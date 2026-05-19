@@ -2,7 +2,7 @@ import asyncio
 import time
 import logging
 from datetime import datetime
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, TypedDict
 
 from scripts.streaming.options.options_fetcher import (
     fetch_futures_quote,
@@ -13,6 +13,27 @@ from scripts.streaming.options.options_fetcher import (
     _safe_float
 )
 from scripts.streaming.options.config import SCHWAB_INDEX_PREFIX
+
+class StockQuote(TypedDict):
+    symbol: str
+    last: float
+    bid: float
+    ask: float
+    open: float
+    timestamp: float
+
+class OptionQuote(TypedDict):
+    symbol: str
+    last: float
+    bid: float
+    ask: float
+    mark: float
+    iv: float
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+    timestamp: float
 
 logger = logging.getLogger(__name__)
 

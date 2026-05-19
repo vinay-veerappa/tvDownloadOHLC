@@ -1,64 +1,93 @@
 import logging
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from typing import Optional
+
 from prisma import Prisma
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class ExpectedMoveBands:
+    """Expected move bands for a ticker on a date. Spec §4.3"""
+    ticker: str
+    calc_date: date
+    expiry_date: Optional[date]
+    spot_at_calc: float
+    straddle_price: float
+    em_365: float
+    em_252: float
+    adj_em: float                       # 0.85 × straddle (user-adjusted EM)
+
+    upper_boundary_1sd: float           # spot + adj_em
+    lower_boundary_1sd: float           # spot - adj_em
+    upper_boundary_2sd: float           # spot + 2 * adj_em
+    lower_boundary_2sd: float           # spot - 2 * adj_em
+
+    source: str = "ExpectedMove"        # "ExpectedMove" | "RthExpectedMove"
+
+
 class ExpectedMoveService:
     """
-    Service for resolving daily expected moves from database records.
-    Computes standard deviation bands from session opens or spot prices.
+    Wraps ExpectedMove and RthExpectedMove tables.
+    Provides the full spec §4.3 interface.
     """
+
     def __init__(self, db: Prisma):
         self.db = db
 
-    async def get_expected_move_bands(self, ticker: str, spot_price: float, session_open: Optional[float] = None) -> Optional[dict]:
-        """
-        Retrieves the latest ExpectedMove or RthExpectedMove for a ticker,
-        and computes the upper/lower 1SD and 2SD bands based on the session open (or spot_price if open is not available).
-        Returns:
-            dict: {
-                "calculation_date": datetime,
-                "expiry_date": datetime or None,
-                "basis_price": float,
-                "em_value": float,
-                "upper_1sd": float,
-                "lower_1sd": float,
-                "upper_2sd": float,
-                "lower_2sd": float,
-                "source": "ExpectedMove" | "RthExpectedMove"
-            } or None
-        """
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _fetch_em_bands(self, ticker: str) -> Optional[ExpectedMoveBands]:
+        """Core resolver — tries ExpectedMove then RthExpectedMove."""
         ticker = ticker.upper()
-        
-        # 1. Try ExpectedMove
+
+        # 1. Try ExpectedMove (primary)
         try:
             em_rec = await self.db.expectedmove.find_first(
                 where={"ticker": ticker},
                 order={"calculationDate": "desc"}
             )
             if em_rec:
-                em_val = em_rec.adjEm or em_rec.price * (em_rec.em252 or em_rec.em365 or 0.0)
-                # Fallback to straddle if adjEm is 0
-                if em_val == 0.0:
-                    em_val = em_rec.straddle
-                    
-                if em_val > 0.0:
-                    basis = session_open or em_rec.price or spot_price
-                    return {
-                        "calculation_date": em_rec.calculationDate,
-                        "expiry_date": em_rec.expiryDate,
-                        "basis_price": basis,
-                        "em_value": em_val,
-                        "upper_1sd": basis + em_val,
-                        "lower_1sd": basis - em_val,
-                        "upper_2sd": basis + (em_val * 2.0),
-                        "lower_2sd": basis - (em_val * 2.0),
-                        "source": "ExpectedMove"
-                    }
+                straddle = em_rec.straddle or 0.0
+                adj_em = em_rec.adjEm if (em_rec.adjEm and em_rec.adjEm > 0) else straddle * 0.85
+                em_365 = em_rec.em365 or 0.0
+                em_252 = em_rec.em252 or 0.0
+                basis = em_rec.price or 0.0
+
+                if adj_em > 0:
+                    calc_date = (
+                        em_rec.calculationDate.date()
+                        if isinstance(em_rec.calculationDate, datetime)
+                        else em_rec.calculationDate
+                    )
+                    expiry_date = None
+                    if em_rec.expiryDate:
+                        expiry_date = (
+                            em_rec.expiryDate.date()
+                            if isinstance(em_rec.expiryDate, datetime)
+                            else em_rec.expiryDate
+                        )
+                    return ExpectedMoveBands(
+                        ticker=ticker,
+                        calc_date=calc_date,
+                        expiry_date=expiry_date,
+                        spot_at_calc=basis,
+                        straddle_price=straddle,
+                        em_365=em_365,
+                        em_252=em_252,
+                        adj_em=adj_em,
+                        upper_boundary_1sd=basis + adj_em,
+                        lower_boundary_1sd=basis - adj_em,
+                        upper_boundary_2sd=basis + 2 * adj_em,
+                        lower_boundary_2sd=basis - 2 * adj_em,
+                        source="ExpectedMove",
+                    )
         except Exception as e:
-            logger.warning(f"Error fetching ExpectedMove for {ticker}: {e}")
+            logger.warning(f"ExpectedMoveService: Error fetching ExpectedMove for {ticker}: {e}")
 
         # 2. Fall back to RthExpectedMove
         try:
@@ -67,21 +96,139 @@ class ExpectedMoveService:
                 order={"date": "desc"}
             )
             if rth_rec:
-                em_val = rth_rec.emStraddle or rth_rec.emIv or rth_rec.emVix or 0.0
-                if em_val > 0.0:
-                    basis = session_open or rth_rec.openPrice or spot_price
-                    return {
-                        "calculation_date": rth_rec.date,
-                        "expiry_date": None,
-                        "basis_price": basis,
-                        "em_value": em_val,
-                        "upper_1sd": basis + em_val,
-                        "lower_1sd": basis - em_val,
-                        "upper_2sd": basis + (em_val * 2.0),
-                        "lower_2sd": basis - (em_val * 2.0),
-                        "source": "RthExpectedMove"
-                    }
+                adj_em = rth_rec.emStraddle or rth_rec.emIv or rth_rec.emVix or 0.0
+                basis = rth_rec.openPrice or 0.0
+                if adj_em > 0:
+                    calc_date = (
+                        rth_rec.date.date()
+                        if isinstance(rth_rec.date, datetime)
+                        else rth_rec.date
+                    )
+                    return ExpectedMoveBands(
+                        ticker=ticker,
+                        calc_date=calc_date,
+                        expiry_date=None,
+                        spot_at_calc=basis,
+                        straddle_price=adj_em,
+                        em_365=adj_em,
+                        em_252=adj_em,
+                        adj_em=adj_em,
+                        upper_boundary_1sd=basis + adj_em,
+                        lower_boundary_1sd=basis - adj_em,
+                        upper_boundary_2sd=basis + 2 * adj_em,
+                        lower_boundary_2sd=basis - 2 * adj_em,
+                        source="RthExpectedMove",
+                    )
         except Exception as e:
-            logger.error(f"Error fetching RthExpectedMove fallback for {ticker}: {e}")
-            
+            logger.error(f"ExpectedMoveService: Error fetching RthExpectedMove for {ticker}: {e}")
+
         return None
+
+    # ------------------------------------------------------------------
+    # Public spec-compliant API
+    # ------------------------------------------------------------------
+
+    async def get_today_em(self, ticker: str) -> Optional[ExpectedMoveBands]:
+        """
+        Today's expected move bands for ticker.
+        Priority: ExpectedMove with calculationDate=today → RthExpectedMove → None.
+        Spec §4.3
+        """
+        return await self._fetch_em_bands(ticker)
+
+    async def get_historical_em_hit_rate(
+        self,
+        ticker: str,
+        lookback_days: int = 60,
+    ) -> Optional[dict]:
+        """
+        How often does spot stay within the EM boundary historically?
+        Returns {within_1sd_pct, beyond_upper_pct, beyond_lower_pct} or None.
+        Spec §4.3
+        """
+        ticker = ticker.upper()
+        try:
+            records = await self.db.expectedmovehistory.find_many(
+                where={"ticker": ticker},
+                order={"calculationDate": "desc"},
+                take=lookback_days
+            )
+            if not records:
+                return None
+
+            total = len(records)
+            within = 0
+            beyond_upper = 0
+            beyond_lower = 0
+
+            for rec in records:
+                close = getattr(rec, "actualClose", None) or getattr(rec, "closePrice", None)
+                upper = getattr(rec, "upperBoundary", None)
+                lower = getattr(rec, "lowerBoundary", None)
+                if close is None or upper is None or lower is None:
+                    total -= 1
+                    continue
+                if lower <= close <= upper:
+                    within += 1
+                elif close > upper:
+                    beyond_upper += 1
+                else:
+                    beyond_lower += 1
+
+            if total == 0:
+                return None
+
+            return {
+                "within_1sd_pct": round(within / total * 100.0, 2),
+                "beyond_upper_pct": round(beyond_upper / total * 100.0, 2),
+                "beyond_lower_pct": round(beyond_lower / total * 100.0, 2),
+                "sample_size": total,
+            }
+        except Exception as e:
+            logger.error(f"ExpectedMoveService: Error computing historical EM hit rate for {ticker}: {e}")
+            return None
+
+    async def get_em_distance_in_sd(
+        self,
+        ticker: str,
+        current_spot: float,
+    ) -> Optional[float]:
+        """
+        How many SDs is current_spot from the session open?
+        Returns (current_spot - open) / adj_em. Positive = above open.
+        Spec §4.3
+        """
+        bands = await self._fetch_em_bands(ticker)
+        if not bands or bands.adj_em <= 0:
+            return None
+        return round((current_spot - bands.spot_at_calc) / bands.adj_em, 4)
+
+    # ------------------------------------------------------------------
+    # Legacy dict API (backward compat)
+    # ------------------------------------------------------------------
+
+    async def get_expected_move_bands(
+        self,
+        ticker: str,
+        spot_price: float,
+        session_open: Optional[float] = None,
+    ) -> Optional[dict]:
+        """Legacy dict-returning method for backward compatibility."""
+        bands = await self._fetch_em_bands(ticker)
+        if not bands:
+            return None
+
+        basis = session_open or bands.spot_at_calc or spot_price
+        adj_em = bands.adj_em
+
+        return {
+            "calculation_date": bands.calc_date,
+            "expiry_date": bands.expiry_date,
+            "basis_price": basis,
+            "em_value": adj_em,
+            "upper_1sd": basis + adj_em,
+            "lower_1sd": basis - adj_em,
+            "upper_2sd": basis + (adj_em * 2.0),
+            "lower_2sd": basis - (adj_em * 2.0),
+            "source": bands.source,
+        }

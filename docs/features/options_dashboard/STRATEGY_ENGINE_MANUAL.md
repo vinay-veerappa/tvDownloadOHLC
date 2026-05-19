@@ -38,6 +38,17 @@ graph TD
 
 ---
 
+## 1.1 Position Rolling Design Decision (D13)
+
+Rolling positions (e.g., at 21 DTE in WHEEL and LONG_DTE_CREDIT) is designed and implemented using an **asynchronous close-and-rescan model**:
+1. **Trigger:** The strategy's `manage()` method evaluates DTE and returns `ManageAction(close=True, reason="ROLL")`.
+2. **Close:** The `PaperExecutor` executes the close, updates the trade status to `CLOSED`, and updates the account cash balance.
+3. **Rescan:** On the subsequent tick, since the silo account has no active trade, the strategy's `scan()` method automatically runs, evaluates entry criteria, and opens a new trade at the next optimal strike and DTE.
+
+This decoupled model ensures maximum simplicity, avoids complex state transitions, and mirrors real-world broker execution where rolling is a compound transaction of closing and re-opening legs.
+
+---
+
 ## 2. Command Reference
 
 ### 2.1 Bootstrapping/Seeding the Silos

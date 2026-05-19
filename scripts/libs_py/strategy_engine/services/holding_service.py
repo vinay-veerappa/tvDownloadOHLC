@@ -1,15 +1,14 @@
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import Optional
+from typing import Optional, TypedDict
 import pytz
 
 # Setup logger
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class HoldingRecord:
+class HoldingRecord(TypedDict):
     """An active equity or option holding in the account."""
     ticker: str
     shares: int
@@ -76,7 +75,7 @@ class HoldingService:
 
         if existing:
             # Average cost basis calculation
-            total_shares = existing.shares + shares
+            total_shares = existing["shares"] + shares
             if total_shares <= 0:
                 # Liquidated or invalid state, delete it
                 try:
@@ -86,7 +85,7 @@ class HoldingService:
                 return HoldingRecord(ticker=ticker, shares=0, cost_basis=0.0, acquired_at=utc_acq)
 
             weighted_cost = (
-                (existing.shares * existing.cost_basis) + (shares * cost_basis)
+                (existing["shares"] * existing["cost_basis"]) + (shares * cost_basis)
             ) / total_shares
 
             try:
@@ -143,7 +142,7 @@ class HoldingService:
             logger.warning(f"Attempted to remove holding for ticker {ticker} but none exists.")
             return None
 
-        remaining_shares = existing.shares - shares
+        remaining_shares = existing["shares"] - shares
         if remaining_shares <= 0:
             try:
                 await self.db.holding.delete(
@@ -179,3 +178,11 @@ class HoldingService:
                 cost_basis=updated.costBasis,
                 acquired_at=acq_at
             )
+
+    async def add_shares(self, ticker: str, shares: int, cost_basis: float, acquired_at: Optional[datetime] = None) -> HoldingRecord:
+        """Alias for add_holding, used by paper executor during assignments."""
+        return await self.add_holding(ticker, shares, cost_basis, acquired_at)
+
+    async def remove_shares(self, ticker: str, shares: int, removed_at: Optional[datetime] = None) -> Optional[HoldingRecord]:
+        """Alias for remove_holding, used by paper executor during call aways."""
+        return await self.remove_holding(ticker, shares)

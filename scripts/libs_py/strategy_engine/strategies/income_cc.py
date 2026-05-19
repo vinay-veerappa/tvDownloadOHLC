@@ -7,6 +7,14 @@ from scripts.libs_py.strategy_engine.strategies.base import Strategy, Signal, Le
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_mid(contract) -> float:
+    """Reliable mid-price; fall back to last when only one side is quoted (D7)."""
+    if contract.bid and contract.bid > 0 and contract.ask and contract.ask > 0:
+        return (contract.bid + contract.ask) / 2.0
+    return contract.last or contract.bid or contract.ask or 0.0
+
+
 class IncomeCcStrategy(Strategy):
     """
     Systematic covered calls written on long stock holdings based on statistical tier boundaries.
@@ -21,6 +29,13 @@ class IncomeCcStrategy(Strategy):
     async def scan(self, now: datetime) -> List[Signal]:
         ticker = self.underlying
         target_dte = 30
+
+        # Check if the ticker's holding is disabled in config.yaml (M10)
+        config_holdings = self.s.get("config", {}).get("holdings", {})
+        ticker_holding_cfg = config_holdings.get(ticker, {})
+        if isinstance(ticker_holding_cfg, dict) and not ticker_holding_cfg.get("enabled", True):
+            # Suppress execution scans and near-miss logs completely for disabled staged tickers (M10)
+            return []
 
         # Retrieve Prisma database client
         prisma = self.s["prisma"]
@@ -42,22 +57,22 @@ class IncomeCcStrategy(Strategy):
 
         # ─── Check stock holding ───
         holding = await self.s["holdings"].get_holding(ticker)
-        if not holding or holding.shares < 100:
+        if not holding or holding["shares"] < 100:
             # No shares or less than 100 shares, cannot write covered call
             return []
 
         # ─── Special staging check for RIVN ───
         if ticker == "RIVN":
-            acquired_at = holding.acquired_at
+            acquired_at = holding["acquired_at"]  # D1: dict access
             if isinstance(acquired_at, str):
                 acquired_at = datetime.fromisoformat(acquired_at.replace("Z", "+00:00"))
-            
+
             # Check if held for >= 4 weeks (28 days)
             days_held = (now.replace(tzinfo=pytz.utc) - acquired_at.replace(tzinfo=pytz.utc)).days
             if days_held < 28:
                 await self._log_near_miss(
-                    ticker, holding.cost_basis, "rivn_staging_active", 
-                    float(days_held), 28.0, 
+                    ticker, holding["cost_basis"], "rivn_staging_active",
+                    float(days_held), 28.0,
                     {"days_held": days_held, "acquiredAt": str(acquired_at)}
                 )
                 return []
@@ -129,11 +144,11 @@ class IncomeCcStrategy(Strategy):
         strike = contract.strike
 
         # Enforce strike >= stock cost basis to prevent selling at a capital loss
-        if strike < holding.cost_basis:
-            logger.info(f"{self.name}: Best delta strike {strike} is below cost basis {holding.cost_basis}. Adjusting to nearest strike >= cost basis.")
+        if strike < holding["cost_basis"]:  # D1: dict access
+            logger.info(f"{self.name}: Best delta strike {strike} is below cost basis {holding['cost_basis']}. Adjusting to nearest strike >= cost basis.")
             # Search for the next available strike >= cost basis
             contracts = chain.calls
-            valid_contracts = [c for c in contracts if c.strike >= holding.cost_basis]
+            valid_contracts = [c for c in contracts if c.strike >= holding["cost_basis"]]
             if valid_contracts:
                 # Find the one closest to the cost basis
                 contract = min(valid_contracts, key=lambda c: c.strike)
@@ -141,14 +156,14 @@ class IncomeCcStrategy(Strategy):
             else:
                 # No strike available above cost basis, skip
                 await self._log_near_miss(
-                    ticker, spot, "no_strike_above_cost_basis", 
-                    strike, holding.cost_basis, 
-                    {"cost_basis": holding.cost_basis}
+                    ticker, spot, "no_strike_above_cost_basis",
+                    strike, holding["cost_basis"],
+                    {"cost_basis": holding["cost_basis"]}
                 )
                 return []
 
-        mid_premium = (contract.bid + contract.ask) / 2.0 or contract.last
-        qty = holding.shares // 100
+        mid_premium = _safe_mid(contract)  # D7
+        qty = holding["shares"] // 100  # D1: dict access
 
         leg = LegSpec(
             option_type="CALL",
@@ -169,7 +184,7 @@ class IncomeCcStrategy(Strategy):
 
         entry_features = {
             "spot": spot,
-            "stock_cost_basis": holding.cost_basis,
+            "stock_cost_basis": holding["cost_basis"],  # D1: dict access
             "target_delta": target_delta,
             "actual_delta": contract.delta,
             "iv_rank": iv_rank,
@@ -183,29 +198,32 @@ class IncomeCcStrategy(Strategy):
             underlying=ticker,
             legs=[leg],
             max_risk_per_contract=spot * 100.0,
-            max_capital_per_contract=0.0, # Stock is already held
-            profit_target_pct=0.50,       # 50% profit target
-            stop_loss_mult=99.0,          # Covered calls are not stopped out
-            roll_at_dte=21,               # Roll at 21 DTE to keep the income machine running
+            max_capital_per_contract=0.0,  # Stock is already held
+            profit_target_pct=self._exit_rules["profit_target_pct"],  # M7
+            stop_loss_mult=self._exit_rules["stop_loss_mult"],         # M7
+            roll_at_dte=self._exit_rules["roll_at_dte"],               # M7
             entry_features=entry_features,
-            notes=f"Selling covered Call {ticker} at {strike} (DTE {target_dte_actual}) against {holding.shares} shares"
+            notes=f"Selling covered Call {ticker} at {strike} (DTE {target_dte_actual}) against {holding['shares']} shares"  # D1
         )
         return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
+        ex = self._exit_rules  # M7: config-driven exit params
         ticker = trade.ticker.upper()
-        spot = current_mtm.underlying_px
+        spot = current_mtm["underlying_px"]
 
-        # 1. Profit Target Check: exit at 50% profit
-        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=0.50)
+        # 1. Profit Target Check
+        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
-        # 2. Tastytrade 21-DTE roll check (roll call forward to keep capturing premium)
-        dte_action = await self._check_dte_time_stop(trade, now, close_at_dte=21)
-        if dte_action:
-            logger.info(f"{self.name}: Covered Call at 21 DTE. Rolling position.")
-            return dte_action
+        # 2. Tastytrade 21-DTE roll check (C9: explicit reason; D13: caller controls reason)
+        roll_dte = ex["roll_at_dte"]
+        if roll_dte is not None:
+            dte_action = await self._check_dte_time_stop(trade, now, close_at_dte=int(roll_dte), reason="ROLL")
+            if dte_action:
+                logger.info(f"{self.name}: Covered Call at {roll_dte} DTE. Rolling position.")
+                return dte_action
 
         # Expiration Check (0 DTE)
         leg = trade.legs[0]

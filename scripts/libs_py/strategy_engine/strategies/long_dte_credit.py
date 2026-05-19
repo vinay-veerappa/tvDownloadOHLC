@@ -196,30 +196,33 @@ class LongDteCreditStrategy(Strategy):
             legs=[short_leg, long_leg],
             max_risk_per_contract=max_risk,
             max_capital_per_contract=max_capital,
-            profit_target_pct=0.50,       # 50% Tastytrade exit target
-            stop_loss_mult=2.0,           # Exit at 2.0x credit (1.0x loss)
-            roll_at_dte=21,               # Roll/Exit strictly at 21 DTE
+            profit_target_pct=self._exit_rules["profit_target_pct"],  # M7 (default 0.50)
+            stop_loss_mult=self._exit_rules["stop_loss_mult"],         # M7 (default 2.0)
+            roll_at_dte=self._exit_rules["roll_at_dte"],               # M7 (default 21)
             entry_features=entry_features,
             notes=f"Selling 45DTE Put Credit Spread {short_strike}/{long_strike} for ${net_credit:.2f} credit"
         )
         return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
-        # 1. Profit Target Check: exit at 50% profit
-        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=0.50)
+        ex = self._exit_rules  # M7
+        # 1. Profit Target Check
+        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
-        # 2. Stop Loss Check: exit at 2x credit (1.0x loss)
-        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=2.0)
+        # 2. Stop Loss Check
+        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=ex["stop_loss_mult"])
         if sl_action:
             return sl_action
 
-        # 3. Tastytrade 21-DTE time exit/roll rule
-        dte_action = await self._check_dte_time_stop(trade, now, close_at_dte=21)
-        if dte_action:
-            logger.info(f"{self.name}: Tastytrade 21-DTE rule triggered. Rolling/Closing position.")
-            return dte_action
+        # 3. Tastytrade DTE time exit/roll rule (C9: explicit reason)
+        roll_dte = ex["roll_at_dte"]
+        if roll_dte is not None:
+            dte_action = await self._check_dte_time_stop(trade, now, close_at_dte=int(roll_dte), reason="ROLL")
+            if dte_action:
+                logger.info(f"{self.name}: Tastytrade {roll_dte}-DTE rule triggered. Rolling/Closing position.")
+                return dte_action
 
         # Expiration Check (0 DTE)
         leg = trade.legs[0]

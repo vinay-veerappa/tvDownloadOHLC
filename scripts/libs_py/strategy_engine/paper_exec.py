@@ -24,6 +24,13 @@ class PaperExecutor:
         self.broker = broker
         self.holdings = holdings
 
+    def _get_slippage(self, ticker: str) -> float:
+        """Returns standard per-share slippage from the Playbook (M9)."""
+        if ticker in ["SPY", "SPX", "QQQ", "IWM"]:
+            return 0.02
+        else:
+            return 0.05
+
     async def execute_signal(self, strategy_name: str, signal: Signal, now: datetime) -> Optional[Any]:
         """
         Opens a new paper trade by creating Trade and TradeLeg records, 
@@ -46,15 +53,20 @@ class PaperExecutor:
             playbook = await self.db.playbook.find_first(where={"name": "Strategy Engine Playbook"})
             playbook_id = playbook.id if playbook else None
 
-            # 4. Calculate entry price based on legs
-            # Net price is sum of leg premiums: negative for LONG, positive for SHORT
+            # 4. Calculate entry price based on legs (adjusted for slippage per Playbook M9)
+            slippage = self._get_slippage(signal.underlying)
             net_premium = 0.0
             for leg in signal.legs:
                 premium = leg.mid
+                if premium is None:
+                    if leg.bid is not None and leg.ask is not None:
+                        premium = (leg.bid + leg.ask) / 2.0
+                    else:
+                        premium = 0.0
                 if leg.side == "SHORT":
-                    net_premium += premium
+                    net_premium += (premium - slippage)
                 else:
-                    net_premium -= premium
+                    net_premium -= (premium + slippage)
 
             # For credit trades, net_premium is positive credit received.
             # For debit trades, net_premium is negative (cost paid). We'll store it as positive debit in entryPrice.
@@ -83,7 +95,7 @@ class PaperExecutor:
                     "takeProfit": signal.profit_target_pct,
                     "stopLoss": signal.stop_loss_mult,
                     "notes": signal.notes,
-                    "metadata": json.dumps(signal.entry_features),
+                    "metadata": json.dumps({**signal.entry_features, "research_strategy_id": signal.research_strategy_id}),
                     "risk": signal.max_risk_per_contract * qty
                 }
             )
@@ -108,7 +120,7 @@ class PaperExecutor:
                         "strike": float(leg.strike) if leg.strike else None,
                         "expiry": expiry_dt,
                         "quantity": int(leg.quantity),
-                        "openPrice": float(leg.mid),
+                        "openPrice": float(leg.mid) - slippage if leg.side == "SHORT" else float(leg.mid) + slippage,
                         "openBid": float(leg.bid) if leg.bid else None,
                         "openAsk": float(leg.ask) if leg.ask else None,
                         "openIv": float(leg.iv) if leg.iv else None,
@@ -120,15 +132,11 @@ class PaperExecutor:
                 )
 
             # 7. Update Account balance
-            # Credit adds premium to balance; Debit subtracts cost from balance
-            cash_effect = net_premium * qty * 100.0
-            new_balance = account.currentBalance + cash_effect
-            await self.db.account.update(
-                where={"id": account.id},
-                data={"currentBalance": new_balance}
-            )
+            # NO-OP: We only book realized PnL at close. Cash acts as Net Equity.
+            cash_effect = 0.0
+            new_balance = account.currentBalance
 
-            logger.info(f"PaperExecutor: Successfully executed trade entry {trade.id} for {strategy_name}. Cash impact: ${cash_effect:+,.2f}. New Balance: ${new_balance:,.2f}")
+            logger.info(f"PaperExecutor: Successfully executed trade entry {trade.id} for {strategy_name}. Balance remains: ${new_balance:,.2f}")
             return trade
 
         except Exception as e:
@@ -155,106 +163,155 @@ class PaperExecutor:
             is_credit = trade_full.direction == "CREDIT"
             entry_price = trade_full.entryPrice
 
-            # 2. Calculate P&L of the options legs
-            # For Credit trades, realized PnL = (entryPrice - cost_to_close) * qty * 100
-            # For Debit trades, realized PnL = (cost_to_close - entryPrice) * qty * 100
-            if is_credit:
-                trade_pnl = (entry_price - cost_to_close) * qty * 100.0
-            else:
-                trade_pnl = (cost_to_close - entry_price) * qty * 100.0
+            is_assignment = False
+            if "ASSIGN" in (action.reason or "").upper():
+                has_short_option = False
+                is_itm = False
+                
+                # Fetch current spot price for ITM verification
+                spot_price = None
+                try:
+                    quote = await self.broker.get_stock_quote(trade_full.ticker)
+                    spot_price = quote.get("mid") or quote.get("last")
+                except Exception as e:
+                    logger.warning(f"PaperExecutor: Could not fetch spot price for ITM verification on assignment: {e}")
+                
+                for leg in trade_full.legs:
+                    if leg.optionType in ["PUT", "CALL"] and leg.side == "SHORT":
+                        has_short_option = True
+                        if leg.expiry:
+                            expiry_date = leg.expiry.date() if isinstance(leg.expiry, datetime) else leg.expiry
+                            days_to_expiry = (expiry_date - now.date()).days
+                            
+                            # Strict DTE check: only assign if at or past expiry (DTE <= 0)
+                            if days_to_expiry <= 0:
+                                if spot_price is not None and leg.strike is not None:
+                                    if leg.optionType == "PUT" and spot_price <= leg.strike:
+                                        is_itm = True
+                                    elif leg.optionType == "CALL" and spot_price >= leg.strike:
+                                        is_itm = True
+                                else:
+                                    # Fallback if quote is unavailable: assume assignment was intended
+                                    is_itm = True
+                                    logger.warning(f"PaperExecutor: Missing spot or strike for ITM verification on trade {trade.id}, defaulting to True.")
+                
+                if has_short_option and is_itm:
+                    is_assignment = True
+                else:
+                    reason_msg = ""
+                    if not has_short_option:
+                        reason_msg = "no short option leg found"
+                    elif not is_itm:
+                        reason_msg = f"short option is out-of-the-money (Spot: {spot_price}, Strike: {trade_full.legs[0].strike})"
+                    else:
+                        reason_msg = "DTE is greater than 0"
+                    logger.warning(f"PaperExecutor: Assignment requested for trade {trade.id} but {reason_msg}. Defaulting to normal close.")
 
-            # 3. Handle Assignment Cash Transitions and Equity holdings updates
-            is_assignment = "ASSIGN" in (action.reason or "").upper()
-            total_cash_returned = 0.0
+            # 2. Calculate Realized P&L (incorporating slippage per Playbook M9)
+            slippage = self._get_slippage(trade_full.ticker)
+            num_legs = len(trade_full.legs)
+            
+            trade_pnl = 0.0
+            stock_gain = 0.0
 
+            # Handle stock transitions for option assignment
             if is_assignment:
                 for leg in trade_full.legs:
                     if leg.optionType == "PUT" and leg.side == "SHORT":
-                        # CSP Short Put Assignment: buy 100 shares at strike
+                        # CSP Assignment: Buy stock at strike
                         strike = leg.strike
                         shares_to_buy = int(qty * 100)
                         logger.info(f"PaperExecutor: CSP assignment triggered. Buying {shares_to_buy} shares of {trade.ticker} at ${strike:.2f}")
-                        
-                        # Add shares to Holdings
                         await self.holdings.add_shares(trade.ticker, shares_to_buy, strike, now)
                         
-                        # Subtract cash for stock purchase
-                        total_cash_returned -= strike * shares_to_buy
-
                     elif leg.optionType == "CALL" and leg.side == "SHORT":
-                        # CC Short Call Assignment: stock is called away at strike
+                        # CC Assignment: Sell stock at strike
                         strike = leg.strike
                         shares_to_sell = int(qty * 100)
                         logger.info(f"PaperExecutor: CC assignment triggered. Selling {shares_to_sell} shares of {trade.ticker} at ${strike:.2f}")
                         
-                        # Get stock cost basis before removal to compute equity P&L
                         holding = await self.holdings.get_holding(trade.ticker)
-                        stock_cost_basis = holding.cost_basis if holding else strike
-                        
-                        # Remove shares from Holdings
+                        stock_cost_basis = holding["cost_basis"] if holding else strike
                         await self.holdings.remove_shares(trade.ticker, shares_to_sell, now)
                         
-                        # Add cash for stock sale
-                        total_cash_returned += strike * shares_to_sell
-                        
-                        # Add stock realized gains to overall trade realized P&L!
                         stock_gain = (strike - stock_cost_basis) * shares_to_sell
-                        trade_pnl += stock_gain
                         logger.info(f"PaperExecutor: Realized stock gain from CC call away: ${stock_gain:+,.2f} (Cost Basis: ${stock_cost_basis:.2f})")
 
-            # 4. Closing Cash impact to Silo account
-            # Credit: we pay cost_to_close to exit
-            # Debit: we receive cost_to_close to exit
-            if not is_assignment:
-                if is_credit:
-                    cash_effect = -cost_to_close * qty * 100.0
-                else:
-                    cash_effect = cost_to_close * qty * 100.0
-            else:
-                # If assigned, the short option expired worthless or ITM (pnl is full credit received, which is already in balance).
-                # The cash impact is only the assignment purchase/sale itself!
-                cash_effect = total_cash_returned
-
-            # 5. Update Tradelegs to CLOSED
+            # 5. Process each leg to update Tradelegs and sum aggregate trade_pnl
             for leg in trade_full.legs:
                 # Try fetching closing market prices from Schwab API, if available
                 close_bid = None
                 close_ask = None
                 close_mid = None
                 try:
-                    opt_quote = await self.broker.get_option_quote(leg.symbol)
-                    close_bid = opt_quote.bid
-                    close_ask = opt_quote.ask
-                    close_mid = opt_quote.mid
+                    if leg.optionType in ["PUT", "CALL"]:
+                        opt_quote = await self.broker.get_option_quote(leg.symbol)
+                    else:
+                        opt_quote = await self.broker.get_stock_quote(leg.symbol)
+                    close_bid = opt_quote.get("bid")
+                    close_ask = opt_quote.get("ask")
+                    close_mid = opt_quote.get("mid")
                 except Exception:
                     pass
 
-                # Calculate leg-level PnL
+                # Fallback to leg-level cost basis if Schwab quote not found
+                # D5: use 100.0 multiplier only for options, 1.0 for stock
+                multiplier = 100.0 if leg.optionType in ["PUT", "CALL"] else 1.0
+                close_val = close_mid if close_mid is not None else (cost_to_close / num_legs)
+                
+                # Apply close slippage per leg
+                if not is_assignment:
+                    if leg.side == "SHORT":
+                        close_val_adjusted = close_val + slippage
+                    else:
+                        close_val_adjusted = max(0.0, close_val - slippage)
+                else:
+                    if leg.optionType in ["PUT", "CALL"]:
+                        close_val_adjusted = 0.0
+                    else:
+                        close_val_adjusted = close_val
+
                 leg_pnl = 0.0
                 if leg.side == "SHORT":
-                    leg_pnl = (leg.openPrice - (close_mid or 0.0)) * leg.quantity * 100.0
+                    leg_pnl = (leg.openPrice - close_val_adjusted) * leg.quantity * multiplier
                 else:
-                    leg_pnl = ((close_mid or 0.0) - leg.openPrice) * leg.quantity * 100.0
+                    leg_pnl = (close_val_adjusted - leg.openPrice) * leg.quantity * multiplier
+
+                trade_pnl += leg_pnl
 
                 await self.db.tradeleg.update(
                     where={"id": leg.id},
                     data={
-                        "closePrice": close_mid or cost_to_close,
+                        "closePrice": close_val_adjusted,
                         "closeBid": close_bid,
                         "closeAsk": close_ask,
                         "legPnl": leg_pnl,
                         "assigned": is_assignment,
-                        "expiredOtm": not is_assignment and (cost_to_close <= 0.0)
+                        "expiredOtm": not is_assignment and (close_val_adjusted <= 0.0)
                     }
                 )
 
+            # Include assignment stock gain/loss in the trade PnL
+            trade_pnl += stock_gain
+            cash_effect = trade_pnl
+
             # 6. Update Trade to CLOSED
             status_label = "ASSIGNED" if is_assignment else "CLOSED"
+            
+            # Normal exit price is the adjusted cost to close, assignment exit price is strike-based or 0
+            if is_assignment:
+                exit_price_adjusted = 0.0
+            else:
+                if is_credit:
+                    exit_price_adjusted = cost_to_close + (num_legs * slippage)
+                else:
+                    exit_price_adjusted = max(0.0, cost_to_close - (num_legs * slippage))
+
             await self.db.trade.update(
                 where={"id": trade.id},
                 data={
                     "exitDate": now,
-                    "exitPrice": cost_to_close,
+                    "exitPrice": exit_price_adjusted,
                     "pnl": trade_pnl,
                     "status": status_label,
                     "notes": (trade_full.notes or "") + f" | Closed: {action.reason}"

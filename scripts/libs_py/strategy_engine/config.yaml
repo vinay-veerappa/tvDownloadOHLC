@@ -1,4 +1,10 @@
-# config.yaml
+# config.yaml — Options Strategy Engine
+# ─────────────────────────────────────
+# M10: Set `enabled: false` on any variant to disable it without removing it.
+#       Engine will skip disabled variants on startup and emit a WARNING log.
+# M7:  Per-variant exit rules (profit_target_pct, stop_loss_mult, roll_at_dte,
+#       time_stop_dte, flat_before_close_minutes) override strategy class defaults.
+
 default_initial_balance: 25000.0
 account_group_name: "Strategy Engine Silos"
 
@@ -17,51 +23,154 @@ approved_tickers:
 
 holdings:
   GOOGL: { shares: 300, cost_basis: 150.0, acquired_at: "2026-01-15T09:30:00Z" }
-  TSLA: { shares: 200, cost_basis: 180.0, acquired_at: "2026-02-10T09:30:00Z" }
-  RIVN: { shares: 1000, cost_basis: 10.0, acquired_at: "2026-03-01T09:30:00Z" } # staged
+  TSLA:  { shares: 200, cost_basis: 180.0, acquired_at: "2026-02-10T09:30:00Z" }
+  RIVN:  { shares: 1000, cost_basis: 10.0, acquired_at: "2026-03-01T09:30:00Z", enabled: false }  # staged — enabled: false suppresses CC spam
 
 blackout_buffers:
-  High: { pre_minutes: 120, post_minutes: 60 }
-  Medium: { pre_minutes: 30, post_minutes: 30 }
-  Low: { pre_minutes: 0, post_minutes: 0 }
+  High:   { pre_minutes: 120, post_minutes: 60 }
+  Medium: { pre_minutes: 30,  post_minutes: 30 }
+  Low:    { pre_minutes: 0,   post_minutes: 0  }
 
 strategies:
+  # ── Wheel ──────────────────────────────────────────────────────────────────
   WHEEL:
     tickers: [NVDA, TSLA, AAPL, GOOGL, MSFT, AMZN]
     variants:
-      "30D_45DTE": { short_delta: 0.30, dte: 45, min_iv_rank: 30 }
-      "20D_45DTE": { short_delta: 0.20, dte: 45, min_iv_rank: 30 }
-      "30D_7DTE":  { short_delta: 0.30, dte: 7,  min_iv_rank: 25 }
+      "30D_45DTE":
+        enabled: true
+        short_delta: 0.30
+        dte: 45
+        min_iv_rank: 30
+        # Exit rules (M7)
+        profit_target_pct: 0.50    # 50% of credit
+        stop_loss_mult: 99.0       # CCs held to expiry/assignment; effectively no stop
+        roll_at_dte: 21            # Roll 21 DTE for positions opened at ≥40 DTE
+        flat_before_close_minutes: 5
 
+      "20D_45DTE":
+        enabled: true
+        short_delta: 0.20
+        dte: 45
+        min_iv_rank: 30
+        profit_target_pct: 0.50
+        stop_loss_mult: 99.0
+        roll_at_dte: 21
+        flat_before_close_minutes: 5
+
+      "30D_7DTE":
+        enabled: true
+        short_delta: 0.30
+        dte: 7
+        min_iv_rank: 25
+        profit_target_pct: 0.50
+        stop_loss_mult: 2.0       # Short DTE — tighter stop
+        roll_at_dte: null
+        flat_before_close_minutes: 15
+
+  # ── 0-DTE Put Credit Spreads ───────────────────────────────────────────────
   ZERO_DTE_PCS:
     tickers: [SPY, SPX]
     variants:
-      "10D_5W": { short_delta: 0.10, width: 5.0, require_positive_gamma: true, require_ict: false }
-      "16D_5W": { short_delta: 0.16, width: 5.0, require_positive_gamma: true, require_ict: false }
-      "10D_5W_NOGEX": { short_delta: 0.10, width: 5.0, require_positive_gamma: false, require_ict: false }
-      "10D_5W_ICT": { short_delta: 0.10, width: 5.0, require_positive_gamma: true, require_ict: true }
+      "10D_5W":
+        enabled: true
+        short_delta: 0.10
+        width: 5.0
+        require_positive_gamma: true
+        require_ict: false
+        profit_target_pct: 0.50
+        stop_loss_mult: 2.0
+        flat_before_close_minutes: 30   # 0DTE — flat 30 min before close
 
+      "16D_5W":
+        enabled: true
+        short_delta: 0.16
+        width: 5.0
+        require_positive_gamma: true
+        require_ict: false
+        profit_target_pct: 0.50
+        stop_loss_mult: 2.0
+        flat_before_close_minutes: 30
+
+      "10D_5W_NOGEX":
+        enabled: true
+        short_delta: 0.10
+        width: 5.0
+        require_positive_gamma: false
+        require_ict: false
+        profit_target_pct: 0.50
+        stop_loss_mult: 2.0
+        flat_before_close_minutes: 30
+
+      "10D_5W_ICT":
+        enabled: true
+        short_delta: 0.10
+        width: 5.0
+        require_positive_gamma: true
+        require_ict: true
+        profit_target_pct: 0.50
+        stop_loss_mult: 2.0
+        flat_before_close_minutes: 30
+
+  # ── Long-DTE Credit Spreads (45DTE) ───────────────────────────────────────
   LONG_DTE_CREDIT:
     tickers: [SPY, NVDA, TSLA, IWM]
     variants:
-      "16D_45DTE": { short_delta: 0.16, width_pct: 0.02, dte: 45, min_iv_rank: 35 }
+      "16D_45DTE":
+        enabled: true
+        short_delta: 0.16
+        width_pct: 0.02
+        dte: 45
+        min_iv_rank: 35
+        profit_target_pct: 0.50
+        stop_loss_mult: 2.0
+        roll_at_dte: 21
 
+  # ── Mean Reversion at Expected Move ───────────────────────────────────────
   MEAN_REVERSION_EM:
     tickers: [SPY, SPX]
     variants:
-      "1SD_TOUCH": { entry_window: ["10:30", "14:30"], max_vix: 20, require_positive_gamma: true }
+      "1SD_TOUCH":
+        enabled: true
+        entry_window: ["10:30", "14:30"]
+        max_vix: 20
+        require_positive_gamma: true
+        profit_target_pct: 0.50
+        stop_loss_mult: 2.0
+        flat_before_close_minutes: 30
 
+  # ── Wall Break Breakout Debit Spreads ──────────────────────────────────────
   WALL_BREAK:
     tickers: [SPY, SPX]
     variants:
-      "BREAKOUT_DEBIT": { entry_window: ["10:00", "15:00"], max_vix: 22, wall_proximity_pct: 0.003 }
+      "BREAKOUT_DEBIT":
+        enabled: true
+        entry_window: ["10:00", "15:00"]
+        max_vix: 22
+        wall_proximity_pct: 0.003
+        profit_target_pct: 0.50
+        stop_loss_mult: 1.5       # Debit spread — tighter stop
+        flat_before_close_minutes: 30
 
+  # ── Income Covered Calls ───────────────────────────────────────────────────
   INCOME_CC:
     tickers: [GOOGL, TSLA, RIVN]
     variants:
-      "TIER": {} # Parameterized dynamically inside the IncomeCcStrategy class tiers
+      "TIER":
+        enabled: true             # M10: set false for RIVN during staging (handled by staging check in strategy)
+        profit_target_pct: 0.50
+        stop_loss_mult: 99.0      # Held to expiry
+        roll_at_dte: 21
 
+  # ── Earnings Short Strangle ────────────────────────────────────────────────
   EARNINGS_STRANGLE:
     tickers: [NVDA, TSLA, AAPL, GOOGL]
     variants:
-      "30D_5D_BEFORE": { days_before: 5, target_delta: 0.30, max_debit: 5.0, max_iv_percentile: 50 }
+      "30D_5D_BEFORE":
+        enabled: true
+        days_before: 5
+        target_delta: 0.30
+        max_debit_pct: 0.02       # C14: debit must be ≤ 2% of spot (was only absolute cap)
+        max_debit: 5.0            # absolute cap retained
+        max_iv_percentile: 50
+        profit_target_pct: 0.50  # C15: spec says 50%, was 30%
+        stop_loss_mult: 2.0

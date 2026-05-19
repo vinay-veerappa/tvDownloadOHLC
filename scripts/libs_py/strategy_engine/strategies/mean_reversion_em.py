@@ -7,6 +7,13 @@ from scripts.libs_py.strategy_engine.strategies.base import Strategy, Signal, Le
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_mid(contract) -> float:
+    """Reliable mid-price; fall back to last when only one side is quoted (D7)."""
+    if contract.bid and contract.bid > 0 and contract.ask and contract.ask > 0:
+        return (contract.bid + contract.ask) / 2.0
+    return contract.last or contract.bid or contract.ask or 0.0
+
 class MeanReversionEmStrategy(Strategy):
     """
     Expected Move Mean Reversion Strategy.
@@ -69,13 +76,13 @@ class MeanReversionEmStrategy(Strategy):
             await self._log_near_miss(ticker, spot, "blackout_window_active", None, None, {"now": str(now)})
             return []
 
-        # ─── Filter 2: VIX Check ───
-        # Fetch current VIX using spot quote of VIX
+        # ─── Filter 2: VIX Check — use $VIX.X Schwab ticker (D8) ───
         try:
-            vix_quote = await self.s["broker"].get_stock_quote("VIX")
+            vix_quote = await self.s["broker"].get_stock_quote("$VIX.X")
             vix = vix_quote["last"]
         except Exception:
-            vix = 15.0 # default fallback
+            vix = 15.0  # hard fallback — logged so operator can detect upstream failure
+            logger.warning(f"{self.name}: VIX fetch from $VIX.X failed; using fallback {vix}")
 
         if vix > max_vix:
             await self._log_near_miss(
@@ -112,14 +119,25 @@ class MeanReversionEmStrategy(Strategy):
         is_downside_touch = spot <= lower_1sd
 
         if not (is_upside_touch or is_downside_touch):
-            # No touch, log near miss with how far away it is
             dist_to_upper = upper_1sd - spot
             dist_to_lower = spot - lower_1sd
             min_dist = min(dist_to_upper, dist_to_lower)
             await self._log_near_miss(
-                ticker, spot, "no_em_boundary_touch", 
-                float(spot), None, 
+                ticker, spot, "no_em_boundary_touch",
+                float(spot), None,
                 {"upper_1sd": upper_1sd, "lower_1sd": lower_1sd, "distance_to_nearest": min_dist}
+            )
+            return []
+
+        # ─── C12: Overshoot guard — spec §8.4 filter #8 ───
+        # Reject if spot has overshot by more than 0.5 × EM (i.e. a 1.5SD+ move).
+        # A 3+SD blowout should not be faded with a simple credit spread.
+        em_distance_sd = await self.s["em"].get_em_distance_in_sd(ticker, spot)
+        if em_distance_sd is not None and abs(em_distance_sd) > 1.5:
+            await self._log_near_miss(
+                ticker, spot, "em_touch_overshot",
+                float(abs(em_distance_sd)), 1.5,
+                {"em_distance_sd": em_distance_sd, "upper_1sd": upper_1sd, "lower_1sd": lower_1sd}
             )
             return []
 
@@ -148,8 +166,8 @@ class MeanReversionEmStrategy(Strategy):
             if not long_contract:
                 return []
 
-            short_mid = (short_contract.bid + short_contract.ask) / 2.0 or short_contract.last
-            long_mid = (long_contract.bid + long_contract.ask) / 2.0 or long_contract.last
+            short_mid = _safe_mid(short_contract)   # D7
+            long_mid  = _safe_mid(long_contract)     # D7
             net_credit = short_mid - long_mid
 
             option_type = "PUT"
@@ -169,8 +187,8 @@ class MeanReversionEmStrategy(Strategy):
             if not long_contract:
                 return []
 
-            short_mid = (short_contract.bid + short_contract.ask) / 2.0 or short_contract.last
-            long_mid = (long_contract.bid + long_contract.ask) / 2.0 or long_contract.last
+            short_mid = _safe_mid(short_contract)   # D7
+            long_mid  = _safe_mid(long_contract)     # D7
             net_credit = short_mid - long_mid
 
             option_type = "CALL"
@@ -243,6 +261,7 @@ class MeanReversionEmStrategy(Strategy):
             "upper_1sd": upper_1sd,
             "lower_1sd": lower_1sd,
             "em_value": em_value,
+            "em_distance_sd": em_distance_sd,
             "is_upside_touch": is_upside_touch,
             "is_downside_touch": is_downside_touch,
             "net_credit": net_credit,
@@ -256,27 +275,28 @@ class MeanReversionEmStrategy(Strategy):
             legs=[short_leg, long_leg],
             max_risk_per_contract=max_risk,
             max_capital_per_contract=max_capital,
-            profit_target_pct=0.50,       # 50% target
-            stop_loss_mult=3.0,           # Exit at 3x credit
-            time_stop_minutes_before_close=30, # Flat by 3:30 PM Eastern
+            profit_target_pct=self._exit_rules["profit_target_pct"],            # M7
+            stop_loss_mult=self._exit_rules["stop_loss_mult"],                   # M7
+            time_stop_minutes_before_close=self._exit_rules["flat_before_close_minutes"],  # M7
             entry_features=entry_features,
             notes=f"Mean Reversion EM touch spread {short_strike}/{long_strike} for ${net_credit:.2f} credit"
         )
         return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
-        # 1. Profit Target: exit at 50% profit
-        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=0.50)
+        ex = self._exit_rules  # M7
+        # 1. Profit Target
+        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
-        # 2. Stop Loss: exit at 3x credit (loss of 2x credit)
-        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=3.0)
+        # 2. Stop Loss
+        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=ex["stop_loss_mult"])
         if sl_action:
             return sl_action
 
-        # 3. Time Stop: close at 3:30 PM Eastern
-        time_action = await self._check_time_stop(trade, now, flat_by_minutes_before_close=30)
+        # 3. Time Stop: flat N minutes before close
+        time_action = await self._check_time_stop(trade, now, flat_by_minutes_before_close=ex["flat_before_close_minutes"])
         if time_action:
             logger.info(f"{self.name}: Intraday time stop activated. Closing mean reversion spread.")
             return time_action

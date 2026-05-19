@@ -125,6 +125,18 @@ class Strategy(ABC):
         self.underlying = params.underlying
         self.p = params.params      # short alias for params dict
 
+    # M7: Centralised exit-rule reader — strategies call self._exit_rules instead of hardcoding
+    @property
+    def _exit_rules(self) -> Dict[str, Any]:
+        """Return exit-rule params sourced from config.yaml variant params with safe defaults."""
+        return {
+            "profit_target_pct":        float(self.p.get("profit_target_pct", 0.50)),
+            "stop_loss_mult":           float(self.p.get("stop_loss_mult", 2.0)),
+            "roll_at_dte":              self.p.get("roll_at_dte"),           # None = no DTE roll
+            "time_stop_dte":            self.p.get("time_stop_dte"),         # None = no DTE hard stop
+            "flat_before_close_minutes": int(self.p.get("flat_before_close_minutes", 30)),
+        }
+
     @abstractmethod
     async def scan(self, now: datetime) -> List[Signal]:
         """Evaluate entry conditions; return zero or more signals.
@@ -193,13 +205,17 @@ class Strategy(ABC):
             return None
 
         # Check profit target based on trade direction
+        qty = trade.quantity
+        multiplier = 100.0
+        pnl_per_share = current_mtm["unrealized_pnl"] / (qty * multiplier)
+
         if trade.direction == "CREDIT":
             # If unrealized P&L is >= target_pct of entry price
-            if current_mtm.unrealized_pnl >= entry_price * target_pct:
+            if pnl_per_share >= entry_price * target_pct:
                 return ManageAction(close=True, reason="TARGET")
         elif trade.direction == "DEBIT":
             # If unrealized P&L is >= target_pct of entry price
-            if current_mtm.unrealized_pnl >= entry_price * target_pct:
+            if pnl_per_share >= entry_price * target_pct:
                 return ManageAction(close=True, reason="TARGET")
 
         return None
@@ -216,16 +232,20 @@ class Strategy(ABC):
         if entry_price <= 0.0:
             return None
 
+        qty = trade.quantity
+        multiplier = 100.0
+        net_per_share = current_mtm["net_value"] / (qty * multiplier)
+
         if trade.direction == "CREDIT":
             # Credit stop mult: e.g. 2.0x means cost to close >= 2 * credit (loss of 1 * credit)
             # Or if net value to close >= entryPrice * stop_mult
-            if current_mtm.net_value >= entry_price * stop_mult:
+            if net_per_share >= entry_price * stop_mult:
                 return ManageAction(close=True, reason="STOP")
         elif trade.direction == "DEBIT":
             # For debit trade, stop is usually stop_pct (e.g. 0.5 means losing 50% of the debit paid)
             # Or if net value to close falls to <= entryPrice * (1 - stop_pct)
             pct = stop_pct if stop_pct is not None else 0.5
-            if current_mtm.net_value <= entry_price * (1.0 - pct):
+            if net_per_share <= entry_price * (1.0 - pct):
                 return ManageAction(close=True, reason="STOP")
 
         return None
@@ -257,27 +277,28 @@ class Strategy(ABC):
         trade: Any,
         now: datetime,
         close_at_dte: int = 21,
+        reason: str = "ROLL",   # C9: caller specifies reason; no brittle self.name check
     ) -> Optional[ManageAction]:
         """For longer-dated trades: close at N DTE (the Tastytrade 21-DTE rule)."""
         # Find first leg's expiry date
         if not trade.legs:
             return None
-        
+
         leg = trade.legs[0]
         if not leg.expiry:
             return None
-            
+
         import pytz
         expiry_date = leg.expiry.date() if isinstance(leg.expiry, datetime) else leg.expiry
-        
+
         # Calculate DTE remaining based on now (in NY/Eastern)
         tz_et = pytz.timezone("America/New_York")
         now_et = now.astimezone(tz_et).date()
-        
+
         dte = (expiry_date - now_et).days
         if dte <= close_at_dte:
-            return ManageAction(close=True, reason="DTE_FLAT" if "INCOME_CC" in self.name else "ROLL")
-            
+            return ManageAction(close=True, reason=reason)
+
         return None
 
     async def _check_regime_invalidation(

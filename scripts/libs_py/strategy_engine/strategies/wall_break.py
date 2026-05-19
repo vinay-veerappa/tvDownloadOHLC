@@ -7,17 +7,24 @@ from scripts.libs_py.strategy_engine.strategies.base import Strategy, Signal, Le
 
 logger = logging.getLogger(__name__)
 
+def _safe_mid(contract) -> float:
+    """Return reliable mid-price; fall back to last if only one side is quoted."""
+    if contract.bid and contract.bid > 0 and contract.ask and contract.ask > 0:
+        return (contract.bid + contract.ask) / 2.0
+    return contract.last or contract.bid or contract.ask or 0.0
+
+
 class WallBreakStrategy(Strategy):
     """
     GEX Wall Breakout Debit Spread Strategy.
     Buys breakout debit spreads (Bull Call or Bear Put) when spot breaches dominant GEX walls.
-    Dominant GEX levels are obtained from GexSnapshot:
-    - Call Wall = pinStrike (if spot is below) or gammaMagnet (if spot is below).
-    - Put Wall = pinStrike (if spot is above) or gammaMagnet (if spot is above).
+    Dominant GEX levels come from RegimeService.get_nearest_walls() which reads
+    MacroSnapshot.dominantNodes — real top-strike GEX concentrations (D9).
     Filters:
     - Time of day: 10:00 AM to 3:00 PM Eastern.
-    - Max VIX (e.g. 22).
+    - Max VIX (e.g. 22) — fetched via $VIX.X Schwab ticker (D8).
     - Spot breaches or is within wall_proximity_pct of a dominant wall.
+    Note: DEX confirmation + volume filter (C13) deferred to v1.1.
     """
     async def scan(self, now: datetime) -> List[Signal]:
         ticker = self.underlying
@@ -70,53 +77,66 @@ class WallBreakStrategy(Strategy):
             await self._log_near_miss(ticker, spot, "blackout_window_active", None, None, {"now": str(now)})
             return []
 
-        # ─── Filter 2: VIX Check ───
+        # ─── Filter 2: VIX Check — use $VIX.X Schwab ticker (D8) ───
         try:
-            vix_quote = await self.s["broker"].get_stock_quote("VIX")
+            vix_quote = await self.s["broker"].get_stock_quote("$VIX.X")
             vix = vix_quote["last"]
         except Exception:
-            vix = 15.0 # fallback
+            # Fallback: read VIX from the latest MacroSnapshot.vix field if available
+            try:
+                regime = await self.s["regime"].get_current_regime(ticker)
+                vix = getattr(regime, "vix", None) or 15.0
+            except Exception:
+                vix = 15.0  # hard fallback — log so we know it's firing
+            logger.warning(f"{self.name}: VIX fetch failed; using fallback {vix}")
 
         if vix > max_vix:
             await self._log_near_miss(
-                ticker, spot, "vix_above_threshold", 
-                float(vix), float(max_vix), 
+                ticker, spot, "vix_above_threshold",
+                float(vix), float(max_vix),
                 {"vix": vix}
             )
             return []
 
-        # ─── Filter 3: GEX Wall Extraction ───
-        regime_data = await self.s["regime"].get_gex_regime(ticker)
-        if not regime_data:
-            logger.warning(f"{self.name}: No GEX regime data available for breakout tracking.")
+        # ─── Filter 3: Real GEX Wall Extraction via RegimeService (D9) ───
+        # get_nearest_walls() reads MacroSnapshot.dominantNodes — actual GEX concentration strikes.
+        # This replaces the synthetic gammaMagnet/pinStrike proxy that fired every day.
+        call_walls = await self.s["regime"].get_nearest_walls(ticker, above_spot=True, n=3)
+        put_walls  = await self.s["regime"].get_nearest_walls(ticker, above_spot=False, n=3)
+
+        if not call_walls and not put_walls:
+            await self._log_near_miss(
+                ticker, spot, "no_gex_walls_available",
+                None, None,
+                {"reason": "MacroSnapshot has no dominantNodes data"}
+            )
             return []
 
-        # Extract walls from snapshot
-        gamma_magnet = regime_data.get("gammaMagnet") or spot
-        pin_strike = regime_data.get("pinStrike") or spot
+        # Primary wall = closest level in each direction
+        call_wall = call_walls[0] if call_walls else None
+        put_wall  = put_walls[0]  if put_walls  else None
 
-        # Identify Call Wall (nearest dominant level above spot) and Put Wall (nearest dominant level below spot)
-        call_wall = max(gamma_magnet, pin_strike)
-        put_wall = min(gamma_magnet, pin_strike)
-
-        if call_wall <= spot:
-            call_wall = spot * 1.01  # fallback
-        if put_wall >= spot:
-            put_wall = spot * 0.99  # fallback
-
-        # Determine proximity or breach
-        is_bullish_breakout = spot >= call_wall * (1.0 - proximity_pct)
-        is_bearish_breakout = spot <= put_wall * (1.0 + proximity_pct)
+        is_bullish_breakout = (
+            call_wall is not None
+            and spot >= call_wall * (1.0 - proximity_pct)
+        )
+        is_bearish_breakout = (
+            put_wall is not None
+            and spot <= put_wall * (1.0 + proximity_pct)
+        )
 
         if not (is_bullish_breakout or is_bearish_breakout):
-            # No breakout, log near miss
-            dist_to_call = call_wall - spot
-            dist_to_put = spot - put_wall
-            min_dist = min(dist_to_call, dist_to_put)
+            dist_to_call = (call_wall - spot) if call_wall else None
+            dist_to_put  = (spot - put_wall)  if put_wall  else None
             await self._log_near_miss(
-                ticker, spot, "no_gex_wall_breakout", 
-                float(spot), None, 
-                {"call_wall": call_wall, "put_wall": put_wall, "distance_to_nearest": min_dist}
+                ticker, spot, "no_gex_wall_breakout",
+                float(spot), None,
+                {
+                    "call_wall": call_wall,
+                    "put_wall": put_wall,
+                    "dist_to_call": dist_to_call,
+                    "dist_to_put": dist_to_put
+                }
             )
             return []
 
@@ -145,8 +165,8 @@ class WallBreakStrategy(Strategy):
             if not short_contract:
                 return []
 
-            long_mid = (long_contract.bid + long_contract.ask) / 2.0 or long_contract.last
-            short_mid = (short_contract.bid + short_contract.ask) / 2.0 or short_contract.last
+            long_mid = _safe_mid(long_contract)   # D7
+            short_mid = _safe_mid(short_contract)  # D7
             net_debit = long_mid - short_mid
 
             option_type = "CALL"
@@ -166,8 +186,8 @@ class WallBreakStrategy(Strategy):
             if not short_contract:
                 return []
 
-            long_mid = (long_contract.bid + long_contract.ask) / 2.0 or long_contract.last
-            short_mid = (short_contract.bid + short_contract.ask) / 2.0 or short_contract.last
+            long_mid = _safe_mid(long_contract)   # D7
+            short_mid = _safe_mid(short_contract)  # D7
             net_debit = long_mid - short_mid
 
             option_type = "PUT"
@@ -235,6 +255,8 @@ class WallBreakStrategy(Strategy):
             "spot": spot,
             "call_wall": call_wall,
             "put_wall": put_wall,
+            "all_call_walls": call_walls,
+            "all_put_walls": put_walls,
             "is_bullish_breakout": is_bullish_breakout,
             "is_bearish_breakout": is_bearish_breakout,
             "net_debit": net_debit,
@@ -248,27 +270,28 @@ class WallBreakStrategy(Strategy):
             legs=[long_leg, short_leg],
             max_risk_per_contract=max_risk,
             max_capital_per_contract=max_capital,
-            profit_target_pct=0.50,       # 50% profit target
-            stop_loss_mult=0.50,          # Treated as stop_pct = 50% in helper
-            time_stop_minutes_before_close=30, # Flat by 3:30 PM Eastern
+            profit_target_pct=self._exit_rules["profit_target_pct"],            # M7
+            stop_loss_mult=self._exit_rules["stop_loss_mult"],                   # M7 (interpreted as stop_pct for DEBIT)
+            time_stop_minutes_before_close=self._exit_rules["flat_before_close_minutes"],  # M7
             entry_features=entry_features,
             notes=f"GEX Wall Breakout Debit Spread {long_strike}/{short_strike} for ${net_debit:.2f} debit"
         )
         return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
-        # 1. Profit Target check: exit at 50% profit of debit paid
-        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=0.50)
+        ex = self._exit_rules  # M7
+        # 1. Profit Target check
+        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
-        # 2. Stop Loss check: exit if value decreases by 50%
-        sl_action = await self._check_stop_loss(trade, current_mtm, stop_pct=0.50)
+        # 2. Stop Loss: for DEBIT spread stop_pct = stop_loss_mult interpreted as fraction
+        sl_action = await self._check_stop_loss(trade, current_mtm, stop_pct=ex["stop_loss_mult"])
         if sl_action:
             return sl_action
 
-        # 3. Time Stop check (EOD flat at 3:30 PM ET)
-        time_action = await self._check_time_stop(trade, now, flat_by_minutes_before_close=30)
+        # 3. Time Stop (EOD flat)
+        time_action = await self._check_time_stop(trade, now, flat_by_minutes_before_close=ex["flat_before_close_minutes"])
         if time_action:
             logger.info(f"{self.name}: Intraday time stop activated. Closing GEX wall breakout spread.")
             return time_action

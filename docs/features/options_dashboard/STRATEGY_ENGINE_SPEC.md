@@ -95,7 +95,7 @@ scripts/libs_py/strategy_engine/         # NEW
 │   ├── ict_service.py                   # on-demand: loader.py + pa.py
 │   ├── calendar_service.py              # wraps EconomicEvent
 │   ├── earnings_service.py              # yfinance → EarningsCalendar
-│   ├── holdings_service.py              # Holding table CRUD
+│   ├── holding_service.py               # Holding table CRUD
 │   ├── sizing_service.py                # respects Account.initialBalance + trade_policies
 │   └── leg_quote_service.py             # current option mid via Schwab chain
 ├── strategies/
@@ -443,7 +443,9 @@ class BrokerService:
         ...
 
     async def get_stock_quote(self, ticker: str) -> StockQuote:
-        """Current quote for an equity or ETF. Cached 5s."""
+        """Current quote for an equity or ETF. Cached 5s.
+        Note: Special indices require proxy mapping in the fetcher config (e.g. VIX -> $VIX.X).
+        """
         ...
 
     async def get_option_quote(self, occ_symbol: str) -> OptionQuote:

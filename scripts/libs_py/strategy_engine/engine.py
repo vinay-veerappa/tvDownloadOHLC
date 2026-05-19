@@ -41,6 +41,8 @@ STRATEGY_CLASSES = {
 }
 
 INDEX_TICKERS = {"SPY", "SPX", "QQQ", "IWM"}
+STOCK_TICKERS = {"NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "AMZN", "RIVN"}
+DAILY_STRATEGY_CODES = {"WHEEL", "EARNINGS_STRANGLE"}
 
 class Engine:
     """
@@ -55,6 +57,7 @@ class Engine:
         self.services = {}
         self.active_strategies = {}
         self.executor = None
+        self._staleness_cache = {}  # C1: per-tick staleness cache
 
     async def initialize(self):
         """Initializes all services and instantiates enabled strategy variants."""
@@ -89,17 +92,31 @@ class Engine:
             "earnings": earnings,
             "holdings": holdings,
             "sizing": sizing,
-            "leg_quote": leg_quote
+            "leg_quote": leg_quote,
+            "config": self.config
         }
 
         self.executor = PaperExecutor(self.db, broker, holdings)
 
         # 3. Instantiate enabled Strategy combinations (silos)
+        loaded = 0
+        skipped_disabled = 0
         for strategy_code, strat_cfg in self.config.get("strategies", {}).items():
             tickers = strat_cfg.get("tickers", [])
             variants = strat_cfg.get("variants", {})
 
             for variant_name, variant_params in variants.items():
+                variant_params = variant_params or {}
+
+                # M10: Skip disabled variants — log WARNING so operator is aware
+                is_enabled = variant_params.get("enabled", True)  # default True if not specified
+                if not is_enabled:
+                    logger.warning(
+                        f"Engine: Variant '{strategy_code}/{variant_name}' is DISABLED in config.yaml. Skipping all {len(tickers)} ticker(s)."
+                    )
+                    skipped_disabled += len(tickers)
+                    continue
+
                 for ticker in tickers:
                     comb_name = f"{strategy_code}_{variant_name}_{ticker}"
 
@@ -125,8 +142,8 @@ class Engine:
                         category=strategy_code,
                         underlying=ticker,
                         account_id=account_id,
-                        params=variant_params or {},
-                        enabled=True
+                        params=variant_params,   # M7: full variant dict (incl. exit rules) passed through
+                        enabled=True             # already filtered above
                     )
 
                     strategy_instance = strat_class(
@@ -135,23 +152,49 @@ class Engine:
                     )
 
                     self.active_strategies[comb_name] = strategy_instance
+                    loaded += 1
 
-        logger.info(f"Engine: Successfully loaded {len(self.active_strategies)} active strategy combinations.")
+        logger.info(
+            f"Engine: Loaded {loaded} active strategy combinations "
+            f"({skipped_disabled} skipped — disabled in config)."
+        )
 
-    async def run_scan_tick(self, now: datetime):
-        """Intraday/Daily entry scan tick. Runs for all active strategy instances."""
-        logger.info(f"Engine: Starting scan tick at {now}")
+    async def run_scan_tick(self, now: datetime, cadence: str = "index"):
+        """
+        Entry scan tick. Cadence filters which strategies execute:
+          "index"  — only strategies whose underlying is an index/ETF
+          "stock"  — only strategies whose underlying is a stock
+          "daily"  — only strategies in DAILY_STRATEGY_CODES (Wheel, Earnings)
+        """
+        logger.info(f"Engine: Starting scan tick [{cadence}] at {now}")
 
         for name, strategy in self.active_strategies.items():
             try:
-                # Staleness check for indices
-                if strategy.underlying in INDEX_TICKERS:
-                    is_stale = await self._check_index_staleness(strategy.underlying, now)
-                    if is_stale:
-                        logger.warning(f"Engine: Skipping entry scan for index silo '{name}' due to GEX/EM data staleness.")
+                # Cadence routing
+                strategy_code = strategy.params.category
+                underlying = strategy.params.underlying
+
+                if cadence == "index":
+                    if underlying not in INDEX_TICKERS:
+                        continue
+                    if strategy_code in DAILY_STRATEGY_CODES:
+                        continue  # Wheel/Earnings on indices run only at 10:00
+                elif cadence == "stock":
+                    if underlying not in STOCK_TICKERS:
+                        continue
+                    if strategy_code in DAILY_STRATEGY_CODES:
+                        continue
+                elif cadence == "daily":
+                    if strategy_code not in DAILY_STRATEGY_CODES:
                         continue
 
-                # Run scan
+                # Staleness check for indices
+                if underlying in INDEX_TICKERS:
+                    is_stale = await self._check_index_staleness(underlying, now)
+                    if is_stale:
+                        logger.warning(f"Engine: Skipping entry scan for index silo '{name}' — GEX data stale.")
+                        continue
+
                 signals = await strategy.scan(now)
                 for signal in signals:
                     await self.executor.execute_signal(name, signal, now)
@@ -159,9 +202,12 @@ class Engine:
             except Exception as e:
                 logger.error(f"Engine: Error during scan tick for strategy '{name}': {e}", exc_info=True)
 
-    async def run_manage_tick(self, now: datetime):
-        """Real-time mark-to-market management tick. Evaluates open paper trades."""
-        logger.info(f"Engine: Starting management tick at {now}")
+    async def run_manage_tick(self, now: datetime, cadence: str = "index"):
+        """
+        Mark-to-market management tick. Only manages trades belonging to the
+        strategies active in the given cadence to avoid redundant MTM work.
+        """
+        logger.info(f"Engine: Starting management tick [{cadence}] at {now}")
 
         # Fetch all open trades
         open_trades = await self.db.trade.find_many(
@@ -178,6 +224,16 @@ class Engine:
                     logger.warning(f"Engine: Open trade {trade.id} linked to account '{account_name}', but no strategy instance is loaded.")
                     continue
 
+                # Cadence filter — only manage trades that belong to this tier
+                underlying = strategy.params.underlying
+                strategy_code = strategy.params.category
+                if cadence == "index" and underlying not in INDEX_TICKERS:
+                    continue
+                if cadence == "stock" and underlying not in STOCK_TICKERS:
+                    continue
+                if cadence == "daily":
+                    continue  # daily scan doesn't manage open trades
+
                 # Get real-time MTM valuation
                 current_mtm = await self.services["leg_quote"].get_trade_mtm(trade)
                 if not current_mtm:
@@ -188,10 +244,10 @@ class Engine:
                     data={
                         "tradeId": trade.id,
                         "takenAt": now,
-                        "underlyingPx": float(current_mtm.underlying_px),
-                        "netValue": float(current_mtm.net_value_per_contract),
-                        "unrealizedPnl": float(current_mtm.unrealized_pnl),
-                        "legPrices": current_mtm.leg_prices_json
+                        "underlyingPx": float(current_mtm["underlying_px"]),
+                        "netValue": float(current_mtm["net_value"]),
+                        "unrealizedPnl": float(current_mtm["unrealized_pnl"]),
+                        "legPrices": current_mtm["leg_prices_json"]
                     }
                 )
 
@@ -203,7 +259,7 @@ class Engine:
                     await self.executor.close_trade(
                         trade,
                         action,
-                        current_mtm.net_value_per_contract,
+                        current_mtm["net_value_per_contract"],
                         now
                     )
 
@@ -216,24 +272,35 @@ class Engine:
         indicates that the upstream streaming pipeline has stopped. 
         In this scenario, entries must be blocked to prevent outdated entries.
         """
+        # C1: check per-tick cache
+        if ticker in self._staleness_cache:
+            cache_val, cache_ts = self._staleness_cache[ticker]
+            if cache_ts == now:
+                return cache_val
+
         try:
-            # Query the latest GexSnapshot for this ticker
+            # Query the latest GexSnapshot for this ticker — use timestamp, not createdAt (B7)
             latest_gex = await self.db.gexsnapshot.find_first(
                 where={"ticker": ticker},
-                order={"createdAt": "desc"}
+                order={"timestamp": "desc"}
             )
             if not latest_gex:
+                self._staleness_cache[ticker] = (True, now)
                 return True
 
-            # Calculate time difference
-            gex_time = latest_gex.createdAt.replace(tzinfo=pytz.utc)
-            now_utc = now.replace(tzinfo=pytz.utc)
+            # Calculate time difference — convert (not relabel) to UTC (B7)
+            gex_time = latest_gex.timestamp
+            if gex_time.tzinfo is None:
+                gex_time = pytz.utc.localize(gex_time)
+            now_utc = now.astimezone(pytz.utc)
             diff_seconds = (now_utc - gex_time).total_seconds()
 
-            if diff_seconds > 300.0:
+            if diff_seconds > 900.0:
                 logger.warning(f"Engine: Staleness alert! Latest GEX snapshot for {ticker} is {diff_seconds:.1f} seconds old.")
+                self._staleness_cache[ticker] = (True, now)
                 return True
 
+            self._staleness_cache[ticker] = (False, now)
             return False
 
         except Exception as e:

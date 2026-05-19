@@ -6,6 +6,14 @@ from scripts.libs_py.strategy_engine.strategies.base import Strategy, Signal, Le
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_mid(contract) -> float:
+    """Reliable mid-price; fall back to last when only one side is quoted (D7)."""
+    if contract.bid and contract.bid > 0 and contract.ask and contract.ask > 0:
+        return (contract.bid + contract.ask) / 2.0
+    return contract.last or contract.bid or contract.ask or 0.0
+
+
 class WheelStrategy(Strategy):
     """
     systematic Option Wheel Strategy.
@@ -15,6 +23,7 @@ class WheelStrategy(Strategy):
     4. If CC is called away, remove stock holding and return to CSP writing.
     """
     async def scan(self, now: datetime) -> List[Signal]:
+
         ticker = self.underlying
         short_delta = self.p.get("short_delta", 0.30)
         target_dte = self.p.get("dte", 45)
@@ -22,7 +31,6 @@ class WheelStrategy(Strategy):
 
         # Retrieve Prisma database client
         prisma = self.s["prisma"]
-        account_id = self.s["sizing"].prisma.account.find_first  # Will look up dynamically in sizing
         
         # Look up the silo Account
         account = await prisma.account.find_first(where={"name": self.name})
@@ -45,7 +53,7 @@ class WheelStrategy(Strategy):
 
         # Check if we hold shares of this stock
         holding = await self.s["holdings"].get_holding(ticker)
-        has_stock = holding is not None and holding.shares > 0
+        has_stock = holding is not None and holding["shares"] > 0
 
         # Fetch Spot Price
         try:
@@ -118,7 +126,7 @@ class WheelStrategy(Strategy):
                 return []
 
             strike = contract.strike
-            mid_premium = (contract.bid + contract.ask) / 2.0 or contract.last
+            mid_premium = _safe_mid(contract)  # D7
 
             # Capital secured = strike * 100
             max_capital = strike * 100.0
@@ -161,10 +169,10 @@ class WheelStrategy(Strategy):
                 legs=[leg],
                 max_risk_per_contract=max_risk,
                 max_capital_per_contract=max_capital,
-                profit_target_pct=0.50,
-                stop_loss_mult=99.0, # CSPs have no stop loss; held to assignment or expiration
-                time_stop_dte=None,
-                roll_at_dte=21 if target_dte >= 40 else None,
+                profit_target_pct=self._exit_rules["profit_target_pct"],
+                stop_loss_mult=self._exit_rules["stop_loss_mult"],
+                time_stop_dte=self._exit_rules.get("time_stop_dte"),
+                roll_at_dte=self._exit_rules["roll_at_dte"] if target_dte >= 40 else None,
                 entry_features={
                     "iv_rank": iv_rank,
                     "spot": spot,
@@ -179,7 +187,7 @@ class WheelStrategy(Strategy):
         else:
             # ─── PHASE 2: Write Covered Call (CC) ───
             # Stock is already held. We write calls matching the number of shares we own (1 contract per 100 shares)
-            owned_shares = holding.shares
+            owned_shares = holding["shares"]  # D1: dict access
             qty = owned_shares // 100
             if qty <= 0:
                 logger.warning(f"{self.name}: Owns {owned_shares} shares of {ticker}, which is less than 100 shares.")
@@ -190,8 +198,41 @@ class WheelStrategy(Strategy):
                 logger.warning(f"{self.name}: No CALL contract found matching delta {short_delta}")
                 return []
 
-            strike = contract.strike
-            mid_premium = (contract.bid + contract.ask) / 2.0 or contract.last
+            # ─── D11: Cost-basis guard ───
+            # Never write a CC below the stock's cost basis — that locks in a capital loss if assigned.
+            # Spec §8.1: "If no call strike both above breakeven AND at ≥0.15 delta is available,
+            # log STUCK_WAITING. No CC is sold. State remains LONG_STOCK."
+            cost_basis = holding["cost_basis"]
+
+            if contract.strike < cost_basis:
+                # Try to find the nearest strike >= cost_basis
+                logger.info(
+                    f"{self.name}: Best delta strike {contract.strike} is below cost basis {cost_basis}. "
+                    f"Searching for strike >= cost basis."
+                )
+                # We need to scan the chain for calls above cost_basis
+                # Use find_strike_nearest as a proxy starting from cost_basis
+                above_cb_contract = self.s["broker"].find_strike_nearest(chain, cost_basis, "CALL")
+                if above_cb_contract and above_cb_contract.strike >= cost_basis:
+                    contract = above_cb_contract
+                    strike = contract.strike
+                else:
+                    # No valid strike — log STUCK_WAITING and skip (spec §8.1)
+                    await self._log_near_miss(
+                        ticker, spot, "STUCK_WAITING",
+                        contract.strike, cost_basis,
+                        {
+                            "reason": "No call strike >= cost_basis available at current delta",
+                            "cost_basis": cost_basis,
+                            "best_strike": contract.strike,
+                            "target_delta": short_delta
+                        }
+                    )
+                    return []
+            else:
+                strike = contract.strike
+
+            mid_premium = _safe_mid(contract)  # D7
 
             # Capital per contract is 0 since we already hold the stock!
             max_capital = 0.0
@@ -221,61 +262,54 @@ class WheelStrategy(Strategy):
                 legs=[leg],
                 max_risk_per_contract=max_risk,
                 max_capital_per_contract=max_capital,
-                profit_target_pct=0.50,
-                stop_loss_mult=99.0, # Covered calls held to expiration or assignment
-                time_stop_dte=None,
-                roll_at_dte=21 if target_dte >= 40 else None,
+                profit_target_pct=self._exit_rules["profit_target_pct"],  # M7
+                stop_loss_mult=self._exit_rules["stop_loss_mult"],         # M7
+                roll_at_dte=self._exit_rules["roll_at_dte"],               # M7 (None if 7DTE variant)
                 entry_features={
                     "iv_rank": iv_rank,
                     "spot": spot,
                     "target_delta": short_delta,
                     "actual_delta": contract.delta,
                     "mid_premium": mid_premium,
-                    "stock_cost_basis": holding.cost_basis
+                    "stock_cost_basis": holding["cost_basis"]  # D1: dict access
                 },
                 notes=f"Selling Covered Call {ticker} at {strike} (DTE {target_dte_actual})"
             )
             return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
+        ex = self._exit_rules  # M7: config-driven exit params
         ticker = trade.ticker.upper()
-        spot = current_mtm.underlying_px
+        spot = current_mtm["underlying_px"]
 
-        # Standard profit target exit at 50%
-        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=0.50)
+        # Standard profit target exit
+        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
-        # Tastytrade 21-DTE roll check for 45 DTE setups
-        roll_at_dte = trade.legs[0].quantity # Wait, is roll_at_dte saved? Let's check DTE
+        # DTE roll check: use config roll_at_dte; only applies when set (e.g. 21 for 45DTE variants)
+        roll_dte = ex["roll_at_dte"]
+        if roll_dte is not None:
+            leg = trade.legs[0]
+            expiry_date = leg.expiry.date() if isinstance(leg.expiry, datetime) else leg.expiry
+            dte = (expiry_date - now.date()).days
+            if 0 < dte <= int(roll_dte):
+                return ManageAction(close=True, reason="ROLL")  # D13: documented close-then-rescan
+
+        # Expiration Check (0 DTE)
         leg = trade.legs[0]
         expiry_date = leg.expiry.date() if isinstance(leg.expiry, datetime) else leg.expiry
         dte = (expiry_date - now.date()).days
-
-        # Check if we are at/before 21 DTE (only if initial DTE was long-dated, like >= 40 days)
-        # Let's see if we want to roll or exit at 21 DTE
-        initial_dte = 45 # Let's assume if it started > 30 DTE, we roll at 21 DTE
-        if dte <= 21 and dte > 0:
-            # Tastytrade rule: Exit/Roll at 21 DTE to avoid gamma risk
-            return ManageAction(close=True, reason="ROLL")
-
-        # Expiration Check (0 DTE)
         if dte <= 0:
             # Check if assigned
             strike = leg.strike
-            qty = leg.quantity
-            
             if leg.optionType == "PUT" and spot <= strike:
-                # Assigned PUT: buy stock!
                 logger.info(f"{self.name}: PUT at strike {strike} is ITM at expiration (Spot: {spot:.2f}). Triggering Assignment.")
                 return ManageAction(close=True, reason="ASSIGNMENT")
-                
             elif leg.optionType == "CALL" and spot >= strike:
-                # Called away CALL: sell stock!
                 logger.info(f"{self.name}: CALL at strike {strike} is ITM at expiration (Spot: {spot:.2f}). Stock called away.")
                 return ManageAction(close=True, reason="ASSIGNMENT")
-
-            # Otherwise, let it expire worthless
+            # Expired worthless
             logger.info(f"{self.name}: Option at strike {strike} expired OTM (Spot: {spot:.2f}). Worthless expiration.")
             return ManageAction(close=True, reason="EOD")
 

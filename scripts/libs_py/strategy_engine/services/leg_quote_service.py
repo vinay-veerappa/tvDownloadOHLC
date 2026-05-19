@@ -1,18 +1,17 @@
 import logging
 import asyncio
-from typing import Dict, List, Any, Optional
-
+from typing import Dict, List, Any, Optional, TypedDict
 logger = logging.getLogger(__name__)
 
-class TradeMtm:
+class TradeMtm(TypedDict):
     """
     Container for aggregate and per-leg mark-to-market (MTM) calculations.
     """
-    def __init__(self, net_value: float, unrealized_pnl: float, leg_details: dict, underlying_px: float):
-        self.net_value = net_value             # Net aggregate cost-to-close (positive if it costs cash to exit)
-        self.unrealized_pnl = unrealized_pnl   # Cumulative open paper profit/loss
-        self.leg_details = leg_details         # Map of option symbol/ticker -> latest quotes and greeks
-        self.underlying_px = underlying_px     # Current underlying price
+    net_value: float             # Net aggregate cost-to-close (positive if it costs cash to exit)
+    unrealized_pnl: float   # Cumulative open paper profit/loss
+    leg_details: dict         # Map of option symbol/ticker -> latest quotes and greeks
+    underlying_px: float     # Current underlying price
+
 
 class LegQuoteService:
     """
@@ -119,12 +118,12 @@ class LegQuoteService:
             f"Underlying={spot:.2f}, Cost-to-Close={total_cost_to_close:,.2f}, PnL={total_unrealized_pnl:,.2f}"
         )
         
-        return TradeMtm(
-            net_value=total_cost_to_close,
-            unrealized_pnl=total_unrealized_pnl,
-            leg_details=leg_details,
-            underlying_px=spot
-        )
+        return {
+            "net_value": total_cost_to_close,
+            "unrealized_pnl": total_unrealized_pnl,
+            "leg_details": leg_details,
+            "underlying_px": spot
+        }
 
     async def get_trade_mtm(self, trade: Any) -> Any:
         """
@@ -149,31 +148,21 @@ class LegQuoteService:
         # If it's a stock holding, we divide by qty.
         is_stock = any(leg.optionType.upper() == "STOCK" for leg in trade.legs)
         multiplier = qty if is_stock else (qty * 100.0)
-        net_value_per_contract = mtm.net_value / multiplier if multiplier > 0 else mtm.net_value
+        net_value_per_contract = mtm["net_value"] / multiplier if multiplier > 0 else mtm["net_value"]
         
         # Build leg_prices_json
         # Format: JSON string mapping symbol -> mark
         leg_prices = {}
-        for sym, details in mtm.leg_details.items():
+        for sym, details in mtm["leg_details"].items():
             leg_prices[sym] = details["mark"]
         leg_prices_json = json.dumps(leg_prices)
         
-        # Create a dynamic object (or a class instance) that matches engine.py expectation
-        class MtmResult:
-            def __init__(self, underlying_px, net_value_per_contract, unrealized_pnl, leg_prices_json, net_value, leg_details):
-                self.underlying_px = underlying_px
-                self.net_value_per_contract = net_value_per_contract
-                self.unrealized_pnl = unrealized_pnl
-                self.leg_prices_json = leg_prices_json
-                self.net_value = net_value
-                self.leg_details = leg_details
-                
-        return MtmResult(
-            underlying_px=mtm.underlying_px,
-            net_value_per_contract=net_value_per_contract,
-            unrealized_pnl=mtm.unrealized_pnl,
-            leg_prices_json=leg_prices_json,
-            net_value=mtm.net_value,
-            leg_details=mtm.leg_details
-        )
+        return {
+            "underlying_px": mtm["underlying_px"],
+            "net_value_per_contract": net_value_per_contract,
+            "unrealized_pnl": mtm["unrealized_pnl"],
+            "leg_prices_json": leg_prices_json,
+            "net_value": mtm["net_value"],
+            "leg_details": mtm["leg_details"]
+        }
 

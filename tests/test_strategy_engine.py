@@ -32,6 +32,8 @@ async def test_regime_service_get_gex_regime():
     mock_snapshot.gammaMagnet = 5220.0
     mock_snapshot.pinStrike = 5200.0
     
+    mock_db.macrosnapshot = MagicMock()
+    mock_db.macrosnapshot.find_first = AsyncMock(return_value=None)
     mock_db.gexsnapshot.find_first = AsyncMock(return_value=mock_snapshot)
     
     service = RegimeService(mock_db)
@@ -200,9 +202,9 @@ async def test_holding_service_add_holding_new():
     service = HoldingService(mock_db)
     result = await service.add_holding("NVDA", 100, 125.50)
     
-    assert result.ticker == "NVDA"
-    assert result.shares == 100
-    assert result.cost_basis == 125.50
+    assert result["ticker"] == "NVDA"
+    assert result["shares"] == 100
+    assert result["cost_basis"] == 125.50
     mock_db.holding.create.assert_called_once()
 
 
@@ -233,8 +235,8 @@ async def test_holding_service_add_holding_increment():
     service = HoldingService(mock_db)
     result = await service.add_holding("NVDA", 100, 150.0)
     
-    assert result.shares == 200
-    assert result.cost_basis == 125.0
+    assert result["shares"] == 200
+    assert result["cost_basis"] == 125.0
     mock_db.holding.update.assert_called_once()
 
 
@@ -263,7 +265,7 @@ async def test_holding_service_remove_holding_partial():
     result = await service.remove_holding("AAPL", 100)
     
     assert result is not None
-    assert result.shares == 50
+    assert result["shares"] == 50
     mock_db.holding.update.assert_called_once()
     mock_db.holding.delete.assert_not_called()
 

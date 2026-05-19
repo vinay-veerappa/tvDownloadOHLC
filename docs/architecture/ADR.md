@@ -286,3 +286,19 @@ To maintain 100% visual consistency across all TradingView indicators and NinjaS
 1. **Mandatory Adoption**: All new indicators and strategies MUST utilize the standardized visual layer (Palette, Templates, Geometry, and Profile Scaling) defined in **`docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md`**.
 2. **Zero-Custom-Drawing Rule**: Indicators must bind to canonical templates in the `VISUAL_TEMPLATES.md` catalog rather than invoking low-level drawing APIs (`line.new`, `box.new`, etc.) with ad-hoc colors.
 3. **Governance**: Any deviation from the Visual System requires an explicit "Overrides" section in the indicator's profile documentation and a justification in code comments.
+
+---
+
+## [ADR-019] Options Rolling Strategy Pattern
+**Status:** Approved
+**Date:** 2026-05-19
+
+### Context
+In multi-silo options strategies (e.g., Wheel, Income Covered Call, Long DTE Credit), active positions frequently require rolling (to a new expiration and/or strike) upon breaching management thresholds (e.g., target profit, delta breach, DTE threshold). A choice exists between implementing a complex, stateful atomic "roll" order structure, or using a "close + rescan" pattern.
+
+### Decision
+1. **Close-then-Rescan Pattern**: The Options Strategy Engine will standardly execute rolls by returning a `ManageAction(close=True, reason="ROLL")`.
+2. **Scan Re-entry**: Once the paper executor closes the existing option position, the strategy is free to scan for a new entry on the subsequent tick.
+3. **Execution Rationale**:
+    - **Re-validation**: Rather than blindly rolling into a new option contract, this pattern forces the standard strategy entry filters (IV Rank, spot price, economic calendar blackouts, and upcoming earnings) to re-evaluate the market context.
+    - **Simplicity & Safety**: Eliminates the risk of complex double-leg executions hanging in the broker service, and guarantees that any new entry adheres to current capital allocation and sizing rules.

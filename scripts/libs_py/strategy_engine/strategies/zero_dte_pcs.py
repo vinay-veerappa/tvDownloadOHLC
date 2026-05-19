@@ -81,15 +81,43 @@ class ZeroDtePcsStrategy(Strategy):
                 return []
 
         # ─── Filter 3: ICT Bullish Bias check ───
+        # IctService.get_context is SYNCHRONOUS — no await.
+        # Signature: get_context(ticker, timeframe="5m", lookback_bars=200) -> IctContext
         if require_ict:
-            ict_data = await self.s["ict"].get_market_structure(ticker)
-            # ict_data contains bias: "BULLISH", "BEARISH", "NEUTRAL"
-            bias = ict_data.get("bias", "NEUTRAL").upper()
+            ict_ctx = self.s["ict"].get_context(ticker, timeframe="5m")
+            if not ict_ctx:
+                await self._log_near_miss(
+                    ticker, spot, "ict_context_unavailable",
+                    None, None,
+                    {"reason": "IctService returned None — parquet may be missing"}
+                )
+                return []
+
+            # Check HTF bias (attribute access on IctContext dataclass)
+            bias = ict_ctx.htf_bias or "NEUTRAL"
             if bias != "BULLISH":
                 await self._log_near_miss(
-                    ticker, spot, "ict_bias_not_bullish", 
-                    None, None, 
-                    {"ict_bias": bias, "ict_fvg": ict_data.get("fvg_count", 0)}
+                    ticker, spot, "ict_bias_not_bullish",
+                    None, None,
+                    {
+                        "ict_bias": bias,
+                        "bullish_fvg_count": len([f for f in ict_ctx.bullish_fvgs if not f.is_mitigated]),
+                        "bearish_fvg_count": len([f for f in ict_ctx.bearish_fvgs if not f.is_mitigated]),
+                        "recent_sweeps": len(ict_ctx.recent_sweeps)
+                    }
+                )
+                return []
+
+            # Additional M11 filter: require at least one unmitigated bullish FVG
+            # near the short strike area (within 0.5% of spot) per spec §8.2
+            if not ict_ctx.has_bullish_fvg_near(spot, tolerance_pct=0.5):
+                await self._log_near_miss(
+                    ticker, spot, "ict_no_bullish_fvg_near",
+                    None, None,
+                    {
+                        "ict_bias": bias,
+                        "bullish_fvgs": [(f.top, f.bottom) for f in ict_ctx.bullish_fvgs if not f.is_mitigated]
+                    }
                 )
                 return []
 
@@ -200,29 +228,28 @@ class ZeroDtePcsStrategy(Strategy):
             legs=[short_leg, long_leg],
             max_risk_per_contract=max_risk,
             max_capital_per_contract=max_capital,
-            profit_target_pct=0.60,       # 60% profit target standard for intraday credit
-            stop_loss_mult=3.0,           # Exit at 3x credit received (loss of 2x credit)
-            time_stop_minutes_before_close=30, # Flat by 3:30 PM Eastern
+            profit_target_pct=self._exit_rules["profit_target_pct"],       # M7 (default 0.50)
+            stop_loss_mult=self._exit_rules["stop_loss_mult"],              # M7 (default 2.0)
+            time_stop_minutes_before_close=self._exit_rules["flat_before_close_minutes"],  # M7
             entry_features=entry_features,
             notes=f"Selling 0DTE Put Credit Spread {short_strike}/{long_strike} for ${net_credit:.2f} credit"
         )
         return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
+        ex = self._exit_rules  # M7
         # ─── Profit Target check ───
-        # Standard PCS profit target (default 60% of credit)
-        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=0.60)
+        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
         # ─── Stop Loss check ───
-        # Exit if aggregate cost to close is >= 3x credit received
-        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=3.0)
+        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=ex["stop_loss_mult"])
         if sl_action:
             return sl_action
 
-        # ─── Time Stop check (EOD flat at 3:30 PM ET) ───
-        time_action = await self._check_time_stop(trade, now, flat_by_minutes_before_close=30)
+        # ─── Time Stop check (EOD flat) ───
+        time_action = await self._check_time_stop(trade, now, flat_by_minutes_before_close=ex["flat_before_close_minutes"])
         if time_action:
             logger.info(f"{self.name}: Intraday time stop activated. Closing position before market close.")
             return time_action

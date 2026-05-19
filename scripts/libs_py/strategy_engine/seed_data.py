@@ -212,6 +212,33 @@ async def main():
                 )
                 print(f"  Updated Holding: {ticker} ({h_cfg['shares']} shares @ ${h_cfg['cost_basis']})")
 
+        # 6. Seed upcoming earnings calendar (M8)
+        print("Seeding upcoming earnings calendar via yfinance...")
+        try:
+            from scripts.libs_py.strategy_engine.services.earnings_service import EarningsService
+            earnings_svc = EarningsService(db)
+            approved_tickers = config.get("approved_tickers", [])
+            # Filter out indices like SPX/SPY/QQQ/IWM that don't have earnings
+            stock_tickers = [t for t in approved_tickers if t not in ["SPX", "SPY", "QQQ", "IWM"]]
+            count = await earnings_svc.fetch_upcoming_all(stock_tickers)
+            print(f"Successfully seeded {count} earnings announcements for approved tickers.")
+        except Exception as ee:
+            print(f"Failed to seed earnings calendar: {ee}")
+
+        # 7. Seed upcoming economic calendar (M8)
+        print("Seeding upcoming economic calendar via ForexFactory...")
+        try:
+            from scripts.streaming.news_calendar_fetcher import fetch_and_save, save_to_prisma
+            # Fetch calendar events for full week
+            events = fetch_and_save(fetch_week=True)
+            if events:
+                db_count = await save_to_prisma(events)
+                print(f"Successfully seeded {db_count} economic calendar events.")
+            else:
+                print("No economic calendar events found to seed.")
+        except Exception as ee:
+            print(f"Failed to seed economic calendar: {ee}")
+
         print("Seeding completed successfully!")
 
     except Exception as e:

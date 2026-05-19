@@ -29,6 +29,12 @@ from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import asyncio
+from dotenv import load_dotenv
+
+# Load env variables from web/.env BEFORE importing and starting Prisma
+dotenv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../web/.env"))
+load_dotenv(dotenv_path)
+
 from prisma import Prisma
 
 # =============================================================================
@@ -294,8 +300,12 @@ def fetch_and_save(target_date: date = None, fetch_week: bool = False,
         print(f"\n  Wrote {count} events to {output_path}")
         print("\n  Events:")
         for ev in unique_events:
-            impact_marker = "🔴" if ev["impact"] == "High" else "🟠" if ev["impact"] == "Medium" else "🟡"
-            print(f"    {impact_marker} {ev['date']} {ev['time_et']} ET - {ev['event']} ({ev['impact']})")
+            impact_marker = "[High]" if ev["impact"] == "High" else "[Medium]" if ev["impact"] == "Medium" else "[Low]"
+            try:
+                emoji = "🔴" if ev["impact"] == "High" else "🟠" if ev["impact"] == "Medium" else "🟡"
+                print(f"    {emoji} {ev['date']} {ev['time_et']} ET - {ev['event']} ({ev['impact']})")
+            except UnicodeEncodeError:
+                print(f"    {impact_marker} {ev['date']} {ev['time_et']} ET - {ev['event']} ({ev['impact']})")
     else:
         # Write empty CSV (no blackouts today)
         write_csv([], output_path)

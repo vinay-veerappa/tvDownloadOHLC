@@ -55,12 +55,22 @@ class AnalyticsService:
                 if not research_strat:
                     continue
 
-                # Parse the parts
-                parts = name.split("_")
-                if len(parts) < 3:
+                KNOWN_STRATEGIES = [
+                    "WHEEL", "ZERO_DTE_PCS", "LONG_DTE_CREDIT", 
+                    "MEAN_REVERSION_EM", "WALL_BREAK", "INCOME_CC", "EARNINGS_STRANGLE"
+                ]
+
+                strategy_code = None
+                for s in KNOWN_STRATEGIES:
+                    if name.startswith(s + "_"):
+                        strategy_code = s
+                        break
+                
+                if not strategy_code:
                     continue
                 
-                strategy_code = parts[0]
+                remainder = name[len(strategy_code)+1:]
+                parts = remainder.split("_")
                 ticker = parts[-1]
 
                 # Fetch all trades for this account
@@ -128,7 +138,7 @@ class AnalyticsService:
                 # Config params lookup
                 # Find matching variant parameters in config yaml
                 strat_config = self.config.get("strategies", {}).get(strategy_code, {})
-                variant_name = "_".join(parts[1:-1])
+                variant_name = "_".join(parts[:-1])
                 variant_params = strat_config.get("variants", {}).get(variant_name, {})
 
                 # Generate Equity Curve
@@ -344,12 +354,12 @@ class AnalyticsService:
         # Calculate chronological equity curve
         sorted_trades = sorted(closed_trades, key=lambda x: x.exitDate or x.createdAt)
         
-        dates = [t.entryDate for t in sorted_trades]
+        dates = []
         equity = []
         current = initial_balance
         
         # Add initial point
-        dates.insert(0, sorted_trades[0].entryDate - timedelta(days=1))
+        dates.append(sorted_trades[0].entryDate - timedelta(days=1))
         equity.append(initial_balance)
         
         for t in sorted_trades:

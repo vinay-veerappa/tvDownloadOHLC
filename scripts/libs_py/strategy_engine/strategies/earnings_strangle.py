@@ -7,6 +7,14 @@ from scripts.libs_py.strategy_engine.strategies.base import Strategy, Signal, Le
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_mid(contract) -> float:
+    """Reliable mid-price; fall back to last when only one side is quoted (D7)."""
+    if contract.bid and contract.bid > 0 and contract.ask and contract.ask > 0:
+        return (contract.bid + contract.ask) / 2.0
+    return contract.last or contract.bid or contract.ask or 0.0
+
+
 class EarningsStrangleStrategy(Strategy):
     """
     Systematic Earnings Short Strangle Strategy.
@@ -114,15 +122,28 @@ class EarningsStrangleStrategy(Strategy):
             logger.warning(f"{self.name}: Short CALL contract not found matching delta {short_delta}")
             return []
 
-        put_mid = (short_put.bid + short_put.ask) / 2.0 or short_put.last
-        call_mid = (short_call.bid + short_call.ask) / 2.0 or short_call.last
+        # ─── D7: use _safe_mid ───
+        put_mid = _safe_mid(short_put)
+        call_mid = _safe_mid(short_call)
         net_credit = put_mid + call_mid
 
         if net_credit <= 0.10:
             await self._log_near_miss(
-                ticker, spot, "credit_below_minimum", 
-                net_credit, 0.10, 
+                ticker, spot, "credit_below_minimum",
+                net_credit, 0.10,
                 {"put_mid": put_mid, "call_mid": call_mid}
+            )
+            return []
+
+        # C14: Reject if net_credit < max_debit_pct * spot (strangle should generate meaningful premium)
+        # Spec §9.3: net credit must exceed 2% of the underlying spot price
+        max_debit_pct = self.p.get("max_debit_pct", 0.02)
+        min_credit_required = spot * max_debit_pct
+        if net_credit < min_credit_required:
+            await self._log_near_miss(
+                ticker, spot, "credit_below_pct_threshold",
+                net_credit, min_credit_required,
+                {"net_credit": net_credit, "min_credit_required": min_credit_required, "max_debit_pct": max_debit_pct}
             )
             return []
 
@@ -194,23 +215,24 @@ class EarningsStrangleStrategy(Strategy):
             legs=[put_leg, call_leg],
             max_risk_per_contract=max_risk,
             max_capital_per_contract=max_capital,
-            profit_target_pct=0.30,       # 30% profit target (high probability crush capture)
-            stop_loss_mult=2.0,           # Exit at 2x credit (1.0x loss)
+            profit_target_pct=self._exit_rules["profit_target_pct"],  # C15+M7: spec says 50%
+            stop_loss_mult=self._exit_rules["stop_loss_mult"],         # M7
             entry_features=entry_features,
             notes=f"Selling pre-earnings strangle {short_put.strike}/{short_call.strike} for ${net_credit:.2f} credit"
         )
         return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
+        ex = self._exit_rules  # M7
         ticker = trade.ticker.upper()
 
-        # 1. Profit Target check: exit at 30% profit
-        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=0.30)
+        # 1. Profit Target check (C15: 50% per spec)
+        pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
-        # 2. Stop Loss check: exit at 2x credit (1x loss)
-        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=2.0)
+        # 2. Stop Loss check
+        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=ex["stop_loss_mult"])
         if sl_action:
             return sl_action
 
