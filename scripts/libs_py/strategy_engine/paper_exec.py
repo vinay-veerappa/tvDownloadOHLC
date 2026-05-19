@@ -24,6 +24,52 @@ class PaperExecutor:
         self.broker = broker
         self.holdings = holdings
 
+    def _notify_discord(self, message: str, files: List[str] = None):
+        """Helper to send non-blocking Discord notifications using the discord_notify utility."""
+        try:
+            import os
+            import yaml
+            # Load config to check if Discord is enabled
+            discord_cfg = {}
+            config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    config = yaml.safe_load(f)
+                    discord_cfg = config.get("discord", {})
+            
+            if not discord_cfg.get("enabled", False):
+                return
+            
+            channel = discord_cfg.get("channel", "test_channel")
+            events = discord_cfg.get("events", {})
+            
+            # Identify which event this is to see if we should skip
+            is_entry = "NEW POSITION OPENED" in message
+            is_exit = "POSITION CLOSED" in message or "POSITION ASSIGNED" in message
+            
+            if is_entry and not events.get("trade_entry", True):
+                return
+            if is_exit and not events.get("trade_exit", True):
+                return
+            
+            from scripts.utils.discord_notify import get_webhook_url, send_message
+            webhook_url = get_webhook_url(channel)
+            if not webhook_url:
+                logger.warning(f"Discord: Webhook URL not found for channel '{channel}'")
+                return
+            
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(None, send_message, webhook_url, message, files)
+                logger.info(f"Discord: Notification queued asynchronously for channel '{channel}'")
+            except RuntimeError:
+                # No running event loop (e.g. outside async context)
+                send_message(webhook_url, message, files)
+        except Exception as e:
+            logger.warning(f"Discord: Failed to send notification: {e}")
+
+
     async def list_open_trades(self) -> List[Any]:
         """
         Lists all currently OPEN paper trades with their legs and accounts (C2).
@@ -152,6 +198,34 @@ class PaperExecutor:
             new_balance = account.currentBalance
 
             logger.info(f"PaperExecutor: Successfully executed trade entry {trade.id} for {strategy_name}. Balance remains: ${new_balance:,.2f}")
+
+            # Discord Trade Entry Notification
+            try:
+                trade_direction = "CREDIT" if is_credit else "DEBIT"
+                legs_str = ""
+                for leg in signal.legs:
+                    strike_str = f" ${leg.strike}" if leg.strike else ""
+                    expiry_str = f" expiring {leg.expiry}" if leg.expiry else ""
+                    legs_str += f"• **{leg.side}** {leg.option_type}{strike_str}{expiry_str} (Qty: {leg.quantity})\n"
+                
+                pt_str = f"{signal.profit_target_pct:.0%}" if signal.profit_target_pct is not None else "N/A"
+                sl_str = f"{signal.stop_loss_mult:.1f}x" if signal.stop_loss_mult is not None else "N/A"
+                
+                entry_msg = (
+                    f"📥 **STRATEGY ENGINE: NEW POSITION OPENED**\n\n"
+                    f"* **Silo:** `{strategy_name}`\n"
+                    f"* **Underlying:** `{signal.underlying}`\n"
+                    f"* **Action:** Opened {trade_direction} position\n"
+                    f"* **Entry Price:** `${entry_price:.2f}`\n"
+                    f"* **Max Risk:** `${signal.max_risk_per_contract * qty:.2f}`\n"
+                    f"* **Legs:**\n{legs_str}"
+                    f"* **Exit Rules:** Target profit {pt_str} | Stop loss {sl_str}\n"
+                    f"* **Notes:** {signal.notes}"
+                )
+                self._notify_discord(entry_msg)
+            except Exception as de:
+                logger.warning(f"PaperExecutor: Failed to queue Discord entry notification: {de}")
+
             return trade
 
         except Exception as e:
@@ -341,6 +415,33 @@ class PaperExecutor:
             )
 
             logger.info(f"PaperExecutor: Successfully closed trade {trade.id} ({status_label}). Realized P&L: ${trade_pnl:+,.2f}. Cash impact: ${cash_effect:+,.2f}. New Balance: ${new_balance:,.2f}")
+
+            # Discord Trade Exit Notification
+            try:
+                pnl_indicator = "🏆 **WIN**" if trade_pnl >= 0.0 else "⚠️ **LOSS**"
+                outcome_str = f"{pnl_indicator}"
+                if is_assignment:
+                    outcome_str = "📦 **ASSIGNED**"
+                
+                legs_str = ""
+                for leg in trade_full.legs:
+                    strike_str = f" ${leg.strike}" if leg.strike else ""
+                    legs_str += f"• **{leg.side}** {leg.optionType}{strike_str} (Open: ${leg.openPrice:.2f} | Close: ${leg.closePrice:.2f})\n"
+                
+                exit_msg = (
+                    f"📤 **STRATEGY ENGINE: POSITION CLOSED**\n\n"
+                    f"* **Silo:** `{trade_full.account.name}`\n"
+                    f"* **Underlying:** `{trade_full.ticker}`\n"
+                    f"* **Outcome:** {outcome_str}\n"
+                    f"* **Realized P&L:** `${trade_pnl:+,.2f}`\n"
+                    f"* **New Account Balance:** `${new_balance:,.2f}`\n"
+                    f"* **Legs Details:**\n{legs_str}"
+                    f"* **Exit Reason:** {action.reason}"
+                )
+                self._notify_discord(exit_msg)
+            except Exception as de:
+                logger.warning(f"PaperExecutor: Failed to queue Discord exit notification: {de}")
+
             return True
 
         except Exception as e:
