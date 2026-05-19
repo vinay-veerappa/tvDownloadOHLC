@@ -45,4 +45,8 @@ start "OPTIONS_GEX" cmd /k "python -m scripts.streaming.options.run_options_leve
 :: echo 🚀 Starting Macro HTF Pipeline...
 :: start "MACRO_PIPELINE" cmd /k "python -m scripts.streaming.options.run_options_levels --macro"
 
+:: 8. [NEW] Start Options Strategy Engine Runner
+echo 🚀 Starting Options Strategy Engine...
+start "STRATEGY_ENGINE" cmd /k "python scripts/libs_py/strategy_engine/runner.py"
+
 pause

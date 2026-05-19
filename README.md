@@ -1,10 +1,9 @@
 # 🤖 MANDATORY AGENT STARTUP 🚨
 **All sessions MUST begin with:**
-1.  **Synchronize**: Invoke the `sync-trading-brain` skill immediately.
-2.  **Architectural Hub**: Read `docs/architecture/ADR.md` (Software & Rules).
-3.  **Trading Hub**: Read `docs/SecondBrain_Trading.md` (Domain Logic & Stats).
-4.  **Visual System**: Read `docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md` (Rendering Standards).
-5.  **Verify**: State: "I have synchronized with ADR-016 (Unified Hierarchy) and the Visual System."
+1.  **Context Anchor**: Read [CLAUDE.md](file:///c:/Users/vinay/tvDownloadOHLC/CLAUDE.md) in full to load core commands, guardrails, and file path references.
+2.  **Synchronize**: Invoke the `sync-trading-brain` skill to align on current trading regime rules and context paths.
+3.  **Strict Reference-on-Demand Rule**: NEVER read core manuals (`docs/architecture/ADR.md`, `docs/SecondBrain_Trading.md`, `docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md`) in full. Instead, query the root context anchor [CLAUDE.md](file:///c:/Users/vinay/tvDownloadOHLC/CLAUDE.md) first to identify relevant anchors, and use line-restricted tools (`StartLine`/`EndLine` parameters) to load only target blocks as needed.
+4.  **Verify**: State: "I have synchronized with the project context anchor (CLAUDE.md), ADR-016 (Unified Hierarchy), and the Visual System rules."
 
 ---
 

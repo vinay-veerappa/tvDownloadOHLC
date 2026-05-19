@@ -87,10 +87,10 @@ class ZeroDtePcsStrategy(Strategy):
                 return []
 
         # ─── Filter 3: ICT Bullish Bias check ───
-        # IctService.get_context is SYNCHRONOUS — no await.
+        # IctService.get_context is ASYNCHRONOUS — must be awaited.
         # Signature: get_context(ticker, timeframe="5m", lookback_bars=200) -> IctContext
         if require_ict:
-            ict_ctx = self.s["ict"].get_context(ticker, timeframe="5m")
+            ict_ctx = await self.s["ict"].get_context(ticker, timeframe="5m")
             if not ict_ctx:
                 await self._log_near_miss(
                     ticker, spot, "ict_context_unavailable",

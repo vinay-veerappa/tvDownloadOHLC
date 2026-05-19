@@ -1719,6 +1719,25 @@ discord:
 
 This config is the **single source of truth for parameters**. Modifying a parameter requires editing the YAML and re-running `seed_data.py --update`.
 
+### 6.4 Staged Signal Pipeline
+
+To prevent immediate entries on raw scans and implement institutional-grade entry guards, the strategy engine implements a deferred **Staged Signal Pipeline**:
+
+1. **Staging Step**: When `Engine.run_scan_tick()` detects an entry signal, it does not execute immediately.
+   - It calculates a configurable execution buffer delay (from `variant` configuration, falling back to top-level `execution_buffer_seconds` default in `config.yaml`, which defaults to 60s).
+   - It serializes the `Signal` dataclass object to JSON (including nested leg specs and dates) and stages it in the database as a `StagedSignal` record with status `PENDING` and `executeAfter = stagedAt + buffer_seconds`.
+   - It dispatches a polished, detailed Discord setup card containing estimated entry prices, strikes, stop loss/profit targets, active boundaries, and estimated execution timestamps.
+2. **Deferred Validation & Execution**: A high-frequency (10s) tick runner triggers `Engine.run_staged_execution_tick()`.
+   - It queries the database for `StagedSignal` records where `status = PENDING` and `executeAfter <= now`.
+   - For each matching staged signal, it fetches fresh spot and leg quotes to run entry validation checks:
+     - **Underlying Level Breach Guard**: If the underlying price has breached short strikes (spot $\le$ short Put strike for bullish spreads; spot $\ge$ short Call strike for bearish spreads), the signal is marked as `EXPIRED`.
+     - **Premium Deterioration Guard**: Checks that the fresh option premium has not deteriorated significantly during the buffer delay:
+       - **Credit Spreads**: Fresh net premium must be $\ge 90\%$ of staged credit, and $\ge \$0.05$ absolute minimum.
+       - **Debit Spreads**: Fresh net premium must be $\le 110\%$ of staged debit.
+     - **Resulting Action**:
+       - If validation checks pass, it updates the `Signal` legs with fresh bid/ask/mid metrics, executes the trade ledger row through `PaperExecutor`, and marks the staged signal as `EXECUTED`.
+       - If validation checks fail, the staged signal is marked as `EXPIRED`, a detailed warning is logged, and a Discord cancellation warning card is sent to the options backtest channel.
+
 ---
 
 ## 7. Paper Execution & Mark-to-Market

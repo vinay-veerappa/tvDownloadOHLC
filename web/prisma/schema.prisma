@@ -565,3 +565,20 @@ model EarningsCalendar {
   @@index([earningsDate])
 }
 
+model StagedSignal {
+  id           String   @id @default(cuid())
+  strategyName String   // e.g. ZERO_DTE_PCS_10D_5W_SPY
+  strategyCode String   // e.g. ZERO_DTE_PCS
+  variantName  String   // e.g. 10D_5W
+  ticker       String
+  stagedAt     DateTime @default(now())
+  executeAfter DateTime
+  status       String   @default("PENDING") // PENDING | EXECUTED | EXPIRED
+  signalJson   String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, executeAfter])
+}
+
+

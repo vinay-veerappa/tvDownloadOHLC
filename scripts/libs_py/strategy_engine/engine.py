@@ -1,7 +1,8 @@
 import logging
 import os
 import yaml
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, date
 import pytz
 
 from scripts.libs_py.strategy_engine.strategies import (
@@ -13,7 +14,7 @@ from scripts.libs_py.strategy_engine.strategies import (
     IncomeCcStrategy,
     EarningsStrangleStrategy
 )
-from scripts.libs_py.strategy_engine.strategies.base import StrategyParams
+from scripts.libs_py.strategy_engine.strategies.base import StrategyParams, Signal, LegSpec
 from scripts.libs_py.strategy_engine.paper_exec import PaperExecutor
 
 # Import all services
@@ -29,6 +30,72 @@ from scripts.libs_py.strategy_engine.services.sizing_service import SizingServic
 from scripts.libs_py.strategy_engine.services.leg_quote_service import LegQuoteService
 
 logger = logging.getLogger(__name__)
+
+
+def serialize_signal(signal: Signal) -> str:
+    """Helper to serialize a dataclass Signal to JSON, handling dates/datetimes."""
+    from dataclasses import asdict
+    
+    def json_serial(obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        raise TypeError(f"Type {type(obj)} not serializable")
+        
+    return json.dumps(asdict(signal), default=json_serial)
+
+
+def deserialize_signal(signal_json: str) -> Signal:
+    """Helper to deserialize JSON back into a dataclass Signal object."""
+    data = json.loads(signal_json)
+    
+    legs = []
+    for l in data.get("legs", []):
+        expiry_val = l.get("expiry")
+        expiry_dt = None
+        if expiry_val:
+            try:
+                if "T" in expiry_val:
+                    expiry_dt = datetime.fromisoformat(expiry_val).date()
+                else:
+                    expiry_dt = date.fromisoformat(expiry_val)
+            except Exception:
+                expiry_dt = expiry_val
+            
+        leg = LegSpec(
+            option_type=l.get("option_type"),
+            side=l.get("side"),
+            strike=l.get("strike"),
+            expiry=expiry_dt,
+            quantity=l.get("quantity"),
+            symbol=l.get("symbol"),
+            mid=l.get("mid"),
+            bid=l.get("bid"),
+            ask=l.get("ask"),
+            iv=l.get("iv"),
+            delta=l.get("delta"),
+            gamma=l.get("gamma"),
+            theta=l.get("theta"),
+            vega=l.get("vega")
+        )
+        legs.append(leg)
+        
+    signal = Signal(
+        research_strategy_id=data.get("research_strategy_id"),
+        strategy_category=data.get("strategy_category"),
+        underlying=data.get("underlying"),
+        legs=legs,
+        max_risk_per_contract=data.get("max_risk_per_contract"),
+        max_capital_per_contract=data.get("max_capital_per_contract"),
+        profit_target_pct=data.get("profit_target_pct", 0.5),
+        stop_loss_mult=data.get("stop_loss_mult", 2.0),
+        time_stop_minutes_before_close=data.get("time_stop_minutes_before_close"),
+        time_stop_dte=data.get("time_stop_dte"),
+        roll_at_dte=data.get("roll_at_dte"),
+        entry_features=data.get("entry_features", {}),
+        notes=data.get("notes", "")
+    )
+    return signal
+
 
 STRATEGY_CLASSES = {
     "WHEEL": WheelStrategy,
@@ -190,17 +257,286 @@ class Engine:
 
                 # Staleness check for indices
                 if underlying in INDEX_TICKERS:
-                    is_stale = await self._check_index_staleness(underlying, now)
+                    is_stale = await self._check_index_staleness(underlying, now, strategy_code)
                     if is_stale:
                         logger.warning(f"Engine: Skipping entry scan for index silo '{name}' — GEX data stale.")
                         continue
 
                 signals = await strategy.scan(now)
                 for signal in signals:
-                    await self.executor.execute_signal(name, signal, now)
+                    # 1. Determine execution buffer delay
+                    buffer_seconds = strategy.params.params.get(
+                        "execution_buffer_seconds",
+                        self.config.get("execution_buffer_seconds", 60)
+                    )
+                    execute_after = now + timedelta(seconds=buffer_seconds)
+                    
+                    # 2. Serialize Signal to JSON
+                    serialized_signal = serialize_signal(signal)
+                    
+                    # 3. Parse variant name safely
+                    variant_name = name
+                    if name.startswith(strategy_code + "_"):
+                        variant_name = name[len(strategy_code) + 1:]
+                    if variant_name.endswith("_" + underlying):
+                        variant_name = variant_name[:-len(underlying) - 1]
+                    
+                    # 4. Stage signal in the database
+                    staged = await self.db.stagedsignal.create(
+                        data={
+                            "strategyName": name,
+                            "strategyCode": strategy_code,
+                            "variantName": variant_name,
+                            "ticker": underlying,
+                            "stagedAt": now,
+                            "executeAfter": execute_after,
+                            "status": "PENDING",
+                            "signalJson": serialized_signal
+                        }
+                    )
+                    
+                    logger.info(f"Engine: Staged new pending signal {staged.id} for strategy '{name}' with {buffer_seconds}s execution buffer.")
+                    
+                    # 5. Notify Discord with a beautiful "Staged Setup Card"
+                    try:
+                        net_premium = 0.0
+                        for leg in signal.legs:
+                            premium = leg.mid if leg.mid is not None else (
+                                (leg.bid + leg.ask) / 2.0 if (leg.bid and leg.ask) else 0.0
+                            )
+                            if leg.side == "SHORT":
+                                net_premium += premium
+                            else:
+                                net_premium -= premium
+                        
+                        is_credit = net_premium >= 0.0
+                        est_entry_price = abs(net_premium)
+                        trade_direction = "CREDIT" if is_credit else "DEBIT"
+                        qty = signal.legs[0].quantity
+                        
+                        legs_str = ""
+                        for leg in signal.legs:
+                            strike_str = f" ${leg.strike}" if leg.strike else ""
+                            expiry_str = f" expiring {leg.expiry}" if leg.expiry else ""
+                            legs_str += f"• **{leg.side}** {leg.option_type}{strike_str}{expiry_str} (Qty: {leg.quantity})\n"
+                        
+                        pt_str = f"{signal.profit_target_pct:.0%}" if signal.profit_target_pct is not None else "N/A"
+                        sl_str = f"{signal.stop_loss_mult:.1f}x" if signal.stop_loss_mult is not None else "N/A"
+                        
+                        from zoneinfo import ZoneInfo
+                        tz_et = ZoneInfo("America/New_York")
+                        staged_at_et = now.astimezone(tz_et)
+                        execute_after_et = execute_after.astimezone(tz_et)
+                        
+                        staged_msg = (
+                            f"📝 **STRATEGY ENGINE: NEW SETUP STAGED**\n\n"
+                            f"* **Silo:** `{name}`\n"
+                            f"* **Underlying:** `{signal.underlying}`\n"
+                            f"* **Action:** Stage {trade_direction} position\n"
+                            f"* **Est. Entry Price:** `${est_entry_price:.2f}`\n"
+                            f"* **Max Risk:** `${signal.max_risk_per_contract * qty:.2f}`\n"
+                            f"* **Legs:**\n{legs_str}"
+                            f"* **Exit Rules:** Target profit {pt_str} | Stop loss {sl_str}\n"
+                            f"* **Staged At:** `{staged_at_et.strftime('%H:%M:%S')} ET`\n"
+                            f"* **Execute After:** `{execute_after_et.strftime('%H:%M:%S')} ET` (Buffer: {buffer_seconds}s)\n"
+                            f"* **Validation Guards:**\n"
+                            f"  🛡️ *Underlying Breach Guard* (Spot must not breach short strikes)\n"
+                            f"  🛡️ *Premium Deterioration Guard* (Credit must not drop by >10% / Debit must not increase by >10%)\n"
+                            f"* **Notes:** {signal.notes}"
+                        )
+                        self.executor._notify_discord(staged_msg)
+                    except Exception as de:
+                        logger.warning(f"Engine: Failed to send Staged Setup Card to Discord: {de}")
 
             except Exception as e:
                 logger.error(f"Engine: Error during scan tick for strategy '{name}': {e}", exc_info=True)
+
+    async def run_staged_execution_tick(self, now: datetime):
+        """
+        Process all pending staged signals that have passed their execution delay buffer window.
+        Performs underlying level breach checks and premium slippage deterioration guards before executing.
+        """
+        # Ensure now is timezone-aware
+        if now.tzinfo is None:
+            now = pytz.utc.localize(now)
+
+        # 1. Fetch pending staged signals
+        pending_signals = await self.db.stagedsignal.find_many(
+            where={
+                "status": "PENDING",
+                "executeAfter": {"lte": now}
+            }
+        )
+
+        if not pending_signals:
+            return
+
+        logger.info(f"Engine: Found {len(pending_signals)} pending staged signal(s) eligible for execution check.")
+
+        for staged in pending_signals:
+            try:
+                # 2. Deserialize signal
+                signal = deserialize_signal(staged.signalJson)
+                underlying = signal.underlying
+                strategy_name = staged.strategyName
+                strategy_code = staged.strategyCode
+                
+                # Retrieve strategy instance to check per-variant parameters
+                strategy = self.active_strategies.get(strategy_name)
+                if not strategy:
+                    logger.error(f"Engine: Strategy instance '{strategy_name}' not loaded. Expiring staged signal.")
+                    await self.db.stagedsignal.update(
+                        where={"id": staged.id},
+                        data={"status": "EXPIRED"}
+                    )
+                    continue
+
+                # 3. Fetch fresh spot price for Underlying Level Breach Guard
+                quote = await self.services["broker"].get_stock_quote(underlying)
+                spot = quote.get("last")
+                if spot is None:
+                    logger.error(f"Engine: Could not fetch stock quote for {underlying}. Skipping tick for this signal.")
+                    continue
+
+                # --- GUARD 1: Underlying Level Breach Guard ---
+                is_valid = True
+                fail_reason = ""
+                
+                short_legs = [leg for leg in signal.legs if leg.side == "SHORT"]
+                for leg in short_legs:
+                    if leg.option_type == "PUT":
+                        if leg.strike is not None and spot <= leg.strike:
+                            is_valid = False
+                            fail_reason = f"Underlying Spot ${spot:.2f} breached short Put strike ${leg.strike:.2f}."
+                            break
+                    elif leg.option_type == "CALL":
+                        if leg.strike is not None and spot >= leg.strike:
+                            is_valid = False
+                            fail_reason = f"Underlying Spot ${spot:.2f} breached short Call strike ${leg.strike:.2f}."
+                            break
+
+                # --- GUARD 2: Premium Deterioration Guard (Slippage) ---
+                if is_valid:
+                    # Calculate original entry price (credit/debit)
+                    original_net_premium = 0.0
+                    for leg in signal.legs:
+                        premium = leg.mid
+                        if premium is None:
+                            if leg.bid is not None and leg.ask is not None:
+                                premium = (leg.bid + leg.ask) / 2.0
+                            else:
+                                premium = 0.0
+                        
+                        if leg.side == "SHORT":
+                            original_net_premium += premium
+                        else:
+                            original_net_premium -= premium
+                    
+                    is_credit = original_net_premium >= 0.0
+                    original_premium_value = abs(original_net_premium)
+
+                    # Fetch fresh option leg quotes and calculate fresh net premium
+                    fresh_net_premium = 0.0
+                    fresh_legs_data = []
+                    
+                    for leg in signal.legs:
+                        oq = await self.services["broker"].get_option_quote(leg.symbol)
+                        bid = oq.get("bid")
+                        ask = oq.get("ask")
+                        mark = oq.get("mark")
+                        mid = mark if mark is not None else (((bid + ask) / 2.0) if (bid and ask) else 0.0)
+                        
+                        fresh_legs_data.append({
+                            "bid": bid,
+                            "ask": ask,
+                            "mid": mid,
+                            "iv": oq.get("iv", 0.0),
+                            "delta": oq.get("delta", 0.0),
+                            "gamma": oq.get("gamma", 0.0),
+                            "theta": oq.get("theta", 0.0),
+                            "vega": oq.get("vega", 0.0)
+                        })
+                        
+                        if leg.side == "SHORT":
+                            fresh_net_premium += mid
+                        else:
+                            fresh_net_premium -= mid
+
+                    if is_credit:
+                        fresh_premium_value = fresh_net_premium
+                        # Credit must be >= 90% of staged credit, and >= $0.05
+                        if fresh_premium_value < 0.90 * original_premium_value:
+                            is_valid = False
+                            fail_reason = f"Credit deteriorated: Fresh Credit ${fresh_premium_value:.2f} < 90% of Staged Credit ${original_premium_value:.2f}."
+                        elif fresh_premium_value < 0.05:
+                            is_valid = False
+                            fail_reason = f"Credit deteriorated: Fresh Credit ${fresh_premium_value:.2f} < absolute minimum $0.05."
+                    else:
+                        fresh_premium_value = -fresh_net_premium
+                        # Debit must be <= 110% of staged debit
+                        if fresh_premium_value > 1.10 * original_premium_value:
+                            is_valid = False
+                            fail_reason = f"Debit deteriorated: Fresh Debit ${fresh_premium_value:.2f} > 110% of Staged Debit ${original_premium_value:.2f}."
+
+                # 4. Finalize execution or expire staged signal
+                if is_valid:
+                    # Update signal legs with fresh prices/greeks before executing
+                    for idx, leg in enumerate(signal.legs):
+                        fd = fresh_legs_data[idx]
+                        leg.bid = fd["bid"]
+                        leg.ask = fd["ask"]
+                        leg.mid = fd["mid"]
+                        leg.iv = fd["iv"]
+                        leg.delta = fd["delta"]
+                        leg.gamma = fd["gamma"]
+                        leg.theta = fd["theta"]
+                        leg.vega = fd["vega"]
+
+                    # Execute the trade paper Ledger entry
+                    slippage_pct = strategy.params.params.get("slippage_pct", 0.02)
+                    trade = await self.executor.execute_signal(strategy_name, signal, now, slippage_pct=slippage_pct)
+                    
+                    if trade:
+                        # Update status in db
+                        await self.db.stagedsignal.update(
+                            where={"id": staged.id},
+                            data={"status": "EXECUTED"}
+                        )
+                        logger.info(f"Engine: Staged signal {staged.id} successfully VALIDATED and EXECUTED as trade {trade.id}.")
+                    else:
+                        logger.error(f"Engine: PaperExecutor failed to open trade for staged signal {staged.id}.")
+                else:
+                    # Expire staged signal
+                    await self.db.stagedsignal.update(
+                        where={"id": staged.id},
+                        data={"status": "EXPIRED"}
+                    )
+                    logger.warning(f"Engine: Staged signal {staged.id} EXPIRED due to validation failure: {fail_reason}")
+                    
+                    # Notify Discord of the cancellation/expiration
+                    try:
+                        from zoneinfo import ZoneInfo
+                        tz_et = ZoneInfo("America/New_York")
+                        staged_at_et = staged.stagedAt.astimezone(tz_et)
+                        expired_at_et = now.astimezone(tz_et)
+                        
+                        cancel_msg = (
+                            f"⚠️ **STRATEGY ENGINE: SETUP EXPIRED / CANCELLED**\n\n"
+                            f"* **Silo:** `{staged.strategyName}`\n"
+                            f"* **Underlying:** `{signal.underlying}`\n"
+                            f"* **Action:** Cancel entry\n"
+                            f"* **Staged At:** `{staged_at_et.strftime('%H:%M:%S')} ET`\n"
+                            f"* **Expired At:** `{expired_at_et.strftime('%H:%M:%S')} ET`\n"
+                            f"* **Reason for Cancellation:**\n"
+                            f"  ❌ {fail_reason}\n"
+                            f"* **Notes:** Staged setup conditions no longer met at execution window boundary."
+                        )
+                        self.executor._notify_discord(cancel_msg)
+                    except Exception as de:
+                        logger.warning(f"Engine: Failed to send staged expiration Discord notification: {de}")
+
+            except Exception as e:
+                logger.error(f"Engine: Error processing staged signal {staged.id}: {e}", exc_info=True)
 
     async def run_manage_tick(self, now: datetime, cadence: str = "index"):
         """
@@ -253,11 +589,13 @@ class Engine:
                 if action.close:
                     logger.info(f"Engine: Exit triggered for trade {trade.id}. Reason: {action.reason or 'Management Rule'}")
                     # Close the trade
+                    slippage_pct = strategy.params.params.get("slippage_pct", 0.02)
                     await self.executor.close_trade(
                         trade,
                         action,
                         current_mtm["net_value_per_contract"],
-                        now
+                        now,
+                        slippage_pct=slippage_pct
                     )
 
             except Exception as e:
@@ -274,9 +612,9 @@ class Engine:
         mkt_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
         return mkt_open <= now_et <= mkt_close
 
-    async def _check_index_staleness(self, ticker: str, now: datetime) -> bool:
+    async def _check_index_staleness(self, ticker: str, now: datetime, strategy_code: Optional[str] = None) -> bool:
         """
-        For indices (SPX, SPY, etc.), any GEX/EM snapshot older than 15 minutes
+        For indices (SPX, SPY, etc.), any GEX/EM snapshot older than the strategy threshold
         during RTH indicates that the upstream streaming pipeline has stopped.
         In this scenario, entries must be blocked to prevent stale-data entries.
 
@@ -284,8 +622,9 @@ class Engine:
         are silently skipped (DEBUG) without raising a WARNING.
         """
         # C1: check per-tick cache
-        if ticker in self._staleness_cache:
-            cache_val, cache_ts = self._staleness_cache[ticker]
+        cache_key = (ticker, strategy_code)
+        if cache_key in self._staleness_cache:
+            cache_val, cache_ts = self._staleness_cache[cache_key]
             if cache_ts == now:
                 return cache_val
 
@@ -293,7 +632,7 @@ class Engine:
         # appear stale.  Skip silently — this is not an actionable warning.
         if not self._is_rth(now):
             logger.debug(f"Engine: Staleness check skipped for {ticker} — outside RTH.")
-            self._staleness_cache[ticker] = (True, now)
+            self._staleness_cache[cache_key] = (True, now)
             return True
 
         try:
@@ -304,7 +643,7 @@ class Engine:
             )
             if not latest_gex:
                 logger.warning(f"Engine: No GexSnapshot found for {ticker} during RTH — pipeline may not have started.")
-                self._staleness_cache[ticker] = (True, now)
+                self._staleness_cache[cache_key] = (True, now)
                 return True
 
             # Calculate time difference — convert (not relabel) to UTC (B7)
@@ -314,15 +653,19 @@ class Engine:
             now_utc = now.astimezone(pytz.utc)
             diff_seconds = (now_utc - gex_time).total_seconds()
 
-            if diff_seconds > 900.0:
+            # Strategy-specific threshold: 180 seconds (3 minutes) for ZERO_DTE_PCS to accommodate the 
+            # 60s-120s (averaging ~92s) live pipeline write cycle, otherwise 15 minutes (900s).
+            threshold = 180.0 if strategy_code == "ZERO_DTE_PCS" else 900.0
+
+            if diff_seconds > threshold:
                 logger.warning(
                     f"Engine: Staleness alert! Latest GEX snapshot for {ticker} is "
-                    f"{diff_seconds:.1f}s old during RTH — upstream pipeline may have stopped."
+                    f"{diff_seconds:.1f}s old during RTH (Strategy: {strategy_code}, Limit: {threshold}s) — upstream pipeline may have stopped."
                 )
-                self._staleness_cache[ticker] = (True, now)
+                self._staleness_cache[cache_key] = (True, now)
                 return True
 
-            self._staleness_cache[ticker] = (False, now)
+            self._staleness_cache[cache_key] = (False, now)
             return False
 
         except Exception as e:

@@ -86,7 +86,7 @@ class PaperExecutor:
         else:
             return 0.05
 
-    async def execute_signal(self, strategy_name: str, signal: Signal, now: datetime) -> Optional[Any]:
+    async def execute_signal(self, strategy_name: str, signal: Signal, now: datetime, slippage_pct: float = 0.02) -> Optional[Any]:
         """
         Opens a new paper trade by creating Trade and TradeLeg records, 
         and updates the corresponding silo Account balance.
@@ -108,9 +108,9 @@ class PaperExecutor:
             playbook = await self.db.playbook.find_first(where={"name": "Strategy Engine Playbook"})
             playbook_id = playbook.id if playbook else None
 
-            # 4. Calculate entry price based on legs (adjusted for slippage per Playbook M9)
-            slippage = self._get_slippage(signal.underlying)
+            # 4. Calculate entry price based on legs (adjusted for dynamic slippage per Task C)
             net_premium = 0.0
+            leg_slippages = []
             for leg in signal.legs:
                 premium = leg.mid
                 if premium is None:
@@ -118,10 +118,19 @@ class PaperExecutor:
                         premium = (leg.bid + leg.ask) / 2.0
                     else:
                         premium = 0.0
-                if leg.side == "SHORT":
-                    net_premium += (premium - slippage)
+
+                # Dynamic slippage calculation
+                if leg.bid is not None and leg.ask is not None and leg.ask > leg.bid:
+                    leg_slippage = slippage_pct * (leg.ask - leg.bid)
                 else:
-                    net_premium -= (premium + slippage)
+                    leg_slippage = self._get_slippage(signal.underlying)
+                
+                leg_slippages.append(leg_slippage)
+
+                if leg.side == "SHORT":
+                    net_premium += (premium - leg_slippage)
+                else:
+                    net_premium -= (premium + leg_slippage)
 
             # For credit trades, net_premium is positive credit received.
             # For debit trades, net_premium is negative (cost paid). We'll store it as positive debit in entryPrice.
@@ -134,7 +143,7 @@ class PaperExecutor:
                 logger.warning(f"PaperExecutor: Invalid trade quantity {qty} for signal {signal.notes}")
                 return None
 
-            # 5. Create Trade record
+            # 5. Create Trade record (writing fill_assumption to metadata)
             trade = await self.db.trade.create(
                 data={
                     "ticker": signal.underlying,
@@ -150,7 +159,12 @@ class PaperExecutor:
                     "takeProfit": signal.profit_target_pct,
                     "stopLoss": signal.stop_loss_mult,
                     "notes": signal.notes,
-                    "metadata": json.dumps({**signal.entry_features, "research_strategy_id": signal.research_strategy_id}),
+                    "metadata": json.dumps({
+                        **signal.entry_features,
+                        "research_strategy_id": signal.research_strategy_id,
+                        "fill_assumption": "mid_with_slippage",
+                        "applied_slippages": leg_slippages
+                    }),
                     "risk": signal.max_risk_per_contract * qty
                 }
             )
@@ -160,7 +174,8 @@ class PaperExecutor:
                 effective_mid = leg.mid if leg.mid is not None else (
                     (leg.bid + leg.ask) / 2.0 if (leg.bid and leg.ask) else 0.0
                 )
-                opening_price = (effective_mid - slippage) if leg.side == "SHORT" else (effective_mid + slippage)
+                leg_slippage = leg_slippages[idx]
+                opening_price = (effective_mid - leg_slippage) if leg.side == "SHORT" else (effective_mid + leg_slippage)
 
 
                 # Ensure expiry is a datetime if it's a date
@@ -232,7 +247,7 @@ class PaperExecutor:
             logger.error(f"PaperExecutor: Failed to execute entry signal: {e}", exc_info=True)
             return None
 
-    async def close_trade(self, trade: Any, action: ManageAction, cost_to_close: float, now: datetime) -> bool:
+    async def close_trade(self, trade: Any, action: ManageAction, cost_to_close: float, now: datetime, slippage_pct: float = 0.02) -> bool:
         """
         Exits an open paper trade, updates closing TradeLeg details, realizes P&L, 
         and updates the corresponding silo Account balance. Handles options assignment transitions.
@@ -296,8 +311,7 @@ class PaperExecutor:
                         reason_msg = "DTE is greater than 0"
                     logger.warning(f"PaperExecutor: Assignment requested for trade {trade.id} but {reason_msg}. Defaulting to normal close.")
 
-            # 2. Calculate Realized P&L (incorporating slippage per Playbook M9)
-            slippage = self._get_slippage(trade_full.ticker)
+            # 2. Calculate Realized P&L (incorporating dynamic slippage per Task C)
             num_legs = len(trade_full.legs)
             
             trade_pnl = 0.0
@@ -326,6 +340,9 @@ class PaperExecutor:
                         stock_gain = (strike - stock_cost_basis) * shares_to_sell
                         logger.info(f"PaperExecutor: Realized stock gain from CC call away: ${stock_gain:+,.2f} (Cost Basis: ${stock_cost_basis:.2f})")
 
+            total_close_slippage = 0.0
+            leg_exit_slippages = []
+
             # 5. Process each leg to update Tradelegs and sum aggregate trade_pnl
             for leg in trade_full.legs:
                 # Try fetching closing market prices from Schwab API, if available
@@ -343,6 +360,18 @@ class PaperExecutor:
                 except Exception:
                     pass
 
+                # Dynamic close slippage calculation
+                if not is_assignment:
+                    if close_bid is not None and close_ask is not None and close_ask > close_bid:
+                        leg_slippage = slippage_pct * (close_ask - close_bid)
+                    else:
+                        leg_slippage = self._get_slippage(trade_full.ticker)
+                else:
+                    leg_slippage = 0.0
+
+                total_close_slippage += leg_slippage
+                leg_exit_slippages.append(leg_slippage)
+
                 # Fallback to leg-level cost basis if Schwab quote not found
                 # D5: use 100.0 multiplier only for options, 1.0 for stock
                 multiplier = 100.0 if leg.optionType in ["PUT", "CALL"] else 1.0
@@ -351,9 +380,9 @@ class PaperExecutor:
                 # Apply close slippage per leg
                 if not is_assignment:
                     if leg.side == "SHORT":
-                        close_val_adjusted = close_val + slippage
+                        close_val_adjusted = close_val + leg_slippage
                     else:
-                        close_val_adjusted = max(0.0, close_val - slippage)
+                        close_val_adjusted = max(0.0, close_val - leg_slippage)
                 else:
                     if leg.optionType in ["PUT", "CALL"]:
                         close_val_adjusted = 0.0
@@ -392,9 +421,16 @@ class PaperExecutor:
                 exit_price_adjusted = 0.0
             else:
                 if is_credit:
-                    exit_price_adjusted = cost_to_close + (num_legs * slippage)
+                    exit_price_adjusted = cost_to_close + total_close_slippage
                 else:
-                    exit_price_adjusted = max(0.0, cost_to_close - (num_legs * slippage))
+                    exit_price_adjusted = max(0.0, cost_to_close - total_close_slippage)
+
+            # Update metadata to include exit slippages
+            try:
+                meta = json.loads(trade_full.metadata) if trade_full.metadata else {}
+            except Exception:
+                meta = {}
+            meta["exit_slippages"] = leg_exit_slippages
 
             await self.db.trade.update(
                 where={"id": trade.id},
@@ -403,7 +439,8 @@ class PaperExecutor:
                     "exitPrice": exit_price_adjusted,
                     "pnl": trade_pnl,
                     "status": status_label,
-                    "notes": (trade_full.notes or "") + f" | Closed: {action.reason}"
+                    "notes": (trade_full.notes or "") + f" | Closed: {action.reason}",
+                    "metadata": json.dumps(meta)
                 }
             )
 
@@ -418,15 +455,24 @@ class PaperExecutor:
 
             # Discord Trade Exit Notification
             try:
+                # Re-fetch trade with legs to get updated database values (e.g. closePrice)
+                trade_updated = await self.db.trade.find_unique(
+                    where={"id": trade.id},
+                    include={"legs": True, "account": True}
+                )
+                
                 pnl_indicator = "🏆 **WIN**" if trade_pnl >= 0.0 else "⚠️ **LOSS**"
                 outcome_str = f"{pnl_indicator}"
                 if is_assignment:
                     outcome_str = "📦 **ASSIGNED**"
                 
                 legs_str = ""
-                for leg in trade_full.legs:
+                legs_to_format = trade_updated.legs if trade_updated else trade_full.legs
+                for leg in legs_to_format:
                     strike_str = f" ${leg.strike}" if leg.strike else ""
-                    legs_str += f"• **{leg.side}** {leg.optionType}{strike_str} (Open: ${leg.openPrice:.2f} | Close: ${leg.closePrice:.2f})\n"
+                    open_px = leg.openPrice if leg.openPrice is not None else 0.0
+                    close_px = leg.closePrice if leg.closePrice is not None else 0.0
+                    legs_str += f"• **{leg.side}** {leg.optionType}{strike_str} (Open: ${open_px:.2f} | Close: ${close_px:.2f})\n"
                 
                 exit_msg = (
                     f"📤 **STRATEGY ENGINE: POSITION CLOSED**\n\n"

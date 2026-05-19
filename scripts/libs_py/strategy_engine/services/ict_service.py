@@ -239,7 +239,7 @@ class IctService:
         # Internal 60-second TTL cache mapping (ticker, timeframe) -> (IctContext, timestamp)
         self._cache: Dict[Tuple[str, str], Tuple[IctContext, float]] = {}
 
-    def get_context(
+    async def get_context(
         self,
         ticker: str,
         timeframe: str = "5m",
@@ -251,10 +251,12 @@ class IctService:
         runs vectorized pa.py to detect FVGs/OBs/sweeps, attaches session tags
         and NWOG/NDOG references.
 
+        Offloads CPU-bound pandas calculations to a thread pool executor.
         Cached in-process for 60s per (ticker, timeframe).
         Returns None if parquet file is unavailable or too short.
         """
         import time as time_lib
+        import asyncio
 
         now_sec = time_lib.time()
         cache_key = (ticker, timeframe)
@@ -266,7 +268,7 @@ class IctService:
                 logger.debug(f"Cache hit for ICT context: {cache_key}")
                 return cached_ctx
 
-        # Load Parquet Data (Load slightly more than lookback to ensure stable swing detection at start)
+        # Load Parquet Data
         if not self.parquet_loader:
             logger.error("Parquet loader is not initialized")
             return None
@@ -277,6 +279,31 @@ class IctService:
             logger.warning(f"No parquet data found or not enough bars for {ticker} {timeframe}")
             return None
 
+        # Offload CPU-heavy calculations to thread pool
+        loop = asyncio.get_running_loop()
+        context = await loop.run_in_executor(
+            None,
+            self._compute_ict_context_sync,
+            df,
+            ticker,
+            timeframe,
+            lookback_bars
+        )
+
+        if context:
+            # Save to Cache
+            self._cache[cache_key] = (context, now_sec)
+
+        return context
+
+    def _compute_ict_context_sync(
+        self,
+        df: pd.DataFrame,
+        ticker: str,
+        timeframe: str,
+        lookback_bars: int,
+    ) -> Optional[IctContext]:
+        """Synchronous CPU-bound calculations for ICT context, executed in worker thread."""
         # Sort and ensure we have sufficient lookback
         df = df.sort_values("time").reset_index(drop=True)
         total_needed = lookback_bars + 50  # Extra buffer for swing fractals
@@ -422,7 +449,6 @@ class IctService:
         # BSL sweep: high > last_sh & close <= last_sh
         # SSL sweep: low < last_sl & close >= last_sl
         for idx in eval_indices:
-            # We can calculate sweeps dynamically
             row_swing = swings_df.loc[idx]
             row_price = df_slice.loc[idx]
             
@@ -469,8 +495,7 @@ class IctService:
         # Load NWOG/NDOG Gaps
         nwog_h, nwog_l, ndog_h, ndog_l = self._get_nwog_ndog_levels(ticker)
 
-        # Higher Timeframe Bias logic:
-        # A simple HTF Bias: if spot is above the midpoint of the latest FVG, or based on unmitigated FVG dominance
+        # Higher Timeframe Bias logic based on unmitigated FVG dominance
         unmit_bull = sum(1 for f in bullish_fvgs if not f.is_mitigated)
         unmit_bear = sum(1 for f in bearish_fvgs if not f.is_mitigated)
         if unmit_bull > unmit_bear:
@@ -480,7 +505,7 @@ class IctService:
         else:
             htf_bias = "NEUTRAL"
 
-        context = IctContext(
+        return IctContext(
             ticker=ticker,
             timeframe=timeframe,
             computed_at=last_time_et,
@@ -498,10 +523,6 @@ class IctService:
             htf_bias=htf_bias
         )
 
-        # Save to Cache
-        self._cache[cache_key] = (context, now_sec)
-
-        return context
 
     def invalidate_cache(self, ticker: Optional[str] = None) -> None:
         """Force re-computation on next call. Used for testing."""

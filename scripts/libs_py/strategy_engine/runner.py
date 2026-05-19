@@ -139,6 +139,17 @@ class Runner:
             coalesce=True,
         )
 
+        # Deferred Staged Execution — 10s tick
+        self.scheduler.add_job(
+            self.tick_staged_execution_job,
+            trigger="interval",
+            seconds=10,
+            id="tick_staged_execution",
+            name="Staged Signal Deferred Execution (10s)",
+            max_instances=1,
+            coalesce=True,
+        )
+
         # Tier 2 — 5 min stock tick
         self.scheduler.add_job(
             self.tick_stock_job,
@@ -171,6 +182,18 @@ class Runner:
             minute=30,
             id="eod_analytics",
             name="EOD Daily Analytics Rollup (16:30 ET)",
+            max_instances=1,
+        )
+
+        # Daily system audit report — 16:35 ET Mon-Fri (after market close and EOD analytics)
+        self.scheduler.add_job(
+            self.daily_system_audit_job,
+            trigger="cron",
+            day_of_week="mon-fri",
+            hour=16,
+            minute=35,
+            id="daily_system_audit",
+            name="Daily System Audit Report (16:35 ET)",
             max_instances=1,
         )
 
@@ -210,8 +233,8 @@ class Runner:
         )
 
         logger.info(
-            "Jobs registered: tick_index(60s), tick_stock(5m), tick_daily(10:00), "
-            "eod_analytics(16:30), weekly_analytics(Sun 17:00), "
+            "Jobs registered: tick_index(60s), tick_staged_execution(10s), tick_stock(5m), tick_daily(10:00), "
+            "eod_analytics(16:30), daily_system_audit(16:35), weekly_analytics(Sun 17:00), "
             "earnings_refresh(Sun 18:00), db_maintenance(03:00)"
         )
 
@@ -243,6 +266,16 @@ class Runner:
         await self.engine.run_manage_tick(now_et, cadence="index")
         await self.engine.run_scan_tick(now_et, cadence="index")
 
+    async def tick_staged_execution_job(self):
+        """High-frequency deferred staged execution runner (every 10s)."""
+        is_open, now_et = self._is_market_hours()
+        if not is_open:
+            logger.debug("tick_staged_execution: outside market hours, skipping.")
+            return
+
+        logger.debug(f"tick_staged_execution @ {now_et.strftime('%H:%M:%S %Z')}")
+        await self.engine.run_staged_execution_tick(now_et)
+
     async def tick_stock_job(self):
         """Tier-2: manage + scan for stock strategies every 5 minutes."""
         is_open, now_et = self._is_market_hours()
@@ -272,6 +305,18 @@ class Runner:
         now_et = datetime.now(TZ_ET)
         logger.info(f"EOD analytics @ {now_et}")
         await self.analytics.run_daily_rollup(now_et)
+
+    async def daily_system_audit_job(self):
+        """Daily system audit report at 16:35 ET Mon-Fri."""
+        now_et = datetime.now(TZ_ET)
+        logger.info(f"Daily system audit @ {now_et}")
+        try:
+            from scripts.analysis.daily_system_audit import run_audit
+            date_str = now_et.strftime("%Y-%m-%d")
+            await run_audit(date_str, send_to_discord=True)
+            logger.info("Daily system audit report successfully generated and sent to Discord.")
+        except Exception as e:
+            logger.error(f"daily_system_audit_job: Failed to run daily audit: {e}", exc_info=True)
 
     async def weekly_analytics_job(self):
         """Weekly rollup on Sunday 17:00 ET (M5)."""

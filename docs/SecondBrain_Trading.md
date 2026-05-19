@@ -153,9 +153,7 @@ A secondary condition determining if a session's range remains valid support/res
 | **HTF History** | `data/*_1d.parquet`, `*_1W.parquet` | Daily/Weekly anchors. Updated by spokes on startup. |
 
 ### 7.2 Synchronization Protocol
-Before performing any statistical analysis (NQStats/Profiler), verify data parity:
-1.  **Verify Data Continuity**: Ensure `stream_chart.py` is running and the Hub is connected.
-2.  **Bridge Gaps**: If the gap exceeds 3 days, the 3-day bootstrap in `stream_chart.py` will leave a hole. Manual sync or increasing bootstrap period is required.
+The automated data pipeline natively handles continuity, synchronization, and gap bridging. Manual verification checks for `stream_chart.py` or the hub connections are not required. If you need to perform deep historical checks, refer to the automated data pipeline tools in `scripts/analysis/`.
 
 ## 8. Timezone Protocol
 This protocol is the absolute rule for all time-based calculations and data processing.
@@ -551,8 +549,30 @@ Cross-reference `version` here against import lines in local `.pine` files to id
 
 **Implication:** If you `pine_open("OldScript")` then inject source for `NewScript` via `pine_set_source`, calling `pine_save()` will save it under `"OldScript"` — not `"NewScript"`. Use §10.B (via `pine_new`) for genuinely new scripts.
 
+## 11. Core Infrastructure & Schema References
+> [!NOTE]
+> **Look at these documents when referenced or required.** Do not load their full contents into the active context unless explicitly requested by the task.
+
+### 11.1 Options & Volatility Infrastructure ([OPTIONS_INVENTORY.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/OPTIONS_INVENTORY.md))
+*   **Purpose**: Complete architectural system map and component inventory for Schwab authentication (`ezoptionsschwab.py`, `options_fetcher.py`), market data ingestion (`api_expected_move.py`), mathematical Greeks calculations (`gex_calculator.py`), and the **Three-Filter Level Scorer** (`level_scorer.py`).
+*   **Key Concepts to Inspect There**:
+    *   **Dual-Proxy Expected Move Normalization**: How ETF straddles map back to Cash Index levels (SPX, NDX, DJI, RUT).
+    *   **Analytics Math Engine**: Analytical BSM Greeks formulation for Call Gamma ($\Gamma$), Net GEX ($\text{GEX}_{\text{net}}$), Delta-Adjusted GEX ($\text{DEX}_{\text{net}}$), Vanna, Charm, and Speed.
+    *   **Three-Filter Level Scorer**: Taxonomy of **Mechanical Walls** (Call/Put Walls), **Structural Anchors** (Pension collars, large OI nodes), and **Inflection Geometry** (Zero Gamma, magnets, voids).
+    *   **Price Action Engine**: High-performance vectorized ICT features (`pa.py` - FVG, IFVG, BPR, OB, sweeps).
+
+### 11.2 Database & Caching Models ([PRISMA_DATABASE_SCHEMA.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/PRISMA_DATABASE_SCHEMA.md))
+*   **Purpose**: Structural SQLite schema definition mapping all relational tables, types, and defaults.
+*   **Key Model Clusters to Inspect There**:
+    *   **Execution Core**: `Account`, `AccountGroup`, `Strategy`, `Playbook`, `Trade`, and `TradeLeg` (tracks options-specific multi-leg positions, pricing, and Greeks).
+    *   **Operational Context**: `MarketCondition` (intraday trend, VIX/VVIX, ATR), `TradePlan` (pre-planned setups), `Note` (AI reviews), and `Chart` (snapshots).
+    *   **Quantitative Research**: `ResearchStrategy` and `ResearchRun` (backtest config, results JSON, equity curve paths, git commits).
+    *   **Options Snapshots**: `GexSnapshot` (60s dealer positioning logs), `MacroSnapshot` (daily major wall coordinates), `ExpectedMove`, `ExpectedMoveHistory`, and `RthExpectedMove`.
+    *   **Workflow & Journals**: `Analysis` (setups, invalidation), `Wargame` (scenarios/outcomes), `Rundown`, `Routine`, and `Journal`.
+
 ---
-**Last Updated**: 2026-04-18
+**Last Updated**: 2026-05-19
 **Status**: Persistent Brain Knowledge (Synchronized with [ADR.md](file:///C:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md))
+
 
 

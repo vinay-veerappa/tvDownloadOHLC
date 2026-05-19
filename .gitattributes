@@ -1,0 +1,18 @@
+# Enforce consistent line endings (automatic line ending normalization)
+# Treat all text files as auto and convert to LF on commit
+* text=auto
+
+# Explicitly declare text files to always use LF (stored as LF, checked out with native eol)
+*.py text
+*.ts text
+*.tsx text
+*.js text
+*.json text
+*.md text
+*.prisma text
+*.css text
+*.html text
+
+# Explicitly declare Windows batch files and powershell to always use CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
