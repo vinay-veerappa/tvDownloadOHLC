@@ -77,7 +77,7 @@ A fully automated paper-trading engine that runs continuously on the user's lapt
 |------------------|---------|-------|
 | Index/ETF (SPY, SPX, QQQ, IWM) | 60 seconds | Matches existing GEX scoring cadence |
 | Stocks (NVDA, TSLA, AAPL, etc.) | 5 minutes | Lower-frequency strategies; GEX refresh is 10 min so 5 min is upper bound |
-| Daily strategies (Wheel CSP scan, earnings scan) | Once per day, 10:00 ET | Premium-selling doesn't need intraday |
+| Daily strategies (Wheel, Long DTE Credit, Income CC, Earnings Strangle) | Once per day, 10:00 ET | Routed by `DAILY_STRATEGY_CODES` in `engine.py`/`runner.py` |
 
 ---
 
@@ -1425,7 +1425,7 @@ class Strategy(ABC):
         self,
         trade,
         current_mtm,
-        target_pct: float = 0.5,
+        profit_target_pct: float = 0.5,
     ) -> Optional[ManageAction]:
         """Standard 50% profit target for credit trades.
 
@@ -1437,7 +1437,7 @@ class Strategy(ABC):
         self,
         trade,
         current_mtm,
-        stop_mult: float = 2.0,
+        stop_loss_mult: float = 2.0,
     ) -> Optional[ManageAction]:
         """Standard stop: 2x credit received."""
         ...
@@ -1446,7 +1446,7 @@ class Strategy(ABC):
         self,
         trade,
         now: datetime,
-        flat_by_minutes_before_close: int = 30,
+        flat_before_close_minutes: int = 30,
     ) -> Optional[ManageAction]:
         """Force close N minutes before market close (for 0DTE strategies)."""
         ...
@@ -1556,7 +1556,7 @@ class StrategyEngine:
         self,
         strategies_index: list,     # Strategy instances for SPY/SPX/QQQ/IWM
         strategies_stock: list,     # Strategy instances for NVDA/TSLA/AAPL/etc.
-        strategies_daily: list,     # Wheel CSP scans, earnings strangle scans
+        strategies_daily: list,     # Strategy codes in DAILY_STRATEGY_CODES (WHEEL, EARNINGS_STRANGLE, INCOME_CC, LONG_DTE_CREDIT)
         paper_exec,                 # PaperExecutor instance
         prisma,
         logger,
@@ -1579,9 +1579,18 @@ class StrategyEngine:
         ...
 
     async def daily_scan(self) -> None:
-        """Called once at 10:00 ET. Runs daily strategies (Wheel CSP scans, earnings scans).
+        """Called once at 10:00 ET. Runs daily strategies routed by DAILY_STRATEGY_CODES.
 
-        These don't need intraday MTM — wheel/CC positions are checked once per day.
+        In current implementation this includes: Wheel, Earnings Strangle,
+        Income Covered Call, and Long-DTE Credit.
+        """
+        ...
+
+    async def _check_index_staleness(self, ticker: str, now: datetime) -> bool:
+        """Hard gate for index entry scans.
+
+        During RTH, entries are blocked when latest GEX snapshot age is > 900s (15m).
+        Outside RTH, stale status is expected and scans are skipped without warning.
         """
         ...
 
@@ -1646,208 +1655,66 @@ if __name__ == "__main__":
 ```yaml
 # scripts/libs_py/strategy_engine/config.yaml
 
-engine:
-  timezone: America/New_York
-  tick_cadences:
-    index_seconds: 60
-    stock_seconds: 300
-    daily_time: "10:00"
-  log_level: INFO
-  log_file: ~/strategy_engine.log
+default_initial_balance: 25000.0
+account_group_name: "Strategy Engine Silos"
 
-prisma:
-  url: file:./web/prisma/dev.db
-
-dolt:
-  path: ./data/options/options/
-
-accounts:
-  # One Account per ResearchStrategy variant. Created by seed_data.py.
-  default_initial_balance: 25000.0
-  group_name: "Strategy Engine Silos"
+approved_tickers: [SPY, SPX, QQQ, IWM, NVDA, TSLA, AAPL, GOOGL, MSFT, AMZN, RIVN]
 
 holdings:
-  # Manually declared paper holdings for income CC strategy.
-  - ticker: TSLA
-    shares: 200
-    cost_basis: 240.00
-    acquired_at: 2024-01-15
-  - ticker: GOOGL
-    shares: 100
-    cost_basis: 165.00
-    acquired_at: 2024-03-01
-  - ticker: RIVN
-    shares: 500
-    cost_basis: 11.50
-    acquired_at: 2024-06-10
+    GOOGL: { shares: 300, cost_basis: 150.0, acquired_at: "2026-01-15T09:30:00Z" }
+    TSLA:  { shares: 200, cost_basis: 180.0, acquired_at: "2026-02-10T09:30:00Z" }
+    RIVN:  { shares: 1000, cost_basis: 10.0, acquired_at: "2026-03-01T09:30:00Z", enabled: false }
+
+blackout_buffers:
+    High:   { pre_minutes: 120, post_minutes: 60 }
+    Medium: { pre_minutes: 30,  post_minutes: 30 }
+    Low:    { pre_minutes: 0,   post_minutes: 0 }
 
 strategies:
-  wheel:
-    enabled: true
-    underlyings: [NVDA, TSLA, AAPL, GOOGL, MSFT, AMZN]
-    variants:
-      - name_suffix: "30D_45DTE"
-        params:
-          short_delta: 0.30
-          dte: 45
-          min_iv_rank: 30
-          target_pct: 0.5
-          roll_at_dte: 21
-          min_premium_pct_of_strike: 0.01
-      - name_suffix: "20D_45DTE"
-        params:
-          short_delta: 0.20
-          dte: 45
-          min_iv_rank: 30
-          target_pct: 0.5
-          roll_at_dte: 21
-          min_premium_pct_of_strike: 0.01
-      - name_suffix: "30D_7DTE"
-        params:
-          short_delta: 0.30
-          dte: 7
-          min_iv_rank: 25
-          target_pct: 0.5
-          roll_at_dte: 2
-          min_premium_pct_of_strike: 0.005
+    WHEEL:
+        tickers: [NVDA, TSLA, AAPL, GOOGL, MSFT, AMZN]
+        variants:
+            "30D_45DTE": { enabled: true, short_delta: 0.30, dte: 45, min_iv_rank: 30, profit_target_pct: 0.50, stop_loss_mult: 99.0, roll_at_dte: 21, flat_before_close_minutes: 5 }
+            "20D_45DTE": { enabled: true, short_delta: 0.20, dte: 45, min_iv_rank: 30, profit_target_pct: 0.50, stop_loss_mult: 99.0, roll_at_dte: 21, flat_before_close_minutes: 5 }
+            "30D_7DTE":  { enabled: true, short_delta: 0.30, dte: 7,  min_iv_rank: 25, profit_target_pct: 0.50, stop_loss_mult: 2.0,  roll_at_dte: null, flat_before_close_minutes: 15 }
 
-  zero_dte_pcs:
-    enabled: true
-    underlyings: [SPY, SPX]
-    variants:
-      - name_suffix: "10D_5W"
-        params:
-          short_delta: 0.10
-          width: 5.0
-          min_credit: 0.10
-          target_pct: 0.5
-          stop_mult: 2.0
-          require_positive_gamma: true
-          min_minutes_in_regime: 30
-          entry_time_start: "10:00"
-          entry_time_end: "13:30"
-          flat_by_minutes_before_close: 30
-          max_vix: 25
-          max_vix_pct_change: 10
-          require_ict_confluence: false
-      - name_suffix: "16D_5W"
-        params:
-          short_delta: 0.16
-          width: 5.0
-          min_credit: 0.15
-          target_pct: 0.5
-          stop_mult: 2.0
-          require_positive_gamma: true
-          min_minutes_in_regime: 30
-          entry_time_start: "10:00"
-          entry_time_end: "13:30"
-          flat_by_minutes_before_close: 30
-          max_vix: 25
-          max_vix_pct_change: 10
-          require_ict_confluence: false
-      - name_suffix: "10D_5W_NOGEX"
-        params:
-          short_delta: 0.10
-          width: 5.0
-          min_credit: 0.10
-          target_pct: 0.5
-          stop_mult: 2.0
-          require_positive_gamma: false   # CONTROL VARIANT — no GEX filter
-          min_minutes_in_regime: 0
-          entry_time_start: "10:00"
-          entry_time_end: "13:30"
-          flat_by_minutes_before_close: 30
-          max_vix: 25
-          max_vix_pct_change: 10
-      - name_suffix: "10D_5W_ICT"
-        params:
-          short_delta: 0.10
-          width: 5.0
-          min_credit: 0.10
-          target_pct: 0.5
-          stop_mult: 2.0
-          require_positive_gamma: true
-          min_minutes_in_regime: 30
-          entry_time_start: "10:00"
-          entry_time_end: "13:30"
-          flat_by_minutes_before_close: 30
-          max_vix: 25
-          max_vix_pct_change: 10
-          require_ict_confluence: true    # ICT VARIANT
-          ict_timeframe: "5m"
+    ZERO_DTE_PCS:
+        tickers: [SPY, SPX]
+        variants:
+            "10D_5W":       { enabled: true, short_delta: 0.10, width: 5.0, require_positive_gamma: true,  require_ict: false, profit_target_pct: 0.50, stop_loss_mult: 2.0, flat_before_close_minutes: 30 }
+            "16D_5W":       { enabled: true, short_delta: 0.16, width: 5.0, require_positive_gamma: true,  require_ict: false, profit_target_pct: 0.50, stop_loss_mult: 2.0, flat_before_close_minutes: 30 }
+            "10D_5W_NOGEX": { enabled: true, short_delta: 0.10, width: 5.0, require_positive_gamma: false, require_ict: false, profit_target_pct: 0.50, stop_loss_mult: 2.0, flat_before_close_minutes: 30 }
+            "10D_5W_ICT":   { enabled: true, short_delta: 0.10, width: 5.0, require_positive_gamma: true,  require_ict: true,  profit_target_pct: 0.50, stop_loss_mult: 2.0, flat_before_close_minutes: 30 }
 
-  long_dte_credit:
-    enabled: true
-    underlyings: [SPY, NVDA, TSLA, IWM]
-    variants:
-      - name_suffix: "16D_45DTE"
-        params:
-          short_delta: 0.16
-          width_pct: 0.02         # 2% of spot
-          dte: 45
-          min_iv_rank: 35
-          target_pct: 0.5
-          stop_mult: 2.0
-          roll_at_dte: 21
+    LONG_DTE_CREDIT:
+        tickers: [SPY, NVDA, TSLA, IWM]
+        variants:
+            "16D_45DTE": { enabled: true, short_delta: 0.16, width_pct: 0.02, dte: 45, min_iv_rank: 35, profit_target_pct: 0.50, stop_loss_mult: 2.0, roll_at_dte: 21 }
 
-  mean_reversion_em:
-    enabled: true
-    underlyings: [SPY, SPX]
-    variants:
-      - name_suffix: "1SD_TOUCH"
-        params:
-          touch_sd_threshold: 1.0
-          width: 5.0
-          require_positive_gamma: true
-          min_minutes_to_close: 90
-          target_pct: 0.5
-          stop_mult: 1.5
-          max_vix: 20
-          entry_time_start: "10:30"
-          entry_time_end: "14:30"
+    MEAN_REVERSION_EM:
+        tickers: [SPY, SPX]
+        variants:
+            "1SD_TOUCH": { enabled: true, entry_window: ["10:30", "14:30"], max_vix: 20, require_positive_gamma: true, profit_target_pct: 0.50, stop_loss_mult: 2.0, flat_before_close_minutes: 30 }
 
-  wall_break:
-    enabled: true
-    underlyings: [SPY, SPX]
-    variants:
-      - name_suffix: "BREAKOUT_DEBIT"
-        params:
-          wall_proximity_pct: 0.003       # within 0.3%
-          require_dex_confirmation: true
-          volume_multiple: 1.5
-          width: 2.0
-          dte: 0
-          target_pct: 0.75
-          stop_pct: 0.5
-          time_stop_minutes: 45
-          max_vix: 22
-          entry_time_start: "10:00"
-          entry_time_end: "15:00"
+    WALL_BREAK:
+        tickers: [SPY, SPX]
+        variants:
+            "BREAKOUT_DEBIT": { enabled: true, entry_window: ["10:00", "15:00"], max_vix: 22, wall_proximity_pct: 0.003, profit_target_pct: 0.50, stop_loss_mult: 1.5, flat_before_close_minutes: 30 }
 
-  income_cc:
-    enabled: true
-    underlyings: [GOOGL, TSLA, RIVN]
-    variants:
-      - name_suffix: "TIER_BY_TICKER"
-        # Per-ticker rules baked in; see strategy implementation.
-        params:
-          target_pct: 0.7
-          earnings_blackout_days: 2
+    INCOME_CC:
+        tickers: [GOOGL, TSLA, RIVN]
+        variants:
+            "TIER": { enabled: true, profit_target_pct: 0.50, stop_loss_mult: 99.0, roll_at_dte: 21 }
 
-  earnings_strangle:
+    EARNINGS_STRANGLE:
+        tickers: [NVDA, TSLA, AAPL, GOOGL]
+        variants:
+            "30D_5D_BEFORE": { enabled: true, days_before: 5, target_delta: 0.30, max_debit: 5.0, max_debit_pct_of_spot: 0.02, max_iv_percentile: 50.0, profit_target_pct: 0.50, stop_loss_pct: 0.30 }
+
+discord:
     enabled: true
-    underlyings: [NVDA, TSLA, AAPL, GOOGL]
-    variants:
-      - name_suffix: "30D_5D_BEFORE"
-        params:
-          days_before_earnings: 5
-          close_days_before_earnings: 1
-          target_call_delta: 0.30
-          target_put_delta: 0.30
-          max_iv_percentile: 50
-          max_debit: 5.0
-          target_pct: 0.5
-          stop_pct: 0.3
+    channel: "options-backtest"
+    events: { trade_entry: true, trade_exit: true, daily_rollup: true, weekly_rollup: true }
 ```
 
 This config is the **single source of truth for parameters**. Modifying a parameter requires editing the YAML and re-running `seed_data.py --update`.
@@ -2983,7 +2850,7 @@ The engine self-manages. No daily user intervention needed.
 
 **What happens automatically:**
 - 9:30 ET: engine starts ticking (it's already running; this is when it begins firing scans).
-- 10:00 ET: daily_scan runs (wheel CSPs, earnings strangles).
+- 10:00 ET: daily_scan runs (WHEEL, EARNINGS_STRANGLE, INCOME_CC, LONG_DTE_CREDIT).
 - 10:00-16:00 ET: index strategies tick every 60s, stock strategies every 5m.
 - 16:00 ET: trading halts; engine stops scanning but holds open positions for next-day decisions.
 - 16:30 ET: analytics daily_rollup runs.
@@ -3011,7 +2878,8 @@ The engine self-manages. No daily user intervention needed.
 | Failure | Symptom | Recovery |
 |---------|---------|----------|
 | Schwab API unreachable | BrokerUnavailableError in logs | Engine logs and skips this tick; auto-retries next tick. If sustained > 15 min, alert user. |
-| GexSnapshot stale > 5 min | RegimeService returns None | Strategies that require regime data refuse to trade. Logged. Engine continues. |
+| GexSnapshot stale > 15 min during RTH (engine hard gate) | `Engine: Staleness alert!...` and index entries skipped | Verify options pipeline writer health, refresh snapshots, and restart stale loop processes if needed. |
+| RegimeService stale gate (index > 5 min, stock > 30 min) | RegimeService returns None | Strategies consuming RegimeService refuse to trade. Logged. Engine continues. |
 | Prisma connection lost | Crashes write attempts | pm2 restarts the runner; engine re-initializes. Resume from last completed tick. |
 | Dolt query fails | iv_rank=None | Strategies that have iv filter skip it; logged in metadata. |
 | Parquet file missing | IctService returns None | Strategies that require ICT skip; logged. |
