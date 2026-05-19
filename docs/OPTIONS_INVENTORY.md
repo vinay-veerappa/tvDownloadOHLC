@@ -1,7 +1,15 @@
 # Options Trading & Market Data Infrastructure Inventory
 
-**Last Updated:** May 18, 2026
+**Last Updated:** May 19, 2026
 **Purpose:** Permanent technical blueprint, architectural catalog, and development reference for the Options, Market Data, Price Action, and PERSISTENCE layers of the TCM Trading System.
+
+## Current Runtime Status (May 19, 2026)
+
+- Options streaming pipeline is running with direct Prisma writes plus API fallback resilience in the interval writer path.
+- Fresh index snapshots are being persisted for SPY, SPX, QQQ, and IWM in `GexSnapshot` / `MacroSnapshot`.
+- Strategy engine index-entry staleness hard gate is currently enforced at 15 minutes during RTH in the engine loop.
+- Daily strategy routing currently includes `WHEEL`, `EARNINGS_STRANGLE`, `INCOME_CC`, and `LONG_DTE_CREDIT` at 10:00 ET.
+- Handoff alignment documents are present under `docs/features/options_dashboard/` (`HANDOFF.md`, `HANDOFF_v2.md`, `HANDOFF_v3.md`).
 
 ---
 
@@ -326,6 +334,18 @@ Maintains SQLite schema configurations, Parquet storage loaders, and intraday JS
 Defined in [schema.prisma](file:///c:/Users/vinay/tvDownloadOHLC/web/prisma/schema.prisma):
 
 ```prisma
+model SchwabToken {
+  id           String   @id @default("schwab-primary")
+  accessToken  String
+  refreshToken String
+  expiresAt    Int
+  idToken      String?
+  tokenType    String
+  scope        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model ExpectedMove {
   id              Int      @id @default(autoincrement())
   ticker          String
@@ -343,6 +363,24 @@ model ExpectedMove {
   note            String?
 
   @@unique([ticker, calculationDate, expiryDate])
+}
+
+model ExpectedMoveHistory {
+  id            Int      @id @default(autoincrement())
+  ticker        String
+  date          DateTime
+  closePrice    Float
+  straddlePrice Float?
+  emStraddle    Float?
+  iv365         Float?
+  em365         Float?
+  iv252         Float?
+  em252         Float?
+  source        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([ticker, date])
   @@index([ticker])
 }
 
@@ -392,6 +430,122 @@ model MacroSnapshot {
   @@index([ticker])
 }
 
+model Trade {
+  id               String          @id @default(cuid())
+  ticker           String
+  entryDate        DateTime
+  exitDate         DateTime?
+  entryPrice       Float?
+  exitPrice        Float?
+  quantity         Float
+  direction        String
+  status           String
+  accountId        String
+  strategyId       String?
+  orderType        String          @default("MARKET")
+  pnl              Float?
+  risk             Float?
+  mae              Float?
+  mfe              Float?
+  metadata         String?
+  originalSource   String?
+  playbookId       String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  marketCondition  MarketCondition?
+  tradeEvents      TradeEvent[]
+  legs             TradeLeg[]
+  snapshots        QuoteSnapshot[]
+}
+
+model TradeLeg {
+  id          String   @id @default(cuid())
+  tradeId     String
+  trade       Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  symbol      String
+  legIndex    Int
+  optionType  String
+  side        String
+  strike      Float?
+  expiry      DateTime?
+  quantity    Int
+
+  openPrice   Float
+  openBid     Float?
+  openAsk     Float?
+  openIv      Float?
+  openDelta   Float?
+  openGamma   Float?
+  openTheta   Float?
+  openVega    Float?
+
+  closePrice  Float?
+  closeBid    Float?
+  closeAsk    Float?
+  closeIv     Float?
+  closeDelta  Float?
+  closeGamma  Float?
+  closeTheta  Float?
+  closeVega   Float?
+
+  legPnl      Float?
+  assigned    Boolean  @default(false)
+  expiredOtm  Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tradeId])
+  @@index([symbol])
+}
+
+model QuoteSnapshot {
+  id              String   @id @default(cuid())
+  tradeId         String
+  trade           Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  takenAt         DateTime @default(now())
+  underlyingPx    Float
+  netValue        Float
+  unrealizedPnl   Float
+  legPrices       String
+
+  vix             Float?
+  gexRegime       String?
+  zeroGamma       Float?
+
+  @@index([tradeId, takenAt])
+}
+
+model SignalNearMiss {
+  id                 String   @id @default(cuid())
+  researchStrategyId String
+
+  evaluatedAt        DateTime @default(now())
+  ticker             String
+  underlyingPx       Float
+
+  failingFilter      String
+  filterValue        Float?
+  filterThreshold    Float?
+  context            String
+
+  @@index([researchStrategyId, evaluatedAt])
+  @@index([failingFilter])
+}
+
+model Holding {
+  id          String   @id @default(cuid())
+  ticker      String   @unique
+  shares      Int
+  costBasis   Float
+  acquiredAt  DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model RthExpectedMove {
   id            Int      @id @default(autoincrement())
   ticker        String
@@ -408,6 +562,19 @@ model RthExpectedMove {
 
   @@unique([ticker, date])
   @@index([ticker])
+}
+
+model EarningsCalendar {
+  id              String   @id @default(cuid())
+  ticker          String
+  earningsDate    DateTime
+  beforeMarket    Boolean
+  confirmed       Boolean  @default(false)
+  source          String   @default("yfinance")
+  fetchedAt       DateTime @default(now())
+
+  @@unique([ticker, earningsDate])
+  @@index([earningsDate])
 }
 
 model EconomicEvent {

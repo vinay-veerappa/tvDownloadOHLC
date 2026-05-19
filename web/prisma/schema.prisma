@@ -12,6 +12,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Current options/strategy persistence scope (May 19, 2026):
+// - Live options snapshots: GexSnapshot, MacroSnapshot, ExpectedMove, RthExpectedMove, ExpectedMoveHistory
+// - Strategy engine: Trade, TradeLeg, QuoteSnapshot, SignalNearMiss, ResearchRun, EarningsCalendar, Holding
+// Keep this section note aligned with docs/OPTIONS_INVENTORY.md when persistence changes.
+
 model Account {
   id             String        @id @default(cuid())
   name           String
