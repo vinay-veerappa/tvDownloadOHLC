@@ -263,17 +263,38 @@ class Engine:
             except Exception as e:
                 logger.error(f"Engine: Error managing trade {trade.id}: {e}", exc_info=True)
 
+    @staticmethod
+    def _is_rth(now: datetime) -> bool:
+        """Return True if `now` falls within RTH (9:30–16:00 ET, Mon–Fri)."""
+        from zoneinfo import ZoneInfo
+        now_et = now.astimezone(ZoneInfo("America/New_York"))
+        if now_et.weekday() >= 5:
+            return False
+        mkt_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
+        mkt_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
+        return mkt_open <= now_et <= mkt_close
+
     async def _check_index_staleness(self, ticker: str, now: datetime) -> bool:
         """
-        For indices (SPX, SPY, etc.), any GEX/EM snapshot older than 5 minutes 
-        indicates that the upstream streaming pipeline has stopped. 
-        In this scenario, entries must be blocked to prevent outdated entries.
+        For indices (SPX, SPY, etc.), any GEX/EM snapshot older than 15 minutes
+        during RTH indicates that the upstream streaming pipeline has stopped.
+        In this scenario, entries must be blocked to prevent stale-data entries.
+
+        Outside RTH the GEX writer does not run, so old data is expected — scans
+        are silently skipped (DEBUG) without raising a WARNING.
         """
         # C1: check per-tick cache
         if ticker in self._staleness_cache:
             cache_val, cache_ts = self._staleness_cache[ticker]
             if cache_ts == now:
                 return cache_val
+
+        # Outside RTH the pipeline does not write GEX snapshots; data will always
+        # appear stale.  Skip silently — this is not an actionable warning.
+        if not self._is_rth(now):
+            logger.debug(f"Engine: Staleness check skipped for {ticker} — outside RTH.")
+            self._staleness_cache[ticker] = (True, now)
+            return True
 
         try:
             # Query the latest GexSnapshot for this ticker — use timestamp, not createdAt (B7)
@@ -282,6 +303,7 @@ class Engine:
                 order={"timestamp": "desc"}
             )
             if not latest_gex:
+                logger.warning(f"Engine: No GexSnapshot found for {ticker} during RTH — pipeline may not have started.")
                 self._staleness_cache[ticker] = (True, now)
                 return True
 
@@ -293,7 +315,10 @@ class Engine:
             diff_seconds = (now_utc - gex_time).total_seconds()
 
             if diff_seconds > 900.0:
-                logger.warning(f"Engine: Staleness alert! Latest GEX snapshot for {ticker} is {diff_seconds:.1f} seconds old.")
+                logger.warning(
+                    f"Engine: Staleness alert! Latest GEX snapshot for {ticker} is "
+                    f"{diff_seconds:.1f}s old during RTH — upstream pipeline may have stopped."
+                )
                 self._staleness_cache[ticker] = (True, now)
                 return True
 
