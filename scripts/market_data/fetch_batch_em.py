@@ -3,6 +3,12 @@ import json
 import os
 import sys
 
+# Ensure repository root is in sys.path so scripts can find top-level packages
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+
 from scripts.market_data.schwab_options_utils import (
     create_schwab_client,
     fetch_option_chain,

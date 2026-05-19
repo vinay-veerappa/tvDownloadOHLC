@@ -9,7 +9,11 @@ import schwab
 
 INDEX_SYMBOL_ALIASES = {
     "SPX": "$SPX",
+    "NDX": "$NDX",
+    "RUT": "$RUT",
+    "VIX": "$VIX",
 }
+
 
 
 @dataclass(frozen=True)

@@ -22,7 +22,7 @@ class WallBreakStrategy(Strategy):
     MacroSnapshot.dominantNodes — real top-strike GEX concentrations (D9).
     Filters:
     - Time of day: 10:00 AM to 3:00 PM Eastern.
-    - Max VIX (e.g. 22) — fetched via $VIX.X Schwab ticker (D8).
+    - Max VIX (e.g. 22) — fetched via $VIX Schwab ticker (D8).
     - Spot breaches or is within wall_proximity_pct of a dominant wall.
     Note: DEX confirmation + volume filter (C13) deferred to v1.1.
     """
@@ -77,9 +77,9 @@ class WallBreakStrategy(Strategy):
             await self._log_near_miss(ticker, spot, "blackout_window_active", None, None, {"now": str(now)})
             return []
 
-        # ─── Filter 2: VIX Check — use $VIX.X Schwab ticker (D8) ───
+        # ─── Filter 2: VIX Check — use $VIX Schwab ticker (D8) ───
         try:
-            vix_quote = await self.s["broker"].get_stock_quote("$VIX.X")
+            vix_quote = await self.s["broker"].get_stock_quote("VIX")
             vix = vix_quote["last"]
         except Exception:
             # Fallback: read VIX from the latest MacroSnapshot.vix field if available

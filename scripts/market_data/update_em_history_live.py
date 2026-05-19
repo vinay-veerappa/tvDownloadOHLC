@@ -6,6 +6,12 @@ import sys
 import os
 import math
 
+# Ensure repository root is in sys.path so scripts can find top-level packages
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+
 # Load Environment (for Prisma)
 try:
     with open('web/.env', 'r') as f:
@@ -26,7 +32,9 @@ from scripts.market_data.schwab_options_utils import (
     first_contracts_for_expiration,
     get_option_iv,
     get_option_mark,
+    normalize_option_chain_symbol,
 )
+
 
 async def update_live_em():
     print("Connecting to DB...")
@@ -61,17 +69,28 @@ async def update_live_em():
         print(f"Processing {ticker}...")
         try:
             # 1. Quote
-            resp = client.get_quote(ticker).json()
+            api_symbol = normalize_option_chain_symbol(ticker)
+            resp = client.get_quote(api_symbol).json()
             # Handle different response structures
             quote = {}
-            for k in resp.keys():
-                if k.upper() == ticker.upper(): 
-                    quote = resp[k]['quote']
-                    break
-            if not quote and len(resp) > 0: quote = list(resp.values())[0]['quote']
+            if isinstance(resp, dict):
+                # Try finding exact match
+                for k, v in resp.items():
+                    if k.upper() == api_symbol.upper() and isinstance(v, dict) and 'quote' in v:
+                        quote = v['quote']
+                        break
+                # Fallback to first dict with 'quote'
+                if not quote:
+                    for v in resp.values():
+                        if isinstance(v, dict) and 'quote' in v:
+                            quote = v['quote']
+                            break
             
             price = quote.get('lastPrice', 0)
-            if price == 0: continue
+            if price == 0:
+                print(f"  Warning: No price found for {ticker} (API symbol {api_symbol})")
+                continue
+
             
             # 2. Chain
             try:

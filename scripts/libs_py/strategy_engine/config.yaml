@@ -174,3 +174,13 @@ strategies:
         max_iv_percentile: 50.0
         profit_target_pct: 0.50
         stop_loss_pct: 0.30
+
+# ── Discord Integration ──────────────────────────────────────────────────────
+discord:
+  enabled: true
+  channel: "test_channel"
+  events:
+    trade_entry: true
+    trade_exit: true
+    daily_rollup: true
+    weekly_rollup: true

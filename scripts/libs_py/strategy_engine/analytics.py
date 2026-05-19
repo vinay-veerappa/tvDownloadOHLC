@@ -33,6 +33,38 @@ class AnalyticsService:
         os.makedirs(self.assets_dir, exist_ok=True)
         os.makedirs(self.rundowns_dir, exist_ok=True)
 
+    def _notify_discord(self, message: str, files: list = None, event_type: str = None):
+        """Helper to send non-blocking Discord notifications using the discord_notify utility."""
+        try:
+            discord_cfg = self.config.get("discord", {})
+            if not discord_cfg.get("enabled", False):
+                return
+            
+            channel = discord_cfg.get("channel", "test_channel")
+            events = discord_cfg.get("events", {})
+            
+            # Check if this specific event type is disabled in the config
+            if event_type and not events.get(event_type, True):
+                return
+            
+            from scripts.utils.discord_notify import get_webhook_url, send_message
+            webhook_url = get_webhook_url(channel)
+            if not webhook_url:
+                logger.warning(f"Discord: Webhook URL not found for channel '{channel}'")
+                return
+            
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(None, send_message, webhook_url, message, files)
+                logger.info(f"Discord: Notification queued asynchronously for channel '{channel}'")
+            except RuntimeError:
+                # No running event loop (e.g. outside async context)
+                send_message(webhook_url, message, files)
+        except Exception as e:
+            logger.warning(f"Discord: Failed to send notification: {e}")
+
+
     async def run_daily_rollup(self, now: datetime):
         """
         Daily EOD rollup. Calculates performance metrics for each active 
@@ -176,6 +208,27 @@ class AnalyticsService:
                     )
 
                 logger.info(f"Analytics: Updated ResearchRun '{run_id}' with Grade {grade}")
+
+                # Discord EOD Performance notification
+                try:
+                    pnl_pct = (total_pnl / account.initialBalance) * 100.0 if account.initialBalance > 0 else 0.0
+                    eod_msg = (
+                        f"📊 **EOD PERFORMANCE SUMMARY: {name}**\n\n"
+                        f"* **Current Balance:** `${account.currentBalance:,.2f}`\n"
+                        f"* **Net Return:** `${total_pnl:+,.2f}` ({pnl_pct:+.2f}%)\n"
+                        f"* **Win Rate:** `{win_rate:.1%}`\n"
+                        f"* **Profit Factor:** `{profit_factor:.2f}`\n"
+                        f"* **Drawdown:** `${max_dd:,.2f}`\n"
+                        f"* **Grade:** **{grade}**\n"
+                        f"* **Total Trades:** {total_trades}"
+                    )
+                    
+                    # Attach equity curve if generated
+                    files = [equity_curve_path] if (equity_curve_path and os.path.exists(equity_curve_path)) else None
+                    self._notify_discord(eod_msg, files=files, event_type="daily_rollup")
+                except Exception as de:
+                    logger.warning(f"Analytics: Failed to send EOD notification for {name}: {de}")
+
 
             except Exception as e:
                 logger.error(f"Analytics: Error processing daily rollup for silo '{account.name}': {e}", exc_info=True)
@@ -366,6 +419,26 @@ class AnalyticsService:
             f.write(markdown_text)
 
         logger.info(f"Analytics: Weekly Rundown saved to database and {filepath}")
+
+        # Discord Weekly Rundown notification
+        try:
+            weekly_msg = (
+                f"🏁 **WEEKLY STRATEGY ENGINE RUNDOWN — {date_str}**\n\n"
+                f"### Executive Summary\n"
+                f"* **Total Active Silos:** {total_silos}\n"
+                f"* **Weekly Aggregate P&L:** `${overall_pnl:,.2f}` ({overall_pct:+.2f}%)\n"
+                f"* **System Mode:** Paper Execution (Continuous Scheduler)\n\n"
+                f"*📎 A comprehensive weekly rundown with rankings, correlation matrices, "
+                f"feature win-rate breakdowns, and near-miss filter suggestions has been compiled "
+                f"and attached as a report file below.*"
+            )
+            
+            # Attach the markdown report file
+            files = [filepath] if (filepath and os.path.exists(filepath)) else None
+            self._notify_discord(weekly_msg, files=files, event_type="weekly_rollup")
+        except Exception as de:
+            logger.warning(f"Analytics: Failed to send weekly rundown notification: {de}")
+
 
     def _compute_correlation_matrix(self, silo_names, trades_by_silo):
         """

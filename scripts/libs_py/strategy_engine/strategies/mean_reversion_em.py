@@ -76,13 +76,13 @@ class MeanReversionEmStrategy(Strategy):
             await self._log_near_miss(ticker, spot, "blackout_window_active", None, None, {"now": str(now)})
             return []
 
-        # ─── Filter 2: VIX Check — use $VIX.X Schwab ticker (D8) ───
+        # ─── Filter 2: VIX Check — use $VIX Schwab ticker (D8) ───
         try:
-            vix_quote = await self.s["broker"].get_stock_quote("$VIX.X")
+            vix_quote = await self.s["broker"].get_stock_quote("VIX")
             vix = vix_quote["last"]
         except Exception:
             vix = 15.0  # hard fallback — logged so operator can detect upstream failure
-            logger.warning(f"{self.name}: VIX fetch from $VIX.X failed; using fallback {vix}")
+            logger.warning(f"{self.name}: VIX fetch failed; using fallback {vix}")
 
         if vix > max_vix:
             await self._log_near_miss(
