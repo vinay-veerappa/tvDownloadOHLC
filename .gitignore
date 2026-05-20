@@ -6,6 +6,7 @@ __pycache__/
 venv/
 env/
 .agent/scratch/
+.agent/skills_backup/
 logs/*.log
 web/logs/
 **/tsconfig.tsbuildinfo
