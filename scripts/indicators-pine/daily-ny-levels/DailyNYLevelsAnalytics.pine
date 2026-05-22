@@ -37,7 +37,7 @@ import vveerappa/PineDrawingMarkers/3 as Markers
 import vveerappa/PineDrawingZones/3 as Zones
 import vveerappa/PineDrawingTables/4 as Tables
 import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
-import vveerappa/StatsLib/15 as STL
+import vveerappa/StatsLib/18 as STL
 
 // ============================================================================
 // Inputs — Session
@@ -208,12 +208,51 @@ var array<RSL.RangeSpec> specs = array.new<RSL.RangeSpec>(0)
 var array<RSL.RangeState> states = array.new<RSL.RangeState>(0)
 var array<STL.ExcursionHistory> histories = array.new<STL.ExcursionHistory>(0)
 var array<Core.PineDrawingState> drawings = array.new<Core.PineDrawingState>(0)
+var array<int> primary_breakout_sides = array.new_int(0)
+
+f_in_session_pine_robust(string session_str, string tz, int t) =>
+    if na(t) or na(session_str)
+        false
+    else
+        int colon_idx = str.pos(session_str, ":")
+        int dash_idx = str.pos(session_str, "-")
+        if na(colon_idx) or na(dash_idx) or colon_idx <= dash_idx or dash_idx < 4
+            false
+        else
+            string start_hhmm = str.substring(session_str, 0, dash_idx)
+            string end_hhmm = str.substring(session_str, dash_idx + 1, colon_idx)
+            string days = str.substring(session_str, colon_idx + 1)
+            
+            int start_min = int(str.tonumber(str.substring(start_hhmm, 0, 2))) * 60 + int(str.tonumber(str.substring(start_hhmm, 2, 4)))
+            int end_min = int(str.tonumber(str.substring(end_hhmm, 0, 2))) * 60 + int(str.tonumber(str.substring(end_hhmm, 2, 4)))
+            
+            int m = RSL.f_mins_of_day(t, tz)
+            int dow = dayofweek(t, tz)
+            bool crosses_midnight = end_min < start_min
+            
+            bool in_time = false
+            int start_dow = dow
+            
+            if not crosses_midnight
+                in_time := (m >= start_min and m < end_min)
+                start_dow := dow
+            else
+                if m >= start_min
+                    in_time := true
+                    start_dow := dow
+                else if m < end_min
+                    in_time := true
+                    start_dow := (dow == 1 ? 7 : dow - 1)
+                    
+            bool in_day = in_time and (str.length(days) == 0 or str.pos(days, str.tostring(start_dow)) >= 0)
+            in_day
 
 f_init_runtime() =>
     array.clear(specs)
     array.clear(states)
     array.clear(histories)
     array.clear(drawings)
+    array.clear(primary_breakout_sides)
 
     array<RSL.RangeSpec> resolved = RSL.f_resolve_preset(i_preset, i_custom_start, i_custom_end, i_custom_cutoff, i_timezone)
     int n = array.size(resolved)
@@ -225,7 +264,7 @@ f_init_runtime() =>
             array.push(states, RSL.f_new_range_state(sp))
             array.push(histories, STL.f_new_excursion_history(sp.name))
             array.push(drawings, Core.f_new_drawing_state())
-            // log.info("  -> Added spec: {0} | Start: {1}, End: {2}, Cutoff: {3}", sp.name, sp.or_start_min, sp.or_end_min, sp.cutoff_min)
+            array.push(primary_breakout_sides, 0)
 
 if barstate.isfirst
     f_init_runtime()
@@ -329,7 +368,7 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
     // log.warning("REFS NOT SET - {0} | bull_ref: {1}, bear_ref: {2}", sp.name, st.bull_ref, st.bear_ref)
 
     if st.sig_breakout_side != 0 and st.sig_outcome == 0
-        float base_stats = st.sig_breakout_side == 1 ? st.or_high : st.or_low
+        float base_stats = st.sig_breakout_px
         if st.sig_breakout_side == 1
             if h > base_stats
                 st.daily_bo_mfe_bull := math.max(nz(st.daily_bo_mfe_bull, 0.0), (h - base_stats) / base_stats * 100.0)
@@ -378,7 +417,9 @@ f_get_pct_fallback(array<float> arr, float pct, float def = 0.0) =>
 
 // Helper to handle signal latching, outcome tracking, and pullback activation.
 f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSpec sp, float c, float h, float l) =>
-    if st.sig_side == 0 or st.sig_outcome == 2
+    log.info("SIG_EVAL [{0}] c={1} or_h={2} or_l={3} sig_side={4} sig_outcome={5} sig_bo_side={6}", sp.name, c, st.or_high, st.or_low, st.sig_side, st.sig_outcome, st.sig_breakout_side)
+    // First breakout is canonical for the session; do not relatch after fakeout.
+    if st.sig_side == 0
         bool bull_bo = c > st.or_high
         bool bear_bo = c < st.or_low
         
@@ -388,12 +429,13 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             st.sig_breakout_side := st.sig_side
             st.sig_breakout_px   := c
             st.sig_outcome       := 0
+            log.info("BO_LATCH [{0}] side={1} px={2} c={3} or_h={4} or_l={5}", sp.name, st.sig_side, st.sig_breakout_px, c, st.or_high, st.or_low)
             
-            // 2. Seed Trigger-bar Excursion (Measured from the OR boundary to maintain historical database consistency)
-            st.daily_bo_mfe_bull := st.sig_side == 1 ? math.max(0.0, (h - st.or_high) / st.or_high * 100.0) : na
-            st.daily_bo_mae_bull := st.sig_side == 1 ? math.max(0.0, (st.or_high - l) / st.or_high * 100.0) : na
-            st.daily_bo_mfe_bear := st.sig_side == -1 ? math.max(0.0, (st.or_low - l) / st.or_low * 100.0) : na
-            st.daily_bo_mae_bear := st.sig_side == -1 ? math.max(0.0, (h - st.or_low) / st.or_low * 100.0) : na
+            // 2. Seed Trigger-bar Excursion (Measured from breakout close price to align with breakout activation)
+            st.daily_bo_mfe_bull := st.sig_side == 1 ? math.max(0.0, (h - st.sig_breakout_px) / st.sig_breakout_px * 100.0) : na
+            st.daily_bo_mae_bull := st.sig_side == 1 ? math.max(0.0, (st.sig_breakout_px - l) / st.sig_breakout_px * 100.0) : na
+            st.daily_bo_mfe_bear := st.sig_side == -1 ? math.max(0.0, (st.sig_breakout_px - l) / st.sig_breakout_px * 100.0) : na
+            st.daily_bo_mae_bear := st.sig_side == -1 ? math.max(0.0, (h - st.sig_breakout_px) / st.sig_breakout_px * 100.0) : na
             
             int side = st.sig_side
             
@@ -428,8 +470,8 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             st.sig_target_px   := st.sig_breakout_px * (side == 1 ? 1.0 + st.sig_p50_bo / 100.0 : 1.0 - st.sig_p50_bo / 100.0)
             st.sig_pivot_px    := st.sig_breakout_px * (side == 1 ? 1.0 + st.sig_p50_fake / 100.0 : 1.0 - st.sig_p50_fake / 100.0)
             
-            st.sig_invalid_px  := base_or * (side == 1 ? 1.0 - p80_mae / 100.0 : 1.0 + p80_mae / 100.0)
-            st.sig_pullback_px := base_or * (side == 1 ? 1.0 - p25_mae / 100.0 : 1.0 + p25_mae / 100.0)
+            st.sig_invalid_px  := st.sig_breakout_px * (side == 1 ? 1.0 - p80_mae / 100.0 : 1.0 + p80_mae / 100.0)
+            st.sig_pullback_px := st.sig_breakout_px * (side == 1 ? 1.0 - p25_mae / 100.0 : 1.0 + p25_mae / 100.0)
             
             float y_rev25 = side == 1 ? st.or_high * (1.0 - st.sig_rev_p25 / 100.0) : st.or_low * (1.0 + st.sig_rev_p25 / 100.0)
             float y_rev50 = side == 1 ? st.or_high * (1.0 - st.sig_rev_p50 / 100.0) : st.or_low * (1.0 + st.sig_rev_p50 / 100.0)
@@ -452,8 +494,8 @@ f_track_range(int idx) =>
     RSL.RangeState st = array.get(states, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
 
-    bool in_or = RSL.f_in_session_pine(sp.session_or, sp.tz)
-    bool in_data = RSL.f_in_session_pine(sp.session_data, sp.tz)
+    bool in_or = f_in_session_pine_robust(sp.session_or, sp.tz, time)
+    bool in_data = f_in_session_pine_robust(sp.session_data, sp.tz, time)
     bool is_new_session = in_or and not st.prev_in_or
     
     // if is_new_session
@@ -485,7 +527,9 @@ f_track_range(int idx) =>
         st.is_committed := true
 
     if is_new_session
+        log.info("RESET_DAILY [{0}] {1} bar_index={2} in_or={3} prev_in_or={4}", idx, sp.name, bar_index, in_or, st.prev_in_or)
         RSL.f_reset_daily(st)
+        array.set(primary_breakout_sides, idx, 0)
 
     st.prev_in_or := in_or
 
@@ -519,12 +563,8 @@ f_track_range(int idx) =>
                 st.or_building := false
             // log.info("LIFECYCLE - {0} | OR Complete (LTF) at min {1} | High: {2}, Low: {3}", sp.name, m, st.or_high, st.or_low)
 
-            // Data Tracking
-            // if st.ref_set and is_in_data_mins
-            //     int mins_s = RSL.f_mins_since(m, sp.or_start_min)
-            //     f_process_price_update(st, hist, sp, h, l, c, mins_s)
-            //     f_process_signal_logic(st, hist, sp, c, h, l)
-            //     data_processed := true
+            // We want to capture data using the Charts Timeframe and not LTF because of pinescript limitations wrt the amount of data on LTF
+        
 
     // Main bar fallbacks (if LTF data missed something or isn't available)
     if in_or and not or_processed
@@ -543,6 +583,7 @@ f_track_range(int idx) =>
     // log.info("LIFECYCLE - {0} | OR Complete (Main) | High: {1}, Low: {2}", sp.name, st.or_high, st.or_low)
 
     if in_data and not data_processed and st.ref_set
+        log.info("DATA_GATE [{0}] {1} close={2} or_h={3} ref_set={4} in_data={5}", idx, sp.name, close, st.or_high, st.ref_set, in_data)
         int mins_s = RSL.f_mins_since(RSL.f_mins_of_day(time, sp.tz), sp.or_start_min)
         f_process_price_update(st, hist, sp, high, low, close, mins_s)
         f_process_signal_logic(st, hist, sp, close, high, low)
@@ -579,8 +620,13 @@ f_track_range(int idx) =>
     if i_show_debug and is_new_session
         Markers.f_draw_text_marker(array.get(drawings, idx), bar_index, high, "NEW: " + sp.name, debug_text_color_resolved, "down", "Normal")
 
+    if array.get(primary_breakout_sides, idx) == 0 and st.sig_side != 0
+        array.set(primary_breakout_sides, idx, st.sig_side)
+
     array.set(states, idx, st)
     array.set(histories, idx, hist)
+    if barstate.islast
+        log.info("FINAL_STATE [{0}] {1} sig_side={2} sig_bo_side={3} sig_outcome={4} sig_bo_px={5} in_data={6} ref_set={7}", idx, sp.name, st.sig_side, st.sig_breakout_side, st.sig_outcome, st.sig_breakout_px, in_data, st.ref_set)
 
 if array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
@@ -713,12 +759,19 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
         int ln_end = line_render_end
         int label_x = ln_end + i_label_gap_bars
         string m_group = "unified-levels-" + str.tostring(idx)
+
+        // OR boundaries (always drawn once OR starts building or completes)
+        if not na(st.or_high)
+            HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.or_high, "OR High" + lb_sfx, breakout_activation_color, 92, m_group + "_or_h", 0, strat)
+        if not na(st.or_low)
+            HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.or_low, "OR Low" + lb_sfx, breakout_activation_color, 92, m_group + "_or_l", 0, strat)
+
         // [Optimized] Tactical histories removed as levels are now state-latched in f_process_signal_logic
 
         // 2. Multi-excursion Statistical Levels (Optimized side-aware loop)
-        // Force both sides for statistical reference if histograms are enabled
-        bool draw_bull = i_show_histogram or i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == 1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and idx == 0)
-        bool draw_bear = i_show_histogram or i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == -1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and idx == 0)
+        int primary_side = array.get(primary_breakout_sides, idx)
+        bool draw_bull = i_show_stat_lines and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == 1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and (primary_side == 1 or primary_side == 0)))
+        bool draw_bear = i_show_stat_lines and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == -1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and (primary_side == -1 or primary_side == 0)))
 
         // Pre-calculate historical pivots
         float p50_fake_b = array.size(hist.fake_mfe_bull) > 0 ? array.percentile_nearest_rank(STL.f_build_filtered(hist.fake_mfe_bull), 50) : na
@@ -757,9 +810,10 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                     float y_piv = ref_px * (1.0 + (side * p_piv / 100.0))
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_piv, "Hist Pivot P50 " + STL.f_pct_fmt(p_piv) + lb_sfx, c_piv, 45, side_group, 0, strat)
 
-        // 3. Tactical Directional Levels (Respect side strategy)
-        bool draw_tac_bull = i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == 1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and idx == 0)
-        bool draw_tac_bear = i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == -1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and idx == 0)
+        // 3. Tactical Directional Levels (Respect side strategy and suppress pre-breakout)
+        bool has_breakout = (render_side != 0)
+        bool draw_tac_bull = has_breakout and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and render_side == 1) or (i_stat_side_strategy == "Primary Only" and primary_side == 1))
+        bool draw_tac_bear = has_breakout and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and render_side == -1) or (i_stat_side_strategy == "Primary Only" and primary_side == -1))
 
         for i = 0 to 1
             int side = i == 0 ? 1 : -1
@@ -810,12 +864,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 [c_conf, w_conf]     = f_get_side_styles(side, render_side, i_emphasize_active_side, bo_confirm_color)
                 [c_tpiv, w_tpiv]     = f_get_side_styles(side, render_side, i_emphasize_active_side, pivot_color)
 
-                // Core tactical lines: Activation, Invalidation, Pullback
-                if i_show_debug
-                    log.info("  -> DRAWING BO ACT: bar=" + str.tostring(st.or_start_bar) + ", price=" + str.tostring(t_render_px) + ", side=" + str.tostring(side))
-                
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, t_render_px, side_label + "Breakout Activation " + lb_sfx, c_bo_act, 90, side_group, 0, strat)
-
+                // Core tactical lines: Invalidation, Pullback
                 if not na(pullback_px)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, pullback_px, side_label + "Pullback Act P25 MAE" + lb_sfx, c_pb_act, 85, side_group, 0, strat)
 
@@ -847,6 +896,12 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                     Zones.f_draw_hist_band(ds, st.or_start_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, st.or_start_bar + z_w, (z_top + z_bot) / 2.0, side_label + "Reversal Zone (" + STL.f_pct_fmt(rev_p25) + "-" + STL.f_pct_fmt(rev_p50) + " Fake MAE)" + lb_sfx, color.new(r_stat_label_color, math.min(int(math.round(float(i_zone_transparency) * 0.6)), 90)), 55, side_group, 0, strat)
 
+                // Draw breakout activation only if this side is the active breakout side and breakout px is valid.
+                if is_active_side and not na(st.sig_breakout_px)
+                    if i_show_debug
+                        log.info("  -> DRAWING BO ACT: bar=" + str.tostring(st.or_start_bar) + ", price=" + str.tostring(st.sig_breakout_px) + ", side=" + str.tostring(side))
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.sig_breakout_px, "Breakout Activation" + lb_sfx, c_bo_act, 90, side_group + "_bo", 0, strat)
+
         // 4. Shared Midpoint Logic
         int n_m = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear)), m_h = 0
         if n_m > 0
@@ -871,8 +926,9 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 bo_mae_win := STL.f_build_filtered(render_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear)
 
             int bo_x1 = st.or_start_bar + int(math.round(float(max_profile_width) * i_bo_hist_offset_mult))
-            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mfe_win, render_side, render_side == 1 ? bull_color : bear_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mfe")
-            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mae_win, -render_side, color.new(render_side == 1 ? bear_color : bull_color, 75), bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mae")
+            float bo_anchor = render_side == 1 ? st.bull_ref : st.bear_ref
+            f_render_dist_histogram_internal(ds, lbl_reg, bo_anchor, bo_mfe_win, render_side, render_side == 1 ? bull_color : bear_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mfe")
+            f_render_dist_histogram_internal(ds, lbl_reg, bo_anchor, bo_mae_win, -render_side, color.new(render_side == 1 ? bear_color : bull_color, 75), bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mae")
 
     // 6. Time Distribution
     if i_show_time_dist and st.ref_set and not na(st.or_start_bar)
@@ -989,8 +1045,8 @@ f_focus_idx() =>
         for i = 0 to array.size(specs) - 1
             RSL.RangeSpec sp = array.get(specs, i)
             RSL.RangeState st = array.get(states, i)
-            bool in_or = RSL.f_in_session_pine(sp.session_or, sp.tz)
-            bool in_data = RSL.f_in_session_pine(sp.session_data, sp.tz)
+            bool in_or = f_in_session_pine_robust(sp.session_or, sp.tz, time)
+            bool in_data = f_in_session_pine_robust(sp.session_data, sp.tz, time)
             if in_or or in_data or st.or_building
                 focus := i
                 break

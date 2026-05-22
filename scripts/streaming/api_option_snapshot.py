@@ -147,6 +147,16 @@ def _fetch_primary_chain(symbol: str) -> OptionChainData | None:
         client = create_client()
         return fetch_option_chain_data(client, symbol, MACRO_DTE_TARGETS)
     except Exception:
+        # 1. Secondary Fallback: Dolt EOD Database
+        try:
+            from scripts.streaming.options.dolt_fallback import fetch_from_dolt
+            chain = fetch_from_dolt(symbol)
+            if chain:
+                return chain
+        except Exception:
+            pass
+            
+        # 2. Tertiary Fallback: yfinance (fallback-of-fallback)
         return _fetch_from_yfinance(symbol)
 
 

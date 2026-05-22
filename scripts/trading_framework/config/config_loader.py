@@ -109,6 +109,18 @@ class OptimizationConfig:
     monte_carlo: MonteCarloConfig
 
 
+@dataclass(frozen=True)
+class PropFirmConfig:
+    """
+    Config for PropFirmSimulator (ADR-021).
+    Consumed by run_backtest.py Layer 6.
+    """
+    primary_profile: str               # Profile key for tearsheet primary result
+    run_profiles: List[str]            # Profiles to run in run_all_profiles()
+    n_simulations: int                 # Monte Carlo permutation count
+    overrides: Dict[str, dict]         # Per-profile field overrides
+
+
 @dataclass
 class AppConfig:
     """Top-level configuration."""
@@ -127,6 +139,7 @@ class AppConfig:
     chop: ChopConfig
     mfe_mae: MfeMaeConfig
     optimization: OptimizationConfig
+    prop_firm: PropFirmConfig
 
 
 def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") -> AppConfig:
@@ -172,6 +185,14 @@ def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") ->
         monte_carlo=mc,
     )
 
+    pf_raw = raw.get("prop_firm", {})
+    prop_firm = PropFirmConfig(
+        primary_profile=pf_raw.get("primary_profile", "apex_50k"),
+        run_profiles=pf_raw.get("run_profiles", ["apex_50k", "topstep_50k", "ftmo_50k"]),
+        n_simulations=pf_raw.get("n_simulations", 5000),
+        overrides=pf_raw.get("overrides", {}),
+    )
+
     return AppConfig(
         data_dir=Path(raw["data"]["parquet_dir"]),
         symbols_price=raw["data"]["symbols"]["price"],
@@ -187,5 +208,6 @@ def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") ->
         execution=execution,
         chop=chop,
         mfe_mae=mfe_mae,
-        optimization=opt
+        optimization=opt,
+        prop_firm=prop_firm,
     )

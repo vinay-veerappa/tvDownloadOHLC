@@ -141,6 +141,43 @@ if barstate.isfirst
 int ny_dow = dayofweek(time, i_timezone)
 
 
+f_in_session_pine_robust(string session_str, string tz, int t) =>
+    if na(t) or na(session_str)
+        false
+    else
+        int colon_idx = str.pos(session_str, ":")
+        int dash_idx = str.pos(session_str, "-")
+        if na(colon_idx) or na(dash_idx) or colon_idx <= dash_idx or dash_idx < 4
+            false
+        else
+            string start_hhmm = str.substring(session_str, 0, dash_idx)
+            string end_hhmm = str.substring(session_str, dash_idx + 1, colon_idx)
+            string days = str.substring(session_str, colon_idx + 1)
+            
+            int start_min = int(str.tonumber(str.substring(start_hhmm, 0, 2))) * 60 + int(str.tonumber(str.substring(start_hhmm, 2, 4)))
+            int end_min = int(str.tonumber(str.substring(end_hhmm, 0, 2))) * 60 + int(str.tonumber(str.substring(end_hhmm, 2, 4)))
+            
+            int m = RSL.f_mins_of_day(t, tz)
+            int dow = dayofweek(t, tz)
+            bool crosses_midnight = end_min < start_min
+            
+            bool in_time = false
+            int start_dow = dow
+            
+            if not crosses_midnight
+                in_time := (m >= start_min and m < end_min)
+                start_dow := dow
+            else
+                if m >= start_min
+                    in_time := true
+                    start_dow := dow
+                else if m < end_min
+                    in_time := true
+                    start_dow := (dow == 1 ? 7 : dow - 1)
+                    
+            bool in_day = in_time and (str.length(days) == 0 or str.pos(days, str.tostring(start_dow)) >= 0)
+            in_day
+
 f_or_color(int idx) =>
     color bull_base = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0), #38BD8A, #008060)
     color bear_base = Core.f_resolve_color(i_theme_mode, color.new(i_bear_color, 0), #F87171, #B3261E)
@@ -156,8 +193,8 @@ f_track_range(int idx) =>
     RSL.RangeState st = array.get(states, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
 
-    bool in_or = RSL.f_in_session_pine(sp.session_or, sp.tz)
-    bool in_data = RSL.f_in_session_pine(sp.session_data, sp.tz)
+    bool in_or = f_in_session_pine_robust(sp.session_or, sp.tz, time)
+    bool in_data = f_in_session_pine_robust(sp.session_data, sp.tz, time)
 
     bool was_in_or = array.get(prev_in_or, idx)
     bool is_new_session = in_or and not was_in_or
@@ -680,8 +717,8 @@ f_focus_idx() =>
         for i = 0 to array.size(specs) - 1
             RSL.RangeSpec sp = array.get(specs, i)
             RSL.RangeState st = array.get(states, i)
-            bool in_or = RSL.f_in_session_pine(sp.session_or, sp.tz)
-            bool in_data = RSL.f_in_session_pine(sp.session_data, sp.tz)
+            bool in_or = f_in_session_pine_robust(sp.session_or, sp.tz, time)
+            bool in_data = f_in_session_pine_robust(sp.session_data, sp.tz, time)
             if in_or or in_data or st.or_building
                 focus := i
                 break

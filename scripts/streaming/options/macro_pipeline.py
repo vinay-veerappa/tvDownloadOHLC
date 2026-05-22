@@ -197,7 +197,8 @@ def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str
     Implements Task 1: Cache & Cascade.
     1. Check Local Cache (using root ticker)
     2. Primary Fetch (Schwab) using resolved_sym
-    3. Fallback (yfinance) using root ticker
+    3. Fallback (Dolt Database) using root ticker
+    4. Fallback (yfinance) using root ticker
     """
     cache_ticker = ticker # Use root for cache name consistency
     today_str = date.today().isoformat()
@@ -230,7 +231,21 @@ def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str
     except Exception as e:
         log.warning("Schwab fetch failed/limited for %s: %s", fetch_sym, e)
         
-    # 3. Fallback (yfinance) using the root ticker
+    # 3. Fallback (Dolt EOD Database)
+    try:
+        from scripts.streaming.options.dolt_fallback import fetch_from_dolt
+        log.info("Attempting Dolt DB fallback for %s...", ticker)
+        chain = fetch_from_dolt(ticker)
+        if chain:
+            log.info("Dolt DB fallback SUCCEEDED for %s", ticker)
+            # Save to cache if fallback succeeded
+            cache_file.write_text(json.dumps(_serialize_chain(chain), cls=DateEncoder, indent=2))
+            return chain
+    except Exception as e:
+        log.warning("Dolt DB fallback failed for %s: %s", ticker, e)
+
+    # 4. Fallback (yfinance) using the root ticker
+    log.info("Attempting yfinance fallback (fallback-of-fallback) for %s...", ticker)
     chain = _fetch_from_yfinance(ticker)
     if chain:
         # Save to cache if fallback succeeded

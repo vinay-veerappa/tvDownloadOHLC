@@ -4,6 +4,8 @@ import json
 import yaml
 from datetime import datetime, timedelta
 import pytz
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 

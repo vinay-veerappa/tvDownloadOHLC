@@ -302,3 +302,61 @@ In multi-silo options strategies (e.g., Wheel, Income Covered Call, Long DTE Cre
 3. **Execution Rationale**:
     - **Re-validation**: Rather than blindly rolling into a new option contract, this pattern forces the standard strategy entry filters (IV Rank, spot price, economic calendar blackouts, and upcoming earnings) to re-evaluate the market context.
     - **Simplicity & Safety**: Eliminates the risk of complex double-leg executions hanging in the broker service, and guarantees that any new entry adheres to current capital allocation and sizing rules.
+
+---
+
+## [ADR-020] Prop Firm RTH Liquidation & Harmonised Strategy Integration Standard
+**Status:** Approved
+**Date:** 2026-05-20
+
+### Context
+To support institutional prop-firm funding rules, we must eliminate overnight carryover risk and swap exposure. Furthermore, to prevent maintenance overhead and duplicate data-handling code, we must enforce a unified, decoupled strategy pattern.
+
+### Decision
+1.  **Mandatory 16:00 ET Hard Exit:** All strategy hunters (Pillar 2) and adapters must enforce absolute liquidation of outstanding trades at or before 16:00 New York Time (the close of the 15:59 bar).
+2.  **Strategy Decoupling Rule:** Custom strategy scripts are forbidden from reading files directly, converting timezones, or performing raw bar-by-bar looping. They must derive calculations from centralized libraries (`libs_py/`) and return a standardized Signal List DataFrame.
+3.  **Optuna-ready Dynamic Pivots:** Swing pivoting structures must be parameter-driven to allow Optuna execution sweeps to discover optimal pivot lookbacks per index.
+
+### Implementation Rules
+1.  **Exits:** Intraday signals are capped at 16:00 ET. The strategy's `hunt()` output enforces `target1_price` or `stop_price` execution, with an absolute exit boundary at 16:00 ET if neither is hit.
+2.  **I/O and Timezones:** Strategies accept standardized, tz-aware `America/New_York` DataFrames from the `DataLoader`. No direct `pd.read_parquet` calls or custom naive timezone conversions are permitted inside `strategies/`.
+3.  **Libraries first:** Strategies must import core structural math (`detect_swings`, `detect_cisd`, `detect_fvg`) directly from `libs_py.ict_engine` and avoid duplicating pivot/gap logic.
+
+---
+
+## [ADR-021] Unified Prop Firm Simulation Standard
+**Status:** Approved
+**Date:** 2026-05-20
+
+### Context
+Prop firm simulation logic had proliferated across four separate, incompatible implementations:
+1. `scripts/trading_framework/ml/prop_eval_mc.py` — Monte Carlo on daily P&L (called with per-trade data — **methodologically incorrect input**).
+2. `scripts/orb_generic/strategy_validation/scripts/06_prop_sim.py` — Full rule-set (daily loss limit, trailing DD, consistency rule, max trades/day) but isolated to ORB strategies only.
+3. `scripts/strategies/nine_thirty_breakout/utils/simulate_prop_pass.py` — Bootstrap MC hardcoded to a single Excel file from one ORB variant.
+4. `scripts/trading_framework/reporting/risk_profiler.py` — Institutional grading (EV, PF, SQN, DRR) but no firm-rule enforcement.
+
+This created maintenance risk, inconsistent metrics, and a silent correctness bug (per-trade returns fed as daily P&L to the Monte Carlo).
+
+### Decision
+A single canonical `PropFirmSimulator` module is adopted as the **only** source for prop firm viability evaluation. All other implementations are demoted to legacy and must not be extended.
+
+### Implementation Rules
+1. **Single Source of Truth:** `scripts/trading_framework/ml/prop_firm_simulator.py` is the canonical module. All backtesting pipelines must import from this module for prop firm simulation.
+2. **Input Contract:** The simulator accepts the `trades_detailed` DataFrame emitted by `VectorizedBacktester.run()` (columns: `pnl_pct`, `exit_time`). It aggregates trades to daily P&L internally after applying rule-based trade caps and daily loss limits. Per-trade returns must never be treated as daily P&L.
+3. **Firm Profiles:** All firm rule configurations (trailing DD, static DD, daily loss limit, consistency rule, max trades/day, eval period) are codified as immutable `PropFirmProfile` dataclasses in `FIRM_PROFILES`. Canonical presets: `apex_50k`, `apex_100k`, `topstep_50k`, `topstep_100k`, `ftmo_50k`, `generic_50k`.
+4. **Config Override:** Firm parameters may be overridden in `sessions.yaml` under `prop_firm.overrides` without modifying code. The `primary_profile` key selects which firm drives the tearsheet pass/fail badge.
+5. **Grading:** Monte Carlo pass-rate maps to ADR-010 letter grades (A ≥ 80%, B ≥ 65%, C ≥ 50%, D ≥ 30%, F < 30%).
+6. **Pipeline Integration:** Prop firm simulation is **Layer 6** of the 7-Layer Research Pipeline (ADR-010). `run_backtest.py` runs `run_all_profiles()` across all configured firm profiles and attaches the multi-profile summary markdown to the tearsheet output.
+7. **Legacy Shims:** `prop_eval_mc.run_prop_mc_simulation()` and `compute_prop_eval_stats()` in `run_backtest.py` are retained as deprecated shims for backward compatibility with existing tests. They must not be called from new strategy code.
+
+### Files
+| Path | Role |
+| :--- | :--- |
+| `scripts/trading_framework/ml/prop_firm_simulator.py` | **Canonical implementation** |
+| `scripts/trading_framework/config/sessions.yaml` | Firm profile config & overrides (`prop_firm:` section) |
+| `scripts/trading_framework/config/config_loader.py` | `PropFirmConfig` dataclass parser |
+| `scripts/trading_framework/run_backtest.py` | Layer 6 integration (consumes `PropFirmSimulator`) |
+| `scripts/trading_framework/ml/prop_eval_mc.py` | **Deprecated shim** — do not extend |
+| `scripts/orb_generic/strategy_validation/scripts/06_prop_sim.py` | Legacy standalone — ORB-specific only |
+| `scripts/strategies/nine_thirty_breakout/utils/simulate_prop_pass.py` | Legacy standalone — NTB-specific only |
+

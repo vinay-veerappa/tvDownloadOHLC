@@ -549,6 +549,31 @@ Cross-reference `version` here against import lines in local `.pine` files to id
 
 **Implication:** If you `pine_open("OldScript")` then inject source for `NewScript` via `pine_set_source`, calling `pine_save()` will save it under `"OldScript"` — not `"NewScript"`. Use §10.B (via `pine_new`) for genuinely new scripts.
 
+---
+
+## 10.8 Harmonised ICT Strategy & Backtest Suite (ADR-020)
+All trading strategies derived from ICT concepts (e.g., displacements, sweeps, rejections) are harmonised under a strict **3-Layer Decoupled Architecture**. No logic drift or duplicate data loaders are permitted.
+
+### 1. Architectural Integrity
+*   **Pillar 1: stateless Math (`scripts/libs_py/`)**: Zero I/O or state. Exposes pure, vectorized NumPy/Pandas math (e.g., `detect_swings` and `detect_fvg` in `ict_engine`).
+*   **Pillar 2: Signal Hunters (`scripts/strategies/`)**: Custom rules chained inside a uniform `.hunt(data, params)` interface. Returns a canonical signal DataFrame (`signal_time`, `direction`, `entry_price`, `stop_price`, `target1_price`).
+*   **Pillar 3: The Engine (`scripts/trading_framework/`)**: Centralized PyArrow parallel I/O, New York timezone localization, matrix-based backtests, Sharpe, MAE/MFE profiling, and Optuna parameter sweeps.
+
+### 2. Mandatory Prop Firm Risk Limit (16:00 ET Max)
+To align with funding firm drawdown parameters and avoid overnight hold risks:
+*   All strategy hunter signals are restricted to **intraday holds only**.
+*   Any trade that is open past 15:59 ET is **forcibly liquidated at the 16:00 ET close price** (close of the 15:59:00 1-minute bar). Both strategy adapters and target Signal List generation enforce this override.
+
+### 3. Dynamic Optimization & Parametrized Swings
+*   Strategies must expose a standard `get_param_grid()` hook.
+*   Pivoting features (e.g. Swing High/Low lookback lengths) must remain dynamic rather than static variables. The Pillar 3 `OptunaOptimizer` dynamically tests and selects the highest-expectancy swing lookback values per ticker index.
+
+### 4. Percentage-Normalized Pricing (ADR-002)
+*   Historical testing across divergent price eras (e.g., NQ at 11,000 in 2022 vs 18,000+ in 2024) is normalized to **price percentage change (%)**.
+*   Accumulating absolute points (`pts`) is forbidden for statistical reporting to prevent optimization distortion toward high-price eras.
+
+---
+
 ## 11. Core Infrastructure & Schema References
 > [!NOTE]
 > **Look at these documents when referenced or required.** Do not load their full contents into the active context unless explicitly requested by the task.

@@ -325,8 +325,8 @@ export f_commit_daily(
     bool fs_sig = sig_side == -1 and sig_outcome == -1 and sig_reversed
 
     [frb, frs] = f_fakeout_reversal_depth(fb_sig, fs_sig, session_low_data, session_high_data, or_high, or_low)
-    float fake_mfe_b = fb_sig ? bull_mfe : na
-    float fake_mfe_s = fs_sig ? bear_mfe : na
+    float fake_mfe_b = fb_sig ? bo_mfe_bull : na
+    float fake_mfe_s = fs_sig ? bo_mfe_bear : na
     float fake_mae_b = fb_sig ? frb : na
     float fake_mae_s = fs_sig ? frs : na
 

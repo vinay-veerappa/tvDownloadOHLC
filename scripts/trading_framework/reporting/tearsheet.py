@@ -49,7 +49,7 @@ def compute_institutional_metrics(trades: List[Any], equity_curve: pd.Series, ac
     Compute institutional risk grading metrics.
     Replicates logic from RiskProfiler for standardizing results.
     """
-    if not trades:
+    if trades is None or len(trades) == 0:
         return {}
         
     pnl_dollars = np.array([t.realized_pnl for t in trades])
@@ -175,7 +175,7 @@ def analyze_trade_metrics(trades: List[Any], point_value: float = 2.0) -> Dict[s
     Returns:
         Dictionary of trade stats
     """
-    if not trades:
+    if trades is None or len(trades) == 0:
         return {}
         
     realized_pnl = np.array([t.realized_pnl for t in trades])

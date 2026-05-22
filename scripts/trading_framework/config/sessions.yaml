@@ -122,3 +122,31 @@ optimization:
   monte_carlo:
     n_simulations: 10000
     eval_days: 30 # Simulated eval period
+
+# ── Prop Firm Simulation (ADR-021) ──
+# Canonical firm rule presets used by PropFirmSimulator.
+# Add/override values here to customize without touching code.
+# All dollar values are USD per 1 Micro-contract equivalent (ADR-009).
+prop_firm:
+  # Which profile key is used as the "primary" result in the tearsheet
+  primary_profile: "apex_50k"
+  # Profiles to run in run_all_profiles() (leave empty for all)
+  run_profiles: ["apex_50k", "topstep_50k", "ftmo_50k"]
+  n_simulations: 5000  # Monte Carlo permutation count
+  # Override specific profile values (key must match FIRM_PROFILES dict)
+  overrides:
+    apex_50k:
+      profit_target: 3000.0
+      max_trailing_drawdown: 2500.0
+      eval_max_days: 30
+    topstep_50k:
+      profit_target: 3000.0
+      max_trailing_drawdown: 2000.0
+      daily_loss_limit: 1000.0
+      eval_max_days: 60
+    ftmo_50k:
+      profit_target: 5000.0
+      max_trailing_drawdown: 5000.0
+      daily_loss_limit: 2500.0
+      consistency_rule_pct: 0.30
+      eval_max_days: 30

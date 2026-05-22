@@ -1,7 +1,16 @@
 """
-Monte Carlo Simulation for Prop Firm Evaluations.
+DEPRECATED (ADR-021) — Do not extend or import from new code.
+==============================================================
+The canonical prop firm simulation implementation has moved to:
+  scripts/trading_framework/ml/prop_firm_simulator.py
 
-Predicts the probability of passing an evaluation given a strategy's 
+This file is retained only as a backward-compatibility shim for
+existing tests. The `run_prop_mc_simulation` function previously
+consumed per-trade % returns as if they were daily P&L, which is
+methodologically incorrect. See ADR-021 for the full decision record.
+
+Monte Carlo Simulation for Prop Firm Evaluations (Legacy).
+Predicts the probability of passing an evaluation given a strategy's
 daily P&L distribution and risk parameters.
 """
 import numpy as np

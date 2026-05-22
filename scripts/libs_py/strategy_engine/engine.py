@@ -3,6 +3,7 @@ import os
 import yaml
 import json
 from datetime import datetime, timedelta, date
+from typing import Optional, Dict, List, Any
 import pytz
 
 from scripts.libs_py.strategy_engine.strategies import (
@@ -380,6 +381,48 @@ class Engine:
                 underlying = signal.underlying
                 strategy_name = staged.strategyName
                 strategy_code = staged.strategyCode
+                
+                # Check Staged Signal TTL Guard
+                execute_after = staged.executeAfter
+                if execute_after.tzinfo is None:
+                    execute_after = pytz.utc.localize(execute_after)
+                
+                ttl_seconds = self.config.get("staged_ttl_seconds", 300)
+                delay = (now - execute_after).total_seconds()
+                if delay > ttl_seconds:
+                    logger.warning(
+                        f"Engine: Staged signal {staged.id} for strategy '{staged.strategyName}' "
+                        f"has expired (executeAfter: {execute_after}, now: {now}, "
+                        f"delay: {delay:.0f}s > TTL {ttl_seconds}s)."
+                    )
+                    await self.db.stagedsignal.update(
+                        where={"id": staged.id},
+                        data={"status": "EXPIRED"}
+                    )
+                    
+                    # Notify Discord of expiration
+                    try:
+                        from zoneinfo import ZoneInfo
+                        tz_et = ZoneInfo("America/New_York")
+                        staged_at_et = staged.stagedAt.astimezone(tz_et)
+                        expired_at_et = now.astimezone(tz_et)
+                        
+                        cancel_msg = (
+                            f"⚠️ **STRATEGY ENGINE: SETUP EXPIRED (STALE / ENGINE SHUTDOWN)**\n\n"
+                            f"* **Silo:** `{staged.strategyName}`\n"
+                            f"* **Underlying:** `{signal.underlying}`\n"
+                            f"* **Action:** Cancel entry (missed execution window)\n"
+                            f"* **Staged At:** `{staged_at_et.strftime('%H:%M:%S')} ET`\n"
+                            f"* **Expired At:** `{expired_at_et.strftime('%H:%M:%S')} ET`\n"
+                            f"* **Reason for Cancellation:**\n"
+                            f"  ❌ Stale entry (delay of {delay:.0f}s exceeded TTL of {ttl_seconds}s)\n"
+                            f"* **Notes:** Entry skipped due to engine shutdown or high startup latency."
+                        )
+                        self.executor._notify_discord(cancel_msg)
+                    except Exception as de:
+                        logger.warning(f"Engine: Failed to send staged expiration Discord notification: {de}")
+                    continue
+
                 
                 # Retrieve strategy instance to check per-variant parameters
                 strategy = self.active_strategies.get(strategy_name)

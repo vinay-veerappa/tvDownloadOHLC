@@ -342,6 +342,9 @@ class PaperExecutor:
 
             total_close_slippage = 0.0
             leg_exit_slippages = []
+            
+            num_short_legs = sum(1 for l in trade_full.legs if l.side == "SHORT" and l.optionType in ["PUT", "CALL"])
+            num_long_legs = sum(1 for l in trade_full.legs if l.side == "LONG" and l.optionType in ["PUT", "CALL"])
 
             # 5. Process each leg to update Tradelegs and sum aggregate trade_pnl
             for leg in trade_full.legs:
@@ -375,7 +378,26 @@ class PaperExecutor:
                 # Fallback to leg-level cost basis if Schwab quote not found
                 # D5: use 100.0 multiplier only for options, 1.0 for stock
                 multiplier = 100.0 if leg.optionType in ["PUT", "CALL"] else 1.0
-                close_val = close_mid if close_mid is not None else (cost_to_close / num_legs)
+                
+                if close_mid is not None:
+                    close_val = close_mid
+                else:
+                    if leg.optionType not in ["PUT", "CALL"]:
+                        close_val = spot_price if spot_price is not None else leg.openPrice
+                    elif cost_to_close > 0:
+                        # Net liability: assign cost to short legs
+                        if leg.side == "SHORT" and num_short_legs > 0:
+                            close_val = cost_to_close / num_short_legs
+                        else:
+                            close_val = 0.0
+                    elif cost_to_close < 0:
+                        # Net asset: assign value to long legs
+                        if leg.side == "LONG" and num_long_legs > 0:
+                            close_val = abs(cost_to_close) / num_long_legs
+                        else:
+                            close_val = 0.0
+                    else:
+                        close_val = 0.0
                 
                 # Apply close slippage per leg
                 if not is_assignment:
@@ -423,7 +445,7 @@ class PaperExecutor:
                 if is_credit:
                     exit_price_adjusted = cost_to_close + total_close_slippage
                 else:
-                    exit_price_adjusted = max(0.0, cost_to_close - total_close_slippage)
+                    exit_price_adjusted = max(0.0, abs(cost_to_close) - total_close_slippage)
 
             # Update metadata to include exit slippages
             try:

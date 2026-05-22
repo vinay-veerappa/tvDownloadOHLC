@@ -12,6 +12,15 @@ from scripts.strategies.reversal.core.mean_reversion import MeanReversionStrateg
 from scripts.strategies.reversal.core.six_am_reversal import SixAMReversalStrategy
 from scripts.strategies.vwap_reclaim.core.vwap_reclaim import VWAPReclaimStrategy
 
+# ── ICT Suite (Harmonised Pillar-2, ADR-020 compliant) ─────────────────────
+from scripts.strategies.ict.strategies import (
+    ICTDisplacementStrategy,
+    ICTLiquiditySweepStrategy,
+    ICTFVGRejectionStrategy,
+    ICTNYSessionStrategy,
+    ICTAsiaVolatilityStrategy,
+)
+
 
 class HunterStrategyAdapter:
     """Adapter to expose hunt()-style strategies as lifecycle-compatible strategies."""
@@ -28,13 +37,20 @@ class HunterStrategyAdapter:
 
 
 STRATEGY_FACTORY_REGISTRY: Dict[str, Callable[[str], Any]] = {
-    "ib_pullback": lambda ticker: HunterStrategyAdapter(IBPullbackStrategy(ticker=ticker), "IB Pullback"),
-    "box_reversion": lambda ticker: HunterStrategyAdapter(BoxReversionStrategy(ticker=ticker), "Box Reversion"),
+    # ── Existing strategies ─────────────────────────────────────────────────
+    "ib_pullback":    lambda ticker: HunterStrategyAdapter(IBPullbackStrategy(ticker=ticker),    "IB Pullback"),
+    "box_reversion":  lambda ticker: HunterStrategyAdapter(BoxReversionStrategy(ticker=ticker),  "Box Reversion"),
     "mean_reversion": lambda ticker: HunterStrategyAdapter(MeanReversionStrategy(ticker=ticker), "Mean Reversion"),
-    "ema_pullback": lambda ticker: HunterStrategyAdapter(EMAPullbackStrategy(ticker=ticker), "EMA Pullback"),
-    "vwap_reclaim": lambda ticker: HunterStrategyAdapter(VWAPReclaimStrategy(ticker=ticker), "VWAP Reclaim"),
+    "ema_pullback":   lambda ticker: HunterStrategyAdapter(EMAPullbackStrategy(ticker=ticker),   "EMA Pullback"),
+    "vwap_reclaim":   lambda ticker: HunterStrategyAdapter(VWAPReclaimStrategy(ticker=ticker),   "VWAP Reclaim"),
     "failed_auction": lambda ticker: HunterStrategyAdapter(FailedAuctionStrategy(ticker=ticker), "Failed Auction"),
-    "six_am_reversal": lambda ticker: HunterStrategyAdapter(SixAMReversalStrategy(ticker=ticker), "6 AM Reversal"),
+    "six_am_reversal":lambda ticker: HunterStrategyAdapter(SixAMReversalStrategy(ticker=ticker), "6 AM Reversal"),
+    # ── ICT Suite (Harmonised, ADR-020) ────────────────────────────────────
+    "ict_displacement":    lambda ticker: HunterStrategyAdapter(ICTDisplacementStrategy(ticker=ticker),    "ICT Displacement (MSS)"),
+    "ict_liquidity_sweep": lambda ticker: HunterStrategyAdapter(ICTLiquiditySweepStrategy(ticker=ticker), "ICT Liquidity Sweep"),
+    "ict_fvg_rejection":   lambda ticker: HunterStrategyAdapter(ICTFVGRejectionStrategy(ticker=ticker),   "ICT FVG Rejection"),
+    "ict_ny_session":      lambda ticker: HunterStrategyAdapter(ICTNYSessionStrategy(ticker=ticker),      "ICT NY Session KZ"),
+    "ict_asia_volatility": lambda ticker: HunterStrategyAdapter(ICTAsiaVolatilityStrategy(ticker=ticker), "ICT Asia Volatility"),
 }
 
 

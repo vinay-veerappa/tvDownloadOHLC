@@ -26,7 +26,11 @@ from scripts.trading_framework.reporting.mfe_mae_report import (
     plot_mfe_mae_analysis,
 )
 from scripts.trading_framework.reporting.chop_filter_report import generate_chop_report
-from scripts.trading_framework.ml.prop_eval_mc import run_prop_mc_simulation
+from scripts.trading_framework.ml.prop_firm_simulator import (
+    PropFirmSimulator,
+    FIRM_PROFILES,
+    PropFirmProfile,
+)
 from scripts.trading_framework.ml.optimizer import OptunaOptimizer
 from scripts.trading_framework.ml.walk_forward import PurgedKFold
 import optuna
@@ -45,8 +49,20 @@ def _extract_horizons(mfe_mae_df: pd.DataFrame, configured_horizons) -> list[int
 
 
 def compute_prop_eval_stats(trade_returns_pct: pd.Series, _mc_config=None) -> Dict[str, Any]:
-    """Backward-compatible alias used by legacy tests/callers."""
-    return run_prop_mc_simulation(trade_returns_pct)
+    """
+    Backward-compatible shim retained for legacy test callers.
+    New code should use PropFirmSimulator.run_all_profiles() directly.
+    Converts per-trade % returns to approximate daily P&L before simulation.
+    """
+    # Treat each trade return as a synthetic daily P&L unit (approximate)
+    account_size = 50_000.0
+    daily_pnl = trade_returns_pct / 100.0 * account_size
+    sim = PropFirmSimulator(account_size=account_size)
+    profile = FIRM_PROFILES["apex_50k"]
+    # Build a minimal trades_detailed-compatible DataFrame
+    synthetic = pd.DataFrame({"pnl_pct": trade_returns_pct.values})
+    mc = sim.run_monte_carlo(synthetic, profile, n_simulations=2000)
+    return {"pass_rate": mc.pass_rate_pct / 100.0, "msg": mc.grade}
 
 
 def generate_mfe_mae_report(
@@ -76,32 +92,32 @@ def generate_mfe_mae_report(
 
 
 def _compute_mfe_mae_compat(signals: pd.DataFrame, df: pd.DataFrame, mfe_mae_config):
-    """Support both legacy and current compute_mfe_mae call signatures."""
-    try:
-        return compute_mfe_mae(signals, df, mfe_mae_config)
-    except TypeError:
-        horizons = getattr(mfe_mae_config, "forward_horizons_minutes", [5, 15, 30, 60, 120])
-        work_df = df.copy()
+    """Compute MFE/MAE by mapping canonical signals back to OHLC DataFrame."""
+    horizons = getattr(mfe_mae_config, "forward_horizons_minutes", [5, 15, 30, 60, 120])
+    work_df = df.copy()
 
-        if "signal" not in work_df.columns:
-            work_df["signal"] = 0
+    if "signal" not in work_df.columns:
+        work_df["signal"] = 0
+        
+    if "atr_14" not in work_df.columns:
+        work_df["atr_14"] = 1.0
 
-        if isinstance(signals, pd.DataFrame) and {"signal_time", "direction"}.issubset(signals.columns):
-            for _, row in signals.iterrows():
-                ts = row.get("signal_time")
-                if ts in work_df.index:
-                    direction = str(row.get("direction", "")).lower()
-                    work_df.at[ts, "signal"] = 1 if direction == "long" else -1 if direction == "short" else 0
+    if isinstance(signals, pd.DataFrame) and {"signal_time", "direction"}.issubset(signals.columns):
+        for _, row in signals.iterrows():
+            ts = row.get("signal_time")
+            if ts in work_df.index:
+                direction = str(row.get("direction", "")).lower()
+                work_df.at[ts, "signal"] = 1 if direction == "long" else -1 if direction == "short" else 0
 
-        return compute_mfe_mae(work_df, "signal", horizons)
+    return compute_mfe_mae(work_df, "signal", horizons)
 
 
 def run_optimization(args, config, df):
     """
     Runs a robust Optuna study with PurgedKFold cross-validation.
     """
-    print(f"🔍 Starting Institutional Optimization for {args.ticker}...")
-    print(f"📊 Method: PurgedKFold CV (k=3), TPE Sampler, Median Pruning")
+    print(f"* Starting Institutional Optimization for {args.ticker}...")
+    print(f"* Method: PurgedKFold CV (k=3), TPE Sampler, Median Pruning")
     
     def objective(trial):
         # 1. Parameter Space (Defaulting to BoxReversion logic)
@@ -141,21 +157,21 @@ def run_optimization(args, config, df):
     optimizer = OptunaOptimizer(study_name=study_name)
     study = optimizer.run_optimization(objective, n_trials=args.trials)
     
-    print(f"🏆 Best IS Parameters: {study.best_params}")
-    print(f"📈 Estimated CV Sharpe: {study.best_value:.2f}")
+    print(f"* Best IS Parameters: {study.best_params}")
+    print(f"* Estimated CV Sharpe: {study.best_value:.2f}")
     return study.best_params
 
 def run_research_pipeline(args):
     """
     Executes the 7-layer research pipeline.
     """
-    print(f"🚀 Initializing Research Pipeline for {args.ticker} using {args.strategy}...")
+    print(f"[*] Initializing Research Pipeline for {args.ticker} using {args.strategy}...")
     
     # 1. Load Config
     config = load_config(args.config)
     
     # 2. Data Loading & Enrichment
-    print("📂 Loading data...")
+    print("* Loading data...")
     loader = DataLoader(config)
     df = loader.load_enriched(args.ticker)
     
@@ -167,44 +183,102 @@ def run_research_pipeline(args):
     strategy = get_strategy(args.strategy, args.ticker)
     
     # 4. Final Parameter Run
-    print("📡 Generating signals...")
+    print("* Generating signals...")
     signals = strategy.generate_signals(df, best_params) 
     
     # 4. Vectorized Backtest
-    print("📈 Running backtest engine...")
+    print("* Running backtest engine...")
     engine = VectorizedBacktester()
     # Mocking result structure for now (matches engine.run output)
     result = engine.run(signals, df, {'leverage': 1.0})
     
     # 5. Advanced Research Analysis (MFE/MAE)
-    print("🔬 Computing MFE/MAE excursions...")
+    print("* Computing MFE/MAE excursions...")
     mfe_mae_signals = _compute_mfe_mae_compat(signals, df, config.mfe_mae)
     
-    # 6. ML / Prop Evaluation
-    print("🧪 Computing Prop Firm evaluation (Monte Carlo)...")
-    pm_stats = compute_prop_eval_stats(result['trade_returns_pct'], config.optimization.monte_carlo)
-    
+    # 6. ML / Prop Evaluation (ADR-021: Unified PropFirmSimulator)
+    print("* Computing Prop Firm evaluation (Monte Carlo across all firm profiles)...")
+    trades_detailed = result.get('trades_detailed', pd.DataFrame())
+    pf_config = config.prop_firm
+
+    # Build overridden profiles from config
+    sim_profiles: list[PropFirmProfile] = []
+    for key in pf_config.run_profiles:
+        if key not in FIRM_PROFILES:
+            print(f"  *  Unknown profile key '{key}' in config * skipping.")
+            continue
+        base = FIRM_PROFILES[key]
+        overrides = pf_config.overrides.get(key, {})
+        if overrides:
+            # Rebuild with overrides applied (frozen dataclass needs replace)
+            from dataclasses import replace
+            base = replace(base, **overrides)
+        sim_profiles.append(base)
+
+    pf_sim = PropFirmSimulator(
+        account_size=config.account_risk.starting_equity,
+        point_value=config.execution.point_value.get(args.ticker, 2.0),
+    )
+
+    all_pf_results = {}
+    primary_det = None
+    primary_mc = None
+    pf_summary_md = ""
+
+    if not trades_detailed.empty and sim_profiles:
+        for profile in sim_profiles:
+            det = pf_sim.run_deterministic(trades_detailed, profile)
+            mc  = pf_sim.run_monte_carlo(trades_detailed, profile, n_simulations=pf_config.n_simulations)
+            all_pf_results[profile.name] = (det, mc)
+            print(f"  * {profile.name}: Pass Rate {mc.pass_rate_pct:.1f}% (Grade {mc.grade}) | Blow {mc.blow_rate_pct:.1f}%")
+            if profile.name == FIRM_PROFILES.get(pf_config.primary_profile, sim_profiles[0]).name:
+                primary_det, primary_mc = det, mc
+
+        if primary_det is None and all_pf_results:
+            primary_det, primary_mc = next(iter(all_pf_results.values()))
+
+        # Build multi-profile summary markdown
+        pf_summary_md = pf_sim.format_multi_report(
+            {k: v for k, v in all_pf_results.items()}
+        )
+        if primary_det is not None:
+            pf_summary_md += pf_sim.format_report(primary_det, primary_mc)
+    else:
+        print("  *  No trades_detailed available * skipping prop firm simulation.")
+
     # 7. Reporting Suite
-    print("📄 Generating institutional reports...")
-    
-    # Wrap result in the expected 'PortfolioResult' structure for tearsheet
-    # Mapping engine output to what tearsheet.py expects
+    print("* Generating institutional reports...")
+
     class MockResult:
-        def __init__(self, res, pm_stats, config):
+        def __init__(self, res, primary_det, primary_mc, pf_summary_md, config):
             self.combined_equity_curve = res['equity_curve']
-            self.combined_trades = res.get('trades_detailed', pd.DataFrame())
-            self.prop_eval_passed = pm_stats['pass_rate'] > 0.8  # Threshold from config
-            self.days_to_pass = None
+            
+            trades_df = res.get('trades_detailed', pd.DataFrame())
+            class MockTrade:
+                def __init__(self, pnl):
+                    self.realized_pnl = pnl
+
+            # Convert pnl_pct to dollar PNL
+            starting_equity = config.account_risk.starting_equity
+            if not trades_df.empty and 'pnl_pct' in trades_df.columns:
+                self.combined_trades = [MockTrade((pnl / 100.0) * starting_equity) for pnl in trades_df['pnl_pct']]
+            else:
+                self.combined_trades = []
+
+            self.prop_eval_passed = (primary_mc.pass_rate_pct >= 65.0) if primary_mc else False
+            self.prop_firm_grade = primary_mc.grade if primary_mc else 'N/A'
+            self.prop_firm_summary_md = pf_summary_md
+            self.days_to_pass = primary_mc.avg_days_to_pass if primary_mc else None
             self.account_summary = {
                 'starting_equity': config.account_risk.starting_equity,
-                'risk_per_trade': config.session_risk.daily_max_loss / config.session_risk.max_trades_per_day, # Approximation
+                'risk_per_trade': config.session_risk.daily_max_loss / config.session_risk.max_trades_per_day,
                 'peak_equity': res['equity_curve'].max(),
                 'current_balance': res['equity_curve'].iloc[-1],
                 'current_drawdown': (res['equity_curve'].iloc[-1] / res['equity_curve'].max()) - 1,
                 'max_trailing_drawdown': config.account_risk.trailing_drawdown
             }
-            
-    perf_result = MockResult(result, pm_stats, config)
+
+    perf_result = MockResult(result, primary_det, primary_mc, pf_summary_md, config)
     
     # Generate Tearsheet
     tearsheet = generate_tearsheet(perf_result)
@@ -221,9 +295,9 @@ def run_research_pipeline(args):
     generate_mfe_mae_report(mfe_mae_signals, config.mfe_mae, args.ticker)
     # generate_chop_report(df, signals, args.ticker) # Needs specific internal data
     
-    print(f"\n✅ Research Pipeline Complete!")
-    print(f"📊 Tearsheet: {ts_path}")
-    print(f"📈 Plots saved to: {output_dir}")
+    print(f"\n* Research Pipeline Complete!")
+    print(f"* Tearsheet: {ts_path}")
+    print(f"* Plots saved to: {output_dir}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Institutional Research Suite - Unified CLI")
