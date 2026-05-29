@@ -359,7 +359,8 @@ class PaperExecutor:
                         opt_quote = await self.broker.get_stock_quote(leg.symbol)
                     close_bid = opt_quote.get("bid")
                     close_ask = opt_quote.get("ask")
-                    close_mid = opt_quote.get("mid")
+                    mark = opt_quote.get("mark")
+                    close_mid = mark if mark is not None else (((close_bid + close_ask) / 2.0) if (close_bid is not None and close_ask is not None) else opt_quote.get("last"))
                 except Exception:
                     pass
 

@@ -12,12 +12,14 @@ var C_GROUP_NAME_EXTRAS = 'Extras'
 // } consts
 
 // { inputs
-var bool useClose   = true 
+//var bool useClose   = true 
 var iFriHoliday     = input.bool(false,"Friday Holiday")   
 var iMonHoliday     = input.bool(false,"Monday Holiday")   
 var iTable          = input.bool(false,"Display Table")
 var iDisplayOpen    = input.bool(true,"Display Open")   
 var iDisplayClose   = input.bool(false,"Display Close")   
+var useSPX          = input.bool(false, "Use SPX iso SPY for ES")
+var iDebug          = input.bool(false, "Debug Logging")
 
 //// Use Fib Levels (From Fadi)
 type FibLevels
@@ -278,14 +280,14 @@ method delete(array<fib> this) =>
         f.lbl.delete()
         f.fl.delete()
 
-method add(array<DailyEM> this, float price, int _time, float stdDev) =>
+method add(array<DailyEM> this, float price, int _time, float stdDev, bool isClose) =>
     DailyEM d     = DailyEM.new()
     d.price     := price
     d.EM     := stdDev
     d.time      := _time
     d.time_last := _time
     d.fibs      := array.new<fib>()
-    d.txt       := useClose?"EM Close": "EM Open"
+    d.txt       := isClose?"EM Close": "EM Open"
     d.calcFibs(price, stdDev)
     this.unshift(d)
 
@@ -327,20 +329,19 @@ getContractCost(_sym, _isClose) =>
     // Return the correct value based on the flag
     _isClose ? c : o
 
-getContractSym(_underlyingSym, _strike, _side, OptionsData current_symbol_options) =>
+getContractSym(_underlyingSym, _strike, _side, OptionsData current_symbol_options, bool isClose) =>
     int ms_per_day = 86400000
-    
-    // 1. Determine target trading session (Today for Open, Next Day for Close)
     int days_to_next_session = 1
-    
-    // Skip weekends, and handle your manual holiday inputs
+
     if dayofweek(time) == dayofweek.friday
-        days_to_next_session := iMonHoliday ? 4 : 3 
+        days_to_next_session := iMonHoliday ? 4 : 3
+
     else if dayofweek(time) == dayofweek.thursday and iFriHoliday
-        days_to_next_session := iMonHoliday ? 5 : 4 
-        
-    int target_trade_time = useClose ? time + (days_to_next_session * ms_per_day) : time
-    
+        days_to_next_session := iMonHoliday ? 5 : 4
+
+    int target_trade_time = isClose ? time + (days_to_next_session * ms_per_day) : time
+
+
     // 2. Identify 0DTE vs Weekly based on ticker
     string opt_sym = current_symbol_options.optionsSymbol
     bool is_0dte = str.contains(opt_sym, "SPX") or str.contains(opt_sym, "NDX") or str.contains(opt_sym, "QQQ") or str.contains(opt_sym, "SPY") or str.contains(opt_sym, "IWM") or str.contains(opt_sym, "DIA")
@@ -375,9 +376,38 @@ getContractSym(_underlyingSym, _strike, _side, OptionsData current_symbol_option
     // 7. Build Final Ticker String
     opt_sym + date_str + _side + str.tostring(strike, '#') + ".0"
 
-getAtmContracts(_underlyingSym, _strike,OptionsData current_symbol_options) =>
-    [getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_CALL,current_symbol_options), getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_PUT,current_symbol_options)]
-// } funcs
+getAtmContracts(_underlyingSym, _strike, OptionsData current_symbol_options, bool isClose) =>
+    [getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_CALL, current_symbol_options, isClose),
+     getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_PUT, current_symbol_options, isClose)]// } funcs
+
+
+
+calcEM(bool isClose, OptionsData opts, string underlyingSym, bool useETFConv) =>
+    float etfAnchor = getContractCost(underlyingSym, isClose)
+    float r = 1.0
+    if useETFConv
+        float fut = getContractCost(syminfo.ticker, true)
+        r := fut / etfAnchor
+    float center = math.round(etfAnchor / opts.strike) * opts.strike
+    [atmCall, atmPut] = getAtmContracts(opts.optionsSymbol, center, opts, isClose)
+    float callCost = getContractCost(atmCall, isClose)
+    float putCost  = getContractCost(atmPut, isClose)
+    float futAnchor = etfAnchor
+    if syminfo.type == "futures"
+        futAnchor := math.round_to_mintick(getContractCost(syminfo.ticker, isClose))
+    float em = na
+    if not na(callCost) and not na(putCost)
+        em := useETFConv ? math.round_to_mintick((callCost + putCost) * r) : math.round_to_mintick(callCost + putCost)
+    if iDebug
+        log.info("EM [" + (isClose ? "CLOSE" : "OPEN") + "] " +
+             "anchor=" + str.tostring(futAnchor) +
+             " ratio=" + str.tostring(r) +
+             " strike=" + str.tostring(center) +
+             " call=" + atmCall + "@" + str.tostring(callCost) +
+             " put="  + atmPut  + "@" + str.tostring(putCost) +
+             " etfEM=" + str.tostring(callCost + putCost) +
+             " finalEM=" + str.tostring(em))
+    [futAnchor, em]
 
 
 // { logic
@@ -397,30 +427,25 @@ var bool can_calculate = false
 var int last_open_time = 0
 var int last_close_time = 0
 
-// Trigger Open logic matching the exact equity open
+var bool calcOpen  = false
+var bool calcClose = false
+
 if is_recent and eq_open and time != last_open_time
     last_open_time := time
-    can_calculate  := true
-    useClose       := false
+    calcOpen := true
+    if iDebug
+        log.info(">>> OPEN trigger @ " + str.format_time(time))
     label.new(bar_index, high, "Open", color=color.green, textcolor=color.white, style=label.style_label_down)
 
-// Trigger Close logic matching the exact equity close
 if is_recent and eq_close and time != last_close_time
     last_close_time := time
-    can_calculate   := true
-    useClose        := true
+    calcClose := true
+    if iDebug
+        log.info(">>> CLOSE trigger @ " + str.format_time(time))
     label.new(bar_index, high, "Close", color=color.green, textcolor=color.white, style=label.style_label_down)
 
 var useETFConv = false
-var ratio = 0.0 
 var underlyingSym = syminfo.ticker
-var anchorOpen = useClose ? close : open
-var centerStrike = 0.0
-var todayExpAtmCallSym = ""
-var todayExpAtmPutSym = ""
-var todayExpAtmCallCost = 0.0
-var todayExpAtmPutCost = 0.0
-var todayEM = 0.0
 var OptionsData current_symbol_options = OptionsData.new("", syminfo.ticker, 1, false)
 
 if barstate.isfirst
@@ -439,10 +464,10 @@ if barstate.isfirst
         useETFConv := true
         
     if str.contains(syminfo.ticker,"ES") 
-        underlyingSym := "SPY"
-        current_symbol_options.optionsSymbol := "SPY"
-        current_symbol_options.strike := 1
-        useETFConv := true
+        underlyingSym := useSPX?  'CBOE:SPX':"SPY"
+        current_symbol_options.optionsSymbol := useSPX?  'SPXW':"SPY"
+        current_symbol_options.strike := useSPX?  5:1
+        useETFConv := useSPX?  false :true
         
     if str.contains(syminfo.ticker,"NDX")   
         current_symbol_options.strike := 25
@@ -480,51 +505,20 @@ if barstate.isfirst
         useETFConv := true
         underlyingSym := 'IWM'
 
-if can_calculate
-    can_calculate := false
-    todayExpAtmCallCost := na
-    todayExpAtmPutCost := na
-    ratio := 0.0 
+if calcOpen
+    calcOpen := false
+    [aOpen, emOpen] = calcEM(false, current_symbol_options, underlyingSym, useETFConv)
+    if not na(emOpen) and emOpen > 0
+        daily.add(aOpen, time, emOpen,false)
 
-    anchorOpen := getContractCost(underlyingSym, useClose) 
+if calcClose
+    calcClose := false
+    [aClose, emClose] = calcEM(true, current_symbol_options, underlyingSym, useETFConv)
+    if not na(emClose) and emClose > 0
+        dailyClose.add(aClose, time, emClose,true)
 
-    if useETFConv
-        float future_contract_price_fetched = 0.0
-        // Fetch futures price (continuous front-month contract)
-        future_contract_price_fetched := getContractCost(syminfo.ticker, true)
-        // Calculate dynamic underlying ratio
-        ratio := future_contract_price_fetched / anchorOpen
 
-    // 2. Mathematically snap to the exact nearest ATM strike
-    centerStrike := math.round(anchorOpen / current_symbol_options.strike) * current_symbol_options.strike
-    log.info("New Session Price: " + str.tostring(anchorOpen) + " | Snapped Strike: " + str.tostring(centerStrike))
-
-    // 3. Fetch the contracts exactly ONCE.
-    [atmCall, atmPut] = getAtmContracts(current_symbol_options.optionsSymbol, centerStrike, current_symbol_options)
-    
-    todayExpAtmCallSym := atmCall
-    todayExpAtmPutSym  := atmPut
-    
-    log.info("Requesting Contracts: " + todayExpAtmCallSym + " & " + todayExpAtmPutSym)
-    
-    // 4. Get the option pricing
-    todayExpAtmCallCost := getContractCost(todayExpAtmCallSym, useClose)
-    todayExpAtmPutCost  := getContractCost(todayExpAtmPutSym, useClose)
-
-    log.info("Option Pricing: C=" + str.tostring(todayExpAtmCallCost) + " | P=" + str.tostring(todayExpAtmPutCost))
-
-    if syminfo.type == "futures"
-        anchorOpen := math.round_to_mintick(anchorOpen + (getContractCost(syminfo.ticker, useClose) - anchorOpen))
-
-    if not na(todayExpAtmCallCost) and not na(todayExpAtmPutCost)
-        todayEM := useETFConv ? math.round_to_mintick((todayExpAtmCallCost + todayExpAtmPutCost) * ratio) : math.round_to_mintick(todayExpAtmCallCost + todayExpAtmPutCost)
-
-        if useClose 
-            dailyClose.add(anchorOpen, time, math.round_to_mintick((todayEM))) 
-        else
-            daily.add(anchorOpen, time, math.round_to_mintick((todayEM)))
-
-if barstate.islast and todayEM > 0.0
+if barstate.islast 
     if daily.size() > 0 and iDisplayOpen
         daily.update(time)
         daily.first().drawFibs(0)
@@ -538,19 +532,27 @@ if barstate.islast and todayEM > 0.0
 
 // { Table 
 var table displayTable = table.new(
-     position.bottom_right, columns = 4, rows = 3, border_color = chart.fg_color, border_width = 2
+     position.bottom_right, columns = 6, rows = 3, border_color = chart.fg_color, border_width = 2
  )
 
-tableRow(int row, string title, string text1, string text2, string text3,color titleColor = #9b27b066, color infoColor = na) =>
-    displayTable.cell(0, row, title, bgcolor = titleColor, text_color = chart.fg_color)
-    displayTable.cell(1, row, text1, bgcolor = infoColor,  text_color = chart.fg_color)
-    displayTable.cell(2, row, text2, bgcolor = infoColor,  text_color = chart.fg_color)
-    displayTable.cell(3, row, text3, bgcolor = infoColor,  text_color = chart.fg_color)
+tableRow(int row, string c0, string c1, string c2, string c3, string c4, color titleColor = #9b27b066, color infoColor = na) =>
+    displayTable.cell(0, row, c0, bgcolor = titleColor, text_color = chart.fg_color)
+    displayTable.cell(1, row, c1, bgcolor = infoColor, text_color = chart.fg_color)
+    displayTable.cell(2, row, c2, bgcolor = infoColor, text_color = chart.fg_color)
+    displayTable.cell(3, row, c3, bgcolor = infoColor, text_color = chart.fg_color)
+    displayTable.cell(4, row, c4, bgcolor = infoColor, text_color = chart.fg_color)
 
 if barstate.islast and iTable
-    tableRow(0, "STRIKE", "EM","EM High", "EM Low", na, #9b27b066)
-    if dailyClose.size() > 0
-        tableRow(1, str.tostring(centerStrike),str.tostring(dailyClose.first().EM),str.tostring((dailyClose.first().price+dailyClose.first().EM)),str.tostring((dailyClose.first().price-dailyClose.first().EM)), na, #9b27b066)
+    tableRow(0, "TYPE", "ANCHOR", "EM", "EM High", "EM Low", #9b27b066)
+    
+    
     if daily.size() > 0
-        tableRow(1, str.tostring(centerStrike),str.tostring(daily.first().EM),str.tostring((daily.first().price+daily.first().EM)),str.tostring((daily.first().price-daily.first().EM)), na, #9b27b066)
+        DailyEM d = daily.first()
+        //tableRow(1, "OPEN", str.tostring(d.EM), str.tostring(d.price + d.EM), str.tostring(d.price - d.EM))
+        tableRow(1, "OPEN",  str.tostring(d.price), str.tostring(d.EM), str.tostring(d.price + d.EM), str.tostring(d.price - d.EM))
+    if dailyClose.size() > 0
+        DailyEM c = dailyClose.first()
+        //tableRow(2, "CLOSE", str.tostring(c.EM), str.tostring(c.price + c.EM), str.tostring(c.price - c.EM))
+        tableRow(2, "CLOSE", str.tostring(c.price), str.tostring(c.EM), str.tostring(c.price + c.EM), str.tostring(c.price - c.EM))
+                
 // } Table
