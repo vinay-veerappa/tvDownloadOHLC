@@ -13,7 +13,9 @@ from scripts.libs_py.strategy_engine.strategies import (
     MeanReversionEmStrategy,
     WallBreakStrategy,
     IncomeCcStrategy,
-    EarningsStrangleStrategy
+    EarningsStrangleStrategy,
+    StockRepairStrategy,
+    CollarStrategy
 )
 from scripts.libs_py.strategy_engine.strategies.base import StrategyParams, Signal, LegSpec
 from scripts.libs_py.strategy_engine.paper_exec import PaperExecutor
@@ -105,12 +107,14 @@ STRATEGY_CLASSES = {
     "MEAN_REVERSION_EM": MeanReversionEmStrategy,
     "WALL_BREAK": WallBreakStrategy,
     "INCOME_CC": IncomeCcStrategy,
-    "EARNINGS_STRANGLE": EarningsStrangleStrategy
+    "EARNINGS_STRANGLE": EarningsStrangleStrategy,
+    "STOCK_REPAIR": StockRepairStrategy,
+    "COLLAR": CollarStrategy
 }
 
 INDEX_TICKERS = {"SPY", "SPX", "QQQ", "IWM"}
 STOCK_TICKERS = {"NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "AMZN", "RIVN"}
-DAILY_STRATEGY_CODES = {"WHEEL", "EARNINGS_STRANGLE", "INCOME_CC","LONG_DTE_CREDIT"}
+DAILY_STRATEGY_CODES = {"WHEEL", "EARNINGS_STRANGLE", "INCOME_CC", "LONG_DTE_CREDIT", "STOCK_REPAIR", "COLLAR"}
 
 class Engine:
     """

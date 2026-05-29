@@ -125,6 +125,20 @@ class Strategy(ABC):
         self.underlying = params.underlying
         self.p = params.params      # short alias for params dict
 
+    def get_min_iv_rank_for_ticker(self, ticker: str, fallback: float) -> float:
+        """
+        Dynamically determine min_iv_rank threshold for a ticker based on the
+        Tastytrade Volatility Playbook configured under volatility_grades.
+        Falls back to the provided fallback value if the ticker is not categorized.
+        """
+        cfg = self.s.get("config", {})
+        vol_grades = cfg.get("volatility_grades", {})
+        for grade_name, grade_cfg in vol_grades.items():
+            tickers = grade_cfg.get("tickers", [])
+            if ticker in tickers:
+                return float(grade_cfg.get("min_iv_rank", fallback))
+        return float(fallback)
+
     # M7: Centralised exit-rule reader — strategies call self._exit_rules instead of hardcoding
     @property
     def _exit_rules(self) -> Dict[str, Any]:

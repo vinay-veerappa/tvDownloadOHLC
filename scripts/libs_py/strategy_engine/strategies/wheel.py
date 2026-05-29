@@ -27,7 +27,8 @@ class WheelStrategy(Strategy):
         ticker = self.underlying
         short_delta = self.p.get("short_delta", 0.30)
         target_dte = self.p.get("dte", 45)
-        min_iv_rank = self.p.get("min_iv_rank", 30)
+        # Determine dynamic min_iv_rank using Tastytrade Playbook routing
+        min_iv_rank = self.get_min_iv_rank_for_ticker(ticker, self.p.get("min_iv_rank", 30))
 
         # Retrieve Prisma database client
         prisma = self.s["prisma"]

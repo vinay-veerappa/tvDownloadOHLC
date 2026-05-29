@@ -21,10 +21,22 @@ approved_tickers:
   - AMZN
   - RIVN
 
+volatility_grades:
+  INDEX:
+    tickers: [SPY, SPX, QQQ, IWM]
+    min_iv_rank: 15
+  BLUE_CHIP:
+    tickers: [AAPL, MSFT, GOOGL, AMZN]
+    min_iv_rank: 15
+  HIGH_BETA:
+    tickers: [TSLA, NVDA, RIVN]
+    min_iv_rank: 30
+
 holdings:
   GOOGL: { shares: 300, cost_basis: 150.0, acquired_at: "2026-01-15T09:30:00Z" }
   TSLA:  { shares: 200, cost_basis: 180.0, acquired_at: "2026-02-10T09:30:00Z" }
-  RIVN:  { shares: 1000, cost_basis: 10.0, acquired_at: "2026-03-01T09:30:00Z", enabled: false }  # staged — enabled: false suppresses CC spam
+  RIVN:  { shares: 1000, cost_basis: 30.0, acquired_at: "2026-03-01T09:30:00Z", enabled: true }  # adjusted to actual underwater cost basis
+  NVDA:  { shares: 100, cost_basis: 250.0, acquired_at: "2026-04-01T09:30:00Z", enabled: true }   # underwater test case for defensive strategies
 
 blackout_buffers:
   High:   { pre_minutes: 120, post_minutes: 60 }
@@ -153,12 +165,35 @@ strategies:
 
   # ── Income Covered Calls ───────────────────────────────────────────────────
   INCOME_CC:
-    tickers: [GOOGL, TSLA, RIVN]
+    tickers: [GOOGL, TSLA]
     variants:
       "TIER":
-        enabled: true             # M10: set false for RIVN during staging (handled by staging check in strategy)
+        enabled: true
         profit_target_pct: 0.50
         stop_loss_mult: 99.0      # Held to expiry
+        roll_at_dte: 21
+
+  # ── Stock Repair Ratio Spread (Defensive/Underwater) ──────────────────────
+  STOCK_REPAIR:
+    tickers: [RIVN, NVDA]
+    variants:
+      "REPAIR":
+        enabled: true
+        dte: 30
+        delta_long: 0.40          # ATM target
+        profit_target_pct: 0.50
+        roll_at_dte: 21
+
+  # ── Options Collar (Defensive/Underwater) ──────────────────────────────────
+  COLLAR:
+    tickers: [RIVN, NVDA]
+    variants:
+      "DEFENSIVE":
+        enabled: true
+        short_call_delta: 0.20    # OTM income leg
+        long_put_delta: 0.15      # Downside protection leg
+        dte: 30
+        profit_target_pct: 0.50
         roll_at_dte: 21
 
   # ── Earnings Short Strangle ────────────────────────────────────────────────

@@ -6,6 +6,8 @@ from scripts.libs_py.strategy_engine.strategies.mean_reversion_em import MeanRev
 from scripts.libs_py.strategy_engine.strategies.wall_break import WallBreakStrategy
 from scripts.libs_py.strategy_engine.strategies.income_cc import IncomeCcStrategy
 from scripts.libs_py.strategy_engine.strategies.earnings_strangle import EarningsStrangleStrategy
+from scripts.libs_py.strategy_engine.strategies.stock_repair import StockRepairStrategy
+from scripts.libs_py.strategy_engine.strategies.collar import CollarStrategy
 
 __all__ = [
     "Strategy",
@@ -15,5 +17,7 @@ __all__ = [
     "MeanReversionEmStrategy",
     "WallBreakStrategy",
     "IncomeCcStrategy",
-    "EarningsStrangleStrategy"
+    "EarningsStrangleStrategy",
+    "StockRepairStrategy",
+    "CollarStrategy"
 ]
