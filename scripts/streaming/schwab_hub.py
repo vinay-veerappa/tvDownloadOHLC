@@ -159,7 +159,7 @@ async def main():
     # Subscriptions from environment or defaults
     # Define default symbols to stream if none provided via command line
     symbols_l1 = ["AAPL", "SPY", "QQQ", "SPX", "/ES", "/NQ", "/YM", "/RTY"]
-    symbols_l2 = ["AAPL", "SPY", "QQQ", "/ES", "/NQ"]
+    symbols_l2 = []
  
     # We wrap start_stream in its own try-except via gather logic or a wrapper
     async def run_stream():

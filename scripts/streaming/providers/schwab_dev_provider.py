@@ -130,7 +130,8 @@ class SchwabDevProvider(SchwabHubProvider):
                 if resp.status_code == 200:
                     return {"status": "success", "data": resp.json()}
                 else:
-                    return {"status": "error", "code": resp.status_code, "message": resp.text}
+                    error_msg = resp.text if (resp.text and resp.text.strip()) else f"HTTP {resp.status_code} ({getattr(resp, 'reason', 'Unknown Error')})"
+                    return {"status": "error", "code": resp.status_code, "message": error_msg}
             return resp
         except Exception as e:
             logger.error(f"Error in Schwab-Dev REST request ({target_method}): {e}")

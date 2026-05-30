@@ -329,6 +329,7 @@ def run_pipeline(
     versioned: bool = False,
     reset_anchors: bool = False,
     snapshot_suffix: str | None = None,
+    intraday_only: bool = False,
 ) -> None:
     """
     Execute one complete fetch -> calculate -> output cycle.
@@ -339,6 +340,8 @@ def run_pipeline(
                 Auto-generated from current Eastern time when empty.
     """
     _setup_logging()
+    
+    dte_targets = DTE_TARGETS if intraday_only else PIPELINE_DTE_TARGETS
 
     if not run_label:
         tz = ZoneInfo(SCHEDULE_TIMEZONE)
@@ -381,7 +384,7 @@ def run_pipeline(
 
         try:
             # 1. Fetch macro-scale option chain (covers near-term density + macro targets)
-            full_chain = fetch_option_chain_data(client, ticker, PIPELINE_DTE_TARGETS)
+            full_chain = fetch_option_chain_data(client, ticker, dte_targets)
             chain = full_chain
             target_cash_spot = full_chain.spot_price
             source_ticker = ticker
@@ -402,7 +405,7 @@ def run_pipeline(
                         ticker,
                         fallback,
                     )
-                    chain = fetch_option_chain_data(client, fallback, PIPELINE_DTE_TARGETS)
+                    chain = fetch_option_chain_data(client, fallback, dte_targets)
                     source_ticker = fallback
                 else:
                     log.error("No fallback available for %s — skipping.", ticker)
@@ -879,6 +882,7 @@ def run_loop(enable_discord: bool = False) -> None:
         # 1. Pulse Cycle -> ALL TICKERS (Full snapshot)
         # 2. Manual Trigger -> TIER 1 + Manual Tickers
         # 3. Normal Loop -> TIER 1 Only (if due)
+        is_intraday_only = False
         if is_pulse_cycle:
             active_this_cycle = ACTIVE_TICKERS
             is_versioned = True
@@ -888,11 +892,12 @@ def run_loop(enable_discord: bool = False) -> None:
         else:
             active_this_cycle = due_tier1
             is_versioned = False
+            is_intraday_only = True
 
         if active_this_cycle:
             run_label = ny_now.strftime("%Y-%m-%d %H:%M ET")
-            log.info("Cycle start — processing %d tickers: %s (Pulse=%s, Versioned=%s)", 
-                     len(active_this_cycle), ", ".join(active_this_cycle), is_pulse_cycle, is_versioned)
+            log.info("Cycle start — processing %d tickers: %s (Pulse=%s, Versioned=%s, IntradayOnly=%s)", 
+                     len(active_this_cycle), ", ".join(active_this_cycle), is_pulse_cycle, is_versioned, is_intraday_only)
 
             # Temporarily restrict ACTIVE_TICKERS to our cycle subset
             import scripts.streaming.options.config as _cfg
@@ -908,7 +913,8 @@ def run_loop(enable_discord: bool = False) -> None:
                     enable_discord=enable_discord, 
                     versioned=is_versioned,
                     reset_anchors=should_reset_anchors,
-                    snapshot_suffix=pulse_suffix
+                    snapshot_suffix=pulse_suffix,
+                    intraday_only=is_intraday_only
                 )
                 # Successful run! Update timestamps
                 if due_tier1 or is_pulse_cycle:
