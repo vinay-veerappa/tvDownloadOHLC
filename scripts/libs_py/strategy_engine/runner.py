@@ -657,10 +657,35 @@ class Runner:
             max_instances=1,
         )
 
+        # Daily earnings calendar sync and Discord briefing (Sunday-Thursday 19:00 ET)
+        self.scheduler.add_job(
+            self.daily_earnings_briefing_job,
+            trigger="cron",
+            day_of_week="sun-thu",
+            hour=19,
+            minute=0,
+            id="daily_earnings_briefing",
+            name="Daily Earnings Sync & Discord Briefing (19:00 ET)",
+            max_instances=1,
+        )
+
+        # Weekly earnings calendar Discord briefing (Sunday 18:30 ET)
+        self.scheduler.add_job(
+            self.weekly_earnings_briefing_job,
+            trigger="cron",
+            day_of_week="sun",
+            hour=18,
+            minute=30,
+            id="weekly_earnings_briefing",
+            name="Weekly Earnings Discord Briefing (Sunday 18:30 ET)",
+            max_instances=1,
+        )
+
         logger.info(
             "Jobs registered: tick_index(60s), tick_staged_execution(10s), tick_stock(5m), tick_daily(10:00), "
             "eod_analytics(16:30), daily_system_audit(16:35), weekly_analytics(Sun 17:00), "
-            "earnings_refresh(Sun 18:00), db_maintenance(03:00)"
+            "earnings_refresh(Sun 18:00), db_maintenance(03:00), "
+            "daily_earnings_briefing(Sun-Thu 19:00), weekly_earnings_briefing(Sun 18:30)"
         )
 
     # ------------------------------------------------------------------
@@ -808,6 +833,35 @@ class Runner:
             logger.info(f"Pruned {deleted_nm} SignalNearMiss rows older than 30 days.")
         except Exception as e:
             logger.error(f"maintenance_job: Failed to prune SignalNearMiss: {e}")
+
+    async def daily_earnings_briefing_job(self):
+        """Syncs the upcoming earnings calendar and delivers the EOD briefing for the next day's session."""
+        now_et = datetime.now(TZ_ET)
+        logger.info(f"Starting daily earnings calendar sync and briefing @ {now_et}")
+        try:
+            # 1. Sync upcoming earnings calendar for next 8 days (min market cap 5B)
+            from scripts.market_data.sync_earnings_calendar import run_sync
+            await run_sync(days=8, min_market_cap=5e9)
+            logger.info("Daily earnings calendar database sync completed.")
+
+            # 2. Run the EOD briefing for tomorrow
+            from scripts.market_data.discord_earnings_notifier import run_notify
+            await asyncio.to_thread(run_notify, mode="EOD", channel_key="option-levels")
+            logger.info("Daily earnings Discord briefing posted successfully.")
+        except Exception as e:
+            logger.error(f"daily_earnings_briefing_job failed: {e}", exc_info=True)
+
+    async def weekly_earnings_briefing_job(self):
+        """Delivers the EOW weekly roadmap briefing on Sunday evening."""
+        now_et = datetime.now(TZ_ET)
+        logger.info(f"Starting weekly earnings calendar briefing @ {now_et}")
+        try:
+            # Run the EOW weekly briefing
+            from scripts.market_data.discord_earnings_notifier import run_notify
+            await asyncio.to_thread(run_notify, mode="EOW", channel_key="option-levels")
+            logger.info("Weekly earnings Discord briefing posted successfully.")
+        except Exception as e:
+            logger.error(f"weekly_earnings_briefing_job failed: {e}", exc_info=True)
 
 
 if __name__ == "__main__":

@@ -746,38 +746,132 @@ def _atm_straddle_cost(calls: list[OptionContract], puts: list[OptionContract], 
     # bid-ask spread.  mark is already computed as (bid+ask)/2 by the fetcher.
     return atm_call.mark + atm_put.mark
 
+def _log_em_calibration_record(
+    ticker: str,
+    expiry: Any,
+    dte: int,
+    spot: float,
+    atm_strike: float,
+    c_mid: float,
+    p_mid: float,
+    straddle: float,
+    em_val: float
+) -> None:
+    try:
+        from datetime import date, datetime
+        from zoneinfo import ZoneInfo
+        import json
+        
+        # Clean ticker name
+        clean_ticker = ticker.upper().replace("/", "").replace("$", "")
+        tracked_tickers = {"SPX", "SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "TSLA"}
+        if clean_ticker not in tracked_tickers:
+            return
+            
+        from scripts.streaming.options.config import REPO_ROOT
+        log_dir = os.path.join(REPO_ROOT, "data", "derived")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "em_calibration_log.jsonl")
+        
+        record = {
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "ticker": ticker,
+            "expiry": expiry.isoformat() if isinstance(expiry, (date, datetime)) else str(expiry),
+            "DTE": dte,
+            "spot": spot,
+            "atm_strike": atm_strike,
+            "atm_call_mid": c_mid,
+            "atm_put_mid": p_mid,
+            "straddle": straddle,
+            "computed_em": em_val,
+            "tos_displayed_em": None
+        }
+        
+        with open(log_path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
 def _expected_move(
     calls: list[OptionContract], 
     puts: list[OptionContract], 
     spot: float,
-    dte: int,
+    dte: int = 0,
     is_futures: bool = False,
+    ticker: str = "",
     *args, **kwargs
 ) -> tuple[float, float]:
-    
-    straddle = _atm_straddle_cost(calls, puts, spot)
-    atm_call = _atm_contract(calls, spot)
-    atm_put = _atm_contract(puts, spot)
-    
-    if not calls or not puts or atm_call is None or atm_put is None or atm_call.iv <= 0 or atm_put.iv <= 0:
-        return 0.0, straddle
+    import inspect
+    if isinstance(dte, float) and dte < 1.0:
+        frame = inspect.currentframe().f_back
+        caller_name = frame.f_code.co_name if frame else "unknown"
+        caller_file = frame.f_code.co_filename if frame else "unknown"
+        caller_line = frame.f_lineno if frame else 0
+        log.warning(
+            "LOUD WARNING: _expected_move received invalid dte argument: %s (float < 1.0). "
+            "Call origin: %s in %s:%d",
+            dte, caller_name, caller_file, caller_line
+        )
 
-    blended_iv = (atm_call.iv + atm_put.iv) / 2.0
+    # 1. Grab config multiplier
+    from scripts.streaming.options.config import (
+        EM_STRADDLE_MULTIPLE_DEFAULT,
+        EM_STRADDLE_MULTIPLE_OVERRIDES
+    )
+    clean_ticker = ticker.lstrip("$").upper() if ticker else ""
+    k = EM_STRADDLE_MULTIPLE_OVERRIDES.get(clean_ticker, EM_STRADDLE_MULTIPLE_DEFAULT)
+    if not (0.9 <= k <= 1.3):
+        log.warning("LOUD WARNING: Resolved expected move multiple k=%.4f is outside the sane band [0.9, 1.3].", k)
 
-    # ThinkOrSwim Expected Move Formula (Calibrated 2026-05-09):
-    # EM = Price * IV * sqrt((0.637 * DTE + intercept) / 365)
-    # Intercept: 0.24 for equity, 0.69 for futures
-    intercept = 0.69 if is_futures else 0.24
+    # 2. Extract ATM strike closest to spot
+    if not calls or not puts:
+        log.warning("LOUD WARNING: Missing options contracts for expected move calculation.")
+        return 0.0, 0.0
+        
+    strikes = sorted(list(set([c.strike for c in calls] + [p.strike for p in puts])))
+    if not strikes:
+        log.warning("LOUD WARNING: No strikes found for expected move calculation.")
+        return 0.0, 0.0
+        
+    atm_strike = min(strikes, key=lambda s: abs(s - spot))
     
-    # Use calendar DTE as per TOS methodology
-    t_eff_yr = (0.637 * dte + intercept) / 365.0
+    c = next((x for x in calls if x.strike == atm_strike), None)
+    p = next((x for x in puts if x.strike == atm_strike), None)
     
-    if t_eff_yr <= 0:
-        return 0.0, straddle
-
-    tos_expected_move = spot * blended_iv * math.sqrt(t_eff_yr)
+    if not c or not p:
+        log.warning("LOUD WARNING: Missing ATM contract for expected move calculation at strike %.2f.", atm_strike)
+        return 0.0, 0.0
+        
+    # 3. Guardrail: crossed or missing market check
+    if c.bid <= 0 or c.ask <= 0 or p.bid <= 0 or p.ask <= 0:
+        log.warning(
+            "LOUD WARNING: Crossed or missing bid/ask for expected move at strike %.2f. "
+            "Call bid/ask: %.2f/%.2f, Put bid/ask: %.2f/%.2f",
+            atm_strike, c.bid, c.ask, p.bid, p.ask
+        )
+        return 0.0, 0.0
+        
+    if c.bid >= c.ask or p.bid >= p.ask:
+        log.warning(
+            "LOUD WARNING: Crossed bid/ask for expected move at strike %.2f. "
+            "Call: %.2f >= %.2f, Put: %.2f >= %.2f",
+            atm_strike, c.bid, c.ask, p.bid, p.ask
+        )
+        return 0.0, 0.0
+        
+    # 4. Compute straddle mid
+    c_mid = (c.bid + c.ask) / 2.0
+    p_mid = (p.bid + p.ask) / 2.0
+    straddle_mid = c_mid + p_mid
     
-    return tos_expected_move, straddle
+    # 5. Compute Expected Move
+    em_value = k * straddle_mid
+    
+    # 6. Capture log
+    expiry = c.expiry
+    _log_em_calibration_record(ticker, expiry, dte, spot, atm_strike, c_mid, p_mid, straddle_mid, em_value)
+    
+    return em_value, straddle_mid
 
 def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
     """Calculate the Expected Move for every unique expiry in the chain."""
@@ -822,7 +916,7 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
         blended_iv  = (atm_call_iv + atm_put_iv) / 2.0 if (atm_call_iv > 0 and atm_put_iv > 0) else 0.0
 
         is_futures = any(chain.ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
-        move, straddle = _expected_move(calls, puts, spot, dte=dte, is_futures=is_futures)
+        move, straddle = _expected_move(calls, puts, spot, dte=dte, is_futures=is_futures, ticker=chain.ticker)
 
         if move <= 0:
             log.info(
@@ -1071,7 +1165,13 @@ def calculate_price_metrics(chain: OptionChainData) -> dict[str, float | None]:
     if spot <= 0:
         raise ValueError("Spot price is zero — cannot calculate price-derived metrics.")
 
-    em_value, straddle = _expected_move(chain.calls, chain.puts, spot, chain.chain_volatility)
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    front_expiry = min(c.expiry for c in chain.contracts) if chain.contracts else None
+    front_dte = max(0, (front_expiry - now_et.date()).days) if front_expiry else 0
+
+    is_futures = any(chain.ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
+    em_value, straddle = _expected_move(chain.calls, chain.puts, spot, front_dte, is_futures=is_futures, ticker=chain.ticker)
     front_calls, front_puts = _find_front_dte_contracts(chain.calls, chain.puts)
     skew_put_25d, skew_call_25d, _, _, _ = _find_skew_pivots(front_calls, front_puts)
     vt_u05, vt_l05, vt_u10, vt_l10, vt_u15, vt_l15 = _vol_trigger_bands(front_calls or chain.calls, spot)
@@ -1271,7 +1371,12 @@ def calculate_dealer_levels(
     hedge_wall = _find_hedge_wall(strikes, spot)
     max_pain = _find_max_pain(front_calls or chain.calls, front_puts or chain.puts)
 
-    em_value, straddle = _expected_move(chain.calls, chain.puts, spot, chain.chain_volatility)
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    front_expiry = min(c.expiry for c in chain.contracts) if chain.contracts else None
+    front_dte = max(0, (front_expiry - now_et.date()).days) if front_expiry else 0
+    is_futures = any(ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
+    em_value, straddle = _expected_move(chain.calls, chain.puts, spot, front_dte, is_futures=is_futures, ticker=ticker)
 
     cliff_up, cliff_down = _find_gamma_cliffs(strikes, spot)
 

@@ -252,3 +252,47 @@ def translate_to_futures(
         ],
         strike_gex=levels.strike_gex,
     )
+
+
+def translate_scored_levels(
+    scored: ScoredLevels,
+    basis_spread: float,
+    basis_ratio: float,
+    use_scale: bool,
+) -> ScoredLevels:
+    """
+    Translate the strikes and expected moves in a ScoredLevels object to futures space.
+    """
+    import copy
+    from .level_scorer import ScoredLevels
+    
+    translated_scored = copy.deepcopy(scored)
+    
+    def _shift(value: float | None) -> float | None:
+        if value is None:
+            return None
+        return round(value * basis_ratio, 2) if use_scale else round(value + basis_spread, 2)
+
+    # Shift each TaggedLevel strike
+    for level in translated_scored.tagged_levels:
+        if level.strike is not None:
+            level.strike = _shift(level.strike)
+
+    # Shift each ExpectedMove
+    shifted_ems = []
+    for em in translated_scored.expected_moves:
+        shifted_ems.append(
+            ExpectedMove(
+                expiry=em.expiry,
+                dte=em.dte,
+                em_value=round(em.em_value * basis_ratio, 2) if use_scale else em.em_value,
+                em_upper=_shift(em.em_upper),
+                em_lower=_shift(em.em_lower),
+                straddle=round(em.straddle * basis_ratio, 2) if use_scale else em.straddle,
+                straddle_85_upper=_shift(getattr(em, "straddle_85_upper", 0.0)) or 0.0,
+                straddle_85_lower=_shift(getattr(em, "straddle_85_lower", 0.0)) or 0.0,
+            )
+        )
+    translated_scored.expected_moves = shifted_ems
+    return translated_scored
+

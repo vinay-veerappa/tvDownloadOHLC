@@ -841,7 +841,7 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
                      "Volatility surface is balanced."
         
         iv_msg = "Rising IV increases hedging velocity and breakout risk." if iv_chg > 0.01 else "Contracting IV favors pinning and dealer liquidity provision."
-        parts.append(f"**VOLATILITY DASH:** IV is {atm_iv:.1%} ({vol_st}). Skew is {skew_st} ({skew:+.1%}). {skew_logic} {iv_msg}")
+        parts.append(f"**VOLATILITY DASH:** ATM IV (0DTE) is {atm_iv:.1%} ({vol_st}). Skew is {skew_st} ({skew:+.1%}). {skew_logic} {iv_msg}")
 
     # 6. STRUCTURAL INTEGRITY
     total_gex = getattr(levels, "total_gex", 0.0)

@@ -369,8 +369,8 @@ def _build_embed(levels: HasLevels, run_label: str, scored: ScoredLevels | None 
         {"name": f"🔽 EM LO ({tag})",        "value": fmt(front_em.em_lower if front_em else levels.em_lower), "inline": True},
         {"name": f"🔼 EM85 HI ({tag})",      "value": fmt(front_em.straddle_85_upper if front_em and getattr(front_em, 'straddle_85_upper', 0) else None), "inline": True},
         {"name": f"🔽 EM85 LO ({tag})",      "value": fmt(front_em.straddle_85_lower if front_em and getattr(front_em, 'straddle_85_lower', 0) else None), "inline": True},
-        {"name": "EMA straddle value" if is_tl else "Straddle (Cash)",
-         "value": fmt(levels.atm_straddle), "inline": True},
+        {"name": "ATM Straddle (market)",    "value": fmt(levels.atm_straddle), "inline": True},
+        {"name": "Expected Move (model)",    "value": f"±{fmt(levels.em_value)}", "inline": True},
         # ── Compact execution plan ──────────────────────────────
         {"name": "🧠 Execution Plan",          "value": "\n".join(build_plan(tag, levels, extended=False)), "inline": False},
     ])

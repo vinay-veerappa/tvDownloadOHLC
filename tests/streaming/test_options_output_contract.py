@@ -866,3 +866,154 @@ def test_discord_invalid_webhook_key_raises_keyerror(monkeypatch) -> None:
         assert "missing key" in str(exc)
     else:
         raise AssertionError("Expected KeyError for invalid webhook key")
+
+
+def test_translate_scored_levels() -> None:
+    from scripts.streaming.options.level_scorer import ScoredLevels, InflectionPoint
+    from scripts.streaming.options.futures_translator import translate_scored_levels
+    from scripts.streaming.options.config import CalendarContext
+    
+    scored = ScoredLevels(
+        ticker="SPX",
+        view_mode="INTRADAY",
+        tagged_levels=[
+            InflectionPoint(
+                strike=7395.0,
+                label="Zero Gamma Level",
+                significance="SECONDARY",
+                side="NEUTRAL",
+                inflection_type="FLIP",
+                field_name="zero_gamma",
+            )
+        ],
+        calendar=CalendarContext(),
+        bias="NEUTRAL",
+        regime="TRANSITION",
+        expected_moves=[]
+    )
+    
+    # Test additive translation
+    basis_spread = 5.5
+    basis_ratio = 1.0
+    use_scale = False
+    
+    translated_scored = translate_scored_levels(scored, basis_spread, basis_ratio, use_scale)
+    assert len(translated_scored.tagged_levels) == 1
+    assert translated_scored.tagged_levels[0].strike == 7400.5
+    
+    # Test multiplicative translation
+    basis_spread = 0.0
+    basis_ratio = 1.01
+    use_scale = True
+    
+    translated_scored_mult = translate_scored_levels(scored, basis_spread, basis_ratio, use_scale)
+    assert translated_scored_mult.tagged_levels[0].strike == round(7395.0 * 1.01, 2)
+
+
+def test_expected_move_warning(caplog) -> None:
+    import logging
+    from scripts.streaming.options.gex_calculator import _expected_move
+    
+    # We pass empty contracts to trigger early return but it should log the warning first
+    with caplog.at_level(logging.WARNING):
+        _expected_move([], [], spot=7000.0, dte=0.128)
+        
+    assert any(
+        "LOUD WARNING: _expected_move received invalid dte argument" in record.message
+        for record in caplog.records
+    )
+
+
+def test_expected_move_calibrated_straddle_multiple() -> None:
+    from scripts.streaming.options.options_fetcher import OptionContract
+    from scripts.streaming.options.gex_calculator import _expected_move
+
+    # Mock contracts for default ticker (k = 1.10)
+    # Closest strike to spot=100.2 should be 100.0
+    calls = [
+        OptionContract(symbol="C90", strike=90.0, contract_type="CALL", bid=10.0, ask=11.0),
+        OptionContract(symbol="C100", strike=100.0, contract_type="CALL", bid=2.0, ask=2.5),
+        OptionContract(symbol="C110", strike=110.0, contract_type="CALL", bid=0.1, ask=0.2),
+    ]
+    puts = [
+        OptionContract(symbol="P90", strike=90.0, contract_type="PUT", bid=0.1, ask=0.2),
+        OptionContract(symbol="P100", strike=100.0, contract_type="PUT", bid=1.8, ask=2.2),
+        OptionContract(symbol="P110", strike=110.0, contract_type="PUT", bid=9.0, ask=10.0),
+    ]
+
+    # For ticker "SPY" or default ticker, k = 1.10
+    # Closest strike: 100.0
+    # Call mid at 100.0: (2.0 + 2.5) / 2.0 = 2.25
+    # Put mid at 100.0: (1.8 + 2.2) / 2.0 = 2.00
+    # Straddle mid: 2.25 + 2.00 = 4.25
+    # Expected EM: 1.10 * 4.25 = 4.675
+    em, straddle = _expected_move(calls, puts, spot=100.2, ticker="SPY")
+    assert round(straddle, 3) == 4.25
+    assert round(em, 4) == 4.675
+
+    # For ticker "SPX", k = 1.05 override
+    # Expected EM: 1.05 * 4.25 = 4.4625
+    em_spx, straddle_spx = _expected_move(calls, puts, spot=100.2, ticker="SPX")
+    assert round(straddle_spx, 3) == 4.25
+    assert round(em_spx, 5) == 4.4625
+
+
+def test_expected_move_fallback_paths(caplog) -> None:
+    import logging
+    from scripts.streaming.options.options_fetcher import OptionContract
+    from scripts.streaming.options.gex_calculator import _expected_move
+
+    # 1. Missing contracts
+    em, straddle = _expected_move([], [], spot=100.0)
+    assert em == 0.0
+    assert straddle == 0.0
+
+    # 2. Crossed/missing bid/ask: bid <= 0
+    calls_bad1 = [OptionContract(symbol="C100", strike=100.0, contract_type="CALL", bid=0.0, ask=2.0)]
+    puts_bad1 = [OptionContract(symbol="P100", strike=100.0, contract_type="PUT", bid=1.0, ask=2.0)]
+    with caplog.at_level(logging.WARNING):
+        em, straddle = _expected_move(calls_bad1, puts_bad1, spot=100.0)
+    assert em == 0.0
+    assert any("Crossed or missing bid/ask" in record.message for record in caplog.records)
+    caplog.clear()
+
+    # 3. Crossed bid/ask: bid >= ask
+    calls_bad2 = [OptionContract(symbol="C100", strike=100.0, contract_type="CALL", bid=2.5, ask=2.0)]
+    puts_bad2 = [OptionContract(symbol="P100", strike=100.0, contract_type="PUT", bid=1.0, ask=2.0)]
+    with caplog.at_level(logging.WARNING):
+        em, straddle = _expected_move(calls_bad2, puts_bad2, spot=100.0)
+    assert em == 0.0
+    assert any("Crossed bid/ask for expected move" in record.message for record in caplog.records)
+
+
+def test_expected_move_header_footer_regression() -> None:
+    from scripts.streaming.options.options_fetcher import OptionContract
+    from scripts.streaming.options.gex_calculator import _expected_move
+
+    # Under the new calibrated model, both header and footer paths call _expected_move
+    # which picks the same closest ATM strike and computes the straddle.
+    # Therefore, they must align exactly if they use the same spot and option chain.
+    calls = [
+        OptionContract(symbol="C98", strike=98.0, contract_type="CALL", bid=3.0, ask=3.5, expiry="2026-06-03"),
+        OptionContract(symbol="C100", strike=100.0, contract_type="CALL", bid=1.0, ask=1.5, expiry="2026-06-03"),
+        OptionContract(symbol="C102", strike=102.0, contract_type="CALL", bid=0.2, ask=0.4, expiry="2026-06-03"),
+    ]
+    puts = [
+        OptionContract(symbol="P98", strike=98.0, contract_type="PUT", bid=0.2, ask=0.4, expiry="2026-06-03"),
+        OptionContract(symbol="P100", strike=100.0, contract_type="PUT", bid=0.8, ask=1.2, expiry="2026-06-03"),
+        OptionContract(symbol="P102", strike=102.0, contract_type="PUT", bid=2.8, ask=3.2, expiry="2026-06-03"),
+    ]
+
+    spot = 99.9
+    ticker = "SPX"
+
+    # Header path: calculates EM specifically using the near expiry contracts
+    em_header, straddle_header = _expected_move(calls, puts, spot, ticker=ticker)
+
+    # Footer path: calculates EM using all contracts on the chain
+    em_footer, straddle_footer = _expected_move(calls, puts, spot, ticker=ticker)
+
+    assert em_header == em_footer
+    assert straddle_header == straddle_footer
+
+

@@ -345,7 +345,7 @@ def _detailed_block(tl: TranslatedLevels) -> list[str]:
         f"  Call Gamma Total   : {tl.call_gamma_total:,.0f}",
         f"  Put Gamma Total    : {tl.put_gamma_total:,.0f}",
         f"  Net Vanna Exposure : {tl.net_vanna_exposure:,.0f}",
-        f"  Implied Vol (ATM)  : {tl.atm_iv*100:,.1f}%" if tl.atm_iv else "  Implied Vol (ATM)  : —",
+        f"  ATM IV (0DTE)      : {tl.atm_iv*100:,.1f}%" if tl.atm_iv else "  ATM IV (0DTE)      : —",
         f"  Daily Vol Change   : {tl.iv_change*100:+.1f}%",
         "",
         f"  ── Key Levels ───────────────────────────────",

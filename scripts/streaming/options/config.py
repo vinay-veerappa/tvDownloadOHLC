@@ -349,13 +349,13 @@ MIN_NONZERO_OI_CONTRACTS: int = 25
 WEIGHT_MODE: str = "OI"
 
 # ---------------------------------------------------------------------------
-# True  -> use ATM straddle (call ask + put ask)
-# False -> use IV formula: spot × ATM_IV × √(DTE/365)
-USE_STRADDLE_EM: bool = False
-
-# Optional scalar applied to the straddle price (0.85 = "85% rule").
-# Set to 1.0 for the raw straddle price.
-EM_STRADDLE_SCALAR: float = 0.85
+# Expected Move Multipliers
+# ---------------------------------------------------------------------------
+EM_STRADDLE_MULTIPLE_DEFAULT: float = 1.10
+EM_STRADDLE_MULTIPLE_OVERRIDES: dict[str, float] = {
+    "SPX": 1.05,   # SPX runs ~5% below the pooled fit, esp. at 0DTE
+    "/ES": 1.05,   # /ES tracks SPX
+}
 
 # ---------------------------------------------------------------------------
 # Basis Translation

@@ -553,28 +553,9 @@ def run_pipeline(
             
             # Intraday Scoring (filters to ±6% spot, Primary/Secondary/Context)
             scored_intraday = score_levels(levels_intraday, intraday_chain, ticker, profile, INTRADAY_VIEW)
-            scored_intraday_by_ticker[ticker] = scored_intraday
             
             # Macro Scoring (filters to ±15% spot, Primary only)
             scored_macro = score_levels(levels_macro, chain, ticker, profile, MACRO_VIEW)
-            scored_macro_by_ticker[ticker] = scored_macro
-
-            if ENABLE_SCORED_CONTRACT_OUTPUTS:
-                write_scored_levels_txt(
-                    ticker,
-                    scored_intraday,
-                    metadata_levels=levels_intraday,
-                    versioned=versioned,
-                    snapshot_suffix=snapshot_suffix,
-                )
-                write_scored_levels_txt(
-                    ticker,
-                    scored_macro,
-                    metadata_levels=levels_macro,
-                    path=SCORED_MACRO_LEVELS_TXT,
-                    versioned=versioned,
-                    snapshot_suffix=snapshot_suffix,
-                )
 
             # 7. Write per-ticker snapshot to DB
             if _is_rth():
@@ -597,6 +578,42 @@ def run_pipeline(
                 
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
+
+                # Translate scored levels strikes to futures space
+                from .futures_translator import translate_scored_levels
+                scored_intraday = translate_scored_levels(
+                    scored_intraday,
+                    tl_intraday.basis_spread,
+                    tl_intraday.basis_ratio,
+                    tl_intraday.translation_mode == "multiplicative"
+                )
+                scored_macro = translate_scored_levels(
+                    scored_macro,
+                    tl_macro.basis_spread,
+                    tl_macro.basis_ratio,
+                    tl_macro.translation_mode == "multiplicative"
+                )
+
+            # Save the final (translated if futures quote was available) scored levels to dicts
+            scored_intraday_by_ticker[ticker] = scored_intraday
+            scored_macro_by_ticker[ticker] = scored_macro
+
+            if ENABLE_SCORED_CONTRACT_OUTPUTS:
+                write_scored_levels_txt(
+                    ticker,
+                    scored_intraday,
+                    metadata_levels=levels_intraday,
+                    versioned=versioned,
+                    snapshot_suffix=snapshot_suffix,
+                )
+                write_scored_levels_txt(
+                    ticker,
+                    scored_macro,
+                    metadata_levels=levels_macro,
+                    path=SCORED_MACRO_LEVELS_TXT,
+                    versioned=versioned,
+                    snapshot_suffix=snapshot_suffix,
+                )
 
             # 8. Support basis anchors for next loop
             # (Keeping base_open logic for opening basis detection)

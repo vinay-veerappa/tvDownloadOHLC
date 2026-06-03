@@ -8,7 +8,7 @@ Usage
 -----
 python -m scripts.ranges.compute_ranges
 python -m scripts.ranges.compute_ranges --symbols NQ1,ES1 --ranges OR_5,IB_60
-python -m scripts.ranges.compute_ranges --ranges OR_5,OR_15,OR_30,IB_60,IB_90,LUNCH,ASIA,OVERNIGHT,SILVER_BULLET_AM,SILVER_BULLET_PM,POWER_HOUR
+python -m scripts.ranges.compute_ranges --ranges OR_5,OR_15,OR_30,IB_60,IB_90,GLOBEX_IB_60,TOKYO_IB_60,LUNCH,ASIA,OVERNIGHT,SILVER_BULLET_AM,SILVER_BULLET_PM,POWER_HOUR
 python -m scripts.ranges.compute_ranges --start 2020-01-01 --append
 
 Schema
@@ -70,6 +70,8 @@ DEFAULT_RANGES = [
     "OR_30",
     "IB_60",
     "IB_90",
+    "GLOBEX_IB_60",
+    "TOKYO_IB_60",
     "LUNCH",
     "ASIA",
     "OVERNIGHT",

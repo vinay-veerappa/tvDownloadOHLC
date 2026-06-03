@@ -37,6 +37,10 @@ RANGE_PRESETS: dict[str, RangeDefinition] = {
     "IB_30": RangeDefinition("IB_30", "30-Min Initial Balance", "09:30", "10:00"),
     "IB_60": RangeDefinition("IB_60", "60-Min Initial Balance", "09:30", "10:30"),
     "IB_90": RangeDefinition("IB_90", "90-Min Initial Balance", "09:30", "11:00"),
+    "GLOBEX_IB_60": RangeDefinition("GLOBEX_IB_60", "60-Min Initial Balance", "18:00", "19:00"),
+    "TOKYO_IB_60": RangeDefinition("TOKYO_IB_60", "60-Min Initial Balance", "19:00", "20:00"),
+
+
 
     # ── Session Ranges ────────────────────────────────────────────────────────
     "ASIA": RangeDefinition(

@@ -1,0 +1,1097 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © niharika / claude
+
+//@version=6
+indicator("IB Stats & Extensions [Multi-Session]", shorttitle="IB Stats", overlay=true,
+          max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// =============================================================================
+// 0. NOTES
+// -----------------------------------------------------------------------------
+// Multi-session Initial Balance statistics + extension ladder, matching the
+// reference dashboard. One SELECTED session is computed & drawn at a time
+// (Pine table/memory limits). Companion Edgeful pipeline computes all sessions
+// across 20y of data — see IB_STATS_PIPELINE_SPEC.md.
+//
+// Conventions:
+//   - Logical trading day rolls at 18:00 ET (CME). Globex/Tokyo/NY group together.
+//   - Each session: IB window (range forms) + outcome window (stats measured).
+//   - FVG bias detected on FIXED 5m via request.security (stable across chart TF).
+//   - "FVG fails -> inverts (IFVG)" triggers on a CLOSE through the gap.
+//   - Bias graded self-contained: bias side's target ext hit before opposite
+//     IB boundary is closed beyond, within the outcome window.
+// =============================================================================
+
+// =============================================================================
+// 1. INPUTS
+// =============================================================================
+TZ = "America/New_York"
+
+grpSel = "Session Selection"
+sessionChoice = input.string("NY AM IB", "Active Session",
+     options=["Globex IB", "Tokyo IB", "London IB", "Midnight OR", "NY AM IB", "NY PM IB"], group=grpSel)
+
+grpWin = "Session Windows (ET) — IB | Outcome deadline"
+gx_ib   = input.session("1800-1900", "Globex IB",   group=grpWin, inline="gx")
+gx_out  = input.session("1900-0200", "→ out",       group=grpWin, inline="gx")
+tk_ib   = input.session("2000-2100", "Tokyo IB",    group=grpWin, inline="tk")
+tk_out  = input.session("2100-0200", "→ out",       group=grpWin, inline="tk")
+ld_ib   = input.session("0300-0400", "London IB",   group=grpWin, inline="ld")
+ld_out  = input.session("0400-0600", "→ out",       group=grpWin, inline="ld")
+mo_ib   = input.session("0000-0030", "Midnight OR",  group=grpWin, inline="mo")
+mo_out  = input.session("0030-1600", "→ out",       group=grpWin, inline="mo")
+am_ib   = input.session("0930-1030", "NY AM IB",    group=grpWin, inline="am")
+am_out  = input.session("1030-1600", "→ out",       group=grpWin, inline="am")
+pm_ib   = input.session("1330-1430", "NY PM IB",    group=grpWin, inline="pm")
+pm_out  = input.session("1430-1600", "→ out",       group=grpWin, inline="pm")
+
+grpBias = "Bias Engine"
+biasTarget   = input.float(0.5, "Bias grade target (ext mult)", options=[0.5,1.0,1.5], group=grpBias,
+     tooltip="Bias is 'correct' if this extension on the bias side is hit before the opposite IB boundary is closed beyond.")
+useFVG       = input.bool(true,  "Enable FVG bias variant", group=grpBias)
+nyAm10Macro  = input.bool(false, "NY AM: Use 10:00 AM Macro FVG", group=grpBias, tooltip="If enabled, ignores 9:30-10:00 FVGs and only uses the first FVG forming at/after 10:00 AM ET.")
+showFVGBox   = input.bool(true,  "Draw FVG box", group=grpBias)
+fvgTF        = input.timeframe("5", "FVG detection timeframe", group=grpBias,
+     tooltip="Fixed TF for FVG detection so bias is identical on 5m and 15m charts.")
+biasMinWidth = input.float(0.0, "Min IB width % for bias", step=0.05, group=grpBias)
+
+grpExt = "Extensions"
+extLevelsStr = input.string("0.5,1,1.5,2,2.5,3,3.5,4", "Extension levels (mult)", group=grpExt)
+showExtLines = input.bool(true, "Show extension ladder", group=grpExt)
+showExtLabels= input.bool(true, "Show extension labels", group=grpExt)
+extBiasAware = input.bool(false, "Extensions: bias-aware (BULL/BEAR hit)", group=grpExt,
+     tooltip="OFF = raw UP/DOWN hit rates. ON = hit rate in the bias direction (BULL when bias long, BEAR when short) — matches reference dashboards for validation.")
+falseBreakThr= input.float(0.5, "False-break min ext (mult)", options=[0.25,0.5,1.0], group=grpExt,
+     tooltip="A break is 'false' if it closes beyond the opposite IB end, OR never reaches this extension on the break side before session end. ICT often uses 0.25; 0.5 is the min tradable.")
+
+grpPlays = "Three Plays (entries/targets in ext multiples)"
+p1TgtExt  = input.float(1.0,  "① Breakout: target ext", step=0.25, group=grpPlays,
+     tooltip="Breakout-continuation: enter at boundary, target this extension, stop = opposite boundary.")
+p2TgtExt  = input.float(0.5,  "② Retest: continuation target ext", step=0.25, group=grpPlays,
+     tooltip="Retest-continuation: enter at mid after break, target this break-side extension, stop = opposite boundary.")
+p3OvershootExt = input.float(0.25, "③ Fade: overshoot trigger ext", step=0.25, group=grpPlays,
+     tooltip="Fade: after price overshoots this far beyond the boundary, enter a fade at the boundary targeting mid.")
+p3StopExt = input.float(0.5,  "③ Fade: stop ext (further out)", step=0.25, group=grpPlays,
+     tooltip="Fade stop: if price reaches this extension instead of reverting to mid, the fade loses.")
+
+grpVis = "Visuals"
+showIBBox   = input.bool(true,  "Show IB box",         group=grpVis)
+showIBMid   = input.bool(true,  "Show IB mid line",    group=grpVis)
+showStats   = input.bool(true,  "Show stats tables",   group=grpVis)
+tblPos      = input.string("Top Right", "Table position", options=["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right"], group=grpVis)
+tblSize     = input.string("Normal", "Table text size", options=["Tiny","Small","Normal","Large","Huge"], group=grpVis)
+colUp       = input.color(color.new(color.green, 0), "Up color",   group=grpVis, inline="c")
+colDn       = input.color(color.new(color.red, 0),   "Down color", group=grpVis, inline="c")
+
+// =============================================================================
+// 2. RESOLVE ACTIVE SESSION
+// =============================================================================
+ibSess  = switch sessionChoice
+    "Globex IB"   => gx_ib
+    "Tokyo IB"    => tk_ib
+    "London IB"   => ld_ib
+    "Midnight OR" => mo_ib
+    "NY AM IB"    => am_ib
+    => pm_ib
+outSess = switch sessionChoice
+    "Globex IB"   => gx_out
+    "Tokyo IB"    => tk_out
+    "London IB"   => ld_out
+    "Midnight OR" => mo_out
+    "NY AM IB"    => am_out
+    => pm_out
+
+inSess(s) => not na(time(timeframe.period, s, TZ))
+inIB  = inSess(ibSess)
+inOut = inSess(outSess)
+// Active measurement period = IB window OR its outcome window
+inActive = inIB or inOut
+
+// Parse extension levels into an array
+var extArr = array.new<float>()
+if barstate.isfirst
+    parts = str.split(extLevelsStr, ",")
+    for i = 0 to array.size(parts) - 1
+        v = str.tonumber(array.get(parts, i))
+        if not na(v)
+            array.push(extArr, v)
+
+// =============================================================================
+// 3. LOGICAL TRADING DAY (rolls 18:00 ET)
+// =============================================================================
+// Shift clock back 18h so 18:00 ET becomes "midnight" of the logical day.
+hourET = hour(time, TZ)
+shiftedTime = time - 18 * 60 * 60 * 1000
+logicalDay  = year(shiftedTime, TZ) * 10000 + month(shiftedTime, TZ) * 100 + dayofmonth(shiftedTime, TZ)
+isNewLogicalDay = ta.change(logicalDay) != 0
+
+// Day-of-week of the logical trading day (for DOW stats)
+logicalDOW = dayofweek(shiftedTime, TZ)
+
+// =============================================================================
+// 4. FIXED-TF FVG DETECTION (first FVG inside the IB window)
+// =============================================================================
+// Pull HTF bar values; detect the 3-bar gap on the fixed FVG timeframe.
+// Gating to the IB window is done on the CHART timeframe (inIB) to avoid
+// session-function desync inside request.security.
+[fvgH2, fvgL2, fvgH0, fvgL0, fvgTime2] = request.security(syminfo.tickerid, fvgTF,
+     [high[2], low[2], high, low,time[2]], lookahead=barmerge.lookahead_off)
+
+// Variables needed for boundary containment
+var int firstIBTime = na
+var int ibOpenBar = na
+
+bullFVGraw = inIB and fvgH2 < fvgL0 and (not na(firstIBTime) and fvgTime2 >= firstIBTime)
+bearFVGraw = inIB and fvgL2 > fvgH0 and (not na(firstIBTime) and fvgTime2 >= firstIBTime)
+
+
+//bullFVGraw = inIB and fvgH2 < fvgL0
+//bearFVGraw = inIB and fvgL2 > fvgH0
+
+// =============================================================================
+// 5. PER-SESSION STATE
+// =============================================================================
+type IBDay
+    int    day
+    int    dow
+    float  ibH
+    float  ibL
+    float  ibOpen
+    float  ibClose
+    bool   ibSet
+    int    ibCloseBar
+    // formation
+    int    hLastBar
+    int    lLastBar
+    string formed        // "low" / "high" / "same"
+    // bias variants (+1/-1/0)
+    int    bFormation
+    int    bCloseDir
+    int    bFVG
+    int    bFVGifvg
+    // FVG tracking
+    float  fvgTop
+    float  fvgBot
+    int    fvgDir
+    bool   fvgSet
+    bool   fvgBroken
+    // outcome tracking
+    bool   highBroken
+    bool   lowBroken
+    int    firstBreakDir
+    int    firstBreakBar
+    float  firstBreakMin    // minutes since IB close to first break
+    bool   doubleBreak
+    bool   midRetested
+    int    firstExtBar
+    float  maxExtUp
+    float  maxExtDn
+    bool   breakBefore12    // first break occurred before midnight ET
+    bool   retrace25        // after break, retraced 25% back into range
+    bool   falseBreak       // closed opposite end OR never reached min ext on break side
+    int    breakBucket      // 15-min clock bucket of first break
+    int    midBucket        // 15-min clock bucket of mid touch
+    // gap
+    float  priorClose
+    float  gapPct
+    int    gapDir
+    bool   gapFilled
+    // range bucket: 0=small 1=medium 2=large (assigned at aggregation via terciles)
+    int    rangeBucket
+    float  rangePct         // IB range as % of price (for tercile bucketing)
+    float  maxBreakExt      // max extension reached on the FIRST break side (for median-ext stats)
+    // three-play outcomes (per day, within outcome window)
+    int    play1Result      // breakout-continuation: 1 win / -1 loss / 0 no setup
+    int    play2Result      // retest-continuation:   1 win / -1 loss / 0 no setup
+    int    play3Result      // fade-to-mid:            1 win / -1 loss / 0 no setup
+    // bias correctness (computed at deadline)
+    bool   graded
+    bool   correctFormation
+    bool   correctCloseDir
+    bool   correctFVG
+    bool   correctFVGifvg
+
+var float ibH = na, var float ibL = na, var float ibOpen = na, var float ibClose = na
+var bool ibSet = false, var int ibCloseBar = na
+var int hLastBar = na, var int lLastBar = na
+var float firstBarOpen = na, var float firstBarClose = na
+
+var float fvgTop = na, var float fvgBot = na, var int fvgDir = 0
+var bool fvgSet = false, var bool fvgBroken = false
+var int fvgBar = na
+
+var bool highBroken = false, var bool lowBroken = false
+var int firstBreakDir = 0, var int firstBreakBar = na
+var bool doubleBreak = false, var bool midRetested = false
+var float maxExtUp = 0.0, var float maxExtDn = 0.0
+var float priorClose = na, var float prevSessClose = na, var bool gapFilled = false
+var bool breakBefore12 = false, var bool retrace25 = false
+var bool closedOppEnd = false
+var float firstBreakMin = na
+var int breakBucket = na, var int midBucket = na
+// --- three-play sequential tracking ---
+// Play 1 (breakout): target = play1Tgt ext on break side, stop = opposite boundary
+var int  p1 = 0          // 0 undecided, 1 win, -1 loss
+// Play 2 (retest-continue): after mid touch, target 0.5x break side, stop opposite boundary
+var bool midTouchedForP2 = false
+var int  p2 = 0
+// Play 3 (fade): after 0.25x overshoot, target = mid, stop = 0.5x ext (further out)
+var bool reached025ForP3 = false
+var int  p3 = 0
+var float maxBreakExt = 0.0
+
+// Completed-day records for aggregation
+var records = array.new<IBDay>()
+
+// Reset at new logical day
+if isNewLogicalDay
+    ibH := na, ibL := na, ibOpen := na, ibClose := na
+    ibSet := false, ibCloseBar := na
+    hLastBar := na, lLastBar := na, firstBarOpen := na, firstBarClose := na
+    fvgTop := na, fvgBot := na, fvgDir := 0, fvgSet := false, fvgBroken := false
+    fvgBar := na
+    ibOpenBar := na       
+    firstIBTime := na      
+    highBroken := false, lowBroken := false
+    firstBreakDir := 0, firstBreakBar := na
+    doubleBreak := false, midRetested := false
+    maxExtUp := 0.0, maxExtDn := 0.0
+    gapFilled := false
+    breakBefore12 := false, retrace25 := false, firstBreakMin := na
+    closedOppEnd := false
+    breakBucket := na, midBucket := na
+    p1 := 0, p2 := 0, p3 := 0
+    midTouchedForP2 := false, reached025ForP3 := false
+    maxBreakExt := 0.0
+
+// =============================================================================
+// 6. BUILD THE IB
+// =============================================================================
+if inIB
+    if na(firstIBTime)
+        firstIBTime := time       // Locks the exact ms timestamp the IB started
+        ibOpenBar := bar_index    // Locks the exact bar index for drawing
+    if na(ibH) or high >= ibH
+        ibH := high
+        hLastBar := bar_index
+    if na(ibL) or low <= ibL
+        ibL := low
+        lLastBar := bar_index
+    if na(firstBarOpen)
+        firstBarOpen := open
+        priorClose := prevSessClose   // gap reference = prior session's IB close
+    ibClose := close
+    if na(ibOpen)
+        ibOpen := open
+
+// NY AM 10:00 AM Macro enforcement
+validFVGTime = true
+if sessionChoice == "NY AM IB" and nyAm10Macro
+    validFVGTime := hourET >= 10
+
+// Capture first FVG inside IB (first one wins)
+if useFVG and inIB and not fvgSet  and validFVGTime
+    if bullFVGraw
+        fvgTop := fvgL0, fvgBot := fvgH2, fvgDir := 1, fvgSet := true, fvgBar := bar_index
+    else if bearFVGraw
+        fvgTop := fvgL2, fvgBot := fvgH0, fvgDir := -1, fvgSet := true, fvgBar := bar_index
+
+// IFVG: flip if FVG closed through (close-based)
+if fvgSet and not fvgBroken
+    if fvgDir == 1 and close < fvgBot
+        fvgBroken := true
+    if fvgDir == -1 and close > fvgTop
+        fvgBroken := true
+
+// Lock IB when the window closes
+ibJustClosed = inIB[1] and not inIB
+if ibJustClosed and not ibSet and not na(ibH)
+    ibSet := true
+    ibCloseBar := bar_index
+    prevSessClose := ibClose   // store for next day's gap reference
+
+// =============================================================================
+// 7. DERIVED GEOMETRY
+// =============================================================================
+ibRange = ibSet ? ibH - ibL : na
+ibMid   = ibSet ? (ibH + ibL) / 2.0 : na
+ibQ1 = ibSet ? ibH - ibRange/4.0 : na
+ibQ3 = ibSet ? ibL + ibRange/4.0 : na
+ibRangePct = ibSet and ibMid > 0 ? ibRange / ibMid * 100.0 : na
+
+extPrice(mult, up) => up ? ibH + mult * ibRange : ibL - mult * ibRange
+
+// =============================================================================
+// 8. OUTCOME TRACKING (during outcome window)
+// =============================================================================
+if ibSet and inOut and not na(ibRange) and ibRange > 0
+    clockBucket = hourET * 4 + math.floor(minute(time, TZ) / 15)
+    // boundary breaks
+    if high > ibH and not highBroken
+        highBroken := true
+        if firstBreakDir == 0
+            firstBreakDir := 1
+            firstBreakBar := bar_index
+            firstBreakMin := not na(ibCloseBar) ? (bar_index - ibCloseBar) * timeframe.in_seconds() / 60 : na
+            breakBefore12 := hourET >= 18
+            breakBucket := clockBucket
+    if low < ibL and not lowBroken
+        lowBroken := true
+        if firstBreakDir == 0
+            firstBreakDir := -1
+            firstBreakBar := bar_index
+            firstBreakMin := not na(ibCloseBar) ? (bar_index - ibCloseBar) * timeframe.in_seconds() / 60 : na
+            breakBefore12 := hourET >= 18
+            breakBucket := clockBucket
+    if highBroken and lowBroken
+        doubleBreak := true
+    // mid retest after a break
+    if (highBroken or lowBroken) and not midRetested
+        if low <= ibMid and high >= ibMid
+            midRetested := true
+            midBucket := clockBucket
+    // retrace 25% back into range after first break
+    if firstBreakDir != 0 and not retrace25
+        if firstBreakDir == 1 and low <= ibH - 0.25 * ibRange
+            retrace25 := true
+        if firstBreakDir == -1 and high >= ibL + 0.25 * ibRange
+            retrace25 := true
+    // closed beyond OPPOSITE end after first break (pure reversal => false break)
+    if firstBreakDir == 1 and close < ibL
+        closedOppEnd := true
+    if firstBreakDir == -1 and close > ibH
+        closedOppEnd := true
+    // max extension reached
+    upExt = (high - ibH) / ibRange
+    dnExt = (ibL - low) / ibRange
+    if upExt > maxExtUp
+        maxExtUp := upExt
+    if dnExt > maxExtDn
+        maxExtDn := dnExt
+    // track max extension on the FIRST break side (for median-ext-by-bucket stats)
+    if firstBreakDir == 1
+        maxBreakExt := maxExtUp
+    else if firstBreakDir == -1
+        maxBreakExt := maxExtDn
+
+    // ============ THREE-PLAY SEQUENTIAL OUTCOMES ============
+    // All evaluated bar-by-bar so target-before-stop ordering is correct.
+    if firstBreakDir != 0
+        bd = firstBreakDir   // +1 up-break, -1 down-break
+        // price levels for this break direction
+        tgt1   = bd == 1 ? extPrice(p1TgtExt, true)  : extPrice(p1TgtExt, false)
+        tgt2   = bd == 1 ? extPrice(p2TgtExt, true)  : extPrice(p2TgtExt, false)
+        oppB   = bd == 1 ? ibL : ibH                 // opposite boundary (stop for P1/P2)
+        os3    = bd == 1 ? extPrice(p3OvershootExt, true)  : extPrice(p3OvershootExt, false)
+        st3    = bd == 1 ? extPrice(p3StopExt, true)       : extPrice(p3StopExt, false)
+
+        // --- Play 1: breakout-continuation (enter at break, tgt p1, stop opp boundary) ---
+        if p1 == 0
+            hitTgt1 = bd == 1 ? high >= tgt1 : low <= tgt1
+            hitStop1 = bd == 1 ? close < oppB : close > oppB
+            if hitTgt1
+                p1 := 1
+            else if hitStop1
+                p1 := -1
+
+        // --- Play 2: retest-continuation (need mid touch first, then tgt2 vs opp boundary) ---
+        if not midTouchedForP2 and low <= ibMid and high >= ibMid
+            midTouchedForP2 := true
+        if midTouchedForP2 and p2 == 0
+            hitTgt2 = bd == 1 ? high >= tgt2 : low <= tgt2
+            hitStop2 = bd == 1 ? close < oppB : close > oppB
+            if hitTgt2
+                p2 := 1
+            else if hitStop2
+                p2 := -1
+
+        // --- Play 3: fade (need overshoot to os3 first, then revert to mid vs stop st3) ---
+        if not reached025ForP3
+            hitOS = bd == 1 ? high >= os3 : low <= os3
+            if hitOS
+                reached025ForP3 := true
+        if reached025ForP3 and p3 == 0
+            hitMid = low <= ibMid and high >= ibMid     // reverted back to mid = fade win
+            hitStop3 = bd == 1 ? high >= st3 : low <= st3 // pushed further out = fade loss
+            if hitMid
+                p3 := 1
+            else if hitStop3
+                p3 := -1
+
+    // gap fill
+    if not gapFilled and not na(priorClose)
+        if low <= priorClose and high >= priorClose
+            gapFilled := true
+
+// =============================================================================
+// 9. COMPUTE BIAS VARIANTS (at IB close)
+// =============================================================================
+var int bFormation = 0, var int bCloseDir = 0, var int bFVGv = 0, var int bFVGifvg = 0
+if isNewLogicalDay
+    bFormation := 0, bCloseDir := 0, bFVGv := 0, bFVGifvg := 0
+
+if ibJustClosed and not na(ibH)
+    // Formation: the extreme made LATER signals the push direction.
+    // High made after low (hLastBar > lLastBar) => pushed up into close => bullish (+1).
+    // This matches the reference convention: low forms first -> bullish ▲.
+    bFormation := hLastBar > lLastBar ? 1 : lLastBar > hLastBar ? -1 :
+                  (firstBarClose > firstBarOpen ? 1 : -1)
+    // close direction
+    bCloseDir := ibClose > ibOpen ? 1 : ibClose < ibOpen ? -1 : 0
+    // FVG
+    bFVGv := fvgSet ? fvgDir : 0
+
+// IFVG variant updates continuously (flip on break)
+bFVGifvg := fvgSet ? (fvgBroken ? -fvgDir : fvgDir) : 0
+
+// =============================================================================
+// 10. GRADE & ARCHIVE AT DEADLINE
+// =============================================================================
+// Grade when outcome window just ended.
+outJustClosed = inOut[1] and not inOut
+gradeOne(biasSign) =>
+    // correct if bias-side target extension reached within the outcome window
+    biasSign == 1 ? maxExtUp >= biasTarget : biasSign == -1 ? maxExtDn >= biasTarget : false
+
+if outJustClosed and ibSet
+    rec = IBDay.new()
+    rec.day := logicalDay
+    rec.dow := logicalDOW
+    rec.ibH := ibH, rec.ibL := ibL, rec.ibOpen := ibOpen, rec.ibClose := ibClose
+    rec.ibSet := true, rec.ibCloseBar := ibCloseBar
+    rec.formed := hLastBar > lLastBar ? "lo_first" : lLastBar > hLastBar ? "hi_first" : "same"
+    rec.bFormation := bFormation, rec.bCloseDir := bCloseDir
+    rec.bFVG := bFVGv, rec.bFVGifvg := bFVGifvg
+    rec.highBroken := highBroken, rec.lowBroken := lowBroken
+    rec.firstBreakDir := firstBreakDir, rec.doubleBreak := doubleBreak
+    rec.midRetested := midRetested
+    rec.maxExtUp := maxExtUp, rec.maxExtDn := maxExtDn
+    rec.firstBreakMin := firstBreakMin
+    rec.breakBefore12 := breakBefore12
+    rec.retrace25 := retrace25
+    // false break: closed opposite end OR never reached min ext on break side
+    brkSideExt = firstBreakDir == 1 ? maxExtUp : firstBreakDir == -1 ? maxExtDn : 0.0
+    rec.falseBreak := firstBreakDir != 0 and (closedOppEnd or brkSideExt < falseBreakThr)
+    rec.breakBucket := breakBucket
+    rec.midBucket := midBucket
+    rec.priorClose := priorClose, rec.gapFilled := gapFilled
+    // gap size / direction
+    gp = not na(priorClose) and priorClose > 0 ? (ibOpen - priorClose) / priorClose * 100.0 : na
+    rec.gapPct := gp
+    rec.gapDir := na(gp) ? 0 : gp > 0 ? 1 : gp < 0 ? -1 : 0
+    // range % (tercile bucket assigned later at aggregation)
+    rec.rangePct := ibMid > 0 ? (ibH - ibL) / ibMid * 100.0 : 0.0
+    rec.rangeBucket := 1   // placeholder; reassigned via terciles at aggregation
+    rec.maxBreakExt := maxBreakExt
+    // three-play results
+    rec.play1Result := p1
+    rec.play2Result := p2
+    rec.play3Result := p3
+    rec.correctFormation := gradeOne(bFormation)
+    rec.correctCloseDir  := gradeOne(bCloseDir)
+    rec.correctFVG       := gradeOne(bFVGv)
+    rec.correctFVGifvg   := gradeOne(bFVGifvg)
+    rec.graded := true
+    array.push(records, rec)
+
+// =============================================================================
+// 11. VISUALS — IB BOX + EXTENSION LADDER
+// =============================================================================
+var box ibBox = na
+var line midLine = na
+var line Q1Line = na
+var line Q3Line = na
+
+var box fvgBox = na
+var label fvgLbl = na
+var array<line>  extLines  = array.new<line>()
+var array<label> extLbls   = array.new<label>()
+
+deleteExt() =>
+    if array.size(extLines) > 0
+        for i = 0 to array.size(extLines) - 1
+            line.delete(array.get(extLines, i))
+        array.clear(extLines)
+    if array.size(extLbls) > 0
+        for i = 0 to array.size(extLbls) - 1
+            label.delete(array.get(extLbls, i))
+        array.clear(extLbls)
+
+if isNewLogicalDay
+    ibBox := na
+    midLine := na
+    Q1Line := na
+    Q3Line := na
+    fvgBox := na
+    fvgLbl := na
+    deleteExt()
+
+// FVG box: drawn from the FVG bar, extended through the session/outcome window.
+// Color reflects current state — bullish/bearish, dimmed once inverted (IFVG).
+if showFVGBox and fvgSet and not na(fvgBar) and inActive
+    fvgCol = fvgDir == 1 ? colUp : colDn
+    transp = fvgBroken ? 75 : 55   // dim when inverted
+    if na(fvgBox)
+        fvgBox := box.new(fvgBar - 2, fvgTop, bar_index, fvgBot,
+             bgcolor=color.new(fvgCol, transp), border_color=color.new(fvgCol, 20), border_width=1)
+        fvgLbl := label.new(fvgBar, fvgTop, fvgDir == 1 ? "FVG↑" : "FVG↓",
+             color=na, textcolor=color.new(fvgCol, 0), style=label.style_label_down, size=size.small)
+    else
+        box.set_right(fvgBox, bar_index)
+        box.set_bgcolor(fvgBox, color.new(fvgCol, transp))
+        // relabel if it inverted
+        label.set_text(fvgLbl, fvgBroken ? (fvgDir == 1 ? "IFVG↓" : "IFVG↑") : (fvgDir == 1 ? "FVG↑" : "FVG↓"))
+
+if ibSet and showIBBox
+    if na(ibBox)
+        ibBox := box.new(ibOpenBar, ibH, bar_index, ibL,
+             bgcolor=color.new(color.olive, 80), border_color=color.new(color.olive, 30), border_width=1)
+    else
+        box.set_right(ibBox, bar_index)
+
+
+var box ibEndMarker = na
+if isNewLogicalDay
+    ibEndMarker := na
+
+// Cap the IB box with a 1-bar wide highlight marker bounded by High and Low
+if ibSet and showIBBox and na(ibEndMarker)
+    ibEndMarker := box.new(left=ibCloseBar, top=ibH, right=ibCloseBar + 1, bottom=ibL, 
+         bgcolor=color.new(color.white, 85), border_color=na)
+
+if ibSet and showIBMid and not na(ibMid)
+    if na(midLine)
+        midLine := line.new(ibCloseBar, ibMid, bar_index, ibMid, color=color.new(color.gray, 30), style=line.style_dotted)
+    else
+        line.set_x2(midLine, bar_index)
+    if na(Q1Line)
+        Q1Line := line.new(ibCloseBar, ibQ1, bar_index, ibQ1, color=color.new(color.gray, 30), style=line.style_dotted)
+    else
+        line.set_x2(Q1Line, bar_index)
+    if na(Q3Line)
+        Q3Line := line.new(ibCloseBar, ibQ3, bar_index, ibQ3, color=color.new(color.gray, 30), style=line.style_dotted)
+    else
+        line.set_x2(Q3Line, bar_index)
+
+// Extension ladder — draw once per day at IB close, extend right
+if ibSet and showExtLines and inOut and array.size(extLines) == 0 and not na(ibRange)
+    for i = 0 to array.size(extArr) - 1
+        m = array.get(extArr, i)
+        // up
+        pu = extPrice(m, true)
+        lu = line.new(ibCloseBar, pu, bar_index, pu, color=color.new(colUp, 40), style=line.style_dashed)
+        array.push(extLines, lu)
+        if showExtLabels
+            array.push(extLbls, label.new(bar_index, pu, "GIB " + str.tostring(m) + "x",
+                 color=na, textcolor=color.new(colUp, 0), style=label.style_label_left, size=size.small))
+        // down
+        pd = extPrice(m, false)
+        ld = line.new(ibCloseBar, pd, bar_index, pd, color=color.new(colDn, 40), style=line.style_dashed)
+        array.push(extLines, ld)
+        if showExtLabels
+            array.push(extLbls, label.new(bar_index, pd, "GIB -" + str.tostring(m) + "x",
+                 color=na, textcolor=color.new(colDn, 0), style=label.style_label_left, size=size.small))
+
+// extend ladder right each bar through the whole logical trading day (past outcome window)
+// so late tags beyond the stats deadline remain visible.
+if array.size(extLines) > 0 and ibSet
+    for i = 0 to array.size(extLines) - 1
+        line.set_x2(array.get(extLines, i), bar_index)
+    if showExtLabels and array.size(extLbls) > 0
+        for i = 0 to array.size(extLbls) - 1
+            label.set_x(array.get(extLbls, i), bar_index)
+
+// IB High / Low solid lines — also extend through the full trading day
+var line hLine = na, var line lLine = na
+if isNewLogicalDay
+    hLine := na, lLine := na
+if ibSet
+    if na(hLine)
+        hLine := line.new(ibCloseBar, ibH, bar_index, ibH, color=color.new(colUp, 0), width=1)
+        lLine := line.new(ibCloseBar, ibL, bar_index, ibL, color=color.new(colDn, 0), width=1)
+    else
+        line.set_x2(hLine, bar_index)
+        line.set_x2(lLine, bar_index)
+
+// =============================================================================
+// 12. AGGREGATION (only on last bar — cheap, runs once)
+// =============================================================================
+posMap = switch tblPos
+    "Top Right"     => position.top_right
+    "Top Left"      => position.top_left
+    "Bottom Right"  => position.bottom_right
+    "Bottom Left"   => position.bottom_left
+    => position.middle_right
+
+var table tStats = na
+
+f_pct(num, den) => den > 0 ? str.tostring(num / den * 100, "#") + "%" : "—"
+// "count (pct%)" format
+f_cntpct(num, den) => den > 0 ? str.tostring(num) + " (" + str.tostring(num / den * 100, "#") + "%)" : "0 (—)"
+// three-tier color by rate (0..1): >60% green, 50-60% orange, <50% red
+f_rag(rate) =>
+    rate >= 0.60 ? color.new(color.green, 55) : rate >= 0.50 ? color.new(color.orange, 50) : color.new(color.red, 55)
+// 15-min bucket index (0..95) -> "HH:MM" ET
+f_bucket2time(b) =>
+    na(b) ? "—" : str.format("{0,number,00}:{1,number,00}", math.floor(b / 4), (b % 4) * 15)
+
+// Resolve text size string -> size constant
+f_txtsize(s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        => size.huge
+
+// Top-level table helpers (Pine requires functions at top level, not inside `if`).
+// Pass the table `t` and text size `ts` explicitly.
+f_hdr(t, ts, rw, txt) =>
+    table.cell(t, 0, rw, txt, bgcolor=color.navy, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(t, 1, rw, "", bgcolor=color.navy)
+    table.cell(t, 2, rw, "", bgcolor=color.navy)
+    table.cell(t, 3, rw, "", bgcolor=color.navy)
+    table.cell(t, 4, rw, "", bgcolor=color.navy)
+    table.merge_cells(t, 0, rw, 4, rw)
+f_kv(t, ts, rw, k, v) =>
+    table.cell(t, 0, rw, k, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(t, 1, rw, v, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(t, 2, rw, "", text_size=ts)
+    table.cell(t, 3, rw, "", text_size=ts)
+    table.cell(t, 4, rw, "", text_size=ts)
+    table.merge_cells(t, 1, rw, 4, rw)   // value spans the data columns
+f_row4(t, ts, rw, a, b, c, d, bg) =>
+    table.cell(t, 0, rw, a, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(t, 1, rw, b, text_color=color.white, text_size=ts, bgcolor=bg)
+    table.cell(t, 2, rw, c, text_color=color.white, text_size=ts)
+    table.cell(t, 3, rw, d, text_color=color.white, text_size=ts)
+    table.cell(t, 4, rw, "", text_size=ts)
+f_colhdr(t, ts, rw, a, b, c, d, bg) =>
+    table.cell(t, 0, rw, a, bgcolor=bg, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(t, 1, rw, b, bgcolor=bg, text_color=color.white, text_size=ts)
+    table.cell(t, 2, rw, c, bgcolor=bg, text_color=color.white, text_size=ts)
+    table.cell(t, 3, rw, d, bgcolor=bg, text_color=color.white, text_size=ts)
+    table.cell(t, 4, rw, "", bgcolor=bg)
+// Bold section divider spanning the full width (merged), with tooltip
+f_divider(t, ts, rw, txt, bg, tip) =>
+    table.cell(t, 0, rw, txt, bgcolor=bg, text_color=color.white, text_size=ts, text_halign=text.align_left, tooltip=tip)
+    table.cell(t, 1, rw, "", bgcolor=bg)
+    table.cell(t, 2, rw, "", bgcolor=bg)
+    table.cell(t, 3, rw, "", bgcolor=bg)
+    table.cell(t, 4, rw, "", bgcolor=bg)
+    table.merge_cells(t, 0, rw, 4, rw)
+// 3-column row: label | value(merged 1-2) | value2(merged 3-4) — for plays/buckets
+f_row3(t, ts, rw, a, b, c, bgB) =>
+    table.cell(t, 0, rw, a, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(t, 1, rw, b, text_color=color.white, text_size=ts, bgcolor=bgB)
+    table.cell(t, 2, rw, "", text_size=ts, bgcolor=bgB)
+    table.cell(t, 3, rw, c, text_color=color.white, text_size=ts)
+    table.cell(t, 4, rw, "", text_size=ts)
+    table.merge_cells(t, 1, rw, 2, rw)
+    table.merge_cells(t, 3, rw, 4, rw)
+// 5-column row (Level | UP | DN | EITHER | CONT) for extensions
+f_row5(t, ts, rw, a, b, c, d, e, bgB, bgC, bgD) =>
+    table.cell(t, 0, rw, a, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(t, 1, rw, b, text_color=color.white, text_size=ts, bgcolor=bgB)
+    table.cell(t, 2, rw, c, text_color=color.white, text_size=ts, bgcolor=bgC)
+    table.cell(t, 3, rw, d, text_color=color.white, text_size=ts, bgcolor=bgD)
+    table.cell(t, 4, rw, e, text_color=color.white, text_size=ts)
+
+if barstate.islast and showStats and array.size(records) > 0
+    n = array.size(records)
+
+    // ---- accumulators ----
+    int bullDays = 0, int bearDays = 0, int contained = 0
+    int dblBreak = 0, int midHits = 0, int gapFills = 0
+    float sumRangePct = 0.0
+    int hi1st = 0, lo1st = 0
+    // bias correct counts
+    int cF = 0, cC = 0, cV = 0, cI = 0
+    int nF = 0, nC = 0, nV = 0, nI = 0
+    // extension hit counts per level (up/down/either + bias-aware)
+    int nLv = array.size(extArr)
+    var array<int> extUp = array.new<int>(nLv, 0)
+    var array<int> extDn = array.new<int>(nLv, 0)
+    var array<int> extEi = array.new<int>(nLv, 0)
+    var array<int> extBias = array.new<int>(nLv, 0)  // hit in the bias direction
+    for li = 0 to nLv - 1
+        array.set(extUp, li, 0)
+        array.set(extDn, li, 0)
+        array.set(extEi, li, 0)
+        array.set(extBias, li, 0)
+    int biasDayN = 0  // days with a non-zero close-dir bias (denominator for bias-aware)
+    // mode buckets: frequency arrays over 96 fifteen-min slots
+    var array<int> brkBucketFreq = array.new<int>(96, 0)
+    var array<int> midBucketFreq = array.new<int>(96, 0)
+    for bi = 0 to 95
+        array.set(brkBucketFreq, bi, 0)
+        array.set(midBucketFreq, bi, 0)
+    // formation
+    int loFirst = 0, loFollow = 0, hiFirst = 0, hiFollow = 0
+    // gap / timing / retrace
+    int gapUp = 0, gapDn = 0, gapFlatCnt = 0
+    float sumGapAbs = 0.0
+    int brkBefore12 = 0, brkAfter12 = 0
+    int retr25Cnt = 0, brokeAnyCnt = 0
+    int falseBrkCnt = 0
+    var array<float> brkMinArr = array.new<float>()
+    array.clear(brkMinArr)
+    // range-bucket break counts (terciles by range%): broke either boundary, per bucket
+    var array<int> bkBroke = array.new<int>(3, 0)
+    var array<int> bkTot   = array.new<int>(3, 0)
+    var array<int> bk05Hit = array.new<int>(3, 0)            // 0.5x ext hit count per bucket
+    var array<float> bkExtArr0 = array.new<float>()          // break-side max ext, small bucket
+    var array<float> bkExtArr1 = array.new<float>()
+    var array<float> bkExtArr2 = array.new<float>()
+    for bi = 0 to 2
+        array.set(bkBroke, bi, 0)
+        array.set(bkTot, bi, 0)
+        array.set(bk05Hit, bi, 0)
+    array.clear(bkExtArr0)
+    array.clear(bkExtArr1)
+    array.clear(bkExtArr2)
+    // --- tercile thresholds on range% ---
+    var array<float> rpAll = array.new<float>()
+    array.clear(rpAll)
+    for i = 0 to n - 1
+        array.push(rpAll, array.get(records, i).rangePct)
+    rpT1 = n >= 3 ? array.percentile_nearest_rank(rpAll, 33) : 0.0
+    rpT2 = n >= 3 ? array.percentile_nearest_rank(rpAll, 67) : 1e12
+    // --- three-play win/loss accumulators ---
+    int p1W = 0, p1L = 0, p2W = 0, p2L = 0, p3W = 0, p3L = 0
+    // per-weekday play wins: index = dow*3 + play (dow 0..7, play 0..2)
+    var array<int> dowPlayWin = array.new<int>(24, 0)
+    for di = 0 to 23
+        array.set(dowPlayWin, di, 0)
+
+    for i = 0 to n - 1
+        r = array.get(records, i)
+        dir = r.firstBreakDir
+        if dir == 1
+            bullDays += 1
+            hi1st += 1
+        else if dir == -1
+            bearDays += 1
+            lo1st += 1
+        if not r.highBroken and not r.lowBroken
+            contained += 1
+        if r.doubleBreak
+            dblBreak += 1
+        if r.midRetested
+            midHits += 1
+        if r.gapFilled
+            gapFills += 1
+        rp = r.ibH > r.ibL and (r.ibH + r.ibL) > 0 ? (r.ibH - r.ibL) / ((r.ibH + r.ibL)/2) * 100 : 0
+        sumRangePct += rp
+        // bias
+        if r.bFormation != 0
+            nF += 1
+            cF += r.correctFormation ? 1 : 0
+        if r.bCloseDir != 0
+            nC += 1
+            cC += r.correctCloseDir ? 1 : 0
+        if r.bFVG != 0
+            nV += 1
+            cV += r.correctFVG ? 1 : 0
+        if r.bFVGifvg != 0
+            nI += 1
+            cI += r.correctFVGifvg ? 1 : 0
+        // extensions
+        dayBias = r.bCloseDir   // use close-direction as the day's bias for bias-aware view
+        if dayBias != 0
+            biasDayN += 1
+        for li = 0 to nLv - 1
+            m = array.get(extArr, li)
+            uHit = r.maxExtUp >= m
+            dHit = r.maxExtDn >= m
+            if uHit
+                array.set(extUp, li, array.get(extUp, li) + 1)
+            if dHit
+                array.set(extDn, li, array.get(extDn, li) + 1)
+            if uHit or dHit
+                array.set(extEi, li, array.get(extEi, li) + 1)
+            // bias-aware: did the extension hit on the bias side?
+            biasHit = dayBias == 1 ? uHit : dayBias == -1 ? dHit : false
+            if biasHit
+                array.set(extBias, li, array.get(extBias, li) + 1)
+        // bucket frequencies for mode
+        if not na(r.breakBucket) and r.breakBucket >= 0 and r.breakBucket < 96
+            array.set(brkBucketFreq, r.breakBucket, array.get(brkBucketFreq, r.breakBucket) + 1)
+        if not na(r.midBucket) and r.midBucket >= 0 and r.midBucket < 96
+            array.set(midBucketFreq, r.midBucket, array.get(midBucketFreq, r.midBucket) + 1)
+        // formation follow-through: low-formed-first => expect up; high-first => expect down
+        if r.formed == "lo_first"
+            loFirst += 1
+            if dir == 1
+                loFollow += 1
+        else if r.formed == "hi_first"
+            hiFirst += 1
+            if dir == -1
+                hiFollow += 1
+        // gap direction / size
+        if r.gapDir == 1
+            gapUp += 1
+        else if r.gapDir == -1
+            gapDn += 1
+        else
+            gapFlatCnt += 1
+        if not na(r.gapPct)
+            sumGapAbs += math.abs(r.gapPct)
+        // break timing
+        if dir != 0
+            brokeAnyCnt += 1
+            if r.breakBefore12
+                brkBefore12 += 1
+            else
+                brkAfter12 += 1
+            if r.retrace25
+                retr25Cnt += 1
+            if r.falseBreak
+                falseBrkCnt += 1
+            if not na(r.firstBreakMin)
+                array.push(brkMinArr, r.firstBreakMin)
+        // range bucket via terciles on range%
+        bkt = r.rangePct <= rpT1 ? 0 : r.rangePct >= rpT2 ? 2 : 1
+        array.set(bkTot, bkt, array.get(bkTot, bkt) + 1)
+        if r.highBroken or r.lowBroken
+            array.set(bkBroke, bkt, array.get(bkBroke, bkt) + 1)
+        // 0.5x hit on break side, per bucket
+        brkExt = r.maxBreakExt
+        if brkExt >= 0.5
+            array.set(bk05Hit, bkt, array.get(bk05Hit, bkt) + 1)
+        // collect break-side max ext per bucket (for median)
+        if dir != 0
+            if bkt == 0
+                array.push(bkExtArr0, brkExt)
+            else if bkt == 1
+                array.push(bkExtArr1, brkExt)
+            else
+                array.push(bkExtArr2, brkExt)
+        // three-play win/loss tally
+        if r.play1Result == 1
+            p1W += 1
+        else if r.play1Result == -1
+            p1L += 1
+        if r.play2Result == 1
+            p2W += 1
+        else if r.play2Result == -1
+            p2L += 1
+        if r.play3Result == 1
+            p3W += 1
+        else if r.play3Result == -1
+            p3L += 1
+        // per-weekday play wins
+        if r.dow >= 1 and r.dow <= 7
+            if r.play1Result == 1
+                array.set(dowPlayWin, r.dow*3 + 0, array.get(dowPlayWin, r.dow*3 + 0) + 1)
+            if r.play2Result == 1
+                array.set(dowPlayWin, r.dow*3 + 1, array.get(dowPlayWin, r.dow*3 + 1) + 1)
+            if r.play3Result == 1
+                array.set(dowPlayWin, r.dow*3 + 2, array.get(dowPlayWin, r.dow*3 + 2) + 1)
+
+    // ===============================================================
+    // CONSOLIDATED TABLE — reorganized by decision priority:
+    //   ① DIRECTION  ② FAKE-OUT  ③ TARGETS  ④ DAY TYPE
+    // ===============================================================
+    ts = f_txtsize(tblSize)
+    int totalRows = 78 + nLv
+    tStats := table.new(posMap, 5, totalRows, border_width=1, frame_color=color.gray, frame_width=1, bgcolor=color.new(color.black, 10))
+    int rr = 0
+
+    // ---- compute three-play win rates, R:R, expectancy ----
+    p1N = p1W + p1L
+    p2N = p2W + p2L
+    p3N = p3W + p3L
+    p1Win = p1N > 0 ? p1W / p1N : 0.0
+    p2Win = p2N > 0 ? p2W / p2N : 0.0
+    p3Win = p3N > 0 ? p3W / p3N : 0.0
+    // structural R:R (reward/risk in range units), from the configured levels:
+    // P1: reward = p1TgtExt + 1 (boundary->tgt), risk = 1 (boundary->opp boundary). Simplify reward = p1TgtExt range beyond boundary, risk = full range.
+    p1RR = p1TgtExt / 1.0
+    // P2: enter mid; reward = mid->(0.5x ext) = 0.5range + p2TgtExt range; risk = mid->opp boundary = 0.5range
+    p2RR = (0.5 + p2TgtExt) / 0.5
+    // P3: enter boundary; reward = boundary->mid = 0.5range; risk = boundary->stop = p3StopExt range
+    p3RR = 0.5 / p3StopExt
+    // expectancy (R units) = win*RR - loss*1
+    p1Exp = p1Win * p1RR - (1 - p1Win)
+    p2Exp = p2Win * p2RR - (1 - p2Win)
+    p3Exp = p3Win * p3RR - (1 - p3Win)
+    // best play = highest measured win rate (require min sample)
+    bestPlayWin = math.max(p1Win, math.max(p2Win, p3Win))
+    bestPlayName = bestPlayWin == p1Win ? "Breakout" : bestPlayWin == p2Win ? "Retest-cont" : "Fade-to-mid"
+    // dominant bias = variant with highest |lift|
+    liftF = nF > 0 ? math.abs(cF/nF - 0.5) : 0.0
+    liftC = nC > 0 ? math.abs(cC/nC - 0.5) : 0.0
+    liftV = nV > 0 ? math.abs(cV/nV - 0.5) : 0.0
+    liftI = nI > 0 ? math.abs(cI/nI - 0.5) : 0.0
+    maxLift = math.max(liftF, math.max(liftC, math.max(liftV, liftI)))
+    biasName = maxLift == liftF ? "Formation" : maxLift == liftC ? "Close" : maxLift == liftV ? "FVG" : "IFVG"
+    biasHr = maxLift == liftF ? (nF>0?cF/nF:0.5) : maxLift == liftC ? (nC>0?cC/nC:0.5) : maxLift == liftV ? (nV>0?cV/nV:0.5) : (nI>0?cI/nI:0.5)
+    // a bias >50% = trade with it (long if bull lean); <50% = fade it
+    biasDir = bullDays >= bearDays ? "Long" : "Short"
+    biasVerdict = biasHr >= 0.5 ? biasDir : (biasDir == "Long" ? "Short" : "Long")  // sub-50% => fade
+
+    // ===== TOP SUGGESTED LINE (simple cross: bias dir + best play) =====
+    f_divider(tStats, ts, rr, "IB STATS — " + sessionChoice + "  (n=" + str.tostring(n) + ")", color.new(color.gray, 20), "Initial Balance statistics for the selected session over the loaded history (n = number of completed days). All % cells: green ≥60%, orange 50-60%, red <50%."), rr += 1
+    f_kv(tStats, ts, rr, "SUGGESTED", biasVerdict + " · " + bestPlayName + " (" + str.tostring(bestPlayWin*100, "#") + "% win)"), rr += 1
+
+    // ===================================================================
+    // ① DIRECTION — which way will the session go?
+    // ===================================================================
+    f_divider(tStats, ts, rr, "① DIRECTION — which way?", color.new(#1b3a5c, 0), "Predicts session direction at IB close. BIAS SIGNALS: Formation = which IB extreme formed later (high-after-low ⇒ bullish). Close Dir = IB closed above/below its open. FVG = direction of first fair-value gap in the IB. FVG→IFVG = same but flips if the gap is later violated. HIT = how often the prediction was right; LIFT = edge vs a 50% coin flip. Lo/Hi formed-1st = follow-through rate of the formation read."), rr += 1
+    f_kv(tStats, ts, rr, "Bull / Bear days", str.tostring(bullDays) + " / " + str.tostring(bearDays) + "  (" + f_pct(bullDays, n) + " bull)"), rr += 1
+    // Bias variants: signal | hit (count%) | lift
+    f_colhdr(tStats, ts, rr, "BIAS SIGNAL", "HIT", "LIFT", "N", color.purple), rr += 1
+    cF_hr = nF > 0 ? cF / nF : 0.0
+    f_row4(tStats, ts, rr, "Formation", f_cntpct(cF, nF), (cF_hr>=0.5?"+":"") + str.tostring((cF_hr-0.5)*100,"#") + "%", str.tostring(nF), f_rag(cF_hr)), rr += 1
+    cC_hr = nC > 0 ? cC / nC : 0.0
+    f_row4(tStats, ts, rr, "Close Dir", f_cntpct(cC, nC), (cC_hr>=0.5?"+":"") + str.tostring((cC_hr-0.5)*100,"#") + "%", str.tostring(nC), f_rag(cC_hr)), rr += 1
+    cV_hr = nV > 0 ? cV / nV : 0.0
+    f_row4(tStats, ts, rr, "FVG", f_cntpct(cV, nV), (cV_hr>=0.5?"+":"") + str.tostring((cV_hr-0.5)*100,"#") + "%", str.tostring(nV), f_rag(cV_hr)), rr += 1
+    cI_hr = nI > 0 ? cI / nI : 0.0
+    f_row4(tStats, ts, rr, "FVG→IFVG", f_cntpct(cI, nI), (cI_hr>=0.5?"+":"") + str.tostring((cI_hr-0.5)*100,"#") + "%", str.tostring(nI), f_rag(cI_hr)), rr += 1
+    // Formation follow-through
+    loHr = loFirst > 0 ? loFollow / loFirst : 0.0
+    f_row4(tStats, ts, rr, "Lo formed 1st→↑", f_cntpct(loFollow, loFirst), str.tostring(loFirst) + "d", "", f_rag(loHr)), rr += 1
+    hiHr = hiFirst > 0 ? hiFollow / hiFirst : 0.0
+    f_row4(tStats, ts, rr, "Hi formed 1st→↓", f_cntpct(hiFollow, hiFirst), str.tostring(hiFirst) + "d", "", f_rag(hiHr)), rr += 1
+
+    // ===================================================================
+    // ② FAKE-OUT — is the break real?
+    // ===================================================================
+    f_divider(tStats, ts, rr, "② FAKE-OUT — is the break real?", color.new(#7a3b00, 0), "How trustworthy a break is. False Break = broke a side but closed beyond the opposite end OR never reached the min extension (set by False-break input). Contained = never broke either side. Double Break = both sides taken (whipsaw). Brk→25% retrace = after breaking, pulled back 25% into the range."), rr += 1
+    f_kv(tStats, ts, rr, "False Break", f_cntpct(falseBrkCnt, brokeAnyCnt) + "  <" + str.tostring(falseBreakThr) + "x/rev"), rr += 1
+    f_kv(tStats, ts, rr, "Contained (no break)", f_cntpct(contained, n)), rr += 1
+    f_kv(tStats, ts, rr, "Double Break (whipsaw)", f_cntpct(dblBreak, n)), rr += 1
+    f_kv(tStats, ts, rr, "Brk→25% retrace", f_cntpct(retr25Cnt, brokeAnyCnt)), rr += 1
+
+    // ===================================================================
+    // PLAYS — the three setups compared (win / R:R / expectancy)
+    // ===================================================================
+    f_divider(tStats, ts, rr, "PLAYS — win · R:R · expectancy", color.new(#3a2d5c, 0), "Three setups graded over history. ① Breakout: enter at boundary on break, target/stop set by inputs. ② Retest-cont: enter at mid after break, continue in break direction. ③ Fade-to-mid: after an overshoot beyond the boundary, fade back to mid. WIN = win rate; R:R = structural reward:risk; EXP(R) = expectancy in R units (win×RR − loss), the number that actually matters."), rr += 1
+    f_colhdr(tStats, ts, rr, "PLAY", "WIN", "R:R", "EXP(R)", color.new(#3a2d5c, 0)), rr += 1
+    f_row4(tStats, ts, rr, "① Breakout", f_cntpct(p1W, p1N), str.tostring(p1RR, "#.#"), (p1Exp>=0?"+":"") + str.tostring(p1Exp, "#.##"), f_rag(p1Win)), rr += 1
+    f_row4(tStats, ts, rr, "② Retest-cont", f_cntpct(p2W, p2N), str.tostring(p2RR, "#.#"), (p2Exp>=0?"+":"") + str.tostring(p2Exp, "#.##"), f_rag(p2Win)), rr += 1
+    f_row4(tStats, ts, rr, "③ Fade-to-mid", f_cntpct(p3W, p3N), str.tostring(p3RR, "#.#"), (p3Exp>=0?"+":"") + str.tostring(p3Exp, "#.##"), f_rag(p3Win)), rr += 1
+
+    // ===================================================================
+    // ③ TARGETS — how far will it extend?
+    // ===================================================================
+    f_divider(tStats, ts, rr, "③ TARGETS — how far?", color.new(#0d4d2b, 0), "How far price extends beyond the IB, in multiples of the IB range. RAW mode: UP/DN = % of days reaching that ext above/below. BIAS mode (input toggle): BIAS = % of bias-direction days reaching it. EITHER = either side hit it. CONT = continuation: of days reaching the previous level, % that reached this one. Below: mode/median time of first break and mid touch."), rr += 1
+    // header depends on mode
+    h1 = extBiasAware ? "BIAS" : "UP"
+    h2 = extBiasAware ? "RAW-EI" : "DN"
+    table.cell(tStats, 0, rr, "EXT", bgcolor=color.navy, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(tStats, 1, rr, h1, bgcolor=color.navy, text_color=color.white, text_size=ts)
+    table.cell(tStats, 2, rr, h2, bgcolor=color.navy, text_color=color.white, text_size=ts)
+    table.cell(tStats, 3, rr, "EITH", bgcolor=color.navy, text_color=color.white, text_size=ts)
+    table.cell(tStats, 4, rr, "CONT", bgcolor=color.navy, text_color=color.white, text_size=ts)
+    rr += 1
+    for li = 0 to nLv - 1
+        m = array.get(extArr, li)
+        uHit = array.get(extUp, li)
+        dHit = array.get(extDn, li)
+        eHit = array.get(extEi, li)
+        bHit = array.get(extBias, li)
+        prevEi = li == 0 ? 0 : array.get(extEi, li - 1)
+        contRate = prevEi > 0 ? eHit / prevEi : 0.0
+        contStr = li == 0 ? "—" : f_pct(eHit, prevEi)
+        eiRate = n > 0 ? eHit / n : 0.0
+        bgEi = li == 0 ? color.new(color.gray, 70) : f_rag(eiRate)
+        if extBiasAware
+            bgB = f_rag(biasDayN > 0 ? bHit/biasDayN : 0.0)
+            f_row5(tStats, ts, rr, str.tostring(m) + "x", f_cntpct(bHit, biasDayN), f_cntpct(eHit, n), f_pct(eHit, n), contStr, bgB, bgEi, bgEi)
+        else
+            f_row5(tStats, ts, rr, str.tostring(m) + "x", f_cntpct(uHit, n), f_cntpct(dHit, n), f_pct(eHit, n), contStr, f_rag(n>0?uHit/n:0), f_rag(n>0?dHit/n:0), bgEi)
+        // color the CONT cell (col 4) by its continuation rate
+        table.cell(tStats, 4, rr, contStr, text_color=color.white, text_size=ts, bgcolor=(li == 0 ? color.new(color.gray, 70) : f_rag(contRate)))
+        rr += 1
+    // Mode + median timing
+    brkModeIdx = array.indexof(brkBucketFreq, array.max(brkBucketFreq))
+    midModeIdx = array.indexof(midBucketFreq, array.max(midBucketFreq))
+    brkModeCnt = array.max(brkBucketFreq)
+    midModeCnt = array.max(midBucketFreq)
+    f_kv(tStats, ts, rr, "Break time: mode", brkModeCnt > 0 ? f_bucket2time(brkModeIdx) + " ET (" + str.tostring(brkModeCnt) + "d)" : "—"), rr += 1
+    f_kv(tStats, ts, rr, "Break time: median", array.size(brkMinArr) > 0 ? str.tostring(array.median(brkMinArr), "#") + " min after IB" : "—"), rr += 1
+    f_kv(tStats, ts, rr, "Mid touch: mode", midModeCnt > 0 ? f_bucket2time(midModeIdx) + " ET (" + str.tostring(midModeCnt) + "d)" : "—"), rr += 1
+
+    // ===================================================================
+    // ④ DAY TYPE — what kind of day / regime?
+    // ===================================================================
+    f_divider(tStats, ts, rr, "④ DAY TYPE — what regime?", color.new(#5c1b3a, 0), "Regime context. Mid Retest = % of days price returns to the IB mid after breaking (high = fade-friendly). Gap Fill = % of gaps from prior session close that fill. RANGE SIZE buckets days into terciles by IB range%: BREAK = how often it breaks at all; MED-EXT = median extension reached (your typical target); P75 = stretch target; 0.5x = how often it reaches the min tradable target. DAY OF WK shows the best-win-rate play per weekday."), rr += 1
+    f_kv(tStats, ts, rr, "Mid Retest (fade)", f_cntpct(midHits, n)), rr += 1
+    f_kv(tStats, ts, rr, "Gap Fill", f_cntpct(gapFills, n)), rr += 1
+    f_kv(tStats, ts, rr, "Gap Up / Dn", str.tostring(gapUp) + " / " + str.tostring(gapDn) + "  avg |" + str.tostring(n>0?sumGapAbs/n:0, "#.##") + "%|"), rr += 1
+
+    // Range size (terciles by range%): BREAK | MED-EXT | P75-EXT | 0.5x HIT
+    table.cell(tStats, 0, rr, "RANGE SIZE", bgcolor=color.new(color.olive, 0), text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(tStats, 1, rr, "BREAK", bgcolor=color.new(color.olive, 0), text_color=color.white, text_size=ts)
+    table.cell(tStats, 2, rr, "MED", bgcolor=color.new(color.olive, 0), text_color=color.white, text_size=ts)
+    table.cell(tStats, 3, rr, "P75", bgcolor=color.new(color.olive, 0), text_color=color.white, text_size=ts)
+    table.cell(tStats, 4, rr, "0.5x", bgcolor=color.new(color.olive, 0), text_color=color.white, text_size=ts)
+    rr += 1
+    bkNames = array.from("Small (low⅓)", "Medium", "Large (top⅓)")
+    for bi = 0 to 2
+        br = array.get(bkBroke, bi)
+        bt = array.get(bkTot, bi)
+        bHr = bt > 0 ? br / bt : 0.0
+        h05 = array.get(bk05Hit, bi)
+        eArr = bi == 0 ? bkExtArr0 : bi == 1 ? bkExtArr1 : bkExtArr2
+        medExt = array.size(eArr) > 0 ? array.median(eArr) : 0.0
+        p75Ext = array.size(eArr) > 0 ? array.percentile_nearest_rank(eArr, 75) : 0.0
+        f_row5(tStats, ts, rr, array.get(bkNames, bi), f_pct(br, bt), str.tostring(medExt, "#.##") + "x", str.tostring(p75Ext, "#.##") + "x", f_pct(h05, bt), f_rag(bHr), color.new(color.gray, 70), color.new(color.gray, 70)), rr += 1
+
+    // Day of week: per-day bull% and the best-win-rate PLAY that day
+    var array<int> dowBull = array.new<int>(8, 0)
+    var array<int> dowTot  = array.new<int>(8, 0)
+    for d = 0 to 7
+        array.set(dowBull, d, 0)
+        array.set(dowTot, d, 0)
+    for i = 0 to n - 1
+        r = array.get(records, i)
+        dd = r.dow
+        if dd >= 1 and dd <= 7
+            array.set(dowTot, dd, array.get(dowTot, dd) + 1)
+            if r.firstBreakDir == 1
+                array.set(dowBull, dd, array.get(dowBull, dd) + 1)
+    table.cell(tStats, 0, rr, "DAY OF WK", bgcolor=color.maroon, text_color=color.white, text_size=ts, text_halign=text.align_left)
+    table.cell(tStats, 1, rr, "BULL(n)", bgcolor=color.maroon, text_color=color.white, text_size=ts)
+    table.cell(tStats, 2, rr, "", bgcolor=color.maroon, text_color=color.white, text_size=ts)
+    table.cell(tStats, 3, rr, "BEST PLAY", bgcolor=color.maroon, text_color=color.white, text_size=ts)
+    table.cell(tStats, 4, rr, "", bgcolor=color.maroon, text_color=color.white, text_size=ts)
+    table.merge_cells(tStats, 1, rr, 2, rr)
+    table.merge_cells(tStats, 3, rr, 4, rr)
+    rr += 1
+    dowNames = array.from("", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+    playNames = array.from("①Brk", "②Ret", "③Fade")
+    for d = 2 to 6
+        bb = array.get(dowBull, d)
+        tt = array.get(dowTot, d)
+        dHr = tt > 0 ? bb / tt : 0.0
+        // best play that weekday = play with most wins
+        w0 = array.get(dowPlayWin, d*3 + 0)
+        w1 = array.get(dowPlayWin, d*3 + 1)
+        w2 = array.get(dowPlayWin, d*3 + 2)
+        bestW = math.max(w0, math.max(w1, w2))
+        bestPlay = tt == 0 ? "—" : bestW == 0 ? "none" : bestW == w0 ? array.get(playNames, 0) : bestW == w1 ? array.get(playNames, 1) : array.get(playNames, 2)
+        f_row3(tStats, ts, rr, array.get(dowNames, d), f_cntpct(bb, tt), bestPlay + " (" + str.tostring(bestW) + "w)", f_rag(dHr)), rr += 1
+
+    // Range distribution
+    var array<float> rngArr = array.new<float>()
+    array.clear(rngArr)
+    for i = 0 to n - 1
+        r = array.get(records, i)
+        array.push(rngArr, r.ibH - r.ibL)
+    f_colhdr(tStats, ts, rr, "RANGE Δ (pts)", "VALUE", "", "", color.new(color.gray, 20)), rr += 1
+    f_kv(tStats, ts, rr, "Median / Mean", str.tostring(array.median(rngArr), "#.#") + " / " + str.tostring(array.avg(rngArr), "#.#")), rr += 1
+    f_kv(tStats, ts, rr, "P25 / P75", str.tostring(array.percentile_nearest_rank(rngArr, 25), "#.#") + " / " + str.tostring(array.percentile_nearest_rank(rngArr, 75), "#.#")), rr += 1
+    f_kv(tStats, ts, rr, "Today vs median", str.tostring(nz(ibRange), "#.#") + " (" + (array.median(rngArr) > 0 ? str.tostring(nz(ibRange)/array.median(rngArr)*100, "#") + "%" : "—") + ")"), rr += 1
+
+// =============================================================================
+// 14. DATA WINDOW
+// =============================================================================
+plot(nz(ibRangePct), "IB Range %", display=display.data_window)
+plot(maxExtUp, "Max Ext Up", display=display.data_window)
+plot(maxExtDn, "Max Ext Dn", display=display.data_window)
+plot(bFVGifvg, "FVG-IFVG Bias", display=display.data_window)
+plot(array.size(records), "Days Recorded", display=display.data_window)
