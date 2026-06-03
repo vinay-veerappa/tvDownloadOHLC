@@ -585,13 +585,15 @@ def run_pipeline(
                     scored_intraday,
                     tl_intraday.basis_spread,
                     tl_intraday.basis_ratio,
-                    tl_intraday.translation_mode == "multiplicative"
+                    tl_intraday.translation_mode == "multiplicative",
+                    min_tick=tl_intraday.min_tick
                 )
                 scored_macro = translate_scored_levels(
                     scored_macro,
                     tl_macro.basis_spread,
                     tl_macro.basis_ratio,
-                    tl_macro.translation_mode == "multiplicative"
+                    tl_macro.translation_mode == "multiplicative",
+                    min_tick=tl_macro.min_tick
                 )
 
             # Save the final (translated if futures quote was available) scored levels to dicts

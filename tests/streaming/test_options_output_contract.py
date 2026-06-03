@@ -1017,3 +1017,105 @@ def test_expected_move_header_footer_regression() -> None:
     assert straddle_header == straddle_footer
 
 
+def test_futures_translation_rounds_to_min_tick() -> None:
+    from scripts.streaming.options.futures_translator import get_min_tick, round_to_tick, translate_to_futures, translate_scored_levels
+    from scripts.streaming.options.gex_calculator import DealerLevels, ExpectedMove
+    from scripts.streaming.options.options_fetcher import FuturesQuote
+    
+    # Test get_min_tick
+    assert get_min_tick("/ESH26") == 0.25
+    assert get_min_tick("/MESM26") == 0.25
+    assert get_min_tick("/NQ") == 0.25
+    assert get_min_tick("/YM") == 1.0
+    assert get_min_tick("/RTY") == 0.1
+    assert get_min_tick("/CL") == 0.01
+    
+    # Test round_to_tick
+    assert round_to_tick(100.123, 0.25) == 100.0
+    assert round_to_tick(100.13, 0.25) == 100.25
+    assert round_to_tick(100.14, 0.25) == 100.25
+    assert round_to_tick(100.6, 1.0) == 101.0
+    assert round_to_tick(100.123, 0.1) == 100.1
+    assert round_to_tick(100.123, 0.01) == 100.12
+    
+    # Test translate_to_futures rounds to min_tick (e.g. 0.25 for ES)
+    levels = DealerLevels(
+        ticker="SPX",
+        spot=7500.0,
+        zero_gamma=7495.12,
+        gamma_flip_lower=7490.05,
+        gamma_flip_upper=7490.05,
+        call_wall=7510.3,
+        put_wall=7480.2,
+        secondary_call_wall=None,
+        secondary_put_wall=None,
+        local_call_node=None,
+        local_put_node=None,
+        call_wall_0dte=None,
+        put_wall_0dte=None,
+        hedge_wall=None,
+        max_pain=None,
+        em_value=30.0,
+        em_upper=7530.0,
+        em_lower=7470.0,
+        atm_straddle=28.0,
+        vol_trigger_upper_05=None,
+        vol_trigger_lower_05=None,
+        vol_trigger_upper_10=None,
+        vol_trigger_lower_10=None,
+        vol_trigger_upper_15=None,
+        vol_trigger_lower_15=None,
+        gamma_cliff_up=None,
+        gamma_cliff_down=None,
+        vanna_call_node=None,
+        vanna_put_node=None,
+        charm_call_node=None,
+        charm_put_node=None,
+        volume_imbalance_call_node=None,
+        volume_imbalance_put_node=None,
+        dex_call_node=None,
+        dex_put_node=None,
+        liquidity_vacuum_lower=None,
+        liquidity_vacuum_upper=None,
+        skew_pivot_put_25d=None,
+        skew_pivot_call_25d=None,
+        gamma_magnet=None,
+        pin_strike=None,
+        pin_odds=0.5,
+        wall_separation=None,
+        expected_moves=[
+            ExpectedMove(expiry="2026-06-04", dte=1, em_value=30.0, em_upper=7530.0, em_lower=7470.0, straddle=28.0)
+        ],
+        gex_regime="NEGATIVE",
+        total_gex=-1000.0,
+        regime_label="TRENDING",
+        directional_bias="BEARISH",
+        call_gamma_total=100.0,
+        put_gamma_total=200.0,
+        net_vanna_exposure=0.0,
+        wall_scope="FRONT_WEEK_WEIGHTED",
+        wall_dte_min=0,
+        wall_dte_max=14,
+        concentration_score=0.5,
+        call_wall_oi=100,
+        put_wall_oi=100,
+        pin_strike_oi=100,
+        net_speed_exposure=0.0,
+        hedge_flow_up_10=0.0,
+        hedge_flow_up_25=0.0,
+        hedge_flow_up_50=0.0,
+        hedge_flow_dn_10=0.0,
+        hedge_flow_dn_25=0.0,
+        hedge_flow_dn_50=0.0,
+        hourly_flow_curve=[],
+    )
+    
+    futures = FuturesQuote(symbol="/ESH26", price=7515.33, open_price=7515.0)
+    # Basis spread is 15.33
+    # translated zero_gamma is 7495.12 + 15.33 = 7510.45 -> closest 0.25 is 7510.50
+    tl = translate_to_futures(levels, futures)
+    assert tl.zero_gamma == 7510.50
+    assert tl.min_tick == 0.25
+
+
+

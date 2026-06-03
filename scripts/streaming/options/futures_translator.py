@@ -7,11 +7,49 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+import math
 
 from .gex_calculator import DealerLevels, ExpectedMove, StrikeGEX
 from .options_fetcher import FuturesQuote
 
 log = logging.getLogger(__name__)
+
+
+def get_min_tick(symbol: str) -> float:
+    """Determine the minimum tick increment for a futures symbol."""
+    sym = symbol.upper().lstrip('/')
+    # Strip micro prefix if present
+    if sym.startswith('M') and (
+        sym[1:3] in ['ES', 'NQ', 'YM', 'GC', 'SI', 'HG', '6E', '6A', '6B', '6J'] or 
+        sym[1:4] in ['RTY', 'CL']
+    ):
+        sym = sym[1:]
+        
+    if sym.startswith('ES') or sym.startswith('NQ'):
+        return 0.25
+    elif sym.startswith('YM'):
+        return 1.0
+    elif sym.startswith('RTY') or sym.startswith('GC'):
+        return 0.1
+    elif sym.startswith('CL'):
+        return 0.01
+    elif sym.startswith('SI'):
+        return 0.005
+    elif sym.startswith('HG'):
+        return 0.0005
+    elif sym.startswith('6E') or sym.startswith('6A') or sym.startswith('6B'):
+        return 0.0001
+    elif sym.startswith('6J'):
+        return 0.000001
+    else:
+        return 0.01
+
+
+def round_to_tick(value: float, min_tick: float) -> float:
+    """Round a price value to the nearest minimum tick increment."""
+    min_tick_str = f"{min_tick:.8f}".rstrip('0')
+    decimals = len(min_tick_str.split('.')[1]) if '.' in min_tick_str else 0
+    return round(round(value / min_tick) * min_tick, decimals)
 
 
 @dataclass
@@ -23,6 +61,7 @@ class TranslatedLevels:
     basis_spread: float         # Additive: futures - cash (e.g. ES-SPX = +4). Multiplicative: 0.0
     basis_ratio: float          # Multiplicative: futures/cash (e.g. NQ/QQQ = 41.4). Additive: 1.0
     translation_mode: str       # "additive" or "multiplicative"
+    min_tick: float
     total_gex: float
     gex_regime: str
 
@@ -106,7 +145,6 @@ class TranslatedLevels:
     iv_change: float               # Percentage change in IV
     expected_moves: list[ExpectedMove]
     strike_gex: list[StrikeGEX] = field(default_factory=list) # Re-add just in case needed for UI pass-through
-
     put_25d_iv: float | None = None
     call_25d_iv: float | None = None
     volatility_skew_premium: float | None = None
@@ -144,15 +182,18 @@ def translate_to_futures(
         ratio,
     )
 
+    min_tick = get_min_tick(futures.symbol)
+
     def _shift(value: float | None) -> float | None:
         if value is None:
             return None
-        return round(value * ratio, 2) if use_scale else round(value + spread, 2)
+        raw_val = value * ratio if use_scale else value + spread
+        return round_to_tick(raw_val, min_tick)
 
     # em_value is a ± magnitude (not a price level).  Magnitude scales with ratio.
     translated_em_value = (
-        round(levels.em_value * ratio, 2) if use_scale
-        else round(levels.em_value, 2)
+        round_to_tick(levels.em_value * ratio, min_tick) if use_scale
+        else round_to_tick(levels.em_value, min_tick)
     )
 
     return TranslatedLevels(
@@ -163,6 +204,7 @@ def translate_to_futures(
         basis_spread=round(spread, 2) if not use_scale else 0.0,
         basis_ratio=round(ratio, 4) if use_scale else 1.0,
         translation_mode="multiplicative" if use_scale else "additive",
+        min_tick=min_tick,
         total_gex=levels.total_gex,
         gex_regime=levels.gex_regime,
         zero_gamma=_shift(levels.zero_gamma),
@@ -206,8 +248,8 @@ def translate_to_futures(
         pin_strike=_shift(levels.pin_strike),
         pin_odds=levels.pin_odds,
         wall_separation=(
-            round(levels.wall_separation * ratio, 2) if use_scale and levels.wall_separation is not None
-            else levels.wall_separation
+            round_to_tick(levels.wall_separation * ratio, min_tick) if use_scale and levels.wall_separation is not None
+            else (round_to_tick(levels.wall_separation, min_tick) if levels.wall_separation is not None else None)
         ),
         regime_label=levels.regime_label,
         directional_bias=levels.directional_bias,
@@ -241,10 +283,10 @@ def translate_to_futures(
             ExpectedMove(
                 expiry=em.expiry,
                 dte=em.dte,
-                em_value=round(em.em_value * ratio, 2) if use_scale else em.em_value,
+                em_value=round_to_tick(em.em_value * ratio, min_tick) if use_scale else round_to_tick(em.em_value, min_tick),
                 em_upper=_shift(em.em_upper),
                 em_lower=_shift(em.em_lower),
-                straddle=round(em.straddle * ratio, 2) if use_scale else em.straddle,
+                straddle=round_to_tick(em.straddle * ratio, min_tick) if use_scale else round_to_tick(em.straddle, min_tick),
                 straddle_85_upper=_shift(em.straddle_85_upper) or 0.0,
                 straddle_85_lower=_shift(em.straddle_85_lower) or 0.0,
             )
@@ -259,6 +301,7 @@ def translate_scored_levels(
     basis_spread: float,
     basis_ratio: float,
     use_scale: bool,
+    min_tick: float | None = None,
 ) -> ScoredLevels:
     """
     Translate the strikes and expected moves in a ScoredLevels object to futures space.
@@ -271,7 +314,10 @@ def translate_scored_levels(
     def _shift(value: float | None) -> float | None:
         if value is None:
             return None
-        return round(value * basis_ratio, 2) if use_scale else round(value + basis_spread, 2)
+        raw_val = value * basis_ratio if use_scale else value + basis_spread
+        if min_tick is not None:
+            return round_to_tick(raw_val, min_tick)
+        return round(raw_val, 2)
 
     # Shift each TaggedLevel strike
     for level in translated_scored.tagged_levels:
@@ -285,10 +331,10 @@ def translate_scored_levels(
             ExpectedMove(
                 expiry=em.expiry,
                 dte=em.dte,
-                em_value=round(em.em_value * basis_ratio, 2) if use_scale else em.em_value,
+                em_value=round_to_tick(em.em_value * basis_ratio, min_tick) if min_tick is not None else (round(em.em_value * basis_ratio, 2) if use_scale else em.em_value),
                 em_upper=_shift(em.em_upper),
                 em_lower=_shift(em.em_lower),
-                straddle=round(em.straddle * basis_ratio, 2) if use_scale else em.straddle,
+                straddle=round_to_tick(em.straddle * basis_ratio, min_tick) if min_tick is not None else (round(em.straddle * basis_ratio, 2) if use_scale else em.straddle),
                 straddle_85_upper=_shift(getattr(em, "straddle_85_upper", 0.0)) or 0.0,
                 straddle_85_lower=_shift(getattr(em, "straddle_85_lower", 0.0)) or 0.0,
             )
