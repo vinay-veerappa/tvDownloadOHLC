@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime, time, timedelta
 import pytz
 from collections import defaultdict
+from scripts.libs_py.nqstats.sessions import get_trading_date
 
 DATA_DIR = Path(__file__).parent.parent.parent / 'data'
 ET = pytz.timezone('US/Eastern')
@@ -56,13 +57,6 @@ def compute_level_touches(ticker: str) -> dict:
     # Defensive: purge the original Unix 'time' column
     if 'time' in df.columns:
         df = df.drop(columns=['time'])
-    
-    # Add trading_date column (day that starts at 18:00)
-    def get_trading_date(ts):
-        if ts.time() >= time(18, 0):
-            return (ts + timedelta(days=1)).date()
-        else:
-            return ts.date()
     
     df['trading_date'] = df.index.map(get_trading_date)
     

@@ -661,7 +661,7 @@ class Runner:
         self.scheduler.add_job(
             self.daily_earnings_briefing_job,
             trigger="cron",
-            day_of_week="sun-thu",
+            day_of_week="mon-thu,sun",
             hour=19,
             minute=0,
             id="daily_earnings_briefing",

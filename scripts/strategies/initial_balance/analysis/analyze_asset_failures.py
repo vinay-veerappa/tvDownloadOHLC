@@ -1,155 +1,158 @@
 """
-Deep Asset Analysis - Diagnose why each asset failed
-
-Analyze:
-1. Trade characteristics (MAE/MFE, win/loss patterns)
-2. IB statistics (range, break frequency)
-3. Asset-specific issues
-4. Proposed optimizations
+Failure Diagnosis Engine - Deep analysis of Initial Balance failures
+Correlates trade losses (false breakouts, whipsaws, stop-outs) with:
+1. Normalized Volatility & ATR regimes
+2. VIX levels (low/high volatility regimes)
+3. Opening Gaps and prior close characteristics
+4. Index divergence (NQ vs ES correlation)
 """
 
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import sys
 
-def analyze_asset(asset_name, csv_path):
-    """Deep analysis of asset performance"""
-    
+# Add project root to path
+project_root = str(Path(__file__).parent.parent.parent.parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+def calculate_daily_atr(df_daily: pd.DataFrame, window: int = 14) -> pd.Series:
+    """Computes daily Average True Range (ATR)."""
+    prev_close = df_daily['close'].shift(1)
+    tr1 = df_daily['high'] - df_daily['low']
+    tr2 = (df_daily['high'] - prev_close).abs()
+    tr3 = (df_daily['low'] - prev_close).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(window).mean()
+
+def run_failure_diagnosis(trades_csv: str = 'scripts/strategies/initial_balance/data/backtest_results_45min.csv'):
+    """
+    Diagnoses Initial Balance trade failures using multi-factor analysis.
+    """
+    path = Path(trades_csv)
+    if not path.exists():
+        print(f"[ERROR] Trades file not found at {path}. Please run backtests first.")
+        return
+        
+    df_trades = pd.read_csv(path)
+    if df_trades.empty or 'pnl_pct' not in df_trades.columns:
+        print(f"[ERROR] Invalid or empty trades file: {path}")
+        return
+        
     print(f"\n{'='*100}")
-    print(f"DEEP ANALYSIS: {asset_name}")
+    print(f"FAILURE DIAGNOSIS REPORT: {path.name}")
     print(f"{'='*100}\n")
     
-    # Load data
-    df = pd.read_csv(csv_path)
+    # Standardize trade dates
+    df_trades['date'] = pd.to_datetime(df_trades['exit_time'], utc=True).dt.date
+    df_trades = df_trades.set_index('date')
     
-    if len(df) == 0:
-        print(f"⚠ No trades for {asset_name}")
-        return None
-    
-    # Basic stats
-    print(f"Total Trades: {len(df)}")
-    print(f"Winners: {(df['result']=='WIN').sum()}")
-    print(f"Losers: {(df['result']=='LOSS').sum()}")
-    print(f"Win Rate: {(df['result']=='WIN').sum()/len(df)*100:.1f}%")
-    
-    # P&L Analysis
-    print(f"\n--- P&L Analysis ---")
-    print(f"Total PnL: {df['pnl_pct'].sum():.2f}%")
-    print(f"Avg Win: {df[df['result']=='WIN']['pnl_pct'].mean():.3f}%")
-    print(f"Avg Loss: {df[df['result']=='LOSS']['pnl_pct'].mean():.3f}%")
-    print(f"Profit Factor: {df[df['result']=='WIN']['pnl_pct'].sum() / abs(df[df['result']=='LOSS']['pnl_pct'].sum()):.2f}")
-    
-    # MAE/MFE Analysis
-    print(f"\n--- MAE/MFE Analysis ---")
-    print(f"Avg MAE: {df['mae_pct'].mean():.3f}%")
-    print(f"Avg MFE: {df['mfe_pct'].mean():.3f}%")
-    print(f"Winners MAE: {df[df['result']=='WIN']['mae_pct'].mean():.3f}%")
-    print(f"Losers MAE: {df[df['result']=='LOSS']['mae_pct'].mean():.3f}%")
-    print(f"Winners MFE: {df[df['result']=='WIN']['mfe_pct'].mean():.3f}%")
-    print(f"Losers MFE: {df[df['result']=='LOSS']['mfe_pct'].mean():.3f}%")
-    
-    # MFE Reach Analysis
-    print(f"\n--- MFE Reach Probability ---")
-    for r in [0.25, 0.5, 0.75, 1.0, 1.5]:
-        pct = (df['mfe_pct'] >= r).sum() / len(df) * 100
-        print(f"{r}R: {pct:.1f}% of trades")
-    
-    # IB Range Analysis
-    print(f"\n--- IB Range Analysis ---")
-    print(f"Avg IB Range: {df['ib_range_pct'].mean():.3f}%")
-    print(f"Min IB Range: {df['ib_range_pct'].min():.3f}%")
-    print(f"Max IB Range: {df['ib_range_pct'].max():.3f}%")
-    print(f"Median IB Range: {df['ib_range_pct'].median():.3f}%")
-    
-    # IB Range vs Win Rate
-    print(f"\n--- IB Range vs Performance ---")
-    df['ib_range_bucket'] = pd.cut(df['ib_range_pct'], bins=[0, 0.3, 0.5, 0.7, 1.0, 10], 
-                                     labels=['<0.3%', '0.3-0.5%', '0.5-0.7%', '0.7-1.0%', '>1.0%'])
-    for bucket in df['ib_range_bucket'].unique():
-        if pd.isna(bucket):
-            continue
-        bucket_data = df[df['ib_range_bucket'] == bucket]
-        wr = (bucket_data['result']=='WIN').sum() / len(bucket_data) * 100
-        avg_pnl = bucket_data['pnl_pct'].mean()
-        print(f"{bucket}: {len(bucket_data)} trades, WR={wr:.1f}%, Avg PnL={avg_pnl:.2f}%")
-    
-    # Directional Bias Analysis
-    print(f"\n--- Directional Bias Analysis ---")
-    print(f"LONG trades: {(df['direction']=='LONG').sum()}")
-    print(f"SHORT trades: {(df['direction']=='SHORT').sum()}")
-    long_wr = (df[df['direction']=='LONG']['result']=='WIN').sum() / (df['direction']=='LONG').sum() * 100
-    short_wr = (df[df['direction']=='SHORT']['result']=='WIN').sum() / (df['direction']=='SHORT').sum() * 100
-    print(f"LONG Win Rate: {long_wr:.1f}%")
-    print(f"SHORT Win Rate: {short_wr:.1f}%")
-    
-    # Matched Expectation Analysis
-    print(f"\n--- Expectation Match Analysis ---")
-    matched = df[df['matched_expectation']==True]
-    unmatched = df[df['matched_expectation']==False]
-    if len(matched) > 0:
-        matched_wr = (matched['result']=='WIN').sum() / len(matched) * 100
-        print(f"Matched Expectation: {len(matched)} trades, WR={matched_wr:.1f}%")
-    if len(unmatched) > 0:
-        unmatched_wr = (unmatched['result']=='WIN').sum() / len(unmatched) * 100
-        print(f"Unmatched Expectation: {len(unmatched)} trades, WR={unmatched_wr:.1f}%")
-    
-    # Tiers Hit Analysis
-    print(f"\n--- Take Profit Tiers Hit ---")
-    for tier in [0, 1, 2]:
-        tier_count = (df['tiers_hit'] == tier).sum()
-        tier_pct = tier_count / len(df) * 100
-        print(f"{tier} tiers: {tier_count} trades ({tier_pct:.1f}%)")
-    
-    # Exit Reason Analysis
-    print(f"\n--- Exit Reasons ---")
-    print(df['exit_reason'].value_counts())
-    
-    # Time-based Analysis
-    print(f"\n--- Entry Time Analysis ---")
-    df['entry_hour'] = pd.to_datetime(df['entry_time'], utc=True).dt.hour
-    for hour in sorted(df['entry_hour'].unique()):
-        hour_data = df[df['entry_hour'] == hour]
-        wr = (hour_data['result']=='WIN').sum() / len(hour_data) * 100
-        print(f"{hour:02d}:00 - {hour+1:02d}:00: {len(hour_data)} trades, WR={wr:.1f}%")
-    
-    return {
-        'asset': asset_name,
-        'total_trades': len(df),
-        'win_rate': (df['result']=='WIN').sum()/len(df)*100,
-        'avg_win': df[df['result']=='WIN']['pnl_pct'].mean(),
-        'avg_loss': df[df['result']=='LOSS']['pnl_pct'].mean(),
-        'avg_mae': df['mae_pct'].mean(),
-        'avg_mfe': df['mfe_pct'].mean(),
-        'avg_ib_range': df['ib_range_pct'].mean(),
-        'mfe_0.5r': (df['mfe_pct'] >= 0.5).sum() / len(df) * 100,
-        'mfe_1.0r': (df['mfe_pct'] >= 1.0).sum() / len(df) * 100
-    }
+    # 1. Load market context data
+    print("[INFO] Loading VIX and index parquets for correlation...")
+    try:
+        vix_daily = pd.read_parquet("data/VIX_1d.parquet")
+        vix_daily.index = pd.to_datetime(vix_daily.index).date
+        vix_daily = vix_daily[~vix_daily.index.duplicated()]
+        df_trades['vix'] = df_trades.index.map(vix_daily['close'])
+    except Exception as e:
+        print(f"[WARNING] Could not load VIX data: {e}")
+        df_trades['vix'] = np.nan
+        
+    try:
+        nq_daily = pd.read_parquet("data/NQ1_1d.parquet")
+        nq_daily.index = pd.to_datetime(nq_daily.index).date
+        nq_daily = nq_daily[~nq_daily.index.duplicated()]
+        df_trades['atr_14d'] = df_trades.index.map(calculate_daily_atr(nq_daily, 14))
+    except Exception as e:
+        print(f"[WARNING] Could not load NQ ATR data: {e}")
+        df_trades['atr_14d'] = np.nan
+        
+    try:
+        es_daily = pd.read_parquet("data/ES1_1d.parquet")
+        es_daily.index = pd.to_datetime(es_daily.index).date
+        es_daily = es_daily[~es_daily.index.duplicated()]
+        
+        # Inter-market green/red close alignment (divergence check)
+        nq_daily['is_green'] = nq_daily['close'] > nq_daily['open']
+        es_daily['is_green'] = es_daily['close'] > es_daily['open']
+        
+        diverged_dates = nq_daily.index[nq_daily['is_green'] != es_daily['is_green']]
+        df_trades['diverged'] = df_trades.index.isin(diverged_dates)
+    except Exception as e:
+        print(f"[WARNING] Could not compute ES/NQ divergence: {e}")
+        df_trades['diverged'] = False
 
+    # 2. Compute customized metrics
+    df_trades['result'] = np.where(df_trades['pnl_pct'] > 0, 'WIN', 'LOSS')
+    df_trades['is_failure'] = df_trades['result'] == 'LOSS'
+    
+    # 3. Volatility / ATR Diagnosis
+    print("--- 1. Volatility & ATR Regimes ---")
+    if df_trades['vix'].notna().any():
+        df_trades['vix_regime'] = pd.qcut(df_trades['vix'], q=3, labels=['LOW_VIX', 'MED_VIX', 'HIGH_VIX'])
+        for regime in ['LOW_VIX', 'MED_VIX', 'HIGH_VIX']:
+            subset = df_trades[df_trades['vix_regime'] == regime]
+            if len(subset) > 0:
+                wr = (subset['result']=='WIN').sum() / len(subset) * 100
+                print(f"  {regime:<8}: {len(subset)} trades | Win Rate: {wr:.1f}%")
+    else:
+        print("  VIX data unavailable.")
+        
+    if df_trades['atr_14d'].notna().any():
+        df_trades['atr_regime'] = pd.qcut(df_trades['atr_14d'], q=3, labels=['LOW_ATR', 'MED_ATR', 'HIGH_ATR'])
+        for regime in ['LOW_ATR', 'MED_ATR', 'HIGH_ATR']:
+            subset = df_trades[df_trades['atr_regime'] == regime]
+            if len(subset) > 0:
+                wr = (subset['result']=='WIN').sum() / len(subset) * 100
+                print(f"  {regime:<8}: {len(subset)} trades | Win Rate: {wr:.1f}%")
+    else:
+        print("  ATR data unavailable.")
+    print("")
 
-# Analyze each asset
-assets = [
-    ('NQ1', 'scripts/strategies/initial_balance/data/historical_validation/nq_2019_2020.csv'),
-    ('ES1', 'scripts/strategies/initial_balance/data/multi_asset_validation/es1_2019_2020.csv'),
-    ('RTY1', 'scripts/strategies/initial_balance/data/multi_asset_validation/rty1_2019_2020.csv'),
-    ('YM1', 'scripts/strategies/initial_balance/data/multi_asset_validation/ym1_2019_2020.csv'),
-    ('GC1', 'scripts/strategies/initial_balance/data/multi_asset_validation/gc1_2019_2020.csv'),
-]
+    # 4. Opening Gap Diagnosis
+    print("--- 2. Normalized IB Range & Gap Sizes ---")
+    df_trades['ib_range_regime'] = pd.qcut(df_trades['ib_range_pct'], q=3, labels=['Tight Range', 'Medium Range', 'Wide Range'])
+    for regime in ['Tight Range', 'Medium Range', 'Wide Range']:
+        subset = df_trades[df_trades['ib_range_regime'] == regime]
+        if len(subset) > 0:
+            wr = (subset['result']=='WIN').sum() / len(subset) * 100
+            print(f"  {regime:<12}: {len(subset)} trades | Win Rate: {wr:.1f}%")
+    print("")
 
-results = []
-for asset_name, csv_path in assets:
-    result = analyze_asset(asset_name, csv_path)
-    if result:
-        results.append(result)
+    # 5. Index Divergence Diagnosis
+    print("--- 3. Inter-Market Divergence (NQ vs ES) ---")
+    for status in [False, True]:
+        subset = df_trades[df_trades['diverged'] == status]
+        if len(subset) > 0:
+            wr = (subset['result']=='WIN').sum() / len(subset) * 100
+            lbl = "Diverged Close (Uncorrelated)" if status else "Aligned Close (Correlated)"
+            print(f"  {lbl:<30}: {len(subset)} trades | Win Rate: {wr:.1f}%")
+    print("")
 
-# Comparison table
-print(f"\n{'='*100}")
-print("ASSET COMPARISON SUMMARY")
-print(f"{'='*100}\n")
+    # 6. Expectation / Bias Match Diagnosis
+    print("--- 4. Confluence / Bias Direction Accuracy ---")
+    if 'matched_expectation' not in df_trades.columns and 'expected_break' in df_trades.columns and 'direction' in df_trades.columns:
+        df_trades['matched_expectation'] = np.where(
+            df_trades['expected_break'].isna(), np.nan,
+            np.where(
+                ((df_trades['direction'] == 'long') & (df_trades['expected_break'] == 'BULLISH')) |
+                ((df_trades['direction'] == 'short') & (df_trades['expected_break'] == 'BEARISH')),
+                True, False
+            )
+        )
+        
+    if 'matched_expectation' in df_trades.columns:
+        for status in [True, False]:
+            subset = df_trades[df_trades['matched_expectation'] == status]
+            if len(subset) > 0:
+                wr = (subset['result']=='WIN').sum() / len(subset) * 100
+                lbl = "Matched Expectation" if status else "Against Expectation"
+                print(f"  {lbl:<30}: {len(subset)} trades | Win Rate: {wr:.1f}%")
+    else:
+        # Compatibility fallback checking if expected_break matched breakout direction
+        print("  Expectation columns not generated in this file.")
+    print("\n" + "="*100)
 
-df_summary = pd.DataFrame(results)
-print(df_summary.to_string(index=False))
-
-# Save detailed analysis
-output_path = Path('scripts/strategies/initial_balance/data/multi_asset_validation/detailed_analysis.csv')
-df_summary.to_csv(output_path, index=False)
-print(f"\n✓ Detailed analysis saved to: {output_path}")
+if __name__ == '__main__':
+    run_failure_diagnosis()

@@ -165,7 +165,7 @@ export function resolveExpectedMoveTicker(symbol: string): string {
   return map[root] ?? root;
 }
 
-function buildCandidates(symbol: string): string[] {
+export function buildCandidates(symbol: string): string[] {
   const normalized = normalizeSymbolRoot(symbol);
   const clean = normalized;
   const noSlash = clean.startsWith("/") ? clean.slice(1) : clean;

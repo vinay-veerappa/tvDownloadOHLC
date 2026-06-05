@@ -4,31 +4,10 @@ import zoneinfo
 import duckdb
 from pathlib import Path
 from .config import STANDARD_MACROS, HYDRA_MACROS, get_1m_path
+from scripts.libs_py.nqstats.sessions import get_trading_date  # noqa: F401 – re-exported for callers
 
 ET_TZ = zoneinfo.ZoneInfo("US/Eastern")
 
-def get_trading_date(dt_et):
-    """
-    Python implementation of Institutional Trading Date logic.
-    Cutoff is 18:00 (6 PM) ET.
-    """
-    dt = pd.to_datetime(dt_et)
-    # Institutional Day Cutoff: 18:00 ET
-    if dt.hour >= 18:
-        base_date = dt.date() + pd.Timedelta(days=1)
-    else:
-        base_date = dt.date()
-        
-    # Mapping for target trading day (Mon-Fri)
-    wd = base_date.weekday()
-    if wd == 5: # Saturday -> Monday
-        target_date = base_date + pd.Timedelta(days=2)
-    elif wd == 6: # Sunday -> Monday
-        target_date = base_date + pd.Timedelta(days=1)
-    else:
-        target_date = base_date
-        
-    return target_date
 
 def load_bars_duckdb(instrument: str, start_date=None, end_date=None) -> pd.DataFrame:
     """

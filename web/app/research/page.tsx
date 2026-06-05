@@ -186,6 +186,26 @@ export default function ResearchDashboard() {
         </Link>
 
         <Link
+          href="/research/ib-stats"
+          className="group rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 via-transparent to-transparent p-5 transition hover:border-amber-400/40 hover:bg-amber-500/10"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-amber-300">
+                <BarChart3 className="h-3.5 w-3.5" />
+                New Dashboard
+              </div>
+              <h2 className="text-xl font-bold text-white">IB Stats</h2>
+              <p className="max-w-md text-sm text-muted-foreground">
+                Multi-session Initial Balance analytics — breakouts, bias formation, plays, extensions, level touches, and FVG behaviour across 6 session slots.
+              </p>
+            </div>
+            <ChevronRight className="h-5 w-5 text-amber-300 transition group-hover:translate-x-1" />
+          </div>
+        </Link>
+
+
+        <Link
           href="/research/screener"
           className="group rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/10 via-transparent to-transparent p-5 transition hover:border-violet-400/40 hover:bg-violet-500/10"
         >

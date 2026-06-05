@@ -12,6 +12,15 @@ def test_run_research_pipeline_uses_registry_and_trades_detailed(monkeypatch):
         session_risk=SimpleNamespace(daily_max_loss=400.0, max_trades_per_day=4),
         mfe_mae=SimpleNamespace(),
         optimization=SimpleNamespace(monte_carlo=SimpleNamespace()),
+        prop_firm=SimpleNamespace(
+            run_profiles=['apex_50k'],
+            overrides={},
+            n_simulations=10,
+            primary_profile='apex_50k'
+        ),
+        execution=SimpleNamespace(
+            point_value={'NQ1': 20.0}
+        )
     )
 
     # Mock dataframe and signals

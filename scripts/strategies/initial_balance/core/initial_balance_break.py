@@ -1,42 +1,47 @@
 """
-IB Break Strategy with ICT Concepts (Vectorized ADR-017 Compliant)
-
-This strategy implements Initial Balance (IB) breakout and pullback logic using
-100% vectorized Pandas/NumPy operations for maximum backtest performance.
+IB Break Strategy with Pine Script and Confluence Alignment
+Supports multi-session setups, advanced bias confluence, and three plays.
+Vectorized and ADR-017 compliant.
 """
 
 import pandas as pd
 import numpy as np
 from datetime import time, datetime, timedelta
 from typing import Dict, List, Optional, Any
-from scripts.utils.vectorized_indicators import VectorizedIndicators
+from scripts.libs_py.nqstats.ib import calculate_ib_statistics, get_time_mask
 
 class IBBreakStrategy:
-    """Initial Balance Break Strategy - ADR-017 Vectorized Version"""
+    """Initial Balance Break Strategy - Unified Python/Pine Version"""
     
     def __init__(
         self,
         ticker: str = "NQ1",
+        session_choice: str = "NY AM IB",
         ib_duration_minutes: int = 60,
-        entry_variant: str = 'breakout',
-        use_ict_fvg: bool = True,
-        use_ict_killzones: bool = True,
-        min_ib_range_pct: float = 0.02,
-        max_ib_range_pct: float = 5.0,
+        entry_variant: str = 'play1',  # 'play1' (Breakout), 'play2' (Retest), 'play3' (Fade)
+        breakout_confirmation_type: str = 'touch',  # 'touch', '1m_close', '5m_close'
+        min_ib_range_pct: float = 0.3,
+        max_ib_range_pct: float = 2.0,
         stop_loss_type: str = 'ib_opposite',
         take_profit_r_multiple: float = 2.0,
-        entry_window_end: time = time(14, 0)
+        p1TgtExt: float = 1.0,
+        p2TgtExt: float = 0.5,
+        p3OvershootExt: float = 0.25,
+        p3StopExt: float = 0.5
     ):
         self.ticker = ticker
+        self.session_choice = session_choice
         self.ib_duration_minutes = ib_duration_minutes
         self.entry_variant = entry_variant
-        self.use_ict_fvg = use_ict_fvg
-        self.use_ict_killzones = use_ict_killzones
+        self.breakout_confirmation_type = breakout_confirmation_type
         self.min_ib_range_pct = min_ib_range_pct
         self.max_ib_range_pct = max_ib_range_pct
         self.stop_loss_type = stop_loss_type
         self.take_profit_r_multiple = take_profit_r_multiple
-        self.entry_window_end = entry_window_end
+        self.p1TgtExt = p1TgtExt
+        self.p2TgtExt = p2TgtExt
+        self.p3OvershootExt = p3OvershootExt
+        self.p3StopExt = p3StopExt
         
         self.output_cols = [
             'signal_time', 'direction', 'entry_price', 'stop_price', 
@@ -44,120 +49,186 @@ class IBBreakStrategy:
         ]
 
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
-        """
-        Vectorized signal hunting method (ADR-017).
-        """
+        """Vectorized signal hunting following ADR-017 (Zero Loops)."""
         p = params or {}
-        ib_dur = int(p.get('ib_duration_minutes', self.ib_duration_minutes))
+        session = p.get('session_choice', self.session_choice)
         entry_var = p.get('entry_variant', self.entry_variant)
+        confirm_type = p.get('breakout_confirmation_type', self.breakout_confirmation_type)
         min_range = p.get('min_ib_range_pct', self.min_ib_range_pct)
         max_range = p.get('max_ib_range_pct', self.max_ib_range_pct)
         tp_r = p.get('take_profit_r_multiple', self.take_profit_r_multiple)
         
-        df = data.copy()
-        df['date'] = df.index.normalize()
-        df['time'] = df.index.time
+        # 1. Compute IB stats & advanced biases via ib.py
+        df = calculate_ib_statistics(data, session_choice=session)
         
-        # 1. IB Boundary Calculation (Vectorized)
-        ib_start = time(9, 30)
-        ib_end_dt = datetime.combine(datetime.min, ib_start) + timedelta(minutes=ib_dur)
-        ib_end = ib_end_dt.time()
+        # Retrieve session parameters
+        from scripts.libs_py.nqstats.ib import SESSION_CONFIGS
+        cfg = SESSION_CONFIGS[session]
+        ib_end, out_end = cfg["ib_end"], cfg["out_end"]
         
-        ib_mask = (df['time'] >= ib_start) & (df['time'] <= ib_end)
-        ib_data = df[ib_mask]
+        # 2. Setup Gating Masks
+        bar_times = df.index.time
+        in_out = get_time_mask(bar_times, ib_end, out_end)
         
-        daily_ib_high = ib_data.groupby('date')['high'].max()
-        daily_ib_low = ib_data.groupby('date')['low'].min()
-        daily_ib_close = ib_data.groupby('date')['close'].last()
-        
-        df['ib_high'] = df['date'].map(daily_ib_high)
-        df['ib_low'] = df['date'].map(daily_ib_low)
-        df['ib_close'] = df['date'].map(daily_ib_close)
-        
-        # IB Range Stats
-        df['ib_range'] = df['ib_high'] - df['ib_low']
         df['ib_range_pct'] = (df['ib_range'] / df['ib_low']) * 100
-        
-        # Expected Break (Bias)
-        df['ib_pos'] = (df['ib_close'] - df['ib_low']) / df['ib_range']
-        df['expected_break'] = np.where(df['ib_pos'] > 0.66, 'HIGH', 
-                                       np.where(df['ib_pos'] < 0.33, 'LOW', 'CHOP'))
-        
-        # 2. Filtering Masks
         valid_range_mask = (df['ib_range_pct'] >= min_range) & (df['ib_range_pct'] <= max_range)
-        after_ib_mask = df['time'] > ib_end
-        before_end_mask = df['time'] <= self.entry_window_end
         
-        # ICT Kill Zones
-        if self.use_ict_killzones:
-            kz_mask = (
-                ((df['time'] >= time(8, 30)) & (df['time'] <= time(11, 0))) |
-                ((df['time'] >= time(13, 30)) & (df['time'] <= time(16, 0)))
+        # 3. Entry Signal Logic
+        df['is_breakout_long'] = False
+        df['is_breakout_short'] = False
+        
+        # Determine breakout conditions based on confirmation type
+        if confirm_type == 'touch':
+            df['is_breakout_long'] = df['high'] > df['ib_high']
+            df['is_breakout_short'] = df['low'] < df['ib_low']
+            df['entry_price_raw'] = np.where(df['is_breakout_long'], df['ib_high'], df['ib_low'])
+        elif confirm_type == '1m_close':
+            df['is_breakout_long'] = df['close'] > df['ib_high']
+            df['is_breakout_short'] = df['close'] < df['ib_low']
+            df['entry_price_raw'] = df['close']
+        elif confirm_type == '5m_close':
+            is_5m_close = (df.index.minute % 5 == 4)
+            df['is_breakout_long'] = is_5m_close & (df['close'] > df['ib_high'])
+            df['is_breakout_short'] = is_5m_close & (df['close'] < df['ib_low'])
+            df['entry_price_raw'] = df['close']
+            
+        # Cumulative breakout status running through the outcome window
+        df['has_broken_long'] = (df['is_breakout_long'] & in_out).groupby(df['logical_date']).cummax()
+        df['has_broken_short'] = (df['is_breakout_short'] & in_out).groupby(df['logical_date']).cummax()
+        
+        # Find the exact timestamp of the first breakout per day
+        df['breakout_long_time'] = np.where(df['is_breakout_long'] & in_out, df['bar_idx'], 999999)
+        df['breakout_short_time'] = np.where(df['is_breakout_short'] & in_out, df['bar_idx'], 999999)
+        
+        daily_first_long_idx = df.groupby('logical_date')['breakout_long_time'].min()
+        daily_first_short_idx = df.groupby('logical_date')['breakout_short_time'].min()
+        
+        df = df.join(daily_first_long_idx, on='logical_date', rsuffix='_first_long')
+        df = df.join(daily_first_short_idx, on='logical_date', rsuffix='_first_short')
+        
+        # 4. Generate Signal Triggers
+        df['is_trigger'] = False
+        df['sig_direction'] = np.nan
+        df['sig_direction'] = df['sig_direction'].astype(object)
+        df['sig_entry'] = np.nan
+        df['sig_stop'] = np.nan
+        df['sig_target'] = np.nan
+        
+        if entry_var == 'play1':
+            # Play 1: Breakout in bias direction
+            # If dominant bias is BULLISH, trigger long on first high break.
+            # If dominant bias is BEARISH, trigger short on first low break.
+            long_trigger = (df['bar_idx'] == df['breakout_long_time_first_long']) & (df['dominant_bias'] == 'BULLISH')
+            short_trigger = (df['bar_idx'] == df['breakout_short_time_first_short']) & (df['dominant_bias'] == 'BEARISH')
+            
+            df.loc[long_trigger & in_out & valid_range_mask, 'is_trigger'] = True
+            df.loc[long_trigger & in_out & valid_range_mask, 'sig_direction'] = 'long'
+            df.loc[long_trigger & in_out & valid_range_mask, 'sig_entry'] = df['entry_price_raw']
+            
+            df.loc[short_trigger & in_out & valid_range_mask, 'is_trigger'] = True
+            df.loc[short_trigger & in_out & valid_range_mask, 'sig_direction'] = 'short'
+            df.loc[short_trigger & in_out & valid_range_mask, 'sig_entry'] = df['entry_price_raw']
+            
+            # Stop is opposite boundary
+            df['sig_stop'] = np.where(df['sig_direction'] == 'long', df['ib_low'], df['ib_high'])
+            
+            # Target is p1TgtExt range beyond entry
+            risk = (df['sig_entry'] - df['sig_stop']).abs()
+            df['sig_target'] = np.where(df['sig_direction'] == 'long', df['sig_entry'] + (risk * self.p1TgtExt), df['sig_entry'] - (risk * self.p1TgtExt))
+            entry_type = 'PLAY1_BREAKOUT'
+            
+        elif entry_var == 'play2':
+            # Play 2: Retest-continuation
+            # Triggered on first touch of midpoint AFTER a breakout has occurred on that side.
+            df['retest_long_eligible'] = (df['bar_idx'] > df['breakout_long_time_first_long']) & (df['low'] <= df['ib_mid'])
+            df['retest_short_eligible'] = (df['bar_idx'] > df['breakout_short_time_first_short']) & (df['high'] >= df['ib_mid'])
+            
+            df['retest_long_time'] = np.where(df['retest_long_eligible'] & in_out, df['bar_idx'], 999999)
+            df['retest_short_time'] = np.where(df['retest_short_eligible'] & in_out, df['bar_idx'], 999999)
+            
+            daily_first_retest_long = df.groupby('logical_date')['retest_long_time'].min()
+            daily_first_retest_short = df.groupby('logical_date')['retest_short_time'].min()
+            
+            df = df.join(daily_first_retest_long, on='logical_date', rsuffix='_first_retest_long')
+            df = df.join(daily_first_retest_short, on='logical_date', rsuffix='_first_retest_short')
+            
+            long_trigger = (df['bar_idx'] == df['retest_long_time_first_retest_long']) & (df['dominant_bias'] == 'BULLISH')
+            short_trigger = (df['bar_idx'] == df['retest_short_time_first_retest_short']) & (df['dominant_bias'] == 'BEARISH')
+            
+            df.loc[long_trigger & in_out & valid_range_mask, 'is_trigger'] = True
+            df.loc[long_trigger & in_out & valid_range_mask, 'sig_direction'] = 'long'
+            df.loc[long_trigger & in_out & valid_range_mask, 'sig_entry'] = df['ib_mid']
+            
+            df.loc[short_trigger & in_out & valid_range_mask, 'is_trigger'] = True
+            df.loc[short_trigger & in_out & valid_range_mask, 'sig_direction'] = 'short'
+            df.loc[short_trigger & in_out & valid_range_mask, 'sig_entry'] = df['ib_mid']
+            
+            # Stop is opposite boundary
+            df['sig_stop'] = np.where(df['sig_direction'] == 'long', df['ib_low'], df['ib_high'])
+            
+            # Target is p2TgtExt range beyond the high/low breakout point
+            df['sig_target'] = np.where(
+                df['sig_direction'] == 'long',
+                df['ib_high'] + (df['ib_range'] * self.p2TgtExt),
+                df['ib_low'] - (df['ib_range'] * self.p2TgtExt)
             )
+            entry_type = 'PLAY2_RETEST'
+            
+        elif entry_var == 'play3':
+            # Play 3: Fade-to-mid
+            # Enter fade at boundary after price overshoots boundary by p3OvershootExt
+            df['os_long_val'] = df['ib_high'] + (df['ib_range'] * self.p3OvershootExt)
+            df['os_short_val'] = df['ib_low'] - (df['ib_range'] * self.p3OvershootExt)
+            
+            df['os_long_eligible'] = (df['high'] >= df['os_long_val'])
+            df['os_short_eligible'] = (df['low'] <= df['os_short_val'])
+            
+            df['os_long_time'] = np.where(df['os_long_eligible'] & in_out, df['bar_idx'], 999999)
+            df['os_short_time'] = np.where(df['os_short_eligible'] & in_out, df['bar_idx'], 999999)
+            
+            daily_first_os_long = df.groupby('logical_date')['os_long_time'].min()
+            daily_first_os_short = df.groupby('logical_date')['os_short_time'].min()
+            
+            df = df.join(daily_first_os_long, on='logical_date', rsuffix='_first_os_long')
+            df = df.join(daily_first_os_short, on='logical_date', rsuffix='_first_os_short')
+            
+            # Fade direction is opposite: if overshoot is High, we sell short. If overshoot is Low, we buy long.
+            long_trigger = (df['bar_idx'] == df['os_short_time_first_os_short'])
+            short_trigger = (df['bar_idx'] == df['os_long_time_first_os_long'])
+            
+            df.loc[long_trigger & in_out & valid_range_mask, 'is_trigger'] = True
+            df.loc[long_trigger & in_out & valid_range_mask, 'sig_direction'] = 'long'
+            df.loc[long_trigger & in_out & valid_range_mask, 'sig_entry'] = df['ib_low']
+            
+            df.loc[short_trigger & in_out & valid_range_mask, 'is_trigger'] = True
+            df.loc[short_trigger & in_out & valid_range_mask, 'sig_direction'] = 'short'
+            df.loc[short_trigger & in_out & valid_range_mask, 'sig_entry'] = df['ib_high']
+            
+            # Target is the midpoint
+            df['sig_target'] = df['ib_mid']
+            
+            # Stop is the configured stop extension (further out)
+            df['sig_stop'] = np.where(
+                df['sig_direction'] == 'long',
+                df['ib_low'] - (df['ib_range'] * self.p3StopExt),
+                df['ib_high'] + (df['ib_range'] * self.p3StopExt)
+            )
+            entry_type = 'PLAY3_FADE'
+            
         else:
-            kz_mask = True
+            raise ValueError(f"Unknown entry variant: {entry_var}")
             
-        # 3. Entry Triggers
-        if entry_var == 'breakout':
-            # Long Breakout
-            long_trigger = (df['high'] > df['ib_high']) & (df['expected_break'] == 'HIGH')
-            # Short Breakout
-            short_trigger = (df['low'] < df['ib_low']) & (df['expected_break'] == 'LOW')
-            entry_type = 'BREAKOUT'
-        else:
-            # Pullback logic (simplified vectorized version)
-            # Requires FVG detection
-            fvg = VectorizedIndicators.find_fvgs(df)
-            df = pd.concat([df, fvg], axis=1)
-            
-            # Re-calculating IB high/low based on the actual break first
-            # Simplified: entry on first FVG fill after price has pulsed outside IB
-            df['has_pulsed_high'] = (df['high'] > df['ib_high']).groupby(df['date']).cummax()
-            df['has_pulsed_low'] = (df['low'] < df['ib_low']).groupby(df['date']).cummax()
-            
-            long_trigger = df['has_pulsed_high'] & (df['fvg_type'] == 1) & (df['low'] <= df['fvg_top'])
-            short_trigger = df['has_pulsed_low'] & (df['fvg_type'] == -1) & (df['high'] >= df['fvg_bottom'])
-            entry_type = 'PULLBACK_FVG'
-
-        # 4. Construct Signal DataFrame
-        df['direction'] = np.nan
-        df.loc[long_trigger & after_ib_mask & before_end_mask & valid_range_mask & kz_mask, 'direction'] = 'long'
-        df.loc[short_trigger & after_ib_mask & before_end_mask & valid_range_mask & kz_mask, 'direction'] = 'short'
-        
-        signals = df[df['direction'].notnull()].copy()
+        signals = df[df['is_trigger']].copy()
         if signals.empty:
             return pd.DataFrame(columns=self.output_cols)
             
-        # Select first signal per day
-        signals = signals.groupby('date').head(1).copy()
-        
-        # 5. Risk Calculation (Vectorized)
         signals['signal_time'] = signals.index
-        signals['entry_price'] = np.where(signals['direction'] == 'long', signals['ib_high'], signals['ib_low'])
-        
-        if self.stop_loss_type == 'ib_opposite':
-            signals['stop_price'] = np.where(signals['direction'] == 'long', signals['ib_low'], signals['ib_high'])
-        else:
-            # Default to fixed 0.5% if not specified
-            signals['stop_price'] = np.where(signals['direction'] == 'long', signals['entry_price'] * 0.995, signals['entry_price'] * 1.005)
-            
-        risk = (signals['entry_price'] - signals['stop_price']).abs()
-        signals['target1_price'] = np.where(
-            signals['direction'] == 'long',
-            signals['entry_price'] + (risk * tp_r),
-            signals['entry_price'] - (risk * tp_r)
-        )
-        
+        signals['direction'] = signals['sig_direction']
+        signals['entry_price'] = signals['sig_entry']
+        signals['stop_price'] = signals['sig_stop']
+        signals['target1_price'] = signals['sig_target']
+        signals['expected_break'] = signals['dominant_bias']
         signals['entry_type'] = entry_type
         
+        # Canonical schema return
         return signals[self.output_cols].reset_index(drop=True)
-
-    @staticmethod
-    def get_param_grid() -> Dict[str, Any]:
-        """Optimization grid for ADR-017 compliance"""
-        return {
-            'ib_duration_minutes': ('int', 15, 60),
-            'take_profit_r_multiple': ('float', 1.0, 5.0),
-            'min_ib_range_pct': ('float', 0.01, 0.1),
-            'max_ib_range_pct': ('float', 1.0, 5.0)
-        }

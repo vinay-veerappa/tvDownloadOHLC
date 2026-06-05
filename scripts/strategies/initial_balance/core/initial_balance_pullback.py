@@ -236,6 +236,7 @@ class IBPullbackStrategy:
             
         # Construct Signal DF
         df['direction'] = np.nan
+        df['direction'] = df['direction'].astype(object)
         df.loc[long_trigger & entry_window & (df['bias'] == 'long'), 'direction'] = 'long'
         df.loc[short_trigger & entry_window & (df['bias'] == 'short'), 'direction'] = 'short'
         
