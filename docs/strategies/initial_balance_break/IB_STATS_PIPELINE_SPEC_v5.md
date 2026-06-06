@@ -32,8 +32,7 @@ computed so Pine and DuckDB produce matching numbers.
 - **§2.8:** Play 3 fill made explicit (touch-back required; no-setup if never returns).
 - **§2.10 (new):** Level-touch tracking for IB quarters {0, 25, 50, 75, 100}% + front-running
   mid (lock timing, formation-phase touches, `early_mid_event`).
-- **§2.11 (new):** FVG **reuse** tracking (multiple touches per gap) via `ib_fvg_detail`.
-  Tracking-only for now; no graded FVG-retest play yet.
+- **§2.11:** FVG **reuse** tracking (v5) — **superseded in v6**: reuse catalog and `ib_fvg_detail` removed; FVG is captured by bias + single inversion (§2.5) and entry-touch timing (§2.10a).
 - **§2.1 / §2.7 / §3.9:** Tercile / VIX cutpoints computed **both ways** — full-sample for
   descriptive tables, trailing/expanding for anything feeding the live SUGGESTED line.
 - **§3.10 / §3.11 (new):** DST-validation table; level-touch / front-running table.
@@ -48,14 +47,12 @@ Monday and a bar at 10:00 ET Tuesday belong to the **same** logical trading day.
 "Globex IB bias → NY day outcome" a coherent same-key question.
 
 ```
-trading_day = date of (timestamp_ET - 18 hours)   # so 18:00 Mon .. 17:59 Tue -> Mon
+trading_day = date of (timestamp_ET + 6 hours)   # so 18:00 Sun .. 17:59 Mon -> Mon
 ```
 
-NOTE: this is a **custom open-side key** (it labels the day by the bar that opens the session),
-not the CME trade-date convention (which labels by the close). They differ by one calendar
-day. The key is internally consistent and is exactly what the cross-session join needs — but
-when joining external series keyed to the CME trade date (VIX, settlement, news), account for
-the off-by-one.
+NOTE: this is a **close-side key** (it labels by the calendar date on which the futures trading
+day ends at 17:00 ET). This aligns with the common desk convention: 18:00 Sun through 17:00 Mon
+is counted as Monday.
 
 ### 1.2 Session slots (all configurable)
 | Slot        | IB window (ET)    | Outcome deadline (ET) | time_basis     | Notes |
@@ -84,6 +81,13 @@ session — this is unchanged and keeps headline numbers comparable across versi
 additionally records what happens *during* the IB formation window (e.g. the final-mid level
 being tagged before IB close). This is stored in separate fields and a separate detail table;
 it never alters the canonical outcome-window stats.
+
+**Cross-midnight constraint (implementation).** Tokyo and Globex outcome windows wrap past
+midnight (`start_min > end_min`, e.g. 21:00→02:00). The time mask must handle the wrap
+(`m >= start OR m < end`), and `outcome_close` / `realized_dir_close` must take the **timestamp-max**
+bar of the logical day's outcome window, not a positional `last`. Grouping is by `trading_day`
+(the 18:00 roll already keeps the wrapped bars together). Unit-test: a 21:00 bar and a 01:00 bar
+fall in the same `in_out` for one logical day.
 
 ### 1.4 Event-anchored foreign slots (DST) — the trade is the open auction
 The premise: when we trade Tokyo/London IB we are trading the **liquidity event** (the
@@ -163,7 +167,7 @@ One row per `(symbol, trading_day, session_slot, time_basis)`. Columns:
   **or (b)** the break side **never reaches `false_break_min_ext`** before the outcome deadline.
   **Order precedence (v5):** evaluate (a) and (b) over the window; if **both** boundaries close
   beyond, flag **both** sides false. `false_break_min_ext` default 0.5x; also test 0.25x (ICT min).
-- Extension hits — for each level L in {0.5,1,1.5,2,2.5,3,3.5,4} and each side {up,down}:
+- Extension hits — for each level L in {0.25,0.5,1,1.5,2,2.5,3,3.5,4} and each side {up,down}:
   - `ext_up_{L}_hit` (bool), `ext_up_{L}_minutes` (time-to-hit, null if not hit); same for down
   - Extension price = ib_high + L×range_pts (up), ib_low − L×range_pts (down)
 - `max_ext_up`, `max_ext_down` = furthest extension reached (in L units), within window
@@ -183,17 +187,39 @@ Compute **every** variant independently every session so they can be A/B'd in §
 
 - `bias_formation_firstreach` — uses the **first bar that reaches** each extreme. The extreme
   established **earlier** signals the push direction: low established first ⇒ **bullish (+1)**,
-  high established first ⇒ bearish (−1). Tie → first-bar close direction.
+  high established first ⇒ bearish (−1). Tie → `sign(ib_close - ib_open)` (0 on doji).
 - `bias_formation_lasttouch` — same idea but using the **last bar that touches** each extreme
   (the current Pine `>= / <=` behavior). A flat top revisited near the close counts as "formed
   later" here, so this variant can disagree with `firstreach` on the same day — which is the
   point of carrying both. (This settles the spec's own open question: a consistently sub-50%
   formation hit rate means it's a fade signal, which is itself tradeable. Let §3.2 rank the two.)
+
+**FVG detector gap safety (implementation constraint).**
+The fixed-5m FVG detector must preserve empty maintenance/weekend bins as NaN barriers and only
+evaluate 3-bar relationships where both compared bars are non-null. This prevents `shift(2)`
+bridging across trading gaps and creating spurious cross-gap FVGs.
 - `bias_close_dir` = sign(ib_close − ib_open)
 - `bias_fvg` = direction of the **first 5m FVG inside the IB window** (bullish gap = +1). FVG =
-  classic 3-bar gap (bar[2].high < bar[0].low for bullish, etc.). Detect on **fixed 5m**.
-- `bias_fvg_ifvg` = `bias_fvg`, but **flips** if the FVG is later closed through within the
-  outcome window (inverse-FVG logic; close-based invalidation).
+  classic 3-bar displacement gap (bull: `bar[2].high < bar[0].low`; bear: `bar[2].low >
+  bar[0].high`). Detect on **fixed 5m**. Store the **gap zone** `[fvg_bottom, fvg_top]` **and the
+  3-bar pattern extreme** `fvg_low` / `fvg_high` — bull gap `fvg_low = min(low)` across the three
+  forming bars (the swing/structure low); bear gap `fvg_high = max(high)`. The **pattern extreme,
+  not the gap edge, is the invalidation anchor**. (Experienced-ICT reading: the gap is the entry
+  zone; the displacement structure is what fails. Applies to all FVG variants incl. `bias_fvg_rth`
+  / `bias_fvg_1011`.)
+- `bias_fvg_ifvg` = `bias_fvg`, but **inverts once** if the gap is invalidated within the outcome
+  window. **Invalidation = a bar that CLOSES beyond the 3-bar pattern extreme** (bull:
+  `close < fvg_low`; bear: `close > fvg_high`) — explicitly **not** a close through the gap edge,
+  and **not** a wick. A wick below `fvg_low` (or a close below the gap *bottom* that holds above
+  `fvg_low`) is a deep fill / liquidity sweep — often a continuation signal, **not** an inversion.
+  **Single inversion only**; the bias reflects the gap's *current* directional state at grade time.
+  The IFVG finalizes at the inversion bar (used by the §2.6 leakage guard).
+- **FVG entry-touch** (the pullback fill; timing in §2.10a): first bar that re-enters the gap zone
+  and **holds** on the valid side of the invalidation level — bull: `low <= fvg_top AND
+  close >= fvg_low`; bear: `high >= fvg_bottom AND close <= fvg_high`. By construction a bar is
+  **either** an entry-touch (held) **or** an invalidation (closed beyond the pattern extreme),
+  never both; a sweep-and-reclaim bar counts as an entry-touch. Touch-of-zone for entry,
+  close-of-structure for invalidation — the one deliberate close-based test (§2.6).
 - **NY AM only — dual FVG (A/B which predicts NY-AM extension better):**
   - `bias_fvg_rth` = first FVG from 09:30
   - `bias_fvg_1011` = first FVG forming in the **ICT 10:00 macro window (09:50)** through
@@ -207,18 +233,40 @@ The downstream playable layer (Pine table + Python `IBBreakStrategy`) must be ru
 each *play* profitable — not just which bias is most accurate in the abstract.
 
 ### 2.6 Bias outcome grading (self-contained, order-sensitive)
-For each variant, grade against **two target levels, tracked separately**:
-`bias_correct_{variant}_05x` and `bias_correct_{variant}_1x` (bool) =
-the session's 0.5x (resp. 1x) extension on the bias side is hit within the outcome window
-**before** the opposite IB boundary is closed beyond.
+For each variant, grade against **four target levels, tracked separately**:
+`bias_correct_{variant}_025x`, `bias_correct_{variant}_05x`,
+`bias_correct_{variant}_075x`, and `bias_correct_{variant}_1x` (bool) =
+the session's extension on the bias side is hit within the outcome window
+**before** the opposite IB boundary is violated.
 
 **Order matters (v5):** occurrence is not enough — the bias-side target must be reached *before*
-the opposite-boundary close, evaluated bar-by-bar. A day that reverses through the far side
-first and only later tags the bias extension grades **incorrect**.
+the opposite-boundary wick violation, evaluated bar-by-bar. A day that reverses through the far
+side first and only later tags the bias extension grades **incorrect**.
 
 **Leakage guard (v5):** for any variant whose bias can finalize *inside* the outcome window
 (`bias_fvg_1011`, and the IFVG flip), count only extension hits that occur **after** the bias
 is finalized. Formation / close-dir / first-RTH-FVG are fixed at/by IB close and are unaffected.
+For `bias_fvg_ifvg`, "finalized" = the inversion bar (the close beyond the pattern extreme, §2.5):
+grade the pre-inversion direction up to that bar and the inverted direction after.
+
+**Entry / stop mechanics (v6) — by order type, not a blanket rule.** Close-based tests exist in
+exactly **three** places: (a) **FVG invalidation** (§2.5, a close beyond the 3-bar pattern
+extreme); (b) **Play 1 breakout entry** confirmation (close beyond the boundary); and (c) **Play 3
+fade touch-back fill** confirmation (close back inside the boundary). **Everything else is touch
+(wick) based** — all stops, all targets, and the **Play 2 limit entry at the mid** — matching live
+fills: stops, targets, and limit orders fill on trade-through; only breakout/fade *entries* and the
+FVG invalidation are confirmed on close. Rule of thumb for any future play: **limit => touch;
+stop / breakout / confirmation entry => close.** For `bias_fvg_ifvg`, "finalized" = the inversion
+bar (the close beyond the pattern extreme); grade the pre-inversion direction up to that bar and the
+inverted direction after.
+
+**Additive realized-direction comparators (v5+):**
+- `realized_dir_break` = `first_break_dir` (+1/-1/0)  [default comparator]
+- `realized_dir_close` = sign(`outcome_close - ib_close`)
+- `realized_dir_ext` = sign(`max_ext_up - max_ext_down`)
+
+Days where selected `realized_dir_* = 0` are excluded from DIR% denominators and reported in
+the no-resolution bucket.
 
 ### 2.7 Conditioning keys (for slicing)
 - `dow` = day of week (of the logical trading day)
@@ -233,27 +281,49 @@ Each day, evaluate all three plays **bar-by-bar within the outcome window** so t
 ordering is correct. Store `play{1,2,3}_result` ∈ {+1 win, −1 loss, 0 no setup}, plus realized
 excursion. All entry/target/stop levels are **configurable** (these are the Pine defaults):
 
-- **① Breakout (continuation):** enter at the IB boundary on the break; target = `p1_tgt_ext`
-  (default 1.0×, i.e. `ib_high + 1.0×range_pts` for an up-break, anchored to the **boundary**,
-  not to entry); stop = opposite IB boundary. Win = target hit before a close beyond the
-  opposite boundary.
-- **② Retest-continuation:** wait for a break, then a return to mid; enter at mid in the break
-  direction; target = `p2_tgt_ext` (default 0.5× break side, boundary-anchored); stop = opposite
-  boundary. Win = target reached after the mid touch. (Edgeful Manip-style play.)
-- **③ Fade-to-mid (mean reversion):** wait for an overshoot to `p3_overshoot_ext` (default 0.25×)
-  beyond the boundary; **then require a touch-back to the boundary to fill the fade entry** — if
-  price never returns to the boundary before the deadline, it is **no-setup (0)**, not a loss.
-  Target = mid; stop = `p3_stop_ext` (default 0.5×, further out). Win = reverts to mid before stop.
+**Execution/labeling rules (agreed policy):**
+- If a setup never triggers, it is **No-Setup (0)**.
+- If a setup triggers, it is a live trade and must be graded as **Win or Loss only**.
+- Win requires target-first ordering; any triggered non-target outcome is a **Loss (-1)**.
+- Same-bar ambiguity is handled conservatively: if entry and stop can occur on the same bar
+  (extraordinary volatility), treat the setup as **triggered** and classify it as a **Loss (-1)**,
+  not No-Setup.
+- If target and stop are both satisfied on the same post-entry bar, classify as **Loss (-1)**
+  (stop-first tie-break) to avoid optimistic bias.
+- Loss diagnostics are split into `stop` vs `timeout` for reporting without changing win/loss math.
 
-For each play also store `play{n}_rr` (structural reward:risk in range units) and the realized
+- **① Breakout (continuation):** enter at the IB boundary on a **close-confirmed** break;
+  target = `p1_tgt_ext`
+  (default 1.0×, i.e. `ib_high + 1.0×range_pts` for an up-break, anchored to the **boundary**,
+  not to entry); stop = opposite IB boundary. Win = target wick-hit before opposite-boundary
+  wick stop.
+- **② Retest-continuation:** wait for a break, then a return to mid; enter at mid via a **resting
+  limit order — filled on TOUCH** (price trades through/at the mid in the break direction; the
+  close is irrelevant, as with any limit order); target = `p2_tgt_ext` (default 0.5× break side,
+  boundary-anchored); stop = opposite boundary. Win = target wick-hit after the limit fills.
+  (Edgeful Manip-style play.)
+- **③ Fade-to-mid (mean reversion):** wait for an overshoot to `p3_overshoot_ext` (default 0.25×)
+  beyond the boundary; **then require a close-confirmed touch-back to the boundary to fill the
+  fade entry** — if price never returns to the boundary before the deadline, it is
+  **no-setup (0)**, not a loss. Target = mid; stop = `p3_stop_ext` (default 0.5×, further out).
+  Win = target wick-hit before wick stop.
+
+For each play also store `play{n}_rr` (structural reward:risk in range units, **derived from the
+configured level — not hard-coded**; e.g. Play 2 RR at level L = `(0.5 + L) / 0.5` for entry at
+mid with stop at the opposite boundary, so it equals 2.0 only when L = 0.5) and the realized
 **MFE/MAE**. The MFE/MAE feed (a) the Edgeful full-ladder expectancy (cover-the-queen at 75%,
 TP1 at 1:1, TP2 at 0.25x/0.5x ext, runner) and (b) a later **MAE-driven refinement of the Play 3
 overshoot/stop** (parked — the per-play MAE distribution is the handle for that, no rework needed).
 
+Diagnostics captured per play event in `ib_play_detail`:
+- `timeout_loss` (bool): true when a triggered trade loses by session expiry instead of stop.
+- `loss_reason` (enum): `no_setup` | `target` | `stop` | `timeout`.
+
 ### 2.9 Event timing (mode + median)
-- `first_break_bucket` = 15-min clock bucket (ET) of the first break → enables **mode** break
+- `first_break_bucket` = **5-min** clock bucket (ET) of the first break → enables **mode** break
   time (most common clock slot), not just median minutes-after-IB.
-- `mid_touch_bucket` = 15-min clock bucket of the mid touch → **mode** mid-touch time.
+- Mid-touch and FVG entry-touch timing buckets are defined in §2.10 / §2.10a, **split by phase**
+  (formation vs outcome). All clock buckets use a **5-minute** minimum granularity.
 
 ### 2.10 Level-touch tracking — quarters + front-running mid (v5)
 Track touches of the IB structural levels both **during formation** and **during the outcome
@@ -268,14 +338,24 @@ For each `(level, phase)` capture: `first_touch_time`, `first_touch_phase`, `las
   provisional range (and thus provisional mid) equals the final range — i.e. the mid stops
   moving. `provisional_mid == final_mid` from `mid_lock_time` onward.
 - `mid_lock_frac` = `mid_lock_time` as a fraction of IB duration (e.g. 35/60 = 0.58).
-- Against the **final** mid level scanned across the whole session:
+- - Against the **final** mid level scanned across the whole session:
   `mid_touch_first_time`, `mid_touch_first_phase`, `mid_touch_last_formation_time`,
   `mid_touch_count_formation`, `mid_touch_count_outcome`, and `mid_touched_again` (touched again
   after its first post-lock touch — the "set H/L early, then revisit mid" pattern you want to
   size up).
+- **Split first-touch (v6 — headline front-running stat):**
+  `mid_touch_first_formation_time` / `mid_touch_first_formation_bucket` (first touch where phase ∈
+  {formation_pre_lock, formation_post_lock}) **and** `mid_touch_first_outcome_time` /
+  `mid_touch_first_outcome_bucket` (first touch where phase = outcome), each floored to a **5-min**
+  ET bucket. The **mode** of each — when the mid is first hit *before* IB close vs *after* — is the
+  deliverable (§3.11). A single all-phase bucket is insufficient: a formation touch masks the
+  outcome-window touch.
 - `early_mid_event` (bool) = **mid locked in the first ⅔ of formation AND the final-mid level
   touched after lock but before IB close.** This is the single flag whose frequency answers
   "is front-running the mid a real, common opportunity?"
+
+Front-run equality checks for `provisional_mid == final_mid` should use tolerant float
+comparison (e.g., `np.isclose` with tight absolute tolerance), not exact equality.
 
 **Honesty constraint.** `mid_lock_frac` and "touched before IB close" are **live-feasible**
 signals (you'd know them in real time). The touch *time relative to the final mid* is
@@ -283,17 +363,26 @@ signals (you'd know them in real time). The touch *time relative to the final mi
 measurement only; the provisional-mid *tradeable* rule is deferred until the data shows the
 opportunity is worth it (see §3.11).
 
-### 2.11 FVG reuse tracking (v5, tracking-only)
-The bias use of FVGs (first FVG → direction, §2.5) treats an FVG as a one-shot directional read.
-The **level** use treats each FVG as a zone price can return to multiple times. Capture both
-without changing the bias logic. Stored long in `ib_fvg_detail` (§4): one row per
-`(symbol, trading_day, slot, fvg_id, touch_n)`, where `fvg_id` orders FVGs by formation time.
+### 2.10a FVG entry-touch timing (v6)
+Symmetric with the mid-touch timing, for the IB FVG (and, on NY AM, the 09:50–11:00 FVG). Uses the
+**entry-touch** definition in §2.5 (re-enter the zone and hold above the invalidation level):
+- `fvg_touch_first_formation_time` / `fvg_touch_first_formation_bucket` = first entry-touch at/after
+  the gap finalizes, while still inside the IB window.
+- `fvg_touch_first_outcome_time` / `fvg_touch_first_outcome_bucket` = first entry-touch in the
+  outcome window.
 
-Per FVG: `formed_time`, `dir` (+1/−1), `top`, `bot`, `formed_phase` (formation/outcome).
-Per touch: `touch_time`, `touch_phase`, `reaction` ∈ {held, closed_through}, and the running
-`inverted` flag (close-through flips it to an IFVG). **No graded FVG-retest play yet** — this
-catalogs the reuse distribution and touch-reaction rates so a play can later be defined off real
-data rather than guessed rules.
+Buckets floored to **5-min** ET. The **mode** answers "when does price typically come back to fill
+the gap, before vs after IB close." Measurement only; no FVG entry rule is graded. Promoted into
+`ib_facts` (like the mid timing) — no separate detail table. Note: the `bias_fvg_1011` gap can form
+*after* the 10:30 IB close, so its formation-phase entry-touch may be empty; that is expected.
+
+### 2.11 FVG handling — single inversion + entry-touch (v6, replaces reuse tracking)
+The per-touch FVG **reuse catalog** (and the `ib_fvg_detail` table) is **removed** — de-scoped. The
+FVG is fully characterized by: (a) its **bias** (`bias_fvg`) and **at-most-one inversion**
+(`bias_fvg_ifvg`, §2.5) via the close-beyond-pattern-extreme rule; and (b) its **entry-touch
+timing** (§2.10a). No inversion count, no touch count. As long as the bias points the correct
+direction (single inversion handled) and we know *when* the entry-touch occurred relative to IB
+close, the FVG is fully captured for the harness.
 
 ---
 
@@ -309,11 +398,45 @@ Per level: hit % up, hit % down, either-side %, and the **conditional ladder**:
 ### 3.2 Bias accuracy table (the A/B harness — primary deliverable)
 Per variant — `bias_formation_firstreach`, `bias_formation_lasttouch`, `bias_close_dir`,
 `bias_fvg`, `bias_fvg_ifvg`, NY-AM `bias_fvg_rth` / `bias_fvg_1011`, `bias_combined` — report
-hit rate (at both 0.5x and 1x grading), N, and **lift = hit_rate − 0.50**. Then:
+hit rate at each graded level (0.25x / 0.5x / 0.75x / 1x, headlining 0.5x and 1x), N, and **lift =
+hit_rate − base** (empirical baseline per the "Empirical baselines" block below, not a fixed 0.50).
+Then:
 - **Agreement lift:** hit rate when ≥2 variants agree vs when they disagree.
 - Bias hit rate sliced by range_bucket, dow, vix_bucket.
 - Directly answers "does criterion X improve or degrade win rate," and ranks the two formation
   definitions head-to-head.
+
+**Bias comparison split (additive):** separate direction correctness from extension hits.
+- `DIR%` uses a selectable comparator (`realized_dir_break` / `realized_dir_close` /
+  `realized_dir_ext`) and is computed over rows where both variant and comparator are non-zero.
+- `TARGET 0.5x%` and `TARGET 1x%` remain extension-hit statistics.
+
+**Empirical baselines (used for lift and coloring):**
+- `base_dir = max(P(realized_dir=+1), P(realized_dir=-1))` over resolved days.
+- `base_tgt = P(V=+1)*P(max_ext_up>=0.5) + P(V=-1)*P(max_ext_down>=0.5)` over firing days.
+- `LIFT_dir = DIR% - base_dir`, `LIFT_tgt = TARGET0.5% - base_tgt`.
+
+Add a **BASELINE** row at top of the direction table.
+
+### 3.2a No-signal buckets (new)
+For sparse variants (`bias_fvg`, `bias_fvg_ifvg`) report:
+- `N_absent = count(V==0)`
+- `chop_rate_absent`
+- `chop_rate_all`
+
+Format: `No-<variant> day -> chop X% (vs Y% baseline, N=Z)`.
+
+### 3.2b Conflict matrix (new)
+At minimum include Formation×FVG, Formation×FVG→IFVG, FVG×Close-Dir, Formation×Close-Dir.
+On rows where both fire, disagree, and realized direction resolves:
+- `N_conflict`
+- `winA%`, `winB%`
+- winner + edge
+
+Headline style: `When A & B disagree (N=x): A right y%, B z%`.
+
+### 3.2c Agreement lift (new)
+Compare `agree_2plus` and `agree_all` buckets against best single-variant DIR%.
 
 ### 3.3 Geometry / gap table
 Range %, range ATR, gap %, gap-fill rate, median gap-fill minutes — by slot, by dow.
@@ -340,11 +463,18 @@ win × RR − loss. Extend beyond Pine's single-target to the **full-ladder expe
 TPs + runner, from MFE/MAE) and slice by range_bucket, bias-agreement, VIX, DOW. The play with
 the best expectancy in the current regime is the trade.
 
+Dashboard/report requirement:
+- Show loss decomposition for each play as `stop_loss_rate` and `timeout_loss_rate`.
+- Show `no_setup_rate` separately so non-trigger days do not pollute play win/loss quality.
+
 ### 3.9 The SUGGESTED line (heuristic synthesis)
 Cross-table: **bias direction × best play** → one-line suggestion. Editable lookup. Sub-50%
 dominant bias flips the direction to a fade. Selector: highest-expectancy (respects R:R),
 not highest-win-rate. **Any bucket feeding SUGGESTED uses the trailing/expanding cutpoints**
 (§2.1), never the full-sample ones, to keep the live read look-ahead-free.
+
+Dominant signal summary (additive): choose the variant with strongest conflict wins and highest
+`LIFT_dir`; if its `DIR%` falls below `base_dir`, present as a fade-biased signal.
 
 ### 3.10 DST-validation table (v5 — Tokyo / London only)
 For each event-anchored foreign slot, compare the `ET_fixed` and `event_anchored` variants over
@@ -385,17 +515,27 @@ All % cells use the traffic-light scheme: ≥60% green, 50–60% orange, <50% re
 - `ib_sessions_config` — slot definitions (name, start, end, deadline, gap-ref, **time_basis**)
 - `ib_facts` — one row per (symbol, trading_day, slot, **time_basis**); all of §2 incl. play
   results, timing buckets, range_pct, bias variants & gradings, **DST regime fields (§1.4)**,
-  **mid-lock / front-running fields (§2.10)**
+  **mid-lock / split mid-touch / front-running fields (§2.10)**, realized direction fields
+  (`realized_dir_break`, `realized_dir_close`, `realized_dir_ext`), and **FVG fields**: `fvg_low`,
+  `fvg_high` (pattern extreme), inversion state, and **FVG entry-touch timing (§2.10a)**
 - `ib_ext_detail` — long: (symbol, trading_day, slot, time_basis, side, level, hit, minutes)
-- `ib_play_detail` — long: (symbol, trading_day, slot, time_basis, play, result, mfe, mae)
+- `ib_play_detail` — long: (symbol, trading_day, slot, time_basis, play, target_lvl, result,
+  mfe, mae, realized_r, timeout_loss, loss_reason, with_bias)
 - `ib_level_touch_detail` — long: (symbol, trading_day, slot, time_basis, level_pct, phase,
   first_touch_time, last_touch_time, touch_count) — **v5**
-- `ib_fvg_detail` — long: (symbol, trading_day, slot, fvg_id, touch_n, formed_time, dir, top,
-  bot, formed_phase, touch_time, touch_phase, reaction, inverted) — **v5**
+- *(removed v6)* `ib_fvg_detail` — per-touch FVG reuse catalog dropped; FVG bias + single inversion
+  + entry-touch timing all live in `ib_facts` (§2.5 / §2.10a / §2.11).
 - `ib_agg_*` — materialized aggregate views feeding each dashboard table
+- `ib_agg_bias_compare` — per-variant DIR%/HIT%/LIFT/N + baselines
+- `ib_agg_bias_conflict` — pairwise conflict matrix
+- `ib_agg_no_signal` — no-signal chop statistics
 
 Python builders write the parquet files into `data/derived/`; the Next.js/DuckDB-WASM dashboard
 reads via the API proxy; design doc lives alongside `MACRO_RESEARCH_PIPELINE_DESIGN.md`.
+
+Precalc input contract (implementation): when `df_1m_precalc` is supplied, builders may derive
+missing helper columns (`timestamp`, `datetime`, `logical_date`, `bar_idx`,
+`minutes_from_midnight`, `us_dst`, `uk_dst`) from the index if absent, to avoid hard failures.
 
 ---
 
@@ -407,11 +547,12 @@ reads via the API proxy; design doc lives alongside `MACRO_RESEARCH_PIPELINE_DES
 - ✅ Streaks (directional, inside/outside days, cross-session agreement)
 - ✅ Median time (to first break, to each extension, to mid retest) + mode clock time
 - ✅ Mid hit % (+ retrace depth, fade vs trend split)
-- ✅ **Front-running mid: lock timing, formation-phase touches, `early_mid_event` (v5)**
+- ✅ **Front-running mid: lock timing, split first-touch (formation/outcome) + 5-min buckets, `early_mid_event` (v5/v6)**
 - ✅ **Quarter-level touch rates {0/25/50/75/100}%, by phase, conditioned (v5)**
 - ✅ Conditional extension ladder: P(N+0.5x | Nx hit)
 - ✅ Bias accuracy per variant (incl. **dual formation**, **dual NY-AM FVG**) + lift + agreement lift
-- ✅ **FVG reuse / multi-touch tracking (v5, tracking-only)**
+- ✅ Bias comparison split: `DIR%` vs `HIT%`, empirical baselines, no-signal buckets, conflict matrix
+- ✅ **FVG: bias + single inversion via close-beyond-pattern-extreme; entry-touch timing (formation/outcome) (v6)**
 - ✅ Three plays (breakout / retest-cont / fade-to-mid): win · R:R · expectancy; Play 3 touch-back fill
 - ✅ Range-size terciles → break% + median ext + P75 stretch ext + 0.5x-hit
 - ✅ First-break-dir = day-winner rate
@@ -428,7 +569,14 @@ slicing; cross-session sequencing; dual NY-AM FVG at full sample; VIX/regime con
 
 **Resolved:**
 - Gap reference: NY AM → prior RTH close (cross-key); overnight → prior same-slot IB close (§2.2).
-- Bias grading: both 0.5x and 1x, **order-sensitive**, with leakage guard (§2.6).
+- Bias grading: 0.25x/0.5x/0.75x/1x, **order-sensitive, touch-based** stops, with leakage guard (§2.6).
+- **Stops/targets are touch-based** everywhere (bias grading + all plays). Close-based tests exist
+  in exactly **three** places: FVG invalidation (§2.5), Play 1 breakout entry confirmation (§2.8),
+  and Play 3 fade touch-back fill confirmation (§2.8).
+- **FVG (experienced-ICT reading):** invalidation / IFVG flip = **close beyond the 3-bar pattern
+  extreme** (`fvg_low`/`fvg_high`), not the gap edge and not a wick; **single inversion** only;
+  entry-touch defined for timing (§2.5/§2.10a).
+- `play{n}_rr` **derived from the configured level**, not hard-coded (§2.8).
 - Range / VIX buckets: terciles per (symbol, slot), **full-sample for tables, trailing for
   SUGGESTED** (§2.1/§2.7/§3.9).
 - Formation bias: **compute both** firstreach and lasttouch, A/B in §3.2 (§2.5).
@@ -437,10 +585,12 @@ slicing; cross-session sequencing; dual NY-AM FVG at full sample; VIX/regime con
   validate (§1.4/§3.10). All data stays UTC→ET; reports carry `dst_regime`.
 - NY-AM dual FVG: `bias_fvg_rth` (09:30) and `bias_fvg_1011` (**09:50 ICT macro → 11:00**, level
   persists, leakage-guarded) (§2.5/§2.6).
-- FVG reuse: **tracking-only** via `ib_fvg_detail`; no graded retest play yet (§2.11).
+- **FVG per-touch catalog REMOVED** (no inversion count, no touch count); replaced by single inversion
+  + entry-touch timing; `ib_fvg_detail` dropped (§2.10a/§2.11).
 - Front-running mid + quarter touches: **measurement layer only**; canonical mid-retest unchanged
   (§2.10/§3.11).
-- Event timing: capture both mode (15-min bucket) and median (§2.9).
+- Event timing: capture both mode (**5-min bucket**) and median; mid + FVG entry-touch split by
+  phase (§2.9/§2.10/§2.10a).
 
 **Still to decide / validate during build:**
 1. Globex outcome deadline (Tokyo open vs run to London).
@@ -454,3 +604,4 @@ slicing; cross-session sequencing; dual NY-AM FVG at full sample; VIX/regime con
    early-entry tradeable layer** (§2.10/§3.11) — and if so, the live provisional-mid rule.
 7. The MAE-driven Play 3 overshoot/stop refinement (parked; MFE/MAE already captured).
 8. Manual back-test validation of three-play win rates and range-tercile targets.
+9. Bias-comparison audit: hand-validate one conflict pair and one no-signal bucket on sample rows.

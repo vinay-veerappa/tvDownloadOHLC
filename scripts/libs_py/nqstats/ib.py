@@ -12,7 +12,6 @@ from typing import Dict, Any, Tuple, Optional, List
 from scripts.libs_py.nqstats.sessions import (
     get_logical_trading_date,
     get_dst_flags,
-    get_event_anchored_times,
     get_time_mask,
     get_time_mask_vectorized,
     normalize_to_eastern
@@ -44,15 +43,15 @@ def detect_fvgs_vectorized(df: pd.DataFrame, timeframe: str = '5min') -> pd.Data
     resampled = df[['high', 'low']].resample(timeframe, origin='start_day').agg({
         'high': 'max',
         'low': 'min'
-    }).dropna()
+    })
     
     high_1 = resampled['high'].shift(2)
     low_1 = resampled['low'].shift(2)
     high_3 = resampled['high']
     low_3 = resampled['low']
     
-    bull_mask = high_1 < low_3
-    bear_mask = low_1 > high_3
+    bull_mask = (high_1 < low_3) & high_1.notna() & low_3.notna()
+    bear_mask = (low_1 > high_3) & low_1.notna() & high_3.notna()
     
     fvg = pd.DataFrame(index=resampled.index)
     fvg['fvg_type'] = 0
@@ -76,7 +75,7 @@ def detect_fvgs_v5(df: pd.DataFrame, timeframe: str = '5min') -> pd.DataFrame:
     resampled = df[['high', 'low']].resample(timeframe, origin='start_day').agg({
         'high': 'max',
         'low': 'min'
-    }).dropna()
+    })
     
     high_1 = resampled['high'].shift(2)
     low_1 = resampled['low'].shift(2)
@@ -93,10 +92,21 @@ def detect_fvgs_v5(df: pd.DataFrame, timeframe: str = '5min') -> pd.DataFrame:
     
     fvg['fvg_top'] = np.nan
     fvg['fvg_bottom'] = np.nan
+    fvg['fvg_low'] = np.nan
+    fvg['fvg_high'] = np.nan
+
+    # Capture the full 3-bar pattern extremes used for IFVG invalidation and hold checks.
+    three_bar_low = pd.concat([resampled['low'], resampled['low'].shift(1), resampled['low'].shift(2)], axis=1).min(axis=1)
+    three_bar_high = pd.concat([resampled['high'], resampled['high'].shift(1), resampled['high'].shift(2)], axis=1).max(axis=1)
+
     fvg.loc[bull_mask, 'fvg_top'] = low_3
     fvg.loc[bull_mask, 'fvg_bottom'] = high_1
+    fvg.loc[bull_mask, 'fvg_low'] = three_bar_low
+    fvg.loc[bull_mask, 'fvg_high'] = three_bar_high
     fvg.loc[bear_mask, 'fvg_top'] = low_1
     fvg.loc[bear_mask, 'fvg_bottom'] = high_3
+    fvg.loc[bear_mask, 'fvg_low'] = three_bar_low
+    fvg.loc[bear_mask, 'fvg_high'] = three_bar_high
     
     fvg['fvg_finalized_time'] = fvg.index + pd.Timedelta(timeframe)
     return fvg
@@ -282,8 +292,8 @@ def evaluate_target_vs_stop_consolidated(
         )
         
         stop_hit = is_eligible & np.where(
-            bias_1m == 1, df['close'] < stop_1m,
-            np.where(bias_1m == -1, df['close'] > stop_1m, False)
+            bias_1m == 1, df['low'] <= stop_1m,
+            np.where(bias_1m == -1, df['high'] >= stop_1m, False)
         )
         
         races_df[f'tgt_{name}'] = np.where(target_hit, df['bar_idx'], len(df))
@@ -316,80 +326,14 @@ def evaluate_target_vs_stop_consolidated(
 
 # ── V5 IMPLEMENTATION FOR THE EDGEFUL PIPELINE ────────────────────────────────────────
 
-def evaluate_target_vs_stop_vectorized(
-    df: pd.DataFrame,
-    bias: pd.Series,
-    target_price: pd.Series,
-    stop_price: pd.Series,
-    start_time: pd.Series,
-    out_end_time: pd.Series
-) -> pd.Series:
-    """
-    Races target price vs stop price (opposite close) inside the outcome window.
-    Only counts hits that occur at or after start_time.
-    """
-    if isinstance(bias, np.ndarray):
-        bias = pd.Series(bias, index=df['logical_date'].unique())
-    if isinstance(target_price, np.ndarray):
-        target_price = pd.Series(target_price, index=bias.index)
-    if isinstance(stop_price, np.ndarray):
-        stop_price = pd.Series(stop_price, index=bias.index)
-    if isinstance(start_time, np.ndarray) or isinstance(start_time, pd.DatetimeIndex):
-        start_time = pd.Series(start_time, index=bias.index)
-    if isinstance(out_end_time, np.ndarray):
-        out_end_time = pd.Series(out_end_time, index=bias.index)
-        
-    logical_date = df['logical_date']
-    
-    # Broadcast to 1m
-    bias_1m = bias.reindex(logical_date).values
-    target_1m = target_price.reindex(logical_date).values
-    stop_1m = stop_price.reindex(logical_date).values
-    start_1m = start_time.reindex(logical_date).values
-    
-    # Bar must be in outcome window and at or after start_time
-    is_after_start = df.index >= start_1m
-    is_eligible = df['in_out'] & is_after_start
-    
-    target_hit = is_eligible & np.where(
-        bias_1m == 1, df['high'] >= target_1m,
-        np.where(bias_1m == -1, df['low'] <= target_1m, False)
-    )
-    
-    stop_hit = is_eligible & np.where(
-        bias_1m == 1, df['close'] < stop_1m,
-        np.where(bias_1m == -1, df['close'] > stop_1m, False)
-    )
-    
-    # Optimize min_target_idx groupby
-    target_hit_bars = df[target_hit]
-    if not target_hit_bars.empty:
-        min_target_idx = target_hit_bars.groupby('logical_date')['bar_idx'].min().reindex(bias.index, fill_value=len(df))
-    else:
-        min_target_idx = pd.Series(len(df), index=bias.index)
-        
-    # Optimize min_stop_idx groupby
-    stop_hit_bars = df[stop_hit]
-    if not stop_hit_bars.empty:
-        min_stop_idx = stop_hit_bars.groupby('logical_date')['bar_idx'].min().reindex(bias.index, fill_value=len(df))
-    else:
-        min_stop_idx = pd.Series(len(df), index=bias.index)
-        
-    target_reached = min_target_idx < len(df)
-    stop_reached = min_stop_idx < len(df)
-    
-    correct = target_reached & (~stop_reached | (min_target_idx < min_stop_idx))
-    return correct
-
-
 def evaluate_all_plays_consolidated(
     df: pd.DataFrame,
     plays_config: List[Dict[str, Any]],  # list of dicts with active, direction, entry_price, target_price, stop_price, entry_idx
     ib_agg: pd.DataFrame,
     date_pos_1m: np.ndarray = None
-) -> List[Tuple[pd.Series, pd.Series, pd.Series]]:
+) -> List[Tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]]:
     """
-    Evaluates play results, MAE, and MFE excursions for all plays consolidated in 3 groupbys.
+    Evaluates play results, MAE, MFE excursions, and realized R for all plays consolidated in 3 groupbys.
     date_pos_1m: integer array mapping each 1m row to its position in ib_agg (avoids reindex overhead).
     """
     if not plays_config:
@@ -410,6 +354,9 @@ def evaluate_all_plays_consolidated(
         pos = ib_agg_pos.get(d)
         if pos is not None:
             max_out_idx_arr[pos] = v
+            
+    # Pre-extract closeout prices at the end of outcome window
+    closeout_prices = np.where(max_out_idx_arr >= 0, df['close'].values[max_out_idx_arr], np.nan)
     
     # Broadcast max_out_idx to 1m
     max_out_idx_1m = max_out_idx_arr[date_pos_1m] if use_pos else \
@@ -439,8 +386,8 @@ def evaluate_all_plays_consolidated(
             np.where(dir_1m == -1, df['low'] <= target_1m, False)
         )
         stop_hit = is_eligible & np.where(
-            dir_1m == 1, df['close'] < stop_1m,
-            np.where(dir_1m == -1, df['close'] > stop_1m, False)
+            dir_1m == 1, df['low'] <= stop_1m,
+            np.where(dir_1m == -1, df['high'] >= stop_1m, False)
         )
         
         hits_df[f'tgt_{i}'] = np.where(target_hit, df['bar_idx'], len(df))
@@ -455,6 +402,8 @@ def evaluate_all_plays_consolidated(
     
     exit_indices = []
     play_results = []
+    realized_rs = []
+    timeout_losses = []
     
     for i, cfg in enumerate(plays_config):
         min_tgt_arr = np.full(len(ib_agg), len(df), dtype=np.intp)
@@ -466,15 +415,44 @@ def evaluate_all_plays_consolidated(
         target_reached = min_tgt_arr < len(df)
         stop_reached = min_stp_arr < len(df)
         
+        # No-setup remains 0. Once setup is active, target-first is win; otherwise loss.
+        entry_price_val = cfg['entry_price'].values
+        target_first = target_reached & (~stop_reached | (min_tgt_arr < min_stp_arr))
+        stop_first = stop_reached & (~target_reached | (min_stp_arr <= min_tgt_arr))
+        timeout_loss = cfg['active'].values & (~target_first) & (~stop_first)
+        
         play_res = np.where(
             cfg['active'].values,
             np.where(
-                target_reached & (~stop_reached | (min_tgt_arr < min_stp_arr)),
-                1, -1
+                target_first,
+                1,
+                -1
             ),
             0
         )
         play_results.append(pd.Series(play_res, index=ib_agg.index))
+        timeout_losses.append(pd.Series(timeout_loss, index=ib_agg.index))
+        
+        # Realized R calculation
+        target_dist = np.abs(cfg['target_price'].values - entry_price_val)
+        stop_dist = np.abs(entry_price_val - cfg['stop_price'].values)
+        stop_dist = np.where(stop_dist == 0, 1e-9, stop_dist)
+        target_mult = target_dist / stop_dist
+
+        timeout_r = cfg['direction'].values * (closeout_prices - entry_price_val) / stop_dist
+        # If no outcome close is available for a day, keep conservative timeout fallback.
+        timeout_r = np.where(np.isfinite(closeout_prices), timeout_r, -1.0)
+
+        realized_r = np.where(
+            cfg['active'].values,
+            np.where(
+                target_first,
+                target_mult,
+                np.where(stop_first, -1.0, timeout_r)
+            ),
+            0.0
+        )
+        realized_rs.append(pd.Series(realized_r, index=ib_agg.index))
         
         exit_idx = np.minimum(
             np.minimum(min_tgt_arr, min_stp_arr),
@@ -537,113 +515,9 @@ def evaluate_all_plays_consolidated(
         mfe_pct = np.where(mid_vals > 0, mfe / mid_vals * 100, 0.0)
         mae_pct = np.where(mid_vals > 0, mae / mid_vals * 100, 0.0)
         
-        outputs.append((play_results[i], pd.Series(mfe_pct, index=ib_agg.index), pd.Series(mae_pct, index=ib_agg.index)))
+        outputs.append((play_results[i], pd.Series(mfe_pct, index=ib_agg.index), pd.Series(mae_pct, index=ib_agg.index), realized_rs[i], timeout_losses[i]))
         
     return outputs
-
-
-def evaluate_play_excursions(
-    df: pd.DataFrame,
-    play_active: pd.Series,
-    direction: pd.Series,
-    entry_price: pd.Series,
-    target_price: pd.Series,
-    stop_price: pd.Series,
-    entry_idx_series: pd.Series,
-    ib_mid: pd.Series
-) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    """
-    Computes play_result (+1, -1, 0) and MAE/MFE excursions.
-    """
-    if isinstance(play_active, np.ndarray):
-        play_active = pd.Series(play_active, index=df['logical_date'].unique())
-    if isinstance(direction, np.ndarray):
-        direction = pd.Series(direction, index=play_active.index)
-    if isinstance(entry_price, np.ndarray):
-        entry_price = pd.Series(entry_price, index=play_active.index)
-    if isinstance(target_price, np.ndarray):
-        target_price = pd.Series(target_price, index=play_active.index)
-    if isinstance(stop_price, np.ndarray):
-        stop_price = pd.Series(stop_price, index=play_active.index)
-    if isinstance(entry_idx_series, np.ndarray):
-        entry_idx_series = pd.Series(entry_idx_series, index=play_active.index)
-        
-    logical_date = df['logical_date']
-    
-    # Broadcast to 1m
-    active_1m = play_active.reindex(logical_date).values
-    dir_1m = direction.reindex(logical_date).values
-    entry_1m = entry_price.reindex(logical_date).values
-    target_1m = target_price.reindex(logical_date).values
-    stop_1m = stop_price.reindex(logical_date).values
-    entry_idx_1m = entry_idx_series.reindex(logical_date).values
-    
-    is_eligible = df['in_out'] & active_1m & (df['bar_idx'] >= entry_idx_1m)
-    
-    target_hit = is_eligible & np.where(
-        dir_1m == 1, df['high'] >= target_1m,
-        np.where(dir_1m == -1, df['low'] <= target_1m, False)
-    )
-    
-    stop_hit = is_eligible & np.where(
-        dir_1m == 1, df['close'] < stop_1m,
-        np.where(dir_1m == -1, df['close'] > stop_1m, False)
-    )
-    
-    bar_idx = df['bar_idx']
-    target_idx = np.where(target_hit, bar_idx, len(df))
-    stop_idx = np.where(stop_hit, bar_idx, len(df))
-    
-    min_target_idx = pd.Series(target_idx, index=logical_date).groupby('logical_date').min().reindex(play_active.index)
-    min_stop_idx = pd.Series(stop_idx, index=logical_date).groupby('logical_date').min().reindex(play_active.index)
-    
-    target_reached = min_target_idx < len(df)
-    stop_reached = min_stop_idx < len(df)
-    
-    play_result = np.where(
-        play_active,
-        np.where(
-            target_reached & (~stop_reached | (min_target_idx < min_stop_idx)),
-            1, -1
-        ),
-        0
-    )
-    
-    max_out_idx = df[df['in_out']].groupby('logical_date')['bar_idx'].max().reindex(play_active.index)
-    
-    exit_idx = np.minimum(
-        np.minimum(min_target_idx.fillna(len(df)).values, min_stop_idx.fillna(len(df)).values),
-        max_out_idx.fillna(len(df)).values
-    )
-    
-    exit_idx_1m = pd.Series(exit_idx, index=play_active.index).reindex(logical_date).values
-    
-    in_trade = (df['bar_idx'] >= entry_idx_1m) & (df['bar_idx'] <= exit_idx_1m) & active_1m
-    
-    trade_high = np.where(in_trade, df['high'], -np.inf)
-    trade_low = np.where(in_trade, df['low'], np.inf)
-    
-    max_high = pd.Series(trade_high, index=logical_date).groupby('logical_date').max().reindex(play_active.index)
-    min_low = pd.Series(trade_low, index=logical_date).groupby('logical_date').min().reindex(play_active.index)
-    
-    mfe = np.where(
-        play_active & (direction == 1), max_high - entry_price,
-        np.where(play_active & (direction == -1), entry_price - min_low, 0.0)
-    )
-    
-    mae = np.where(
-        play_active & (direction == 1), entry_price - min_low,
-        np.where(play_active & (direction == -1), max_high - entry_price, 0.0)
-    )
-    
-    mfe = np.maximum(0.0, mfe)
-    mae = np.maximum(0.0, mae)
-    
-    mid_vals = ib_mid.values
-    mfe_pct = np.where(mid_vals > 0, mfe / mid_vals * 100, 0.0)
-    mae_pct = np.where(mid_vals > 0, mae / mid_vals * 100, 0.0)
-    
-    return pd.Series(play_result, index=play_active.index), pd.Series(mfe_pct, index=play_active.index), pd.Series(mae_pct, index=play_active.index)
 
 
 def extract_level_touch_details(df: pd.DataFrame, ib_agg: pd.DataFrame) -> pd.DataFrame:
@@ -696,286 +570,22 @@ def extract_level_touch_details(df: pd.DataFrame, ib_agg: pd.DataFrame) -> pd.Da
     return res_df
 
 
-def extract_fvg_reuse_details(df: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Extracts horizontal zone touch/reuse details for all detected FVGs (fully vectorized global merge).
-    """
-    fvg_df = fvg_df[fvg_df['fvg_type'] != 0].copy()
-    if fvg_df.empty:
-        return pd.DataFrame(columns=['trading_day', 'fvg_id', 'touch_n', 'formed_time', 'dir', 'top', 'bot', 'formed_phase', 'touch_time', 'touch_phase', 'reaction', 'inverted'])
-        
-    fvg_df['fvg_id'] = fvg_df.groupby('logical_date').cumcount() + 1
-    
-    # Calculate formed_phase using integer minutes for speed
-    fvg_fin_mins = fvg_df['fvg_finalized_time'].dt.hour * 60 + fvg_df['fvg_finalized_time'].dt.minute
-    fvg_df['formed_phase'] = np.where(fvg_fin_mins <= fvg_df['ib_end_mins'], 'formation', 'outcome')
-    
-    # Filter fvg_df to keep only dates present in df
-    valid_dates = df['logical_date'].unique()
-    fvg_df = fvg_df[fvg_df['logical_date'].isin(valid_dates)].copy()
-    
-    if fvg_df.empty:
-        return pd.DataFrame(columns=['trading_day', 'fvg_id', 'touch_n', 'formed_time', 'dir', 'top', 'bot', 'formed_phase', 'touch_time', 'touch_phase', 'reaction', 'inverted'])
-        
-    fvg_cols = ['logical_date', 'fvg_id', 'fvg_finalized_time', 'fvg_type', 'fvg_top', 'fvg_bottom', 'ib_end_mins', 'out_end_mins', 'formed_phase']
-    fvg_sub = fvg_df[fvg_cols].copy()
-    
-    # Use numpy searchsorted group approach instead of pd.merge cross-join.
-    # Both df_1m_sub and fvg_sub are sorted by logical_date (time-series invariant).
-    # np.searchsorted finds group boundaries O(log n); per-group broadcasting is pure numpy.
-    #
-    # IMPORTANT: use ALL 1m bars for each logical_date (no in_ib/in_out filter).
-    # The baseline includes overnight bars (touch_time can be 00:00:00) because overnight
-    # FVGs are touched by bars from their formation time up to session end.
-    # The after_fin check in the loop correctly excludes bars before the FVG formed.
-    df_1m_sub = df[['high', 'low', 'close', 'logical_date', 'minutes_from_midnight']].copy()
-    df_1m_sub['timestamp'] = df_1m_sub.index
-    df_dates_raw = df_1m_sub['logical_date'].values    # Python datetime.date objects
-    fvg_dates_raw = fvg_sub['logical_date'].values     # Python datetime.date objects
-
-    # Convert to int32 ordinals for reliable numpy searchsorted / intersect1d
-    # (numpy's object-array comparisons for datetime.date are not stable across versions)
-    df_date_ords  = np.fromiter((d.toordinal() for d in df_dates_raw),  dtype=np.int32, count=len(df_dates_raw))
-    fvg_date_ords = np.fromiter((d.toordinal() for d in fvg_dates_raw), dtype=np.int32, count=len(fvg_dates_raw))
-
-    # Unique sorted ordinals present in both
-    unique_ords = np.intersect1d(df_date_ords, fvg_date_ords)  # int32, sorted
-    if len(unique_ords) == 0:
-        return pd.DataFrame(columns=['trading_day', 'fvg_id', 'touch_n', 'formed_time', 'dir', 'top', 'bot', 'formed_phase', 'touch_time', 'touch_phase', 'reaction', 'inverted'])
-
-    # Map ordinals back to Python date objects (needed for result arrays)
-    _ord_to_date: dict[int, object] = {}
-    for _ord, _dt in zip(df_date_ords, df_dates_raw):
-        if _ord not in _ord_to_date:
-            _ord_to_date[_ord] = _dt
-    unique_dates = [_ord_to_date[o] for o in unique_ords]  # list[datetime.date], len == unique_ords
-
-    # Build group boundary arrays using int32 ordinals (reliable searchsorted)
-    df_lo = np.searchsorted(df_date_ords,  unique_ords, side='left')
-    df_hi = np.searchsorted(df_date_ords,  unique_ords, side='right')
-    fv_lo = np.searchsorted(fvg_date_ords, unique_ords, side='left')
-    fv_hi = np.searchsorted(fvg_date_ords, unique_ords, side='right')
-
-    # Pre-extract numpy arrays for zero-copy inner loops
-    bar_ts    = df_1m_sub['timestamp'].values
-    bar_high  = df_1m_sub['high'].values
-    bar_low   = df_1m_sub['low'].values
-    bar_close = df_1m_sub['close'].values
-    bar_mins  = df_1m_sub['minutes_from_midnight'].values
-
-    fvg_fin_time     = fvg_sub['fvg_finalized_time'].values
-    fvg_type         = fvg_sub['fvg_type'].values
-    fvg_top          = fvg_sub['fvg_top'].values
-    fvg_bot          = fvg_sub['fvg_bottom'].values
-    fvg_id           = fvg_sub['fvg_id'].values
-    fvg_ib_end       = fvg_sub['ib_end_mins'].values
-    fvg_out_end      = fvg_sub['out_end_mins'].values
-    fvg_formed_phase = fvg_sub['formed_phase'].values
-
-    # Per-day numpy broadcasting: (nb, nf) boolean matrix per day, no Python cross-join.
-    # Bars and FVGs are pre-sorted by logical_date; searchsorted gives O(log n) boundaries.
-    # Global hit index arrays built via concatenation — no per-day Python list overhead.
-    all_bar_idx, all_fvg_idx, all_day_idx = [], [], []
-
-    for i in range(len(unique_dates)):
-        bi0, bi1 = df_lo[i], df_hi[i]
-        fi0, fi1 = fv_lo[i], fv_hi[i]
-        if bi0 == bi1 or fi0 == fi1:
-            continue
-
-        b_mn = bar_mins[bi0:bi1]
-        day_out_end = int(fvg_out_end[fi0])
-        in_sess = b_mn <= day_out_end
-        if not in_sess.any():
-            continue
-
-        # Local (within-day) indices for bars passing the session filter
-        local_bar_pos = np.where(in_sess)[0]       # positions within bi0:bi1
-        b_ts_d = bar_ts[bi0:bi1][local_bar_pos]
-        b_hi_d = bar_high[bi0:bi1][local_bar_pos]
-        b_lo_d = bar_low[bi0:bi1][local_bar_pos]
-
-        f_fin = fvg_fin_time[fi0:fi1]
-        f_tp  = fvg_top[fi0:fi1]
-        f_bt  = fvg_bot[fi0:fi1]
-
-        # SIMD-vectorized (nb_d, nf) boolean matrix — numpy BLAS-level throughput
-        touches = (b_ts_d[:, None] > f_fin[None, :]) & \
-                  (b_lo_d[:, None] <= f_tp[None, :]) & \
-                  (b_hi_d[:, None] >= f_bt[None, :])
-
-        local_bi, local_fi = np.where(touches)
-        if len(local_bi) == 0:
-            continue
-
-        # Sort by (fvg, bar) so output is in (logical_date, fvg_id, timestamp) order
-        sort_ord = np.lexsort((local_bi, local_fi))
-        local_bi = local_bi[sort_ord]
-        local_fi = local_fi[sort_ord]
-
-        # Map back to global flat indices
-        all_bar_idx.append(bi0 + local_bar_pos[local_bi])   # global bar index
-        all_fvg_idx.append(fi0 + local_fi)                  # global fvg index
-        all_day_idx.append(np.full(len(local_bi), i, dtype=np.intp))
-
-    if not all_bar_idx:
-        merged = pd.DataFrame(columns=['logical_date', 'fvg_id', 'fvg_finalized_time', 'fvg_type',
-                                        'fvg_top', 'fvg_bottom', 'formed_phase', 'timestamp',
-                                        'high', 'low', 'close', 'minutes_from_midnight', 'ib_end_mins'])
-    else:
-        hit_bar = np.concatenate(all_bar_idx)
-        hit_fvg = np.concatenate(all_fvg_idx)
-        # Direct numpy indexing — no per-day list appends of full column arrays
-        merged = pd.DataFrame({
-            'logical_date':          df_dates_raw[hit_bar],
-            'fvg_id':                fvg_id[hit_fvg],
-            'fvg_finalized_time':    fvg_fin_time[hit_fvg],
-            'fvg_type':              fvg_type[hit_fvg],
-            'fvg_top':               fvg_top[hit_fvg],
-            'fvg_bottom':            fvg_bot[hit_fvg],
-            'formed_phase':          fvg_formed_phase[hit_fvg],
-            'timestamp':             bar_ts[hit_bar],
-            'high':                  bar_high[hit_bar],
-            'low':                   bar_low[hit_bar],
-            'close':                 bar_close[hit_bar],
-            'minutes_from_midnight': bar_mins[hit_bar],
-            'ib_end_mins':           fvg_ib_end[hit_fvg],
-        })
-    
-    if merged.empty:
-        # No touches at all — all FVGs untouched
-        untouched_out = pd.DataFrame({
-            'trading_day': fvg_df['logical_date'],
-            'fvg_id':      fvg_df['fvg_id'],
-            'touch_n':     0,
-            'formed_time': fvg_df['fvg_finalized_time'],
-            'dir':         fvg_df['fvg_type'].astype(int),
-            'top':         fvg_df['fvg_top'],
-            'bot':         fvg_df['fvg_bottom'],
-            'formed_phase': fvg_df['formed_phase'],
-            'touch_time':  pd.NaT,
-            'touch_phase': None,
-            'reaction':    None,
-            'inverted':    False
-        })
-        return untouched_out[['trading_day', 'fvg_id', 'touch_n', 'formed_time', 'dir', 'top', 'bot', 'formed_phase', 'touch_time', 'touch_phase', 'reaction', 'inverted']]
-
-    # --- O(n) numpy post-processing (no sort_values / groupby) ---
-    # The loop pre-sorted each day's output by (fvg_ii, bar_ii), and unique_dates
-    # is sorted, so merged is already in (logical_date, fvg_id, timestamp) order.
-
-    ld_arr = merged['logical_date'].values
-    fi_arr = merged['fvg_id'].values
-
-    # Group-change mask: True at the start of each (logical_date, fvg_id) group
-    group_start = np.empty(len(merged), dtype=bool)
-    group_start[0] = True
-    group_start[1:] = (ld_arr[1:] != ld_arr[:-1]) | (fi_arr[1:] != fi_arr[:-1])
-
-    # O(n) cumcount: global_pos - group_start_pos_of_this_element
-    group_start_pos = np.where(group_start)[0]
-    group_sizes     = np.diff(np.append(group_start_pos, len(merged)))
-    start_per_elem  = np.repeat(group_start_pos, group_sizes)
-    touch_n_arr     = np.arange(len(merged)) - start_per_elem + 1   # 1-indexed
-
-    # Close-through check (vectorized, no groupby)
-    fvg_type_arr = merged['fvg_type'].values
-    close_arr    = merged['close'].values
-    fvg_top_arr  = merged['fvg_top'].values
-    fvg_bot_arr  = merged['fvg_bottom'].values
-    is_break_arr = np.where(
-        fvg_type_arr == 1,
-        close_arr < fvg_bot_arr,
-        close_arr > fvg_top_arr
-    )
-
-    # O(n) cummax-with-resets (cumany per group) using cumsum offset trick:
-    #   cumsum_break[i] > cumsum_at_group_start[i]  iff  any break since group start
-    cumsum_break = np.cumsum(is_break_arr.astype(np.int32))
-    # cumsum value at end of previous group (= 0 for first group)
-    prev_end_cs = np.zeros(len(merged), dtype=np.int32)
-    prev_end_cs[group_start_pos[1:]] = cumsum_break[group_start_pos[1:] - 1]
-    # Each element's "group start cumsum offset" = cumsum_break value just before its group started.
-    # Stored as sparse deltas at group boundaries; np.repeat broadcasts them per-element.
-    group_start_cs_vals = np.concatenate([[0], cumsum_break[group_start_pos[1:] - 1]])
-    group_cs_offset     = np.repeat(group_start_cs_vals, group_sizes)
-    inverted_arr        = (cumsum_break - group_cs_offset) > 0
-
-    # touch_phase and reaction (fully vectorized)
-    mins_arr        = merged['minutes_from_midnight'].values
-    ib_end_mins_arr = merged['ib_end_mins'].values
-    touch_phase_arr = np.where(mins_arr <= ib_end_mins_arr, 'formation', 'outcome')
-    reaction_arr    = np.where(is_break_arr, 'closed_through', 'held')
-
-    touched_out = pd.DataFrame({
-        'trading_day':  ld_arr,
-        'fvg_id':       fi_arr,
-        'touch_n':      touch_n_arr,
-        'formed_time':  merged['fvg_finalized_time'].values,
-        'dir':          fvg_type_arr.astype(int),
-        'top':          fvg_top_arr,
-        'bot':          fvg_bot_arr,
-        'formed_phase': merged['formed_phase'].values,
-        'touch_time':   merged['timestamp'].values,
-        'touch_phase':  touch_phase_arr,
-        'reaction':     reaction_arr,
-        'inverted':     inverted_arr,
-    })
-
-    # Untouched FVG detection: numpy isin instead of pd.merge + drop_duplicates
-    # Build unique (logical_date, fvg_id) set from first-touch rows (touch_n == 1)
-    first_touch_mask = group_start   # group_start coincides with touch_n == 1
-    touched_ld = ld_arr[first_touch_mask]
-    touched_fi = fi_arr[first_touch_mask]
-    # Composite integer key: date_ordinal * 100000 + fvg_id (fvg_id << 17 bits safe for <131072 FVGs/day)
-    def _composite(ld_a, fi_a):
-        # logical_date is datetime.date; convert to ordinal for hashing
-        return np.array([d.toordinal() for d in ld_a], dtype=np.int64) * 100000 + fi_a.astype(np.int64)
-
-    touched_keys_set  = _composite(touched_ld, touched_fi)
-    fvg_keys          = _composite(fvg_df['logical_date'].values, fvg_df['fvg_id'].values)
-    is_untouched      = ~np.isin(fvg_keys, touched_keys_set)
-    untouched_fvg     = fvg_df[is_untouched]
-
-    untouched_out = pd.DataFrame({
-        'trading_day':  untouched_fvg['logical_date'].values,
-        'fvg_id':       untouched_fvg['fvg_id'].values,
-        'touch_n':      0,
-        'formed_time':  untouched_fvg['fvg_finalized_time'].values,
-        'dir':          untouched_fvg['fvg_type'].values.astype(int),
-        'top':          untouched_fvg['fvg_top'].values,
-        'bot':          untouched_fvg['fvg_bottom'].values,
-        'formed_phase': untouched_fvg['formed_phase'].values,
-        'touch_time':   pd.NaT,
-        'touch_phase':  None,
-        'reaction':     None,
-        'inverted':     False,
-    })
-
-    # Concat and final sort (only on the small untouched_out, already sorted)
-    res_df = pd.concat([touched_out, untouched_out], ignore_index=True)
-    # touched_out is already sorted by (trading_day, fvg_id, touch_n);
-    # untouched_out has touch_n=0 and needs to be interspersed.
-    res_df = res_df.sort_values(by=['trading_day', 'fvg_id', 'touch_n']).reset_index(drop=True)
-
-    expected_cols = ['trading_day', 'fvg_id', 'touch_n', 'formed_time', 'dir', 'top', 'bot', 'formed_phase', 'touch_time', 'touch_phase', 'reaction', 'inverted']
-    return res_df[expected_cols]
-
-
 def calculate_ib_statistics_v5(
     df_1m: pd.DataFrame,
     symbol: str,
     session_choice: str = "NY AM IB",
     time_basis: str = "ET_fixed",
+    false_break_min_ext: float = 0.5,
     use_fvg: bool = True,
     vix_series: Optional[pd.Series] = None,
     df_1m_precalc: Optional[pd.DataFrame] = None,
     fvg_df_precalc: Optional[pd.DataFrame] = None,
-    daily_atr_precalc: Optional[pd.Series] = None
+    daily_atr_precalc: Optional[pd.Series] = None,
+    legacy_default_play_levels: Optional[Dict[int, float]] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Computes complete Initial Balance stats and details for the selected session (v5 Spec).
-    Returns (facts_df, level_touch_df, fvg_detail_df).
+    Returns (facts_df, level_touch_df, play_detail_df).
     """
     if session_choice not in SESSION_CONFIGS_V5:
         raise ValueError(f"Unknown session choice: {session_choice}")
@@ -985,8 +595,24 @@ def calculate_ib_statistics_v5(
     # 1. Normalize timezone and dates
     if df_1m_precalc is not None:
         df = df_1m_precalc.copy()
-        us_dst = df['us_dst']
-        uk_dst = df['uk_dst']
+        if 'timestamp' not in df.columns:
+            df['timestamp'] = df.index
+        if 'datetime' not in df.columns:
+            df['datetime'] = df.index
+        if 'logical_date' not in df.columns:
+            df['logical_date'] = get_logical_trading_date(df.index)
+        if 'bar_idx' not in df.columns:
+            df['bar_idx'] = np.arange(len(df))
+        if 'minutes_from_midnight' not in df.columns:
+            df['minutes_from_midnight'] = df.index.hour * 60 + df.index.minute
+
+        if 'us_dst' in df.columns and 'uk_dst' in df.columns:
+            us_dst = df['us_dst']
+            uk_dst = df['uk_dst']
+        else:
+            us_dst, uk_dst = get_dst_flags(df.index)
+            df['us_dst'] = us_dst
+            df['uk_dst'] = uk_dst
     else:
         df = normalize_to_eastern(df_1m).copy()
         df = df[~df.index.isna()]
@@ -1153,7 +779,11 @@ def calculate_ib_statistics_v5(
     ib_agg['high_last_idx'] = high_last_idx
     ib_agg['low_last_idx'] = low_last_idx
     
-    tie_breaker = np.where(ib_agg['ib_close'] > ib_agg['ib_open'], 1, -1)
+    tie_breaker = np.where(
+        ib_agg['ib_close'] > ib_agg['ib_open'],
+        1,
+        np.where(ib_agg['ib_close'] < ib_agg['ib_open'], -1, 0)
+    )
     
     ib_agg['bias_formation_firstreach'] = np.where(
         ib_agg['low_first_idx'] < ib_agg['high_first_idx'], 1,
@@ -1170,18 +800,29 @@ def calculate_ib_statistics_v5(
         np.where(ib_agg['ib_close'] < ib_agg['ib_open'], -1, 0)
     )
     
-    # Broadcast to 1m — build integer positional map once to replace all .reindex(logical_date) calls
+    # Broadcast to 1m — build integer positional map once to replace all .reindex(logical_date) calls.
+    # Keep a has-IB mask so orphan dates cannot leak into ungated computations.
     logical_date = df['logical_date']
     # date_pos_1m[i] = position of logical_date[i] in ib_agg.index (O(n) numpy lookup)
-    # Dates not in ib_agg (weekends, holidays outside session) default to 0 — safe because
-    # those bars always have in_ib=False/in_out=False, so they never affect outputs.
     _ib_agg_date_to_pos = {d: i for i, d in enumerate(ib_agg.index)}
     date_pos_1m = np.array([_ib_agg_date_to_pos.get(d, 0) for d in logical_date], dtype=np.intp)
+    has_ib_1m = logical_date.isin(ib_agg.index).to_numpy()
     df = df.join(ib_agg[['ib_high', 'ib_low', 'ib_mid', 'ib_range']], on='logical_date')
     
     # 4. FVG Calculations
     if fvg_df_precalc is not None:
         fvg_df = fvg_df_precalc.copy()
+        if 'logical_date' not in fvg_df.columns:
+            fvg_df['logical_date'] = get_logical_trading_date(fvg_df.index)
+
+        # Backward compatibility: legacy precomputed FVG parquet may not include
+        # pattern-extreme columns introduced in v6.
+        required_fvg_cols = ['fvg_type', 'fvg_top', 'fvg_bottom', 'fvg_finalized_time', 'fvg_low', 'fvg_high']
+        missing_fvg_cols = [c for c in required_fvg_cols if c not in fvg_df.columns]
+        if missing_fvg_cols:
+            detected_fvg = detect_fvgs_v5(df, '5min')
+            for col in missing_fvg_cols:
+                fvg_df[col] = detected_fvg[col].reindex(fvg_df.index)
     else:
         fvg_df = detect_fvgs_v5(df, '5min')
         fvg_df['logical_date'] = get_logical_trading_date(fvg_df.index)
@@ -1202,11 +843,13 @@ def calculate_ib_statistics_v5(
     
     # Join first FVG details to ib_agg
     ib_agg = ib_agg.join(
-        first_ib_fvg[['fvg_type', 'fvg_top', 'fvg_bottom', 'fvg_finalized_time']].rename(
+        first_ib_fvg[['fvg_type', 'fvg_top', 'fvg_bottom', 'fvg_low', 'fvg_high', 'fvg_finalized_time']].rename(
             columns={
                 'fvg_type': 'bias_fvg',
                 'fvg_top': 'ib_fvg_top',
                 'fvg_bottom': 'ib_fvg_bottom',
+                'fvg_low': 'fvg_low',
+                'fvg_high': 'fvg_high',
                 'fvg_finalized_time': 'ib_fvg_fin_time'
             }
         )
@@ -1225,11 +868,13 @@ def calculate_ib_statistics_v5(
         first_1011_fvg = ib_fvgs_1011.groupby('logical_date').first()
         
         ib_agg = ib_agg.join(
-            first_1011_fvg[['fvg_type', 'fvg_top', 'fvg_bottom', 'fvg_finalized_time']].rename(
+            first_1011_fvg[['fvg_type', 'fvg_top', 'fvg_bottom', 'fvg_low', 'fvg_high', 'fvg_finalized_time']].rename(
                 columns={
                     'fvg_type': 'bias_fvg_1011',
                     'fvg_top': 'fvg_1011_top',
                     'fvg_bottom': 'fvg_1011_bottom',
+                    'fvg_low': 'fvg_1011_low',
+                    'fvg_high': 'fvg_1011_high',
                     'fvg_finalized_time': 'fvg_1011_fin_time'
                 }
             )
@@ -1239,22 +884,24 @@ def calculate_ib_statistics_v5(
         ib_agg['bias_fvg_rth'] = 0
         ib_agg['bias_fvg_1011'] = 0
         ib_agg['fvg_1011_fin_time'] = pd.NaT
+        ib_agg['fvg_1011_low'] = np.nan
+        ib_agg['fvg_1011_high'] = np.nan
         
     # Check if first FVG is broken
     df = df.join(
-        ib_agg[['bias_fvg', 'ib_fvg_top', 'ib_fvg_bottom', 'ib_fvg_fin_time']],
+        ib_agg[['bias_fvg', 'ib_fvg_top', 'ib_fvg_bottom', 'fvg_low', 'fvg_high', 'ib_fvg_fin_time']],
         on='logical_date'
     )
     
     is_after_fvg = df.index >= df['ib_fvg_fin_time'].values
-    is_before_out_end = df['minutes_from_midnight'].values < df['out_end_mins'].values
+    is_in_out = df['in_out'].values
     
     df['fvg_broken_bar'] = np.where(
-        is_after_fvg & is_before_out_end & (df['bias_fvg'] == 1),
-        df['close'] < df['ib_fvg_bottom'],
+        is_after_fvg & is_in_out & (df['bias_fvg'] == 1),
+        df['close'] < df['fvg_low'],
         np.where(
-            is_after_fvg & is_before_out_end & (df['bias_fvg'] == -1),
-            df['close'] > df['ib_fvg_top'],
+            is_after_fvg & is_in_out & (df['bias_fvg'] == -1),
+            df['close'] > df['fvg_high'],
             False
         )
     )
@@ -1266,6 +913,15 @@ def calculate_ib_statistics_v5(
         -ib_agg['bias_fvg'],
         ib_agg['bias_fvg']
     )
+    
+    # Calculate combined bias (equal weights)
+    ib_agg['bias_combined'] = np.sign(
+        ib_agg['bias_formation_firstreach'] +
+        ib_agg['bias_formation_lasttouch'] +
+        ib_agg['bias_close_dir'] +
+        ib_agg['bias_fvg'] +
+        ib_agg['bias_fvg_ifvg']
+    ).fillna(0).astype(int)
     
     # 5. Prior Session Close & Gap
     if session_choice == "NY AM IB":
@@ -1309,8 +965,8 @@ def calculate_ib_statistics_v5(
     )
     
     # 6. Breakouts
-    break_high_bar = df['in_out'] & (df['high'] > df['ib_high'])
-    break_low_bar = df['in_out'] & (df['low'] < df['ib_low'])
+    break_high_bar = df['in_out'] & (df['close'] > df['ib_high'])
+    break_low_bar = df['in_out'] & (df['close'] < df['ib_low'])
     
     # Optimize high_break_idx groupby
     break_high_bars = df[break_high_bar]
@@ -1347,6 +1003,52 @@ def calculate_ib_statistics_v5(
         default=None
     )
     
+    # Mid retest & retrace calculations
+    first_break_dir_1m = ib_agg['first_break_dir'].values[date_pos_1m]
+    first_break_idx_1m = ib_agg['first_break_idx'].values[date_pos_1m]
+    mid_1m = ib_agg['ib_mid'].values[date_pos_1m]
+    
+    is_mid_retest_bar = df['in_out'] & (df['bar_idx'] > first_break_idx_1m) & np.where(
+        first_break_dir_1m == 1, df['low'] <= mid_1m,
+        np.where(first_break_dir_1m == -1, df['high'] >= mid_1m, False)
+    )
+    
+    mid_retest_bars = df[is_mid_retest_bar]
+    if not mid_retest_bars.empty:
+        min_retest_idx = mid_retest_bars.groupby('logical_date')['bar_idx'].min().reindex(ib_agg.index, fill_value=len(df))
+    else:
+        min_retest_idx = pd.Series(len(df), index=ib_agg.index)
+        
+    ib_agg['mid_retest'] = min_retest_idx < len(df)
+    ib_agg['mid_retest_minutes'] = np.where(ib_agg['mid_retest'], min_retest_idx - ib_agg['first_break_idx'], np.nan)
+    
+    # Retrace depth pct & behavior
+    post_break_bar = df['in_out'] & (df['bar_idx'] >= first_break_idx_1m) & (first_break_dir_1m != 0)
+    post_break_bars = df[post_break_bar]
+    if not post_break_bars.empty:
+        post_break_agg = post_break_bars.groupby('logical_date').agg(
+            pb_high=('high', 'max'),
+            pb_low=('low', 'min')
+        ).reindex(ib_agg.index)
+    else:
+        post_break_agg = pd.DataFrame(index=ib_agg.index)
+        post_break_agg['pb_high'] = np.nan
+        post_break_agg['pb_low'] = np.nan
+        
+    pb_high = post_break_agg['pb_high']
+    pb_low = post_break_agg['pb_low']
+    
+    ib_agg['retrace_depth_pct'] = np.where(
+        (ib_agg['first_break_dir'] != 0) & (ib_agg['ib_range'] > 0),
+        (pb_high - pb_low) / ib_agg['ib_range'] * 100,
+        0.0
+    )
+    ib_agg['behavior'] = np.where(
+        ib_agg['first_break_dir'] == 0,
+        "none",
+        np.where(ib_agg['retrace_depth_pct'] >= 50.0, "fade", "trend")
+    )
+    
     # Optimize close_below_low_idx groupby
     close_below_low_bar = df['in_out'] & (df['close'] < df['ib_low'])
     close_below_low_bars = df[close_below_low_bar]
@@ -1364,7 +1066,7 @@ def calculate_ib_statistics_v5(
         close_above_high_idx = pd.Series(len(df), index=ib_agg.index)
         
     # Optimize target_reached_high_idx groupby
-    target_reached_high_bar = df['in_out'] & (df['high'] >= df['ib_high'] + 0.5 * df['ib_range'])
+    target_reached_high_bar = df['in_out'] & (df['high'] >= df['ib_high'] + false_break_min_ext * df['ib_range'])
     target_reached_high_bars = df[target_reached_high_bar]
     if not target_reached_high_bars.empty:
         target_reached_high_idx = target_reached_high_bars.groupby('logical_date')['bar_idx'].min().reindex(ib_agg.index, fill_value=len(df))
@@ -1372,7 +1074,7 @@ def calculate_ib_statistics_v5(
         target_reached_high_idx = pd.Series(len(df), index=ib_agg.index)
         
     # Optimize target_reached_low_idx groupby
-    target_reached_low_bar = df['in_out'] & (df['low'] <= df['ib_low'] - 0.5 * df['ib_range'])
+    target_reached_low_bar = df['in_out'] & (df['low'] <= df['ib_low'] - false_break_min_ext * df['ib_range'])
     target_reached_low_bars = df[target_reached_low_bar]
     if not target_reached_low_bars.empty:
         target_reached_low_idx = target_reached_low_bars.groupby('logical_date')['bar_idx'].min().reindex(ib_agg.index, fill_value=len(df))
@@ -1394,6 +1096,10 @@ def calculate_ib_statistics_v5(
         max_high=('high', 'max'),
         min_low=('low', 'min')
     )
+    if not out_bars.empty:
+        out_close_idx = out_bars.groupby('logical_date')['datetime'].idxmax()
+        out_close = out_bars.loc[out_close_idx, ['logical_date', 'close']].set_index('logical_date')['close']
+        out_agg = out_agg.join(out_close.rename('outcome_close'))
     ib_agg = ib_agg.join(out_agg)
     ib_agg['max_ext_up'] = np.where(
         (ib_agg['max_high'] > ib_agg['ib_high']) & (ib_agg['ib_range'] > 0),
@@ -1405,9 +1111,20 @@ def calculate_ib_statistics_v5(
         (ib_agg['ib_low'] - ib_agg['min_low']) / ib_agg['ib_range'],
         0.0
     )
+    ib_agg['realized_dir_break'] = ib_agg['first_break_dir'].fillna(0).astype(int)
+    ib_agg['realized_dir_close'] = np.where(
+        ib_agg['outcome_close'] > ib_agg['ib_close'],
+        1,
+        np.where(ib_agg['outcome_close'] < ib_agg['ib_close'], -1, 0)
+    ).astype(int)
+    ib_agg['realized_dir_ext'] = np.where(
+        ib_agg['max_ext_up'] > ib_agg['max_ext_down'],
+        1,
+        np.where(ib_agg['max_ext_up'] < ib_agg['max_ext_down'], -1, 0)
+    ).astype(int)
     
-    # 7. Level extension hits (consolidated single groupby on 16 columns)
-    levels = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+    # 7. Level extension hits (consolidated single groupby on 18 columns)
+    levels = [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
     df_levels = pd.DataFrame(index=df.index)
     df_levels['logical_date'] = df['logical_date']
     
@@ -1471,6 +1188,37 @@ def calculate_ib_statistics_v5(
     ib_agg['ib_duration_mins'] = (ib_agg['mid_end_ts'] - ib_agg['mid_start_ts']).dt.total_seconds() / 60.0
     ib_agg['mid_lock_frac'] = (ib_agg['mid_lock_time'] - ib_agg['mid_start_ts']).dt.total_seconds() / 60.0 / ib_agg['ib_duration_mins']
     
+    # Front-Running logic: first touch inside the IB window before it closes when provisional_mid == final_mid
+    ib_bars = df[in_ib].copy()
+    ib_bars['run_high'] = ib_bars.groupby('logical_date')['high'].cummax()
+    ib_bars['run_low'] = ib_bars.groupby('logical_date')['low'].cummin()
+    ib_bars['run_mid'] = (ib_bars['run_high'] + ib_bars['run_low']) / 2.0
+    
+    mid_matches = np.isclose(ib_bars['run_mid'], ib_bars['ib_mid'], rtol=0.0, atol=1e-9)
+    mid_touched = (ib_bars['low'] <= ib_bars['run_mid']) & (ib_bars['high'] >= ib_bars['run_mid'])
+    
+    ib_end_idx_series = ib_bars.groupby('logical_date')['bar_idx'].max()
+    ib_bars['ib_end_idx'] = ib_end_idx_series.reindex(ib_bars['logical_date']).values
+    is_before_close = ib_bars['bar_idx'] < ib_bars['ib_end_idx']
+    
+    ib_bars['front_run_active_bar'] = mid_matches & mid_touched & is_before_close
+    
+    front_run_bars = ib_bars[ib_bars['front_run_active_bar']]
+    if not front_run_bars.empty:
+        first_front_run = front_run_bars.groupby('logical_date').first()
+        ib_agg['front_run_active'] = True
+        ib_agg['front_run_time'] = first_front_run['datetime']
+        ib_start_ts = ib_bars.groupby('logical_date')['datetime'].min()
+        ib_agg['front_run_activation_mins'] = (first_front_run['datetime'] - ib_start_ts.reindex(first_front_run.index)).dt.total_seconds() / 60.0
+    else:
+        ib_agg['front_run_active'] = False
+        ib_agg['front_run_time'] = pd.NaT
+        ib_agg['front_run_activation_mins'] = np.nan
+        
+    ib_agg['front_run_active'] = ib_agg['front_run_active'].fillna(False)
+    ib_agg['front_run_time'] = ib_agg['front_run_time'].fillna(pd.NaT)
+    ib_agg['front_run_activation_mins'] = ib_agg['front_run_activation_mins'].fillna(np.nan)
+
     # Level touch and mid touch calculations
     level_touch_df = extract_level_touch_details(df, ib_agg)
     
@@ -1480,7 +1228,8 @@ def calculate_ib_statistics_v5(
     mid_lock_1m = ib_agg['mid_lock_time'].values[date_pos_1m]
     
     mid_lvl_price = low_1m + 0.5 * range_1m
-    mid_touch_bar = (df['low'] <= mid_lvl_price) & (df['high'] >= mid_lvl_price)
+    in_scope_bar = (df['in_ib'] | df['in_out']).to_numpy()
+    mid_touch_bar = has_ib_1m & in_scope_bar & (df['low'] <= mid_lvl_price) & (df['high'] >= mid_lvl_price)
     mid_touch_bars = df[mid_touch_bar].copy()
     
     is_pre_lock = df['in_ib'] & (df.index < mid_lock_1m)
@@ -1494,10 +1243,14 @@ def calculate_ib_statistics_v5(
     )
     mid_touch_bars['phase'] = phase_arr[mid_touch_bar]
     
-    ib_agg['mid_touch_first_time'] = mid_touch_bars.groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
-    ib_agg['mid_touch_first_phase'] = mid_touch_bars.groupby('logical_date')['phase'].first().reindex(ib_agg.index)
-    
+    mid_touch_valid = mid_touch_bars[mid_touch_bars['phase'] != 'outside']
     is_form_touch = mid_touch_bars['phase'].isin(['formation_pre_lock', 'formation_post_lock'])
+
+    ib_agg['mid_touch_first_time'] = mid_touch_valid.groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
+    ib_agg['mid_touch_first_phase'] = mid_touch_valid.groupby('logical_date')['phase'].first().reindex(ib_agg.index)
+    ib_agg['mid_touch_first_formation_time'] = mid_touch_bars[is_form_touch].groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
+    ib_agg['mid_touch_first_outcome_time'] = mid_touch_bars[mid_touch_bars['phase'] == 'outcome'].groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
+
     ib_agg['mid_touch_last_formation_time'] = mid_touch_bars[is_form_touch].groupby('logical_date')['datetime'].last().reindex(ib_agg.index)
     
     ib_agg['mid_touch_count_formation'] = mid_touch_bars[is_form_touch].groupby('logical_date').size().reindex(ib_agg.index)
@@ -1505,16 +1258,65 @@ def calculate_ib_statistics_v5(
     ib_agg['mid_touch_count_formation'] = ib_agg['mid_touch_count_formation'].fillna(0).astype(int)
     ib_agg['mid_touch_count_outcome'] = ib_agg['mid_touch_count_outcome'].fillna(0).astype(int)
     
-    ib_agg['mid_touched_again'] = mid_touch_bars.groupby('logical_date').size().reindex(ib_agg.index) > 1
+    ib_agg['mid_touched_again'] = mid_touch_valid.groupby('logical_date').size().reindex(ib_agg.index) > 1
     ib_agg['mid_touched_again'] = ib_agg['mid_touched_again'].fillna(False)
     
     ib_agg['mid_touch_count_post_lock'] = mid_touch_bars[mid_touch_bars['phase'] == 'formation_post_lock'].groupby('logical_date').size().reindex(ib_agg.index)
     ib_agg['mid_touch_count_post_lock'] = ib_agg['mid_touch_count_post_lock'].fillna(0).astype(int)
     
     ib_agg['early_mid_event'] = (ib_agg['mid_lock_frac'] <= 2.0/3.0) & (ib_agg['mid_touch_count_post_lock'] > 0)
+
+    # FVG touch timing split by formation/outcome (analogous to split mid-touch timing).
+    fvg_top_1m = ib_agg['ib_fvg_top'].values[date_pos_1m]
+    fvg_bottom_1m = ib_agg['ib_fvg_bottom'].values[date_pos_1m]
+    fvg_low_1m = ib_agg['fvg_low'].values[date_pos_1m]
+    fvg_high_1m = ib_agg['fvg_high'].values[date_pos_1m]
+    fvg_fin_1m = ib_agg['ib_fvg_fin_time'].values[date_pos_1m]
+    bias_fvg_1m = ib_agg['bias_fvg'].values[date_pos_1m]
+    fvg_fin_valid = pd.notna(fvg_fin_1m)
+
+    fvg_touch_bar = has_ib_1m & fvg_fin_valid & (bias_fvg_1m != 0) & (df.index.values >= fvg_fin_1m) & np.where(
+        bias_fvg_1m == 1,
+        (df['low'].values <= fvg_top_1m) & (df['close'].values >= fvg_low_1m),
+        np.where(
+            bias_fvg_1m == -1,
+            (df['high'].values >= fvg_bottom_1m) & (df['close'].values <= fvg_high_1m),
+            False
+        )
+    )
+    fvg_touch_formation = df[fvg_touch_bar & df['in_ib'].values]
+    fvg_touch_outcome = df[fvg_touch_bar & df['in_out'].values]
+    ib_agg['fvg_touch_first_formation_time'] = fvg_touch_formation.groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
+    ib_agg['fvg_touch_first_outcome_time'] = fvg_touch_outcome.groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
+
+    if session_choice == "NY AM IB":
+        fvg1011_top_1m = ib_agg['fvg_1011_top'].values[date_pos_1m]
+        fvg1011_bottom_1m = ib_agg['fvg_1011_bottom'].values[date_pos_1m]
+        fvg1011_low_1m = ib_agg['fvg_1011_low'].values[date_pos_1m]
+        fvg1011_high_1m = ib_agg['fvg_1011_high'].values[date_pos_1m]
+        fvg1011_fin_1m = ib_agg['fvg_1011_fin_time'].values[date_pos_1m]
+        bias_fvg1011_1m = ib_agg['bias_fvg_1011'].values[date_pos_1m]
+        fvg1011_fin_valid = pd.notna(fvg1011_fin_1m)
+
+        fvg1011_touch_bar = has_ib_1m & fvg1011_fin_valid & (bias_fvg1011_1m != 0) & (df.index.values >= fvg1011_fin_1m) & np.where(
+            bias_fvg1011_1m == 1,
+            (df['low'].values <= fvg1011_top_1m) & (df['close'].values >= fvg1011_low_1m),
+            np.where(
+                bias_fvg1011_1m == -1,
+                (df['high'].values >= fvg1011_bottom_1m) & (df['close'].values <= fvg1011_high_1m),
+                False
+            )
+        )
+        fvg1011_touch_formation = df[fvg1011_touch_bar & df['in_ib'].values]
+        fvg1011_touch_outcome = df[fvg1011_touch_bar & df['in_out'].values]
+        ib_agg['fvg_1011_touch_first_formation_time'] = fvg1011_touch_formation.groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
+        ib_agg['fvg_1011_touch_first_outcome_time'] = fvg1011_touch_outcome.groupby('logical_date')['datetime'].first().reindex(ib_agg.index)
+    else:
+        ib_agg['fvg_1011_touch_first_formation_time'] = pd.NaT
+        ib_agg['fvg_1011_touch_first_outcome_time'] = pd.NaT
     
     # 10. Bias Outcomes Grading (0.5x and 1.0x targets) (consolidated race evaluation)
-    variants = ['formation_firstreach', 'formation_lasttouch', 'close_dir', 'fvg', 'fvg_ifvg']
+    variants = ['formation_firstreach', 'formation_lasttouch', 'close_dir', 'fvg', 'fvg_ifvg', 'combined']
     if session_choice == "NY AM IB":
         variants += ['fvg_rth', 'fvg_1011']
         
@@ -1529,18 +1331,12 @@ def calculate_ib_statistics_v5(
             fin_time = ib_agg['ib_fvg_fin_time']
         elif v == 'fvg_1011':
             fin_time = ib_agg['fvg_1011_fin_time']
-        elif v == 'fvg_ifvg':
-            # It flips if broken. If broken, it is finalized at fvg_broken_time.
-            # Otherwise finalized at ib_fvg_fin_time.
-            fin_time = np.where(ib_agg['fvg_broken_time'].notna(), ib_agg['fvg_broken_time'], ib_agg['ib_fvg_fin_time'])
-            # Use ndarray cast instead of pd.to_datetime() (avoids slow object-array inference)
-            fin_time = fin_time.astype('datetime64[ns]')
         else:
             fin_time = ib_end_time
         fin_time = pd.Series(fin_time, index=ib_agg.index)
         fin_time = fin_time.combine_first(ib_end_time)
         
-        for lvl in [0.5, 1.0]:
+        for lvl in [0.0, 0.25, 0.5, 0.75, 1.0]:
             lvl_col = str(lvl).replace('.', '')
             
             tgt_up = ib_agg['ib_high'] + lvl * ib_agg['ib_range']
@@ -1572,9 +1368,10 @@ def calculate_ib_statistics_v5(
     # Run all races consolidated (pass date_pos_1m for O(n) numpy broadcasting)
     race_results = evaluate_target_vs_stop_consolidated(df, races, ib_agg, date_pos_1m)
     
-    # Assign correct boolean to ib_agg
+    # Assign bias correctness columns in one batch to avoid DataFrame fragmentation.
+    bias_correct_cols = {}
     for v in variants:
-        for lvl in [0.5, 1.0]:
+        for lvl in [0.0, 0.25, 0.5, 0.75, 1.0]:
             lvl_col = str(lvl).replace('.', '')
             
             if v == 'fvg_ifvg':
@@ -1586,110 +1383,247 @@ def calculate_ib_statistics_v5(
                 )
             else:
                 correct = race_results[f'{v}_{lvl_col}']
-                
-            ib_agg[f'bias_correct_{v}_{lvl_col}x'] = correct
+
+            bias_correct_cols[f'bias_correct_{v}_{lvl_col}x'] = pd.Series(correct, index=ib_agg.index)
+
+    if bias_correct_cols:
+        ib_agg = pd.concat([ib_agg, pd.DataFrame(bias_correct_cols, index=ib_agg.index)], axis=1)
+
+    # Keep block layout compact before subsequent column additions.
+    ib_agg = ib_agg.copy()
             
     # 11. Plays Evaluation
-    # Broadcast to 1m (O(n) numpy positional indexing)
+    play_levels = [0.25, 0.5, 0.75, 1.0]
+    
     mid_1m = ib_agg['ib_mid'].values[date_pos_1m]
     high_1m = ib_agg['ib_high'].values[date_pos_1m]
     low_1m = ib_agg['ib_low'].values[date_pos_1m]
     range_1m = ib_agg['ib_range'].values[date_pos_1m]
     first_break_dir_1m = ib_agg['first_break_dir'].values[date_pos_1m]
     first_break_idx_1m = ib_agg['first_break_idx'].values[date_pos_1m]
-    bar_idx = df['bar_idx']
-    
-    # 1. Play 2 entry index and Play 3 overshoot index (consolidated in one groupby)
-    df_play_indices = pd.DataFrame(index=df.index)
-    df_play_indices['logical_date'] = logical_date
-    
+
+    first_break_dir = ib_agg['first_break_dir']
+    first_break_idx = ib_agg['first_break_idx']
+    ib_high = ib_agg['ib_high']
+    ib_low = ib_agg['ib_low']
+    ib_mid = ib_agg['ib_mid']
+    ib_range = ib_agg['ib_range']
+    bias_combined = ib_agg['bias_combined']
+
+    # Calculate Play 2 entry index (mid touch after breakout)
     p2_touch = df['in_out'] & (df['bar_idx'] > first_break_idx_1m) & (df['low'] <= mid_1m) & (df['high'] >= mid_1m)
-    df_play_indices['p2_entry'] = np.where(p2_touch, df['bar_idx'], len(df))
+    df_p2 = pd.DataFrame(index=df.index)
+    df_p2['logical_date'] = logical_date
+    df_p2['p2_entry'] = np.where(p2_touch, df['bar_idx'], len(df))
+    p2_entry_idx = df_p2.groupby('logical_date')['p2_entry'].min().reindex(ib_agg.index, fill_value=len(df))
     
-    overshoot_lvl = np.where(first_break_dir_1m == 1, high_1m + 0.25 * range_1m, low_1m - 0.25 * range_1m)
-    overshoot_cond = df['in_out'] & np.where(
-        first_break_dir_1m == 1, df['high'] >= overshoot_lvl,
-        np.where(first_break_dir_1m == -1, df['low'] <= overshoot_lvl, False)
+    # Calculate opposite boundary violation for Play 2 invalidation
+    opp_close_stop = np.where(first_break_dir == 1, ib_low, ib_high)
+    opp_close_stop_1m = opp_close_stop[date_pos_1m]
+    opp_close_violation = df['in_out'] & (df['bar_idx'] > first_break_idx_1m) & np.where(
+        first_break_dir_1m == 1, df['low'] <= opp_close_stop_1m,
+        np.where(first_break_dir_1m == -1, df['high'] >= opp_close_stop_1m, False)
     )
-    df_play_indices['p3_overshoot'] = np.where(overshoot_cond, df['bar_idx'], len(df))
+    df_violation = pd.DataFrame(index=df.index)
+    df_violation['logical_date'] = logical_date
+    df_violation['viol_idx'] = np.where(opp_close_violation, df['bar_idx'], len(df))
+    first_viol_idx = df_violation.groupby('logical_date')['viol_idx'].min().reindex(ib_agg.index, fill_value=len(df))
     
-    play_indices_min = df_play_indices.groupby('logical_date').min()
+    # Compile the 12 play configurations
+    plays_config = []
+    config_meta = []  # List of tuples (play_n, target_lvl)
     
-    p2_entry_idx = play_indices_min['p2_entry'].reindex(ib_agg.index, fill_value=len(df))
-    overshoot_idx = play_indices_min['p3_overshoot'].reindex(ib_agg.index, fill_value=len(df))
-    overshoot_idx_1m = overshoot_idx.reindex(logical_date).values
-    
-    # 3. Play 3 fill index (requires overshoot first)
-    fill_lvl = np.where(first_break_dir_1m == 1, high_1m, low_1m)
-    fill_cond = df['in_out'] & (df['bar_idx'] > overshoot_idx_1m) & (df['low'] <= fill_lvl) & (df['high'] >= fill_lvl)
-    
-    df_fill = pd.DataFrame(index=df.index)
-    df_fill['logical_date'] = logical_date
-    df_fill['fill_idx'] = np.where(fill_cond, df['bar_idx'], len(df))
-    fill_idx = df_fill.groupby('logical_date')['fill_idx'].min().reindex(ib_agg.index, fill_value=len(df))
-    
-    # Build configurations for all 3 plays to evaluate them consolidated
-    plays_config = [
-        {
-            'active': ib_agg['first_break_dir'] != 0,
-            'direction': ib_agg['first_break_dir'],
-            'entry_price': pd.Series(np.where(ib_agg['first_break_dir'] == 1, ib_agg['ib_high'], ib_agg['ib_low']), index=ib_agg.index),
-            'target_price': pd.Series(np.where(ib_agg['first_break_dir'] == 1, ib_agg['ib_high'] + ib_agg['ib_range'], ib_agg['ib_low'] - ib_agg['ib_range']), index=ib_agg.index),
-            'stop_price': pd.Series(np.where(ib_agg['first_break_dir'] == 1, ib_agg['ib_low'], ib_agg['ib_high']), index=ib_agg.index),
-            'entry_idx': ib_agg['first_break_idx']
-        },
-        {
-            'active': (ib_agg['first_break_dir'] != 0) & (p2_entry_idx < len(df)),
-            'direction': ib_agg['first_break_dir'],
-            'entry_price': ib_agg['ib_mid'],
-            'target_price': pd.Series(np.where(ib_agg['first_break_dir'] == 1, ib_agg['ib_high'] + 0.5 * ib_agg['ib_range'], ib_agg['ib_low'] - 0.5 * ib_agg['ib_range']), index=ib_agg.index),
-            'stop_price': pd.Series(np.where(ib_agg['first_break_dir'] == 1, ib_agg['ib_low'], ib_agg['ib_high']), index=ib_agg.index),
+    for lvl in play_levels:
+        # Play 1
+        p1_active = first_break_dir != 0
+        p1_dir = first_break_dir
+        p1_entry_price = np.where(first_break_dir == 1, ib_high, ib_low)
+        p1_target_price = p1_entry_price + p1_dir * lvl * ib_range
+        p1_stop_price = np.where(p1_dir == 1, ib_low, ib_high)
+        
+        plays_config.append({
+            'active': pd.Series(p1_active, index=ib_agg.index),
+            'direction': pd.Series(p1_dir, index=ib_agg.index),
+            'entry_price': pd.Series(p1_entry_price, index=ib_agg.index),
+            'target_price': pd.Series(p1_target_price, index=ib_agg.index),
+            'stop_price': pd.Series(p1_stop_price, index=ib_agg.index),
+            'entry_idx': first_break_idx
+        })
+        config_meta.append((1, lvl))
+        
+        # Play 2
+        # If entry and invalidation occur on the same bar, classify as triggered and loss later.
+        p2_active = (first_break_dir != 0) & (p2_entry_idx < len(df)) & (p2_entry_idx <= first_viol_idx)
+        p2_dir = first_break_dir
+        p2_entry_price = ib_mid
+        p2_target_price = np.where(p2_dir == 1, ib_high + lvl * ib_range, ib_low - lvl * ib_range)
+        p2_stop_price = np.where(p2_dir == 1, ib_low, ib_high)
+        
+        plays_config.append({
+            'active': pd.Series(p2_active, index=ib_agg.index),
+            'direction': pd.Series(p2_dir, index=ib_agg.index),
+            'entry_price': pd.Series(p2_entry_price, index=ib_agg.index),
+            'target_price': pd.Series(p2_target_price, index=ib_agg.index),
+            'stop_price': pd.Series(p2_stop_price, index=ib_agg.index),
             'entry_idx': p2_entry_idx
-        },
-        {
-            'active': (ib_agg['first_break_dir'] != 0) & (fill_idx < len(df)),
-            'direction': -ib_agg['first_break_dir'],
-            'entry_price': pd.Series(np.where(ib_agg['first_break_dir'] == 1, ib_agg['ib_high'], ib_agg['ib_low']), index=ib_agg.index),
-            'target_price': ib_agg['ib_mid'],
-            'stop_price': pd.Series(np.where(ib_agg['first_break_dir'] == 1, ib_agg['ib_high'] + 0.5 * ib_agg['ib_range'], ib_agg['ib_low'] - 0.5 * ib_agg['ib_range']), index=ib_agg.index),
-            'entry_idx': fill_idx
-        }
-    ]
+        })
+        config_meta.append((2, lvl))
+        
+        # Play 3
+        # Overshoot is lvl / 2, stop is lvl (relative to boundary).
+        overshoot_lvl_1m = np.where(first_break_dir_1m == 1, high_1m + (lvl / 2.0) * range_1m, low_1m - (lvl / 2.0) * range_1m)
+        overshoot_cond = df['in_out'] & (df['bar_idx'] > first_break_idx_1m) & np.where(
+            first_break_dir_1m == 1, df['high'] >= overshoot_lvl_1m,
+            np.where(first_break_dir_1m == -1, df['low'] <= overshoot_lvl_1m, False)
+        )
+        df_os = pd.DataFrame(index=df.index)
+        df_os['logical_date'] = logical_date
+        df_os['overshoot_idx'] = np.where(overshoot_cond, df['bar_idx'], len(df))
+        p3_overshoot_idx = df_os.groupby('logical_date')['overshoot_idx'].min().reindex(ib_agg.index, fill_value=len(df))
+        p3_overshoot_idx_1m = p3_overshoot_idx.values[date_pos_1m]
+        
+        # Touch-back fill condition: close-confirmed boundary re-entry after overshoot
+        boundary_1m = np.where(first_break_dir_1m == 1, high_1m, low_1m)
+        fill_cond = df['in_out'] & (df['bar_idx'] > p3_overshoot_idx_1m) & np.where(
+            first_break_dir_1m == 1, df['close'] <= boundary_1m,
+            np.where(first_break_dir_1m == -1, df['close'] >= boundary_1m, False)
+        )
+        df_fl = pd.DataFrame(index=df.index)
+        df_fl['logical_date'] = logical_date
+        df_fl['fill_idx'] = np.where(fill_cond, df['bar_idx'], len(df))
+        p3_fill_idx = df_fl.groupby('logical_date')['fill_idx'].min().reindex(ib_agg.index, fill_value=len(df))
+        
+        # Invalidation condition: touch or exceed stop level after overshoot but before fill
+        stop_lvl_1m = np.where(first_break_dir_1m == 1, high_1m + lvl * range_1m, low_1m - lvl * range_1m)
+        stop_exceed_cond = df['in_out'] & (df['bar_idx'] > p3_overshoot_idx_1m) & np.where(
+            first_break_dir_1m == 1, df['high'] >= stop_lvl_1m,
+            np.where(first_break_dir_1m == -1, df['low'] <= stop_lvl_1m, False)
+        )
+        df_se = pd.DataFrame(index=df.index)
+        df_se['logical_date'] = logical_date
+        df_se['stop_exceed_idx'] = np.where(stop_exceed_cond, df['bar_idx'], len(df))
+        p3_stop_exceed_idx = df_se.groupby('logical_date')['stop_exceed_idx'].min().reindex(ib_agg.index, fill_value=len(df))
+        
+        # If fill and stop-exceed occur on the same bar, classify as triggered and loss later.
+        p3_active = (first_break_dir != 0) & (p3_fill_idx < len(df)) & (p3_fill_idx <= p3_stop_exceed_idx)
+        p3_dir = -first_break_dir
+        p3_entry_price = np.where(first_break_dir == 1, ib_high, ib_low)
+        p3_target_price = ib_mid
+        p3_stop_price = np.where(first_break_dir == 1, ib_high + lvl * ib_range, ib_low - lvl * ib_range)
+        
+        plays_config.append({
+            'active': pd.Series(p3_active, index=ib_agg.index),
+            'direction': pd.Series(p3_dir, index=ib_agg.index),
+            'entry_price': pd.Series(p3_entry_price, index=ib_agg.index),
+            'target_price': pd.Series(p3_target_price, index=ib_agg.index),
+            'stop_price': pd.Series(p3_stop_price, index=ib_agg.index),
+            'entry_idx': p3_fill_idx
+        })
+        config_meta.append((3, lvl))
+        
+    # Run all plays consolidated
+    evaluated_plays = evaluate_all_plays_consolidated(df, plays_config, ib_agg, date_pos_1m)
     
-    play_results = evaluate_all_plays_consolidated(df, plays_config, ib_agg, date_pos_1m)
+    # Build plays detail long-format DataFrame
+    play_records = []
     
-    p1_res, p1_mfe, p1_mae = play_results[0]
-    ib_agg['play1_result'] = p1_res
-    ib_agg['play1_rr'] = 1.0
-    ib_agg['play1_mfe'] = p1_mfe
-    ib_agg['play1_mae'] = p1_mae
+    default_play_cols = {}
+    default_lvl_targets = {1: 1.0, 2: 0.5, 3: 0.5}
+    if legacy_default_play_levels is not None:
+        for play_n, lvl in legacy_default_play_levels.items():
+            if play_n in default_lvl_targets:
+                default_lvl_targets[play_n] = float(lvl)
+
+    selected_default_lvl = {
+        play_n: min(play_levels, key=lambda x: abs(x - target))
+        for play_n, target in default_lvl_targets.items()
+    }
+
+    def _structural_rr(play_n: int, lvl: float) -> float:
+        if play_n == 1:
+            # Entry at boundary, stop at opposite boundary -> risk = 1.0x range.
+            return float(lvl)
+        if play_n == 2:
+            # Entry at mid, stop at opposite boundary -> risk = 0.5x range; reward = (0.5+lvl)x.
+            return float((0.5 + lvl) / 0.5)
+        if play_n == 3:
+            # Entry at boundary, target at mid -> reward = 0.5x; stop = lvl x.
+            return float(0.5 / lvl) if lvl > 0 else np.nan
+        return np.nan
+
+    for idx, (play_n, lvl) in enumerate(config_meta):
+        res, mfe, mae, realized_r, timeout_loss = evaluated_plays[idx]
+        lvl_col = str(lvl).replace('.', '')
+        
+        play_dir = np.where(play_n == 3, -first_break_dir, first_break_dir)
+        with_bias = np.where(bias_combined == 0, 0, np.where(play_dir == bias_combined, 1, -1))
+        
+        play_df = pd.DataFrame({
+            'trading_day': ib_agg.index,
+            'play': play_n,
+            'target_lvl': lvl,
+            'result': res.values,
+            'mfe': mfe.values,
+            'mae': mae.values,
+            'realized_r': realized_r.values,
+            'timeout_loss': timeout_loss.values,
+            'with_bias': with_bias
+        })
+        play_df['loss_reason'] = np.select(
+            [
+                play_df['result'] == 0,
+                (play_df['result'] == -1) & play_df['timeout_loss'],
+                play_df['result'] == -1,
+                play_df['result'] == 1,
+            ],
+            ['no_setup', 'timeout', 'stop', 'target'],
+            default='unknown'
+        )
+        play_records.append(play_df)
+
+        # Always expose level-specific outputs for transparent level-vs-bias analysis.
+        default_play_cols[f'play{play_n}_result_{lvl_col}x'] = res
+        default_play_cols[f'play{play_n}_with_bias_{lvl_col}x'] = pd.Series(with_bias, index=ib_agg.index)
+        
+        # Collect default play columns for backward compatibility and assign in one batch.
+        if play_n == 1 and np.isclose(lvl, selected_default_lvl[1]):
+            default_play_cols['play1_result'] = res
+            default_play_cols['play1_rr'] = pd.Series(_structural_rr(1, lvl), index=ib_agg.index)
+            default_play_cols['play1_mfe'] = mfe
+            default_play_cols['play1_mae'] = mae
+            default_play_cols['play1_timeout_loss'] = timeout_loss
+        elif play_n == 2 and np.isclose(lvl, selected_default_lvl[2]):
+            default_play_cols['play2_result'] = res
+            default_play_cols['play2_rr'] = pd.Series(_structural_rr(2, lvl), index=ib_agg.index)
+            default_play_cols['play2_mfe'] = mfe
+            default_play_cols['play2_mae'] = mae
+            default_play_cols['play2_timeout_loss'] = timeout_loss
+        elif play_n == 3 and np.isclose(lvl, selected_default_lvl[3]):
+            default_play_cols['play3_result'] = res
+            default_play_cols['play3_rr'] = pd.Series(_structural_rr(3, lvl), index=ib_agg.index)
+            default_play_cols['play3_mfe'] = mfe
+            default_play_cols['play3_mae'] = mae
+            default_play_cols['play3_timeout_loss'] = timeout_loss
+
+    if default_play_cols:
+        ib_agg = pd.concat([ib_agg, pd.DataFrame(default_play_cols, index=ib_agg.index)], axis=1)
+            
+    play_detail_df = pd.concat(play_records, ignore_index=True)
     
-    p2_res, p2_mfe, p2_mae = play_results[1]
-    ib_agg['play2_result'] = p2_res
-    ib_agg['play2_rr'] = 2.0
-    ib_agg['play2_mfe'] = p2_mfe
-    ib_agg['play2_mae'] = p2_mae
-    
-    p3_res, p3_mfe, p3_mae = play_results[2]
-    ib_agg['play3_result'] = p3_res
-    ib_agg['play3_rr'] = 1.0
-    ib_agg['play3_mfe'] = p3_mfe
-    ib_agg['play3_mae'] = p3_mae
-    
-    # 12. FVG Reuse long-format tracking
-    fvg_detail_df = extract_fvg_reuse_details(df, fvg_df)
-    
-    # 13. Clean and build final output fact table
+    # 12. Clean and build final output fact table
     facts_df = ib_agg.reset_index().rename(columns={'logical_date': 'trading_day'})
     facts_df['symbol'] = symbol
     facts_df['session_slot'] = session_choice
     facts_df['time_basis'] = time_basis
+    facts_df['play1_default_target_lvl'] = selected_default_lvl[1]
+    facts_df['play2_default_target_lvl'] = selected_default_lvl[2]
+    facts_df['play3_default_target_lvl'] = selected_default_lvl[3]
     
     # Add calendar/DST info
     daily_dst_info = df.groupby('logical_date')[['us_dst', 'uk_dst', 'et_window_offset_hours', 'dst_regime']].first().reset_index()
     facts_df = facts_df.merge(daily_dst_info.rename(columns={'logical_date': 'trading_day'}), on='trading_day')
     
-    # DOW — compute directly from date objects (no pd.to_datetime conversion needed)
+    # DOW — compute directly from date objects
     _DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     facts_df['dow'] = [_DAY_NAMES[d.weekday()] for d in facts_df['trading_day']]
     
@@ -1697,10 +1631,15 @@ def calculate_ib_statistics_v5(
     facts_df['prior_day_result'] = np.sign(facts_df['play1_result'].shift(1))
     
     # Event timings clock buckets
-    # Map first_break_idx and mid_lock_time to 15-minute clock buckets
     facts_df['first_break_time_val'] = facts_df['first_break_idx'].map(lambda idx: df.index[int(idx)] if not pd.isna(idx) and idx < len(df) else pd.NaT)
-    facts_df['first_break_bucket'] = facts_df['first_break_time_val'].dt.floor('15min').dt.time
-    facts_df['mid_touch_bucket'] = facts_df['mid_touch_first_time'].dt.floor('15min').dt.time
+    facts_df['first_break_bucket'] = facts_df['first_break_time_val'].dt.floor('5min').dt.time
+    facts_df['mid_touch_bucket'] = facts_df['mid_touch_first_time'].dt.floor('5min').dt.time
+    facts_df['mid_touch_first_formation_bucket'] = facts_df['mid_touch_first_formation_time'].dt.floor('5min').dt.time
+    facts_df['mid_touch_first_outcome_bucket'] = facts_df['mid_touch_first_outcome_time'].dt.floor('5min').dt.time
+    facts_df['fvg_touch_first_formation_bucket'] = facts_df['fvg_touch_first_formation_time'].dt.floor('5min').dt.time
+    facts_df['fvg_touch_first_outcome_bucket'] = facts_df['fvg_touch_first_outcome_time'].dt.floor('5min').dt.time
+    facts_df['fvg_1011_touch_first_formation_bucket'] = facts_df['fvg_1011_touch_first_formation_time'].dt.floor('5min').dt.time
+    facts_df['fvg_1011_touch_first_outcome_bucket'] = facts_df['fvg_1011_touch_first_outcome_time'].dt.floor('5min').dt.time
     
     # Cleanup level_touch_df
     level_touch_df['symbol'] = symbol
@@ -1708,9 +1647,9 @@ def calculate_ib_statistics_v5(
     level_touch_df['time_basis'] = time_basis
     level_touch_df = level_touch_df.rename(columns={'logical_date': 'trading_day'})
     
-    # Cleanup fvg_detail_df
-    fvg_detail_df['symbol'] = symbol
-    fvg_detail_df['session_slot'] = session_choice
-    fvg_detail_df['time_basis'] = time_basis
+    # Cleanup play_detail_df
+    play_detail_df['symbol'] = symbol
+    play_detail_df['session_slot'] = session_choice
+    play_detail_df['time_basis'] = time_basis
     
-    return facts_df, level_touch_df, fvg_detail_df
+    return facts_df, level_touch_df, play_detail_df

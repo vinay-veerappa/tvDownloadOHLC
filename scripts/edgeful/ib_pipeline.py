@@ -13,7 +13,7 @@ from scripts.libs_py.nqstats.ib import calculate_ib_statistics_v5
 INSTRUMENTS = ["NQ1", "ES1", "YM1", "RTY1", "CL1", "GC1"]
 SESSIONS = ["Globex IB", "Tokyo IB", "London IB", "Midnight OR", "NY AM IB", "NY PM IB"]
 ICT_DIR = Path("data/derived/ICT")
-ALL_TABLES = {"facts", "ext", "play", "level_touch", "fvg"}
+ALL_TABLES = {"facts", "ext", "play", "level_touch"}
 
 def process_single_symbol(symbol, start_date, end_date, vix_series, force_regen=None, incremental=False):
     # Setup imports inside process for multiprocessing cleanliness on Windows
@@ -132,7 +132,7 @@ def process_single_symbol(symbol, start_date, end_date, vix_series, force_regen=
         
         symbol_facts = []
         symbol_touches = []
-        symbol_fvgs = []
+        symbol_plays = []
         
         for sess in SESSIONS:
             time_bases = ["ET_fixed"]
@@ -141,7 +141,7 @@ def process_single_symbol(symbol, start_date, end_date, vix_series, force_regen=
                 
             for tb in time_bases:
                 print(f"    - [{symbol}] Running {sess} ({tb})...")
-                facts, touches, fvgs = calculate_ib_statistics_v5(
+                facts, touches, plays = calculate_ib_statistics_v5(
                     df_1m=df_1m,
                     symbol=symbol,
                     session_choice=sess,
@@ -157,14 +157,14 @@ def process_single_symbol(symbol, start_date, end_date, vix_series, force_regen=
                     symbol_facts.append(facts)
                 if not touches.empty:
                     symbol_touches.append(touches)
-                if not fvgs.empty:
-                    symbol_fvgs.append(fvgs)
+                if not plays.empty:
+                    symbol_plays.append(plays)
                     
         f_df = pd.concat(symbol_facts, ignore_index=True) if symbol_facts else pd.DataFrame()
         t_df = pd.concat(symbol_touches, ignore_index=True) if symbol_touches else pd.DataFrame()
-        v_df = pd.concat(symbol_fvgs, ignore_index=True) if symbol_fvgs else pd.DataFrame()
+        p_df = pd.concat(symbol_plays, ignore_index=True) if symbol_plays else pd.DataFrame()
         
-        return f_df, t_df, v_df
+        return f_df, t_df, p_df
     except Exception as e:
         print(f"  -> Error processing {symbol}: {e}")
         import traceback
@@ -183,7 +183,7 @@ def main():
     )
     parser.add_argument(
         "--tables", type=str, default="",
-        help="Comma-separated subset of tables to regenerate: facts,ext,play,level_touch,fvg (default: all)"
+        help="Comma-separated subset of tables to regenerate: facts,ext,play,level_touch (default: all)"
     )
     parser.add_argument(
         "--incremental", "-i", action="store_true",
@@ -270,8 +270,6 @@ def main():
         
     facts_list = []
     level_touches_list = []
-    fvg_details_list = []
-    
     from concurrent.futures import ProcessPoolExecutor
     
     if args.workers > 0:
@@ -284,10 +282,10 @@ def main():
         print("\nRunning symbol tasks sequentially in the main thread...")
         for symbol in target_list:
             try:
-                facts, touches, fvgs = process_single_symbol(
+                facts, touches, plays = process_single_symbol(
                     symbol, symbol_starts[symbol], args.end, vix_series, force_regen, incremental_mode
                 )
-                results.append((symbol, facts, touches, fvgs))
+                results.append((symbol, facts, touches, plays))
             except Exception as exc:
                 print(f"Symbol {symbol} generated an exception: {exc}")
     else:
@@ -302,8 +300,8 @@ def main():
             for future in futures:
                 symbol = futures[future]
                 try:
-                    facts, touches, fvgs = future.result()
-                    results.append((symbol, facts, touches, fvgs))
+                    facts, touches, plays = future.result()
+                    results.append((symbol, facts, touches, plays))
                 except Exception as exc:
                     print(f"Symbol {symbol} generated an exception: {exc}")
                    # ── MATERIALIZE PARQUET FILES PER SYMBOL ─────────────────────────────────
@@ -315,9 +313,8 @@ def main():
     sort_keys = {
         "ib_facts": ["symbol", "trading_day", "session_slot", "time_basis"],
         "ib_ext_detail": ["symbol", "trading_day", "session_slot", "time_basis", "side", "level"],
-        "ib_play_detail": ["symbol", "trading_day", "session_slot", "time_basis", "play"],
-        "ib_level_touch_detail": ["symbol", "trading_day", "session_slot", "time_basis", "level_pct", "phase"],
-        "ib_fvg_detail": ["symbol", "session_slot", "time_basis", "trading_day", "fvg_id", "touch_n"]
+        "ib_play_detail": ["symbol", "trading_day", "session_slot", "time_basis", "play", "target_lvl"],
+        "ib_level_touch_detail": ["symbol", "trading_day", "session_slot", "time_basis", "level_pct", "phase"]
     }
     
     def save_symbol_table(new_df, base_name, symbol, keys, recompute_func=None):
@@ -415,7 +412,12 @@ def main():
             
         return pd.concat(dfs, ignore_index=True).sort_values(by=["symbol", "trading_day", "session_slot", "time_basis"]).reset_index(drop=True)
 
-    for symbol, facts, touches, fvgs in results:
+    facts_list = []
+    level_touches_list = []
+    fvg_details_list = []
+    play_details_list = []
+    
+    for symbol, facts, touches, plays in results:
         # Calculate bar index offset and adjust index columns in incremental mode
         if incremental_mode and symbol in symbol_last_dates and not facts.empty and 'existing_facts' in locals() and not existing_facts.empty:
             df_ext_sym = existing_facts[existing_facts["symbol"] == symbol]
@@ -445,7 +447,7 @@ def main():
             last_date = symbol_last_dates[symbol]
             if not facts.empty: facts = facts[facts["trading_day"] > last_date]
             if not touches.empty: touches = touches[touches["trading_day"] > last_date]
-            if not fvgs.empty: fvgs = fvgs[fvgs["trading_day"] > last_date]
+            if not plays.empty: plays = plays[plays["trading_day"] > last_date]
         
         if facts.empty:
             continue
@@ -455,7 +457,7 @@ def main():
         
         # 1. ib_ext_detail (Vectorized)
         ext_dfs = []
-        levels = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+        levels = [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
         base_cols = ['symbol', 'trading_day', 'session_slot', 'time_basis']
         
         for lvl in levels:
@@ -482,20 +484,8 @@ def main():
             
         symbol_ext = pd.concat(ext_dfs, ignore_index=True) if ext_dfs else pd.DataFrame(columns=base_cols + ['side', 'level', 'hit', 'minutes'])
         
-        # 2. ib_play_detail (Vectorized)
-        play_dfs = []
-        for play_n in [1, 2, 3]:
-            col_res = f'play{play_n}_result'
-            col_mfe = f'play{play_n}_mfe'
-            col_mae = f'play{play_n}_mae'
-            df_play = facts[base_cols].copy()
-            df_play['play'] = play_n
-            df_play['result'] = facts[col_res].fillna(0).astype(int) if col_res in facts.columns else 0
-            df_play['mfe'] = facts[col_mfe].fillna(0.0).astype(float) if col_mfe in facts.columns else 0.0
-            df_play['mae'] = facts[col_mae].fillna(0.0).astype(float) if col_mae in facts.columns else 0.0
-            play_dfs.append(df_play)
-            
-        symbol_play = pd.concat(play_dfs, ignore_index=True) if play_dfs else pd.DataFrame(columns=base_cols + ['play', 'result', 'mfe', 'mae'])
+        # 2. ib_play_detail
+        symbol_play = plays
         
         # Clean temporary calculation columns from facts
         temp_cols = []
@@ -516,9 +506,6 @@ def main():
         
         final_touches = save_symbol_table(touches, "ib_level_touch_detail", symbol, sort_keys["ib_level_touch_detail"])
         if final_touches is not None: print(f"    - ib_level_touch_detail_{symbol}: {len(final_touches)} rows")
-        
-        final_fvgs = save_symbol_table(fvgs, "ib_fvg_detail", symbol, sort_keys["ib_fvg_detail"])
-        if final_fvgs is not None: print(f"    - ib_fvg_detail_{symbol}:         {len(final_fvgs)} rows")
         
         gc.collect()
 

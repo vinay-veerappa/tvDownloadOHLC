@@ -4,7 +4,8 @@ from datetime import time, date
 from scripts.libs_py.nqstats.sessions import (
     get_logical_trading_date,
     get_dst_flags,
-    get_event_anchored_times
+    get_event_anchored_times,
+    get_time_mask_vectorized
 )
 
 def test_get_logical_trading_date():
@@ -87,3 +88,15 @@ def test_get_event_anchored_times():
     assert end == time(3, 0)
     assert offset == -1
     assert regime == "shifted"
+
+
+def test_get_time_mask_vectorized_cross_midnight():
+    # 20:59, 21:00, 01:00, 01:59, 02:00 ET in minutes
+    bar_mins = pd.Series([20 * 60 + 59, 21 * 60, 1 * 60, 1 * 60 + 59, 2 * 60], dtype="int64").to_numpy()
+    start_mins = pd.Series([21 * 60] * len(bar_mins), dtype="int64").to_numpy()
+    end_mins = pd.Series([2 * 60] * len(bar_mins), dtype="int64").to_numpy()
+
+    mask = get_time_mask_vectorized(bar_mins, start_mins, end_mins)
+
+    # Cross-midnight interval is [21:00, 02:00): 21:00 and 01:xx are in, 20:59 and 02:00 are out.
+    assert mask.tolist() == [False, True, True, True, False]

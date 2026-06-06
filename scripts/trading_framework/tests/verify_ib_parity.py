@@ -11,8 +11,7 @@ def main():
         "ib_facts.parquet",
         "ib_ext_detail.parquet",
         "ib_play_detail.parquet",
-        "ib_level_touch_detail.parquet",
-        "ib_fvg_detail.parquet"
+        "ib_level_touch_detail.parquet"
     ]
     
     # Define sort keys for stable comparison
@@ -20,8 +19,7 @@ def main():
         "ib_facts.parquet": ["symbol", "trading_day", "session_slot", "time_basis"],
         "ib_ext_detail.parquet": ["symbol", "trading_day", "session_slot", "time_basis", "side", "level"],
         "ib_play_detail.parquet": ["symbol", "trading_day", "session_slot", "time_basis", "play"],
-        "ib_level_touch_detail.parquet": ["symbol", "trading_day", "session_slot", "time_basis", "level_pct", "phase"],
-        "ib_fvg_detail.parquet": ["symbol", "session_slot", "time_basis", "trading_day", "fvg_id", "touch_n"]
+        "ib_level_touch_detail.parquet": ["symbol", "trading_day", "session_slot", "time_basis", "level_pct", "phase"]
     }
     
     print("=== Verification of Parquet Parity ===")

@@ -46,7 +46,7 @@ pm_ib   = input.session("1330-1430", "NY PM IB",    group=grpWin, inline="pm")
 pm_out  = input.session("1430-1600", "→ out",       group=grpWin, inline="pm")
 
 grpBias = "Bias Engine"
-biasTarget   = input.float(0.5, "Bias grade target (ext mult)", options=[0.5,1.0,1.5], group=grpBias,
+biasTarget   = input.float(0.25, "Bias grade target (ext mult)", options=[0,0.25,0.5,1.0,1.5], group=grpBias,
      tooltip="Bias is 'correct' if this extension on the bias side is hit before the opposite IB boundary is closed beyond.")
 useFVG       = input.bool(true,  "Enable FVG bias variant", group=grpBias)
 nyAm10Macro  = input.bool(false, "NY AM: Use 10:00 AM Macro FVG", group=grpBias, tooltip="If enabled, ignores 9:30-10:00 FVGs and only uses the first FVG forming at/after 10:00 AM ET.")
@@ -107,6 +107,13 @@ inOut = inSess(outSess)
 // Active measurement period = IB window OR its outcome window
 inActive = inIB or inOut
 
+// Prior RTH close — gap reference for NY AM (RTH = 09:30-16:00 ET)
+inRTH = inSess("0930-1600")
+var float priorRTHClose = na
+if inRTH[1] and not inRTH        // RTH just closed
+    priorRTHClose := close[1]    // last RTH bar's close ≈ 16:00 close
+
+
 // Parse extension levels into an array
 var extArr = array.new<float>()
 if barstate.isfirst
@@ -134,16 +141,35 @@ logicalDOW = dayofweek(shiftedTime, TZ)
 // Pull HTF bar values; detect the 3-bar gap on the fixed FVG timeframe.
 // Gating to the IB window is done on the CHART timeframe (inIB) to avoid
 // session-function desync inside request.security.
-[fvgH2, fvgL2, fvgH0, fvgL0, fvgTime2] = request.security(syminfo.tickerid, fvgTF,
-     [high[2], low[2], high, low,time[2]], lookahead=barmerge.lookahead_off)
+//[fvgH2, fvgL2, fvgH0, fvgL0, fvgTime2] = request.security(syminfo.tickerid, fvgTF,
+//     [high[2], low[2], high, low,time[2]], lookahead=barmerge.lookahead_off)
+// Pull a short history of the FVG-timeframe bars so detection doesn't depend on chart TF.
+// We look back a few HTF bars each chart bar and scan for the most recent unseen gap.
+f_htf() => [high, low, time]
+[hSer, lSer, tSer] = request.security(syminfo.tickerid, fvgTF, f_htf(),
+     lookahead=barmerge.lookahead_off)
+
+// Track the last HTF bar time we've processed, so each HTF bar is evaluated once.
+var int lastHTFtime = na
+htfIsNew = na(lastHTFtime) or (not na(tSer) and tSer > lastHTFtime)
+if not na(tSer)
+    lastHTFtime := tSer
+
+// Classic 3-bar gap on the HTF series: compare HTF bar[2] vs HTF bar[0].
+// hSer[2]/lSer[2] are two HTF bars back regardless of chart TF.
+bullGap = not na(hSer[2]) and hSer[2] < lSer[0]
+bearGap = not na(lSer[2]) and lSer[2] > hSer[0]
+fvgFormTime = tSer[2]   // the gap is "formed" at the 3rd HTF bar
 
 // Variables needed for boundary containment
 var int firstIBTime = na
 var int ibOpenBar = na
 
-bullFVGraw = inIB and fvgH2 < fvgL0 and (not na(firstIBTime) and fvgTime2 >= firstIBTime)
-bearFVGraw = inIB and fvgL2 > fvgH0 and (not na(firstIBTime) and fvgTime2 >= firstIBTime)
-
+//bullFVGraw = inIB and fvgH2 < fvgL0 and (not na(firstIBTime) and fvgTime2 >= firstIBTime)
+//bearFVGraw = inIB and fvgL2 > fvgH0 and (not na(firstIBTime) and fvgTime2 >= firstIBTime)
+// REPLACE the bullFVGraw / bearFVGraw lines
+bullFVGraw = inIB and htfIsNew and bullGap and (not na(firstIBTime) and fvgFormTime >= firstIBTime)
+bearFVGraw = inIB and htfIsNew and bearGap and (not na(firstIBTime) and fvgFormTime >= firstIBTime)
 
 //bullFVGraw = inIB and fvgH2 < fvgL0
 //bearFVGraw = inIB and fvgL2 > fvgH0
@@ -240,8 +266,16 @@ var bool reached025ForP3 = false
 var int  p3 = 0
 var float maxBreakExt = 0.0
 
+var bool clsBelowLow = false, var bool clsAboveHigh = false
+var bool upTgtBeforeOpp = false, var bool dnTgtBeforeOpp = false
+
 // Completed-day records for aggregation
 var records = array.new<IBDay>()
+
+var bool archivedToday = false
+var bool p3Filled = false
+
+
 
 // Reset at new logical day
 if isNewLogicalDay
@@ -263,6 +297,11 @@ if isNewLogicalDay
     p1 := 0, p2 := 0, p3 := 0
     midTouchedForP2 := false, reached025ForP3 := false
     maxBreakExt := 0.0
+    clsBelowLow := false, clsAboveHigh := false
+    upTgtBeforeOpp := false, dnTgtBeforeOpp := false
+    archivedToday := false
+    p3Filled := false
+
 
 // =============================================================================
 // 6. BUILD THE IB
@@ -279,7 +318,8 @@ if inIB
         lLastBar := bar_index
     if na(firstBarOpen)
         firstBarOpen := open
-        priorClose := prevSessClose   // gap reference = prior session's IB close
+        firstBarClose := close                                                    // FIX A: was never assigned
+        priorClose := (sessionChoice == "NY AM IB") ? priorRTHClose : prevSessClose // FIX B: NY AM gaps off prior RTH close
     ibClose := close
     if na(ibOpen)
         ibOpen := open
@@ -292,9 +332,12 @@ if sessionChoice == "NY AM IB" and nyAm10Macro
 // Capture first FVG inside IB (first one wins)
 if useFVG and inIB and not fvgSet  and validFVGTime
     if bullFVGraw
-        fvgTop := fvgL0, fvgBot := fvgH2, fvgDir := 1, fvgSet := true, fvgBar := bar_index
+        //fvgTop := fvgL0, fvgBot := fvgH2, fvgDir := 1, fvgSet := true, fvgBar := bar_index
+        fvgTop := lSer[0], fvgBot := hSer[2], fvgDir := 1, fvgSet := true, fvgBar := bar_index
     else if bearFVGraw
-        fvgTop := fvgL2, fvgBot := fvgH0, fvgDir := -1, fvgSet := true, fvgBar := bar_index
+        //fvgTop := fvgL2, fvgBot := fvgH0, fvgDir := -1, fvgSet := true, fvgBar := bar_index
+        fvgTop := lSer[2], fvgBot := hSer[0], fvgDir := -1, fvgSet := true, fvgBar := bar_index
+
 
 // IFVG: flip if FVG closed through (close-based)
 if fvgSet and not fvgBroken
@@ -361,6 +404,16 @@ if ibSet and inOut and not na(ibRange) and ibRange > 0
         closedOppEnd := true
     if firstBreakDir == -1 and close > ibH
         closedOppEnd := true
+    // (place next to the existing closedOppEnd block)
+    if close < ibL
+        clsBelowLow := true
+    if close > ibH
+        clsAboveHigh := true
+    if not upTgtBeforeOpp and high >= extPrice(biasTarget, true)  and not clsBelowLow
+        upTgtBeforeOpp := true
+    if not dnTgtBeforeOpp and low  <= extPrice(biasTarget, false) and not clsAboveHigh
+        dnTgtBeforeOpp := true
+
     // max extension reached
     upExt = (high - ibH) / ibRange
     dnExt = (ibL - low) / ibRange
@@ -406,17 +459,24 @@ if ibSet and inOut and not na(ibRange) and ibRange > 0
                 p2 := -1
 
         // --- Play 3: fade (need overshoot to os3 first, then revert to mid vs stop st3) ---
+        // --- Play 3: fade (overshoot -> touch-back fills entry -> revert to mid vs stop) ---
         if not reached025ForP3
             hitOS = bd == 1 ? high >= os3 : low <= os3
             if hitOS
                 reached025ForP3 := true
-        if reached025ForP3 and p3 == 0
-            hitMid = low <= ibMid and high >= ibMid     // reverted back to mid = fade win
-            hitStop3 = bd == 1 ? high >= st3 : low <= st3 // pushed further out = fade loss
+        // after overshoot, the fade fills only when price returns to the boundary
+        if reached025ForP3 and not p3Filled
+            backToBoundary = bd == 1 ? low <= ibH : high >= ibL
+            if backToBoundary
+                p3Filled := true
+        if p3Filled and p3 == 0
+            hitMid = low <= ibMid and high >= ibMid          // reverted to mid = win
+            hitStop3 = bd == 1 ? high >= st3 : low <= st3    // pushed further out = loss
             if hitMid
                 p3 := 1
             else if hitStop3
                 p3 := -1
+
 
     // gap fill
     if not gapFilled and not na(priorClose)
@@ -451,9 +511,9 @@ bFVGifvg := fvgSet ? (fvgBroken ? -fvgDir : fvgDir) : 0
 outJustClosed = inOut[1] and not inOut
 gradeOne(biasSign) =>
     // correct if bias-side target extension reached within the outcome window
-    biasSign == 1 ? maxExtUp >= biasTarget : biasSign == -1 ? maxExtDn >= biasTarget : false
+    biasSign == 1 ? upTgtBeforeOpp : biasSign == -1 ? dnTgtBeforeOpp : false
 
-if outJustClosed and ibSet
+if outJustClosed and ibSet and not archivedToday
     rec = IBDay.new()
     rec.day := logicalDay
     rec.dow := logicalDOW
@@ -493,6 +553,7 @@ if outJustClosed and ibSet
     rec.correctFVGifvg   := gradeOne(bFVGifvg)
     rec.graded := true
     array.push(records, rec)
+    archivedToday := true
 
 // =============================================================================
 // 11. VISUALS — IB BOX + EXTENSION LADDER
@@ -927,9 +988,14 @@ if barstate.islast and showStats and array.size(records) > 0
     maxLift = math.max(liftF, math.max(liftC, math.max(liftV, liftI)))
     biasName = maxLift == liftF ? "Formation" : maxLift == liftC ? "Close" : maxLift == liftV ? "FVG" : "IFVG"
     biasHr = maxLift == liftF ? (nF>0?cF/nF:0.5) : maxLift == liftC ? (nC>0?cC/nC:0.5) : maxLift == liftV ? (nV>0?cV/nV:0.5) : (nI>0?cI/nI:0.5)
-    // a bias >50% = trade with it (long if bull lean); <50% = fade it
-    biasDir = bullDays >= bearDays ? "Long" : "Short"
-    biasVerdict = biasHr >= 0.5 ? biasDir : (biasDir == "Long" ? "Short" : "Long")  // sub-50% => fade
+    // REPLACE the biasDir / biasVerdict lines
+    // Direction from the *winning variant's* net read over the sample, not raw break counts.
+    // Per variant, "lean long" if its correct-count implies the bull side won more than half.
+    biasLeanLong = maxLift == liftF ? (loFollow >= (loFirst - loFollow)) :
+                 maxLift == liftC ? (bullDays >= bearDays) :
+                 (cV >= (nV - cV))   // FVG/IFVG: correct calls skew which way price went
+    biasDir = biasLeanLong ? "Long" : "Short"
+    biasVerdict = biasHr >= 0.5 ? biasDir : (biasDir == "Long" ? "Short" : "Long")
 
     // ===== TOP SUGGESTED LINE (simple cross: bias dir + best play) =====
     f_divider(tStats, ts, rr, "IB STATS — " + sessionChoice + "  (n=" + str.tostring(n) + ")", color.new(color.gray, 20), "Initial Balance statistics for the selected session over the loaded history (n = number of completed days). All % cells: green ≥60%, orange 50-60%, red <50%."), rr += 1
