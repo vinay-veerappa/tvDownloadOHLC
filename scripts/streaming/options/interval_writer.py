@@ -121,6 +121,11 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
         "putVolumeCentroid": levels.put_volume_centroid,
         "netSpeedExposure": levels.net_speed_exposure,
         "netVannaExposure": levels.net_vanna_exposure,
+        # Futures translation matrix
+        "futuresSymbol": levels.futures_symbol,
+        "futuresTranslationMode": levels.translation_mode,
+        "futuresBasisSpread": levels.basis_spread,
+        "futuresBasisRatio": levels.basis_ratio,
     }
 
     payload = _sanitize_payload(payload)
@@ -180,6 +185,10 @@ async def _write_snapshot_direct(payload: dict[str, Any]) -> bool:
             "put25dIv": payload.get("put25dIv"),
             "call25dIv": payload.get("call25dIv"),
             "volatilitySkewPremium": payload.get("volatilitySkewPremium"),
+            "futuresSymbol": payload.get("futuresSymbol"),
+            "futuresTranslationMode": payload.get("futuresTranslationMode"),
+            "futuresBasisSpread": payload.get("futuresBasisSpread"),
+            "futuresBasisRatio": payload.get("futuresBasisRatio"),
         })
         log.info("GexSnapshot written DIRECTLY to DB (Offline Mode) for %s", payload["ticker"])
         return True

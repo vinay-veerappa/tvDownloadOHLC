@@ -25,8 +25,8 @@ var string GRP_MATCH = "Symbol Matching"
 i_familyPref    = input.string("Auto", "Family Source Preference", options = ["Auto", "Prefer Index", "Prefer ETF"], group = GRP_MATCH)
 i_overrideExact = input.bool(false, "Override Exact Match With Family Preference", group = GRP_MATCH)
 
-var string GRP_CONV = "ETF Conversion"
-i_convCaptureMode = input.string("Both", "Capture ETF Ratio On", options = ["RTH Open", "RTH Close", "Both"], group = GRP_CONV, tooltip = "When to snapshot ETF->futures conversion ratio using ETF regular session events.")
+var string GRP_CONV = "Futures Conversion"
+i_applyConv = input.string("Auto", "Apply Futures Conversion", options = ["Auto", "Always", "Never"], group = GRP_CONV, tooltip = "Auto applies the ratio/basis only if the current chart is a Futures chart.")
 
 var string GRP_FILT = "Level Filters"
 i_proxFilter        = input.float(1.5, "Hide Tactical Levels > X% Away (0=Off)", step=0.5, group=GRP_FILT, tooltip="Applies to tactical scored levels (0D, LOC, DEX, CLIFF).")
@@ -90,37 +90,39 @@ i_debugLogs         = input.bool(false, "Enable Debug Logs", group = GRP_DEBUG)
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════
 
-f_labelSize(string s) => s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : size.large
-f_dbg(string msg) =>
+f_labelSize(string s) = >
+    s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : size.large
+
+f_dbg(string msg) = >
     if i_debugLogs
         log.info(msg)
 
-f_pos(string s) =>
+f_pos(string s) = >
     s == "Top Left" ? position.top_left : s == "Top Center" ? position.top_center : s == "Top Right" ? position.top_right :
      s == "Middle Left" ? position.middle_left : s == "Middle Center" ? position.middle_center : s == "Middle Right" ? position.middle_right :
      s == "Bottom Left" ? position.bottom_left : s == "Bottom Center" ? position.bottom_center : position.bottom_right
 
-f_norm(string v) => str.upper(str.trim(v))
+f_norm(string v) = > str.upper(str.trim(v))
 
-f_stripPrefix(string v) =>
+f_stripPrefix(string v) = >
     t = f_norm(v)
     str.startswith(t, "/") ? str.substring(t, 1, str.length(t)) : t
 
-f_stripContinuousSuffix(string v) =>
+f_stripContinuousSuffix(string v) = >
     c = f_stripPrefix(v)
     l = str.length(c)
     l > 2 and str.endswith(c, "!") ? str.substring(c, 0, l - 2) : c
 
-f_primarySymbol() =>
+f_primarySymbol() = >
     r = f_stripPrefix(syminfo.root)
     t = f_stripPrefix(syminfo.ticker)
     str.length(r) > 0 ? r : t
 
-f_canonicalSymbol(string s) =>
+f_canonicalSymbol(string s) = >
     c = f_stripContinuousSuffix(s)
     c == "MES" ? "ES" : c == "MNQ" ? "NQ" : c == "MYM" ? "YM" : c == "M2K" ? "RTY" : c == "MGC" ? "GC" : c == "SIL" ? "SI" : c == "MCL" ? "CL" : c == "MHG" ? "HG" : c == "M6E" ? "6E" : c == "M6A" ? "6A" : c == "M6B" ? "6B" : c == "M6J" ? "6J" : c
 
-f_symbolFamilyKey(string s) =>
+f_symbolFamilyKey(string s) = >
     c = f_canonicalSymbol(s)
     r = c
     if c == "ES" or c == "SPX" or c == "SPY"
@@ -133,15 +135,15 @@ f_symbolFamilyKey(string s) =>
         r := "RTY_FAMILY"
     r
 
-f_sourceKind(string s) =>
+f_sourceKind(string s) = >
     c = f_canonicalSymbol(s)
     c == "SPX" or c == "NDX" or c == "DJX" or c == "DJI" or c == "RUT" ? "INDEX" : c == "SPY" or c == "QQQ" or c == "DIA" or c == "IWM" ? "ETF" : "OTHER"
 
-f_isOvernightFutures(string s) =>
+f_isOvernightFutures(string s) = >
     c = f_canonicalSymbol(s)
     c == "ES" or c == "NQ" or c == "YM" or c == "RTY" or c == "CL" or c == "GC" or c == "SI" or c == "HG" or c == "6E" or c == "6A" or c == "6B" or c == "6J" or c == "ZN" or c == "ZB"
 
-f_getSourceTicker(string sC) =>
+f_getSourceTicker(string sC) = >
     if sC == "ES" or sC == "MES"
         "CME_MINI:ES1!"
     else if sC == "SPX"
@@ -170,24 +172,9 @@ f_getSourceTicker(string sC) =>
         sC
 
 
-// Reusable ETF -> futures conversion utilities
-f_getSessionAlignedPrice(string sym, bool useClose) =>
-    request.security(sym, timeframe.period, useClose ? close : open, gaps = barmerge.gaps_on, ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
+// No dynamic conversion logic needed here anymore.
 
-f_computeEtfToFuturesRatio(string futSym, string etfSym, bool useClose) =>
-    futPx = f_getSessionAlignedPrice(futSym, useClose)
-    etfPx = f_getSessionAlignedPrice(etfSym, useClose)
-    not na(futPx) and not na(etfPx) and math.abs(etfPx) > syminfo.mintick ? (futPx / etfPx) : na
-
-f_computeEtfToFuturesOffset(string futSym, string etfSym, bool useClose) =>
-    futPx = f_getSessionAlignedPrice(futSym, useClose)
-    etfPx = f_getSessionAlignedPrice(etfSym, useClose)
-    not na(futPx) and not na(etfPx) ? (futPx - etfPx) : na
-
-f_captureOnOpen() => i_convCaptureMode == "RTH Open" or i_convCaptureMode == "Both"
-f_captureOnClose() => i_convCaptureMode == "RTH Close" or i_convCaptureMode == "Both"
-
-f_matchScore(string assetTag) =>
+f_matchScore(string assetTag) = >
     asset = f_canonicalSymbol(assetTag)
     aFam = f_symbolFamilyKey(asset)
     primary = f_canonicalSymbol(f_primarySymbol())
@@ -210,14 +197,14 @@ f_matchScore(string assetTag) =>
     exact ? eBase : (fBase + boost)
 
 f_num(float v) => na(v) ? "—" : str.tostring(v, "#.##")
-f_dashNum(float v) =>
+f_dashNum(float v) = >
     av = math.abs(v)
     na(v) ? "—" :
      av >= 1000000000 ? str.tostring(v / 1000000000.0, "#.#") + "B" :
      av >= 1000000 ? str.tostring(v / 1000000.0, "#.#") + "M" :
      av >= 1000 ? str.tostring(v / 1000.0, "#.#") + "K" :
      str.tostring(v, "#.##")
-f_wrapIndex(string src, int baseWidth) =>
+f_wrapIndex(string src, int baseWidth) = >
     splitIdx = math.min(baseWidth, str.length(src))
     if str.length(src) > baseWidth
         window = str.substring(src, baseWidth, math.min(baseWidth + 24, str.length(src)))
@@ -225,17 +212,17 @@ f_wrapIndex(string src, int baseWidth) =>
         if not na(spacePos)
             splitIdx := baseWidth + spacePos
     splitIdx
-f_regimeShort(string regime) =>
+f_regimeShort(string regime) = >
     regime == "BATTLE_ZONE" ? "BATTLE ZONE" :
      regime == "PINNED" ? "PIN" :
      regime == "COILED" ? "COIL" :
      regime == "EXPANSION" ? "EXPANSION" : regime
-f_biasShort(string bias) =>
+f_biasShort(string bias) = >
     bias == "BULLISH" ? "BULLISH" : bias == "BEARISH" ? "BEARISH" : "NEUTRAL"
-f_pick(float v1, float v2, float v3) => not na(v1) ? v1 : (not na(v2) ? v2 : v3)
-f_isNear(float value, float ref, float thr) => not na(value) and not na(ref) and math.abs(value - ref) <= thr
+f_pick(float v1, float v2, float v3) = > not na(v1) ? v1 : (not na(v2) ? v2 : v3)
+f_isNear(float value, float ref, float thr) = > not na(value) and not na(ref) and math.abs(value - ref) <= thr
 
-f_nearestBelow(float ref, float v1, float v2, float v3) =>
+f_nearestBelow(float ref, float v1, float v2, float v3) = >
     float b = na
     if not na(ref)
         if not na(v1) and v1 < ref and (na(b) or v1 > b)
@@ -246,7 +233,7 @@ f_nearestBelow(float ref, float v1, float v2, float v3) =>
             b := v3
     na(b) ? f_pick(v1, v2, v3) : b
 
-f_nearestAbove(float ref, float v1, float v2, float v3) =>
+f_nearestAbove(float ref, float v1, float v2, float v3) = >
     float b = na
     if not na(ref)
         if not na(v1) and v1 > ref and (na(b) or v1 < b)
@@ -257,7 +244,7 @@ f_nearestAbove(float ref, float v1, float v2, float v3) =>
             b := v3
     na(b) ? f_pick(v1, v2, v3) : b
 
-f_bestShortTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
+f_bestShortTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) = >
     float b = na
     if f_isNear(v1, spot, thr) and (na(b) or v1 > b)
         b := v1
@@ -271,7 +258,7 @@ f_bestShortTrigger(float spot, float thr, float v1, float v2, float v3, float v4
         b := v5
     na(b) ? f_pick(v1, v2, v3) : b
 
-f_bestLongTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
+f_bestLongTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) = >
     float b = na
     if f_isNear(v1, spot, thr) and (na(b) or v1 < b)
         b := v1
@@ -285,7 +272,7 @@ f_bestLongTrigger(float spot, float thr, float v1, float v2, float v3, float v4,
         b := v5
     na(b) ? f_pick(v1, v2, v3) : b
 
-f_extractAssetTag(string lineText) =>
+f_extractAssetTag(string lineText) = >
     tokens = str.split(lineText, ",")
     asset = ""
     if array.size(tokens) > 0
@@ -294,7 +281,7 @@ f_extractAssetTag(string lineText) =>
             asset := f_stripPrefix(array.get(fp, 0))
     asset
 
-f_findMatchingLine(string blob) =>
+f_findMatchingLine(string blob) = >
     string mL = ""
     string mA = ""
     int bs = 0
@@ -349,12 +336,12 @@ var float st_OIVelPWRate = 0.0
 var float st_OIVelPINRate = 0.0
 var float st_VolExpUp = na
 var float st_VolExpDn = na
-
-
+var float st_FuturesBasis = na
+var float st_FuturesRatio = na
 
 f_parseScoredLevels(string lineText, 
     array<float> prices, array<string> filters, 
-    array<string> sigs, array<string> labels) =>
+    array<string> sigs, array<string> labels) = >
     array.clear(prices)
     array.clear(filters)
     array.clear(sigs)
@@ -386,7 +373,7 @@ f_parseScoredLevels(string lineText,
                     array.push(sigs, str.trim(array.get(meta, 1)))
                     array.push(labels, str.trim(array.get(meta, 2)))
 
-f_scoredColor(string filter_code, string sig_code, string label_text) =>
+f_scoredColor(string filter_code, string sig_code, string label_text) = >
     // Color is driven by FILTER TYPE (what kind of level)
     // plus context from the label for side detection
     u = str.upper(label_text)
@@ -411,17 +398,17 @@ f_scoredColor(string filter_code, string sig_code, string label_text) =>
         result := is_hi ? i_colUpperEM : i_colLowerEM
     result
 
-f_scoredStyle(string sig_code) =>
+f_scoredStyle(string sig_code) = >
     // Style is driven by SIGNIFICANCE (how important)
     sig_code == "P" ? line.style_solid : 
      sig_code == "S" ? line.style_dashed : 
      line.style_dotted
 
-f_scoredWidth(string sig_code) =>
+f_scoredWidth(string sig_code) = >
     // Width is driven by SIGNIFICANCE
     sig_code == "P" ? i_lineWidthPrimary : i_lineWidthSecondary
 
-f_scoredCompactLabel(string filter_code, string label_text) =>
+f_scoredCompactLabel(string filter_code, string label_text) = >
     // Labels are already compact from the Python export.
     // Add a visual prefix based on filter type for quick scanning.
     prefix = filter_code == "W" ? "▌" : filter_code == "A" ? "⚓" : filter_code == "I" ? "◆" : filter_code == "E" ? "◈" : "•"
@@ -437,7 +424,7 @@ f_scoredCompactLabel(string filter_code, string label_text) =>
         disp := str.replace(u, "EM85 LO", "EM85-")
     prefix + " " + disp
 
-f_passScoredProximity(string label_text, float price) =>
+f_passScoredProximity(string label_text, float price) = >
     if i_proxFilter <= 0.0
         true
     else
@@ -446,7 +433,7 @@ f_passScoredProximity(string label_text, float price) =>
         not isTactical or ((math.abs(price - close) / close) * 100.0 <= i_proxFilter)
 
 
-f_assignLabelColumn(float level, array<float> cols, float gap, int maxC) =>
+f_assignLabelColumn(float level, array<float> cols, float gap, int maxC) = >
     int a = -1
     if i_labelCollision == "Off"
         a := 0
@@ -483,7 +470,7 @@ f_assignLabelColumn(float level, array<float> cols, float gap, int maxC) =>
 // ═══════════════════════════════════════════════════════════════════════
 
 var string TZ = "America/New_York"
-f_sessionKey() => dayofmonth(time, TZ) + month(time, TZ) * 31 + year(time, TZ) * 400
+f_sessionKey() = > dayofmonth(time, TZ) + month(time, TZ) * 31 + year(time, TZ) * 400
 isNewSession = ta.change(f_sessionKey()) != 0
 var int sessionStartBar = 0
 if barstate.isfirst 
@@ -506,9 +493,6 @@ var string equity_ref = str.contains(syminfo.ticker, "NQ")  ? "QQQ" :
 var bool can_calculate = false
 var int last_open_time = 0
 var int last_close_time = 0
-var float etfConvRatio = na
-var float etfConvOffset = na
-var string etfConvSnapshot = "none"
 
 // OPTIMIZATION: Parse pasted text only once when the script loads
 var string rawScored = ""
@@ -517,20 +501,7 @@ var string matchScored = ""
 // Trigger Open logic matching the exact equity open
 if is_recent and eq_open and time != last_open_time
     last_open_time := time
-    if f_captureOnOpen()
-        string active_source_ref = equity_ref
-        if matchScored != ""
-            active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
-        rOpen = f_computeEtfToFuturesRatio(syminfo.main_tickerid, active_source_ref, false)
-        oOpen = f_computeEtfToFuturesOffset(syminfo.main_tickerid, active_source_ref, false)
-        if not na(rOpen) and not na(oOpen)
-            etfConvRatio := rOpen
-            etfConvOffset := oOpen
-            etfConvSnapshot := "open"
-            f_dbg("[conv] captured on RTH open; ratio=" + str.tostring(etfConvRatio, "#.######") + ", offset=" + str.tostring(etfConvOffset, "#.##") + ", etf=" + equity_ref)
-        else
-            f_dbg("[conv] open capture failed; etf=" + equity_ref)
-    can_calculate  := true
+    can_calculate := true
     //useClose       := false
     sessionStartBar := bar_index
     label.new(bar_index, high, "Open", color=color.green, textcolor=color.white, style=label.style_label_down)
@@ -539,20 +510,7 @@ if is_recent and eq_open and time != last_open_time
 // Trigger Close logic matching the exact equity close
 if is_recent and eq_close and time != last_close_time
     last_close_time := time
-    if f_captureOnClose()
-        string active_source_ref = equity_ref
-        if matchScored != ""
-            active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
-        rClose = f_computeEtfToFuturesRatio(syminfo.main_tickerid, active_source_ref, true)
-        oClose = f_computeEtfToFuturesOffset(syminfo.main_tickerid, active_source_ref, true)
-        if not na(rClose) and not na(oClose)
-            etfConvRatio := rClose
-            etfConvOffset := oClose
-            etfConvSnapshot := "close"
-            f_dbg("[conv] captured on RTH close; ratio=" + str.tostring(etfConvRatio, "#.######") + ", offset=" + str.tostring(etfConvOffset, "#.##") + ", etf=" + equity_ref)
-        else
-            f_dbg("[conv] close capture failed; etf=" + equity_ref)
-    can_calculate   := true
+    can_calculate := true
     //useClose        := true
     sessionStartBar := bar_index
     label.new(bar_index, high, "Close", color=color.green, textcolor=color.white, style=label.style_label_down)
@@ -683,6 +641,10 @@ if barstate.isfirst
                         st_OIVelPWRate := str.tonumber(str.replace(ti, "META_OI_VEL_PW_RATE_", ""))
                     else if str.startswith(ti, "META_OI_VEL_PIN_RATE_")
                         st_OIVelPINRate := str.tonumber(str.replace(ti, "META_OI_VEL_PIN_RATE_", ""))
+                    else if str.startswith(ti, "META_FUTURES_BASIS_")
+                        st_FuturesBasis := str.tonumber(str.replace(ti, "META_FUTURES_BASIS_", ""))
+                    else if str.startswith(ti, "META_FUTURES_RATIO_")
+                        st_FuturesRatio := str.tonumber(str.replace(ti, "META_FUTURES_RATIO_", ""))
                     else if str.startswith(ti, "META_VOL_EXPANSION_UP_")
                         st_VolExpUp := str.tonumber(str.replace(ti, "META_VOL_EXPANSION_UP_", ""))
                     else if str.startswith(ti, "META_VOL_EXPANSION_DN_")
@@ -690,6 +652,56 @@ if barstate.isfirst
 
         f_dbg("[init] metadata summary: regime=" + st_Regime + ", bias=" + st_Bias + ", concentration=" + str.tostring(st_Concentration) + ", integrity=" + str.tostring(st_Integrity))
 
+        // ── Apply Static Futures Translation ONCE After Parsing ──
+        bool doConversion = (i_applyConv == "Auto" and syminfo.type == "futures") or (i_applyConv == "Always")
+        
+        if doConversion and array.size(cached_sPrices) > 0
+            if not na(st_FuturesBasis) and math.abs(st_FuturesBasis) > 0.001
+                for k = 0 to array.size(cached_sPrices) - 1
+                    array.set(cached_sPrices, k, array.get(cached_sPrices, k) + st_FuturesBasis)
+                
+                if not na(st_ShortTrig)
+                    st_ShortTrig := st_ShortTrig + st_FuturesBasis
+                if not na(st_LongTrig)
+                    st_LongTrig := st_LongTrig + st_FuturesBasis
+                if not na(st_ShortTgt)
+                    st_ShortTgt := st_ShortTgt + st_FuturesBasis
+                if not na(st_LongTgt)
+                    st_LongTgt := st_LongTgt + st_FuturesBasis
+                if not na(st_ShortInv)
+                    st_ShortInv := st_ShortInv + st_FuturesBasis
+                if not na(st_LongInv)
+                    st_LongInv := st_LongInv + st_FuturesBasis
+                if not na(st_VolExpUp)
+                    st_VolExpUp := st_VolExpUp + st_FuturesBasis
+                if not na(st_VolExpDn)
+                    st_VolExpDn := st_VolExpDn + st_FuturesBasis
+                    
+                etfConversion := true
+                f_dbg("[conv] ONCE: applied additive basis from metadata=" + str.tostring(st_FuturesBasis, "#.##"))
+            else if not na(st_FuturesRatio) and math.abs(st_FuturesRatio - 1.0) > 0.000001
+                for k = 0 to array.size(cached_sPrices) - 1
+                    array.set(cached_sPrices, k, array.get(cached_sPrices, k) * st_FuturesRatio)
+                    
+                if not na(st_ShortTrig)
+                    st_ShortTrig := st_ShortTrig * st_FuturesRatio
+                if not na(st_LongTrig)
+                    st_LongTrig := st_LongTrig * st_FuturesRatio
+                if not na(st_ShortTgt)
+                    st_ShortTgt := st_ShortTgt * st_FuturesRatio
+                if not na(st_LongTgt)
+                    st_LongTgt := st_LongTgt * st_FuturesRatio
+                if not na(st_ShortInv)
+                    st_ShortInv := st_ShortInv * st_FuturesRatio
+                if not na(st_LongInv)
+                    st_LongInv := st_LongInv * st_FuturesRatio
+                if not na(st_VolExpUp)
+                    st_VolExpUp := st_VolExpUp * st_FuturesRatio
+                if not na(st_VolExpDn)
+                    st_VolExpDn := st_VolExpDn * st_FuturesRatio
+                    
+                etfConversion := true
+                f_dbg("[conv] ONCE: applied multiplicative scale from metadata=" + str.tostring(st_FuturesRatio, "#.######"))
 // Redraw / Calculation State
 var float st_ZG = na, var float st_MAG = na, var float st_PIN = na
 var float st_CW = na, var float st_PW = na, var float st_EU = na, var float st_EL = na
@@ -707,7 +719,7 @@ var line line_gcUp = na
 var line line_gcDn = na
 var bool etfConversion = false
 
-f_clearAll() =>
+f_clearAll() = >
     while array.size(allLines) > 0
         line.delete(array.shift(allLines))
     while array.size(allLabels) > 0
@@ -738,71 +750,20 @@ if can_calculate
 
     if array.size(cached_sPrices) > 0
         // Reuse scored arrays parsed at startup; avoid reparsing text each recalculation cycle.
-        sPrices  = array.copy(cached_sPrices)
+        sPrices = array.copy(cached_sPrices)
         sFilters = array.copy(cached_sFilters)
-        sSigs    = array.copy(cached_sSigs)
-        sLabels  = array.copy(cached_sLabels)
+        sSigs = array.copy(cached_sSigs)
+        sLabels = array.copy(cached_sLabels)
 
         f_dbg("[draw] can_calculate start: bars in cache=" + str.tostring(array.size(sPrices)) + ", asset=" + (str.length(matchScored) > 0 ? matchScored : "<none>"))
 
     
         if array.size(sPrices) > 0
-            // ── Apply Futures Anchor Scaling for Scored Levels ──
-            sC = f_canonicalSymbol(matchScored)
-            pC = f_canonicalSymbol(f_primarySymbol())
-            sF = f_symbolFamilyKey(sC)
-            cF = f_symbolFamilyKey(pC)
-            sFut = f_isOvernightFutures(sC)
-            cFut = f_isOvernightFutures(pC)
-
-            if cFut and sF == cF and not sFut
-                // We are on a futures ticker but data is from Spot/ETF
-                anc = sC == "ES" or sC == "SPX" or sC == "SPY" ? "ES" : sC == "NQ" or sC == "NDX" or sC == "QQQ" ? "NQ" : sC == "YM" or sC == "DJI" or sC == "DIA" ? "YM" : sC == "RTY" or sC == "RUT" or sC == "IWM" ? "RTY" : ""
-                if anc != ""
-                    sR = array.get(sPrices, 0)
-                    if math.abs(sR) > syminfo.mintick
-                        kind = f_sourceKind(sC)
-                        if kind == "INDEX"
-                            offset = etfConvOffset
-                            if na(offset)
-                                string active_source_ref = equity_ref
-                                if matchScored != ""
-                                    active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
-                                offset := f_computeEtfToFuturesOffset(syminfo.main_tickerid, active_source_ref, true)
-                                if not na(offset)
-                                    f_dbg("[conv] using fallback live offset=" + str.tostring(offset, "#.##") + ", src=" + active_source_ref)
-                            if not na(offset) and math.abs(offset) > 0.001
-                                for k = 0 to array.size(sPrices) - 1
-                                    array.set(sPrices, k, array.get(sPrices, k) + offset)
-                                etfConversion := true
-                                srcTag = na(etfConvOffset) ? "fallback_live" : etfConvSnapshot
-                                f_dbg("[conv] applied offset=" + str.tostring(offset, "#.##") + " from " + srcTag)
-                            else if na(offset)
-                                f_dbg("[conv] skipped scaling: offset not captured yet (mode=" + i_convCaptureMode + ")")
-                        else
-                            fs = etfConvRatio
-                            if na(fs)
-                                // Fallback allows first-load conversion before the next RTH open/close snapshot.
-                                string active_source_ref = equity_ref
-                                if matchScored != ""
-                                    active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
-                                fs := f_computeEtfToFuturesRatio(syminfo.main_tickerid, active_source_ref, true)
-                                if not na(fs)
-                                    f_dbg("[conv] using fallback live ratio=" + str.tostring(fs, "#.######") + ", src=" + active_source_ref)
-                            if not na(fs) and math.abs(fs - 1.0) > 0.000001 
-                                for k = 0 to array.size(sPrices) - 1
-                                    array.set(sPrices, k, array.get(sPrices, k) * fs)
-                                etfConversion := true
-                                srcTag = na(etfConvRatio) ? "fallback_live" : etfConvSnapshot
-                                f_dbg("[conv] applied ratio=" + str.tostring(fs, "#.######") + " from " + srcTag)
-                            else if na(fs)
-                                f_dbg("[conv] skipped scaling: ratio not captured yet (mode=" + i_convCaptureMode + ")")
-            
             int dbgSkippedEm = 0
             int dbgSkippedProx = 0
             int dbgDrawn = 0
             for i = 0 to array.size(sPrices) - 1
-                s_lv  = array.get(sPrices, i)
+                s_lv = array.get(sPrices, i)
                 s_flt := array.get(sFilters, i)
                 s_sig := array.get(sSigs, i)
                 s_lbl = array.get(sLabels, i)
@@ -821,7 +782,7 @@ if can_calculate
                 s_wid = f_scoredWidth(s_sig)
                 
                 ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, 
-                    color=s_clr, width=s_wid, style=s_sty)
+                    color = s_clr, width = s_wid, style = s_sty)
                 array.push(allLines, ln)
                 dbgDrawn := dbgDrawn + 1
 
@@ -844,10 +805,842 @@ if can_calculate
                         if i_showPriceInLabel
                             dispTxt := dispTxt + " (" + str.tostring(s_lv, "#.##") + ")"
                         lb = label.new(bar_index + i_labelOffset, s_lv, dispTxt, 
-                            textcolor=s_clr, 
-                            color=color.new(#131722, 100 - i_labelBgOpacity), 
-                            style=label.style_label_left, 
-                            size=f_labelSize(i_labelSize))
+                            textcolor = s_clr, 
+                            color = color.new(#131722, 100 - i_labelBgOpacity), 
+                            style = label.style_label_left, 
+                            size = f_labelSize(i_labelSize))
+                        array.push(allLabels, lb)
+                        array.push(labelCols, lc)
+
+                u_lbl = str.upper(s_lbl)
+
+                // Walls → override CW/PW
+                if s_flt == "W"
+                    if str.contains(u_lbl, "DEX C")
+                        st_DCN := s_lv
+                    else if str.contains(u_lbl, "DEX P")
+                        st_DPN := s_lv
+                    else if str.contains(u_lbl, "LOC C")
+                        st_LCN := s_lv
+                    else if str.contains(u_lbl, "LOC P")
+                        st_LPN := s_lv
+                    else if str.contains(u_lbl, "0D CW")
+                        st_CW0 := s_lv
+                    else if str.contains(u_lbl, "0D PW")
+                        st_PW0 := s_lv// This Pine Script(TM) source code is subject to the terms of the Mozilla Public License 2.0
+// Copyright (c) antigravity
+//
+// MacroDealerLevels.pine v1.0
+// ======================
+// Scored/unified levels indicator.
+
+// Format: TICKER:STRIKE:FILTER|SIG|LABEL, STRIKE:FILTER|SIG|LABEL, ...
+//   FILTER: W (Wall), A (Anchor), I (Inflection), X (Other)
+//   SIG:    P (Primary), S (Secondary), C (Context)
+//   LABEL:  Human-readable compact text
+
+//@version=6
+indicator("Macro Dealer Levels Auto", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════
+
+var string GRP_DATA = "Data Buffers"
+i_pastedScored  = input.text_area("", "Paste Unified Levels (unified_levels.txt recommended)", group = GRP_DATA)
+
+
+var string GRP_MATCH = "Symbol Matching"
+i_familyPref    = input.string("Auto", "Family Source Preference", options = ["Auto", "Prefer Index", "Prefer ETF"], group = GRP_MATCH)
+i_overrideExact = input.bool(false, "Override Exact Match With Family Preference", group = GRP_MATCH)
+
+var string GRP_CONV = "Futures Conversion"
+i_applyConv = input.string("Auto", "Apply Futures Conversion", options = ["Auto", "Always", "Never"], group = GRP_CONV, tooltip = "Auto applies the ratio/basis only if the current chart is a Futures chart.")
+
+var string GRP_FILT = "Level Filters"
+i_proxFilter        = input.float(1.5, "Hide Tactical Levels > X% Away (0=Off)", step=0.5, group=GRP_FILT, tooltip="Applies to tactical scored levels (0D, LOC, DEX, CLIFF).")
+
+var string GRP_LINES = "Line Style"
+i_showEmFill        = input.bool(false, "Show EM Fill", group = GRP_LINES)
+i_lineWidthPrimary  = input.int(2, "Primary Width", minval = 1, maxval = 4, group = GRP_LINES)
+i_lineWidthSecondary= input.int(1, "Secondary Width", minval = 1, maxval = 4, group = GRP_LINES)
+i_showGammaFlip     = input.bool(true, "Show Gamma Flip Fill", group = GRP_LINES)
+
+var string GRP_COLORS = "Theme Colors (Light/Dark Ready)"
+i_colUpperEM        = input.color(color.new(#00FFFF, 0), "Upper EM", group = GRP_COLORS) // Aqua
+i_colZeroGamma      = input.color(color.new(#FFFF00, 0), "Zero Gamma", group = GRP_COLORS) // Yellow
+i_colLowerEM        = input.color(color.new(#00FFFF, 0), "Lower EM", group = GRP_COLORS)
+i_colGammaMagnet    = input.color(color.new(#EE82EE, 0), "Gamma Magnet", group = GRP_COLORS) // Violet
+i_colPinStrike      = input.color(color.new(#EE82EE, 30), "Pin Strike", group = GRP_COLORS)
+i_colEmFill         = input.color(color.new(#00FFFF, 92), "EM Fill", group = GRP_COLORS)
+i_colGammaFlipFill  = input.color(color.new(#FFFF00, 92), "Gamma Flip Fill", group = GRP_COLORS)
+
+// ─────────────────────────────────────────────────────────────────────
+// 2. COLOR INPUTS — Add a new group after GRP_COLORS:
+// ─────────────────────────────────────────────────────────────────────
+
+var string GRP_SCORED = "Scored Level Theme"
+i_colWallCall   = input.color(color.new(#00FF00, 0),  "Wall: Call Side",      group = GRP_SCORED)
+i_colWallPut    = input.color(color.new(#FF4444, 0),  "Wall: Put Side",       group = GRP_SCORED)
+i_colAnchor     = input.color(color.new(#FFD700, 0),  "Structural Anchor",    group = GRP_SCORED)
+i_colAnchorCrit = input.color(color.new(#FF6600, 0),  "Anchor (Critical)",    group = GRP_SCORED)
+i_colInflFlip   = input.color(color.new(#FFFFFF, 0),  "Inflection: Flip",     group = GRP_SCORED)
+i_colInflCliff  = input.color(color.new(#008080, 0),  "Inflection: Cliff",    group = GRP_SCORED)
+i_colInflVoid   = input.color(color.new(#9966FF, 0),  "Inflection: Void",     group = GRP_SCORED)
+i_colInflMagnet = input.color(color.new(#EE82EE, 0),  "Inflection: Magnet",   group = GRP_SCORED)
+
+var string GRP_LABELS = "Label Collision & Display"
+i_showLabels        = input.bool(true, "Show Labels", group = GRP_LABELS)
+i_showPriceInLabel  = input.bool(true, "Show Price In Label", group = GRP_LABELS)
+i_compactLabels     = input.bool(true, "Compact Label Text", group = GRP_LABELS)
+i_mergeSamePrice    = input.bool(true, "Merge Same-Price Labels", group = GRP_LABELS)
+i_mergeTolerance    = input.float(1.0, "Merge Tolerance (Points)", step=0.5, group=GRP_LABELS, tooltip="Combines levels within this many points of each other.")
+i_labelSize         = input.string("tiny", "Label Size", options = ["tiny", "small", "normal", "large"], group = GRP_LABELS)
+i_labelOffset       = input.int(2, "Label Offset", minval = 0, maxval = 50, group = GRP_LABELS)
+i_labelBgOpacity    = input.int(95, "Label Bg Opacity", minval = 0, maxval = 100, group = GRP_LABELS)
+i_labelCollision    = input.string("Stagger", "Collision Mode", options = ["Stagger", "Hide", "Off"], group = GRP_LABELS)
+i_maxLabelCols      = input.int(4, "Max Columns", minval = 1, maxval = 10, group = GRP_LABELS)
+i_columnStepBars    = input.int(2, "Column Step Bars", minval = 1, maxval = 20, group = GRP_LABELS)
+i_minLabelGapTicks  = input.int(40, "Min Gap (ticks)", minval = 1, maxval = 500, group = GRP_LABELS)
+
+var string GRP_DASH = "Dashboard"
+i_showDash          = input.bool(true, "Show Dashboard", group = GRP_DASH)
+i_dashPos           = input.string("Bottom Right", "Position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = GRP_DASH)
+i_dashSize          = input.string("small", "Text Size", options = ["tiny", "small", "normal", "large"], group = GRP_DASH)
+i_dashBgOpacity     = input.int(95, "Bg Opacity", minval = 0, maxval = 100, group = GRP_DASH)
+
+var string GRP_VIS = "Level Filters"
+i_showEM            = input.bool(true, "Show EM Levels", group = GRP_VIS)
+
+var string GRP_DEBUG = "Debug"
+i_debugLogs         = input.bool(false, "Enable Debug Logs", group = GRP_DEBUG)
+
+// ═══════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════
+
+f_labelSize(string s) = >
+    s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : size.large
+
+f_dbg(string msg) = >
+    if i_debugLogs
+        log.info(msg)
+
+f_pos(string s) = >
+    s == "Top Left" ? position.top_left : s == "Top Center" ? position.top_center : s == "Top Right" ? position.top_right :
+     s == "Middle Left" ? position.middle_left : s == "Middle Center" ? position.middle_center : s == "Middle Right" ? position.middle_right :
+     s == "Bottom Left" ? position.bottom_left : s == "Bottom Center" ? position.bottom_center : position.bottom_right
+
+f_norm(string v) = > str.upper(str.trim(v))
+
+f_stripPrefix(string v) = >
+    t = f_norm(v)
+    str.startswith(t, "/") ? str.substring(t, 1, str.length(t)) : t
+
+f_stripContinuousSuffix(string v) = >
+    c = f_stripPrefix(v)
+    l = str.length(c)
+    l > 2 and str.endswith(c, "!") ? str.substring(c, 0, l - 2) : c
+
+f_primarySymbol() = >
+    r = f_stripPrefix(syminfo.root)
+    t = f_stripPrefix(syminfo.ticker)
+    str.length(r) > 0 ? r : t
+
+f_canonicalSymbol(string s) = >
+    c = f_stripContinuousSuffix(s)
+    c == "MES" ? "ES" : c == "MNQ" ? "NQ" : c == "MYM" ? "YM" : c == "M2K" ? "RTY" : c == "MGC" ? "GC" : c == "SIL" ? "SI" : c == "MCL" ? "CL" : c == "MHG" ? "HG" : c == "M6E" ? "6E" : c == "M6A" ? "6A" : c == "M6B" ? "6B" : c == "M6J" ? "6J" : c
+
+f_symbolFamilyKey(string s) = >
+    c = f_canonicalSymbol(s)
+    r = c
+    if c == "ES" or c == "SPX" or c == "SPY"
+        r := "ES_FAMILY"
+    else if c == "NQ" or c == "NDX" or c == "QQQ"
+        r := "NQ_FAMILY"
+    else if c == "YM" or c == "DJX" or c == "DJI" or c == "US30" or c == "DOW" or c == "DIA"
+        r := "YM_FAMILY"
+    else if c == "RTY" or c == "RUT" or c == "IWM"
+        r := "RTY_FAMILY"
+    r
+
+f_sourceKind(string s) = >
+    c = f_canonicalSymbol(s)
+    c == "SPX" or c == "NDX" or c == "DJX" or c == "DJI" or c == "RUT" ? "INDEX" : c == "SPY" or c == "QQQ" or c == "DIA" or c == "IWM" ? "ETF" : "OTHER"
+
+f_isOvernightFutures(string s) = >
+    c = f_canonicalSymbol(s)
+    c == "ES" or c == "NQ" or c == "YM" or c == "RTY" or c == "CL" or c == "GC" or c == "SI" or c == "HG" or c == "6E" or c == "6A" or c == "6B" or c == "6J" or c == "ZN" or c == "ZB"
+
+f_getSourceTicker(string sC) = >
+    if sC == "ES" or sC == "MES"
+        "CME_MINI:ES1!"
+    else if sC == "SPX"
+        "SP:SPX"
+    else if sC == "SPY"
+        "AMEX:SPY"
+    else if sC == "NQ" or sC == "MNQ"
+        "CME_MINI:NQ1!"
+    else if sC == "NDX"
+        "NDX"
+    else if sC == "QQQ"
+        "NASDAQ:QQQ"
+    else if sC == "YM" or sC == "MYM"
+        "CBOT_MINI:YM1!"
+    else if sC == "DJI" or sC == "DJX" or sC == "DOW"
+        "DJI"
+    else if sC == "DIA"
+        "AMEX:DIA"
+    else if sC == "RTY" or sC == "M2K"
+        "CME_MINI:RTY1!"
+    else if sC == "RUT"
+        "RUT"
+    else if sC == "IWM"
+        "AMEX:IWM"
+    else
+        sC
+
+
+// No dynamic conversion logic needed here anymore.
+
+f_matchScore(string assetTag) = >
+    asset = f_canonicalSymbol(assetTag)
+    aFam = f_symbolFamilyKey(asset)
+    primary = f_canonicalSymbol(f_primarySymbol())
+    pFam = f_symbolFamilyKey(primary)
+    ticker = f_canonicalSymbol(syminfo.ticker)
+    tFam = f_symbolFamilyKey(ticker)
+    root = f_canonicalSymbol(syminfo.root)
+    rFam = f_symbolFamilyKey(root)
+    exact = asset == ticker or asset == root or asset == primary
+    family = aFam == tFam or aFam == rFam or aFam == pFam
+    eBase = i_overrideExact and i_familyPref != "Auto" ? 120 : 200
+    fBase = family ? 100 : 0
+    boost = 0
+    if family and i_familyPref != "Auto"
+        k = f_sourceKind(asset)
+        if i_familyPref == "Prefer ETF" and k == "ETF"
+            boost := 30
+        else if i_familyPref == "Prefer Index" and k == "INDEX"
+            boost := 30
+    exact ? eBase : (fBase + boost)
+
+f_num(float v) => na(v) ? "—" : str.tostring(v, "#.##")
+f_dashNum(float v) = >
+    av = math.abs(v)
+    na(v) ? "—" :
+     av >= 1000000000 ? str.tostring(v / 1000000000.0, "#.#") + "B" :
+     av >= 1000000 ? str.tostring(v / 1000000.0, "#.#") + "M" :
+     av >= 1000 ? str.tostring(v / 1000.0, "#.#") + "K" :
+     str.tostring(v, "#.##")
+f_wrapIndex(string src, int baseWidth) = >
+    splitIdx = math.min(baseWidth, str.length(src))
+    if str.length(src) > baseWidth
+        window = str.substring(src, baseWidth, math.min(baseWidth + 24, str.length(src)))
+        spacePos = str.pos(window, " ")
+        if not na(spacePos)
+            splitIdx := baseWidth + spacePos
+    splitIdx
+f_regimeShort(string regime) = >
+    regime == "BATTLE_ZONE" ? "BATTLE ZONE" :
+     regime == "PINNED" ? "PIN" :
+     regime == "COILED" ? "COIL" :
+     regime == "EXPANSION" ? "EXPANSION" : regime
+f_biasShort(string bias) = >
+    bias == "BULLISH" ? "BULLISH" : bias == "BEARISH" ? "BEARISH" : "NEUTRAL"
+f_pick(float v1, float v2, float v3) = > not na(v1) ? v1 : (not na(v2) ? v2 : v3)
+f_isNear(float value, float ref, float thr) = > not na(value) and not na(ref) and math.abs(value - ref) <= thr
+
+f_nearestBelow(float ref, float v1, float v2, float v3) = >
+    float b = na
+    if not na(ref)
+        if not na(v1) and v1 < ref and (na(b) or v1 > b)
+            b := v1
+        if not na(v2) and v2 < ref and (na(b) or v2 > b)
+            b := v2
+        if not na(v3) and v3 < ref and (na(b) or v3 > b)
+            b := v3
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_nearestAbove(float ref, float v1, float v2, float v3) = >
+    float b = na
+    if not na(ref)
+        if not na(v1) and v1 > ref and (na(b) or v1 < b)
+            b := v1
+        if not na(v2) and v2 > ref and (na(b) or v2 < b)
+            b := v2
+        if not na(v3) and v3 > ref and (na(b) or v3 < b)
+            b := v3
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_bestShortTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) = >
+    float b = na
+    if f_isNear(v1, spot, thr) and (na(b) or v1 > b)
+        b := v1
+    if f_isNear(v2, spot, thr) and (na(b) or v2 > b)
+        b := v2
+    if f_isNear(v3, spot, thr) and (na(b) or v3 > b)
+        b := v3
+    if f_isNear(v4, spot, thr) and (na(b) or v4 > b)
+        b := v4
+    if f_isNear(v5, spot, thr) and (na(b) or v5 > b)
+        b := v5
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_bestLongTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) = >
+    float b = na
+    if f_isNear(v1, spot, thr) and (na(b) or v1 < b)
+        b := v1
+    if f_isNear(v2, spot, thr) and (na(b) or v2 < b)
+        b := v2
+    if f_isNear(v3, spot, thr) and (na(b) or v3 < b)
+        b := v3
+    if f_isNear(v4, spot, thr) and (na(b) or v4 < b)
+        b := v4
+    if f_isNear(v5, spot, thr) and (na(b) or v5 < b)
+        b := v5
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_extractAssetTag(string lineText) = >
+    tokens = str.split(lineText, ",")
+    asset = ""
+    if array.size(tokens) > 0
+        fp = str.split(str.trim(array.get(tokens, 0)), ":")
+        if array.size(fp) >= 3
+            asset := f_stripPrefix(array.get(fp, 0))
+    asset
+
+f_findMatchingLine(string blob) = >
+    string mL = ""
+    string mA = ""
+    int bs = 0
+    rows = str.split(blob, "\n")
+    if array.size(rows) > 0
+        for i = 0 to array.size(rows) - 1
+            row = str.trim(array.get(rows, i))
+            if str.length(row) > 0 and str.contains(row, ",")
+                a = f_extractAssetTag(row)
+                sc = f_matchScore(a)
+                if str.length(a) > 0 and sc > bs
+                    mL := row
+                    mA := a
+                    bs := sc
+    [mL, mA]
+
+var string st_Regime = "NEUTRAL"
+var string st_Bias = "NEUTRAL"
+var string st_Note = "No tactical briefing loaded."
+var float st_ShortTrig = na
+var float st_LongTrig = na
+var float st_ShortTgt = na
+var float st_LongTgt = na
+var float st_ShortInv = na
+var float st_LongInv = na
+var float st_Vanna = 0.0
+var float st_Speed = 0.0
+var float st_Charm = 0.0
+var float st_GEX_DA = 0.0
+var float st_TotalGEX = 0.0
+var float st_IV = 0.0
+var float st_IVChg = 0.0
+var float st_Skew = 0.0
+var float st_Stability = 0.0
+var float st_Integrity = 0.0
+var float st_Concentration = 0.0
+var string st_WallScope = "UNSPECIFIED"
+var float st_HFlowUp10 = 0.0
+var float st_HFlowDn10 = 0.0
+var float st_HFlowUp25 = 0.0
+var float st_HFlowDn25 = 0.0
+var float st_HFlowUp50 = 0.0
+var float st_HFlowDn50 = 0.0
+var float st_OICallWall = 0.0
+var float st_OIPutWall = 0.0
+var float st_OIPin = 0.0
+var string st_OIVelCWStatus = "N/A"
+var string st_OIVelPWStatus = "N/A"
+var string st_OIVelPINStatus = "N/A"
+var float st_OIVelCWRate = 0.0
+var float st_OIVelPWRate = 0.0
+var float st_OIVelPINRate = 0.0
+var float st_VolExpUp = na
+var float st_VolExpDn = na
+var float st_FuturesBasis = na
+var float st_FuturesRatio = na
+
+f_parseScoredLevels(string lineText, 
+    array<float> prices, array<string> filters, 
+    array<string> sigs, array<string> labels) = >
+    array.clear(prices)
+    array.clear(filters)
+    array.clear(sigs)
+    array.clear(labels)
+    tokens = str.split(lineText, ",")
+    if array.size(tokens) > 0
+        for i = 0 to array.size(tokens) - 1
+            token = str.trim(array.get(tokens, i))
+            parts = str.split(token, ":")
+            string px = ""
+            string raw_label = ""
+            if i == 0
+                // First token: TICKER:PRICE:FILTER|SIG|LABEL
+                if array.size(parts) >= 3
+                    px := str.trim(array.get(parts, 1))
+                    raw_label := str.trim(array.get(parts, 2))
+            else
+                // Subsequent: PRICE:FILTER|SIG|LABEL
+                if array.size(parts) >= 2
+                    px := str.trim(array.get(parts, 0))
+                    raw_label := str.trim(array.get(parts, 1))
+            lv = math.round_to_mintick(str.tonumber(px))
+            if not na(lv) and str.length(raw_label) > 0
+                // Split FILTER|SIG|LABEL
+                meta = str.split(raw_label, "|")
+                if array.size(meta) >= 3
+                    array.push(prices, lv)
+                    array.push(filters, str.trim(array.get(meta, 0)))
+                    array.push(sigs, str.trim(array.get(meta, 1)))
+                    array.push(labels, str.trim(array.get(meta, 2)))
+
+f_scoredColor(string filter_code, string sig_code, string label_text) = >
+    // Color is driven by FILTER TYPE (what kind of level)
+    // plus context from the label for side detection
+    u = str.upper(label_text)
+    result = color.silver
+    if filter_code == "W"
+        // Wall: red for calls/resistance, green for puts/support
+        is_put = str.contains(u, "PW") or str.contains(u, "PUT") or str.contains(u, "HW") or str.contains(u, "LOC P")
+        result := is_put ? i_colWallPut : i_colWallCall
+    else if filter_code == "A"
+        // Anchor: gold normally, orange-red if CRIT in label
+        result := str.contains(u, "CRIT") ? i_colAnchorCrit : i_colAnchor
+    else if filter_code == "I"
+        // Inflection: depends on inflection subtype
+        result := str.contains(u, "ZERO") or str.contains(u, "FLIP") ? i_colInflFlip :
+             str.contains(u, "CLIFF") ? i_colInflCliff :
+             str.contains(u, "VOID") ? i_colInflVoid :
+             str.contains(u, "MAGNET") ? i_colInflMagnet :
+             color.white
+    else if filter_code == "E"
+        // Explicit expected move tracks
+        is_hi = str.contains(u, "EM HI") or str.contains(u, "EM85 HI") or str.contains(u, "UPPER")
+        result := is_hi ? i_colUpperEM : i_colLowerEM
+    result
+
+f_scoredStyle(string sig_code) = >
+    // Style is driven by SIGNIFICANCE (how important)
+    sig_code == "P" ? line.style_solid : 
+     sig_code == "S" ? line.style_dashed : 
+     line.style_dotted
+
+f_scoredWidth(string sig_code) = >
+    // Width is driven by SIGNIFICANCE
+    sig_code == "P" ? i_lineWidthPrimary : i_lineWidthSecondary
+
+f_scoredCompactLabel(string filter_code, string label_text) = >
+    // Labels are already compact from the Python export.
+    // Add a visual prefix based on filter type for quick scanning.
+    prefix = filter_code == "W" ? "▌" : filter_code == "A" ? "⚓" : filter_code == "I" ? "◆" : filter_code == "E" ? "◈" : "•"
+    u = str.upper(label_text)
+    disp = label_text
+    if str.contains(u, "EM HI")
+        disp := str.replace(u, "EM HI", "EM+")
+    else if str.contains(u, "EM LO")
+        disp := str.replace(u, "EM LO", "EM-")
+    else if str.contains(u, "EM85 HI")
+        disp := str.replace(u, "EM85 HI", "EM85+")
+    else if str.contains(u, "EM85 LO")
+        disp := str.replace(u, "EM85 LO", "EM85-")
+    prefix + " " + disp
+
+f_passScoredProximity(string label_text, float price) = >
+    if i_proxFilter <= 0.0
+        true
+    else
+        u = str.upper(label_text)
+        isTactical = str.contains(u, "0D") or str.contains(u, "LOC") or str.contains(u, "DEX") or str.contains(u, "CLIFF")
+        not isTactical or ((math.abs(price - close) / close) * 100.0 <= i_proxFilter)
+
+
+f_assignLabelColumn(float level, array<float> cols, float gap, int maxC) = >
+    int a = -1
+    if i_labelCollision == "Off"
+        a := 0
+    else
+        if array.size(cols) > 0
+            for c = 0 to array.size(cols) - 1
+                if math.abs(level - array.get(cols, c)) >= gap
+                    a := c
+                    break
+        if a == -1
+            if array.size(cols) < maxC
+                array.push(cols, level)
+                a := array.size(cols) - 1
+            else if i_labelCollision == "Hide"
+                a := -1
+            else
+                bG = -1.0
+                bC = 0
+                for c = 0 to array.size(cols) - 1
+                    g = math.abs(level - array.get(cols, c))
+                    if g > bG
+                        bG := g
+                        bC := c
+                a := bC
+    if a >= 0
+        if a >= array.size(cols)
+            array.push(cols, level)
+        else
+            array.set(cols, a, level)
+    a
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATE & EXECUTION
+// ═══════════════════════════════════════════════════════════════════════
+
+var string TZ = "America/New_York"
+f_sessionKey() = > dayofmonth(time, TZ) + month(time, TZ) * 31 + year(time, TZ) * 400
+isNewSession = ta.change(f_sessionKey()) != 0
+var int sessionStartBar = 0
+if barstate.isfirst 
+    sessionStartBar := bar_index
+
+
+// { logic
+bool is_recent = time >= (timenow - (86400000 * 2)) // Keeping 4 days to allow for long weekends
+
+// Define the underlying equity ticker based on your futures contract
+var string equity_ref = str.contains(syminfo.ticker, "NQ")  ? "QQQ" : 
+                         str.contains(syminfo.ticker, "ES")  ? "SPY" : 
+                         str.contains(syminfo.ticker, "YM")  ? "DIA" : 
+                         str.contains(syminfo.ticker, "RTY") ? "IWM" : 
+                         str.contains(syminfo.ticker, "SPX") ? "AMEX:SPY" : syminfo.ticker
+
+// Request the exact RTH session states from the underlying equity index
+[eq_open, eq_close] = request.security(equity_ref, timeframe.period, [session.isfirstbar_regular, session.islastbar_regular], gaps = barmerge.gaps_on)
+
+var bool can_calculate = false
+var int last_open_time = 0
+var int last_close_time = 0
+
+// OPTIMIZATION: Parse pasted text only once when the script loads
+var string rawScored = ""
+var string matchScored = ""
+
+// Trigger Open logic matching the exact equity open
+if is_recent and eq_open and time != last_open_time
+    last_open_time := time
+    can_calculate := true
+    //useClose       := false
+    sessionStartBar := bar_index
+    label.new(bar_index, high, "Open", color=color.green, textcolor=color.white, style=label.style_label_down)
+    f_dbg("[session] eq_open triggered; can_calculate=true at bar=" + str.tostring(bar_index) + " time=" + str.tostring(time))
+
+// Trigger Close logic matching the exact equity close
+if is_recent and eq_close and time != last_close_time
+    last_close_time := time
+    can_calculate := true
+    //useClose        := true
+    sessionStartBar := bar_index
+    label.new(bar_index, high, "Close", color=color.green, textcolor=color.white, style=label.style_label_down)
+    f_dbg("[session] eq_close triggered; sessionStartBar reset at bar=" + str.tostring(bar_index) + " time=" + str.tostring(time))
+
+
+
+var array<line> allLines = array.new_line()
+var array<label> allLabels = array.new_label()
+var array<int> labelCols = array.new_int()
+var array<float> colLastPrices = array.new_float()
+
+// OPTIMIZATION: Parse pasted text only once when the script loads
+// (vars moved up to allow conversion ratio logic to access them early)
+
+// Redraw / Calculation State
+var float st_ZG = na, var float st_MAG = na, var float st_PIN = na
+var float st_CW = na, var float st_PW = na, var float st_EU = na, var float st_EL = na
+var float st_GFU = na, var float st_GFL = na, var float st_GCU = na, var float st_GCD = na
+var float st_CW0 = na, var float st_PW0 = na, var float st_MP = na, var float st_HW = na
+var float st_LCN = na, var float st_LPN = na, var float st_DCN = na, var float st_DPN = na
+var string st_Asset = ""
+var float st_ANCHOR = na
+var string st_ANCHOR_LABEL = ""
+
+// Global line vars for EM and Gamma Flip fills (must be global to be used outside if blocks)
+var line line_emUp = na
+var line line_emDn = na
+var line line_gcUp = na
+var line line_gcDn = na
+var bool etfConversion = false
+
+
+
+// ── Global Parsed Data Caches ──
+var array<float> cached_sPrices = array.new_float()
+var array<string> cached_sFilters = array.new_string()
+var array<string> cached_sSigs = array.new_string()
+var array<string> cached_sLabels = array.new_string()
+
+
+if barstate.isfirst
+    [rS, mS] = f_findMatchingLine(i_pastedScored)
+    rawScored := rS
+    matchScored := mS
+    f_dbg("[init] matched asset=" + (str.length(matchScored) > 0 ? matchScored : "<none>") + ", raw line len=" + str.tostring(str.length(rawScored)))
+    if matchScored != ""
+        f_parseScoredLevels(rawScored, cached_sPrices, cached_sFilters, cached_sSigs, cached_sLabels)
+        f_dbg("[init] parsed scored levels: prices=" + str.tostring(array.size(cached_sPrices)) + ", filters=" + str.tostring(array.size(cached_sFilters)) + ", sigs=" + str.tostring(array.size(cached_sSigs)) + ", labels=" + str.tostring(array.size(cached_sLabels)))
+        // Ensure first draw happens immediately after load; otherwise script waits for next session gate.
+        can_calculate := true
+        sessionStartBar := bar_index
+        f_dbg("[init] forcing initial draw: can_calculate=true at bar=" + str.tostring(bar_index))
+    else
+        f_dbg("[init] parse skipped (matchScored empty)")
+
+    // --- Metadata Parsing ---
+    if matchScored != ""
+        tokens = str.split(rawScored, ",")
+        if array.size(tokens) > 0
+            for i = 0 to array.size(tokens) - 1
+                token = str.trim(array.get(tokens, i))
+                parts = str.split(token, ":")
+                string ti = ""
+                if i == 0
+                    if array.size(parts) >= 3
+                        ti := str.trim(array.get(parts, 2))
+                else
+                    if array.size(parts) >= 2
+                        ti := str.trim(array.get(parts, 1))
+
+                if str.contains(ti, "|")
+                    meta_parts = str.split(ti, "|")
+                    if array.size(meta_parts) >= 3
+                        ti := str.trim(array.get(meta_parts, 2))
+
+                if str.startswith(ti, "META_")
+                    if str.startswith(ti, "META_REGIME_")
+                        st_Regime := str.replace(ti, "META_REGIME_", "")
+                    else if str.startswith(ti, "META_BIAS_")
+                        st_Bias := str.replace(ti, "META_BIAS_", "")
+                    else if str.startswith(ti, "META_NOTE_")
+                        st_Note := str.replace(ti, "META_NOTE_", "")
+                    else if str.startswith(ti, "META_S_TRIG_")
+                        st_ShortTrig := str.tonumber(str.replace(ti, "META_S_TRIG_", ""))
+                    else if str.startswith(ti, "META_L_TRIG_")
+                        st_LongTrig := str.tonumber(str.replace(ti, "META_L_TRIG_", ""))
+                    else if str.startswith(ti, "META_S_TGT_")
+                        st_ShortTgt := str.tonumber(str.replace(ti, "META_S_TGT_", ""))
+                    else if str.startswith(ti, "META_L_TGT_")
+                        st_LongTgt := str.tonumber(str.replace(ti, "META_L_TGT_", ""))
+                    else if str.startswith(ti, "META_S_INV_")
+                        st_ShortInv := str.tonumber(str.replace(ti, "META_S_INV_", ""))
+                    else if str.startswith(ti, "META_L_INV_")
+                        st_LongInv := str.tonumber(str.replace(ti, "META_L_INV_", ""))
+                    else if str.startswith(ti, "META_VANNA_")
+                        st_Vanna := str.tonumber(str.replace(ti, "META_VANNA_", ""))
+                    else if str.startswith(ti, "META_SPEED_")
+                        st_Speed := str.tonumber(str.replace(ti, "META_SPEED_", ""))
+                    else if str.startswith(ti, "META_CHARM_")
+                        st_Charm := str.tonumber(str.replace(ti, "META_CHARM_", ""))
+                    else if str.startswith(ti, "META_GEX_DA_")
+                        st_GEX_DA := str.tonumber(str.replace(ti, "META_GEX_DA_", ""))
+                    else if str.startswith(ti, "META_GEX_TOTAL_")
+                        st_TotalGEX := str.tonumber(str.replace(ti, "META_GEX_TOTAL_", ""))
+                    else if str.startswith(ti, "META_IV_")
+                        st_IV := str.tonumber(str.replace(ti, "META_IV_", ""))
+                    else if str.startswith(ti, "META_IVCHG_")
+                        st_IVChg := str.tonumber(str.replace(ti, "META_IVCHG_", ""))
+                    else if str.startswith(ti, "META_SKEW_")
+                        st_Skew := str.tonumber(str.replace(ti, "META_SKEW_", ""))
+                    else if str.startswith(ti, "META_STABILITY_")
+                        st_Stability := str.tonumber(str.replace(ti, "META_STABILITY_", ""))
+                    else if str.startswith(ti, "META_INTEGRITY_")
+                        st_Integrity := str.tonumber(str.replace(ti, "META_INTEGRITY_", ""))
+                    else if str.startswith(ti, "META_CONCENTRATION_")
+                        st_Concentration := str.tonumber(str.replace(ti, "META_CONCENTRATION_", ""))
+                    else if str.startswith(ti, "META_WALL_SCOPE_")
+                        st_WallScope := str.replace(ti, "META_WALL_SCOPE_", "")
+                    else if str.startswith(ti, "META_HFLOW_UP10_")
+                        st_HFlowUp10 := str.tonumber(str.replace(ti, "META_HFLOW_UP10_", ""))
+                    else if str.startswith(ti, "META_HFLOW_DN10_")
+                        st_HFlowDn10 := str.tonumber(str.replace(ti, "META_HFLOW_DN10_", ""))
+                    else if str.startswith(ti, "META_HFLOW_UP25_")
+                        st_HFlowUp25 := str.tonumber(str.replace(ti, "META_HFLOW_UP25_", ""))
+                    else if str.startswith(ti, "META_HFLOW_DN25_")
+                        st_HFlowDn25 := str.tonumber(str.replace(ti, "META_HFLOW_DN25_", ""))
+                    else if str.startswith(ti, "META_HFLOW_UP50_")
+                        st_HFlowUp50 := str.tonumber(str.replace(ti, "META_HFLOW_UP50_", ""))
+                    else if str.startswith(ti, "META_HFLOW_DN50_")
+                        st_HFlowDn50 := str.tonumber(str.replace(ti, "META_HFLOW_DN50_", ""))
+                    else if str.startswith(ti, "META_OI_CALLWALL_")
+                        st_OICallWall := str.tonumber(str.replace(ti, "META_OI_CALLWALL_", ""))
+                    else if str.startswith(ti, "META_OI_PUTWALL_")
+                        st_OIPutWall := str.tonumber(str.replace(ti, "META_OI_PUTWALL_", ""))
+                    else if str.startswith(ti, "META_OI_PIN_")
+                        st_OIPin := str.tonumber(str.replace(ti, "META_OI_PIN_", ""))
+                    else if str.startswith(ti, "META_OI_VEL_CW_STATUS_")
+                        st_OIVelCWStatus := str.replace(ti, "META_OI_VEL_CW_STATUS_", "")
+                    else if str.startswith(ti, "META_OI_VEL_PW_STATUS_")
+                        st_OIVelPWStatus := str.replace(ti, "META_OI_VEL_PW_STATUS_", "")
+                    else if str.startswith(ti, "META_OI_VEL_PIN_STATUS_")
+                        st_OIVelPINStatus := str.replace(ti, "META_OI_VEL_PIN_STATUS_", "")
+                    else if str.startswith(ti, "META_OI_VEL_CW_RATE_")
+                        st_OIVelCWRate := str.tonumber(str.replace(ti, "META_OI_VEL_CW_RATE_", ""))
+                    else if str.startswith(ti, "META_OI_VEL_PW_RATE_")
+                        st_OIVelPWRate := str.tonumber(str.replace(ti, "META_OI_VEL_PW_RATE_", ""))
+                    else if str.startswith(ti, "META_OI_VEL_PIN_RATE_")
+                        st_OIVelPINRate := str.tonumber(str.replace(ti, "META_OI_VEL_PIN_RATE_", ""))
+                    else if str.startswith(ti, "META_FUTURES_BASIS_")
+                        st_FuturesBasis := str.tonumber(str.replace(ti, "META_FUTURES_BASIS_", ""))
+                    else if str.startswith(ti, "META_FUTURES_RATIO_")
+                        st_FuturesRatio := str.tonumber(str.replace(ti, "META_FUTURES_RATIO_", ""))
+                    else if str.startswith(ti, "META_VOL_EXPANSION_UP_")
+                        st_VolExpUp := str.tonumber(str.replace(ti, "META_VOL_EXPANSION_UP_", ""))
+                    else if str.startswith(ti, "META_VOL_EXPANSION_DN_")
+                        st_VolExpDn := str.tonumber(str.replace(ti, "META_VOL_EXPANSION_DN_", ""))
+
+        f_dbg("[init] metadata summary: regime=" + st_Regime + ", bias=" + st_Bias + ", concentration=" + str.tostring(st_Concentration) + ", integrity=" + str.tostring(st_Integrity))
+
+        // ── Apply Static Futures Translation ONCE After Parsing ──
+        bool doConversion = (i_applyConv == "Auto" and syminfo.type == "futures") or (i_applyConv == "Always")
+        
+        if doConversion and array.size(cached_sPrices) > 0
+            if not na(st_FuturesBasis) and math.abs(st_FuturesBasis) > 0.001
+                for k = 0 to array.size(cached_sPrices) - 1
+                    array.set(cached_sPrices, k, array.get(cached_sPrices, k) + st_FuturesBasis)
+                
+                if not na(st_ShortTrig)
+                    st_ShortTrig := st_ShortTrig + st_FuturesBasis
+                if not na(st_LongTrig)
+                    st_LongTrig := st_LongTrig + st_FuturesBasis
+                if not na(st_ShortTgt)
+                    st_ShortTgt := st_ShortTgt + st_FuturesBasis
+                if not na(st_LongTgt)
+                    st_LongTgt := st_LongTgt + st_FuturesBasis
+                if not na(st_ShortInv)
+                    st_ShortInv := st_ShortInv + st_FuturesBasis
+                if not na(st_LongInv)
+                    st_LongInv := st_LongInv + st_FuturesBasis
+                if not na(st_VolExpUp)
+                    st_VolExpUp := st_VolExpUp + st_FuturesBasis
+                if not na(st_VolExpDn)
+                    st_VolExpDn := st_VolExpDn + st_FuturesBasis
+                    
+                etfConversion := true
+                f_dbg("[conv] ONCE: applied additive basis from metadata=" + str.tostring(st_FuturesBasis, "#.##"))
+            else if not na(st_FuturesRatio) and math.abs(st_FuturesRatio - 1.0) > 0.000001
+                for k = 0 to array.size(cached_sPrices) - 1
+                    array.set(cached_sPrices, k, array.get(cached_sPrices, k) * st_FuturesRatio)
+                    
+                if not na(st_ShortTrig)
+                    st_ShortTrig := st_ShortTrig * st_FuturesRatio
+                if not na(st_LongTrig)
+                    st_LongTrig := st_LongTrig * st_FuturesRatio
+                if not na(st_ShortTgt)
+                    st_ShortTgt := st_ShortTgt * st_FuturesRatio
+                if not na(st_LongTgt)
+                    st_LongTgt := st_LongTgt * st_FuturesRatio
+                if not na(st_ShortInv)
+                    st_ShortInv := st_ShortInv * st_FuturesRatio
+                if not na(st_LongInv)
+                    st_LongInv := st_LongInv * st_FuturesRatio
+                if not na(st_VolExpUp)
+                    st_VolExpUp := st_VolExpUp * st_FuturesRatio
+                if not na(st_VolExpDn)
+                    st_VolExpDn := st_VolExpDn * st_FuturesRatio
+                    
+                etfConversion := true
+                f_dbg("[conv] ONCE: applied multiplicative scale from metadata=" + str.tostring(st_FuturesRatio, "#.######"))
+
+f_clearAll() = >
+    while array.size(allLines) > 0
+        line.delete(array.shift(allLines))
+    while array.size(allLabels) > 0
+        label.delete(array.shift(allLabels))
+    array.clear(labelCols)
+    array.clear(colLastPrices)
+
+
+
+var s_flt = ""
+var s_sig = ""
+var int dbg_lastWaitLogTs = 0
+if can_calculate
+    can_calculate := false
+    f_clearAll()
+    st_ZG := na, st_MAG := na, st_PIN := na, st_ANCHOR := na
+    st_ANCHOR_LABEL := ""
+    st_CW := na, st_PW := na, st_EU := na, st_EL := na
+    st_GFU := na, st_GFL := na, st_GCU := na, st_GCD := na
+    st_CW0 := na, st_PW0 := na, st_MP := na, st_HW := na
+    st_LCN := na, st_LPN := na, st_DCN := na, st_DPN := na
+    st_Asset := matchScored
+    line_emUp := na
+    line_emDn := na
+    line_gcUp := na
+    line_gcDn := na
+    etfConversion := false
+
+    if array.size(cached_sPrices) > 0
+        // Reuse scored arrays parsed at startup; avoid reparsing text each recalculation cycle.
+        sPrices = array.copy(cached_sPrices)
+        sFilters = array.copy(cached_sFilters)
+        sSigs = array.copy(cached_sSigs)
+        sLabels = array.copy(cached_sLabels)
+
+        f_dbg("[draw] can_calculate start: bars in cache=" + str.tostring(array.size(sPrices)) + ", asset=" + (str.length(matchScored) > 0 ? matchScored : "<none>"))
+
+    
+        if array.size(sPrices) > 0
+            int dbgSkippedEm = 0
+            int dbgSkippedProx = 0
+            int dbgDrawn = 0
+            for i = 0 to array.size(sPrices) - 1
+                s_lv = array.get(sPrices, i)
+                s_flt := array.get(sFilters, i)
+                s_sig := array.get(sSigs, i)
+                s_lbl = array.get(sLabels, i)
+
+                // Keep explicit EM rows optional via visibility control.
+                if s_flt == "E" and not i_showEM
+                    dbgSkippedEm := dbgSkippedEm + 1
+                    continue
+
+                if not f_passScoredProximity(s_lbl, s_lv)
+                    dbgSkippedProx := dbgSkippedProx + 1
+                    continue
+                
+                s_clr = f_scoredColor(s_flt, s_sig, s_lbl)
+                s_sty = f_scoredStyle(s_sig)
+                s_wid = f_scoredWidth(s_sig)
+                
+                ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, 
+                    color = s_clr, width = s_wid, style = s_sty)
+                array.push(allLines, ln)
+                dbgDrawn := dbgDrawn + 1
+
+                if str.contains(str.upper(s_lbl), "EM HI")
+                    line_emUp := ln
+                if str.contains(str.upper(s_lbl), "EM LO")
+                    line_emDn := ln
+                
+                // Capture FLIP lines from scored levels for linefill
+                if str.contains(str.upper(s_lbl), "FLIP UP")
+                    line_gcUp := ln
+                if str.contains(str.upper(s_lbl), "FLIP DN")
+                    line_gcDn := ln
+                
+                if i_showLabels
+                    mg = syminfo.mintick * i_minLabelGapTicks
+                    lc = f_assignLabelColumn(s_lv, colLastPrices, mg, i_maxLabelCols)
+                    if lc >= 0
+                        dispTxt = f_scoredCompactLabel(s_flt, s_lbl)
+                        if i_showPriceInLabel
+                            dispTxt := dispTxt + " (" + str.tostring(s_lv, "#.##") + ")"
+                        lb = label.new(bar_index + i_labelOffset, s_lv, dispTxt, 
+                            textcolor = s_clr, 
+                            color = color.new(#131722, 100 - i_labelBgOpacity), 
+                            style = label.style_label_left, 
+                            size = f_labelSize(i_labelSize))
                         array.push(allLabels, lb)
                         array.push(labelCols, lc)
 
@@ -940,7 +1733,7 @@ if barstate.islast
 var table dash = na
 
 if barstate.isfirst
-    dash := table.new(f_pos(i_dashPos), 2, 36, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
+    dash := table.new(f_pos(i_dashPos), 2, 36, bgcolor = color.new(#131722, 100 - i_dashBgOpacity), border_width = 0)
 
 
 if barstate.islast and i_showDash
@@ -1050,7 +1843,7 @@ if barstate.islast and i_showDash
     // Row: Concentration & Stability
     row := row+1
     concClr = st_Concentration < 0.6 ? color.yellow : color.white
-    stabClr  = st_Stability > 0.6 ? color.orange : color.white
+    stabClr = st_Stability > 0.6 ? color.orange : color.white
     table.cell(dash, 0, row, "Concentration | Stability", text_color = labelTxt, text_size = tSz)
     table.cell(dash, 1, row, str.tostring(st_Concentration * 100, "0") + "% | " + str.tostring(st_Stability * 100, "0") + "%", text_color = st_Concentration < 0.6 ? concClr : stabClr, text_size = tSz)
 
@@ -1063,7 +1856,327 @@ if barstate.islast and i_showDash
     table.cell(dash, 0, row, "FLOWS", text_color = sectionTxt, text_size = tSz, bgcolor = sectionBg)
     table.cell(dash, 1, row, "", text_size = tSz, bgcolor = sectionBg)
 
-    vannaClr  = st_Vanna > 1.5 ? color.lime : st_Vanna < -1.5 ? color.red : color.gray
+    vannaClr = st_Vanna > 1.5 ? color.lime : st_Vanna < -1.5 ? color.red : color.gray
+    
+    row := row+1
+    table.cell(dash, 0, row, "Vanna | Charm", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_dashNum(st_Vanna) + " | " + f_dashNum(st_Charm), text_color = vannaClr, text_size = tSz)
+    
+    row := row+1
+    table.cell(dash, 0, row, "Hedge Flow ±25", text_color = labelTxt, text_size = tSz)
+    hfClr = math.abs(st_HFlowUp25) > math.abs(st_HFlowDn25) ? color.lime : color.red
+    table.cell(dash, 1, row, f_dashNum(st_HFlowDn25) + " / " + f_dashNum(st_HFlowUp25), text_color = hfClr, text_size = tSz)
+
+    row := row+1
+    table.cell(dash, 0, row, "OI Velocity", text_color = labelTxt, text_size = tSz)
+    oiVelTxt = "CW " + st_OIVelCWStatus + " " + str.tostring(st_OIVelCWRate, "+#.0") + "/m | " + "PW " + st_OIVelPWStatus + " " + str.tostring(st_OIVelPWRate, "+#.0") + "/m | " + "PIN " + st_OIVelPINStatus + " " + str.tostring(st_OIVelPINRate, "+#.0") + "/m"
+    buildMax = math.max(st_OIVelCWStatus == "BUILD" ? math.abs(st_OIVelCWRate) : 0.0, math.max(st_OIVelPWStatus == "BUILD" ? math.abs(st_OIVelPWRate) : 0.0, st_OIVelPINStatus == "BUILD" ? math.abs(st_OIVelPINRate) : 0.0))
+    decayMax = math.max(st_OIVelCWStatus == "DECAY" ? math.abs(st_OIVelCWRate) : 0.0, math.max(st_OIVelPWStatus == "DECAY" ? math.abs(st_OIVelPWRate) : 0.0, st_OIVelPINStatus == "DECAY" ? math.abs(st_OIVelPINRate) : 0.0))
+    domBuild = buildMax >= decayMax and buildMax > 0
+    domDecay = decayMax > buildMax and decayMax > 0
+    domMag = domBuild ? buildMax : domDecay ? decayMax : math.max(math.abs(st_OIVelCWRate), math.max(math.abs(st_OIVelPWRate), math.abs(st_OIVelPINRate)))
+    oiVelClr = color.silver
+    if st_OIVelCWStatus == "N/A" and st_OIVelPWStatus == "N/A" and st_OIVelPINStatus == "N/A"
+        oiVelClr := color.gray
+    else if domBuild
+        oiVelClr := domMag >= 2500 ? color.lime : domMag >= 600 ? color.new(color.lime, 0) : color.new(color.yellow, 0)
+    else if domDecay
+        oiVelClr := domMag >= 2500 ? color.red : domMag >= 600 ? color.new(color.red, 0) : color.new(color.orange, 0)
+    else
+        oiVelClr := domMag >= 600 ? color.yellow : color.silver
+    table.cell(dash, 1, row, oiVelTxt, text_color = oiVelClr, text_size = tSz)
+
+    // --- IV & Skew row ---
+    row := row+1
+    table.cell(dash, 0, row, "IV | Skew", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, str.tostring(st_IV * 100, "#.#") + "% " + str.tostring(st_IVChg * 100, "+#.#") + " | " + str.tostring(st_Skew * 100, "+#.#") + "%", text_color = color.white, text_size = tSz)
+
+
+    // --- DEX Highlight Logic (Targeting) ---
+    prox_thr = emV2 * 0.1 // 10% of EM as proximity
+    isNearDCN = not na(st_DCN) and math.abs(close - st_DCN) < prox_thr
+    isNearDPN = not na(st_DPN) and math.abs(close - st_DPN) < prox_thr
+    
+    // Row  7: Separator
+    row := row+1
+    table.cell(dash, 0, row, "", text_size = size.tiny)
+    table.cell(dash, 1, row, "", text_size = size.tiny)
+    // Row  8: Narrative header
+    row := row+1
+    table.cell(dash, 0, row, "PLAN", text_color = sectionTxt, text_size = tSz, bgcolor = sectionBg)
+    table.cell(dash, 1, row, "", text_size = tSz, bgcolor = sectionBg)
+    dexInfo = ""
+    if not na(st_DPN) or not na(st_DCN)
+        dexInfo := "DEX Nodes: " + f_num(st_DPN) + " / " + f_num(st_DCN)
+    row := row+1
+    table.cell(dash, 1, row, dexInfo, text_color = (isNearDCN or isNearDPN) ? color.yellow : color.white, text_size = tSz)
+    // Row  9: Short
+    row := row+1
+    sZ = ""
+    if not na(st_GCD)
+        sZ := "GC↓" + f_num(st_GCD) + " "
+    if not na(st_DPN)
+        sZ := sZ + "DEX " + f_num(st_DPN)
+    table.cell(dash, 0, row, "SHORT", text_color = color.white, text_size = tSz, bgcolor = color.new(color.red, 82))
+    table.cell(dash, 1, row, "Trigger < " + f_num(sTrig) + "  Target " + f_num(sTgt) + "  Invalidate > " + f_num(sInv), text_color = color.new(color.red, 0), text_size = tSz, bgcolor = color.new(color.red, 90))
+    // Row 10: Short zones
+    row := row+1
+    table.cell(dash, 0, row, "", text_size = size.tiny)
+    table.cell(dash, 1, row, str.length(sZ) > 0 ? sZ : "", text_color = color.new(color.red, 40), text_size = tSz)
+    // Row 11: Long
+    row := row+1
+    lZ = ""
+    if not na(st_GCU)
+        lZ := "GC↑" + f_num(st_GCU) + " "
+    if not na(st_DCN)
+        lZ := lZ + "DEX " + f_num(st_DCN)
+    table.cell(dash, 0, row, "LONG", text_color = color.white, text_size = tSz, bgcolor = color.new(color.lime, 82))
+    table.cell(dash, 1, row, "Trigger > " + f_num(lTrig) + "  Target " + f_num(lTgt) + "  Invalidate < " + f_num(lInv), text_color = color.new(color.lime, 0), text_size = tSz, bgcolor = color.new(color.lime, 90))
+    // Row 12: Long zones
+    row := row+1
+    table.cell(dash, 0, row, "", text_size = size.tiny)
+    table.cell(dash, 1, row, str.length(lZ) > 0 ? lZ : "", text_color = color.new(color.lime, 40), text_size = tSz)
+    // Row 13: EM
+    row := row+1
+    table.cell(dash, 0, row, "EM", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_EL) + " ↔ " + f_num(st_EU), text_color = color.aqua, text_size = tSz)
+    
+    // Row 14: Coach's Note (with wrapping)
+    row := row+1
+    table.cell(dash, 0, row, "NOTE", text_color = color.orange, text_size = tSz)
+    noteParts = str.split(st_Note, " | ")
+    if array.size(noteParts) > 1
+        for noteIdx = 0 to array.size(noteParts) - 1
+            noteLine = str.trim(array.get(noteParts, noteIdx))
+            wrapIdx = f_wrapIndex(noteLine, 42)
+            noteA = str.substring(noteLine, 0, wrapIdx)
+            noteB = wrapIdx < str.length(noteLine) ? str.trim(str.substring(noteLine, wrapIdx)) : ""
+            if noteIdx > 0
+                row := row + 1
+                table.cell(dash, 0, row, "", text_size = tSz)
+            table.cell(dash, 1, row, noteA, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+            if str.length(noteB) > 0
+                row := row + 1
+                table.cell(dash, 0, row, "", text_size = tSz)
+                table.cell(dash, 1, row, noteB, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+    else if str.length(st_Note) > 60
+        splitIdx = f_wrapIndex(st_Note, 42)
+
+        note1 = str.substring(st_Note, 0, splitIdx)
+        note2 = str.trim(str.substring(st_Note, splitIdx))
+        table.cell(dash, 1, row, note1, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+        row := row + 1
+        table.cell(dash, 0, row, "", text_size = tSz)
+        table.cell(dash, 1, row, note2, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+    else
+        table.cell(dash, 1, row, st_Note, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+
+if barstate.islast and not i_showDash and not na(dash)
+    table.clear(dash, 0, 0, 1, 35)
+
+if i_debugLogs and barstate.islast and array.size(allLines) == 0
+    shouldLogWait = dbg_lastWaitLogTs == 0 or (timenow - dbg_lastWaitLogTs) > 60000
+    if shouldLogWait
+        dbg_lastWaitLogTs := timenow
+        f_dbg("[wait] no lines drawn yet. is_recent=" + str.tostring(is_recent) + ", eq_open=" + str.tostring(eq_open) + ", eq_close=" + str.tostring(eq_close) + ", can_calculate=" + str.tostring(can_calculate) + ", matched=" + (str.length(matchScored) > 0 ? matchScored : "<none>") + ", raw_len=" + str.tostring(str.length(rawScored)) + ", cache=" + str.tostring(array.size(cached_sPrices)))
+
+                    else if str.contains(u_lbl, "HW")
+                        st_PW := s_lv
+                        st_HW := s_lv
+                    else if str.contains(u_lbl, "CW")
+                        st_CW := s_lv
+                    else if str.contains(u_lbl, "PW")
+                        st_PW := s_lv
+
+                // Anchors → track st_ANCHOR
+                if s_flt == "A"
+                    if str.contains(u_lbl, "PIN")
+                        st_PIN := s_lv
+                    else if str.contains(u_lbl, "MAX")
+                        st_MP := s_lv
+                    else if na(st_ANCHOR)
+                        st_ANCHOR := s_lv
+                        st_ANCHOR_LABEL := s_lbl
+
+                // Inflections → override ZG/MAG
+                if s_flt == "I"
+                    if str.contains(u_lbl, "ZERO")
+                        st_ZG := s_lv
+                    if str.contains(u_lbl, "MAGNET")
+                        st_MAG := s_lv
+                    if str.contains(u_lbl, "FLIP UP")
+                        st_GFU := s_lv
+                    if str.contains(u_lbl, "FLIP DN")
+                        st_GFL := s_lv
+                    if str.contains(u_lbl, "CLIFF UP")
+                        st_GCU := s_lv
+                    if str.contains(u_lbl, "CLIFF DN")
+                        st_GCD := s_lv
+
+                // Expected move tracks from explicit EM filter
+                if s_flt == "E"
+                    if str.contains(u_lbl, "EM HI")
+                        st_EU := s_lv
+                    if str.contains(u_lbl, "EM LO")
+                        st_EL := s_lv
+
+            f_dbg("[draw] summary: total=" + str.tostring(array.size(sPrices)) + ", drawn=" + str.tostring(dbgDrawn) + ", skipped_em=" + str.tostring(dbgSkippedEm) + ", skipped_prox=" + str.tostring(dbgSkippedProx) + ", lines_now=" + str.tostring(array.size(allLines)))
+    else
+        f_dbg("[draw] skipped: cached_sPrices=" + str.tostring(array.size(cached_sPrices)))
+
+
+    
+    // OPTIMIZATION: Apply linefills immediately after line creation
+    if i_showEmFill and not na(line_emUp) and not na(line_emDn)
+        linefill.new(line_emUp, line_emDn, i_colEmFill)
+    if i_showGammaFlip and not na(line_gcUp) and not na(line_gcDn)
+        linefill.new(line_gcUp, line_gcDn, i_colGammaFlipFill)
+    
+
+// ── OPTIMIZED Realtime Extension ──
+// By wrapping this in barstate.islast, we prevent the script from trying 
+// to extend lines on thousands of historical bars.
+if barstate.islast
+    if array.size(allLines) > 0
+        for i = 0 to array.size(allLines) - 1
+            line.set_x2(array.get(allLines, i), bar_index)
+            
+    if array.size(allLabels) > 0
+        for i = 0 to array.size(allLabels) - 1
+            c = i < array.size(labelCols) ? array.get(labelCols, i) : 0
+            label.set_x(array.get(allLabels, i), bar_index + i_labelOffset + (c * i_columnStepBars))
+
+// ═══════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════
+
+var table dash = na
+
+if barstate.isfirst
+    dash := table.new(f_pos(i_dashPos), 2, 36, bgcolor = color.new(#131722, 100 - i_dashBgOpacity), border_width = 0)
+
+
+if barstate.islast and i_showDash
+    tSz = f_labelSize(i_dashSize)
+    table.clear(dash, 0, 0, 1, 35)
+    
+    // ── Derived metrics ──
+    emV = not na(st_EU) and not na(st_EL) ? (st_EU - st_EL) / 2.0 : na
+    wSep = not na(st_CW) and not na(st_PW) ? math.abs(st_CW - st_PW) : na
+    // ── Regime + Direction from Metadata ──
+    regime = st_Regime
+    biasLabel = st_Bias
+    biasArrow = biasLabel == "BULLISH" ? "↑" : biasLabel == "BEARISH" ? "↓" : "↔"
+    biasClr = biasLabel == "BULLISH" ? color.lime : biasLabel == "BEARISH" ? color.red : color.gray
+
+    // ── Proximity triggers ──
+    emV2 = not na(emV) ? emV : 50.0
+    thr = emV2 * 3.0
+    // Use metadata triggers if available, fallback to internal logic
+    sTrig = not na(st_ShortTrig) ? st_ShortTrig : f_bestShortTrigger(close, thr, st_GFL, st_PW, st_LPN, st_HW, st_ZG)
+    lTrig = not na(st_LongTrig) ? st_LongTrig : f_bestLongTrigger(close, thr, st_CW, st_GFU, st_CW0, st_LCN, st_ZG)
+    sTgt = not na(st_ShortTgt) ? st_ShortTgt : f_nearestBelow(sTrig, st_PW, st_HW, st_EL)
+    sInv = not na(st_ShortInv) ? st_ShortInv : f_nearestAbove(sTrig, st_CW, st_GFU, st_EU)
+    lTgt = not na(st_LongTgt) ? st_LongTgt : f_nearestAbove(lTrig, st_MP, st_EU, st_GFU)
+    lInv = not na(st_LongInv) ? st_LongInv : f_nearestBelow(lTrig, st_ZG, st_GFL, st_PW)
+
+    primary = f_primarySymbol()
+    resolved = str.length(st_Asset) > 0 ? st_Asset : "—"
+    modeText = f_isOvernightFutures(primary) ? "Globex" : "Calendar"
+    sectionBg = color.new(#24324A, 35)
+    sectionTxt = color.new(#8FB5FF, 0)
+    labelTxt = color.new(#9098AA, 0)
+
+    anchorVal = st_ANCHOR
+    anchorLbl = st_ANCHOR_LABEL
+    if na(anchorVal)
+        if not na(st_PIN)
+            anchorVal := st_PIN
+            anchorLbl := "PIN"
+        else if not na(st_ZG)
+            anchorVal := st_ZG
+            anchorLbl := "ZERO"
+        else if not na(st_MP)
+            anchorVal := st_MP
+            anchorLbl := "MAX"
+    anchorTxt = na(anchorVal) ? "—" : (f_num(anchorVal) + (str.length(anchorLbl) > 0 ? " " + anchorLbl : ""))
+
+    row = 0
+    // Row  0: Header
+    table.cell(dash, 0, row, primary + " | " + modeText, text_color = color.white, text_size = tSz, bgcolor = sectionBg)
+    table.cell(dash, 1, row, resolved + (etfConversion ? " scaled" : ""), text_color = str.length(st_Asset) > 0 ? color.lime : color.red, text_size = tSz, bgcolor = sectionBg)
+    // Row  1: Regime + Direction
+    row := row+1
+    table.cell(dash, 0, row, "Regime", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_regimeShort(regime) + " " + biasArrow + " " + f_biasShort(biasLabel), text_color = biasClr, text_size = tSz)
+
+    // Section: Market structure
+    row := row+1
+    table.cell(dash, 0, row, "MARKET", text_color = sectionTxt, text_size = tSz, bgcolor = sectionBg)
+    table.cell(dash, 1, row, "", text_size = tSz, bgcolor = sectionBg)
+
+    // Row: Mag
+    row := row+1
+    table.cell(dash, 0, row, "Gamma Magnet", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_MAG), text_color = i_colGammaMagnet, text_size = tSz)
+    // Row: Pin
+    row := row+1
+    table.cell(dash, 0, row, "Pin Strike", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_PIN), text_color = i_colPinStrike, text_size = tSz)
+
+    // Row: Anchor (with fallback)
+    row := row+1
+    table.cell(dash, 0, row, "ANCHOR", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, anchorTxt, text_color = i_colAnchor, text_size = tSz)
+
+    // Row: Zero Gamma
+    row := row+1
+    table.cell(dash, 0, row, "Zero Gamma", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_ZG), text_color = i_colZeroGamma, text_size = tSz)
+
+    // Row: Cliffs
+    row := row+1
+    table.cell(dash, 0, row, "CLIFFS", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_GCD) + " / " + f_num(st_GCU), text_color = color.teal, text_size = tSz)
+
+    // Row: Vol expansion
+    row := row+1
+    table.cell(dash, 0, row, "Vol Expansion", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_VolExpDn) + " / " + f_num(st_VolExpUp), text_color = color.new(#FF00FF, 0), text_size = tSz)
+
+    // Section: Risk
+    row := row+1
+    table.cell(dash, 0, row, "RISK", text_color = sectionTxt, text_size = tSz, bgcolor = sectionBg)
+    table.cell(dash, 1, row, "", text_size = tSz, bgcolor = sectionBg)
+
+    // Row: Separation + EM + GEX
+    row := row+1
+    table.cell(dash, 0, row, "Wall Sep | EM | GEX", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(wSep) + " | " + f_num(emV) + " | " + f_dashNum(st_TotalGEX), text_color = color.white, text_size = tSz)
+
+    // Row: Delta-adjusted GEX
+    row := row+1
+    gexDaClr = st_GEX_DA > 0 ? color.lime : st_GEX_DA < 0 ? color.red : color.gray
+    table.cell(dash, 0, row, "GEX Delta-Adj", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_dashNum(st_GEX_DA), text_color = gexDaClr, text_size = tSz)
+
+    // Row: Concentration & Stability
+    row := row+1
+    concClr = st_Concentration < 0.6 ? color.yellow : color.white
+    stabClr = st_Stability > 0.6 ? color.orange : color.white
+    table.cell(dash, 0, row, "Concentration | Stability", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, str.tostring(st_Concentration * 100, "0") + "% | " + str.tostring(st_Stability * 100, "0") + "%", text_color = st_Concentration < 0.6 ? concClr : stabClr, text_size = tSz)
+
+    row := row+1
+    table.cell(dash, 0, row, "Wall Scope", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, st_WallScope, text_color = color.silver, text_size = tSz)
+
+    // --- Institutional Flows (Greeks) ---
+    row := row+1
+    table.cell(dash, 0, row, "FLOWS", text_color = sectionTxt, text_size = tSz, bgcolor = sectionBg)
+    table.cell(dash, 1, row, "", text_size = tSz, bgcolor = sectionBg)
+
+    vannaClr = st_Vanna > 1.5 ? color.lime : st_Vanna < -1.5 ? color.red : color.gray
     
     row := row+1
     table.cell(dash, 0, row, "Vanna | Charm", text_color = labelTxt, text_size = tSz)

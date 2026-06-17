@@ -196,6 +196,12 @@ def translate_to_futures(
         else round_to_tick(levels.em_value, min_tick)
     )
 
+    # Attach Translation Matrix to the original DealerLevels object
+    levels.futures_symbol = futures.symbol
+    levels.translation_mode = "multiplicative" if use_scale else "additive"
+    levels.basis_spread = round(spread, 2) if not use_scale else 0.0
+    levels.basis_ratio = round(ratio, 4) if use_scale else 1.0
+
     return TranslatedLevels(
         futures_symbol=futures.symbol,
         cash_ticker=levels.ticker,

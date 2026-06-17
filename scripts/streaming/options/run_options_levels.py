@@ -557,11 +557,6 @@ def run_pipeline(
             # Macro Scoring (filters to ±15% spot, Primary only)
             scored_macro = score_levels(levels_macro, chain, ticker, profile, MACRO_VIEW)
 
-            # 7. Write per-ticker snapshot to DB
-            if _is_rth():
-                from .interval_writer import write_snapshot
-                write_snapshot(levels_intraday, ticker_override=ticker)
-
             # 6. Translate levels into futures price space
             if futures_sym is None or fut is None:
                 log.debug("No futures translation for %s (mapping missing or quote failed).", ticker)
@@ -578,6 +573,11 @@ def run_pipeline(
                 
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
+
+            # 7. Write per-ticker snapshot to DB (now includes futures translation fields)
+            if _is_rth():
+                from .interval_writer import write_snapshot
+                write_snapshot(levels_intraday, ticker_override=ticker)
 
                 # (Removed translate_scored_levels call: TradingView Pinescript performs live dynamic translation 
                 # against native cash/ETF data. Unified outputs must remain in native space to prevent double-conversion).

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState, memo } from 'react';
 import Link from 'next/link';
@@ -34,7 +34,7 @@ import {
 import { initDuckDB, loadParquet, resetDuckDB, runQuery } from '@/lib/duckdb';
 import { QueryStatus } from '@/app/edgeful/components/QueryStatus';
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Types ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 type EngineStatus = 'loading' | 'ready' | 'error';
 
@@ -143,7 +143,7 @@ type TimingRow = {
   play1_n: number;
 };
 
-// ─── Constants ─────────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Constants ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const DEFAULT_FILTERS: FilterState = {
   symbol: 'ALL',
@@ -175,7 +175,12 @@ const TABLE_NAMES = [
   'ib_level_touch_detail',
 ];
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+type IbIndexResponse = {
+  symbols?: string[];
+  tables?: Record<string, string[]>;
+};
+
+// ΓöÇΓöÇΓöÇ Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function q(v: string) {
   return `'${v.replace(/'/g, "''")}'`;
@@ -332,7 +337,7 @@ const TimingInnerChart = memo(function TimingInnerChart({ data, granularity }: {
   );
 });
 
-// ─── Sub-components ────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Sub-components ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function SelectField({
   label,
@@ -400,11 +405,11 @@ function SectionHeader({
   );
 }
 
-// ─── Page ──────────────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 export default function IBStatsPage() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
-  const [deferredFilters] = useDeferredValue([filters]);
+  const deferredFilters = useDeferredValue(filters);
 
   const [dbStatus, setDbStatus] = useState<EngineStatus>('loading');
   const [lastDataUpdate, setLastDataUpdate] = useState<string | null>(null);
@@ -434,7 +439,7 @@ export default function IBStatsPage() {
   const [withBiasFilter, setWithBiasFilter] = useState<string>('all');
   const [realizedDirMethod, setRealizedDirMethod] = useState<'break' | 'close' | 'ext'>('break');
 
-  // ── Engine init ───────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Engine init ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   const loadEngine = useCallback(async () => {
     setDbStatus('loading');
@@ -442,22 +447,52 @@ export default function IBStatsPage() {
       await initDuckDB();
       const v = Date.now();
       let lastMod: string | null = null;
-      
-      for (const table of TABLE_NAMES) {
-        const loadedSymbols = [];
-        for (const sym of CORE_SYMBOLS) {
-          const fileName = `${table}_${sym}.parquet`;
-          try {
-            await loadParquet(fileName, `/api/data/${fileName}?v=${v}`);
-            loadedSymbols.push(sym);
-            if (!lastMod) {
-              const r = await fetch(`/api/data/${fileName}?v=${v}`, { headers: { Range: 'bytes=0-0' } });
-              lastMod = r.headers.get('last-modified');
+      let symbolsToLoad = CORE_SYMBOLS;
+      const tableSymbolsToLoad: Record<string, string[]> = {};
+
+      try {
+        const r = await fetch(`/api/data/ib-index?v=${v}`);
+        if (r.ok) {
+          const idx = (await r.json()) as IbIndexResponse;
+          if (Array.isArray(idx.symbols) && idx.symbols.length > 0) {
+            symbolsToLoad = idx.symbols;
+          }
+          if (idx.tables && typeof idx.tables === 'object') {
+            for (const [table, syms] of Object.entries(idx.tables)) {
+              if (Array.isArray(syms) && syms.length > 0) {
+                tableSymbolsToLoad[table] = syms;
+              }
             }
-          } catch (e) {
-            console.warn(`File not found or failed to load: ${fileName}`);
           }
         }
+      } catch {
+        // Fall back to CORE_SYMBOLS if index discovery fails.
+      }
+
+      const firstProbeFile = `ib_facts_${symbolsToLoad[0] ?? CORE_SYMBOLS[0]}.parquet`;
+      try {
+        const r = await fetch(`/api/data/${firstProbeFile}?v=${v}`, { headers: { Range: 'bytes=0-0' } });
+        lastMod = r.headers.get('last-modified');
+      } catch {
+        // Metadata probe is optional; continue with data load.
+      }
+      
+      for (const table of TABLE_NAMES) {
+        const symbolsForTable = tableSymbolsToLoad[table] ?? symbolsToLoad;
+        const loadedSymbols = (
+          await Promise.all(
+            symbolsForTable.map(async (sym) => {
+              const fileName = `${table}_${sym}.parquet`;
+              try {
+                await loadParquet(fileName, `/api/data/${fileName}?v=${v}`);
+                return sym;
+              } catch {
+                console.warn(`File not found or failed to load: ${fileName}`);
+                return null;
+              }
+            })
+          )
+        ).filter((sym): sym is string => !!sym);
         
         if (loadedSymbols.length > 0) {
           const unionQuery = loadedSymbols.map(sym => `SELECT * FROM ${table}_${sym}`).join(' UNION ALL ');
@@ -479,7 +514,7 @@ export default function IBStatsPage() {
     loadEngine();
   }, [loadEngine]);
 
-  // ── Populate symbol options ───────────────────────────────────────────────────
+  // ΓöÇΓöÇ Populate symbol options ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   useEffect(() => {
     if (dbStatus !== 'ready') return;
@@ -488,7 +523,7 @@ export default function IBStatsPage() {
       .catch(console.error);
   }, [dbStatus]);
 
-  // ── Main query ────────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Main query ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   const fetchDashboard = useCallback(async () => {
     if (dbStatus !== 'ready') return;
@@ -595,12 +630,12 @@ export default function IBStatsPage() {
               WHEN 'combined' THEN AVG(CASE WHEN bias_correct_combined_05x THEN 1.0 ELSE 0.0 END) * 100
             END AS DOUBLE) AS hit_05,
             CAST(CASE key
-              WHEN 'formation_firstreach' THEN AVG(CASE WHEN bias_correct_formation_firstreach_1x THEN 1.0 ELSE 0.0 END) * 100
-              WHEN 'formation_lasttouch' THEN AVG(CASE WHEN bias_correct_formation_lasttouch_1x THEN 1.0 ELSE 0.0 END) * 100
-              WHEN 'close_dir' THEN AVG(CASE WHEN bias_correct_close_dir_1x THEN 1.0 ELSE 0.0 END) * 100
-              WHEN 'fvg' THEN AVG(CASE WHEN bias_correct_fvg_1x THEN 1.0 ELSE 0.0 END) * 100
-              WHEN 'fvg_ifvg' THEN AVG(CASE WHEN bias_correct_fvg_ifvg_1x THEN 1.0 ELSE 0.0 END) * 100
-              WHEN 'combined' THEN AVG(CASE WHEN bias_correct_combined_1x THEN 1.0 ELSE 0.0 END) * 100
+              WHEN 'formation_firstreach' THEN AVG(CASE WHEN bias_correct_formation_firstreach_10x THEN 1.0 ELSE 0.0 END) * 100
+              WHEN 'formation_lasttouch' THEN AVG(CASE WHEN bias_correct_formation_lasttouch_10x THEN 1.0 ELSE 0.0 END) * 100
+              WHEN 'close_dir' THEN AVG(CASE WHEN bias_correct_close_dir_10x THEN 1.0 ELSE 0.0 END) * 100
+              WHEN 'fvg' THEN AVG(CASE WHEN bias_correct_fvg_10x THEN 1.0 ELSE 0.0 END) * 100
+              WHEN 'fvg_ifvg' THEN AVG(CASE WHEN bias_correct_fvg_ifvg_10x THEN 1.0 ELSE 0.0 END) * 100
+              WHEN 'combined' THEN AVG(CASE WHEN bias_correct_combined_10x THEN 1.0 ELSE 0.0 END) * 100
             END AS DOUBLE) AS hit_1,
             CAST(db.base_dir AS DOUBLE) AS base_dir,
             CAST(tb.base_up05 AS DOUBLE) AS base_up05,
@@ -628,8 +663,6 @@ export default function IBStatsPage() {
             CAST(db.base_dir AS DOUBLE) AS dir_pct,
             CAST(tb.base_up05 AS DOUBLE) AS hit_05,
             CAST(tb.base_dn05 AS DOUBLE) AS hit_1,
-            CAST(0.0 AS DOUBLE) AS lift_dir,
-            CAST(0.0 AS DOUBLE) AS lift_tgt,
             CAST(db.base_dir AS DOUBLE) AS base_dir,
             CAST(tb.base_up05 AS DOUBLE) AS base_up05,
             CAST(tb.base_dn05 AS DOUBLE) AS base_dn05,
@@ -680,13 +713,13 @@ export default function IBStatsPage() {
             ${where}
           ),
           pairs AS (
-            SELECT 'Formation × FVG' AS pair_label, 'Formation' AS a_name, 'FVG' AS b_name, bias_formation_firstreach AS a_sig, bias_fvg AS b_sig, realized_dir FROM base
+            SELECT 'Formation ├ù FVG' AS pair_label, 'Formation' AS a_name, 'FVG' AS b_name, bias_formation_firstreach AS a_sig, bias_fvg AS b_sig, realized_dir FROM base
             UNION ALL
-            SELECT 'Formation × IFVG', 'Formation', 'IFVG', bias_formation_firstreach, bias_fvg_ifvg, realized_dir FROM base
+            SELECT 'Formation ├ù IFVG', 'Formation', 'IFVG', bias_formation_firstreach, bias_fvg_ifvg, realized_dir FROM base
             UNION ALL
-            SELECT 'FVG × Close-Dir', 'FVG', 'Close-Dir', bias_fvg, bias_close_dir, realized_dir FROM base
+            SELECT 'FVG ├ù Close-Dir', 'FVG', 'Close-Dir', bias_fvg, bias_close_dir, realized_dir FROM base
             UNION ALL
-            SELECT 'Formation × Close-Dir', 'Formation', 'Close-Dir', bias_formation_firstreach, bias_close_dir, realized_dir FROM base
+            SELECT 'Formation ├ù Close-Dir', 'Formation', 'Close-Dir', bias_formation_firstreach, bias_close_dir, realized_dir FROM base
           ),
           filtered AS (
             SELECT * FROM pairs WHERE a_sig != 0 AND b_sig != 0 AND a_sig != b_sig AND realized_dir != 0
@@ -760,6 +793,9 @@ export default function IBStatsPage() {
           FROM agree2
           WHERE is_agree_all = 1
         `),
+
+        // Bias accuracy per variant
+        runQuery<any>(`
           SELECT
             'First Reach' AS metric,
             CAST(AVG(CASE WHEN bias_correct_formation_firstreach_${biasTargetLvl.replace('.', '')}x THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS accuracy,
@@ -1032,7 +1068,7 @@ export default function IBStatsPage() {
       setExtRows(extData as ExtRow[]);
       setTouchRows(touchData as TouchRow[]);
       setFvgRows(fvgData as FvgRow[]);
-      setRangeBucketRows(bucketData as RangeBucketRow[]);
+      setRangeBucketRows(bucketData as unknown as RangeBucketRow[]);
       setTimingRows(timingHistogramData as TimingRow[]);
       setDstRows(dstData);
       setLevelTouchOutcomeRows(levelTouchOutcomeData);
@@ -1111,7 +1147,8 @@ export default function IBStatsPage() {
     
     const biasName = bestBias.metric;
     const playName = `Play ${bestPlay.play} (${bestPlay.play === 1 ? 'Breakout' : bestPlay.play === 2 ? 'Retest' : 'Fade'})`;
-    const evStr = `${bestPlay.ev > 0 ? '+' : ''}${bestPlay.ev.toFixed(2)}R`;
+    const bestPlayEv = typeof bestPlay.ev === 'number' && Number.isFinite(bestPlay.ev) ? bestPlay.ev : 0;
+    const evStr = `${bestPlayEv > 0 ? '+' : ''}${bestPlayEv.toFixed(2)}R`;
     const isFadeSignal = baseline ? (bestBias.dir_pct ?? 0) < (baseline.base_dir ?? 50) : false;
     
     let suggestionText = '';
@@ -1124,17 +1161,17 @@ export default function IBStatsPage() {
     return {
       biasName,
       playName,
-      ev: bestPlay.ev,
+      ev: bestPlayEv,
       text: suggestionText
     };
   }, [biasRows, playRows]);
 
-  // ── Render ────────────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Render ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.08),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(168,85,247,0.1),_transparent_26%),#050816] text-zinc-100">
       <div className="mx-auto w-full max-w-[1600px] space-y-8 px-6 py-8">
-        {/* ── Header ─────────────────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ Header ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <div className="flex flex-col gap-5 border-b border-zinc-900 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-3">
             <Link
@@ -1151,7 +1188,7 @@ export default function IBStatsPage() {
               <div>
                 <h1 className="text-3xl font-semibold tracking-tight">IB Stats</h1>
                 <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-                  Multi-session Initial Balance analytics — breakouts, bias formation, plays, extensions, level touches, and FVG behaviour.
+                  Multi-session Initial Balance analytics ΓÇö breakouts, bias formation, plays, extensions, level touches, and FVG behaviour.
                 </p>
               </div>
             </div>
@@ -1176,7 +1213,7 @@ export default function IBStatsPage() {
           </div>
         </div>
 
-        {/* ── Filters ────────────────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ Filters ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <Card className="border-zinc-900 bg-black/30 p-5 backdrop-blur-sm">
           <div className="flex flex-wrap gap-4">
             <SelectField
@@ -1224,7 +1261,7 @@ export default function IBStatsPage() {
           </div>
         </Card>
 
-        {/* ── Overview Stats ─────────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ Overview Stats ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7">
           <StatCard
             label="Sample"
@@ -1252,7 +1289,7 @@ export default function IBStatsPage() {
             accent="text-fuchsia-300"
           />
           <StatCard
-            label="False Break ▲"
+            label="False Break Γû▓"
             value={overview ? `${(overview.false_break_high_rate ?? 0).toFixed(1)}%` : '--'}
             accent="text-orange-300"
           />
@@ -1263,7 +1300,7 @@ export default function IBStatsPage() {
           />
         </div>
 
-        {/* ── 0: SUGGESTED SYNTHESIS ─────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ 0: SUGGESTED SYNTHESIS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <Card className="border-zinc-900 bg-zinc-950/60 border-l-2 border-l-amber-500 p-5 mt-6">
           <SectionHeader
             icon={<Zap className="h-5 w-5" />}
@@ -1275,7 +1312,7 @@ export default function IBStatsPage() {
           </div>
         </Card>
 
-        {/* ── ① DIRECTION ───────────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ Γæá DIRECTION ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] mt-6">
           {/* Directional Bias */}
           <Card className="border-zinc-900 bg-black/30 p-5">
@@ -1283,7 +1320,7 @@ export default function IBStatsPage() {
               <div className="flex items-center gap-2">
                 <span className="text-emerald-300"><TrendingUp className="h-5 w-5" /></span>
                 <h2 className="text-lg font-semibold tracking-tight flex items-center">
-                  ① DIRECTION: Bias Comparison & Conflict
+                  Γæá DIRECTION: Bias Comparison & Conflict
                   <TooltipHelp text="DIR% measures direction correctness versus realized direction; HIT% measures extension hits. LIFTs are measured against empirical baselines." />
                 </h2>
               </div>
@@ -1328,7 +1365,7 @@ export default function IBStatsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-900 bg-black/20">
-                  {biasRows.map((row) => {
+                  {biasRows.map((row, idx) => {
                     const getLiftColor = (val: number) => {
                       if (val > 1.0) return 'text-emerald-400 font-semibold';
                       if (val < -1.0) return 'text-rose-400/90';
@@ -1336,7 +1373,7 @@ export default function IBStatsPage() {
                     };
                     const rowClass = row.is_baseline ? 'bg-zinc-950/60' : '';
                     return (
-                      <tr key={row.metric} className={rowClass}>
+                      <tr key={`bias-row-${row.metric}-${idx}`} className={rowClass}>
                         <td className="px-4 py-3 text-zinc-200">{row.metric}</td>
                         <td className="px-4 py-3 text-right text-zinc-200">{(row.dir_pct ?? 0).toFixed(1)}%</td>
                         <td className="px-4 py-3 text-right text-sky-300">{(row.hit_05 ?? 0).toFixed(1)}%</td>
@@ -1357,13 +1394,13 @@ export default function IBStatsPage() {
               </table>
             </div>
             <div className="mt-3 rounded-lg border border-zinc-900 bg-zinc-950/40 p-3 text-xs text-zinc-300">
-              {noSignalRows.map((r) => (
-                <div key={r.variant}>
-                  No-{r.variant} day -> chop {(r.chop_rate_absent ?? 0).toFixed(1)}% (vs {(r.chop_rate_all ?? 0).toFixed(1)}% baseline, N={Math.round(r.n_absent ?? 0)})
+              {noSignalRows.map((r, idx) => (
+                <div key={`no-sig-${r.variant}-${idx}`}>
+                  No-{r.variant} day {'->'} chop {(r.chop_rate_absent ?? 0).toFixed(1)}% (vs {(r.chop_rate_all ?? 0).toFixed(1)}% baseline, N={Math.round(r.n_absent ?? 0)})
                 </div>
               ))}
-              {agreementRows.map((r) => (
-                <div key={r.bucket}>
+              {agreementRows.map((r, idx) => (
+                <div key={`agree-${r.bucket}-${idx}`}>
                   {r.bucket}: {(r.accuracy ?? 0).toFixed(1)}% (N={Math.round(r.n ?? 0)})
                 </div>
               ))}
@@ -1373,9 +1410,9 @@ export default function IBStatsPage() {
               {conflictRows.length === 0 ? (
                 <div className="text-zinc-500">No conflict rows for current filters.</div>
               ) : (
-                conflictRows.slice(0, 6).map((r) => (
-                  <div key={r.pair_label}>
-                    {r.pair_label}: {r.a_name} {(r.winA ?? 0).toFixed(1)}% / {r.b_name} {(r.winB ?? 0).toFixed(1)}% (N={Math.round(r.n_conflict ?? 0)}) -> <span className="text-amber-300">{r.winner}</span>
+                conflictRows.slice(0, 6).map((r, idx) => (
+                  <div key={`conflict-${r.pair_label}-${idx}`}>
+                    {r.pair_label}: {r.a_name} {(r.winA ?? 0).toFixed(1)}% / {r.b_name} {(r.winB ?? 0).toFixed(1)}% (N={Math.round(r.n_conflict ?? 0)}) {'->'} <span className="text-amber-300">{r.winner}</span>
                   </div>
                 ))
               )}
@@ -1390,8 +1427,8 @@ export default function IBStatsPage() {
               color="text-violet-300"
             />
             <div className="grid gap-6">
-              {fvgRows.map((row) => (
-                <div key={row.metric} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-4">
+              {fvgRows.map((row, idx) => (
+                <div key={`fvg-row-${row.metric}-${idx}`} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-4">
                   <div className="mb-3 text-sm font-semibold text-zinc-200">
                     {row.metric}
                     <span className="ml-2 text-xs text-zinc-500 font-mono">N={Math.round(row.n).toLocaleString()}</span>
@@ -1405,7 +1442,7 @@ export default function IBStatsPage() {
                           {label}
                           <TooltipHelp text={tooltip} />
                         </div>
-                        <div className={`mt-1 text-xl font-semibold ${color}`}>{value != null ? `${value.toFixed(1)}%` : '--%'}</div>
+                        <div className={`mt-1 text-xl font-semibold ${color}`}>{value != null ? `${Number(value ?? 0).toFixed(1)}%` : '--%'}</div>
                         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-zinc-900">
                           <div
                             className={`h-full rounded-full ${
@@ -1413,7 +1450,7 @@ export default function IBStatsPage() {
                                 ? 'bg-sky-400'
                                 : 'bg-violet-400'
                             }`}
-                            style={{ width: `${Math.min(100, value ?? 0)}%` }}
+                            style={{ width: `${Math.min(100, Number(value ?? 0))}%` }}
                           />
                         </div>
                       </div>
@@ -1434,13 +1471,13 @@ export default function IBStatsPage() {
           </Card>
         </div>
 
-        {/* ── ② FAKE-OUT & BREAKS ─────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ Γæí FAKE-OUT & BREAKS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <Card className="border-zinc-900 bg-black/30 p-5 mt-6">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-orange-300"><TrendingDown className="h-5 w-5" /></span>
               <h2 className="text-lg font-semibold tracking-tight flex items-center">
-                ② FAKE-OUT & BREAKS
+                Γæí FAKE-OUT & BREAKS
                 <TooltipHelp text="Analysis of breakouts that fail to expand and instead reverse to the opposite side." />
               </h2>
             </div>
@@ -1492,7 +1529,7 @@ export default function IBStatsPage() {
           </div>
         </Card>
 
-        {/* ── PLAYS ──────────────────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ PLAYS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <Card className="border-zinc-900 bg-black/30 p-5 mt-6">
           <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2">
@@ -1535,7 +1572,7 @@ export default function IBStatsPage() {
             </div>
           </div>
           <div className="grid gap-6 lg:grid-cols-3">
-            {playRows.map((play) => {
+              {playRows.map((play, idx) => {
               const colorClass =
                 play.play === 1
                   ? 'text-cyan-300'
@@ -1549,7 +1586,7 @@ export default function IBStatsPage() {
               const evColorClass = expectancy >= 0 ? 'text-emerald-400' : 'text-rose-400';
 
               return (
-                <div key={play.play} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-4 flex flex-col justify-between">
+                  <div key={`play-card-${play.play}-${idx}`} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-4 flex flex-col justify-between">
                   <div>
                     <div className={`mb-3 text-xs font-semibold uppercase tracking-[0.2em] ${colorClass}`}>
                       Play {play.play} ({play.play === 1 ? 'Breakout' : play.play === 2 ? 'Retest' : 'Fade'})
@@ -1582,13 +1619,13 @@ export default function IBStatsPage() {
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Avg MFE</div>
                         <div className="mt-1 text-md font-medium text-emerald-300">
-                          {(play.avg_mfe * 100).toFixed(2)}%
+                          {(Number(play.avg_mfe ?? 0) * 100).toFixed(2)}%
                         </div>
                       </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Avg MAE</div>
                         <div className="mt-1 text-md font-medium text-rose-300">
-                          {(play.avg_mae * 100).toFixed(2)}%
+                          {(Number(play.avg_mae ?? 0) * 100).toFixed(2)}%
                         </div>
                       </div>
                       <div>
@@ -1607,7 +1644,7 @@ export default function IBStatsPage() {
                       <span className="text-zinc-400">No-Setup {(play.no_setup_rate ?? 0).toFixed(1)}%</span>
                     </div>
                   </div>
-                  <div className="mt-4 h-24">
+                  <div className="mt-4 h-24 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
                         data={[
@@ -1690,7 +1727,7 @@ export default function IBStatsPage() {
                 </div>
               </div>
 
-              <div className="h-56 w-full bg-zinc-950/20 rounded-xl border border-zinc-900 p-2">
+              <div className="h-56 w-full bg-zinc-950/20 rounded-xl border border-zinc-900 p-2 min-h-[224px]">
                 <TimingInnerChart data={aggregatedTimingData} granularity={granularity} />
               </div>
 
@@ -1752,18 +1789,18 @@ export default function IBStatsPage() {
           </div>
         </Card>
 
-        {/* ── ③ TARGETS ─────────────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ Γæó TARGETS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <div className="grid gap-6 xl:grid-cols-[1.6fr_1fr] mt-6">
           {/* Extension Levels */}
           <Card className="border-zinc-900 bg-black/30 p-5">
             <div className="mb-4 flex items-center gap-2">
               <span className="text-sky-300"><TrendingDown className="h-5 w-5" /></span>
               <h2 className="text-lg font-semibold tracking-tight flex items-center">
-                ③ TARGETS: Extension Hit Rates
+                Γæó TARGETS: Extension Hit Rates
                 <TooltipHelp text="Probability that price reaches specific multiples of the IB range in the direction of the breakout." />
               </h2>
             </div>
-            <div className="h-72">
+            <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={extRows} barCategoryGap="20%">
                   <CartesianGrid vertical={false} stroke="#18181b" />
@@ -1772,7 +1809,7 @@ export default function IBStatsPage() {
                     tick={{ fill: '#a1a1aa', fontSize: 12 }}
                     axisLine={false}
                     tickLine={false}
-                    tickFormatter={(v) => `${v}×`}
+                    tickFormatter={(v) => `${v}├ù`}
                   />
                   <YAxis tick={{ fill: '#71717a', fontSize: 12 }} axisLine={false} tickLine={false} width={36} />
                   <Tooltip
@@ -1794,18 +1831,18 @@ export default function IBStatsPage() {
               color="text-fuchsia-300"
             />
             <div className="space-y-3">
-              {touchRows.map((row) => (
-                <div key={row.phase} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
+              {touchRows.map((row, index) => (
+                <div key={`${row.phase ?? 'unknown-phase'}-${index}`} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
                   <div className="mb-1 flex items-center justify-between text-sm">
                     <span className="text-zinc-300">
-                      {row.phase.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                      {(row.phase ?? 'Unknown').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                     </span>
-                    <span className="text-fuchsia-300">{row.avg_touch_count.toFixed(2)} avg</span>
+                    <span className="text-fuchsia-300">{Number(row.avg_touch_count ?? 0).toFixed(2)} avg</span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-zinc-900">
                     <div
                       className="h-full rounded-full bg-fuchsia-400"
-                      style={{ width: `${Math.min(100, (row.avg_touch_count / 5) * 100)}%` }}
+                      style={{ width: `${Math.min(100, (Number(row.avg_touch_count ?? 0) / 5) * 100)}%` }}
                     />
                   </div>
                   <div className="mt-1 text-xs text-zinc-500">N={Math.round(row.n).toLocaleString()}</div>
@@ -1815,19 +1852,19 @@ export default function IBStatsPage() {
           </Card>
         </div>
 
-        {/* ── ④ DAY TYPE, RANGE Δ & FRONT RUNNING ─────────────────────────────────── */}
+        {/* ΓöÇΓöÇ Γæú DAY TYPE, RANGE ╬ö & FRONT RUNNING ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <div className="grid gap-6 xl:grid-cols-2 mt-6">
           <Card className="border-zinc-900 bg-black/30 p-5">
             <div className="mb-4 flex items-center gap-2">
               <span className="text-amber-300"><Waves className="h-5 w-5" /></span>
               <h2 className="text-lg font-semibold tracking-tight flex items-center">
-                ④ DAY TYPE & RANGE Δ: Size Distribution
+                Γæú DAY TYPE & RANGE ╬ö: Size Distribution
                 <TooltipHelp text="Breakout behavior categorized by the relative size of the Initial Balance range (Small, Medium, Large terciles)." />
               </h2>
             </div>
             <div className="space-y-4">
-              {rangeBucketRows.map((row) => (
-                <div key={row.bucket} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-4">
+              {rangeBucketRows.map((row, idx) => (
+                <div key={`${row.bucket}-${idx}`} className="rounded-xl border border-zinc-900 bg-zinc-950/60 p-4">
                   <div className="mb-3 flex items-center justify-between text-sm font-semibold">
                     <span className="text-zinc-200">{row.bucket} IB Size</span>
                     <span className="text-xs text-zinc-500 font-mono">N={Math.round(row.n).toLocaleString()}</span>
@@ -1947,7 +1984,7 @@ export default function IBStatsPage() {
           </Card>
         </div>
 
-        {/* ── DST VALIDATION ────────────────────────────────────────────────── */}
+        {/* ΓöÇΓöÇ DST VALIDATION ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
         <Card className="border-zinc-900 bg-black/30 p-5 mt-6">
           <div className="mb-4">
             <div className="flex items-center gap-2">
@@ -1985,10 +2022,10 @@ export default function IBStatsPage() {
                       {Math.round(row.sample).toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-right text-sky-400">
-                      {row.break_rate.toFixed(1)}%
+                      {Number(row.break_rate ?? 0).toFixed(1)}%
                     </td>
                     <td className="px-4 py-3 text-right text-emerald-400">
-                      {row.bias_accuracy.toFixed(1)}%
+                      {Number(row.bias_accuracy ?? 0).toFixed(1)}%
                     </td>
                     <td className="px-4 py-3 text-right text-zinc-300">
                       {row.play1_win_rate != null ? `${row.play1_win_rate.toFixed(1)}%` : 'N/A'}

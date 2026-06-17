@@ -35,6 +35,7 @@ from scripts.streaming.options.config import (
     MACRO_DTE_TARGETS,
     PIPELINE_DTE_TARGETS,
     MACRO_LEVELS_TXT,
+    SCORED_MACRO_LEVELS_TXT,
     INDEX_TO_FUTURES,
     USE_OPENING_BASIS,
     FUTURES_YF_MAP,
@@ -47,9 +48,10 @@ from scripts.streaming.options.whale_detector import detect_volume_anomalies
 from scripts.streaming.options.macro_charting import generate_macro_chart_bytes
 from scripts.streaming.options.discord_notifier import send_macro_update
 from scripts.streaming.options.interval_writer import write_macro_snapshot
-from scripts.streaming.options.file_writer import write_macro_levels, write_quant_json
+from scripts.streaming.options.file_writer import write_macro_levels, write_quant_json, write_scored_levels_txt
 from scripts.streaming.options.gex_calculator import calculate_dealer_levels, extract_dominant_oi_nodes
 from scripts.streaming.options.level_scorer import score_levels
+from scripts.streaming.options.futures_translator import translate_to_futures
 
 log = logging.getLogger(__name__)
 
@@ -297,6 +299,14 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                 chain.underlying_symbol = ticker
                 dl = calculate_dealer_levels(chain, ticker)
                 
+                # Fetch futures quote to calculate translation ratio
+                fut_root = INDEX_TO_FUTURES.get(ticker, ticker)
+                fut = None
+                if fut_root != ticker:
+                    fut = fetch_futures_quote(fut_root)
+                if fut:
+                    translate_to_futures(dl, fut)
+                
                 macro_levels = {
                     "macro_call_wall": dl.call_wall,
                     "macro_put_wall": dl.put_wall,
@@ -319,6 +329,8 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                 profile = get_ticker_profile(ticker)
                 scored = score_levels(dl, chain, ticker, profile, view_mode=MACRO_VIEW)
                 macro_levels["scored"] = scored
+                
+                write_scored_levels_txt(ticker, scored, metadata_levels=dl, path=SCORED_MACRO_LEVELS_TXT, versioned=versioned)
 
                 # Charting & Discord (Primary only)
                 chart_buf = generate_macro_chart_bytes(ticker, float(chain.spot_price), macro_levels, anomalies["structural"], scored=scored)
@@ -356,6 +368,9 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                     if fut:
                         m_chain.underlying_symbol = fetch_sym
                         m_dl = calculate_dealer_levels(m_chain, fetch_sym)
+                        
+                        translate_to_futures(m_dl, fut)
+                        
                         m_levels = {
                             "macro_call_wall": m_dl.call_wall,
                             "macro_put_wall": m_dl.put_wall,
@@ -367,6 +382,10 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                         }
                         m_anomalies = detect_volume_anomalies(m_chain, fetch_sym)
                         m_nodes = extract_dominant_oi_nodes(m_chain)
+
+                        m_profile = get_ticker_profile(target_tag)
+                        m_scored = score_levels(m_dl, m_chain, target_tag, m_profile, view_mode=MACRO_VIEW)
+                        m_levels["scored"] = m_scored
 
                         # Basis Translation
                         if m_chain.spot_price is None or m_chain.spot_price <= 0:
@@ -423,6 +442,8 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                         write_macro_levels(target_tag, f_l, f_a, f_n, versioned=versioned)
                         write_quant_json(target_tag, fut.price, f_l, f_a, f_n, versioned=versioned)
                         write_macro_snapshot(target_tag, fut.price, f_l, f_a, f_n)
+                        
+                        write_scored_levels_txt(target_tag, m_scored, metadata_levels=m_dl, path=SCORED_MACRO_LEVELS_TXT, versioned=versioned)
 
             log.info("Macro HTF Pipeline completed for %s", ticker)
 

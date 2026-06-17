@@ -35,6 +35,10 @@ export async function POST(req: NextRequest) {
       putVolumeCentroid,
       netSpeedExposure,
       netVannaExposure,
+      futuresSymbol,
+      futuresTranslationMode,
+      futuresBasisSpread,
+      futuresBasisRatio,
     } = body;
 
     if (!ticker || !timestamp || !tradingDate || totalGex === undefined || !gexRegime || !spotPrice) {
@@ -62,6 +66,10 @@ export async function POST(req: NextRequest) {
         putVolumeCentroid: putVolumeCentroid ?? null,
         netSpeedExposure: netSpeedExposure ?? null,
         netVannaExposure: netVannaExposure ?? null,
+        futuresSymbol: futuresSymbol ?? null,
+        futuresTranslationMode: futuresTranslationMode ?? null,
+        futuresBasisSpread: futuresBasisSpread ?? null,
+        futuresBasisRatio: futuresBasisRatio ?? null,
       },
     });
 
@@ -117,6 +125,10 @@ export async function GET(req: NextRequest) {
         putVolumeCentroid: true,
         netSpeedExposure: true,
         netVannaExposure: true,
+        futuresSymbol: true,
+        futuresTranslationMode: true,
+        futuresBasisSpread: true,
+        futuresBasisRatio: true,
       },
     });
 

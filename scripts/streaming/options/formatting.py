@@ -449,6 +449,12 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     parts.append(f"0:META_IVCHG_{iv_chg:.4f}")
     parts.append(f"0:META_SKEW_{skew:.4f}")
 
+    # Futures Translation
+    if getattr(levels, "translation_mode", None) == "additive":
+        parts.append(f"0:META_FUTURES_BASIS_{getattr(levels, 'basis_spread')}")
+    elif getattr(levels, "translation_mode", None) == "multiplicative":
+        parts.append(f"0:META_FUTURES_RATIO_{getattr(levels, 'basis_ratio')}")
+
     # Vol Triggers (Vol Expansion Boundaries)
     vol_up_05 = getattr(levels, "vol_trigger_upper_05", None)
     vol_dn_05 = getattr(levels, "vol_trigger_lower_05", None)
