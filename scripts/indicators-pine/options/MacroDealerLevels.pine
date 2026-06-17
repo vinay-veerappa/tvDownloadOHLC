@@ -141,6 +141,35 @@ f_isOvernightFutures(string s) =>
     c = f_canonicalSymbol(s)
     c == "ES" or c == "NQ" or c == "YM" or c == "RTY" or c == "CL" or c == "GC" or c == "SI" or c == "HG" or c == "6E" or c == "6A" or c == "6B" or c == "6J" or c == "ZN" or c == "ZB"
 
+f_getSourceTicker(string sC) =>
+    if sC == "ES" or sC == "MES"
+        "CME_MINI:ES1!"
+    else if sC == "SPX"
+        "SP:SPX"
+    else if sC == "SPY"
+        "AMEX:SPY"
+    else if sC == "NQ" or sC == "MNQ"
+        "CME_MINI:NQ1!"
+    else if sC == "NDX"
+        "NDX"
+    else if sC == "QQQ"
+        "NASDAQ:QQQ"
+    else if sC == "YM" or sC == "MYM"
+        "CBOT_MINI:YM1!"
+    else if sC == "DJI" or sC == "DJX" or sC == "DOW"
+        "DJI"
+    else if sC == "DIA"
+        "AMEX:DIA"
+    else if sC == "RTY" or sC == "M2K"
+        "CME_MINI:RTY1!"
+    else if sC == "RUT"
+        "RUT"
+    else if sC == "IWM"
+        "AMEX:IWM"
+    else
+        sC
+
+
 // Reusable ETF -> futures conversion utilities
 f_getSessionAlignedPrice(string sym, bool useClose) =>
     request.security(sym, timeframe.period, useClose ? close : open, gaps = barmerge.gaps_on, ignore_invalid_symbol = true, lookahead = barmerge.lookahead_off)
@@ -149,6 +178,11 @@ f_computeEtfToFuturesRatio(string futSym, string etfSym, bool useClose) =>
     futPx = f_getSessionAlignedPrice(futSym, useClose)
     etfPx = f_getSessionAlignedPrice(etfSym, useClose)
     not na(futPx) and not na(etfPx) and math.abs(etfPx) > syminfo.mintick ? (futPx / etfPx) : na
+
+f_computeEtfToFuturesOffset(string futSym, string etfSym, bool useClose) =>
+    futPx = f_getSessionAlignedPrice(futSym, useClose)
+    etfPx = f_getSessionAlignedPrice(etfSym, useClose)
+    not na(futPx) and not na(etfPx) ? (futPx - etfPx) : na
 
 f_captureOnOpen() => i_convCaptureMode == "RTH Open" or i_convCaptureMode == "Both"
 f_captureOnClose() => i_convCaptureMode == "RTH Close" or i_convCaptureMode == "Both"
@@ -473,19 +507,29 @@ var bool can_calculate = false
 var int last_open_time = 0
 var int last_close_time = 0
 var float etfConvRatio = na
+var float etfConvOffset = na
 var string etfConvSnapshot = "none"
+
+// OPTIMIZATION: Parse pasted text only once when the script loads
+var string rawScored = ""
+var string matchScored = ""
 
 // Trigger Open logic matching the exact equity open
 if is_recent and eq_open and time != last_open_time
     last_open_time := time
     if f_captureOnOpen()
-        rOpen = f_computeEtfToFuturesRatio(syminfo.main_tickerid, equity_ref, false)
-        if not na(rOpen)
+        string active_source_ref = equity_ref
+        if matchScored != ""
+            active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
+        rOpen = f_computeEtfToFuturesRatio(syminfo.main_tickerid, active_source_ref, false)
+        oOpen = f_computeEtfToFuturesOffset(syminfo.main_tickerid, active_source_ref, false)
+        if not na(rOpen) and not na(oOpen)
             etfConvRatio := rOpen
+            etfConvOffset := oOpen
             etfConvSnapshot := "open"
-            f_dbg("[conv] captured on RTH open; ratio=" + str.tostring(etfConvRatio, "#.######") + ", etf=" + equity_ref)
+            f_dbg("[conv] captured on RTH open; ratio=" + str.tostring(etfConvRatio, "#.######") + ", offset=" + str.tostring(etfConvOffset, "#.##") + ", etf=" + equity_ref)
         else
-            f_dbg("[conv] open capture failed (na ratio); etf=" + equity_ref)
+            f_dbg("[conv] open capture failed; etf=" + equity_ref)
     can_calculate  := true
     //useClose       := false
     sessionStartBar := bar_index
@@ -496,13 +540,18 @@ if is_recent and eq_open and time != last_open_time
 if is_recent and eq_close and time != last_close_time
     last_close_time := time
     if f_captureOnClose()
-        rClose = f_computeEtfToFuturesRatio(syminfo.main_tickerid, equity_ref, true)
-        if not na(rClose)
+        string active_source_ref = equity_ref
+        if matchScored != ""
+            active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
+        rClose = f_computeEtfToFuturesRatio(syminfo.main_tickerid, active_source_ref, true)
+        oClose = f_computeEtfToFuturesOffset(syminfo.main_tickerid, active_source_ref, true)
+        if not na(rClose) and not na(oClose)
             etfConvRatio := rClose
+            etfConvOffset := oClose
             etfConvSnapshot := "close"
-            f_dbg("[conv] captured on RTH close; ratio=" + str.tostring(etfConvRatio, "#.######") + ", etf=" + equity_ref)
+            f_dbg("[conv] captured on RTH close; ratio=" + str.tostring(etfConvRatio, "#.######") + ", offset=" + str.tostring(etfConvOffset, "#.##") + ", etf=" + equity_ref)
         else
-            f_dbg("[conv] close capture failed (na ratio); etf=" + equity_ref)
+            f_dbg("[conv] close capture failed; etf=" + equity_ref)
     can_calculate   := true
     //useClose        := true
     sessionStartBar := bar_index
@@ -517,8 +566,7 @@ var array<int> labelCols = array.new_int()
 var array<float> colLastPrices = array.new_float()
 
 // OPTIMIZATION: Parse pasted text only once when the script loads
-var string rawScored = ""
-var string matchScored = ""
+// (vars moved up to allow conversion ratio logic to access them early)
 
 // ── Global Parsed Data Caches ──
 var array<float> cached_sPrices = array.new_float()
@@ -713,20 +761,42 @@ if can_calculate
                 if anc != ""
                     sR = array.get(sPrices, 0)
                     if math.abs(sR) > syminfo.mintick
-                        fs = etfConvRatio
-                        if na(fs)
-                            // Fallback allows first-load conversion before the next RTH open/close snapshot.
-                            fs := f_computeEtfToFuturesRatio(syminfo.main_tickerid, equity_ref, true)
-                            if not na(fs)
-                                f_dbg("[conv] using fallback live ratio=" + str.tostring(fs, "#.######") + ", etf=" + equity_ref)
-                        if not na(fs) and math.abs(fs - 1.0) > 0.001 
-                            for k = 0 to array.size(sPrices) - 1
-                                array.set(sPrices, k, array.get(sPrices, k) * fs)
-                            etfConversion := true
-                            srcTag = na(etfConvRatio) ? "fallback_live" : etfConvSnapshot
-                            f_dbg("[conv] applied ratio=" + str.tostring(fs, "#.######") + " from " + srcTag)
-                        else if na(fs)
-                            f_dbg("[conv] skipped scaling: ratio not captured yet (mode=" + i_convCaptureMode + ")")
+                        kind = f_sourceKind(sC)
+                        if kind == "INDEX"
+                            offset = etfConvOffset
+                            if na(offset)
+                                string active_source_ref = equity_ref
+                                if matchScored != ""
+                                    active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
+                                offset := f_computeEtfToFuturesOffset(syminfo.main_tickerid, active_source_ref, true)
+                                if not na(offset)
+                                    f_dbg("[conv] using fallback live offset=" + str.tostring(offset, "#.##") + ", src=" + active_source_ref)
+                            if not na(offset) and math.abs(offset) > 0.001
+                                for k = 0 to array.size(sPrices) - 1
+                                    array.set(sPrices, k, array.get(sPrices, k) + offset)
+                                etfConversion := true
+                                srcTag = na(etfConvOffset) ? "fallback_live" : etfConvSnapshot
+                                f_dbg("[conv] applied offset=" + str.tostring(offset, "#.##") + " from " + srcTag)
+                            else if na(offset)
+                                f_dbg("[conv] skipped scaling: offset not captured yet (mode=" + i_convCaptureMode + ")")
+                        else
+                            fs = etfConvRatio
+                            if na(fs)
+                                // Fallback allows first-load conversion before the next RTH open/close snapshot.
+                                string active_source_ref = equity_ref
+                                if matchScored != ""
+                                    active_source_ref := f_getSourceTicker(f_canonicalSymbol(matchScored))
+                                fs := f_computeEtfToFuturesRatio(syminfo.main_tickerid, active_source_ref, true)
+                                if not na(fs)
+                                    f_dbg("[conv] using fallback live ratio=" + str.tostring(fs, "#.######") + ", src=" + active_source_ref)
+                            if not na(fs) and math.abs(fs - 1.0) > 0.000001 
+                                for k = 0 to array.size(sPrices) - 1
+                                    array.set(sPrices, k, array.get(sPrices, k) * fs)
+                                etfConversion := true
+                                srcTag = na(etfConvRatio) ? "fallback_live" : etfConvSnapshot
+                                f_dbg("[conv] applied ratio=" + str.tostring(fs, "#.######") + " from " + srcTag)
+                            else if na(fs)
+                                f_dbg("[conv] skipped scaling: ratio not captured yet (mode=" + i_convCaptureMode + ")")
             
             int dbgSkippedEm = 0
             int dbgSkippedProx = 0
