@@ -579,22 +579,8 @@ def run_pipeline(
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
 
-                # Translate scored levels strikes to futures space
-                from .futures_translator import translate_scored_levels
-                scored_intraday = translate_scored_levels(
-                    scored_intraday,
-                    tl_intraday.basis_spread,
-                    tl_intraday.basis_ratio,
-                    tl_intraday.translation_mode == "multiplicative",
-                    min_tick=tl_intraday.min_tick
-                )
-                scored_macro = translate_scored_levels(
-                    scored_macro,
-                    tl_macro.basis_spread,
-                    tl_macro.basis_ratio,
-                    tl_macro.translation_mode == "multiplicative",
-                    min_tick=tl_macro.min_tick
-                )
+                # (Removed translate_scored_levels call: TradingView Pinescript performs live dynamic translation 
+                # against native cash/ETF data. Unified outputs must remain in native space to prevent double-conversion).
 
             # Save the final (translated if futures quote was available) scored levels to dicts
             scored_intraday_by_ticker[ticker] = scored_intraday
