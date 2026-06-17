@@ -724,6 +724,17 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
     )
 
     parts: list[str] = [thesis]
+    
+    # Expose Futures Translation details if applicable
+    if hasattr(levels, "translation_mode"):
+        mode = getattr(levels, "translation_mode")
+        if mode == "additive":
+            val = getattr(levels, "basis_spread", 0.0)
+            parts.append(f"**CONVERSION:** Additive Index Basis ({val:+.2f} pts)")
+        elif mode == "multiplicative":
+            val = getattr(levels, "basis_ratio", 1.0)
+            parts.append(f"**CONVERSION:** Multiplicative ETF Scale ({val:.4f}x)")
+
     parts.append(_snapshot_delta_line(tag, levels))
     parts.append(_oi_velocity_line(tag, levels))
 
