@@ -1,11 +1,15 @@
-
 import asyncio
 from prisma import Prisma
 import datetime
 import math
 import os
-import json
-import requests
+import httpx
+import sys
+
+# Ensure repository root is in sys.path so scripts can find top-level packages
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
 # Load Environment
 try:
@@ -17,8 +21,7 @@ try:
 except Exception as e:
     print(f"Warning: Could not load .env: {e}")
 
-# Helper for Schwab
-import schwab
+from scripts.streaming.options.config import HUB_URL
 
 def get_mark(o):
     if 'mark' in o: return o['mark']
@@ -27,31 +30,29 @@ def get_mark(o):
 def get_iv(o):
     return o.get('volatility', 0)
 
+async def hub_request(method, params):
+    """Send a REST request through the Hub's proxy."""
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30.0)
+            if resp.status_code == 200:
+                result = resp.json()
+                if isinstance(result, dict) and "status" not in result:
+                    return {"status": "success", "data": result}
+                return result
+            else:
+                return {"status": "error", "message": f"Hub Error [{resp.status_code}]: {resp.text}"}
+        except Exception as e:
+            return {"status": "error", "message": f"Hub Connection Error: {str(e)}"}
+
 async def capture_rth_metrics():
     print("Connecting to DB...")
     db = Prisma()
     await db.connect()
     
-    # 1. Get VIX (Yahoo Finance Proxy or Schwab)
-    # Schwab has VIX data.
-    
     # 2. Tickers to Track
     TICKERS = ["SPY", "QQQ", "IWM", "SPX", "NVDA", "TSLA", "AAPL", "AMD", "AMZN", "MSFT", "GOOGL", "META"]
     
-    # Setup Schwab Client
-    if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
-        print("Error: Missing credentials")
-        return
-
-    with open("secrets.json", "r") as f: secrets = json.load(f)
-    try:
-        client = schwab.auth.client_from_token_file(
-            token_path="token.json", api_key=secrets["app_key"], app_secret=secrets["app_secret"], enforce_enums=False
-        )
-    except Exception as e:
-        print(f"Auth failed: {e}")
-        return
-
     # Date Logic: Target Expiry
     today = datetime.date.today()
     friday = today + datetime.timedelta(days=(4 - today.weekday() + 7) % 7)
@@ -61,7 +62,6 @@ async def capture_rth_metrics():
     print(f"Target Expiry: {target_friday}")
     
     # Volatility Index Mapping
-    # Ticker -> Vol Index Symbol (Default is VIX)
     VOL_MAP = {
         "SPY": "$VIX", "SPX": "$VIX",
         "QQQ": "$VXN", "NQ": "$VXN", "NDX": "$VXN",
@@ -69,9 +69,7 @@ async def capture_rth_metrics():
     }
     
     # 1. Fetch All Volatility Indices
-    # Symbols to fetch: Unique values from map + defaults
     vol_symbols = list(set(VOL_MAP.values()))
-    # Add alternatives if needed (e.g. VIX vs $VIX)
     search_symbols = []
     for s in vol_symbols:
         search_symbols.append(s)
@@ -81,36 +79,35 @@ async def capture_rth_metrics():
     
     vol_values = {} # Symbol -> Value
     
-    print(f"Fetching Volatility Indices individually: {search_symbols}")
-    
-    for sym in search_symbols:
-        try:
-            # Individual fetch
-            v_resp = client.get_quote(sym).json()
-            
-            # Parse results
-            for k, v in v_resp.items():
-                if 'quote' in v and 'lastPrice' in v['quote']:
-                    val = v['quote']['lastPrice']
-                    # Normalize key
-                    clean_key = k.upper().replace('$','')
-                    vol_values[k] = val
-                    vol_values[clean_key] = val
-                    if not k.startswith('$'): vol_values[f"${k}"] = val
-                    print(f"  Captured {k}: {val}")
-        except Exception as e:
-            print(f"  Error fetching {sym}: {e}")
+    # Batch fetch via Hub
+    v_resp_raw = await hub_request("get_quotes", {"symbols": search_symbols})
+    if v_resp_raw.get("status") == "success":
+        v_resp = v_resp_raw.get("data", {})
+        for k, v in v_resp.items():
+            if isinstance(v, dict) and 'quote' in v and 'lastPrice' in v['quote']:
+                val = v['quote']['lastPrice']
+                clean_key = k.upper().replace('$','')
+                vol_values[k] = val
+                vol_values[clean_key] = val
+                if not k.startswith('$'): vol_values[f"${k}"] = val
+                print(f"  Captured {k}: {val}")
+    else:
+        print(f"Error fetching volatility indices: {v_resp_raw.get('message')}")
             
     print(f"Final Vol Indices: {vol_values}")
             
-
-        
     for ticker in TICKERS:
         try:
             print(f"Processing {ticker}...")
             # Spot Price
             search_ticker = "$SPX" if ticker == "SPX" else ticker
-            q_resp = client.get_quote(search_ticker).json()
+            q_resp_raw = await hub_request("get_quotes", {"symbols": [search_ticker]})
+            
+            if q_resp_raw.get("status") != "success":
+                print(f"  Quote fetch failed for {ticker}: {q_resp_raw.get('message')}")
+                continue
+                
+            q_resp = q_resp_raw.get("data", {})
             
             quote = {}
             for k in q_resp.keys():
@@ -119,7 +116,8 @@ async def capture_rth_metrics():
                     break
             if not quote and len(q_resp) > 0:
                  first_val = list(q_resp.values())[0]
-                 if 'quote' in first_val: quote = first_val['quote']
+                 if isinstance(first_val, dict) and 'quote' in first_val: 
+                     quote = first_val['quote']
             
             price = quote.get('lastPrice')
             if not price: 
@@ -127,12 +125,21 @@ async def capture_rth_metrics():
                 continue
                 
             # Chain
-            chain_sym = search_ticker 
-            chain_resp = client.get_option_chain(
-                chain_sym, strike_count=20, strategy='ANALYTICAL', from_date=target_friday, to_date=target_friday
-            ).json()
+            chain_resp_raw = await hub_request("get_option_chain", {
+                "symbol": search_ticker,
+                "strike_count": 20,
+                "strategy": "ANALYTICAL",
+                "from_date": target_friday.strftime("%Y-%m-%d"),
+                "to_date": target_friday.strftime("%Y-%m-%d")
+            })
             
-            if chain_resp.get('status') != 'SUCCESS':
+            if chain_resp_raw.get('status') != 'success':
+                print(f"  Chain fetch failed for {ticker}: {chain_resp_raw.get('message')}")
+                continue
+                
+            chain_resp = chain_resp_raw.get("data", {})
+            
+            if chain_resp.get('status') and chain_resp.get('status') != 'SUCCESS':
                 continue
                 
             # Find Expiry Map

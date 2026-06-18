@@ -1,9 +1,7 @@
 import os
 import sys
-import json
-import schwab
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import argparse
 
 # Ensure we can import data_utils from local dir
@@ -29,76 +27,7 @@ SCHWAB_MAP = {
     "GC1": "/GC"
 }
 
-def get_schwab_client():
-    # Secrets expected in project root (../../)
-    root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
-    token_path = os.path.join(root_dir, "token.json")
-    secrets_path = os.path.join(root_dir, "secrets.json")
-    
-    if not os.path.exists(token_path) or not os.path.exists(secrets_path):
-        print(f"Error: Credentials not found at {root_dir}")
-        return None
-        
-    with open(secrets_path, "r") as f:
-        secrets = json.load(f)
-        
-    try:
-        client = schwab.auth.client_from_token_file(
-            token_path=token_path,
-            api_key=secrets["app_key"],
-            app_secret=secrets["app_secret"],
-            enforce_enums=False
-        )
-        return client
-    except Exception as e:
-        print(f"Auth Failed: {e}")
-        return None
-
-def fetch_data(client, symbol, start_dt, end_dt):
-    print(f"Fetching {symbol} from {start_dt} to {end_dt}...")
-    
-    try:
-        resp = client.get_price_history(
-            symbol,
-            period_type='day',
-            frequency_type='minute',
-            frequency=1,
-            start_datetime=start_dt,
-            end_datetime=end_dt,
-            need_extended_hours_data=True
-        ).json()
-        
-        if 'candles' not in resp or not resp['candles']:
-            print(f"No candles found. Response: {resp.get('errors') or 'Empty'}")
-            return None
-            
-        candles = resp['candles']
-        print(f"  Got {len(candles)} rows.")
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(candles)
-        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms')
-        df.set_index('datetime', inplace=True)
-        
-        # Rename columns to standard match
-        df.rename(columns={
-            "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"
-        }, inplace=True)
-        
-        # Keep time column as unix timestamp (milliseconds) for consistency with stream_chart.py
-        # DatetimeIndex is ns (10^-9). ms is 10^-3. Divide by 10^6.
-        df['time'] = (df.index.astype('int64') // 10**6).astype('int64')
-        
-        return df[['time', 'open', 'high', 'low', 'close', 'volume']]
-        
-    except Exception as e:
-        print(f"Fetch Error {symbol}: {e}")
-        return None
-
 def backfill_live(ticker):
-    client = get_schwab_client()
-    if not client: return
-
     schwab_ticker = SCHWAB_MAP.get(ticker, ticker)
     
     # Determined Safe Symbol for Filename: /NQ -> -NQ
@@ -151,7 +80,7 @@ def backfill_live(ticker):
     # Save
     try:
         combined.to_parquet(filepath, index=False)
-        print(f"✅ Successfully backfilled {filename} from local history.")
+        print(f"Successfully backfilled {filename} from local history.")
         print(f"   Total rows: {len(combined)}")
         print(f"   Range: {pd.to_datetime(combined['time'].min(), unit='ms')} -> {pd.to_datetime(combined['time'].max(), unit='ms')}")
     except Exception as e:

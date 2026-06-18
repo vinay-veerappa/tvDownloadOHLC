@@ -1,53 +1,69 @@
-import schwab
-import json
 import os
+import sys
+import asyncio
+import httpx
 
-def check_futures():
+# Ensure repository root is in sys.path so scripts can find top-level packages
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from scripts.streaming.options.config import HUB_URL
+
+async def hub_request(method, params):
+    """Send a REST request through the Hub's proxy."""
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30.0)
+            if resp.status_code == 200:
+                result = resp.json()
+                if isinstance(result, dict) and "status" not in result:
+                    return {"status": "success", "data": result}
+                return result
+            else:
+                return {"status": "error", "message": f"Hub Error [{resp.status_code}]: {resp.text}"}
+        except Exception as e:
+            return {"status": "error", "message": f"Hub Connection Error: {str(e)}"}
+
+async def check_futures():
     symbols = ["/ES", "/NQ", "ES", "NQ", "/ESH25", "/NQH25"] # Guesses
     
-    if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
-        print("Error: secrets.json or token.json missing.")
-        return
-
-    with open("secrets.json", "r") as f:
-        secrets = json.load(f)
-        
-    try:
-        client = schwab.auth.client_from_token_file(
-            token_path="token.json",
-            api_key=secrets["app_key"], # Correct key name now
-            app_secret=secrets["app_secret"],
-            enforce_enums=False
-        )
-    except Exception as e:
-        print(f"Auth Error: {e}")
-        return
-
-    print("Checking Futures Symbols...")
+    print("Checking Futures Symbols via Hub...")
     for sym in symbols:
         try:
             print(f"--- {sym} ---")
             # Try getting quote
-            resp = client.get_quote(sym).json()
-            if sym in resp or (len(resp) > 0 and 'quote' in list(resp.values())[0]):
-                print(f"  ✅ Quote Found: {resp}")
+            resp_raw = await hub_request("get_quotes", {"symbols": [sym]})
+            if resp_raw.get("status") != "success":
+                print(f"  [X] Quote Fetch Error: {resp_raw.get('message')}")
+                continue
+                
+            resp = resp_raw.get("data", {})
+            if sym in resp or (len(resp) > 0 and isinstance(list(resp.values())[0], dict) and 'quote' in list(resp.values())[0]):
+                print(f"  [OK] Quote Found: {resp}")
                 
                 # Try getting chain
-                chain = client.get_option_chain(
-                    sym,
-                    strike_count=2,
-                    strategy='ANALYTICAL'
-                ).json()
+                chain_raw = await hub_request("get_option_chain", {
+                    "symbol": sym,
+                    "strike_count": 2,
+                    "strategy": "ANALYTICAL"
+                })
+                
+                if chain_raw.get("status") != "success":
+                    print(f"  [X] Option Chain Error: {chain_raw.get('message')}")
+                    continue
+                    
+                chain = chain_raw.get("data", {})
                 
                 if chain.get('status') == 'FAILED':
-                   print(f"  ❌ Option Chain Failed.")
+                   print(f"  [X] Option Chain Failed.")
                 else:
-                   print(f"  ✅ Option Chain Found ({len(chain.get('callExpDateMap',{}))} expirations)")
+                   print(f"  [OK] Option Chain Found ({len(chain.get('callExpDateMap',{}))} expirations)")
             else:
-                print(f"  ❌ Quote Not Found.")
+                print(f"  [X] Quote Not Found.")
                 
         except Exception as e:
             print(f"Error ({sym}): {e}")
 
 if __name__ == "__main__":
-    check_futures()
+    asyncio.run(check_futures())

@@ -30,10 +30,10 @@ def create_backup(filepath):
     
     try:
         shutil.copy2(filepath, backup_path)
-        print(f"✅ Backup created: {backup_name}")
+        print(f"Backup created: {backup_name}")
         return backup_path
     except Exception as e:
-        print(f"❌ Backup failed for {filename}: {e}")
+        print(f"Backup failed for {filename}: {e}")
         raise e
 
 def safe_save_parquet(df, filepath):
@@ -56,10 +56,10 @@ def safe_save_parquet(df, filepath):
         if os.path.exists(filepath):
             os.remove(filepath)
         os.rename(tmp_path, filepath)
-        print(f"✅ Successfully saved: {os.path.basename(filepath)}")
+        print(f"Successfully saved: {os.path.basename(filepath)}")
         
     except Exception as e:
-        print(f"❌ Save failed: {e}")
+        print(f"Save failed: {e}")
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         raise e

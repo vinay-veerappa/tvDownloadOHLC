@@ -16,46 +16,8 @@ INDEX_SYMBOL_ALIASES = {
 
 
 
-@dataclass(frozen=True)
-class OptionChainResult:
-    requested_symbol: str
-    api_symbol: str
-    payload: dict[str, Any]
-
-
 def normalize_option_chain_symbol(symbol: str) -> str:
     return INDEX_SYMBOL_ALIASES.get(symbol.upper(), symbol)
-
-
-def create_schwab_client(root_dir: str = "."):
-    root = Path(root_dir)
-    secrets_path = root / "secrets.json"
-    token_path = root / "token.json"
-
-    if not secrets_path.exists() or not token_path.exists():
-        raise FileNotFoundError("Missing secrets.json or token.json")
-
-    secrets = json.loads(secrets_path.read_text())
-    return schwab.auth.client_from_token_file(
-        token_path=str(token_path),
-        api_key=secrets["app_key"],
-        app_secret=secrets["app_secret"],
-        enforce_enums=False,
-    )
-
-
-def fetch_option_chain(client, symbol: str, **kwargs) -> OptionChainResult:
-    api_symbol = normalize_option_chain_symbol(symbol)
-    response = client.get_option_chain(api_symbol, **kwargs)
-    payload = response.json()
-    if response.status_code != 200:
-        detail = payload if isinstance(payload, dict) else {"raw": str(payload)}
-        raise RuntimeError(f"Option chain request failed for {symbol} ({api_symbol}): {detail}")
-
-    if payload.get("status") and payload.get("status") != "SUCCESS":
-        raise RuntimeError(f"Option chain status failed for {symbol} ({api_symbol}): {payload.get('status')}")
-
-    return OptionChainResult(requested_symbol=symbol, api_symbol=api_symbol, payload=payload)
 
 
 def find_expiration_key(option_map: dict[str, Any], target_date: date) -> str | None:

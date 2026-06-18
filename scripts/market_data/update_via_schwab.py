@@ -12,11 +12,10 @@ Usage:
 
 import os
 import sys
-import json
-import schwab
 import pandas as pd
-from datetime import datetime, timedelta
-import time
+from datetime import datetime, timedelta, timezone
+import asyncio
+import httpx
 import argparse
 import subprocess
 from pathlib import Path
@@ -28,6 +27,13 @@ sys.path.append(utils_dir)
 
 import data_utils
 from data_utils import DATA_DIR
+
+# Ensure repository root is in sys.path so scripts can find top-level packages
+root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
+
+from scripts.streaming.options.config import HUB_URL
 
 # Map App Ticker -> Schwab Ticker
 SCHWAB_MAP = {
@@ -68,33 +74,23 @@ SCHWAB_MAP = {
     "GC": "/GC"
 }
 
-def get_schwab_client():
-    """Initialize Schwab API client"""
-    root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
-    token_path = os.path.join(root_dir, "token.json")
-    secrets_path = os.path.join(root_dir, "secrets.json")
-    
-    if not os.path.exists(token_path) or not os.path.exists(secrets_path):
-        print(f"Error: Credentials not found at {root_dir}")
-        return None
-        
-    with open(secrets_path, "r") as f:
-        secrets = json.load(f)
-        
-    try:
-        client = schwab.auth.client_from_token_file(
-            token_path=token_path,
-            api_key=secrets["app_key"],
-            app_secret=secrets["app_secret"],
-            enforce_enums=False
-        )
-        return client
-    except Exception as e:
-        print(f"Auth Failed: {e}")
-        return None
+async def hub_request(method, params):
+    """Send a REST request through the Hub's proxy."""
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30.0)
+            if resp.status_code == 200:
+                result = resp.json()
+                if isinstance(result, dict) and "status" not in result:
+                    return {"status": "success", "data": result}
+                return result
+            else:
+                return {"status": "error", "message": f"Hub Error [{resp.status_code}]: {resp.text}"}
+        except Exception as e:
+            return {"status": "error", "message": f"Hub Connection Error: {str(e)}"}
 
-def fetch_data(client, symbol, timeframe, start_dt, end_dt):
-    """Fetch historical data from Schwab API"""
+async def fetch_data(symbol, timeframe, start_dt, end_dt):
+    """Fetch historical data from Schwab Hub API"""
     # Map timeframe to Schwab params
     period_type = 'day'
     freq_type = 'minute'
@@ -125,22 +121,31 @@ def fetch_data(client, symbol, timeframe, start_dt, end_dt):
 
     print(f"Fetching {symbol} ({timeframe}) from {start_dt} to {end_dt}...")
     
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms = int(end_dt.timestamp() * 1000)
+    
     try:
-        resp = client.get_price_history(
-            symbol,
-            period_type=period_type,
-            frequency_type=freq_type,
-            frequency=freq,
-            start_datetime=start_dt,
-            end_datetime=end_dt,
-            need_extended_hours_data=True
-        ).json()
+        resp_raw = await hub_request("get_price_history", {
+            "symbol": symbol,
+            "period_type": period_type,
+            "frequency_type": freq_type,
+            "frequency": freq,
+            "start_date": start_ms,
+            "end_date": end_ms,
+            "need_extended_hours_data": True
+        })
         
-        if 'candles' not in resp or not resp['candles']:
-            print(f"No candles found. Response: {resp.get('errors') or 'Empty'}")
+        if resp_raw.get("status") != "success":
+            print(f"No candles found. Response: {resp_raw.get('message')}")
             return None
             
-        candles = resp['candles']
+        resp = resp_raw.get("data", {})
+        candles = resp.get('candles', [])
+        
+        if not candles:
+            print("No candles found.")
+            return None
+            
         print(f"  Got {len(candles)} rows.")
         
         # Convert to DataFrame
@@ -161,12 +166,8 @@ def fetch_data(client, symbol, timeframe, start_dt, end_dt):
         print(f"Fetch Error {symbol}: {e}")
         return None
 
-def update_ticker(ticker, timeframe):
+async def update_ticker(ticker, timeframe):
     """Update a single ticker's data for a specific timeframe"""
-    client = get_schwab_client()
-    if not client: 
-        return False
-
     schwab_ticker = SCHWAB_MAP.get(ticker)
     if not schwab_ticker:
         print(f"Error: {ticker} not found in SCHWAB_MAP")
@@ -203,7 +204,7 @@ def update_ticker(ticker, timeframe):
     else:
         default_lookback = timedelta(days=30)
     
-    start_dt = datetime.now() - default_lookback
+    start_dt = datetime.now(timezone.utc) - default_lookback
     existing_df = None
     
     # 1. Check existing data to bridge gap
@@ -224,8 +225,8 @@ def update_ticker(ticker, timeframe):
                     existing_df.index = existing_df.index.tz_convert(None)
                 
                 last_dt = existing_df.index.max()
-                # Start from last timestamp
-                start_dt = last_dt
+                # Make last_dt aware
+                start_dt = last_dt.replace(tzinfo=timezone.utc)
                 print(f"Existing data found. Last timestamp: {last_dt}")
                 
                 # Create backup before modifying
@@ -234,17 +235,13 @@ def update_ticker(ticker, timeframe):
             print(f"Error reading existing file: {e}")
             
     # 2. Fetch New Data
-    end_dt = datetime.utcnow()
-    
-    # Ensure start_dt is naive for comparison if it's already naive
-    if start_dt.tzinfo is not None:
-        start_dt = start_dt.replace(tzinfo=None)
+    end_dt = datetime.now(timezone.utc)
         
     if start_dt >= end_dt - timedelta(minutes=1): 
         print("Data is up to date.")
         return True
 
-    new_df = fetch_data(client, schwab_ticker, timeframe, start_dt, end_dt)
+    new_df = await fetch_data(schwab_ticker, timeframe, start_dt, end_dt)
     
     if new_df is None or new_df.empty:
         print("No new data fetched.")
@@ -264,6 +261,8 @@ def update_ticker(ticker, timeframe):
         combined.index.name = 'datetime'
     else:
         combined = new_df
+        if combined.index.tz is not None:
+            combined.index = combined.index.tz_convert(None)
         combined.index.name = 'datetime'
         
     # 4. Save
@@ -275,16 +274,13 @@ def update_ticker(ticker, timeframe):
         print(f"Save Failed: {e}")
         return False
 
-def run_json_update(ticker):
+async def run_json_update(ticker):
     """Run the JSON chunking script for the specific ticker"""
-    # Standardize ticker name (remove aliases like NQ -> NQ1)
     storage_ticker = ticker
     if ticker in ["NQ", "ES", "RTY", "YM", "CL", "GC"]:
         storage_ticker = f"{ticker}1"
         
     print(f"Updating Web JSON chunks for {storage_ticker}...")
-    
-    # Path to the converter script
     script_path = os.path.join(current_dir, "../data_processing/convert/convert_to_chunked_json.py")
     
     if not os.path.exists(script_path):
@@ -292,22 +288,46 @@ def run_json_update(ticker):
         return
         
     try:
-        # Pass the ticker as an argument to limit processing
-        result = subprocess.run(
-            [sys.executable, script_path, storage_ticker],
-            capture_output=True,
-            text=True,
-            cwd=os.path.abspath(os.path.join(current_dir, "../../"))
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, script_path, storage_ticker,
+            cwd=os.path.abspath(os.path.join(current_dir, "../../")),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
-        if result.returncode == 0:
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0:
             print(f"DONE: Web JSON chunks updated for {storage_ticker}")
         else:
-            print(f"FAILED: JSON update failed: {result.stderr}")
+            print(f"FAILED: JSON update failed: {stderr.decode()}")
     except Exception as e:
         print(f"Error running JSON update: {e}")
 
+async def run_all(args):
+    if args.all:
+        timeframes = ['1m', '5m', '15m', '1h', '1d', '1W']
+        updated_tickers = set()
+        for ticker in SCHWAB_MAP.keys():
+            success = False
+            for tf in timeframes:
+                if await update_ticker(ticker, tf):
+                    success = True
+                await asyncio.sleep(0.5)
+            if success:
+                updated_tickers.add(ticker)
+        
+        if not args.no_json:
+            for ticker in updated_tickers:
+                await run_json_update(ticker)
+                
+    elif args.ticker:
+        success = await update_ticker(args.ticker, args.tf)
+        if success and not args.no_json:
+            await run_json_update(args.ticker)
+        if not success:
+            sys.exit(1)
+
 def main():
-    parser = argparse.ArgumentParser(description='Update ticker data via Schwab API')
+    parser = argparse.ArgumentParser(description='Update ticker data via Schwab Hub API')
     parser.add_argument("ticker", nargs='?', help="Ticker symbol (e.g. VVIX, SPX, NQ1)")
     parser.add_argument("--tf", default="1m", help="Timeframe (1m, 5m, 15m, 1h, 1d, 1W)")
     parser.add_argument("--all", action="store_true", help="Update all tickers in SCHWAB_MAP")
@@ -315,33 +335,11 @@ def main():
     
     args = parser.parse_args()
     
-    if args.all:
-        # Update all tickers for common timeframes
-        timeframes = ['1m', '5m', '15m', '1h', '1d', '1W']
-        updated_tickers = set()
-        for ticker in SCHWAB_MAP.keys():
-            success = False
-            for tf in timeframes:
-                if update_ticker(ticker, tf):
-                    success = True
-                time.sleep(0.5)  # Rate limiting
-            if success:
-                updated_tickers.add(ticker)
-        
-        # Run JSON update once per updated ticker
-        if not args.no_json:
-            for ticker in updated_tickers:
-                run_json_update(ticker)
-                
-    elif args.ticker:
-        success = update_ticker(args.ticker, args.tf)
-        if success and not args.no_json:
-            run_json_update(args.ticker)
-        if not success:
-            sys.exit(1)
-    else:
+    if not args.ticker and not args.all:
         parser.print_help()
         sys.exit(1)
+        
+    asyncio.run(run_all(args))
 
 if __name__ == "__main__":
     main()

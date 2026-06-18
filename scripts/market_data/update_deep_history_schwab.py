@@ -1,20 +1,24 @@
-
 import os
 import sys
-import json
-import schwab
+import asyncio
+import httpx
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 
 # Ensure we can import data_utils from local dir
-# Assuming this script is in scripts/market_data/
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# data_utils is in scripts/utils
 utils_dir = os.path.abspath(os.path.join(current_dir, "../utils"))
 sys.path.append(utils_dir)
 
 import data_utils
+
+# We must append the project root so scripts.streaming is found
+root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
+
+from scripts.streaming.options.config import HUB_URL
 
 # Map App Ticker -> Schwab Ticker
 SCHWAB_MAP = {
@@ -40,8 +44,7 @@ SCHWAB_MAP = {
     "META": "META", "GOOGL": "GOOGL",
     "PLTR": "PLTR", "JPM": "JPM", "GS": "GS",
 
-    # Futures (Trying generic symbols, might need specific contracts)
-    # Schwab usually requires /ES, /NQ, or specific month codes like ESZ25
+    # Futures
     "ES1": "/ES", 
     "NQ1": "/NQ",
     "RTY1": "/RTY",
@@ -54,64 +57,61 @@ SCHWAB_MAP = {
     "GC": "/GC"
 }
 
-def get_schwab_client():
-    # Secrets expected in project root (../../)
-    root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
-    token_path = os.path.join(root_dir, "token.json")
-    secrets_path = os.path.join(root_dir, "secrets.json")
-    
-    if not os.path.exists(token_path) or not os.path.exists(secrets_path):
-        print(f"Error: Credentials not found at {root_dir}")
-        return None
-        
-    with open(secrets_path, "r") as f:
-        secrets = json.load(f)
-        
-    try:
-        client = schwab.auth.client_from_token_file(
-            token_path=token_path,
-            api_key=secrets["app_key"],
-            app_secret=secrets["app_secret"],
-            enforce_enums=False
-        )
-        return client
-    except Exception as e:
-        print(f"Auth Failed: {e}")
-        return None
+async def hub_request(method, params):
+    """Send a REST request through the Hub's proxy."""
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=60.0)
+            if resp.status_code == 200:
+                result = resp.json()
+                if isinstance(result, dict) and "status" not in result:
+                    return {"status": "success", "data": result}
+                return result
+            else:
+                return {"status": "error", "message": f"Hub Error [{resp.status_code}]: {resp.text}"}
+        except Exception as e:
+            return {"status": "error", "message": f"Hub Connection Error: {str(e)}"}
 
-def fetch_15m_history(client, symbol):
-    print(f"Fetching 6mo 15m data for {symbol}...")
+async def fetch_15m_history(symbol):
+    print(f"Fetching 2yr 15m data for {symbol} via Hub...")
     
-    end_dt = datetime.now()
+    end_dt = datetime.now(timezone.utc)
     start_dt = end_dt - timedelta(days=730) # 2 Years
     
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms = int(end_dt.timestamp() * 1000)
+    
     try:
-        resp = client.get_price_history(
-            symbol,
-            period_type='day',
-            frequency_type='minute',
-            frequency=15,
-            start_datetime=start_dt,
-            end_datetime=end_dt,
-            need_extended_hours_data=True
-        ).json()
+        resp = await hub_request("get_price_history", {
+            "symbol": symbol,
+            "period_type": "day",
+            "frequency_type": "minute",
+            "frequency": 15,
+            "start_date": start_ms,
+            "end_date": end_ms,
+            "need_extended_hours_data": True
+        })
         
-        if 'candles' not in resp or not resp['candles']:
-            print(f"No candles found for {symbol}. Response: {resp.get('errors') or 'Empty'}")
+        if resp.get("status") != "success":
+            print(f"Fetch Error {symbol}: {resp.get('message')}")
             return None
             
-        candles = resp['candles']
+        data = resp.get("data", {})
+        candles = data.get('candles', [])
+        
+        if not candles:
+            print(f"No candles found for {symbol}.")
+            return None
+            
         print(f"  Got {len(candles)} rows.")
         
         # Convert to DataFrame
         df = pd.DataFrame(candles)
-        # Schwab cols: close, datetime (ms), high, low, open, volume
         
         # Normalize to App Standard
         df['datetime'] = pd.to_datetime(df['datetime'], unit='ms')
         df.set_index('datetime', inplace=True)
         
-        # Renaissance keys
         df.rename(columns={
             "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"
         }, inplace=True)
@@ -122,25 +122,15 @@ def fetch_15m_history(client, symbol):
         print(f"Fetch Error {symbol}: {e}")
         return None
 
-def update_deep_history():
-    client = get_schwab_client()
-    if not client: return
-
+async def update_deep_history():
     for app_ticker, schwab_ticker in SCHWAB_MAP.items():
         print(f"\n--- Processing {app_ticker} ({schwab_ticker}) ---")
         
-        new_df = fetch_15m_history(client, schwab_ticker)
+        new_df = await fetch_15m_history(schwab_ticker)
         if new_df is None or new_df.empty:
             continue
             
-        # File Path (using app_ticker)
-        # UpdateIntraday uses: {ticker}_15m.parquet
         filename = f"{app_ticker}_15m.parquet"
-        
-        # data_utils.DATA_DIR assumes ../../data usually? 
-        # Checking data_utils source would be good, but we can standardise.
-        # Assuming data_utils.DATA_DIR is correct.
-        
         filepath = os.path.join(data_utils.DATA_DIR, filename)
         
         # Merge Logic
@@ -171,7 +161,7 @@ def update_deep_history():
             print(f"  Save Failed: {e}")
             
         # Rate limit kindness
-        time.sleep(0.5)
+        await asyncio.sleep(0.5)
 
 if __name__ == "__main__":
-    update_deep_history()
+    asyncio.run(update_deep_history())

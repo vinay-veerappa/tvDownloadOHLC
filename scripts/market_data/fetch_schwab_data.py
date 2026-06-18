@@ -1,11 +1,11 @@
 import os
 import sys
-import json
-import schwab
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import argparse
+import asyncio
+import httpx
 
 # Ensure we can import data_utils from local dir
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +14,13 @@ sys.path.append(utils_dir)
 
 import data_utils
 from data_utils import DATA_DIR # Assuming this exists from previous scan
+
+# We must append the project root so scripts.streaming is found
+root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
+
+from scripts.streaming.options.config import HUB_URL
 
 # Map App Ticker -> Schwab Ticker
 SCHWAB_MAP = {
@@ -37,34 +44,24 @@ SCHWAB_MAP = {
     "GC": "/GC"
 }
 
-def get_schwab_client():
-    # Secrets expected in project root
-    root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
-    token_path = os.path.join(root_dir, "token.json")
-    secrets_path = os.path.join(root_dir, "secrets.json")
-    
-    if not os.path.exists(token_path) or not os.path.exists(secrets_path):
-        print(f"Error: Credentials not found at {root_dir}")
-        return None
-        
-    with open(secrets_path, "r") as f:
-        secrets = json.load(f)
-        
-    try:
-        client = schwab.auth.client_from_token_file(
-            token_path=token_path,
-            api_key=secrets["app_key"],
-            app_secret=secrets["app_secret"],
-            enforce_enums=False
-        )
-        return client
-    except Exception as e:
-        print(f"Auth Failed: {e}")
-        return None
+async def hub_request(method, params):
+    """Send a REST request through the Hub's proxy."""
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30.0)
+            if resp.status_code == 200:
+                result = resp.json()
+                if isinstance(result, dict) and "status" not in result:
+                    return {"status": "success", "data": result}
+                return result
+            else:
+                return {"status": "error", "message": f"Hub Error [{resp.status_code}]: {resp.text}"}
+        except Exception as e:
+            return {"status": "error", "message": f"Hub Connection Error: {str(e)}"}
 
-def fetch_data(client, symbol, timeframe, start_dt, end_dt):
+async def fetch_data(symbol, timeframe, start_dt, end_dt):
     # Map timeframe to Schwab params
-    # tf input: "1m", "5m", "15m", "30m", "1h", "1d"
+    # tf input: "1m", "5m", "15m", "30m", "1d"
     
     period_type = 'day'
     freq_type = 'minute'
@@ -86,24 +83,33 @@ def fetch_data(client, symbol, timeframe, start_dt, end_dt):
         print(f"Unsupported timeframe: {timeframe} (Schwab API only supports 1m, 5m, 15m, 30m, 1d)")
         return None
 
-    print(f"Fetching {symbol} ({timeframe}) from {start_dt} to {end_dt}...")
+    print(f"Fetching {symbol} ({timeframe}) from {start_dt} to {end_dt} via Hub...")
+    
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms = int(end_dt.timestamp() * 1000)
     
     try:
-        resp = client.get_price_history(
-            symbol,
-            period_type=period_type,
-            frequency_type=freq_type,
-            frequency=freq,
-            start_datetime=start_dt,
-            end_datetime=end_dt,
-            need_extended_hours_data=True
-        ).json()
+        resp_raw = await hub_request("get_price_history", {
+            "symbol": symbol,
+            "period_type": period_type,
+            "frequency_type": freq_type,
+            "frequency": freq,
+            "start_date": start_ms,
+            "end_date": end_ms,
+            "need_extended_hours_data": True
+        })
         
-        if 'candles' not in resp or not resp['candles']:
-            print(f"No candles found. Response: {resp.get('errors') or 'Empty'}")
+        if resp_raw.get("status") != "success":
+            print(f"No candles found. Response: {resp_raw.get('message')}")
             return None
             
-        candles = resp['candles']
+        resp = resp_raw.get("data", {})
+        candles = resp.get('candles', [])
+        
+        if not candles:
+            print("No candles found.")
+            return None
+            
         print(f"  Got {len(candles)} rows.")
         
         # Convert to DataFrame
@@ -125,10 +131,7 @@ def fetch_data(client, symbol, timeframe, start_dt, end_dt):
         print(f"Fetch Error {symbol}: {e}")
         return None
 
-def update_ticker(ticker, timeframe):
-    client = get_schwab_client()
-    if not client: return
-
+async def update_ticker(ticker, timeframe):
     schwab_ticker = SCHWAB_MAP.get(ticker, ticker) # Default to same if not mapped
     
     # *** IMPORTANT: Write to LIVE STORAGE, not Historical ***
@@ -147,7 +150,7 @@ def update_ticker(ticker, timeframe):
     filename = f"live_storage_{storage_ticker}.parquet"
     filepath = os.path.join(live_dir, filename)
     
-    start_dt = datetime.now() - timedelta(days=5) # Default: Last 5 days lookback
+    start_dt = datetime.now(timezone.utc) - timedelta(days=5) # Default: Last 5 days lookback
     
     existing_df = None
     
@@ -173,32 +176,39 @@ def update_ticker(ticker, timeframe):
                      existing_df.index = pd.to_datetime(existing_df['date'])
             
             if not existing_df.empty:
+                if existing_df.index.tz is not None:
+                    existing_df.index = existing_df.index.tz_convert(None)
+                    
                 last_dt = existing_df.index.max()
-                start_dt = last_dt
+                start_dt = last_dt.replace(tzinfo=timezone.utc)
                 print(f"Existing data found. Last timestamp: {last_dt}")
         except Exception as e:
             print(f"Error reading existing file: {e}")
             
     # 2. Fetch New Data
-    end_dt = datetime.now()
+    end_dt = datetime.now(timezone.utc)
     
     if start_dt >= end_dt - timedelta(minutes=1): 
         print("Data is up to date.")
         return
 
-    new_df = fetch_data(client, schwab_ticker, timeframe, start_dt, end_dt)
+    new_df = await fetch_data(schwab_ticker, timeframe, start_dt, end_dt)
     
     if new_df is None or new_df.empty:
         return
 
     # 3. Merge
     if existing_df is not None:
+        if new_df.index.tz is not None:
+            new_df.index = new_df.index.tz_convert(None)
         combined = pd.concat([existing_df, new_df])
         # Remove duplicates based on index
         combined = combined[~combined.index.duplicated(keep='last')]
         combined.sort_index(inplace=True)
     else:
         combined = new_df
+        if combined.index.tz is not None:
+            combined.index = combined.index.tz_convert(None)
         
     # 4. Save
     try:
@@ -215,4 +225,4 @@ if __name__ == "__main__":
     parser.add_argument("--tf", default="1m", help="Timeframe (1m, 5m, 1h, 1d)")
     
     args = parser.parse_args()
-    update_ticker(args.ticker, args.tf)
+    asyncio.run(update_ticker(args.ticker, args.tf))
