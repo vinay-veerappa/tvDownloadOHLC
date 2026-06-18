@@ -67,3 +67,6 @@ bin/
 args.json
 tokens.db
 tmp/
+
+# Ignore dynamic runtime state files
+scripts/libs_py/strategy_engine/scheduler_state.json
