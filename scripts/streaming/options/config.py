@@ -245,6 +245,7 @@ TIER2_INTERVAL_SECONDS: int = 600   # 10 minutes for lower-priority tickers
 # Maps each primary index to its corresponding futures symbol.
 INDEX_TO_FUTURES: dict[str, str] = {
     "SPX": ES_FUTURES_SYMBOL,
+    "SPY": ES_FUTURES_SYMBOL,
     "QQQ": NQ_FUTURES_SYMBOL,
     "DIA": YM_FUTURES_SYMBOL,
     "IWM": RTY_FUTURES_SYMBOL,

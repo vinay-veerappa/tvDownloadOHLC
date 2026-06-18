@@ -288,6 +288,10 @@ model GexSnapshot {
   put25dIv              Float?
   call25dIv             Float?
   volatilitySkewPremium Float?
+  futuresSymbol         String?
+  futuresTranslationMode String?
+  futuresBasisSpread    Float?
+  futuresBasisRatio     Float?
   createdAt             DateTime @default(now())
 
   @@index([ticker, tradingDate])

@@ -122,10 +122,10 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
         "netSpeedExposure": levels.net_speed_exposure,
         "netVannaExposure": levels.net_vanna_exposure,
         # Futures translation matrix
-        "futuresSymbol": levels.futures_symbol,
-        "futuresTranslationMode": levels.translation_mode,
-        "futuresBasisSpread": levels.basis_spread,
-        "futuresBasisRatio": levels.basis_ratio,
+        "futuresSymbol": getattr(levels, "futures_symbol", None),
+        "futuresTranslationMode": getattr(levels, "translation_mode", None),
+        "futuresBasisSpread": getattr(levels, "basis_spread", None),
+        "futuresBasisRatio": getattr(levels, "basis_ratio", None),
     }
 
     payload = _sanitize_payload(payload)

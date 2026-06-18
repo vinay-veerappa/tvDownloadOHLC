@@ -405,6 +405,10 @@ model GexSnapshot {
   put25dIv              Float?
   call25dIv             Float?
   volatilitySkewPremium Float?
+  futuresSymbol         String?
+  futuresTranslationMode String?
+  futuresBasisSpread    Float?
+  futuresBasisRatio     Float?
   createdAt             DateTime @default(now())
 
   @@index([ticker, tradingDate])
@@ -603,6 +607,7 @@ model EconomicEvent {
   * `daily_levels.json`: Localized API cache.
   * `daily_levels.txt`: Copy-ready formatted strings.
   * `weekly_em_pinescript.txt`: Unified Pine Script v6 `array.new` strings, enabling copy-paste input for TradingView indicators.
+  * `unified_levels`: Feeds Pine Script with native cash-space pricing alongside dynamic `META_FUTURES_RATIO` and `META_FUTURES_BASIS_` metadata tokens to execute live client-side translation without double-conversion.
 
 ---
 

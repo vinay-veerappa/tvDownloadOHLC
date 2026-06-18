@@ -1,4 +1,4 @@
-# Technical Design: Options Live GEX V3
+﻿# Options Pipeline & Dashboard Architecture
 
 ## 1. Purpose
 Translate PRD and design spec into an implementation-ready architecture for frontend, API, compute, and publishing.
@@ -222,3 +222,47 @@ Use a shared envelope:
 2. Track cache hit/miss and payload size by endpoint.
 3. Add regression budgets for p95 latency and client render cost.
 4. Fail CI on severe performance budget regressions when benchmarks are available.
+
+
+## 15. Futures Translation & Mapping Matrix
+
+A critical component of the pipeline is ensuring that derivative cash vehicles (SPY, SPX, QQQ) are accurately represented in their futures equivalent spaces (/ES, /NQ) so traders have synchronized DOM levels.
+
+### 15.1 Global Mapping Config (`config.py`)
+Translation is exclusively driven by the `INDEX_TO_FUTURES` dictionary. If a ticker is not in this map, it remains in standard cash space.
+```python
+INDEX_TO_FUTURES: dict[str, str] = {
+    "SPX": "/ES",
+    "SPY": "/ES",
+    "QQQ": "/NQ",
+    "DIA": "/YM",
+    "IWM": "/RTY",
+}
+```
+*Note: Single stock equities (e.g., AAPL, NVDA) are intentionally omitted and do not undergo translation.*
+
+### 15.2 Translation Math (`futures_translator.py`)
+When a mapping is detected, the `DealerLevels` object is mutated to include translation metadata:
+- **`futures_symbol`**: The target string (e.g., `"/ES"`).
+- **`translation_mode`**: Either `additive` (basis spread, like SPX to /ES) or `multiplicative` (scaling ratio, like SPY to /ES).
+- **`basis_spread`**: Absolute point difference (applied for `additive`).
+- **`basis_ratio`**: Division ratio (e.g., ~10x for SPY to /ES).
+
+### 15.3 Database Schema (Prisma)
+The output of the translation is safely captured in the Prisma `GexSnapshot` table using `getattr` defaults to gracefully handle unmapped single stocks:
+```prisma
+model GexSnapshot {
+  ...
+  // Futures translation matrix
+  futuresSymbol           String?
+  futuresTranslationMode  String?
+  futuresBasisSpread      Float?
+  futuresBasisRatio       Float?
+}
+```
+
+### 15.4 UI Layer Consumption
+The Next.js Frontend consumes the `GexSnapshot` via the `/api/options-live/v3/*` endpoints. 
+- **Container Level:** Global store maintains the active `symbol` state.
+- **Rendering Level:** The presence of `futuresSymbol` and `futuresBasisRatio` dictates whether the charts render raw cash scales or the translated futures scale.
+- **Preservation of Pine Compat:** The UI handles the scaled metrics seamlessly, whilst the backend continues to spit out unaltered `daily_levels.txt` for TradingView PineScript users.
