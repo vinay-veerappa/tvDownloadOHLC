@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { getLiveChartData } from "@/actions/get-live-chart"
 import { OHLCData } from "@/actions/data-actions"
 import { toast } from "sonner"
+import { resampleOHLC, canResample, parseTimeframeToSeconds } from "@/lib/resampling"
 
 interface UseLiveDataLoadingProps {
     ticker: string
@@ -85,14 +86,41 @@ export function useLiveDataLoading({
                         rawDataRef.current = unique
                     }
 
-                    // Sorting again (redundant but safe)
-                    // rawDataRef.current.sort((a, b) => a.time - b.time)
-                    // setFullData([...rawDataRef.current])
+                    // --- Live Upsampling Logic ---
+                    let resampledData = rawDataRef.current;
+                    if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
+                        if (canResample('1', timeframe)) {
+                            resampledData = resampleOHLC(rawDataRef.current, '1', timeframe);
+                        } else {
+                            // Manual aggregation for Daily/Weekly (bypassing restriction)
+                            const toSeconds = parseTimeframeToSeconds(timeframe);
+                            if (toSeconds > 0) {
+                                const resampled: OHLCData[] = [];
+                                let currentBucket: OHLCData | null = null;
+                                let bucketEndTime = Number.NaN;
+                                for (const candle of rawDataRef.current) {
+                                    const bucketStart = Math.floor(candle.time / toSeconds) * toSeconds;
+                                    if (bucketStart !== bucketEndTime) {
+                                        if (currentBucket) resampled.push(currentBucket);
+                                        currentBucket = { ...candle, time: bucketStart };
+                                        bucketEndTime = bucketStart;
+                                    } else if (currentBucket) {
+                                        currentBucket.high = Math.max(currentBucket.high, candle.high);
+                                        currentBucket.low = Math.min(currentBucket.low, candle.low);
+                                        currentBucket.close = candle.close;
+                                        currentBucket.volume = (currentBucket.volume || 0) + (candle.volume || 0);
+                                    }
+                                }
+                                if (currentBucket) resampled.push(currentBucket);
+                                resampledData = resampled;
+                            }
+                        }
+                    }
+
                     setFullData((prev) => {
                         // Optimizing: only update fullData if we have a NEW candle or first load
-                        // Intraday price updates are handled by livePrice state + reference logic in use-chart-data
-                        if (rawDataRef.current.length > prev.length || prev.length === 0) {
-                            return [...rawDataRef.current]
+                        if (resampledData.length > prev.length || prev.length === 0) {
+                            return [...resampledData]
                         }
                         return prev
                     })
@@ -106,9 +134,9 @@ export function useLiveDataLoading({
                     // First Load Callback
                     if (isFirstLoad.current) {
                         onDataLoad?.({
-                            start: formatted[0].time,
-                            end: formatted[formatted.length - 1].time,
-                            totalBars: formatted.length
+                            start: resampledData[0].time,
+                            end: resampledData[resampledData.length - 1].time,
+                            totalBars: resampledData.length
                         })
                         isFirstLoad.current = false
                     }
@@ -121,15 +149,24 @@ export function useLiveDataLoading({
 
                 // Update current candle with live price (tick-by-tick rendering)
                 if (currentLivePrice && rawDataRef.current.length > 0) {
-                    const lastCandle = rawDataRef.current[rawDataRef.current.length - 1]
-                    const updatedCandle = {
-                        ...lastCandle,
-                        close: currentLivePrice,
-                        high: Math.max(lastCandle.high, currentLivePrice),
-                        low: Math.min(lastCandle.low, currentLivePrice)
-                    }
-                    rawDataRef.current[rawDataRef.current.length - 1] = updatedCandle
-                    setFullData([...rawDataRef.current])
+                    // Also update the raw 1m candle so next poll delta is accurate
+                    const lastRaw = rawDataRef.current[rawDataRef.current.length - 1];
+                    lastRaw.close = currentLivePrice;
+                    lastRaw.high = Math.max(lastRaw.high, currentLivePrice);
+                    lastRaw.low = Math.min(lastRaw.low, currentLivePrice);
+
+                    setFullData(prev => {
+                        if (prev.length === 0) return prev;
+                        const updated = [...prev];
+                        const lastCandle = updated[updated.length - 1];
+                        updated[updated.length - 1] = {
+                            ...lastCandle,
+                            close: currentLivePrice,
+                            high: Math.max(lastCandle.high, currentLivePrice),
+                            low: Math.min(lastCandle.low, currentLivePrice)
+                        };
+                        return updated;
+                    });
                 }
 
                 // Set hasMore based on API response
@@ -198,8 +235,39 @@ export function useLiveDataLoading({
                     const olderData = formatted.filter(c => c.time < oldestTime);
 
                     if (olderData.length > 0) {
-                        rawDataRef.current = [...olderData, ...rawDataRef.current];
-                        setFullData([...rawDataRef.current]);
+                        const combined1m = [...olderData, ...rawDataRef.current];
+                        rawDataRef.current = combined1m;
+
+                        let resampledData = combined1m;
+                        if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
+                            if (canResample('1', timeframe)) {
+                                resampledData = resampleOHLC(combined1m, '1', timeframe);
+                            } else {
+                                const toSeconds = parseTimeframeToSeconds(timeframe);
+                                if (toSeconds > 0) {
+                                    const resampled: OHLCData[] = [];
+                                    let currentBucket: OHLCData | null = null;
+                                    let bucketEndTime = Number.NaN;
+                                    for (const candle of combined1m) {
+                                        const bucketStart = Math.floor(candle.time / toSeconds) * toSeconds;
+                                        if (bucketStart !== bucketEndTime) {
+                                            if (currentBucket) resampled.push(currentBucket);
+                                            currentBucket = { ...candle, time: bucketStart };
+                                            bucketEndTime = bucketStart;
+                                        } else if (currentBucket) {
+                                            currentBucket.high = Math.max(currentBucket.high, candle.high);
+                                            currentBucket.low = Math.min(currentBucket.low, candle.low);
+                                            currentBucket.close = candle.close;
+                                            currentBucket.volume = (currentBucket.volume || 0) + (candle.volume || 0);
+                                        }
+                                    }
+                                    if (currentBucket) resampled.push(currentBucket);
+                                    resampledData = resampled;
+                                }
+                            }
+                        }
+
+                        setFullData([...resampledData]);
                     } else {
                     }
                 }

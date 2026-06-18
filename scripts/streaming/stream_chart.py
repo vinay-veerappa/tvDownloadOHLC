@@ -803,6 +803,35 @@ async def update_historical_files(symbol):
         weekly_df.to_parquet(weekly_path)
         print(f"   ✅ Rebuilt 1W from 1d: {len(weekly_df)} rows")
 
+        # --- EXPORT TO JSON FOR FRONTEND LIVE CHARTS ---
+        safe_sym = get_safe_symbol(symbol)
+        live_dir = os.path.join(DATA_DIR, "live")
+        
+        def write_df_to_live_json(df, tf_suffix):
+            if df.empty: return
+            candles = []
+            for ts, row in df.iterrows():
+                candles.append({
+                    "time": int(ts.timestamp() * 1000),
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": int(row.get("volume", 0))
+                })
+            out_path = os.path.join(live_dir, f"live_chart_{safe_sym}_{tf_suffix}.json")
+            with open(out_path, "w") as f:
+                json.dump({
+                    "symbol": symbol,
+                    "last_update": get_now_iso(),
+                    "live_price": float(df.iloc[-1]["close"]),
+                    "candles": candles
+                }, f)
+                
+        write_df_to_live_json(combined_daily, "1D")
+        write_df_to_live_json(weekly_df, "1W")
+        print(f"   ✅ Exported 1D and 1W JSON files for frontend.")
+
     except Exception as e:
         import traceback
         traceback.print_exc()

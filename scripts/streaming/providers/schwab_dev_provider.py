@@ -95,8 +95,17 @@ class SchwabDevProvider(SchwabHubProvider):
         
         # Generic Parameter translation (snake_case -> camelCase for schwabdev)
         final_params = {}
+        
+        # Special translations for date parameters in price_history
+        param_translation_map = {
+            "start_datetime": "startDate",
+            "end_datetime": "endDate"
+        }
+
         for k, v in params.items():
-            if "_" in k:
+            if k in param_translation_map:
+                final_params[param_translation_map[k]] = v
+            elif "_" in k:
                 parts = k.split("_")
                 camel_k = parts[0] + "".join(p.title() for p in parts[1:])
                 final_params[camel_k] = v
