@@ -75,7 +75,7 @@ export default function ResearchDashboard() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-            Research Hub
+            Edgeful Dashboard
           </h1>
           <p className="text-muted-foreground mt-1">
             Institutional strategy optimization and performance hierarchy.

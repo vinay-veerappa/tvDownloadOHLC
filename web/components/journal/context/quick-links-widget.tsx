@@ -6,17 +6,24 @@ import {
     BookOpen,
     Radio,
     Zap,
-    History,
-    ArrowRight,
+    Activity,
     Flame,
     Radar,
-    Waves
+    Beaker
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
 export function QuickLinksWidget() {
     const links = [
+        {
+            title: "Chart",
+            description: "Real-time Charting & Analysis",
+            icon: Activity,
+            href: "/tools/live-chart",
+            color: "text-green-500",
+            bg: "bg-green-500/10",
+        },
         {
             title: "Profiler",
             description: "Market Profile & TPO Analysis",
@@ -26,12 +33,28 @@ export function QuickLinksWidget() {
             bg: "bg-blue-500/10",
         },
         {
-            title: "Live Chart",
-            description: "Real-time Charting & Analysis",
+            title: "Edgeful Dashboard",
+            description: "Institutional Edge & Research",
+            icon: Beaker,
+            href: "/research",
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+        },
+        {
+            title: "Mission Control",
+            description: "Real-time Bias & Alignment",
             icon: Radio,
-            href: "/tools/live-chart",
-            color: "text-green-500",
-            bg: "bg-green-500/10",
+            href: "/dashboard/mission-control/NQ1",
+            color: "text-red-500",
+            bg: "bg-red-500/10",
+        },
+        {
+            title: "GEX Dashboard V3",
+            description: "Live Options Flow & GEX",
+            icon: Radar,
+            href: "/options-live-v3",
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
         },
         {
             title: "Expected Move",
@@ -42,22 +65,6 @@ export function QuickLinksWidget() {
             bg: "bg-amber-500/10",
         },
         {
-            title: "Journal",
-            description: "Trade Logging & Review",
-            icon: BookOpen,
-            href: "/journal",
-            color: "text-purple-500",
-            bg: "bg-purple-500/10",
-        },
-        {
-            title: "Backtest",
-            description: "Strategy Performance Testing",
-            icon: History,
-            href: "/backtest",
-            color: "text-pink-500",
-            bg: "bg-pink-500/10",
-        },
-        {
             title: "Candle Science",
             description: "3-Candle Pattern Projections",
             icon: Flame,
@@ -66,20 +73,12 @@ export function QuickLinksWidget() {
             bg: "bg-orange-500/10",
         },
         {
-            title: "Options Live",
-            description: "Live Options Flow",
-            icon: Radar,
-            href: "/options-live",
-            color: "text-rose-500",
-            bg: "bg-rose-500/10",
-        },
-        {
-            title: "Macro HTF",
-            description: "Quant Macro Levels",
-            icon: Waves,
-            href: "/macro",
-            color: "text-indigo-500",
-            bg: "bg-indigo-500/10",
+            title: "Journal",
+            description: "Trade Logging & Review",
+            icon: BookOpen,
+            href: "/journal",
+            color: "text-purple-500",
+            bg: "bg-purple-500/10",
         },
     ]
 

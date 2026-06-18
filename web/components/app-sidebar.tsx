@@ -67,6 +67,19 @@ export function AppSidebar() {
             active: pathname === "/profiler",
         },
         {
+            label: "Candle Science",
+            icon: Flame,
+            href: "/candle-science",
+            active: pathname === "/candle-science",
+        },
+        {
+            label: "Edgeful Dashboard",
+            icon: Beaker,
+            href: "/research",
+            active: pathname === "/research" || pathname?.startsWith("/research/"),
+            badge: "New",
+        },
+        {
             label: "Mission Control",
             icon: Radio,
             href: "/dashboard/mission-control/NQ1",
@@ -85,39 +98,13 @@ export function AppSidebar() {
             href: "/tools/expected-move",
             active: pathname === "/tools/expected-move",
         },
-        {
-            label: "Macro HTF",
-            icon: Waves,
-            href: "/macro",
-            active: pathname === "/macro",
-            badge: "New",
-        },
-        {
-            label: "Candle Science",
-            icon: Flame,
-            href: "/candle-science",
-            active: pathname === "/candle-science",
-        },
-        {
-            label: "Options Live",
-            icon: Radar,
-            href: "/options-live",
-            active: pathname === "/options-live",
-            badge: "Live", // Feature flag for badge
-        },
+        
         {
             label: "GEX Dashboard V3",
             icon: Radar,
             href: "/options-live-v3",
             active: pathname === "/options-live-v3",
             badge: "New", // Feature flag for badge
-        },
-        {
-            label: "Bookmap",
-            icon: Layers,
-            href: "/bookmap",
-            active: pathname?.startsWith("/bookmap"),
-            badge: "Pro",
         },
         {
             label: "Journal",
@@ -128,12 +115,6 @@ export function AppSidebar() {
     ]
 
     const toolRoutes = [
-        {
-            label: "Historical Chart",
-            icon: BarChart3,
-            href: "/",
-            active: pathname === "/",
-        },
         {
             label: "Backtest",
             icon: History,
@@ -147,25 +128,13 @@ export function AppSidebar() {
             active: pathname === "/data",
         },
         {
-            label: "Research Hub",
-            icon: Beaker,
-            href: "/research",
-            active: pathname === "/research" || pathname?.startsWith("/research/"),
-            badge: "New",
+            label: "Bookmap",
+            icon: Layers,
+            href: "/bookmap",
+            active: pathname?.startsWith("/bookmap"),
+            badge: "Pro",
         },
-        {
-            label: "Edgeful Dashboard",
-            icon: LayoutDashboard,
-            href: "/edgeful",
-            active: pathname === "/edgeful",
-            badge: "New",
-        },
-        {
-            label: "Reference",
-            icon: Library,
-            href: "/profiler/reference",
-            active: pathname === "/profiler/reference",
-        },
+        
     ]
 
     return (
