@@ -76,10 +76,23 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 ### Analysis (`analysis/`)
 | Script | Purpose |
 |:---|:---|
-| `generate_coverage_report.py` | Update DATA_COVERAGE_REPORT.md |
+| `generate_coverage_report.py` | Update DATA_COVERAGE_REPORT.md with data ranges and volume presence |
+| `daily_system_audit.py` | Complete Options Engine daily audit (logs, PnL, gaps, Discord reporting) |
 | `mae_mfe_analyzer.py` | Trade MAE/MFE analysis |
 | `generate_bias_charts.py` | ICT bias chart generation |
 | `extrapolate_em_to_futures.py` | EM extrapolation for futures |
+
+### Validation & Auditing (`validation/`)
+| Script | Purpose |
+|:---|:---|
+| `audit_all_data_gaps.py` | Comprehensive gap analysis for live 1m storage, Daily, and Weekly files |
+| `check_data_gaps.py` | Analyzes 1m/5m/15m overlaps and recommends if data downloads are needed |
+| `check_data_continuity.py` | Checks historical 1m parquets for gaps larger than 48 hours |
+
+### Maintenance (`maintenance/`)
+| Script | Purpose |
+|:---|:---|
+| `force_gap_fill.py` | Connects to the Schwab Hub proxy to manually fetch and patch missing 1-minute data into live_storage parquet files. |
 
 ### Quantitative Strategies (`scripts/strategies/`)
 | Category | Purpose |
