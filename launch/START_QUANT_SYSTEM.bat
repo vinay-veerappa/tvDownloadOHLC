@@ -2,6 +2,10 @@
 set BASE_DIR=%~dp0..
 cd /d %BASE_DIR%
 
+:: Force Python to use UTF-8 for all console output to prevent UnicodeEncodeErrors with Emojis on Windows
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
+
 title QUANT UNIFIED SYSTEM - STARTUP
 echo ===================================================
 echo     STARTING QUANT UNIFIED HUD SYSTEM

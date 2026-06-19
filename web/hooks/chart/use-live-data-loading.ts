@@ -5,6 +5,7 @@ import { getLiveChartData } from "@/actions/get-live-chart"
 import { OHLCData } from "@/actions/data-actions"
 import { toast } from "sonner"
 import { resampleOHLC, canResample, parseTimeframeToSeconds } from "@/lib/resampling"
+import { getResolutionInMinutes } from "@/lib/resolution"
 
 interface UseLiveDataLoadingProps {
     ticker: string
@@ -34,167 +35,259 @@ export function useLiveDataLoading({
 
     const lastTimeRef = useRef<number>(0)
     const rawDataRef = useRef<OHLCData[]>([]) // Keep raw array to avoid closure staleness
+    const [historyLoaded, setHistoryLoaded] = useState(false)
+
+    const wsRef = useRef<WebSocket | null>(null)
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const retryCountRef = useRef(0)
+
+    const processAndMergeCandles = useCallback((rawCandles: any[], isInitial: boolean) => {
+        if (rawCandles.length === 0) return;
+
+        const formatted: OHLCData[] = rawCandles.map((c: any) => ({
+            time: c.time > 10000000000 ? c.time / 1000 : c.time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume
+        }));
+
+        if (isInitial) {
+            rawDataRef.current = formatted;
+        } else {
+            const combined = [...rawDataRef.current, ...formatted];
+            combined.sort((a, b) => a.time - b.time);
+
+            const unique: OHLCData[] = [];
+            if (combined.length > 0) {
+                unique.push(combined[0]);
+                for (let i = 1; i < combined.length; i++) {
+                    const current = combined[i];
+                    const last = unique[unique.length - 1];
+                    if (current.time === last.time) {
+                        unique[unique.length - 1] = current;
+                    } else {
+                        unique.push(current);
+                    }
+                }
+            }
+            rawDataRef.current = unique;
+        }
+
+        // Live Upsampling Logic
+        let resampledData = rawDataRef.current;
+        if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
+            if (canResample('1', timeframe)) {
+                resampledData = resampleOHLC(rawDataRef.current, '1', timeframe);
+            } else {
+                const toSeconds = parseTimeframeToSeconds(timeframe);
+                if (toSeconds > 0) {
+                    const resampled: OHLCData[] = [];
+                    let currentBucket: OHLCData | null = null;
+                    let bucketEndTime = Number.NaN;
+                    for (const candle of rawDataRef.current) {
+                        const bucketStart = Math.floor(candle.time / toSeconds) * toSeconds;
+                        if (bucketStart !== bucketEndTime) {
+                            if (currentBucket) resampled.push(currentBucket);
+                            currentBucket = { ...candle, time: bucketStart };
+                            bucketEndTime = bucketStart;
+                        } else if (currentBucket) {
+                            currentBucket.high = Math.max(currentBucket.high, candle.high);
+                            currentBucket.low = Math.min(currentBucket.low, candle.low);
+                            currentBucket.close = candle.close;
+                            currentBucket.volume = (currentBucket.volume || 0) + (candle.volume || 0);
+                        }
+                    }
+                    if (currentBucket) resampled.push(currentBucket);
+                    resampledData = resampled;
+                }
+            }
+        }
+
+        setFullData([...resampledData]);
+
+        if (rawDataRef.current.length > 0) {
+            const lastBar = rawDataRef.current[rawDataRef.current.length - 1];
+            lastTimeRef.current = lastBar.time;
+        }
+    }, [timeframe]);
 
     const fetchData = useCallback(async () => {
         try {
-            // Request delta since last known time (in ms)
-            const sinceMs = lastTimeRef.current * 1000
-
-            const res = await getLiveChartData(ticker, timeframe, isFirstLoad.current ? undefined : sinceMs, isFirstLoad.current ? 180000 : undefined)
+            setIsLoading(true);
+            const httpRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=180000`, { cache: 'no-store' });
+            const res = await httpRes.json();
 
             if (res.success && res.data) {
-                const rawCandles = res.data.candles || []
-
+                const rawCandles = res.data.candles || [];
                 if (rawCandles.length > 0) {
-                    const formatted: OHLCData[] = rawCandles.map((c: any) => ({
-                        time: c.time / 1000,
-                        open: c.open,
-                        high: c.high,
-                        low: c.low,
-                        close: c.close,
-                        volume: c.volume
-                    }))
-
-                    if (isFirstLoad.current) {
-                        rawDataRef.current = formatted
-                    } else {
-                        // Robust Merge Strategy:
-                        // 1. Combine arrays
-                        // 2. Sort by time
-                        // 3. Deduplicate by time (keeping latest version of same timestamp)
-
-                        const combined = [...rawDataRef.current, ...formatted]
-
-                        // Sort first
-                        combined.sort((a, b) => a.time - b.time)
-
-                        // Deduplicate
-                        const unique: OHLCData[] = []
-                        if (combined.length > 0) {
-                            unique.push(combined[0])
-                            for (let i = 1; i < combined.length; i++) {
-                                const current = combined[i]
-                                const last = unique[unique.length - 1]
-                                if (current.time === last.time) {
-                                    // Replace with new version (usually updated close/volume)
-                                    unique[unique.length - 1] = current
-                                } else {
-                                    unique.push(current)
-                                }
-                            }
-                        }
-                        rawDataRef.current = unique
-                    }
-
-                    // --- Live Upsampling Logic ---
-                    let resampledData = rawDataRef.current;
-                    if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
-                        if (canResample('1', timeframe)) {
-                            resampledData = resampleOHLC(rawDataRef.current, '1', timeframe);
-                        } else {
-                            // Manual aggregation for Daily/Weekly (bypassing restriction)
-                            const toSeconds = parseTimeframeToSeconds(timeframe);
-                            if (toSeconds > 0) {
-                                const resampled: OHLCData[] = [];
-                                let currentBucket: OHLCData | null = null;
-                                let bucketEndTime = Number.NaN;
-                                for (const candle of rawDataRef.current) {
-                                    const bucketStart = Math.floor(candle.time / toSeconds) * toSeconds;
-                                    if (bucketStart !== bucketEndTime) {
-                                        if (currentBucket) resampled.push(currentBucket);
-                                        currentBucket = { ...candle, time: bucketStart };
-                                        bucketEndTime = bucketStart;
-                                    } else if (currentBucket) {
-                                        currentBucket.high = Math.max(currentBucket.high, candle.high);
-                                        currentBucket.low = Math.min(currentBucket.low, candle.low);
-                                        currentBucket.close = candle.close;
-                                        currentBucket.volume = (currentBucket.volume || 0) + (candle.volume || 0);
-                                    }
-                                }
-                                if (currentBucket) resampled.push(currentBucket);
-                                resampledData = resampled;
-                            }
-                        }
-                    }
-
-                    setFullData((prev) => {
-                        // Optimizing: only update fullData if we have a NEW candle or first load
-                        if (resampledData.length > prev.length || prev.length === 0) {
-                            return [...resampledData]
-                        }
-                        return prev
-                    })
-
-                    // Update ref for next poll using the absolute latest time we have
-                    if (rawDataRef.current.length > 0) {
-                        const lastBar = rawDataRef.current[rawDataRef.current.length - 1]
-                        lastTimeRef.current = lastBar.time
-                    }
-
-                    // First Load Callback
-                    if (isFirstLoad.current) {
-                        onDataLoad?.({
-                            start: resampledData[0].time,
-                            end: resampledData[resampledData.length - 1].time,
-                            totalBars: resampledData.length
-                        })
-                        isFirstLoad.current = false
-                    }
-                }
-
-                // Always update metadata
-                const currentLivePrice = res.data.live_price
-                setLivePrice(currentLivePrice)
-                setLastUpdate(res.data.last_update)
-
-                // Update current candle with live price (tick-by-tick rendering)
-                if (currentLivePrice && rawDataRef.current.length > 0) {
-                    // Also update the raw 1m candle so next poll delta is accurate
-                    const lastRaw = rawDataRef.current[rawDataRef.current.length - 1];
-                    lastRaw.close = currentLivePrice;
-                    lastRaw.high = Math.max(lastRaw.high, currentLivePrice);
-                    lastRaw.low = Math.min(lastRaw.low, currentLivePrice);
-
-                    setFullData(prev => {
-                        if (prev.length === 0) return prev;
-                        const updated = [...prev];
-                        const lastCandle = updated[updated.length - 1];
-                        updated[updated.length - 1] = {
-                            ...lastCandle,
-                            close: currentLivePrice,
-                            high: Math.max(lastCandle.high, currentLivePrice),
-                            low: Math.min(lastCandle.low, currentLivePrice)
-                        };
-                        return updated;
+                    processAndMergeCandles(rawCandles, true);
+                    
+                    onDataLoad?.({
+                        start: rawCandles[0].time > 10000000000 ? rawCandles[0].time / 1000 : rawCandles[0].time,
+                        end: rawCandles[rawCandles.length - 1].time > 10000000000 ? rawCandles[rawCandles.length - 1].time / 1000 : rawCandles[rawCandles.length - 1].time,
+                        totalBars: rawCandles.length
                     });
                 }
-
-                // Set hasMore based on API response
-                if (res.data.hasMore !== undefined) {
-                    setHasMoreData(res.data.hasMore);
-                }
-
-            } else if (isFirstLoad.current) {
-                setLastError(res.error || "Failed to fetch live data")
+                
+                if (res.data.live_price) setLivePrice(res.data.live_price);
+                if (res.data.last_update) setLastUpdate(res.data.last_update);
+                if (res.data.hasMore !== undefined) setHasMoreData(res.data.hasMore);
+                
+                isFirstLoad.current = false;
+                setHistoryLoaded(true);
+            } else {
+                setLastError(res.error || "Failed to fetch history data");
             }
         } catch (e: any) {
-            console.error("Live fetch error:", e)
-            setLastError(e.message)
+            console.error("History fetch error:", e);
+            setLastError(e.message);
         } finally {
-            setIsLoading(false)
+            setIsLoading(false);
         }
-    }, [onDataLoad, ticker, timeframe])
+    }, [onDataLoad, ticker, timeframe, processAndMergeCandles]);
 
+    // Reset and Load History on symbol/timeframe change
     useEffect(() => {
-        // Skip if not enabled (historical mode)
-        if (!enabled) return;
+        isFirstLoad.current = true;
+        setHistoryLoaded(false);
+        rawDataRef.current = [];
+        lastTimeRef.current = 0;
+        setFullData([]);
+        
+        if (enabled) {
+            fetchData();
+        }
+    }, [ticker, timeframe, enabled, fetchData]);
 
-        fetchData()
-        const id = setInterval(() => {
-            if (isRunningRef.current) fetchData()
-        }, 2000) // Reduced polling (2s) to prevent I/O overload, relying on livePrice for ticks
-        return () => clearInterval(id)
-    }, [fetchData, enabled])
+    // Connect to WebSocket after history is loaded
+    useEffect(() => {
+        if (!enabled || !historyLoaded) {
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current);
+                reconnectTimeoutRef.current = null;
+            }
+            return;
+        }
+
+        const connectWs = () => {
+            if (wsRef.current) {
+                wsRef.current.close();
+            }
+
+            const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+            const wsUrl = `ws://${host}:8001/stream?symbol=${encodeURIComponent(ticker)}&timeframe=${encodeURIComponent(timeframe)}`;
+            console.log(`🔌 [useLiveDataLoading] Connecting WebSocket to ${wsUrl}`);
+            const ws = new WebSocket(wsUrl);
+            wsRef.current = ws;
+
+            ws.onopen = () => {
+                console.log(`🔌 [useLiveDataLoading] WebSocket connected for ${ticker} (${timeframe})`);
+                retryCountRef.current = 0;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'snapshot') {
+                        const candles = msg.candles || [];
+                        if (candles.length > 0) {
+                            processAndMergeCandles(candles, false);
+                        }
+                        if (msg.live_price) {
+                            setLivePrice(msg.live_price);
+                        }
+                    } else if (msg.type === 'quote') {
+                        const currentLivePrice = msg.price;
+                        setLivePrice(currentLivePrice);
+                        setLastUpdate(msg.time);
+
+                        if (currentLivePrice && rawDataRef.current.length > 0) {
+                            const lastRaw = rawDataRef.current[rawDataRef.current.length - 1];
+                            const liveTime = Math.floor(new Date(msg.time).getTime() / 1000);
+                            const resolutionMins = getResolutionInMinutes(timeframe);
+                            const resolutionSecs = resolutionMins * 60;
+
+                            if (liveTime < lastRaw.time + resolutionSecs) {
+                                lastRaw.close = currentLivePrice;
+                                lastRaw.high = Math.max(lastRaw.high, currentLivePrice);
+                                lastRaw.low = Math.min(lastRaw.low, currentLivePrice);
+
+                                setFullData(prev => {
+                                    if (prev.length === 0) return prev;
+                                    const updated = [...prev];
+                                    const lastCandle = updated[updated.length - 1];
+                                    updated[updated.length - 1] = {
+                                        ...lastCandle,
+                                        close: currentLivePrice,
+                                        high: Math.max(lastCandle.high, currentLivePrice),
+                                        low: Math.min(lastCandle.low, currentLivePrice)
+                                    };
+                                    return updated;
+                                });
+                            }
+                        }
+                    } else if (msg.type === 'candle') {
+                        const candle = msg.candle;
+                        if (candle) {
+                            processAndMergeCandles([candle], false);
+                        }
+                    }
+                } catch (e) {
+                    console.error('[useLiveDataLoading] WS message parse error:', e);
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error(`❌ [useLiveDataLoading] WebSocket error for URL: ${wsUrl}`, err);
+            };
+
+            ws.onclose = () => {
+                console.log(`🔌 [useLiveDataLoading] WebSocket closed for ${ticker}`);
+                wsRef.current = null;
+                const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000);
+                retryCountRef.current += 1;
+                reconnectTimeoutRef.current = setTimeout(() => {
+                    if (enabled && historyLoaded && isRunningRef.current) {
+                        connectWs();
+                    }
+                }, delay);
+            };
+        };
+
+        if (isRunning) {
+            connectWs();
+        }
+
+        return () => {
+            if (wsRef.current) {
+                const ws = wsRef.current;
+                ws.onopen = null;
+                ws.onmessage = null;
+                ws.onerror = null;
+                ws.onclose = null;
+
+                if (ws.readyState === WebSocket.CONNECTING) {
+                    ws.onopen = () => {
+                        try { ws.close(); } catch (e) {}
+                    };
+                } else {
+                    try { ws.close(); } catch (e) {}
+                }
+                wsRef.current = null;
+            }
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current);
+                reconnectTimeoutRef.current = null;
+            }
+        };
+    }, [enabled, historyLoaded, ticker, timeframe, isRunning, processAndMergeCandles]);
+
 
     return {
         fullData,
@@ -223,7 +316,7 @@ export function useLiveDataLoading({
 
                 if (res.success && res.data && res.data.candles) {
                     const formatted: OHLCData[] = res.data.candles.map((c: any) => ({
-                        time: c.time / 1000,
+                        time: c.time > 10000000000 ? c.time / 1000 : c.time,
                         open: c.open,
                         high: c.high,
                         low: c.low,

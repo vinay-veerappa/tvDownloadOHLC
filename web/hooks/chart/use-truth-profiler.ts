@@ -10,10 +10,11 @@ interface UseTruthProfilerProps {
     indicators: string[]
     theme?: ThemeParams
     indicatorParams?: Record<string, any>
+    isDisposed?: () => boolean
 }
 
 export function useTruthProfiler({
-    chart, series, ticker, indicators, theme, indicatorParams
+    chart, series, ticker, indicators, theme, indicatorParams, isDisposed
 }: UseTruthProfilerProps) {
     const [truthSessions, setTruthSessions] = useState<ProfilerSession[]>([])
     const [truthLevels, setTruthLevels] = useState<LevelTouchesResponse>({})
@@ -22,6 +23,7 @@ export function useTruthProfiler({
     // Data Fetching
     useEffect(() => {
         if (!ticker) return
+        let isCurrent = true
 
         const loadData = async () => {
             try {
@@ -29,12 +31,15 @@ export function useTruthProfiler({
                     fetchProfilerStats(ticker),
                     fetchLevelTouches(ticker)
                 ])
+                if (!isCurrent) return
 
                 setTruthSessions(sessionsRes.sessions)
                 setTruthLevels(levelsRes)
 
-                if (truthProfilerRef.current) {
-                    truthProfilerRef.current.setRemoteData(sessionsRes.sessions, levelsRes)
+                if (!isDisposed?.() && truthProfilerRef.current) {
+                    try {
+                        truthProfilerRef.current.setRemoteData(sessionsRes.sessions, levelsRes)
+                    } catch (e) {}
                 }
             } catch (err) {
                 console.error('[useTruthProfiler] Failed to fetch Truth Profiler data:', err)
@@ -42,36 +47,58 @@ export function useTruthProfiler({
         }
 
         loadData()
+        return () => {
+            isCurrent = false
+        }
     }, [ticker])
 
     // Lifecycle
     useEffect(() => {
-        if (!chart || !series || !theme) return
+        let isCurrent = true
+        if (!chart || !series || !theme || isDisposed?.()) return
 
         const isEnabled = indicators.includes('truth-profiler')
 
         if (isEnabled) {
             import('@/lib/charts/indicators/truth-profiler').then(({ TruthProfiler }) => {
-                if (!truthProfilerRef.current) {
-                    truthProfilerRef.current = new TruthProfiler(
-                        chart,
-                        series,
-                        indicatorParams?.['truth-profiler'] || {},
-                        theme,
-                        () => { }
-                    )
-                    series.attachPrimitive(truthProfilerRef.current)
+                if (!isCurrent || isDisposed?.()) return
 
-                    if (truthSessions.length > 0) {
-                        truthProfilerRef.current.setRemoteData(truthSessions, truthLevels)
+                try {
+                    if (!truthProfilerRef.current) {
+                        truthProfilerRef.current = new TruthProfiler(
+                            chart,
+                            series,
+                            indicatorParams?.['truth-profiler'] || {},
+                            theme,
+                            () => { }
+                        )
+                        series.attachPrimitive(truthProfilerRef.current)
+
+                        if (truthSessions.length > 0) {
+                            truthProfilerRef.current.setRemoteData(truthSessions, truthLevels)
+                        }
+                    } else {
+                        truthProfilerRef.current.applyOptions(indicatorParams?.['truth-profiler'] || {})
                     }
-                } else {
-                    truthProfilerRef.current.applyOptions(indicatorParams?.['truth-profiler'] || {})
+                } catch (e) {
+                    console.error('[TruthProfiler] Error instantiating/attaching:', e)
                 }
             })
         } else {
             if (truthProfilerRef.current) {
-                series.detachPrimitive(truthProfilerRef.current)
+                try {
+                    series.detachPrimitive(truthProfilerRef.current)
+                } catch (e) {}
+                truthProfilerRef.current = null
+            }
+        }
+
+        return () => {
+            isCurrent = false
+            if (isDisposed && !isDisposed() && series && truthProfilerRef.current) {
+                try {
+                    series.detachPrimitive(truthProfilerRef.current)
+                } catch (e) {}
                 truthProfilerRef.current = null
             }
         }
@@ -79,8 +106,10 @@ export function useTruthProfiler({
 
     // Theme Sync
     useEffect(() => {
-        if (truthProfilerRef.current && theme) {
-            truthProfilerRef.current.updateTheme(theme)
+        if (!isDisposed?.() && truthProfilerRef.current && theme) {
+            try {
+                truthProfilerRef.current.updateTheme(theme)
+            } catch (e) {}
         }
     }, [theme])
 

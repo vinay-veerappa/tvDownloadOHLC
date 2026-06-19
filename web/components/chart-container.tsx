@@ -188,10 +188,11 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
     const {
         chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd,
-        scrollToTime, getDataRange, getVisibleTimeRange, indicators: activeIndicatorsRef
+        scrollToTime, getDataRange, getVisibleTimeRange, indicators: activeIndicatorsRef,
+        isDisposed
     } = useChart(
         chartContainerRef as React.RefObject<HTMLDivElement>,
-        style, indicators, data, markers, displayTimezone, timeframe, vwapSettings, ticker
+        style, indicators, data, markers, displayTimezone, timeframe, vwapSettings, ticker, theme, mode
     )
 
     // Sync Series Ref
@@ -590,13 +591,13 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         getTotalBars: () => fullData.length,
         takeScreenshot: () => chart?.takeScreenshot() || null,
         updateLivePrice: (price: number) => {
-            if (!series || !data || data.length === 0) return;
+            if (isDisposed() || !series || !data || data.length === 0) return;
             const lastBar = data[data.length - 1];
             if (!lastBar) return;
             const updatedBar = { ...lastBar, close: price, high: Math.max(lastBar.high, price), low: Math.min(lastBar.low, price) };
             series.update(updatedBar);
         }
-    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange, jumpToTime, series, data])
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange, jumpToTime, series, data, isDisposed])
 
 
     // -------------------------------------------------------------------------

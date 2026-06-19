@@ -13,10 +13,11 @@ interface UseExpectedMoveProps {
     initialSettings?: EMSettings | null
     onSettingsChange?: (settings: EMSettings) => void
     data: any[]
+    isDisposed?: () => boolean
 }
 
 export function useExpectedMove({
-    chart, series, ticker, indicators, theme, initialSettings, onSettingsChange, data
+    chart, series, ticker, indicators, theme, initialSettings, onSettingsChange, data, isDisposed
 }: UseExpectedMoveProps) {
     const [settings, setSettings] = useState<EMSettings | null>(initialSettings || null)
     const emPluginRef = useRef<any>(null)
@@ -31,7 +32,8 @@ export function useExpectedMove({
     }, [initialSettings])
 
     useEffect(() => {
-        if (!series || !chart || !ticker) return
+        let isCurrent = true
+        if (!series || !chart || !ticker || isDisposed?.()) return
 
         const showEM = indicators.includes('expected-move') || indicators.includes('em')
 
@@ -39,6 +41,7 @@ export function useExpectedMove({
             const load = async () => {
                 try {
                     const { ExpectedMoveLevels } = await import('@/lib/charts/plugins/expected-move-levels')
+                    if (!isCurrent || isDisposed?.()) return
 
                     if (!emPluginRef.current) {
                         emPluginRef.current = new ExpectedMoveLevels(chart, series, {
@@ -59,9 +62,11 @@ export function useExpectedMove({
 
                     const daysLimit = settings?.daysToShow || 30
                     const resp = await fetch(`/api/em-levels?ticker=${apiTicker}&days=${daysLimit}`)
+                    if (!isCurrent || isDisposed?.()) return
                     if (!resp.ok) return
 
                     const result = await resp.json()
+                    if (!isCurrent || isDisposed?.()) return
                     if (!result.data || result.data.length === 0) return
 
                     const methodDataMap = new Map<string, any[]>()
@@ -95,7 +100,19 @@ export function useExpectedMove({
             load()
         } else {
             if (emPluginRef.current) {
-                series.detachPrimitive(emPluginRef.current)
+                try {
+                    series.detachPrimitive(emPluginRef.current)
+                } catch (e) {}
+                emPluginRef.current = null
+            }
+        }
+
+        return () => {
+            isCurrent = false
+            if (isDisposed && !isDisposed() && series && emPluginRef.current) {
+                try {
+                    series.detachPrimitive(emPluginRef.current)
+                } catch (e) {}
                 emPluginRef.current = null
             }
         }
@@ -103,24 +120,28 @@ export function useExpectedMove({
 
     // Update from Current Data
     useEffect(() => {
-        if (emPluginRef.current && data.length > 0) {
-            emPluginRef.current.updateFromBars(data)
+        if (!isDisposed?.() && emPluginRef.current && data.length > 0) {
+            try {
+                emPluginRef.current.updateFromBars(data)
+            } catch (e) {}
         }
     }, [data])
 
     // Sync with Settings
     useEffect(() => {
-        if (emPluginRef.current && settings) {
-            emPluginRef.current.updateFromSettings({
-                methods: settings.methods,
-                levelMultiples: settings.levelMultiples,
-                showLabels: settings.showLabels,
-                showWeeklyClose: settings.showWeeklyClose,
-                labelFontSize: settings.labelFontSize
-            })
-            if (dataRef.current.length > 0) {
-                emPluginRef.current.updateFromBars(dataRef.current)
-            }
+        if (!isDisposed?.() && emPluginRef.current && settings) {
+            try {
+                emPluginRef.current.updateFromSettings({
+                    methods: settings.methods,
+                    levelMultiples: settings.levelMultiples,
+                    showLabels: settings.showLabels,
+                    showWeeklyClose: settings.showWeeklyClose,
+                    labelFontSize: settings.labelFontSize
+                })
+                if (dataRef.current.length > 0) {
+                    emPluginRef.current.updateFromBars(dataRef.current)
+                }
+            } catch (e) {}
             onSettingsChange?.(settings)
         }
     }, [settings])
@@ -131,8 +152,10 @@ export function useExpectedMove({
     })
 
     useEffect(() => {
-        if (emPluginRef.current && dailyDataLogic.fullData.length > 0) {
-            emPluginRef.current.setDailySettlements(dailyDataLogic.fullData)
+        if (!isDisposed?.() && emPluginRef.current && dailyDataLogic.fullData.length > 0) {
+            try {
+                emPluginRef.current.setDailySettlements(dailyDataLogic.fullData)
+            } catch (e) {}
         }
     }, [dailyDataLogic.fullData])
 

@@ -37,7 +37,8 @@ export function useChart(
     timeframe: string = '1m',
     vwapSettings?: VWAPSettings,
     ticker?: string,
-    theme?: ThemeParams // New Arg
+    theme?: ThemeParams,
+    mode: 'historical' | 'live' = 'historical'
 ) {
     // console.log('[useChart] displayTimezone:', displayTimezone)
     const { resolvedTheme } = useTheme()
@@ -93,6 +94,9 @@ export function useChart(
                 rightOffset: 50,
                 minBarSpacing: 0.02, // Allow zooming out to see more history
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
+                enableConflation: true, // v5.1+ Data Conflation for huge datasets
+                conflationThresholdFactor: 1.5, // Slight smoothing when zoomed out
+                precomputeConflationOnInit: true, // Process in background on load
                 tickMarkFormatter: (time: number, tickMarkType: TickMarkType, locale: string) => {
                     const date = new Date(time * 1000);
                     // Force using the generic formatter with specific options for each type
@@ -311,8 +315,7 @@ export function useChart(
 
         // Add whitespace bars (only in historical mode for better UX)
         // In live mode, chart auto-scrolls and whitespace interferes with tick updates
-        const params = new URLSearchParams(window.location.search);
-        const isLiveMode = window.location.pathname.includes('/live') || params.get('mode') === 'live';
+        const isLiveMode = mode === 'live';
         if (result.length > 0 && !isLiveMode) {
             const lastBar = result[result.length - 1];
             const lastTime = lastBar.time as number;
@@ -671,7 +674,7 @@ export function useChart(
         getDataRange,
         getVisibleBarIndex,
         getVisibleTimeRange,
-        indicators: indicatorsRef, // Expose indicators ref
-
+        indicators: indicatorsRef,
+        isDisposed: () => isDisposedRef.current
     }
 }

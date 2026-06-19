@@ -15,21 +15,24 @@ interface UseV2DrawingSandboxProps {
     onDrawingDeleted?: (id: string) => void
     onDrawingSelected?: (tool: any) => void
     onDrawingDeselected?: () => void
+    isDisposed?: () => boolean
 }
 
 export function useV2DrawingSandbox({
     chart, series, ticker, timeframe, theme, drawingToolsEnabled, selectedTool,
     onDrawingCreated, onDrawingModified, onDrawingDeleted,
-    onDrawingSelected, onDrawingDeselected
+    onDrawingSelected, onDrawingDeselected, isDisposed
 }: UseV2DrawingSandboxProps) {
     const v2SandboxRef = useRef<any>(null)
 
     useEffect(() => {
-        if (!chart || !series || !drawingToolsEnabled || !theme) return
+        let isCurrent = true
+        if (!chart || !series || !drawingToolsEnabled || !theme || isDisposed?.()) return
 
         const initSandbox = async () => {
             try {
                 const { V2SandboxManager } = await import('@/lib/charts/v2/sandbox-manager')
+                if (!isCurrent || isDisposed?.()) return
                 
                 if (!v2SandboxRef.current) {
                     v2SandboxRef.current = new V2SandboxManager(chart, series, {
@@ -61,8 +64,11 @@ export function useV2DrawingSandbox({
         initSandbox()
 
         return () => {
-            if (v2SandboxRef.current) {
-                series.detachPrimitive(v2SandboxRef.current.plugin)
+            isCurrent = false
+            if (isDisposed && !isDisposed() && series && v2SandboxRef.current) {
+                try {
+                    series.detachPrimitive(v2SandboxRef.current.plugin)
+                } catch (e) {}
                 v2SandboxRef.current = null
             }
         }
@@ -70,8 +76,10 @@ export function useV2DrawingSandbox({
 
     // Update Theme independently
     useEffect(() => {
-        if (v2SandboxRef.current && theme) {
-            v2SandboxRef.current.updateTheme(theme)
+        if (!isDisposed?.() && v2SandboxRef.current && theme) {
+            try {
+                v2SandboxRef.current.updateTheme(theme)
+            } catch (e) {}
         }
     }, [theme])
 

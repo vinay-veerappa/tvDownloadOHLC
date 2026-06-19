@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { normalizeResolution, getResolutionInMinutes } from "@/lib/resolution"
@@ -70,6 +70,15 @@ export function useChartData({
 }: UseChartDataProps) {
     const timeframe = useMemo(() => normalizeResolution(rawTimeframe), [rawTimeframe])
     const currentReplayTimeRef = useRef<number | null>(null)
+    const liveCandleRef = useRef<{
+        ticker: string
+        timeframe: string
+        time: number
+        open: number
+        high: number
+        low: number
+        close: number
+    } | null>(null)
 
     const histLoading = useDataLoading({
         ticker,
@@ -151,17 +160,48 @@ export function useChartData({
                 }
 
                 if (shouldProjectNew) {
-                    // Start new candle
+                    const ref = liveCandleRef.current
+                    let candle: {
+                        ticker: string
+                        timeframe: string
+                        time: number
+                        open: number
+                        high: number
+                        low: number
+                        close: number
+                    }
+                    if (ref && ref.ticker === ticker && ref.timeframe === timeframe && ref.time === newCandleTime) {
+                        // Update existing projected candle
+                        ref.close = livePrice
+                        if (livePrice > ref.high) ref.high = livePrice
+                        if (livePrice < ref.low) ref.low = livePrice
+                        candle = ref
+                    } else {
+                        // Start a new projected candle
+                        candle = {
+                            ticker,
+                            timeframe,
+                            time: newCandleTime,
+                            open: lastCandle.close,
+                            high: livePrice,
+                            low: livePrice,
+                            close: livePrice
+                        }
+                        liveCandleRef.current = candle
+                    }
+
                     enriched.push({
-                        time: newCandleTime,
-                        open: lastCandle.close, // Gapless? Or use livePrice? Usually open = last close or livePrice
-                        high: livePrice,
-                        low: livePrice,
-                        close: livePrice,
+                        time: candle.time,
+                        open: candle.open,
+                        high: candle.high,
+                        low: candle.low,
+                        close: candle.close,
                         volume: 0
                     })
                 } else {
-                    // Update existing last candle
+                    // We are not projecting a new candle, so we can clear the ref
+                    liveCandleRef.current = null
+
                     lastCandle.close = livePrice
                     if (livePrice > lastCandle.high) lastCandle.high = livePrice
                     if (livePrice < lastCandle.low) lastCandle.low = livePrice
@@ -172,7 +212,7 @@ export function useChartData({
             }
         }
         return baseData
-    }, [replay.data, mode, (loading as any).livePrice, (loading as any).lastUpdate, timeframe])
+    }, [replay.data, mode, (loading as any).livePrice, (loading as any).lastUpdate, timeframe, ticker])
 
     useEffect(() => {
         if (!loading.isLoading && loading.fullData.length > 0) {

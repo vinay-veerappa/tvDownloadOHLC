@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta, time as dt_time
 from zoneinfo import ZoneInfo
 import httpx
 import websockets
-
+from aiohttp import web
 try:
     import yfinance as yf
 except ImportError:
@@ -62,6 +62,8 @@ async def hub_request(method, params):
 # Global State
 charts = {} # Key: Symbol -> { data: {}, data_15s: {}, data_30s: {}, file_json: str, file_15s: str, file_30s: str, ... }
 active_subscriptions = {"futures": [], "equities": []}
+# Global State for WebSocket active connections: symbol -> client_id -> (ws, timeframe)
+active_connections = {}
 
 def get_safe_symbol(symbol):
     return symbol.replace("/", "-")
@@ -341,9 +343,11 @@ def init_chart_data(symbol):
             if not df.empty:
                 if 'timestamp' in df.columns:
                     df = df.drop(columns=['timestamp'])
+                # Only keep last 15,000 candles in memory to save RAM
+                df = df.tail(15000)
                 data["candles"] = deduplicate_candles(df.to_dict(orient="records"))
                 data["last_update"] = get_now_iso()
-                print(f"✅ [{symbol}] Restored {len(data['candles'])} bars (1m).")
+                print(f"✅ [{symbol}] Restored {len(data['candles'])} bars (1m) to memory.")
         except Exception as e:
             print(f"⚠️ [{symbol}] Restore failed: {e}")
             
@@ -828,6 +832,8 @@ async def update_historical_files(symbol):
                     "candles": candles
                 }, f)
                 
+        # Only export HTF data to JSON since it's small and updates rarely.
+        # 1M data is now served directly from Parquet via API.
         write_df_to_live_json(combined_daily, "1D")
         write_df_to_live_json(weekly_df, "1W")
         print(f"   ✅ Exported 1D and 1W JSON files for frontend.")
@@ -836,6 +842,120 @@ async def update_historical_files(symbol):
         import traceback
         traceback.print_exc()
         print(f"   ⚠️ Historical update failed: {e}")
+
+def normalize_client_symbol(symbol):
+    if not symbol:
+        return ""
+    clean = symbol.replace("1!", "").replace("-", "/").upper()
+    if not clean.startswith("/") and clean in ["NQ", "ES", "YM", "RTY", "CL", "GC"]:
+        clean = "/" + clean
+    return clean
+
+async def websocket_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    
+    symbol_raw = request.query.get("symbol")
+    timeframe = request.query.get("timeframe", "1m")
+    
+    symbol = normalize_client_symbol(symbol_raw)
+    if not symbol:
+        await ws.close(code=4000, message=b"Missing symbol")
+        return ws
+        
+    client_id = id(ws)
+    active_connections.setdefault(symbol, {})[client_id] = (ws, timeframe)
+    print(f"🔌 WebSocket client connected for {symbol} (tf: {timeframe})")
+    
+    # 1. Send initial snapshot from memory
+    try:
+        if symbol in charts:
+            chart_ctx = charts[symbol]
+            if timeframe == "15s":
+                candles_to_send = chart_ctx["data_15s"]["candles"][-100:]
+                live_p = chart_ctx["data_15s"]["live_price"]
+            elif timeframe == "30s":
+                candles_to_send = chart_ctx["data_30s"]["candles"][-100:]
+                live_p = chart_ctx["data_30s"]["live_price"]
+            else:
+                candles_to_send = chart_ctx["data"]["candles"][-100:]
+                live_p = chart_ctx["data"]["live_price"]
+                
+            await ws.send_json({
+                "type": "snapshot",
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "live_price": live_p,
+                "candles": candles_to_send
+            })
+        else:
+            print(f"⚠️ WebSocket symbol {symbol} not in active charts watchlist")
+            await ws.send_json({
+                "type": "snapshot",
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "live_price": 0.0,
+                "candles": []
+            })
+    except Exception as e:
+        print(f"❌ Error sending initial snapshot to WS client: {e}")
+        
+    # 2. Keep connection open
+    try:
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                if msg.data == "ping":
+                    await ws.send_str("pong")
+            elif msg.type == web.WSMsgType.ERROR:
+                print(f"ws connection closed with exception {ws.exception()}")
+    finally:
+        # Clean up client
+        if symbol in active_connections and client_id in active_connections[symbol]:
+            del active_connections[symbol][client_id]
+            if not active_connections[symbol]:
+                del active_connections[symbol]
+        print(f"🔌 WebSocket client disconnected for {symbol}")
+        
+    return ws
+
+async def broadcast_quote(symbol, price, iso_time):
+    if symbol not in active_connections:
+        return
+    message = json.dumps({
+        "type": "quote",
+        "symbol": symbol,
+        "price": price,
+        "time": iso_time
+    })
+    tasks = []
+    for client_id, (ws, _) in list(active_connections[symbol].items()):
+        try:
+            tasks.append(ws.send_str(message))
+        except Exception as e:
+            pass
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+async def broadcast_candle(symbol, candle, timeframe="1m"):
+    if symbol not in active_connections:
+        return
+    message = json.dumps({
+        "type": "candle",
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candle": candle
+    })
+    tasks = []
+    for client_id, (ws, client_tf) in list(active_connections[symbol].items()):
+        c_tf = "1m" if client_tf in ["1", "1m"] else client_tf
+        s_tf = "1m" if timeframe in ["1", "1m"] else timeframe
+        if c_tf == s_tf:
+            try:
+                tasks.append(ws.send_str(message))
+            except Exception as e:
+                pass
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 async def level_one_handler(msg):
     # msg is the data portion of the broadcast
@@ -854,18 +974,24 @@ async def level_one_handler(msg):
                     safe_symbol = get_safe_symbol(key)
                     quote_file = os.path.join(DATA_DIR, "live", f"latest_quote_{safe_symbol}.json")
                     try:
-                        with open(quote_file, "w") as f:
-                            json.dump({
-                                "symbol": key,
-                                "price": last_price,
-                                "time": cdata["last_update"]
-                            }, f)
+                        atomic_write_json({
+                            "symbol": key,
+                            "price": last_price,
+                            "time": cdata["last_update"]
+                        }, quote_file)
                     except: pass
 
                     # --- Sub-Minute Aggregation ---
                     curr_time = time.time()
                     update_sub_candle(chart_ctx["data_15s"], last_price, curr_time, 15)
                     update_sub_candle(chart_ctx["data_30s"], last_price, curr_time, 30)
+                    
+                    # Broadcast quote and sub-minute candles
+                    await broadcast_quote(key, last_price, cdata["last_update"])
+                    if chart_ctx["data_15s"]["candles"]:
+                        await broadcast_candle(key, chart_ctx["data_15s"]["candles"][-1], "15s")
+                    if chart_ctx["data_30s"]["candles"]:
+                        await broadcast_candle(key, chart_ctx["data_30s"]["candles"][-1], "30s")
 
         # Batch write sub-minute JSONs after processing all quotes in message
         for key in {c.get('key') for c in msg['content'] if c.get('key') in charts}:
@@ -908,32 +1034,61 @@ async def chart_handler(msg):
             files = charts[key]["files"]
             impacted_symbols.add(key)
             
-            candle = {
-                "time": c.get("CHART_TIME_MILLIS", 0),
-                "open": c.get("OPEN_PRICE", 0),
-                "high": c.get("HIGH_PRICE", 0),
-                "low": c.get("LOW_PRICE", 0),
-                "close": c.get("CLOSE_PRICE", 0),
-                "volume": c.get("VOLUME", 0)
-            }
-            
-            # Archive Logic: Save PREVIOUS candle when a new one starts
-            if cdata["candles"] and cdata["candles"][-1]["time"] != candle["time"]:
-                completed_candle = cdata["candles"][-1]
-                save_candles_to_parquet(key, [completed_candle], files["parquet"])
+            # Parse fields that are present (supports both named and numbered keys)
+            candle_time = c.get("CHART_TIME_MILLIS") or c.get("1") or c.get(1)
+            if not candle_time:
+                continue
+            candle_time = int(candle_time)
 
+            # Helper to get float or None safely
+            def get_val(keys):
+                for k in keys:
+                    v = c.get(k)
+                    if v is not None:
+                        try:
+                            return float(v)
+                        except (TypeError, ValueError):
+                            pass
+                return None
+
+            open_val = get_val(["OPEN_PRICE", "2", 2])
+            high_val = get_val(["HIGH_PRICE", "3", 3])
+            low_val = get_val(["LOW_PRICE", "4", 4])
+            close_val = get_val(["CLOSE_PRICE", "5", 5])
+            volume_val = get_val(["VOLUME", "6", 6])
+            
             # Update Buffer
-            if cdata["candles"] and cdata["candles"][-1]["time"] == candle["time"]:
-                cdata["candles"][-1] = candle
+            if cdata["candles"] and cdata["candles"][-1]["time"] == candle_time:
+                # Merge delta into existing candle
+                prev = cdata["candles"][-1]
+                if open_val is not None: prev["open"] = open_val
+                if high_val is not None: prev["high"] = high_val
+                if low_val is not None: prev["low"] = low_val
+                if close_val is not None: prev["close"] = close_val
+                if volume_val is not None: prev["volume"] = int(volume_val)
             else:
-                cdata["candles"].append(candle)
+                # Save previous finalized candle to live parquet storage
+                if cdata["candles"]:
+                    finalized_candle = cdata["candles"][-1]
+                    save_candles_to_parquet(key, [finalized_candle], files["parquet"])
+
+                # New candle
+                prev = cdata["candles"][-1] if cdata["candles"] else None
+                new_candle = {
+                    "time": candle_time,
+                    "open": open_val if open_val is not None else (prev["close"] if prev else 0.0),
+                    "high": high_val if high_val is not None else (prev["close"] if prev else 0.0),
+                    "low": low_val if low_val is not None else (prev["close"] if prev else 0.0),
+                    "close": close_val if close_val is not None else (prev["close"] if prev else 0.0),
+                    "volume": int(volume_val) if volume_val is not None else 0
+                }
+                cdata["candles"].append(new_candle)
                 # Soft prune if too large
-                if len(cdata["candles"]) > 600000:
-                    cdata["candles"] = cdata["candles"][-500000:]
+                if len(cdata["candles"]) > 20000:
+                    cdata["candles"] = cdata["candles"][-15000:]
             
             cdata["last_update"] = get_now_iso()
-            if cdata["live_price"] == 0:
-                cdata["live_price"] = candle["close"]
+            # Note: We don't overwrite live_price here, it's handled by level_one_handler.
 
     # Perform expensive operations (dedup, sort, write) ONCE per symbol per message
     for key in impacted_symbols:
@@ -944,6 +1099,10 @@ async def chart_handler(msg):
         # Deduplicate ONCE per batch
         cdata["candles"] = deduplicate_candles(cdata["candles"])
         
+        # Broadcast 1m candle update
+        if cdata["candles"]:
+            await broadcast_candle(key, cdata["candles"][-1], "1m")
+            
         try:
             now = time.time()
             
@@ -957,19 +1116,79 @@ async def chart_handler(msg):
                     "candles": cdata["candles"][-50:] if cdata["candles"] else []
                 }
                 snap_file = files["json"].replace(".json", "_snapshot.json")
-                with open(snap_file, "w") as f:
-                    json.dump(snapshot, f)
+                atomic_write_json(snapshot, snap_file)
                 cdata["_last_snap_ts"] = now
 
-            # Full JSON Checkpoint writer (throttled)
-            last_write = cdata.get("_last_write_ts", 0)
-            if now - last_write > 60:
-                with open(files["json"], "w") as f:
-                    json.dump(cdata, f)
-                cdata["_last_write_ts"] = now
-                print(f"📁 Checkpoint saved for {key}")
+            # Full JSON Checkpoint writer has been REMOVED to save Disk I/O.
+            # Frontend now fetches history from Parquet via API.
         except Exception as e:
             print(f"❌ Write error {key}: {e}")
+
+async def handle_history(request):
+    symbol = request.query.get("symbol")
+    limit_str = request.query.get("limit", "180000")
+    try:
+        limit = int(limit_str)
+    except:
+        limit = 180000
+        
+    if not symbol:
+        return web.json_response({"error": "Missing symbol"}, status=400)
+        
+    files = get_live_files(symbol)
+    parquet_path = files["parquet"]
+    
+    try:
+        if not os.path.exists(parquet_path):
+            return web.json_response({"error": f"No parquet data for {symbol}"}, status=404)
+            
+        df = pd.read_parquet(parquet_path)
+        df = df.tail(limit)
+        
+        candles = df.to_dict(orient="records")
+        formatted = []
+        for c in candles:
+            formatted.append({
+                "time": int(c["time"]),
+                "open": float(c["open"]),
+                "high": float(c["high"]),
+                "low": float(c["low"]),
+                "close": float(c["close"]),
+                "volume": int(c.get("volume", 0))
+            })
+            
+        return web.json_response({
+            "symbol": symbol,
+            "candles": formatted,
+            "hasMore": len(df) >= limit
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def start_api_server():
+    app = web.Application()
+    
+    # Configure CORS
+    import aiohttp_cors
+    cors = aiohttp_cors.setup(app, defaults={
+        "*": aiohttp_cors.ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+        )
+    })
+    
+    resource = cors.add(app.router.add_resource("/history"))
+    cors.add(resource.add_route("GET", handle_history))
+    
+    # Add WebSocket endpoint
+    app.router.add_get('/stream', websocket_handler)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8001)
+    await site.start()
+    print("🌐 API Server started on http://0.0.0.0:8001")
 
 async def main():
     print("🚀 [StreamChart] Starting as Spoke...")
@@ -998,16 +1217,26 @@ async def main():
                     print(f"✅ [{sym}] Bridged {len(bridged)} missing bars.")
                     cdata["candles"] = deduplicate_candles(cdata["candles"] + bridged)
             
-            if len(cdata["candles"]) > 500000:
-                cdata["candles"] = cdata["candles"][-500000:]
+            if len(cdata["candles"]) > 20000:
+                cdata["candles"] = cdata["candles"][-15000:]
             cdata["last_update"] = get_now_iso()
             
             # Commit bootstrap/bridged data to live storage parquet
             save_candles_to_parquet(sym, cdata["candles"], charts[sym]["files"]["parquet"])
             
-            with open(charts[sym]["files"]["json"], "w") as f:
-                json.dump(cdata, f, indent=2)
+            # No longer writing the massive JSON checkpoint on boot.
+            # Only creating the initial snapshot.
+            snapshot_file = charts[sym]["files"]["json"].replace(".json", "_snapshot.json")
+            with open(snapshot_file, "w") as f:
+                json.dump({
+                    "symbol": sym,
+                    "last_update": cdata["last_update"],
+                    "live_price": cdata["live_price"],
+                    "candles": cdata["candles"][-50:]
+                }, f, indent=2)
 
+    # 1.5 Start API Server
+    await start_api_server()
 
     # 2. Historical Data Update (Daily/Weekly)
     print("\n📅 Updating Historical Files (Daily/Weekly)...")

@@ -65,8 +65,13 @@ class SchwabDevProvider(SchwabHubProvider):
         if isinstance(message, dict) and "data" in message and isinstance(message["data"], list):
             for item in message["data"]:
                 # Reverse map symbols (e.g. /ESM25 -> /ES)
-                if isinstance(item, dict) and "key" in item:
-                    item["key"] = self._reverse_map.get(item["key"], item["key"])
+                if isinstance(item, dict):
+                    if "key" in item:
+                        item["key"] = self._reverse_map.get(item["key"], item["key"])
+                    if "content" in item and isinstance(item["content"], list):
+                        for sub in item["content"]:
+                            if isinstance(sub, dict) and "key" in sub:
+                                sub["key"] = self._reverse_map.get(sub["key"], sub["key"])
                 asyncio.run_coroutine_threadsafe(self._on_message(item), self._main_loop)
         else:
             # Send other messages (notify, response, heartbeat) as-is
@@ -158,37 +163,11 @@ class SchwabDevProvider(SchwabHubProvider):
             logger.error("Stream not initialized. Call initialize() first.")
             return
 
-        logger.info("Starting Schwab-Dev Stream...")
-        self.stream.start(receiver=self._internal_receiver)
-        
-        # Wait for login/startup
-        await asyncio.sleep(3)
-        
-        # 1. Level 1 Subscriptions (SPX/Indices vs Equities)
+        # 1. Resolve futures roots BEFORE starting the stream connection
+        active_contracts = []
         if symbols_l1:
-            indices = [s for s in symbols_l1 if s == "SPX" or s.startswith("$")]
             futures = [s for s in symbols_l1 if s.startswith("/")]
-            equities = [s for s in symbols_l1 if s not in indices and s not in futures]
-            
-            if equities:
-                logger.info(f"Subscribing to LEVELONE_EQUITIES: {equities}")
-                self.stream.send(self.stream.level_one_equities(equities, "0,1,2,8,9"))
-                logger.info(f"Subscribing to CHART_EQUITY: {equities}")
-                self.stream.send(self.stream.chart_equity(equities, "0,1,2,3,4,5,6,7,8"))
-
-            if indices:
-                logger.info(f"Subscribing to LEVELONE_INDICES: {indices}")
-                # Try adding $SPX if SPX is requested
-                if "SPX" in indices and "$SPX" not in indices:
-                    indices.append("$SPX")
-                self.stream.send(self.stream.basic_request("LEVELONE_INDICES", "SUBS", parameters={
-                    "keys": ",".join(indices),
-                    "fields": "0,1,2,3"
-                }))
-            
             if futures:
-                # For schwabdev, CHART_FUTURES and LEVELONE_FUTURES often require the active contract (e.g. /ESH25)
-                # rather than the root symbol (/ES).
                 logger.info(f"Resolving futures roots: {futures}")
                 mapping = await self.resolve_futures_symbols(futures)
                 active_contracts = [mapping[f]["active"] for f in futures]
@@ -198,7 +177,43 @@ class SchwabDevProvider(SchwabHubProvider):
                     self._reverse_map[info["active"]] = root
                     if info["direct"] != info["active"]:
                          self._reverse_map[info["direct"]] = root
+
+        logger.info("Starting Schwab-Dev Stream...")
+        self.stream.start(receiver=self._internal_receiver)
+        
+        # Wait for login/startup
+        await asyncio.sleep(3)
+        
+        # 2. Level 1 Subscriptions (SPX/Indices vs Equities)
+        if symbols_l1:
+            indices = [s for s in symbols_l1 if s == "SPX" or s.startswith("$")]
+            equities = [s for s in symbols_l1 if s not in indices and not s.startswith("/")]
+            
+            if equities:
+                logger.info(f"Subscribing to LEVELONE_EQUITIES: {equities}")
+                self.stream.send(self.stream.level_one_equities(equities, "0,1,2,8,9"))
+                logger.info(f"Subscribing to CHART_EQUITY: {equities}")
+                self.stream.send(self.stream.chart_equity(equities, "0,1,2,3,4,5,6,7,8"))
+
+            if indices:
+                # Ensure all indices have the leading $ prefix
+                valid_indices = []
+                for idx in indices:
+                    if idx.startswith("$"):
+                        valid_indices.append(idx)
+                    elif idx == "SPX":
+                        valid_indices.append("$SPX")
+                    else:
+                        valid_indices.append("$" + idx)
+                valid_indices = list(set(valid_indices))
                 
+                logger.info(f"Subscribing to LEVELONE_INDICES: {valid_indices}")
+                self.stream.send(self.stream.basic_request("LEVELONE_INDICES", "SUBS", parameters={
+                    "keys": ",".join(valid_indices),
+                    "fields": "0,1,2,3"
+                }))
+            
+            if active_contracts:
                 logger.info(f"Subscribing to LEVELONE_FUTURES: {active_contracts}")
                 self.stream.send(self.stream.level_one_futures(active_contracts, "0,1,2,3,4,5,6"))
                 
@@ -222,6 +237,9 @@ class SchwabDevProvider(SchwabHubProvider):
         self.is_running = True
         while self.is_running:
             await asyncio.sleep(1)
+            if not getattr(self, "stream", None) or not self.stream.active:
+                logger.warning("⚠️ Schwab-Dev Stream has become inactive. Raising connection error.")
+                raise ConnectionError("Schwab-Dev Stream became inactive.")
 
     async def subscribe_level_two(self, symbols: list[str]):
         """

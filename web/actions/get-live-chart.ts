@@ -23,12 +23,6 @@ export async function getLiveChartData(ticker: string = "/NQ", timeframe: string
         const filename = `live_chart_${safeTicker}${suffix}.json`;
         const filePath = path.join(process.cwd(), '..', 'data', 'live', filename);
 
-        try {
-            await fs.access(filePath);
-        } catch {
-            return { success: false, error: `Live data not available for ${ticker}. Streamer might not be watching it.` };
-        }
-
         // --- Delta Logic (Optimized) ---
         if (since) {
             // Try reading Snapshot first (Fast Path)
@@ -62,41 +56,54 @@ export async function getLiveChartData(ticker: string = "/NQ", timeframe: string
                 }
             }
 
-            // Fallback: Read Full File (Slow Path - only if client is stale)
-            const content = await fs.readFile(filePath, 'utf-8');
-            const data = JSON.parse(content);
-
-            if (data.candles) {
-                const newCandles = data.candles.filter((c: any) => c.time >= since);
-                return {
-                    success: true,
-                    data: {
-                        ...data,
-                        candles: newCandles
+            // Fallback: Read Full File via API (Slow Path - only if client is stale or missing snapshot)
+            try {
+                const apiRes = await fetch(`http://127.0.0.1:8001/history?symbol=${encodeURIComponent(safeTicker)}&limit=5000`, { cache: 'no-store' });
+                if (apiRes.ok) {
+                    const apiData = await apiRes.json();
+                    if (apiData.candles) {
+                        const newCandles = apiData.candles.filter((c: any) => c.time >= since);
+                        return {
+                            success: true,
+                            data: {
+                                ...apiData,
+                                candles: newCandles,
+                                last_update: new Date().toISOString(),
+                                live_price: apiData.candles.length > 0 ? apiData.candles[apiData.candles.length - 1].close : null,
+                            }
+                        };
                     }
-                };
+                }
+            } catch (e) {
+                // Ignore and fall through to full load
             }
         }
 
-        // Full Load (First time) - Read Big File
-        const content = await fs.readFile(filePath, 'utf-8');
-        const data = JSON.parse(content);
+        // Full Load (First time or deep history) - Request from Python API
+        try {
+            const apiRes = await fetch(`http://127.0.0.1:8001/history?symbol=${encodeURIComponent(safeTicker)}&limit=${limit || 180000}`, { cache: 'no-store' });
+            if (!apiRes.ok) {
+                 return { success: false, error: `Python API error: ${apiRes.statusText}` };
+            }
+            const apiData = await apiRes.json();
+            
+            if (apiData.error) {
+                return { success: false, error: apiData.error };
+            }
 
-        // Apply limit if specified (windowing for performance)
-        if (limit && data.candles && data.candles.length > limit) {
-            const startIndex = data.candles.length - limit;
-            return {
-                success: true,
+            // Return mock metadata so frontend doesn't break
+            return { 
+                success: true, 
                 data: {
-                    ...data,
-                    candles: data.candles.slice(startIndex),
-                    hasMore: true, // Indicate more data available
-                    totalCandles: data.candles.length
-                }
+                    ...apiData,
+                    last_update: new Date().toISOString(),
+                    live_price: apiData.candles && apiData.candles.length > 0 ? apiData.candles[apiData.candles.length - 1].close : null,
+                    totalCandles: apiData.candles?.length || 0
+                } 
             };
+        } catch (apiError: any) {
+             return { success: false, error: `Failed to connect to Python Streamer API: ${apiError.message}` };
         }
-
-        return { success: true, data };
     } catch (error: any) {
         return { success: false, error: error.message };
     }

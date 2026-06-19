@@ -88,7 +88,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
 
     // Imperative Live Price Update
     useEffect(() => {
-        if (props.mode === 'live' && livePrice && chartRef.current) {
+        if (props.mode === 'live' && livePrice !== undefined && livePrice > 0 && chartRef.current) {
             chartRef.current.updateLivePrice(livePrice);
         }
     }, [livePrice, props.mode]);
