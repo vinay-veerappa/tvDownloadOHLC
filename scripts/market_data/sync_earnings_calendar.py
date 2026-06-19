@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = REPO_ROOT / "web" / "prisma" / "dev.db"
 
 # Core Watchlist that should ALWAYS be included regardless of market cap
-CORE_WATCHLIST = {"SPY", "QQQ", "IWM", "SPX", "NDX", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA"}
+CORE_WATCHLIST = {"SPY", "QQQ", "IWM", "SPX", "NDX", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"}
 
 
 def _get_db_connection() -> sqlite3.Connection:

@@ -97,7 +97,7 @@ async def force_fill(symbol, start_dt, end_dt):
 async def main():
     symbols = [
         "/CL", "/ES", "/GC", "/NQ", "/RTY", "/YM",
-        "AAPL", "AMZN", "GOOG", "GOOGL", "META", "MSFT", 
+        "AAPL", "AMZN", "GOOGL", "META", "MSFT", 
         "NFLX", "NVDA", "QQQ", "RIVN", "SPY", "TSLA"
     ]
     

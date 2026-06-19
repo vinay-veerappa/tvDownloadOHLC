@@ -61,6 +61,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `update_data.py` | Master data update script |
 | `fetch_vix_data.py` | Fetch VIX history |
 | `fetch_economic_calendar.py` | Fetch economic events |
+| `sync_daily_weekly_schwab.py` | Directly uses Schwab easy_client to fetch and append YTD daily and weekly candles for all symbols to historical parquets. |
 
 ### Streaming / Options (`streaming/options/`)
 | Script | Purpose |
@@ -93,6 +94,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | Script | Purpose |
 |:---|:---|
 | `force_gap_fill.py` | Connects to the Schwab Hub proxy to manually fetch and patch missing 1-minute data into live_storage parquet files. |
+| `trim_parquet_by_date.py` | Utility to strictly trim all historical parquet files inside a directory to a specified end date. |
 
 ### Quantitative Strategies (`scripts/strategies/`)
 | Category | Purpose |

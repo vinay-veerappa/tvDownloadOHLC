@@ -49,7 +49,6 @@ INDEX_MOVERS = {
     "AMZN": "NDX/SPX-mover",
     "META": "NDX/SPX-mover",
     "GOOGL": "NDX/SPX-mover",
-    "GOOG": "NDX/SPX-mover",
     "AVGO": "NDX/SPX-mover",
     "TSLA": "NDX/SPX-mover",
     "COST": "NDX/SPX-mover",

@@ -98,11 +98,14 @@ def regenerate_json(ticker_safe):
     with open(json_path, 'w') as f:
         json.dump(output, f, indent=2)
         
-    print(f"✅ Regenerated {json_path}")
+    print(f"Successfully Regenerated {json_path}")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         regenerate_json(sys.argv[1])
     else:
-        regenerate_json("-NQ")
-        regenerate_json("-ES")
+        print("Regenerating ALL live JSON files from parquets...")
+        for file in os.listdir(LIVE_DIR):
+            if file.startswith("live_storage_") and file.endswith(".parquet"):
+                ticker = file.replace("live_storage_", "").replace(".parquet", "")
+                regenerate_json(ticker)
