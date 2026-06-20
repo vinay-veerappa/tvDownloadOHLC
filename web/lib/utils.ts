@@ -10,6 +10,7 @@ export function formatTimeForTimezone(time: number, timezone: string = 'America/
   // Handle UTC explicitly if needed, though toLocaleString handles it well with 'UTC' or 'America/New_York'
   return date.toLocaleString('en-US', {
     timeZone: timezone === 'local' ? undefined : timezone,
+    year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

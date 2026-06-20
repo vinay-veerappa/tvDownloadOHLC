@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { getLiveChartData } from "@/actions/get-live-chart"
 import { OHLCData } from "@/actions/data-actions"
 import { toast } from "sonner"
-import { resampleOHLC, canResample, parseTimeframeToSeconds } from "@/lib/resampling"
+import { canResample, parseTimeframeToSeconds } from "@/lib/resampling"
+import { resampleOHLCAsync } from "@/lib/resampling-client"
 import { getResolutionInMinutes } from "@/lib/resolution"
 
 interface UseLiveDataLoadingProps {
@@ -35,14 +36,17 @@ export function useLiveDataLoading({
 
     const lastTimeRef = useRef<number>(0)
     const rawDataRef = useRef<OHLCData[]>([]) // Keep raw array to avoid closure staleness
+    const resamplingSequenceRef = useRef<number>(0)
     const [historyLoaded, setHistoryLoaded] = useState(false)
 
     const wsRef = useRef<WebSocket | null>(null)
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
     const retryCountRef = useRef(0)
 
-    const processAndMergeCandles = useCallback((rawCandles: any[], isInitial: boolean) => {
+    const processAndMergeCandles = useCallback(async (rawCandles: any[], isInitial: boolean) => {
         if (rawCandles.length === 0) return;
+
+        const currentSeq = ++resamplingSequenceRef.current;
 
         const formatted: OHLCData[] = rawCandles.map((c: any) => ({
             time: c.time > 10000000000 ? c.time / 1000 : c.time,
@@ -79,7 +83,7 @@ export function useLiveDataLoading({
         let resampledData = rawDataRef.current;
         if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
             if (canResample('1', timeframe)) {
-                resampledData = resampleOHLC(rawDataRef.current, '1', timeframe);
+                resampledData = await resampleOHLCAsync(rawDataRef.current, '1', timeframe);
             } else {
                 const toSeconds = parseTimeframeToSeconds(timeframe);
                 if (toSeconds > 0) {
@@ -105,6 +109,8 @@ export function useLiveDataLoading({
             }
         }
 
+        if (currentSeq !== resamplingSequenceRef.current) return;
+
         setFullData([...resampledData]);
 
         if (rawDataRef.current.length > 0) {
@@ -122,7 +128,7 @@ export function useLiveDataLoading({
             if (res.success && res.data) {
                 const rawCandles = res.data.candles || [];
                 if (rawCandles.length > 0) {
-                    processAndMergeCandles(rawCandles, true);
+                    await processAndMergeCandles(rawCandles, true);
                     
                     onDataLoad?.({
                         start: rawCandles[0].time > 10000000000 ? rawCandles[0].time / 1000 : rawCandles[0].time,
@@ -191,13 +197,13 @@ export function useLiveDataLoading({
                 retryCountRef.current = 0;
             };
 
-            ws.onmessage = (event) => {
+            ws.onmessage = async (event) => {
                 try {
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'snapshot') {
                         const candles = msg.candles || [];
                         if (candles.length > 0) {
-                            processAndMergeCandles(candles, false);
+                            await processAndMergeCandles(candles, false);
                         }
                         if (msg.live_price) {
                             setLivePrice(msg.live_price);
@@ -235,7 +241,7 @@ export function useLiveDataLoading({
                     } else if (msg.type === 'candle') {
                         const candle = msg.candle;
                         if (candle) {
-                            processAndMergeCandles([candle], false);
+                            await processAndMergeCandles([candle], false);
                         }
                     }
                 } catch (e) {
@@ -334,7 +340,7 @@ export function useLiveDataLoading({
                         let resampledData = combined1m;
                         if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
                             if (canResample('1', timeframe)) {
-                                resampledData = resampleOHLC(combined1m, '1', timeframe);
+                                resampledData = await resampleOHLCAsync(combined1m, '1', timeframe);
                             } else {
                                 const toSeconds = parseTimeframeToSeconds(timeframe);
                                 if (toSeconds > 0) {

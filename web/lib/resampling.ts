@@ -8,9 +8,9 @@ export function parseTimeframeToSeconds(tf: string): number {
         return parseInt(tf, 10) * 60 // Default to minutes
     }
 
-    // Strict case matching for units: m (min), h (hour), D (day), W (week), M (month)
+    // Strict case matching for units: m (min), h (hour), D (day), W (week), M (month), Y (year)
     // We allow 'd' and 'w' to leniently map to Day/Week, but 'm' MUST be minute and 'M' MUST be Month
-    const match = tf.match(/^(\d+)(m|h|d|w|M)$/i)
+    const match = tf.match(/^(\d+)(m|h|d|w|M|y)$/i)
     if (!match) return 0
 
     const [, numStr, unit] = match
@@ -26,6 +26,8 @@ export function parseTimeframeToSeconds(tf: string): number {
         case 'w':
         case 'W': return num * 60 * 60 * 24 * 7
         case 'M': return num * 60 * 60 * 24 * 30 // Approximate month
+        case 'y':
+        case 'Y': return num * 60 * 60 * 24 * 365 // Approximate year
         default: return 0
     }
 }

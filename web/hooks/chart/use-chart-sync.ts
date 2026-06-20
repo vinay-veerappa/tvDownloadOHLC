@@ -1,20 +1,71 @@
-import { IChartApi, MouseEventParams, Time } from "lightweight-charts";
-import { useEffect, useRef } from "react";
+import { IChartApi, ISeriesApi, MouseEventParams, SeriesType } from "lightweight-charts";
+import { useRef } from "react";
 
 export interface ChartSyncContext {
-    register: (id: string, chart: IChartApi) => void;
+    register: (id: string, chart: IChartApi, series: ISeriesApi<SeriesType>, data: any[]) => void;
     unregister: (id: string) => void;
 }
 
+interface RegisteredChart {
+    chart: IChartApi;
+    series: ISeriesApi<SeriesType>;
+    data: any[];
+}
+
+// Helper to perform an O(log N) binary search for the exact or closest bar by time
+function findClosestBar(data: any[], targetTime: number): any {
+    if (!data || data.length === 0) return null;
+
+    let low = 0;
+    let high = data.length - 1;
+
+    // Boundary checks
+    const firstTime = data[low].time as number;
+    const lastTime = data[high].time as number;
+    if (targetTime <= firstTime) return data[low];
+    if (targetTime >= lastTime) return data[high];
+
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const midTime = data[mid].time as number;
+
+        if (midTime === targetTime) {
+            return data[mid];
+        }
+
+        if (midTime < targetTime) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    // After loop, low and high boundaries contain the closest items.
+    const itemLow = data[low];
+    const itemHigh = data[high];
+    
+    if (!itemLow) return itemHigh || null;
+    if (!itemHigh) return itemLow;
+
+    const diffLow = Math.abs((itemLow.time as number) - targetTime);
+    const diffHigh = Math.abs((itemHigh.time as number) - targetTime);
+
+    return diffLow < diffHigh ? itemLow : itemHigh;
+}
+
 export function useChartSync() {
-    const chartsRef = useRef<Map<string, IChartApi>>(new Map());
+    const chartsRef = useRef<Map<string, RegisteredChart>>(new Map());
     const isSyncingRef = useRef(false);
 
-    const register = (id: string, chart: IChartApi) => {
-        if (chartsRef.current.has(id)) return;
+    const register = (id: string, chart: IChartApi, series: ISeriesApi<SeriesType>, data: any[]) => {
+        const existing = chartsRef.current.get(id);
+        
+        // Update series/data references on every call to keep them fresh
+        chartsRef.current.set(id, { chart, series, data });
+
+        if (existing) return;
 
         console.log(`[Sync] Registering chart ${id}`);
-        chartsRef.current.set(id, chart);
 
         // 1. Sync Visible Range (Time Scale)
         const timeScale = chart.timeScale();
@@ -26,9 +77,9 @@ export function useChartSync() {
             isSyncingRef.current = true;
 
             // Propagate to all other charts
-            chartsRef.current.forEach((otherChart, otherId) => {
+            chartsRef.current.forEach((other, otherId) => {
                 if (otherId !== id) {
-                    otherChart.timeScale().setVisibleLogicalRange(range);
+                    other.chart.timeScale().setVisibleLogicalRange(range);
                 }
             });
 
@@ -40,17 +91,39 @@ export function useChartSync() {
         // 2. Sync Crosshair
         const handleCrosshairMove = (param: MouseEventParams) => {
             if (isSyncingRef.current) return;
-            // We only care about syncing the TIME (x-axis), not price (y-axis)
-            // But we need to set the crosshair position on others.
-            // Lightweight charts doesn't have a direct "setCrosshairPosition(time)" API easily exposed 
-            // without calculating x,y coordinates which vary per chart height.
-            // However, we can trick it or just sync the time range which often aligns the cursor if hovered?
-            // Actually, LWC 4.0+ has setCrosshairPosition but it takes (price, time, series).
+            
+            isSyncingRef.current = true;
+            const targetTime = param.time;
 
-            // For now, let's focus on TimeScale sync which is the most critical.
-            // Crosshair sync is tricky across different height charts because Y is different.
-            // We can emit a custom event or shared state if needed, but strict API sync is complex.
-            // Let's stick to TimeScale sync first.
+            chartsRef.current.forEach((other, otherId) => {
+                if (otherId === id) return;
+
+                if (targetTime !== undefined && targetTime !== null) {
+                    const otherData = other.data;
+                    const otherSeries = other.series;
+
+                    if (otherData && otherData.length > 0 && otherSeries) {
+                        const matchingItem = findClosestBar(otherData, targetTime as number);
+                        if (matchingItem) {
+                            const price = matchingItem.close !== undefined ? matchingItem.close : (matchingItem.value || 0);
+                            try {
+                                other.chart.setCrosshairPosition(price, targetTime, otherSeries);
+                            } catch (err) {
+                                console.warn(`[Sync] Failed to set crosshair position for ${otherId}`, err);
+                            }
+                        }
+                    }
+                } else {
+                    // Clear crosshair on other charts when cursor leaves
+                    try {
+                        other.chart.clearCrosshairPosition();
+                    } catch (err) {
+                        console.warn(`[Sync] Failed to clear crosshair position for ${otherId}`, err);
+                    }
+                }
+            });
+
+            isSyncingRef.current = false;
         };
 
         chart.subscribeCrosshairMove(handleCrosshairMove);
@@ -63,8 +136,9 @@ export function useChartSync() {
     };
 
     const unregister = (id: string) => {
-        const chart = chartsRef.current.get(id);
-        if (chart) {
+        const entry = chartsRef.current.get(id);
+        if (entry) {
+            const chart = entry.chart;
             if ((chart as any)._cleanupSync) (chart as any)._cleanupSync();
             chartsRef.current.delete(id);
             console.log(`[Sync] Unregistered chart ${id}`);

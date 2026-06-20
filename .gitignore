@@ -7,6 +7,8 @@ venv/
 env/
 .agent/scratch/
 .agent/skills_backup/
+.agents/
+.agents
 logs/*.log
 web/logs/
 **/tsconfig.tsbuildinfo

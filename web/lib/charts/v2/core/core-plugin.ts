@@ -61,8 +61,6 @@ export class LineToolsCorePlugin<HorzScaleItem> implements ILineToolsApi {
 		this._toolRegistry = new ToolRegistry<HorzScaleItem>();
 		this._interactionManager = new InteractionManager<HorzScaleItem>(this, this._chart, this._series, this._tools, this._toolRegistry);
 		this._priceAxisLabelStackingManager = new PriceAxisLabelStackingManager<HorzScaleItem>(this._chart, this._series);
-
-		console.log('Line Tools Core Plugin initialized.');
 	}
 
 	/**
@@ -131,7 +129,6 @@ export class LineToolsCorePlugin<HorzScaleItem> implements ILineToolsApi {
 	 */
 	public registerLineTool(type: LineToolType, toolClass: new (...args: any[]) => BaseLineTool<HorzScaleItem>): void {
 		this._toolRegistry.registerTool(type, toolClass);
-		console.log(`Registered line tool: ${type}`);
 	}
 
 	// #region ILineToolsApi Implementation

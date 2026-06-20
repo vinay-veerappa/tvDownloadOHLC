@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useEffect, useState, useMemo } from "react"
 import { Card } from "@/components/ui/card"
 import { getAvailableData } from "@/actions/data-actions"
 import { ChartPageClient } from "@/components/chart-page-client"
@@ -9,9 +9,7 @@ import { useSearchParams } from "next/navigation"
 function ChartPageContent() {
     const searchParams = useSearchParams()
     const rawMode = searchParams.get('mode')
-    console.log('[ChartPage] Raw searchParams mode:', rawMode)
     const mode = (rawMode as 'historical' | 'live') || 'historical'
-    console.log('[ChartPage] Resolved mode:', mode)
     const [data, setData] = useState<{ tickers: string[]; timeframes: string[]; tickerMap: Record<string, string[]> } | null>(null)
     const [markers, setMarkers] = useState<any[]>([])
     const [trades, setTrades] = useState<any[]>([])
@@ -48,11 +46,14 @@ function ChartPageContent() {
         }
     }, [mode])
 
-    if (!data) return <div className="flex items-center justify-center h-screen">Loading Chart...</div>
-
     const ticker = searchParams.get('ticker') || "ES1!"
     const timeframe = searchParams.get('timeframe') || "1m"
-    const indicators = searchParams.get('indicators')?.split(',') || []
+    const indicatorsString = searchParams.get('indicators') || ''
+    const indicators = useMemo(() => {
+        return indicatorsString.split(',').filter(Boolean)
+    }, [indicatorsString])
+
+    if (!data) return <div className="flex items-center justify-center h-screen">Loading Chart...</div>
 
     return (
         <div className="flex flex-col h-screen overflow-hidden">

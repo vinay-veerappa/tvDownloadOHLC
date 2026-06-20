@@ -48,6 +48,29 @@ function getNYFormatter(): Intl.DateTimeFormat {
     return nyFormatter;
 }
 
+const offsetCache = new Map<number, number>();
+
+function getNYOffset(unixTime: number, formatter: Intl.DateTimeFormat): number {
+    const hourKey = Math.floor(unixTime / 3600);
+    let offset = offsetCache.get(hourKey);
+    if (offset === undefined) {
+        const d = new Date(unixTime * 1000);
+        const parts = formatter.formatToParts(d);
+        
+        const year = parseInt(parts.find(p => p.type === 'year')?.value || '1970');
+        const month = parseInt(parts.find(p => p.type === 'month')?.value || '1');
+        const day = parseInt(parts.find(p => p.type === 'day')?.value || '1');
+        const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+        const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+        const second = parseInt(parts.find(p => p.type === 'second')?.value || '0');
+        
+        const nyLocalUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+        offset = Math.round((nyLocalUtc - d.getTime()) / 1000);
+        offsetCache.set(hourKey, offset);
+    }
+    return offset;
+}
+
 function updateSession(s: any, bar: any, interval: number) {
     if (!s.set) {
         s.startUnix = bar.time;
@@ -70,12 +93,13 @@ function calculateSessions(data: any[], barInterval: number): SessionData[] {
 
     // Group by trading day
     for (const bar of data) {
-        const shifted = new Date((bar.time + 6 * 3600) * 1000);
-        const sp = formatter.formatToParts(shifted);
-        const sy = sp.find(p => p.type === 'year')?.value || '1970';
-        const sm = sp.find(p => p.type === 'month')?.value || '01';
-        const sd = sp.find(p => p.type === 'day')?.value || '01';
-        const dateStr = `${sy}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}`;
+        const offset = getNYOffset(bar.time + 6 * 3600, formatter);
+        const localTime = bar.time + 6 * 3600 + offset;
+        const d = new Date(localTime * 1000);
+        const sy = d.getUTCFullYear();
+        const sm = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const sd = String(d.getUTCDate()).padStart(2, '0');
+        const dateStr = `${sy}-${sm}-${sd}`;
 
         if (!days.has(dateStr)) days.set(dateStr, []);
         days.get(dateStr)!.push(bar);
@@ -107,10 +131,11 @@ function calculateSessions(data: any[], barInterval: number): SessionData[] {
             dHigh = Math.max(dHigh, bar.high);
             dLow = Math.min(dLow, bar.low);
 
-            const date = new Date(bar.time * 1000);
-            const parts = formatter.formatToParts(date);
-            const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-            const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+            const offset = getNYOffset(bar.time, formatter);
+            const localTime = bar.time + offset;
+            const d = new Date(localTime * 1000);
+            const h = d.getUTCHours();
+            const m = d.getUTCMinutes();
             const hm = h * 100 + m;
 
             if (h >= 18) {
@@ -201,25 +226,22 @@ function calculateSessions(data: any[], barInterval: number): SessionData[] {
     const p12History = new Set<string>();
 
     for (const bar of data) {
-        // Calculate P12 block using wall clock to be DST-safe
-        const date = new Date(bar.time * 1000);
-        const parts = formatter.formatToParts(date);
-        const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+        const offset = getNYOffset(bar.time, formatter);
+        const localTime = bar.time + offset;
+        const d = new Date(localTime * 1000);
+        const h = d.getUTCHours();
 
         // Block boundaries: 18:00-06:00 and 06:00-18:00
-        // If hour >= 18 or hour < 6 -> Evening block
-        // If hour >= 6 and hour < 18 -> Morning block
         const isEvening = h >= 18 || h < 6;
         const currentBlockType = isEvening ? 'Evening' : 'Morning';
 
-        // Unique key for the block (TradingDate-Type)
-        // tradingTime stays on the same date for Morning (06:00-18:00) 
-        // and moves to the "Next Day" date for Evening (18:00-06:00), but stays stable across midnight.
-        const tradingTime = new Date((bar.time + 6 * 3600) * 1000); // 6h shift to align with trading day
-        const tParts = formatter.formatToParts(tradingTime);
-        const sy = tParts.find(p => p.type === 'year')?.value;
-        const sm = tParts.find(p => p.type === 'month')?.value;
-        const sd = tParts.find(p => p.type === 'day')?.value;
+        // 6h shift to align with trading day
+        const offsetShifted = getNYOffset(bar.time + 6 * 3600, formatter);
+        const localTimeShifted = bar.time + 6 * 3600 + offsetShifted;
+        const dShifted = new Date(localTimeShifted * 1000);
+        const sy = dShifted.getUTCFullYear();
+        const sm = dShifted.getUTCMonth() + 1;
+        const sd = dShifted.getUTCDate();
         const blockKey = `${sy}-${sm}-${sd}-${currentBlockType}`;
 
         if (p12StartUnix === -1) {
@@ -229,7 +251,6 @@ function calculateSessions(data: any[], barInterval: number): SessionData[] {
             p12L = bar.low;
         } else if (blockKey !== p12BlockKey) {
             // Push finished block
-            // Deduplicate: ensure we don't push the same block key twice
             if (!p12History.has(p12BlockKey)) {
                 finalResults.push({
                     session: 'P12',
@@ -253,8 +274,6 @@ function calculateSessions(data: any[], barInterval: number): SessionData[] {
     }
 
     if (p12StartUnix !== -1) {
-        // Last block
-        // For the very last block in history, we extend forward
         if (!p12History.has(p12BlockKey)) {
             finalResults.push({
                 session: 'P12',
@@ -278,10 +297,11 @@ function precomputeExtensions(sessions: SessionData[], extendUntil: string): Ses
     for (const s of sessions) {
         if (!s.startUnix) continue;
 
-        const date = new Date(s.startUnix * 1000);
-        const parts = formatter.formatToParts(date);
-        const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-        const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+        const offset = getNYOffset(s.startUnix, formatter);
+        const localTime = s.startUnix + offset;
+        const d = new Date(localTime * 1000);
+        const h = d.getUTCHours();
+        const m = d.getUTCMinutes();
 
         let diffSec = (eH - h) * 3600 + (eM - m) * 60;
         if (diffSec <= 0) diffSec += 24 * 3600;

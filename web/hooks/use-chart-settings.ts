@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS: ChartSettings = {
     shiftVisibleRangeOnNewBar: true,
     allowShiftVisibleRangeOnWhitespaceReplacement: true,
     crosshairMode: 'normal',
-    showTrades: true,
+    showTrades: false,
     showTrading: false
 }
 

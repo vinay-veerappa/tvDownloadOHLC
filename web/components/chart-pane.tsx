@@ -58,11 +58,11 @@ export function ChartPane({
 
     // Register for Sync
     useEffect(() => {
-        if (chart && syncContext) {
-            syncContext.register(id, chart);
+        if (chart && series && syncContext) {
+            syncContext.register(id, chart, series, data);
             return () => syncContext.unregister(id);
         }
-    }, [chart, syncContext, id]);
+    }, [chart, series, data, syncContext, id]);
 
     // Hide TimeScale if not bottom pane?
     useEffect(() => {

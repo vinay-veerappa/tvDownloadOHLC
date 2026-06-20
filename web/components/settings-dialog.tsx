@@ -72,7 +72,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             shiftVisibleRangeOnNewBar: true,
             allowShiftVisibleRangeOnWhitespaceReplacement: true,
             crosshairMode: 'normal',
-            showTrades: true,
+            showTrades: false,
             showTrading: false
         }
         setLocalSettings(defaults)

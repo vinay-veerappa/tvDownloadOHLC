@@ -244,6 +244,14 @@ export function useChartData({
         isLoadingMore: loading.isLoadingMore,
         hasMoreData: loading.hasMoreData,
         loadMoreData: loading.loadMoreData,
+
+        isLoadingMoreLeft: (loading as any).isLoadingMoreLeft !== undefined ? (loading as any).isLoadingMoreLeft : loading.isLoadingMore,
+        isLoadingMoreRight: (loading as any).isLoadingMoreRight !== undefined ? (loading as any).isLoadingMoreRight : false,
+        hasMoreDataLeft: (loading as any).hasMoreDataLeft !== undefined ? (loading as any).hasMoreDataLeft : loading.hasMoreData,
+        hasMoreDataRight: (loading as any).hasMoreDataRight !== undefined ? (loading as any).hasMoreDataRight : false,
+        loadMoreDataLeft: (loading as any).loadMoreDataLeft !== undefined ? (loading as any).loadMoreDataLeft : loading.loadMoreData,
+        loadMoreDataRight: (loading as any).loadMoreDataRight !== undefined ? (loading as any).loadMoreDataRight : () => {},
+
         totalRows: loading.totalRows,
         fullDataRange: loading.fullDataRange,
         jumpToTime: loading.jumpToTime,

@@ -14,6 +14,7 @@ export function normalizeResolution(input: string): Resolution {
     if (input.toUpperCase().endsWith('D')) return input.toUpperCase() // "1D"
     if (input.toUpperCase().endsWith('W')) return input.toUpperCase() // "1W"
     if (input.toUpperCase().endsWith('M') && !input.endsWith('m')) return input.toUpperCase() // "1M" (Month)
+    if (input.toUpperCase().endsWith('Y')) return input.toUpperCase() // "1Y" (Year)
 
     // Handle minutes/hours/seconds
     const lower = input.toLowerCase()
@@ -48,7 +49,7 @@ export function normalizeResolution(input: string): Resolution {
  * - "15s" -> "15s"
  */
 export function formatResolution(res: Resolution): string {
-    if (res.endsWith('D') || res.endsWith('W') || res.endsWith('M') || res.endsWith('s')) {
+    if (res.endsWith('D') || res.endsWith('W') || res.endsWith('M') || res.endsWith('Y') || res.endsWith('s')) {
         return res
     }
 
@@ -70,7 +71,7 @@ export function formatResolution(res: Resolution): string {
  * - "1440" (if passed) -> "1D" (though 1D usually passed as string)
  */
 export function resolutionToFolderName(res: Resolution): string {
-    if (res.endsWith('D') || res.endsWith('W') || res.endsWith('M')) {
+    if (res.endsWith('D') || res.endsWith('W') || res.endsWith('M') || res.endsWith('Y')) {
         return res
     }
     if (res.endsWith('s')) {
@@ -96,6 +97,7 @@ export function getResolutionInMinutes(res: Resolution): number {
     if (res.endsWith('D')) return parseInt(res) * 1440
     if (res.endsWith('W')) return parseInt(res) * 10080
     if (res.endsWith('M')) return parseInt(res) * 43200 // Approx
+    if (res.endsWith('Y')) return parseInt(res) * 525600 // Approx year
     if (res.endsWith('s')) return parseInt(res) / 60
 
     return parseInt(res) || 1

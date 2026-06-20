@@ -168,6 +168,5 @@ export abstract class TwoPointDrawing<TOptions extends TwoPointOptions = TwoPoin
 
     public updateAllViews(): void {
         this.updateCoordinates();
-        this.requestUpdate();
     }
 }

@@ -85,7 +85,6 @@ export function createLineToolsPlugin<HorzScaleItem>(
 			throw new Error('A valid Lightweight Charts series instance must be provided.');
 		}
 
-		console.log('Initializing Line Tools Core Plugin...');
 		const horzScaleBehavior = chart.horzBehaviour();
 
 		const plugin = new LineToolsCorePlugin<HorzScaleItem>(chart, series, horzScaleBehavior);

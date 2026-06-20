@@ -173,7 +173,11 @@ export function ChartWrapper(props: ChartWrapperProps) {
         const savedIndicators = IndicatorStorage.getIndicators(chartId)
 
         if (savedIndicators.length > 0) {
-            setIndicators(savedIndicators.filter(i => i.enabled).map(i => i.type))
+            const targetIndicators = savedIndicators.filter(i => i.enabled).map(i => i.type)
+            setIndicators(prev => {
+                if (JSON.stringify(prev) === JSON.stringify(targetIndicators)) return prev;
+                return targetIndicators;
+            })
 
             // Extract params into map
             const paramsMap: Record<string, any> = {}
@@ -184,13 +188,15 @@ export function ChartWrapper(props: ChartWrapperProps) {
             setIndicatorParams(prev => {
                 // Merge storage params, but prioritize existing local state to prevent overwrite race conditions
                 const next = { ...prev };
+                let changed = false;
                 Object.entries(paramsMap).forEach(([key, value]) => {
                     // Only load from storage if we don't have local state (e.g. init or new indicator)
                     if (next[key] === undefined) {
                         next[key] = value;
+                        changed = true;
                     }
                 });
-                return next;
+                return changed ? next : prev;
             })
         } else if (props.indicators && props.indicators.length > 0) {
             const initialIndicators = props.indicators.map((type: string) => ({
@@ -199,7 +205,10 @@ export function ChartWrapper(props: ChartWrapperProps) {
                 params: {}
             }))
             IndicatorStorage.saveIndicators(chartId, initialIndicators)
-            setIndicators(props.indicators)
+            setIndicators(prev => {
+                if (JSON.stringify(prev) === JSON.stringify(props.indicators)) return prev;
+                return props.indicators;
+            })
         }
     }, [chartId, props.indicators])
 

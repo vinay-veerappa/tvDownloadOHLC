@@ -101,8 +101,6 @@ export class V2SandboxManager<HorzScaleItem> {
                 this._callbacks.onDrawingDoubleClick?.(selectedLineTool);
             }
         });
-
-        console.log("V2 Sandbox Manager Initialized and Tools Registered.");
     }
 
     public get plugin() {
@@ -134,11 +132,9 @@ export class V2SandboxManager<HorzScaleItem> {
     }
 
     public updateStorageKey(key: string) {
-        console.log(`[V2SandboxManager] Storage key updated to: ${key}`);
     }
 
     public updateTheme(theme: any) {
-        console.log(`[V2SandboxManager] Updating theme:`, theme);
     }
 
     public loadTools(tools: any[]) {

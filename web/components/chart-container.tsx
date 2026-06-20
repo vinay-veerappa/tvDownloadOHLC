@@ -172,7 +172,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         fullData, data, replayMode, replayIndex, isSelectingReplayStart,
         setIsSelectingReplayStart, startReplay, startReplaySelection, stopReplay,
         stepForward, stepBack, findIndexForTime, setReplayIndex,
-        loadMoreData, hasMoreData, isLoadingMore, fullDataRange, jumpToTime
+        loadMoreData, hasMoreData, isLoadingMore, fullDataRange, jumpToTime,
+        hasMoreDataLeft, isLoadingMoreLeft, loadMoreDataLeft,
+        hasMoreDataRight, isLoadingMoreRight, loadMoreDataRight
     } = useChartData({
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
         getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null,
@@ -186,13 +188,15 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         dataRef.current = data;
     }, [data]);
 
+    const isRestoringRangeRef = useRef(false)
+
     const {
         chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd,
         scrollToTime, getDataRange, getVisibleTimeRange, indicators: activeIndicatorsRef,
         isDisposed
     } = useChart(
         chartContainerRef as React.RefObject<HTMLDivElement>,
-        style, indicators, data, markers, displayTimezone, timeframe, vwapSettings, ticker, theme, mode
+        style, indicators, data, showTrades ? markers : [], displayTimezone, timeframe, vwapSettings, ticker, theme, mode, isRestoringRangeRef
     )
 
     // Sync Series Ref
@@ -208,7 +212,20 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     })
 
     useChartInfiniteScroll({
-        chart, series, replayMode, data, hasMoreData, isLoadingMore, loadMoreData
+        chart,
+        series,
+        replayMode,
+        data,
+        hasMoreData,
+        isLoadingMore,
+        loadMoreData,
+        hasMoreDataLeft,
+        isLoadingMoreLeft,
+        loadMoreDataLeft,
+        hasMoreDataRight,
+        isLoadingMoreRight,
+        loadMoreDataRight,
+        isRestoringRangeRef
     })
 
     const { truthSessions, truthLevels, truthProfilerRef } = useTruthProfiler({
@@ -1232,15 +1249,17 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 document.body
             )}
 
-            <PropertiesModal
-                open={propertiesModalOpen}
-                onOpenChange={setPropertiesModalOpen}
-                drawingType={selectedDrawingType as any}
-                initialOptions={selectedDrawingOptions}
-                points={selectedDrawingPoints}
-                onSave={handlePropertiesSave}
-                ticker={ticker}
-            />
+            {propertiesModalOpen && (
+                <PropertiesModal
+                    open={propertiesModalOpen}
+                    onOpenChange={setPropertiesModalOpen}
+                    drawingType={selectedDrawingType as any}
+                    initialOptions={selectedDrawingOptions}
+                    points={selectedDrawingPoints}
+                    onSave={handlePropertiesSave}
+                    ticker={ticker}
+                />
+            )}
 
             {/* Inline Text Editor Overlay */}
             {inlineTextEditing && (
@@ -1259,208 +1278,220 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             )}
 
             {/* Text Settings Dialog */}
-            <TextSettings
-                open={textSettingsOpen}
-                onOpenChange={setTextSettingsOpen}
-                options={{
-                    text: selectedDrawingOptions?.text,
-                    textColor: selectedDrawingOptions?.textColor || selectedDrawingOptions?.color,
-                    fontSize: selectedDrawingOptions?.fontSize,
-                    bold: selectedDrawingOptions?.bold,
-                    italic: selectedDrawingOptions?.italic,
-                    visibleTimeframes: selectedDrawingOptions?.visibleTimeframes,
-                    backgroundColor: selectedDrawingOptions?.backgroundColor,
-                    backgroundVisible: selectedDrawingOptions?.backgroundVisible,
-                    borderColor: selectedDrawingOptions?.borderColor,
-                    borderVisible: selectedDrawingOptions?.borderVisible,
-                    wordWrap: selectedDrawingOptions?.wordWrap,
-                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
-                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
-                }}
-                onSave={(opts) => {
-                    handlePropertiesSave(opts);
-                    setTextSettingsOpen(false);
-                }}
-                onCancel={() => setTextSettingsOpen(false)}
-            />
+            {textSettingsOpen && (
+                <TextSettings
+                    open={textSettingsOpen}
+                    onOpenChange={setTextSettingsOpen}
+                    options={{
+                        text: selectedDrawingOptions?.text,
+                        textColor: selectedDrawingOptions?.textColor || selectedDrawingOptions?.color,
+                        fontSize: selectedDrawingOptions?.fontSize,
+                        bold: selectedDrawingOptions?.bold,
+                        italic: selectedDrawingOptions?.italic,
+                        visibleTimeframes: selectedDrawingOptions?.visibleTimeframes,
+                        backgroundColor: selectedDrawingOptions?.backgroundColor,
+                        backgroundVisible: selectedDrawingOptions?.backgroundVisible,
+                        borderColor: selectedDrawingOptions?.borderColor,
+                        borderVisible: selectedDrawingOptions?.borderVisible,
+                        wordWrap: selectedDrawingOptions?.wordWrap,
+                        alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                        alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
+                    }}
+                    onSave={(opts) => {
+                        handlePropertiesSave(opts);
+                        setTextSettingsOpen(false);
+                    }}
+                    onCancel={() => setTextSettingsOpen(false)}
+                />
+            )}
 
             {/* Rectangle Settings Dialog */}
-            <RectangleSettingsDialog
-                open={rectangleSettingsOpen}
-                onOpenChange={setRectangleSettingsOpen}
-                options={{
-                    ...DEFAULT_RECTANGLE_OPTIONS,
-                    borderColor: selectedDrawingOptions?.borderColor || '#2962FF',
-                    borderWidth: selectedDrawingOptions?.borderWidth || 1,
-                    borderStyle: selectedDrawingOptions?.borderStyle || 0,
-                    fillColor: selectedDrawingOptions?.fillColor || '#2962FF',
-                    fillOpacity: selectedDrawingOptions?.fillOpacity ?? 0.1,
-                    showMidline: selectedDrawingOptions?.showMidline || false,
-                    showQuarterLines: selectedDrawingOptions?.showQuarterLines || false,
-                    text: selectedDrawingOptions?.text,
-                    textColor: selectedDrawingOptions?.textColor,
-                    fontSize: selectedDrawingOptions?.fontSize,
-                    bold: selectedDrawingOptions?.bold,
-                    italic: selectedDrawingOptions?.italic,
-                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
-                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
-                    visibleTimeframes: selectedDrawingOptions?.visibleTimeframes
-                }}
-                points={(() => {
-                    const drawing = selectedDrawingRef.current;
-                    if (!drawing) return undefined;
-                    if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
-                    if (drawing.points && typeof drawing.points === 'function') {
-                        const pts = drawing.points();
-                        return (pts && pts.length >= 2) ? { p1: pts[0], p2: pts[1] } : undefined;
-                    }
-                    if (drawing.points && drawing.points.length >= 2) {
-                        return { p1: drawing.points[0], p2: drawing.points[1] };
-                    }
-                    return undefined;
-                })()}
-                onApply={(opts, pts) => {
-                    handlePropertiesSave(opts, pts);
-                    setRectangleSettingsOpen(false);
-                }}
-                onCancel={() => setRectangleSettingsOpen(false)}
-            />
+            {rectangleSettingsOpen && (
+                <RectangleSettingsDialog
+                    open={rectangleSettingsOpen}
+                    onOpenChange={setRectangleSettingsOpen}
+                    options={{
+                        ...DEFAULT_RECTANGLE_OPTIONS,
+                        borderColor: selectedDrawingOptions?.borderColor || '#2962FF',
+                        borderWidth: selectedDrawingOptions?.borderWidth || 1,
+                        borderStyle: selectedDrawingOptions?.borderStyle || 0,
+                        fillColor: selectedDrawingOptions?.fillColor || '#2962FF',
+                        fillOpacity: selectedDrawingOptions?.fillOpacity ?? 0.1,
+                        showMidline: selectedDrawingOptions?.showMidline || false,
+                        showQuarterLines: selectedDrawingOptions?.showQuarterLines || false,
+                        text: selectedDrawingOptions?.text,
+                        textColor: selectedDrawingOptions?.textColor,
+                        fontSize: selectedDrawingOptions?.fontSize,
+                        bold: selectedDrawingOptions?.bold,
+                        italic: selectedDrawingOptions?.italic,
+                        alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                        alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
+                        visibleTimeframes: selectedDrawingOptions?.visibleTimeframes
+                    }}
+                    points={(() => {
+                        const drawing = selectedDrawingRef.current;
+                        if (!drawing) return undefined;
+                        if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
+                        if (drawing.points && typeof drawing.points === 'function') {
+                            const pts = drawing.points();
+                            return (pts && pts.length >= 2) ? { p1: pts[0], p2: pts[1] } : undefined;
+                        }
+                        if (drawing.points && drawing.points.length >= 2) {
+                            return { p1: drawing.points[0], p2: drawing.points[1] };
+                        }
+                        return undefined;
+                    })()}
+                    onApply={(opts, pts) => {
+                        handlePropertiesSave(opts, pts);
+                        setRectangleSettingsOpen(false);
+                    }}
+                    onCancel={() => setRectangleSettingsOpen(false)}
+                />
+            )}
 
             {/* New TrendLine Settings Dialog */}
-            <TrendLineSettingsDialog
-                open={trendLineSettingsOpen}
-                onOpenChange={setTrendLineSettingsOpen}
-                options={{
-                    ...DEFAULT_TRENDLINE_OPTIONS,
-                    color: selectedDrawingOptions?.lineColor || '#2962FF',
-                    width: selectedDrawingOptions?.lineWidth || 2,
-                    style: selectedDrawingOptions?.lineStyle || 0,
-                    opacity: selectedDrawingOptions?.opacity || 1,
-                    extendLeft: selectedDrawingOptions?.extendLeft || false,
-                    extendRight: selectedDrawingOptions?.extendRight || false,
-                    showAngle: selectedDrawingOptions?.showAngle || false,
-                    showDistance: selectedDrawingOptions?.showDistance || false,
-                    showPriceRange: selectedDrawingOptions?.showPriceRange || false,
-                    showBarsRange: selectedDrawingOptions?.showBarsRange || false,
-                    text: selectedDrawingOptions?.text,
-                    textColor: selectedDrawingOptions?.textColor,
-                    fontSize: selectedDrawingOptions?.fontSize,
-                    bold: selectedDrawingOptions?.bold,
-                    italic: selectedDrawingOptions?.italic,
-                    alignment: selectedDrawingOptions?.alignment,
-                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
-                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
-                }}
-                points={(() => {
-                    const drawing = selectedDrawingRef.current;
-                    if (!drawing) return undefined;
-                    if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
-                    if (drawing.points && drawing.points.length >= 2) {
-                        return { p1: drawing.points[0], p2: drawing.points[1] };
-                    }
-                    return undefined;
-                })()}
-                onApply={(opts, pts) => handlePropertiesSave(opts, pts)}
-                onCancel={() => setTrendLineSettingsOpen(false)}
-            />
+            {trendLineSettingsOpen && (
+                <TrendLineSettingsDialog
+                    open={trendLineSettingsOpen}
+                    onOpenChange={setTrendLineSettingsOpen}
+                    options={{
+                        ...DEFAULT_TRENDLINE_OPTIONS,
+                        color: selectedDrawingOptions?.lineColor || '#2962FF',
+                        width: selectedDrawingOptions?.lineWidth || 2,
+                        style: selectedDrawingOptions?.lineStyle || 0,
+                        opacity: selectedDrawingOptions?.opacity || 1,
+                        extendLeft: selectedDrawingOptions?.extendLeft || false,
+                        extendRight: selectedDrawingOptions?.extendRight || false,
+                        showAngle: selectedDrawingOptions?.showAngle || false,
+                        showDistance: selectedDrawingOptions?.showDistance || false,
+                        showPriceRange: selectedDrawingOptions?.showPriceRange || false,
+                        showBarsRange: selectedDrawingOptions?.showBarsRange || false,
+                        text: selectedDrawingOptions?.text,
+                        textColor: selectedDrawingOptions?.textColor,
+                        fontSize: selectedDrawingOptions?.fontSize,
+                        bold: selectedDrawingOptions?.bold,
+                        italic: selectedDrawingOptions?.italic,
+                        alignment: selectedDrawingOptions?.alignment,
+                        alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                        alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
+                    }}
+                    points={(() => {
+                        const drawing = selectedDrawingRef.current;
+                        if (!drawing) return undefined;
+                        if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
+                        if (drawing.points && drawing.points.length >= 2) {
+                            return { p1: drawing.points[0], p2: drawing.points[1] };
+                        }
+                        return undefined;
+                    })()}
+                    onApply={(opts, pts) => handlePropertiesSave(opts, pts)}
+                    onCancel={() => setTrendLineSettingsOpen(false)}
+                />
+            )}
 
             {/* Horizontal Line Settings Dialog */}
-            <HorizontalLineSettingsDialog
-                open={horizontalLineSettingsOpen}
-                onOpenChange={setHorizontalLineSettingsOpen}
-                options={{
-                    ...DEFAULT_HORIZONTAL_OPTIONS,
-                    color: selectedDrawingOptions?.color || '#2962FF',
-                    width: selectedDrawingOptions?.width || 1,
-                    style: selectedDrawingOptions?.lineStyle || 1,
-                    showLabel: selectedDrawingOptions?.showLabel ?? true,
-                    labelBackgroundColor: selectedDrawingOptions?.labelBackgroundColor || '#2962FF',
-                    labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
-                    text: selectedDrawingOptions?.text,
-                    textColor: selectedDrawingOptions?.textColor,
-                    fontSize: selectedDrawingOptions?.fontSize,
-                    bold: selectedDrawingOptions?.bold,
-                    italic: selectedDrawingOptions?.italic,
-                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
-                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
-                }}
-                price={(() => {
-                    const drawing = selectedDrawingRef.current;
-                    if (!drawing) return 0;
-                    if (drawing._price !== undefined) return drawing._price;
-                    if (drawing.points && drawing.points.length >= 1) {
-                        return drawing.points[0].price;
-                    }
-                    return 0;
-                })()}
-                onApply={(opts, price) => handlePropertiesSave(opts, price)}
-                onCancel={() => setHorizontalLineSettingsOpen(false)}
-            />
+            {horizontalLineSettingsOpen && (
+                <HorizontalLineSettingsDialog
+                    open={horizontalLineSettingsOpen}
+                    onOpenChange={setHorizontalLineSettingsOpen}
+                    options={{
+                        ...DEFAULT_HORIZONTAL_OPTIONS,
+                        color: selectedDrawingOptions?.color || '#2962FF',
+                        width: selectedDrawingOptions?.width || 1,
+                        style: selectedDrawingOptions?.lineStyle || 1,
+                        showLabel: selectedDrawingOptions?.showLabel ?? true,
+                        labelBackgroundColor: selectedDrawingOptions?.labelBackgroundColor || '#2962FF',
+                        labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
+                        text: selectedDrawingOptions?.text,
+                        textColor: selectedDrawingOptions?.textColor,
+                        fontSize: selectedDrawingOptions?.fontSize,
+                        bold: selectedDrawingOptions?.bold,
+                        italic: selectedDrawingOptions?.italic,
+                        alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                        alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
+                    }}
+                    price={(() => {
+                        const drawing = selectedDrawingRef.current;
+                        if (!drawing) return 0;
+                        if (drawing._price !== undefined) return drawing._price;
+                        if (drawing.points && drawing.points.length >= 1) {
+                            return drawing.points[0].price;
+                        }
+                        return 0;
+                    })()}
+                    onApply={(opts, price) => handlePropertiesSave(opts, price)}
+                    onCancel={() => setHorizontalLineSettingsOpen(false)}
+                />
+            )}
 
 
             {/* Vertical Line Settings Dialog */}
-            <VerticalLineSettingsDialog
-                open={verticalLineSettingsOpen}
-                onOpenChange={setVerticalLineSettingsOpen}
-                options={{
-                    ...DEFAULT_VERTICAL_OPTIONS,
-                    color: selectedDrawingOptions?.color || '#2962FF',
-                    width: selectedDrawingOptions?.width || 2,
-                    style: selectedDrawingOptions?.lineStyle || 0,
-                    showLabel: selectedDrawingOptions?.showLabel ?? true,
-                    labelBackgroundColor: selectedDrawingOptions?.labelBackgroundColor || '#2962FF',
-                    labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
-                    text: selectedDrawingOptions?.text,
-                    textColor: selectedDrawingOptions?.textColor,
-                    fontSize: selectedDrawingOptions?.fontSize,
-                    bold: selectedDrawingOptions?.bold,
-                    italic: selectedDrawingOptions?.italic,
-                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
-                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
-                    orientation: selectedDrawingOptions?.orientation || 'horizontal',
-                }}
-                time={(() => {
-                    const drawing = selectedDrawingRef.current;
-                    if (!drawing) return 0;
-                    if (drawing._time !== undefined) return drawing._time;
-                    if (drawing.points && drawing.points.length >= 1) {
-                        return drawing.points[0].timestamp || drawing.points[0].time;
-                    }
-                    return 0;
-                })()}
-                onApply={(opts, time) => handlePropertiesSave(opts, time)}
-                onCancel={() => setVerticalLineSettingsOpen(false)}
-            />
+            {verticalLineSettingsOpen && (
+                <VerticalLineSettingsDialog
+                    open={verticalLineSettingsOpen}
+                    onOpenChange={setVerticalLineSettingsOpen}
+                    options={{
+                        ...DEFAULT_VERTICAL_OPTIONS,
+                        color: selectedDrawingOptions?.color || '#2962FF',
+                        width: selectedDrawingOptions?.width || 2,
+                        style: selectedDrawingOptions?.lineStyle || 0,
+                        showLabel: selectedDrawingOptions?.showLabel ?? true,
+                        labelBackgroundColor: selectedDrawingOptions?.labelBackgroundColor || '#2962FF',
+                        labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
+                        text: selectedDrawingOptions?.text,
+                        textColor: selectedDrawingOptions?.textColor,
+                        fontSize: selectedDrawingOptions?.fontSize,
+                        bold: selectedDrawingOptions?.bold,
+                        italic: selectedDrawingOptions?.italic,
+                        alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                        alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
+                        orientation: selectedDrawingOptions?.orientation || 'horizontal',
+                    }}
+                    time={(() => {
+                        const drawing = selectedDrawingRef.current;
+                        if (!drawing) return 0;
+                        if (drawing._time !== undefined) return drawing._time;
+                        if (drawing.points && drawing.points.length >= 1) {
+                            return drawing.points[0].timestamp || drawing.points[0].time;
+                        }
+                        return 0;
+                    })()}
+                    onApply={(opts, time) => handlePropertiesSave(opts, time)}
+                    onCancel={() => setVerticalLineSettingsOpen(false)}
+                />
+            )}
 
             {/* Ray Settings Dialog */}
-            <RaySettingsDialog
-                open={raySettingsOpen}
-                onOpenChange={setRaySettingsOpen}
-                options={{
-                    color: selectedDrawingOptions?.lineColor || selectedDrawingOptions?.color || DEFAULT_RAY_OPTIONS.color,
-                    width: selectedDrawingOptions?.lineWidth || selectedDrawingOptions?.width || DEFAULT_RAY_OPTIONS.width,
-                    style: selectedDrawingOptions?.lineStyle ?? selectedDrawingOptions?.style ?? DEFAULT_RAY_OPTIONS.style,
-                    opacity: selectedDrawingOptions?.opacity ?? DEFAULT_RAY_OPTIONS.opacity,
-                    text: selectedDrawingOptions?.text,
-                    textColor: selectedDrawingOptions?.textColor,
-                    fontSize: selectedDrawingOptions?.fontSize,
-                    bold: selectedDrawingOptions?.bold,
-                    italic: selectedDrawingOptions?.italic,
-                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
-                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
-                }}
-                points={(() => {
-                    const drawing = selectedDrawingRef.current;
-                    if (!drawing) return undefined;
-                    if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
-                    if (drawing.points && drawing.points.length >= 2) {
-                        return { p1: drawing.points[0], p2: drawing.points[1] };
-                    }
-                    return undefined;
-                })()}
-                onApply={(opts, pts) => handlePropertiesSave(opts, pts)}
-                onCancel={() => setRaySettingsOpen(false)}
-            />
+            {raySettingsOpen && (
+                <RaySettingsDialog
+                    open={raySettingsOpen}
+                    onOpenChange={setRaySettingsOpen}
+                    options={{
+                        color: selectedDrawingOptions?.lineColor || selectedDrawingOptions?.color || DEFAULT_RAY_OPTIONS.color,
+                        width: selectedDrawingOptions?.lineWidth || selectedDrawingOptions?.width || DEFAULT_RAY_OPTIONS.width,
+                        style: selectedDrawingOptions?.lineStyle ?? selectedDrawingOptions?.style ?? DEFAULT_RAY_OPTIONS.style,
+                        opacity: selectedDrawingOptions?.opacity ?? DEFAULT_RAY_OPTIONS.opacity,
+                        text: selectedDrawingOptions?.text,
+                        textColor: selectedDrawingOptions?.textColor,
+                        fontSize: selectedDrawingOptions?.fontSize,
+                        bold: selectedDrawingOptions?.bold,
+                        italic: selectedDrawingOptions?.italic,
+                        alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                        alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
+                    }}
+                    points={(() => {
+                        const drawing = selectedDrawingRef.current;
+                        if (!drawing) return undefined;
+                        if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
+                        if (drawing.points && drawing.points.length >= 2) {
+                            return { p1: drawing.points[0], p2: drawing.points[1] };
+                        }
+                        return undefined;
+                    })()}
+                    onApply={(opts, pts) => handlePropertiesSave(opts, pts)}
+                    onCancel={() => setRaySettingsOpen(false)}
+                />
+            )}
         </div>
     )
 }))

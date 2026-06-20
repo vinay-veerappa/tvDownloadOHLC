@@ -183,6 +183,6 @@ export class OHLCLegend implements ISeriesPrimitive<any> {
 
     // Required by interface
     updateAllViews() {
-        this._requestUpdate();
+        // Just a lifecycle notification, no need to trigger another repaint loop!
     }
 }

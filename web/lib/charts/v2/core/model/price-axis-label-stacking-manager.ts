@@ -41,7 +41,6 @@ export class PriceAxisLabelStackingManager<HorzScaleItem> {
 	) {
 		this._chart = chart;
 		this._series = series;
-		console.log('[PriceAxisLabelStackingManager] Initializing...');
 
         // NEW: Initialize _priceAxisRendererOptions in the constructor
         const chartOptions = this._chart.options();
@@ -62,7 +61,6 @@ export class PriceAxisLabelStackingManager<HorzScaleItem> {
             paddingTop: 2,    
             tickLength: priceScaleOptions.ticksVisible ? 4 : 0,
         };
-        console.log('[PriceAxisLabelStackingManager] Initial PriceAxisViewRendererOptions set from chart/series defaults.');
 	}
 
 	/**

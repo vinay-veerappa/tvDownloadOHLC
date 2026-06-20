@@ -51,11 +51,13 @@ from api.features.indicators.router import router as indicators_router
 from api.features.sessions.router import router as sessions_router
 from api.features.profiler.router import router as profiler_router
 from api.features.candle_science.router import router as candle_science_router
+from api.features.ohlc.router import router as ohlc_router
 
 # Include specific routers first, greedy ones last
 app.include_router(indicators_router, prefix="/api/indicators", tags=["indicators"])
 app.include_router(profiler_router, tags=["profiler"])
 app.include_router(candle_science_router, prefix="/api/candle-science", tags=["candle-science"])
+app.include_router(ohlc_router, prefix="/api/ohlc", tags=["ohlc"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"]) # Greedy /{ticker} last
 
 

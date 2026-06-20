@@ -38,7 +38,8 @@ export function useChart(
     vwapSettings?: VWAPSettings,
     ticker?: string,
     theme?: ThemeParams,
-    mode: 'historical' | 'live' = 'historical'
+    mode: 'historical' | 'live' = 'historical',
+    isRestoringRangeRef?: React.RefObject<boolean>
 ) {
     // console.log('[useChart] displayTimezone:', displayTimezone)
     const { resolvedTheme } = useTheme()
@@ -304,6 +305,7 @@ export function useChart(
     // Track if this is the first data load for this ticker
     const isFirstLoadRef = useRef(true)
     const prevDataLengthRef = useRef(0)
+    const prevDataRef = useRef<any[]>([])
     const dataHashRef = useRef('')
 
     // Memoize chart data transformation (Heiken Ashi + whitespace)
@@ -346,6 +348,18 @@ export function useChart(
             const timeScale = chartInstance.timeScale()
             const isFirstLoad = isFirstLoadRef.current || prevDataLengthRef.current === 0
 
+            // Get visible logical range before updating to find anchor bar
+            const visibleRange = timeScale.getVisibleLogicalRange()
+            let anchorTime: number | null = null
+            let anchorOffset = 0
+
+            if (visibleRange && prevDataRef.current.length > 0) {
+                // Clamp index to [0, length - 1] to handle scrolling past edges (e.g. negative from)
+                const oldAnchorIndex = Math.max(0, Math.min(Math.floor(visibleRange.from), prevDataRef.current.length - 1))
+                anchorTime = prevDataRef.current[oldAnchorIndex].time
+                anchorOffset = visibleRange.from - oldAnchorIndex
+            }
+
             // Optimized Update Logic
             // 1. If first load or data gap/reset (length diff > 2), set full data
             const lenDiff = chartData.length - prevDataLengthRef.current;
@@ -357,9 +371,16 @@ export function useChart(
 
             // Decision: Full Render vs Incremental Update
             if (isFirstLoad || dataContentChanged || Math.abs(lenDiff) > 2 || lenDiff < 0) {
+                // Set lock to prevent scroll checks during range restoration
+                if (isRestoringRangeRef) {
+                    (isRestoringRangeRef as any).current = true
+                }
+
                 // Full update (gap filled, data reset, or significant length change)
+                const startSetData = Date.now();
                 try {
                     seriesInstance.setData(chartData)
+                    console.log('[useChart] seriesInstance.setData finished in', Date.now() - startSetData, 'ms for', chartData.length, 'bars');
                     dataHashRef.current = currentHash
                 } catch (err) {
                     console.error('[useChart] setData FAILED:', err)
@@ -371,7 +392,40 @@ export function useChart(
                         try {
                             if (!isDisposedRef.current) timeScale.fitContent()
                         } catch { }
+                        if (isRestoringRangeRef) {
+                            (isRestoringRangeRef as any).current = false
+                        }
                     })
+                } else if (anchorTime !== null && visibleRange) {
+                    // Restore visible range by finding the new index of our anchor bar
+                    const newAnchorIndex = chartData.findIndex(bar => bar.time === anchorTime)
+                    console.log(`⏱️ [useChart] Restore range check: anchorTime=${anchorTime}, newAnchorIndex=${newAnchorIndex}, anchorOffset=${anchorOffset}, visibleRange.from=${visibleRange.from.toFixed(2)}, visibleRange.to=${visibleRange.to.toFixed(2)}`);
+                    if (newAnchorIndex !== -1) {
+                        const newFrom = newAnchorIndex + anchorOffset
+                        const rangeWidth = visibleRange.to - visibleRange.from
+                        try {
+                            timeScale.setVisibleLogicalRange({
+                                from: newFrom,
+                                to: newFrom + rangeWidth
+                            })
+                            console.log(`⏱️ [useChart] SetVisibleLogicalRange called: from=${newFrom.toFixed(2)}, to=${(newFrom + rangeWidth).toFixed(2)}`);
+                        } catch (err) {
+                            console.error('[useChart] Failed to restore visible logical range:', err)
+                        }
+                    } else {
+                        console.warn(`⏱️ [useChart] Anchor time ${anchorTime} NOT found in new chartData (length: ${chartData.length})`);
+                    }
+
+                    // Clear lock after a short delay to allow chart layout to stabilize
+                    setTimeout(() => {
+                        if (isRestoringRangeRef) {
+                            (isRestoringRangeRef as any).current = false
+                        }
+                    }, 50)
+                } else {
+                    if (isRestoringRangeRef) {
+                        (isRestoringRangeRef as any).current = false
+                    }
                 }
             } else {
                 // Incremental update (tick-by-tick, just update last candle)
@@ -386,6 +440,7 @@ export function useChart(
                 }
             }
 
+            prevDataRef.current = chartData
             prevDataLengthRef.current = chartData.length
 
             if (markers && markers.length > 0) {
@@ -393,6 +448,10 @@ export function useChart(
                     createSeriesMarkers(seriesInstance as any, markers)
                 } else if (typeof (seriesInstance as any).setMarkers === 'function') {
                     (seriesInstance as any).setMarkers(markers)
+                }
+            } else {
+                if (seriesInstance && typeof (seriesInstance as any).setMarkers === 'function') {
+                    (seriesInstance as any).setMarkers([])
                 }
             }
         } catch (e) {

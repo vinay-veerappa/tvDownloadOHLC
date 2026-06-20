@@ -132,7 +132,14 @@ class EMRenderer {
             const anchors = new Map<string, { x1: number, x2: number, price: number, type: string }>();
             const dayStatus = new Map<string, { x: number, yAnchor: number, contained: boolean, mult: number }>();
 
+            const visibleRange = timeScale.getVisibleRange();
+            const startTime = visibleRange ? (visibleRange.from as number) : 0;
+            const endTime = visibleRange ? (visibleRange.to as number) : Number.MAX_SAFE_INTEGER;
+
             for (const level of this._levels) {
+                if (level.startUnix !== undefined && level.startUnix > endTime) continue;
+                if (level.endUnix !== undefined && level.endUnix < startTime) continue;
+
                 const x1 = timeScale.timeToCoordinate(level.startUnix as Time);
                 const x2 = timeScale.timeToCoordinate(level.endUnix as Time);
                 if (x1 === null && x2 === null) continue;
@@ -668,7 +675,9 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         }];
     }
 
-    updateAllViews() { this._requestUpdate(); }
+    updateAllViews() {
+        // Just a lifecycle notification, no need to trigger another repaint loop!
+    }
     axisViews() { return []; }
     priceAxisViews() { return []; }
     autoscaleInfo() { return null; }

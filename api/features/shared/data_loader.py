@@ -11,14 +11,17 @@ from typing import Optional
 # Path to data directory - relative to project root
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 
+# In-Memory Cache to prevent reading Parquet from disk on every API call
+_HISTORICAL_CACHE = {}
 
-def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
+def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> Optional[pd.DataFrame]:
     """
     Load OHLCV data from Parquet file
     
     Args:
         ticker: e.g., "ES1", "NQ1" or "ES1!" (will be stripped)
         timeframe: e.g., "5m", "1h", "1D", "1wk" (maps "1W" -> "1wk")
+        t_end: Optional timestamp limit (used to skip live fusion for purely historical slices)
     
     Returns:
         DataFrame with columns: time, open, high, low, close, volume
@@ -46,101 +49,54 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
         print(f"File not found: {filepath}")
         return None
     
-    df = pd.read_parquet(filepath)
-    
-    # Handle datetime index - reset to column and convert to Unix timestamp
-    if df.index.name in ['datetime', 'time', 'timestamp'] or (not df.index.empty and isinstance(df.index, pd.DatetimeIndex)):
-        idx_name = df.index.name or 'datetime'
-        df = df.reset_index()
-        if 'time' in df.columns and idx_name != 'time':
-            # If 'time' column is all NaN or largely empty, drop it in favor of index
-            if df['time'].isna().all() or (df['time'].dtype == 'float64' and df['time'].isna().sum() > 0):
-                df = df.drop(columns=['time'])
-                df = df.rename(columns={idx_name: 'time'})
-    
-    # Rename datetime column to time if needed
-    if 'datetime' in df.columns:
-        if 'time' in df.columns and 'datetime' != 'time':
-             df = df.drop(columns=['datetime'])
-        elif 'time' not in df.columns:
-            df = df.rename(columns={'datetime': 'time'})
-    elif 'timestamp' in df.columns:
-        if 'time' in df.columns and 'timestamp' != 'time':
-             df = df.drop(columns=['timestamp'])
-        elif 'time' not in df.columns:
-             df = df.rename(columns={'timestamp': 'time'})
-    
-    # Convert datetime to Unix timestamp (seconds) if needed
-    if 'time' in df.columns and pd.api.types.is_datetime64_any_dtype(df['time']):
-        df['time'] = df['time'].astype('int64') // 10**9
-    
-    # DROP ROWS WITH NaN TIME
-    if 'time' in df.columns:
-        df = df.dropna(subset=['time'])
-
-    # Ensure expected columns exist
-    expected_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
-    for col in expected_cols:
-        if col not in df.columns:
-            print(f"Missing column: {col}")
-            return None
-    
-    # Sort by time
-    df = df.sort_values('time').reset_index(drop=True)
-    
-    # --- Live Data Fusion (Only for 1m data) ---
-    if timeframe == "1m":
-        live_path = None
+    cache_key = f"{clean_ticker}_{timeframe}"
+    if cache_key in _HISTORICAL_CACHE:
+        df = _HISTORICAL_CACHE[cache_key]
+    else:
+        df = pd.read_parquet(filepath)
         
-        # Map back to Live Symbol format
-        # NQ1 -> /NQ -> -NQ (Filename format)
-        live_dir = DATA_DIR / "live"
-        if clean_ticker == "NQ1":
-            live_path = live_dir / "live_storage_-NQ.parquet"
-        elif clean_ticker == "ES1":
-            live_path = live_dir / "live_storage_-ES.parquet"
-        elif clean_ticker == "YM1":
-            live_path = live_dir / "live_storage_-YM.parquet"
-        elif clean_ticker == "RTY1":
-            live_path = live_dir / "live_storage_-RTY.parquet"
-        else:
-            # Standard Equities (e.g. QQQ -> live_storage_QQQ.parquet)
-            live_path = live_dir / f"live_storage_{clean_ticker}.parquet"
-            
-        if live_path and live_path.exists():
-            try:
-                live_df = pd.read_parquet(live_path)
-                if not live_df.empty:
-                    # Normalize columns if needed (live parquet should match, but verify)
-                    if 'timestamp' in live_df.columns and 'time' not in live_df.columns:
-                         live_df = live_df.rename(columns={'timestamp': 'time'})
-                         
-                    # Determine columns to keep
-                    cols = [c for c in expected_cols if c in live_df.columns]
-                    live_df = live_df[cols]
-                    
-                    # Normalize units: ensure both main and live 'time' are in seconds
-                    # Detect 13-digit numbers (ms) or 16-digit (us) and divide
-                    for df_temp in [df, live_df]:
-                        if 'time' in df_temp.columns and not df_temp.empty:
-                            m = df_temp['time'].max()
-                            if m > 1e16: # Nanoseconds (1.7e18)
-                                df_temp['time'] = df_temp['time'] // 10**9
-                            elif m > 1e13: # Microseconds (1.7e15)
-                                df_temp['time'] = df_temp['time'] // 10**6
-                            elif m > 1e10: # Milliseconds (1.7e12)
-                                df_temp['time'] = df_temp['time'] // 10**3
-                            # Else already seconds (1.7e9)
-                    
-                    # Concat and Dedupe
-                    # Keep LAST (Live) version of overlapping 1m bars
-                    df = pd.concat([df, live_df])
-                    df = df.drop_duplicates(subset=['time'], keep='last')
-                    df = df.sort_values('time').reset_index(drop=True)
-                    # print(f"Fused live data for {ticker}: +{len(live_df)} bars")
-            except Exception as e:
-                print(f"Failed to merge live data for {ticker}: {e}")
+        # Handle datetime index - reset to column and convert to Unix timestamp
+        if df.index.name in ['datetime', 'time', 'timestamp'] or (not df.index.empty and isinstance(df.index, pd.DatetimeIndex)):
+            old_cols = set(df.columns)
+            df = df.reset_index()
+            new_cols = set(df.columns) - old_cols
+            if new_cols:
+                reset_col = list(new_cols)[0]
+                if 'time' not in df.columns:
+                    df = df.rename(columns={reset_col: 'time'})
+                elif reset_col != 'time':
+                    if df['time'].isna().all() or (df['time'].dtype == 'float64' and df['time'].isna().sum() > 0):
+                        df = df.drop(columns=['time'])
+                        df = df.rename(columns={reset_col: 'time'})
+        
+        if 'datetime' in df.columns:
+            if 'time' in df.columns and 'datetime' != 'time':
+                 df = df.drop(columns=['datetime'])
+            elif 'time' not in df.columns:
+                df = df.rename(columns={'datetime': 'time'})
+        elif 'timestamp' in df.columns:
+            if 'time' in df.columns and 'timestamp' != 'time':
+                 df = df.drop(columns=['timestamp'])
+            elif 'time' not in df.columns:
+                 df = df.rename(columns={'timestamp': 'time'})
+        
+        if 'time' in df.columns and pd.api.types.is_datetime64_any_dtype(df['time']):
+            df['time'] = df['time'].astype('int64') // 10**9
+        
+        if 'time' in df.columns:
+            df = df.dropna(subset=['time'])
 
+        expected_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
+        for col in expected_cols:
+            if col not in df.columns:
+                print(f"Missing column: {col}")
+                return None
+        
+        df = df.sort_values('time').reset_index(drop=True)
+        
+        # Store in cache (no copy needed as this is a fresh df)
+        _HISTORICAL_CACHE[cache_key] = df
+    
     return df
 
 

@@ -128,30 +128,40 @@ async def calculate_from_file(request: IndicatorFromFileRequest):
     # Load data from file
     df = load_parquet(request.ticker, request.timeframe)
     
-    if df is None:
+    if df is None or df.empty:
         raise HTTPException(
             status_code=404,
             detail=f"Data not found for {request.ticker} {request.timeframe}"
         )
     
-    # Filter by time range if specified
-    if request.start_time:
-        df = df[df['time'] >= request.start_time]
-    if request.end_time:
-        df = df[df['time'] <= request.end_time]
+    # Calculate indicators ON FULL DATAFRAME FIRST to prevent cold-start distortion
+    indicator_values = calculate_indicators(df, request.indicators)
     
-    if df.empty:
+    # Now slice using half-open boundaries to prevent overlaps
+    import numpy as np
+    mask = pd.Series(True, index=df.index)
+    if request.start_time:
+        mask &= (df['time'] >= request.start_time)
+    if request.end_time:
+        mask &= (df['time'] < request.end_time)
+    
+    df_sliced = df[mask]
+    
+    if df_sliced.empty:
         raise HTTPException(
             status_code=404,
             detail="No data in specified time range"
         )
+        
+    indices = np.where(mask)[0]
     
-    # Calculate indicators
-    indicator_values = calculate_indicators(df, request.indicators)
+    sliced_indicators = {}
+    for k, v in indicator_values.items():
+        sliced_indicators[k] = [v[i] for i in indices]
     
     return IndicatorResponse(
-        time=df['time'].tolist(),
-        indicators=indicator_values
+        time=df_sliced['time'].tolist(),
+        indicators=sliced_indicators
     )
 
 

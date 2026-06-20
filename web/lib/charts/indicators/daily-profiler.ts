@@ -265,8 +265,9 @@ class DailyProfilerRenderer {
                 // No break condition - render all applicable passed sessions
                 // Visibility checks inside the loop handles efficiency
                 const session = this._data[i];
-
-
+                if (session.startUnix !== undefined && session.startUnix > endTime) {
+                    break;
+                }
 
                 // Determine style based on session name
                 let color = this._options.asiaColor;
@@ -372,6 +373,8 @@ class DailyProfilerRenderer {
                     if (session.endUnix) extendUnix = session.endUnix;
                     else extendUnix = (startUnix as number) + 3600;
                 }
+
+                if (extendUnix < startTime) continue;
 
                 const x1 = timeScale.timeToCoordinate(startUnix);
 
@@ -619,6 +622,29 @@ class DailyProfilerRenderer {
     }
 }
 
+const offsetCache = new Map<number, number>();
+
+function getNYOffset(unixTime: number, formatter: Intl.DateTimeFormat): number {
+    const hourKey = Math.floor(unixTime / 3600);
+    let offset = offsetCache.get(hourKey);
+    if (offset === undefined) {
+        const d = new Date(unixTime * 1000);
+        const parts = formatter.formatToParts(d);
+        
+        const year = parseInt(parts.find(p => p.type === 'year')?.value || '1970');
+        const month = parseInt(parts.find(p => p.type === 'month')?.value || '1');
+        const day = parseInt(parts.find(p => p.type === 'day')?.value || '1');
+        const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+        const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+        const second = parseInt(parts.find(p => p.type === 'second')?.value || '0');
+        
+        const nyLocalUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+        offset = Math.round((nyLocalUtc - d.getTime()) / 1000);
+        offsetCache.set(hourKey, offset);
+    }
+    return offset;
+}
+
 export class DailyProfiler implements ISeriesPrimitive<Time> {
     public _type = 'daily-profiler'; // Fix: Added type for cleaner identification
     _chart: IChartApi;
@@ -757,16 +783,13 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         const days = new Map<string, any[]>();
 
         for (const bar of data) {
-            // If I take (Time + 6 Hours) -> 
-            // 18:00 + 6 = 24:00 (00:00 Next Day).
-            // 17:00 + 6 = 23:00 (Same Day).
-            // So (Time + 6h) formatted to NY gives the correct Trading Date!
-            const shifted = new Date((bar.time + 6 * 3600) * 1000);
-            const sp = this._nyFormatter.formatToParts(shifted);
-            const sy = sp.find(p => p.type === 'year')?.value || '1970';
-            const sm = sp.find(p => p.type === 'month')?.value || '01';
-            const sd = sp.find(p => p.type === 'day')?.value || '01';
-            const dateStr = `${sy}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}`;
+            const offset = getNYOffset(bar.time + 6 * 3600, this._nyFormatter);
+            const localTime = bar.time + 6 * 3600 + offset;
+            const d = new Date(localTime * 1000);
+            const sy = d.getUTCFullYear();
+            const sm = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const sd = String(d.getUTCDate()).padStart(2, '0');
+            const dateStr = `${sy}-${sm}-${sd}`;
 
             if (!days.has(dateStr)) days.set(dateStr, []);
             days.get(dateStr)!.push(bar);
@@ -806,10 +829,11 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
                 dHigh = Math.max(dHigh, bar.high);
                 dLow = Math.min(dLow, bar.low);
 
-                const date = new Date(bar.time * 1000);
-                const parts = this._nyFormatter.formatToParts(date);
-                const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-                const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+                const offset = getNYOffset(bar.time, this._nyFormatter);
+                const localTime = bar.time + offset;
+                const d = new Date(localTime * 1000);
+                const h = d.getUTCHours();
+                const m = d.getUTCMinutes();
 
                 const hm = h * 100 + m;
 
@@ -924,19 +948,21 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         const p12History = new Set<string>();
 
         for (const bar of data) {
-            const date = new Date(bar.time * 1000);
-            const parts = this._nyFormatter.formatToParts(date);
-            const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+            const offset = getNYOffset(bar.time, this._nyFormatter);
+            const localTime = bar.time + offset;
+            const d = new Date(localTime * 1000);
+            const h = d.getUTCHours();
 
             const isEvening = h >= 18 || h < 6;
             const currentBlockType = isEvening ? 'Evening' : 'Morning';
 
             // Use trading day shift for keying
-            const tradingTime = new Date((bar.time + 6 * 3600) * 1000);
-            const tParts = this._nyFormatter.formatToParts(tradingTime);
-            const sy = tParts.find(p => p.type === 'year')?.value;
-            const sm = tParts.find(p => p.type === 'month')?.value;
-            const sd = tParts.find(p => p.type === 'day')?.value;
+            const offsetShifted = getNYOffset(bar.time + 6 * 3600, this._nyFormatter);
+            const localTimeShifted = bar.time + 6 * 3600 + offsetShifted;
+            const dShifted = new Date(localTimeShifted * 1000);
+            const sy = dShifted.getUTCFullYear();
+            const sm = dShifted.getUTCMonth() + 1;
+            const sd = dShifted.getUTCDate();
             const blockKey = `${sy}-${sm}-${sd}-${currentBlockType}`;
 
             if (p12StartUnix === -1) {
@@ -1060,11 +1086,11 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         for (const s of this._data) {
             if (!s.startUnix) continue;
 
-            // Get NY hour and minute of the session's startUnix
-            const date = new Date(s.startUnix * 1000);
-            const parts = this._nyFormatter.formatToParts(date);
-            const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-            const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+            const offset = getNYOffset(s.startUnix, this._nyFormatter);
+            const localTime = s.startUnix + offset;
+            const d = new Date(localTime * 1000);
+            const h = d.getUTCHours();
+            const m = d.getUTCMinutes();
 
             // Calculate difference in seconds to target HH:MM on the same calendar day
             let diffSec = (eH - h) * 3600 + (eM - m) * 60;
@@ -1086,7 +1112,9 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         }];
     }
 
-    updateAllViews() { this._requestUpdate(); }
+    updateAllViews() {
+        // Just a lifecycle notification, no need to trigger another repaint loop!
+    }
     autoscaleInfo(startTimePoint: Logical, endTimePoint: Logical): AutoscaleInfo | null { return null; }
     hitTest(x: number, y: number): any {
         if (!this._data || this._data.length === 0) return null;
