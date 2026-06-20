@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { getLiveChartData } from "@/actions/get-live-chart"
 import { OHLCData } from "@/actions/data-actions"
 import { toast } from "sonner"
-import { canResample, parseTimeframeToSeconds } from "@/lib/resampling"
+import { canResample, parseTimeframeToSeconds, resampleDataForWMY } from "@/lib/resampling"
 import { resampleOHLCAsync } from "@/lib/resampling-client"
 import { getResolutionInMinutes } from "@/lib/resolution"
 
@@ -82,7 +82,9 @@ export function useLiveDataLoading({
         // Live Upsampling Logic
         let resampledData = rawDataRef.current;
         if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
-            if (canResample('1', timeframe)) {
+            if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                resampledData = resampleDataForWMY(rawDataRef.current, timeframe);
+            } else if (canResample('1', timeframe)) {
                 resampledData = await resampleOHLCAsync(rawDataRef.current, '1', timeframe);
             } else {
                 const toSeconds = parseTimeframeToSeconds(timeframe);
@@ -339,7 +341,9 @@ export function useLiveDataLoading({
 
                         let resampledData = combined1m;
                         if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
-                            if (canResample('1', timeframe)) {
+                            if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                                resampledData = resampleDataForWMY(combined1m, timeframe);
+                            } else if (canResample('1', timeframe)) {
                                 resampledData = await resampleOHLCAsync(combined1m, '1', timeframe);
                             } else {
                                 const toSeconds = parseTimeframeToSeconds(timeframe);

@@ -98,10 +98,15 @@ export function resampleOHLC(data: OHLCData[], fromTF: string, toTF: string): OH
 
     // Push final bucket
     if (currentBucket) {
-        resampled.push(currentBucket)
+        resampled.push(currentBucket);
+        // If weekly aggregation, add empty bucket for next week start
+        if (isWeekly) {
+            const nextWeekStart = currentBucket.time + 7 * 86400;
+            resampled.push({ time: nextWeekStart, open: 0, high: 0, low: 0, close: 0, volume: 0 });
+        }
     }
 
-    return resampled
+    return resampled;
 }
 
 // Function to check if we can resample from source to target
@@ -120,3 +125,72 @@ export function canResample(fromTF: string, toTF: string): boolean {
     // 'm' (minutes) and raw resolution strings ("240") are allowed!
     return true
 }
+
+// Helper to resample Daily/Weekly/Monthly/Yearly on the client for fallback purposes
+export function resampleDataForWMY(data: OHLCData[], targetTimeframe: string): OHLCData[] {
+    if (data.length === 0) return data
+
+    // Parse timeframe
+    const isWeekly = targetTimeframe.toUpperCase().endsWith('W')
+    const isMonthly = targetTimeframe.toUpperCase().endsWith('M')
+    const isYearly = targetTimeframe.toUpperCase().endsWith('Y')
+
+    let months = 1
+    if (isMonthly) {
+        const match = targetTimeframe.match(/^(\d+)M$/i)
+        if (match) {
+            months = parseInt(match[1], 10)
+        }
+    }
+    let years = 1
+    if (isYearly) {
+        const match = targetTimeframe.match(/^(\d+)Y$/i)
+        if (match) {
+            years = parseInt(match[1], 10)
+        }
+    }
+
+    const resampled: OHLCData[] = []
+    let currentBucket: OHLCData | null = null
+    let bucketEndTime = Number.NaN
+
+    for (const candle of data) {
+        const date = new Date(candle.time * 1000)
+        let bucketStart = 0
+
+        if (isWeekly) {
+            const weekSeconds = 7 * 86400;
+            bucketStart = Math.floor(candle.time / weekSeconds) * weekSeconds;
+        } else if (isMonthly) {
+            const year = date.getUTCFullYear()
+            const month = date.getUTCMonth()
+            const bucketMonth = Math.floor(month / months) * months
+            const firstOfMonth = new Date(Date.UTC(year, bucketMonth, 1, 0, 0, 0, 0))
+            bucketStart = Math.floor(firstOfMonth.getTime() / 1000)
+        } else if (isYearly) {
+            const year = date.getUTCFullYear()
+            const bucketYear = Math.floor(year / years) * years
+            const firstOfYear = new Date(Date.UTC(bucketYear, 0, 1, 0, 0, 0, 0))
+            bucketStart = Math.floor(firstOfYear.getTime() / 1000)
+        } else {
+            // Fallback to simple seconds-based bucketing if it's something else
+            const toSeconds = parseTimeframeToSeconds(targetTimeframe)
+            if (toSeconds <= 0) return data
+            bucketStart = Math.floor(candle.time / toSeconds) * toSeconds
+        }
+
+        if (bucketStart !== bucketEndTime) {
+            if (currentBucket) resampled.push(currentBucket)
+            currentBucket = { ...candle, time: bucketStart }
+            bucketEndTime = bucketStart
+        } else if (currentBucket) {
+            currentBucket.high = Math.max(currentBucket.high, candle.high)
+            currentBucket.low = Math.min(currentBucket.low, candle.low)
+            currentBucket.close = candle.close
+            currentBucket.volume = (currentBucket.volume || 0) + (candle.volume || 0)
+        }
+    }
+    if (currentBucket) resampled.push(currentBucket)
+    return resampled
+}
+

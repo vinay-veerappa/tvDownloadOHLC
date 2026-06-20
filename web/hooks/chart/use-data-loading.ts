@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { getDataMetadata, OHLCData } from "@/actions/data-actions"
 import { toast } from "sonner"
-import { canResample, parseTimeframeToSeconds } from "@/lib/resampling"
+import { canResample, parseTimeframeToSeconds, resampleDataForWMY } from "@/lib/resampling"
 import { resampleOHLCAsync } from "@/lib/resampling-client"
 import { resolutionToFolderName } from "@/lib/resolution"
 
@@ -43,76 +43,7 @@ const fetchBinaryOHLC = async (
     }
 };
 
-// Helper to resample Daily/Weekly/Monthly/Yearly on the client for fallback purposes
-function resampleDataForWMY(data: OHLCData[], targetTimeframe: string): OHLCData[] {
-    if (data.length === 0) return data
 
-    // Parse timeframe
-    const isWeekly = targetTimeframe.toUpperCase().endsWith('W')
-    const isMonthly = targetTimeframe.toUpperCase().endsWith('M')
-    const isYearly = targetTimeframe.toUpperCase().endsWith('Y')
-
-    let months = 1
-    if (isMonthly) {
-        const match = targetTimeframe.match(/^(\d+)M$/i)
-        if (match) {
-            months = parseInt(match[1], 10)
-        }
-    }
-    let years = 1
-    if (isYearly) {
-        const match = targetTimeframe.match(/^(\d+)Y$/i)
-        if (match) {
-            years = parseInt(match[1], 10)
-        }
-    }
-
-    const resampled: OHLCData[] = []
-    let currentBucket: OHLCData | null = null
-    let bucketEndTime = Number.NaN
-
-    for (const candle of data) {
-        const date = new Date(candle.time * 1000)
-        let bucketStart = 0
-
-        if (isWeekly) {
-            const day = date.getUTCDay()
-            const sunday = new Date(date)
-            sunday.setUTCDate(date.getUTCDate() - day)
-            sunday.setUTCHours(0, 0, 0, 0)
-            bucketStart = Math.floor(sunday.getTime() / 1000)
-        } else if (isMonthly) {
-            const year = date.getUTCFullYear()
-            const month = date.getUTCMonth()
-            const bucketMonth = Math.floor(month / months) * months
-            const firstOfMonth = new Date(Date.UTC(year, bucketMonth, 1, 0, 0, 0, 0))
-            bucketStart = Math.floor(firstOfMonth.getTime() / 1000)
-        } else if (isYearly) {
-            const year = date.getUTCFullYear()
-            const bucketYear = Math.floor(year / years) * years
-            const firstOfYear = new Date(Date.UTC(bucketYear, 0, 1, 0, 0, 0, 0))
-            bucketStart = Math.floor(firstOfYear.getTime() / 1000)
-        } else {
-            // Fallback to simple seconds-based bucketing if it's something else
-            const toSeconds = parseTimeframeToSeconds(targetTimeframe)
-            if (toSeconds <= 0) return data
-            bucketStart = Math.floor(candle.time / toSeconds) * toSeconds
-        }
-
-        if (bucketStart !== bucketEndTime) {
-            if (currentBucket) resampled.push(currentBucket)
-            currentBucket = { ...candle, time: bucketStart }
-            bucketEndTime = bucketStart
-        } else if (currentBucket) {
-            currentBucket.high = Math.max(currentBucket.high, candle.high)
-            currentBucket.low = Math.min(currentBucket.low, candle.low)
-            currentBucket.close = candle.close
-            currentBucket.volume = (currentBucket.volume || 0) + (candle.volume || 0)
-        }
-    }
-    if (currentBucket) resampled.push(currentBucket)
-    return resampled
-}
 
 // Memory limits - keep setData fast while preserving enough history
 const MAX_BARS = 60000           // Hard cap
@@ -216,7 +147,11 @@ export function useDataLoading({
 
                     // Apply resampling if needed
                     if (isResamplingRef.current) {
-                        finalData = await resampleOHLCAsync(result.data, baseTimeframeRef.current, timeframe)
+                        if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                            finalData = result.data // Already resampled on fallback load
+                        } else {
+                            finalData = await resampleOHLCAsync(result.data, baseTimeframeRef.current, timeframe)
+                        }
                     }
 
                     setFullData(finalData)
@@ -468,7 +403,11 @@ export function useDataLoading({
 
                 // Resample if needed
                 if (isResamplingRef.current) {
-                    finalData = await resampleOHLCAsync(result.data, usedTimeframe, timeframe)
+                    if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                        finalData = resampleDataForWMY(result.data, timeframe)
+                    } else {
+                        finalData = await resampleOHLCAsync(result.data, usedTimeframe, timeframe)
+                    }
                 }
 
                 // Replace fullData with new data centered on target time
