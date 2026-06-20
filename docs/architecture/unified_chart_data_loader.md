@@ -10,18 +10,42 @@ This document provides a comprehensive blueprint and handover reference for the 
 * **Historical Mode (`useDataLoading`)**: Loads deep historical OHLC data from binary Parquet slices via `fetchBinaryOHLC` (port 8000). Features a robust bidirectional pagination engine, coordinate-locking to prevent scroll jumping, and a 50,000-candle eviction cap to keep the lightweight-charts rendering engine performant.
 * **Live Mode (`useLiveDataLoading`)**: Loads initial streaming history from the `/api/history` NextJS proxy (pointing to the Schwab streaming API on port 8001) and connects to a WebSocket server (`ws://localhost:8001/stream`) to apply real-time quote updates to the latest bar.
 
-### Identified Gaps
-1. **Historical W/M/Y Resampling Bug**: When requesting non-native resolutions ending in `W`/`M`/`Y` (e.g. `2M`, `3M`, `6M`, `1Y`), the hook correctly loads `1D` fallback data and calls `resampleDataForWMY()`. However, it incorrectly routes the result through the worker's `resampleOHLCAsync()` which rejects calendar resolutions, rendering a blank chart.
-2. **Live Resampling Calendar Drift**: In live mode, multi-month and yearly resolutions are resampled using a simple seconds-based approximation (e.g. `30 * 86400` seconds per month). This causes **calendar drift** because month lengths vary (28, 29, 30, 31 days) and leap years are ignored.
-3. **Data Silos**: Historical data and live storage (Schwab parquet data cached on disk during trading hours) are currently treated as separate worlds. A trader in "History Mode" cannot view the newest live-cached candles without manually switching to "Live Mode."
+### Resolved Issues (Phase 1)
+1. **Historical W/M/Y Resampling Bug**: **[RESOLVED]** The hook now correctly bypasses the Web Worker for W/M/Y resolutions and uses the shared `resampleDataForWMY()` engine.
+2. **Live Resampling Calendar Drift**: **[RESOLVED]** Live mode now imports the shared, high-fidelity `resampleDataForWMY()` resampler, completely resolving the calendar drift issue caused by the old seconds-based approximation.
+
+### Remaining Gaps (Phase 2)
+1. **Data Silos**: Historical data and live storage (Schwab parquet data cached on disk during trading hours) are currently treated as separate worlds. A trader in "History Mode" cannot view the newest live-cached candles without manually switching to "Live Mode."
 
 ---
 
 ## 2. Target Architecture: Seamless Data Fusion & Parity
 
 To address these gaps, the system is designed around two pillars:
-1. **Shared Resampling & Eviction Engine**: All client-side resampling (intraday worker-based and calendar-based W/M/Y) and pagination boundaries are managed by a single unified controller.
+1. **Shared Resampling & Eviction Engine**: All client-side resampling (intraday worker-based and calendar-based W/M/Y) and pagination boundaries are managed by a single unified controller. *(Completed in Phase 1)*
 2. **Seamless Historical + Live Storage Merge in History Mode**: When in History Mode, the engine will query the deep historical parquets AND automatically fetch/merge the live storage cache (Schwab data) at the right boundary, rendering a single continuous chart without requiring the WebSocket connection.
+
+### Target Data Flow Diagram
+
+```mermaid
+graph TD;
+  User[User selects Timeframe/Ticker] --> ModeCheck{Is Live Mode?};
+  
+  ModeCheck -- Yes --> LiveFetch[Fetch from /api/history];
+  LiveFetch --> LiveWS[Subscribe to WebSocket :8001];
+  LiveWS --> ResampleEngine[Shared Resampling Engine];
+  
+  ModeCheck -- No --> HistFetch[Fetch from /api/ohlc/ :8000];
+  HistFetch --> LiveMerge[Merge with /api/history Live Cache];
+  LiveMerge --> ResampleEngine;
+  
+  ResampleEngine --> Intraday{Is Intraday?};
+  Intraday -- Yes --> Worker[resampleOHLCAsync Worker];
+  Intraday -- No --> Calendar[resampleDataForWMY];
+  
+  Worker --> ChartRenderer[Lightweight Charts];
+  Calendar --> ChartRenderer;
+```
 
 ### Detailed Data Pathways & Fallbacks
 
@@ -153,14 +177,14 @@ Any modifications to resampling or pagination boundaries must pass these verific
 
 When starting a new session to implement these features, follow this step-by-step checklist:
 
-- [ ] **Step 1: Move & Export Resampling**:
+- [x] **Step 1: Move & Export Resampling**:
   * Cut `resampleDataForWMY` out of `web/hooks/chart/use-data-loading.ts` and paste it into `web/lib/resampling.ts` as an exportable function.
-- [ ] **Step 2: Fix Historical Mode W/M/Y Bug**:
+- [x] **Step 2: Fix Historical Mode W/M/Y Bug**:
   * Edit `web/hooks/chart/use-data-loading.ts`. Locate the initial load `useEffect` and `jumpToTime` methods.
   * Wrap the `resampleOHLCAsync()` calls in a check: `if (!timeframe.endsWith('W') && !timeframe.endsWith('M') && !timeframe.endsWith('Y'))`. This prevents worker failure for W/M/Y.
-- [ ] **Step 3: Create Resampling Unit Tests**:
+- [x] **Step 3: Create Resampling Unit Tests**:
   * Create `web/tests/resampling.test.mjs` using the built-in `node:test` framework to mock and assert all calendar grouping rules (2M, 3M, 1Y).
-- [ ] **Step 4: Fix Live Mode Calendar Drift**:
+- [x] **Step 4: Fix Live Mode Calendar Drift**:
   * Edit `web/hooks/chart/use-live-data-loading.ts`. Find the resampling logic (lines 84-110).
   * Integrate the exported `resampleDataForWMY` for W/M/Y timeframes instead of the seconds-based `Math.floor(candle.time / toSeconds)` loop.
 - [ ] **Step 5: Implement Seamless Merger**:
