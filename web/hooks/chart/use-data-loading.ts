@@ -51,6 +51,23 @@ const MAX_BARS = 60000           // Hard cap
 const EVICT_WHEN_OVER = 50000    // Start evicting at 50k
 const EVICT_TO = 40000           // Settle at 40k (~60-80ms setData)
 
+async function processLiveData(liveData: OHLCData[], targetTf: string): Promise<OHLCData[]> {
+    if (liveData.length === 0) return [];
+    
+    const targetUpper = targetTf.toUpperCase();
+    const isCalendarTf = targetUpper.endsWith('D') || 
+                          targetUpper.endsWith('W') || 
+                          targetUpper.endsWith('M') || 
+                          targetUpper.endsWith('Y');
+                          
+    if (isCalendarTf) {
+        return resampleDataForWMY(liveData, targetTf);
+    } else if (targetTf !== '1' && targetTf !== '1m' && targetTf !== '15s' && targetTf !== '30s') {
+        return await resampleOHLCAsync(liveData, '1', targetTf);
+    }
+    return liveData;
+}
+
 interface UseDataLoadingProps {
     ticker: string
     timeframe: string // Standardized resolution (e.g., "1", "240")
@@ -148,7 +165,7 @@ export function useDataLoading({
                     let liveData: OHLCData[] = []
                     
                     try {
-                        const liveRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=180000`, { cache: 'no-store' })
+                        const liveRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=5000`, { cache: 'no-store' })
                         if (liveRes.ok) {
                             const json = await liveRes.json()
                             if (json.success && json.data && json.data.candles) {
@@ -162,23 +179,19 @@ export function useDataLoading({
                     let finalData: OHLCData[] = []
 
                     if (isResamplingRef.current) {
-                        // Merge base datasets first (1m parquet + 1m live)
-                        const mergedBase = mergeDatasets(histData, liveData)
-                        if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                        // Merge base datasets first after resampling live data to base timeframe (e.g. 1D live matches 1D parquet)
+                        const processedLive = await processLiveData(liveData, baseTimeframeRef.current)
+                        const mergedBase = mergeDatasets(histData, processedLive)
+                        const targetUpper = timeframe.toUpperCase()
+                        const isCalendarTf = targetUpper.endsWith('D') || targetUpper.endsWith('W') || targetUpper.endsWith('M') || targetUpper.endsWith('Y')
+                        if (isCalendarTf) {
                             finalData = resampleDataForWMY(mergedBase, timeframe)
                         } else {
                             finalData = await resampleOHLCAsync(mergedBase, baseTimeframeRef.current, timeframe)
                         }
                     } else {
                         // Resample live data first to match native native timeframe
-                        let processedLive = liveData
-                        if (liveData.length > 0) {
-                            if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
-                                processedLive = resampleDataForWMY(liveData, timeframe)
-                            } else if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
-                                processedLive = await resampleOHLCAsync(liveData, '1', timeframe)
-                            }
-                        }
+                        const processedLive = await processLiveData(liveData, timeframe)
                         finalData = mergeDatasets(histData, processedLive)
                     }
 
@@ -344,25 +357,34 @@ export function useDataLoading({
                 const histData = result.data
                 let liveData: OHLCData[] = []
                 
-                try {
-                    const liveRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=180000`, { cache: 'no-store' })
-                    if (liveRes.ok) {
-                        const json = await liveRes.json()
-                        if (json.success && json.data && json.data.candles) {
-                            liveData = json.data.candles
+                // Only fetch live data if we are paging close to the present (newest timestamp is within 5 days of now)
+                const newestHistTime = histData.length > 0 ? histData[histData.length - 1].time : 0
+                const isCloseToPresent = (Date.now() / 1000 - newestHistTime) < 5 * 86400
+
+                if (isCloseToPresent || histData.length === 0) {
+                    try {
+                        const liveRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=5000`, { cache: 'no-store' })
+                        if (liveRes.ok) {
+                            const json = await liveRes.json()
+                            if (json.success && json.data && json.data.candles) {
+                                liveData = json.data.candles
+                            }
                         }
+                    } catch (e) {
+                        console.error("[useDataLoading] Failed to fetch live storage cache for merge (right):", e)
                     }
-                } catch (e) {
-                    console.error("[useDataLoading] Failed to fetch live storage cache for merge (right):", e)
                 }
 
                 let newData: OHLCData[] = []
 
                 if (isResamplingRef.current) {
-                    // Merge base datasets first (1m parquet + 1m live)
-                    const mergedBase = mergeDatasets(histData, liveData)
+                    // Merge base datasets first after resampling live data to base timeframe (e.g. 1D live matches 1D parquet)
+                    const processedLive = await processLiveData(liveData, baseTimeframeRef.current)
+                    const mergedBase = mergeDatasets(histData, processedLive)
                     const resampleStart = performance.now()
-                    if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                    const targetUpper = timeframe.toUpperCase()
+                    const isCalendarTf = targetUpper.endsWith('D') || targetUpper.endsWith('W') || targetUpper.endsWith('M') || targetUpper.endsWith('Y')
+                    if (isCalendarTf) {
                         newData = resampleDataForWMY(mergedBase, timeframe)
                     } else {
                         newData = await resampleOHLCAsync(mergedBase, usedTimeframe, timeframe)
@@ -370,14 +392,7 @@ export function useDataLoading({
                     console.log(`⏱️ [useDataLoading] Resampling finished in ${(performance.now() - resampleStart).toFixed(2)} ms`);
                 } else {
                     // Resample live data first to match native native timeframe
-                    let processedLive = liveData
-                    if (liveData.length > 0) {
-                        if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
-                            processedLive = resampleDataForWMY(liveData, timeframe)
-                        } else if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
-                            processedLive = await resampleOHLCAsync(liveData, '1', timeframe)
-                        }
-                    }
+                    const processedLive = await processLiveData(liveData, timeframe)
                     newData = mergeDatasets(histData, processedLive)
                 }
 
