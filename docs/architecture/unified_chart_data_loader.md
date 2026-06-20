@@ -187,8 +187,25 @@ When starting a new session to implement these features, follow this step-by-ste
 - [x] **Step 4: Fix Live Mode Calendar Drift**:
   * Edit `web/hooks/chart/use-live-data-loading.ts`. Find the resampling logic (lines 84-110).
   * Integrate the exported `resampleDataForWMY` for W/M/Y timeframes instead of the seconds-based `Math.floor(candle.time / toSeconds)` loop.
-- [ ] **Step 5: Implement Seamless Merger**:
+- [x] **Step 5: Implement Seamless Merger**:
   * In `use-data-loading.ts` (History Mode), when loading or paging right, call `/api/history` to load live-stored Schwab data, merge it with historical parquet data, and deduplicate overlaps.
+
+---
+
+## 9. Resolved Implementation Issues
+
+### 1. Millisecond Resampling Grouping Bug
+* **Issue**: The raw live data from `/api/history` contains timestamps in milliseconds (e.g. `1781888100000`), whereas the client-side resampling function `resampleOHLC` expects timestamps in seconds. Because 1-minute in milliseconds ($60,000\text{ ms}$) is a multiple of $300\text{s}$ (5m) and $900\text{s}$ (15m), dividing any millisecond timestamp by $300$ or $900$ yielded an exact integer. The resampler failed to group the candles, resulting in 1-minute bars being rendered on 5m and 15m charts.
+* **Resolution**: Normalized the raw `liveData` to seconds inside `processLiveData` before passing it to any of the resamplers.
+
+### 2. Windows Console UnicodePrint Errors
+* **Issue**: The python backend `load_parquet` printed emojis (`⚡` and `⚠️`) on successful fusion or errors. Running python/uvicorn on Windows command prompts without custom encoding configurations crashed the server with `UnicodeEncodeError` when trying to print these symbols.
+* **Resolution**: Replaced the emojis with standard text strings (`[data_loader]`) inside [data_loader.py](file:///c:/Users/vinay/tvDownloadOHLC/api/features/shared/data_loader.py).
+
+### 3. Startup Zoom & Scroll Check Loop
+* **Issue**: Initially, `fitContent()` was called on startup, rendering all 25k+ candles on screen. Since the oldest bar was visible, the scroll check triggered `loadMoreDataLeft` immediately, prepending older data and causing visual scroll jumps.
+* **Resolution**: Forced a zoomed-in visible logical range to show only the last 150 real bars on initial load in [use-chart.ts](file:///c:/Users/vinay/tvDownloadOHLC/web/hooks/use-chart.ts), preventing the leftward scroll check from triggering until the user manually scrolls left.
+
 
 ---
 

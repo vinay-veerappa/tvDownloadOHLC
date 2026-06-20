@@ -87,13 +87,15 @@ To support both legacy logic and seamless timezone switching:
 
 ---
 
-## 5. Key Workflows
-
-### Data Loading (Client-Side)
-1.  User selects Ticker/Timeframe.
-2.  `useDataLoading` or `useLiveDataLoading` calls backend APIs (`/api/data` or `/api/history`).
-3.  If Timeframe > 1m, the shared `resampling.ts` library aggregates the 1m base data on the fly using a Web Worker for intraday intervals, or synchronous epoch-math for W/M/Y calendar intervals.
-4.  Data is fed to `StandardChart`.
+### Data Loading (History Mode & Live Mode)
+1.  **History Mode (`useDataLoading`)**:
+    * Client fetches from `/api/ohlc/{ticker}/{timeframe}` (port 8000).
+    * Backend dynamically loads the historical parquet slice, reads the background live storage parquet (`live_storage_{ticker}.parquet`), resamples the live data to the target timeframe using Pandas, and merges/deduplicates them in-memory.
+    * For timeframes where native parquets don't exist (e.g. 3m), the client fetches the base 1m merged data from the backend and resamples it on the fly using `resampling.ts` (via Web Worker `resampleOHLCAsync`).
+2.  **Live Mode (`useLiveDataLoading`)**:
+    * Client fetches the initial streaming history window from `/api/history` (port 8001) and connects to a WebSocket connection (`/stream` on port 8001) to receive real-time tick-by-tick updates.
+3.  **Visual Presentation**:
+    * The resampled, continuous dataset is loaded into the chart. Under History Mode, an optional "Live Updates" toggle can be turned on to connect to WebSocket stream updates for real-time appending.
 
 ### Trading Engine (Simulation)
 1.  User clicks "Buy".
