@@ -82,7 +82,45 @@ export interface DataSourceProvider {
 
 ---
 
-## 4. Specific Test Cases & Verification Protocol
+## 4. Indicator Boundary Behavior & Guardrails
+
+When merging historical Parquet files (port 8000) and live storage data (port 8001), indicators (e.g. Daily Profiler, expected move calculations, swing high/low trackers) will process the combined array. To ensure indicators compute correctly across the boundary, we must guarantee:
+
+1. **Chronological Continuity**:
+   * **The Risk**: If the parquet file ends at `10:00` and live storage starts at `10:05`, a 5-minute gap exists. If a timezone mismatch exists (e.g. one uses EST-labeled Unix seconds and the other uses UTC Unix seconds), a massive time shift (5 hours) will manifest at the boundary.
+   * **The Guardrail**: Both datasets must be converted to naive UTC Unix Epoch seconds *before* any merge or resampling. Timestamps must be sorted in strictly ascending order (`T_i < T_{i+1}`).
+2. **Overlap Resolution & Deduplication**:
+   * **The Risk**: If the same timestamp exists in both datasets, duplicate keys will cause lightweight-charts to crash and indicators (which expect 1-bar intervals) to output NaN values.
+   * **The Guardrail**: If timestamp `T` exists in both datasets, the newer data from the live storage provider **must overwrite** the historical parquet data.
+3. **Warm-up Lookback Periods**:
+   * **The Risk**: Indicators like EMAs or session ranges require a lookback window (e.g. 200 bars). If the user scrolls right and switches from historical to live datasets, a discontinuity will break indicator history.
+   * **The Guardrail**: Because the unified hook maintains a single, continuous `fullData` array, indicators calculate over the entire seamless timeline, ensuring lookback states are preserved perfectly.
+
+---
+
+## 5. Live Updates in Historical Mode (State & UI Toggle)
+
+To allow the chart to act like live mode when in History Mode during active market hours, we introduce a **Live Updates Toggle** in the chart settings/toolbar:
+
+```
+[Live Updates Toggle] (ON / OFF)
+```
+
+### Behavioral Specification:
+1. **Toggle is OFF (Static History)**:
+   * The chart loads historical parquet files merged with the live storage snapshot.
+   * No WebSocket connection is established. The data is frozen at the snapshot time, making it ideal for deep historical analysis.
+2. **Toggle is ON (Streaming History)**:
+   * The chart loads historical parquet files merged with the live storage snapshot.
+   * A WebSocket connection to port 8001 is opened.
+   * Real-time quote and candle updates are streamed and appended to the right edge of the merged dataset.
+   * When a new 1-minute candle closes, it is merged into the dataset, and the older data at the left edge is subject to standard memory eviction.
+
+This design decouples **Live Execution Mode** (which handles active orders, account state, and WebSocket streams for active trading) from **Live Updates** (which simply streams visual price data to the chart, whether in historical or live mode).
+
+---
+
+## 6. Specific Test Cases & Verification Protocol
 
 Any modifications to resampling or pagination boundaries must pass these verification rules:
 
@@ -107,7 +145,7 @@ Any modifications to resampling or pagination boundaries must pass these verific
 
 ---
 
-## 5. Handover Plan for Next Session
+## 7. Handover Plan for Next Session
 
 When starting a new session to implement these features, follow this step-by-step checklist:
 
