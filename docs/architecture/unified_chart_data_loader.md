@@ -87,8 +87,12 @@ export interface DataSourceProvider {
 When merging historical Parquet files (port 8000) and live storage data (port 8001), indicators (e.g. Daily Profiler, expected move calculations, swing high/low trackers) will process the combined array. To ensure indicators compute correctly across the boundary, we must guarantee:
 
 1. **Chronological Continuity**:
-   * **The Risk**: If the parquet file ends at `10:00` and live storage starts at `10:05`, a 5-minute gap exists. If a timezone mismatch exists (e.g. one uses EST-labeled Unix seconds and the other uses UTC Unix seconds), a massive time shift (5 hours) will manifest at the boundary.
-   * **The Guardrail**: Both datasets must be converted to naive UTC Unix Epoch seconds *before* any merge or resampling. Timestamps must be sorted in strictly ascending order (`T_i < T_{i+1}`).
+   * **The Risk**: Gaps or timestamp shifts between the historical data and live Schwab data will break indicator sequence calculations (like Daily Profiler box ranges).
+   * **The Guardrail**:
+     * **Parquet Data**: Parquet files are natively stored in naive UTC Unix seconds, requiring no translation.
+     * **Schwab REST API (`/history`)**: Candles provide timestamps in milliseconds (UTC). We must check if `T > 10,000,000,000` and divide by `1000` to convert to standard Unix seconds.
+     * **Schwab Streaming WebSocket (`quote` / `snapshot`)**: Timestamps are provided as ISO-8601 strings (e.g. `"2026-06-20T03:34:24Z"`). We must parse them using `Math.floor(new Date(msg.time).getTime() / 1000)` to resolve them to standard UTC Unix seconds.
+     * Merged results must be sorted strictly in ascending order (`T_i < T_{i+1}`).
 2. **Overlap Resolution & Deduplication**:
    * **The Risk**: If the same timestamp exists in both datasets, duplicate keys will cause lightweight-charts to crash and indicators (which expect 1-bar intervals) to output NaN values.
    * **The Guardrail**: If timestamp `T` exists in both datasets, the newer data from the live storage provider **must overwrite** the historical parquet data.
