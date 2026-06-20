@@ -99,11 +99,6 @@ export function resampleOHLC(data: OHLCData[], fromTF: string, toTF: string): OH
     // Push final bucket
     if (currentBucket) {
         resampled.push(currentBucket);
-        // If weekly aggregation, add empty bucket for next week start
-        if (isWeekly) {
-            const nextWeekStart = currentBucket.time + 7 * 86400;
-            resampled.push({ time: nextWeekStart, open: 0, high: 0, low: 0, close: 0, volume: 0 });
-        }
     }
 
     return resampled;

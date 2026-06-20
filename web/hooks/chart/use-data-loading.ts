@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { canResample, parseTimeframeToSeconds, resampleDataForWMY } from "@/lib/resampling"
 import { resampleOHLCAsync } from "@/lib/resampling-client"
 import { resolutionToFolderName } from "@/lib/resolution"
+import { mergeDatasets } from "@/lib/data-merger"
 
 const fetchBinaryOHLC = async (
     ticker: string,
@@ -143,15 +144,42 @@ export function useDataLoading({
                 }
 
                 if (result.success && result.data) {
-                    let finalData = result.data
-
-                    // Apply resampling if needed
-                    if (isResamplingRef.current) {
-                        if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
-                            finalData = result.data // Already resampled on fallback load
-                        } else {
-                            finalData = await resampleOHLCAsync(result.data, baseTimeframeRef.current, timeframe)
+                    const histData = result.data
+                    let liveData: OHLCData[] = []
+                    
+                    try {
+                        const liveRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=180000`, { cache: 'no-store' })
+                        if (liveRes.ok) {
+                            const json = await liveRes.json()
+                            if (json.success && json.data && json.data.candles) {
+                                liveData = json.data.candles
+                            }
                         }
+                    } catch (e) {
+                        console.error("[useDataLoading] Failed to fetch live storage cache for merge:", e)
+                    }
+
+                    let finalData: OHLCData[] = []
+
+                    if (isResamplingRef.current) {
+                        // Merge base datasets first (1m parquet + 1m live)
+                        const mergedBase = mergeDatasets(histData, liveData)
+                        if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                            finalData = resampleDataForWMY(mergedBase, timeframe)
+                        } else {
+                            finalData = await resampleOHLCAsync(mergedBase, baseTimeframeRef.current, timeframe)
+                        }
+                    } else {
+                        // Resample live data first to match native native timeframe
+                        let processedLive = liveData
+                        if (liveData.length > 0) {
+                            if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                                processedLive = resampleDataForWMY(liveData, timeframe)
+                            } else if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
+                                processedLive = await resampleOHLCAsync(liveData, '1', timeframe)
+                            }
+                        }
+                        finalData = mergeDatasets(histData, processedLive)
                     }
 
                     setFullData(finalData)
@@ -313,17 +341,44 @@ export function useDataLoading({
             console.log(`⏱️ [useDataLoading] fetchBinaryOHLC (right) completed in ${(fetchEnd - loadStart).toFixed(2)} ms`);
 
             if (result.success && result.data && result.data.length > 0) {
-                let newData = result.data
+                const histData = result.data
+                let liveData: OHLCData[] = []
+                
+                try {
+                    const liveRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=180000`, { cache: 'no-store' })
+                    if (liveRes.ok) {
+                        const json = await liveRes.json()
+                        if (json.success && json.data && json.data.candles) {
+                            liveData = json.data.candles
+                        }
+                    }
+                } catch (e) {
+                    console.error("[useDataLoading] Failed to fetch live storage cache for merge (right):", e)
+                }
 
-                // Resample if needed
+                let newData: OHLCData[] = []
+
                 if (isResamplingRef.current) {
+                    // Merge base datasets first (1m parquet + 1m live)
+                    const mergedBase = mergeDatasets(histData, liveData)
                     const resampleStart = performance.now()
                     if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
-                        newData = resampleDataForWMY(result.data, timeframe)
+                        newData = resampleDataForWMY(mergedBase, timeframe)
                     } else {
-                        newData = await resampleOHLCAsync(result.data, usedTimeframe, timeframe)
+                        newData = await resampleOHLCAsync(mergedBase, usedTimeframe, timeframe)
                     }
                     console.log(`⏱️ [useDataLoading] Resampling finished in ${(performance.now() - resampleStart).toFixed(2)} ms`);
+                } else {
+                    // Resample live data first to match native native timeframe
+                    let processedLive = liveData
+                    if (liveData.length > 0) {
+                        if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+                            processedLive = resampleDataForWMY(liveData, timeframe)
+                        } else if (timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s') {
+                            processedLive = await resampleOHLCAsync(liveData, '1', timeframe)
+                        }
+                    }
+                    newData = mergeDatasets(histData, processedLive)
                 }
 
                 // Filter duplicates synchronously using boundary refs to avoid React state timing issues
