@@ -68,31 +68,27 @@ To achieve high-performance updates without UI freezing, the live chart uses a s
 - **Fault Tolerance**: The frontend shows a "Data Stream Offline" state instead of hanging if the script stops.
 
 ## 5. Future Scope & Roadmap
-### Phase 1: Real-time Signal Engine
+
+### Phase 1: Real-time Signal Engine (Pending)
 - Integrate the **9:30 NQ Breakout** logic into the stream handler.
 - Trigger desktop/mobile notifications when a breakout occurs live.
 
-### Phase 2: System Consolidation
-- Build a unified "Master Parquet" merge utility to combine `live_storage.parquet` with historical `NQ1_1m.parquet` daily.
-- Implement an equity curve visualizer for the live session.
+### Phase 2: Live Trade Analytics (Pending)
+- Implement an equity curve visualizer for the live session to monitor intra-day performance.
+*(Note: Live parquets and historical parquets will intentionally remain completely independent on disk to support discrete statistical analysis.)*
 
-### Phase 3: Automated Execution
+### Phase 3: Automated Execution (Long-term)
 - Add order submission (Buy/Sell) capabilities via the Schwab Trader API.
 - Implement a real-time Stop Loss / Take Profit manager (Trailing Stops).
 
-### Phase 4: Unified Charting Interface (Planned)
-The goal is to create a single, high-performance charting application that consolidates all existing tools.
+### Phase 4: Unified Charting Interface (IN PROGRESS)
+We are currently actively building a single, high-performance charting application that consolidates all historical and live data streams seamlessly in the browser.
 
-#### 🎯 Objectives:
-1. **Dynamic Context Switching**: Dropdown or command-palette to switch tickers (/NQ, /ES, etc.) and timeframes (1m, 5m, 15m) without page reloads.
-2. **Indicator Library**: A plugin architecture to toggle existing indicators (Standard Deviations, ICT FVGs, Price Models) over live data.
-3. **Data Fusion**: Seamlessly blending historical Parquet data (multiple years) with the live "hot buffer" for a continuous scrolling experience.
+#### 🎯 Current Objectives (See `unified_chart_data_loader.md`):
+1. **Client-Side Data Fusion**: Seamlessly blending historical Parquet data (multiple years) with the live "hot buffer" in the React state for a continuous scrolling experience—without altering the independent parquet files on disk.
+2. **Dynamic Context Switching**: Dropdown or command-palette to switch tickers (/NQ, /ES, etc.) and timeframes (1m, 5m, 15m) without page reloads.
+3. **Indicator Library**: A plugin architecture to toggle existing indicators (Standard Deviations, ICT FVGs, Price Models) over the newly fused dataset.
 
-#### 🛠️ Technical Hurdles:
+#### 🛠️ Technical Hurdles Being Addressed:
 - **State Management**: Handling large datasets (>100k points) across timeframe switches without memory leaks.
-- **API Multiplexing**: If switching tickers, the Python streamer must dynamically (un)subscribe to avoid Schwab rate limits and bandwidth waste.
-- **Worker Threads**: Offloading indicator calculations (e.g., SD bands) to Web Workers to keep the UI at 60fps.
-- **Syncing Tools**: Ensuring drawings and annotations persist across ticker/timeframe switches.
-
----
-*Created: December 2025*
+- **Unified Resampling**: Relying on a shared `resampling.ts` worker to upsample 1m base data into higher timeframes, guaranteeing parity between history and live data.
