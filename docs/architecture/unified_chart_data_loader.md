@@ -165,3 +165,47 @@ When starting a new session to implement these features, follow this step-by-ste
   * Integrate the exported `resampleDataForWMY` for W/M/Y timeframes instead of the seconds-based `Math.floor(candle.time / toSeconds)` loop.
 - [ ] **Step 5: Implement Seamless Merger**:
   * In `use-data-loading.ts` (History Mode), when loading or paging right, call `/api/history` to load live-stored Schwab data, merge it with historical parquet data, and deduplicate overlaps.
+
+---
+
+## 8. Target File Inventory & Key Code Snippets
+
+For a fast start in the next session, here are the exact files and lines of code to modify:
+
+1. **[resampling.ts](file:///c:/Users/vinay/tvDownloadOHLC/web/lib/resampling.ts)**
+   * Paste `resampleDataForWMY` here. Signature:
+     `export function resampleDataForWMY(data: OHLCData[], targetTimeframe: string): OHLCData[]`
+
+2. **[use-data-loading.ts](file:///c:/Users/vinay/tvDownloadOHLC/web/hooks/chart/use-data-loading.ts)**
+   * **Lines 47-115**: Delete the local duplicate of `resampleDataForWMY`.
+   * **Lines 214-221**: Wrap the call to `resampleOHLCAsync` in the initial load:
+     ```typescript
+     if (isResamplingRef.current) {
+         if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+             finalData = result.data; // Already resampled on fallback load
+         } else {
+             finalData = await resampleOHLCAsync(result.data, baseTimeframeRef.current, timeframe);
+         }
+     }
+     ```
+   * **Lines 467-473** (in `jumpToTime`): Wrap the call similarly:
+     ```typescript
+     if (isResamplingRef.current) {
+         if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+             finalData = resampleDataForWMY(result.data, timeframe);
+         } else {
+             finalData = await resampleOHLCAsync(result.data, usedTimeframe, timeframe);
+         }
+     }
+     ```
+
+3. **[use-live-data-loading.ts](file:///c:/Users/vinay/tvDownloadOHLC/web/hooks/chart/use-live-data-loading.ts)**
+   * **Lines 84-110**: Locate where it resamples. Replace the seconds-based fallback loop for W/M/Y with:
+     ```typescript
+     if (timeframe.endsWith('W') || timeframe.endsWith('M') || timeframe.endsWith('Y')) {
+         resampledData = resampleDataForWMY(rawDataRef.current, timeframe);
+     } else {
+         // Keep existing seconds-based resampling or intraday resampleOHLCAsync
+     }
+     ```
+
