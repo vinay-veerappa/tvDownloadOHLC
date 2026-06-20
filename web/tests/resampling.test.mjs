@@ -201,3 +201,17 @@ test('resampleOHLC aggregates minute to 5-minute buckets', () => {
   // close of first bucket = last bar in bucket
   assert.equal(result[0].close, bars[4].close);
 });
+
+test('resampleOHLC fails to aggregate when input timestamps are in milliseconds (bug reproduction)', () => {
+  const bars = [
+    { time: 1781888100000, open: 10, high: 12, low: 9, close: 11 },
+    { time: 1781888160000, open: 11, high: 13, low: 10, close: 12 },
+    { time: 1781888220000, open: 12, high: 14, low: 11, close: 13 },
+    { time: 1781888280000, open: 13, high: 15, low: 12, close: 14 },
+    { time: 1781888340000, open: 14, high: 16, low: 13, close: 15 }
+  ];
+  const result = resampleOHLC(bars, '1m', '5m');
+  // It fails to aggregate and returns 5 separate bars instead of 1
+  assert.equal(result.length, 5);
+});
+

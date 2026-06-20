@@ -390,8 +390,34 @@ export function useChart(
                     isFirstLoadRef.current = false
                     requestAnimationFrame(() => {
                         try {
-                            if (!isDisposedRef.current) timeScale.fitContent()
-                        } catch { }
+                            if (!isDisposedRef.current) {
+                                const isLiveMode = mode === 'live';
+                                if (isLiveMode) {
+                                    if (chartData.length > 150) {
+                                        timeScale.setVisibleLogicalRange({
+                                            from: chartData.length - 150,
+                                            to: chartData.length + 10
+                                        });
+                                        console.log(`⏱️ [useChart] Initial zoom: set visible range to last 150 bars (live mode)`);
+                                    } else {
+                                        timeScale.fitContent();
+                                    }
+                                } else {
+                                    // Historical/History mode: last 100 elements are whitespace
+                                    if (chartData.length > 250) {
+                                        timeScale.setVisibleLogicalRange({
+                                            from: chartData.length - 250,
+                                            to: chartData.length
+                                        });
+                                        console.log(`⏱️ [useChart] Initial zoom: set visible range to last 150 real bars (historical mode)`);
+                                    } else {
+                                        timeScale.fitContent();
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            console.error('[useChart] Failed to set initial visible range:', err);
+                        }
                         if (isRestoringRangeRef) {
                             (isRestoringRangeRef as any).current = false
                         }

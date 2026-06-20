@@ -119,3 +119,79 @@ test('Data Merger - Empty Inputs', () => {
     assert.equal(merged2.length, 1);
     assert.equal(merged2[0].time, 1000);
 });
+
+test('Data Merger - Unsorted/Out of Order Inputs', () => {
+    const historical = [
+        { time: 1060, open: 11, close: 12 },
+        { time: 1000, open: 10, close: 11 }
+    ];
+    const live = [
+        { time: 1120, open: 13, close: 14 },
+        { time: 1080, open: 12, close: 13 }
+    ];
+
+    const merged = mergeDatasets(historical, live);
+
+    assert.equal(merged.length, 4);
+    assert.equal(merged[0].time, 1000);
+    assert.equal(merged[1].time, 1060);
+    assert.equal(merged[2].time, 1080);
+    assert.equal(merged[3].time, 1120);
+});
+
+test('Data Merger - Intra-dataset Duplicates', () => {
+    const historical = [
+        { time: 1000, open: 10, close: 11 },
+        { time: 1000, open: 10, close: 99 } // duplicate in historical
+    ];
+    const live = [
+        { time: 1060, open: 12, close: 13 },
+        { time: 1060, open: 12, close: 88 } // duplicate in live
+    ];
+
+    const merged = mergeDatasets(historical, live);
+
+    assert.equal(merged.length, 2);
+    assert.equal(merged[0].time, 1000);
+    // In our map insertion, the last one inserted wins.
+    assert.equal(merged[0].close, 99);
+    assert.equal(merged[1].time, 1060);
+    assert.equal(merged[1].close, 88);
+});
+
+test('Data Merger - Live Data Starts Before Historical', () => {
+    const historical = [
+        { time: 2000, open: 10, close: 11 },
+        { time: 2060, open: 11, close: 12 }
+    ];
+    const live = [
+        { time: 1940, open: 9, close: 10 }, // starts before
+        { time: 2000, open: 10, close: 99 } // overlaps
+    ];
+
+    const merged = mergeDatasets(historical, live);
+
+    assert.equal(merged.length, 3);
+    assert.equal(merged[0].time, 1940);
+    assert.equal(merged[1].time, 2000);
+    assert.equal(merged[1].close, 99); // Overwritten by live
+    assert.equal(merged[2].time, 2060);
+});
+
+test('Data Merger - Null/Undefined/Zero properties in candles', () => {
+    const historical = [
+        { time: 1000, open: null, high: undefined, low: 0, close: 11 }
+    ];
+    const live = [
+        { time: 1060, open: 12, high: 13, low: 11, close: 12, volume: 0 }
+    ];
+
+    const merged = mergeDatasets(historical, live);
+
+    assert.equal(merged.length, 2);
+    assert.equal(merged[0].time, 1000);
+    assert.equal(merged[0].open, null);
+    assert.equal(merged[0].low, 0);
+    assert.equal(merged[1].time, 1060);
+    assert.equal(merged[1].volume, 0);
+});

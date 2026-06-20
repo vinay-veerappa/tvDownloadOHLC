@@ -14,9 +14,33 @@ DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 # In-Memory Cache to prevent reading Parquet from disk on every API call
 _HISTORICAL_CACHE = {}
 
+TICKER_MAP = {
+    "ES1": "-ES",
+    "NQ1": "-NQ",
+    "RTY1": "-RTY",
+    "YM1": "-YM",
+    "CL1": "-CL",
+    "GC1": "-GC",
+}
+
+def parse_timeframe_to_pandas(tf: str) -> str:
+    clean_tf = tf.replace('m', '')
+    if clean_tf.isdigit():
+        return f"{clean_tf}min"
+    lower = tf.lower()
+    if lower.endswith('h'):
+        return f"{lower[:-1]}H"
+    if lower.endswith('d'):
+        return f"{lower[:-1]}D"
+    if lower.endswith('w'):
+        return f"{lower[:-1]}W"
+    if lower.endswith('m') and tf.isupper():
+        return f"{tf[:-1]}M"
+    return tf
+
 def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> Optional[pd.DataFrame]:
     """
-    Load OHLCV data from Parquet file
+    Load OHLCV data from Parquet file merged with live storage data in memory.
     
     Args:
         ticker: e.g., "ES1", "NQ1" or "ES1!" (will be stripped)
@@ -96,6 +120,50 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
         
         # Store in cache (no copy needed as this is a fresh df)
         _HISTORICAL_CACHE[cache_key] = df
+        
+    # ----------------------------------------------------
+    # DYNAMIC IN-MEMORY LIVE STORAGE FUSION (PHASE 2 BACKEND)
+    # ----------------------------------------------------
+    live_ticker = TICKER_MAP.get(clean_ticker, clean_ticker)
+    live_path = DATA_DIR / "live" / f"live_storage_{live_ticker}.parquet"
+    
+    if live_path.exists():
+        try:
+            df_l = pd.read_parquet(live_path)
+            if not df_l.empty:
+                # Ensure the time column is datetime index for resampling
+                # Live storage uses epoch ms (13-digit)
+                df_l['datetime'] = pd.to_datetime(df_l['time'], unit='ms')
+                df_l = df_l.set_index('datetime')
+                
+                # Resample live data if target is not 1m
+                clean_tf = timeframe.replace('m', '')
+                if clean_tf not in ['1', '1m']:
+                    rule = parse_timeframe_to_pandas(timeframe)
+                    df_l_resampled = df_l.resample(rule).agg({
+                        'time': 'first',
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last',
+                        'volume': 'sum'
+                    }).dropna()
+                else:
+                    df_l_resampled = df_l
+                
+                # Convert resampled index back to Unix seconds
+                df_l_resampled['time'] = df_l_resampled.index.astype('int64') // 10**9
+                
+                # Keep expected columns
+                df_l_resampled = df_l_resampled[['time', 'open', 'high', 'low', 'close', 'volume']]
+                
+                # Merge and deduplicate (live overwrites historical)
+                merged = pd.concat([df, df_l_resampled])
+                merged = merged.drop_duplicates(subset=['time'], keep='last')
+                df = merged.sort_values('time').reset_index(drop=True)
+                print(f"[data_loader] Successfully fused {len(df_l_resampled)} live storage bars into {clean_ticker}_{timeframe}")
+        except Exception as e:
+            print(f"[data_loader] Failed to fuse live storage for {clean_ticker}: {e}")
     
     return df
 
