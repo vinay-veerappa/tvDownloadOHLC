@@ -6,10 +6,11 @@ This document outlines the current implementation, requirements, and future road
 The system provides a real-time bridge between the Schwab Streaming API and a local web interface, with persistent storage for session bars.
 
 ### Current Components:
-- **`stream_chart.py`**: The "Engine". Handles WebSocket authentication, Level 1 price streaming, and 1-minute OHLC bar calculation.
-- **Hot Buffer (`live_chart.json`)**: A high-frequency JSON file used for rapid polling by the web frontend.
+- **`stream_chart.py` / Schwab Streamer**: The "Engine". Handles WebSocket authentication, Level 1 price streaming, and 1-minute OHLC bar calculation.
+- **API Server (`/api/history`)**: Serves the initial batch of live-stored candles (up to 180,000) for instant chart loading.
+- **WebSocket Server (`ws://localhost:8001/stream`)**: Pushes real-time quotes, candle snapshots, and closed candles directly to connected web clients.
 - **Persistent Storage (`live_storage.parquet`)**: A session-based Parquet file where completed 1-minute bars are archived for future backtesting and analysis.
-- **Frontend (`/tools/live-chart`)**: A React/Next.js interface providing real-time visualization via Lightweight Charts.
+- **Frontend (`/chart` live mode)**: A React/Next.js interface providing real-time visualization via Lightweight Charts.
 
 ## 2. Technical Requirements
 - **Authentication**: Requires `secrets.json` (App Key/Secret) and `token.json` (OAuth2 Access/Refresh tokens).
@@ -22,29 +23,31 @@ The system provides a real-time bridge between the Schwab Streaming API and a lo
 
 ## 3. Current Design
 ### Data Flow:
-1. **WebSocket Connect**: StreamClient initiates a connection to Schwab.
+1. **WebSocket Connect (Backend)**: StreamClient initiates a connection to Schwab.
 2. **Subscriptions**: Subscribes to `CHART_FUTURES` (1-min bars) and `LEVEL_ONE_FUTURES` (Last Price).
-3. **Price Oscillation**: Level 1 ticks update the `live_price` field in `live_chart.json` instantly.
-4. **Bar Completion**: When a new minute timestamp arrives, the previous bar is flushed to `live_storage.parquet`.
+3. **Frontend Initialization**: `useLiveDataLoading` fetches initial historical window via REST (`/api/history`).
+4. **WebSocket Connect (Frontend)**: Frontend connects to local `ws://localhost:8001/stream`.
 5. **Frontend Sync (Dual-Layer)**:
-    - **Base Layer (State)**: `useLiveDataLoading` polls the server action every 2000ms to fetch full candle history. This ensures data integrity and fills any missed packets.
-    - **Live Layer (Imperative)**: `useLiveQuote` polls `live_chart.json` every 200ms. Updates are sent directly to the chart instance via `ChartContainerRef.updateLivePrice()`, bypassing React's render cycle for sub-16ms latency.
+    - **Base Layer (State)**: The initial REST fetch populates the main reactive `fullData` array. 
+    - **Live Layer (Imperative)**: Real-time ticks from the WebSocket are sent directly to the chart instance via `ChartContainerRef.updateLivePrice()`, bypassing React's render cycle for sub-16ms latency. Closed candles trigger an internal array update.
+6. **Resampling**: If the user selects a higher timeframe, the base data is resampled using the shared `resampling.ts` engine (Worker for intraday, synchronous epoch-math for W/M/Y).
 
 ### Architecture Diagram
 ```mermaid
 graph TD
     A[Schwab API] -->|Stream| B(stream_chart.py)
-    B -->|200ms| C{Hot Buffer<br/>live_chart.json}
-    B -->|1m Complete| D[Parquet Storage<br/>live_storage.parquet]
+    B -->|REST API| C[FastAPI /api/history]
+    B -->|WebSocket| D[ws://localhost:8001/stream]
+    B -->|1m Complete| E[Parquet Storage<br/>live_storage.parquet]
     
-    C -->|200ms Poll| E[ChartWrapper]
-    D -->|2000ms Poll| F[useLiveDataLoading]
+    C -->|Initial Fetch| F[useLiveDataLoading]
+    D -->|Real-time Ticks| F
     
-    E -->|Imperative| G[ChartContainer Ref]
-    G -->|series.update| H[Lightweight Charts]
+    F -->|Resampling Engine| G[resampling.ts]
+    G -->|State Update| H[Full Data Window]
     
-    F -->|State Update| I[Full Data Window]
-    I -->|Re-render| G
+    F -->|Imperative| I[ChartContainer Ref]
+    I -->|series.update| J[Lightweight Charts]
 ```
 
 ### Frontend Architecture (Live Mode)
@@ -52,14 +55,12 @@ To achieve high-performance updates without UI freezing, the live chart uses a s
 
 1.  **Windowed Loading**: Instead of loading the entire multi-year history, `useLiveDataLoading` fetches a window of recent data (e.g., 180k candles) to reduce initial payload and memory usage.
 2.  **Imperative Ref Updates**:
-    - The `ChartWrapper` component listens to high-frequency price updates.
+    - The `ChartWrapper` component listens to high-frequency WebSocket updates.
     - Instead of passing `livePrice` as a reactive prop (which triggers full component re-renders), it calls an imperative method on the `ChartContainer` ref.
     - **Method**: `chartRef.current?.updateLivePrice(price)`
     - **Implementation**: Directly accesses the Lightweight Charts `series` object to call `series.update()`.
-3.  **Conflict Resolution**:
-    - The "Base Layer" (2s poll) is the source of truth.
-    - The "Live Layer" (200ms poll) is a visual tip projection.
-    - If the Base Layer update lags slightly, it might revert the tip for <200ms, but the next high-frequency tick immediately corrects it, ensuring a perception of zero lag.
+3.  **Resampling Parity**:
+    - High-fidelity resampling for Weekly, Monthly, and Yearly timeframes leverages `resampleDataForWMY()`, ensuring the live chart perfectly matches the historical chart's calendar alignment.
 
 ## 4. Safety & Security
 - **Credential Protection**: `secrets.json` and `token.json` are globally ignored via `.gitignore`.

@@ -37,8 +37,8 @@
 ### State Management
 -   **React Context**: `TradingContext` manages global state (Positions, Account Balance, Active Ticker).
 -   **Hooks**: Specialized hooks for data and logic:
-    -   `useDataLoading`: Fetches/paginates OHLC data.
-    -   `useResampling`: Aggregates 1m data into higher timeframes (5m, 15m, 1h) client-side.
+    -   `useDataLoading`: Fetches/paginates Historical OHLC data.
+    -   `useLiveDataLoading`: Fetches streaming Live OHLC data via WebSockets.
     -   `useReplay`: Manages bar-by-bar playback state.
 
 ### Charting Engine
@@ -91,8 +91,8 @@ To support both legacy logic and seamless timezone switching:
 
 ### Data Loading (Client-Side)
 1.  User selects Ticker/Timeframe.
-2.  `useDataLoading` hook calls `GET /api/data/{ticker}`.
-3.  If Timeframe > 1m, `useResampling` aggregates the 1m base data on the fly (for performance and consistency).
+2.  `useDataLoading` or `useLiveDataLoading` calls backend APIs (`/api/data` or `/api/history`).
+3.  If Timeframe > 1m, the shared `resampling.ts` library aggregates the 1m base data on the fly using a Web Worker for intraday intervals, or synchronous epoch-math for W/M/Y calendar intervals.
 4.  Data is fed to `StandardChart`.
 
 ### Trading Engine (Simulation)
