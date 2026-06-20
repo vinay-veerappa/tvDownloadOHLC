@@ -21,6 +21,9 @@ export function useLiveDataLoading({
     enabled = true,
     onDataLoad
 }: UseLiveDataLoadingProps) {
+    const onDataLoadRef = useRef(onDataLoad)
+    useEffect(() => { onDataLoadRef.current = onDataLoad }, [onDataLoad])
+
     const [fullData, setFullData] = useState<OHLCData[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [lastError, setLastError] = useState<string | null>(null)
@@ -132,7 +135,7 @@ export function useLiveDataLoading({
                 if (rawCandles.length > 0) {
                     await processAndMergeCandles(rawCandles, true);
                     
-                    onDataLoad?.({
+                    onDataLoadRef.current?.({
                         start: rawCandles[0].time > 10000000000 ? rawCandles[0].time / 1000 : rawCandles[0].time,
                         end: rawCandles[rawCandles.length - 1].time > 10000000000 ? rawCandles[rawCandles.length - 1].time / 1000 : rawCandles[rawCandles.length - 1].time,
                         totalBars: rawCandles.length
@@ -154,7 +157,7 @@ export function useLiveDataLoading({
         } finally {
             setIsLoading(false);
         }
-    }, [onDataLoad, ticker, timeframe, processAndMergeCandles]);
+    }, [ticker, timeframe, processAndMergeCandles]);
 
     // Reset and Load History on symbol/timeframe change
     useEffect(() => {

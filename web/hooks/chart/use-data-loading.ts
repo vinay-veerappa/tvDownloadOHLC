@@ -81,6 +81,11 @@ export function useDataLoading({
     onDataLoad,
     onPrepend
 }: UseDataLoadingProps) {
+    const onDataLoadRef = useRef(onDataLoad)
+    const onPrependRef = useRef(onPrepend)
+    useEffect(() => { onDataLoadRef.current = onDataLoad }, [onDataLoad])
+    useEffect(() => { onPrependRef.current = onPrepend }, [onPrepend])
+
     // Core Data State
     const [fullData, setFullData] = useState<OHLCData[]>([])
 
@@ -202,7 +207,7 @@ export function useDataLoading({
                         setHasMoreDataLeft(true) // assume more history exists
                         setHasMoreDataRight(false) // initially we are at the newest edge
                         
-                        onDataLoad?.({
+                        onDataLoadRef.current?.({
                             start: finalData[0].time,
                             end: finalData[finalData.length - 1].time,
                             totalBars: finalData.length
@@ -240,7 +245,7 @@ export function useDataLoading({
         }
 
         loadData()
-    }, [ticker, timeframe, onDataLoad])
+    }, [ticker, timeframe])
 
     const LOAD_DEBOUNCE_MS = 200
 
@@ -279,7 +284,7 @@ export function useDataLoading({
                 }
 
                 const prependedCount = newData.length
-                if (onPrepend) onPrepend(prependedCount)
+                if (onPrependRef.current) onPrependRef.current(prependedCount)
 
                 // Filter duplicates synchronously using boundary refs to avoid React state timing issues
                 let cleanNewData = newData
@@ -331,7 +336,7 @@ export function useDataLoading({
         } finally {
             setIsLoadingMoreLeft(false)
         }
-    }, [ticker, timeframe, isLoadingMoreLeft, hasMoreDataLeft, onPrepend])
+    }, [ticker, timeframe, isLoadingMoreLeft, hasMoreDataLeft])
 
     // Load More Data (Pagination Right - Newer Data)
     const loadMoreDataRight = useCallback(async () => {
