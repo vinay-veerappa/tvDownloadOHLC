@@ -32,6 +32,25 @@ def get_now_iso():
     """Returns current time in UTC as ISO string for storage."""
     return datetime.now(timezone.utc).isoformat()
 
+def atomic_write_json(data, filepath):
+    """Writes JSON data to a file atomically using a temporary file and os.replace."""
+    dir_name = os.path.dirname(filepath)
+    base_name = os.path.basename(filepath)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    tmp_path = os.path.join(dir_name, f".{base_name}.tmp")
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, filepath)
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except:
+                pass
+        raise e
+
 def resolve_futures_htf_source():
     if FUTURES_HTF_SOURCE in {"yfinance", "schwab"}:
         return FUTURES_HTF_SOURCE
@@ -832,11 +851,8 @@ async def update_historical_files(symbol):
                     "candles": candles
                 }, f)
                 
-        # Only export HTF data to JSON since it's small and updates rarely.
-        # 1M data is now served directly from Parquet via API.
-        write_df_to_live_json(combined_daily, "1D")
-        write_df_to_live_json(weekly_df, "1W")
-        print(f"   ✅ Exported 1D and 1W JSON files for frontend.")
+        # Daily/Weekly JSON exports decommissioned - frontend now queries Spoke/Parquet API directly.
+        pass
 
     except Exception as e:
         import traceback
@@ -970,16 +986,8 @@ async def level_one_handler(msg):
                     cdata["live_price"] = last_price
                     cdata["last_update"] = get_now_iso()
                     
-                    # Write Fast Quote
-                    safe_symbol = get_safe_symbol(key)
-                    quote_file = os.path.join(DATA_DIR, "live", f"latest_quote_{safe_symbol}.json")
-                    try:
-                        atomic_write_json({
-                            "symbol": key,
-                            "price": last_price,
-                            "time": cdata["last_update"]
-                        }, quote_file)
-                    except: pass
+                    # Write Fast Quote (Decommissioned - frontend uses Spoke /quote API)
+                    pass
 
                     # --- Sub-Minute Aggregation ---
                     curr_time = time.time()
@@ -993,15 +1001,8 @@ async def level_one_handler(msg):
                     if chart_ctx["data_30s"]["candles"]:
                         await broadcast_candle(key, chart_ctx["data_30s"]["candles"][-1], "30s")
 
-        # Batch write sub-minute JSONs after processing all quotes in message
-        for key in {c.get('key') for c in msg['content'] if c.get('key') in charts}:
-            chart_ctx = charts[key]
-            try:
-                with open(chart_ctx["files"]["json_15s"], "w") as f:
-                    json.dump(chart_ctx["data_15s"], f)
-                with open(chart_ctx["files"]["json_30s"], "w") as f:
-                    json.dump(chart_ctx["data_30s"], f)
-            except: pass
+        # Batch write sub-minute JSONs (Decommissioned - sub-minute state kept in memory)
+        pass
 
 def save_candles_to_parquet(symbol, candles, parquet_path):
     """Saves a list of candles to the live storage parquet, ensuring no duplicates."""
@@ -1103,26 +1104,8 @@ async def chart_handler(msg):
         if cdata["candles"]:
             await broadcast_candle(key, cdata["candles"][-1], "1m")
             
-        try:
-            now = time.time()
-            
-            # Snapshot writer (throttled)
-            last_snap = cdata.get("_last_snap_ts", 0)
-            if now - last_snap > 0.5: # Relaxed from 0.25 to 0.5 during volume spikes
-                snapshot = {
-                    "symbol": cdata["symbol"],
-                    "last_update": cdata["last_update"],
-                    "live_price": cdata["live_price"],
-                    "candles": cdata["candles"][-50:] if cdata["candles"] else []
-                }
-                snap_file = files["json"].replace(".json", "_snapshot.json")
-                atomic_write_json(snapshot, snap_file)
-                cdata["_last_snap_ts"] = now
-
-            # Full JSON Checkpoint writer has been REMOVED to save Disk I/O.
-            # Frontend now fetches history from Parquet via API.
-        except Exception as e:
-            print(f"❌ Write error {key}: {e}")
+        # Snapshot writing decommissioned - frontend fetches history and streams via WebSockets/Parquet.
+        pass
 
 async def handle_history(request):
     symbol = request.query.get("symbol")
@@ -1165,6 +1148,26 @@ async def handle_history(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+async def handle_quote(request):
+    symbol = request.query.get("symbol")
+    if not symbol:
+        return web.json_response({"error": "Missing symbol"}, status=400)
+    
+    # Normalize ticker (e.g. NQ1! -> /NQ, -NQ -> /NQ)
+    clean = symbol.replace("1!", "").replace("-", "/").upper()
+    if not clean.startswith("/") and clean in ["NQ", "ES", "YM", "RTY", "CL", "GC"]:
+        clean = "/" + clean
+
+    if clean in charts:
+        cdata = charts[clean]["data"]
+        return web.json_response({
+            "symbol": clean,
+            "price": cdata.get("live_price", 0.0),
+            "time": cdata.get("last_update", "")
+        })
+    else:
+        return web.json_response({"error": f"Symbol {clean} not in active charts"}, status=404)
+
 async def start_api_server():
     app = web.Application()
     
@@ -1180,6 +1183,9 @@ async def start_api_server():
     
     resource = cors.add(app.router.add_resource("/history"))
     cors.add(resource.add_route("GET", handle_history))
+    
+    resource_quote = cors.add(app.router.add_resource("/quote"))
+    cors.add(resource_quote.add_route("GET", handle_quote))
     
     # Add WebSocket endpoint
     app.router.add_get('/stream', websocket_handler)
@@ -1224,16 +1230,8 @@ async def main():
             # Commit bootstrap/bridged data to live storage parquet
             save_candles_to_parquet(sym, cdata["candles"], charts[sym]["files"]["parquet"])
             
-            # No longer writing the massive JSON checkpoint on boot.
-            # Only creating the initial snapshot.
-            snapshot_file = charts[sym]["files"]["json"].replace(".json", "_snapshot.json")
-            with open(snapshot_file, "w") as f:
-                json.dump({
-                    "symbol": sym,
-                    "last_update": cdata["last_update"],
-                    "live_price": cdata["live_price"],
-                    "candles": cdata["candles"][-50:]
-                }, f, indent=2)
+            # No longer writing snapshot or checkpoint JSON files on boot.
+            pass
 
     # 1.5 Start API Server
     await start_api_server()

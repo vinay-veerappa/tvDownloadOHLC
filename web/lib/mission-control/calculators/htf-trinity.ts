@@ -1,7 +1,6 @@
 // HTFTrinityAnalysis interface is defined below
 import path from 'path';
 import fs from 'fs';
-import { ParquetReader } from 'parquetjs-lite';
 
 export interface HTFProfile {
     timeframe: 'WEEKLY' | 'MONTHLY';
@@ -39,34 +38,26 @@ async function loadHTFContext(ticker: string) {
 
 // Helper to get live price (from Hybrid source)
 async function getLivePrice(ticker: string): Promise<number | null> {
-    const validTicker = ticker === 'NQ1' ? '-NQ' : ticker;
-    // 1. Try Fast JSON (Live Chart)
-    const jsonPath = path.join(process.cwd(), '..', 'data', 'live', `live_chart_${validTicker}.json`);
-    if (fs.existsSync(jsonPath)) {
-        try {
-            const jData = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-            // Use live_price if valid
-            if (typeof jData.live_price === 'number') return jData.live_price;
-            // Fallback to last candle close
-            if (jData.candles && jData.candles.length > 0) return jData.candles[jData.candles.length - 1].close;
-        } catch (e) { }
+    let safeTicker = ticker;
+    const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
+    const clean = ticker.replace(/[^a-zA-Z]/g, "").toUpperCase();
+    const root = clean.replace(/\d+$/, "");
+    if (roots.includes(root)) {
+        safeTicker = "/" + root;
     }
 
-    // 2. Fallback to Parquet Scan (Slower but reliable)
-    const livePath = path.join(process.cwd(), '..', 'data', 'live', `live_storage_${validTicker}.parquet`);
-    if (!fs.existsSync(livePath)) return null;
-
     try {
-        const reader = await ParquetReader.openFile(livePath);
-        const cursor = reader.getCursor();
-        let lastRecord = null;
-        let record = null;
-        while (record = await cursor.next()) {
-            lastRecord = record;
+        const apiRes = await fetch(`http://127.0.0.1:8001/quote?symbol=${encodeURIComponent(safeTicker)}`, { cache: 'no-store' });
+        if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (apiData && typeof apiData.price === 'number') {
+                return apiData.price;
+            }
         }
-        await reader.close();
-        return lastRecord ? lastRecord.close : null;
-    } catch (e) { return null; }
+    } catch (e) {
+        console.error(`[HTFTrinity] getLivePrice failed to fetch from Spoke API:`, e);
+    }
+    return null;
 }
 
 function analyzeProfile(profile: any, currentPrice: number, timeframe: 'WEEKLY' | 'MONTHLY'): HTFProfile {

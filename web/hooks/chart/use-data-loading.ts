@@ -79,13 +79,15 @@ interface UseDataLoadingProps {
     timeframe: string // Standardized resolution (e.g., "1", "240")
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
     onPrepend?: (count: number) => void
+    liveUpdatesEnabled?: boolean
 }
 
 export function useDataLoading({
     ticker,
     timeframe,
     onDataLoad,
-    onPrepend
+    onPrepend,
+    liveUpdatesEnabled = false
 }: UseDataLoadingProps) {
     const onDataLoadRef = useRef(onDataLoad)
     const onPrependRef = useRef(onPrepend)
@@ -98,6 +100,16 @@ export function useDataLoading({
     // Loading State
     const [isLoading, setIsLoading] = useState(true)
     const [lastError, setLastError] = useState<string | null>(null)
+
+    // History and Live Connection State
+    const [historyLoaded, setHistoryLoaded] = useState(false)
+    const [livePrice, setLivePrice] = useState<number | null>(null)
+    const [lastUpdate, setLastUpdate] = useState<string | null>(null)
+    const liveRawDataRef = useRef<OHLCData[]>([])
+    const wsRef = useRef<WebSocket | null>(null)
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const retryCountRef = useRef(0)
+    const resamplingSequenceRef = useRef<number>(0)
 
     // Pagination State (Time Based)
     const [hasMoreDataLeft, setHasMoreDataLeft] = useState(true)
@@ -119,6 +131,10 @@ export function useDataLoading({
     useEffect(() => {
         async function loadData() {
             setIsLoading(true)
+            setHistoryLoaded(false)
+            liveRawDataRef.current = []
+            setLivePrice(null)
+            setLastUpdate(null)
             try {
                 // Reset state
                 baseTimeframeRef.current = timeframe
@@ -186,6 +202,36 @@ export function useDataLoading({
                         finalData = result.data
                     }
 
+                    if (liveUpdatesEnabled) {
+                        try {
+                            const liveRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=5000`, { cache: 'no-store' })
+                            if (liveRes.ok) {
+                                const json = await liveRes.json()
+                                if (json && json.success && json.data && json.data.candles) {
+                                    const liveCandles = json.data.candles
+                                    
+                                    // Normalize live candles (handle ms to seconds conversion)
+                                    const formattedLive = liveCandles.map((c: any) => ({
+                                        time: c.time > 10000000000 ? c.time / 1000 : c.time,
+                                        open: c.open,
+                                        high: c.high,
+                                        low: c.low,
+                                        close: c.close,
+                                        volume: c.volume
+                                    }))
+                                    liveRawDataRef.current = formattedLive
+                                    
+                                    // Resample live data to match current timeframe
+                                    const processedLive = await processLiveData(liveRawDataRef.current, timeframe)
+                                    // Merge with the historical data
+                                    finalData = mergeDatasets(finalData, processedLive)
+                                }
+                            }
+                        } catch (e) {
+                            console.error("[useDataLoading] Live cache fetch failed:", e)
+                        }
+                    }
+
                     setFullData(finalData)
                     if (finalData.length > 0) {
                         leftBoundaryRef.current = finalData[0].time
@@ -200,6 +246,7 @@ export function useDataLoading({
                         })
                     }
 
+                    setHistoryLoaded(true)
                     // Fetch metadata using the BASE timeframe
                     fetchMetadata(baseTimeframeRef.current)
                 } else {
@@ -231,7 +278,177 @@ export function useDataLoading({
         }
 
         loadData()
-    }, [ticker, timeframe])
+    }, [ticker, timeframe, liveUpdatesEnabled])
+
+    // WebSocket Streaming Effect
+    useEffect(() => {
+        if (!liveUpdatesEnabled || !historyLoaded) return
+
+        let isCancelled = false
+
+        // Map ticker to standard futures symbol or raw ticker
+        let safeTicker = ticker
+        const roots = ["ES", "NQ", "YM", "RTY", "GC", "CL"]
+        const root = ticker.replace(/1!$/, "")
+        if (roots.includes(root)) {
+            safeTicker = "/" + root
+        }
+
+        // Map timeframe to ws timeframe (15s, 30s are supported, other/higher timeframes resampled from 1m)
+        const wsTimeframe = (timeframe === "15s" || timeframe === "30s") ? timeframe : "1m"
+
+        function connect() {
+            if (isCancelled) return
+
+            if (wsRef.current) {
+                try {
+                    wsRef.current.close()
+                } catch (e) {}
+            }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+            // Spoke API runs on port 8001
+            const wsUrl = `${protocol}//localhost:8001/stream?symbol=${encodeURIComponent(safeTicker)}&timeframe=${encodeURIComponent(wsTimeframe)}`
+
+            console.log(`🔌 [useDataLoading] Connecting to WebSocket: ${wsUrl}`)
+            const ws = new WebSocket(wsUrl)
+            wsRef.current = ws
+
+            ws.onopen = () => {
+                if (isCancelled) {
+                    ws.close()
+                    return
+                }
+                console.log(`🔌 [useDataLoading] WebSocket connected for ${safeTicker} (${timeframe})`)
+                retryCountRef.current = 0
+            }
+
+            ws.onmessage = async (event) => {
+                if (isCancelled) return
+                try {
+                    const msg = JSON.parse(event.data)
+                    if (!msg || typeof msg !== 'object') return
+
+                    if (msg.type === 'snapshot') {
+                        if (msg.candles && Array.isArray(msg.candles)) {
+                            const formatted = msg.candles.map((c: any) => ({
+                                time: c.time > 10000000000 ? c.time / 1000 : c.time,
+                                open: Number(c.open),
+                                high: Number(c.high),
+                                low: Number(c.low),
+                                close: Number(c.close),
+                                volume: Number(c.volume || 0)
+                            }))
+                            liveRawDataRef.current = formatted
+
+                            // Resample and merge
+                            const processed = await processLiveData(liveRawDataRef.current, timeframe)
+                            setFullData(prev => mergeDatasets(prev, processed))
+                        }
+                        if (msg.live_price !== undefined && msg.live_price !== null) {
+                            setLivePrice(msg.live_price)
+                            setLastUpdate(new Date().toISOString())
+                        }
+                    } else if (msg.type === 'candle') {
+                        const rawCandle = msg.candle
+                        if (rawCandle) {
+                            const formattedCandle: OHLCData = {
+                                time: rawCandle.time > 10000000000 ? rawCandle.time / 1000 : rawCandle.time,
+                                open: Number(rawCandle.open),
+                                high: Number(rawCandle.high),
+                                low: Number(rawCandle.low),
+                                close: Number(rawCandle.close),
+                                volume: Number(rawCandle.volume || 0)
+                            }
+
+                            // Add or update in liveRawDataRef
+                            const existingIdx = liveRawDataRef.current.findIndex(c => c.time === formattedCandle.time)
+                            if (existingIdx >= 0) {
+                                liveRawDataRef.current[existingIdx] = formattedCandle
+                            } else {
+                                liveRawDataRef.current.push(formattedCandle)
+                            }
+
+                            // Resample and merge
+                            const processed = await processLiveData(liveRawDataRef.current, timeframe)
+                            setFullData(prev => mergeDatasets(prev, processed))
+                        }
+                    } else if (msg.type === 'quote') {
+                        if (msg.price !== undefined && msg.price !== null) {
+                            const price = Number(msg.price)
+                            setLivePrice(price)
+                            const currentIsoTime = msg.time || new Date().toISOString()
+                            setLastUpdate(currentIsoTime)
+
+                            // Update last raw candle in ref to keep resampled data up to date
+                            if (liveRawDataRef.current.length > 0) {
+                                const lastRaw = liveRawDataRef.current[liveRawDataRef.current.length - 1]
+                                const liveTime = Math.floor(new Date(currentIsoTime).getTime() / 1000)
+                                const rawTimeframe = (timeframe === "15s" || timeframe === "30s") ? timeframe : "1m"
+                                const rawSecs = parseTimeframeToSeconds(rawTimeframe)
+
+                                if (liveTime < lastRaw.time + rawSecs) {
+                                    lastRaw.close = price
+                                    lastRaw.high = Math.max(lastRaw.high, price)
+                                    lastRaw.low = Math.min(lastRaw.low, price)
+                                }
+                            }
+
+                            // Mutate/refresh last candle of fullData in-place
+                            setFullData(prev => {
+                                if (prev.length === 0) return prev
+                                const next = [...prev]
+                                const lastBar = { ...next[next.length - 1] }
+                                const liveTime = Math.floor(new Date(currentIsoTime).getTime() / 1000)
+                                const targetSecs = parseTimeframeToSeconds(timeframe)
+
+                                if (liveTime < lastBar.time + targetSecs) {
+                                    lastBar.close = price
+                                    lastBar.high = Math.max(lastBar.high, price)
+                                    lastBar.low = Math.min(lastBar.low, price)
+                                    next[next.length - 1] = lastBar
+                                }
+                                return next
+                            })
+                        }
+                    }
+                } catch (err) {
+                    console.error(`❌ [useDataLoading] Error processing WS message:`, err)
+                }
+            }
+
+            ws.onerror = (err) => {
+                console.error(`🔌 [useDataLoading] WebSocket error for ${safeTicker}:`, err)
+            }
+
+            ws.onclose = (event) => {
+                if (isCancelled) return
+                console.log(`🔌 [useDataLoading] WebSocket closed for ${safeTicker}. Reason: ${event.reason || 'none'}`)
+
+                // Reconnect with backoff
+                const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000)
+                retryCountRef.current += 1
+
+                reconnectTimeoutRef.current = setTimeout(() => {
+                    connect()
+                }, delay)
+            }
+        }
+
+        connect()
+
+        return () => {
+            isCancelled = true
+            if (wsRef.current) {
+                try {
+                    wsRef.current.close()
+                } catch (e) {}
+            }
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current)
+            }
+        }
+    }, [ticker, timeframe, liveUpdatesEnabled, historyLoaded])
 
     const LOAD_DEBOUNCE_MS = 200
 
@@ -511,6 +728,9 @@ export function useDataLoading({
         isLoadingMore: isLoadingMoreLeft,
         isLoadingMoreLeft,
         isLoadingMoreRight,
+        // Live streaming state
+        livePrice,
+        lastUpdate,
         // Debug
         baseTimeframe: baseTimeframeRef.current,
         isResampling: isResamplingRef.current,

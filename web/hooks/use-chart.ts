@@ -39,7 +39,8 @@ export function useChart(
     ticker?: string,
     theme?: ThemeParams,
     mode: 'historical' | 'live' = 'historical',
-    isRestoringRangeRef?: React.RefObject<boolean>
+    isRestoringRangeRef?: React.RefObject<boolean>,
+    liveUpdatesActive?: boolean
 ) {
     // console.log('[useChart] displayTimezone:', displayTimezone)
     const { resolvedTheme } = useTheme()
@@ -317,7 +318,7 @@ export function useChart(
 
         // Add whitespace bars (only in historical mode for better UX)
         // In live mode, chart auto-scrolls and whitespace interferes with tick updates
-        const isLiveMode = mode === 'live';
+        const isLiveMode = mode === 'live' || !!liveUpdatesActive;
         if (result.length > 0 && !isLiveMode) {
             const lastBar = result[result.length - 1];
             const lastTime = lastBar.time as number;
@@ -370,7 +371,27 @@ export function useChart(
             const dataContentChanged = dataHashRef.current !== currentHash
 
             // Decision: Full Render vs Incremental Update
-            if (isFirstLoad || dataContentChanged || Math.abs(lenDiff) > 2 || lenDiff < 0) {
+            // An update is incremental if:
+            // 1. Not the first load
+            // 2. The dataset size is identical (last bar update) or has grown by exactly 1 bar (new bar appended)
+            // 3. The starting timestamp of the dataset has not changed (i.e. not a ticker/timeframe switch or history backfill)
+            const isIncremental = !isFirstLoad &&
+                (lenDiff === 0 || lenDiff === 1) &&
+                prevDataRef.current.length > 0 &&
+                chartData[0]?.time === prevDataRef.current[0]?.time;
+
+            if (isIncremental) {
+                // Incremental update (tick-by-tick, just update last candle or append new candle)
+                const lastBar = chartData[chartData.length - 1]
+                try {
+                    seriesInstance.update(lastBar)
+                } catch (err) {
+                    // Fallback to full render if update fails
+                    console.error('[useChart] update() FAILED, fallback:', err)
+                    seriesInstance.setData(chartData)
+                }
+                dataHashRef.current = currentHash
+            } else {
                 // Set lock to prevent scroll checks during range restoration
                 if (isRestoringRangeRef) {
                     (isRestoringRangeRef as any).current = true
@@ -391,7 +412,7 @@ export function useChart(
                     requestAnimationFrame(() => {
                         try {
                             if (!isDisposedRef.current) {
-                                const isLiveMode = mode === 'live';
+                                const isLiveMode = mode === 'live' || !!liveUpdatesActive;
                                 if (isLiveMode) {
                                     if (chartData.length > 150) {
                                         timeScale.setVisibleLogicalRange({
@@ -452,17 +473,6 @@ export function useChart(
                     if (isRestoringRangeRef) {
                         (isRestoringRangeRef as any).current = false
                     }
-                }
-            } else {
-                // Incremental update (tick-by-tick, just update last candle)
-                const lastBar = chartData[chartData.length - 1]
-                try {
-                    seriesInstance.update(lastBar)
-                } catch (err) {
-                    // Fallback to full render if update fails
-                    console.error('[useChart] update() FAILED, fallback:', err)
-                    seriesInstance.setData(chartData)
-                    dataHashRef.current = currentHash
                 }
             }
 

@@ -84,7 +84,8 @@ export function useChartData({
         ticker,
         timeframe,
         onDataLoad,
-        onPrepend: (count) => replay.adjustIndex(count)
+        onPrepend: (count) => replay.adjustIndex(count),
+        liveUpdatesEnabled: mode === 'historical'
     })
 
     const liveLoading = useLiveDataLoading({
@@ -126,7 +127,8 @@ export function useChartData({
 
     const data = useMemo(() => {
         const baseData = replay.data
-        if (mode === 'live' && baseData.length > 0) {
+        const showLiveUpdates = mode === 'live' || (mode === 'historical' && !replay.replayMode)
+        if (showLiveUpdates && baseData.length > 0) {
             const liveStore = loading as any
             const livePrice = liveStore.livePrice
             const lastUpdate = liveStore.lastUpdate // ISO String
@@ -182,7 +184,7 @@ export function useChartData({
                             ticker,
                             timeframe,
                             time: newCandleTime,
-                            open: lastCandle.close,
+                            open: livePrice,
                             high: livePrice,
                             low: livePrice,
                             close: livePrice

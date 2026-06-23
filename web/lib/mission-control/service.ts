@@ -124,15 +124,24 @@ export class MissionControlService {
     }
 
     private async getMarketState(): Promise<'HISTORICAL' | 'LIVE'> {
-        const { existsSync } = await import('fs');
-        const path = await import('path');
-        const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
-        const clean = this.ticker.replace(/[^a-zA-Z]/g, "").toUpperCase();
-        const root = clean.replace(/\d+$/, "");
-        const safeTicker = roots.includes(root) ? `-${root}` : this.ticker;
+        try {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 1000);
+            
+            const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
+            const clean = this.ticker.replace(/[^a-zA-Z]/g, "").toUpperCase();
+            const root = clean.replace(/\d+$/, "");
+            const safeTicker = roots.includes(root) ? `/${root}` : this.ticker;
 
-        const livePath = path.join(process.cwd(), '..', 'data', 'live', `live_chart_${safeTicker}.json`);
-        return existsSync(livePath) ? 'LIVE' : 'HISTORICAL';
+            const res = await fetch(`http://127.0.0.1:8001/history?symbol=${encodeURIComponent(safeTicker)}&limit=1`, { 
+                signal: controller.signal,
+                cache: 'no-store'
+            });
+            clearTimeout(id);
+            return res.ok ? 'LIVE' : 'HISTORICAL';
+        } catch (e) {
+            return 'HISTORICAL';
+        }
     }
 
     private async getDailyEM(): Promise<number | null> {

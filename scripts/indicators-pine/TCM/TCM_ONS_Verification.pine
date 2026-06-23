@@ -19,6 +19,23 @@ type FVG
     bool    mitigated
     box     fvgBox
 
+type OrderBlock
+    int     id                      // Unique sequential identifier
+    int     startIdx                // Bar index where sequence begins
+    int     endIdx                  // Bar index where sequence ends
+    float   top                     // Highest body edge of the cluster
+    float   bot                     // Lowest body edge of the cluster
+    float   meanThreshold           // 50% Midpoint of the body-to-body range
+    bool    isBullish               // True = +OB (Down candles), False = -OB (Up candles)
+    string  obClass                 // "Standard", "Rejection", "Propulsion", "Reclaimed"
+    int     parentObId              // Stores parent OB ID if Propulsion
+    bool    isValidated             // True when CSD/breakout triggers
+    bool    isMitigated             // True when candle body closes past invalidation edge
+    int     thresholdState          // 0 = Untested Magnet, 1 = Tested Wall, 2 = Breached
+    box     obBox                   // Visual box rendering
+    line    meanLine                // Visual 50% line rendering
+
+
 type ONSProfile
     int     startTime
     int     endTime
@@ -28,6 +45,8 @@ type ONSProfile
     float   rangePts
     box     onsBox
     line    eqLine
+    line    q25Line
+    line    q75Line
     line    dev05Up
     line    dev05Dn
     line    dev10Up
@@ -62,16 +81,26 @@ string GRP_UI  = "UI Settings"
 
 i_onsTime      = input.session("0400-0815", "ONS Time Window", group=GRP_ONS)
 i_onsTz        = input.string("America/Chicago", "Timezone", group=GRP_ONS)
+i_rthClassify = input.session("0830-1600", "Classification Window", group=GRP_ONS)
 
 i_showOnsBox   = input.bool(true, "Show ONS Box", group=GRP_ONS)
 i_onsBgColor   = input.color(color.new(#868686, 90), "ONS Box Background", group=GRP_ONS)
 i_onsBorderCol = input.color(color.new(#000000, 50), "ONS Box Border", group=GRP_ONS)
 i_onsEqColor   = input.color(color.new(#000000, 0), "ONS EQ Line", group=GRP_ONS)
+i_eqExtendMin = input.int(30, "Extend EQ Line (minutes)", minval=0, group=GRP_ONS)
+
 
 i_showFvgs     = input.bool(true, "Show ONS FVGs", group=GRP_FVG)
+i_showMitFvgs  = input.bool(true, "Show Mitigated FVGs", group=GRP_FVG) // New Toggle
 i_bullFvgCol   = input.color(color.new(#26a69a, 80), "Bullish FVG", group=GRP_FVG)
 i_bearFvgCol   = input.color(color.new(#ef5350, 80), "Bearish FVG", group=GRP_FVG)
 i_mitigatedCol = input.color(color.new(#808080, 80), "Mitigated FVG", group=GRP_FVG)
+
+i_showObs      = input.bool(true, "Show ONS Order Blocks", group=GRP_FVG)
+i_showMitObs   = input.bool(true, "Show Mitigated OBs", group=GRP_FVG)  // New Toggle
+i_bullObCol    = input.color(color.new(#26a69a, 85), "Bullish OB (+OB)", group=GRP_FVG)
+i_bearObCol    = input.color(color.new(#ef5350, 85), "Bearish OB (-OB)", group=GRP_FVG)
+i_obMitCol     = input.color(color.new(#808080, 90), "Mitigated OB", group=GRP_FVG)
 
 i_showDevBands = input.bool(true, "Show Deviation Bands", group=GRP_DEV)
 i_devColor     = input.color(color.new(#2962ff, 50), "Deviation Line Color", group=GRP_DEV)
@@ -110,7 +139,30 @@ f_inSession(string sess, string tz) =>
 
 var array<ONSProfile> onsProfiles = array.new<ONSProfile>()
 var array<FVG> onsFvgs = array.new<FVG>()
+var array<OrderBlock> onsObs = array.new<OrderBlock>()
 
+// Sequential ID assignment anchor
+var int totalObCount = 0
+
+// Decoupled dual-channel candidate tracking states
+var int   bullStartIdx    = na
+var int   bullEndIdx      = na
+var float bullOpenPrice   = na
+var float bullTop         = na
+var float bullBot         = na
+var bool  bullActive      = false
+
+var int   bearStartIdx    = na
+var int   bearEndIdx      = na
+var float bearOpenPrice   = na
+var float bearTop         = na
+var float bearBot         = na
+var bool  bearActive      = false
+
+// Pivot boundary elements for tracking market structure splits
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+ 
 // -- Global Historical Stats --
 var int stat_totalDays = 0
 var int stat_p1Count = 0, int stat_p1HighFirst = 0, int stat_p1LowFirst = 0
@@ -125,6 +177,8 @@ var int stat_dev10UpHits = 0, var int stat_dev10DnHits = 0
 var ONSProfile activeONS = na
 
 bool inONS = f_inSession(i_onsTime, i_onsTz) and timeframe.isintraday
+bool inClassify = f_inSession(i_rthClassify, i_onsTz) and timeframe.isintraday
+
 bool onsStart = inONS and not inONS[1]
 bool onsEnd = not inONS and inONS[1]
 
@@ -194,12 +248,16 @@ if onsEnd and not na(activeONS)
         activeONS.eqLine := line.new(activeONS.startTime, activeONS.eqPrice, time, activeONS.eqPrice, xloc=xloc.bar_time, color=i_onsEqColor, style=line.style_dotted)
         array.push(activeExtensions, activeONS.eqLine)
         
+        float onsPct = activeONS.eqPrice != 0 ? (activeONS.rangePts / activeONS.eqPrice) * 100 : na
         string infoTxt = "ONS\n" + str.tostring(activeONS.rangePts, "#.##") + " pts"
+        infoTxt += "\n" + str.tostring(onsPct, "#.###") + "%"
         if activeONS.rangePts < 50
             infoTxt += "\n<50pt Exp"
-        if activeONS.rangePts >= 98 and activeONS.rangePts <= 102
+        else if activeONS.rangePts >= 98 and activeONS.rangePts <= 102
             infoTxt += "\n100pt Marker"
-            
+        else
+            infoTxt += ">100pt Marker"
+
         activeONS.infoLabel := label.new(time, activeONS.highPrice, infoTxt, xloc=xloc.bar_time, textcolor=i_onsBorderCol, style=label.style_none, size=f_labelSize(i_tableSize), text_font_family=f_font(i_textFont))
         
         if i_showDevBands
@@ -210,7 +268,15 @@ if onsEnd and not na(activeONS)
             activeONS.dev10Dn := line.new(activeONS.startTime, activeONS.lowPrice - range_*1.0, time, activeONS.lowPrice - range_*1.0, xloc=xloc.bar_time, color=i_devColor, style=line.style_dashed)
             activeONS.dev20Up := line.new(activeONS.startTime, activeONS.highPrice + range_*2.0, time, activeONS.highPrice + range_*2.0, xloc=xloc.bar_time, color=i_devColor, style=line.style_solid)
             activeONS.dev20Dn := line.new(activeONS.startTime, activeONS.lowPrice - range_*2.0, time, activeONS.lowPrice - range_*2.0, xloc=xloc.bar_time, color=i_devColor, style=line.style_solid)
-            
+
+            float q25 = activeONS.lowPrice + activeONS.rangePts * 0.25
+            float q75 = activeONS.lowPrice + activeONS.rangePts * 0.75
+            activeONS.q25Line := line.new(activeONS.startTime, q25, time, q25, xloc=xloc.bar_time, color=color.new(i_onsEqColor, 50), style=line.style_dotted)
+            activeONS.q75Line := line.new(activeONS.startTime, q75, time, q75, xloc=xloc.bar_time, color=color.new(i_onsEqColor, 50), style=line.style_dotted)
+
+            array.push(activeExtensions, activeONS.q25Line)
+            array.push(activeExtensions, activeONS.q75Line)
+                
             array.push(activeExtensions, activeONS.dev05Up)
             array.push(activeExtensions, activeONS.dev05Dn)
             array.push(activeExtensions, activeONS.dev10Up)
@@ -225,14 +291,15 @@ if onsEnd and not na(activeONS)
 // ══ RTH PROFILE MONITORING
 // ══════════════════════════════════════════════
 
-if not inONS and array.size(onsProfiles) > 0
+if inClassify and not inONS and array.size(onsProfiles) > 0
     ONSProfile lastP = array.get(onsProfiles, array.size(onsProfiles)-1)
-    
+    int eqExtendMs = i_eqExtendMin * 60 * 1000
+
     // Extend active lines
     if array.size(activeExtensions) > 0
         for i = 0 to array.size(activeExtensions) - 1
             line l = array.get(activeExtensions, i)
-            line.set_x2(l, time)
+            line.set_x2(l, time + eqExtendMs)
 
     // Monitor ONS High/Low Breaks
     bool brokeHigh = high > lastP.highPrice
@@ -241,8 +308,17 @@ if not inONS and array.size(onsProfiles) > 0
     // Time Markers
     int hr = hour(time, i_onsTz)
     int mn = minute(time, i_onsTz)
-    bool is945 = hr == 9 and mn >= 45 and mn <= 50
     bool is1100 = hr >= 11 and hr <= 13 // 11:00 AM - 1:30 PM Rebalance Window
+
+    // 9:45 candle marker (CT)
+    bool is945Open = hour(time, i_onsTz) == 9 and minute(time, i_onsTz) == 45
+    if is945Open and timeframe.isintraday
+        label.new(time, high, "9:45 CT", xloc=xloc.bar_time, yloc=yloc.abovebar, style=label.style_label_down, color=color.new(color.black, 20), textcolor=color.white, size=size.normal)
+    
+    // 9:45 candle marker (EST)
+    bool is945ETOpen = hour(time, "America/New_York") == 9 and minute(time, "America/New_York") == 45
+    if is945ETOpen and timeframe.isintraday
+        label.new(time, high, "9:45 EST", xloc=xloc.bar_time, yloc=yloc.abovebar, style=label.style_label_down, color=color.new(color.black, 20), textcolor=color.white, size=size.normal)
 
     if brokeHigh and not lastP.highHit
         lastP.highHit := true
@@ -269,7 +345,6 @@ if not inONS and array.size(onsProfiles) > 0
 
     // Profile 5: Rebalance (11:00 AM - 1:30 PM Window)
     if is1100 and not lastP.rebalanced
-        // Check if price returned to EQ or filled an ONS FVG
         bool touchEQ = low <= lastP.eqPrice and high >= lastP.eqPrice
         if touchEQ
             lastP.rebalanced := true
@@ -330,12 +405,14 @@ if onsStart and array.size(onsProfiles) > 0
         stat_p6LowFirst  += (p.hitLowFirst ? 1 : 0)
 
 // Array Cleanup for Profiles
-while array.size(onsProfiles) > 50 
+while array.size(onsProfiles) > 5 
     ONSProfile del = array.shift(onsProfiles)
     if not na(del.onsBox)
         box.delete(del.onsBox)
     if not na(del.eqLine)
         line.delete(del.eqLine)
+        line.delete(del.q25Line)
+        line.delete(del.q75Line)
         line.delete(del.dev05Up)
         line.delete(del.dev05Dn)
         line.delete(del.dev10Up)
@@ -367,26 +444,201 @@ if numFvgs > 0
     for i = numFvgs - 1 to 0
         FVG f = array.get(onsFvgs, i)
         if not f.mitigated
-            // Extend box right
-            box.set_right(f.fvgBox, time)
-            
-            // Check for mitigation
             if f.isBullish
                 if low <= f.bot
                     f.mitigated := true
-                    box.set_bgcolor(f.fvgBox, i_mitigatedCol)
-                    box.set_border_color(f.fvgBox, color.new(i_mitigatedCol, 0))
+                    if not i_showMitFvgs
+                        box.delete(f.fvgBox)
+                    else
+                        box.set_bgcolor(f.fvgBox, i_mitigatedCol)
+                        box.set_border_color(f.fvgBox, color.new(i_mitigatedCol, 0))
+                else
+                    box.set_right(f.fvgBox, time)
             else
                 if high >= f.top
                     f.mitigated := true
-                    box.set_bgcolor(f.fvgBox, i_mitigatedCol)
-                    box.set_border_color(f.fvgBox, color.new(i_mitigatedCol, 0))
+                    if not i_showMitFvgs
+                        box.delete(f.fvgBox)
+                    else
+                        box.set_bgcolor(f.fvgBox, i_mitigatedCol)
+                        box.set_border_color(f.fvgBox, color.new(i_mitigatedCol, 0))
+                else
+                    box.set_right(f.fvgBox, time)
 
-// Array Cleanup for FVGs
-while array.size(onsFvgs) > 50
+while array.size(onsFvgs) > 10
     FVG del = array.shift(onsFvgs)
     box.delete(del.fvgBox)
 
+
+// ══════════════════════════════════════════════
+// ══ ADVANCED TCM ORDER BLOCK ENGINE (v1.1)
+// ══════════════════════════════════════════════
+
+// Native pivot identification logic inside session boundaries (N=1 structure)
+bool isSwingHigh = high[1] > high[2] and high[1] > high[0] and inONS
+bool isSwingLow  = low[1]  < low[2]  and low[1]  < low[0]  and inONS
+
+if isSwingHigh
+    lastSwingHigh := high[1]
+if isSwingLow
+    lastSwingLow := low[1]
+
+// Dynamic cluster compilation matching consecutive order flow types
+bool isDownCandle = close < open
+bool isUpCandle   = close > open
+
+if inONS and i_showObs
+    // --- BULLISH OB CANDIDATE PROCESSING (Strictly Tracks Last Candle) ---
+    if isDownCandle
+        bullStartIdx   := bar_index
+        bullEndIdx     := bar_index
+        bullOpenPrice  := open
+        bullTop        := math.max(open, close)
+        bullBot        := math.min(open, close)
+        bullActive     := true
+
+    // --- BEARISH OB CANDIDATE PROCESSING (Strictly Tracks Last Candle) ---
+    if isUpCandle
+        bearStartIdx   := bar_index
+        bearEndIdx     := bar_index
+        bearOpenPrice  := open
+        bearTop        := math.max(open, close)
+        bearBot        := math.min(open, close)
+        bearActive     := true
+
+    // --- INDEPENDENT VALIDATION ENGINE (CSD CHECK) ---
+    // Validate Bullish Order Block (+OB)
+    if bullActive and close > bullOpenPrice
+        totalObCount += 1
+        float mt = (bullTop + bullBot) / 2
+        string calculatedClass = "Standard"
+        int matchedParentId = 0
+        
+        if array.size(onsObs) > 0
+            for j = array.size(onsObs) - 1 to 0
+                OrderBlock priorOB = array.get(onsObs, j)
+                if not priorOB.isMitigated and priorOB.isBullish
+                    bool isAtLowPivot = not na(lastSwingLow) and bullBot <= lastSwingLow
+                    if isAtLowPivot and bullBot < priorOB.bot
+                        calculatedClass := "Propulsion"
+                        matchedParentId := priorOB.id
+                        break
+                        
+        color renderColor = i_bullObCol
+        if calculatedClass == "Propulsion"
+            renderColor := color.new(renderColor, 30) 
+            
+        box obBoxVisual = box.new(time[bar_index - bullStartIdx], bullTop, time, bullBot, 
+                                  xloc=xloc.bar_time, bgcolor=renderColor, border_color=color.new(renderColor, 0))
+        line meanLineVisual = line.new(time[bar_index - bullStartIdx], mt, time, mt, 
+                                    xloc=xloc.bar_time, color=color.new(renderColor, 20), style=line.style_dashed)
+        
+        array.push(onsObs, OrderBlock.new(
+          id = totalObCount, startIdx = bullStartIdx, endIdx = bullEndIdx,
+          top = bullTop, bot = bullBot, meanThreshold = mt, isBullish = true,
+          obClass = calculatedClass, parentObId = matchedParentId, isValidated = true, isMitigated = false,
+          thresholdState = 0, obBox = obBoxVisual, meanLine = meanLineVisual))
+          
+        bullActive := false 
+
+    // Validate Bearish Order Block (-OB)
+    if bearActive and close < bearOpenPrice
+        totalObCount += 1
+        float mt = (bearTop + bearBot) / 2
+        string calculatedClass = "Standard"
+        int matchedParentId = 0
+        
+        if array.size(onsObs) > 0
+            for j = array.size(onsObs) - 1 to 0
+                OrderBlock priorOB = array.get(onsObs, j)
+                if not priorOB.isMitigated and not priorOB.isBullish
+                    bool isAtHighPivot = not na(lastSwingHigh) and bearTop >= lastSwingHigh
+                    if isAtHighPivot and bearTop > priorOB.top
+                        calculatedClass := "Propulsion"
+                        matchedParentId := priorOB.id
+                        break
+                        
+        color renderColor = i_bearObCol
+        if calculatedClass == "Propulsion"
+            renderColor := color.new(renderColor, 30)
+            
+        box obBoxVisual = box.new(time[bar_index - bearStartIdx], bearTop, time, bearBot, 
+                                  xloc=xloc.bar_time, bgcolor=renderColor, border_color=color.new(renderColor, 0))
+        line meanLineVisual = line.new(time[bar_index - bearStartIdx], mt, time, mt, 
+                                    xloc=xloc.bar_time, color=color.new(renderColor, 20), style=line.style_dashed)
+        
+        array.push(onsObs, OrderBlock.new(
+          id = totalObCount, startIdx = bearStartIdx, endIdx = bearEndIdx,
+          top = bearTop, bot = bearBot, meanThreshold = mt, isBullish = false,
+          obClass = calculatedClass, parentObId = matchedParentId, isValidated = true, isMitigated = false,
+          thresholdState = 0, obBox = obBoxVisual, meanLine = meanLineVisual))
+          
+        bearActive := false
+
+// In-Session & Out-of-Session Real-Time Lifecycle Management
+int activeObSize = array.size(onsObs)
+if activeObSize > 0
+    for i = activeObSize - 1 to 0
+        OrderBlock o = array.get(onsObs, i)
+        if not o.isMitigated
+            if o.thresholdState == 0
+                bool tappedMid = low <= o.meanThreshold and high >= o.meanThreshold
+                if tappedMid
+                    o.thresholdState := 1 
+            
+            // Mitigation Rule: Candle body close breaking protection level
+            bool bodyMitigationBull = o.isBullish and close < o.bot
+            bool bodyMitigationBear = not o.isBullish and close > o.top
+            
+            if bodyMitigationBull or bodyMitigationBear
+                o.isMitigated := true
+                if not i_showMitObs
+                    box.delete(o.obBox)
+                    line.delete(o.meanLine)
+                else
+                    box.set_bgcolor(o.obBox, i_obMitCol)
+                    box.set_border_color(o.obBox, color.new(i_obMitCol, 0))
+                    line.set_color(o.meanLine, color.new(i_obMitCol, 50))
+                    box.set_right(o.obBox, time)
+                    line.set_x2(o.meanLine, time)
+            else
+                box.set_right(o.obBox, time)
+                line.set_x2(o.meanLine, time)        
+// In-Session & Out-of-Session Real-Time Lifecycle Management
+activeObSize := array.size(onsObs)
+if activeObSize > 0
+    for i = activeObSize - 1 to 0
+        OrderBlock o = array.get(onsObs, i)
+        if not o.isMitigated
+            // Track reactions at the 50% Mean Threshold State Machine relative to first expansion
+            if o.thresholdState == 0
+                bool tappedMid = low <= o.meanThreshold and high >= o.meanThreshold
+                if tappedMid
+                    o.thresholdState := 1 // Transition from Magnet to Tested Wall
+            
+            // Cutoff Validation Policy: Mitigation occurs strictly on an hourly/intraday candle body close
+            bool bodyMitigationBull = o.isBullish and close < o.bot
+            bool bodyMitigationBear = not o.isBullish and close > o.top
+            
+            if bodyMitigationBull or bodyMitigationBear
+                o.isMitigated := true
+                box.set_bgcolor(o.obBox, i_obMitCol)
+                box.set_border_color(o.obBox, color.new(i_obMitCol, 0))
+                line.set_color(o.meanLine, color.new(i_obMitCol, 50))
+                box.delete(o.obBox)
+                o.meanLine.delete()
+
+            else
+                // Real-time right coordinate extensions
+                box.set_right(o.obBox, time)
+                line.set_x2(o.meanLine, time)
+
+// Clean memory to maintain running footprint optimization targets
+while array.size(onsObs) > 10
+    OrderBlock del = array.shift(onsObs)
+    box.delete(del.obBox)
+    line.delete(del.meanLine)    
+    
 // ══════════════════════════════════════════════
 // ══ VISUALS & TABLES
 // ══════════════════════════════════════════════
@@ -396,7 +648,7 @@ if barstate.islast
     if not na(onsTable)
         table.delete(onsTable)
     
-    onsTable := table.new(f_tablePos(i_tablePos), 2, 10, border_color=color.gray, border_width=1, bgcolor=color.new(color.black, 80))
+    onsTable := table.new(f_tablePos(i_tablePos), 2, 10, border_color=color.rgb(33, 34, 37), border_width=1, bgcolor=color.new(color.black, 40))
     
     string tSize = f_labelSize(i_tableSize)
     
@@ -404,16 +656,21 @@ if barstate.islast
     table.cell(onsTable, 1, 0, "Value / Prob", text_color=color.yellow, text_size=tSize)
     
     float lastRange = na
-    string curProfile = "Pending"
     float pHighOverall = 0.0, pLowOverall = 0.0
     float pHighType = 0.0, pLowType = 0.0
     int typeN = 0
+    string curProfile = "Pending"
+    ONSProfile lastP = na
 
-    if array.size(onsProfiles) > 0
-        ONSProfile lastP = array.get(onsProfiles, array.size(onsProfiles)-1)
-        lastRange := lastP.rangePts
+    if not na(activeONS)
+        lastP  := activeONS              // live session forming → genuinely Pending
+    else if array.size(onsProfiles) > 0
+        lastP  := array.get(onsProfiles, array.size(onsProfiles)-1)
+
+    if not na(lastP )
         curProfile := lastP.pType
-        
+        lastRange := na(lastP.rangePts) ? lastP.highPrice - lastP.lowPrice : lastP.rangePts
+
         // Sum of all hits across profiles
         int totalHighFirst = stat_p1HighFirst + stat_p2HighFirst + stat_p3HighFirst + stat_p4HighFirst + stat_p5HighFirst + stat_p6HighFirst
         int totalLowFirst  = stat_p1LowFirst + stat_p2LowFirst + stat_p3LowFirst + stat_p4LowFirst + stat_p5LowFirst + stat_p6LowFirst
@@ -429,34 +686,37 @@ if barstate.islast
             pLowOverall  := (float(totalLowFirst + currentLowFirst) / denom) * 100
             
         // Profile-Specific Probabilities
+        // Add the live session once if it has registered any break
+        int curBroke = (lastP.hitHighFirst or lastP.hitLowFirst) ? 1 : 0
+        
         switch curProfile
             "P1: Expansion" =>
-                typeN := stat_p1Count + currentHighFirst + currentLowFirst
+                typeN := stat_p1Count + curBroke
                 if typeN > 0
                     pHighType := (float(stat_p1HighFirst + currentHighFirst) / typeN) * 100
                     pLowType  := (float(stat_p1LowFirst + currentLowFirst) / typeN) * 100
             "P2: Rejection" =>
-                typeN := stat_p2Count + currentHighFirst + currentLowFirst
+                typeN := stat_p2Count + curBroke
                 if typeN > 0
                     pHighType := (float(stat_p2HighFirst + currentHighFirst) / typeN) * 100
                     pLowType  := (float(stat_p2LowFirst + currentLowFirst) / typeN) * 100
             "P3: 9:45 Macro" =>
-                typeN := stat_p3Count + currentHighFirst + currentLowFirst
+                typeN := stat_p3Count + curBroke
                 if typeN > 0
                     pHighType := (float(stat_p3HighFirst + currentHighFirst) / typeN) * 100
                     pLowType  := (float(stat_p3LowFirst + currentLowFirst) / typeN) * 100
             "P4: Seek & Destroy" =>
-                typeN := stat_p4Count + currentHighFirst + currentLowFirst
+                typeN := stat_p4Count + curBroke
                 if typeN > 0
                     pHighType := (float(stat_p4HighFirst + currentHighFirst) / typeN) * 100
                     pLowType  := (float(stat_p4LowFirst + currentLowFirst) / typeN) * 100
             "P5: Rebalance" =>
-                typeN := stat_p5Count + currentHighFirst + currentLowFirst
+                typeN := stat_p5Count + curBroke
                 if typeN > 0
                     pHighType := (float(stat_p5HighFirst + currentHighFirst) / typeN) * 100
                     pLowType  := (float(stat_p5LowFirst + currentLowFirst) / typeN) * 100
             "P6: Inefficient" =>
-                typeN := stat_p6Count + currentHighFirst + currentLowFirst
+                typeN := stat_p6Count + curBroke
                 if typeN > 0
                     pHighType := (float(stat_p6HighFirst + currentHighFirst) / typeN) * 100
                     pLowType  := (float(stat_p6LowFirst + currentLowFirst) / typeN) * 100
@@ -473,11 +733,10 @@ if barstate.islast
     // Bias Logic (uses profile-specific if available, otherwise overall)
     string bias = "Neutral"
     color biasCol = color.white
-    // Threshold adjusted for smaller sample sizes
     float bHigh = typeN >= 2 ? pHighType : pHighOverall
     float bLow  = typeN >= 2 ? pLowType  : pLowOverall
 
-    if bHigh > bLow + 1 // Lowered from 2
+    if bHigh > bLow + 1 
         bias := "LONG"
         biasCol := color.green
     else if bLow > bHigh + 1
@@ -506,6 +765,6 @@ if barstate.islast
                 activeFvgs += 1
     table.cell(onsTable, 1, 8, str.tostring(lastRange, "#.##") + " pts / " + str.tostring(activeFvgs), text_color=color.white, text_size=tSize)
 
-    table.cell(onsTable, 0, 9, "Diag: Total/Hits", text_color=color.gray, text_size=tSize)
+    table.cell(onsTable, 0, 9, "Diag: Total/Hits", text_color=color.white, text_size=tSize)
     int totalHits = stat_p1HighFirst + stat_p2HighFirst + stat_p3HighFirst + stat_p4HighFirst + stat_p5HighFirst + stat_p6HighFirst + stat_p1LowFirst + stat_p2LowFirst + stat_p3LowFirst + stat_p4LowFirst + stat_p5LowFirst + stat_p6LowFirst
-    table.cell(onsTable, 1, 9, str.tostring(stat_totalDays) + " / " + str.tostring(totalHits), text_color=color.gray, text_size=tSize)
+    table.cell(onsTable, 1, 9, str.tostring(stat_totalDays) + " / " + str.tostring(totalHits), text_color=color.white, text_size=tSize)

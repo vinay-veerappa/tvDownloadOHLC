@@ -196,7 +196,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         isDisposed
     } = useChart(
         chartContainerRef as React.RefObject<HTMLDivElement>,
-        style, indicators, data, showTrades ? markers : [], displayTimezone, timeframe, vwapSettings, ticker, theme, mode, isRestoringRangeRef
+        style, indicators, data, showTrades ? markers : [], displayTimezone, timeframe, vwapSettings, ticker, theme, mode, isRestoringRangeRef, mode === 'historical' && !replayMode
     )
 
     // Sync Series Ref
