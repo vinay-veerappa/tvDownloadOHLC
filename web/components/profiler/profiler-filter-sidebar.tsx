@@ -27,6 +27,14 @@ interface FilterSidebarProps {
     // Target Session
     targetSession: string;
     onTargetSessionChange: (session: string) => void;
+
+    // Date Range Props
+    startDate: string;
+    endDate: string;
+    datePreset: string;
+    onDatePresetChange: (preset: string) => void;
+    onStartDateChange: (date: string) => void;
+    onEndDateChange: (date: string) => void;
 }
 
 const SESSIONS = ['Asia', 'London', 'NY1', 'NY2'];
@@ -54,7 +62,13 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar(props: 
         isCollapsed,
         onToggleCollapse,
         targetSession,
-        onTargetSessionChange
+        onTargetSessionChange,
+        startDate,
+        endDate,
+        datePreset,
+        onDatePresetChange,
+        onStartDateChange,
+        onEndDateChange
     } = props;
 
     // ... existing helpers ...
@@ -150,6 +164,47 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar(props: 
                         </SelectContent>
                     </Select>
                 </div>
+
+                {/* Date range filter */}
+                <div className="space-y-1.5 pt-2 border-t border-border/50">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase">Date Range</Label>
+                    <Select value={datePreset} onValueChange={onDatePresetChange}>
+                        <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Select range" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All Time</SelectItem>
+                            <SelectItem value="last30">Last 30 Days</SelectItem>
+                            <SelectItem value="last90">Last 90 Days</SelectItem>
+                            <SelectItem value="last180">Last 180 Days</SelectItem>
+                            <SelectItem value="ytd">Year to Date (YTD)</SelectItem>
+                            <SelectItem value="custom">Custom Range</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {datePreset === 'custom' && (
+                    <div className="grid grid-cols-2 gap-2 pt-1.5 animate-in fade-in duration-300">
+                        <div className="space-y-1">
+                            <Label className="text-[10px] text-muted-foreground">Start Date</Label>
+                            <input 
+                                type="date" 
+                                value={startDate} 
+                                onChange={(e) => onStartDateChange(e.target.value)}
+                                className="w-full text-xs bg-background border border-input rounded px-2 py-1 h-8 focus:outline-none focus:ring-1 focus:ring-primary"
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-[10px] text-muted-foreground">End Date</Label>
+                            <input 
+                                type="date" 
+                                value={endDate} 
+                                onChange={(e) => onEndDateChange(e.target.value)}
+                                className="w-full text-xs bg-background border border-input rounded px-2 py-1 h-8 focus:outline-none focus:ring-1 focus:ring-primary"
+                            />
+                        </div>
+                    </div>
+                )}
             </CardHeader>
 
             <ScrollArea className="flex-1">

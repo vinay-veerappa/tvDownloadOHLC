@@ -10,6 +10,8 @@ interface UseServerFilteredStatsProps {
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
     intraState: string;
+    startDate?: string;
+    endDate?: string;
 }
 
 /**
@@ -21,7 +23,9 @@ export function useServerFilteredStats({
     targetSession,
     filters,
     brokenFilters,
-    intraState
+    intraState,
+    startDate,
+    endDate
 }: UseServerFilteredStatsProps) {
     // Create a stable cache key based on all filter parameters
     const cacheKey = JSON.stringify({
@@ -30,7 +34,9 @@ export function useServerFilteredStats({
         targetSession,
         filters,
         brokenFilters,
-        intraState
+        intraState,
+        startDate,
+        endDate
     });
 
     const { data, error, isLoading, mutate } = useSWR<FilteredStatsResponse>(
@@ -41,7 +47,9 @@ export function useServerFilteredStats({
                 target_session: targetSession,
                 filters,
                 broken_filters: brokenFilters,
-                intra_state: intraState
+                intra_state: intraState,
+                start_date: startDate || undefined,
+                end_date: endDate || undefined
             };
             return fetchFilteredStats(payload);
         },

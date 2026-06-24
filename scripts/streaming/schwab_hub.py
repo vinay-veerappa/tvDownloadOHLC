@@ -1,6 +1,14 @@
 import asyncio
 import json
 import os
+import sys
+import io
+
+# Force standard output and error to use utf-8 on Windows to prevent emoji encoding crashes
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 import logging
 from datetime import datetime, timezone
 

@@ -20,6 +20,8 @@ interface SessionAnalysisViewProps {
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
     intraState: string;
+    startDate?: string;
+    endDate?: string;
 }
 
 const OUTCOMES = ['Long True', 'Short True', 'Long False', 'Short False'];
@@ -32,7 +34,7 @@ export const SESSION_LEVELS: Record<string, string[]> = {
     'NY2': ['ny1_mid', 'prev_ny2_mid', 'london_mid', 'open_0730', 'asia_mid', 'daily_open', 'pdl', 'pdh', 'pdm'],
 };
 
-export const SessionAnalysisView = memo(function SessionAnalysisView({ session, sessions, allSessions, dailyHodLod, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState }: SessionAnalysisViewProps) {
+export const SessionAnalysisView = memo(function SessionAnalysisView({ session, sessions, allSessions, dailyHodLod, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState, startDate, endDate }: SessionAnalysisViewProps) {
 
     // Filter sessions to strictly this session context
     const sessionData = useMemo(() => {
@@ -144,6 +146,8 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
                                 filters={filters}
                                 brokenFilters={brokenFilters}
                                 intraState={intraState}
+                                startDate={startDate}
+                                endDate={endDate}
                             />
                         </TabsContent>
                     ))}

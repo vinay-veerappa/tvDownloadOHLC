@@ -13,6 +13,8 @@ DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 
 # In-Memory Cache to prevent reading Parquet from disk on every API call
 _HISTORICAL_CACHE = {}
+_LIVE_STORAGE_CACHE = {}
+_FUSED_CACHE = {}
 
 TICKER_MAP = {
     "ES1": "-ES",
@@ -65,6 +67,20 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
     }
     if clean_ticker in aliases:
         clean_ticker = aliases[clean_ticker]
+        
+    live_ticker = TICKER_MAP.get(clean_ticker, clean_ticker)
+    live_path = DATA_DIR / "live" / f"live_storage_{live_ticker}.parquet"
+    
+    fused_key = f"fused_{clean_ticker}_{timeframe}"
+    live_mtime = 0.0
+    if live_path.exists():
+        try:
+            live_mtime = os.path.getmtime(live_path)
+        except Exception:
+            pass
+            
+    if fused_key in _FUSED_CACHE and _FUSED_CACHE[fused_key][1] == live_mtime:
+        return _FUSED_CACHE[fused_key][0].copy()
         
     filename = f"{clean_ticker}_{timeframe}.parquet"
     filepath = DATA_DIR / filename
@@ -129,7 +145,22 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
     
     if live_path.exists():
         try:
-            df_l = pd.read_parquet(live_path)
+            mtime = os.path.getmtime(live_path)
+            cache_key_live = f"live_{live_ticker}"
+            if cache_key_live in _LIVE_STORAGE_CACHE and _LIVE_STORAGE_CACHE[cache_key_live][1] == mtime:
+                df_l = _LIVE_STORAGE_CACHE[cache_key_live][0].copy()
+            else:
+                df_l = pd.read_parquet(live_path)
+                _LIVE_STORAGE_CACHE[cache_key_live] = (df_l, mtime)
+                df_l = df_l.copy()
+
+            if not df_l.empty:
+                # Filter to only keep candles after (last historical time - 2 hours) to avoid processing huge history
+                if not df.empty:
+                    last_hist_time_ms = int(df['time'].iloc[-1] * 1000)
+                    overlap_threshold_ms = last_hist_time_ms - (7200 * 1000)
+                    df_l = df_l[df_l['time'] >= overlap_threshold_ms].copy()
+
             if not df_l.empty:
                 # Ensure the time column is datetime index for resampling
                 # Live storage uses epoch ms (13-digit)
@@ -164,6 +195,9 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
                 print(f"[data_loader] Successfully fused {len(df_l_resampled)} live storage bars into {clean_ticker}_{timeframe}")
         except Exception as e:
             print(f"[data_loader] Failed to fuse live storage for {clean_ticker}: {e}")
+    
+    if df is not None:
+        _FUSED_CACHE[fused_key] = (df.copy(), live_mtime)
     
     return df
 

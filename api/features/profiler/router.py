@@ -256,7 +256,9 @@ async def get_filtered_profiler_stats(
         "target_session": str,
         "filters": { "Asia": "Short True", ... },
         "broken_filters": { "Asia": "Broken", ... },
-        "intra_state": "Any"
+        "intra_state": "Any",
+        "start_date": "2026-01-01",
+        "end_date": "2026-06-24"
     }
     Returns: matched_dates, count, distribution, range_stats
     """
@@ -265,9 +267,11 @@ async def get_filtered_profiler_stats(
     filters = payload.get("filters", {})
     broken_filters = payload.get("broken_filters", {})
     intra_state = payload.get("intra_state", "Any")
+    start_date = payload.get("start_date")
+    end_date = payload.get("end_date")
     
     result = ProfilerService.get_filtered_stats(
-        ticker, target_session, filters, broken_filters, intra_state
+        ticker, target_session, filters, broken_filters, intra_state, start_date, end_date
     )
     
     if "error" in result:
@@ -286,7 +290,9 @@ async def get_filtered_price_model(
         "target_session": str (price model session, e.g. "Daily", "NY1"),
         "filters": { "Asia": "Short True", ... },
         "broken_filters": { "Asia": "Broken", ... },
-        "intra_state": "Any"
+        "intra_state": "Any",
+        "start_date": "2026-01-01",
+        "end_date": "2026-06-24"
     }
     Returns: average path, extreme path, count
     """
@@ -296,9 +302,11 @@ async def get_filtered_price_model(
     broken_filters = payload.get("broken_filters", {})
     intra_state = payload.get("intra_state", "Any")
     bucket_minutes = payload.get("bucket_minutes", 1)
+    start_date = payload.get("start_date")
+    end_date = payload.get("end_date")
     
     result = ProfilerService.get_filtered_price_model(
-        ticker, target_session, filters, broken_filters, intra_state, bucket_minutes
+        ticker, target_session, filters, broken_filters, intra_state, bucket_minutes, start_date, end_date
     )
     
     if "error" in result:

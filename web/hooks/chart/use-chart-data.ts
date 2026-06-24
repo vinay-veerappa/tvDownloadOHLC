@@ -70,7 +70,7 @@ export function useChartData({
 }: UseChartDataProps) {
     const timeframe = useMemo(() => normalizeResolution(rawTimeframe), [rawTimeframe])
     const currentReplayTimeRef = useRef<number | null>(null)
-    const liveCandleRef = useRef<{
+    const liveCandlesRef = useRef<Map<number, {
         ticker: string
         timeframe: string
         time: number
@@ -78,7 +78,12 @@ export function useChartData({
         high: number
         low: number
         close: number
-    } | null>(null)
+    }>>(new Map())
+
+    // Clear projected candles when ticker/timeframe changes
+    useEffect(() => {
+        liveCandlesRef.current.clear()
+    }, [ticker, timeframe])
 
     const histLoading = useDataLoading({
         ticker,
@@ -137,23 +142,20 @@ export function useChartData({
                 const enriched = [...baseData]
                 const lastIdx = enriched.length - 1
                 const lastCandle = { ...enriched[lastIdx] }
+                const projections = liveCandlesRef.current
 
-                // Determine if we should project a NEW candle
+                // Determine if we should project a NEW candle (or multiple)
                 let shouldProjectNew = false
                 let newCandleTime = 0
 
                 if (lastUpdate) {
                     const lastBarTime = lastCandle.time
                     const liveTime = Math.floor(new Date(lastUpdate).getTime() / 1000)
-                    const resolutionMins = getResolutionInMinutes(timeframe) // 0.25 for 15s
+                    const resolutionMins = getResolutionInMinutes(timeframe)
                     const resolutionSecs = resolutionMins * 60
 
-                    // Check if liveTime belongs to a future interval
-                    // If lastBarTime is 9:00:00 (1m), next is 9:01:00
-                    // If liveTime is 9:01:05, we need a new bar
-
-                    if (liveTime >= lastBarTime + resolutionSecs) {
-                        // Align to grid
+                    const nextExpectedTime = lastBarTime + resolutionSecs
+                    if (liveTime >= nextExpectedTime) {
                         newCandleTime = Math.floor(liveTime / resolutionSecs) * resolutionSecs
                         if (newCandleTime > lastBarTime) {
                             shouldProjectNew = true
@@ -161,26 +163,49 @@ export function useChartData({
                     }
                 }
 
-                if (shouldProjectNew) {
-                    const ref = liveCandleRef.current
-                    let candle: {
-                        ticker: string
-                        timeframe: string
-                        time: number
-                        open: number
-                        high: number
-                        low: number
-                        close: number
+                if (shouldProjectNew && lastUpdate) {
+                    const lastBarTime = lastCandle.time
+                    const resolutionMins = getResolutionInMinutes(timeframe)
+                    const resolutionSecs = resolutionMins * 60
+
+                    const nextExpectedTime = lastBarTime + resolutionSecs
+                    let tempTime = nextExpectedTime
+                    let prevClose = lastCandle.close
+
+                    // 1. Project intermediate candles — use cached data if available
+                    while (tempTime < newCandleTime) {
+                        const cached = projections.get(tempTime)
+                        if (cached && cached.ticker === ticker && cached.timeframe === timeframe) {
+                            enriched.push({
+                                time: tempTime,
+                                open: cached.open,
+                                high: cached.high,
+                                low: cached.low,
+                                close: cached.close,
+                                volume: 0
+                            })
+                            prevClose = cached.close
+                        } else {
+                            enriched.push({
+                                time: tempTime,
+                                open: prevClose,
+                                high: prevClose,
+                                low: prevClose,
+                                close: prevClose,
+                                volume: 0
+                            })
+                        }
+                        tempTime += resolutionSecs
                     }
-                    if (ref && ref.ticker === ticker && ref.timeframe === timeframe && ref.time === newCandleTime) {
-                        // Update existing projected candle
-                        ref.close = livePrice
-                        if (livePrice > ref.high) ref.high = livePrice
-                        if (livePrice < ref.low) ref.low = livePrice
-                        candle = ref
+
+                    // 2. Project the active forming candle at newCandleTime
+                    const existing = projections.get(newCandleTime)
+                    if (existing && existing.ticker === ticker && existing.timeframe === timeframe) {
+                        existing.close = livePrice
+                        if (livePrice > existing.high) existing.high = livePrice
+                        if (livePrice < existing.low) existing.low = livePrice
                     } else {
-                        // Start a new projected candle
-                        candle = {
+                        projections.set(newCandleTime, {
                             ticker,
                             timeframe,
                             time: newCandleTime,
@@ -188,29 +213,68 @@ export function useChartData({
                             high: livePrice,
                             low: livePrice,
                             close: livePrice
-                        }
-                        liveCandleRef.current = candle
+                        })
                     }
 
+                    const activeCandle = projections.get(newCandleTime)!
                     enriched.push({
-                        time: candle.time,
-                        open: candle.open,
-                        high: candle.high,
-                        low: candle.low,
-                        close: candle.close,
+                        time: activeCandle.time,
+                        open: activeCandle.open,
+                        high: activeCandle.high,
+                        low: activeCandle.low,
+                        close: activeCandle.close,
                         volume: 0
                     })
+
+                    // Clean up entries already in fullData
+                    for (const [t] of projections) {
+                        if (t <= lastBarTime) projections.delete(t)
+                    }
                 } else {
-                    // We are not projecting a new candle, so we can clear the ref
-                    liveCandleRef.current = null
+                    // Not projecting — accumulate high/low for the current bar
+                    const barTime = lastCandle.time
+                    let tracked = projections.get(barTime)
 
-                    lastCandle.close = livePrice
-                    if (livePrice > lastCandle.high) lastCandle.high = livePrice
-                    if (livePrice < lastCandle.low) lastCandle.low = livePrice
-                    enriched[lastIdx] = lastCandle
+                    if (!tracked || tracked.ticker !== ticker || tracked.timeframe !== timeframe) {
+                        tracked = {
+                            ticker, timeframe, time: barTime,
+                            open: lastCandle.open,
+                            high: lastCandle.high,
+                            low: lastCandle.low,
+                            close: lastCandle.close
+                        }
+                        projections.set(barTime, tracked)
+                    }
+
+                    // Merge base values (in case a candle message updated fullData)
+                    tracked.high = Math.max(tracked.high, lastCandle.high)
+                    tracked.low = Math.min(tracked.low, lastCandle.low)
+
+                    // Apply current tick
+                    tracked.close = livePrice
+                    tracked.high = Math.max(tracked.high, livePrice)
+                    tracked.low = Math.min(tracked.low, livePrice)
+
+                    enriched[lastIdx] = {
+                        ...lastCandle,
+                        high: tracked.high,
+                        low: tracked.low,
+                        close: tracked.close
+                    }
+
+                    // Clean up old entries
+                    for (const [t] of projections) {
+                        if (t < barTime) projections.delete(t)
+                    }
                 }
-
-                return enriched
+                if (enriched.length >= 2) {
+                    const l1 = enriched[enriched.length - 1];
+                    const l2 = enriched[enriched.length - 2];
+                    const bl1 = baseData[baseData.length - 1];
+                    const bl2 = baseData[baseData.length - 2];
+                    console.log(`[useChartData] enriched: [${new Date(l2.time * 1000).toLocaleTimeString()}] O:${l2.open} H:${l2.high} L:${l2.low} C:${l2.close} | [${new Date(l1.time * 1000).toLocaleTimeString()}] O:${l1.open} H:${l1.high} L:${l1.low} C:${l1.close} (base: [${new Date(bl2.time * 1000).toLocaleTimeString()}] C:${bl2.close} | [${new Date(bl1.time * 1000).toLocaleTimeString()}] C:${bl1.close}), livePrice: ${livePrice}, lastUpdate: ${lastUpdate}, shouldProjectNew: ${shouldProjectNew}, newCandleTime: ${newCandleTime}`);
+                }
+                return enriched;
             }
         }
         return baseData

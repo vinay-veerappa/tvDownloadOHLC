@@ -198,6 +198,8 @@ export interface FilterPayload {
     broken_filters: Record<string, string>;
     intra_state: string;
     bucket_minutes?: number; // Optional bucket size (1, 5, 15)
+    start_date?: string;
+    end_date?: string;
 }
 
 export interface FilteredStatsResponse {
@@ -229,7 +231,9 @@ export async function fetchFilteredStats(payload: FilterPayload): Promise<Filter
             target_session: payload.target_session,
             filters: payload.filters,
             broken_filters: payload.broken_filters,
-            intra_state: payload.intra_state
+            intra_state: payload.intra_state,
+            start_date: payload.start_date,
+            end_date: payload.end_date
         })
     });
     if (!res.ok) {
@@ -254,7 +258,9 @@ export async function fetchFilteredPriceModel(payload: FilterPayload): Promise<P
             filters: payload.filters,
             broken_filters: payload.broken_filters,
             intra_state: payload.intra_state,
-            bucket_minutes: payload.bucket_minutes
+            bucket_minutes: payload.bucket_minutes,
+            start_date: payload.start_date,
+            end_date: payload.end_date
         })
     });
     if (!res.ok) {

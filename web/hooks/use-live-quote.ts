@@ -60,12 +60,10 @@ export function useLiveQuote(ticker: string | null, isLiveMode: boolean) {
 
             const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
             const wsUrl = `ws://${host}:8001/stream?symbol=${encodeURIComponent(requestTicker)}&timeframe=1m`;
-            console.log(`🔌 [useLiveQuote] Connecting WebSocket to ${wsUrl}`);
             const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
 
             ws.onopen = () => {
-                console.log(`🔌 [useLiveQuote] WebSocket connected for ${requestTicker}`);
                 setIsLoading(false);
                 setError(null);
                 retryCountRef.current = 0;
@@ -89,7 +87,6 @@ export function useLiveQuote(ticker: string | null, isLiveMode: boolean) {
             };
 
             ws.onclose = () => {
-                console.log(`🔌 [useLiveQuote] WebSocket closed for ${requestTicker}`);
                 wsRef.current = null;
                 const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000);
                 retryCountRef.current += 1;

@@ -195,3 +195,4 @@ test('Data Merger - Null/Undefined/Zero properties in candles', () => {
     assert.equal(merged[1].time, 1060);
     assert.equal(merged[1].volume, 0);
 });
+

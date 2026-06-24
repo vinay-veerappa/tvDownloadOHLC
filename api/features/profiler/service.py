@@ -650,7 +650,9 @@ class ProfilerService:
         target_session: str,
         filters: Dict[str, str] = None,
         broken_filters: Dict[str, str] = None,
-        intra_state: str = "Any"
+        intra_state: str = "Any",
+        start_date: str = None,
+        end_date: str = None
     ) -> Dict:
         """
         Get pre-aggregated stats for filtered sessions.
@@ -663,7 +665,9 @@ class ProfilerService:
             target_session, 
             json.dumps(filters, sort_keys=True) if filters else "", 
             json.dumps(broken_filters, sort_keys=True) if broken_filters else "", 
-            intra_state
+            intra_state,
+            start_date or "",
+            end_date or ""
         )
         
         cached_stats = ProfilerService._cache_get(ProfilerService._filtered_stats_cache, cache_key)
@@ -671,13 +675,18 @@ class ProfilerService:
             return cached_stats
 
         # 1. Load all sessions
-        # 1. Load all sessions
         stats = ProfilerService.analyze_profiler_stats(ticker, days=10000)
         
         if "error" in stats:
             return stats
         
         all_sessions = stats.get('sessions', [])
+        
+        # Apply start_date and end_date filters
+        if start_date:
+            all_sessions = [s for s in all_sessions if s.get('date', '') >= start_date]
+        if end_date:
+            all_sessions = [s for s in all_sessions if s.get('date', '') <= end_date]
         
         # 2. Apply filters to get matched dates
         matched_dates = ProfilerService.apply_filters(
@@ -813,7 +822,9 @@ class ProfilerService:
         filters: Dict[str, str] = None,
         broken_filters: Dict[str, str] = None,
         intra_state: str = "Any",
-        bucket_minutes: int = 1
+        bucket_minutes: int = 1,
+        start_date: str = None,
+        end_date: str = None
     ) -> Dict:
         """
         Generate price model using filter criteria instead of explicit date list.
@@ -826,7 +837,9 @@ class ProfilerService:
             json.dumps(filters, sort_keys=True) if filters else "", 
             json.dumps(broken_filters, sort_keys=True) if broken_filters else "", 
             intra_state, 
-            bucket_minutes
+            bucket_minutes,
+            start_date or "",
+            end_date or ""
         )
         
         cached_price_model = ProfilerService._cache_get(ProfilerService._price_model_cache, cache_key)
@@ -835,7 +848,7 @@ class ProfilerService:
 
         # 1. Get filtered stats (which includes matched dates)
         stats = ProfilerService.get_filtered_stats(
-            ticker, target_session, filters, broken_filters, intra_state
+            ticker, target_session, filters, broken_filters, intra_state, start_date, end_date
         )
         
         if "error" in stats:

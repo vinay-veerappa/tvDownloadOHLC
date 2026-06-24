@@ -35,6 +35,8 @@ interface PriceModelChartProps {
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
     intraState: string;
+    startDate?: string;
+    endDate?: string;
     height?: number;
 }
 
@@ -46,6 +48,8 @@ export const PriceModelChart = memo(function PriceModelChart({
     filters,
     brokenFilters,
     intraState,
+    startDate,
+    endDate,
     height = 300
 }: PriceModelChartProps) {
     // State for aggregation interval
@@ -68,7 +72,9 @@ export const PriceModelChart = memo(function PriceModelChart({
         filters,
         brokenFilters,
         intraState,
-        bucketMinutes
+        bucketMinutes,
+        startDate,
+        endDate
     });
 
     // Use SWR for caching and deduplication
@@ -81,7 +87,9 @@ export const PriceModelChart = memo(function PriceModelChart({
                 filters,
                 broken_filters: brokenFilters,
                 intra_state: intraState,
-                bucket_minutes: bucketMinutes
+                bucket_minutes: bucketMinutes,
+                start_date: startDate || undefined,
+                end_date: endDate || undefined
             };
             return fetchFilteredPriceModel(payload);
         },

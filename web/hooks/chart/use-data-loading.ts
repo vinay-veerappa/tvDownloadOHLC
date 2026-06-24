@@ -310,7 +310,6 @@ export function useDataLoading({
             // Spoke API runs on port 8001
             const wsUrl = `${protocol}//localhost:8001/stream?symbol=${encodeURIComponent(safeTicker)}&timeframe=${encodeURIComponent(wsTimeframe)}`
 
-            console.log(`🔌 [useDataLoading] Connecting to WebSocket: ${wsUrl}`)
             const ws = new WebSocket(wsUrl)
             wsRef.current = ws
 
@@ -319,7 +318,6 @@ export function useDataLoading({
                     ws.close()
                     return
                 }
-                console.log(`🔌 [useDataLoading] WebSocket connected for ${safeTicker} (${timeframe})`)
                 retryCountRef.current = 0
             }
 
@@ -394,22 +392,10 @@ export function useDataLoading({
                                 }
                             }
 
-                            // Mutate/refresh last candle of fullData in-place
-                            setFullData(prev => {
-                                if (prev.length === 0) return prev
-                                const next = [...prev]
-                                const lastBar = { ...next[next.length - 1] }
-                                const liveTime = Math.floor(new Date(currentIsoTime).getTime() / 1000)
-                                const targetSecs = parseTimeframeToSeconds(timeframe)
-
-                                if (liveTime < lastBar.time + targetSecs) {
-                                    lastBar.close = price
-                                    lastBar.high = Math.max(lastBar.high, price)
-                                    lastBar.low = Math.min(lastBar.low, price)
-                                    next[next.length - 1] = lastBar
-                                }
-                                return next
-                            })
+                            // NOTE: We do NOT update fullData here. The projection logic
+                            // in use-chart-data.ts is the single owner of live price overlay.
+                            // Updating fullData here caused dual-updates, extra candles,
+                            // and constant array churn that confused incremental detection.
                         }
                     }
                 } catch (err) {
@@ -423,7 +409,6 @@ export function useDataLoading({
 
             ws.onclose = (event) => {
                 if (isCancelled) return
-                console.log(`🔌 [useDataLoading] WebSocket closed for ${safeTicker}. Reason: ${event.reason || 'none'}`)
 
                 // Reconnect with backoff
                 const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000)
@@ -464,13 +449,11 @@ export function useDataLoading({
         // Use base timeframe for loading
         const usedTimeframe = baseTimeframeRef.current
         const loadStart = performance.now()
-        console.log(`⏱️ [useDataLoading] loadMoreDataLeft started: fetching history before ${leftBoundaryRef.current}`);
 
         try {
             // Fetch next 20000 bars strictly older than current left boundary
             const result = await fetchBinaryOHLC(ticker, usedTimeframe, 0, leftBoundaryRef.current, 20000, "left")
             const fetchEnd = performance.now()
-            console.log(`⏱️ [useDataLoading] fetchBinaryOHLC (left) completed in ${(fetchEnd - loadStart).toFixed(2)} ms`);
 
             if (result.success && result.data && result.data.length > 0) {
                 let newData = result.data
@@ -483,7 +466,6 @@ export function useDataLoading({
                     } else {
                         newData = await resampleOHLCAsync(result.data, usedTimeframe, timeframe)
                     }
-                    console.log(`⏱️ [useDataLoading] Resampling finished in ${(performance.now() - resampleStart).toFixed(2)} ms`);
                 }
 
                 const prependedCount = newData.length
@@ -492,16 +474,13 @@ export function useDataLoading({
                 // Filter duplicates synchronously using boundary refs to avoid React state timing issues
                 let cleanNewData = newData
                 const firstExistingDataTime = leftBoundaryRef.current
-                console.log(`⏱️ [useDataLoading] Filter check: newData length=${newData.length}, firstExisting=${firstExistingDataTime}, oldestNew=${newData[0]?.time}, newestNew=${newData[newData.length - 1]?.time}`);
                 if (newData.length > 0 && firstExistingDataTime !== 9999999999) {
                     if (newData[newData.length - 1].time >= firstExistingDataTime) {
                         cleanNewData = newData.filter(d => d.time < firstExistingDataTime)
-                        console.log(`⏱️ [useDataLoading] Filtered out overlapping/newer bars. Remaining unique count: ${cleanNewData.length}`);
                     }
                 }
 
                 const actualAddedCount = cleanNewData.length
-                console.log(`⏱️ [useDataLoading] actualAddedCount=${actualAddedCount}, hasMoreDataLeft calculation basis: newData.length=${newData.length}`);
 
                 setFullData(prev => {
                     let combined = [...cleanNewData, ...prev]
@@ -523,11 +502,9 @@ export function useDataLoading({
 
                 if (actualAddedCount === 0) {
                     setHasMoreDataLeft(false)
-                    console.log(`⏱️ [useDataLoading] No new unique bars found left. Setting hasMoreDataLeft = false`);
                 } else {
                     const hasMore = newData.length >= 1000;
                     setHasMoreDataLeft(hasMore)
-                    console.log(`⏱️ [useDataLoading] Set hasMoreDataLeft = ${hasMore} (fetched count: ${newData.length})`);
                 }
             } else {
                 setHasMoreDataLeft(false)
@@ -553,13 +530,11 @@ export function useDataLoading({
         // Use base timeframe for loading
         const usedTimeframe = baseTimeframeRef.current
         const loadStart = performance.now()
-        console.log(`⏱️ [useDataLoading] loadMoreDataRight started: fetching newer data after ${rightBoundaryRef.current}`);
 
         try {
             // Fetch next 20000 bars strictly newer than current right boundary
             const result = await fetchBinaryOHLC(ticker, usedTimeframe, rightBoundaryRef.current, 9999999999, 20000, "right")
             const fetchEnd = performance.now()
-            console.log(`⏱️ [useDataLoading] fetchBinaryOHLC (right) completed in ${(fetchEnd - loadStart).toFixed(2)} ms`);
 
             if (result.success && result.data && result.data.length > 0) {
                 const histData = result.data
@@ -597,7 +572,6 @@ export function useDataLoading({
                     } else {
                         newData = await resampleOHLCAsync(mergedBase, usedTimeframe, timeframe)
                     }
-                    console.log(`⏱️ [useDataLoading] Resampling finished in ${(performance.now() - resampleStart).toFixed(2)} ms`);
                 } else {
                     // Resample live data first to match native native timeframe
                     const processedLive = await processLiveData(liveData, timeframe)
@@ -607,16 +581,13 @@ export function useDataLoading({
                 // Filter duplicates synchronously using boundary refs to avoid React state timing issues
                 let cleanNewData = newData
                 const lastExistingDataTime = rightBoundaryRef.current
-                console.log(`⏱️ [useDataLoading] Filter check (right): newData length=${newData.length}, lastExisting=${lastExistingDataTime}, oldestNew=${newData[0]?.time}, newestNew=${newData[newData.length - 1]?.time}`);
                 if (newData.length > 0 && lastExistingDataTime !== 0) {
                     if (newData[0].time <= lastExistingDataTime) {
                         cleanNewData = newData.filter(d => d.time > lastExistingDataTime)
-                        console.log(`⏱️ [useDataLoading] Filtered out overlapping/older bars (right). Remaining unique count: ${cleanNewData.length}`);
                     }
                 }
 
                 const actualAddedCount = cleanNewData.length
-                console.log(`⏱️ [useDataLoading] actualAddedCount (right)=${actualAddedCount}, hasMoreDataRight calculation basis: newData.length=${newData.length}`);
 
                 // Check if we need to evict data from the START (oldest, left)
                 setFullData(prev => {
@@ -639,11 +610,9 @@ export function useDataLoading({
 
                 if (actualAddedCount === 0) {
                     setHasMoreDataRight(false)
-                    console.log(`⏱️ [useDataLoading] No new unique bars found right. Setting hasMoreDataRight = false`);
                 } else {
                     const hasMore = newData.length >= 1000;
                     setHasMoreDataRight(hasMore)
-                    console.log(`⏱️ [useDataLoading] Set hasMoreDataRight = ${hasMore} (fetched count: ${newData.length})`);
                 }
             } else {
                 setHasMoreDataRight(false)

@@ -375,10 +375,75 @@ export function useChart(
             // 1. Not the first load
             // 2. The dataset size is identical (last bar update) or has grown by exactly 1 bar (new bar appended)
             // 3. The starting timestamp of the dataset has not changed (i.e. not a ticker/timeframe switch or history backfill)
-            const isIncremental = !isFirstLoad &&
+            let isIncremental = !isFirstLoad &&
                 (lenDiff === 0 || lenDiff === 1) &&
                 prevDataRef.current.length > 0 &&
                 chartData[0]?.time === prevDataRef.current[0]?.time;
+
+            // If we think it's incremental, verify that no older bars (excluding the very last bar) have changed their values
+            if (isIncremental) {
+                const checkCount = Math.min(5, chartData.length - 1);
+                for (let i = 2; i <= checkCount + 1; i++) {
+                    const idx = chartData.length - i;
+                    if (idx < 0) break;
+                    
+                    const newBar = chartData[idx];
+                    let prevBar: any = null;
+                    for (let j = prevDataRef.current.length - 1; j >= 0; j--) {
+                        if (prevDataRef.current[j].time === newBar.time) {
+                            prevBar = prevDataRef.current[j];
+                            break;
+                        }
+                    }
+                    
+                    if (prevBar) {
+                        if (
+                            newBar.open !== prevBar.open ||
+                            newBar.high !== prevBar.high ||
+                            newBar.low !== prevBar.low ||
+                            newBar.close !== prevBar.close ||
+                            newBar.volume !== prevBar.volume
+                        ) {
+                            // An older bar changed! Force full render to show the update.
+                            isIncremental = false;
+                            break;
+                        }
+                    } else {
+                        // The bar didn't exist in prevDataRef, meaning it's new but not the last bar.
+                        // Force full render to be safe.
+                        isIncremental = false;
+                        break;
+                    }
+                }
+            }
+
+            // Print OHLC values for the last two candles of chartData and prevDataRef
+            if (chartData.length >= 2) {
+                const c1 = chartData[chartData.length - 1];
+                const c2 = chartData[chartData.length - 2];
+                const t1Str = new Date(c1.time * 1000).toLocaleTimeString('en-US', { hour12: false });
+                const t2Str = new Date(c2.time * 1000).toLocaleTimeString('en-US', { hour12: false });
+                
+                let p1Str = "N/A";
+                let p2Str = "N/A";
+                if (prevDataRef.current.length >= 2) {
+                    const pc1 = prevDataRef.current[prevDataRef.current.length - 1];
+                    const pc2 = prevDataRef.current[prevDataRef.current.length - 2];
+                    p1Str = `[${new Date(pc1.time * 1000).toLocaleTimeString('en-US', { hour12: false })}] O:${pc1.open} H:${pc1.high} L:${pc1.low} C:${pc1.close}`;
+                    p2Str = `[${new Date(pc2.time * 1000).toLocaleTimeString('en-US', { hour12: false })}] O:${pc2.open} H:${pc2.high} L:${pc2.low} C:${pc2.close}`;
+                } else if (prevDataRef.current.length === 1) {
+                    const pc1 = prevDataRef.current[0];
+                    p1Str = `[${new Date(pc1.time * 1000).toLocaleTimeString('en-US', { hour12: false })}] O:${pc1.open} H:${pc1.high} L:${pc1.low} C:${pc1.close}`;
+                }
+
+                console.log(
+                    `[useChart Update] Ticker: ${ticker}, Timeframe: ${timeframe}\n` +
+                    `  isIncremental: ${isIncremental}, lenDiff: ${lenDiff}, isFirstLoad: ${isFirstLoad}\n` +
+                    `  Current Last 2: [${t2Str}] O:${c2.open} H:${c2.high} L:${c2.low} C:${c2.close} | [${t1Str}] O:${c1.open} H:${c1.high} L:${c1.low} C:${c1.close}\n` +
+                    `  Previous Last 2: ${p2Str} | ${p1Str}\n` +
+                    `  Action: ${isIncremental ? 'update()' : 'setData()'}`
+                );
+            }
 
             if (isIncremental) {
                 // Incremental update (tick-by-tick, just update last candle or append new candle)
@@ -398,10 +463,8 @@ export function useChart(
                 }
 
                 // Full update (gap filled, data reset, or significant length change)
-                const startSetData = Date.now();
                 try {
                     seriesInstance.setData(chartData)
-                    console.log('[useChart] seriesInstance.setData finished in', Date.now() - startSetData, 'ms for', chartData.length, 'bars');
                     dataHashRef.current = currentHash
                 } catch (err) {
                     console.error('[useChart] setData FAILED:', err)
@@ -419,7 +482,6 @@ export function useChart(
                                             from: chartData.length - 150,
                                             to: chartData.length + 10
                                         });
-                                        console.log(`⏱️ [useChart] Initial zoom: set visible range to last 150 bars (live mode)`);
                                     } else {
                                         timeScale.fitContent();
                                     }
@@ -430,7 +492,6 @@ export function useChart(
                                             from: chartData.length - 250,
                                             to: chartData.length
                                         });
-                                        console.log(`⏱️ [useChart] Initial zoom: set visible range to last 150 real bars (historical mode)`);
                                     } else {
                                         timeScale.fitContent();
                                     }
@@ -446,7 +507,6 @@ export function useChart(
                 } else if (anchorTime !== null && visibleRange) {
                     // Restore visible range by finding the new index of our anchor bar
                     const newAnchorIndex = chartData.findIndex(bar => bar.time === anchorTime)
-                    console.log(`⏱️ [useChart] Restore range check: anchorTime=${anchorTime}, newAnchorIndex=${newAnchorIndex}, anchorOffset=${anchorOffset}, visibleRange.from=${visibleRange.from.toFixed(2)}, visibleRange.to=${visibleRange.to.toFixed(2)}`);
                     if (newAnchorIndex !== -1) {
                         const newFrom = newAnchorIndex + anchorOffset
                         const rangeWidth = visibleRange.to - visibleRange.from
@@ -455,12 +515,10 @@ export function useChart(
                                 from: newFrom,
                                 to: newFrom + rangeWidth
                             })
-                            console.log(`⏱️ [useChart] SetVisibleLogicalRange called: from=${newFrom.toFixed(2)}, to=${(newFrom + rangeWidth).toFixed(2)}`);
                         } catch (err) {
                             console.error('[useChart] Failed to restore visible logical range:', err)
                         }
                     } else {
-                        console.warn(`⏱️ [useChart] Anchor time ${anchorTime} NOT found in new chartData (length: ${chartData.length})`);
                     }
 
                     // Clear lock after a short delay to allow chart layout to stabilize

@@ -40,7 +40,7 @@ export function useChartTrading({ series, position, pendingOrders }: UseChartTra
                 color: position.direction === 'LONG' ? '#2962FF' : '#F44336',
                 lineWidth: 2,
                 lineStyle: 0, // Solid
-                axisLabelVisible: true,
+                axisLabelVisible: false,
                 title: `${position.direction} ${position.quantity} (${position.unrealizedPnl >= 0 ? '+' : ''}${position.unrealizedPnl.toFixed(2)})`,
             }
 
@@ -57,7 +57,7 @@ export function useChartTrading({ series, position, pendingOrders }: UseChartTra
                     color: '#FF5252', // Red
                     lineWidth: 1,
                     lineStyle: 2, // Dashed
-                    axisLabelVisible: true,
+                    axisLabelVisible: false,
                     title: `SL`,
                 }
                 if (slLineRef.current) slLineRef.current.applyOptions(slOptions)
@@ -74,7 +74,7 @@ export function useChartTrading({ series, position, pendingOrders }: UseChartTra
                     color: '#4CAF50', // Green
                     lineWidth: 1,
                     lineStyle: 2, // Dashed
-                    axisLabelVisible: true,
+                    axisLabelVisible: false,
                     title: `TP`,
                 }
                 if (tpLineRef.current) tpLineRef.current.applyOptions(tpOptions)
@@ -124,7 +124,7 @@ export function useChartTrading({ series, position, pendingOrders }: UseChartTra
                 color: color,
                 lineWidth: 1,
                 lineStyle: 2, // Dashed for pending
-                axisLabelVisible: true,
+                axisLabelVisible: false,
                 title: title,
             }
 

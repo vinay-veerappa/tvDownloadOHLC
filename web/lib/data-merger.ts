@@ -44,3 +44,4 @@ function normalizeCandle(c: OHLCData): OHLCData {
         time: c.time > 10000000000 ? c.time / 1000 : c.time
     };
 }
+

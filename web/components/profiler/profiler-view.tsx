@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useDeferredValue } from 'react';
+import { useState, useMemo, useDeferredValue, useEffect } from 'react';
 import { useServerFilteredStats } from '@/hooks/use-server-filtered-stats';
 import { useLevelTouches } from '@/hooks/use-level-touches';
 import { useDailyHodLod } from '@/hooks/use-daily-hod-lod';
@@ -28,6 +28,36 @@ interface ProfilerViewProps {
     ticker?: string;
 }
 
+const getPresetDates = (preset: string) => {
+    const today = new Date();
+    const formatDate = (date: Date) => date.toISOString().split('T')[0];
+    
+    switch (preset) {
+        case 'last30': {
+            const d = new Date();
+            d.setDate(today.getDate() - 30);
+            return { start: formatDate(d), end: formatDate(today) };
+        }
+        case 'last90': {
+            const d = new Date();
+            d.setDate(today.getDate() - 90);
+            return { start: formatDate(d), end: formatDate(today) };
+        }
+        case 'last180': {
+            const d = new Date();
+            d.setDate(today.getDate() - 180);
+            return { start: formatDate(d), end: formatDate(today) };
+        }
+        case 'ytd': {
+            const currentYear = today.getFullYear();
+            return { start: `${currentYear}-01-01`, end: formatDate(today) };
+        }
+        case 'all':
+        default:
+            return { start: '', end: '' };
+    }
+};
+
 export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProps) {
     // 1. Global State
     const [ticker, setTicker] = useState(initialTicker);
@@ -38,6 +68,28 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
 
+    // Date Range State
+    const [startDate, setStartDate] = useState<string>(() => {
+        // Safe default during SSR, will be updated in useEffect on client
+        return '';
+    });
+    const [endDate, setEndDate] = useState<string>('');
+    const [datePreset, setDatePreset] = useState<string>('last90');
+
+    // Load from localStorage on client mount to avoid hydration mismatch
+    useEffect(() => {
+        const savedPreset = localStorage.getItem('profiler-date-preset') || 'last90';
+        setDatePreset(savedPreset);
+        if (savedPreset === 'custom') {
+            setStartDate(localStorage.getItem('profiler-start-date') || '');
+            setEndDate(localStorage.getItem('profiler-end-date') || '');
+        } else {
+            const { start, end } = getPresetDates(savedPreset);
+            setStartDate(start);
+            setEndDate(end);
+        }
+    }, []);
+
     // Intra-session state
     const intraState = 'Any';
 
@@ -46,6 +98,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const debouncedFilters = useDebounce(filters, 800);
     const debouncedBrokenFilters = useDebounce(brokenFilters, 800);
     const debouncedTicker = useDebounce(ticker, 800);
+    const debouncedStartDate = useDebounce(startDate, 800);
+    const debouncedEndDate = useDebounce(endDate, 800);
 
     // 3. Server-Side Filtered Data
     const {
@@ -60,7 +114,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
         targetSession: debouncedTargetSession,
         filters: debouncedFilters,
         brokenFilters: debouncedBrokenFilters,
-        intraState: intraState
+        intraState: intraState,
+        startDate: debouncedStartDate,
+        endDate: debouncedEndDate
     });
 
     // 4. Other Data Fetching
@@ -78,9 +134,40 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     // Handlers (Memoized)
     const handleFilterChange = useMemo(() => (s: string, v: string) => setFilters(prev => ({ ...prev, [s]: v })), []);
     const handleBrokenFilterChange = useMemo(() => (s: string, v: string) => setBrokenFilters(prev => ({ ...prev, [s]: v })), []);
+    
+    const handleDatePresetChange = useMemo(() => (preset: string) => {
+        setDatePreset(preset);
+        localStorage.setItem('profiler-date-preset', preset);
+        if (preset !== 'custom') {
+            const { start, end } = getPresetDates(preset);
+            setStartDate(start);
+            setEndDate(end);
+            localStorage.removeItem('profiler-start-date');
+            localStorage.removeItem('profiler-end-date');
+        }
+    }, []);
+
+    const handleStartDateChange = useMemo(() => (date: string) => {
+        setStartDate(date);
+        localStorage.setItem('profiler-start-date', date);
+    }, []);
+
+    const handleEndDateChange = useMemo(() => (date: string) => {
+        setEndDate(date);
+        localStorage.setItem('profiler-end-date', date);
+    }, []);
+
     const handleReset = useMemo(() => () => {
         setFilters({});
         setBrokenFilters({});
+        const defaultPreset = 'last90';
+        setDatePreset(defaultPreset);
+        const { start, end } = getPresetDates(defaultPreset);
+        setStartDate(start);
+        setEndDate(end);
+        localStorage.setItem('profiler-date-preset', defaultPreset);
+        localStorage.removeItem('profiler-start-date');
+        localStorage.removeItem('profiler-end-date');
     }, []);
 
     const sidebarStats = useMemo(() => ({ validSamples }), [validSamples]);
@@ -206,6 +293,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                             filters={debouncedFilters}
                             brokenFilters={debouncedBrokenFilters}
                             intraState={intraState}
+                            startDate={debouncedStartDate}
+                            endDate={debouncedEndDate}
                             height={400}
                         />
                     </div>
@@ -219,6 +308,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                             filters={debouncedFilters}
                             brokenFilters={debouncedBrokenFilters}
                             intraState={intraState}
+                            startDate={debouncedStartDate}
+                            endDate={debouncedEndDate}
                         />
                     </div>
                 </div>
@@ -250,7 +341,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
         deferredLevelTouches,
         filteredDates,
         distributionChartData,
-        maxProb
+        maxProb,
+        debouncedStartDate,
+        debouncedEndDate
     ]);
 
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
@@ -275,6 +368,14 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     // Target Session
                     targetSession={targetSession}
                     onTargetSessionChange={setTargetSession}
+
+                    // Date Filters
+                    startDate={startDate}
+                    endDate={endDate}
+                    datePreset={datePreset}
+                    onDatePresetChange={handleDatePresetChange}
+                    onStartDateChange={handleStartDateChange}
+                    onEndDateChange={handleEndDateChange}
                 />
             </div>
 
@@ -332,6 +433,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                                             filters={debouncedFilters}
                                             brokenFilters={debouncedBrokenFilters}
                                             intraState={intraState}
+                                            startDate={debouncedStartDate}
+                                            endDate={debouncedEndDate}
                                         />
                                     </TabsContent>
                                 );

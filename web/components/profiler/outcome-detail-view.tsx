@@ -25,6 +25,8 @@ interface OutcomeDetailViewProps {
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
     intraState: string;
+    startDate?: string;
+    endDate?: string;
 }
 
 export const OutcomeDetailView = memo(function OutcomeDetailView({
@@ -37,7 +39,9 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
     levelTouches,
     filters,
     brokenFilters,
-    intraState
+    intraState,
+    startDate,
+    endDate
 }: OutcomeDetailViewProps) {
 
     // 1. Identification: Which dates match this outcome?
@@ -132,6 +136,8 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
                     filters={mergedFilters} // <--- Critical: use merged filters so ALL charts in grid reflect the outcome
                     brokenFilters={brokenFilters}
                     intraState={intraState}
+                    startDate={startDate}
+                    endDate={endDate}
                 />
             </section>
 

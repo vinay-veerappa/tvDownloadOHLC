@@ -194,12 +194,10 @@ export function useLiveDataLoading({
             const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
             const wsTimeframe = (timeframe === "15s" || timeframe === "30s") ? timeframe : "1m";
             const wsUrl = `ws://${host}:8001/stream?symbol=${encodeURIComponent(ticker)}&timeframe=${encodeURIComponent(wsTimeframe)}`;
-            console.log(`🔌 [useLiveDataLoading] Connecting WebSocket to ${wsUrl}`);
             const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
 
             ws.onopen = () => {
-                console.log(`🔌 [useLiveDataLoading] WebSocket connected for ${ticker} (tf: ${timeframe}, wsTf: ${wsTimeframe})`);
                 retryCountRef.current = 0;
             };
 
@@ -232,23 +230,9 @@ export function useLiveDataLoading({
                                 lastRaw.low = Math.min(lastRaw.low, currentLivePrice);
                             }
 
-                            // 2. Update last resampled candle of fullData in-place if within same target timeframe boundary
-                            setFullData(prev => {
-                                if (prev.length === 0) return prev;
-                                const updated = [...prev];
-                                const lastCandle = updated[updated.length - 1];
-                                const targetSecs = parseTimeframeToSeconds(timeframe);
-
-                                if (liveTime < lastCandle.time + targetSecs) {
-                                    updated[updated.length - 1] = {
-                                        ...lastCandle,
-                                        close: currentLivePrice,
-                                        high: Math.max(lastCandle.high, currentLivePrice),
-                                        low: Math.min(lastCandle.low, currentLivePrice)
-                                    };
-                                }
-                                return updated;
-                            });
+                            // NOTE: We do NOT update fullData here. The projection logic
+                            // in use-chart-data.ts is the single owner of live price overlay.
+                            // Updating fullData here caused dual-updates and array churn.
                         }
                     } else if (msg.type === 'candle') {
                         const candle = msg.candle;
@@ -266,7 +250,6 @@ export function useLiveDataLoading({
             };
 
             ws.onclose = () => {
-                console.log(`🔌 [useLiveDataLoading] WebSocket closed for ${ticker}`);
                 wsRef.current = null;
                 const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000);
                 retryCountRef.current += 1;

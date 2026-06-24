@@ -3,6 +3,13 @@ import schwab
 import json
 import os
 import sys
+import io
+
+# Force standard output and error to use utf-8 on Windows to prevent emoji encoding crashes
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', write_through=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', write_through=True)
+
 import time
 import sqlite3
 import pandas as pd
@@ -234,7 +241,7 @@ def validate_bootstrap_data(symbol, bootstrap_candles):
         print(f"⚠️ [{symbol}] Bootstrap validation failed: {e}")
         return bootstrap_candles
 
-def detect_gaps(candles, symbol, threshold_minutes=5):
+def detect_gaps(candles, symbol, threshold_minutes=1):
     """
     Detect gaps in 1-minute data larger than threshold.
     Returns list of (gap_start_ms, gap_end_ms) tuples.
@@ -245,7 +252,7 @@ def detect_gaps(candles, symbol, threshold_minutes=5):
         return []
         
     gaps = []
-    threshold_ms = threshold_minutes * 60 * 1000  # 5 minutes = 300,000 ms
+    threshold_ms = threshold_minutes * 60 * 1000  # 1 minute = 60,000 ms
     now_ms = int(time.time() * 1000)
     
     # 1. Check for gaps between existing candles
@@ -387,6 +394,26 @@ def init_chart_data(symbol):
         "data_30s": data_30s,
         "files": files 
     }
+
+async def check_and_bridge_gaps(symbol):
+    if symbol not in charts:
+        return
+    cdata = charts[symbol]["data"]
+    files = charts[symbol]["files"]
+    gaps = detect_gaps(cdata["candles"], symbol)
+    if gaps:
+        print(f"🔧 [{symbol}] Attempting to bridge {len(gaps)} gaps...")
+        bridged = await bridge_gaps(symbol, gaps)
+        if bridged:
+            print(f"✅ [{symbol}] Bridged {len(bridged)} missing bars.")
+            cdata["candles"] = deduplicate_candles(bridged + cdata["candles"])
+            
+            if len(cdata["candles"]) > 20000:
+                cdata["candles"] = cdata["candles"][-15000:]
+            cdata["last_update"] = get_now_iso()
+            
+            # Commit bootstrap/bridged data to live storage parquet
+            save_candles_to_parquet(symbol, cdata["candles"], files["parquet"])
 
 # HUB_URL and HUB_WS imported at top
 
@@ -1017,8 +1044,8 @@ def save_candles_to_parquet(symbol, candles, parquet_path):
             new_df.to_parquet(parquet_path, index=False)
         else:
             existing_df = pd.read_parquet(parquet_path)
-            # Combine, deduplicate on 'time', and save
-            pd.concat([existing_df, new_df]).drop_duplicates(subset=['time']).sort_values('time').to_parquet(parquet_path, index=False)
+            # Combine, deduplicate on 'time', keeping the new/latest data, and save
+            pd.concat([existing_df, new_df]).drop_duplicates(subset=['time'], keep='last').sort_values('time').to_parquet(parquet_path, index=False)
         # print(f"📁 [{symbol}] Archived {len(candles)} bars to {os.path.basename(parquet_path)}")
     except Exception as e:
         print(f"❌ Error saving parquet for {symbol}: {e}")
@@ -1211,27 +1238,14 @@ async def main():
         if boot:
             boot = validate_bootstrap_data(sym, boot)
             cdata = charts[sym]["data"]
-            existing_times = {c["time"] for c in cdata["candles"]}
-            cdata["candles"] = deduplicate_candles(cdata["candles"] + [c for c in boot if c["time"] not in existing_times])
+            # Let boot (REST API bootstrap) take priority and overwrite existing memory candles
+            cdata["candles"] = deduplicate_candles(boot + cdata["candles"])
             
             # 1.2 Detect and bridge gaps between restored data and bootstrap
-            gaps = detect_gaps(cdata["candles"], sym)
-            if gaps:
-                print(f"🔧 [{sym}] Attempting to bridge {len(gaps)} gaps...")
-                bridged = await bridge_gaps(sym, gaps)
-                if bridged:
-                    print(f"✅ [{sym}] Bridged {len(bridged)} missing bars.")
-                    cdata["candles"] = deduplicate_candles(cdata["candles"] + bridged)
+            await check_and_bridge_gaps(sym)
             
-            if len(cdata["candles"]) > 20000:
-                cdata["candles"] = cdata["candles"][-15000:]
-            cdata["last_update"] = get_now_iso()
-            
-            # Commit bootstrap/bridged data to live storage parquet
+            # Always commit the final bootstrapped/merged/bridged data to live storage parquet
             save_candles_to_parquet(sym, cdata["candles"], charts[sym]["files"]["parquet"])
-            
-            # No longer writing snapshot or checkpoint JSON files on boot.
-            pass
 
     # 1.5 Start API Server
     await start_api_server()
@@ -1246,6 +1260,12 @@ async def main():
         try:
             async with websockets.connect(HUB_WS) as ws:
                 print(f"✅ Connected to Hub at {HUB_WS}")
+                
+                # Check and bridge gaps for all symbols on reconnection
+                print("🔄 Hub connection established/restored. Scanning for gaps...")
+                for sym in symbols:
+                    await check_and_bridge_gaps(sym)
+                
                 while True:
                     msg_raw = await ws.recv()
                     msg = json.loads(msg_raw)

@@ -12,6 +12,8 @@ interface PriceModelGridProps {
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
     intraState: string;
+    startDate?: string;
+    endDate?: string;
 }
 
 export const PriceModelGrid = memo(function PriceModelGrid({
@@ -19,7 +21,9 @@ export const PriceModelGrid = memo(function PriceModelGrid({
     targetSession,
     filters,
     brokenFilters,
-    intraState
+    intraState,
+    startDate,
+    endDate
 }: PriceModelGridProps) {
     const sessions = ['Asia', 'London', 'NY1', 'NY2'];
 
@@ -41,6 +45,8 @@ export const PriceModelGrid = memo(function PriceModelGrid({
                         filters={filters}
                         brokenFilters={brokenFilters}
                         intraState={intraState}
+                        startDate={startDate}
+                        endDate={endDate}
                         height={250} // Fixed height for grid alignment
                     />
                 </div>
