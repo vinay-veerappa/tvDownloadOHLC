@@ -59,7 +59,7 @@ const getPresetDates = (preset: string) => {
 };
 
 export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProps) {
-    // 1. Global State
+    const [isInitialized, setIsInitialized] = useState(false);
     const [ticker, setTicker] = useState(initialTicker);
     const [activeTab, setActiveTab] = useState('daily');
     const [subTab, setSubTab] = useState('asia');
@@ -69,15 +69,11 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
     const [showBreakdowns, setShowBreakdowns] = useState(false);
 
-    // Date Range State
-    const [startDate, setStartDate] = useState<string>(() => {
-        // Safe default during SSR, will be updated in useEffect on client
-        return '';
-    });
+    const [startDate, setStartDate] = useState<string>('');
     const [endDate, setEndDate] = useState<string>('');
     const [datePreset, setDatePreset] = useState<string>('last90');
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-    // Load from localStorage on client mount to avoid hydration mismatch
     useEffect(() => {
         const savedPreset = localStorage.getItem('profiler-date-preset') || 'last90';
         setDatePreset(savedPreset);
@@ -89,8 +85,99 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
             setStartDate(start);
             setEndDate(end);
         }
+        setIsInitialized(true);
     }, []);
 
+    if (!isInitialized) {
+        return (
+            <div className="flex items-start gap-4 h-full animate-pulse p-4">
+                <div className="w-[280px] h-[calc(100vh-2rem)] bg-muted/20 rounded-lg border border-border/50" />
+                <div className="flex-1 space-y-6">
+                    <div className="h-10 w-48 bg-muted/20 rounded-md" />
+                    <div className="h-12 w-64 bg-muted/20 rounded-md" />
+                    <div className="h-[400px] w-full bg-muted/20 rounded-lg border border-border/50" />
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <ProfilerViewContent
+            ticker={ticker}
+            setTicker={setTicker}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            subTab={subTab}
+            setSubTab={setSubTab}
+            targetSession={targetSession}
+            setTargetSession={setTargetSession}
+            filters={filters}
+            setFilters={setFilters}
+            brokenFilters={brokenFilters}
+            setBrokenFilters={setBrokenFilters}
+            showBreakdowns={showBreakdowns}
+            setShowBreakdowns={setShowBreakdowns}
+            startDate={startDate}
+            setStartDate={setStartDate}
+            endDate={endDate}
+            setEndDate={setEndDate}
+            datePreset={datePreset}
+            setDatePreset={setDatePreset}
+            isSidebarCollapsed={isSidebarCollapsed}
+            setIsSidebarCollapsed={setIsSidebarCollapsed}
+        />
+    );
+}
+
+interface ProfilerViewContentProps {
+    ticker: string;
+    setTicker: React.Dispatch<React.SetStateAction<string>>;
+    activeTab: string;
+    setActiveTab: React.Dispatch<React.SetStateAction<string>>;
+    subTab: string;
+    setSubTab: React.Dispatch<React.SetStateAction<string>>;
+    targetSession: string;
+    setTargetSession: React.Dispatch<React.SetStateAction<string>>;
+    filters: Record<string, string>;
+    setFilters: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    brokenFilters: Record<string, string>;
+    setBrokenFilters: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    showBreakdowns: boolean;
+    setShowBreakdowns: React.Dispatch<React.SetStateAction<boolean>>;
+    startDate: string;
+    setStartDate: React.Dispatch<React.SetStateAction<string>>;
+    endDate: string;
+    setEndDate: React.Dispatch<React.SetStateAction<string>>;
+    datePreset: string;
+    setDatePreset: React.Dispatch<React.SetStateAction<string>>;
+    isSidebarCollapsed: boolean;
+    setIsSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+}
+
+function ProfilerViewContent({
+    ticker,
+    setTicker,
+    activeTab,
+    setActiveTab,
+    subTab,
+    setSubTab,
+    targetSession,
+    setTargetSession,
+    filters,
+    setFilters,
+    brokenFilters,
+    setBrokenFilters,
+    showBreakdowns,
+    setShowBreakdowns,
+    startDate,
+    setStartDate,
+    endDate,
+    setEndDate,
+    datePreset,
+    setDatePreset,
+    isSidebarCollapsed,
+    setIsSidebarCollapsed,
+}: ProfilerViewContentProps) {
     // Intra-session state
     const intraState = 'Any';
 
@@ -128,9 +215,6 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const deferredFilteredSessions = useDeferredValue(filteredSessions);
     const deferredLevelTouches = useDeferredValue(levelTouches);
     const deferredDailyHodLod = useDeferredValue(dailyHodLod);
-
-    // 6. UI State
-    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
     // Handlers (Memoized)
     const handleFilterChange = useMemo(() => (s: string, v: string) => setFilters(prev => ({ ...prev, [s]: v })), []);

@@ -766,10 +766,11 @@ class ProfilerService:
         )
         
         # Apply start_date and end_date filters AFTER applying transition filters
-        if start_date:
-            matched_dates = [d for d in matched_dates if d >= start_date]
-        if end_date:
-            matched_dates = [d for d in matched_dates if d <= end_date]
+        if start_date or end_date:
+            import bisect
+            start_idx = bisect.bisect_left(matched_dates, start_date) if start_date else 0
+            end_idx = bisect.bisect_right(matched_dates, end_date) if end_date else len(matched_dates)
+            matched_dates = matched_dates[start_idx:end_idx]
             
         date_set = set(matched_dates)
         
@@ -1074,19 +1075,22 @@ class ProfilerService:
         if not start_date and not end_date:
             return cached_columnar
             
-        indices = [i for i, d in enumerate(dates) if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
-        if len(indices) == len(dates):
+        import bisect
+        start_idx = bisect.bisect_left(dates, start_date) if start_date else 0
+        end_idx = bisect.bisect_right(dates, end_date) if end_date else len(dates)
+        
+        if start_idx == 0 and end_idx == len(dates):
             return cached_columnar
             
         return {
-            "dates": [dates[i] for i in indices],
-            "hod_time": [cached_columnar["hod_time"][i] for i in indices],
-            "lod_time": [cached_columnar["lod_time"][i] for i in indices],
-            "hod_price": [cached_columnar["hod_price"][i] for i in indices],
-            "lod_price": [cached_columnar["lod_price"][i] for i in indices],
-            "daily_open": [cached_columnar["daily_open"][i] for i in indices],
-            "daily_high": [cached_columnar["daily_high"][i] for i in indices],
-            "daily_low": [cached_columnar["daily_low"][i] for i in indices]
+            "dates": dates[start_idx:end_idx],
+            "hod_time": cached_columnar["hod_time"][start_idx:end_idx],
+            "lod_time": cached_columnar["lod_time"][start_idx:end_idx],
+            "hod_price": cached_columnar["hod_price"][start_idx:end_idx],
+            "lod_price": cached_columnar["lod_price"][start_idx:end_idx],
+            "daily_open": cached_columnar["daily_open"][start_idx:end_idx],
+            "daily_high": cached_columnar["daily_high"][start_idx:end_idx],
+            "daily_low": cached_columnar["daily_low"][start_idx:end_idx]
         }
 
     @staticmethod
@@ -1275,18 +1279,21 @@ class ProfilerService:
         if not start_date and not end_date:
             return cached_columnar
             
-        indices = [i for i, d in enumerate(dates) if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
-        if len(indices) == len(dates):
+        import bisect
+        start_idx = bisect.bisect_left(dates, start_date) if start_date else 0
+        end_idx = bisect.bisect_right(dates, end_date) if end_date else len(dates)
+        
+        if start_idx == 0 and end_idx == len(dates):
             return cached_columnar
             
-        filtered_dates = [dates[i] for i in indices]
+        filtered_dates = dates[start_idx:end_idx]
         filtered_levels = {}
         for lk, lvl_data in cached_columnar["levels"].items():
             filtered_levels[lk] = {
-                "level": [lvl_data["level"][i] for i in indices],
-                "touched": [lvl_data["touched"][i] for i in indices],
+                "level": lvl_data["level"][start_idx:end_idx],
+                "touched": lvl_data["touched"][start_idx:end_idx],
                 "hits": {
-                    s: [lvl_data["hits"][s][i] for i in indices] for s in lvl_data["hits"]
+                    s: lvl_data["hits"][s][start_idx:end_idx] for s in lvl_data["hits"]
                 }
             }
             
@@ -1346,7 +1353,7 @@ class ProfilerService:
         try:
             # Use robust loader to get synchronized Unix timestamps
             from api.features.shared.data_loader import load_parquet
-            df = load_parquet(ticker, "1m")
+            df = load_parquet(ticker, "1m", columns=["time", "high", "low"])
             
             if df is None or df.empty:
                 return None

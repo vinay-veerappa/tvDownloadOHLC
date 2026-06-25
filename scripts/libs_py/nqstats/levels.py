@@ -10,34 +10,50 @@ def calculate_daily_levels(df_1m: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate Institutional Standard Levels (PDH, PDL, PDM, Settle) for all days.
     Input df_1m must be localized or localized to US/Eastern inside.
+    Uses daily (1d) parquet data if available to avoid heavy 1m resampling.
     """
     et_df = df_1m.tz_convert('US/Eastern') if df_1m.index.tz else df_1m
+    dates = et_df.index.date
+    u_dates = np.unique(dates)
     
-    # 1. Resample to Daily (D) to get PD levels
-    # NQ Close is 16:00 ET. Standard 'D' resample uses 00:00.
-    # We need to define "Trading Day" properly: 18:00 (prev) to 17:00 (today).
-    # However, NQStats usually anchors 'Daily' logic to the standard calendar day for PDH/L 
-    # based on the 16:00 close.
-    
-    # Standard Prior Day (Standard Calendar Day 00:00-23:59)
-    daily = et_df.resample('D').agg({
-        'high': 'max',
-        'low': 'min',
-        'close': 'last'
-    }).shift(1) # Shift to make 'today' look at 'yesterday'
+    # Try reading from 1d daily parquet
+    daily = None
+    try:
+        from api.features.shared.data_loader import DATA_DIR
+        daily_parquet = DATA_DIR / "NQ1_1d.parquet" # Or detect ticker if possible, default NQ1
+        if daily_parquet.exists():
+            df_d = pd.read_parquet(daily_parquet)
+            if df_d.index.tz is None:
+                df_d = df_d.tz_localize('UTC').tz_convert('US/Eastern')
+            else:
+                df_d = df_d.tz_convert('US/Eastern')
+            
+            # Aggregate standard calendar day and shift by 1
+            daily = df_d.resample('D').agg({
+                'high': 'max',
+                'low': 'min',
+                'close': 'last'
+            }).shift(1)
+    except Exception as e:
+        print(f"[Levels] Could not load 1d parquet: {e}. Falling back to 1m resampling.")
+        daily = None
+
+    if daily is None:
+        # Fallback to standard 1m resampling
+        daily = et_df.resample('D').agg({
+            'high': 'max',
+            'low': 'min',
+            'close': 'last'
+        }).shift(1)
     
     # Map back to 1m
-    dates = et_df.index.date
-    # PEFORMANCE/FIX: Use tz_localize(None) to drop timezone info WITHOUT shifting hours.
-    # tz_convert(None) converts to UTC then drops, which shifts midnight to 04:00 (for ET).
     daily_naive = daily.copy()
     daily_naive.index = daily_naive.index.tz_localize(None)
-    daily_map = daily_naive.reindex(pd.to_datetime(np.unique(dates))).to_dict('index')
+    daily_map = daily_naive.reindex(pd.to_datetime(u_dates)).to_dict('index')
     
     levels = pd.DataFrame(index=et_df.index)
     
     # Optimized mapping
-    u_dates = np.unique(dates)
     pdh = np.array([daily_map.get(pd.Timestamp(d), {}).get('high', np.nan) for d in dates])
     pdl = np.array([daily_map.get(pd.Timestamp(d), {}).get('low', np.nan) for d in dates])
     pdc = np.array([daily_map.get(pd.Timestamp(d), {}).get('close', np.nan) for d in dates])
@@ -49,10 +65,6 @@ def calculate_daily_levels(df_1m: pd.DataFrame) -> pd.DataFrame:
     
     # 2. Weekly Close
     weekly_close = et_df['close'].resample('W').last().shift(1)
-    # Map to daily then to 1m
-    weekly_map = weekly_close.to_dict()
-    # Find most recent Sunday/Monday anchor
-    # Simple way: ffill the weekly_close reindexed to daily then reindexed to 1m
     levels['pwc'] = weekly_close.reindex(et_df.index, method='ffill')
 
     return levels

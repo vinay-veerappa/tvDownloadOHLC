@@ -33,4 +33,5 @@ async def get_ohlc_slice(
         arr = slice_df[["time", "open", "high", "low", "close"]].values.astype(np.float64)
         return Response(content=arr.tobytes(), media_type="application/octet-stream")
     
-    return slice_df[["time", "open", "high", "low", "close"]].to_dict(orient="records")
+    from fastapi.responses import ORJSONResponse
+    return ORJSONResponse(slice_df[["time", "open", "high", "low", "close"]].to_dict(orient="records"))

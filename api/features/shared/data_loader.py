@@ -40,7 +40,7 @@ def parse_timeframe_to_pandas(tf: str) -> str:
         return f"{tf[:-1]}M"
     return tf
 
-def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> Optional[pd.DataFrame]:
+def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None, columns: Optional[list] = None) -> Optional[pd.DataFrame]:
     """
     Load OHLCV data from Parquet file merged with live storage data in memory.
     
@@ -48,9 +48,10 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
         ticker: e.g., "ES1", "NQ1" or "ES1!" (will be stripped)
         timeframe: e.g., "5m", "1h", "1D", "1wk" (maps "1W" -> "1wk")
         t_end: Optional timestamp limit (used to skip live fusion for purely historical slices)
+        columns: Optional list of columns to load from disk (e.g. ['time', 'high', 'low']).
     
     Returns:
-        DataFrame with columns: time, open, high, low, close, volume
+        DataFrame with columns: time, open, high, low, close, volume (or a subset if columns specified)
     """
     # Clean ticker: "ES1!" -> "ES1"
     clean_ticker = ticker.replace("!", "")
@@ -67,11 +68,20 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
     }
     if clean_ticker in aliases:
         clean_ticker = aliases[clean_ticker]
+
+    # Ignore column selective loading if resampling is needed (resampling requires OHLCV columns)
+    clean_tf = timeframe.replace('m', '')
+    if columns is not None and clean_tf not in ['1', '1m']:
+        columns = None
         
     live_ticker = TICKER_MAP.get(clean_ticker, clean_ticker)
     live_path = DATA_DIR / "live" / f"live_storage_{live_ticker}.parquet"
     
+    # Generate stable cache keys
     fused_key = f"fused_{clean_ticker}_{timeframe}"
+    if columns is not None:
+        fused_key += "_cols_" + "_".join(sorted(columns))
+        
     live_mtime = 0.0
     if live_path.exists():
         try:
@@ -89,10 +99,14 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
         if not cached_df.empty and live_path.exists():
             try:
                 cache_key_live = f"live_{live_ticker}"
+                if columns is not None:
+                    cache_key_live += "_cols_" + "_".join(sorted(columns))
+                    
                 if cache_key_live in _LIVE_STORAGE_CACHE and _LIVE_STORAGE_CACHE[cache_key_live][1] == live_mtime:
                     df_l = _LIVE_STORAGE_CACHE[cache_key_live][0]
                 else:
-                    df_l = pd.read_parquet(live_path, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+                    live_cols = columns if columns is not None else ['time', 'open', 'high', 'low', 'close', 'volume']
+                    df_l = pd.read_parquet(live_path, columns=live_cols)
                     _LIVE_STORAGE_CACHE[cache_key_live] = (df_l, live_mtime)
                 
                 if df_l is not None and not df_l.empty:
@@ -110,7 +124,6 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
                             new_live = new_live.set_index('datetime')
                             
                             # Resample if needed
-                            clean_tf = timeframe.replace('m', '')
                             if clean_tf not in ['1', '1m']:
                                 rule = parse_timeframe_to_pandas(timeframe)
                                 new_live_resampled = new_live.resample(rule).agg({
@@ -126,11 +139,11 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
                                 
                             if not new_live_resampled.empty:
                                 new_live_resampled['time'] = new_live_resampled.index.astype('int64') // 10**9
-                                new_live_resampled = new_live_resampled[['time', 'open', 'high', 'low', 'close', 'volume']]
+                                live_cols_to_slice = columns if columns is not None else ['time', 'open', 'high', 'low', 'close', 'volume']
+                                new_live_resampled = new_live_resampled[live_cols_to_slice]
                                 
                                 updated_df = pd.concat([cached_df, new_live_resampled]).reset_index(drop=True)
                                 _FUSED_CACHE[fused_key] = (updated_df, live_mtime)
-                                # print(f"[data_loader] Incrementally appended {len(new_live_resampled)} live bars to {clean_ticker}_{timeframe}")
                                 return updated_df.copy()
                         else:
                             _FUSED_CACHE[fused_key] = (cached_df, live_mtime)
@@ -146,10 +159,13 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
         return None
     
     cache_key = f"{clean_ticker}_{timeframe}"
+    if columns is not None:
+        cache_key += "_cols_" + "_".join(sorted(columns))
+        
     if cache_key in _HISTORICAL_CACHE:
         df = _HISTORICAL_CACHE[cache_key]
     else:
-        df = pd.read_parquet(filepath)
+        df = pd.read_parquet(filepath, columns=columns)
         
         # Handle datetime index - reset to column and convert to Unix timestamp
         if df.index.name in ['datetime', 'time', 'timestamp'] or (not df.index.empty and isinstance(df.index, pd.DatetimeIndex)):
@@ -183,6 +199,9 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
             df = df.dropna(subset=['time'])
 
         expected_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
+        if columns is not None:
+            expected_cols = [c for c in expected_cols if c in columns]
+            
         for col in expected_cols:
             if col not in df.columns:
                 print(f"Missing column: {col}")
@@ -203,10 +222,14 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
         try:
             mtime = os.path.getmtime(live_path)
             cache_key_live = f"live_{live_ticker}"
+            if columns is not None:
+                cache_key_live += "_cols_" + "_".join(sorted(columns))
+                
             if cache_key_live in _LIVE_STORAGE_CACHE and _LIVE_STORAGE_CACHE[cache_key_live][1] == mtime:
                 df_l = _LIVE_STORAGE_CACHE[cache_key_live][0].copy()
             else:
-                df_l = pd.read_parquet(live_path, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+                live_cols = columns if columns is not None else ['time', 'open', 'high', 'low', 'close', 'volume']
+                df_l = pd.read_parquet(live_path, columns=live_cols)
                 _LIVE_STORAGE_CACHE[cache_key_live] = (df_l, mtime)
                 df_l = df_l.copy()
 
@@ -219,12 +242,10 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
 
             if not df_l.empty:
                 # Ensure the time column is datetime index for resampling
-                # Live storage uses epoch ms (13-digit)
                 df_l['datetime'] = pd.to_datetime(df_l['time'], unit='ms')
                 df_l = df_l.set_index('datetime')
                 
                 # Resample live data if target is not 1m
-                clean_tf = timeframe.replace('m', '')
                 if clean_tf not in ['1', '1m']:
                     rule = parse_timeframe_to_pandas(timeframe)
                     df_l_resampled = df_l.resample(rule).agg({
@@ -242,7 +263,8 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
                 df_l_resampled['time'] = df_l_resampled.index.astype('int64') // 10**9
                 
                 # Keep expected columns
-                df_l_resampled = df_l_resampled[['time', 'open', 'high', 'low', 'close', 'volume']]
+                live_cols_to_slice = columns if columns is not None else ['time', 'open', 'high', 'low', 'close', 'volume']
+                df_l_resampled = df_l_resampled[live_cols_to_slice]
                 
                 # Optimized merge: split using searchsorted to avoid copying 6.5M rows
                 if not df.empty and not df_l_resampled.empty:
@@ -260,8 +282,6 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
                     df = pd.concat([df_before, merged_overlap]).reset_index(drop=True)
                 elif not df_l_resampled.empty:
                     df = df_l_resampled.copy()
-                
-                # print(f"[data_loader] Successfully fused {len(df_l_resampled)} live storage bars into {clean_ticker}_{timeframe}")
         except Exception as e:
             print(f"[data_loader] Failed to fuse live storage for {clean_ticker}: {e}")
     
