@@ -682,17 +682,17 @@ class ProfilerService:
         
         all_sessions = stats.get('sessions', [])
         
-        # Apply start_date and end_date filters
-        if start_date:
-            all_sessions = [s for s in all_sessions if s.get('date', '') >= start_date]
-        if end_date:
-            all_sessions = [s for s in all_sessions if s.get('date', '') <= end_date]
-        
         # 2. Apply filters to get matched dates
         matched_dates = ProfilerService.apply_filters(
             all_sessions, target_session, filters, broken_filters, intra_state
         )
         
+        # Apply start_date and end_date filters AFTER applying transition filters
+        if start_date:
+            matched_dates = [d for d in matched_dates if d >= start_date]
+        if end_date:
+            matched_dates = [d for d in matched_dates if d <= end_date]
+            
         date_set = set(matched_dates)
         
         # 3. Get sessions for matched dates

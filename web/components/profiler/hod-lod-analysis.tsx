@@ -35,6 +35,20 @@ function minutesToTime(mins: number): string {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 }
 
+function timeToTradingMinutes(time: string): number {
+    const [h, m] = time.split(':').map(Number);
+    const calMins = h * 60 + m;
+    // Session starts at 18:00 (1080 minutes)
+    return calMins >= 1080 ? (calMins - 1080) : (calMins + 360);
+}
+
+function tradingMinutesToTime(mins: number): string {
+    const calMins = mins < 360 ? (mins + 1080) : (mins - 360);
+    const h = Math.floor(calMins / 60) % 24;
+    const m = calMins % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+}
+
 function roundToBucket(time: string, granularity: number): string {
     const mins = timeToMinutes(time);
     const rounded = Math.floor(mins / granularity) * granularity;
@@ -239,12 +253,12 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
         return {
             timeHistogramData: data,
             hodStats: {
-                median: minutesToTime(Math.round(median(finalHodTimes.map(timeToMinutes)))),
+                median: tradingMinutesToTime(Math.round(median(finalHodTimes.map(timeToTradingMinutes)))),
                 mode: mode(hodBucketed),
                 count: finalHodTimes.length,
             },
             lodStats: {
-                median: minutesToTime(Math.round(median(finalLodTimes.map(timeToMinutes)))),
+                median: tradingMinutesToTime(Math.round(median(finalLodTimes.map(timeToTradingMinutes)))),
                 mode: mode(lodBucketed),
                 count: finalLodTimes.length,
             },

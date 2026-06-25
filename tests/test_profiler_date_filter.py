@@ -54,6 +54,26 @@ def test_profiler_price_model_date_filtering():
     
     print("Price model verification passed!")
 
+def test_profiler_transition_filters():
+    # Fetch stats with transition filters on previous sessions
+    filters = {"Prev Asia": "Short True"}
+    full_stats = ProfilerService.get_filtered_stats("NQ1", "NY1", filters=filters)
+    assert "error" not in full_stats
+    matched_dates = sorted(full_stats["matched_dates"])
+    assert len(matched_dates) > 0, "No dates matched transition filter"
+    
+    # Take a date that matched
+    target_date = matched_dates[0]
+    
+    # Query specifically with start_date=target_date and end_date=target_date
+    filtered = ProfilerService.get_filtered_stats(
+        "NQ1", "NY1", filters=filters, start_date=target_date, end_date=target_date
+    )
+    assert target_date in filtered["matched_dates"], f"Transition boundary bug: target_date {target_date} failed to match when start_date is set to it."
+    
+    print("Transition filters verification passed!")
+
 if __name__ == "__main__":
     test_profiler_date_filtering()
     test_profiler_price_model_date_filtering()
+    test_profiler_transition_filters()
