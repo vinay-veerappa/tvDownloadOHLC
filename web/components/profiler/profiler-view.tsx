@@ -67,6 +67,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
 
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
+    const [showBreakdowns, setShowBreakdowns] = useState(false);
 
     // Date Range State
     const [startDate, setStartDate] = useState<string>(() => {
@@ -276,10 +277,18 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                 <RangeDistribution sessions={deferredFilteredSessions} forcedSession="daily" dailyHodLod={deferredDailyHodLod} />
             </section>
 
-            {/* 3. Daily Price Model */}
+            {/* 3. Price Models */}
             <section>
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold">Price Models</h2>
+                    <div className="flex items-center space-x-2">
+                        <Label htmlFor="show-breakdowns" className="text-sm text-muted-foreground">Compare Session Breakdowns</Label>
+                        <Switch
+                            id="show-breakdowns"
+                            checked={showBreakdowns}
+                            onCheckedChange={setShowBreakdowns}
+                        />
+                    </div>
                 </div>
 
                 <div className="space-y-8">
@@ -300,18 +309,20 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     </div>
 
                     {/* 3.2 Session Breakdowns (Grid) */}
-                    <div className="space-y-2">
-                        <h4 className="text-sm font-semibold opacity-70">Session Breakdown</h4>
-                        <PriceModelGrid
-                            ticker={debouncedTicker}
-                            targetSession={debouncedTargetSession}
-                            filters={debouncedFilters}
-                            brokenFilters={debouncedBrokenFilters}
-                            intraState={intraState}
-                            startDate={debouncedStartDate}
-                            endDate={debouncedEndDate}
-                        />
-                    </div>
+                    {showBreakdowns && (
+                        <div className="space-y-2 animate-in fade-in duration-300">
+                            <h4 className="text-sm font-semibold opacity-70">Session Breakdown</h4>
+                            <PriceModelGrid
+                                ticker={debouncedTicker}
+                                targetSession={debouncedTargetSession}
+                                filters={debouncedFilters}
+                                brokenFilters={debouncedBrokenFilters}
+                                intraState={intraState}
+                                startDate={debouncedStartDate}
+                                endDate={debouncedEndDate}
+                            />
+                        </div>
+                    )}
                 </div>
             </section>
 
@@ -343,7 +354,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
         distributionChartData,
         maxProb,
         debouncedStartDate,
-        debouncedEndDate
+        debouncedEndDate,
+        showBreakdowns
     ]);
 
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
@@ -404,42 +416,46 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     </div>
 
                     <TabsContent value="daily" className="mt-2 w-full animate-in fade-in slide-in-from-top-4 duration-500">
-                        {dailyTabContent}
+                        {activeTab === 'daily' && dailyTabContent}
                     </TabsContent>
 
                     <TabsContent value="sessions" className="mt-2 w-full animate-in fade-in slide-in-from-top-4 duration-500">
-                        <Tabs value={subTab} onValueChange={setSubTab} className="w-full">
-                            <div className="flex justify-start">
-                                <TabsList className="h-10 p-1 bg-muted/50 inline-flex mb-8 border border-border/30">
-                                    <TabsTrigger value="asia" className="px-6">Asia</TabsTrigger>
-                                    <TabsTrigger value="london" className="px-6">London</TabsTrigger>
-                                    <TabsTrigger value="ny1" className="px-6">NY1</TabsTrigger>
-                                    <TabsTrigger value="ny2" className="px-6">NY2</TabsTrigger>
-                                </TabsList>
-                            </div>
+                        {activeTab === 'sessions' && (
+                            <Tabs value={subTab} onValueChange={setSubTab} className="w-full">
+                                <div className="flex justify-start">
+                                    <TabsList className="h-10 p-1 bg-muted/50 inline-flex mb-8 border border-border/30">
+                                        <TabsTrigger value="asia" className="px-6">Asia</TabsTrigger>
+                                        <TabsTrigger value="london" className="px-6">London</TabsTrigger>
+                                        <TabsTrigger value="ny1" className="px-6">NY1</TabsTrigger>
+                                        <TabsTrigger value="ny2" className="px-6">NY2</TabsTrigger>
+                                    </TabsList>
+                                </div>
 
-                            {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
-                                const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
-                                return (
-                                    <TabsContent key={sessKey} value={sessKey}>
-                                        <SessionAnalysisView
-                                            session={sessName}
-                                            sessions={deferredFilteredSessions}
-                                            allSessions={deferredFilteredSessions}
-                                            dailyHodLod={deferredDailyHodLod || null}
-                                            filteredDates={filteredDates}
-                                            ticker={debouncedTicker}
-                                            levelTouches={deferredLevelTouches}
-                                            filters={debouncedFilters}
-                                            brokenFilters={debouncedBrokenFilters}
-                                            intraState={intraState}
-                                            startDate={debouncedStartDate}
-                                            endDate={debouncedEndDate}
-                                        />
-                                    </TabsContent>
-                                );
-                            })}
-                        </Tabs>
+                                {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
+                                    const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
+                                    return (
+                                        <TabsContent key={sessKey} value={sessKey}>
+                                            {subTab === sessKey && (
+                                                <SessionAnalysisView
+                                                    session={sessName}
+                                                    sessions={deferredFilteredSessions}
+                                                    allSessions={deferredFilteredSessions}
+                                                    dailyHodLod={deferredDailyHodLod || null}
+                                                    filteredDates={filteredDates}
+                                                    ticker={debouncedTicker}
+                                                    levelTouches={deferredLevelTouches}
+                                                    filters={debouncedFilters}
+                                                    brokenFilters={debouncedBrokenFilters}
+                                                    intraState={intraState}
+                                                    startDate={debouncedStartDate}
+                                                    endDate={debouncedEndDate}
+                                                />
+                                            )}
+                                        </TabsContent>
+                                    );
+                                })}
+                            </Tabs>
+                        )}
                     </TabsContent>
                 </Tabs>
             </div>

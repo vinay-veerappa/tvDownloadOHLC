@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, memo } from 'react';
+import { useMemo, memo, useState } from 'react';
 import { ProfilerSession, LevelTouchesResponse, DailyHodLodResponse } from '@/lib/api/profiler';
 import { SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
@@ -76,6 +76,9 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
         return OUTCOMES.filter(o => outcomeGroups.groups[o].length > 0);
     }, [outcomeGroups]);
 
+    const [activeOutcome, setActiveOutcome] = useState<string>(validOutcomes[0] || 'Long True');
+    const currentActive = validOutcomes.includes(activeOutcome) ? activeOutcome : (validOutcomes[0] || 'Long True');
+
     if (sessionData.length === 0) {
         return <div className="p-8 text-center text-muted-foreground">No data matches criteria for {session} session.</div>;
     }
@@ -114,7 +117,7 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
                         <span>📋</span> Copy All Outcomes
                     </button>
                 </div>
-                <Tabs defaultValue={validOutcomes[0]} className="w-full">
+                <Tabs value={currentActive} onValueChange={setActiveOutcome} className="w-full">
                     <div className="flex justify-start">
                         <TabsList className="h-10 p-1 bg-muted/60 inline-flex mb-8 border border-border/40">
                             {validOutcomes.map(outcome => {
@@ -135,20 +138,22 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
 
                     {validOutcomes.map(outcome => (
                         <TabsContent key={outcome} value={outcome} className="mt-0">
-                            <OutcomeDetailView
-                                outcome={outcome}
-                                sessions={outcomeGroups.groups[outcome]}
-                                allSessions={allSessions}
-                                dailyHodLod={dailyHodLod}
-                                ticker={ticker}
-                                targetSession={session}
-                                levelTouches={levelTouches} // [NEW] Pass level data
-                                filters={filters}
-                                brokenFilters={brokenFilters}
-                                intraState={intraState}
-                                startDate={startDate}
-                                endDate={endDate}
-                            />
+                            {currentActive === outcome && (
+                                <OutcomeDetailView
+                                    outcome={outcome}
+                                    sessions={outcomeGroups.groups[outcome]}
+                                    allSessions={allSessions}
+                                    dailyHodLod={dailyHodLod}
+                                    ticker={ticker}
+                                    targetSession={session}
+                                    levelTouches={levelTouches} // [NEW] Pass level data
+                                    filters={filters}
+                                    brokenFilters={brokenFilters}
+                                    intraState={intraState}
+                                    startDate={startDate}
+                                    endDate={endDate}
+                                />
+                            )}
                         </TabsContent>
                     ))}
                 </Tabs>

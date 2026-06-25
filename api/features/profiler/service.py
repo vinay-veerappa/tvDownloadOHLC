@@ -26,6 +26,7 @@ class ProfilerService:
     _daily_hod_lod_cache = OrderedDict()
     _filtered_stats_cache = OrderedDict()  # Cache for filtered stats results
     _prediction_cache = OrderedDict()  # Cache for prediction datasets
+    _pivoted_cache = OrderedDict()  # Cache for pre-pivoted session DataFrames
 
     _MAX_DF_CACHE = int(os.getenv("PROFILER_MAX_DF_CACHE", "2"))
     _MAX_JSON_CACHE = int(os.getenv("PROFILER_MAX_JSON_CACHE", "4"))
@@ -89,6 +90,7 @@ class ProfilerService:
             keys = [k for k in ProfilerService._prediction_cache.keys() if str(k).startswith(f"{ticker}_")]
             for k in keys:
                 ProfilerService._prediction_cache.pop(k, None)
+            ProfilerService._pivoted_cache.clear()
         else:
             ProfilerService._cache.clear()
             ProfilerService._json_cache.clear()
@@ -97,6 +99,7 @@ class ProfilerService:
             ProfilerService._daily_hod_lod_cache.clear()
             ProfilerService._filtered_stats_cache.clear()
             ProfilerService._prediction_cache.clear()
+            ProfilerService._pivoted_cache.clear()
         return {"cleared": ticker or "all"}
 
 
@@ -316,6 +319,7 @@ class ProfilerService:
         # Use absolute Unix seconds for the index (converts US/Eastern -> UTC Unix)
         np_ts_unix = df.index.astype('int64').to_numpy() // 10**9
 
+        is_daily = len(valid_sessions) > 0 and valid_sessions[0].get('session') == 'Daily'
         for i, (start_idx, end_idx) in enumerate(zip(start_locs, end_locs)):
             # Bounds check for searchsorted results
             if start_idx >= len(df) or end_idx > len(df) or start_idx >= end_idx:
@@ -324,16 +328,11 @@ class ProfilerService:
             sess_open = valid_sessions[i]['open']
             if sess_open is None or sess_open <= 0: continue
             
+            start_idx_val = start_idx
+            end_idx_val = end_idx
+            
             # Use the integer Unix timestamps from our pre-converted array
             base_ts_unix = int(valid_starts[i].timestamp())
-            
-            # Slicing numpy array using Unix seconds
-            # Use searchsorted on the Unix array
-            start_idx_val = np.searchsorted(np_ts_unix, base_ts_unix)
-            end_ts_unix = base_ts_unix + int(duration_hours * 3600)
-            end_idx_val = np.searchsorted(np_ts_unix, end_ts_unix)
-            
-            if start_idx_val >= end_idx_val: continue
             
             chunk_ts_unix = np_ts_unix[start_idx_val:end_idx_val]
             chunk_high = np_high[start_idx_val:end_idx_val]
@@ -346,45 +345,47 @@ class ProfilerService:
             sess_anchor = valid_sessions[i].get('prior_close') or sess_open
             if sess_anchor is None or sess_anchor <= 0: continue
             
-            # V24 Logic: Chained Session O/U Anchors
-            # 1. Asia O/U (18:00-19:30) -> Mins 0-90. Anchors London (540+)
-            # 2. London O/U (02:30-03:30) -> Mins 510-570. Anchors NY AM (810+)
-            # 3. NY AM O/U (08:00-09:30) -> Mins 840-930. Anchors NY PM (1080+)
-            
-            # (Already extracted above)
-            
-            # Calculate O/U Mids for this specific session instance
-            asia_ou_mid = sess_open # Fallback
-            lon_ou_mid  = sess_open # Fallback
-            ny_ou_mid   = sess_open # Fallback
-            
-            # Asia O/U Mid
-            mask_asia = (time_deltas_m >= 0) & (time_deltas_m < 90)
-            if mask_asia.any():
-                h, l = chunk_high[mask_asia], chunk_low[mask_asia]
-                if len(h) > 0: asia_ou_mid = (h.max() + l.min()) / 2.0
+            if is_daily:
+                # Calculate O/U Mids for this specific session instance using fast binary search slicing
+                asia_ou_mid = sess_open
+                lon_ou_mid  = sess_open
+                ny_ou_mid   = sess_open
                 
-            # London O/U Mid
-            mask_lon = (time_deltas_m >= 510) & (time_deltas_m < 570)
-            if mask_lon.any():
-                h, l = chunk_high[mask_lon], chunk_low[mask_lon]
-                if len(h) > 0: lon_ou_mid = (h.max() + l.min()) / 2.0
-                
-            # NY AM O/U Mid
-            mask_ny = (time_deltas_m >= 840) & (time_deltas_m < 930)
-            if mask_ny.any():
-                h, l = chunk_high[mask_ny], chunk_low[mask_ny]
-                if len(h) > 0: ny_ou_mid = (h.max() + l.min()) / 2.0
+                # Asia O/U Mid (0 to 90 min)
+                idx_asia_start = np.searchsorted(chunk_ts_unix, base_ts_unix)
+                idx_asia_end = np.searchsorted(chunk_ts_unix, base_ts_unix + 90 * 60)
+                h_asia = chunk_high[idx_asia_start:idx_asia_end]
+                l_asia = chunk_low[idx_asia_start:idx_asia_end]
+                if len(h_asia) > 0:
+                    asia_ou_mid = (h_asia.max() + l_asia.min()) / 2.0
+                    
+                # London O/U Mid (510 to 570 min)
+                idx_lon_start = np.searchsorted(chunk_ts_unix, base_ts_unix + 510 * 60)
+                idx_lon_end = np.searchsorted(chunk_ts_unix, base_ts_unix + 570 * 60)
+                h_lon = chunk_high[idx_lon_start:idx_lon_end]
+                l_lon = chunk_low[idx_lon_start:idx_lon_end]
+                if len(h_lon) > 0:
+                    lon_ou_mid = (h_lon.max() + l_lon.min()) / 2.0
+                    
+                # NY AM O/U Mid (840 to 930 min)
+                idx_ny_start = np.searchsorted(chunk_ts_unix, base_ts_unix + 840 * 60)
+                idx_ny_end = np.searchsorted(chunk_ts_unix, base_ts_unix + 930 * 60)
+                h_ny = chunk_high[idx_ny_start:idx_ny_end]
+                l_ny = chunk_low[idx_ny_start:idx_ny_end]
+                if len(h_ny) > 0:
+                    ny_ou_mid = (h_ny.max() + l_ny.min()) / 2.0
 
-            # Apply Dynamic Anchors (V24 Chain)
-            anchors = np.full(len(chunk_ts_unix), sess_anchor)
-            
-            # London (03:00+) -> Asia O/U Mid
-            anchors[time_deltas_m >= 540] = asia_ou_mid
-            # NY AM (07:30+) -> London O/U Mid
-            anchors[time_deltas_m >= 810] = lon_ou_mid
-            # NY PM (12:00+) -> NY AM O/U Mid
-            anchors[time_deltas_m >= 1080] = ny_ou_mid
+                # Apply Dynamic Anchors (V24 Chain) using binary search slices
+                anchors = np.full(len(chunk_ts_unix), sess_anchor)
+                idx_540 = np.searchsorted(chunk_ts_unix, base_ts_unix + 540 * 60)
+                idx_810 = np.searchsorted(chunk_ts_unix, base_ts_unix + 810 * 60)
+                idx_1080 = np.searchsorted(chunk_ts_unix, base_ts_unix + 1080 * 60)
+                
+                anchors[idx_540:idx_810] = asia_ou_mid
+                anchors[idx_810:idx_1080] = lon_ou_mid
+                anchors[idx_1080:] = ny_ou_mid
+            else:
+                anchors = sess_anchor
             
             norm_high = ((chunk_high - anchors) / anchors) * 100
             norm_low = ((chunk_low - anchors) / anchors) * 100
@@ -571,37 +572,49 @@ class ProfilerService:
         filters = filters or {}
         broken_filters = broken_filters or {}
 
-        session_rows = []
-        for s in sessions:
-            date = s.get('date')
-            sess_name = s.get('session')
-            if not date or not sess_name:
-                continue
-            session_rows.append({
-                'date': date,
-                'session': sess_name,
-                'status': s.get('status', ''),
-                'broken': bool(s.get('broken', False)),
-            })
+        sessions_id = id(sessions)
+        cached_pivots = ProfilerService._cache_get(ProfilerService._pivoted_cache, sessions_id)
+        if cached_pivots is not None:
+            status_pivot, broken_pivot = cached_pivots
+        else:
+            session_rows = []
+            for s in sessions:
+                date = s.get('date')
+                sess_name = s.get('session')
+                if not date or not sess_name:
+                    continue
+                session_rows.append({
+                    'date': date,
+                    'session': sess_name,
+                    'status': s.get('status', ''),
+                    'broken': bool(s.get('broken', False)),
+                })
 
-        if not session_rows:
-            return []
+            if not session_rows:
+                return []
 
-        session_df = pd.DataFrame(session_rows)
-        session_df = session_df.sort_values(['date', 'session'])
+            session_df = pd.DataFrame(session_rows)
+            session_df = session_df.sort_values(['date', 'session'])
 
-        status_pivot = session_df.pivot_table(index='date', columns='session', values='status', aggfunc='last')
-        broken_pivot = session_df.pivot_table(index='date', columns='session', values='broken', aggfunc='last')
+            status_pivot = session_df.pivot_table(index='date', columns='session', values='status', aggfunc='last')
+            broken_pivot = session_df.pivot_table(index='date', columns='session', values='broken', aggfunc='last')
 
-        # Add previous-session context as shifted columns for transition filters.
-        for base_session in ['NY1', 'NY2', 'Asia']:
-            if base_session in status_pivot.columns:
-                status_pivot[f'Prev {base_session}'] = status_pivot[base_session].shift(1)
-            if base_session in broken_pivot.columns:
-                broken_pivot[f'Prev {base_session}'] = broken_pivot[base_session].shift(1)
+            # Add previous-session context as shifted columns for transition filters.
+            for base_session in ['NY1', 'NY2', 'Asia']:
+                if base_session in status_pivot.columns:
+                    status_pivot[f'Prev {base_session}'] = status_pivot[base_session].shift(1)
+                if base_session in broken_pivot.columns:
+                    broken_pivot[f'Prev {base_session}'] = broken_pivot[base_session].shift(1)
 
-        status_pivot = status_pivot.sort_index()
-        broken_pivot = broken_pivot.reindex(status_pivot.index).fillna(False).astype(bool)
+            status_pivot = status_pivot.sort_index()
+            broken_pivot = broken_pivot.reindex(status_pivot.index).fillna(False).astype(bool)
+            
+            ProfilerService._cache_set(
+                ProfilerService._pivoted_cache,
+                sessions_id,
+                (status_pivot, broken_pivot),
+                max_items=8
+            )
         mask = pd.Series(True, index=status_pivot.index)
 
         # Status filters
