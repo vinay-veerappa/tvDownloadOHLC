@@ -79,8 +79,64 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
         except Exception:
             pass
             
-    if fused_key in _FUSED_CACHE and _FUSED_CACHE[fused_key][1] == live_mtime:
-        return _FUSED_CACHE[fused_key][0].copy()
+    # 1. Check for fully cached fused dataframe
+    if fused_key in _FUSED_CACHE:
+        cached_df, cached_mtime = _FUSED_CACHE[fused_key]
+        if cached_mtime == live_mtime:
+            return cached_df.copy()
+            
+        # 2. Try incremental append in-memory to avoid copying 6.5M rows
+        if not cached_df.empty and live_path.exists():
+            try:
+                cache_key_live = f"live_{live_ticker}"
+                if cache_key_live in _LIVE_STORAGE_CACHE and _LIVE_STORAGE_CACHE[cache_key_live][1] == live_mtime:
+                    df_l = _LIVE_STORAGE_CACHE[cache_key_live][0]
+                else:
+                    df_l = pd.read_parquet(live_path, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+                    _LIVE_STORAGE_CACHE[cache_key_live] = (df_l, live_mtime)
+                
+                if df_l is not None and not df_l.empty:
+                    last_cached_time_ms = int(cached_df['time'].iloc[-1] * 1000)
+                    new_live = df_l[df_l['time'] > last_cached_time_ms].copy()
+                    
+                    live_min_time_ms = df_l['time'].min()
+                    live_max_time_ms = df_l['time'].max()
+                    
+                    # Ensure live data begins before/at last cached time (no gaps)
+                    # and that live storage hasn't been reset/trimmed
+                    if live_max_time_ms > last_cached_time_ms and live_min_time_ms <= last_cached_time_ms:
+                        if not new_live.empty:
+                            new_live['datetime'] = pd.to_datetime(new_live['time'], unit='ms')
+                            new_live = new_live.set_index('datetime')
+                            
+                            # Resample if needed
+                            clean_tf = timeframe.replace('m', '')
+                            if clean_tf not in ['1', '1m']:
+                                rule = parse_timeframe_to_pandas(timeframe)
+                                new_live_resampled = new_live.resample(rule).agg({
+                                    'time': 'first',
+                                    'open': 'first',
+                                    'high': 'max',
+                                    'low': 'min',
+                                    'close': 'last',
+                                    'volume': 'sum'
+                                }).dropna()
+                            else:
+                                new_live_resampled = new_live
+                                
+                            if not new_live_resampled.empty:
+                                new_live_resampled['time'] = new_live_resampled.index.astype('int64') // 10**9
+                                new_live_resampled = new_live_resampled[['time', 'open', 'high', 'low', 'close', 'volume']]
+                                
+                                updated_df = pd.concat([cached_df, new_live_resampled]).reset_index(drop=True)
+                                _FUSED_CACHE[fused_key] = (updated_df, live_mtime)
+                                # print(f"[data_loader] Incrementally appended {len(new_live_resampled)} live bars to {clean_ticker}_{timeframe}")
+                                return updated_df.copy()
+                        else:
+                            _FUSED_CACHE[fused_key] = (cached_df, live_mtime)
+                            return cached_df.copy()
+            except Exception as e:
+                print(f"[data_loader] Incremental append failed, falling back to full fusion: {e}")
         
     filename = f"{clean_ticker}_{timeframe}.parquet"
     filepath = DATA_DIR / filename
@@ -150,7 +206,7 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
             if cache_key_live in _LIVE_STORAGE_CACHE and _LIVE_STORAGE_CACHE[cache_key_live][1] == mtime:
                 df_l = _LIVE_STORAGE_CACHE[cache_key_live][0].copy()
             else:
-                df_l = pd.read_parquet(live_path)
+                df_l = pd.read_parquet(live_path, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
                 _LIVE_STORAGE_CACHE[cache_key_live] = (df_l, mtime)
                 df_l = df_l.copy()
 
@@ -188,11 +244,24 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None) -> 
                 # Keep expected columns
                 df_l_resampled = df_l_resampled[['time', 'open', 'high', 'low', 'close', 'volume']]
                 
-                # Merge and deduplicate (live overwrites historical)
-                merged = pd.concat([df, df_l_resampled])
-                merged = merged.drop_duplicates(subset=['time'], keep='last')
-                df = merged.sort_values('time').reset_index(drop=True)
-                print(f"[data_loader] Successfully fused {len(df_l_resampled)} live storage bars into {clean_ticker}_{timeframe}")
+                # Optimized merge: split using searchsorted to avoid copying 6.5M rows
+                if not df.empty and not df_l_resampled.empty:
+                    min_live_time = df_l_resampled['time'].min()
+                    split_idx = df['time'].searchsorted(min_live_time)
+                    
+                    df_before = df.iloc[:split_idx]
+                    df_overlap = df.iloc[split_idx:]
+                    
+                    # Concat and deduplicate only the overlapping part
+                    merged_overlap = pd.concat([df_overlap, df_l_resampled])
+                    merged_overlap = merged_overlap.drop_duplicates(subset=['time'], keep='last')
+                    merged_overlap = merged_overlap.sort_values('time')
+                    
+                    df = pd.concat([df_before, merged_overlap]).reset_index(drop=True)
+                elif not df_l_resampled.empty:
+                    df = df_l_resampled.copy()
+                
+                # print(f"[data_loader] Successfully fused {len(df_l_resampled)} live storage bars into {clean_ticker}_{timeframe}")
         except Exception as e:
             print(f"[data_loader] Failed to fuse live storage for {clean_ticker}: {e}")
     

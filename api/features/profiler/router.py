@@ -25,7 +25,7 @@ def _load_engine_df(ticker: str) -> pd.DataFrame:
 
 
 @router.get("/{ticker}/status", tags=["Stats"])
-async def get_profiler_live_status(ticker: str):
+def get_profiler_live_status(ticker: str):
     """
     Get current NQStats live status summarizing all sessions in the current trading day.
     Returns session statuses (asiabox_status, london_status, etc.) for use as filter context.
@@ -43,7 +43,7 @@ async def get_profiler_live_status(ticker: str):
 
 
 @router.get("/stats/profiler/{ticker}", tags=["Stats"])
-async def get_profiler_stats(ticker: str, days: int = Query(50)):
+def get_profiler_stats(ticker: str, days: int = Query(50)):
     """
     Get pre-computed profiler sessions.
     PRIORITY 1: Pre-computed JSON
@@ -58,7 +58,7 @@ async def get_profiler_stats(ticker: str, days: int = Query(50)):
 
 
 @router.post("/{ticker}/filtered", tags=["Stats"])
-async def get_profiler_filtered_stats(
+def get_profiler_filtered_stats(
     ticker: str,
     payload: dict = Body(...)
 ):
@@ -87,7 +87,7 @@ async def get_profiler_filtered_stats(
 
 
 @router.post("/{ticker}/price-model", tags=["Stats"])
-async def get_profiler_filtered_price_model(
+def get_profiler_filtered_price_model(
     ticker: str,
     payload: dict = Body(...)
 ):
@@ -115,7 +115,7 @@ async def get_profiler_filtered_price_model(
     return result
 
 @router.get("/stats/hod-lod/{ticker}", tags=["Stats"])
-async def get_hod_lod_stats(ticker: str):
+def get_hod_lod_stats(ticker: str):
     """
     Get pre-computed HOD/LOD time statistics.
     """
@@ -131,7 +131,7 @@ async def get_hod_lod_stats(ticker: str):
     return data
 
 @router.get("/stats/profiler/{ticker}/levels", tags=["Stats"])
-async def get_profiler_level_stats(ticker: str):
+def get_profiler_level_stats(ticker: str):
     """
     Get pre-computed daily level hit probability stats (Hit Rate, Median Time, Mode).
     Returns nested dict by Context (All, Green, Red).
@@ -144,7 +144,7 @@ async def get_profiler_level_stats(ticker: str):
     return result
 
 @router.get("/stats/range-dist/{ticker}", tags=["Stats"])
-async def get_range_distribution(ticker: str):
+def get_range_distribution(ticker: str):
     """
     Get pre-computed price range distribution (high/low relative to open).
     """
@@ -160,7 +160,7 @@ async def get_range_distribution(ticker: str):
     return data
 
 @router.post("/stats/clear-cache/{ticker}", tags=["Stats"])
-async def clear_profiler_cache(ticker: str = "NQ1"):
+def clear_profiler_cache(ticker: str = "NQ1"):
     """
     Clear the in-memory cache for profiler data.
     This forces the server to reload from the JSON file on next request.
@@ -169,13 +169,13 @@ async def clear_profiler_cache(ticker: str = "NQ1"):
     return ProfilerService.clear_cache(ticker)
 
 @router.post("/stats/clear-cache", tags=["Stats"])
-async def clear_all_profiler_cache():
+def get_all_profiler_cache():
     """Clear all in-memory cache."""
     from api.features.profiler.service import ProfilerService
     return ProfilerService.clear_cache()
 
 @router.get("/stats/daily-hod-lod/{ticker}", tags=["Stats"])
-async def get_daily_hod_lod(
+def get_daily_hod_lod(
     ticker: str, 
     unadjusted: bool = Query(False),
     start_date: str = Query(None),
@@ -192,7 +192,7 @@ async def get_daily_hod_lod(
     return data
 
 @router.get("/stats/level-touches/{ticker}", tags=["Stats"])
-async def get_level_touches(
+def get_level_touches(
     ticker: str,
     start_date: str = Query(None),
     end_date: str = Query(None)
@@ -208,7 +208,7 @@ async def get_level_touches(
     return data
 
 @router.get("/stats/reference", tags=["Stats"])
-async def get_reference_stats():
+def get_reference_stats():
     """
     Get Reference Data (aggregated stats and medians) from docs folder.
     """
@@ -231,7 +231,7 @@ async def get_reference_stats():
     }
 
 @router.get("/{ticker}/price-model", tags=["Stats"])
-async def get_price_model(
+def get_price_model(
     ticker: str,
     session: str,
     outcome: str,
@@ -253,7 +253,7 @@ async def get_price_model(
 # ============================================================================
 
 @router.post("/stats/filtered-stats", tags=["Stats"])
-async def get_filtered_profiler_stats(
+def get_filtered_profiler_stats(
     payload: dict = Body(...)
 ):
     """
@@ -287,7 +287,7 @@ async def get_filtered_profiler_stats(
 
 
 @router.post("/stats/filtered-price-model", tags=["Stats"])
-async def get_filtered_price_model(
+def get_filtered_price_model(
     payload: dict = Body(...)
 ):
     """
@@ -322,7 +322,7 @@ async def get_filtered_price_model(
 
 
 @router.post("/stats/custom-price-model", tags=["Stats"])
-async def get_custom_price_model(
+def get_custom_price_model(
     payload: dict = Body(...)
 ):
     """
@@ -357,7 +357,7 @@ async def get_custom_price_model(
 # ============================================================================
 
 @router.get("/stats/prediction/asia", tags=["Stats"])
-async def get_asia_prediction(
+def get_asia_prediction(
     prev_ny1: str = Query(..., description="Status of previous day's NY1 session (e.g. 'Long True')"),
     prev_ny2: str = Query(..., description="Status of previous day's NY2 session")
 ):
@@ -370,7 +370,7 @@ async def get_asia_prediction(
     return result
 
 @router.get("/stats/prediction/london", tags=["Stats"])
-async def get_london_prediction(
+def get_london_prediction(
     prev_ny2: str = Query(..., description="Status of previous day's NY2 session"),
     asia_status: str = Query(..., description="Status of current day's Asia session")
 ):

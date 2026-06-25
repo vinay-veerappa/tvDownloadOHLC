@@ -351,25 +351,36 @@ class ProfilerService:
                 lon_ou_mid  = sess_open
                 ny_ou_mid   = sess_open
                 
-                # Asia O/U Mid (0 to 90 min)
-                idx_asia_start = np.searchsorted(chunk_ts_unix, base_ts_unix)
-                idx_asia_end = np.searchsorted(chunk_ts_unix, base_ts_unix + 90 * 60)
+                # Batch searchsorted calls to minimize Python interpreter overhead (V24 Chain)
+                target_times = [
+                    base_ts_unix,
+                    base_ts_unix + 90 * 60,
+                    base_ts_unix + 510 * 60,
+                    base_ts_unix + 570 * 60,
+                    base_ts_unix + 840 * 60,
+                    base_ts_unix + 930 * 60,
+                    base_ts_unix + 540 * 60,
+                    base_ts_unix + 810 * 60,
+                    base_ts_unix + 1080 * 60
+                ]
+                indices = np.searchsorted(chunk_ts_unix, target_times)
+                idx_asia_start, idx_asia_end = indices[0], indices[1]
+                idx_lon_start, idx_lon_end = indices[2], indices[3]
+                idx_ny_start, idx_ny_end = indices[4], indices[5]
+                idx_540, idx_810, idx_1080 = indices[6], indices[7], indices[8]
+                
                 h_asia = chunk_high[idx_asia_start:idx_asia_end]
                 l_asia = chunk_low[idx_asia_start:idx_asia_end]
                 if len(h_asia) > 0:
                     asia_ou_mid = (h_asia.max() + l_asia.min()) / 2.0
                     
                 # London O/U Mid (510 to 570 min)
-                idx_lon_start = np.searchsorted(chunk_ts_unix, base_ts_unix + 510 * 60)
-                idx_lon_end = np.searchsorted(chunk_ts_unix, base_ts_unix + 570 * 60)
                 h_lon = chunk_high[idx_lon_start:idx_lon_end]
                 l_lon = chunk_low[idx_lon_start:idx_lon_end]
                 if len(h_lon) > 0:
                     lon_ou_mid = (h_lon.max() + l_lon.min()) / 2.0
                     
                 # NY AM O/U Mid (840 to 930 min)
-                idx_ny_start = np.searchsorted(chunk_ts_unix, base_ts_unix + 840 * 60)
-                idx_ny_end = np.searchsorted(chunk_ts_unix, base_ts_unix + 930 * 60)
                 h_ny = chunk_high[idx_ny_start:idx_ny_end]
                 l_ny = chunk_low[idx_ny_start:idx_ny_end]
                 if len(h_ny) > 0:
@@ -377,9 +388,6 @@ class ProfilerService:
 
                 # Apply Dynamic Anchors (V24 Chain) using binary search slices
                 anchors = np.full(len(chunk_ts_unix), sess_anchor)
-                idx_540 = np.searchsorted(chunk_ts_unix, base_ts_unix + 540 * 60)
-                idx_810 = np.searchsorted(chunk_ts_unix, base_ts_unix + 810 * 60)
-                idx_1080 = np.searchsorted(chunk_ts_unix, base_ts_unix + 1080 * 60)
                 
                 anchors[idx_540:idx_810] = asia_ou_mid
                 anchors[idx_810:idx_1080] = lon_ou_mid
