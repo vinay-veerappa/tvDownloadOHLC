@@ -307,11 +307,18 @@ class ProfilerService:
         end_ts_list = [ts + pd.Timedelta(hours=duration_hours) for ts in valid_starts]
         end_locs = df.index.searchsorted(end_ts_list)
         
-        # 4. Extract Data Arrays (Optimized: NumPy)
-        all_time_idxs = []
-        all_norm_highs = []
-        all_norm_lows = []
+        # 4. Extract Data Arrays (Optimized: NumPy / Aligned 2D Matrix)
+        max_len = int(duration_hours * 60) + 1
+        use_matrix = (bucket_minutes == 1)
         
+        if use_matrix:
+            high_matrix = np.full((len(valid_sessions), max_len), np.nan, dtype=np.float32)
+            low_matrix = np.full((len(valid_sessions), max_len), np.nan, dtype=np.float32)
+        else:
+            all_time_idxs = []
+            all_norm_highs = []
+            all_norm_lows = []
+            
         # Pre-fetch numpy arrays (Zero Copy views)
         np_high = df['high'].values
         np_low = df['low'].values
@@ -347,10 +354,6 @@ class ProfilerService:
             
             if is_daily:
                 # Calculate O/U Mids for this specific session instance using fast binary search slicing
-                asia_ou_mid = sess_open
-                lon_ou_mid  = sess_open
-                ny_ou_mid   = sess_open
-                
                 # Batch searchsorted calls to minimize Python interpreter overhead (V24 Chain)
                 target_times = [
                     base_ts_unix,
@@ -371,18 +374,21 @@ class ProfilerService:
                 
                 h_asia = chunk_high[idx_asia_start:idx_asia_end]
                 l_asia = chunk_low[idx_asia_start:idx_asia_end]
+                asia_ou_mid = sess_open
                 if len(h_asia) > 0:
                     asia_ou_mid = (h_asia.max() + l_asia.min()) / 2.0
                     
                 # London O/U Mid (510 to 570 min)
                 h_lon = chunk_high[idx_lon_start:idx_lon_end]
                 l_lon = chunk_low[idx_lon_start:idx_lon_end]
+                lon_ou_mid = sess_open
                 if len(h_lon) > 0:
                     lon_ou_mid = (h_lon.max() + l_lon.min()) / 2.0
                     
                 # NY AM O/U Mid (840 to 930 min)
                 h_ny = chunk_high[idx_ny_start:idx_ny_end]
                 l_ny = chunk_low[idx_ny_start:idx_ny_end]
+                ny_ou_mid = sess_open
                 if len(h_ny) > 0:
                     ny_ou_mid = (h_ny.max() + l_ny.min()) / 2.0
 
@@ -398,47 +404,26 @@ class ProfilerService:
             norm_high = ((chunk_high - anchors) / anchors) * 100
             norm_low = ((chunk_low - anchors) / anchors) * 100
             
-            # Bucketing Logic
-            if bucket_minutes > 1:
-                time_idxs = (time_deltas_m // bucket_minutes) * bucket_minutes
+            if use_matrix:
+                mask = (time_deltas_m >= 0) & (time_deltas_m < max_len)
+                valid_deltas = time_deltas_m[mask]
+                high_matrix[i, valid_deltas] = norm_high[mask]
+                low_matrix[i, valid_deltas] = norm_low[mask]
             else:
-                time_idxs = time_deltas_m
-                
-            all_time_idxs.append(time_idxs)
-            all_norm_highs.append(norm_high)
-            all_norm_lows.append(norm_low)
+                # Bucketing Logic
+                if bucket_minutes > 1:
+                    time_idxs = (time_deltas_m // bucket_minutes) * bucket_minutes
+                else:
+                    time_idxs = time_deltas_m
+                    
+                all_time_idxs.append(time_idxs)
+                all_norm_highs.append(norm_high)
+                all_norm_lows.append(norm_low)
 
-        if not all_time_idxs:
-            return {"median": [], "extreme": [], "count": 0}
-
-        # 5. Concatenate (Fast)
-        cat_time = np.concatenate(all_time_idxs)
-        cat_high = np.concatenate(all_norm_highs)
-        cat_low = np.concatenate(all_norm_lows)
-        
-        # Create SINGLE DataFrame for GroupBy
-        combined = pd.DataFrame({
-            'time_idx': cat_time,
-            'norm_high': cat_high,
-            'norm_low': cat_low
-        })
-        
-        # Group by bucketed minute offset and calculate median/extreme
-        stats = combined.groupby('time_idx').agg({
-            'norm_high': ['median', 'max'],
-            'norm_low':  ['median', 'min']
-        })
-        
-        # 6. Format Output
-        avg_path = []
-        ext_path = []
-        
         # Helper to format time
         base_dt = None
         if valid_sessions:
             try:
-                # Parse start time from first session to get base hours/minutes
-                # Parse start time from first session to get base hours/minutes
                 from datetime import datetime, timedelta
                 s_ts = pd.Timestamp(valid_sessions[0]['start_time'])
                 
@@ -451,42 +436,112 @@ class ProfilerService:
                 print(f"[DEBUG] Label format error: {e}")
                 pass
 
-        # Using sorted index ensures time order
-        for time_idx in sorted(stats.index):
-            # Access using MultiIndex columns
-            row = stats.loc[time_idx]
-            
-            # ('col', 'stat') lookup
-            avg_h = row[('norm_high', 'median')]
-            max_h = row[('norm_high', 'max')]
-            avg_l = row[('norm_low', 'median')]
-            min_l = row[('norm_low', 'min')]
-            
-            # Calculate time string
-            time_str = ""
-            if base_dt:
-                curr_dt = base_dt + timedelta(minutes=int(time_idx))
-                time_str = curr_dt.strftime("%H:%M")
+        avg_path = []
+        ext_path = []
 
-            avg_path.append({
-                "time_idx": int(time_idx),
-                "time": time_str,
-                "high": round(float(avg_h), 3),
-                "low": round(float(avg_l), 3)
+        if use_matrix:
+            # Check if NaNs exist to choose between fast np.median and np.nanmedian
+            # Wrap in errstate to suppress All-NaN warnings for early closures
+            with np.errstate(all='ignore'):
+                if np.isnan(high_matrix).any():
+                    median_high = np.nanmedian(high_matrix, axis=0)
+                else:
+                    median_high = np.median(high_matrix, axis=0)
+                    
+                if np.isnan(low_matrix).any():
+                    median_low = np.nanmedian(low_matrix, axis=0)
+                else:
+                    median_low = np.median(low_matrix, axis=0)
+                    
+                max_high = np.nanmax(high_matrix, axis=0)
+                min_low = np.nanmin(low_matrix, axis=0)
+            
+            # Filter valid time indices (ignore where median_high is NaN)
+            indices = np.arange(max_len)
+            valid_mask = ~np.isnan(median_high)
+            indices = indices[valid_mask]
+            median_high = median_high[valid_mask]
+            max_high = max_high[valid_mask]
+            median_low = median_low[valid_mask]
+            min_low = min_low[valid_mask]
+            
+            # Precompute time strings
+            time_strs = []
+            if base_dt:
+                for m in range(max_len + 100):
+                    curr_dt = base_dt + timedelta(minutes=m)
+                    time_strs.append(curr_dt.strftime("%H:%M"))
+                    
+            for i, idx in enumerate(indices):
+                time_str = time_strs[idx] if base_dt else ""
+                avg_path.append({
+                    "time_idx": int(idx),
+                    "time": time_str,
+                    "high": round(float(median_high[i]), 3),
+                    "low": round(float(median_low[i]), 3)
+                })
+                ext_path.append({
+                    "time_idx": int(idx),
+                    "time": time_str,
+                    "high": round(float(max_high[i]), 3),
+                    "low": round(float(min_low[i]), 3)
+                })
+        else:
+            if not all_time_idxs:
+                return {"median": [], "extreme": [], "count": 0}
+
+            # 5. Concatenate (Fast)
+            cat_time = np.concatenate(all_time_idxs)
+            cat_high = np.concatenate(all_norm_highs)
+            cat_low = np.concatenate(all_norm_lows)
+            
+            # Create SINGLE DataFrame for GroupBy
+            combined = pd.DataFrame({
+                'time_idx': cat_time,
+                'norm_high': cat_high,
+                'norm_low': cat_low
             })
             
-            ext_path.append({
-                "time_idx": int(time_idx),
-                "time": time_str,
-                "high": round(float(max_h), 3),
-                "low": round(float(min_l), 3)
+            # Group by bucketed minute offset and calculate median/extreme
+            stats = combined.groupby('time_idx').agg({
+                'norm_high': ['median', 'max'],
+                'norm_low':  ['median', 'min']
             })
+            
+            # Precompute time strings
+            time_strs = []
+            if base_dt:
+                max_idx = int(stats.index.max()) + 100
+                for m in range(max_idx):
+                    curr_dt = base_dt + timedelta(minutes=m)
+                    time_strs.append(curr_dt.strftime("%H:%M"))
+                    
+            indices = stats.index.to_numpy()
+            avg_hs = stats[('norm_high', 'median')].to_numpy()
+            max_hs = stats[('norm_high', 'max')].to_numpy()
+            avg_ls = stats[('norm_low', 'median')].to_numpy()
+            min_ls = stats[('norm_low', 'min')].to_numpy()
+            
+            for i, idx in enumerate(indices):
+                time_str = time_strs[idx] if base_dt else ""
+                avg_path.append({
+                    "time_idx": int(idx),
+                    "time": time_str,
+                    "high": round(float(avg_hs[i]), 3),
+                    "low": round(float(avg_ls[i]), 3)
+                })
+                ext_path.append({
+                    "time_idx": int(idx),
+                    "time": time_str,
+                    "high": round(float(max_hs[i]), 3),
+                    "low": round(float(min_ls[i]), 3)
+                })
             
         print(f"[DEBUG] Composite Path Gen Time: {time.time() - start_time:.2f}s (Processed {len(valid_sessions)} sessions)")
         return {
             "median": avg_path,
             "extreme": ext_path,
-            "count": len(sessions)
+            "count": len(valid_sessions)
         }
 
     @staticmethod
