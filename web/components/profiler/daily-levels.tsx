@@ -4,7 +4,7 @@ import { useMemo, useState, memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { LevelTouchesResponse, LevelTouchEntry } from '@/lib/api/profiler';
+import { LevelTouchesResponse } from '@/lib/api/profiler';
 import {
     ResponsiveContainer,
     BarChart,
@@ -140,26 +140,27 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
 
         const filteredHitDates = new Map<string, Set<string>>(); // bucket -> Set of dates
 
-        filteredDates.forEach(date => {
-            const dayData = levelTouches[date];
-            if (!dayData) return;
+        const dateIndices = new Map<string, number>();
+        levelTouches.dates.forEach((d, idx) => {
+            dateIndices.set(d, idx);
+        });
 
-            const levelData = dayData[levelKey as keyof typeof dayData] as LevelTouchEntry | undefined;
-            if (!levelData) return;
+        const levelData = levelTouches.levels?.[levelKey];
 
-            total++;
+        if (levelData) {
+            filteredDates.forEach(date => {
+                const idx = dateIndices.get(date);
+                if (idx === undefined) return;
 
-            if (levelData.touched && levelData.hits) {
-                // Optimized backend returns pre-calculated first hit per session
-                const firstHit = levelData.hits[targetSession];
+                total++;
 
-                if (firstHit) {
+                const hitMins = levelData.hits?.[targetSession]?.[idx];
+                if (hitMins !== undefined && hitMins !== -1) {
                     touched++;
 
-                    const [h, m] = firstHit.split(':').map(Number);
-                    const mins = h * 60 + m;
+                    const mins = hitMins;
 
-                    // We need to map this hit (HH:MM) to our linear minute timeline [startMins, endMins]
+                    // We need to map this hit (minutes from midnight) to our linear minute timeline [startMins, endMins]
                     // Calculate offset from session start
                     let offset = mins - (sessionStartH * 60 + sessionStartM);
                     if (offset < 0) offset += 24 * 60;
@@ -181,8 +182,8 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
                         filteredHitDates.get(bucket)!.add(date);
                     }
                 }
-            }
-        });
+            });
+        }
 
         const hitRate = total > 0 ? (touched / total) * 100 : 0;
 

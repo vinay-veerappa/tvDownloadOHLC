@@ -163,12 +163,19 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
         const lodTimes: string[] = [];
 
         // Use true daily HOD/LOD data if available
-        if (dailyHodLod) {
+        if (dailyHodLod && dailyHodLod.dates) {
+            const dateIndices = new Map<string, number>();
+            dailyHodLod.dates.forEach((d, idx) => {
+                dateIndices.set(d, idx);
+            });
+
             filteredDates.forEach(date => {
-                const dayData = dailyHodLod[date];
-                if (dayData) {
-                    if (dayData.hod_time) hodTimes.push(dayData.hod_time);
-                    if (dayData.lod_time) lodTimes.push(dayData.lod_time);
+                const idx = dateIndices.get(date);
+                if (idx !== undefined) {
+                    const hMin = dailyHodLod.hod_time[idx];
+                    const lMin = dailyHodLod.lod_time[idx];
+                    if (hMin !== undefined && hMin !== -1) hodTimes.push(minutesToTime(hMin));
+                    if (lMin !== undefined && lMin !== -1) lodTimes.push(minutesToTime(lMin));
                 }
             });
         } else {

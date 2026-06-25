@@ -294,43 +294,45 @@ export class TruthProfiler implements ISeriesPrimitive<Time> {
             });
         }
 
-        for (const [date, dayLevels] of Object.entries(levels)) {
-            // Robust Day Start/End Calculation
-            // Trading Day X starts 18:00 (X-1) and ends 16:00 (X) or 17:00 (X)
-            const offset = dateOffsets.get(date) || '-05:00';
+        if (levels && levels.dates && levels.levels) {
+            levels.dates.forEach((date, idx) => {
+                // Robust Day Start/End Calculation
+                // Trading Day X starts 18:00 (X-1) and ends 16:00 (X) or 17:00 (X)
+                const offset = dateOffsets.get(date) || '-05:00';
 
-            // Previous Date Calculation for 18:00 Start
-            const tDate = new Date(date);
-            tDate.setDate(tDate.getDate() - 1);
-            const prevDateStr = tDate.toISOString().split('T')[0];
+                // Previous Date Calculation for 18:00 Start
+                const tDate = new Date(date);
+                tDate.setDate(tDate.getDate() - 1);
+                const prevDateStr = tDate.toISOString().split('T')[0];
 
-            const dayStart = Math.floor(new Date(`${prevDateStr}T18:00:00${offset}`).getTime() / 1000);
-            const dayEnd = Math.floor(new Date(`${date}T17:00:00${offset}`).getTime() / 1000);
+                const dayStart = Math.floor(new Date(`${prevDateStr}T18:00:00${offset}`).getTime() / 1000);
+                const dayEnd = Math.floor(new Date(`${date}T17:00:00${offset}`).getTime() / 1000);
 
-            const processLevel = (name: string, entry: any, forceStart?: number) => {
-                if (!entry || !entry.level) return;
+                const processLevelVal = (name: string, levelVal: number | undefined, forceStart?: number) => {
+                    if (levelVal === undefined || levelVal === null || levelVal === 0) return;
 
-                mapped.push({
-                    session: name,
-                    startUnix: forceStart ?? dayStart,
-                    endUnix: dayEnd,
-                    h: entry.level,
-                    l: entry.level,
-                    price: entry.level
-                });
-            };
+                    mapped.push({
+                        session: name,
+                        startUnix: forceStart ?? dayStart,
+                        endUnix: dayEnd,
+                        h: levelVal,
+                        l: levelVal,
+                        price: levelVal
+                    });
+                };
 
-            processLevel('PDH', dayLevels.pdh);
-            processLevel('PDL', dayLevels.pdl);
-            processLevel('PDMid', dayLevels.pdm);
+                processLevelVal('PDH', levels.levels.pdh?.level?.[idx]);
+                processLevelVal('PDL', levels.levels.pdl?.level?.[idx]);
+                processLevelVal('PDMid', levels.levels.pdm?.level?.[idx]);
 
-            if (dayLevels.p12h) processLevel('P12 H', dayLevels.p12h);
-            if (dayLevels.p12l) processLevel('P12 l', dayLevels.p12l);
-            if (dayLevels.p12m) processLevel('P12 Mid', dayLevels.p12m);
+                processLevelVal('P12 H', levels.levels.p12h?.level?.[idx]);
+                processLevelVal('P12 l', levels.levels.p12l?.level?.[idx]);
+                processLevelVal('P12 Mid', levels.levels.p12m?.level?.[idx]);
 
-            if (dayLevels.daily_open) processLevel('Globex Open', dayLevels.daily_open);
-            if (dayLevels.midnight_open) processLevel('Midnight Open', dayLevels.midnight_open);
-            if (dayLevels.open_0730) processLevel('07:30 Open', dayLevels.open_0730);
+                processLevelVal('Globex Open', levels.levels.daily_open?.level?.[idx]);
+                processLevelVal('Midnight Open', levels.levels.midnight_open?.level?.[idx]);
+                processLevelVal('07:30 Open', levels.levels.open_0730?.level?.[idx]);
+            });
         }
 
         this._data = mapped;

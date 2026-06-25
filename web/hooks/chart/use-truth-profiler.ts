@@ -17,7 +17,7 @@ export function useTruthProfiler({
     chart, series, ticker, indicators, theme, indicatorParams, isDisposed
 }: UseTruthProfilerProps) {
     const [truthSessions, setTruthSessions] = useState<ProfilerSession[]>([])
-    const [truthLevels, setTruthLevels] = useState<LevelTouchesResponse>({})
+    const [truthLevels, setTruthLevels] = useState<LevelTouchesResponse>({ dates: [], levels: {} })
     const truthProfilerRef = useRef<any>(null)
 
     // Data Fetching

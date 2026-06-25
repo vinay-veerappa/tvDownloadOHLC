@@ -53,24 +53,33 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
     // The backend filtered list usually lacks "Daily" rows or specific daily_open fields.
     // We construct them here to ensure RangeDistribution has correct daily stats.
     const dailyRangeSessions = useMemo(() => {
-        if (!dailyHodLod) return [];
+        if (!dailyHodLod || !dailyHodLod.dates) return [];
         const synthetic: ProfilerSession[] = [];
 
+        const dateIndices = new Map<string, number>();
+        dailyHodLod.dates.forEach((d, idx) => {
+            dateIndices.set(d, idx);
+        });
+
         outcomeDates.forEach(date => {
-            const d = dailyHodLod[date];
-            if (d) {
+            const idx = dateIndices.get(date);
+            if (idx !== undefined) {
+                const dailyOpen = dailyHodLod.daily_open[idx];
+                const dailyHigh = dailyHodLod.daily_high[idx];
+                const dailyLow = dailyHodLod.daily_low[idx];
+
                 // @ts-ignore - Constructing partial session with required fields for RangeDistribution
                 synthetic.push({
                     date: date,
                     session: 'Asia', // RangeDistribution looks for 'Asia' to grab daily_open/high/low attached
-                    open: d.daily_open,
+                    open: dailyOpen,
                     // Attach daily stats that RangeDistribution (daily mode) looks for
                     // @ts-ignore
-                    daily_open: d.daily_open,
+                    daily_open: dailyOpen,
                     // @ts-ignore
-                    daily_high: d.daily_high,
+                    daily_high: dailyHigh,
                     // @ts-ignore
-                    daily_low: d.daily_low,
+                    daily_low: dailyLow,
                     // Dummy props to satisfy interface
                     range_high: 0,
                     range_low: 0,

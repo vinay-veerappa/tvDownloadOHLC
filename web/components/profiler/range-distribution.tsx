@@ -179,16 +179,27 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
             // Get unique dates from sessions
             const uniqueDates = [...new Set(sessions.map(s => s.date))];
 
+            const dateIndices = new Map<string, number>();
+            if (dailyHodLod && dailyHodLod.dates) {
+                dailyHodLod.dates.forEach((d, idx) => {
+                    dateIndices.set(d, idx);
+                });
+            }
+
             uniqueDates.forEach(date => {
                 // PRIORITY 1: Use dailyHodLod lookup (normalized design)
-                if (dailyHodLod && dailyHodLod[date]) {
-                    const dayData = dailyHodLod[date];
-                    const { daily_open, daily_high, daily_low } = dayData;
+                if (dailyHodLod && dailyHodLod.dates) {
+                    const idx = dateIndices.get(date);
+                    if (idx !== undefined) {
+                        const daily_open = dailyHodLod.daily_open[idx];
+                        const daily_high = dailyHodLod.daily_high[idx];
+                        const daily_low = dailyHodLod.daily_low[idx];
 
-                    if (daily_open && daily_open > 0) {
-                        highPcts.push(((daily_high - daily_open) / daily_open) * 100);
-                        lowPcts.push(((daily_low - daily_open) / daily_open) * 100);
-                        return; // Skip to next date
+                        if (daily_open && daily_open > 0) {
+                            highPcts.push(((daily_high - daily_open) / daily_open) * 100);
+                            lowPcts.push(((daily_low - daily_open) / daily_open) * 100);
+                            return; // Skip to next date
+                        }
                     }
                 }
 

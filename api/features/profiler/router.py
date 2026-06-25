@@ -175,12 +175,16 @@ async def clear_all_profiler_cache():
     return ProfilerService.clear_cache()
 
 @router.get("/stats/daily-hod-lod/{ticker}", tags=["Stats"])
-async def get_daily_hod_lod(ticker: str, unadjusted: bool = Query(False)):
+async def get_daily_hod_lod(
+    ticker: str, 
+    unadjusted: bool = Query(False),
+    start_date: str = Query(None),
+    end_date: str = Query(None)
+):
     """
-    Get pre-computed true daily HOD/LOD times (from 1-minute data).
-    Returns dict mapping date -> {hod_time, lod_time, hod_price, lod_price, ...}
+    Get pre-computed true daily HOD/LOD times (from 1-minute data) in columnar format.
     """
-    data = ProfilerService.get_daily_hod_lod(ticker, unadjusted=unadjusted)
+    data = ProfilerService.get_daily_hod_lod(ticker, unadjusted=unadjusted, start_date=start_date, end_date=end_date)
     
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
@@ -188,12 +192,15 @@ async def get_daily_hod_lod(ticker: str, unadjusted: bool = Query(False)):
     return data
 
 @router.get("/stats/level-touches/{ticker}", tags=["Stats"])
-async def get_level_touches(ticker: str):
+async def get_level_touches(
+    ticker: str,
+    start_date: str = Query(None),
+    end_date: str = Query(None)
+):
     """
-    Get pre-computed reference level touch data (PDH/PDL/PDM, P12 H/L/M).
-    Returns dict mapping date -> {pdh: {level, touched, touch_time}, ...}
+    Get pre-computed reference level touch data (PDH/PDL/PDM, P12 H/L/M) in columnar format.
     """
-    data = ProfilerService.get_level_touches(ticker)
+    data = ProfilerService.get_level_touches(ticker, start_date=start_date, end_date=end_date)
     
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])

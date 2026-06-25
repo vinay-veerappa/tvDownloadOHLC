@@ -106,21 +106,22 @@ export async function fetchRangeDist(ticker: string): Promise<RangeDistResponse>
     return res.json();
 }
 
-// Daily HOD/LOD times (true daily high/low times from 1-minute data)
-export interface DailyHodLodEntry {
-    hod_time: string;  // HH:MM format
-    lod_time: string;
-    hod_price: number;
-    lod_price: number;
-    daily_high: number;
-    daily_low: number;
-    daily_open: number;
+// Daily HOD/LOD times (true daily high/low times from 1-minute data) - columnar format
+export interface DailyHodLodResponse {
+    dates: string[];
+    hod_time: number[];
+    lod_time: number[];
+    hod_price: number[];
+    lod_price: number[];
+    daily_open: number[];
+    daily_high: number[];
+    daily_low: number[];
 }
 
-export type DailyHodLodResponse = Record<string, DailyHodLodEntry>;
-
-export async function fetchDailyHodLod(ticker: string, unadjusted: boolean = false): Promise<DailyHodLodResponse> {
-    const url = `${API_BASE_URL}/stats/daily-hod-lod/${ticker}${unadjusted ? '?unadjusted=true' : ''}`;
+export async function fetchDailyHodLod(ticker: string, unadjusted: boolean = false, startDate?: string, endDate?: string): Promise<DailyHodLodResponse> {
+    let url = `${API_BASE_URL}/stats/daily-hod-lod/${ticker}?unadjusted=${unadjusted}`;
+    if (startDate) url += `&start_date=${startDate}`;
+    if (endDate) url += `&end_date=${endDate}`;
     const res = await fetch(url);
     if (!res.ok) {
         throw new Error('Failed to fetch daily HOD/LOD data');
@@ -128,44 +129,23 @@ export async function fetchDailyHodLod(ticker: string, unadjusted: boolean = fal
     return res.json();
 }
 
-// Level touch data (PDH/PDL/PDM, P12 H/L/M touch times)
-export interface LevelTouchEntry {
-    level: number;
-    touched: boolean;
-    hits: Record<string, string>; // session name -> first hit time (HH:MM)
-    // touch_times: string[]; REMOVED for optimization
+// Level touch data (PDH/PDL/PDM, P12 H/L/M touch times) - columnar format
+export interface LevelTouchColumnar {
+    level: number[];
+    touched: number[]; // 1 if touched, 0 if not
+    hits: Record<string, number[]>; // session name -> array of minutes from midnight (-1 if none)
 }
 
-export interface DayLevelTouches {
-    pdh: LevelTouchEntry;
-    pdl: LevelTouchEntry;
-    pdm: LevelTouchEntry;
-    p12h?: LevelTouchEntry;
-    p12l?: LevelTouchEntry;
-    p12m?: LevelTouchEntry;
-    ny_p12h?: LevelTouchEntry;
-    ny_p12l?: LevelTouchEntry;
-    ny_p12m?: LevelTouchEntry;
-    // Time-based opens
-    daily_open?: LevelTouchEntry;
-    midnight_open?: LevelTouchEntry;
-    open_0730?: LevelTouchEntry;
-    // Session mids
-    asia_mid?: LevelTouchEntry;
-    london_mid?: LevelTouchEntry;
-    ny1_mid?: LevelTouchEntry;
-    ny2_mid?: LevelTouchEntry;
-    // Previous Session mids
-    prev_asia_mid?: LevelTouchEntry;
-    prev_london_mid?: LevelTouchEntry;
-    prev_ny1_mid?: LevelTouchEntry;
-    prev_ny2_mid?: LevelTouchEntry;
+export interface LevelTouchesResponse {
+    dates: string[];
+    levels: Record<string, LevelTouchColumnar>;
 }
 
-export type LevelTouchesResponse = Record<string, DayLevelTouches>;
-
-export async function fetchLevelTouches(ticker: string): Promise<LevelTouchesResponse> {
-    const res = await fetch(`${API_BASE_URL}/stats/level-touches/${ticker}?t=${new Date().getTime()}`);
+export async function fetchLevelTouches(ticker: string, startDate?: string, endDate?: string): Promise<LevelTouchesResponse> {
+    let url = `${API_BASE_URL}/stats/level-touches/${ticker}?t=${new Date().getTime()}`;
+    if (startDate) url += `&start_date=${startDate}`;
+    if (endDate) url += `&end_date=${endDate}`;
+    const res = await fetch(url);
     if (!res.ok) {
         throw new Error('Failed to fetch level touches data');
     }

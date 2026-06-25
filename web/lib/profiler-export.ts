@@ -89,21 +89,26 @@ function calculatePriceDistRange(values: number[], bucketSize: number = 0.1): st
 function getLevelProb(
     levelTouches: LevelTouchesResponse | null | undefined,
     dates: Set<string>,
-    levelKey: "p12h" | "p12m" | "p12l" | "asia_mid" | "london_mid"
+    levelKey: string
 ): string {
-    if (!levelTouches || dates.size === 0) return "-";
+    if (!levelTouches || !levelTouches.dates || !levelTouches.levels || dates.size === 0) return "-";
+
+    const levelData = levelTouches.levels[levelKey];
+    if (!levelData) return "-";
+
+    const dateIndices = new Map<string, number>();
+    levelTouches.dates.forEach((d, idx) => {
+        dateIndices.set(d, idx);
+    });
 
     let hits = 0;
     let total = 0;
 
-    // levelTouches is Record<string, DayLevelTouches> (Date -> Levels)
-    // We iterate the dates in our subset
     dates.forEach(date => {
-        const dayData = levelTouches[date];
-        if (dayData) {
+        const idx = dateIndices.get(date);
+        if (idx !== undefined) {
             total++;
-            // Check if specific level was touched
-            if (dayData[levelKey] && dayData[levelKey].touched) {
+            if (levelData.touched?.[idx] === 1) {
                 hits++;
             }
         }
@@ -153,16 +158,25 @@ export function generateSingleOutcomeString({
     const lodTimes: string[] = [];
     const outcomeDates = new Set(sessions.map(s => s.date));
 
-    if (dailyHodLod) {
+    if (dailyHodLod && dailyHodLod.dates) {
+        const dateIndices = new Map<string, number>();
+        dailyHodLod.dates.forEach((d, idx) => {
+            dateIndices.set(d, idx);
+        });
+
         outcomeDates.forEach(date => {
-            const d = dailyHodLod[date];
-            if (d) {
-                if (d.hod_time) hodTimes.push(d.hod_time);
-                if (d.lod_time) lodTimes.push(d.lod_time);
+            const idx = dateIndices.get(date);
+            if (idx !== undefined) {
+                const hMin = dailyHodLod.hod_time?.[idx];
+                const lMin = dailyHodLod.lod_time?.[idx];
+                if (hMin !== undefined && hMin !== -1) {
+                    hodTimes.push(minutesToTime(hMin));
+                }
+                if (lMin !== undefined && lMin !== -1) {
+                    lodTimes.push(minutesToTime(lMin));
+                }
             }
         });
-    } else {
-        // Fallback or skip
     }
 
     const lodTimeMode = calculateTimeModeRange(lodTimes, 15);
@@ -172,15 +186,25 @@ export function generateSingleOutcomeString({
     const highPcts: number[] = [];
     const lowPcts: number[] = [];
 
-    outcomeDates.forEach(date => {
-        if (dailyHodLod && dailyHodLod[date]) {
-            const d = dailyHodLod[date];
-            if (d.daily_open && d.daily_high && d.daily_low) {
-                highPcts.push(((d.daily_high - d.daily_open) / d.daily_open) * 100);
-                lowPcts.push(((d.daily_low - d.daily_open) / d.daily_open) * 100);
+    if (dailyHodLod && dailyHodLod.dates) {
+        const dateIndices = new Map<string, number>();
+        dailyHodLod.dates.forEach((d, idx) => {
+            dateIndices.set(d, idx);
+        });
+
+        outcomeDates.forEach(date => {
+            const idx = dateIndices.get(date);
+            if (idx !== undefined) {
+                const dailyOpen = dailyHodLod.daily_open?.[idx];
+                const dailyHigh = dailyHodLod.daily_high?.[idx];
+                const dailyLow = dailyHodLod.daily_low?.[idx];
+                if (dailyOpen && dailyHigh && dailyLow) {
+                    highPcts.push(((dailyHigh - dailyOpen) / dailyOpen) * 100);
+                    lowPcts.push(((dailyLow - dailyOpen) / dailyOpen) * 100);
+                }
             }
-        }
-    });
+        });
+    }
 
     const lodDist = calculatePriceDistRange(lowPcts);
     const hodDist = calculatePriceDistRange(highPcts);

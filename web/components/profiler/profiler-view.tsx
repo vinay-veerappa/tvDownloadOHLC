@@ -120,8 +120,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     });
 
     // 4. Other Data Fetching
-    const { levelTouches } = useLevelTouches(debouncedTicker);
-    const { dailyHodLod } = useDailyHodLod(debouncedTicker);
+    const { levelTouches } = useLevelTouches(debouncedTicker, debouncedStartDate, debouncedEndDate);
+    const { dailyHodLod } = useDailyHodLod(debouncedTicker, debouncedStartDate, debouncedEndDate);
 
     // 5. Deferred Data for Heavy Charts (Unblocks UI during rendering)
     const deferredFilteredSessions = useDeferredValue(filteredSessions);

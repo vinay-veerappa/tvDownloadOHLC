@@ -923,148 +923,235 @@ class ProfilerService:
         return result
 
     @staticmethod
-    def get_daily_hod_lod(ticker: str, unadjusted: bool = False) -> Dict:
+    def get_daily_hod_lod(ticker: str, unadjusted: bool = False, start_date: str = None, end_date: str = None) -> Dict:
         """
-        Get pre-computed true daily HOD/LOD times.
+        Get pre-computed true daily HOD/LOD times in a highly optimized columnar format.
         Buffered in memory to avoid repeated disk I/O (1MB+).
         """
         ticker = ProfilerService._normalize_ticker(ticker)
         cache_key = f"{ticker}_unadjusted" if unadjusted else ticker
         
         cached_hod_lod = ProfilerService._cache_get(ProfilerService._daily_hod_lod_cache, cache_key)
-        if cached_hod_lod is not None:
-            return cached_hod_lod
+        if cached_hod_lod is None:
+            filename = f"{ticker}_daily_hod_lod_unadjusted.json" if unadjusted else f"{ticker}_daily_hod_lod.json"
+            json_path = DATA_DIR / filename
             
-        filename = f"{ticker}_daily_hod_lod_unadjusted.json" if unadjusted else f"{ticker}_daily_hod_lod.json"
-        json_path = DATA_DIR / filename
-        
-        if not json_path.exists():
-            return {"error": f"Daily HOD/LOD data for {ticker} ({'Unadjusted' if unadjusted else 'Adjusted'}) not found."}
-        
-        try:
-            with open(json_path, 'r') as f:
-                data = json.load(f)
-            ProfilerService._cache_set(
-                ProfilerService._daily_hod_lod_cache,
-                cache_key,
-                data,
-                ProfilerService._MAX_DAILY_HOD_LOD_CACHE,
-            )
-            return data
-        except Exception as e:
-            return {"error": str(e)}
+            if not json_path.exists():
+                return {"error": f"Daily HOD/LOD data for {ticker} ({'Unadjusted' if unadjusted else 'Adjusted'}) not found."}
+            
+            try:
+                with open(json_path, 'r') as f:
+                    cached_hod_lod = json.load(f)
+                ProfilerService._cache_set(
+                    ProfilerService._daily_hod_lod_cache,
+                    cache_key,
+                    cached_hod_lod,
+                    ProfilerService._MAX_DAILY_HOD_LOD_CACHE,
+                )
+            except Exception as e:
+                return {"error": str(e)}
+
+        # Helper to convert HH:MM to minutes
+        def time_to_minutes(t):
+            if not t: return -1
+            try:
+                h, m = map(int, t.split(':'))
+                return h * 60 + m
+            except:
+                return -1
+
+        # Filter and convert to columnar
+        dates = sorted(list(cached_hod_lod.keys()))
+        if start_date or end_date:
+            dates = [d for d in dates if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
+
+        hod_time = []
+        lod_time = []
+        hod_price = []
+        lod_price = []
+        daily_open = []
+        daily_high = []
+        daily_low = []
+
+        for d in dates:
+            entry = cached_hod_lod[d]
+            hod_time.append(time_to_minutes(entry.get("hod_time")))
+            lod_time.append(time_to_minutes(entry.get("lod_time")))
+            hod_price.append(entry.get("hod_price") or 0.0)
+            lod_price.append(entry.get("lod_price") or 0.0)
+            daily_open.append(entry.get("daily_open") or 0.0)
+            daily_high.append(entry.get("daily_high") or 0.0)
+            daily_low.append(entry.get("daily_low") or 0.0)
+
+        return {
+            "dates": dates,
+            "hod_time": hod_time,
+            "lod_time": lod_time,
+            "hod_price": hod_price,
+            "lod_price": lod_price,
+            "daily_open": daily_open,
+            "daily_high": daily_high,
+            "daily_low": daily_low
+        }
 
     @staticmethod
-    def get_level_touches(ticker: str) -> Dict:
+    def get_level_touches(ticker: str, start_date: str = None, end_date: str = None) -> Dict:
         """
         Get pre-computed reference level touch data.
         Buffered in memory to avoid repeated disk I/O.
-        OPTIMIZED: Returns only the first hit per session to reduce payload size.
+        Returns a highly optimized columnar JSON structure.
         """
         ticker = ProfilerService._normalize_ticker(ticker)
         cached_level_touches = ProfilerService._cache_get(ProfilerService._level_touches_cache, ticker)
-        if cached_level_touches is not None:
-            return cached_level_touches
+        
+        if cached_level_touches is None:
+            json_path = DATA_DIR / f"{ticker}_level_touches.json"
             
-        json_path = DATA_DIR / f"{ticker}_level_touches.json"
-        
-        if not json_path.exists():
-            return {"error": f"Level touch data for {ticker} not found."}
-        
-        try:
-            with open(json_path, 'r') as f:
-                raw_data = json.load(f)
+            if not json_path.exists():
+                return {"error": f"Level touch data for {ticker} not found."}
+            
+            try:
+                with open(json_path, 'r') as f:
+                    raw_data = json.load(f)
+                    
+                # Optimize Payload: Convert raw touch_times list to first_hit dict per session
+                # Matches ranges in daily-levels.tsx
+                SESSION_RANGES = {
+                    'Asia':   {'start': 18*60, 'end': 41*60}, # 18:00 - 17:00 (next day)
+                    'London': {'start': 26*60, 'end': 41*60}, # 02:00 - 17:00
+                    'NY1':    {'start': 32*60, 'end': 41*60}, # 08:00 - 17:00
+                    'NY2':    {'start': 36*60, 'end': 41*60}, # 12:00 - 17:00
+                    'P12':    {'start': 30*60, 'end': 41*60}, # 06:00 - 17:00
+                    'Daily':  {'start': 18*60, 'end': 41*60}  # 18:00 - 17:00 (next day)
+                }
                 
-            # Optimize Payload: Convert raw touch_times list to first_hit dict per session
-            # Matches ranges in daily-levels.tsx
-            SESSION_RANGES = {
-                'Asia':   {'start': 18*60, 'end': 41*60}, # 18:00 - 17:00 (next day)
-                'London': {'start': 26*60, 'end': 41*60}, # 02:00 - 17:00
-                'NY1':    {'start': 32*60, 'end': 41*60}, # 08:00 - 17:00
-                'NY2':    {'start': 36*60, 'end': 41*60}, # 12:00 - 17:00
-                'P12':    {'start': 30*60, 'end': 41*60}, # 06:00 - 17:00
-                'Daily':  {'start': 18*60, 'end': 41*60}  # 18:00 - 17:00 (next day)
-            }
-            
-            # Flatten all touch events into records; collect untouched levels separately.
-            # OPTIMIZED: vectorized session-range check replaces O(dates*levels*touches*sessions) scan.
-            touch_records: list = []
-            untouched_map: dict = {}
+                # Flatten all touch events into records; collect untouched levels separately.
+                # OPTIMIZED: vectorized session-range check replaces O(dates*levels*touches*sessions) scan.
+                touch_records = []
+                untouched_map = {}
 
-            for date_key, day_levels in raw_data.items():
-                for level_name, level_data in day_levels.items():
-                    if not isinstance(level_data, dict):
-                        continue
-                    touched      = level_data.get('touched', False)
-                    level_val    = level_data.get('level')
-                    touch_times  = level_data.get('touch_times', [])
+                for date_key, day_levels in raw_data.items():
+                    for level_name, level_data in day_levels.items():
+                        if not isinstance(level_data, dict):
+                            continue
+                        touched      = level_data.get('touched', False)
+                        level_val    = level_data.get('level')
+                        touch_times  = level_data.get('touch_times', [])
 
-                    if not touched or not touch_times:
-                        untouched_map.setdefault(date_key, {})[level_name] = {
-                            'level': level_val, 'touched': False, 'hits': {}
+                        if not touched or not touch_times:
+                            untouched_map.setdefault(date_key, {})[level_name] = {
+                                'level': level_val, 'touched': False, 'hits': {}
+                            }
+                            continue
+
+                        for t in touch_times:
+                            try:
+                                h, m = map(int, t.split(':'))
+                                touch_records.append({
+                                    'date': date_key, 'level_name': level_name,
+                                    'level_val': level_val, 'mins': h * 60 + m, 'time_str': t
+                                })
+                            except Exception:
+                                pass
+
+                # Seed output with untouched levels
+                cached_level_touches = {d: dict(lvls) for d, lvls in untouched_map.items()}
+
+                if touch_records:
+                    df_t = pd.DataFrame(touch_records).sort_values('mins')
+                    # Level metadata: canonical level_val per (date, level_name)
+                    meta = df_t.groupby(['date', 'level_name'])['level_val'].first()
+
+                    # Vectorized first-hit per (date, level, session).
+                    # Session ranges store minutes relative to a 41-hour trading day window
+                    # (18:00 prev day = 1080 → 17:00 = 2460). Raw touch mins are 0-1439;
+                    # touches after-midnight are matched via mins+1440.
+                    session_hits = {}  # (date_key, level_name) -> {sess_name: time_str}
+                    for sess_name, rng in SESSION_RANGES.items():
+                        start, end = rng['start'], rng['end']
+                        direct  = (df_t['mins'] >= start) & (df_t['mins'] < end)
+                        wrapped = ((df_t['mins'] + 1440) >= start) & ((df_t['mins'] + 1440) < end)
+                        in_rng  = df_t[direct | wrapped]
+                        if in_rng.empty:
+                            continue
+                        # .sort_values('mins') already applied; .first() yields earliest touch
+                        first_hits = in_rng.groupby(['date', 'level_name'])['time_str'].first()
+                        for (date_k, level_n), time_val in first_hits.items():
+                            session_hits.setdefault((date_k, level_n), {})[sess_name] = time_val
+
+                    # Build output for touched levels (with ≥1 session hit)
+                    for (date_k, level_n), hits in session_hits.items():
+                        cached_level_touches.setdefault(date_k, {})[level_n] = {
+                            'level': meta.get((date_k, level_n)),
+                            'touched': True,
+                            'hits': hits,
                         }
-                        continue
+                    # Touched levels that matched no session range
+                    all_touched = set(zip(df_t['date'], df_t['level_name']))
+                    for date_k, level_n in all_touched - set(session_hits.keys()):
+                        cached_level_touches.setdefault(date_k, {})[level_n] = {
+                            'level': meta.get((date_k, level_n)),
+                            'touched': True,
+                            'hits': {},
+                        }
 
-                    for t in touch_times:
-                        try:
-                            h, m = map(int, t.split(':'))
-                            touch_records.append({
-                                'date': date_key, 'level_name': level_name,
-                                'level_val': level_val, 'mins': h * 60 + m, 'time_str': t
-                            })
-                        except Exception:
-                            pass
+                ProfilerService._cache_set(
+                    ProfilerService._level_touches_cache,
+                    ticker,
+                    cached_level_touches,
+                    ProfilerService._MAX_LEVEL_TOUCHES_CACHE,
+                )
+            except Exception as e:
+                return {"error": str(e)}
 
-            # Seed output with untouched levels
-            optimized_data: dict = {d: dict(lvls) for d, lvls in untouched_map.items()}
+        # Helper to convert HH:MM to minutes
+        def time_to_minutes(t):
+            if not t: return -1
+            try:
+                h, m = map(int, t.split(':'))
+                return h * 60 + m
+            except:
+                return -1
 
-            if touch_records:
-                df_t = pd.DataFrame(touch_records).sort_values('mins')
-                # Level metadata: canonical level_val per (date, level_name)
-                meta = df_t.groupby(['date', 'level_name'])['level_val'].first()
+        # Filter dates
+        dates = sorted(list(cached_level_touches.keys()))
+        if start_date or end_date:
+            dates = [d for d in dates if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
 
-                # Vectorized first-hit per (date, level, session).
-                # Session ranges store minutes relative to a 41-hour trading day window
-                # (18:00 prev day = 1080 → 17:00 = 2460). Raw touch mins are 0-1439;
-                # touches after-midnight are matched via mins+1440.
-                session_hits: dict = {}  # (date_key, level_name) -> {sess_name: time_str}
-                for sess_name, rng in SESSION_RANGES.items():
-                    start, end = rng['start'], rng['end']
-                    direct  = (df_t['mins'] >= start) & (df_t['mins'] < end)
-                    wrapped = ((df_t['mins'] + 1440) >= start) & ((df_t['mins'] + 1440) < end)
-                    in_rng  = df_t[direct | wrapped]
-                    if in_rng.empty:
-                        continue
-                    # .sort_values('mins') already applied; .first() yields earliest touch
-                    first_hits = in_rng.groupby(['date', 'level_name'])['time_str'].first()
-                    for (date_k, level_n), time_val in first_hits.items():
-                        session_hits.setdefault((date_k, level_n), {})[sess_name] = time_val
+        level_keys = ["pdh", "pdm", "pdl", "p12h", "p12m", "p12l", "ny_p12h", "ny_p12m", "ny_p12l", "daily_open", "midnight_open", "open_0730", "asia_mid", "london_mid", "ny1_mid", "ny2_mid", "prev_asia_mid", "prev_london_mid", "prev_ny1_mid", "prev_ny2_mid"]
+        sessions = ["Asia", "London", "NY1", "NY2", "P12", "Daily"]
+        
+        levels_columnar = {}
+        for lk in level_keys:
+            levels_list = []
+            touched_list = []
+            hits_by_session = {s: [] for s in sessions}
+            
+            for d in dates:
+                day_data = cached_level_touches[d]
+                lvl_data = day_data.get(lk)
+                if lvl_data:
+                    levels_list.append(lvl_data.get('level') or 0.0)
+                    touched_list.append(1 if lvl_data.get('touched') else 0)
+                    hits_dict = lvl_data.get('hits', {})
+                    for s in sessions:
+                        hits_by_session[s].append(time_to_minutes(hits_dict.get(s)))
+                else:
+                    levels_list.append(0.0)
+                    touched_list.append(0)
+                    for s in sessions:
+                        hits_by_session[s].append(-1)
+            
+            levels_columnar[lk] = {
+                "level": levels_list,
+                "touched": touched_list,
+                "hits": hits_by_session
+            }
 
-                # Build output for touched levels (with ≥1 session hit)
-                for (date_k, level_n), hits in session_hits.items():
-                    optimized_data.setdefault(date_k, {})[level_n] = {
-                        'level': meta.get((date_k, level_n)),
-                        'touched': True,
-                        'hits': hits,
-                    }
-                # Touched levels that matched no session range
-                all_touched = set(zip(df_t['date'], df_t['level_name']))
-                for date_k, level_n in all_touched - set(session_hits.keys()):
-                    optimized_data.setdefault(date_k, {})[level_n] = {
-                        'level': meta.get((date_k, level_n)),
-                        'touched': True,
-                        'hits': {},
-                    }
-
-            ProfilerService._cache_set(
-                ProfilerService._level_touches_cache,
-                ticker,
-                optimized_data,
-                ProfilerService._MAX_LEVEL_TOUCHES_CACHE,
-            )
-            return optimized_data
-        except Exception as e:
-            return {"error": str(e)}
+        return {
+            "dates": dates,
+            "levels": levels_columnar
+        }
 
     @staticmethod
     def prewarm_cache(ticker: str = "NQ1", sessions: Optional[List[str]] = None):
