@@ -554,7 +554,8 @@ class ProfilerService:
         target_session: str,
         filters: Dict[str, str] = None,
         broken_filters: Dict[str, str] = None,
-        intra_state: str = "Any"
+        intra_state: str = "Any",
+        ticker: str = None
     ) -> List[str]:
         """
         Apply filters and return the list of matching dates (intersection logic).
@@ -565,6 +566,7 @@ class ProfilerService:
             filters: Dict of session -> status filter (e.g., {"Asia": "Short True"})
             broken_filters: Dict of session -> broken filter (e.g., {"Asia": "Broken"})
             intra_state: "Any", "Long", "Short", etc. for intra-session filtering
+            ticker: Optional ticker to cache pivoted DataFrames by ticker instead of list ID
         
         Returns:
             List of matching date strings
@@ -572,8 +574,8 @@ class ProfilerService:
         filters = filters or {}
         broken_filters = broken_filters or {}
 
-        sessions_id = id(sessions)
-        cached_pivots = ProfilerService._cache_get(ProfilerService._pivoted_cache, sessions_id)
+        cache_key = ticker if ticker else id(sessions)
+        cached_pivots = ProfilerService._cache_get(ProfilerService._pivoted_cache, cache_key)
         if cached_pivots is not None:
             status_pivot, broken_pivot = cached_pivots
         else:
@@ -611,7 +613,7 @@ class ProfilerService:
             
             ProfilerService._cache_set(
                 ProfilerService._pivoted_cache,
-                sessions_id,
+                cache_key,
                 (status_pivot, broken_pivot),
                 max_items=8
             )
@@ -697,7 +699,7 @@ class ProfilerService:
         
         # 2. Apply filters to get matched dates
         matched_dates = ProfilerService.apply_filters(
-            all_sessions, target_session, filters, broken_filters, intra_state
+            all_sessions, target_session, filters, broken_filters, intra_state, ticker
         )
         
         # Apply start_date and end_date filters AFTER applying transition filters
@@ -944,8 +946,8 @@ class ProfilerService:
         ticker = ProfilerService._normalize_ticker(ticker)
         cache_key = f"{ticker}_unadjusted" if unadjusted else ticker
         
-        cached_hod_lod = ProfilerService._cache_get(ProfilerService._daily_hod_lod_cache, cache_key)
-        if cached_hod_lod is None:
+        cached_columnar = ProfilerService._cache_get(ProfilerService._daily_hod_lod_cache, cache_key)
+        if cached_columnar is None:
             filename = f"{ticker}_daily_hod_lod_unadjusted.json" if unadjusted else f"{ticker}_daily_hod_lod.json"
             json_path = DATA_DIR / filename
             
@@ -954,57 +956,74 @@ class ProfilerService:
             
             try:
                 with open(json_path, 'r') as f:
-                    cached_hod_lod = json.load(f)
+                    raw_data = json.load(f)
+                
+                # Helper to convert HH:MM to minutes
+                def time_to_minutes(t):
+                    if not t: return -1
+                    try:
+                        h, m = map(int, t.split(':'))
+                        return h * 60 + m
+                    except:
+                        return -1
+
+                all_dates = sorted(list(raw_data.keys()))
+                hod_time = []
+                lod_time = []
+                hod_price = []
+                lod_price = []
+                daily_open = []
+                daily_high = []
+                daily_low = []
+
+                for d in all_dates:
+                    entry = raw_data[d]
+                    hod_time.append(time_to_minutes(entry.get("hod_time")))
+                    lod_time.append(time_to_minutes(entry.get("lod_time")))
+                    hod_price.append(entry.get("hod_price") or 0.0)
+                    lod_price.append(entry.get("lod_price") or 0.0)
+                    daily_open.append(entry.get("daily_open") or 0.0)
+                    daily_high.append(entry.get("daily_high") or 0.0)
+                    daily_low.append(entry.get("daily_low") or 0.0)
+
+                cached_columnar = {
+                    "dates": all_dates,
+                    "hod_time": hod_time,
+                    "lod_time": lod_time,
+                    "hod_price": hod_price,
+                    "lod_price": lod_price,
+                    "daily_open": daily_open,
+                    "daily_high": daily_high,
+                    "daily_low": daily_low
+                }
+                
                 ProfilerService._cache_set(
                     ProfilerService._daily_hod_lod_cache,
                     cache_key,
-                    cached_hod_lod,
+                    cached_columnar,
                     ProfilerService._MAX_DAILY_HOD_LOD_CACHE,
                 )
             except Exception as e:
                 return {"error": str(e)}
 
-        # Helper to convert HH:MM to minutes
-        def time_to_minutes(t):
-            if not t: return -1
-            try:
-                h, m = map(int, t.split(':'))
-                return h * 60 + m
-            except:
-                return -1
-
-        # Filter and convert to columnar
-        dates = sorted(list(cached_hod_lod.keys()))
-        if start_date or end_date:
-            dates = [d for d in dates if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
-
-        hod_time = []
-        lod_time = []
-        hod_price = []
-        lod_price = []
-        daily_open = []
-        daily_high = []
-        daily_low = []
-
-        for d in dates:
-            entry = cached_hod_lod[d]
-            hod_time.append(time_to_minutes(entry.get("hod_time")))
-            lod_time.append(time_to_minutes(entry.get("lod_time")))
-            hod_price.append(entry.get("hod_price") or 0.0)
-            lod_price.append(entry.get("lod_price") or 0.0)
-            daily_open.append(entry.get("daily_open") or 0.0)
-            daily_high.append(entry.get("daily_high") or 0.0)
-            daily_low.append(entry.get("daily_low") or 0.0)
-
+        # Apply optional date filtering to columnar data
+        dates = cached_columnar["dates"]
+        if not start_date and not end_date:
+            return cached_columnar
+            
+        indices = [i for i, d in enumerate(dates) if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
+        if len(indices) == len(dates):
+            return cached_columnar
+            
         return {
-            "dates": dates,
-            "hod_time": hod_time,
-            "lod_time": lod_time,
-            "hod_price": hod_price,
-            "lod_price": lod_price,
-            "daily_open": daily_open,
-            "daily_high": daily_high,
-            "daily_low": daily_low
+            "dates": [dates[i] for i in indices],
+            "hod_time": [cached_columnar["hod_time"][i] for i in indices],
+            "lod_time": [cached_columnar["lod_time"][i] for i in indices],
+            "hod_price": [cached_columnar["hod_price"][i] for i in indices],
+            "lod_price": [cached_columnar["lod_price"][i] for i in indices],
+            "daily_open": [cached_columnar["daily_open"][i] for i in indices],
+            "daily_high": [cached_columnar["daily_high"][i] for i in indices],
+            "daily_low": [cached_columnar["daily_low"][i] for i in indices]
         }
 
     @staticmethod
@@ -1015,9 +1034,29 @@ class ProfilerService:
         Returns a highly optimized columnar JSON structure.
         """
         ticker = ProfilerService._normalize_ticker(ticker)
-        cached_level_touches = ProfilerService._cache_get(ProfilerService._level_touches_cache, ticker)
         
-        if cached_level_touches is None:
+        # We cache the fully built, unfiltered columnar dictionary in memory
+        cached_columnar = ProfilerService._cache_get(ProfilerService._level_touches_cache, ticker)
+        
+        if cached_columnar is None:
+            # 1. Try loading precomputed columnar json from disk
+            columnar_path = DATA_DIR / f"{ticker}_level_touches_columnar.json"
+            if columnar_path.exists():
+                try:
+                    with open(columnar_path, 'r') as f:
+                        cached_columnar = json.load(f)
+                    ProfilerService._cache_set(
+                        ProfilerService._level_touches_cache,
+                        ticker,
+                        cached_columnar,
+                        ProfilerService._MAX_LEVEL_TOUCHES_CACHE,
+                    )
+                except Exception as e:
+                    print(f"Error loading columnar levels for {ticker}: {e}")
+                    cached_columnar = None
+
+        # 2. If not found, compute it from the raw JSON file
+        if cached_columnar is None:
             json_path = DATA_DIR / f"{ticker}_level_touches.json"
             
             if not json_path.exists():
@@ -1068,7 +1107,7 @@ class ProfilerService:
                                 pass
 
                 # Seed output with untouched levels
-                cached_level_touches = {d: dict(lvls) for d, lvls in untouched_map.items()}
+                raw_processed = {d: dict(lvls) for d, lvls in untouched_map.items()}
 
                 if touch_records:
                     df_t = pd.DataFrame(touch_records).sort_values('mins')
@@ -1076,9 +1115,6 @@ class ProfilerService:
                     meta = df_t.groupby(['date', 'level_name'])['level_val'].first()
 
                     # Vectorized first-hit per (date, level, session).
-                    # Session ranges store minutes relative to a 41-hour trading day window
-                    # (18:00 prev day = 1080 → 17:00 = 2460). Raw touch mins are 0-1439;
-                    # touches after-midnight are matched via mins+1440.
                     session_hits = {}  # (date_key, level_name) -> {sess_name: time_str}
                     for sess_name, rng in SESSION_RANGES.items():
                         start, end = rng['start'], rng['end']
@@ -1094,7 +1130,7 @@ class ProfilerService:
 
                     # Build output for touched levels (with ≥1 session hit)
                     for (date_k, level_n), hits in session_hits.items():
-                        cached_level_touches.setdefault(date_k, {})[level_n] = {
+                        raw_processed.setdefault(date_k, {})[level_n] = {
                             'level': meta.get((date_k, level_n)),
                             'touched': True,
                             'hits': hits,
@@ -1102,68 +1138,98 @@ class ProfilerService:
                     # Touched levels that matched no session range
                     all_touched = set(zip(df_t['date'], df_t['level_name']))
                     for date_k, level_n in all_touched - set(session_hits.keys()):
-                        cached_level_touches.setdefault(date_k, {})[level_n] = {
+                        raw_processed.setdefault(date_k, {})[level_n] = {
                             'level': meta.get((date_k, level_n)),
                             'touched': True,
                             'hits': {},
                         }
 
+                # Helper to convert HH:MM to minutes
+                def time_to_minutes(t):
+                    if not t: return -1
+                    try:
+                        h, m = map(int, t.split(':'))
+                        return h * 60 + m
+                    except:
+                        return -1
+
+                # Format to columnar for ALL dates
+                all_dates = sorted(list(raw_processed.keys()))
+                level_keys = ["pdh", "pdm", "pdl", "p12h", "p12m", "p12l", "ny_p12h", "ny_p12m", "ny_p12l", "daily_open", "midnight_open", "open_0730", "asia_mid", "london_mid", "ny1_mid", "ny2_mid", "prev_asia_mid", "prev_london_mid", "prev_ny1_mid", "prev_ny2_mid"]
+                sessions = ["Asia", "London", "NY1", "NY2", "P12", "Daily"]
+                
+                levels_columnar = {}
+                for lk in level_keys:
+                    levels_list = []
+                    touched_list = []
+                    hits_by_session = {s: [] for s in sessions}
+                    
+                    for d in all_dates:
+                        day_data = raw_processed[d]
+                        lvl_data = day_data.get(lk)
+                        if lvl_data:
+                            levels_list.append(lvl_data.get('level') or 0.0)
+                            touched_list.append(1 if lvl_data.get('touched') else 0)
+                            hits_dict = lvl_data.get('hits', {})
+                            for s in sessions:
+                                hits_by_session[s].append(time_to_minutes(hits_dict.get(s)))
+                        else:
+                            levels_list.append(0.0)
+                            touched_list.append(0)
+                            for s in sessions:
+                                hits_by_session[s].append(-1)
+                    
+                    levels_columnar[lk] = {
+                        "level": levels_list,
+                        "touched": touched_list,
+                        "hits": hits_by_session
+                    }
+
+                cached_columnar = {
+                    "dates": all_dates,
+                    "levels": levels_columnar
+                }
+
+                # Save columnar version to disk for instant load next time
+                try:
+                    columnar_path = DATA_DIR / f"{ticker}_level_touches_columnar.json"
+                    with open(columnar_path, 'w') as f:
+                        json.dump(cached_columnar, f)
+                except Exception as e:
+                    print(f"Error saving columnar levels for {ticker}: {e}")
+
                 ProfilerService._cache_set(
                     ProfilerService._level_touches_cache,
                     ticker,
-                    cached_level_touches,
+                    cached_columnar,
                     ProfilerService._MAX_LEVEL_TOUCHES_CACHE,
                 )
             except Exception as e:
                 return {"error": str(e)}
 
-        # Helper to convert HH:MM to minutes
-        def time_to_minutes(t):
-            if not t: return -1
-            try:
-                h, m = map(int, t.split(':'))
-                return h * 60 + m
-            except:
-                return -1
-
-        # Filter dates
-        dates = sorted(list(cached_level_touches.keys()))
-        if start_date or end_date:
-            dates = [d for d in dates if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
-
-        level_keys = ["pdh", "pdm", "pdl", "p12h", "p12m", "p12l", "ny_p12h", "ny_p12m", "ny_p12l", "daily_open", "midnight_open", "open_0730", "asia_mid", "london_mid", "ny1_mid", "ny2_mid", "prev_asia_mid", "prev_london_mid", "prev_ny1_mid", "prev_ny2_mid"]
-        sessions = ["Asia", "London", "NY1", "NY2", "P12", "Daily"]
-        
-        levels_columnar = {}
-        for lk in level_keys:
-            levels_list = []
-            touched_list = []
-            hits_by_session = {s: [] for s in sessions}
+        # 3. Apply optional date filtering to the columnar data
+        dates = cached_columnar["dates"]
+        if not start_date and not end_date:
+            return cached_columnar
             
-            for d in dates:
-                day_data = cached_level_touches[d]
-                lvl_data = day_data.get(lk)
-                if lvl_data:
-                    levels_list.append(lvl_data.get('level') or 0.0)
-                    touched_list.append(1 if lvl_data.get('touched') else 0)
-                    hits_dict = lvl_data.get('hits', {})
-                    for s in sessions:
-                        hits_by_session[s].append(time_to_minutes(hits_dict.get(s)))
-                else:
-                    levels_list.append(0.0)
-                    touched_list.append(0)
-                    for s in sessions:
-                        hits_by_session[s].append(-1)
+        indices = [i for i, d in enumerate(dates) if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
+        if len(indices) == len(dates):
+            return cached_columnar
             
-            levels_columnar[lk] = {
-                "level": levels_list,
-                "touched": touched_list,
-                "hits": hits_by_session
+        filtered_dates = [dates[i] for i in indices]
+        filtered_levels = {}
+        for lk, lvl_data in cached_columnar["levels"].items():
+            filtered_levels[lk] = {
+                "level": [lvl_data["level"][i] for i in indices],
+                "touched": [lvl_data["touched"][i] for i in indices],
+                "hits": {
+                    s: [lvl_data["hits"][s][i] for i in indices] for s in lvl_data["hits"]
+                }
             }
-
+            
         return {
-            "dates": dates,
-            "levels": levels_columnar
+            "dates": filtered_dates,
+            "levels": filtered_levels
         }
 
     @staticmethod

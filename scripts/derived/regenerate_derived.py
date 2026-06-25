@@ -51,9 +51,9 @@ def ensure_time_column(file_path):
         
     if dirty:
         data_utils.safe_save_parquet(df, str(file_path))
-        print(f"  ✅ Schema updated and saved to {file_path}")
+        print(f"  [OK] Schema updated and saved to {file_path}")
     else:
-        print("  ✅ Schema is already compatible.")
+        print("  [OK] Schema is already compatible.")
 
 def regenerate_all(ticker="ES1"):
     print(f"\n=== REGENERATING DATA FOR {ticker} ===\n")
@@ -115,6 +115,7 @@ def regenerate_all(ticker="ES1"):
             with open(output_path, 'w') as f:
                 json.dump(results, f, indent=2)
             print(f"    Saved {output_path}")
+            level_touches.save_columnar_version(ticker, results)
         except Exception as e:
             print(f"    Error in Level Touches: {e}")
     else:
