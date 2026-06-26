@@ -297,6 +297,12 @@ def detect_gaps(candles, symbol, threshold_minutes=1):
             print(f"🔍 [{symbol}] Gap detected since last data point (UTC): {last_dt} -> {now_dt}")
             gaps.append((last_time, now_ms))
 
+def get_schwab_api_symbol(symbol: str) -> str:
+    """Prepend '$' for cash indices for Schwab REST API requests."""
+    if symbol in ["SPX", "VIX", "VVIX", "NDX", "RUT", "DJX"]:
+        return "$" + symbol
+    return symbol
+
 async def bridge_gaps(symbol, gaps):
     """
     Fetch missing data for each gap from Schwab Hub.
@@ -319,7 +325,7 @@ async def bridge_gaps(symbol, gaps):
         try:
             # When providing start_datetime and end_datetime, Schwab API prefers NO period/periodType
             resp = await hub_request("get_price_history", {
-                "symbol": symbol,
+                "symbol": get_schwab_api_symbol(symbol),
                 "frequency_type": "minute",
                 "frequency": 1,
                 "start_datetime": int(gap_start_ms),
@@ -423,7 +429,7 @@ async def fetch_bootstrap_data(symbol):
     print(f"🚀 [{symbol}] Bootstrapping via Hub...")
     try:
         params = {
-            "symbol": symbol,
+            "symbol": get_schwab_api_symbol(symbol),
             "period_type": "day",
             "period": 3, # period enum value or string matches Schwab
             "frequency_type": "minute",

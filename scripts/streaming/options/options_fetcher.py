@@ -291,8 +291,162 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
         return FuturesQuote(symbol=symbol, price=last, open_price=open_p)
 
 
+# ---------------------------------------------------------------------------
+# Futures symbol → live_storage filename stem
+# ---------------------------------------------------------------------------
+_FUTURES_LIVE_STORAGE_MAP: dict[str, str] = {
+    "/ES":  "-ES",
+    "/NQ":  "-NQ",
+    "/RTY": "-RTY",
+    "/YM":  "-YM",
+    "/GC":  "-GC",
+    "/CL":  "-CL",
+}
+
+
+def get_eod_close_price(symbol: str, target_dt_utc: datetime) -> float | None:
+    """
+    Return the close price of the 1-minute bar whose open timestamp matches
+    *target_dt_utc* (UTC-naive datetime, second-precision).
+
+    Two source paths are supported:
+
+    Futures (``/ES``, ``/NQ``, ``/RTY``, ``/YM`` …)
+        Reads ``data/live/live_storage_{stem}.parquet``.
+        Schema: ``timestamp`` column, UTC-naive datetime64[ns], minute bars.
+        A bar labelled ``2026-06-25 19:59:00`` is the 15:59 ET candle.
+
+    SPX cash spot (``"SPX"``)
+        Reads ``data/SPX_1m.parquet``.
+        Schema: DatetimeIndex named ``datetime``, US/Eastern timezone-aware.
+        A bar labelled ``2026-06-25 16:04:00-04:00`` is the 16:04 ET candle.
+
+    Returns ``None`` if the file is missing, the bar is not found, or any
+    read error occurs.
+    """
+    try:
+        import pandas as pd
+        from scripts.streaming.options.config import LIVE_STORAGE_DIR, OHLCV_DATA_DIR
+
+        if symbol == "SPX":
+            path = LIVE_STORAGE_DIR / "live_storage_SPX.parquet"
+            close_val = None
+            target_ts = pd.Timestamp(target_dt_utc)
+
+            # 1. Try reading from live_storage_SPX.parquet
+            if path.exists():
+                try:
+                    df = pd.read_parquet(path, columns=["timestamp", "close"])
+                    row = df[df["timestamp"] == target_ts]
+                    if not row.empty:
+                        close_val = float(row.iloc[0]["close"])
+                        log.info("get_eod_close_price SPX: found %.2f at %s UTC (parquet)", close_val, target_ts)
+                        return close_val
+                    else:
+                        # Fallback to the last available candle on target day in parquet
+                        df_today = df[df["timestamp"].dt.date == target_ts.date()]
+                        if not df_today.empty:
+                            last_row = df_today.sort_values("timestamp").iloc[-1]
+                            close_val = float(last_row["close"])
+                            log.warning(
+                                "get_eod_close_price SPX: target %s UTC not found in parquet. Falling back to last bar of the day: %.2f at %s UTC",
+                                target_ts, close_val, last_row["timestamp"]
+                            )
+                            return close_val
+                except Exception as e:
+                    log.warning("get_eod_close_price SPX: error reading parquet %s: %s", path, e)
+
+            # 2. Fallback: fetch from Hub REST API
+            log.info("get_eod_close_price SPX: %s not found in parquet, querying Hub REST API...", target_ts)
+            try:
+                resp = _hub_request("get_price_history", {
+                    "symbol": "$SPX",
+                    "period_type": "day",
+                    "period": 1,
+                    "frequency_type": "minute",
+                    "frequency": 1,
+                    "need_extended_hours_data": True
+                })
+                candles = resp.get("candles", [])
+                if candles:
+                    new_candles = []
+                    for c in candles:
+                        c_time = float(c.get("datetime", 0))
+                        new_candles.append({
+                            "time": c_time,
+                            "open": float(c.get("open", 0)),
+                            "high": float(c.get("high", 0)),
+                            "low": float(c.get("low", 0)),
+                            "close": float(c.get("close", 0)),
+                            "volume": int(c.get("volume", 0))
+                        })
+                    
+                    new_df = pd.DataFrame(new_candles)
+                    new_df["timestamp"] = pd.to_datetime(new_df["time"], unit="ms")
+                    
+                    # Find target candle
+                    target_row = new_df[new_df["timestamp"] == target_ts]
+                    if not target_row.empty:
+                        close_val = float(target_row.iloc[0]["close"])
+                        log.info("get_eod_close_price SPX: found %.2f at %s UTC (Hub REST)", close_val, target_ts)
+                    else:
+                        # Fallback to the last available candle on target day from API response
+                        df_today = new_df[new_df["timestamp"].dt.date == target_ts.date()]
+                        if not df_today.empty:
+                            last_row = df_today.sort_values("timestamp").iloc[-1]
+                            close_val = float(last_row["close"])
+                            log.warning(
+                                "get_eod_close_price SPX: target %s UTC not found. Falling back to last bar of the day: %.2f at %s UTC",
+                                target_ts, close_val, last_row["timestamp"]
+                            )
+                    
+                    # Cache/save to parquet
+                    if not path.exists():
+                        new_df.to_parquet(path, index=False)
+                    else:
+                        existing_df = pd.read_parquet(path)
+                        pd.concat([existing_df, new_df]).drop_duplicates(subset=["time"], keep="last").sort_values("time").to_parquet(path, index=False)
+                    log.info("get_eod_close_price SPX: Cached %d candles to %s", len(new_df), path)
+                    
+                    if close_val is not None:
+                        return close_val
+            except Exception as e:
+                log.error("get_eod_close_price SPX: Hub REST fallback failed: %s", e)
+
+            # 3. Graceful fallback: return None (the caller will retain underlying.mark)
+            log.warning("get_eod_close_price SPX: could not fetch/find close at %s UTC", target_ts)
+            return None
+
+
+        # --- Futures path ---
+        stem = _FUTURES_LIVE_STORAGE_MAP.get(symbol)
+        if stem is None:
+            log.warning("get_eod_close_price: no live_storage mapping for %s", symbol)
+            return None
+        path = LIVE_STORAGE_DIR / f"live_storage_{stem}.parquet"
+        if not path.exists():
+            log.warning("get_eod_close_price: %s not found", path)
+            return None
+
+        df = pd.read_parquet(path, columns=["timestamp", "close"])
+        # timestamp is UTC-naive datetime64[ns] — match exactly.
+        target_ts = pd.Timestamp(target_dt_utc)
+        row = df[df["timestamp"] == target_ts]
+        if row.empty:
+            log.warning("get_eod_close_price %s: bar %s UTC not found", symbol, target_ts)
+            return None
+        close = float(row.iloc[0]["close"])
+        log.info("get_eod_close_price %s: found %.2f at %s UTC", symbol, close, target_ts)
+        return close
+
+    except Exception as exc:
+        log.error("get_eod_close_price(%s, %s) failed: %s", symbol, target_dt_utc, exc)
+        return None
+
+
 def fetch_futures_option_chain_data(symbol: str, dte_targets: list[int]) -> OptionChainData:
     """
+
     Directly fetch futures options data using REST 'quotes' for generated symbols.
     format: ./ROOT{month}{year}{C/P}{strike}
     """

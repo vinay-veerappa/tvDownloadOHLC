@@ -46,6 +46,8 @@ from .config import (
     ENABLE_DISCORD_UPDATES,
     ETF_FALLBACK,
     INDEX_TO_FUTURES,
+    EOD_FUTURES_CLOSE_TIME,
+    EOD_SPX_CLOSE_TIME,
     LOG_FILE,
     MIN_NONZERO_OI_CONTRACTS,
     PRIORITY_TICKERS,
@@ -100,7 +102,7 @@ from .gex_calculator import (
     rescale_levels_to_target_spot,
 )
 from .level_scorer import score_levels, ScoredLevels
-from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data
+from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data, get_eod_close_price, FuturesQuote
 from .state_tracker import (
     build_current_state,
     detect_changes,
@@ -413,6 +415,58 @@ def run_pipeline(
 
             # 2. Fetch front-month futures quote
             fut = fetch_futures_quote(futures_sym)
+
+            # 2c. EOD close-price override (16:15 ET snapshot only)
+            # At EOD, ES/NQ/RTY/YM keep trading after 4 PM so the live Schwab
+            # mark drifts away from the official 15:59 RTH close.  Pin the
+            # futures price to the 15:59 candle close from our local parquet.
+            # This also overrides the SPX cash spot to the 16:04 ET close.
+            is_eod_snapshot = (snapshot_suffix == "1615")
+            if is_eod_snapshot and futures_sym and fut and fut.price is not None:
+                tz_ny = ZoneInfo("America/New_York")
+                tz_utc = ZoneInfo("UTC")
+                now_ny = datetime.now(tz_ny)
+                # Build UTC-naive timestamp for the 15:59 ET candle
+                eod_close_et = datetime.combine(
+                    now_ny.date(), EOD_FUTURES_CLOSE_TIME
+                ).replace(tzinfo=tz_ny)
+                eod_close_utc = eod_close_et.astimezone(tz_utc).replace(tzinfo=None)
+                parquet_close = get_eod_close_price(futures_sym, eod_close_utc)
+                if parquet_close is not None:
+                    log.info(
+                        "EOD parquet override %s: 15:59 close=%.2f  (live mark was %.2f)",
+                        futures_sym, parquet_close, fut.price,
+                    )
+                    fut = FuturesQuote(
+                        symbol=fut.symbol,
+                        price=parquet_close,
+                        open_price=fut.open_price,
+                    )
+                else:
+                    log.warning(
+                        "EOD parquet override: no 15:59 bar for %s — keeping live mark %.2f",
+                        futures_sym, fut.price,
+                    )
+
+                # SPX cash spot: pin to 16:04 ET close
+                if ticker == "SPX":
+                    spx_close_et = datetime.combine(
+                        now_ny.date(), EOD_SPX_CLOSE_TIME
+                    ).replace(tzinfo=tz_ny)
+                    spx_close_utc = spx_close_et.astimezone(tz_utc).replace(tzinfo=None)
+                    spx_parquet_close = get_eod_close_price("SPX", spx_close_utc)
+                    if spx_parquet_close is not None:
+                        log.info(
+                            "EOD SPX spot override: 16:04 close=%.2f  (chain mark was %.2f)",
+                            spx_parquet_close, full_chain.spot_price,
+                        )
+                        target_cash_spot = spx_parquet_close
+                        full_chain = replace(full_chain, spot=spx_parquet_close)
+                    else:
+                        log.warning(
+                            "EOD SPX spot override: no 16:04 bar — keeping chain mark %.2f",
+                            full_chain.spot_price,
+                        )
 
             # 2b. Establish or load basis anchor
             # Logic: 

@@ -365,6 +365,22 @@ EM_STRADDLE_MULTIPLE_OVERRIDES: dict[str, float] = {
 # for the entire session. If False, use the dynamic real-time basis.
 USE_OPENING_BASIS: bool = True
 
+# At the 16:15 ET EOD snapshot, pin the futures basis ratio to the last
+# traded close of the RTH session rather than the live Schwab mark (which
+# drifts after 4 PM).  Futures trade through 4:15 PM ET so their mark can
+# be 10-40 pts above the official 15:59 close by the time we query.
+#
+# ETF/Index → Futures  : use the 15:59 ET 1-min candle close from
+#                         data/live/live_storage_{sym}.parquet
+# SPX cash spot         : use the 16:04 ET 1-min candle close from
+#                         data/SPX_1m.parquet (ET-indexed DatetimeIndex)
+EOD_FUTURES_CLOSE_TIME: time = time(15, 59)   # last RTH futures candle
+EOD_SPX_CLOSE_TIME:     time = time(16,  4)   # last full SPX 1-min bar
+
+# Directories used by the EOD close-price parquet lookup.
+LIVE_STORAGE_DIR: Path = REPO_ROOT / "data" / "live"   # live_storage_-ES.parquet etc.
+OHLCV_DATA_DIR:   Path = REPO_ROOT / "data"            # SPX_1m.parquet etc.
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------

@@ -1,6 +1,13 @@
 import os
 import subprocess
 import time
+import sys
+import io
+
+# Force standard output and error to use utf-8 on Windows to prevent emoji encoding crashes
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', write_through=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', write_through=True)
 
 def kill_process_by_port(port):
     try:
@@ -43,8 +50,8 @@ def main():
     print("===================================================")
     
     # 1. Clear ports
-    print("Checking active ports (Hub:8080, API:8000, Web:3000)...")
-    for port in [8080, 8000, 3000]:
+    print("Checking active ports (Hub:8080, API:8000, Chart:8001, Web:3000)...")
+    for port in [8080, 8000, 8001, 3000]:
         kill_process_by_port(port)
     
     # 2. Clear stray processes
@@ -54,7 +61,9 @@ def main():
         "l2_processor_engine", 
         "stream_chart", 
         "api.main", 
-        "run_options_levels"
+        "run_options_levels",
+        "news_calendar_fetcher",
+        "strategy_engine"
     ]
     kill_python_scripts(scripts)
     
