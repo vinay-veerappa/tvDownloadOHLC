@@ -84,6 +84,7 @@ from .config import (
     UNIFIED_LEVELS_JSON,
     ENABLE_UNIFIED_CONTRACT_OUTPUTS,
     ENABLE_SCORED_CONTRACT_OUTPUTS,
+    SCHWAB_INDEX_PREFIX,
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
 from .file_writer import (
@@ -102,7 +103,7 @@ from .gex_calculator import (
     rescale_levels_to_target_spot,
 )
 from .level_scorer import score_levels, ScoredLevels
-from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data, get_eod_close_price, FuturesQuote
+from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data, get_eod_close_price, FuturesQuote, _hub_request, _safe_float
 from .state_tracker import (
     build_current_state,
     detect_changes,
@@ -485,6 +486,20 @@ def run_pipeline(
                     # Attempt to capture new anchor
                     # Prefer open prices (Open Price Hack)
                     spot_open = full_chain.spot_open
+                    
+                    # Fallback: if spot_open is missing/0.0, fetch it via get_quotes REST API from the Hub
+                    if not spot_open:
+                        try:
+                            api_sym = SCHWAB_INDEX_PREFIX.get(ticker, ticker)
+                            qres = _hub_request("get_quotes", {"symbols": [api_sym]})
+                            qdata = qres.get(api_sym, {})
+                            q_val = qdata.get("quote", {})
+                            spot_open = _safe_float(q_val.get("openPrice") or q_val.get("sessionOpen"))
+                            if spot_open:
+                                log.info("Fetched spot open price for %s via get_quotes: %.2f", ticker, spot_open)
+                        except Exception as e:
+                            log.warning("Could not fetch spot open price for %s via get_quotes: %s", ticker, e)
+
                     fut_open = fut.open_price
                     
                     if spot_open and fut_open:
