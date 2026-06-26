@@ -380,6 +380,17 @@ export function useChart(
                 prevDataRef.current.length > 0 &&
                 chartData[0]?.time === prevDataRef.current[0]?.time;
 
+            // Check if the last bar's time went backwards (e.g. projected candle was replaced
+            // by real data from setFullData). If so, force setData() to avoid
+            // "Cannot update oldest data" error from lightweight-charts update().
+            if (isIncremental && prevDataRef.current.length > 0 && chartData.length > 0) {
+                const newLastTime = chartData[chartData.length - 1].time;
+                const prevLastTime = prevDataRef.current[prevDataRef.current.length - 1].time;
+                if (newLastTime < prevLastTime) {
+                    isIncremental = false;
+                }
+            }
+
             // If we think it's incremental, verify that no older bars (excluding the very last bar) have changed their values
             if (isIncremental) {
                 const checkCount = Math.min(5, chartData.length - 1);

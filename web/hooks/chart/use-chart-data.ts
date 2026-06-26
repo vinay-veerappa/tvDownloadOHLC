@@ -173,18 +173,34 @@ export function useChartData({
                 let enriched: OHLCData[];
 
                 if (shouldProjectNew && lastUpdate) {
-                    // New candle period has started but the real candle hasn't been added
-                    // to fullData yet (waiting for WS candle message → setFullData transition).
-                    // Do NOT project synthetic candles beyond fullData — this causes
-                    // "Cannot update oldest data" errors when fullData catches up.
-                    // Just return baseData as-is; the new candle appears via setFullData.
-                    enriched = baseData;
+                    // New candle period has started. Append the forming candle from liveCandleRef
+                    // so the chart shows it with real OHLC + livePrice as close.
+                    // When setFullData catches up (WS candle transition), use-chart.ts will
+                    // detect the time went backwards and use setData() instead of update().
+                    const tail: OHLCData[] = []
+
+                    if (liveCandle && liveCandle.time === newCandleTime) {
+                        // Real WS candle available — merge livePrice into close/high/low
+                        const realHigh = Math.max(liveCandle.high, livePrice)
+                        const realLow = Math.min(liveCandle.low, livePrice)
+                        tail.push({
+                            time: newCandleTime,
+                            open: liveCandle.open,
+                            high: realHigh,
+                            low: realLow,
+                            close: livePrice,
+                            volume: liveCandle.volume
+                        })
+                    }
+                    // If no liveCandle for this period, don't append — chart shows last real bar
 
                     // Clean up old projections
                     const lastBarTime = lastCandle.time
                     for (const [t] of projections) {
                         if (t <= lastBarTime) projections.delete(t)
                     }
+
+                    enriched = tail.length > 0 ? baseData.concat(tail) : baseData;
                 } else {
                     // Not projecting — the last bar in baseData is the current forming candle.
                     const barTime = lastCandle.time
