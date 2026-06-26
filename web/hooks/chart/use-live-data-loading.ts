@@ -274,7 +274,16 @@ export function useLiveDataLoading({
                                 lastRaw.close = currentLivePrice;
                                 lastRaw.high = Math.max(lastRaw.high, currentLivePrice);
                                 lastRaw.low = Math.min(lastRaw.low, currentLivePrice);
-                                liveCandleRef.current = { ...lastRaw };
+                                // Update liveCandleRef: preserve open from WS candle message,
+                                // only update close/high/low with live price
+                                const existing = liveCandleRef.current;
+                                if (existing && existing.time === candleTime) {
+                                    existing.close = currentLivePrice;
+                                    existing.high = Math.max(existing.high, currentLivePrice);
+                                    existing.low = Math.min(existing.low, currentLivePrice);
+                                } else {
+                                    liveCandleRef.current = { ...lastRaw };
+                                }
                             } else if (candleTime > lastRaw.time) {
                                 // New candle period — update or create liveCandleRef
                                 const existing = liveCandleRef.current;

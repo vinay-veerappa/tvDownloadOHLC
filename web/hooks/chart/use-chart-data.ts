@@ -173,58 +173,18 @@ export function useChartData({
                 let enriched: OHLCData[];
 
                 if (shouldProjectNew && lastUpdate) {
-                    const lastBarTime = lastCandle.time
-                    const resolutionMins = getResolutionInMinutes(timeframe)
-                    const resolutionSecs = resolutionMins * 60
-
-                    const nextExpectedTime = lastBarTime + resolutionSecs
-                    let tempTime = nextExpectedTime
-
-                    // Build the tail: only include candles we have REAL data for.
-                    // Do NOT synthesize flat candles from prevClose — wait for WS data.
-                    const tail: OHLCData[] = []
-
-                    // 1. Intermediate candles — only if we have real WS data
-                    while (tempTime < newCandleTime) {
-                        if (liveCandle && liveCandle.time === tempTime) {
-                            tail.push({
-                                time: tempTime,
-                                open: liveCandle.open,
-                                high: liveCandle.high,
-                                low: liveCandle.low,
-                                close: liveCandle.close,
-                                volume: liveCandle.volume
-                            })
-                        }
-                        // If no real data for this intermediate candle, skip it.
-                        // The chart will show a gap until real data arrives.
-                        tempTime += resolutionSecs
-                    }
-
-                    // 2. Active forming candle — only if we have real WS data
-                    if (liveCandle && liveCandle.time === newCandleTime) {
-                        // Merge livePrice into the real candle's close/high/low
-                        const realHigh = Math.max(liveCandle.high, livePrice)
-                        const realLow = Math.min(liveCandle.low, livePrice)
-                        tail.push({
-                            time: newCandleTime,
-                            open: liveCandle.open,
-                            high: realHigh,
-                            low: realLow,
-                            close: livePrice,
-                            volume: liveCandle.volume
-                        })
-                    }
-                    // If no real data for the active candle, don't append it.
-                    // The chart shows the last real bar until WS data arrives.
+                    // New candle period has started but the real candle hasn't been added
+                    // to fullData yet (waiting for WS candle message → setFullData transition).
+                    // Do NOT project synthetic candles beyond fullData — this causes
+                    // "Cannot update oldest data" errors when fullData catches up.
+                    // Just return baseData as-is; the new candle appears via setFullData.
+                    enriched = baseData;
 
                     // Clean up old projections
+                    const lastBarTime = lastCandle.time
                     for (const [t] of projections) {
                         if (t <= lastBarTime) projections.delete(t)
                     }
-
-                    // Concatenate shared prefix with real-data tail
-                    enriched = tail.length > 0 ? baseData.concat(tail) : baseData;
                 } else {
                     // Not projecting — the last bar in baseData is the current forming candle.
                     const barTime = lastCandle.time
@@ -244,7 +204,6 @@ export function useChartData({
                         });
                     } else {
                         // No real WS candle for this bar — return baseData as-is.
-                        // The chart shows the last real bar without modification.
                         enriched = baseData;
                     }
 
