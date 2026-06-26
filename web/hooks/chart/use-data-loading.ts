@@ -348,6 +348,11 @@ export function useDataLoading({
                             }))
                             liveRawDataRef.current = formatted
 
+                            // Set liveCandleRef to the last snapshot candle (the forming candle)
+                            if (formatted.length > 0) {
+                                liveCandleRef.current = { ...formatted[formatted.length - 1] }
+                            }
+
                             // Resample and merge
                             const processed = await processLiveData(liveRawDataRef.current, timeframe)
                             setFullData(prev => mergeDatasets(prev, processed))
@@ -416,6 +421,9 @@ export function useDataLoading({
                                     lastRaw.close = price
                                     lastRaw.high = Math.max(lastRaw.high, price)
                                     lastRaw.low = Math.min(lastRaw.low, price)
+
+                                    // Also update liveCandleRef so use-chart-data.ts has real OHLC
+                                    liveCandleRef.current = { ...lastRaw }
                                 }
                             }
 

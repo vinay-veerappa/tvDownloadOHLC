@@ -239,6 +239,18 @@ export function useLiveDataLoading({
                         const candles = msg.candles || [];
                         if (candles.length > 0) {
                             await processAndMergeCandles(candles, false);
+                            // Set liveCandleRef to the last snapshot candle (the forming candle)
+                            const last = candles[candles.length - 1];
+                            if (last) {
+                                liveCandleRef.current = {
+                                    time: last.time > 10000000000 ? last.time / 1000 : last.time,
+                                    open: last.open,
+                                    high: last.high,
+                                    low: last.low,
+                                    close: last.close,
+                                    volume: last.volume
+                                };
+                            }
                         }
                         if (msg.live_price) {
                             setLivePrice(msg.live_price);
@@ -259,6 +271,9 @@ export function useLiveDataLoading({
                                 lastRaw.close = currentLivePrice;
                                 lastRaw.high = Math.max(lastRaw.high, currentLivePrice);
                                 lastRaw.low = Math.min(lastRaw.low, currentLivePrice);
+
+                                // Also update liveCandleRef so use-chart-data.ts has real OHLC
+                                liveCandleRef.current = { ...lastRaw };
                             }
 
                             // NOTE: We do NOT update fullData here. The projection logic
