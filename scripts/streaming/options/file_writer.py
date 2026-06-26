@@ -187,6 +187,7 @@ _LEVEL_ATTRS: list[tuple[str, str]] = [
     ("local_call_node", "Local Call Node"),
     ("call_wall_0dte", "0DTE Call Wall"),
     ("zero_gamma", "Zero Gamma"),
+    ("zero_gamma_delta_adj", "Zero Gamma (DA)"),
     ("max_pain", "Max Pain"),
     ("put_wall_0dte", "0DTE Put Wall"),
     ("local_put_node", "Local Put Node"),
@@ -354,6 +355,7 @@ def _detailed_block(tl: TranslatedLevels) -> list[str]:
         f"  Local Call Node    : {fmt(tl.local_call_node)}",
         f"  0DTE Call Wall     : {fmt(tl.call_wall_0dte)}",
         f"  Zero Gamma         : {fmt(tl.zero_gamma)}",
+        f"  Zero Gamma (DA)    : {fmt(tl.zero_gamma_delta_adj)}",
         f"  Max Pain           : {fmt(tl.max_pain)}",
         f"  0DTE Put Wall      : {fmt(tl.put_wall_0dte)}",
         f"  Local Put Node     : {fmt(tl.local_put_node)}",
@@ -872,6 +874,9 @@ def write_macro_levels(
     if levels.get("zero_gamma"):
         tokens.append(f"{levels['zero_gamma']:.2f}:Zero Gamma")
 
+    if levels.get("zero_gamma_delta_adj"):
+        tokens.append(f"{levels['zero_gamma_delta_adj']:.2f}:Zero Gamma DA")
+
     # 2. Structural Whales (Confluence >= 2)
     for w in anomalies.get("structural", []):
         # Add a multiplier tag if there are multiple expirations (e.g., "x5")
@@ -932,6 +937,7 @@ def write_quant_json(
         "ticker": ticker,
         "spot": spot,
         "zero_gamma": levels.get("zero_gamma"),
+        "zero_gamma_delta_adj": levels.get("zero_gamma_delta_adj"),
         "call_wall": levels.get("macro_call_wall"),
         "put_wall": levels.get("macro_put_wall"),
         "major_nodes": [n for n in dominant_nodes if n.get('dominance_pct', 0) > 4.0],
@@ -1107,6 +1113,9 @@ def _build_scored_tokens(
             if not is_kept_context_inflection:
                 continue
 
+        if isinstance(tl, InflectionPoint) and "zero_gamma" in str(getattr(tl, "field_name", "")).lower():
+            is_kept_context_inflection = True
+
         if isinstance(tl, StructuralAnchor) and tl.days_to_expiry > max_visible_dte_days:
             continue
 
@@ -1145,7 +1154,9 @@ def _build_scored_tokens(
         elif isinstance(tl, InflectionPoint):
             filt = "I"
             field_l = tl.field_name.lower()
-            if "zero" in field_l:
+            if "zero_gamma_delta_adj" in field_l:
+                label = "ZERO GEX DA"
+            elif "zero" in field_l:
                 label = "ZERO GEX"
             elif "gamma_flip_upper" in field_l:
                 label = "FLIP UP"

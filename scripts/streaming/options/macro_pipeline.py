@@ -311,6 +311,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                     "macro_call_wall": dl.call_wall,
                     "macro_put_wall": dl.put_wall,
                     "zero_gamma": dl.zero_gamma,
+                    "zero_gamma_delta_adj": dl.zero_gamma_delta_adj,
                     "put_25d_iv": dl.put_25d_iv,
                     "call_25d_iv": dl.call_25d_iv,
                     "volatility_skew_premium": dl.volatility_skew_premium,
@@ -375,6 +376,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                             "macro_call_wall": m_dl.call_wall,
                             "macro_put_wall": m_dl.put_wall,
                             "zero_gamma": m_dl.zero_gamma,
+                            "zero_gamma_delta_adj": m_dl.zero_gamma_delta_adj,
                             "put_25d_iv": m_dl.put_25d_iv,
                             "call_25d_iv": m_dl.call_25d_iv,
                             "volatility_skew_premium": m_dl.volatility_skew_premium,
@@ -419,7 +421,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                         f_l, f_a, f_n = copy.deepcopy(m_levels), copy.deepcopy(m_anomalies), copy.deepcopy(m_nodes)
 
                         if mode == "multiplicative":
-                            for k in ["macro_call_wall", "macro_put_wall", "zero_gamma"]:
+                            for k in ["macro_call_wall", "macro_put_wall", "zero_gamma", "zero_gamma_delta_adj"]:
                                 if f_l.get(k): f_l[k] = round(f_l[k] * anchor_ratio, 2)
                             for sg in f_l.get("strikes_oi", []): 
                                 sg["strike"] = round(sg["strike"] * anchor_ratio, 2)
@@ -429,7 +431,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
                                 for w in f_a.get(bucket, []): 
                                     w["strike"] = round(w["strike"] * anchor_ratio, 2)
                         else:
-                            for k in ["macro_call_wall", "macro_put_wall", "zero_gamma"]:
+                            for k in ["macro_call_wall", "macro_put_wall", "zero_gamma", "zero_gamma_delta_adj"]:
                                 if f_l.get(k): f_l[k] = round(f_l[k] + anchor_basis, 2)
                             for sg in f_l.get("strikes_oi", []): 
                                 sg["strike"] = round(sg["strike"] + anchor_basis, 2)

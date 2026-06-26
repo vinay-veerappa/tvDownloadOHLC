@@ -5,6 +5,7 @@ import { normalizeResolution, getResolutionInMinutes } from "@/lib/resolution"
 import { useDataLoading } from "./use-data-loading"
 import { useLiveDataLoading } from "./use-live-data-loading"
 import { useReplay } from "./use-replay"
+import { OHLCData } from "@/actions/data-actions"
 
 import { SessionType } from "@/components/top-toolbar"
 
@@ -139,9 +140,11 @@ export function useChartData({
             const lastUpdate = liveStore.lastUpdate // ISO String
 
             if (livePrice !== null && livePrice !== undefined) {
-                const enriched = [...baseData]
-                const lastIdx = enriched.length - 1
-                const lastCandle = { ...enriched[lastIdx] }
+                // Avoid copying the entire baseData array on every tick.
+                // We only modify the last candle and/or append projections,
+                // so we share the prefix by reference and build a new tail.
+                const lastIdx = baseData.length - 1
+                const lastCandle = baseData[lastIdx]
                 const projections = liveCandlesRef.current
 
                 // Determine if we should project a NEW candle (or multiple)
@@ -163,6 +166,8 @@ export function useChartData({
                     }
                 }
 
+                let enriched: OHLCData[];
+
                 if (shouldProjectNew && lastUpdate) {
                     const lastBarTime = lastCandle.time
                     const resolutionMins = getResolutionInMinutes(timeframe)
@@ -172,11 +177,14 @@ export function useChartData({
                     let tempTime = nextExpectedTime
                     let prevClose = lastCandle.close
 
+                    // Build the tail: intermediate + active projected candles
+                    const tail: OHLCData[] = []
+
                     // 1. Project intermediate candles — use cached data if available
                     while (tempTime < newCandleTime) {
                         const cached = projections.get(tempTime)
                         if (cached && cached.ticker === ticker && cached.timeframe === timeframe) {
-                            enriched.push({
+                            tail.push({
                                 time: tempTime,
                                 open: cached.open,
                                 high: cached.high,
@@ -186,7 +194,7 @@ export function useChartData({
                             })
                             prevClose = cached.close
                         } else {
-                            enriched.push({
+                            tail.push({
                                 time: tempTime,
                                 open: prevClose,
                                 high: prevClose,
@@ -205,19 +213,22 @@ export function useChartData({
                         if (livePrice > existing.high) existing.high = livePrice
                         if (livePrice < existing.low) existing.low = livePrice
                     } else {
+                        // Use prevClose as the open (matches hub behavior: open = prev close).
+                        // Initialize high/low to span both prevClose and livePrice so the
+                        // candle doesn't start with a flat top/bottom (O=H or O=L).
                         projections.set(newCandleTime, {
                             ticker,
                             timeframe,
                             time: newCandleTime,
-                            open: livePrice,
-                            high: livePrice,
-                            low: livePrice,
+                            open: prevClose,
+                            high: Math.max(prevClose, livePrice),
+                            low: Math.min(prevClose, livePrice),
                             close: livePrice
                         })
                     }
 
                     const activeCandle = projections.get(newCandleTime)!
-                    enriched.push({
+                    tail.push({
                         time: activeCandle.time,
                         open: activeCandle.open,
                         high: activeCandle.high,
@@ -230,6 +241,9 @@ export function useChartData({
                     for (const [t] of projections) {
                         if (t <= lastBarTime) projections.delete(t)
                     }
+
+                    // Concatenate shared prefix with new tail (avoids copying baseData)
+                    enriched = baseData.concat(tail);
                 } else {
                     // Not projecting — accumulate high/low for the current bar
                     const barTime = lastCandle.time
@@ -244,6 +258,11 @@ export function useChartData({
                             close: lastCandle.close
                         }
                         projections.set(barTime, tracked)
+                    } else {
+                        // Projection was created from the shouldProjectNew=true path
+                        // with a synthetic open. Now that the real candle arrived in
+                        // fullData, correct the open to match the real market open.
+                        tracked.open = lastCandle.open
                     }
 
                     // Merge base values (in case a candle message updated fullData)
@@ -255,18 +274,21 @@ export function useChartData({
                     tracked.high = Math.max(tracked.high, livePrice)
                     tracked.low = Math.min(tracked.low, livePrice)
 
-                    enriched[lastIdx] = {
+                    // Build enriched: share prefix, replace only last element
+                    enriched = baseData.slice(0, lastIdx);
+                    enriched.push({
                         ...lastCandle,
                         high: tracked.high,
                         low: tracked.low,
                         close: tracked.close
-                    }
+                    });
 
                     // Clean up old entries
                     for (const [t] of projections) {
                         if (t < barTime) projections.delete(t)
                     }
                 }
+
                 if (enriched.length >= 2) {
                     const l1 = enriched[enriched.length - 1];
                     const l2 = enriched[enriched.length - 2];

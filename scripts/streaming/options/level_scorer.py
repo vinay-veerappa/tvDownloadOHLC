@@ -119,6 +119,12 @@ _LEVEL_METADATA: dict[str, dict[str, str]] = {
         "side": "NEUTRAL",
         "desc": "The point where dealer positioning flips from long to short gamma. Volatility increases significantly below this level.",
     },
+    "zero_gamma_delta_adj": {
+        "label": "Zero Gamma DA",
+        "significance": "PIVOT",
+        "side": "NEUTRAL",
+        "desc": "The delta-adjusted zero gamma level, taking delta hedging bias into account. Highly reactive for intraday trading.",
+    },
     "gamma_magnet": {
         "label": "Gamma Magnet",
         "significance": "CONTEXTUAL",
@@ -428,7 +434,7 @@ def _find_inflection_points(
     """Filter 3: Zero Gamma and structural flip zones."""
     pts: list[InflectionPoint] = []
     
-    if levels.zero_gamma is not None and lo <= levels.zero_gamma <= hi:
+    if levels.zero_gamma is not None:
         pts.append(InflectionPoint(
             strike=levels.zero_gamma,
             label="Zero Gamma Level",
@@ -436,6 +442,16 @@ def _find_inflection_points(
             side="NEUTRAL",
             inflection_type="FLIP",
             field_name="zero_gamma"
+        ))
+
+    if hasattr(levels, "zero_gamma_delta_adj") and levels.zero_gamma_delta_adj is not None:
+        pts.append(InflectionPoint(
+            strike=levels.zero_gamma_delta_adj,
+            label="Zero Gamma DA",
+            significance="SECONDARY",
+            side="NEUTRAL",
+            inflection_type="FLIP",
+            field_name="zero_gamma_delta_adj"
         ))
 
     if hasattr(levels, "gamma_flip_upper") and levels.gamma_flip_upper is not None and lo <= levels.gamma_flip_upper <= hi:

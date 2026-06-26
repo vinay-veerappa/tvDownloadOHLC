@@ -1114,6 +1114,11 @@ async def chart_handler(msg):
                 if cdata["candles"]:
                     finalized_candle = cdata["candles"][-1]
                     save_candles_to_parquet(key, [finalized_candle], files["parquet"])
+                    # Broadcast the finalized candle so WS clients receive it.
+                    # Without this, the previous candle is saved to parquet but never
+                    # sent via WebSocket, causing a permanent gap in the frontend chart
+                    # (the candle is only received if the client reconnects or reloads).
+                    await broadcast_candle(key, finalized_candle, "1m")
 
                 # New candle
                 prev = cdata["candles"][-1] if cdata["candles"] else None

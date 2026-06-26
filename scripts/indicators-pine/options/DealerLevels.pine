@@ -34,6 +34,7 @@ col0DTECall = input.color(color.new(color.lime, 60), "0DTE Call Wall", group = g
 colDexCall = input.color(color.new(color.lime, 15), "DEX Call Node", group = grp_colors)
 colGammaCliffUp = input.color(color.new(color.teal, 20), "Gamma Cliff Up", group = grp_colors)
 colZeroGamma = input.color(color.new(color.yellow, 0), "Zero Gamma", group = grp_colors)
+colZeroGammaDA = input.color(color.new(color.orange, 0), "Zero Gamma DA", group = grp_colors)
 colGammaFlip = input.color(color.new(color.yellow, 45), "Gamma Flip Zone", group = grp_colors)
 colGammaCliffDown = input.color(color.new(color.teal, 20), "Gamma Cliff Down", group = grp_colors)
 colMaxPain = input.color(color.new(color.orange, 0), "Max Pain", group = grp_colors)
@@ -73,6 +74,7 @@ maxEMDte = input.int(7, "Max EM DTE to Show", minval = 0, maxval = 15, group = g
 showCallLevels = input.bool(true, "Show Call Levels", group = grp_visibility)
 showPutLevels = input.bool(true, "Show Put Levels", group = grp_visibility)
 showZeroGammaLevel = input.bool(true, "Show Zero Gamma", group = grp_visibility)
+showZeroGammaDALevel = input.bool(true, "Show Zero Gamma DA", group = grp_visibility)
 showGammaFlipLevels = input.bool(true, "Show Gamma Flip Zone", group = grp_visibility)
 showGammaCliffLevels = input.bool(true, "Show Gamma Cliffs", group = grp_visibility)
 showMaxPainLevel = input.bool(true, "Show Max Pain", group = grp_visibility)
@@ -305,7 +307,7 @@ f_parse_levels(string lineText, array<float> prices, array<string> titles) =>
 // ═══════════════════════════════════════════════════════════════════════
 f_level_color(string title) =>
     u = f_norm(title)
-    f_is_em_upper(u) ? colUpperEM : f_is_em_lower(u) ? colLowerEM : f_is_em85_upper(u) ? colUpperEM : f_is_em85_lower(u) ? colLowerEM : u == "ZERO GAMMA" ? colZeroGamma :
+    f_is_em_upper(u) ? colUpperEM : f_is_em_lower(u) ? colLowerEM : f_is_em85_upper(u) ? colUpperEM : f_is_em85_lower(u) ? colLowerEM : (u == "ZERO GAMMA" or u == "ZERO GEX") ? colZeroGamma : (u == "ZERO GAMMA DA" or u == "ZERO GEX DA") ? colZeroGammaDA :
      u == "GAMMA FLIP UPPER" or u == "GAMMA FLIP LOWER" ? colGammaFlip :
      u == "GAMMA CLIFF UP" ? colGammaCliffUp : u == "GAMMA CLIFF DOWN" ? colGammaCliffDown :
      u == "MAX PAIN" ? colMaxPain : u == "HEDGE WALL" ? colHedge :
@@ -403,8 +405,10 @@ f_show_level(string title, string lineText) =>
         show := showCallLevels
     else if str.contains(u, "PUT")
         show := showPutLevels
-    else if u == "ZERO GAMMA"
+    else if u == "ZERO GAMMA" or u == "ZERO GEX"
         show := showZeroGammaLevel
+    else if u == "ZERO GAMMA DA" or u == "ZERO GEX DA"
+        show := showZeroGammaDALevel
     else if str.contains(u, "GAMMA FLIP")
         show := showGammaFlipLevels
     else if str.contains(u, "GAMMA CLIFF")
@@ -505,6 +509,7 @@ var line gfUF = na
 var line gfLF = na
 var linefill gfBF = na
 var float pZG = na
+var float pZG_DA = na
 var float pGFU = na
 var float pGFL = na
 var float pGCU = na
@@ -533,7 +538,7 @@ dashSize = f_label_size(dashTextSize)
 
 // Recreate table if position changed
 if barstate.isfirst
-    dashTbl := table.new(f_position(dashPosition), 2, 14, bgcolor = color.new(color.black, dashBgOpacity), border_width = 0)
+    dashTbl := table.new(f_position(dashPosition), 2, 15, bgcolor = color.new(color.black, dashBgOpacity), border_width = 0)
 
 selUpd = barstate.isfirst or familySourcePreference != lastFSP or overrideExactWithFamilyPreference != lastOE
 if selUpd
@@ -560,6 +565,7 @@ if needsDraw
     gfLF := na
     gfBF := na
     pZG := na
+    pZG_DA := na
     pGFU := na
     pGFL := na
     pGCU := na
@@ -658,8 +664,10 @@ if needsDraw
                 if f_is_em_lower(tn)
                     eLP := lv
                     pEL := lv
-                if tn == "ZERO GAMMA"
+                if tn == "ZERO GAMMA" or tn == "ZERO GEX"
                     pZG := lv
+                if tn == "ZERO GAMMA DA" or tn == "ZERO GEX DA"
+                    pZG_DA := lv
                 if tn == "GAMMA FLIP UPPER"
                     gUP := lv
                     pGFU := lv
@@ -800,43 +808,46 @@ if barstate.islast and showDashboard and not na(dashTbl)
     // Row  5: ZG
     table.cell(dashTbl, 0, 5, "ZERO γ", text_color = color.gray, text_size = dashSize)
     table.cell(dashTbl, 1, 5, f_num(pZG), text_color = colZeroGamma, text_size = dashSize)
-    // Row  6: Cliffs
-    table.cell(dashTbl, 0, 6, "CLIFFS", text_color = color.gray, text_size = dashSize)
-    table.cell(dashTbl, 1, 6, "↓" + f_num(pGCD) + " | ↑" + f_num(pGCU), text_color = color.teal, text_size = dashSize)
-    // Row  7: Separator
-    table.cell(dashTbl, 0, 7, "", text_size = size.tiny)
-    table.cell(dashTbl, 1, 7, "", text_size = size.tiny)
-    // Row  8: Narrative header
-    table.cell(dashTbl, 0, 8, "PLAN", text_color = color.white, text_size = dashSize)
+    // Row  6: ZG DA
+    table.cell(dashTbl, 0, 6, "ZERO γ DA", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 6, f_num(pZG_DA), text_color = colZeroGammaDA, text_size = dashSize)
+    // Row  7: Cliffs
+    table.cell(dashTbl, 0, 7, "CLIFFS", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 7, "↓" + f_num(pGCD) + " | ↑" + f_num(pGCU), text_color = color.teal, text_size = dashSize)
+    // Row  8: Separator
+    table.cell(dashTbl, 0, 8, "", text_size = size.tiny)
+    table.cell(dashTbl, 1, 8, "", text_size = size.tiny)
+    // Row  9: Narrative header
+    table.cell(dashTbl, 0, 9, "PLAN", text_color = color.white, text_size = dashSize)
     dexInfo = ""
     if not na(pDPN) or not na(pDCN)
         dexInfo := "DEX " + f_num(pDPN) + "/" + f_num(pDCN)
-    table.cell(dashTbl, 1, 8, dexInfo, text_color = color.white, text_size = dashSize)
-    // Row  9: Short
+    table.cell(dashTbl, 1, 9, dexInfo, text_color = color.white, text_size = dashSize)
+    // Row 10: Short
     sZ = ""
     if not na(pGCD)
         sZ := "GC↓" + f_num(pGCD) + " "
     if not na(pDPN)
         sZ := sZ + "DEX " + f_num(pDPN)
-    table.cell(dashTbl, 0, 9, "SHORT", text_color = color.red, text_size = dashSize)
-    table.cell(dashTbl, 1, 9, "< " + f_num(sTrig) + " → " + f_num(sTgt) + " inv > " + f_num(sInv), text_color = color.red, text_size = dashSize)
-    // Row 10: Short zones
-    table.cell(dashTbl, 0, 10, "", text_size = size.tiny)
-    table.cell(dashTbl, 1, 10, str.length(sZ) > 0 ? sZ : "", text_color = color.new(color.red, 40), text_size = dashSize)
-    // Row 11: Long
+    table.cell(dashTbl, 0, 10, "SHORT", text_color = color.red, text_size = dashSize)
+    table.cell(dashTbl, 1, 10, "< " + f_num(sTrig) + " → " + f_num(sTgt) + " inv > " + f_num(sInv), text_color = color.red, text_size = dashSize)
+    // Row 11: Short zones
+    table.cell(dashTbl, 0, 11, "", text_size = size.tiny)
+    table.cell(dashTbl, 1, 11, str.length(sZ) > 0 ? sZ : "", text_color = color.new(color.red, 40), text_size = dashSize)
+    // Row 12: Long
     lZ = ""
     if not na(pGCU)
         lZ := "GC↑" + f_num(pGCU) + " "
     if not na(pDCN)
         lZ := lZ + "DEX " + f_num(pDCN)
-    table.cell(dashTbl, 0, 11, "LONG", text_color = color.lime, text_size = dashSize)
-    table.cell(dashTbl, 1, 11, "> " + f_num(lTrig) + " → " + f_num(lTgt) + " inv < " + f_num(lInv), text_color = color.lime, text_size = dashSize)
-    // Row 12: Long zones
-    table.cell(dashTbl, 0, 12, "", text_size = size.tiny)
-    table.cell(dashTbl, 1, 12, str.length(lZ) > 0 ? lZ : "", text_color = color.new(color.lime, 40), text_size = dashSize)
-    // Row 13: EM
-    table.cell(dashTbl, 0, 13, "EM", text_color = color.aqua, text_size = dashSize)
-    table.cell(dashTbl, 1, 13, f_num(pEL) + " ↔ " + f_num(pEU), text_color = color.aqua, text_size = dashSize)
+    table.cell(dashTbl, 0, 12, "LONG", text_color = color.lime, text_size = dashSize)
+    table.cell(dashTbl, 1, 12, "> " + f_num(lTrig) + " → " + f_num(lTgt) + " inv < " + f_num(lInv), text_color = color.lime, text_size = dashSize)
+    // Row 13: Long zones
+    table.cell(dashTbl, 0, 13, "", text_size = size.tiny)
+    table.cell(dashTbl, 1, 13, str.length(lZ) > 0 ? lZ : "", text_color = color.new(color.lime, 40), text_size = dashSize)
+    // Row 14: EM
+    table.cell(dashTbl, 0, 14, "EM", text_color = color.aqua, text_size = dashSize)
+    table.cell(dashTbl, 1, 14, f_num(pEL) + " ↔ " + f_num(pEU), text_color = color.aqua, text_size = dashSize)
 
 if barstate.islast and not showDashboard and not na(dashTbl)
-    table.clear(dashTbl, 0, 0, 1, 13)
+    table.clear(dashTbl, 0, 0, 1, 14)

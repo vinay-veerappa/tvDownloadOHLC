@@ -362,6 +362,7 @@ def _build_embed(levels: HasLevels, run_label: str, scored: ScoredLevels | None 
         {"name": f"📈 Call Wall ({tag})",    "value": fmt(levels.call_wall),   "inline": True},
         {"name": f"📉 Put Wall ({tag})",     "value": fmt(levels.put_wall),    "inline": True},
         {"name": f"⚡ Zero Gamma ({tag})",   "value": fmt(levels.zero_gamma),  "inline": True},
+        {"name": f"⚡ Zero Gamma (DA) ({tag})", "value": fmt(levels.zero_gamma_delta_adj), "inline": True},
         # ── Spacer ───────────────────────────────────────────────
         {"name": "\u200b", "value": "\u200b", "inline": False},
         # ── Expected move ────────────────────────────────────────
@@ -522,6 +523,7 @@ def send_macro_update(
     
     # Extract variables safely
     zg = levels.get("zero_gamma")
+    zg_da = levels.get("zero_gamma_delta_adj")
     cw = levels.get("macro_call_wall")
     pw = levels.get("macro_put_wall")
     
@@ -546,6 +548,7 @@ def send_macro_update(
         f"• Ceiling (Call Wall): {cw:,.2f}" if cw else "• Ceiling: N/A",
         f"• Floor (Put Wall): {pw:,.2f}" if pw else "• Floor: N/A",
         f"• Pivot (Zero Gamma): {zg:,.2f}" if zg else "• Pivot: N/A",
+        f"• Pivot (Zero Gamma DA): {zg_da:,.2f}" if zg_da else "• Pivot (Zero Gamma DA): N/A",
         f"• Major Nodes: {nodes_str}",
         "",
     ]

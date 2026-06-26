@@ -1118,4 +1118,103 @@ def test_futures_translation_rounds_to_min_tick() -> None:
     assert tl.min_tick == 0.25
 
 
+def test_zero_gamma_delta_adj_calculation_and_translation() -> None:
+    from scripts.streaming.options.futures_translator import translate_to_futures
+    from scripts.streaming.options.gex_calculator import DealerLevels, _find_dynamic_zero_gamma, OptionContract
+    from scripts.streaming.options.options_fetcher import FuturesQuote
+    from datetime import date
+
+    # 1. Test binary search repricing solver
+    calls = [
+        OptionContract(symbol="C110", strike=110.0, contract_type="CALL", open_interest=1000, iv=0.2, dte=1, expiry=date(2026, 6, 26), bid=1.0, ask=1.1, delta=0.5, gamma=0.05, theta=-0.05, vega=0.05)
+    ]
+    puts = [
+        OptionContract(symbol="P90", strike=90.0, contract_type="PUT", open_interest=1000, iv=0.2, dte=1, expiry=date(2026, 6, 26), bid=1.0, ask=1.1, delta=-0.5, gamma=0.05, theta=-0.05, vega=0.05)
+    ]
+    
+    zg = _find_dynamic_zero_gamma(calls, puts, spot=100.0, delta_adjusted=False)
+    zg_da = _find_dynamic_zero_gamma(calls, puts, spot=100.0, delta_adjusted=True)
+    
+    assert zg is not None
+    assert zg_da is not None
+    assert abs(zg - 100.0) < 5.0
+    
+    # 2. Test translate_to_futures for zero_gamma_delta_adj
+    levels = DealerLevels(
+        ticker="SPX",
+        spot=7500.0,
+        zero_gamma=7495.12,
+        zero_gamma_delta_adj=7490.05,
+        gamma_flip_lower=7490.05,
+        gamma_flip_upper=7490.05,
+        call_wall=7510.3,
+        put_wall=7480.2,
+        secondary_call_wall=None,
+        secondary_put_wall=None,
+        local_call_node=None,
+        local_put_node=None,
+        call_wall_0dte=None,
+        put_wall_0dte=None,
+        hedge_wall=None,
+        max_pain=None,
+        em_value=30.0,
+        em_upper=7530.0,
+        em_lower=7470.0,
+        atm_straddle=28.0,
+        vol_trigger_upper_05=None,
+        vol_trigger_lower_05=None,
+        vol_trigger_upper_10=None,
+        vol_trigger_lower_10=None,
+        vol_trigger_upper_15=None,
+        vol_trigger_lower_15=None,
+        gamma_cliff_up=None,
+        gamma_cliff_down=None,
+        vanna_call_node=None,
+        vanna_put_node=None,
+        charm_call_node=None,
+        charm_put_node=None,
+        volume_imbalance_call_node=None,
+        volume_imbalance_put_node=None,
+        dex_call_node=None,
+        dex_put_node=None,
+        liquidity_vacuum_lower=None,
+        liquidity_vacuum_upper=None,
+        skew_pivot_put_25d=None,
+        skew_pivot_call_25d=None,
+        gamma_magnet=None,
+        pin_strike=None,
+        pin_odds=0.5,
+        wall_separation=None,
+        expected_moves=[],
+        gex_regime="NEGATIVE",
+        total_gex=-1000.0,
+        regime_label="TRENDING",
+        directional_bias="BEARISH",
+        call_gamma_total=100.0,
+        put_gamma_total=200.0,
+        net_vanna_exposure=0.0,
+        wall_scope="FRONT_WEEK_WEIGHTED",
+        wall_dte_min=0,
+        wall_dte_max=14,
+        concentration_score=0.5,
+        call_wall_oi=100,
+        put_wall_oi=100,
+        pin_strike_oi=100,
+        net_speed_exposure=0.0,
+        hedge_flow_up_10=0.0,
+        hedge_flow_up_25=0.0,
+        hedge_flow_up_50=0.0,
+        hedge_flow_dn_10=0.0,
+        hedge_flow_dn_25=0.0,
+        hedge_flow_dn_50=0.0,
+        hourly_flow_curve=[],
+    )
+    
+    futures = FuturesQuote(symbol="/ESH26", price=7515.33, open_price=7515.0)
+    tl = translate_to_futures(levels, futures)
+    assert tl.zero_gamma == 7510.50
+    assert tl.zero_gamma_delta_adj == 7505.50
+
+
+
 

@@ -40,6 +40,7 @@ export function useLiveDataLoading({
     const lastTimeRef = useRef<number>(0)
     const rawDataRef = useRef<OHLCData[]>([]) // Keep raw array to avoid closure staleness
     const resamplingSequenceRef = useRef<number>(0)
+    const fetchSeqRef = useRef<number>(0) // Guards against stale HTTP fetch responses (React Strict Mode double-fire)
     const [historyLoaded, setHistoryLoaded] = useState(false)
 
     const wsRef = useRef<WebSocket | null>(null)
@@ -61,7 +62,29 @@ export function useLiveDataLoading({
         }));
 
         if (isInitial) {
-            rawDataRef.current = formatted;
+            // Merge with any data that may have arrived via WS between fetch start and completion.
+            // This prevents a stale HTTP response from overwriting newer WS snapshot data.
+            if (rawDataRef.current.length === 0) {
+                rawDataRef.current = formatted;
+            } else {
+                const combined = [...rawDataRef.current, ...formatted];
+                combined.sort((a, b) => a.time - b.time);
+
+                const unique: OHLCData[] = [];
+                if (combined.length > 0) {
+                    unique.push(combined[0]);
+                    for (let i = 1; i < combined.length; i++) {
+                        const current = combined[i];
+                        const last = unique[unique.length - 1];
+                        if (current.time === last.time) {
+                            unique[unique.length - 1] = current;
+                        } else {
+                            unique.push(current);
+                        }
+                    }
+                }
+                rawDataRef.current = unique;
+            }
         } else {
             const combined = [...rawDataRef.current, ...formatted];
             combined.sort((a, b) => a.time - b.time);
@@ -125,10 +148,14 @@ export function useLiveDataLoading({
     }, [timeframe]);
 
     const fetchData = useCallback(async () => {
+        const mySeq = ++fetchSeqRef.current; // Unique ID for this fetch; stale responses are discarded
         try {
             setIsLoading(true);
             const httpRes = await fetch(`/api/history?symbol=${encodeURIComponent(ticker)}&limit=180000`, { cache: 'no-store' });
             const res = await httpRes.json();
+
+            // Discard stale response (e.g. React Strict Mode double-fire or rapid ticker switch)
+            if (mySeq !== fetchSeqRef.current) return;
 
             if (res.success && res.data) {
                 const rawCandles = res.data.candles || [];
@@ -237,7 +264,35 @@ export function useLiveDataLoading({
                     } else if (msg.type === 'candle') {
                         const candle = msg.candle;
                         if (candle) {
-                            await processAndMergeCandles([candle], false);
+                            // Fast path: for native timeframes (1m/15s/30s), insert/update directly
+                            // into rawDataRef and setFullData without full sort+dedup+resample.
+                            const needsResampling = timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s';
+                            if (!needsResampling) {
+                                const formattedCandle: OHLCData = {
+                                    time: candle.time > 10000000000 ? candle.time / 1000 : candle.time,
+                                    open: candle.open,
+                                    high: candle.high,
+                                    low: candle.low,
+                                    close: candle.close,
+                                    volume: candle.volume
+                                };
+                                const raw = rawDataRef.current;
+                                if (raw.length > 0 && raw[raw.length - 1].time === formattedCandle.time) {
+                                    // Update last candle in-place
+                                    raw[raw.length - 1] = formattedCandle;
+                                } else if (raw.length > 0 && formattedCandle.time > raw[raw.length - 1].time) {
+                                    // Append new candle (maintains sort order)
+                                    raw.push(formattedCandle);
+                                } else {
+                                    // Fallback: timestamp out of order, use full merge
+                                    await processAndMergeCandles([candle], false);
+                                    return;
+                                }
+                                setFullData([...raw]);
+                                lastTimeRef.current = formattedCandle.time;
+                            } else {
+                                await processAndMergeCandles([candle], false);
+                            }
                         }
                     }
                 } catch (e) {

@@ -123,12 +123,14 @@ export function useDataLoading({
     // Resampling Internal State (Managed by loader discovery)
     const baseTimeframeRef = useRef<string>(timeframe)
     const isResamplingRef = useRef<boolean>(false)
+    const fetchSeqRef = useRef<number>(0) // Guards against stale HTTP fetch responses (React Strict Mode double-fire)
 
     // Metadata State (Full Range)
     const [fullDataRange, setFullDataRange] = useState<{ start: number; end: number } | null>(null)
 
     // Initial Data Load Effect
     useEffect(() => {
+        const mySeq = ++fetchSeqRef.current // Unique ID for this load; stale responses are discarded
         async function loadData() {
             setIsLoading(true)
             setHistoryLoaded(false)
@@ -231,6 +233,9 @@ export function useDataLoading({
                             console.error("[useDataLoading] Live cache fetch failed:", e)
                         }
                     }
+
+                    // Discard stale response (e.g. React Strict Mode double-fire or rapid ticker switch)
+                    if (mySeq !== fetchSeqRef.current) return
 
                     setFullData(finalData)
                     if (finalData.length > 0) {
@@ -367,9 +372,20 @@ export function useDataLoading({
                                 liveRawDataRef.current.push(formattedCandle)
                             }
 
-                            // Resample and merge
-                            const processed = await processLiveData(liveRawDataRef.current, timeframe)
-                            setFullData(prev => mergeDatasets(prev, processed))
+                            // Fast path: for native timeframes, merge single candle directly
+                            // instead of resampling the entire liveRawDataRef array.
+                            const needsResampling = timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s'
+                            if (!needsResampling) {
+                                setFullData(prev => {
+                                    const map = new Map<number, OHLCData>(prev.map(c => [c.time, c]))
+                                    map.set(formattedCandle.time, formattedCandle)
+                                    return Array.from(map.values()).sort((a, b) => a.time - b.time)
+                                })
+                            } else {
+                                // Resample and merge
+                                const processed = await processLiveData(liveRawDataRef.current, timeframe)
+                                setFullData(prev => mergeDatasets(prev, processed))
+                            }
                         }
                     } else if (msg.type === 'quote') {
                         if (msg.price !== undefined && msg.price !== null) {

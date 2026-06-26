@@ -272,6 +272,7 @@ class DealerLevels:
     put_25d_iv: float | None = None
     call_25d_iv: float | None = None
     volatility_skew_premium: float | None = None
+    zero_gamma_delta_adj: float | None = None
 
 
 def _best_contract_per_strike(contracts: list[OptionContract]) -> dict[float, OptionContract]:
@@ -532,6 +533,102 @@ def _find_front_dte_contracts(calls: list[OptionContract], puts: list[OptionCont
         return [], []
     front_dte = min(contract.dte for contract in universe)
     return [c for c in calls if c.dte == front_dte], [p for p in puts if p.dte == front_dte]
+
+
+def _calculate_hypothetical_total_gex(calls: list[OptionContract], puts: list[OptionContract], S_hypo: float, delta_adjusted: bool = False) -> float:
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, time
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    contract_size = 100
+    r, q = 0.02, 0.0
+    
+    total = 0.0
+    
+    # Process calls
+    for c in calls:
+        try:
+            exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+        except Exception:
+            t = 1e-5
+        iv = max(c.iv, 1e-4)
+        K = c.strike
+        d1, d2, norm_d1 = _bsm_d1d2(S_hypo, K, t, iv, r, q)
+        if d1 is not None and norm_d1 is not None:
+            gamma = math.exp(-q * t) * norm_d1 / (S_hypo * iv * math.sqrt(t))
+            gex = gamma * c.open_interest * contract_size * S_hypo
+            if delta_adjusted:
+                delta = 0.5 * math.erfc(-d1 / math.sqrt(2))
+                total += gex * abs(delta)
+            else:
+                total += gex
+
+    # Process puts
+    for p in puts:
+        try:
+            exp_dt = datetime.combine(p.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+        except Exception:
+            t = 1e-5
+        iv = max(p.iv, 1e-4)
+        K = p.strike
+        d1, d2, norm_d1 = _bsm_d1d2(S_hypo, K, t, iv, r, q)
+        if d1 is not None and norm_d1 is not None:
+            gamma = math.exp(-q * t) * norm_d1 / (S_hypo * iv * math.sqrt(t))
+            gex = gamma * p.open_interest * contract_size * S_hypo
+            if delta_adjusted:
+                delta = 0.5 * math.erfc(-d1 / math.sqrt(2)) - 1.0
+                total -= gex * abs(delta)
+            else:
+                total -= gex
+                
+    return total
+
+
+def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContract], spot: float, delta_adjusted: bool = False) -> float | None:
+    """Find the zero-gamma level nearest to spot using a cascaded bounded binary search.
+
+    Problem with the old [0.5x, 1.5x] approach: when a full option chain (including
+    LEAPS) is passed, the GEX profile can have *multiple* sign crossings. The binary
+    search would arbitrarily converge to whichever crossing happened to straddle the
+    midpoint of the search range — often a spurious far-OTM LEAPS crossing (~1.25x
+    spot) instead of the economically relevant near-ATM crossing (~1.01x spot).
+
+    Fix: search three progressively wider bands centered on spot, collecting all
+    candidate crossings, then return the one nearest to spot.
+    """
+    if not calls and not puts:
+        return None
+
+    def _bisect(lo: float, hi: float) -> float | None:
+        g_lo = _calculate_hypothetical_total_gex(calls, puts, lo, delta_adjusted)
+        g_hi = _calculate_hypothetical_total_gex(calls, puts, hi, delta_adjusted)
+        if g_lo * g_hi > 0:
+            return None
+        for _ in range(50):
+            mid = (lo + hi) / 2.0
+            g_mid = _calculate_hypothetical_total_gex(calls, puts, mid, delta_adjusted)
+            if abs(g_mid) < 1e-2:
+                return round(mid, 2)
+            if g_mid < 0:
+                lo = mid
+            else:
+                hi = mid
+        return round((lo + hi) / 2.0, 2)
+
+    # Search three bands, picking the crossing nearest to spot.
+    # Tighter bands first so we find near-ATM crossings before LEAPS crossings.
+    candidates: list[float] = []
+    for lo_scale, hi_scale in [(0.90, 1.10), (0.80, 1.20), (0.50, 1.50)]:
+        result = _bisect(spot * lo_scale, spot * hi_scale)
+        if result is not None:
+            candidates.append(result)
+
+    if not candidates:
+        return None
+
+    return min(candidates, key=lambda x: abs(x - spot))
 
 
 def _find_gamma_flip_zone(strikes: list[StrikeGEX], spot: float, min_oi: int) -> tuple[float | None, float | None, float | None]:
@@ -1367,7 +1464,9 @@ def calculate_dealer_levels(
     call_wall_0dte, _ = _find_walls(front_calls, min_oi_floor, spot=spot, side="CALL")
     put_wall_0dte, _ = _find_walls(front_puts, min_oi_floor, spot=spot, side="PUT")
 
-    gamma_flip_lower, gamma_flip_upper, zero_gamma = _find_gamma_flip_zone(strikes, spot, min_oi_floor)
+    gamma_flip_lower, gamma_flip_upper, _ = _find_gamma_flip_zone(strikes, spot, min_oi_floor)
+    zero_gamma = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=False)
+    zero_gamma_delta_adj = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=True)
     hedge_wall = _find_hedge_wall(strikes, spot)
     max_pain = _find_max_pain(front_calls or chain.calls, front_puts or chain.puts)
 
@@ -1495,6 +1594,7 @@ def calculate_dealer_levels(
         total_gex=total_gex,
         gex_regime=gex_regime,
         zero_gamma=zero_gamma,
+        zero_gamma_delta_adj=zero_gamma_delta_adj,
         gamma_flip_lower=gamma_flip_lower,
         gamma_flip_upper=gamma_flip_upper,
         call_wall=call_wall,
@@ -1598,6 +1698,7 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         total_gex=levels.total_gex,
         gex_regime=levels.gex_regime,
         zero_gamma=_scale(levels.zero_gamma),
+        zero_gamma_delta_adj=_scale(levels.zero_gamma_delta_adj),
         gamma_flip_lower=_scale(levels.gamma_flip_lower),
         gamma_flip_upper=_scale(levels.gamma_flip_upper),
         call_wall=_scale(levels.call_wall),

@@ -66,6 +66,7 @@ class TranslatedLevels:
     gex_regime: str
 
     zero_gamma: float | None
+    zero_gamma_delta_adj: float | None
     gamma_flip_lower: float | None
     gamma_flip_upper: float | None
 
@@ -214,6 +215,7 @@ def translate_to_futures(
         total_gex=levels.total_gex,
         gex_regime=levels.gex_regime,
         zero_gamma=_shift(levels.zero_gamma),
+        zero_gamma_delta_adj=_shift(levels.zero_gamma_delta_adj),
         gamma_flip_lower=_shift(levels.gamma_flip_lower),
         gamma_flip_upper=_shift(levels.gamma_flip_upper),
         call_wall=_shift(levels.call_wall),

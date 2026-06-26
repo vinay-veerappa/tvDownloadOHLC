@@ -289,7 +289,7 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
         q = data.get("quote", {})
         
         last = _safe_float(q.get("mark") or q.get("lastPrice"))
-        open_p = _safe_float(q.get("openPrice") or q.get("sessionOpen"))
+        open_p = _safe_float(q.get("sessionOpen") or q.get("openPrice"))
         
         log.info(f"Quote for {active}: last={last}, open={open_p}")
         

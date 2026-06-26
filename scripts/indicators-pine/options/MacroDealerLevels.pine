@@ -40,6 +40,7 @@ i_showGammaFlip     = input.bool(true, "Show Gamma Flip Fill", group = GRP_LINES
 var string GRP_COLORS = "Theme Colors (Light/Dark Ready)"
 i_colUpperEM        = input.color(color.new(#00FFFF, 0), "Upper EM", group = GRP_COLORS) // Aqua
 i_colZeroGamma      = input.color(color.new(#FFFF00, 0), "Zero Gamma", group = GRP_COLORS) // Yellow
+i_colZeroGammaDA    = input.color(color.new(#FFA500, 0), "Zero Gamma DA", group = GRP_COLORS) // Orange
 i_colLowerEM        = input.color(color.new(#00FFFF, 0), "Lower EM", group = GRP_COLORS)
 i_colGammaMagnet    = input.color(color.new(#EE82EE, 0), "Gamma Magnet", group = GRP_COLORS) // Violet
 i_colPinStrike      = input.color(color.new(#EE82EE, 30), "Pin Strike", group = GRP_COLORS)
@@ -532,7 +533,7 @@ var array<color> dyn_lblBgColor = array.new_color()
 // (vars moved up to allow conversion ratio logic to access them early)
 
 // Redraw / Calculation State
-var float st_ZG = na, var float st_MAG = na, var float st_PIN = na
+var float st_ZG = na, var float st_ZG_DA = na, var float st_MAG = na, var float st_PIN = na
 var float st_CW = na, var float st_PW = na, var float st_EU = na, var float st_EL = na
 var float st_GFU = na, var float st_GFL = na, var float st_GCU = na, var float st_GCD = na
 var float st_CW0 = na, var float st_PW0 = na, var float st_MP = na, var float st_HW = na
@@ -748,7 +749,7 @@ var int dbg_lastWaitLogTs = 0
 if can_calculate
     can_calculate := false
     f_clearAll()
-    st_ZG := na, st_MAG := na, st_PIN := na, st_ANCHOR := na
+    st_ZG := na, st_ZG_DA := na, st_MAG := na, st_PIN := na, st_ANCHOR := na
     st_ANCHOR_LABEL := ""
     st_CW := na, st_PW := na, st_EU := na, st_EL := na
     st_GFU := na, st_GFL := na, st_GCU := na, st_GCD := na
@@ -869,7 +870,10 @@ if can_calculate
                 // Inflections → override ZG/MAG
                 if s_flt == "I"
                     if str.contains(u_lbl, "ZERO")
-                        st_ZG := s_lv
+                        if str.contains(u_lbl, "DA")
+                            st_ZG_DA := s_lv
+                        else
+                            st_ZG := s_lv
                     if str.contains(u_lbl, "MAGNET")
                         st_MAG := s_lv
                     if str.contains(u_lbl, "FLIP UP")
@@ -1019,6 +1023,11 @@ if barstate.islast and i_showDash
     row := row+1
     table.cell(dash, 0, row, "Zero Gamma", text_color = labelTxt, text_size = tSz)
     table.cell(dash, 1, row, f_num(st_ZG), text_color = i_colZeroGamma, text_size = tSz)
+
+    // Row: Zero Gamma DA
+    row := row+1
+    table.cell(dash, 0, row, "Zero Gamma DA", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_ZG_DA), text_color = i_colZeroGammaDA, text_size = tSz)
 
     // Row: Cliffs
     row := row+1
