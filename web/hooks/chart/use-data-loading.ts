@@ -373,8 +373,21 @@ export function useDataLoading({
                                 volume: Number(rawCandle.volume || 0)
                             }
 
-                            // Always update the live candle ref (instant, no array copy)
-                            liveCandleRef.current = formattedCandle
+                            // Merge with existing liveCandleRef to preserve extreme prices
+                            // captured by the quote handler between candle messages.
+                            const existingLC = liveCandleRef.current
+                            if (existingLC && existingLC.time === formattedCandle.time) {
+                                liveCandleRef.current = {
+                                    time: formattedCandle.time,
+                                    open: formattedCandle.open,
+                                    high: Math.max(formattedCandle.high, existingLC.high),
+                                    low: Math.min(formattedCandle.low, existingLC.low),
+                                    close: formattedCandle.close,
+                                    volume: formattedCandle.volume
+                                }
+                            } else {
+                                liveCandleRef.current = formattedCandle
+                            }
 
                             // Add or update in liveRawDataRef
                             const existingIdx = liveRawDataRef.current.findIndex(c => c.time === formattedCandle.time)

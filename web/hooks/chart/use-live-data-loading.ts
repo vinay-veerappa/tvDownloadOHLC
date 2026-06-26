@@ -318,8 +318,23 @@ export function useLiveDataLoading({
                                 close: candle.close,
                                 volume: candle.volume
                             };
-                            // Always update the live candle ref (instant, no array copy)
-                            liveCandleRef.current = formattedCandle;
+                            // Merge with existing liveCandleRef to preserve extreme prices
+                            // captured by the quote handler between candle messages.
+                            // The hub's candle has the real open, but the quote stream might
+                            // have captured more extreme high/low ticks the hub hasn't seen yet.
+                            const existing = liveCandleRef.current;
+                            if (existing && existing.time === formattedCandle.time) {
+                                liveCandleRef.current = {
+                                    time: formattedCandle.time,
+                                    open: formattedCandle.open,  // hub's real open
+                                    high: Math.max(formattedCandle.high, existing.high),
+                                    low: Math.min(formattedCandle.low, existing.low),
+                                    close: formattedCandle.close,
+                                    volume: formattedCandle.volume
+                                };
+                            } else {
+                                liveCandleRef.current = formattedCandle;
+                            }
 
                             const needsResampling = timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s';
                             if (!needsResampling) {
