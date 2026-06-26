@@ -285,18 +285,25 @@ export function useLiveDataLoading({
                                     liveCandleRef.current = { ...lastRaw };
                                 }
                             } else if (candleTime > lastRaw.time) {
-                                // New candle period — only update if liveCandleRef already
-                                // exists (created by WS candle message). Do NOT create a
-                                // synthetic liveCandleRef from quotes — this avoids showing
-                                // a flat candle with open=prevClose before real data arrives.
+                                // New candle period — create liveCandleRef from the first quote.
+                                // Use currentLivePrice as open (not prevClose) — it's the best
+                                // estimate of the opening price from the quote stream.
+                                // The WS candle message will later merge and update the real open.
                                 const existing = liveCandleRef.current;
                                 if (existing && existing.time === candleTime) {
                                     existing.close = currentLivePrice;
                                     existing.high = Math.max(existing.high, currentLivePrice);
                                     existing.low = Math.min(existing.low, currentLivePrice);
+                                } else {
+                                    liveCandleRef.current = {
+                                        time: candleTime,
+                                        open: currentLivePrice,
+                                        high: currentLivePrice,
+                                        low: currentLivePrice,
+                                        close: currentLivePrice,
+                                        volume: 0
+                                    };
                                 }
-                                // If no liveCandleRef for this period yet, the chart shows
-                                // the last real bar until the WS candle message arrives.
                             }
                             // If candleTime < lastRaw.time, ignore (stale quote)
                         }

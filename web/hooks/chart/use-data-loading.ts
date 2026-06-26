@@ -444,14 +444,22 @@ export function useDataLoading({
                                         liveCandleRef.current = { ...lastRaw }
                                     }
                                 } else if (candleTime > lastRaw.time) {
-                                    // New candle period — only update if liveCandleRef already
-                                    // exists (created by WS candle message). Do NOT create a
-                                    // synthetic liveCandleRef from quotes.
+                                    // New candle period — create liveCandleRef from the first quote.
+                                    // Use price as open (not prevClose) — best estimate from quotes.
                                     const existing = liveCandleRef.current
                                     if (existing && existing.time === candleTime) {
                                         existing.close = price
                                         existing.high = Math.max(existing.high, price)
                                         existing.low = Math.min(existing.low, price)
+                                    } else {
+                                        liveCandleRef.current = {
+                                            time: candleTime,
+                                            open: price,
+                                            high: price,
+                                            low: price,
+                                            close: price,
+                                            volume: 0
+                                        }
                                     }
                                 }
                             }

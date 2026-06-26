@@ -173,9 +173,9 @@ export function useChartData({
                 let enriched: OHLCData[];
 
                 if (shouldProjectNew && lastUpdate) {
-                    // New candle period has started. Append a whitespace bar (time only, no OHLC)
-                    // so the chart reserves the slot but doesn't render a candle. When real WS
-                    // data arrives (liveCandleRef), the whitespace bar is replaced with a real candle.
+                    // New candle period has started. Append the forming candle from liveCandleRef.
+                    // The quote handler creates liveCandleRef from the first quote (open=livePrice).
+                    // The WS candle message later merges and updates the real open.
                     const tail: OHLCData[] = []
 
                     if (liveCandle && liveCandle.time === newCandleTime && liveCandle.open !== undefined) {
@@ -190,12 +190,8 @@ export function useChartData({
                             close: livePrice,
                             volume: liveCandle.volume
                         })
-                    } else {
-                        // No real data yet — append a whitespace bar (time only, no OHLC).
-                        // lightweight-charts renders this as an empty slot (no candle).
-                        // When liveCandleRef gets data, the next render replaces it.
-                        tail.push({ time: newCandleTime })
                     }
+                    // If no liveCandle for this period, don't append — chart shows last real bar
 
                     // Clean up old projections
                     const lastBarTime = lastCandle.time
@@ -203,7 +199,7 @@ export function useChartData({
                         if (t <= lastBarTime) projections.delete(t)
                     }
 
-                    enriched = baseData.concat(tail);
+                    enriched = tail.length > 0 ? baseData.concat(tail) : baseData;
                 } else {
                     // Not projecting — the last bar in baseData is the current forming candle.
                     const barTime = lastCandle.time
