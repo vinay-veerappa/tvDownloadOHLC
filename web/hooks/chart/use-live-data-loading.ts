@@ -266,19 +266,37 @@ export function useLiveDataLoading({
                             const rawTimeframe = (timeframe === "15s" || timeframe === "30s") ? timeframe : "1m";
                             const rawSecs = parseTimeframeToSeconds(rawTimeframe);
 
-                            // 1. Update last raw candle in ref if within same raw timeframe boundary
-                            if (liveTime < lastRaw.time + rawSecs) {
+                            // Determine which candle period this quote belongs to
+                            const candleTime = Math.floor(liveTime / rawSecs) * rawSecs;
+
+                            if (candleTime === lastRaw.time) {
+                                // Same candle period — update in-place
                                 lastRaw.close = currentLivePrice;
                                 lastRaw.high = Math.max(lastRaw.high, currentLivePrice);
                                 lastRaw.low = Math.min(lastRaw.low, currentLivePrice);
-
-                                // Also update liveCandleRef so use-chart-data.ts has real OHLC
                                 liveCandleRef.current = { ...lastRaw };
+                            } else if (candleTime > lastRaw.time) {
+                                // New candle period — update or create liveCandleRef
+                                const existing = liveCandleRef.current;
+                                if (existing && existing.time === candleTime) {
+                                    // Already tracking this candle — update close/high/low
+                                    existing.close = currentLivePrice;
+                                    existing.high = Math.max(existing.high, currentLivePrice);
+                                    existing.low = Math.min(existing.low, currentLivePrice);
+                                } else {
+                                    // First quote for this new candle — create it
+                                    // open = previous candle's close (market convention)
+                                    liveCandleRef.current = {
+                                        time: candleTime,
+                                        open: lastRaw.close,
+                                        high: currentLivePrice,
+                                        low: currentLivePrice,
+                                        close: currentLivePrice,
+                                        volume: 0
+                                    };
+                                }
                             }
-
-                            // NOTE: We do NOT update fullData here. The projection logic
-                            // in use-chart-data.ts is the single owner of live price overlay.
-                            // Updating fullData here caused dual-updates and array churn.
+                            // If candleTime < lastRaw.time, ignore (stale quote)
                         }
                     } else if (msg.type === 'candle') {
                         const candle = msg.candle;
@@ -313,11 +331,10 @@ export function useLiveDataLoading({
                                     return;
                                 }
 
-                                // Only trigger setFullData on candle transitions (new candle).
-                                // Updates to the forming candle are handled by liveCandleRef
-                                // in use-chart-data.ts, avoiding O(n) array copies on every tick.
+                                // On transitions, append to fullData without copying the entire array.
+                                // Use functional update: prev.concat([newCandle]) shares the prefix.
                                 if (isTransition) {
-                                    setFullData([...raw]);
+                                    setFullData(prev => prev.concat([formattedCandle]));
                                 }
                                 lastTimeRef.current = formattedCandle.time;
                             } else {

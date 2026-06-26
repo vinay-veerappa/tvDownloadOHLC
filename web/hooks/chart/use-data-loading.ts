@@ -391,11 +391,8 @@ export function useDataLoading({
                             const needsResampling = timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s'
                             if (!needsResampling) {
                                 if (isTransition) {
-                                    setFullData(prev => {
-                                        const map = new Map<number, OHLCData>(prev.map(c => [c.time, c]))
-                                        map.set(formattedCandle.time, formattedCandle)
-                                        return Array.from(map.values()).sort((a, b) => a.time - b.time)
-                                    })
+                                    // Append without copying the entire array
+                                    setFullData(prev => prev.concat([formattedCandle]))
                                 }
                             } else {
                                 // Resample and merge
@@ -410,27 +407,40 @@ export function useDataLoading({
                             const currentIsoTime = msg.time || new Date().toISOString()
                             setLastUpdate(currentIsoTime)
 
-                            // Update last raw candle in ref to keep resampled data up to date
                             if (liveRawDataRef.current.length > 0) {
                                 const lastRaw = liveRawDataRef.current[liveRawDataRef.current.length - 1]
                                 const liveTime = Math.floor(new Date(currentIsoTime).getTime() / 1000)
                                 const rawTimeframe = (timeframe === "15s" || timeframe === "30s") ? timeframe : "1m"
                                 const rawSecs = parseTimeframeToSeconds(rawTimeframe)
 
-                                if (liveTime < lastRaw.time + rawSecs) {
+                                // Determine which candle period this quote belongs to
+                                const candleTime = Math.floor(liveTime / rawSecs) * rawSecs;
+
+                                if (candleTime === lastRaw.time) {
+                                    // Same candle period — update in-place
                                     lastRaw.close = price
                                     lastRaw.high = Math.max(lastRaw.high, price)
                                     lastRaw.low = Math.min(lastRaw.low, price)
-
-                                    // Also update liveCandleRef so use-chart-data.ts has real OHLC
                                     liveCandleRef.current = { ...lastRaw }
+                                } else if (candleTime > lastRaw.time) {
+                                    // New candle period — update or create liveCandleRef
+                                    const existing = liveCandleRef.current
+                                    if (existing && existing.time === candleTime) {
+                                        existing.close = price
+                                        existing.high = Math.max(existing.high, price)
+                                        existing.low = Math.min(existing.low, price)
+                                    } else {
+                                        liveCandleRef.current = {
+                                            time: candleTime,
+                                            open: lastRaw.close,
+                                            high: price,
+                                            low: price,
+                                            close: price,
+                                            volume: 0
+                                        }
+                                    }
                                 }
                             }
-
-                            // NOTE: We do NOT update fullData here. The projection logic
-                            // in use-chart-data.ts is the single owner of live price overlay.
-                            // Updating fullData here caused dual-updates, extra candles,
-                            // and constant array churn that confused incremental detection.
                         }
                     }
                 } catch (err) {
