@@ -214,6 +214,17 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
                 or underlying.get("sessionOpen") 
                 or underlying.get("open") 
             )
+            if spot_open == 0.0:
+                try:
+                    qres = _hub_request("get_quotes", {"symbols": [api_sym]})
+                    qdata = qres.get(api_sym, {})
+                    q_val = qdata.get("quote", {})
+                    fetched_open = _safe_float(q_val.get("openPrice") or q_val.get("sessionOpen"))
+                    if fetched_open:
+                        spot_open = fetched_open
+                        log.info("Fetched spot open price for %s via get_quotes fallback: %.2f", symbol, spot_open)
+                except Exception as e:
+                    log.warning("Could not fetch spot open price for %s via get_quotes fallback: %s", symbol, e)
 
         call_map = payload.get("callExpDateMap", {})
         put_map = payload.get("putExpDateMap", {})
