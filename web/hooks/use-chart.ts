@@ -417,31 +417,13 @@ export function useChart(
                 }
             }
 
-            // Print OHLC values for the last two candles of chartData and prevDataRef
-            if (chartData.length >= 2) {
+            // Log only on non-incremental updates (setData) or first load — skip tick-by-tick update() logs
+            if (!isIncremental && chartData.length >= 2) {
                 const c1 = chartData[chartData.length - 1];
                 const c2 = chartData[chartData.length - 2];
-                const t1Str = new Date(c1.time * 1000).toLocaleTimeString('en-US', { hour12: false });
-                const t2Str = new Date(c2.time * 1000).toLocaleTimeString('en-US', { hour12: false });
-                
-                let p1Str = "N/A";
-                let p2Str = "N/A";
-                if (prevDataRef.current.length >= 2) {
-                    const pc1 = prevDataRef.current[prevDataRef.current.length - 1];
-                    const pc2 = prevDataRef.current[prevDataRef.current.length - 2];
-                    p1Str = `[${new Date(pc1.time * 1000).toLocaleTimeString('en-US', { hour12: false })}] O:${pc1.open} H:${pc1.high} L:${pc1.low} C:${pc1.close}`;
-                    p2Str = `[${new Date(pc2.time * 1000).toLocaleTimeString('en-US', { hour12: false })}] O:${pc2.open} H:${pc2.high} L:${pc2.low} C:${pc2.close}`;
-                } else if (prevDataRef.current.length === 1) {
-                    const pc1 = prevDataRef.current[0];
-                    p1Str = `[${new Date(pc1.time * 1000).toLocaleTimeString('en-US', { hour12: false })}] O:${pc1.open} H:${pc1.high} L:${pc1.low} C:${pc1.close}`;
-                }
-
                 console.log(
-                    `[useChart Update] Ticker: ${ticker}, Timeframe: ${timeframe}\n` +
-                    `  isIncremental: ${isIncremental}, lenDiff: ${lenDiff}, isFirstLoad: ${isFirstLoad}\n` +
-                    `  Current Last 2: [${t2Str}] O:${c2.open} H:${c2.high} L:${c2.low} C:${c2.close} | [${t1Str}] O:${c1.open} H:${c1.high} L:${c1.low} C:${c1.close}\n` +
-                    `  Previous Last 2: ${p2Str} | ${p1Str}\n` +
-                    `  Action: ${isIncremental ? 'update()' : 'setData()'}`
+                    `[useChart] setData: ${ticker} ${timeframe} len=${chartData.length} lenDiff=${lenDiff} ` +
+                    `last=[${new Date(c1.time * 1000).toLocaleTimeString('en-US', { hour12: false })}] O:${c1.open} H:${c1.high} L:${c1.low} C:${c1.close}`
                 );
             }
 

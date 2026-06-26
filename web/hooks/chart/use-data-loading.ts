@@ -125,6 +125,10 @@ export function useDataLoading({
     const isResamplingRef = useRef<boolean>(false)
     const fetchSeqRef = useRef<number>(0) // Guards against stale HTTP fetch responses (React Strict Mode double-fire)
 
+    // Latest WS candle (instant ref, no array copy). Used by use-chart-data.ts
+    // to render the forming candle with real OHLC without waiting for setFullData.
+    const liveCandleRef = useRef<OHLCData | null>(null)
+
     // Metadata State (Full Range)
     const [fullDataRange, setFullDataRange] = useState<{ start: number; end: number } | null>(null)
 
@@ -364,23 +368,30 @@ export function useDataLoading({
                                 volume: Number(rawCandle.volume || 0)
                             }
 
+                            // Always update the live candle ref (instant, no array copy)
+                            liveCandleRef.current = formattedCandle
+
                             // Add or update in liveRawDataRef
                             const existingIdx = liveRawDataRef.current.findIndex(c => c.time === formattedCandle.time)
+                            const isTransition = existingIdx < 0
                             if (existingIdx >= 0) {
                                 liveRawDataRef.current[existingIdx] = formattedCandle
                             } else {
                                 liveRawDataRef.current.push(formattedCandle)
                             }
 
-                            // Fast path: for native timeframes, merge single candle directly
-                            // instead of resampling the entire liveRawDataRef array.
+                            // Fast path: for native timeframes, only trigger setFullData on
+                            // candle transitions (new candle). Updates to the forming candle
+                            // are handled by liveCandleRef in use-chart-data.ts.
                             const needsResampling = timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s'
                             if (!needsResampling) {
-                                setFullData(prev => {
-                                    const map = new Map<number, OHLCData>(prev.map(c => [c.time, c]))
-                                    map.set(formattedCandle.time, formattedCandle)
-                                    return Array.from(map.values()).sort((a, b) => a.time - b.time)
-                                })
+                                if (isTransition) {
+                                    setFullData(prev => {
+                                        const map = new Map<number, OHLCData>(prev.map(c => [c.time, c]))
+                                        map.set(formattedCandle.time, formattedCandle)
+                                        return Array.from(map.values()).sort((a, b) => a.time - b.time)
+                                    })
+                                }
                             } else {
                                 // Resample and merge
                                 const processed = await processLiveData(liveRawDataRef.current, timeframe)
@@ -716,6 +727,7 @@ export function useDataLoading({
         // Live streaming state
         livePrice,
         lastUpdate,
+        liveCandleRef,
         // Debug
         baseTimeframe: baseTimeframeRef.current,
         isResampling: isResamplingRef.current,

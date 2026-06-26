@@ -43,6 +43,10 @@ export function useLiveDataLoading({
     const fetchSeqRef = useRef<number>(0) // Guards against stale HTTP fetch responses (React Strict Mode double-fire)
     const [historyLoaded, setHistoryLoaded] = useState(false)
 
+    // Latest WS candle (instant ref, no array copy). Used by use-chart-data.ts
+    // to render the forming candle with real OHLC without waiting for setFullData.
+    const liveCandleRef = useRef<OHLCData | null>(null)
+
     const wsRef = useRef<WebSocket | null>(null)
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
     const retryCountRef = useRef(0)
@@ -264,31 +268,42 @@ export function useLiveDataLoading({
                     } else if (msg.type === 'candle') {
                         const candle = msg.candle;
                         if (candle) {
-                            // Fast path: for native timeframes (1m/15s/30s), insert/update directly
-                            // into rawDataRef and setFullData without full sort+dedup+resample.
+                            const formattedCandle: OHLCData = {
+                                time: candle.time > 10000000000 ? candle.time / 1000 : candle.time,
+                                open: candle.open,
+                                high: candle.high,
+                                low: candle.low,
+                                close: candle.close,
+                                volume: candle.volume
+                            };
+                            // Always update the live candle ref (instant, no array copy)
+                            liveCandleRef.current = formattedCandle;
+
                             const needsResampling = timeframe !== '1' && timeframe !== '1m' && timeframe !== '15s' && timeframe !== '30s';
                             if (!needsResampling) {
-                                const formattedCandle: OHLCData = {
-                                    time: candle.time > 10000000000 ? candle.time / 1000 : candle.time,
-                                    open: candle.open,
-                                    high: candle.high,
-                                    low: candle.low,
-                                    close: candle.close,
-                                    volume: candle.volume
-                                };
                                 const raw = rawDataRef.current;
+                                const isTransition = raw.length === 0 || formattedCandle.time > raw[raw.length - 1].time;
+
                                 if (raw.length > 0 && raw[raw.length - 1].time === formattedCandle.time) {
                                     // Update last candle in-place
                                     raw[raw.length - 1] = formattedCandle;
-                                } else if (raw.length > 0 && formattedCandle.time > raw[raw.length - 1].time) {
+                                } else if (raw.length > 0 && isTransition) {
                                     // Append new candle (maintains sort order)
+                                    raw.push(formattedCandle);
+                                } else if (raw.length === 0) {
                                     raw.push(formattedCandle);
                                 } else {
                                     // Fallback: timestamp out of order, use full merge
                                     await processAndMergeCandles([candle], false);
                                     return;
                                 }
-                                setFullData([...raw]);
+
+                                // Only trigger setFullData on candle transitions (new candle).
+                                // Updates to the forming candle are handled by liveCandleRef
+                                // in use-chart-data.ts, avoiding O(n) array copies on every tick.
+                                if (isTransition) {
+                                    setFullData([...raw]);
+                                }
                                 lastTimeRef.current = formattedCandle.time;
                             } else {
                                 await processAndMergeCandles([candle], false);
@@ -354,6 +369,7 @@ export function useLiveDataLoading({
         isLoading,
         livePrice,
         lastUpdate,
+        liveCandleRef,
         isRunning,
         setIsRunning,
         lastError,

@@ -138,6 +138,10 @@ export function useChartData({
             const liveStore = loading as any
             const livePrice = liveStore.livePrice
             const lastUpdate = liveStore.lastUpdate // ISO String
+            // Real WS candle (instant ref, no array copy). Has the forming candle's
+            // real OHLC from the streaming hub — used instead of synthetic projections.
+            const liveCandleRef = liveStore.liveCandleRef as React.MutableRefObject<OHLCData | null>
+            const liveCandle = liveCandleRef?.current ?? null
 
             if (livePrice !== null && livePrice !== undefined) {
                 // Avoid copying the entire baseData array on every tick.
@@ -182,60 +186,91 @@ export function useChartData({
 
                     // 1. Project intermediate candles — use cached data if available
                     while (tempTime < newCandleTime) {
-                        const cached = projections.get(tempTime)
-                        if (cached && cached.ticker === ticker && cached.timeframe === timeframe) {
+                        // If we have a real WS candle for this intermediate timestamp, use it
+                        if (liveCandle && liveCandle.time === tempTime) {
                             tail.push({
                                 time: tempTime,
-                                open: cached.open,
-                                high: cached.high,
-                                low: cached.low,
-                                close: cached.close,
-                                volume: 0
+                                open: liveCandle.open,
+                                high: liveCandle.high,
+                                low: liveCandle.low,
+                                close: liveCandle.close,
+                                volume: liveCandle.volume
                             })
-                            prevClose = cached.close
+                            prevClose = liveCandle.close
                         } else {
-                            tail.push({
-                                time: tempTime,
-                                open: prevClose,
-                                high: prevClose,
-                                low: prevClose,
-                                close: prevClose,
-                                volume: 0
-                            })
+                            const cached = projections.get(tempTime)
+                            if (cached && cached.ticker === ticker && cached.timeframe === timeframe) {
+                                tail.push({
+                                    time: tempTime,
+                                    open: cached.open,
+                                    high: cached.high,
+                                    low: cached.low,
+                                    close: cached.close,
+                                    volume: 0
+                                })
+                                prevClose = cached.close
+                            } else {
+                                tail.push({
+                                    time: tempTime,
+                                    open: prevClose,
+                                    high: prevClose,
+                                    low: prevClose,
+                                    close: prevClose,
+                                    volume: 0
+                                })
+                            }
                         }
                         tempTime += resolutionSecs
                     }
 
                     // 2. Project the active forming candle at newCandleTime
-                    const existing = projections.get(newCandleTime)
-                    if (existing && existing.ticker === ticker && existing.timeframe === timeframe) {
-                        existing.close = livePrice
-                        if (livePrice > existing.high) existing.high = livePrice
-                        if (livePrice < existing.low) existing.low = livePrice
-                    } else {
-                        // Use prevClose as the open (matches hub behavior: open = prev close).
-                        // Initialize high/low to span both prevClose and livePrice so the
-                        // candle doesn't start with a flat top/bottom (O=H or O=L).
-                        projections.set(newCandleTime, {
-                            ticker,
-                            timeframe,
+                    // If we have a real WS candle for this timestamp, use its OHLC as the base
+                    // and only override close with the latest livePrice tick.
+                    if (liveCandle && liveCandle.time === newCandleTime) {
+                        // Real candle data available — use it directly, merge livePrice for close
+                        const realHigh = Math.max(liveCandle.high, livePrice)
+                        const realLow = Math.min(liveCandle.low, livePrice)
+                        tail.push({
                             time: newCandleTime,
-                            open: prevClose,
-                            high: Math.max(prevClose, livePrice),
-                            low: Math.min(prevClose, livePrice),
-                            close: livePrice
+                            open: liveCandle.open,
+                            high: realHigh,
+                            low: realLow,
+                            close: livePrice,
+                            volume: liveCandle.volume
+                        })
+                    } else {
+                        // No real candle yet — fall back to projection
+                        const existing = projections.get(newCandleTime)
+                        if (existing && existing.ticker === ticker && existing.timeframe === timeframe) {
+                            // Update open to current prevClose — it may have changed since
+                            // the projection was first created (e.g. intermediate candle finalized)
+                            existing.open = prevClose
+                            existing.close = livePrice
+                            if (livePrice > existing.high) existing.high = livePrice
+                            if (livePrice < existing.low) existing.low = livePrice
+                        } else {
+                            // Use prevClose as the open (matches hub behavior: open = prev close).
+                            projections.set(newCandleTime, {
+                                ticker,
+                                timeframe,
+                                time: newCandleTime,
+                                open: prevClose,
+                                high: Math.max(prevClose, livePrice),
+                                low: Math.min(prevClose, livePrice),
+                                close: livePrice
+                            })
+                        }
+
+                        const activeCandle = projections.get(newCandleTime)!
+                        tail.push({
+                            time: activeCandle.time,
+                            open: activeCandle.open,
+                            high: activeCandle.high,
+                            low: activeCandle.low,
+                            close: activeCandle.close,
+                            volume: 0
                         })
                     }
-
-                    const activeCandle = projections.get(newCandleTime)!
-                    tail.push({
-                        time: activeCandle.time,
-                        open: activeCandle.open,
-                        high: activeCandle.high,
-                        low: activeCandle.low,
-                        close: activeCandle.close,
-                        volume: 0
-                    })
 
                     // Clean up entries already in fullData
                     for (const [t] of projections) {
@@ -245,43 +280,59 @@ export function useChartData({
                     // Concatenate shared prefix with new tail (avoids copying baseData)
                     enriched = baseData.concat(tail);
                 } else {
-                    // Not projecting — accumulate high/low for the current bar
+                    // Not projecting — the last bar in baseData is the current forming candle.
+                    // If we have a real WS candle for this timestamp, use its OHLC as the base
+                    // and only override close with the latest livePrice tick.
                     const barTime = lastCandle.time
-                    let tracked = projections.get(barTime)
 
-                    if (!tracked || tracked.ticker !== ticker || tracked.timeframe !== timeframe) {
-                        tracked = {
-                            ticker, timeframe, time: barTime,
-                            open: lastCandle.open,
-                            high: lastCandle.high,
-                            low: lastCandle.low,
-                            close: lastCandle.close
-                        }
-                        projections.set(barTime, tracked)
+                    if (liveCandle && liveCandle.time === barTime) {
+                        // Real WS candle available — use its open/high/low, merge livePrice
+                        const realHigh = Math.max(liveCandle.high, livePrice)
+                        const realLow = Math.min(liveCandle.low, livePrice)
+                        enriched = baseData.slice(0, lastIdx);
+                        enriched.push({
+                            ...lastCandle,
+                            open: liveCandle.open,
+                            high: realHigh,
+                            low: realLow,
+                            close: livePrice,
+                            volume: liveCandle.volume
+                        });
                     } else {
-                        // Projection was created from the shouldProjectNew=true path
-                        // with a synthetic open. Now that the real candle arrived in
-                        // fullData, correct the open to match the real market open.
-                        tracked.open = lastCandle.open
+                        // No real WS candle — fall back to projection accumulation
+                        let tracked = projections.get(barTime)
+
+                        if (!tracked || tracked.ticker !== ticker || tracked.timeframe !== timeframe) {
+                            tracked = {
+                                ticker, timeframe, time: barTime,
+                                open: lastCandle.open,
+                                high: lastCandle.high,
+                                low: lastCandle.low,
+                                close: lastCandle.close
+                            }
+                            projections.set(barTime, tracked)
+                        } else {
+                            tracked.open = lastCandle.open
+                        }
+
+                        // Merge base values (in case a candle message updated fullData)
+                        tracked.high = Math.max(tracked.high, lastCandle.high)
+                        tracked.low = Math.min(tracked.low, lastCandle.low)
+
+                        // Apply current tick
+                        tracked.close = livePrice
+                        tracked.high = Math.max(tracked.high, livePrice)
+                        tracked.low = Math.min(tracked.low, livePrice)
+
+                        // Build enriched: share prefix, replace only last element
+                        enriched = baseData.slice(0, lastIdx);
+                        enriched.push({
+                            ...lastCandle,
+                            high: tracked.high,
+                            low: tracked.low,
+                            close: tracked.close
+                        });
                     }
-
-                    // Merge base values (in case a candle message updated fullData)
-                    tracked.high = Math.max(tracked.high, lastCandle.high)
-                    tracked.low = Math.min(tracked.low, lastCandle.low)
-
-                    // Apply current tick
-                    tracked.close = livePrice
-                    tracked.high = Math.max(tracked.high, livePrice)
-                    tracked.low = Math.min(tracked.low, livePrice)
-
-                    // Build enriched: share prefix, replace only last element
-                    enriched = baseData.slice(0, lastIdx);
-                    enriched.push({
-                        ...lastCandle,
-                        high: tracked.high,
-                        low: tracked.low,
-                        close: tracked.close
-                    });
 
                     // Clean up old entries
                     for (const [t] of projections) {
@@ -289,12 +340,12 @@ export function useChartData({
                     }
                 }
 
-                if (enriched.length >= 2) {
+                // Debug log throttled: only log on candle transitions or projection changes
+                if (enriched.length >= 2 && shouldProjectNew) {
                     const l1 = enriched[enriched.length - 1];
                     const l2 = enriched[enriched.length - 2];
                     const bl1 = baseData[baseData.length - 1];
-                    const bl2 = baseData[baseData.length - 2];
-                    console.log(`[useChartData] enriched: [${new Date(l2.time * 1000).toLocaleTimeString()}] O:${l2.open} H:${l2.high} L:${l2.low} C:${l2.close} | [${new Date(l1.time * 1000).toLocaleTimeString()}] O:${l1.open} H:${l1.high} L:${l1.low} C:${l1.close} (base: [${new Date(bl2.time * 1000).toLocaleTimeString()}] C:${bl2.close} | [${new Date(bl1.time * 1000).toLocaleTimeString()}] C:${bl1.close}), livePrice: ${livePrice}, lastUpdate: ${lastUpdate}, shouldProjectNew: ${shouldProjectNew}, newCandleTime: ${newCandleTime}`);
+                    console.log(`[useChartData] project: baseEnd=${new Date(bl1.time * 1000).toLocaleTimeString('en-US', {hour12: false})} C:${bl1.close} | active=[${new Date(l1.time * 1000).toLocaleTimeString('en-US', {hour12: false})}] O:${l1.open} H:${l1.high} L:${l1.low} C:${l1.close} livePrice=${livePrice}`);
                 }
                 return enriched;
             }
