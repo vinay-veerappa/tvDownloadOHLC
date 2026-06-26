@@ -285,25 +285,18 @@ export function useLiveDataLoading({
                                     liveCandleRef.current = { ...lastRaw };
                                 }
                             } else if (candleTime > lastRaw.time) {
-                                // New candle period — update or create liveCandleRef
+                                // New candle period — only update if liveCandleRef already
+                                // exists (created by WS candle message). Do NOT create a
+                                // synthetic liveCandleRef from quotes — this avoids showing
+                                // a flat candle with open=prevClose before real data arrives.
                                 const existing = liveCandleRef.current;
                                 if (existing && existing.time === candleTime) {
-                                    // Already tracking this candle — update close/high/low
                                     existing.close = currentLivePrice;
                                     existing.high = Math.max(existing.high, currentLivePrice);
                                     existing.low = Math.min(existing.low, currentLivePrice);
-                                } else {
-                                    // First quote for this new candle — create it
-                                    // open = previous candle's close (market convention)
-                                    liveCandleRef.current = {
-                                        time: candleTime,
-                                        open: lastRaw.close,
-                                        high: currentLivePrice,
-                                        low: currentLivePrice,
-                                        close: currentLivePrice,
-                                        volume: 0
-                                    };
                                 }
+                                // If no liveCandleRef for this period yet, the chart shows
+                                // the last real bar until the WS candle message arrives.
                             }
                             // If candleTime < lastRaw.time, ignore (stale quote)
                         }

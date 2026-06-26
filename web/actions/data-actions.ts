@@ -6,10 +6,10 @@ import { resolutionToFolderName } from "../lib/resolution"
 
 export interface OHLCData {
     time: number
-    open: number
-    high: number
-    low: number
-    close: number
+    open?: number
+    high?: number
+    low?: number
+    close?: number
     volume?: number
 }
 

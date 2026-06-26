@@ -173,16 +173,15 @@ export function useChartData({
                 let enriched: OHLCData[];
 
                 if (shouldProjectNew && lastUpdate) {
-                    // New candle period has started. Append the forming candle from liveCandleRef
-                    // so the chart shows it with real OHLC + livePrice as close.
-                    // When setFullData catches up (WS candle transition), use-chart.ts will
-                    // detect the time went backwards and use setData() instead of update().
+                    // New candle period has started. Append a whitespace bar (time only, no OHLC)
+                    // so the chart reserves the slot but doesn't render a candle. When real WS
+                    // data arrives (liveCandleRef), the whitespace bar is replaced with a real candle.
                     const tail: OHLCData[] = []
 
-                    if (liveCandle && liveCandle.time === newCandleTime) {
+                    if (liveCandle && liveCandle.time === newCandleTime && liveCandle.open !== undefined) {
                         // Real WS candle available — merge livePrice into close/high/low
-                        const realHigh = Math.max(liveCandle.high, livePrice)
-                        const realLow = Math.min(liveCandle.low, livePrice)
+                        const realHigh = Math.max(liveCandle.high!, livePrice)
+                        const realLow = Math.min(liveCandle.low!, livePrice)
                         tail.push({
                             time: newCandleTime,
                             open: liveCandle.open,
@@ -191,8 +190,12 @@ export function useChartData({
                             close: livePrice,
                             volume: liveCandle.volume
                         })
+                    } else {
+                        // No real data yet — append a whitespace bar (time only, no OHLC).
+                        // lightweight-charts renders this as an empty slot (no candle).
+                        // When liveCandleRef gets data, the next render replaces it.
+                        tail.push({ time: newCandleTime })
                     }
-                    // If no liveCandle for this period, don't append — chart shows last real bar
 
                     // Clean up old projections
                     const lastBarTime = lastCandle.time
@@ -200,15 +203,15 @@ export function useChartData({
                         if (t <= lastBarTime) projections.delete(t)
                     }
 
-                    enriched = tail.length > 0 ? baseData.concat(tail) : baseData;
+                    enriched = baseData.concat(tail);
                 } else {
                     // Not projecting — the last bar in baseData is the current forming candle.
                     const barTime = lastCandle.time
 
-                    if (liveCandle && liveCandle.time === barTime) {
+                    if (liveCandle && liveCandle.time === barTime && liveCandle.open !== undefined) {
                         // Real WS candle available — use its open/high/low, merge livePrice
-                        const realHigh = Math.max(liveCandle.high, livePrice)
-                        const realLow = Math.min(liveCandle.low, livePrice)
+                        const realHigh = Math.max(liveCandle.high!, livePrice)
+                        const realLow = Math.min(liveCandle.low!, livePrice)
                         enriched = baseData.slice(0, lastIdx);
                         enriched.push({
                             ...lastCandle,

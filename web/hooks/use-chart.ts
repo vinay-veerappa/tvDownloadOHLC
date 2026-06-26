@@ -277,10 +277,14 @@ export function useChart(
             setSeriesInstance(newSeries)
 
             if (data.length > 0) {
-                // Clone data to avoid mutations (whitespace added in data update effect)
-                const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
+                // Filter whitespace bars for Heiken Ashi, re-add after
+                const hasOHLC = (c: any) => c.open !== undefined && c.high !== undefined && c.low !== undefined && c.close !== undefined;
+                const solidBars = data.filter(hasOHLC);
+                const whitespaceBars = data.filter(c => !hasOHLC(c));
+                const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(solidBars as any) : [...solidBars];
+                const finalData = whitespaceBars.length > 0 ? chartData.concat(whitespaceBars) : chartData;
 
-                newSeries.setData(chartData)
+                newSeries.setData(finalData)
                 chartInstance.timeScale().fitContent()
 
             } else {
@@ -313,8 +317,19 @@ export function useChart(
     const chartData = useMemo(() => {
         if (!data.length) return [];
 
+        // Filter out whitespace bars (time only, no OHLC) for Heiken Ashi calculation.
+        // They are re-added after as true whitespace points.
+        const hasOHLC = (c: any) => c.open !== undefined && c.high !== undefined && c.low !== undefined && c.close !== undefined;
+        const solidBars = data.filter(hasOHLC);
+        const whitespaceBars = data.filter(c => !hasOHLC(c));
+
         // Calculate base data (Heiken Ashi or raw OHLC)
-        let result = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
+        let result = style === 'heiken-ashi' ? calculateHeikenAshi(solidBars as any) : [...solidBars];
+
+        // Re-add whitespace bars (true whitespace — time only, no OHLC)
+        if (whitespaceBars.length > 0) {
+            result = result.concat(whitespaceBars);
+        }
 
         // Add whitespace bars (only in historical mode for better UX)
         // In live mode, chart auto-scrolls and whitespace interferes with tick updates
