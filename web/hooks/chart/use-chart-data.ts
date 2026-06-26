@@ -179,14 +179,13 @@ export function useChartData({
 
                     const nextExpectedTime = lastBarTime + resolutionSecs
                     let tempTime = nextExpectedTime
-                    let prevClose = lastCandle.close
 
-                    // Build the tail: intermediate + active projected candles
+                    // Build the tail: only include candles we have REAL data for.
+                    // Do NOT synthesize flat candles from prevClose — wait for WS data.
                     const tail: OHLCData[] = []
 
-                    // 1. Project intermediate candles — use cached data if available
+                    // 1. Intermediate candles — only if we have real WS data
                     while (tempTime < newCandleTime) {
-                        // If we have a real WS candle for this intermediate timestamp, use it
                         if (liveCandle && liveCandle.time === tempTime) {
                             tail.push({
                                 time: tempTime,
@@ -196,38 +195,15 @@ export function useChartData({
                                 close: liveCandle.close,
                                 volume: liveCandle.volume
                             })
-                            prevClose = liveCandle.close
-                        } else {
-                            const cached = projections.get(tempTime)
-                            if (cached && cached.ticker === ticker && cached.timeframe === timeframe) {
-                                tail.push({
-                                    time: tempTime,
-                                    open: cached.open,
-                                    high: cached.high,
-                                    low: cached.low,
-                                    close: cached.close,
-                                    volume: 0
-                                })
-                                prevClose = cached.close
-                            } else {
-                                tail.push({
-                                    time: tempTime,
-                                    open: prevClose,
-                                    high: prevClose,
-                                    low: prevClose,
-                                    close: prevClose,
-                                    volume: 0
-                                })
-                            }
                         }
+                        // If no real data for this intermediate candle, skip it.
+                        // The chart will show a gap until real data arrives.
                         tempTime += resolutionSecs
                     }
 
-                    // 2. Project the active forming candle at newCandleTime
-                    // If we have a real WS candle for this timestamp, use its OHLC as the base
-                    // and only override close with the latest livePrice tick.
+                    // 2. Active forming candle — only if we have real WS data
                     if (liveCandle && liveCandle.time === newCandleTime) {
-                        // Real candle data available — use it directly, merge livePrice for close
+                        // Merge livePrice into the real candle's close/high/low
                         const realHigh = Math.max(liveCandle.high, livePrice)
                         const realLow = Math.min(liveCandle.low, livePrice)
                         tail.push({
@@ -238,51 +214,19 @@ export function useChartData({
                             close: livePrice,
                             volume: liveCandle.volume
                         })
-                    } else {
-                        // No real candle yet — fall back to projection
-                        const existing = projections.get(newCandleTime)
-                        if (existing && existing.ticker === ticker && existing.timeframe === timeframe) {
-                            // Update open to current prevClose — it may have changed since
-                            // the projection was first created (e.g. intermediate candle finalized)
-                            existing.open = prevClose
-                            existing.close = livePrice
-                            if (livePrice > existing.high) existing.high = livePrice
-                            if (livePrice < existing.low) existing.low = livePrice
-                        } else {
-                            // Use prevClose as the open (matches hub behavior: open = prev close).
-                            projections.set(newCandleTime, {
-                                ticker,
-                                timeframe,
-                                time: newCandleTime,
-                                open: prevClose,
-                                high: Math.max(prevClose, livePrice),
-                                low: Math.min(prevClose, livePrice),
-                                close: livePrice
-                            })
-                        }
-
-                        const activeCandle = projections.get(newCandleTime)!
-                        tail.push({
-                            time: activeCandle.time,
-                            open: activeCandle.open,
-                            high: activeCandle.high,
-                            low: activeCandle.low,
-                            close: activeCandle.close,
-                            volume: 0
-                        })
                     }
+                    // If no real data for the active candle, don't append it.
+                    // The chart shows the last real bar until WS data arrives.
 
-                    // Clean up entries already in fullData
+                    // Clean up old projections
                     for (const [t] of projections) {
                         if (t <= lastBarTime) projections.delete(t)
                     }
 
-                    // Concatenate shared prefix with new tail (avoids copying baseData)
-                    enriched = baseData.concat(tail);
+                    // Concatenate shared prefix with real-data tail
+                    enriched = tail.length > 0 ? baseData.concat(tail) : baseData;
                 } else {
                     // Not projecting — the last bar in baseData is the current forming candle.
-                    // If we have a real WS candle for this timestamp, use its OHLC as the base
-                    // and only override close with the latest livePrice tick.
                     const barTime = lastCandle.time
 
                     if (liveCandle && liveCandle.time === barTime) {
@@ -299,39 +243,9 @@ export function useChartData({
                             volume: liveCandle.volume
                         });
                     } else {
-                        // No real WS candle — fall back to projection accumulation
-                        let tracked = projections.get(barTime)
-
-                        if (!tracked || tracked.ticker !== ticker || tracked.timeframe !== timeframe) {
-                            tracked = {
-                                ticker, timeframe, time: barTime,
-                                open: lastCandle.open,
-                                high: lastCandle.high,
-                                low: lastCandle.low,
-                                close: lastCandle.close
-                            }
-                            projections.set(barTime, tracked)
-                        } else {
-                            tracked.open = lastCandle.open
-                        }
-
-                        // Merge base values (in case a candle message updated fullData)
-                        tracked.high = Math.max(tracked.high, lastCandle.high)
-                        tracked.low = Math.min(tracked.low, lastCandle.low)
-
-                        // Apply current tick
-                        tracked.close = livePrice
-                        tracked.high = Math.max(tracked.high, livePrice)
-                        tracked.low = Math.min(tracked.low, livePrice)
-
-                        // Build enriched: share prefix, replace only last element
-                        enriched = baseData.slice(0, lastIdx);
-                        enriched.push({
-                            ...lastCandle,
-                            high: tracked.high,
-                            low: tracked.low,
-                            close: tracked.close
-                        });
+                        // No real WS candle for this bar — return baseData as-is.
+                        // The chart shows the last real bar without modification.
+                        enriched = baseData;
                     }
 
                     // Clean up old entries
