@@ -1101,6 +1101,15 @@ async def chart_handler(msg):
                 if close_val is not None: prev["close"] = close_val
                 if volume_val is not None: prev["volume"] = int(volume_val)
             else:
+                # Check for gap before adding new candle
+                if cdata["candles"]:
+                    last_time = cdata["candles"][-1]["time"]
+                    if candle_time - last_time > 60000:
+                        print(f"⚠️ [{key}] Gap detected in stream: {last_time} -> {candle_time}. Triggering bridge...")
+                        # We can't await here because chart_handler is not async in the loop 
+                        # Wait, chart_handler IS async. Let's call it.
+                        await check_and_bridge_gaps(key)
+
                 # Save previous finalized candle to live parquet storage
                 if cdata["candles"]:
                     finalized_candle = cdata["candles"][-1]
