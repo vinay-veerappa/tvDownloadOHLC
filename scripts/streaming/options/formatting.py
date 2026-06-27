@@ -42,6 +42,7 @@ class HasLevels(Protocol):
     gamma_cliff_down: float | None
     zero_gamma: float | None
     zero_gamma_delta_adj: float | None
+    opening_gap_target: float | None
     max_pain: float | None
     hedge_wall: float | None
     total_gex: float
@@ -210,44 +211,32 @@ def _calculate_tactical_levels(levels: HasLevels) -> dict[str, float | None]:
     em = levels.em_value if levels.em_value > 0 else 1.0
     active_zg = getattr(levels, 'zero_gamma_delta_adj', None) or levels.zero_gamma
 
-    # Regime Identification
-    gex_da = getattr(levels, "total_gex_delta_adj", None)
-    is_short_gamma = (gex_da < 0) if gex_da is not None else (levels.gex_regime == "NEGATIVE")
-
-    # Gap / Level Breach Adaptation
-    is_gap_active = False
-    if ref_price is not None:
-        pwall_0dte = getattr(levels, 'put_wall_0dte', None)
-        if pwall_0dte is not None and ref_price < pwall_0dte:
-            is_gap_active = True
-        cwall_0dte = getattr(levels, 'call_wall_0dte', None)
-        if cwall_0dte is not None and ref_price > cwall_0dte:
-            is_gap_active = True
-        if is_short_gamma and active_zg is not None and ref_price < (active_zg - em):
-            is_gap_active = True
-
-    # Dynamic Triggering Matrix
-    if is_gap_active:
-        s_trig = nearest_below(ref_price, levels.gamma_magnet, levels.vol_trigger_lower_05)
-        if s_trig is None:
-            s_trig = nearest_below(ref_price, levels.put_wall_0dte, levels.local_put_node, levels.hedge_wall, active_zg, levels.em_lower)
-        l_trig = nearest_above(ref_price, active_zg, levels.gamma_flip_upper, levels.call_wall_0dte, levels.call_wall, levels.local_call_node, levels.em_upper)
-    elif is_short_gamma:
-        s_trig = nearest_below(ref_price, levels.gamma_flip_lower, levels.put_wall_0dte, levels.local_put_node, levels.hedge_wall, active_zg, levels.em_lower)
-        l_trig = nearest_above(ref_price, active_zg, levels.gamma_flip_upper, levels.call_wall_0dte, levels.call_wall, levels.local_call_node, levels.em_upper)
+    regime = levels.regime_label
+    is_positive_gex = (levels.total_gex >= 0)
+    is_short_gamma = not is_positive_gex
+    
+    # Track B: Premium/Discount Fade
+    if regime in ["PINNED", "BATTLE_ZONE"] and is_positive_gex:
+        l_trig = first_level(levels.em_lower, levels.put_wall_0dte)
+        s_trig = first_level(levels.em_upper, levels.call_wall_0dte)
+        l_tgt = levels.gamma_magnet
+        s_tgt = levels.gamma_magnet
     else:
-        s_trig = first_level(levels.put_wall_0dte, levels.put_wall, levels.hedge_wall, levels.em_lower)
+        # Track A: Breakout Expansion
         l_trig = first_level(levels.call_wall_0dte, levels.call_wall, levels.em_upper)
+        s_trig = first_level(levels.put_wall_0dte, levels.put_wall, levels.em_lower)
+        l_tgt = first_level(levels.vol_trigger_upper_05, levels.em_upper)
+        s_tgt = first_level(levels.vol_trigger_lower_05, levels.em_lower)
 
     # Fallbacks to guarantee non-None if levels exist
     if s_trig is None:
         s_trig = first_level(active_zg, levels.gamma_flip_lower, levels.put_wall_0dte)
     if l_trig is None:
         l_trig = first_level(levels.call_wall, levels.gamma_flip_upper, active_zg)
-
-    # ── Targets ──
-    s_tgt = nearest_below(s_trig, levels.put_wall_0dte, levels.local_put_node, levels.hedge_wall, levels.em_lower)
-    l_tgt = nearest_above(l_trig, levels.max_pain, levels.em_upper)
+    if s_tgt is None:
+        s_tgt = nearest_below(s_trig, levels.put_wall_0dte, levels.local_put_node, levels.hedge_wall, levels.em_lower)
+    if l_tgt is None:
+        l_tgt = nearest_above(l_trig, levels.max_pain, levels.em_upper)
 
     # ── Precision Invalidations ──
     if is_short_gamma:
@@ -433,6 +422,7 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     bias = getattr(levels, "directional_bias", "NEUTRAL")
     parts.append(f"0:META_REGIME_{regime}")
     parts.append(f"0:META_BIAS_{bias}")
+    parts.append(f"0:META_OGT_{fmt_copy(getattr(levels, 'opening_gap_target', None))}")
     
     # Greeks as metadata for dashboard rows
     vanna = getattr(levels, "net_vanna_exposure", 0.0)
@@ -498,8 +488,15 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     f = fmt_copy
     tactical = _calculate_tactical_levels(levels)
     
-    parts.append(f"0:META_S_TRIG_{f(tactical['s_trig'])}")
-    parts.append(f"0:META_L_TRIG_{f(tactical['l_trig'])}")
+    regime = getattr(levels, "regime_label", "NEUTRAL")
+    is_positive_gex = (getattr(levels, "total_gex", 0.0) >= 0)
+    
+    if regime in ["PINNED", "BATTLE_ZONE"] and is_positive_gex:
+        parts.append(f"0:META_S_TRIG_{f(tactical['s_trig'])}:► SELL PREMIUM ZONE (Look for Short Rejection)")
+        parts.append(f"0:META_L_TRIG_{f(tactical['l_trig'])}:► BUY DISCOUNT ZONE (Look for Long Rejection)")
+    else:
+        parts.append(f"0:META_S_TRIG_{f(tactical['s_trig'])}")
+        parts.append(f"0:META_L_TRIG_{f(tactical['l_trig'])}")
     parts.append(f"0:META_S_TGT_{f(tactical['s_tgt'])}")
     parts.append(f"0:META_L_TGT_{f(tactical['l_tgt'])}")
     parts.append(f"0:META_S_INV_{f(tactical['s_inv'])}")

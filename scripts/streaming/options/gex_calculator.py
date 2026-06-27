@@ -273,6 +273,7 @@ class DealerLevels:
     call_25d_iv: float | None = None
     volatility_skew_premium: float | None = None
     zero_gamma_delta_adj: float | None = None
+    opening_gap_target: float | None = None
 
 
 def _best_contract_per_strike(contracts: list[OptionContract]) -> dict[float, OptionContract]:
@@ -584,6 +585,70 @@ def _calculate_hypothetical_total_gex(calls: list[OptionContract], puts: list[Op
                 total -= gex
                 
     return total
+
+
+def _calculate_hypothetical_overnight_delta_imbalance(calls: list[OptionContract], puts: list[OptionContract], S_hypo: float) -> float:
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, time
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    contract_size = 100
+    r, q = 0.02, 0.0
+    total = 0.0
+    
+    for c in calls:
+        try:
+            exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+        except Exception:
+            t = 1e-5
+        iv = max(c.iv, 1e-4)
+        charm = _analytical_charm('c', S_hypo, c.strike, t, iv, r, q)
+        total += charm * c.open_interest * contract_size * S_hypo / 365.0
+        
+    for p in puts:
+        try:
+            exp_dt = datetime.combine(p.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+        except Exception:
+            t = 1e-5
+        iv = max(p.iv, 1e-4)
+        charm = _analytical_charm('p', S_hypo, p.strike, t, iv, r, q)
+        total += charm * p.open_interest * contract_size * S_hypo / 365.0
+        
+    return total
+
+
+def _calculate_opening_gap_target(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> float | None:
+    if not calls and not puts:
+        return None
+
+    def _bisect(lo: float, hi: float) -> float | None:
+        g_lo = _calculate_hypothetical_overnight_delta_imbalance(calls, puts, lo)
+        g_hi = _calculate_hypothetical_overnight_delta_imbalance(calls, puts, hi)
+        if g_lo * g_hi > 0:
+            return None
+        for _ in range(50):
+            mid = (lo + hi) / 2.0
+            g_mid = _calculate_hypothetical_overnight_delta_imbalance(calls, puts, mid)
+            if abs(g_mid) < 1e-2:
+                return round(mid, 2)
+            if g_mid < 0:
+                lo = mid
+            else:
+                hi = mid
+        return round((lo + hi) / 2.0, 2)
+
+    candidates: list[float] = []
+    for lo_scale, hi_scale in [(0.90, 1.10), (0.80, 1.20), (0.50, 1.50)]:
+        result = _bisect(spot * lo_scale, spot * hi_scale)
+        if result is not None:
+            candidates.append(result)
+
+    if not candidates:
+        return None
+
+    return min(candidates, key=lambda x: abs(x - spot))
 
 
 def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContract], spot: float, delta_adjusted: bool = False) -> float | None:
@@ -1467,6 +1532,7 @@ def calculate_dealer_levels(
     gamma_flip_lower, gamma_flip_upper, _ = _find_gamma_flip_zone(strikes, spot, min_oi_floor)
     zero_gamma = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=False)
     zero_gamma_delta_adj = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=True)
+    opening_gap_target = _calculate_opening_gap_target(chain.calls, chain.puts, spot)
     hedge_wall = _find_hedge_wall(strikes, spot)
     max_pain = _find_max_pain(front_calls or chain.calls, front_puts or chain.puts)
 
@@ -1595,6 +1661,7 @@ def calculate_dealer_levels(
         gex_regime=gex_regime,
         zero_gamma=zero_gamma,
         zero_gamma_delta_adj=zero_gamma_delta_adj,
+        opening_gap_target=opening_gap_target,
         gamma_flip_lower=gamma_flip_lower,
         gamma_flip_upper=gamma_flip_upper,
         call_wall=call_wall,
@@ -1699,6 +1766,7 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         gex_regime=levels.gex_regime,
         zero_gamma=_scale(levels.zero_gamma),
         zero_gamma_delta_adj=_scale(levels.zero_gamma_delta_adj),
+        opening_gap_target=_scale(levels.opening_gap_target),
         gamma_flip_lower=_scale(levels.gamma_flip_lower),
         gamma_flip_upper=_scale(levels.gamma_flip_upper),
         call_wall=_scale(levels.call_wall),

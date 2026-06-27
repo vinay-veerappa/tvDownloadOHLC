@@ -1395,36 +1395,63 @@ def write_unified_levels_txt(
             show_far_macro=show_far_macro,
             macro_extension_band_pct=macro_extension_band_pct,
         )
-        if not tokens:
+        # Sanitize tokens to prevent delimiter corruption
+        clean_tokens = []
+        for t in tokens:
+            # Remove any unintended carriage returns or commas inside the token
+            cleaned = t.replace("\r\n", " ").replace("\n", " ").replace(",", "")
+            if cleaned:
+                clean_tokens.append(cleaned)
+                
+        if not clean_tokens:
             continue
-        tokens[0] = f"{ticker}:{tokens[0]}"
-        lines.append(", ".join(tokens))
+            
+        clean_tokens[0] = f"{ticker}:{clean_tokens[0]}"
+        lines.append(", ".join(clean_tokens))
 
-    path.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(lines)
-    path.write_text(text + ("\n" if text else ""), encoding="utf-8")
-    log.info("Unified levels TXT written -> %s (%d tickers)", path, len(lines))
-    current_path = _sync_current_txt(path, text + ("\n" if text else ""))
-    log.info("Current unified TXT mirror written -> %s", current_path)
+    final_text = text + ("\n" if text else "")
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(final_text, encoding="utf-8")
+        log.info("Unified levels TXT written -> %s (%d tickers)", path, len(lines))
+    except IOError as e:
+        log.error("Failed to write unified levels main file: %s", e)
+
+    try:
+        current_path = _sync_current_txt(path, final_text)
+        log.info("Current unified TXT mirror written -> %s", current_path)
+    except IOError as e:
+        log.error("Failed to write current unified TXT mirror: %s", e)
 
     if versioned:
-        v_path = _sidecar_path(path, "versioned")
-        v_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
-        log.info("Versioned unified levels TXT written -> %s", v_path)
+        try:
+            v_path = _sidecar_path(path, "versioned")
+            v_path.write_text(final_text, encoding="utf-8")
+            log.info("Versioned unified levels TXT written -> %s", v_path)
+        except IOError as e:
+            log.error("Failed to write versioned unified levels TXT: %s", e)
 
     if snapshot_suffix:
-        s_path = _snapshot_history_path(path, snapshot_suffix)
-        s_path.parent.mkdir(parents=True, exist_ok=True)
-        s_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
-        log.info("Snapshot unified levels TXT written -> %s", s_path)
+        try:
+            s_path = _snapshot_history_path(path, snapshot_suffix)
+            s_path.parent.mkdir(parents=True, exist_ok=True)
+            s_path.write_text(final_text, encoding="utf-8")
+            log.info("Snapshot unified levels TXT written -> %s", s_path)
+        except IOError as e:
+            log.error("Failed to write snapshot unified levels TXT: %s", e)
 
-        hhmm = _snapshot_hhmm(snapshot_suffix)
-        if hhmm in {"0930", "1615"}:
-            alias_name = f"{path.stem}_{'open' if hhmm == '0930' else 'close'}{path.suffix}"
-            alias_path = path.parent / "current" / alias_name
-            alias_path.parent.mkdir(parents=True, exist_ok=True)
-            alias_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
-            log.info("Current unified session alias written -> %s", alias_path)
+        try:
+            hhmm = _snapshot_hhmm(snapshot_suffix)
+            if hhmm in {"0930", "1615"}:
+                alias_name = f"{path.stem}_{'open' if hhmm == '0930' else 'close'}{path.suffix}"
+                alias_path = path.parent / "current" / alias_name
+                alias_path.parent.mkdir(parents=True, exist_ok=True)
+                alias_path.write_text(final_text, encoding="utf-8")
+                log.info("Current unified session alias written -> %s", alias_path)
+        except IOError as e:
+            log.error("Failed to write current unified session alias: %s", e)
 
 
 def _parse_unified_line(line: str) -> dict[str, Any]:
