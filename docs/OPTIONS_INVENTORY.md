@@ -169,7 +169,21 @@ Handles historical database updates, real-time option chain snapshotting, VIX in
 * **Description:** Downloads VIX and VVIX daily and intraday close prices, providing volatility regime filters for the options pricing engine.
 
 ### B. High-Performance Parquet Database
-All historical OHLCV data is organized under `/data` using snappy-compressed Apache Parquet files, optimized for vectorized operations:
+All historical OHLCV data is organized under `/data` using snappy-compressed Apache Parquet files, optimized for vectorized operations. For a detailed list of all 180+ datasets, their start/end dates, and bar counts, see the auto-generated [DATA_INVENTORY.md](file:///C:/Users/vinay/tvDownloadOHLC/DATA_INVENTORY.md).
+
+#### Core Historical Coverage Ranges:
+*   **Indices (SPX / NDX / RUT / DJI / VIX / VVIX)**:
+    *   `SPX_1d` / `SPX_1W` starts in **August 1939** (21,800+ bars).
+    *   `SPX_1m` starts in **January 2011** (1,450,000+ bars).
+    *   `VIX_1d` starts in **October 1995** (7,700+ bars) and `VIX_1m` in **October 2021**.
+*   **Index ETFs (SPY / QQQ / IWM / DIA)**:
+    *   `SPY_1d` starts in **January 1993** (8,400+ bars).
+    *   `QQQ_1d` starts in **March 1999** (6,800+ bars), `QQQ_15m` starts in **August 2013**, and `QQQ_5m` in **June 2016**.
+*   **Futures Continuous Contracts (ES1 / NQ1 / YM1 / RTY1 / CL1 / GC1)**:
+    *   `ES1_1d`/`NQ1_1d` starts in **September 2000** (6,500+ bars), and 1-minute historical intraday data (`ES1_1m`/`NQ1_1m`) starts in **January 2006** (6.3+ Million bars per contract).
+    *   `YM1_1m`/`CL1_1m`/`GC1_1m` starts in **January 2008** (5.8+ Million bars per contract).
+*   **Market Internals (TICK / TICKQ / TRIN / TRINQ / ADV / DVOL / UVOL)**:
+    *   1-minute intraday feeds start in **January 2011** (1.45+ Million bars).
 
 | Asset Type | File Signature | Timeframes | Purpose |
 | :--- | :--- | :--- | :--- |
@@ -240,7 +254,7 @@ $$\text{Centroid}_{\text{Put}} = \frac{\sum (K \times \text{Volume}_{\text{Put}}
   * `_analytical_charm(flag, S, K, t, sigma, r, q)`: Returns the exact Charm decay factor.
   * `_analytical_speed(S, K, t, sigma, r, q)`: Returns the Gamma sensitivity rate.
   * `_delta_adjusted_gex(chain_data)`: Returns delta-adjusted call and put gamma levels.
-  * `find_zero_gamma(chain_gex_df)`: Iterates strike bounds to locate the exact price level where net book positioning shifts sign.
+  * `find_zero_gamma(chain_gex_df)`: Iterates strike bounds to locate the exact price level where net book positioning shifts sign. Also supports delta-adjusted Sign Flip calculation.
 
 #### 💻 [level_scorer.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/level_scorer.py)
 * **Description:** Implements the **Three-Filter Level Scorer** architecture. Prioritizes mathematical levels into TaggedLevels based on mechanical walls, structural anchors, and inflection points.
@@ -640,6 +654,7 @@ The computed options levels, calculated in [gex_calculator.py](file:///c:/Users/
 | **Tactical Call Wall** | $\max_K (\text{GEX}_{\text{Call}, K, \text{near-term}})$ | **PIVOT (Secondary)** | Near-term expiry wall. High daily attraction/pin potential in bullish regimes. |
 | **Tactical Put Wall** | $\max_K (|\text{GEX}_{\text{Put}, K, \text{near-term}}|)$ | **PIVOT (Secondary)** | Near-term downside support floor. Active hedging pivot for the current session. |
 | **Zero Gamma Level** | $\text{Price where } \text{GEX}_{\text{net}} \text{ crosses } 0$ | **PIVOT (Secondary)** | The transition boundary. Volatility expands below; market is supportive above. |
+| **Zero Gamma (Δ-Adj)**| $\text{Price where } \text{DEX}_{\text{net}} \text{ crosses } 0$ | **PIVOT (Secondary)** | The delta-adjusted transition boundary, weighting exposure by strike delta. Pins the flip boundary more accurately under skew. |
 | **Vanna Resistance** | $\max_K (\text{Vanna}_{\text{Call}, K})$ | **CONTEXTUAL** | Peak sensitivity to implied volatility changes. Triggers hedging shifts as IV expands. |
 | **Vanna Support** | $\max_K (\text{Vanna}_{\text{Put}, K})$ | **CONTEXTUAL** | Peak downside IV sensitivity. Key for spotting volatility-based sell accelerations. |
 | **Charm Gravity Node** | $\max_K (\text{Charm}_{\text{Call}, K})$ | **CONTEXTUAL** | Peak time-decay sensitivity. Drives passive weekend buyback/selling pressures. |

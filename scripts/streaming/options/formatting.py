@@ -41,6 +41,7 @@ class HasLevels(Protocol):
     gamma_cliff_up: float | None
     gamma_cliff_down: float | None
     zero_gamma: float | None
+    zero_gamma_delta_adj: float | None
     max_pain: float | None
     hedge_wall: float | None
     total_gex: float
@@ -207,37 +208,59 @@ def _calculate_tactical_levels(levels: HasLevels) -> dict[str, float | None]:
     """
     ref_price = getattr(levels, 'spot', None) or getattr(levels, 'futures_price', None)
     em = levels.em_value if levels.em_value > 0 else 1.0
+    active_zg = getattr(levels, 'zero_gamma_delta_adj', None) or levels.zero_gamma
 
-    def _is_near_spot(value: float | None, threshold_ems: float = 3.0) -> bool:
-        if value is None or ref_price is None:
-            return False
-        return abs(value - ref_price) <= threshold_ems * em
+    # Regime Identification
+    gex_da = getattr(levels, "total_gex_delta_adj", None)
+    is_short_gamma = (gex_da < 0) if gex_da is not None else (levels.gex_regime == "NEGATIVE")
 
-    # ── Short-side trigger ──
-    near_short_candidates = [
-        v for v in [levels.gamma_flip_lower, levels.put_wall_0dte,
-                    levels.local_put_node, levels.hedge_wall, levels.zero_gamma]
-        if v is not None and _is_near_spot(v)
-    ]
-    s_trig = max(near_short_candidates) if near_short_candidates else first_level(levels.zero_gamma, levels.gamma_flip_lower, levels.put_wall_0dte)
+    # Gap / Level Breach Adaptation
+    is_gap_active = False
+    if ref_price is not None:
+        pwall_0dte = getattr(levels, 'put_wall_0dte', None)
+        if pwall_0dte is not None and ref_price < pwall_0dte:
+            is_gap_active = True
+        cwall_0dte = getattr(levels, 'call_wall_0dte', None)
+        if cwall_0dte is not None and ref_price > cwall_0dte:
+            is_gap_active = True
+        if is_short_gamma and active_zg is not None and ref_price < (active_zg - em):
+            is_gap_active = True
 
-    # ── Long-side trigger ──
-    near_long_candidates = [
-        v for v in [levels.call_wall, levels.gamma_flip_upper,
-                    levels.call_wall_0dte, levels.local_call_node, levels.zero_gamma]
-        if v is not None and _is_near_spot(v)
-    ]
-    l_trig = min(near_long_candidates) if near_long_candidates else first_level(levels.call_wall, levels.gamma_flip_upper, levels.zero_gamma)
+    # Dynamic Triggering Matrix
+    if is_gap_active:
+        s_trig = nearest_below(ref_price, levels.gamma_magnet, levels.vol_trigger_lower_05)
+        if s_trig is None:
+            s_trig = nearest_below(ref_price, levels.put_wall_0dte, levels.local_put_node, levels.hedge_wall, active_zg, levels.em_lower)
+        l_trig = nearest_above(ref_price, active_zg, levels.gamma_flip_upper, levels.call_wall_0dte, levels.call_wall, levels.local_call_node, levels.em_upper)
+    elif is_short_gamma:
+        s_trig = nearest_below(ref_price, levels.gamma_flip_lower, levels.put_wall_0dte, levels.local_put_node, levels.hedge_wall, active_zg, levels.em_lower)
+        l_trig = nearest_above(ref_price, active_zg, levels.gamma_flip_upper, levels.call_wall_0dte, levels.call_wall, levels.local_call_node, levels.em_upper)
+    else:
+        s_trig = first_level(levels.put_wall_0dte, levels.put_wall, levels.hedge_wall, levels.em_lower)
+        l_trig = first_level(levels.call_wall_0dte, levels.call_wall, levels.em_upper)
+
+    # Fallbacks to guarantee non-None if levels exist
+    if s_trig is None:
+        s_trig = first_level(active_zg, levels.gamma_flip_lower, levels.put_wall_0dte)
+    if l_trig is None:
+        l_trig = first_level(levels.call_wall, levels.gamma_flip_upper, active_zg)
 
     # ── Targets ──
     s_tgt = nearest_below(s_trig, levels.put_wall_0dte, levels.local_put_node, levels.hedge_wall, levels.em_lower)
     l_tgt = nearest_above(l_trig, levels.max_pain, levels.em_upper)
 
-    # ── Invalidations (Institutional Safety Nets) ──
-    # Short invalidated if we reclaim key resistance above trigger
-    s_inv = nearest_above(s_trig, levels.zero_gamma, levels.gamma_flip_upper, levels.call_wall_0dte, levels.call_wall, levels.em_upper)
-    # Long invalidated if we lose key support below trigger
-    l_inv = nearest_below(l_trig, levels.zero_gamma, levels.gamma_flip_lower, levels.put_wall_0dte, levels.put_wall, levels.em_lower)
+    # ── Precision Invalidations ──
+    if is_short_gamma:
+        s_inv = nearest_above(s_trig, active_zg, levels.gamma_flip_upper, levels.call_wall_0dte, levels.local_call_node)
+        if s_inv is None or s_inv == s_trig:
+            s_inv = nearest_above(s_trig, active_zg, levels.gamma_flip_upper, levels.call_wall_0dte, levels.call_wall, levels.em_upper)
+            
+        l_inv = nearest_below(l_trig, active_zg, levels.gamma_flip_lower, levels.put_wall_0dte, levels.local_put_node)
+        if l_inv is None or l_inv == l_trig:
+            l_inv = nearest_below(l_trig, active_zg, levels.gamma_flip_lower, levels.put_wall_0dte, levels.put_wall, levels.em_lower)
+    else:
+        s_inv = nearest_above(s_trig, active_zg, levels.gamma_flip_upper, levels.call_wall_0dte, levels.call_wall, levels.em_upper)
+        l_inv = nearest_below(l_trig, active_zg, levels.gamma_flip_lower, levels.put_wall_0dte, levels.put_wall, levels.em_lower)
 
     return {
         "s_trig": s_trig, "l_trig": l_trig,
@@ -275,13 +298,15 @@ def build_plan(
     }.get(levels.regime_label, "")
 
     zg_context = ""
-    if levels.zero_gamma is not None and ref_price is not None:
-        zg_dist = levels.zero_gamma - ref_price
+    active_zg = getattr(levels, 'zero_gamma_delta_adj', None) or levels.zero_gamma
+    if active_zg is not None and ref_price is not None:
+        zg_dist = active_zg - ref_price
         direction = "above" if zg_dist > 0 else "below"
         # Only show distance if it's significant (>0.5 EM)
         em = levels.em_value if levels.em_value > 0 else 1.0
         if abs(zg_dist) > 0.5 * em:
-            zg_context = f" Note: Zero Gamma ({f(levels.zero_gamma)}) is {abs(zg_dist):.0f} pts {direction}."
+            zg_label = "Zero Gamma (DA)" if getattr(levels, 'zero_gamma_delta_adj', None) is not None else "Zero Gamma"
+            zg_context = f" Note: {zg_label} ({f(active_zg)}) is {abs(zg_dist):.0f} pts {direction}."
 
     if extended:
         return [
@@ -368,10 +393,16 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     Build a copy-ready string for *levels* prefixed by *tag*.
     This version includes full narrative metadata for the TradingView dashboard.
     """
-    parts = [
-        f"{fmt_copy(getattr(levels, attr, None))}:{label}"
-        for attr, label in _COPY_LEVEL_SPEC
-    ]
+    parts = []
+    for attr, label in _COPY_LEVEL_SPEC:
+        if attr == "zero_gamma":
+            zg_da = getattr(levels, "zero_gamma_delta_adj", None)
+            if zg_da is not None:
+                parts.append(f"{fmt_copy(zg_da)}:Zero Gamma (Δ-Adj)")
+            else:
+                parts.append(f"{fmt_copy(getattr(levels, attr, None))}:{label}")
+        else:
+            parts.append(f"{fmt_copy(getattr(levels, attr, None))}:{label}")
     
     # ── Multi-Expiry Expected Moves ──
     ems = getattr(levels, "expected_moves", [])
@@ -760,10 +791,13 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
 
     # 2. THE PIVOT
     # Priority: Gamma Flip (Tactical) > Zero Gamma (Structural) > Max Pain (Gravitational)
+    active_zg = getattr(levels, 'zero_gamma_delta_adj', None) or levels.zero_gamma
+    zg_label = "Zero Gamma (DA) Pivot" if getattr(levels, 'zero_gamma_delta_adj', None) is not None else "Zero Gamma Pivot"
+    
     pivots_of_interest = []
     if levels.gamma_flip_lower: pivots_of_interest.append(("Gamma Regime Lower", levels.gamma_flip_lower, 0))
     if levels.gamma_flip_upper: pivots_of_interest.append(("Gamma Regime Upper", levels.gamma_flip_upper, 0))
-    if levels.zero_gamma: pivots_of_interest.append(("Zero Gamma Pivot", levels.zero_gamma, 1))
+    if active_zg: pivots_of_interest.append((zg_label, active_zg, 1))
     if levels.max_pain: pivots_of_interest.append(("Max Pain", levels.max_pain, 2))
     
     if ref_price and pivots_of_interest:

@@ -51,11 +51,16 @@ These are your primary anchors. They change slowly and dictate the overarching t
 
 
 
-* **Zero Gamma:** The absolute pivot. The price where cumulative GEX crosses zero. Above it, dealer hedging dampens moves (Positive GEX). Below it, hedging amplifies moves (Negative GEX). 
+* **Zero Gamma / Zero Gamma (Δ-Adj):** The absolute pivot. The price where cumulative GEX crosses zero. The pipeline prioritizes the delta-adjusted version (`Zero Gamma (Δ-Adj)`) which weights dealer exposure by strike delta, pinning the flip boundary more accurately under skew. Above it, dealer hedging dampens moves (Positive GEX). Below it, hedging amplifies moves (Negative GEX).
 * **Macro Call Wall / Put Wall:** The absolute structural ceiling and floor of the market. Treat these as extreme resistance and support. 
 * **Major Nodes:** Thick, brightly colored lines representing massive, slow-accumulated Open Interest fortresses (e.g., `MAJ P (8.0%)`). Price will struggle heavily to break these on the first test.
 * **Gamma Magnet:** The intraday center of gravity where hedging flows pull price. Use this as your mid-range profit target.
 * **Expected Move (EM Upper/Lower):** The options-implied "normal" range for the day. Inside the band = two-way chop; outside the band = violent expansion.
+
+### 🎨 Visual Indicator Options
+Depending on your preference for visual density, you can choose between two TradingView indicators:
+1. **Execution HUD & Visual Plan (`ExecutionHUD.pine`):** Ideal for execution. It displays key triggers and targets as shaded zones (with a solid midline), draws secondary levels as muted/dotted gray "ghost lines", and presents a clean 4-column HUD table with a color-coded status banner.
+2. **Macro Dealer Levels Auto (`MacroDealerLevels.pine`):** Ideal for research. It plots all levels with individual labels and colors, and renders a comprehensive multi-row details table with extensive Greeks and flows.
 
 ### 🚨 Layer 2: The Urgent Tape (Institutional Whales)
 These are dynamic labels injected directly from the live options flow, representing aggressive institutional conviction.

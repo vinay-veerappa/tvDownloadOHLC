@@ -872,6 +872,8 @@ if can_calculate
                     if str.contains(u_lbl, "ZERO")
                         if str.contains(u_lbl, "DA")
                             st_ZG_DA := s_lv
+                        else if str.contains(u_lbl, "ADJ")
+                            st_ZG_DA := s_lv
                         else
                             st_ZG := s_lv
                     if str.contains(u_lbl, "MAGNET")

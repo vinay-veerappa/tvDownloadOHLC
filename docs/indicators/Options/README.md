@@ -63,6 +63,7 @@ JSON outputs remain canonical in `data/options/` so web/API consumers are not im
 	- `EM85 HI/LO` is the tighter straddle-derived confidence envelope.
 - Core structural levels:
 	- `ZERO GEX` is the primary pivot.
+	- `Zero Gamma (Δ-Adj)` is the delta-adjusted Zero Gamma level, prioritized over standard Zero Gamma for more precise positioning boundary checks.
 	- `CW/PW` are top resistance and support walls.
 	- `FLIP UP/DN` and `CLIFF UP/DN` define regime transition and acceleration boundaries.
 - Tactical levels:
@@ -83,9 +84,13 @@ Defined in `scripts/streaming/options/config.py`:
 - Scheduler times and timezone
 - Discord defaults and output toggles
 
-## Pine Consumption
-Recommended TradingView paste sources:
-- `data/options/unified_levels.txt` (scored-first)
+## Pine Consumption & Indicators
+Recommended TradingView Indicators:
+1. **Execution HUD & Visual Plan** (`ExecutionHUD.pine`): An elite visual execution framework implementing shaded bands, a midline inside the box, muted ghost lines, and an interactive 4-column HUD.
+2. **Macro Dealer Levels Auto** (`MacroDealerLevels.pine`): The original level display overlay featuring a detailed multi-row narrative dashboard.
+
+Paste Sources:
+- `data/options/unified_levels.txt` (scored-first, recommended for HUD)
 - `data/options/daily_levels.txt` (legacy-rich output)
 - `data/options/macro_levels.txt` (macro context)
 

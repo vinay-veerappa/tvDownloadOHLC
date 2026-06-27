@@ -54,7 +54,8 @@ Handles the translation of cash-index levels (SPX) into futures-space (/ES) usin
 - EM and EM85 values are preserved through rescale to avoid downstream signal loss.
 
 ### 2.4 Formatting + Delivery
-- `formatting.py` generates copy-ready rows and metadata tokens for Pine.
+- `formatting.py` generates copy-ready rows and metadata tokens for Pine. It resolves `active_zg` by prioritizing the delta-adjusted Zero Gamma (`zero_gamma_delta_adj`) over the standard metric.
+- `copy_ready_line` formats the active Zero Gamma level as `Zero Gamma (Δ-Adj)` to automatically route the delta-adjusted value to the charts.
 - `discord_notifier.py` builds compact embeds, enforces payload budgets, and falls back to text payloads when embed rejection occurs.
 
 ---
@@ -63,7 +64,9 @@ Handles the translation of cash-index levels (SPX) into futures-space (/ES) usin
 
 - Web tactical dashboard (`/options-live`)
 - Discord updates and regime alerts
-- TradingView Pine overlays via paste-based text inputs
+- TradingView Pine overlays via paste-based text inputs:
+  - **`ExecutionHUD.pine`**: Draws trigger/target bands (scaled to 1.5% of Expected Move) with a solid midline inside each band, transparent ghost lines, and an interactive 4-column HUD.
+  - **`MacroDealerLevels.pine`**: Displays a detailed multi-row dashboard and original level layout, updated to parse `Zero Gamma (Δ-Adj)` levels.
 
 ---
 

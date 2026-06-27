@@ -19,6 +19,7 @@ Scope: `scripts/streaming/options/*` runtime and `data/options/*` outputs
 | FR-2.2 | Compute multi-expiry expected moves (`expected_moves`). |
 | FR-2.3 | Compute EM85 bounds (`straddle_85_upper`, `straddle_85_lower`) for each expected-move expiry. |
 | FR-2.4 | Preserve EM85 fields through both rescale and translation paths. |
+| FR-2.5 | Prioritize `zero_gamma_delta_adj` (delta-adjusted Zero Gamma) over standard Zero Gamma for core boundary checks and formatting exports. |
 
 ### FR-3 Translation and Normalization
 | ID | Requirement |
@@ -49,6 +50,7 @@ Scope: `scripts/streaming/options/*` runtime and `data/options/*` outputs
 | FR-6.2 | Maintain intraday and macro JSON outputs (`daily_levels.json`, `intraday_levels.json`, `macro_levels.json`). |
 | FR-6.3 | Produce copy-ready text outputs including EM and EM85 fields when present. |
 | FR-6.4 | Produce unified outputs (`unified_levels.txt`, `unified_levels.json`) when enabled. |
+| FR-6.5 | Format Zero Gamma copy-ready labels as `Zero Gamma (Δ-Adj)` to allow downstream chart routing of delta-adjusted levels. |
 
 ### FR-7 Notifications and Scheduling
 | ID | Requirement |

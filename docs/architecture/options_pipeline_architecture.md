@@ -1,4 +1,4 @@
-﻿# Options Pipeline & Dashboard Architecture
+# Options Pipeline & Dashboard Architecture
 
 ## 1. Purpose
 Translate PRD and design spec into an implementation-ready architecture for frontend, API, compute, and publishing.
@@ -164,14 +164,15 @@ Use a shared envelope:
 ### 13.1 Existing Producer/Consumer Contract to Preserve
 1. Producer script: `scripts/streaming/options/run_options_levels.py`.
 2. Existing output artifacts that must remain valid:
-- `data/daily_levels.json` (structured levels)
-- `data/daily_levels.txt` (copy-ready text for Pine)
-3. Existing Pine consumer that must continue to work unchanged:
-- `scripts/indicators/options/DealerLevels.pine`
+- `data/options/daily_levels.json` (structured levels)
+- `data/options/unified_levels.txt` (copy-ready text for Pine)
+3. Pine consumers that consume these outputs:
+- **`scripts/indicators-pine/options/MacroDealerLevels.pine`**: Legacy-compatible detailed visual dashboard, aligned to support the `Zero Gamma (Δ-Adj)` label format.
+- **`scripts/indicators-pine/options/ExecutionHUD.pine`**: Greenfield execution indicator representing trigger/target bands with a midline inside the box, transparent ghost lines, and an interactive 4-column HUD.
 
 ### 13.2 Compatibility Requirements
 1. V3 APIs must be additive and must not break current file schemas consumed by Pine workflows.
-2. If new derived fields are introduced, append them without removing or renaming legacy fields used by copy/paste flows.
+2. If new derived fields are introduced, append them without removing or renaming legacy fields used by copy/paste flows. In particular, `formatting.py` routes the delta-adjusted Zero Gamma level dynamically through the existing `"zero_gamma"` key using the label `"Zero Gamma (Δ-Adj)"` to avoid index schema breakage.
 3. Any schema evolution for file outputs requires versioned adapters and fallback behavior.
 4. Keep symbol routing assumptions compatible with DealerLevels matching logic (index/ETF/futures families).
 
@@ -266,3 +267,14 @@ The Next.js Frontend consumes the `GexSnapshot` via the `/api/options-live/v3/*`
 - **Container Level:** Global store maintains the active `symbol` state.
 - **Rendering Level:** The presence of `futuresSymbol` and `futuresBasisRatio` dictates whether the charts render raw cash scales or the translated futures scale.
 - **Preservation of Pine Compat:** The UI handles the scaled metrics seamlessly, whilst the backend continues to spit out unaltered `daily_levels.txt` for TradingView PineScript users.
+
+### 15.5 TradingView Overlay Integrations
+1. **Execution HUD & Visual Plan (`ExecutionHUD.pine`):**
+   * Uses a custom shaded execution channel scaled to 1.5% of Expected Move.
+   * Draws a thin, solid midline directly at the exact level strike inside the box.
+   * Suppresses chart clutter by drawing secondary levels as 75% transparent dotted gray "ghost lines".
+   * Implements a 4-column HUD table with color-coded live expansion status banners (Green/Red/Slate) and descriptive hover tooltips.
+2. **Macro Dealer Levels (`MacroDealerLevels.pine`):**
+   * Plots all option levels with distinctive tags, colors, and line styles.
+   * Renders a highly comprehensive multi-row dashboard compiling Greeks, economic calendars, and execution plans.
+   * Upgraded to parse and display the delta-adjusted Zero Gamma level dynamically.
