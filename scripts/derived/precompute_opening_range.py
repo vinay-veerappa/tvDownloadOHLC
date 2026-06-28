@@ -27,11 +27,26 @@ def load_1m_data(ticker: str) -> pd.DataFrame:
     
     df = pd.read_parquet(parquet_path)
     
-    # Ensure time column is datetime
-    if 'time' in df.columns:
-        if df['time'].dtype == 'int64':
-            df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
-        df['datetime'] = df['time']
+    # Ensure datetime is present and parsed
+    if 'datetime' in df.columns:
+        df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
+    elif df.index.name == 'datetime':
+        df = df.reset_index()
+        df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
+    elif 'time' in df.columns:
+        # Convert numeric time to datetime
+        if df['time'].dtype in ['int64', 'float64']:
+            df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
+        else:
+            df['datetime'] = pd.to_datetime(df['time'], utc=True)
+    else:
+        df = df.reset_index()
+        # Find any column that looks like datetime
+        for col in df.columns:
+            if 'date' in col.lower() or 'time' in col.lower():
+                df.rename(columns={col: 'datetime'}, inplace=True)
+                df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
+                break
     
     # Convert to NY timezone
     if df['datetime'].dt.tz is None:

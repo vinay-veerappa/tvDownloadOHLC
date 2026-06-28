@@ -641,21 +641,24 @@ def run_pipeline(
             scored_macro_by_ticker[ticker] = scored_macro
 
             if ENABLE_SCORED_CONTRACT_OUTPUTS:
-                write_scored_levels_txt(
-                    ticker,
-                    scored_intraday,
-                    metadata_levels=levels_intraday,
-                    versioned=versioned,
-                    snapshot_suffix=snapshot_suffix,
-                )
-                write_scored_levels_txt(
-                    ticker,
-                    scored_macro,
-                    metadata_levels=levels_macro,
-                    path=SCORED_MACRO_LEVELS_TXT,
-                    versioned=versioned,
-                    snapshot_suffix=snapshot_suffix,
-                )
+                # DEPRECATED: write_scored_levels_txt generation stopped.
+                # Files moved to archive. Left here commented for reference.
+                # write_scored_levels_txt(
+                #     ticker,
+                #     scored_intraday,
+                #     metadata_levels=levels_intraday,
+                #     versioned=versioned,
+                #     snapshot_suffix=snapshot_suffix,
+                # )
+                # write_scored_levels_txt(
+                #     ticker,
+                #     scored_macro,
+                #     metadata_levels=levels_macro,
+                #     path=SCORED_MACRO_LEVELS_TXT,
+                #     versioned=versioned,
+                #     snapshot_suffix=snapshot_suffix,
+                # )
+                pass
 
             # 8. Support basis anchors for next loop
             # (Keeping base_open logic for opening basis detection)
@@ -696,6 +699,7 @@ def run_pipeline(
             cash_levels=list(cash_levels_by_ticker.values()),
             scored_levels=list(scored_intraday_by_ticker.values()),
             json_path=DAILY_LEVELS_JSON, # Legacy
+            txt_path=None, # Legacy TXT deprecated
             versioned=versioned,
             snapshot_suffix=snapshot_suffix,
         )
@@ -705,6 +709,7 @@ def run_pipeline(
             cash_levels=list(cash_levels_by_ticker.values()),
             scored_levels=list(scored_intraday_by_ticker.values()),
             json_path=INTRADAY_LEVELS_JSON, # Explicit
+            txt_path=None,
             versioned=versioned,
             snapshot_suffix=snapshot_suffix,
         )
@@ -716,7 +721,7 @@ def run_pipeline(
             cash_levels=list(macro_levels_by_ticker.values()),
             scored_levels=list(scored_macro_by_ticker.values()),
             json_path=MACRO_LEVELS_JSON,
-            txt_path=DATA_DIR / "macro_levels.txt",
+            txt_path=None, # Macro TXT deprecated
             txt_mode="macro",
             versioned=versioned,
             snapshot_suffix=snapshot_suffix,

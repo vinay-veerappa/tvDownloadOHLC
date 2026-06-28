@@ -398,7 +398,7 @@ def write_levels(
     cash_levels: list[DealerLevels] | None = None,
     scored_levels: list[ScoredLevels] | None = None,
     json_path: Path = DAILY_LEVELS_JSON,
-    txt_path: Path = DAILY_LEVELS_TXT,
+    txt_path: Path | None = DAILY_LEVELS_TXT,
     txt_mode: str = "daily",
     versioned: bool = False,
     snapshot_suffix: str | None = None,
@@ -419,70 +419,21 @@ def write_levels(
     for sl in scored_levels or []:
         tagged_entries.extend(_to_scored_entries(sl))
 
-    # Market structure summary per translated instrument (Tier 2 metrics).
-
-    # Market structure summary per translated instrument (Tier 2 metrics).
+    # Market structure summary — CASH-FIRST (ETF-scale, not futures-translated).
+    # The market_structure should use cash/ETF DealerLevels as the primary source.
+    # TranslatedLevels (futures-scale) are only used for tickers that have no
+    # cash version (e.g., pure futures like /ES without an ETF proxy).
     market_structure: list[dict[str, Any]] = []
-    for tl in translated_levels:
-        market_structure.append({
-            "asset": cash_tag(tl.futures_symbol),
-            "cash_ticker": tl.cash_ticker,
-            "regime_label": tl.regime_label,
-            "gex_regime": tl.gex_regime,
-            "total_gex": tl.total_gex,
-            "total_gex_delta_adj": tl.total_gex_delta_adj,
-            "gamma_magnet": tl.gamma_magnet,
-            "pin_strike": tl.pin_strike,
-            "pin_odds": tl.pin_odds,
-            "wall_separation": tl.wall_separation,
-            "call_gamma_total": tl.call_gamma_total,
-            "put_gamma_total": tl.put_gamma_total,
-            "net_vanna_exposure": tl.net_vanna_exposure,
-            "net_speed_exposure": tl.net_speed_exposure,
-            "wall_scope": getattr(tl, "wall_scope", "UNSPECIFIED"),
-            "wall_dte_min": getattr(tl, "wall_dte_min", 0),
-            "wall_dte_max": getattr(tl, "wall_dte_max", 0),
-            "concentration_score": getattr(tl, "concentration_score", 0.0),
-            "call_wall_oi": getattr(tl, "call_wall_oi", 0),
-            "put_wall_oi": getattr(tl, "put_wall_oi", 0),
-            "pin_strike_oi": getattr(tl, "pin_strike_oi", 0),
-            "hedge_flow": {
-                "up_10": getattr(tl, "hedge_flow_up_10", 0.0),
-                "up_25": getattr(tl, "hedge_flow_up_25", 0.0),
-                "up_50": getattr(tl, "hedge_flow_up_50", 0.0),
-                "dn_10": getattr(tl, "hedge_flow_dn_10", 0.0),
-                "dn_25": getattr(tl, "hedge_flow_dn_25", 0.0),
-                "dn_50": getattr(tl, "hedge_flow_dn_50", 0.0),
-            },
-            "hourly_flow_curve": getattr(tl, "hourly_flow_curve", []),
-            "call_volume_centroid": tl.call_volume_centroid,
-            "put_volume_centroid": tl.put_volume_centroid,
-            "call_centroid": tl.call_volume_centroid, # standardized name
-            "put_centroid": tl.put_volume_centroid,   # standardized name
-            "atm_iv": tl.atm_iv,
-            "iv_change": tl.iv_change,
-            "put_25d_iv": tl.put_25d_iv,
-            "call_25d_iv": tl.call_25d_iv,
-            "volatility_skew_premium": tl.volatility_skew_premium,
-            "expected_moves": [
-                {
-                    "expiry": em.expiry,
-                    "dte": em.dte,
-                    "em_upper": em.em_upper,
-                    "em_lower": em.em_lower,
-                    "em_value": em.em_value,
-                    "straddle": em.straddle
-                }
-                for em in tl.expected_moves
-            ],
-            "coach_note": build_coaches_note(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl),
-            "tactical_plan": build_plan(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl)
-        })
-    # Also include cash-only tickers (ETFs, stocks) that don't have futures translation
-    translated_cash_tickers = {tl.cash_ticker for tl in translated_levels}
+
+    # Build a lookup of cash levels by ticker for quick access
+    cash_levels_lookup: dict[str, Any] = {}
     for levels in cash_levels or []:
-        if levels.ticker in translated_cash_tickers:
-            continue  # already covered by translated version
+        cash_levels_lookup[levels.ticker] = levels
+
+    # 1. Add cash levels FIRST (ETF-scale) — these are the primary source
+    cash_tickers_seen = set()
+    for levels in cash_levels or []:
+        cash_tickers_seen.add(levels.ticker)
         market_structure.append({
             "asset": levels.ticker,
             "cash_ticker": levels.ticker,
@@ -536,6 +487,66 @@ def write_levels(
             ],
             "coach_note": build_coaches_note(levels.ticker, levels),
             "tactical_plan": build_plan(levels.ticker, levels)
+        })
+
+    # 2. Add translated levels ONLY for tickers not already covered by cash levels
+    #    (e.g., pure futures symbols like /ES that don't have an ETF proxy)
+    for tl in translated_levels:
+        if tl.cash_ticker in cash_tickers_seen:
+            continue  # already covered by cash (ETF-scale) version
+        market_structure.append({
+            "asset": cash_tag(tl.futures_symbol),
+            "cash_ticker": tl.cash_ticker,
+            "regime_label": tl.regime_label,
+            "gex_regime": tl.gex_regime,
+            "total_gex": tl.total_gex,
+            "total_gex_delta_adj": tl.total_gex_delta_adj,
+            "gamma_magnet": tl.gamma_magnet,
+            "pin_strike": tl.pin_strike,
+            "pin_odds": tl.pin_odds,
+            "wall_separation": tl.wall_separation,
+            "call_gamma_total": tl.call_gamma_total,
+            "put_gamma_total": tl.put_gamma_total,
+            "net_vanna_exposure": tl.net_vanna_exposure,
+            "net_speed_exposure": tl.net_speed_exposure,
+            "wall_scope": getattr(tl, "wall_scope", "UNSPECIFIED"),
+            "wall_dte_min": getattr(tl, "wall_dte_min", 0),
+            "wall_dte_max": getattr(tl, "wall_dte_max", 0),
+            "concentration_score": getattr(tl, "concentration_score", 0.0),
+            "call_wall_oi": getattr(tl, "call_wall_oi", 0),
+            "put_wall_oi": getattr(tl, "put_wall_oi", 0),
+            "pin_strike_oi": getattr(tl, "pin_strike_oi", 0),
+            "hedge_flow": {
+                "up_10": getattr(tl, "hedge_flow_up_10", 0.0),
+                "up_25": getattr(tl, "hedge_flow_up_25", 0.0),
+                "up_50": getattr(tl, "hedge_flow_up_50", 0.0),
+                "dn_10": getattr(tl, "hedge_flow_dn_10", 0.0),
+                "dn_25": getattr(tl, "hedge_flow_dn_25", 0.0),
+                "dn_50": getattr(tl, "hedge_flow_dn_50", 0.0),
+            },
+            "hourly_flow_curve": getattr(tl, "hourly_flow_curve", []),
+            "call_volume_centroid": tl.call_volume_centroid,
+            "put_volume_centroid": tl.put_volume_centroid,
+            "call_centroid": tl.call_volume_centroid,
+            "put_centroid": tl.put_volume_centroid,
+            "atm_iv": tl.atm_iv,
+            "iv_change": tl.iv_change,
+            "put_25d_iv": tl.put_25d_iv,
+            "call_25d_iv": tl.call_25d_iv,
+            "volatility_skew_premium": tl.volatility_skew_premium,
+            "expected_moves": [
+                {
+                    "expiry": em.expiry,
+                    "dte": em.dte,
+                    "em_upper": em.em_upper,
+                    "em_lower": em.em_lower,
+                    "em_value": em.em_value,
+                    "straddle": em.straddle
+                }
+                for em in tl.expected_moves
+            ],
+            "coach_note": build_coaches_note(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl),
+            "tactical_plan": build_plan(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl)
         })
     
 
@@ -831,23 +842,24 @@ def write_levels(
         for tl in translated_levels:
             lines.extend(_detailed_block(tl))
 
-    txt_path.parent.mkdir(parents=True, exist_ok=True)
-    txt_data = "\n".join(lines)
-    txt_path.write_text(txt_data, encoding="utf-8")
-    log.info("TXT written  -> %s", txt_path)
-    current_txt_path = _sync_current_txt(txt_path, txt_data)
-    log.info("Current TXT mirror written -> %s", current_txt_path)
+    if txt_path:
+        txt_path.parent.mkdir(parents=True, exist_ok=True)
+        txt_data = "\n".join(lines)
+        txt_path.write_text(txt_data, encoding="utf-8")
+        log.info("TXT written  -> %s", txt_path)
+        current_txt_path = _sync_current_txt(txt_path, txt_data)
+        log.info("Current TXT mirror written -> %s", current_txt_path)
 
-    if versioned:
-        v_txt_path = _sidecar_path(txt_path, "versioned")
-        v_txt_path.write_text(txt_data, encoding="utf-8")
-        log.info("Versioned TXT written -> %s", v_txt_path)
+        if versioned:
+            v_txt_path = _sidecar_path(txt_path, "versioned")
+            v_txt_path.write_text(txt_data, encoding="utf-8")
+            log.info("Versioned TXT written -> %s", v_txt_path)
 
-    if snapshot_suffix:
-        s_txt_path = _snapshot_history_path(txt_path, snapshot_suffix)
-        s_txt_path.parent.mkdir(parents=True, exist_ok=True)
-        s_txt_path.write_text(txt_data, encoding="utf-8")
-        log.info("Snapshot TXT written -> %s", s_txt_path)
+        if snapshot_suffix:
+            s_txt_path = _snapshot_history_path(txt_path, snapshot_suffix)
+            s_txt_path.parent.mkdir(parents=True, exist_ok=True)
+            s_txt_path.write_text(txt_data, encoding="utf-8")
+            log.info("Snapshot TXT written -> %s", s_txt_path)
 
 
 def write_macro_levels(
@@ -1250,6 +1262,10 @@ def _legacy_level_to_unified_token(token: str) -> str | None:
 
     norm = label.strip().upper()
     mapping: dict[str, tuple[str, str, str]] = {
+        "ABSOLUTE CALL WALL": ("W", "P", "CW"),
+        "ABSOLUTE PUT WALL":  ("W", "P", "PW"),
+        "ZERO GAMMA":         ("I", "P", "ZERO GEX"),
+        "ZERO GAMMA (Δ-ADJ)": ("I", "P", "ZERO GEX DA"),
         "LOCAL CALL NODE": ("W", "S", "LOC C"),
         "LOCAL PUT NODE": ("W", "S", "LOC P"),
         "0DTE CALL WALL": ("W", "S", "0D CW"),

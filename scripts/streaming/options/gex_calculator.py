@@ -633,7 +633,7 @@ def _calculate_opening_gap_target(calls: list[OptionContract], puts: list[Option
             g_mid = _calculate_hypothetical_overnight_delta_imbalance(calls, puts, mid)
             if abs(g_mid) < 1e-2:
                 return round(mid, 2)
-            if g_mid < 0:
+            if (g_mid < 0 and g_lo < 0) or (g_mid > 0 and g_lo > 0):
                 lo = mid
             else:
                 hi = mid
@@ -676,7 +676,7 @@ def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContr
             g_mid = _calculate_hypothetical_total_gex(calls, puts, mid, delta_adjusted)
             if abs(g_mid) < 1e-2:
                 return round(mid, 2)
-            if g_mid < 0:
+            if (g_mid < 0 and g_lo < 0) or (g_mid > 0 and g_lo > 0):
                 lo = mid
             else:
                 hi = mid

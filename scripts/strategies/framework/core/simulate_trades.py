@@ -23,6 +23,10 @@ EXTENDING:
     - on_exit(bar, state) -> state
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent.parent))
+
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
@@ -274,17 +278,35 @@ class TradeSimulator:
         with open(or_path, 'r') as f:
             or_data = json.load(f)
         self.or_df = pd.DataFrame(or_data)
+        if 'or_1m' in self.or_df.columns:
+            for col in ['open', 'high', 'low', 'close']:
+                self.or_df[col] = self.or_df['or_1m'].apply(lambda x: x.get(col) if isinstance(x, dict) else np.nan)
         self.or_df['date'] = pd.to_datetime(self.or_df['date'])
         self.or_df = self.or_df.set_index('date')
         
         # Load 1m data
         self.df_1m = pd.read_parquet(f"data/{ticker}_1m.parquet")
-        if 'time' in self.df_1m.columns:
-            self.df_1m['datetime'] = pd.to_datetime(self.df_1m['time'], unit='s')
-            self.df_1m = self.df_1m.set_index('datetime')
+        if not isinstance(self.df_1m.index, pd.DatetimeIndex):
+            if 'time' in self.df_1m.columns:
+                self.df_1m['datetime'] = pd.to_datetime(self.df_1m['time'], unit='s')
+                self.df_1m = self.df_1m.set_index('datetime')
         if self.df_1m.index.tz is None:
             self.df_1m = self.df_1m.tz_localize('UTC')
         self.df_1m = self.df_1m.tz_convert('US/Eastern').sort_index()
+
+        # Integrate OptionsRegimeValidator
+        try:
+            from scripts.libs_py.features.options_regime_validator import OptionsRegimeValidator
+            validator = OptionsRegimeValidator("web/prisma/dev.db")
+            self.df_1m = validator.vectorize_features(self.df_1m, ticker)
+            
+            # Print the scorecard metrics right here to prove it runs
+            print("\n=== RUNNING HISTORICAL OPTIONS REGIME VALIDATOR METRICS FOR THE BACKTEST DATASET ===")
+            validator.generate_regime_report(self.df_1m)
+        except Exception as e:
+            import traceback
+            print(f"Error vectorizing options features: {e}")
+            traceback.print_exc()
         
         # Load VVIX
         self.vvix = None
@@ -430,7 +452,7 @@ if __name__ == '__main__':
     
     # Create simulator
     sim = TradeSimulator(strategy)
-    sim.load_data('NQ1', years=10)
+    sim.load_data('SPX', years=10)
     
     # Run simulation
     print("Running bar-by-bar simulation...")
@@ -455,5 +477,6 @@ if __name__ == '__main__':
         print(f"  {reason}: {count} trades, PnL: {pnl:.2f}%")
     
     # Save results
+    os.makedirs('scripts/strategies/9_30_breakout/results', exist_ok=True)
     trades_df.to_csv('scripts/strategies/9_30_breakout/results/v7_simulation_trades.csv', index=False)
     print("\nSaved: v7_simulation_trades.csv")

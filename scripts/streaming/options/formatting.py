@@ -221,6 +221,10 @@ def _calculate_tactical_levels(levels: HasLevels) -> dict[str, float | None]:
         s_trig = first_level(levels.em_upper, levels.call_wall_0dte)
         l_tgt = levels.gamma_magnet
         s_tgt = levels.gamma_magnet
+
+        # Fix the boundary inversion by routing stop-losses to out-of-bounds volatility metrics:
+        l_inv = first_level(levels.vol_trigger_lower_05, levels.em_lower * 0.998)
+        s_inv = first_level(levels.vol_trigger_upper_05, levels.em_upper * 1.002)
     else:
         # Track A: Breakout Expansion
         l_trig = first_level(levels.call_wall_0dte, levels.call_wall, levels.em_upper)

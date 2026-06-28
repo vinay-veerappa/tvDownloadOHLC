@@ -416,6 +416,156 @@ model Chart {
   trade      Trade?    @relation(fields: [tradeId], references: [id])
 }
 
+// ── Weekly Briefing & Daily EOD System ───────────────────────────
+// Stores the weekly strategic map (produced Friday EOD) and daily
+// progress checks (produced Mon-Thu EOD) for historical backtesting
+// and cross-time evaluation of regime/level accuracy.
+
+model WeeklyBriefing {
+  id              String   @id @default(cuid())
+  weekStartDate   DateTime                         // Monday of the target week
+  weekEndDate     DateTime                         // Friday of the target week
+  generatedAt     DateTime @default(now())        // When this briefing was produced
+  tickersCovered  Int
+  summaryMd       String?                          // LLM-generated narrative (stored after narrative script runs)
+  createdAt       DateTime @default(now())
+
+  tickerSnapshots WeeklyBriefingTicker[]
+  dailyEodUpdates  DailyEodUpdate[]
+
+  @@unique([weekStartDate])
+}
+
+model WeeklyBriefingTicker {
+  id                  String   @id @default(cuid())
+  briefingId          String
+  briefing            WeeklyBriefing @relation(fields: [briefingId], references: [id], onDelete: Cascade)
+
+  ticker              String
+  asset               String                          // "ES", "NQ", etc.
+  spotPrice           Float
+  // Prior week price context
+  priorWeekOpen       Float?
+  priorWeekHigh       Float?
+  priorWeekLow        Float?
+  priorWeekClose      Float?
+  priorWeekChangePct  Float?
+  priorWeekRangePct   Float?
+  // Momentum
+  last5dChangePct     Float?
+  last10dChangePct    Float?
+  trend               String?                         // "uptrend", "downtrend", "choppy"
+  // GEX regime
+  regimeLabel         String                          // "TRENDING", "PINNED", etc.
+  gexSign             String                          // "POSITIVE" or "NEGATIVE"
+  totalGex            Float
+  concentrationScore  Float?
+  // Mandated track (hardcoded by Python, not LLM)
+  mandatedTrack       String
+  // Key levels
+  callWall            Float
+  putWall             Float
+  zeroGamma           Float?
+  gammaMagnet         Float?
+  pinStrike           Float?
+  pinOdds             Float?
+  wallSeparation      Float?
+  // Volatility
+  atmIv               Float?
+  put25dIv            Float?
+  call25dIv           Float?
+  skewPremium          Float?
+  skewDirection       String?
+  // Hedge flows
+  hedgeFlowBias       String?
+  // Expected moves (Friday terminal boundary)
+  fridayEmUpper       Float?
+  fridayEmLower       Float?
+  fridayEmValue       Float?
+  // Account invalidation
+  bullishInvalidation  Float
+  bearishInvalidation  Float
+  distToBullishInvPct Float
+  distToBearishInvPct Float
+  invalidationMandate String
+  // Scenarios
+  scenarioBullish     String?
+  scenarioBearish     String?
+  scenarioNeutral     String?
+
+  createdAt           DateTime @default(now())
+
+  @@index([briefingId, ticker])
+  @@index([ticker])
+}
+
+model DailyEodUpdate {
+  id                  String   @id @default(cuid())
+  date                DateTime                        // The trading day this EOD covers
+  weeklyBriefingId    String?                         // Reference to the weekly anchor
+  weeklyBriefing      WeeklyBriefing? @relation(fields: [weeklyBriefingId], references: [id])
+  generatedAt        DateTime @default(now())
+  tickersCovered     Int
+  summaryMd          String?                          // LLM-generated narrative (stored after narrative script runs)
+  createdAt          DateTime @default(now())
+
+  tickerSnapshots    DailyEodTickerSnapshot[]
+
+  @@unique([date])
+}
+
+model DailyEodTickerSnapshot {
+  id                  String   @id @default(cuid())
+  eodUpdateId         String
+  eodUpdate           DailyEodUpdate @relation(fields: [eodUpdateId], references: [id], onDelete: Cascade)
+
+  ticker              String
+  // Today's price action
+  openPrice           Float
+  highPrice           Float
+  lowPrice            Float
+  closePrice          Float
+  changePct           Float
+  rangePct            Float
+  body                String                          // "bullish" or "bearish"
+  // Weekly anchor reference
+  mandatedTrack       String
+  callWall            Float
+  putWall             Float
+  todayEmUpper        Float?
+  todayEmLower        Float?
+  // Level interactions
+  callWallTested      Boolean
+  callWallBroken      Boolean
+  putWallTested       Boolean
+  putWallBroken       Boolean
+  emUpperTested       Boolean
+  emUpperBroken       Boolean
+  emLowerTested       Boolean
+  emLowerBroken       Boolean
+  // Invalidation proximity
+  bullishInvalidation  Float
+  bearishInvalidation  Float
+  distToBullishInvPct Float
+  distToBearishInvPct Float
+  // Track alignment
+  onTrack             Boolean
+  trackAssessment     String
+  // Regime check
+  weeklyRegime        String
+  currentRegime       String
+  regimeChanged       Boolean
+  // Weekly progress
+  positionInEmEnvelope Float?                         // 0.0 = lower EM, 1.0 = upper EM
+  daysElapsedInWeek   Int
+  daysRemainingInWeek Int
+
+  createdAt           DateTime @default(now())
+
+  @@index([eodUpdateId, ticker])
+  @@index([ticker])
+}
+
 model GexSnapshot {
   id                    Int      @id @default(autoincrement())
   ticker                String
