@@ -873,6 +873,89 @@ async def save_weekly_briefing_to_db(
         await db.disconnect()
 
 
+def fetch_vol_context(ticker: str, target_date: date) -> dict:
+    """
+    Fetches Volatility Risk Premium and high-timeframe trend friction features
+    from the feature store (SQLite + Parquet) for a given ticker and date.
+    """
+    import sqlite3
+    import numpy as np
+    
+    # Defaults
+    context = {
+        "vix": None,
+        "vvix": None,
+        "historical_vol_20d": None,
+        "volatility_risk_premium": None,
+        "vrp_interpretation": "PREMIUM_UNDERPRICED",
+        "dist_21_ema_pct": None,
+        "dist_200_sma_pct": None
+    }
+    
+    # 1. Fetch Volatility & VRP from SQLite DB
+    try:
+        target_dt = datetime.combine(target_date, datetime.min.time())
+        target_ms = int(target_dt.timestamp() * 1000)
+        
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT historical_vol_20d, volatility_risk_premium 
+                FROM MacroSnapshot 
+                WHERE ticker = ? AND tradingDate <= ? 
+                ORDER BY tradingDate DESC 
+                LIMIT 1
+                """,
+                (ticker, target_ms)
+            )
+            row = cursor.fetchone()
+            if row:
+                hv_val, vrp_val = row
+                
+                # Apply clean float check to prevent NaN serialization issues
+                if hv_val is not None and pd.notna(hv_val):
+                    context["historical_vol_20d"] = float(hv_val)
+                if vrp_val is not None and pd.notna(vrp_val):
+                    context["volatility_risk_premium"] = float(vrp_val)
+                    context["vrp_interpretation"] = "PREMIUM_OVERPRICED" if vrp_val > 0.03 else "PREMIUM_UNDERPRICED"
+    except Exception as e:
+        log.error(f"Error fetching volatility context from DB for {ticker}: {e}", exc_info=True)
+
+    # 2. Fetch Trend Friction features from centralized Parquet matrix
+    try:
+        friction_path = REPO_ROOT / "data" / "derived" / "market_friction_matrix.parquet"
+        if friction_path.exists():
+            friction_df = pd.read_parquet(str(friction_path))
+            if not friction_df.empty:
+                ticker_filter = [ticker]
+                if ticker == "SPX":
+                    ticker_filter.append("SPY")
+                elif ticker == "SPY":
+                    ticker_filter.append("SPX")
+                    
+                df_ticker = friction_df[friction_df['ticker'].isin(ticker_filter)].copy()
+                if not df_ticker.empty:
+                    df_ticker['date_key'] = df_ticker['date_key'].astype(str)
+                    target_date_str = target_date.strftime('%Y-%m-%d')
+                    
+                    df_sorted = df_ticker[df_ticker['date_key'] <= target_date_str].sort_values(by='date_key', ascending=False)
+                    if not df_sorted.empty:
+                        latest_row = df_sorted.iloc[0]
+                        
+                        def clean_float(val):
+                            return float(val) if pd.notna(val) else None
+                            
+                        context["vix"] = clean_float(latest_row.get("vix_close"))
+                        context["vvix"] = clean_float(latest_row.get("vvix_close"))
+                        context["dist_21_ema_pct"] = clean_float(latest_row.get("dist_21_ema_pct"))
+                        context["dist_200_sma_pct"] = clean_float(latest_row.get("dist_200_sma_pct"))
+    except Exception as e:
+        log.error(f"Error reading market friction matrix for {ticker}: {e}", exc_info=True)
+        
+    return context
+
+
 async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict | None:
     """Load the latest (or specified) weekly briefing from DB and assemble
     the in-memory TOON JSON for the LLM.
@@ -959,6 +1042,7 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
                     "bearish": snap.scenarioBearish,
                     "neutral": snap.scenarioNeutral,
                 },
+                "institutional_volatility_context": fetch_vol_context(snap.ticker, briefing.weekStartDate.date())
             })
 
         events = await fetch_week_events(briefing.weekStartDate.date(), briefing.weekEndDate.date())
@@ -1175,6 +1259,7 @@ async def load_daily_eod_from_db(eod_date: date | None = None, session_type: str
                 },
                 "on_track": snap.onTrack,
                 "track_assessment": snap.trackAssessment,
+                "institutional_volatility_context": fetch_vol_context(snap.ticker, eod.date.date())
             })
 
         return {

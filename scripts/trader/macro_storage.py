@@ -10,9 +10,12 @@ from pathlib import Path
 import io
 
 # Force standard output and error to use utf-8 on Windows to prevent emoji encoding crashes
-if sys.platform == 'win32':
+if sys.platform == 'win32' and not hasattr(sys.stdout, '_wrapped_utf8'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', write_through=True)
+    sys.stdout._wrapped_utf8 = True
+if sys.platform == 'win32' and not hasattr(sys.stderr, '_wrapped_utf8'):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', write_through=True)
+    sys.stderr._wrapped_utf8 = True
 
 # Ensure repository root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
