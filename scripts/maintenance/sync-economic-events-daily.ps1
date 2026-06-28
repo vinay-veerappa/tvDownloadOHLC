@@ -26,11 +26,10 @@ function Invoke-LoggedCmd {
     }
 }
 
-Push-Location $webRoot
+Push-Location $repoRoot
 try {
-    $env:DATABASE_URL = 'file:./dev.db'
-    Invoke-LoggedCmd -Command "npx tsx prisma/seed-economic-events.ts" -StepName "Starting economic-event sync"
-    Invoke-LoggedCmd -Command "npx tsx scripts/check-economic-events-coverage.ts" -StepName "Running coverage check"
+    $env:DATABASE_URL = 'file:./web/prisma/dev.db'
+    Invoke-LoggedCmd -Command "python scripts/market_data/fetch_economic_calendar.py" -StepName "Starting economic-event sync (Python)"
     "[$timestamp] Economic-event sync completed" | Tee-Object -FilePath $logFile -Append
 }
 finally {

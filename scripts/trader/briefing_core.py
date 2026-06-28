@@ -677,7 +677,7 @@ async def fetch_week_events(start_date: date, end_date: date) -> list[dict]:
         res = []
         for e in events:
             # Filter out low impact news to avoid clutter
-            if e.impact and e.impact.upper() == "LOW":
+            if e.impact and ( e.impact.upper() == "LOW" or e.impact.upper() == "MEDIUM" ):
                 continue
                 
             # e.datetime is a python datetime object

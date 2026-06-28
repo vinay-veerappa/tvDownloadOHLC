@@ -103,6 +103,14 @@ def get_last_scheduled_eod_analytics(now_et: datetime) -> datetime:
     return now_et - timedelta(days=7)
 
 
+def get_last_scheduled_economic_refresh(now_et: datetime) -> datetime:
+    # Daily 03:05 ET
+    target = now_et.replace(hour=3, minute=5, second=0, microsecond=0)
+    if target > now_et:
+        target -= timedelta(days=1)
+    return target
+
+
 class Runner:
     """
     Continuous Scheduler for the Options Strategy Engine.
@@ -228,6 +236,17 @@ class Runner:
         last_daily_scan = parse_iso(last_daily_scan_str)
         last_earnings_refresh = parse_iso(last_earnings_refresh_str)
         last_eod_analytics = parse_iso(last_eod_analytics_str)
+        last_econ_refresh_str = state.get("last_econ_refresh")
+        last_econ_refresh = parse_iso(last_econ_refresh_str)
+
+        # 0. Economic Calendar Refresh (Daily 03:05 ET)
+        target_econ = get_last_scheduled_economic_refresh(now_et)
+        if not last_econ_refresh or last_econ_refresh < target_econ:
+            logger.info(f"Missed economic calendar refresh (last run: {last_econ_refresh}, target: {target_econ}). Running retroactively...")
+            await self.economic_calendar_refresh_job()
+            state = self._load_scheduler_state()
+            state["last_econ_refresh"] = target_econ.isoformat()
+            self._save_scheduler_state(state)
 
         # 1. Earnings Refresh (Sunday 18:00 ET)
         target_earnings = get_last_scheduled_earnings_refresh(now_et)
@@ -657,6 +676,17 @@ class Runner:
             max_instances=1,
         )
 
+        # Economic calendar refresh — daily 03:05 ET
+        self.scheduler.add_job(
+            self.economic_calendar_refresh_job,
+            trigger="cron",
+            hour=3,
+            minute=5,
+            id="economic_calendar_refresh",
+            name="Economic Calendar Refresh (03:05 ET)",
+            max_instances=1,
+        )
+
         # Daily earnings calendar sync and Discord briefing (Sunday-Thursday 19:00 ET)
         self.scheduler.add_job(
             self.daily_earnings_briefing_job,
@@ -833,6 +863,17 @@ class Runner:
             logger.info(f"Pruned {deleted_nm} SignalNearMiss rows older than 30 days.")
         except Exception as e:
             logger.error(f"maintenance_job: Failed to prune SignalNearMiss: {e}")
+
+    async def economic_calendar_refresh_job(self):
+        """Daily 03:05 ET — refresh economic events calendar for next 14 days."""
+        now_et = datetime.now(TZ_ET)
+        logger.info(f"Economic calendar refresh @ {now_et}")
+        try:
+            from scripts.market_data.fetch_economic_calendar import main as run_fetch_econ
+            await asyncio.to_thread(run_fetch_econ)
+            logger.info("Economic calendar refreshed.")
+        except Exception as e:
+            logger.error(f"economic_calendar_refresh_job: Failed: {e}", exc_info=True)
 
     async def daily_earnings_briefing_job(self):
         """Syncs the upcoming earnings calendar and delivers the EOD briefing for the next day's session."""
