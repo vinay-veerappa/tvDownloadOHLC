@@ -41,8 +41,8 @@ DISCORD_WEBHOOKS_PATH = REPO_ROOT / "discord_webhooks.json"
 
 # Ollama config
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "gemma4:31b-cloud"
-FALLBACK_MODEL = "glm-5.2:cloud"
+DEFAULT_MODEL = "glm-5.2:cloud"
+FALLBACK_MODEL = "gemma4:31b-cloud"
 
 
 def load_prompt_template() -> str:
@@ -82,7 +82,7 @@ def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
                         "temperature": 0.3,
                         "top_p": 0.9,
                         "num_ctx": 32768,
-                        "num_predict": 4096,
+                        "num_predict": -1,
                     },
                 },
                 timeout=timeout,
