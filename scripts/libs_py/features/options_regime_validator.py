@@ -66,26 +66,42 @@ class OptionsRegimeValidator:
         return df
 
     def _fetch_macro_snapshots(self, ticker: str) -> pd.DataFrame:
-        query = """
-            SELECT tradingDate, zeroGamma, zero_gamma_delta_adj, spotPrice
+        query_full = """
+            SELECT tradingDate, zeroGamma, zero_gamma_delta_adj, spotPrice, volatility_risk_premium
             FROM MacroSnapshot
             WHERE ticker = ?
             ORDER BY tradingDate ASC
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
-                df = pd.read_sql(query, conn, params=(ticker,))
+                df = pd.read_sql(query_full, conn, params=(ticker,))
         except Exception:
-            # Fallback wrapper if zero_gamma_delta_adj doesn't exist in historical tables yet
-            query = """
-                SELECT tradingDate, zeroGamma, spotPrice
+            # Fallback if zero_gamma_delta_adj is missing from the DB schema
+            query_fallback = """
+                SELECT tradingDate, zeroGamma, spotPrice, volatility_risk_premium
                 FROM MacroSnapshot
                 WHERE ticker = ?
                 ORDER BY tradingDate ASC
             """
-            with sqlite3.connect(self.db_path) as conn:
-                df = pd.read_sql(query, conn, params=(ticker,))
-            df['zero_gamma_delta_adj'] = np.nan
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    df = pd.read_sql(query_fallback, conn, params=(ticker,))
+                df['zero_gamma_delta_adj'] = np.nan
+            except Exception:
+                # Absolute fallback if even volatility_risk_premium is missing (e.g. unmigrated DB)
+                query_base = """
+                    SELECT tradingDate, zeroGamma, spotPrice
+                    FROM MacroSnapshot
+                    WHERE ticker = ?
+                    ORDER BY tradingDate ASC
+                """
+                try:
+                    with sqlite3.connect(self.db_path) as conn:
+                        df = pd.read_sql(query_base, conn, params=(ticker,))
+                    df['zero_gamma_delta_adj'] = np.nan
+                    df['volatility_risk_premium'] = np.nan
+                except Exception:
+                    df = pd.DataFrame(columns=['tradingDate', 'zeroGamma', 'zero_gamma_delta_adj', 'spotPrice', 'volatility_risk_premium'])
         
         if not df.empty:
             df['tradingDate'] = _safe_to_datetime(df['tradingDate']).dt.tz_convert('US/Eastern').dt.normalize()
@@ -155,7 +171,8 @@ class OptionsRegimeValidator:
         # Merge Macro (Daily) Data
         df['trading_date'] = df.index.normalize()
         if not macro_df.empty:
-            df = df.merge(macro_df[['zeroGamma', 'zero_gamma_delta_adj', 'spotPrice']], left_on='trading_date', right_index=True, how='left')
+            cols_to_merge = [c for c in ['zeroGamma', 'zero_gamma_delta_adj', 'spotPrice', 'volatility_risk_premium'] if c in macro_df.columns]
+            df = df.merge(macro_df[cols_to_merge], left_on='trading_date', right_index=True, how='left')
             # Dynamic scaling if macro spot is in a different price scale
             if 'open' in df.columns:
                 daily_open = df.groupby('trading_date')['open'].transform('first')
@@ -167,6 +184,7 @@ class OptionsRegimeValidator:
         else:
             df['zeroGamma'] = np.nan
             df['zero_gamma_delta_adj'] = np.nan
+            df['volatility_risk_premium'] = np.nan
 
         # Merge Expected Move (Daily) Data
         if not em_df.empty:
@@ -180,6 +198,44 @@ class OptionsRegimeValidator:
         else:
             df['openPrice'] = np.nan
             df['emStraddle'] = np.nan
+
+        # Save index to prevent any pandas merge realignment issues
+        df['orig_index'] = df.index
+
+        # Stitch the Parquet Matrix (Market Friction Matrix)
+        friction_path = Path("data/derived/market_friction_matrix.parquet")
+        if friction_path.exists():
+            try:
+                friction_df = pd.read_parquet(friction_path)
+                if not friction_df.empty:
+                    friction_df['date_key'] = friction_df['date_key'].astype(str)
+                    df['date_key'] = df['orig_index'].dt.strftime('%Y-%m-%d')
+                    
+                    ticker_filter = [ticker, mapped_ticker]
+                    ticker_friction = friction_df[friction_df['ticker'].isin(ticker_filter)]
+                    
+                    if not ticker_friction.empty:
+                        ticker_friction = ticker_friction.drop_duplicates(subset=['date_key'])
+                        cols_to_join = [col for col in ticker_friction.columns if col != 'ticker']
+                        df = df.merge(ticker_friction[cols_to_join], on='date_key', how='left')
+                    else:
+                        for col in ['dist_21_ema_pct', 'dist_200_sma_pct', 'vix_close', 'vvix_close']:
+                            df[col] = np.nan
+                else:
+                    for col in ['dist_21_ema_pct', 'dist_200_sma_pct', 'vix_close', 'vvix_close']:
+                        df[col] = np.nan
+            except Exception as e:
+                logger.error(f"Failed to stitch market friction matrix: {e}", exc_info=True)
+                for col in ['dist_21_ema_pct', 'dist_200_sma_pct', 'vix_close', 'vvix_close']:
+                    df[col] = np.nan
+        else:
+            for col in ['dist_21_ema_pct', 'dist_200_sma_pct', 'vix_close', 'vvix_close']:
+                df[col] = np.nan
+
+        # Restore index from the orig_index column
+        if 'orig_index' in df.columns:
+            df.set_index('orig_index', inplace=True)
+            df.index.name = None
 
         # Restore original index to preserve time-series index structure
         df.index = orig_index

@@ -732,7 +732,7 @@ def fetch_yfinance_daily_history(symbol, start_dt, end_dt, now_utc):
 async def fetch_schwab_daily_history(symbol, start_dt, end_dt, now_utc):
     """Fetches daily history via Hub's REST proxy."""
     resp = await hub_request("get_price_history", {
-        "symbol": symbol,
+        "symbol": get_schwab_api_symbol(symbol),
         "period_type": "year",
         "period": 1,
         "frequency_type": "daily",

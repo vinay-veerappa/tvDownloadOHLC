@@ -104,8 +104,8 @@ def get_last_scheduled_eod_analytics(now_et: datetime) -> datetime:
 
 
 def get_last_scheduled_economic_refresh(now_et: datetime) -> datetime:
-    # Daily 03:05 ET
-    target = now_et.replace(hour=3, minute=5, second=0, microsecond=0)
+    # Daily 16:30 ET
+    target = now_et.replace(hour=16, minute=30, second=0, microsecond=0)
     if target > now_et:
         target -= timedelta(days=1)
     return target
@@ -676,14 +676,14 @@ class Runner:
             max_instances=1,
         )
 
-        # Economic calendar refresh — daily 03:05 ET
+        # Economic calendar refresh — daily 16:30 ET
         self.scheduler.add_job(
             self.economic_calendar_refresh_job,
             trigger="cron",
-            hour=3,
-            minute=5,
+            hour=16,
+            minute=30,
             id="economic_calendar_refresh",
-            name="Economic Calendar Refresh (03:05 ET)",
+            name="Economic Calendar Refresh (16:30 ET)",
             max_instances=1,
         )
 

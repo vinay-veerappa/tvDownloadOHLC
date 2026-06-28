@@ -609,6 +609,8 @@ model MacroSnapshot {
   put25dIv              Float?
   call25dIv             Float?
   volatilitySkewPremium Float?
+  historical_vol_20d    Float?
+  volatility_risk_premium Float?
   anomalies             String?
   dominantNodes         String?
 
