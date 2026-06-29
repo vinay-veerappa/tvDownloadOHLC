@@ -20,24 +20,24 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 //   - Rolling section computes from committed history (last 5/10/20 win rate)
 //
 // Libraries required:
-//   - vveerappa/RangeSessionLib/15
+//   - vveerappa/RangeSessionLib/17
 //   - vveerappa/PineDrawingCore/3
 //   - vveerappa/PineDrawingHorizontalLevels/4
 //   - vveerappa/PineDrawingMarkers/3
 //   - vveerappa/PineDrawingZones/3
 //   - vveerappa/PineDrawingTables/4
 //   - vveerappa/PineDrawingVerticalMarkers/3
-//   - vveerappa/StatsLib/18
+//   - vveerappa/StatsLib/19
 // ============================================================================
 
-import vveerappa/RangeSessionLib/15 as RSL
+import vveerappa/RangeSessionLib/17 as RSL
 import vveerappa/PineDrawingCore/3 as Core
 import vveerappa/PineDrawingHorizontalLevels/4 as HLevels
 import vveerappa/PineDrawingMarkers/3 as Markers
 import vveerappa/PineDrawingZones/3 as Zones
 import vveerappa/PineDrawingTables/4 as Tables
 import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
-import vveerappa/StatsLib/18 as STL
+import vveerappa/StatsLib/19 as STL
 
 // ============================================================================
 // Inputs — Session
@@ -902,11 +902,11 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 if not na(pivot_px)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, pivot_px, side_label + "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(p50_fake) + lb_sfx, c_tpiv, 70, side_group, 0, strat)
 
-                // Reversal Zone
+                // Reversal Zone — Fix 1: Anchor at OR High (bull) / OR Low (bear) to match MAE measurement anchor
                 if not na(rev_p25) and not na(rev_p75) and not na(rev_p50) and rev_p25 > 0
-                    float y_rev25 = side == 1 ? st.or_low * (1.0 - rev_p25 / 100.0) : st.or_high * (1.0 + rev_p25 / 100.0)
-                    float y_rev50 = side == 1 ? st.or_low * (1.0 - rev_p50 / 100.0) : st.or_high * (1.0 + rev_p50 / 100.0)
-                    float y_rev75 = side == 1 ? st.or_low * (1.0 - rev_p75 / 100.0) : st.or_high * (1.0 + rev_p75 / 100.0)
+                    float y_rev25 = side == 1 ? st.or_high * (1.0 - rev_p25 / 100.0) : st.or_low * (1.0 + rev_p25 / 100.0)
+                    float y_rev50 = side == 1 ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0)
+                    float y_rev75 = side == 1 ? st.or_high * (1.0 - rev_p75 / 100.0) : st.or_low * (1.0 + rev_p75 / 100.0)
                     float z_top = math.max(y_rev25, y_rev75), z_bot = math.min(y_rev25, y_rev75)
                     int z_w = math.max(2, ln_end - bo_bar)
                     Zones.f_draw_hist_band(ds, bo_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
