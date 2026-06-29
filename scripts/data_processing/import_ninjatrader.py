@@ -90,13 +90,9 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
     
     try:
         if has_headers:
-            # Flexible reading with forced column names to handle ragged rows (e.g. 7 cols then 8 cols)
-            # We assume standard order: Date, Time, Open, High, Low, Close, Volume, (TickCount/OI)
-            # We provide enough names to catch all fields.
-            col_names = ['date_str', 'time_str', 'open', 'high', 'low', 'close', 'volume', 'aux1', 'aux2', 'aux3']
-            
-            # Read with header=0 to skip the file's header, but use OUR names
-            df = pd.read_csv(csv_path, sep=delimiter, on_bad_lines='skip', names=col_names, skiprows=1, engine='python', index_col=False)
+            # Force reading only the first 7 columns to handle trailing commas and ragged rows (e.g. Volume, TickCount)
+            col_names = ['date_str', 'time_str', 'open', 'high', 'low', 'close', 'volume']
+            df = pd.read_csv(csv_path, sep=delimiter, usecols=range(7), names=col_names, skiprows=1, index_col=False)
             
             # Normalize column names (not needed since we set them, but for safety if logic changes)
             df.columns = [c.strip().lower() for c in df.columns]
