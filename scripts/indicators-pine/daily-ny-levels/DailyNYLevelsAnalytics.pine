@@ -847,14 +847,16 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             if not na(t_render_px)
                 // Percentile stats (single source of truth — always from history)
                 float p50_bo   = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
-                float p20_bo   = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 20)
+                // Fix 4: Cashflow uses all breakouts (not wins-only) per Gunship tooltip
+                float p20_bo   = f_get_pct_fallback(f_filter_breakout_all(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 20)
                 float p50_fake = f_get_pct_fallback(f_filter_fakeout_mfe(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
                 float p75_fake = f_get_pct_fallback(f_filter_fakeout_mfe(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 75)
                 
                 // MAE stats (Invalidation/Pullback) with robust cold-start fallbacks
                 float p80_mae_losses = f_get_pct_fallback(f_filter_tactical_outcome(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, false), 80, 0.5)
                 float p80_mae_wins   = f_get_pct_fallback(f_filter_tactical_outcome(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, true), 80, p80_mae_losses)
-                float p25_mae        = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side), 25, 0.15)
+                // Fix 4: Pullback uses all breakouts (not wins-only) per Gunship tooltip
+                float p25_mae        = f_get_pct_fallback(f_filter_breakout_all(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side), 25, 0.15)
 
                 // Derived prices (single source of truth — always from t_render_px)
                 float target_px        = t_render_px * (side == 1 ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
@@ -902,15 +904,14 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 if not na(pivot_px)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, pivot_px, side_label + "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(p50_fake) + lb_sfx, c_tpiv, 70, side_group, 0, strat)
 
-                // Reversal Zone — Fix 1: Anchor at OR High (bull) / OR Low (bear) to match MAE measurement anchor
-                if not na(rev_p25) and not na(rev_p75) and not na(rev_p50) and rev_p25 > 0
+                // Reversal Zone — Fix 1+2: Anchor at OR High/Low, range P25-P50 (per Gunship tooltip)
+                if not na(rev_p25) and not na(rev_p50) and rev_p25 > 0
                     float y_rev25 = side == 1 ? st.or_high * (1.0 - rev_p25 / 100.0) : st.or_low * (1.0 + rev_p25 / 100.0)
                     float y_rev50 = side == 1 ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0)
-                    float y_rev75 = side == 1 ? st.or_high * (1.0 - rev_p75 / 100.0) : st.or_low * (1.0 + rev_p75 / 100.0)
-                    float z_top = math.max(y_rev25, y_rev75), z_bot = math.min(y_rev25, y_rev75)
+                    float z_top = math.max(y_rev25, y_rev50), z_bot = math.min(y_rev25, y_rev50)
                     int z_w = math.max(2, ln_end - bo_bar)
                     Zones.f_draw_hist_band(ds, bo_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, bo_bar + z_w, y_rev50, side_label + "Reversal Target P50 Median (" + STL.f_pct_fmt(rev_p25) + "-" + STL.f_pct_fmt(rev_p75) + ")" + lb_sfx, c_conf, 55, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, bo_bar + z_w, y_rev50, side_label + "Reversal Target P50 Median (" + STL.f_pct_fmt(rev_p25) + "-" + STL.f_pct_fmt(rev_p50) + ")" + lb_sfx, c_conf, 55, side_group, 0, strat)
 
                 // Draw breakout activation only if this side is the active breakout side and breakout px is valid.
                 if is_active_side and not na(st.sig_breakout_px)
