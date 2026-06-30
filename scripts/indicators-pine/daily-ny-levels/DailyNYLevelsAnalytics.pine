@@ -210,6 +210,12 @@ var array<STL.ExcursionHistory> histories = array.new<STL.ExcursionHistory>(0)
 var array<Core.PineDrawingState> drawings = array.new<Core.PineDrawingState>(0)
 var array<int> primary_breakout_sides = array.new_int(0)
 
+// Close-based MAE tracking (separate from RangeState to avoid library republish)
+var array<float> hist_bo_mae_close_bull = array.new_float(0)
+var array<float> hist_bo_mae_close_bear = array.new_float(0)
+var float daily_bo_mae_close_bull_track = na
+var float daily_bo_mae_close_bear_track = na
+
 f_in_session_pine_robust(string session_str, string tz, int t) =>
     if na(t) or na(session_str)
         false
@@ -663,6 +669,23 @@ f_track_range(int idx) =>
 if array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
         f_track_range(i)
+        // Track close-based MAE (global scope — for Gunship comparison)
+        RSL.RangeSpec sp_track = array.get(specs, i)
+        RSL.RangeState st_track = array.get(states, i)
+        bool track_in_data = f_in_session_pine_robust(sp_track.session_data, sp_track.tz, time)
+        if track_in_data and not na(st_track.or_high) and st_track.sig_breakout_side != 0 and not na(st_track.sig_breakout_px)
+            float base_stats = st_track.sig_breakout_px
+            if st_track.sig_breakout_side == 1 and close < base_stats
+                daily_bo_mae_close_bull_track := math.max(nz(daily_bo_mae_close_bull_track, 0.0), (base_stats - close) / base_stats * 100.0)
+            else if st_track.sig_breakout_side == -1 and close > base_stats
+                daily_bo_mae_close_bear_track := math.max(nz(daily_bo_mae_close_bear_track, 0.0), (close - base_stats) / base_stats * 100.0)
+        // Push close-based MAE on session commit (check array size growth, not is_committed)
+        STL.ExcursionHistory hist_track = array.get(histories, i)
+        if array.size(hist_track.sig_side) > array.size(hist_bo_mae_close_bull)
+            array.push(hist_bo_mae_close_bull, st_track.sig_side == 1 ? daily_bo_mae_close_bull_track : na)
+            array.push(hist_bo_mae_close_bear, st_track.sig_side == -1 ? daily_bo_mae_close_bear_track : na)
+            daily_bo_mae_close_bull_track := na
+            daily_bo_mae_close_bear_track := na
 
 // ============================================================================
 // Rendering Helpers
@@ -1103,6 +1126,89 @@ if barstate.islast and array.size(specs) > 0
                     else
                         bear_pend += 1
         log.info("HARM_CLASSIFY [{0}] N={1} | Bull: trig={2} win={3} loss={4} fake={5} pend={6} | Bear: trig={7} win={8} loss={9} fake={10} pend={11} | Total: win={12} fail={13} pend={14}", sp.name, sig_n, bull_trig, bull_win, bull_loss, bull_fake, bull_pend, bear_trig, bear_win, bear_loss, bear_fake, bear_pend, bull_win + bear_win, bull_loss + bear_loss + bull_fake + bear_fake, bull_pend + bear_pend)
+
+        // ====================================================================
+        // GUNSHIP COMPARISON TABLE (debug — first preset only)
+        // ====================================================================
+        if i == 0
+            // Build filtered arrays for bull side
+            array<float> bo_mae_all_bull = array.new_float(0)
+            array<float> bo_mae_win_bull = array.new_float(0)
+            array<float> bo_mae_close_all_bull = array.new_float(0)
+            array<float> bo_mae_close_win_bull = array.new_float(0)
+            array<float> bo_mfe_win_bull = array.new_float(0)
+            array<float> bo_mfe_fake_bull = array.new_float(0)
+            array<float> mae_abs_all_bull = array.new_float(0)
+            int n_all = 0, n_win = 0, n_fake = 0
+            for j = 0 to sig_n - 1
+                int s = array.get(hist.sig_side, j)
+                int o = array.get(hist.sig_outcome, j)
+                if s == 1
+                    n_all += 1
+                    float mae_v = array.get(hist.bo_mae_bull, j)
+                    float mae_close_v = array.get(hist_bo_mae_close_bull, j)
+                    float mfe_v = array.get(hist.bo_mfe_bull, j)
+                    float abs_v = array.get(hist.mae_bull_abs, j)
+                    if not na(mae_v)
+                        array.push(bo_mae_all_bull, mae_v)
+                    if not na(mae_close_v)
+                        array.push(bo_mae_close_all_bull, mae_close_v)
+                    if o == 1 and not na(mae_v)
+                        n_win += 1
+                        array.push(bo_mae_win_bull, mae_v)
+                        if not na(mae_close_v)
+                            array.push(bo_mae_close_win_bull, mae_close_v)
+                        if not na(mfe_v)
+                            array.push(bo_mfe_win_bull, mfe_v)
+                    else if o == 2 and not na(mae_v)
+                        n_fake += 1
+                        if not na(mfe_v)
+                            array.push(bo_mfe_fake_bull, mfe_v)
+                    if not na(abs_v)
+                        array.push(mae_abs_all_bull, abs_v)
+
+            // Compute percentiles
+            float p25_mae_all = array.size(bo_mae_all_bull) > 0 ? array.percentile_nearest_rank(bo_mae_all_bull, 25) : na
+            float p50_mae_all = array.size(bo_mae_all_bull) > 0 ? array.percentile_nearest_rank(bo_mae_all_bull, 50) : na
+            float p80_mae_all = array.size(bo_mae_all_bull) > 0 ? array.percentile_nearest_rank(bo_mae_all_bull, 80) : na
+            float p25_mae_win = array.size(bo_mae_win_bull) > 0 ? array.percentile_nearest_rank(bo_mae_win_bull, 25) : na
+            float p50_mae_win = array.size(bo_mae_win_bull) > 0 ? array.percentile_nearest_rank(bo_mae_win_bull, 50) : na
+            float p80_mae_win = array.size(bo_mae_win_bull) > 0 ? array.percentile_nearest_rank(bo_mae_win_bull, 80) : na
+            float p20_mfe_win = array.size(bo_mfe_win_bull) > 0 ? array.percentile_nearest_rank(bo_mfe_win_bull, 20) : na
+            float p50_mfe_win = array.size(bo_mfe_win_bull) > 0 ? array.percentile_nearest_rank(bo_mfe_win_bull, 50) : na
+            float p75_mfe_win = array.size(bo_mfe_win_bull) > 0 ? array.percentile_nearest_rank(bo_mfe_win_bull, 75) : na
+            float p50_mfe_fake = array.size(bo_mfe_fake_bull) > 0 ? array.percentile_nearest_rank(bo_mfe_fake_bull, 50) : na
+            float p75_mfe_fake = array.size(bo_mfe_fake_bull) > 0 ? array.percentile_nearest_rank(bo_mfe_fake_bull, 75) : na
+            float p50_mae_abs = array.size(mae_abs_all_bull) > 0 ? array.percentile_nearest_rank(mae_abs_all_bull, 50) : na
+
+            // Close-based MAE percentiles
+            float p25_mae_close_all = array.size(bo_mae_close_all_bull) > 0 ? array.percentile_nearest_rank(bo_mae_close_all_bull, 25) : na
+            float p50_mae_close_all = array.size(bo_mae_close_all_bull) > 0 ? array.percentile_nearest_rank(bo_mae_close_all_bull, 50) : na
+            float p80_mae_close_all = array.size(bo_mae_close_all_bull) > 0 ? array.percentile_nearest_rank(bo_mae_close_all_bull, 80) : na
+            float p25_mae_close_win = array.size(bo_mae_close_win_bull) > 0 ? array.percentile_nearest_rank(bo_mae_close_win_bull, 25) : na
+            float p80_mae_close_win = array.size(bo_mae_close_win_bull) > 0 ? array.percentile_nearest_rank(bo_mae_close_win_bull, 80) : na
+
+            // Gunship known values — preset-aware
+            float gun_p25mae = sp.name == "1100 BO" ? 0.0863 : sp.name == "Market Open" ? 0.0619 : 0.0863
+            float gun_p80mae = sp.name == "1100 BO" ? 0.1963 : sp.name == "Market Open" ? 0.2869 : 0.1963
+            float gun_p50mae = sp.name == "1100 BO" ? 0.1220 : sp.name == "Market Open" ? 0.1220 : 0.1220
+            float gun_p20mfe = sp.name == "1100 BO" ? 0.0560 : sp.name == "Market Open" ? 0.3240 : 0.0560
+            float gun_p50mfe_g = sp.name == "1100 BO" ? 0.2340 : sp.name == "Market Open" ? 0.5240 : 0.2340
+            float gun_p75mfe_g = sp.name == "1100 BO" ? 0.2970 : sp.name == "Market Open" ? 0.5950 : 0.2970
+            float gun_p50mfe_f = sp.name == "1100 BO" ? 0.1010 : sp.name == "Market Open" ? 0.2030 : 0.1010
+            float gun_p75mfe_f = sp.name == "1100 BO" ? 0.1190 : sp.name == "Market Open" ? 0.3820 : 0.1190
+            int   gun_total_wins = 56
+
+            // Sort bo_mae_all for dump
+            array<float> sorted_mae = array.copy(bo_mae_all_bull)
+            array.sort(sorted_mae, order.ascending)
+            int sz_mae = array.size(sorted_mae)
+            string dump = ""
+            for j = 0 to sz_mae - 1
+                dump += str.tostring(j + 1) + ":" + str.tostring(array.get(sorted_mae, j), "#.###") + " "
+
+            // Log everything
+            log.info("GUNSHIP_CMP [{0}] bull_all={1} win={2} fake={3} total_wins={4} (gun=56) | p50mae_all={5} (gun=0.122) | p25mae_all={6} (gun=0.0863) | p80mae_all={7} (gun=0.1963) | p25mae_win={8} | p80mae_win={9} | p50mae_win={10} | p50mae_abs={11} | p20mfe_win={12} (gun=0.056) | p50mfe_win={13} (gun=0.234) | p75mfe_win={14} (gun=0.297) | p50mfe_fake={15} (gun=0.101) | p75mfe_fake={16} (gun=0.119) | CLOSE_MAE: p25_all={17} p50_all={18} p80_all={19} p25_win={20} p80_win={21} | SORTED_MAE: {22}", sp.name, n_all, n_win, n_fake, bull_win + bear_win, p50_mae_all, p25_mae_all, p80_mae_all, p25_mae_win, p80_mae_win, p50_mae_win, p50_mae_abs, p20_mfe_win, p50_mfe_win, p75_mfe_win, p50_mfe_fake, p75_mfe_fake, p25_mae_close_all, p50_mae_close_all, p80_mae_close_all, p25_mae_close_win, p80_mae_close_win, dump)
 
 // ============================================================================
 // Tables
