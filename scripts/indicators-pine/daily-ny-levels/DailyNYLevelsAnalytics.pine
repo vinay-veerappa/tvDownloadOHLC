@@ -22,7 +22,7 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 // Libraries required:
 //   - vveerappa/RangeSessionLib/17
 //   - vveerappa/PineDrawingCore/3
-//   - vveerappa/PineDrawingHorizontalLevels/4
+//   - vveerappa/PineDrawingHorizontalLevels/5
 //   - vveerappa/PineDrawingMarkers/3
 //   - vveerappa/PineDrawingZones/3
 //   - vveerappa/PineDrawingTables/4
@@ -32,7 +32,7 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 
 import vveerappa/RangeSessionLib/17 as RSL
 import vveerappa/PineDrawingCore/3 as Core
-import vveerappa/PineDrawingHorizontalLevels/4 as HLevels
+import vveerappa/PineDrawingHorizontalLevels/5 as HLevels
 import vveerappa/PineDrawingMarkers/3 as Markers
 import vveerappa/PineDrawingZones/3 as Zones
 import vveerappa/PineDrawingTables/4 as Tables
@@ -834,9 +834,9 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                     float y_avg = green_bo_px * (1.0 + (side * p_avg / 100.0))
                     float y_str = green_bo_px * (1.0 + (side * p_str / 100.0))
                     
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "MED MFE " + STL.f_pct_fmt(p_med) + lb_sfx, c_med, 42, side_group, 0, strat)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg, "AVG " + STL.f_pct_fmt(p_avg) + lb_sfx, c_avg, 43, side_group, 0, strat)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "MAX MFE P75 " + STL.f_pct_fmt(p_str) + lb_sfx, c_str, 50, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "MED MFE " + STL.f_pct_fmt(p_med) + lb_sfx, c_med, 42, side_group, 0, strat, "MED MFE — p50 MFE of Green zone sessions")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg, "AVG " + STL.f_pct_fmt(p_avg) + lb_sfx, c_avg, 43, side_group, 0, strat, "AVG — average MFE of Green zone sessions")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "MAX MFE P75 " + STL.f_pct_fmt(p_str) + lb_sfx, c_str, 50, side_group, 0, strat, "MAX MFE — p75 Green")
 
         // 3. Tactical Directional Levels (Respect side strategy and suppress pre-breakout)
         bool has_breakout = (render_side != 0)
@@ -907,29 +907,29 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
 
                 // Core tactical lines: Invalidation, Pullback
                 if not na(pullback_px)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", bo_bar, ln_end, pullback_px, side_label + "Pullback Act P25 MAE" + lb_sfx, c_pb_act, 85, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", bo_bar, ln_end, pullback_px, side_label + "PB Entry " + STL.f_pct_fmt(p25_mae) + lb_sfx, c_pb_act, 85, side_group, 0, strat, "PB entry — p25 MAE")
 
                 if not na(invalid_px_wins)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_wins, side_label + "PB Invalidation Wins P80" + lb_sfx, color.new(c_inv, 30), 94, side_group + "_wins", 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_wins, side_label + "PB/BO Inval " + lb_sfx, color.new(c_inv, 30), 94, side_group + "_wins", 0, strat, "PB/BO Invalidation — p80 MAE from breakout")
 
                 if not na(invalid_px_losses)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_losses, side_label + "PB Invalidation Losses P80" + lb_sfx, c_inv, 95, side_group + "_losses", 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_losses, side_label + "PB Inval Losses P80" + lb_sfx, c_inv, 95, side_group + "_losses", 0, strat, "PB Invalidation Losses — p80 MAE from breakout (losses only)")
 
                 // Targets & Cashflow
                 if not na(target_px)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, target_px, side_label + "Target BO EV Target " + STL.f_pct_fmt(i_ev_target_pct) + lb_sfx, c_tgt, 78, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, target_px, side_label + "Target BO EV Target " + STL.f_pct_fmt(i_ev_target_pct) + lb_sfx, c_tgt, 78, side_group, 0, strat, "Target — EV target " + STL.f_pct_fmt(i_ev_target_pct) + " from breakout")
 
                 float y_cash = t_render_px * (side == 1 ? 1.0 + p20_bo / 100.0 : 1.0 - p20_bo / 100.0)
                 if not na(y_cash)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_cash, side_label + "BO Cashflow P20 (MFE) " + STL.f_pct_fmt(p20_bo) + lb_sfx, c_cash, 80, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_cash, side_label + "BO Cashflow " + STL.f_pct_fmt(p20_bo) + lb_sfx, c_cash, 80, side_group, 0, strat, "BO Cashflow — p20 MFE from breakout (" + STL.f_pct_fmt(p20_bo) + "). 80% of sessions reached this level.")
 
                 float y_conf = t_render_px * (side == 1 ? 1.0 + p75_fake / 100.0 : 1.0 - p75_fake / 100.0)
                 if not na(y_conf)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_conf, side_label + "BO Confirm P75 " + STL.f_pct_fmt(p75_fake) + lb_sfx, c_conf, 75, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_conf, side_label + "BO Confirm " + STL.f_pct_fmt(p75_fake) + lb_sfx, c_conf, 75, side_group, 0, strat, "BO Confirm — p75 MFE of fakes")
 
                 // Pivot (P50 of Fakes MFE)
                 if not na(pivot_px)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, pivot_px, side_label + "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(p50_fake) + lb_sfx, c_tpiv, 70, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, pivot_px, side_label + "Pivot " + STL.f_pct_fmt(p50_fake) + lb_sfx, c_tpiv, 70, side_group, 0, strat, "Pivot — p50 MFE of fakes")
 
                 // Reversal Zone — Fix 1+2: Anchor at OR High/Low, range P25-P50 (per Gunship tooltip)
                 if not na(rev_p25) and not na(rev_p50) and rev_p25 > 0
@@ -938,13 +938,13 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                     float z_top = math.max(y_rev25, y_rev50), z_bot = math.min(y_rev25, y_rev50)
                     int z_w = math.max(2, ln_end - bo_bar)
                     Zones.f_draw_hist_band(ds, bo_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, bo_bar + z_w, y_rev50, side_label + "Reversal Target P50 Median (" + STL.f_pct_fmt(rev_p25) + "-" + STL.f_pct_fmt(rev_p50) + ")" + lb_sfx, c_conf, 55, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, bo_bar + z_w, y_rev50, side_label + "Reversal Zone " + lb_sfx, c_conf, 55, side_group, 0, strat, "Reversal Zone — p25-p50 MAE of fakes")
 
                 // Draw breakout activation only if this side is the active breakout side and breakout px is valid.
                 if is_active_side and not na(st.sig_breakout_px)
                     if i_show_debug
                         log.info("  -> DRAWING BO ACT: bar=" + str.tostring(bo_bar) + ", price=" + str.tostring(st.sig_breakout_px) + ", side=" + str.tostring(side))
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", bo_bar, ln_end, st.sig_breakout_px, "Breakout Activation" + lb_sfx, c_bo_act, 90, side_group + "_bo", 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", bo_bar, ln_end, st.sig_breakout_px, "BO Entry" + lb_sfx, c_bo_act, 90, side_group + "_bo", 0, strat, "Breakout close at range high")
 
         // 4. Shared Midpoint Logic
         int n_m = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear)), m_h = 0
@@ -956,7 +956,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                     if array.get(hist.mid_hit_bull, k) or array.get(hist.mid_hit_bear, k)
                         m_h += 1
         float m_pct = n_wins == 0 ? na : (float(m_h) / float(n_wins)) * 100.0
-        HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.or_mid, "Midpoint Hit Rate (" + STL.f_pct_fmt(m_pct) + ")" + lb_sfx, r_mid_line_color, 50, sp.name + "_mid", 0, strat)
+        HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.or_mid, "Midpoint " + STL.f_pct_fmt(m_pct) + lb_sfx, r_mid_line_color, 50, sp.name + "_mid", 0, strat, "Range Midpoint (Hit rate " + STL.f_pct_fmt(m_pct) + ")")
 
         // 5. Histograms
         if i_show_histogram

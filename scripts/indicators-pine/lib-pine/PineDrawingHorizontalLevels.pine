@@ -352,7 +352,7 @@ export f_draw_settlement_level(Core.PineDrawingState ds, Core.LabelRegistry lr, 
 // ============================================================================
 
 /// Draw a generic priority line (P, S, or C tier).
-export f_draw_priority_line(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_text, color base_clr = na, int priority = 10, string tag = "", int lookback = 0, string strategy = "merge") =>
+export f_draw_priority_line(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_text, color base_clr = na, int priority = 10, string tag = "", int lookback = 0, string strategy = "merge", string tooltip = "") =>
     int width = tier == "P" ? 2 : 1
     string style = tier == "C" ? "Dotted" : tier == "S" ? "Dashed" : "Solid"
     int transp = tier == "S" ? 15 : tier == "C" ? 30 : 0
@@ -360,7 +360,7 @@ export f_draw_priority_line(Core.PineDrawingState ds, Core.LabelRegistry lr, str
     color clr = color.new(c, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(width, profile)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, c, x2 + Core.f_geometry_label_gap_bars(), strategy, priority, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, c, x2 + Core.f_geometry_label_gap_bars(), strategy, priority, tag, lookback, tooltip)
 
 // ============================================================================
 // 2.7 Anchored and Reference Levels
