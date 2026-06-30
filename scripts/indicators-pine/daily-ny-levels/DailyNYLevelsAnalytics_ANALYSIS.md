@@ -2131,3 +2131,86 @@ The gap was not a rule mismatch — it was a **session count mismatch**. Gunship
 | 2026-06-29 | Discarded incorrect theories (universal rule, EV precedence, circular dep) | §10.8 |
 | 2026-06-29 | **Q1 Break live validation** — confirmed FULL, BO Inval = -0.343% | §11.1 |
 | 2026-06-29 | **Resolved Q1 Break gap** — session count mismatch (71 vs 74), rule is correct | §11.2 |
+| 2026-06-29 | **Pine Script classification fixes applied** (5 fixes, no new variables) | §12 |
+
+---
+
+## 12. 🛠️ Pine Script Classification Fixes (2026-06-29)
+
+> **Goal:** Align `f_process_signal_logic` in `DailyNYLevelsAnalytics.pine` with the verified Gunship classification rule (§10) without adding new variables.
+
+### 12.1 Verified Rule (recap)
+
+| Outcome | `sig_outcome` | Condition |
+|---------|---------------|-----------|
+| **WIN (FULL)** | `1` | 5m close breakout occurred AND no invalidation wick-touch before cutoff |
+| **LOSS (FAILED)** | `-1` | Invalidation wick-touch hit (low for bull, high for bear) |
+| **FAKEOUT** | `2` | Invalidation hit AND opposite OR wick cross (deeper loss; populates fakeout arrays) |
+| PENDING | `0` | Transient — finalized to WIN at session commit |
+
+**EV target is NOT a classification criterion.** Fakeout is NOT a separate classification — it is a subset of loss that also marks sessions for fakeout-dependent level calculations.
+
+### 12.2 Fixes Applied
+
+#### Fix 1 — Remove EV target as classification criterion (CRITICAL)
+
+**Where:** `f_process_signal_logic` (was L507-509)
+**Before:** EV target hit → `sig_outcome := 1` (WIN), which BLOCKED the invalidation check via the `sig_outcome <= 0` guard. A session that hit EV then later wicked to invalidation was wrongly classified FULL.
+**After:** EV target block removed from classification. `sig_target_px` is still latched at breakout for rendering the "Target BO EV Target" line — it no longer affects `sig_outcome`.
+
+#### Fix 2 — Invalidation is the primary (only) classification criterion (CRITICAL)
+
+**Where:** `f_process_signal_logic` evaluation block
+**Before:** Precedence was EV target → Fakeout → Invalidation (invalidation checked LAST, only if still pending).
+**After:** Invalidation checked FIRST → `sig_outcome := -1`. This is the sole WIN/LOSS discriminator per the verified rule.
+
+#### Fix 3 — Cutoff finalization: PENDING → WIN (CRITICAL)
+
+**Where:** Both `f_commit_daily` call sites (new-session commit + data-just-ended commit)
+**Before:** If no invalidation and no EV target hit, `sig_outcome` stayed `0` (PENDING) and was **silently dropped** from win-rate stats (the `o != 0` filter excluded it). Non-invalidating sessions were undercounted.
+**After:** Before each commit, `if st.sig_side != 0 and st.sig_outcome == 0 then st.sig_outcome := 1`. A breakout session with no invalidation is now correctly counted as WIN (FULL).
+
+#### Fix 4 — Preserve fakeout detection WITHOUT a new variable
+
+**Where:** `f_process_signal_logic` fakeout block
+**Before:** Fakeout (`sig_outcome := 2`) took precedence over invalidation; invalidation was skipped when fakeout fired.
+**After:** Invalidation sets `-1` first; fakeout check then OVERRIDES `-1 → 2` when opposite OR is crossed (deeper than invalidation). `sig_outcome == 2` is still consumed by `f_commit_daily` to populate `fake_mfe`/`fake_mae`/`fakeout_reversal` arrays. **No new variable needed** — the existing `sig_outcome == 2` already serves the fakeout-detection purpose.
+
+#### Fix 5 — Fix "Result" display in Summary table
+
+**Where:** `f_draw_summary_table` LIVE SESSION section
+**Before:** `is_full = st.daily_bull_mfe >= target_pct or st.daily_bear_mfe >= target_pct` (session MFE vs EV target — independent of classification).
+**After:** `is_full = st.sig_outcome == 1`; display now shows FAILED / FULL / PENDING based on the verified classification.
+
+### 12.3 Fakeout-Dependent Levels — Verification (all preserved)
+
+All fakeout-dependent levels continue to work because `sig_outcome == 2` is still set for fakeout sessions (Fix 4):
+
+| Level | Source | Filter | Status |
+|-------|--------|--------|--------|
+| Pivot (P50 fake MFE) | `f_filter_fakeout_mfe` → `p50_fake` | `sig_outcome == 2` | ✅ preserved |
+| BO Confirm (P75 fake MFE) | `f_filter_fakeout_mfe` → `p75_fake` | `sig_outcome == 2` | ✅ preserved |
+| Reversal Zone (P25-P50 fake MAE) | `f_filter_fakeout_mae` → `rev_p25`/`rev_p50` | `sig_outcome == 2` | ✅ preserved |
+| Fakeout View table | `fake_mfe`/`fake_mae` arrays | `sig_outcome == 2` via `fb_sig`/`fs_sig` | ✅ preserved |
+| `fakeout_bull`/`fakeout_bear` (StatsLib) | `fb_sig`/`fs_sig` | `sig_outcome == 2` | ✅ preserved |
+| `fakeout_reversal` (StatsLib) | `frb`/`frs` | `sig_outcome == 2` | ✅ preserved |
+
+**Loss percentile integrity:** `f_filter_mae_by_outcome` for losses already includes `o == 2`, so `p80_mae_losses` still captures fakeout sessions via the ALL `bo_mae_bull` array (pushed unconditionally). No data loss for invalidation percentiles.
+
+### 12.4 Resulting Classification Logic (no new variables)
+
+```
+sig_outcome: 0=Pending, 1=WIN(FULL), -1=LOSS(FAILED), 2=Fakeout(deep loss)
+
+Each bar after breakout, before cutoff:
+  1. Invalidation wick-touch?  → sig_outcome := -1
+  2. Fakeout (opposite OR)?   → sig_outcome := 2   (overrides -1; deeper loss)
+  3. (nothing)                → stays 0
+
+At session commit:
+  if sig_outcome == 0 → sig_outcome := 1   (no invalidation = FULL)
+```
+
+### 12.5 Variables Changed
+
+**None added, none removed.** The fix reuses the existing `sig_outcome` integer field (`0/1/-1/2`) with corrected precedence and finalization. This satisfies the constraint of avoiding new variables.

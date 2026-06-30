@@ -503,19 +503,21 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
                 label.new(bar_index, high, "LATCH: BO=" + str.tostring(st.sig_breakout_px) + " S=" + str.tostring(st.sig_side), color=color.blue, textcolor=color.white, style=label.style_label_down)
     
     // Evaluation logic (using latched values)
+    // VERIFIED RULE: Invalidation wick-touch is the ONLY classification criterion.
+    //   WIN  (1) = breakout occurred AND no invalidation wick-touch before cutoff (finalized at commit)
+    //   LOSS (-1) = invalidation wick-touch hit
+    //   FAKE (2)  = invalidation hit AND opposite OR wick cross (deeper loss; populates fakeout arrays)
+    // EV target is a display level only — NOT a classification criterion.
     if st.sig_side != 0 and st.sig_outcome <= 0 and not is_breakout_bar
-        // 1. EV target hit takes precedence over fakeout/loss
-        if not na(st.sig_target_px) and (st.sig_side == 1 ? h >= st.sig_target_px : l <= st.sig_target_px)
-            st.sig_outcome := 1 // WIN
-        // 2. If price wicks through the opposite side of the Opening Range, it is a confirmed Fakeout
-        else
-            bool crossed_opposite = st.sig_side == 1 ? l < st.or_low : h > st.or_high
-            if crossed_opposite
-                st.sig_outcome := 2 // Fakeout (takes precedence over straight loss)
-            // 3. If it hasn't crossed the opposite side and hasn't hit invalidation yet, check invalidation
-            else if st.sig_outcome == 0
-                if not na(st.sig_invalid_px) and (st.sig_side == 1 ? l <= st.sig_invalid_px : h >= st.sig_invalid_px)
-                    st.sig_outcome := -1 // Straight Loss (can be upgraded to 2 if it later wicks beyond opposite boundary)
+        // 1. Invalidation wick-touch — primary classification criterion (FAILED)
+        if not na(st.sig_invalid_px) and (st.sig_side == 1 ? l <= st.sig_invalid_px : h >= st.sig_invalid_px)
+            st.sig_outcome := -1 // Straight Loss
+        // 2. Fakeout — opposite OR wick cross (deeper than invalidation; overrides -1 -> 2 so
+        //    f_commit_daily populates fake_mfe/fake_mae/fakeout_reversal arrays for
+        //    Pivot / Confirm / Reversal Zone levels. No new variable needed.
+        bool crossed_opposite = st.sig_side == 1 ? l < st.or_low : h > st.or_high
+        if crossed_opposite
+            st.sig_outcome := 2 // Fakeout (deep loss; preserves fakeout-dependent levels)
 
 f_track_range(int idx) =>
     RSL.RangeSpec sp = array.get(specs, idx)
@@ -540,6 +542,10 @@ f_track_range(int idx) =>
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
         float pb_bear = (na(st.daily_mae_bear_pb) or (not st.entry_triggered_bear)) ? na : st.daily_mae_bear_pb
 
+        // Fix: Cutoff finalization — no invalidation = WIN (FULL). Previously PENDING (0)
+        // sessions were silently dropped from win-rate stats (o != 0 filter).
+        if st.sig_side != 0 and st.sig_outcome == 0
+            st.sig_outcome := 1 // WIN (FULL) — no invalidation wick-touch before cutoff
         bool mid_hit_b_comm = st.sig_side == 1 and st.mid_hit_bull and st.sig_outcome == 1
         bool mid_hit_s_comm = st.sig_side == -1 and st.mid_hit_bear and st.sig_outcome == 1
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct, st.sig_side, st.sig_outcome)
@@ -633,6 +639,10 @@ f_track_range(int idx) =>
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
         float pb_bear = (na(st.daily_mae_bear_pb) or (not st.entry_triggered_bear)) ? na : st.daily_mae_bear_pb
 
+        // Fix: Cutoff finalization — no invalidation = WIN (FULL). Previously PENDING (0)
+        // sessions were silently dropped from win-rate stats (o != 0 filter).
+        if st.sig_side != 0 and st.sig_outcome == 0
+            st.sig_outcome := 1 // WIN (FULL) — no invalidation wick-touch before cutoff
         bool mid_hit_b_comm = st.sig_side == 1 and st.mid_hit_bull and st.sig_outcome == 1
         bool mid_hit_s_comm = st.sig_side == -1 and st.mid_hit_bear and st.sig_outcome == 1
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct, st.sig_side, st.sig_outcome)
@@ -1258,9 +1268,10 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     r += 1
     f_summary_aggregate_row(t, r, "› FR Price", "---", cell_bg, body_txt, body_txt, body_sz)
     r += 1
-    bool is_full = st.daily_bull_mfe >= target_pct or st.daily_bear_mfe >= target_pct
-    string res_txt = is_full ? "FULL" : "PENDING"
-    color res_clr = is_full ? bull_clr : body_txt
+    // Fix: Result now reflects verified classification (sig_outcome) instead of session MFE vs EV target.
+    bool is_full = st.sig_outcome == 1
+    string res_txt = st.sig_outcome == -1 ? "FAILED" : is_full ? "FULL" : "PENDING"
+    color res_clr = is_full ? bull_clr : st.sig_outcome == -1 ? bear_clr : body_txt
     f_summary_aggregate_row(t, r, "› Result", res_txt, cell_bg, body_txt, res_clr, body_sz)
     r += 1
     float entry_px = st.sig_breakout_px
