@@ -324,7 +324,7 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
     [nb, ns, nbp, nsp] = STL.f_track_mfe(h, l, mins, st.bull_ref, st.bear_ref, st.daily_bull_mfe, st.daily_bear_mfe, st.daily_bull_peak_min, st.daily_bear_peak_min)
     st.daily_bull_mfe := nb, st.daily_bear_mfe := ns, st.daily_bull_peak_min := nbp, st.daily_bear_peak_min := nsp
     
-    [mab, mas] = STL.f_track_mae_abs(h, l, st.or_low, st.or_high, st.daily_mae_bull_abs, st.daily_mae_bear_abs)
+    [mab, mas] = STL.f_track_mae_abs(h, l, st.or_high, st.or_low, st.daily_mae_bull_abs, st.daily_mae_bear_abs)
     st.daily_mae_bull_abs := mab, st.daily_mae_bear_abs := mas
     
     bool is_peak_hit_bull = mins == st.daily_bull_peak_min
@@ -493,7 +493,7 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             
             // 4. Compute evaluation percentiles and prices with robust cold-start fallbacks
             float p80_mae_fallback = f_get_pct_fallback(bo_mae_all, 80, 0.5)
-            float p80_mae = f_get_pct_fallback(bo_mae_wins, 80, p80_mae_fallback)
+            float p80_mae = f_get_pct_fallback(bo_mae_all, 80, p80_mae_fallback)
             
             st.sig_target_px  := st.sig_breakout_px * (side == 1 ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
             st.sig_invalid_px := st.sig_breakout_px * (side == 1 ? 1.0 - p80_mae / 100.0 : 1.0 + p80_mae / 100.0)
@@ -504,16 +504,18 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
     
     // Evaluation logic (using latched values)
     if st.sig_side != 0 and st.sig_outcome <= 0 and not is_breakout_bar
-        // 1. If it closed on the opposite side of the Opening Range, it is a confirmed Fakeout
-        bool crossed_opposite = st.sig_side == 1 ? c < st.or_low : c > st.or_high
-        if crossed_opposite
-            st.sig_outcome := 2 // Fakeout (takes precedence over straight loss)
-        // 2. If it hasn't crossed the opposite side and hasn't hit invalidation yet, check target and invalidation
-        else if st.sig_outcome == 0
-            if not na(st.sig_target_px) and (st.sig_side == 1 ? h >= st.sig_target_px : l <= st.sig_target_px)
-                st.sig_outcome := 1 // WIN
-            else if not na(st.sig_invalid_px) and (st.sig_side == 1 ? l <= st.sig_invalid_px : h >= st.sig_invalid_px)
-                st.sig_outcome := -1 // Straight Loss (can be upgraded to 2 if it later closes beyond opposite boundary)
+        // 1. EV target hit takes precedence over fakeout/loss
+        if not na(st.sig_target_px) and (st.sig_side == 1 ? h >= st.sig_target_px : l <= st.sig_target_px)
+            st.sig_outcome := 1 // WIN
+        // 2. If price wicks through the opposite side of the Opening Range, it is a confirmed Fakeout
+        else
+            bool crossed_opposite = st.sig_side == 1 ? l < st.or_low : h > st.or_high
+            if crossed_opposite
+                st.sig_outcome := 2 // Fakeout (takes precedence over straight loss)
+            // 3. If it hasn't crossed the opposite side and hasn't hit invalidation yet, check invalidation
+            else if st.sig_outcome == 0
+                if not na(st.sig_invalid_px) and (st.sig_side == 1 ? l <= st.sig_invalid_px : h >= st.sig_invalid_px)
+                    st.sig_outcome := -1 // Straight Loss (can be upgraded to 2 if it later wicks beyond opposite boundary)
 
 f_track_range(int idx) =>
     RSL.RangeSpec sp = array.get(specs, idx)

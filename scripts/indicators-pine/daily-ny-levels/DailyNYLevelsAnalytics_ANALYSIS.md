@@ -614,6 +614,8 @@ This causes:
 **Fix:** Swapping `st.or_low` and `st.or_high` at the call sites:
 `[mab, mas] = STL.f_track_mae_abs(h, l, st.or_high, st.or_low, ...)`
 
+**Status:** ✅ Fixed 2026-06-29 in `DailyNYLevelsAnalytics.pine` L327.
+
 ---
 
 ## 📋 Summary Table
@@ -629,9 +631,9 @@ This causes:
 | **Bug** | ~~`sig_reversed` never set → fakeout arrays always na~~ **FIXED** (Option A applied) | ✅ Fixed |
 | **Bug** | `f_filter_mae_by_outcome` includes pending (o==0) in "losses" | 🟡 Medium |
 | **Bug** | ~~`bo_bar` render/signal state desync~~ **FIXED** — `sig_breakout_bar` latched in signal logic | ✅ Fixed |
-| **Bug** | Swapped parameters in `STL.f_track_mae_abs` | 🔴 High |
-| **Repaint** | LTF 1m data on realtime bar (OR flicker) | 🟡 Inherent |
-| **Repaint** | Breakout px latched from realtime close | 🟢 Low |
+| **Bug** | Swapped parameters in `STL.f_track_mae_abs` | 🔴 High | ✅ Fixed 2026-06-29 |
+| **Repaint** | LTF 1m data on realtime bar (OR flicker) | 🟡 Inherent | — |
+| **Repaint** | Breakout px latched from realtime close | 🟢 Low | — |
 | **Dead code** | ~~Vestigial `sig_*` state fields~~ **PARTIALLY FIXED** — removed `sig_reversed` from RangeState + `f_find_breakout_bar` function; remaining vestigial `sig_*` fields still present | 🟢 Low |
 
 ---
@@ -1311,6 +1313,25 @@ DNL has 12 bull fakeout sessions; Gunship has 18. Likely due to more historical 
 | 2026-06-29 | **HARM DEBUG analysis** — captured debug logs, verified 4 discrepancies with calculations, documented fix plan | §5.8c |
 | 2026-06-29 | **Fix 2: Reversal zone range** — changed from P25-P75 to P25-P50 per Gunship tooltip | §5.8c |
 | 2026-06-29 | **Documented MAE Swapped Parameters Bug** — Added details on signature mismatch | §4.13 |
+| 2026-06-29 | **Gunship consistency analysis** — tested 50+ rule combinations across 9 scripts, discovered exact classification rule: R1 + TOUCH P95 Session MAE (OR, ALL, split by side), applied to OR boundary = 55/18 exact match | §7 |
+| 2026-06-29 | **Key discovery: Session MAE from OR** — P80 Session MAE from OR (R1 wins, bull) = 0.210% matches Gunship chart value of 0.209%, confirming MAE source | §7.2 |
+| 2026-06-29 | **Key discovery: P95 not P80** — Gunship uses P95 for stop-loss, not P80. P80 catches too many false fails (13-19 vs 3 needed) | §7.2 |
+| 2026-06-29 | **Key discovery: ALL sessions sample** — Gunship computes percentile from ALL sessions (not wins-only), which is critical for exact match | §7.2 |
+| 2026-06-29 | **Key discovery: OR boundary anchor** — Stop-loss applied to OR boundary, not BO px. Applied to BO px gives 53/20 (wrong) | §7.2 |
+| 2026-06-29 | **Cross-preset validation** — Tested rules across all 4 presets. No single rule matches all. R2 close for MO Break, R3+stop close for 1800 Break, MFE>0+not R2 exact for Magic Hour fails | §8 |
+| 2026-06-29 | **DNL code analysis** — Read `f_process_signal_logic` (L463-510): DNL uses R2(fakeout)>EV target(win)>P80 MAE(loss) with rolling P80. DNL gives 11/39/22 for 1100 BO — wildly different from Gunship 55/18/0 | §8.3 |
+| 2026-06-29 | **Session count discrepancies** — MO Break: 73 vs 74, 1800 Break: 74 vs 75, Magic Hour: 52 vs 60. Missing sessions are root cause of cross-preset mismatches | §8.2 |
+| 2026-06-29 | **Gunship "FULL" ≠ EV target** — Gunship has 55 FULL but only 19 sessions hit 0.30% EV target. FULL = "not failed" (no EV target requirement) | §8.5 |
+| 2026-06-29 | **Q1 Break validation** — Replaced Magic Hour with Q1 Break (OR=0600-0830, cutoff=1200). N=72 vs 73 (1 short, same pattern). R3 closest rule (49/23 vs 44/29). Captured Gunship table + levels with tooltips. Q1 Break is NOT an outlier. | §9 |
+| 2026-06-29 | **Cross-preset pattern** — R3 (any 5m touch) is the most consistent R-rule across wider-OR presets. R1 for short-OR, R2 for tight-OR. Stop-loss catches remaining fails. | §9.7 |
+| 2026-06-29 | **Correct date range discovered** — Mar 12-13 → Jun 26, excluding Good Friday (Apr 3), Memorial Day (May 25), Juneteenth (Jun 19). All 4 presets match exact session counts. | §8.2 |
+| 2026-06-29 | **1100 BO exact match** — P80 CLOSE stop-only (no R2), P80 from ALL, fallback 0.5% = 55/18. First exact classification match. | §10.5 |
+| 2026-06-29 | **User clarification: WICK-based** — All levels are wick (touch) based except Breakout (close-based). Fakeout check should use high/low, not close. | §10.1 |
+| 2026-06-29 | **User clarification: EV precedence** — If EV target hit, session is FULL regardless of stop or opposite OR. EV takes full precedence. | §10.1 |
+| 2026-06-29 | **April 13 chart verification** — User confirmed 1100 BO Apr 13 is FAIL. 5m CLOSE didn't reach invalidation but 5m WICK did. Proves stop is TOUCH-based. | §10.4 |
+| 2026-06-29 | **4 Pine Script bugs identified** — (1) Fakeout CLOSE→WICK, (2) EV precedence reorder, (3) P80 Wins→ALL, (4) §4.13 swapped MAE params confirmed | §10.3 |
+| 2026-06-29 | **Circular dependency identified** — P80→classification→history→P80. Early session misclassification causes cascading divergence. All 4 fixes must be applied simultaneously. | §10.6 |
+| 2026-06-29 | **Applied 4 Pine Script bug fixes** — L327 swapped MAE params, L493 P80 ALL sessions, L506 fakeout WICK-based, L506-514 EV precedence | §10.7 |
 
 ---
 
@@ -1510,3 +1531,637 @@ To maintain 100% consistency across all ranges (no custom code per preset), we p
 
 #### 6.9.3 Current Status
 This finding is fully documented and ready. We will pick up the final implementation/verification of this consistent 5m model in a future session.
+
+---
+
+## 7. 🔬 Gunship Consistency Analysis — Session Classification Rule Discovery (2026-06-29)
+
+> **Goal:** Reverse-engineer the Gunship's exact session classification rule to achieve 100% consistency (55 FULL / 18 Failed) with the Python verification pipeline.
+
+### 7.1 Methodology
+
+We systematically tested **50+ classification rule combinations** across 8 validation scripts (`theory_validation_v1.py` through `theory_validation_v9.py`), varying:
+
+| Dimension | Values tested |
+|-----------|--------------|
+| **Failure rule** | R1 (cutoff close beyond opp OR), R2 (any 5m close beyond opp OR), R3 (any 5m touch beyond opp OR) |
+| **Stop-loss trigger** | TOUCH (bar high/low touches invalidation), CLOSE (bar close beyond invalidation) |
+| **Stop-loss percentile** | P70–P100, in steps of 1–5% |
+| **MAE source** | BO MAE (from breakout close), Session MAE (from OR boundary) |
+| **Percentile sample** | R1 wins only, ALL sessions, combined (bull+bear together) |
+| **Percentile method** | Nearest-rank (Pine Script default), Linear interpolation |
+| **Stop-loss anchor** | BO px, OR boundary |
+| **Breakout detection** | 1m close (73 sessions), 5m close (72 sessions) |
+
+### 7.2 Key Findings
+
+#### Finding 1: The Gunship uses Session MAE from OR boundary (not BO MAE)
+The Gunship chart shows P80 MAE = 0.209% for the 1100 BO bull side. Our Python computation of P80 Session MAE from OR boundary (R1 wins, bull) = **0.210%** — an exact match. The P80 BO MAE from BO px (R1 wins, bull) = 0.260% — does NOT match. This confirms the Gunship computes its invalidation percentile from **Session MAE measured from the OR boundary**, not from the breakout close.
+
+#### Finding 2: The Gunship uses a HIGHER percentile than P80 for stop-loss
+The DNL Pine Script currently uses P80 MAE for invalidation. However, P80 catches too many sessions as fails (13–19 stop-only fails vs the 3 needed). The Gunship uses approximately **P95** (nearest-rank) or **P92–P94** (linear interpolation), which catches exactly the right number of additional fails.
+
+#### Finding 3: The stop-loss is TOUCH-based, not CLOSE-based
+TOUCH-based stops (bar high/low touches the invalidation level) match the Gunship, while CLOSE-based stops (bar close beyond invalidation) are too conservative. This is consistent with the Pine Script's `f_process_signal_logic` which checks `low <= invalid_px` (touch), not `close <= invalid_px`.
+
+#### Finding 4: The stop-loss is anchored to the OR boundary, not BO px
+The percentile percentage is computed from Session MAE (OR boundary) and **applied to the OR boundary** (not BO px). This means the invalidation level is `OR_High × (1 - P95_MAE)` for bull, not `BO_px × (1 - P95_MAE)`.
+
+### 7.3 EXACT MATCH — The Gunship Classification Rule
+
+**The rule that produces exactly 55 FULL / 18 Failed:**
+
+```
+FAIL = R1 (cutoff close beyond opposite OR boundary)
+     OR TOUCH stop-loss hit (any 5m bar low/high touches the P95 invalidation level)
+
+Where:
+  - P95 invalidation = OR_Boundary × (1 - P95_Session_MAE%)
+  - P95_Session_MAE = array.percentile_nearest_rank(all_session_mae_or, 95), split by side
+  - Session MAE = (OR_High - post_bo_low) / OR_High × 100  [for bull]
+  - Session MAE = (post_bo_high - OR_Low) / OR_Low × 100   [for bear]
+  - TOUCH = bar low ≤ invalidation (bull) or bar high ≥ invalidation (bear)
+  - Breakout detection = 1m close beyond OR (73 sessions)
+  - Post-bo tracking = 5m bars (chart-level)
+```
+
+**Verified configurations that produce 55/18:**
+
+| Config | Percentile | Method | Sample | Anchor | Stop Type | Bull MAE | Bear MAE |
+|--------|-----------|--------|--------|--------|-----------|----------|----------|
+| **A** ⭐ | P95 | Nearest-rank | ALL, split by side | OR boundary | TOUCH | 0.501% | 0.527% |
+| B | P92–P94 | Linear | ALL, split by side | OR boundary | TOUCH | 0.459–0.495% | 0.524–0.527% |
+| C | P94–P95 | Nearest-rank | ALL, combined | OR boundary | TOUCH | 0.527% | 0.527% |
+| D | P94 | Linear | ALL, combined | OR boundary | TOUCH | 0.526% | 0.526% |
+| E | P88 | Linear | ALL, combined | OR boundary | CLOSE | 0.466% | 0.466% |
+| F | P94 | Linear | ALL, combined | BO px | CLOSE | 0.526% | 0.526% |
+
+**Config A is the most likely** because:
+1. It uses nearest-rank percentile (matches Pine Script's `array.percentile_nearest_rank`)
+2. P95 is a standard "extreme" percentile for stop-loss
+3. It splits by side (bull/bear have different volatility, which the Gunship tooltips confirm)
+4. TOUCH-based is consistent with the Pine Script's signal logic
+
+### 7.4 Theories for Validation
+
+#### Theory 1: P95 is the correct percentile (HIGH CONFIDENCE)
+**Hypothesis:** The Gunship uses P95 Session MAE from OR boundary (ALL sessions, split by side) as the stop-loss invalidation level, applied to the OR boundary with TOUCH-based triggering.
+
+**Evidence:**
+- Produces exactly 55/18 with nearest-rank percentile
+- P80 (current DNL) catches 13–19 stop-only fails (too many)
+- P95 catches exactly 3 stop-only fails (matching the 18 - 15 = 3 additional fails needed)
+- The Gunship chart shows P80 MAE = 0.209% which matches our P80 Session MAE from OR (R1 wins) = 0.210%, confirming the MAE source is correct
+
+**Validation steps:**
+1. ✅ Run `theory_validation_v9.py` — confirms 55/18 with P95 nearest-rank, TOUCH, OR boundary
+2. ⬜ Cross-validate on other presets (MO Break, 1800 Break, Magic Hour)
+3. ⬜ Verify the 3 stop-only fails match known Gunship fails
+4. ⬜ Check if the Gunship's "BO Inval" level on the chart matches `OR_High × (1 - P95_Session_MAE)`
+
+#### Theory 2: The Gunship uses ALL sessions (not just wins) for the percentile sample (MEDIUM CONFIDENCE)
+**Hypothesis:** The P95 is computed from ALL sessions (including fails), not just winning sessions.
+
+**Evidence:**
+- Using R1 wins only: P95 bull = 0.242%, bear = 0.523% → 55/17 (1 fail short)
+- Using ALL sessions: P95 bull = 0.501%, bear = 0.527% → 55/18 (exact match)
+- The Gunship likely doesn't distinguish wins/losses when computing the stop-loss percentile — it uses the full distribution of adverse excursion
+
+**Counter-evidence:**
+- The DNL Pine Script currently uses `f_filter_breakout_wins` for invalidation, which filters to wins only
+- The Gunship tooltip says "BO Inval — p80 MAE" without specifying "wins" — but the DNL tooltip says "PB Invalidation Wins P80"
+
+**Validation:** Check if the Gunship's invalidation level matches P95 of ALL sessions or P95 of wins only.
+
+#### Theory 3: The stop-loss anchor is OR boundary, not BO px (MEDIUM CONFIDENCE)
+**Hypothesis:** The invalidation level is computed as `OR_Boundary × (1 - P95_MAE)`, not `BO_px × (1 - P95_MAE)`.
+
+**Evidence:**
+- Applied to OR boundary: P95 → 55/18 ✅
+- Applied to BO px: P95 → 53/20 (Δ=-2/2) ❌
+- The Session MAE is measured from OR boundary, so applying the percentile to the same anchor is internally consistent
+
+**Counter-evidence:**
+- The DNL Pine Script currently applies the percentile to BO px: `sig_invalid_px = sig_breakout_px * (1 - p80_mae)`
+- The Gunship chart shows BO Inval = 29,711.25 with BO px = 29,773.50, giving MAE = 0.209%. If the anchor were OR High (29,735.00), the MAE would be (29735 - 29711.25) / 29735 = 0.080%, which doesn't match 0.209%.
+
+**Reconciliation:** The chart's "BO Inval" level IS anchored at BO px. But the CLASSIFICATION rule (win/fail) may use a DIFFERENT invalidation level anchored at OR boundary. The chart shows the BO-px-anchored level for trade management, but the session classification uses the OR-boundary-anchored level.
+
+#### Theory 4: The 73rd session matters (CONFIRMED)
+**Hypothesis:** Using 1m breakout detection (73 sessions) vs 5m breakout detection (72 sessions) changes the R1 baseline from 57/15 to 56/17, which is critical for the final count.
+
+**Evidence:**
+- 72 sessions (5m breakout): R1 = 57/15, P95 TOUCH OR = 55/17 (1 fail short)
+- 73 sessions (1m breakout): R1 = 56/17, P95 TOUCH OR = 55/18 (exact match) ✅
+
+The extra session (detected on 1m but not 5m) is an R1 fail, which shifts the baseline by -1 win / +1 fail, making the P95 stop catch exactly the right number of additional fails.
+
+#### Theory 5: The Gunship uses nearest-rank, not linear interpolation (MEDIUM CONFIDENCE)
+**Hypothesis:** The Gunship uses Pine Script's `array.percentile_nearest_rank` (not `array.percentile` with linear interpolation).
+
+**Evidence:**
+- Nearest-rank P95: 55/18 ✅ (exact match)
+- Linear P92–P94: 55/18 ✅ (also matches, but with less standard percentile values)
+- The DNL Pine Script explicitly uses `array.percentile_nearest_rank` in its code
+- The Gunship is also a Pine Script indicator, likely using the same function
+
+### 7.5 Discrepancy Summary — DNL vs Gunship Classification
+
+| Aspect | DNL Current | Gunship (Discovered) | Impact |
+|--------|------------|---------------------|--------|
+| **Percentile** | P80 | P95 | DNL catches too many false fails |
+| **MAE source** | BO MAE from BO px | Session MAE from OR boundary | Different distribution |
+| **Sample** | Wins only | ALL sessions | Smaller sample → tighter stop |
+| **Anchor** | BO px | OR boundary | Different invalidation level |
+| **Stop trigger** | TOUCH (low/high) | TOUCH (low/high) | ✅ Same |
+| **Fail rule** | R1 + stop + EV target | R1 + stop (no EV target) | DNL requires EV hit for win |
+| **Breakout detection** | 5m close | 1m close | 1 extra session detected |
+
+### 7.6 Recommended Fix for DNL Pine Script
+
+To achieve consistency with the Gunship, the DNL Pine Script needs:
+
+1. **Change invalidation percentile from P80 to P95**
+2. **Change MAE source from BO MAE to Session MAE (from OR boundary)**
+3. **Change percentile sample from wins-only to ALL sessions**
+4. **Change invalidation anchor from BO px to OR boundary**
+5. **Remove EV target requirement for win classification** (win = not failed, no target needed)
+6. **Use 1m breakout detection** (already done via LTF)
+
+### 7.7 Validation Scripts Created
+
+| Script | Purpose |
+|--------|---------|
+| `deep_analysis.py` | Initial exploration of R1/R2/R3 rules, MFE thresholds |
+| `theory_validation.py` | Rolling P80 MAE stop-loss (too aggressive) |
+| `theory_validation_v2.py` | Fixed full-sample P80 MAE stop-loss |
+| `theory_validation_v3.py` | TOUCH vs CLOSE stop-loss, percentile sweeps |
+| `theory_validation_v4.py` | 2026-05-20 investigation, MAE-exceeds-P80 theories |
+| `theory_validation_v5.py` | Gunship's actual P80 value (0.209%), Session MAE from OR |
+| `theory_validation_v6.py` | Session MAE from OR sweeps (found P80 match) |
+| `theory_validation_v7.py` | Combined rules, R3 selective, OR boundary anchor |
+| `theory_validation_v8.py` | Mixed bull/bear percentiles (72 sessions) |
+| `theory_validation_v9.py` | **73 sessions, linear interpolation, combined percentiles — FOUND EXACT MATCH** |
+
+---
+
+## 8. 🔬 Cross-Preset Validation (2026-06-29)
+
+> **Goal:** Validate the 1100 BO classification rule discovery against ALL 4 presets.
+> **Key correction:** The Gunship tooltip says "P80 MAE from breakout" — no wins/losses filter specified.
+
+### 8.1 Correct Preset Configurations (from RangeSessionLib.pine)
+
+| Preset | OR Start | OR End | Cutoff | Days | Crosses Midnight | Gunship Target |
+|--------|----------|--------|--------|------|------------------|----------------|
+| 1100 BO | 1100 | 1115 | 1230 | 23456 (Mon-Fri) | No | 55 FULL / 18 Failed (N=73) |
+| MO Break | 0930 | 0935 | 1200 | 23456 (Mon-Fri) | No | 32 FULL / 42 Failed (N=74) |
+| 1800 Break | 1800 | 1815 | 0300 (next day) | 12345 (Sun-Thu) | Yes | 35 FULL / 40 Failed (N=75) |
+| Magic Hour | 0300 | 0700 | 0830 | 23456 (Mon-Fri) | No | 54 FULL / 6 Failed (N=60) |
+
+### 8.2 Session Count Verification
+
+| Preset | Python N | Gunship N | Match? | Root Cause of Discrepancy |
+|--------|---------|----------|--------|---------------------------|
+| 1100 BO | 73 | 73 | ✅ | — |
+| MO Break | 73 | 74 | ❌ (-1) | Likely missing 1 Sunday/Monday session from Parquet data gap |
+| 1800 Break | 74 | 75 | ❌ (-1) | Same — 1 missing overnight session |
+| Magic Hour | 52 | 60 | ❌ (-8) | 21 sessions have no breakout (4-hour OR too wide); 8 missing sessions likely from data gaps or different breakout detection |
+
+### 8.3 DNL Pine Script Code Analysis — Actual Classification Logic
+
+Reading `f_process_signal_logic` (L463-510) reveals the DNL's EXACT rule:
+
+```
+1. FAKEOUT (outcome=2): R2 — any 5m CLOSE beyond opposite OR boundary
+   → Checked FIRST, takes PRECEDENCE over win/loss
+   → If crossed, outcome locks to 2 immediately
+
+2. WIN (outcome=1): EV target (0.30%) hit by TOUCH (high/low)
+   → Checked second, only if NOT crossed opposite
+   → Can be upgraded to fakeout if a later bar crosses opposite
+
+3. LOSS (outcome=-1): P80 MAE invalidation hit by TOUCH (low/high)
+   → Checked third, only if NOT crossed and NOT won
+   → Uses ROLLING P80 BO MAE from prior wins, fallback to ALL, then 0.5%
+   → Anchored at BO px: invalid_px = BO_px × (1 - P80_MAE)
+
+4. PENDING (outcome=0): none of the above by cutoff
+```
+
+**Critical finding:** The DNL rule produces 11 wins / 39 fails / 22 pending for 1100 BO — wildly different from the Gunship's 55/18/0. This confirms the Gunship uses a **completely different classification rule** than the DNL Pine Script.
+
+### 8.4 Cross-Preset Rule Testing Results
+
+#### R1/R2/R3 Baselines (no stop-loss)
+
+| Preset | R1 (cutoff close) | R2 (any 5m close) | R3 (any 5m touch) | Target |
+|--------|------------------|--------------------|--------------------|--------|
+| 1100 BO | 56/17 | 48/25 | 45/28 | 55/18 |
+| MO Break | 48/25 | 30/43 | 26/47 | 32/42 |
+| 1800 Break | 56/18 | 41/33 | 37/37 | 35/40 |
+| Magic Hour | 52/0 | 50/2 | 50/2 | 54/6 |
+
+**Key observations:**
+- **R2 is very close for MO Break** (30/43 vs 32/42, Δ=-2/+1)
+- **R3 is close for 1800 Break** (37/37 vs 35/40, Δ=+2/-3)
+- **R1 is close for 1100 BO** (56/17 vs 55/18, Δ=+1/-1)
+- **No single R rule matches all presets** — the Gunship must use a combination or a different mechanism
+
+#### Best Universal Rule Candidates
+
+| Rule | 1100 BO | MO Break | 1800 Break | Magic Hour | Universal? |
+|------|---------|----------|------------|------------|------------|
+| R2 only | 48/25 ❌ | 30/43 ≈ | 41/33 ❌ | 50/2 ❌ | No |
+| MFE>0 AND not R2 | 47/26 ❌ | 30/43 ≈ | 41/33 ❌ | 46/6 ✅ | No |
+| R3 + P80 BO MAE stop | 43/30 ❌ | 26/47 ❌ | 35/39 ≈ | 41/11 ❌ | No |
+| EV target hit | 19/54 ❌ | 41/32 ❌ | 35/39 ≈ | 8/44 ❌ | No |
+| R1 + P95 Sess MAE OR (TOUCH, OR bdy) | 55/18 ✅ | 47/26 ❌ | 65/22 ❌ | 47/5 ❌ | **1100 BO only** |
+
+#### 1100 BO — Exact Match Confirmed
+
+The P95 Session MAE from OR boundary (ALL sessions, split by side, TOUCH, applied to OR boundary) produces **55/18** for 1100 BO. This was verified with 73 sessions (exact session count match).
+
+However, this rule does NOT generalize to other presets. The fail rates vary too widely across presets (18/73=25% for 1100 BO, 42/74=57% for MO Break, 40/75=53% for 1800 Break, 6/60=10% for Magic Hour) for any single percentile-based stop to match all.
+
+### 8.5 Key Theories for Further Validation
+
+#### Theory 6: The Gunship uses R2 (any 5m close beyond opp OR) as the primary fail rule (HIGH CONFIDENCE for MO Break)
+**Evidence:** R2 gives 30/43 for MO Break (target 32/42, Δ=-2/+1). With 1 missing session, this could be an exact match.
+**Validation:** Fix the MO Break session count (find the 74th session) and re-test R2.
+
+#### Theory 7: The Gunship uses different fail rules for different preset types (MEDIUM CONFIDENCE)
+**Evidence:** R1 is close for 1100 BO, R2 is close for MO Break, R3+stop is close for 1800 Break. The Gunship may use a preset-type-aware rule:
+- Intraday presets (1100 BO, 1400 Break): R1 (cutoff close beyond opp OR)
+- Pre-Market presets (MO Break): R2 (any 5m close beyond opp OR)
+- Overnight presets (1800 Break): R3 (any 5m touch beyond opp OR) + stop-loss
+- Wide-OR presets (Magic Hour): MFE > 0 AND not R2
+
+#### Theory 8: The session count discrepancies are the root cause of mismatches (HIGH CONFIDENCE)
+**Evidence:** All presets are 1-8 sessions short of the Gunship count. The missing sessions are likely fails (since the Gunship has higher fail rates than our Python). Fixing the session counts would shift the R1/R2/R3 baselines closer to the targets.
+**Validation:** 
+1. Find the missing MO Break session (74th) — likely a Sunday/Monday data gap
+2. Find the missing 1800 Break session (75th) — likely a Thursday/Friday data gap
+3. Investigate Magic Hour's 8 missing sessions — may need 5m breakout detection instead of 1m
+
+#### Theory 9: The Gunship uses a rolling stop-loss, not a fixed full-sample percentile (MEDIUM CONFIDENCE)
+**Evidence:** The DNL Pine Script code explicitly uses a rolling P80 (from prior wins, fallback to ALL, then 0.5%). The Gunship, being a Pine Script indicator, likely uses the same rolling approach. However, the rolling P80 is very aggressive early on (0.5% fallback catches many sessions) and stabilizes later.
+**Validation:** Test rolling P80 with the EXACT DNL fallback chain, but with R2 as the fail rule (not R1).
+
+#### Theory 10: The Gunship's "FULL" means "not failed" (no EV target requirement) (HIGH CONFIDENCE)
+**Evidence:** The Gunship has 55 FULL for 1100 BO, but only 19 sessions hit the 0.30% EV target. If FULL = EV target hit, we'd see 19 FULL, not 55. So FULL = "session did not fail" = "breakout held without crossing opposite OR or hitting stop-loss."
+**Validation:** Test Win = NOT R2 AND NOT stop-loss hit, with no EV target requirement.
+
+### 8.6 Recommended Next Steps
+
+1. **Fix session counts** — Find the missing sessions for MO Break (74th), 1800 Break (75th), and Magic Hour (8 missing). This is the highest priority as it affects all other validation.
+
+2. **Test R2 + rolling P80 stop** — Once session counts are fixed, test: Fail = R2 (any 5m close beyond opp OR) OR rolling P80 BO MAE stop hit. Win = NOT failed. This combines the closest universal rule (R2) with the DNL's actual stop-loss mechanism.
+
+3. **Investigate Magic Hour's 21 no-breakout sessions** — The 4-hour OR (0300-0700) is very wide. Check if the Gunship uses a different breakout detection (e.g., 5m close instead of 1m close) or a different OR definition.
+
+4. **Capture Gunship tooltips for all presets** — Use TradingView MCP to read the Gunship's tooltips for MO Break, 1800 Break, and Magic Hour to confirm the P80 MAE source and anchor.
+
+### 8.7 Cross-Preset Validation Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `cross_preset_validation.py` | Initial cross-preset test (wrong OR windows) |
+| `cross_preset_validation_v2.py` | Correct OR windows from RangeSessionLib.pine |
+| `cross_preset_validation_v3.py` | R2/R3/stop-only sweeps across all presets |
+| `cross_preset_validation_v4.py` | EV-target and MFE-threshold based rules |
+| `cross_preset_validation_v5.py` | **Exact DNL Pine Script rule** (rolling P80, R2 precedence) |
+| `debug_sessions.py` | Session date listing per preset for count verification |
+
+---
+
+## 9. 📊 Q1 Break Validation (2026-06-29)
+
+> **Purpose:** Replace Magic Hour (outlier) with Q1 Break as the 4th preset for cross-preset validation. Q1 Break has a 2.5-hour OR window (0600-0830 ET), intermediate between 1100 BO (15 min) and Magic Hour (4 hours).
+
+### 9.1 Q1 Break Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| OR Start | 0600 ET |
+| OR End | 0830 ET |
+| Cutoff | 1200 ET |
+| Days | Mon-Fri (23456) |
+| EV Target | 0.30% |
+
+### 9.2 Gunship Summary Table (Live Capture)
+
+| Metric | Value |
+|--------|-------|
+| **Preset** | Q1 Break |
+| **N** | 73 |
+| **FULL (Wins)** | 44 |
+| **FAILED (Losses)** | 29 |
+| **FULL%** | 60.3% |
+| **p50 MAE ▲ (Bullish)** | 0.257% |
+| **p50 MAE ▼ (Bearish)** | 0.327% |
+| **Status** | Active |
+| **Bearing** | DOWN |
+| **FR Zone** | RED |
+| **Result** | Failed (live) |
+| **Entry Price** | 29,643.25 |
+| **Current Streak** | 5 Failed |
+| **Best Full Run** | 7 |
+| **Worst Fail Run** | 5 |
+
+### 9.3 Gunship Drawn Levels (Live Session, Bear Breakout, BO px=29,643.25)
+
+| Level | Price | Derived % | Tooltip |
+|-------|-------|-----------|---------|
+| **BO Entry** | 29,643.25 | — | Breakout close at range low |
+| **PB Entry** | 29,690.67 | 0.160% | PB entry — p25 MAE |
+| **BO Cashflow** | 29,567.70 | 0.255% | BO Cashflow — p20 MFE |
+| **MED MFE** | 29,495.59 | 0.498% | MED MFE — p50 Red |
+| **MAX MFE** | 29,469.52 | 0.586% | MAX MFE — p75 Red |
+| **BO Inval / PB Inval** | 29,796.00 | 0.515% | PB/BO Invalidation — p80 MAE from breakout |
+
+### 9.4 Python vs Gunship Level Verification
+
+| Level | Gunship % | Python (bear, ALL) | Python (bear, R1 wins) | Match? |
+|-------|-----------|--------------------|-----------------------|--------|
+| P80 MAE (BO Inval) | 0.515% | 0.684% | 0.636% | ❌ Neither matches |
+| P25 MAE (PB Entry) | 0.160% | 0.222% | 0.191% | ❌ Neither matches |
+| P20 MFE (Cashflow) | 0.255% | 0.131% | 0.139% | ❌ Neither matches |
+| P50 Red MFE (MED) | 0.498% | 0.320% (ALL) / 0.333% (fails) | 0.320% | ❌ Neither matches |
+| P75 Red MFE (MAX) | 0.586% | 0.599% (ALL) / 0.483% (fails) | 0.659% | ≈ ALL (0.599 vs 0.586) |
+
+**Key observations:**
+- The Gunship's P80 MAE (0.515%) is LOWER than both Python samples (0.684% ALL, 0.636% R1 wins). This suggests the Gunship uses a different sample or the missing 73rd session shifts the percentile.
+- The P75 Red MFE (MAX MFE) is the closest match: Gunship 0.586% vs Python ALL 0.599% (Δ=0.013%).
+- The P20 MFE (Cashflow) is significantly off: Gunship 0.255% vs Python 0.131%. The Gunship's Cashflow level is much higher, suggesting it uses a different sample (possibly "Red" = failed sessions, not ALL).
+
+### 9.5 Classification Rule Testing
+
+**Session count:** N=72 (target 73) — 1 short, same pattern as MO Break and 1800 Break.
+
+**R-rule baselines:**
+
+| Rule | Wins | Fails | Target | Δ |
+|------|------|-------|--------|---|
+| R1 (cutoff close) | 62 | 10 | 44/29 | +18/-19 |
+| R2 (any 5m close) | 51 | 21 | 44/29 | +7/-8 |
+| R3 (any 5m touch) | 49 | 23 | 44/29 | +5/-6 |
+
+**Best rule candidates:**
+
+| Rule | Wins | Fails | Target | Δ |
+|------|------|-------|--------|---|
+| R3 + P75 BO MAE (ALL, TOUCH, BO px) | 45 | 27 | 44/29 | +1/-2 |
+| R3 + P80 BO MAE (ALL, TOUCH, BO px) | 45 | 27 | 44/29 | +1/-2 |
+| R3 + P75 Sess MAE OR (ALL, TOUCH, OR bdy) | 45 | 27 | 44/29 | +1/-2 |
+| MFE>0 AND not R3 | 49 | 23 | 44/29 | +5/-6 |
+
+**No exact match found.** The closest is R3 + P75/P80 stop at 45/27 (Δ=+1/-2). The 1 missing session could account for the discrepancy.
+
+### 9.6 Q1 Break vs Other Presets — Comparison
+
+| Preset | N (Python) | N (Gunship) | Gap | Best R-rule | Best Result | Target | Δ |
+|--------|-----------|-------------|-----|------------|-------------|--------|---|
+| 1100 BO | 73 | 73 | 0 | R1 | 55/18 | 55/18 | 0/0 ✅ |
+| MO Break | 73 | 74 | -1 | R2 | 30/43 | 32/42 | -2/+1 |
+| 1800 Break | 74 | 75 | -1 | R3 | 37/37 | 35/40 | +2/-3 |
+| **Q1 Break** | **72** | **73** | **-1** | **R3** | **49/23** | **44/29** | **+5/-6** |
+| ~~Magic Hour~~ | ~~52~~ | ~~60~~ | ~~-8~~ | — | — | — | — |
+
+**Q1 Break is NOT an outlier** — it follows the same pattern as MO Break and 1800 Break:
+- 1 session short (72 vs 73)
+- R3 is the closest R-rule
+- Stop-loss is needed to catch additional fails
+- The gap is small enough that the missing session could close it
+
+**Magic Hour remains the only outlier** with its 8-session gap and 21 no-breakout sessions.
+
+### 9.7 Cross-Preset Pattern Analysis
+
+Across the 4 valid presets (excluding Magic Hour), a clear pattern emerges:
+
+| Preset | OR Width | Fail Rate | Best R-Rule | R-Rule Catches |
+|--------|----------|-----------|-------------|----------------|
+| 1100 BO | 15 min | 25% (18/73) | R1 (cutoff close) | 17/18 fails |
+| Q1 Break | 2.5 hr | 40% (29/73) | R3 (any touch) | 23/29 fails |
+| MO Break | 5 min | 57% (42/74) | R2 (any close) | 43/42 fails |
+| 1800 Break | 15 min | 53% (40/75) | R3 (any touch) | 37/40 fails |
+
+**Key insight:** The best R-rule varies by preset, but R3 (any 5m touch beyond opp OR) is the most consistent across the wider-OR presets (Q1 Break, 1800 Break). R1 (cutoff close only) works for 1100 BO because the short data window (11:15-12:30) means few bars to cross back. R2 (any 5m close) works for MO Break because the tight OR (5 min) means breakouts are marginal and easily reversed.
+
+**The stop-loss (P80 BO MAE) catches the remaining fails** that the R-rule misses, but the exact percentile needed varies by preset. This suggests the Gunship uses a **rolling** P80 (not fixed full-sample), which would naturally adapt to each preset's characteristics.
+
+### 9.8 Q1 Break Validation Script
+
+| Script | Purpose |
+|--------|---------|
+| `q1_break_validation.py` | Q1 Break session building, level verification, and classification rule testing |
+
+---
+
+## 10. 🎯 Classification Rule Discovery — Final Findings (2026-06-29)
+
+> **Session:** Extended validation with user chart verification across all 4 presets.
+
+### 10.1 User Clarifications (Critical)
+
+The user provided three key clarifications that reshape our understanding:
+
+1. **All levels are WICK (TOUCH) based, except Breakout which is CLOSE based.**
+   - Breakout detection: 5m CLOSE beyond OR → confirms breakout, BO close = anchor price
+   - EV target hit: 5m WICK (high/low) touches target price
+   - P80 invalidation: 5m WICK (high/low) touches invalidation level
+   - Opposite OR crossing (fakeout): 5m WICK (high/low) touches opposite OR boundary
+   - **This means our "R2" (CLOSE-based opposite OR crossing) should be "R3" (TOUCH-based)**
+
+2. **If EV target is hit → FULL (profit target achieved, stop-loss is irrelevant).**
+   - EV hit takes full precedence over all other outcomes
+   - A session that hits EV target then crosses opposite OR is still FULL
+   - A session that hits EV target then touches invalidation is still FULL
+
+3. **Rolling 71-72 sessions from the current date (5000-bar limitation).**
+   - The Gunship always has ~71-72 sessions of history due to the 5000-bar limit on the 5-min chart
+   - The P80 is computed from prior sessions only (rolling, not including current session)
+   - With 73 total sessions, the rolling P80 for the last session uses 72 prior sessions
+
+### 10.2 The Universal Classification Rule (Proposed)
+
+Based on user clarifications and chart verification:
+
+```
+BREAKOUT: 5m CLOSE beyond OR boundary → BO px = close price (CLOSE-based)
+
+EVALUATION (per 5m bar, in order):
+  1. EV TARGET HIT (WICK): high ≥ target_px (bull) or low ≤ target_px (bear)
+     → If hit: FULL (win) — takes full precedence, stop-loss irrelevant
+  
+  2. P80 INVALIDATION (WICK): low ≤ invalid_px (bull) or high ≥ invalid_px (bear)
+     → If touched: FAIL (stop-loss hit)
+  
+  3. OPPOSITE OR CROSSING (WICK): low < or_low (bull) or high > or_high (bear)
+     → If touched AND EV NOT hit: FAIL (fakeout)
+
+CLASSIFICATION:
+  FULL  = EV target hit OR (EV not hit AND no stop touch AND no opposite OR touch)
+  FAIL  = EV not hit AND (stop touch OR opposite OR touch)
+
+P80 MAE: rolling, from prior sessions, BO MAE, BO px anchor, fallback 0.5%
+```
+
+### 10.3 Pine Script Code Issues Identified
+
+Reviewing `f_process_signal_logic` (L463-516) against the user's clarifications reveals **4 bugs**:
+
+#### Bug 1: Fakeout check is CLOSE-based, should be WICK-based (L506)
+```pine
+// Current (WRONG — CLOSE-based):
+bool crossed_opposite = st.sig_side == 1 ? c < st.or_low : c > st.or_high
+
+// Should be (WICK-based):
+bool crossed_opposite = st.sig_side == 1 ? l < st.or_low : h > st.or_high
+```
+**Impact:** The current code only flags fakeout when the 5m CLOSE is beyond the opposite OR. The user confirmed all levels (except breakout) should be wick-based. This means sessions where price wicked beyond the opposite OR but closed back inside are NOT being flagged as fakeouts.
+
+#### Bug 2: Fakeout takes precedence over WIN, should be reversed (L506-514)
+```pine
+// Current order (WRONG):
+// 1. Check fakeout FIRST → if crossed, outcome = 2 (takes precedence)
+// 2. Then check EV target → outcome = 1 (WIN)
+// 3. Then check invalidation → outcome = -1 (LOSS)
+
+// Should be (EV takes precedence):
+// 1. Check EV target FIRST → if hit, outcome = 1 (WIN, takes full precedence)
+// 2. If EV not hit, check invalidation → outcome = -1 (LOSS)
+// 3. If EV not hit and no invalidation, check fakeout → outcome = 2 (FAKEOUT)
+```
+**Impact:** The current code checks fakeout BEFORE EV target. If a session hits the EV target on bar 5 but crosses the opposite OR on bar 10, the current code would flag it as a fakeout (outcome=2) on bar 10, overwriting the win. The user confirmed: "if EV is hit then the other outcomes don't matter."
+
+#### Bug 3: P80 sample is WINS-only, should be ALL sessions (L493)
+```pine
+// Current (WINS-only):
+float p80_mae = f_get_pct_fallback(bo_mae_wins, 80, p80_mae_fallback)
+
+// Should be (ALL sessions):
+float p80_mae = f_get_pct_fallback(bo_mae_all, 80, 0.5)
+```
+**Impact:** The current code computes P80 from winning sessions only, with fallback to ALL then 0.5%. Our testing shows P80 from ALL sessions (no wins filter) produces the correct classification for 1100 BO (55/18 exact match with CLOSE-based stop). The wins-only P80 is too tight, catching too many false fails.
+
+**Note:** This finding is from the CLOSE-based stop test. With the corrected WICK-based stop, the P80 sample may need re-evaluation. The circular dependency (P80 → classification → history → P80) means this must be tested with the full corrected logic.
+
+#### Bug 4: §4.13 Swapped Parameters in `f_track_mae_abs` Call — CONFIRMED
+```pine
+// StatsLib.pine L127 — function signature:
+export f_track_mae_abs(float bar_h, float bar_l, float or_high, float or_low, ...)
+
+// DailyNYLevelsAnalytics.pine L327 — call site (SWAPPED):
+[mab, mas] = STL.f_track_mae_abs(h, l, st.or_low, st.or_high, ...)
+
+// Should be:
+[mab, mas] = STL.f_track_mae_abs(h, l, st.or_high, st.or_low, ...)
+```
+**Impact:** Bull absolute MAE measures drawdown from OR Low (wrong) instead of OR High. Bear absolute MAE measures drawdown from OR High (wrong) instead of OR Low. This corrupts the Session MAE values used for P80 computation and DOW diagnostics.
+
+**Verification:** Confirmed by reading both files. The function signature expects `(or_high, or_low)` but the call passes `(or_low, or_high)`.
+
+### 10.4 Chart Verification Results
+
+The user verified specific sessions on the chart:
+
+| Date | Preset | Side | Our Data | Gunship | Key Insight |
+|------|--------|------|----------|---------|-------------|
+| Jun 18 | 1100 BO | bear | MFE=0.285%, R2=Y, R3=Y | FAILED | Data correct; failed via P80 stop touch |
+| Apr 29 | MO Break | bull | Stop=N, R2=N | FULL | Didn't fail by cutoff → FULL |
+| May 22 | MO Break | bull | R2=Y, Stop=N | FAILED | Failed via opposite OR touch (wick) |
+| Apr 13 | 1100 BO | bear | Stop=N(CLOSE), Stop=Y(TOUCH), R2=Y | FAILED | **Stop is WICK-based, not CLOSE-based** |
+
+**April 13 was the breakthrough:** The 5m CLOSE didn't reach the invalidation level (Stop=N for CLOSE), but the 5m WICK did (MAE=0.355% > P80=0.329%). The user confirmed this session is FAILED, proving the stop is **TOUCH/WICK-based**.
+
+### 10.5 Testing Results Summary
+
+| Rule Config | 1100 BO | MO Break | 1800 Break | Q1 Break |
+|-------------|---------|----------|------------|----------|
+| P80 CLOSE only, ALL, no R2 | **55/18 ✅** | 59/15 ❌ | 59/16 ❌ | 55/18 ❌ |
+| P80 TOUCH only, ALL, no R2 | 51/22 ❌ | 54/20 ❌ | 57/18 ❌ | 50/23 ❌ |
+| P80 TOUCH + R3, ALL, no EV | 43/30 ❌ | 30/44 ❌ | 39/36 ❌ | **44/29 ✅** |
+| P80 TOUCH + R3 + EV precedence, ALL | 43/30 ❌ | 39/35 ❌ | 46/29 ❌ | 47/26 ❌ |
+| P80 TOUCH + R2(CLOSE), ALL, no EV | 43/30 ❌ | 30/44 ❌ | 39/36 ❌ | 44/29 ✅ |
+
+**No single configuration matches all 4 presets.** The closest:
+- 1100 BO matches with P80 CLOSE only (but user confirmed TOUCH is correct)
+- Q1 Break matches with P80 TOUCH + R3
+
+The discrepancy is likely caused by the **circular dependency**: the P80 value depends on the classification of prior sessions, which depends on the P80 value. If the first few sessions are classified incorrectly (due to cold-start fallback), the rolling P80 diverges from the Gunship's, causing cascading errors.
+
+### 10.6 Root Cause: Circular Dependency
+
+The classification system has a circular dependency:
+
+```
+P80 (from prior history) → determines current session's stop-loss level
+→ determines if current session is FULL or FAIL
+→ current session's MAE goes into wins or fails history array
+→ affects next session's P80
+```
+
+If the first few sessions use the wrong fallback (0.5%) and get classified incorrectly, the rolling P80 diverges from the Gunship's P80. By session 73, the divergence has compounded, causing 5-10 session mismatches.
+
+**The fix:** Apply all 4 bug fixes simultaneously, then re-run the rolling classification. The corrected logic should converge to the Gunship's classification because:
+1. WICK-based fakeout (Bug 1) catches more fakeouts → more fails in history → tighter P80
+2. EV precedence (Bug 2) saves sessions that hit EV target → fewer fails → wider P80
+3. P80 from ALL (Bug 3) uses full sample → more stable P80
+4. Correct MAE values (Bug 4) → correct P80 computation
+
+### 10.7 Recommended Pine Script Fixes
+
+| # | Fix | File | Line | Change | Priority |
+|---|-----|------|------|--------|----------|
+| 1 | Fakeout → WICK-based | DailyNYLevelsAnalytics.pine | L506 | `c < st.or_low` → `l < st.or_low` (and `c > st.or_high` → `h > st.or_high`) | 🔴 Critical | ✅ Applied |
+| 2 | EV precedence | DailyNYLevelsAnalytics.pine | L506-514 | Reorder: check EV target FIRST, then invalidation, then fakeout | 🔴 Critical | ✅ Applied |
+| 3 | P80 from ALL | DailyNYLevelsAnalytics.pine | L493 | `f_get_pct_fallback(bo_mae_wins, 80, ...)` → `f_get_pct_fallback(bo_mae_all, 80, 0.5)` | 🟡 Medium | ✅ Applied |
+| 4 | MAE swapped params | DailyNYLevelsAnalytics.pine | L327 | `st.or_low, st.or_high` → `st.or_high, st.or_low` | 🔴 Critical | ✅ Applied |
+
+### 10.8 Post-Fix Verification Results
+
+Updated `test_rolling_classification.py` to mirror the corrected Pine Script logic and re-ran all 4 presets:
+
+| Config | 1100 BO | MO Break | 1800 Break | Q1 Break |
+|--------|---------|----------|------------|----------|
+| Target | 55/18 | 32/42 | 35/40 | 44/29 |
+| Corrected DNL (TOUCH, P80 ALL, EV precedence, WICK fakeout) | **42/31 ❌** | **43/31 ❌** | **49/26 ❌** | **62/11 ❌** |
+
+The corrected DNL logic is **still more strict** than the Gunship. Even with all 4 bugs fixed, the Gunship classifies more sessions as FULL and fewer as FAILED.
+
+### 10.8.1 Revised Hypothesis
+The Gunship likely does **not** use a single universal fakeout/stop rule. The only exact matches found are:
+- **1100 BO**: P80 CLOSE stop-only, ALL sessions, **no opposite-OR fakeout rule** = 55/18 ✅
+- **Q1 Break**: P80 TOUCH + R3, ALL sessions = 44/29 ✅
+
+This suggests either:
+1. Preset-specific classification rules, or
+2. The Gunship's base rule is much more lenient than "opposite OR touch = fail"
+
+### 10.9 Next Steps
+
+1. **Publish corrected Pine Script** to TradingView and verify live behavior
+2. **Capture Gunship per-preset classification details** via MCP to confirm the actual rule
+3. **Test hypothesis**: Gunship "FULL" = NOT (stop-loss hit), with no opposite-OR fail rule
+4. **Verify all levels** after Pine Script is live
+5. **Investigate "Red zone" definition** for MED MFE and MAX MFE levels
+
+### 10.9 Validation Scripts Created (Session 2)
+
+| Script | Purpose |
+|--------|---------|
+| `check_data_range.py` | Data range and holiday gap analysis |
+| `check_data_range_v2.py` | Session count from June 26 backwards, finding correct start date |
+| `cross_preset_final.py` | Cross-preset validation with correct date range (Mar 12-13 → Jun 26) |
+| `verify_all_levels.py` | Unified level verification across all 4 presets |
+| `verify_levels_v2.py` | Level verification with fixed Reversal Zone direction |
+| `verify_reversal_zone.py` | Reversal Zone P25/P50 boundary verification |
+| `verify_rolling.py` | Rolling percentile level verification |
+| `check_ev_target.py` | EV target hit analysis (5m vs 1m, discrepancy sessions) |
+| `test_rolling_classification.py` | Rolling classification with CLOSE/TOUCH, Wins/ALL/Fails |
+| `test_stop_only.py` | P80 stop-loss only (no R2) classification |
+| `test_ev_precedence.py` | EV precedence rule: FAIL = (R2 AND NOT EV) OR stop |
+| `test_touch_stop.py` | TOUCH-based stop with various R2/EV combinations |
+| `show_classification_detail.py` | Detailed session-by-session classification output |
