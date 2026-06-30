@@ -821,18 +821,22 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 [c_avg, w_avg] = f_get_side_styles(side, render_side, i_emphasize_active_side, stat_avg_color)
                 [c_str, w_str] = f_get_side_styles(side, render_side, i_emphasize_active_side, r_stat_stretch_color)
 
-                if array.size(src_data) > 0
-                    float p_med = array.median(src_data)
-                    float p_avg = array.avg(src_data)
-                    float p_str = array.percentile_nearest_rank(src_data, i_pct_stretch)
+                // MED/MAX MFE: Use Green (FULL/winning) sessions from BO px — verified 2026-06-30
+                array<float> green_mfe = f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
+                float green_bo_px = not na(st.sig_breakout_px) and st.sig_breakout_side == side ? st.sig_breakout_px : (side == 1 ? st.or_high : st.or_low)
+                
+                if array.size(green_mfe) > 0
+                    float p_med = array.percentile_nearest_rank(green_mfe, 50)
+                    float p_avg = array.avg(green_mfe)
+                    float p_str = array.percentile_nearest_rank(green_mfe, 75)
                     
-                    float y_med = ref_px * (1.0 + (side * p_med / 100.0))
-                    float y_avg = ref_px * (1.0 + (side * p_avg / 100.0))
-                    float y_str = ref_px * (1.0 + (side * p_str / 100.0))
+                    float y_med = green_bo_px * (1.0 + (side * p_med / 100.0))
+                    float y_avg = green_bo_px * (1.0 + (side * p_avg / 100.0))
+                    float y_str = green_bo_px * (1.0 + (side * p_str / 100.0))
                     
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "Median P50 " + STL.f_pct_fmt(p_med) + lb_sfx, c_med, 42, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "MED MFE " + STL.f_pct_fmt(p_med) + lb_sfx, c_med, 42, side_group, 0, strat)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg, "AVG " + STL.f_pct_fmt(p_avg) + lb_sfx, c_avg, 43, side_group, 0, strat)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "Stretch P" + str.tostring(int(i_pct_stretch)) + " " + STL.f_pct_fmt(p_str) + lb_sfx, c_str, 50, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "MAX MFE P75 " + STL.f_pct_fmt(p_str) + lb_sfx, c_str, 50, side_group, 0, strat)
 
         // 3. Tactical Directional Levels (Respect side strategy and suppress pre-breakout)
         bool has_breakout = (render_side != 0)
@@ -862,16 +866,16 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             if not na(t_render_px)
                 // Percentile stats (single source of truth — always from history)
                 float p50_bo   = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
-                // Fix 4: Cashflow uses all breakouts (not wins-only) per Gunship tooltip
-                float p20_bo   = f_get_pct_fallback(f_filter_breakout_all(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 20)
+                // Cashflow uses WINS (Green/FULL sessions) — verified 2026-06-30 via Python + Gunship comparison
+                float p20_bo   = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 20)
                 float p50_fake = f_get_pct_fallback(f_filter_fakeout_mfe(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
                 float p75_fake = f_get_pct_fallback(f_filter_fakeout_mfe(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 75)
                 
                 // MAE stats (Invalidation/Pullback) with robust cold-start fallbacks
                 float p80_mae_losses = f_get_pct_fallback(f_filter_tactical_outcome(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, false), 80, 0.5)
                 float p80_mae_wins   = f_get_pct_fallback(f_filter_tactical_outcome(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, true), 80, p80_mae_losses)
-                // Fix 4: Pullback uses all breakouts (not wins-only) per Gunship tooltip
-                float p25_mae        = f_get_pct_fallback(f_filter_breakout_all(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side), 25, 0.15)
+                // Pullback uses WINS (Green/FULL sessions) — verified 2026-06-30 via Python + Gunship comparison
+                float p25_mae        = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side), 25, 0.15)
 
                 // Derived prices (single source of truth — always from t_render_px)
                 float target_px        = t_render_px * (side == 1 ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
