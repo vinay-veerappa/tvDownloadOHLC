@@ -166,17 +166,30 @@ def build_sessions(cfg):
         if session_5m.empty:
             continue
 
-        # OR building from 5m chart bars
-        or_bars = session_5m[
-            (session_5m['et_hhmm'] >= cfg['or_start']) &
-            (session_5m['et_hhmm'] < cfg['or_end'])
+        # OR building from 1m LTF bars (Pine uses request.security_lower_tf "1")
+        # This matches the Pine code which uses 1m for OR building only.
+        if cfg['crosses_midnight']:
+            next_date = date + pd.Timedelta(days=1)
+            session_1m = pd.concat([
+                df_1m[(df_1m['date'] == date) & (df_1m['et_hhmm'] >= cfg['or_start'])],
+                df_1m[(df_1m['date'] == next_date) & (df_1m['et_hhmm'] < cfg['cutoff'])]
+            ])
+        else:
+            session_1m = df_1m[
+                (df_1m['date'] == date) &
+                (df_1m['et_hhmm'] >= cfg['or_start']) &
+                (df_1m['et_hhmm'] < cfg['cutoff'])
+            ]
+        or_bars_1m = session_1m[
+            (session_1m['et_hhmm'] >= cfg['or_start']) &
+            (session_1m['et_hhmm'] < cfg['or_end'])
         ]
-        if or_bars.empty:
+        if or_bars_1m.empty:
             continue
-        or_high = or_bars['high'].max()
-        or_low = or_bars['low'].min()
+        or_high = or_bars_1m['high'].max()
+        or_low = or_bars_1m['low'].min()
 
-        # Data window (post-OR to cutoff)
+        # Data window (post-OR to cutoff) — 5m chart timeframe (production standard)
         data_5m = session_5m[session_5m['et_hhmm'] >= cfg['or_end']]
         if data_5m.empty:
             continue
@@ -248,6 +261,8 @@ def build_sessions(cfg):
         bo_mfe = 0.0
         bo_mae = 0.0
 
+        # Pine skips invalidation check on breakout bar (not is_breakout_bar)
+        is_breakout_bar = True
         for idx, row in post_bo.iterrows():
             # Track bo_mfe and bo_mae from breakout price
             if bo_side == 1:
@@ -271,9 +286,10 @@ def build_sessions(cfg):
             session_low_data = min(session_low_data, row['low'])
             session_high_data = max(session_high_data, row['high'])
 
-            # Classification checks (only if still pending)
-            if sig_outcome <= 0:
-                # 1. Invalidation wick-touch
+            # Classification checks (only if still pending AND not breakout bar)
+            # Pine: if st.sig_side != 0 and st.sig_outcome <= 0 and not is_breakout_bar
+            if sig_outcome <= 0 and not is_breakout_bar:
+                # 1. Invalidation wick-touch (rolling p80)
                 if bo_side == 1 and row['low'] <= invalid_px:
                     sig_outcome = -1  # LOSS
                 elif bo_side == -1 and row['high'] >= invalid_px:
@@ -283,6 +299,8 @@ def build_sessions(cfg):
                                    (bo_side == -1 and row['high'] > or_high)
                 if crossed_opposite:
                     sig_outcome = 2  # FAKE
+
+            is_breakout_bar = False  # Subsequent bars are not breakout bars
 
         # Cutoff finalization: no invalidation = WIN
         if sig_outcome == 0:
@@ -371,7 +389,7 @@ for preset_name, cfg in PRESETS.items():
     for label, sample in [('Wins', same_win), ('ALL', same_all), ('Fakes', same_fake)]:
         if len(sample) == 0:
             continue
-        p20 = pine_pct(sample['bo_mfe'].values, 20)
+        p20 = pine_pct_raw(sample['bo_mfe'].values, 20)
         price = bo_px * (1 + side * p20 / 100)
         delta_g = price - g['BO Cashflow']
         print(f"    {label:6s} N={len(sample):3d} P20={p20:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
@@ -381,7 +399,7 @@ for preset_name, cfg in PRESETS.items():
     for label, sample in [('ALL', same_all), ('Wins', same_win), ('Losses', same_loss), ('Fakes', same_fake)]:
         if len(sample) == 0:
             continue
-        p80 = pine_pct(sample['bo_mae'].values, 80)
+        p80 = pine_pct_raw(sample['bo_mae'].values, 80)
         price = bo_px * (1 - side * p80 / 100)
         delta_g = price - g['PB Inval']
         print(f"    {label:7s} N={len(sample):3d} P80={p80:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
@@ -391,7 +409,7 @@ for preset_name, cfg in PRESETS.items():
     for label, sample in [('Wins', same_win), ('ALL', same_all), ('Fakes', same_fake)]:
         if len(sample) == 0:
             continue
-        p25 = pine_pct(sample['bo_mae'].values, 25)
+        p25 = pine_pct_raw(sample['bo_mae'].values, 25)
         price = bo_px * (1 - side * p25 / 100)
         delta_g = price - g['PB Entry']
         print(f"    {label:6s} N={len(sample):3d} P25={p25:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
@@ -433,7 +451,7 @@ for preset_name, cfg in PRESETS.items():
     # ---- Pivot P50 (fake MFE from BO px) ----
     print(f"\n  PIVOT P50 (Gunship: {g['Pivot']:.2f})")
     if len(same_fake) > 0:
-        p50 = pine_pct(same_fake['bo_mfe'].values, 50)
+        p50 = pine_pct_raw(same_fake['bo_mfe'].values, 50)
         price = bo_px * (1 + side * p50 / 100)
         delta_g = price - g['Pivot']
         print(f"    Fakes N={len(same_fake):3d} P50={p50:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
@@ -441,7 +459,7 @@ for preset_name, cfg in PRESETS.items():
     # ---- BO Confirm P75 (fake MFE from BO px) ----
     print(f"\n  BO CONFIRM P75 (Gunship: {g['BO Confirm']:.2f})")
     if len(same_fake) > 0:
-        p75 = pine_pct(same_fake['bo_mfe'].values, 75)
+        p75 = pine_pct_raw(same_fake['bo_mfe'].values, 75)
         price = bo_px * (1 + side * p75 / 100)
         delta_g = price - g['BO Confirm']
         print(f"    Fakes N={len(same_fake):3d} P75={p75:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
@@ -451,7 +469,7 @@ for preset_name, cfg in PRESETS.items():
     for label, sample in [('Wins(Green)', same_win), ('ALL', same_all)]:
         if len(sample) == 0:
             continue
-        p50 = pine_pct(sample['bo_mfe'].values, 50)
+        p50 = pine_pct_raw(sample['bo_mfe'].values, 50)
         price = bo_px * (1 + side * p50 / 100)
         delta_g = price - g['MED MFE']
         print(f"    {label:12s} N={len(sample):3d} P50={p50:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
@@ -461,7 +479,7 @@ for preset_name, cfg in PRESETS.items():
     for label, sample in [('Wins(Green)', same_win), ('ALL', same_all)]:
         if len(sample) == 0:
             continue
-        p75 = pine_pct(sample['bo_mfe'].values, 75)
+        p75 = pine_pct_raw(sample['bo_mfe'].values, 75)
         price = bo_px * (1 + side * p75 / 100)
         delta_g = price - g['MAX MFE']
         print(f"    {label:12s} N={len(sample):3d} P75={p75:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
@@ -474,10 +492,23 @@ for preset_name, cfg in PRESETS.items():
         delta_g = price - g['AVG']
         print(f"    Wins(Green) N={len(same_win):3d} AVG={avg_mfe:.4f}% -> {price:.2f}  dGun={delta_g:+.2f}")
 
-    # ---- Classification detail ----
-    print(f"\n  CLASSIFICATION DETAIL (first 10 same-side sessions):")
-    for _, row in same_all.head(10).iterrows():
+    # ---- Full session dump (all same-side sessions) ----
+    print(f"\n  FULL SESSION DUMP (all {len(same_all)} same-side sessions):")
+    print(f"    {'Date':<12} {'Outcome':>7} {'bo_mae%':>8} {'bo_mfe%':>8} {'p80_at_bo%':>10} {'invalid_px':>12} {'bo_px':>10}")
+    for _, row in same_all.iterrows():
         outcome_str = {1: 'WIN', -1: 'LOSS', 2: 'FAKE'}.get(row['sig_outcome'], '?')
-        print(f"    {row['date']} side={row['side']} outcome={outcome_str} bo_mae={row['bo_mae']:.4f}% p80_at_bo={row['p80_mae_at_bo']:.4f}% invalid={row['invalid_px']:.2f}")
+        print(f"    {str(row['date']):<12} {outcome_str:>7} {row['bo_mae']:8.4f} {row['bo_mfe']:8.4f} {row['p80_mae_at_bo']:10.4f} {row['invalid_px']:12.2f} {row['bo_px']:10.2f}")
+
+    # ---- Sorted bo_mae dump for manual percentile verification ----
+    print(f"\n  SORTED bo_mae (all {len(same_all)} same-side sessions, for manual p80 check):")
+    all_mae = sorted(same_all['bo_mae'].values)
+    win_mae = sorted(same_win['bo_mae'].values)
+    for i, v in enumerate(all_mae):
+        marker = " <-- p80 rank" if i == math.ceil(80/100*len(all_mae))-1 else ""
+        print(f"    ALL[{i+1:3d}] = {v:.4f}%{marker}")
+    print(f"  ---")
+    for i, v in enumerate(win_mae):
+        marker = " <-- p80 rank" if i == math.ceil(80/100*len(win_mae))-1 else ""
+        print(f"    WIN[{i+1:3d}] = {v:.4f}%{marker}")
 
     print()
