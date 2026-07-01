@@ -200,7 +200,7 @@ string lb_sfx = ""
 // Display Profile — table and label size tokens (resolved once per bar).
 // ============================================================================
 r_tbl_hdr_size  = Core.f_display_profile_table_size("Small",  i_display_profile)
-r_tbl_body_size = Core.f_display_profile_table_size("Tiny",   i_display_profile)
+r_tbl_body_size = Core.f_display_profile_table_size("Small",   i_display_profile)
 r_tbl_title_size = Core.f_display_profile_table_size("Small", i_display_profile)
 
 // ============================================================================
@@ -1212,36 +1212,22 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     f_summary_aggregate_row(t, r, "› BO Price", entry_txt, cell_bg, body_txt, body_txt, body_sz)
     r += 1
 
-    // ====== STREAKS — UP ======
-    f_summary_section_header(t, r, "♦ STREAKS — UP ♦", header_bg, header_txt, hdr_sz)
+    // ====== STREAKS (UP | DN) ======
+    f_summary_section_header(t, r, "♦ STREAKS (UP | DN) ♦", header_bg, header_txt, hdr_sz)
     r += 1
-    string cur_up_txt = str.tostring(cs_up) + (cw_up ? " Full" : " Failed")
+    string cur_up_txt = str.tostring(cs_up) + (cw_up ? " Full" : " Fail")
     color cur_up_clr = cw_up ? bull_clr : bear_clr
-    f_summary_aggregate_row(t, r, "› Current", cur_up_txt, cell_bg, body_txt, cur_up_clr, body_sz)
-    r += 1
-    f_summary_aggregate_row(t, r, "› Best Full Run", str.tostring(bw_up), cell_bg, body_txt, bull_clr, body_sz)
-    r += 1
-    f_summary_aggregate_row(t, r, "› Worst Fail Run", str.tostring(wf_up), cell_bg, body_txt, bear_clr, body_sz)
-    r += 1
-    f_summary_aggregate_row(t, r, "› Avg Full Run", str.tostring(aw_up, "#.#"), cell_bg, body_txt, bull_clr, body_sz)
-    r += 1
-    f_summary_aggregate_row(t, r, "› Avg Fail Run", str.tostring(af_up, "#.#"), cell_bg, body_txt, bear_clr, body_sz)
-    r += 1
-
-    // ====== STREAKS — DOWN ======
-    f_summary_section_header(t, r, "♦ STREAKS — DOWN ♦", header_bg, header_txt, hdr_sz)
-    r += 1
-    string cur_dn_txt = str.tostring(cs_dn) + (cw_dn ? " Full" : " Failed")
+    string cur_dn_txt = str.tostring(cs_dn) + (cw_dn ? " Full" : " Fail")
     color cur_dn_clr = cw_dn ? bull_clr : bear_clr
-    f_summary_aggregate_row(t, r, "› Current", cur_dn_txt, cell_bg, body_txt, cur_dn_clr, body_sz)
+    f_summary_split_row(t, r, "› Current", cur_up_txt, cur_dn_txt, cell_bg, body_txt, cur_up_clr, cur_dn_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Best Full Run", str.tostring(bw_dn), cell_bg, body_txt, bull_clr, body_sz)
+    f_summary_split_row(t, r, "› Best Full Run", str.tostring(bw_up), str.tostring(bw_dn), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Worst Fail Run", str.tostring(wf_dn), cell_bg, body_txt, bear_clr, body_sz)
+    f_summary_split_row(t, r, "› Worst Fail Run", str.tostring(wf_up), str.tostring(wf_dn), cell_bg, body_txt, bear_clr, bear_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Avg Full Run", str.tostring(aw_dn, "#.#"), cell_bg, body_txt, bull_clr, body_sz)
+    f_summary_split_row(t, r, "› Avg Full Run", str.tostring(aw_up, "#.#"), str.tostring(aw_dn, "#.#"), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Avg Fail Run", str.tostring(af_dn, "#.#"), cell_bg, body_txt, bear_clr, body_sz)
+    f_summary_split_row(t, r, "› Avg Fail Run", str.tostring(af_up, "#.#"), str.tostring(af_dn, "#.#"), cell_bg, body_txt, bear_clr, bear_clr, body_sz)
     r += 1
 
     // ====== STREAKS — AGGREGATE ======
