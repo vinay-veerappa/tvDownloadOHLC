@@ -134,7 +134,7 @@ i_color_pullback_activation = input.color(#A3E635, "Pullback Activation Color", 
 // ============================================================================
 grp_table = "Data Table"
 i_show_table = input.bool(false, "Show Data Table", group=grp_table)
-i_table_view = input.string("Summary", "Table View", options=["Summary", "DOW Diagnostic", "MFE View", "MAE View", "Fakeout View"], group=grp_table)
+i_table_view = input.string("Summary", "Table View", options=["Summary", "DOW Diagnostic", "MFE & MAE View", "Fakeout View"], group=grp_table)
 i_table_pos = input.string("Bottom Right", "Table Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=grp_table)
 i_table_bg_color = input.color(color.black, "Table Background Color", group=grp_table)
 i_table_border_color = input.color(color.gray, "Table Border Color", group=grp_table)
@@ -1438,60 +1438,65 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
     RSL.RangeSpec sp = array.get(specs, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
 
-    int n_cols = 6
-    int n_rows = 3
-    table t = Tables.f_new_table(pos, n_cols, n_rows, color.new(bg, 85), color.new(border, 70), 1)
-    color cell_bg = color.new(bg, 85)
-    color h_bg = color.new(header_bg, 70)
-
-    Tables.f_draw_header_cell(t, 0, 0, sp.name + " - " + view, h_bg, header_txt, hdr_sz, 1, text.align_center)
-    Tables.f_draw_header_cell(t, 1, 0, "Count", h_bg, header_txt, hdr_sz, 1, text.align_center)
-    Tables.f_draw_header_cell(t, 2, 0, "P50", h_bg, header_txt, hdr_sz, 1, text.align_center)
-    Tables.f_draw_header_cell(t, 3, 0, "P75", h_bg, header_txt, hdr_sz, 1, text.align_center)
-    Tables.f_draw_header_cell(t, 4, 0, "P90", h_bg, header_txt, hdr_sz, 1, text.align_center)
-    Tables.f_draw_header_cell(t, 5, 0, "Rate", h_bg, header_txt, hdr_sz, 1, text.align_center)
-
-    if view == "MFE View"
+    if view == "MFE & MAE View"
+        int n_cols_mfe = 9
+        int n_rows_mfe = 3
+        table t_mfe = Tables.f_new_table(pos, n_cols_mfe, n_rows_mfe, color.new(bg, 85), color.new(border, 70), 1)
+        
+        Tables.f_draw_header_cell(t_mfe, 0, 0, sp.name + " - MFE & MAE", h_bg, header_txt, hdr_sz, 9, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 0, 1, "Side", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 1, 1, "N", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 2, 1, "MFE p50", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 3, 1, "MFE p75", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 4, 1, "MFE p90", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 5, 1, "MAE p50", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 6, 1, "MAE p75", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 7, 1, "PB p50", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 8, 1, "R-Mult", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        
         array<float> bull = STL.f_build_filtered(hist.mfe_bull)
         array<float> bear = STL.f_build_filtered(hist.mfe_bear)
-        float b50 = array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 50) : na
-        float b75 = array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 75) : na
-        float b90 = array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 90) : na
-        float s50 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 50) : na
-        float s75 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 75) : na
-        float s90 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 90) : na
-        Tables.f_draw_value_cell(t, 0, 1, "Bull", cell_bg, bull_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 1, 1, str.tostring(array.size(bull)), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(b50), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 3, 1, STL.f_pct_fmt(b75), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 4, 1, STL.f_pct_fmt(b90), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 5, 1, "-", cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 0, 2, "Bear", cell_bg, bear_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 1, 2, str.tostring(array.size(bear)), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 2, 2, STL.f_pct_fmt(s50), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(s75), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(s90), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 5, 2, "-", cell_bg, body_txt, body_sz, 1, text.align_center)
-    else if view == "MAE View"
         array<float> mab = STL.f_build_filtered(hist.mae_bull_abs)
         array<float> mas = STL.f_build_filtered(hist.mae_bear_abs)
         array<float> mpb = STL.f_build_filtered(hist.mae_bull_pb)
         array<float> mps = STL.f_build_filtered(hist.mae_bear_pb)
+        
         float rb = array.size(hist.r_multiple_bull) > 0 ? array.avg(hist.r_multiple_bull) : na
         float rs = array.size(hist.r_multiple_bear) > 0 ? array.avg(hist.r_multiple_bear) : na
-        Tables.f_draw_value_cell(t, 0, 1, "Bull Abs/PB", cell_bg, bull_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 1, 1, str.tostring(array.size(mab)), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 3, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 4, 1, STL.f_pct_fmt(array.size(mpb) > 0 ? array.percentile_nearest_rank(mpb, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 5, 1, na(rb) ? "n/a" : str.tostring(rb, "#.##"), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 0, 2, "Bear Abs/PB", cell_bg, bear_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 1, 2, str.tostring(array.size(mas)), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 2, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 5, 2, na(rs) ? "n/a" : str.tostring(rs, "#.##"), cell_bg, body_txt, body_sz, 1, text.align_center)
+        
+        // Bull Row
+        Tables.f_draw_value_cell(t_mfe, 0, 2, "Bull", cell_bg, bull_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 1, 2, str.tostring(array.size(bull)), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 2, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 3, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 4, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 90) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 5, 2, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 6, 2, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 7, 2, STL.f_pct_fmt(array.size(mpb) > 0 ? array.percentile_nearest_rank(mpb, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 8, 2, na(rb) ? "n/a" : str.tostring(rb, "#.##"), cell_bg, body_txt, body_sz, 1, text.align_center)
+        
+        Tables.f_draw_value_cell(t_mfe, 0, 3, "Bear", cell_bg, bear_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 1, 3, str.tostring(array.size(bear)), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 2, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 3, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 4, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 90) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 5, 3, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 6, 3, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 7, 3, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 8, 3, na(rs) ? "n/a" : str.tostring(rs, "#.##"), cell_bg, body_txt, body_sz, 1, text.align_center)
+        
     else if view == "Fakeout View"
+        int n_cols = 6
+        int n_rows = 3
+        table t = Tables.f_new_table(pos, n_cols, n_rows, color.new(bg, 85), color.new(border, 70), 1)
+        
+        Tables.f_draw_header_cell(t, 0, 0, sp.name + " - Fakeout View", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t, 1, 0, "Count", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t, 2, 0, "P50", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t, 3, 0, "P75", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t, 4, 0, "P90", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t, 5, 0, "Rate", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        
         array<float> fmb = STL.f_build_filtered_by_outcome(hist.bo_mfe_bull, hist.sig_side, hist.sig_outcome, 1, 2)
         array<float> fms = STL.f_build_filtered_by_outcome(hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, -1, 2)
         array<float> rfb = STL.f_build_filtered_by_outcome(hist.mae_bull_abs, hist.sig_side, hist.sig_outcome, 1, 2)
@@ -1505,6 +1510,8 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
         float rs50 = array.size(rfs) > 0 ? array.percentile_nearest_rank(rfs, 50) : na
         float rs90 = array.size(rfs) > 0 ? array.percentile_nearest_rank(rfs, 90) : na
         float dbr = STL.f_double_break_rate(hist.double_break, hist.entry_triggered_bull, hist.entry_triggered_bear)
+        
+        color cell_bg = color.new(bg, 85)
         Tables.f_draw_value_cell(t, 0, 1, "Bull Fake", cell_bg, bull_clr, body_sz, 1, text.align_center)
         Tables.f_draw_value_cell(t, 1, 1, STL.f_pct_fmt(b50), cell_bg, body_txt, body_sz, 1, text.align_center)
         Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(b75), cell_bg, body_txt, body_sz, 1, text.align_center)
