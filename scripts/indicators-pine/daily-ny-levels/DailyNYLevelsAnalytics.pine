@@ -1440,7 +1440,7 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
 
     if view == "MFE & MAE View"
         int n_cols_mfe = 9
-        int n_rows_mfe = 3
+        int n_rows_mfe = 4
         table t_mfe = Tables.f_new_table(pos, n_cols_mfe, n_rows_mfe, color.new(bg, 85), color.new(border, 70), 1)
         
         Tables.f_draw_header_cell(t_mfe, 0, 0, sp.name + " - MFE & MAE", h_bg, header_txt, hdr_sz, 9, text.align_center)
@@ -1511,7 +1511,6 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
         float rs90 = array.size(rfs) > 0 ? array.percentile_nearest_rank(rfs, 90) : na
         float dbr = STL.f_double_break_rate(hist.double_break, hist.entry_triggered_bull, hist.entry_triggered_bear)
         
-        color cell_bg = color.new(bg, 85)
         Tables.f_draw_value_cell(t, 0, 1, "Bull Fake", cell_bg, bull_clr, body_sz, 1, text.align_center)
         Tables.f_draw_value_cell(t, 1, 1, STL.f_pct_fmt(b50), cell_bg, body_txt, body_sz, 1, text.align_center)
         Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(b75), cell_bg, body_txt, body_sz, 1, text.align_center)
