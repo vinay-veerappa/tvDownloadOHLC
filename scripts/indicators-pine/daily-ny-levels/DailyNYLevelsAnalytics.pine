@@ -27,7 +27,7 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 //   - vveerappa/PineDrawingZones/3
 //   - vveerappa/PineDrawingTables/4
 //   - vveerappa/PineDrawingVerticalMarkers/3
-//   - vveerappa/StatsLib/20
+//   - vveerappa/StatsLib/21
 // ============================================================================
 
 import vveerappa/RangeSessionLib/20 as RSL
@@ -37,7 +37,7 @@ import vveerappa/PineDrawingMarkers/3 as Markers
 import vveerappa/PineDrawingZones/3 as Zones
 import vveerappa/PineDrawingTables/4 as Tables
 import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
-import vveerappa/StatsLib/20 as STL
+import vveerappa/StatsLib/21 as STL
 
 // ============================================================================
 // Inputs — Session
