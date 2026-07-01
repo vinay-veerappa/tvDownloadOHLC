@@ -1,14 +1,14 @@
 // This Pine Script source code is subject to the terms of the Mozilla Public License 2.0
-// © antigravity / Vinay
+// Â© antigravity / Vinay
 
 //@version=6
 indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
 
 // ============================================================================
-// Daily NY Levels Analytics v3 — Phase 2 with v3 Library Migration
+// Daily NY Levels Analytics v3 â€” Phase 2 with v3 Library Migration
 // Author: vveerappa | Version: 3
 // ============================================================================
-// Architecture — Visual System v3.1:
+// Architecture â€” Visual System v3.1:
 //   - All family libraries on /3, StatsLib on /9
 //   - StatsLib/9: f_streak_stats, f_prob_after_streak,
 //     f_rolling_win_rate, f_combine_bool_or, f_combine_bool_and
@@ -16,7 +16,7 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 //     registry-based collision suppression and staggering
 //   - Module-scope color palette resolved once per bar (r_ prefix vars)
 //   - Combined Summary table with directional split (UP/DOWN) at top
-//   - DOW Diagnostic split by direction (▲/▼) using O(N) single-pass aggregation
+//   - DOW Diagnostic split by direction (â–²/â–¼) using O(N) single-pass aggregation
 //   - Rolling section computes from committed history (last 5/10/20 win rate)
 //
 // Libraries required:
@@ -40,7 +40,7 @@ import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
 import vveerappa/StatsLib/21 as STL
 
 // ============================================================================
-// Inputs — Session
+// Inputs â€” Session
 // ============================================================================
 grp_session = "Session & Presets"
 i_preset = input.string("Market Open", "Preset", options=["1800 Break", "0300 Break", "0300 Transfer", "Q1 Break", "Market Open", "Magic Hour", "1100 BO", "Lunch Break", "1400 Break", "Custom"], group=grp_session)
@@ -51,7 +51,7 @@ i_timezone = input.string("America/New_York", "Timezone", options=["America/New_
 i_ev_target_pct = input.float(0.30, "EV Target (%)", minval=0.01, step=0.01, group=grp_session)
 
 // ============================================================================
-// Inputs — Features
+// Inputs â€” Features
 // ============================================================================
 grp_features = "Features"
 i_show_stat_lines = input.bool(true, "Show Stat Lines", group=grp_features)
@@ -77,14 +77,14 @@ i_show_time_med = input.bool(true, "Show Median Line", group=grp_features)
 i_emphasize_active_side = input.bool(true, "Emphasize Active Side", group=grp_features)
 
 // ============================================================================
-// Inputs — Theme
+// Inputs â€” Theme
 // ============================================================================
 grp_theme = "Theme"
 i_theme_mode = input.string("Custom", "Color Theme", options=["Custom", "Dark", "Light"], group=grp_theme)
 i_display_profile = input.string("Normal", "Display Profile", options=["Tiny", "Small", "Normal", "Large", "Huge"], group=grp_theme)
 
 // ============================================================================
-// Inputs — Visual System
+// Inputs â€” Visual System
 // ============================================================================
 grp_visual = "Visual System"
 i_bull_color = input.color(#38BD8A, "Bull Color (Custom)", group=grp_visual)
@@ -105,7 +105,7 @@ i_label_stagger_bars = input.int(8, "Label Stagger Step (bars)", minval=1, maxva
 i_label_strategy = input.string("Stagger", "Label Strategy", options=["Stagger", "Merge", "Hide", "Off"], group=grp_visual)
 
 // ============================================================================
-// Inputs — Context Colors (Phase 1 stat lines, histograms, time dist)
+// Inputs â€” Context Colors (Phase 1 stat lines, histograms, time dist)
 // ============================================================================
 grp_ctx_colors = "Context Colors"
 i_color_median = input.color(#FACC15, "Median Color", group=grp_ctx_colors)
@@ -115,7 +115,7 @@ i_color_midpoint = input.color(#94A3B8, "Midpoint Color", group=grp_ctx_colors)
 i_color_time_title = input.color(#D946EF, "Time Dist Title Color", group=grp_ctx_colors)
 
 // ============================================================================
-// Inputs — Tactical Colors (Phase 2 directional overlay)
+// Inputs â€” Tactical Colors (Phase 2 directional overlay)
 // ============================================================================
 grp_tac_colors = "Tactical Colors"
 i_color_bo_cashflow = input.color(#4ADE80, "BO Cashflow Color", group=grp_tac_colors)
@@ -130,7 +130,7 @@ i_color_pullback_activation = input.color(#A3E635, "Pullback Activation Color", 
   
 
 // ============================================================================
-// Inputs — Data Table
+// Inputs â€” Data Table
 // ============================================================================
 grp_table = "Data Table"
 i_show_table = input.bool(false, "Show Data Table", group=grp_table)
@@ -143,7 +143,7 @@ i_table_header_text_color = input.color(color.white, "Table Header Text Color", 
 i_table_body_text_color = input.color(color.white, "Table Body Text Color", group=grp_table)
 
 // ============================================================================
-// Inputs — Debug
+// Inputs â€” Debug
 // ============================================================================
 grp_debug = "Debug"
 i_show_debug = input.bool(false, "Show Debug Labels", group=grp_debug)
@@ -171,7 +171,7 @@ table_bull_color = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0)
 table_bear_color = Core.f_resolve_color(i_theme_mode, color.new(i_bear_color, 0), #F87171, #B3261E)
 
 // ============================================================================
-// Render color palette — resolved once per bar, consumed everywhere.
+// Render color palette â€” resolved once per bar, consumed everywhere.
 // Per Visual System v3.1: resolve at module scope, not inside render functions.
 // ============================================================================
 r_bull_color              = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0), #38BD8A, #008060)
@@ -197,7 +197,7 @@ r_pb_not_armed_color      = color.new(r_pullback_act_color, 70)
 string lb_sfx = ""
 
 // ============================================================================
-// Display Profile — table and label size tokens (resolved once per bar).
+// Display Profile â€” table and label size tokens (resolved once per bar).
 // ============================================================================
 r_tbl_hdr_size  = Core.f_display_profile_table_size("Small",  i_display_profile)
 r_tbl_body_size = Core.f_display_profile_table_size("Small",   i_display_profile)
@@ -278,7 +278,7 @@ int ny_dow = dayofweek(time, i_timezone)
 // ============================================================================
 
 f_or_color(int idx, string state) =>
-    // Consume module-level resolved base colors — do not re-resolve here.
+    // Consume module-level resolved base colors â€” do not re-resolve here.
     color base = idx % 2 == 0 ? r_bull_color : r_bear_color
     int alpha = math.min(15 + idx * 10, 75)
     if state == "forming"
@@ -436,12 +436,12 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
     //   WIN  (1) = breakout occurred AND no invalidation wick-touch before cutoff (finalized at commit)
     //   LOSS (-1) = invalidation wick-touch hit
     //   FAKE (2)  = invalidation hit AND opposite OR wick cross (deeper loss; populates fakeout arrays)
-    // EV target is a display level only — NOT a classification criterion.
+    // EV target is a display level only â€” NOT a classification criterion.
     if st.sig_side != STL.SIDE_NONE and st.sig_outcome <= 0 and not is_breakout_bar
-        // 1. Invalidation wick-touch — primary classification criterion (FAILED)
+        // 1. Invalidation wick-touch â€” primary classification criterion (FAILED)
         if not na(st.sig_invalid_px) and (st.sig_side == STL.SIDE_BULL ? l <= st.sig_invalid_px : h >= st.sig_invalid_px)
             st.sig_outcome := STL.OUTCOME_LOSS // Straight Loss
-        // 2. Fakeout — opposite OR wick cross (deeper than invalidation; overrides -1 -> 2 so
+        // 2. Fakeout â€” opposite OR wick cross (deeper than invalidation; overrides -1 -> 2 so
         //    f_commit_daily populates fake_mfe/fake_mae/fakeout_reversal arrays for
         //    Pivot / Confirm / Reversal Zone levels. No new variable needed.
         bool crossed_opposite = st.sig_side == STL.SIDE_BULL ? l < st.or_low : h > st.or_high
@@ -471,10 +471,10 @@ f_track_range(int idx) =>
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
         float pb_bear = (na(st.daily_mae_bear_pb) or (not st.entry_triggered_bear)) ? na : st.daily_mae_bear_pb
 
-        // Fix: Cutoff finalization — no invalidation = WIN (FULL). Previously PENDING (0)
+        // Fix: Cutoff finalization â€” no invalidation = WIN (FULL). Previously PENDING (0)
         // sessions were silently dropped from win-rate stats (o != 0 filter).
         if st.sig_side != STL.SIDE_NONE and st.sig_outcome == 0
-            st.sig_outcome := STL.OUTCOME_WIN // WIN (FULL) — no invalidation wick-touch before cutoff
+            st.sig_outcome := STL.OUTCOME_WIN // WIN (FULL) â€” no invalidation wick-touch before cutoff
         bool mid_hit_b_comm = st.sig_side == STL.SIDE_BULL and st.mid_hit_bull and st.sig_outcome == 1
         bool mid_hit_s_comm = st.sig_side == STL.SIDE_BEAR and st.mid_hit_bear and st.sig_outcome == 1
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.sig_side, st.sig_outcome)
@@ -568,10 +568,10 @@ f_track_range(int idx) =>
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
         float pb_bear = (na(st.daily_mae_bear_pb) or (not st.entry_triggered_bear)) ? na : st.daily_mae_bear_pb
 
-        // Fix: Cutoff finalization — no invalidation = WIN (FULL). Previously PENDING (0)
+        // Fix: Cutoff finalization â€” no invalidation = WIN (FULL). Previously PENDING (0)
         // sessions were silently dropped from win-rate stats (o != 0 filter).
         if st.sig_side != STL.SIDE_NONE and st.sig_outcome == 0
-            st.sig_outcome := STL.OUTCOME_WIN // WIN (FULL) — no invalidation wick-touch before cutoff
+            st.sig_outcome := STL.OUTCOME_WIN // WIN (FULL) â€” no invalidation wick-touch before cutoff
         bool mid_hit_b_comm = st.sig_side == STL.SIDE_BULL and st.mid_hit_bull and st.sig_outcome == 1
         bool mid_hit_s_comm = st.sig_side == STL.SIDE_BEAR and st.mid_hit_bear and st.sig_outcome == 1
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.sig_side, st.sig_outcome)
@@ -750,7 +750,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 [c_avg, w_avg] = f_get_side_styles(side, render_side, i_emphasize_active_side, stat_avg_color)
                 [c_str, w_str] = f_get_side_styles(side, render_side, i_emphasize_active_side, r_stat_stretch_color)
 
-                // MED/MAX MFE: Use Green (FULL/winning) sessions from BO px — verified 2026-06-30
+                // MED/MAX MFE: Use Green (FULL/winning) sessions from BO px â€” verified 2026-06-30
                 array<float> green_mfe = STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
                 float green_bo_px = not na(st.sig_breakout_px) and st.sig_breakout_side == side ? st.sig_breakout_px : (side == STL.SIDE_BULL ? st.or_high : st.or_low)
                 
@@ -763,9 +763,9 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                     float y_avg = green_bo_px * (1.0 + (side * p_avg / 100.0))
                     float y_str = green_bo_px * (1.0 + (side * p_str / 100.0))
                     
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "MED MFE " + STL.f_pct_fmt(p_med) + lb_sfx, c_med, 42, side_group, 0, strat, "MED MFE — p50 MFE of Green zone sessions")
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg, "AVG " + STL.f_pct_fmt(p_avg) + lb_sfx, c_avg, 43, side_group, 0, strat, "AVG — average MFE of Green zone sessions")
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "MAX MFE P75 " + STL.f_pct_fmt(p_str) + lb_sfx, c_str, 50, side_group, 0, strat, "MAX MFE — p75 Green")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "MED MFE " + STL.f_pct_fmt(p_med) + lb_sfx, c_med, 42, side_group, 0, strat, "MED MFE â€” p50 MFE of Green zone sessions")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg, "AVG " + STL.f_pct_fmt(p_avg) + lb_sfx, c_avg, 43, side_group, 0, strat, "AVG â€” average MFE of Green zone sessions")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "MAX MFE P75 " + STL.f_pct_fmt(p_str) + lb_sfx, c_str, 50, side_group, 0, strat, "MAX MFE â€” p75 Green")
 
         // 3. Tactical Directional Levels (Respect side strategy and suppress pre-breakout)
         bool has_breakout = (render_side != 0)
@@ -793,9 +793,9 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 log.info("TACTICAL LOOP [" + str.tostring(idx) + "] " + sp.name + " Side=" + str.tostring(side) + ": is_active=" + (is_active_side ? "true" : "false") + ", t_render_px=" + str.tostring(t_render_px))
             
             if not na(t_render_px)
-                // Percentile stats (single source of truth — always from history)
+                // Percentile stats (single source of truth â€” always from history)
                 float p50_bo   = STL.f_get_pct_fallback(STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
-                // Cashflow uses WINS (Green/FULL sessions) — verified 2026-06-30 via Python + Gunship comparison
+                // Cashflow uses WINS (Green/FULL sessions) â€” verified 2026-06-30 via Python + Gunship comparison
                 float p20_bo   = STL.f_get_pct_fallback(STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 20)
                 float p50_fake = STL.f_get_pct_fallback(STL.f_filter_fakeout_mfe(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
                 float p75_fake = STL.f_get_pct_fallback(STL.f_filter_fakeout_mfe(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 75)
@@ -803,10 +803,10 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 // MAE stats (Invalidation/Pullback) with robust cold-start fallbacks
                 float p80_mae_losses = STL.f_get_pct_fallback(STL.f_build_filtered_by_outcome(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, STL.OUTCOME_NON_WIN), 80, 0.5)
                 float p80_mae_wins   = STL.f_get_pct_fallback(STL.f_build_filtered_by_outcome(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, STL.OUTCOME_WIN), 80, p80_mae_losses)
-                // Pullback uses WINS (Green/FULL sessions) — verified 2026-06-30 via Python + Gunship comparison
+                // Pullback uses WINS (Green/FULL sessions) â€” verified 2026-06-30 via Python + Gunship comparison
                 float p25_mae        = STL.f_get_pct_fallback(STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side), 25, 0.15)
 
-                // Derived prices (single source of truth — always from t_render_px)
+                // Derived prices (single source of truth â€” always from t_render_px)
                 float target_px        = t_render_px * (side == STL.SIDE_BULL ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
                 float pivot_px         = t_render_px * (side == STL.SIDE_BULL ? 1.0 + p50_fake / 100.0 : 1.0 - p50_fake / 100.0)
                 float invalid_px_wins  = t_render_px * (side == STL.SIDE_BULL ? 1.0 - p80_mae_wins / 100.0 : 1.0 + p80_mae_wins / 100.0)
@@ -836,38 +836,38 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
 
                 // Core tactical lines: Invalidation, Pullback
                 if not na(pullback_px)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", bo_bar, ln_end, pullback_px, side_label + "PB Entry " + STL.f_pct_fmt(p25_mae) + lb_sfx, c_pb_act, 85, side_group, 0, strat, "PB entry — p25 MAE")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", bo_bar, ln_end, pullback_px, side_label + "PB Entry " + STL.f_pct_fmt(p25_mae) + lb_sfx, c_pb_act, 85, side_group, 0, strat, "PB entry â€” p25 MAE")
 
                 if not na(invalid_px_wins)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_wins, side_label + "PB/BO Inval " + lb_sfx, color.new(c_inv, 30), 94, side_group + "_wins", 0, strat, "PB/BO Invalidation — p80 MAE from breakout")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_wins, side_label + "PB/BO Inval " + lb_sfx, color.new(c_inv, 30), 94, side_group + "_wins", 0, strat, "PB/BO Invalidation â€” p80 MAE from breakout")
 
                 if not na(invalid_px_losses)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_losses, side_label + "PB Inval Losses P80" + lb_sfx, c_inv, 95, side_group + "_losses", 0, strat, "PB Invalidation Losses — p80 MAE from breakout (losses only)")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, invalid_px_losses, side_label + "PB Inval Losses P80" + lb_sfx, c_inv, 95, side_group + "_losses", 0, strat, "PB Invalidation Losses â€” p80 MAE from breakout (losses only)")
 
                 // Targets & Cashflow
                 if not na(target_px)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, target_px, side_label + "Target BO EV Target " + STL.f_pct_fmt(i_ev_target_pct) + lb_sfx, c_tgt, 78, side_group, 0, strat, "Target — EV target " + STL.f_pct_fmt(i_ev_target_pct) + " from breakout")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, target_px, side_label + "Target BO EV Target " + STL.f_pct_fmt(i_ev_target_pct) + lb_sfx, c_tgt, 78, side_group, 0, strat, "Target â€” EV target " + STL.f_pct_fmt(i_ev_target_pct) + " from breakout")
 
                 float y_cash = t_render_px * (side == STL.SIDE_BULL ? 1.0 + p20_bo / 100.0 : 1.0 - p20_bo / 100.0)
                 if not na(y_cash)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_cash, side_label + "BO Cashflow " + STL.f_pct_fmt(p20_bo) + lb_sfx, c_cash, 80, side_group, 0, strat, "BO Cashflow — p20 MFE from breakout (" + STL.f_pct_fmt(p20_bo) + "). 80% of sessions reached this level.")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_cash, side_label + "BO Cashflow " + STL.f_pct_fmt(p20_bo) + lb_sfx, c_cash, 80, side_group, 0, strat, "BO Cashflow â€” p20 MFE from breakout (" + STL.f_pct_fmt(p20_bo) + "). 80% of sessions reached this level.")
 
                 float y_conf = t_render_px * (side == STL.SIDE_BULL ? 1.0 + p75_fake / 100.0 : 1.0 - p75_fake / 100.0)
                 if not na(y_conf)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_conf, side_label + "BO Confirm " + STL.f_pct_fmt(p75_fake) + lb_sfx, c_conf, 75, side_group, 0, strat, "BO Confirm — p75 MFE of fakes")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_conf, side_label + "BO Confirm " + STL.f_pct_fmt(p75_fake) + lb_sfx, c_conf, 75, side_group, 0, strat, "BO Confirm â€” p75 MFE of fakes")
 
                 // Pivot (P50 of Fakes MFE)
                 if not na(pivot_px)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, pivot_px, side_label + "Pivot " + STL.f_pct_fmt(p50_fake) + lb_sfx, c_tpiv, 70, side_group, 0, strat, "Pivot — p50 MFE of fakes")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, pivot_px, side_label + "Pivot " + STL.f_pct_fmt(p50_fake) + lb_sfx, c_tpiv, 70, side_group, 0, strat, "Pivot â€” p50 MFE of fakes")
 
-                // Reversal Zone — Fix 1+2: Anchor at OR High/Low, range P25-P50 (per Gunship tooltip)
+                // Reversal Zone â€” Fix 1+2: Anchor at OR High/Low, range P25-P50 (per Gunship tooltip)
                 if not na(rev_p25) and not na(rev_p50) and rev_p25 > 0
                     float y_rev25 = side == STL.SIDE_BULL ? st.or_high * (1.0 - rev_p25 / 100.0) : st.or_low * (1.0 + rev_p25 / 100.0)
                     float y_rev50 = side == STL.SIDE_BULL ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0)
                     float z_top = math.max(y_rev25, y_rev50), z_bot = math.min(y_rev25, y_rev50)
                     int z_w = math.max(2, ln_end - bo_bar)
                     Zones.f_draw_hist_band(ds, bo_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, bo_bar + z_w, y_rev50, side_label + "Reversal Zone " + lb_sfx, c_conf, 55, side_group, 0, strat, "Reversal Zone — p25-p50 MAE of fakes")
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, bo_bar + z_w, y_rev50, side_label + "Reversal Zone " + lb_sfx, c_conf, 55, side_group, 0, strat, "Reversal Zone â€” p25-p50 MAE of fakes")
 
                 // Draw breakout activation only if this side is the active breakout side and breakout px is valid.
                 if is_active_side and not na(st.sig_breakout_px)
@@ -1122,7 +1122,7 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     array<float> bo_mfe_b_wins = STL.f_filter_breakout_wins(hist.bo_mfe_bull, hist.sig_side, hist.sig_outcome, 1)
     array<float> bo_mfe_s_wins = STL.f_filter_breakout_wins(hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, -1)
 
-    // Streak stats — 3 scopes: UP Signal, DOWN Signal, Aggregated Signals
+    // Streak stats â€” 3 scopes: UP Signal, DOWN Signal, Aggregated Signals
     [cs_up, cw_up, bw_up, wf_up, aw_up, af_up] = STL.f_streak_stats(sig_bull_win_bools)
     [cs_dn, cw_dn, bw_dn, wf_dn, aw_dn, af_dn] = STL.f_streak_stats(sig_bear_win_bools)
     [cs_ag, cw_ag, bw_ag, wf_ag, aw_ag, af_ag] = STL.f_streak_stats(sig_ag_win_bools)
@@ -1150,151 +1150,150 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     int n_rows = 70
     int n_cols = 3
     table t = Tables.f_new_table(pos, n_cols, n_rows, color.new(bg, 90), color.new(border, 75), 1)
-    color cell_bg = color.new(bg, 85)
     color section_bg = color.new(header_bg, 90)
 
     int r = 0
 
     // Title row (spans 3 cols)
-    Tables.f_draw_header_cell(t, 0, r, "♦ " + sp.name + " ♦", color.new(header_bg, 70), header_txt, hdr_sz, 3, text.align_center)
+    Tables.f_draw_header_cell(t, 0, r, "â™¦ " + sp.name + " â™¦", color.new(header_bg, 70), header_txt, hdr_sz, 3, text.align_center)
     r += 1
 
     // ====== SUMMARY section (directional split) ======
-    f_summary_section_header(t, r, "♦ SUMMARY ♦", header_bg, header_txt, hdr_sz)
+    f_summary_section_header(t, r, "â™¦ SUMMARY â™¦", header_bg, header_txt, hdr_sz)
     r += 1
-    Tables.f_draw_header_cell(t, 0, r, "Metric", cell_bg, header_txt, body_sz, 1, text.align_left)
-    Tables.f_draw_header_cell(t, 1, r, "↑ UP", cell_bg, bull_clr, body_sz, 1, text.align_center)
-    Tables.f_draw_header_cell(t, 2, r, "↓ DOWN", cell_bg, bear_clr, body_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 0, r, "Metric", color.new(bg, 85), header_txt, body_sz, 1, text.align_left)
+    Tables.f_draw_header_cell(t, 1, r, "â†‘ UP", color.new(bg, 85), bull_clr, body_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 2, r, "â†“ DOWN", color.new(bg, 85), bear_clr, body_sz, 1, text.align_center)
     r += 1
-    f_summary_split_row(t, r, "› Signal Trig", str.tostring(sig_bull_trig), str.tostring(sig_bear_trig), cell_bg, body_txt, body_txt, body_txt, body_sz)
+    f_summary_split_row(t, r, "â€º Signal Trig", str.tostring(sig_bull_trig), str.tostring(sig_bear_trig), color.new(bg, 85), body_txt, body_txt, body_txt, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Signal Win", str.tostring(sig_bull_wins), str.tostring(sig_bear_wins), cell_bg, body_txt, bull_clr, bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Signal Win", str.tostring(sig_bull_wins), str.tostring(sig_bear_wins), color.new(bg, 85), body_txt, bull_clr, bear_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Signal Loss", str.tostring(sig_bull_losses), str.tostring(sig_bear_losses), cell_bg, body_txt, bear_clr, bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Signal Loss", str.tostring(sig_bull_losses), str.tostring(sig_bear_losses), color.new(bg, 85), body_txt, bear_clr, bear_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Signal Rate", STL.f_pct_fmt(bull_rate), STL.f_pct_fmt(bear_rate), cell_bg, body_txt, not na(bull_rate) and bull_rate >= 50 ? bull_clr : bear_clr, not na(bear_rate) and bear_rate >= 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Signal Rate", STL.f_pct_fmt(bull_rate), STL.f_pct_fmt(bear_rate), color.new(bg, 85), body_txt, not na(bull_rate) and bull_rate >= 50 ? bull_clr : bear_clr, not na(bear_rate) and bear_rate >= 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› p20 MFE %", STL.f_pct_fmt(array.size(bo_mfe_b_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_b_wins, 20) : na), STL.f_pct_fmt(array.size(bo_mfe_s_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_s_wins, 20) : na), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
+    f_summary_split_row(t, r, "â€º p20 MFE %", STL.f_pct_fmt(array.size(bo_mfe_b_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_b_wins, 20) : na), STL.f_pct_fmt(array.size(bo_mfe_s_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_s_wins, 20) : na), color.new(bg, 85), body_txt, bull_clr, bull_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› p50 MFE %", STL.f_pct_fmt(array.size(bo_mfe_b_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_b_wins, 50) : na), STL.f_pct_fmt(array.size(bo_mfe_s_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_s_wins, 50) : na), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
+    f_summary_split_row(t, r, "â€º p50 MFE %", STL.f_pct_fmt(array.size(bo_mfe_b_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_b_wins, 50) : na), STL.f_pct_fmt(array.size(bo_mfe_s_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_s_wins, 50) : na), color.new(bg, 85), body_txt, bull_clr, bull_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› p75 MFE %", STL.f_pct_fmt(array.size(bo_mfe_b_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_b_wins, 75) : na), STL.f_pct_fmt(array.size(bo_mfe_s_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_s_wins, 75) : na), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
+    f_summary_split_row(t, r, "â€º p75 MFE %", STL.f_pct_fmt(array.size(bo_mfe_b_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_b_wins, 75) : na), STL.f_pct_fmt(array.size(bo_mfe_s_wins) > 0 ? array.percentile_nearest_rank(bo_mfe_s_wins, 75) : na), color.new(bg, 85), body_txt, bull_clr, bull_clr, body_sz)
     r += 1
     r += 1
-    f_summary_split_row(t, r, "› p50 MAE %", STL.f_pct_fmt(array.size(hist.mae_bull_abs) > 0 ? array.percentile_nearest_rank(hist.mae_bull_abs, 50) : na), STL.f_pct_fmt(array.size(hist.mae_bear_abs) > 0 ? array.percentile_nearest_rank(hist.mae_bear_abs, 50) : na), cell_bg, body_txt, body_txt, body_txt, body_sz)
+    f_summary_split_row(t, r, "â€º p50 MAE %", STL.f_pct_fmt(array.size(hist.mae_bull_abs) > 0 ? array.percentile_nearest_rank(hist.mae_bull_abs, 50) : na), STL.f_pct_fmt(array.size(hist.mae_bear_abs) > 0 ? array.percentile_nearest_rank(hist.mae_bear_abs, 50) : na), color.new(bg, 85), body_txt, body_txt, body_txt, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› N (sessions)", str.tostring(n_total_signals), cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º N (sessions)", str.tostring(n_total_signals), color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
 
     // ====== LIVE SESSION section ======
-    f_summary_section_header(t, r, "♦ LIVE SESSION ♦", header_bg, header_txt, hdr_sz)
+    f_summary_section_header(t, r, "â™¦ LIVE SESSION â™¦", header_bg, header_txt, hdr_sz)
     r += 1
     string status_txt = st.or_building ? "Building" : st.or_complete ? "Active" : "Wait"
-    f_summary_aggregate_row(t, r, "› Status", status_txt, cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Status", status_txt, color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
     int live_side = st.sig_side
     string bearing_txt = live_side == STL.SIDE_BULL ? "UP" : live_side == STL.SIDE_BEAR ? "DOWN" : "NEUTRAL"
     color bearing_clr = live_side == STL.SIDE_BULL ? bull_clr : live_side == STL.SIDE_BEAR ? bear_clr : body_txt
-    f_summary_aggregate_row(t, r, "› Sig Side", bearing_txt, cell_bg, body_txt, bearing_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Sig Side", bearing_txt, color.new(bg, 85), body_txt, bearing_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› FR Zone", "---", cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º FR Zone", "---", color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› FR Price", "---", cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º FR Price", "---", color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
     // Fix: Result now reflects verified classification (sig_outcome) instead of session MFE vs EV target.
     bool is_full = st.sig_outcome == 1
     string res_txt = st.sig_outcome == -1 ? "FAILED" : is_full ? "FULL" : "PENDING"
     color res_clr = is_full ? bull_clr : st.sig_outcome == -1 ? bear_clr : body_txt
-    f_summary_aggregate_row(t, r, "› Result", res_txt, cell_bg, body_txt, res_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Result", res_txt, color.new(bg, 85), body_txt, res_clr, body_sz)
     r += 1
     float entry_px = st.sig_breakout_px
     string entry_txt = na(entry_px) ? "---" : str.tostring(entry_px, format.mintick)
-    f_summary_aggregate_row(t, r, "› BO Price", entry_txt, cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º BO Price", entry_txt, color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
 
     // ====== STREAKS (UP | DN) ======
-    f_summary_section_header(t, r, "♦ STREAKS (UP | DN) ♦", header_bg, header_txt, hdr_sz)
+    f_summary_section_header(t, r, "â™¦ STREAKS (UP | DN) â™¦", header_bg, header_txt, hdr_sz)
     r += 1
     string cur_up_txt = str.tostring(cs_up) + (cw_up ? " Full" : " Fail")
     color cur_up_clr = cw_up ? bull_clr : bear_clr
     string cur_dn_txt = str.tostring(cs_dn) + (cw_dn ? " Full" : " Fail")
     color cur_dn_clr = cw_dn ? bull_clr : bear_clr
-    f_summary_split_row(t, r, "› Current", cur_up_txt, cur_dn_txt, cell_bg, body_txt, cur_up_clr, cur_dn_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Current", cur_up_txt, cur_dn_txt, color.new(bg, 85), body_txt, cur_up_clr, cur_dn_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Best Full Run", str.tostring(bw_up), str.tostring(bw_dn), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Best Full Run", str.tostring(bw_up), str.tostring(bw_dn), color.new(bg, 85), body_txt, bull_clr, bull_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Worst Fail Run", str.tostring(wf_up), str.tostring(wf_dn), cell_bg, body_txt, bear_clr, bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Worst Fail Run", str.tostring(wf_up), str.tostring(wf_dn), color.new(bg, 85), body_txt, bear_clr, bear_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Avg Full Run", str.tostring(aw_up, "#.#"), str.tostring(aw_dn, "#.#"), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Avg Full Run", str.tostring(aw_up, "#.#"), str.tostring(aw_dn, "#.#"), color.new(bg, 85), body_txt, bull_clr, bull_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Avg Fail Run", str.tostring(af_up, "#.#"), str.tostring(af_dn, "#.#"), cell_bg, body_txt, bear_clr, bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Avg Fail Run", str.tostring(af_up, "#.#"), str.tostring(af_dn, "#.#"), color.new(bg, 85), body_txt, bear_clr, bear_clr, body_sz)
     r += 1
 
-    // ====== STREAKS — AGGREGATE ======
-    f_summary_section_header(t, r, "♦ STREAKS — AGGREGATE ♦", header_bg, header_txt, hdr_sz)
+    // ====== STREAKS â€” AGGREGATE ======
+    f_summary_section_header(t, r, "â™¦ STREAKS â€” AGGREGATE â™¦", header_bg, header_txt, hdr_sz)
     r += 1
     string cur_ag_txt = str.tostring(cs_ag) + (cw_ag ? " Full" : " Failed")
     color cur_ag_clr = cw_ag ? bull_clr : bear_clr
-    f_summary_aggregate_row(t, r, "› Current", cur_ag_txt, cell_bg, body_txt, cur_ag_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Current", cur_ag_txt, color.new(bg, 85), body_txt, cur_ag_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Best Full Run", str.tostring(bw_ag), cell_bg, body_txt, bull_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Best Full Run", str.tostring(bw_ag), color.new(bg, 85), body_txt, bull_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Worst Fail Run", str.tostring(wf_ag), cell_bg, body_txt, bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Worst Fail Run", str.tostring(wf_ag), color.new(bg, 85), body_txt, bear_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Avg Full Run", str.tostring(aw_ag, "#.#"), cell_bg, body_txt, bull_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Avg Full Run", str.tostring(aw_ag, "#.#"), color.new(bg, 85), body_txt, bull_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Avg Fail Run", str.tostring(af_ag, "#.#"), cell_bg, body_txt, bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Avg Fail Run", str.tostring(af_ag, "#.#"), color.new(bg, 85), body_txt, bear_clr, body_sz)
     r += 1
 
     // ====== FRONT RUN (placeholder) ======
-    f_summary_section_header(t, r, "♦ FRONT RUN ♦", header_bg, header_txt, hdr_sz)
+    f_summary_section_header(t, r, "â™¦ FRONT RUN â™¦", header_bg, header_txt, hdr_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Current", "---", cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Current", "---", color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Best Full Run", "---", cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Best Full Run", "---", color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Worst Fail Run", "---", cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Worst Fail Run", "---", color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Avg Full Run", "---", cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Avg Full Run", "---", color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› Avg Fail Run", "---", cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "â€º Avg Fail Run", "---", color.new(bg, 85), body_txt, body_txt, body_sz)
     r += 1
 
     // ====== AFTER STREAK (aggregate on combined wins) ======
-    f_summary_section_header(t, r, "♦ AFTER STREAK ♦", header_bg, header_txt, hdr_sz)
+    f_summary_section_header(t, r, "â™¦ AFTER STREAK â™¦", header_bg, header_txt, hdr_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› After 1 Fail", STL.f_pct_fmt(p_f1) + " nxt Full", cell_bg, body_txt, not na(p_f1) and p_f1 > 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º After 1 Fail", STL.f_pct_fmt(p_f1) + " nxt Full", color.new(bg, 85), body_txt, not na(p_f1) and p_f1 > 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› After 2 Fail", STL.f_pct_fmt(p_f2) + " nxt Full", cell_bg, body_txt, not na(p_f2) and p_f2 > 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º After 2 Fail", STL.f_pct_fmt(p_f2) + " nxt Full", color.new(bg, 85), body_txt, not na(p_f2) and p_f2 > 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› After 3+ Fail", STL.f_pct_fmt(p_f3) + " nxt Full", cell_bg, body_txt, not na(p_f3) and p_f3 > 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º After 3+ Fail", STL.f_pct_fmt(p_f3) + " nxt Full", color.new(bg, 85), body_txt, not na(p_f3) and p_f3 > 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› After 1 Full", STL.f_pct_fmt(p_w1) + " nxt Full", cell_bg, body_txt, not na(p_w1) and p_w1 > 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º After 1 Full", STL.f_pct_fmt(p_w1) + " nxt Full", color.new(bg, 85), body_txt, not na(p_w1) and p_w1 > 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› After 2 Full", STL.f_pct_fmt(p_w2) + " nxt Full", cell_bg, body_txt, not na(p_w2) and p_w2 > 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º After 2 Full", STL.f_pct_fmt(p_w2) + " nxt Full", color.new(bg, 85), body_txt, not na(p_w2) and p_w2 > 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_aggregate_row(t, r, "› After 3+ Full", STL.f_pct_fmt(p_w3) + " nxt Full", cell_bg, body_txt, not na(p_w3) and p_w3 > 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_aggregate_row(t, r, "â€º After 3+ Full", STL.f_pct_fmt(p_w3) + " nxt Full", color.new(bg, 85), body_txt, not na(p_w3) and p_w3 > 50 ? bull_clr : bear_clr, body_sz)
     r += 1
 
     // ====== ROLLING (UP | DOWN | Combined) ======
-    f_summary_section_header(t, r, "♦ ROLLING (Full %) ♦", header_bg, header_txt, hdr_sz)
+    f_summary_section_header(t, r, "â™¦ ROLLING (Full %) â™¦", header_bg, header_txt, hdr_sz)
     r += 1
-    Tables.f_draw_header_cell(t, 0, r, "Window", cell_bg, header_txt, body_sz, 1, text.align_left)
-    Tables.f_draw_header_cell(t, 1, r, "UP", cell_bg, bull_clr, body_sz, 1, text.align_center)
-    Tables.f_draw_header_cell(t, 2, r, "DOWN", cell_bg, bear_clr, body_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 0, r, "Window", color.new(bg, 85), header_txt, body_sz, 1, text.align_left)
+    Tables.f_draw_header_cell(t, 1, r, "UP", color.new(bg, 85), bull_clr, body_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 2, r, "DOWN", color.new(bg, 85), bear_clr, body_sz, 1, text.align_center)
     r += 1
-    f_summary_split_row(t, r, "› Last 5", STL.f_pct_fmt(r5_up), STL.f_pct_fmt(r5_dn), cell_bg, body_txt, not na(r5_up) and r5_up >= 50 ? bull_clr : bear_clr, not na(r5_dn) and r5_dn >= 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Last 5", STL.f_pct_fmt(r5_up), STL.f_pct_fmt(r5_dn), color.new(bg, 85), body_txt, not na(r5_up) and r5_up >= 50 ? bull_clr : bear_clr, not na(r5_dn) and r5_dn >= 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Last 10", STL.f_pct_fmt(r10_up), STL.f_pct_fmt(r10_dn), cell_bg, body_txt, not na(r10_up) and r10_up >= 50 ? bull_clr : bear_clr, not na(r10_dn) and r10_dn >= 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Last 10", STL.f_pct_fmt(r10_up), STL.f_pct_fmt(r10_dn), color.new(bg, 85), body_txt, not na(r10_up) and r10_up >= 50 ? bull_clr : bear_clr, not na(r10_dn) and r10_dn >= 50 ? bull_clr : bear_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› Last 20", STL.f_pct_fmt(r20_up), STL.f_pct_fmt(r20_dn), cell_bg, body_txt, not na(r20_up) and r20_up >= 50 ? bull_clr : bear_clr, not na(r20_dn) and r20_dn >= 50 ? bull_clr : bear_clr, body_sz)
+    f_summary_split_row(t, r, "â€º Last 20", STL.f_pct_fmt(r20_up), STL.f_pct_fmt(r20_dn), color.new(bg, 85), body_txt, not na(r20_up) and r20_up >= 50 ? bull_clr : bear_clr, not na(r20_dn) and r20_dn >= 50 ? bull_clr : bear_clr, body_sz)
     r += 1
     // Combined row spanning cols 1-2
-    Tables.f_draw_value_cell(t, 0, r, "› Combined 5/10/20", cell_bg, body_txt, body_sz, 1, text.align_left)
-    Tables.f_draw_value_cell(t, 1, r, STL.f_pct_fmt(r5_ag) + " / " + STL.f_pct_fmt(r10_ag) + " / " + STL.f_pct_fmt(r20_ag), cell_bg, body_txt, body_sz, 2, text.align_center)
+    Tables.f_draw_value_cell(t, 0, r, "â€º Combined 5/10/20", color.new(bg, 85), body_txt, body_sz, 1, text.align_left)
+    Tables.f_draw_value_cell(t, 1, r, STL.f_pct_fmt(r5_ag) + " / " + STL.f_pct_fmt(r10_ag) + " / " + STL.f_pct_fmt(r20_ag), color.new(bg, 85), body_txt, body_sz, 2, text.align_center)
 
 // ----------------------------------------------------------------------------
-// DOW Diagnostic — MFE/MAE percentiles per weekday, split by direction (▲/▼)
+// DOW Diagnostic â€” MFE/MAE percentiles per weekday, split by direction (â–²/â–¼)
 // ----------------------------------------------------------------------------
 
 f_draw_dow_table(int idx, string pos, color bg, color border, color header_bg, color header_txt, color body_txt, color bull_clr, color bear_clr, string hdr_sz, string body_sz) =>
@@ -1305,11 +1304,9 @@ f_draw_dow_table(int idx, string pos, color bg, color border, color header_bg, c
     int n_cols = 7
     int n_rows = 10
     table t = Tables.f_new_table(pos, n_cols, n_rows, color.new(bg, 90), color.new(border, 75), 1)
-    color cell_bg = color.new(bg, 85)
-
     int r = 0
     // Title spans 7 cols
-    Tables.f_draw_header_cell(t, 0, r, "♦ " + sp.name + " — DAY OF WEEK ♦", color.new(header_bg, 70), header_txt, hdr_sz, 7, text.align_center)
+    Tables.f_draw_header_cell(t, 0, r, "â™¦ " + sp.name + " â€” DAY OF WEEK â™¦", color.new(header_bg, 70), header_txt, hdr_sz, 7, text.align_center)
     r += 1
 
     // Column headers: METRIC | SUN | MON | TUE | WED | THU | FRI
@@ -1373,60 +1370,60 @@ f_draw_dow_table(int idx, string pos, color bg, color border, color header_bg, c
                 array.push(b, mae_val)
 
     // Render Rows
-    Tables.f_draw_value_cell(t, 0, r, "› N", cell_bg, body_txt, body_sz, 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º N", color.new(bg, 85), body_txt, body_sz, 1, text.align_left)
     for di = 0 to 5
-        Tables.f_draw_value_cell(t, di + 1, r, str.tostring(array.get(tot_cnt, di)), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, str.tostring(array.get(tot_cnt, di)), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
     r += 1
     
-    Tables.f_draw_value_cell(t, 0, r, "› Full%", cell_bg, bull_clr, body_sz, 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º Full%", color.new(bg, 85), bull_clr, body_sz, 1, text.align_left)
     for di = 0 to 5
         float rate = array.get(tot_cnt, di) > 0 ? (float(array.get(win_cnt, di)) / float(array.get(tot_cnt, di))) * 100.0 : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(rate) ? "---" : str.tostring(rate, "#.#") + "%", cell_bg, not na(rate) and rate >= 50 ? bull_clr : bear_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(rate) ? "---" : str.tostring(rate, "#.#") + "%", color.new(bg, 85), not na(rate) and rate >= 50 ? bull_clr : bear_clr, body_sz, 1, text.align_center)
     r += 1
 
     // MAE Percentiles
-    Tables.f_draw_value_cell(t, 0, r, "› p50 MAE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º p50 MAE", color.new(bg, 85), body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
         array<float> arr = di == 0 ? mae_bucket_sun : di == 1 ? mae_bucket_mon : di == 2 ? mae_bucket_tue : di == 3 ? mae_bucket_wed : di == 4 ? mae_bucket_thu : mae_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 50) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, body_txt, "Tiny", 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), color.new(bg, 85), body_txt, "Tiny", 1, text.align_center)
     r += 1
     
-    Tables.f_draw_value_cell(t, 0, r, "› p75 MAE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º p75 MAE", color.new(bg, 85), body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
         array<float> arr = di == 0 ? mae_bucket_sun : di == 1 ? mae_bucket_mon : di == 2 ? mae_bucket_tue : di == 3 ? mae_bucket_wed : di == 4 ? mae_bucket_thu : mae_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 75) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, body_txt, "Tiny", 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), color.new(bg, 85), body_txt, "Tiny", 1, text.align_center)
     r += 1
 
-    Tables.f_draw_value_cell(t, 0, r, "› p90 MAE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º p90 MAE", color.new(bg, 85), body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
         array<float> arr = di == 0 ? mae_bucket_sun : di == 1 ? mae_bucket_mon : di == 2 ? mae_bucket_tue : di == 3 ? mae_bucket_wed : di == 4 ? mae_bucket_thu : mae_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 90) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, bear_clr, "Tiny", 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), color.new(bg, 85), bear_clr, "Tiny", 1, text.align_center)
     r += 1
 
     // MFE Percentiles
     color mfe_clr = color.aqua
-    Tables.f_draw_value_cell(t, 0, r, "› p25 MFE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º p25 MFE", color.new(bg, 85), body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
         array<float> arr = di == 0 ? mfe_bucket_sun : di == 1 ? mfe_bucket_mon : di == 2 ? mfe_bucket_tue : di == 3 ? mfe_bucket_wed : di == 4 ? mfe_bucket_thu : mfe_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 25) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, mfe_clr, "Tiny", 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), color.new(bg, 85), mfe_clr, "Tiny", 1, text.align_center)
     r += 1
 
-    Tables.f_draw_value_cell(t, 0, r, "› p50 MFE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º p50 MFE", color.new(bg, 85), body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
         array<float> arr = di == 0 ? mfe_bucket_sun : di == 1 ? mfe_bucket_mon : di == 2 ? mfe_bucket_tue : di == 3 ? mfe_bucket_wed : di == 4 ? mfe_bucket_thu : mfe_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 50) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, mfe_clr, "Tiny", 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), color.new(bg, 85), mfe_clr, "Tiny", 1, text.align_center)
     r += 1
 
-    Tables.f_draw_value_cell(t, 0, r, "› p75 MFE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "â€º p75 MFE", color.new(bg, 85), body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
         array<float> arr = di == 0 ? mfe_bucket_sun : di == 1 ? mfe_bucket_mon : di == 2 ? mfe_bucket_tue : di == 3 ? mfe_bucket_wed : di == 4 ? mfe_bucket_thu : mfe_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 75) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, mfe_clr, "Tiny", 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), color.new(bg, 85), mfe_clr, "Tiny", 1, text.align_center)
     r += 1
 
 
@@ -1437,22 +1434,21 @@ f_draw_dow_table(int idx, string pos, color bg, color border, color header_bg, c
 f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg, color header_txt, color body_txt, color bull_clr, color bear_clr, string view, string hdr_sz, string body_sz) =>
     RSL.RangeSpec sp = array.get(specs, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
-
     if view == "MFE & MAE View"
         int n_cols_mfe = 9
         int n_rows_mfe = 4
         table t_mfe = Tables.f_new_table(pos, n_cols_mfe, n_rows_mfe, color.new(bg, 85), color.new(border, 70), 1)
         
-        Tables.f_draw_header_cell(t_mfe, 0, 0, sp.name + " - MFE & MAE", h_bg, header_txt, hdr_sz, 9, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 0, 1, "Side", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 1, 1, "N", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 2, 1, "MFE p50", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 3, 1, "MFE p75", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 4, 1, "MFE p90", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 5, 1, "MAE p50", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 6, 1, "MAE p75", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 7, 1, "PB p50", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t_mfe, 8, 1, "R-Mult", h_bg, header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 0, 0, sp.name + " - MFE & MAE", color.new(header_bg, 70), header_txt, hdr_sz, 9, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 0, 1, "Side", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 1, 1, "N", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 2, 1, "MFE p50", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 3, 1, "MFE p75", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 4, 1, "MFE p90", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 5, 1, "MAE p50", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 6, 1, "MAE p75", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 7, 1, "PB p50", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
+        Tables.f_draw_header_cell(t_mfe, 8, 1, "R-Mult", color.new(header_bg, 70), header_txt, hdr_sz, 1, text.align_center)
         
         array<float> bull = STL.f_build_filtered(hist.mfe_bull)
         array<float> bear = STL.f_build_filtered(hist.mfe_bear)
@@ -1465,25 +1461,25 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
         float rs = array.size(hist.r_multiple_bear) > 0 ? array.avg(hist.r_multiple_bear) : na
         
         // Bull Row
-        Tables.f_draw_value_cell(t_mfe, 0, 2, "Bull", cell_bg, bull_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 1, 2, str.tostring(array.size(bull)), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 2, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 3, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 4, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 90) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 5, 2, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 6, 2, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 7, 2, STL.f_pct_fmt(array.size(mpb) > 0 ? array.percentile_nearest_rank(mpb, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 8, 2, na(rb) ? "n/a" : str.tostring(rb, "#.##"), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 0, 2, "Bull", color.new(bg, 85), bull_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 1, 2, str.tostring(array.size(bull)), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 2, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 50) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 3, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 75) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 4, 2, STL.f_pct_fmt(array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 90) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 5, 2, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 50) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 6, 2, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 75) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 7, 2, STL.f_pct_fmt(array.size(mpb) > 0 ? array.percentile_nearest_rank(mpb, 50) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 8, 2, na(rb) ? "n/a" : str.tostring(rb, "#.##"), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
         
-        Tables.f_draw_value_cell(t_mfe, 0, 3, "Bear", cell_bg, bear_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 1, 3, str.tostring(array.size(bear)), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 2, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 3, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 4, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 90) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 5, 3, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 6, 3, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 75) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 7, 3, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t_mfe, 8, 3, na(rs) ? "n/a" : str.tostring(rs, "#.##"), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 0, 3, "Bear", color.new(bg, 85), bear_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 1, 3, str.tostring(array.size(bear)), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 2, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 50) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 3, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 75) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 4, 3, STL.f_pct_fmt(array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 90) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 5, 3, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 50) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 6, 3, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 75) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 7, 3, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t_mfe, 8, 3, na(rs) ? "n/a" : str.tostring(rs, "#.##"), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
         
     else if view == "Fakeout View"
         int n_cols = 6
@@ -1511,18 +1507,18 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
         float rs90 = array.size(rfs) > 0 ? array.percentile_nearest_rank(rfs, 90) : na
         float dbr = STL.f_double_break_rate(hist.double_break, hist.entry_triggered_bull, hist.entry_triggered_bear)
         
-        Tables.f_draw_value_cell(t, 0, 1, "Bull Fake", cell_bg, bull_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 1, 1, STL.f_pct_fmt(b50), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(b75), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 3, 1, STL.f_pct_fmt(rb50), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 4, 1, STL.f_pct_fmt(rb90), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 5, 1, STL.f_pct_fmt(dbr), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 0, 2, "Bear Fake", cell_bg, bear_clr, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 1, 2, STL.f_pct_fmt(s50), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 2, 2, STL.f_pct_fmt(s75), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(rs50), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(rs90), cell_bg, body_txt, body_sz, 1, text.align_center)
-        Tables.f_draw_value_cell(t, 5, 2, STL.f_pct_fmt(dbr), cell_bg, body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 0, 1, "Bull Fake", color.new(bg, 85), bull_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 1, 1, STL.f_pct_fmt(b50), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(b75), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 3, 1, STL.f_pct_fmt(rb50), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 4, 1, STL.f_pct_fmt(rb90), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 5, 1, STL.f_pct_fmt(dbr), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 0, 2, "Bear Fake", color.new(bg, 85), bear_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 1, 2, STL.f_pct_fmt(s50), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 2, 2, STL.f_pct_fmt(s75), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(rs50), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(rs90), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, 5, 2, STL.f_pct_fmt(dbr), color.new(bg, 85), body_txt, body_sz, 1, text.align_center)
 
 
 // ----------------------------------------------------------------------------
