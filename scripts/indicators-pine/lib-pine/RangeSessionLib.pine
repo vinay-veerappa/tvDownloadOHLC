@@ -43,14 +43,10 @@ export type RangeState
     float daily_bo_mfe_bear
     float daily_bo_mae_bull
     float daily_bo_mae_bear
-    float pb_tracker_bull
-    float pb_tracker_bear
     bool mid_hit_bull
     bool mid_hit_bear
     bool entry_triggered_bull
     bool entry_triggered_bear
-    float session_low_data
-    float session_high_data
     float close_at_cutoff
     bool is_committed
     int sig_side        // 0=None, 1=Bull, -1=Bear
@@ -73,8 +69,6 @@ export type RangeState
     float sig_rev_p50       // [NEW] Latched Fake MAE P50 %
     bool prev_in_or     // New
     bool prev_in_data   // New
-    array<float> daily_pivot_bulls
-    array<float> daily_pivot_bears
     array<int> data_mins
     array<float> data_highs
     array<float> data_lows
@@ -112,46 +106,42 @@ export f_is_new_session_pine(string session_str, string tz) =>
 
 export f_new_range_state(RangeSpec spec) =>
     RangeState.new(
-        spec,
-        na,
-        na,
-        na,
-        na,
-        false,
-        false,
-        na,
-        na,
-        na,
-        na,
-        false,
-        0.0,
-        0.0,
-        0,
-        0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        false,
-        false,
-        false,
-        false,
-        na,
-        na,
-        na,
-        false,
-        0,
-        0,
-        false,
-        0,
-        na,
-        na, // sig_breakout_bar
+        spec, // spec
+        na, // session_open
+        na, // or_high
+        na, // or_low
+        na, // or_last_close
+        false, // or_building
+        false, // or_complete
+        0, // or_start_bar
+        na, // bull_ref
+        na, // bear_ref
+        na, // or_mid
+        false, // ref_set
+        na, // daily_bull_mfe
+        na, // daily_bear_mfe
+        0, // daily_bull_peak_min
+        0, // daily_bear_peak_min
+        na, // daily_mae_bull_abs
+        na, // daily_mae_bear_abs
+        na, // daily_mae_bull_pb
+        na, // daily_mae_bear_pb
+        na, // daily_bo_mfe_bull
+        na, // daily_bo_mfe_bear
+        na, // daily_bo_mae_bull
+        na, // daily_bo_mae_bear
+        false, // mid_hit_bull
+        false, // mid_hit_bear
+        false, // entry_triggered_bull
+        false, // entry_triggered_bear
+        na, // close_at_cutoff
+        false, // is_committed
+        0, // sig_side
+        0, // sig_outcome
+        false, // is_terminated
+        0, // sig_breakout_side
+        na, // sig_breakout_px
+        0, // sig_breakout_bar
         na, // sig_pullback_px
         false, // sig_pullback_armed
         na, // sig_target_px
@@ -166,12 +156,11 @@ export f_new_range_state(RangeSpec spec) =>
         na, // sig_rev_p50
         false, // prev_in_or
         false, // prev_in_data
-        array.new_float(0),
-        array.new_float(0),
-        array.new_int(0),
-        array.new_float(0),
-        array.new_float(0)
+        array.new_int(0), // data_mins
+        array.new_float(0), // data_highs
+        array.new_float(0) // data_lows
     )
+
 
 export f_reset_daily(RangeState state) =>
     state.session_open := na
@@ -197,15 +186,11 @@ export f_reset_daily(RangeState state) =>
     state.daily_bo_mfe_bear := na
     state.daily_bo_mae_bull := na
     state.daily_bo_mae_bear := na
-    state.pb_tracker_bull := na
-    state.pb_tracker_bear := na
     state.mid_hit_bull := false
     state.mid_hit_bear := false
     state.entry_triggered_bull := false
     state.entry_triggered_bear := false
     state.sig_pullback_armed := false
-    state.session_low_data := na
-    state.session_high_data := na
     state.close_at_cutoff := na
     state.is_committed := false
     state.sig_side := 0
@@ -227,8 +212,6 @@ export f_reset_daily(RangeState state) =>
     state.sig_rev_p50 := na
     state.prev_in_or := false
     state.prev_in_data := false
-    array.clear(state.daily_pivot_bulls)
-    array.clear(state.daily_pivot_bears)
     array.clear(state.data_mins)
     array.clear(state.data_highs)
     array.clear(state.data_lows)

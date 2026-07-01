@@ -7,14 +7,8 @@ export type ExcursionHistory
     array<float> mfe_bear
     array<float> bo_mfe_bull
     array<float> bo_mfe_bear
-    array<float> bo_mfe_bull_win
-    array<float> bo_mfe_bear_win
-    array<float> bo_mae_bull_loss
-    array<float> bo_mae_bear_loss
     array<int> peak_time_bull
     array<int> peak_time_bear
-    array<float> pivot_bull
-    array<float> pivot_bear
     array<float> mae_bull_abs
     array<float> mae_bear_abs
     array<float> mae_bull_pb
@@ -27,21 +21,9 @@ export type ExcursionHistory
     array<int> dow
     array<float> r_multiple_bull
     array<float> r_multiple_bear
-    array<int> direction_flag
-    array<bool> reversal_flag
-    array<bool> ev_win_bull
-    array<bool> ev_win_bear
     array<bool> entry_triggered_bull
     array<bool> entry_triggered_bear
-    array<bool> fakeout_bull
-    array<bool> fakeout_bear
     array<bool> double_break
-    array<float> fake_mfe_bull
-    array<float> fake_mfe_bear
-    array<float> fake_mae_bull
-    array<float> fake_mae_bear
-    array<float> fakeout_reversal_bull
-    array<float> fakeout_reversal_bear
     array<int> sig_side        // Added in v4
     array<int> sig_outcome     // Added in v4
 
@@ -49,22 +31,14 @@ export f_new_excursion_history(string name) =>
     ExcursionHistory.new(
         name,
         array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
-        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
         array.new_int(0), array.new_int(0),
-        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
-        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
+        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
         array.new_bool(0), array.new_bool(0),
         array.new_float(0),
         array.new_int(0),
         array.new_float(0), array.new_float(0),
-        array.new_int(0),
-        array.new_bool(0),
-        array.new_bool(0), array.new_bool(0),
-        array.new_bool(0), array.new_bool(0),
         array.new_bool(0), array.new_bool(0),
         array.new_bool(0),
-        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
-        array.new_float(0), array.new_float(0),
         array.new_int(0), array.new_int(0)
     )
 
@@ -170,8 +144,6 @@ export f_track_mae_pullback(float bar_h, float bar_l, float or_high, float or_lo
 export f_track_mid_hit(float bar_h, float bar_l, float or_mid, bool prev_bull_hit, bool prev_bear_hit) =>
     [prev_bull_hit or bar_h >= or_mid, prev_bear_hit or bar_l <= or_mid]
 
-export f_compute_ev_win(float mfe, float ev_target_pct) =>
-    mfe <= 0 ? false : mfe >= ev_target_pct
 
 export f_compute_r_multiple(float mfe, float mae_abs) =>
     na(mae_abs) or mae_abs <= 0 ? na : mfe / mae_abs
@@ -284,8 +256,6 @@ export f_commit_daily(
     float bo_mfe_bear,
     int bull_peak,
     int bear_peak,
-    array<float> day_pivot_bulls,
-    array<float> day_pivot_bears,
     float mae_bull_abs,
     float mae_bear_abs,
     float mae_bull_pb,
@@ -300,14 +270,9 @@ export f_commit_daily(
     bool trig_bull,
     bool trig_bear,
     float close_at_cutoff,
-    float session_low_data,
-    float session_high_data,
-    float ev_target_pct,
     int sig_side = 0,
     int sig_outcome = 0
 ) =>
-    bool ev_bull = f_compute_ev_win(bull_mfe, ev_target_pct)
-    bool ev_bear = f_compute_ev_win(bear_mfe, ev_target_pct)
     float r_bull = f_compute_r_multiple(bull_mfe, mae_bull_abs)
     float r_bear = f_compute_r_multiple(bear_mfe, mae_bear_abs)
     int dir = bull_mfe > bear_mfe ? 1 : bear_mfe > bull_mfe ? -1 : 0
@@ -315,48 +280,15 @@ export f_commit_daily(
     array<float> bear_hist = f_build_filtered(hist.mfe_bear)
     float p50_bull = array.size(bull_hist) > 0 ? array.percentile_nearest_rank(bull_hist, 50) : na
     float p50_bear = array.size(bear_hist) > 0 ? array.percentile_nearest_rank(bear_hist, 50) : na
-    bool bull_reversal = not na(p50_bull) and bull_mfe >= p50_bull and close_at_cutoff < or_low
-    bool bear_reversal = not na(p50_bear) and bear_mfe >= p50_bear and close_at_cutoff > or_high
-    [fb, fs, db] = f_classify_fakeout(trig_bull, trig_bear, close_at_cutoff, or_high, or_low)
-    
-    // Fakeout masking: sig_outcome == 2 means price broke out then closed beyond
-    // the opposite OR boundary. This is the canonical fakeout flag set in
-    // f_process_signal_logic. The dedicated fakeout arrays (fake_mfe, fake_mae,
-    // fakeout_bull/bear, fakeout_reversal) are populated only for fakeout sessions
-    // so that table views and library percentile functions have clean, pre-filtered data.
-    bool fb_sig = sig_side == 1 and sig_outcome == 2
-    bool fs_sig = sig_side == -1 and sig_outcome == 2
-
-    [frb, frs] = f_fakeout_reversal_depth(fb_sig, fs_sig, session_low_data, session_high_data, or_high, or_low)
-    float fake_mfe_b = fb_sig ? bo_mfe_bull : na
-    float fake_mfe_s = fs_sig ? bo_mfe_bear : na
-    float fake_mae_b = fb_sig ? frb : na
-    float fake_mae_s = fs_sig ? frs : na
+    [_, _, db] = f_classify_fakeout(trig_bull, trig_bear, close_at_cutoff, or_high, or_low)
 
     //log.info("STL COMMIT START - Range: {0} | MFE B/S: {1}/{2} | BO MFE B/S: {3}/{4} | MAE Abs B/S: {5}/{6} | PB B/S: {7}/{8} | Side: {9}, Outcome: {10}", hist.range_name, bull_mfe, bear_mfe, bo_mfe_bull, bo_mfe_bear, mae_bull_abs, mae_bear_abs, mae_bull_pb, mae_bear_pb, sig_side, sig_outcome)
-    //log.info("STL SIZES BEFORE - MFE: {0}, BO MFE: {1}, MAE: {2}, PB: {3}, Fake MFE: {4}, Side: {5}, Outcome: {6}", array.size(hist.mfe_bull), array.size(hist.bo_mfe_bull), array.size(hist.mae_bull_abs), array.size(hist.mae_bull_pb), array.size(hist.fake_mfe_bull), array.size(hist.sig_side), array.size(hist.sig_outcome))
-    
     array.push(hist.mfe_bull, bull_mfe)
     array.push(hist.mfe_bear, bear_mfe)
     array.push(hist.bo_mfe_bull, bo_mfe_bull)
     array.push(hist.bo_mfe_bear, bo_mfe_bear)
-    // Stratify BO arrays by outcome — wins typically resolve early so MFE is
-    // truncated; losses run to cutoff so MAE has more time. Mixing them
-    // produces biased percentiles.
-    array.push(hist.bo_mfe_bull_win,  sig_side == 1  and sig_outcome == 1  ? bo_mfe_bull : na)
-    array.push(hist.bo_mfe_bear_win,  sig_side == -1 and sig_outcome == 1  ? bo_mfe_bear : na)
-    array.push(hist.bo_mae_bull_loss, sig_side == 1  and sig_outcome == -1 ? bo_mae_bull : na)
-    array.push(hist.bo_mae_bear_loss, sig_side == -1 and sig_outcome == -1 ? bo_mae_bear : na)
-    
     array.push(hist.peak_time_bull, bull_peak)
     array.push(hist.peak_time_bear, bear_peak)
-
-    if array.size(day_pivot_bulls) > 0
-        for i = 0 to array.size(day_pivot_bulls) - 1
-            array.push(hist.pivot_bull, array.get(day_pivot_bulls, i))
-    if array.size(day_pivot_bears) > 0
-        for i = 0 to array.size(day_pivot_bears) - 1
-            array.push(hist.pivot_bear, array.get(day_pivot_bears, i))
 
     array.push(hist.mae_bull_abs, mae_bull_abs)
     array.push(hist.mae_bear_abs, mae_bear_abs)
@@ -370,21 +302,9 @@ export f_commit_daily(
     array.push(hist.dow, dow)
     array.push(hist.r_multiple_bull, r_bull)
     array.push(hist.r_multiple_bear, r_bear)
-    array.push(hist.direction_flag, dir)
-    array.push(hist.reversal_flag, bull_reversal or bear_reversal)
-    array.push(hist.ev_win_bull, ev_bull)
-    array.push(hist.ev_win_bear, ev_bear)
     array.push(hist.entry_triggered_bull, trig_bull)
     array.push(hist.entry_triggered_bear, trig_bear)
-    array.push(hist.fakeout_bull, fb_sig)
-    array.push(hist.fakeout_bear, fs_sig)
     array.push(hist.double_break, db)
-    array.push(hist.fake_mfe_bull, fake_mfe_b)
-    array.push(hist.fake_mfe_bear, fake_mfe_s)
-    array.push(hist.fake_mae_bull, fake_mae_b)
-    array.push(hist.fake_mae_bear, fake_mae_s)
-    array.push(hist.fakeout_reversal_bull, frb)
-    array.push(hist.fakeout_reversal_bear, frs)
     array.push(hist.sig_side, sig_side)
     array.push(hist.sig_outcome, sig_outcome)
 

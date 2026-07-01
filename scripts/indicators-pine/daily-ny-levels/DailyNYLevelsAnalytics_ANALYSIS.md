@@ -2527,3 +2527,34 @@ Current DNL labels vs Gunship labels — proposed unified naming:
 | *(not rendered)* | Max Reversal ({pct}%) | Max Reversal | "Max Rev — p90 MAE of fakes" |
 | Midpoint Hit Rate ({pct}%) | MID {pct}% | Midpoint | — |
 | Target BO EV Target 0.3% | *(none)* | *(keep as DNL-only)* | — |
+
+### 13.8 Close-Based MAE Experiment Results (2026-06-30)
+
+We ran an experiment to test whether measuring Pullback MAE using bar closes (`bo_mae_close`) instead of bar wicks (`bo_mae`) would resolve the remaining gaps in `PB Entry P25` and `PB Inval P80`.
+
+#### Comparison Summary (Wins Only)
+
+| Preset | Level | Target | Touch-Wins | Close-Wins | Best Fit |
+|---|---|---|---|---|---|
+| **1100 BO** | **PB Entry P25** | **30,384.60** (0.0860%) | **30,378.42** (diff = **-6.18**) | **30,405.90** (diff = **+21.30**) | 🔴 **Touch-Wins** |
+| | **PB Inval P80** | **30,351.03** (0.1964%) | **30,331.79** (diff = **-19.24**) | **30,370.26** (diff = **+19.23**) | ⚪ **Tie** (19 pts) |
+| **MO Break** | **PB Entry P25** | **30,197.02** (0.0620%) | **30,167.28** (diff = **-29.74**) | **30,215.75** (diff = **+18.73**) | 🟢 **Close-Wins** |
+| | **PB Inval P80** | **30,129.00** (0.2871%) | **30,113.11** (diff = **-15.89**) | **30,153.86** (diff = **+24.86**) | 🔴 **Touch-Wins** |
+
+#### Key Insights from the Sweep
+
+1. **Trade-off and Inconsistency:** 
+   - Close-Wins improves the `PB Entry P25` level for **MO Break** (reducing error from 29.74 pts to 18.73 pts).
+   - However, Close-Wins significantly degrades the `PB Entry P25` level for **1100 BO** (increasing error from -6.18 pts to +21.30 pts).
+   - Therefore, a wholesale switch to close-based MAE is not a clean solution as it breaks the alignment for the 1100 BO preset.
+
+2. **Resolution Hypothesis (1-Minute Close Data):**
+   - The Gunship's actual levels are consistently *between* our 5m Touch and 5m Close calculations.
+   - We simulated 1-minute close-based MAE (higher resolution close tracking) and found it matches the Gunship levels much more closely:
+     - For **1100 BO PB Entry P25**: 1m Close (inc. breakout bar) is **0.0706%** (diff = **-0.0154%**, **+4.68 pts**) compared to Touch's +0.0203% and 5m Close's -0.0700%.
+     - For **MO Break PB Inval P80**: 1m Close (inc. breakout bar) is **0.3142%** (diff = **+0.0271%**, **-8.19 pts**) compared to Touch's +0.0526% and 5m Close's -0.0823%.
+   - This suggests the Gunship tracks adverse excursions on a higher resolution (e.g. 1m closes/wicks) or is using a different combination of close/touch logic.
+
+3. **Classification Sample Size Impact:**
+   - The remaining discrepancies are heavily influenced by the session outcome classifications (DNL has fewer Wins than the Gunship due to a stricter stop-loss classification).
+   - Resolving the session count gap (e.g. by using close-based stops for classification) will shift the Wins-only distribution and naturally align the levels without changing the MAE metric type.

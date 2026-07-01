@@ -20,24 +20,24 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 //   - Rolling section computes from committed history (last 5/10/20 win rate)
 //
 // Libraries required:
-//   - vveerappa/RangeSessionLib/17
+//   - vveerappa/RangeSessionLib/19
 //   - vveerappa/PineDrawingCore/3
 //   - vveerappa/PineDrawingHorizontalLevels/5
 //   - vveerappa/PineDrawingMarkers/3
 //   - vveerappa/PineDrawingZones/3
 //   - vveerappa/PineDrawingTables/4
 //   - vveerappa/PineDrawingVerticalMarkers/3
-//   - vveerappa/StatsLib/19
+//   - vveerappa/StatsLib/20
 // ============================================================================
 
-import vveerappa/RangeSessionLib/17 as RSL
+import vveerappa/RangeSessionLib/19 as RSL
 import vveerappa/PineDrawingCore/3 as Core
 import vveerappa/PineDrawingHorizontalLevels/5 as HLevels
 import vveerappa/PineDrawingMarkers/3 as Markers
 import vveerappa/PineDrawingZones/3 as Zones
 import vveerappa/PineDrawingTables/4 as Tables
 import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
-import vveerappa/StatsLib/19 as STL
+import vveerappa/StatsLib/20 as STL
 
 // ============================================================================
 // Inputs — Session
@@ -379,13 +379,9 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
     
     if h > st.bull_ref
         st.entry_triggered_bull := true
-        array.push(st.daily_pivot_bulls, (h - st.bull_ref) / st.bull_ref * 100.0)
     if l < st.bear_ref
         st.entry_triggered_bear := true
-        array.push(st.daily_pivot_bears, (st.bear_ref - l) / st.bear_ref * 100.0)
         
-    st.session_low_data := na(st.session_low_data) ? l : math.min(st.session_low_data, l)
-    st.session_high_data := na(st.session_high_data) ? h : math.max(st.session_high_data, h)
     st.close_at_cutoff := c
 
 // Internal helper to handle the "Win then Total" history filtering fallback.
@@ -548,7 +544,7 @@ f_track_range(int idx) =>
             st.sig_outcome := 1 // WIN (FULL) — no invalidation wick-touch before cutoff
         bool mid_hit_b_comm = st.sig_side == 1 and st.mid_hit_bull and st.sig_outcome == 1
         bool mid_hit_s_comm = st.sig_side == -1 and st.mid_hit_bear and st.sig_outcome == 1
-        STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct, st.sig_side, st.sig_outcome)
+        STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.sig_side, st.sig_outcome)
         st.is_committed := true
 
     if is_new_session
@@ -645,7 +641,7 @@ f_track_range(int idx) =>
             st.sig_outcome := 1 // WIN (FULL) — no invalidation wick-touch before cutoff
         bool mid_hit_b_comm = st.sig_side == 1 and st.mid_hit_bull and st.sig_outcome == 1
         bool mid_hit_s_comm = st.sig_side == -1 and st.mid_hit_bear and st.sig_outcome == 1
-        STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct, st.sig_side, st.sig_outcome)
+        STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.sig_side, st.sig_outcome)
         st.is_committed := true
 
 
@@ -784,7 +780,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
     array<float> mfe_s = STL.f_build_filtered(hist.mfe_bear)
 
     // HARM DEBUG: Raw array sizes
-    log.info("HARM_ARRAYS [{0}] mfe_bull={1} mfe_bear={2} bo_mfe_bull={3} bo_mfe_bear={4} bo_mae_bull={5} bo_mae_bear={6} mae_bull_abs={7} mae_bear_abs={8} sig_side={9} sig_outcome={10} fake_mfe_bull={11} fake_mfe_bear={12} fake_mae_bull={13} fake_mae_bear={14}", sp.name, array.size(hist.mfe_bull), array.size(hist.mfe_bear), array.size(hist.bo_mfe_bull), array.size(hist.bo_mfe_bear), array.size(hist.bo_mae_bull), array.size(hist.bo_mae_bear), array.size(hist.mae_bull_abs), array.size(hist.mae_bear_abs), array.size(hist.sig_side), array.size(hist.sig_outcome), array.size(hist.fake_mfe_bull), array.size(hist.fake_mfe_bear), array.size(hist.fake_mae_bull), array.size(hist.fake_mae_bear))
+    log.info("HARM_ARRAYS [{0}] mfe_bull={1} mfe_bear={2} bo_mfe_bull={3} bo_mfe_bear={4} bo_mae_bull={5} bo_mae_bear={6} mae_bull_abs={7} mae_bear_abs={8} sig_side={9} sig_outcome={10}", sp.name, array.size(hist.mfe_bull), array.size(hist.mfe_bear), array.size(hist.bo_mfe_bull), array.size(hist.bo_mfe_bear), array.size(hist.bo_mae_bull), array.size(hist.bo_mae_bear), array.size(hist.mae_bull_abs), array.size(hist.mae_bear_abs), array.size(hist.sig_side), array.size(hist.sig_outcome))
 
     // Rendering Gate: Allow rendering during OR building or once refs are set
     if (st.ref_set or st.or_building) and not na(st.bull_ref)
@@ -1141,7 +1137,7 @@ f_summary_split_row(table t, int row, string label, string up_val, string down_v
     Tables.f_draw_value_cell(t, 1, row, up_val, bg, up_fg, cell_sz, 1, text.align_left)
     Tables.f_draw_value_cell(t, 2, row, down_val, bg, down_fg, cell_sz, 1, text.align_left)
 
-f_draw_summary_table(int idx, string pos, color bg, color border, color header_bg, color header_txt, color body_txt, color bull_clr, color bear_clr, float target_pct, string hdr_sz, string body_sz) =>
+f_draw_summary_table(int idx, string pos, color bg, color border, color header_bg, color header_txt, color body_txt, color bull_clr, color bear_clr, string hdr_sz, string body_sz) =>
     RSL.RangeSpec sp = array.get(specs, idx)
     RSL.RangeState st = array.get(states, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
@@ -1622,10 +1618,10 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
         Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na), cell_bg, body_txt, body_sz, 1, text.align_center)
         Tables.f_draw_value_cell(t, 5, 2, na(rs) ? "n/a" : str.tostring(rs, "#.##"), cell_bg, body_txt, body_sz, 1, text.align_center)
     else if view == "Fakeout View"
-        array<float> fmb = STL.f_build_filtered(hist.fake_mfe_bull)
-        array<float> fms = STL.f_build_filtered(hist.fake_mfe_bear)
-        array<float> rfb = STL.f_build_filtered(hist.fake_mae_bull)
-        array<float> rfs = STL.f_build_filtered(hist.fake_mae_bear)
+        array<float> fmb = STL.f_build_filtered_by_outcome(hist.bo_mfe_bull, hist.sig_side, hist.sig_outcome, 1, 2)
+        array<float> fms = STL.f_build_filtered_by_outcome(hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, -1, 2)
+        array<float> rfb = STL.f_build_filtered_by_outcome(hist.mae_bull_abs, hist.sig_side, hist.sig_outcome, 1, 2)
+        array<float> rfs = STL.f_build_filtered_by_outcome(hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, -1, 2)
         float b50 = array.size(fmb) > 0 ? array.percentile_nearest_rank(fmb, 50) : na
         float b75 = array.size(fmb) > 0 ? array.percentile_nearest_rank(fmb, 75) : na
         float s50 = array.size(fms) > 0 ? array.percentile_nearest_rank(fms, 50) : na
@@ -1681,7 +1677,7 @@ if barstate.islast and i_show_table and array.size(specs) > 0
     string pos_resolved = Tables.f_table_pos(i_table_pos)
 
     if i_table_view == "Summary"
-        f_draw_summary_table(idx, pos_resolved, table_bg_color_resolved, table_border_color_resolved, table_header_bg_color_resolved, table_header_text_color_resolved, table_body_text_color_resolved, table_bull_color, table_bear_color, i_ev_target_pct, r_tbl_hdr_size, r_tbl_body_size)
+        f_draw_summary_table(idx, pos_resolved, table_bg_color_resolved, table_border_color_resolved, table_header_bg_color_resolved, table_header_text_color_resolved, table_body_text_color_resolved, table_bull_color, table_bear_color, r_tbl_hdr_size, r_tbl_body_size)
     else if i_table_view == "DOW Diagnostic"
         f_draw_dow_table(idx, pos_resolved, table_bg_color_resolved, table_border_color_resolved, table_header_bg_color_resolved, table_header_text_color_resolved, table_body_text_color_resolved, table_bull_color, table_bear_color, r_tbl_hdr_size, r_tbl_body_size)
     else

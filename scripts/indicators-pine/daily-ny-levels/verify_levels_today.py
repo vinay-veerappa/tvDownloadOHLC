@@ -67,7 +67,9 @@ df_1m['et_dow'] = df_1m['et_time'].dt.dayofweek
 df_1m['date'] = df_1m['et_time'].dt.date
 
 # Date range: exclude today (2026-06-30) since session is still active
+# We only care about data since 2026-03-16 (to match TradingView chart's 5000 bar limit / exact start date)
 df_1m = df_1m[df_1m['date'] <= pd.Timestamp('2026-06-27').date()]
+df_1m = df_1m[df_1m['date'] >= pd.Timestamp('2026-03-16').date()]
 HOLIDAYS = {
     pd.Timestamp('2026-04-03').date(),
     pd.Timestamp('2026-05-25').date(),
