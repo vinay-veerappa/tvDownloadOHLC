@@ -134,7 +134,7 @@ i_color_pullback_activation = input.color(#A3E635, "Pullback Activation Color", 
 // ============================================================================
 grp_table = "Data Table"
 i_show_table = input.bool(false, "Show Data Table", group=grp_table)
-i_table_view = input.string("Summary", "Table View", options=["Summary", "DOW Diagnostic", "MFE View", "MAE View", "DOW View", "Fakeout View"], group=grp_table)
+i_table_view = input.string("Summary", "Table View", options=["Summary", "DOW Diagnostic", "MFE View", "MAE View", "Fakeout View"], group=grp_table)
 i_table_pos = input.string("Bottom Right", "Table Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=grp_table)
 i_table_bg_color = input.color(color.black, "Table Background Color", group=grp_table)
 i_table_border_color = input.color(color.gray, "Table Border Color", group=grp_table)
@@ -1438,23 +1438,18 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
     RSL.RangeSpec sp = array.get(specs, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
 
-    bool is_dow = view == "DOW View"
-    int n_cols = is_dow ? 3 : 6
-    int n_rows = is_dow ? 7 : 3
+    int n_cols = 6
+    int n_rows = 3
     table t = Tables.f_new_table(pos, n_cols, n_rows, color.new(bg, 85), color.new(border, 70), 1)
     color cell_bg = color.new(bg, 85)
     color h_bg = color.new(header_bg, 70)
 
     Tables.f_draw_header_cell(t, 0, 0, sp.name + " - " + view, h_bg, header_txt, hdr_sz, 1, text.align_center)
-    if is_dow
-        Tables.f_draw_header_cell(t, 1, 0, "Count", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t, 2, 0, "Avg MFE", h_bg, header_txt, hdr_sz, 1, text.align_center)
-    else
-        Tables.f_draw_header_cell(t, 1, 0, "Count", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t, 2, 0, "P50", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t, 3, 0, "P75", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t, 4, 0, "P90", h_bg, header_txt, hdr_sz, 1, text.align_center)
-        Tables.f_draw_header_cell(t, 5, 0, "Rate", h_bg, header_txt, hdr_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 1, 0, "Count", h_bg, header_txt, hdr_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 2, 0, "P50", h_bg, header_txt, hdr_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 3, 0, "P75", h_bg, header_txt, hdr_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 4, 0, "P90", h_bg, header_txt, hdr_sz, 1, text.align_center)
+    Tables.f_draw_header_cell(t, 5, 0, "Rate", h_bg, header_txt, hdr_sz, 1, text.align_center)
 
     if view == "MFE View"
         array<float> bull = STL.f_build_filtered(hist.mfe_bull)
@@ -1522,29 +1517,6 @@ f_draw_legacy_table(int idx, string pos, color bg, color border, color header_bg
         Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(rs50), cell_bg, body_txt, body_sz, 1, text.align_center)
         Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(rs90), cell_bg, body_txt, body_sz, 1, text.align_center)
         Tables.f_draw_value_cell(t, 5, 2, STL.f_pct_fmt(dbr), cell_bg, body_txt, body_sz, 1, text.align_center)
-    else  // DOW View (aggregate)
-        array<int> cnts = array.new_int(7, 0)
-        array<float> sums_b = array.new_float(7, 0.0)
-        array<float> sums_s = array.new_float(7, 0.0)
-
-        int n_all = array.size(hist.dow)
-        if n_all > 0
-            for j = 0 to n_all - 1
-                int d = array.get(hist.dow, j)
-                if d >= 1 and d <= 6
-                    array.set(cnts, d, array.get(cnts, d) + 1)
-                    array.set(sums_b, d, array.get(sums_b, d) + array.get(hist.mfe_bull, j))
-                    array.set(sums_s, d, array.get(sums_s, d) + array.get(hist.mfe_bear, j))
-
-        for d = 1 to 6
-            string d_name = STL.f_day_full(d)
-            Tables.f_draw_header_cell(t, 0, d, d_name, cell_bg, header_txt, hdr_sz, 1, text.align_center)
-            int cnt = array.get(cnts, d)
-            float sum_b = array.get(sums_b, d)
-            float sum_s = array.get(sums_s, d)
-            float avg_net = cnt == 0 ? na : (sum_b + sum_s) / float(2 * cnt)
-            Tables.f_draw_value_cell(t, 1, d, str.tostring(cnt), cell_bg, body_txt, body_sz, 1, text.align_center)
-            Tables.f_draw_value_cell(t, 2, d, STL.f_pct_fmt(avg_net), cell_bg, body_txt, body_sz, 1, text.align_center)
 
 
 // ----------------------------------------------------------------------------
