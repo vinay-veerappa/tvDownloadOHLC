@@ -445,15 +445,6 @@ f_filter_fakeout_mae(array<float> mae_abs_data, array<int> sig_sides, array<int>
     //    out := STL.f_build_filtered(mae_abs_data)
     out
 
-f_find_breakout_bar(int or_start_bar, float or_high, float or_low) =>
-    int bo_bar = or_start_bar
-    if not na(or_start_bar) and not na(or_high) and not na(or_low)
-        for i = or_start_bar to bar_index
-            float c = close[bar_index - i]
-            if not na(c) and (c > or_high or c < or_low)
-                bo_bar := i
-                break
-    bo_bar
 
 // Helper to handle signal latching, outcome tracking, and pullback activation.
 f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSpec sp, float c, float h, float l) =>
@@ -470,6 +461,7 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             st.sig_side          := bull_bo ? 1 : -1
             st.sig_breakout_side := st.sig_side
             st.sig_breakout_px   := c
+            st.sig_breakout_bar  := bar_index
             st.sig_outcome       := 0
             is_breakout_bar      := true
             if i_show_debug
@@ -730,7 +722,7 @@ f_render_dist_histogram_internal(Core.PineDrawingState ds, Core.LabelRegistry lb
 f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.ExcursionHistory hist, Core.PineDrawingState ds, Core.LabelRegistry lbl_reg) =>
     int tf_min = timeframe.isintraday ? timeframe.multiplier : 1
     [bars_to_cutoff, cutoff_bar, line_render_end, max_profile_width] = f_render_geometry(sp, st, tf_min)
-    int bo_bar = f_find_breakout_bar(st.or_start_bar, st.or_high, st.or_low)
+    int bo_bar = not na(st.sig_breakout_bar) ? st.sig_breakout_bar : st.or_start_bar
 
     // Lifecycle state for this render pass
     string lc_state = st.or_building and not st.or_complete ? "forming" : st.or_complete ? "finalized" : "inactive"

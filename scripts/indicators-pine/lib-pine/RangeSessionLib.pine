@@ -55,18 +55,8 @@ export type RangeState
     int sig_breakout_side
     float sig_breakout_px
     int sig_breakout_bar  // Latched bar_index of the breakout bar (avoids linear scan in render)
-    float sig_pullback_px
-    bool sig_pullback_armed
-    float sig_target_px     // [NEW] Latched P50 Target
-    float sig_invalid_px    // [NEW] Latched P80 Invalidation
-    float sig_p50_bo        // [NEW] Latched Median MFE %
-    float sig_p20_bo        // [NEW] Latched MFE P20 %
-    float sig_p75_fake      // [NEW] Latched Fake MFE P75 %
-    float sig_p50_fake      // Latched Fake MFE P50 % (Pivot)
-    float sig_pivot_px      // Latched Pivot price (P50 Fake MFE)
-    float sig_rev_zone_px   // [NEW] Latched Reversal Zone Mid %
-    float sig_rev_p25       // [NEW] Latched Fake MAE P25 %
-    float sig_rev_p50       // [NEW] Latched Fake MAE P50 %
+    float sig_target_px
+    float sig_invalid_px
     bool prev_in_or     // New
     bool prev_in_data   // New
     array<int> data_mins
@@ -142,18 +132,8 @@ export f_new_range_state(RangeSpec spec) =>
         0, // sig_breakout_side
         na, // sig_breakout_px
         0, // sig_breakout_bar
-        na, // sig_pullback_px
-        false, // sig_pullback_armed
         na, // sig_target_px
         na, // sig_invalid_px
-        na, // sig_p50_bo
-        na, // sig_p20_bo
-        na, // sig_p75_fake
-        na, // sig_p50_fake
-        na, // sig_pivot_px
-        na, // sig_rev_zone_px
-        na, // sig_rev_p25
-        na, // sig_rev_p50
         false, // prev_in_or
         false, // prev_in_data
         array.new_int(0), // data_mins
@@ -190,7 +170,6 @@ export f_reset_daily(RangeState state) =>
     state.mid_hit_bear := false
     state.entry_triggered_bull := false
     state.entry_triggered_bear := false
-    state.sig_pullback_armed := false
     state.close_at_cutoff := na
     state.is_committed := false
     state.sig_side := 0
@@ -199,17 +178,8 @@ export f_reset_daily(RangeState state) =>
     state.sig_breakout_side := 0
     state.sig_breakout_px := na
     state.sig_breakout_bar := na
-    state.sig_pullback_px := na
     state.sig_target_px := na
     state.sig_invalid_px := na
-    state.sig_p50_bo := na
-    state.sig_p20_bo := na
-    state.sig_p75_fake := na
-    state.sig_p50_fake := na
-    state.sig_pivot_px := na
-    state.sig_rev_zone_px := na
-    state.sig_rev_p25 := na
-    state.sig_rev_p50 := na
     state.prev_in_or := false
     state.prev_in_data := false
     array.clear(state.data_mins)
