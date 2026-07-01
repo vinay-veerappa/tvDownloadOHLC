@@ -353,12 +353,12 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
 
     if st.sig_breakout_side != 0
         float base_stats = st.sig_breakout_px
-        if st.sig_breakout_side == 1
+        if st.sig_breakout_side == STL.SIDE_BULL
             if h > base_stats
                 st.daily_bo_mfe_bull := math.max(nz(st.daily_bo_mfe_bull, 0.0), (h - base_stats) / base_stats * 100.0)
             if l < base_stats
                 st.daily_bo_mae_bull := math.max(nz(st.daily_bo_mae_bull, 0.0), (base_stats - l) / base_stats * 100.0)
-        else if st.sig_breakout_side == -1
+        else if st.sig_breakout_side == STL.SIDE_BEAR
             if l < base_stats
                 st.daily_bo_mfe_bear := math.max(nz(st.daily_bo_mfe_bear, 0.0), (base_stats - l) / base_stats * 100.0)
             if h > base_stats
@@ -370,10 +370,10 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
     array.push(st.data_lows, l)
     
     // Track midpoint touch post-breakout for successful pullback verification
-    if st.sig_breakout_side == 1
+    if st.sig_breakout_side == STL.SIDE_BULL
         if l <= st.or_mid
             st.mid_hit_bull := true
-    else if st.sig_breakout_side == -1
+    else if st.sig_breakout_side == STL.SIDE_BEAR
         if h >= st.or_mid
             st.mid_hit_bear := true
     
@@ -384,66 +384,7 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
         
     st.close_at_cutoff := c
 
-// Internal helper to handle the "Win then Total" history filtering fallback.
-// Now accepts a secondary session-wide fallback array to handle historical compatibility for newly added BO metrics.
-f_filter_tactical(array<float> bo_data, array<float> session_data, array<int> sig_sides, array<int> sig_outcomes, int side, int target_outcome) =>
-    array<float> out_data = STL.f_build_filtered_by_outcome(bo_data, sig_sides, sig_outcomes, side, target_outcome)
-    // Hybrid logic: If breakout-specific data is sparse (< 20 samples), use session-wide data as the statistical base.
-    bool used_fallback = false
-    if array.size(out_data) < 20
-        out_data := STL.f_build_filtered_by_outcome(session_data, sig_sides, sig_outcomes, side, target_outcome)
-        used_fallback := true
-    // log.info("FILTER TACTICAL - {0} | Side: {1}, TargetOutcome: {2} | Result Size: {3} | Fallback: {4}", "tactical", side, target_outcome, array.size(out_data), used_fallback)
-    out_data
 
-f_get_pct_fallback(array<float> arr, float pct, float def = 0.0) =>
-    array.size(arr) > 0 ? array.percentile_nearest_rank(arr, pct) : def
-
-f_filter_mae_by_outcome(array<float> src, array<int> side_hist, array<int> outcome_hist, int target_side, bool wins_only) =>
-    array<float> out = array.new_float(0)
-    int n = math.min(array.size(src), math.min(array.size(side_hist), array.size(outcome_hist)))
-    if n > 0
-        int src_off = array.size(src) - n
-        int side_off = array.size(side_hist) - n
-        int outcome_off = array.size(outcome_hist) - n
-        for i = 0 to n - 1
-            float val = array.get(src, src_off + i)
-            int s = array.get(side_hist, side_off + i)
-            int o = array.get(outcome_hist, outcome_off + i)
-            bool side_match = s == target_side
-            bool outcome_match = wins_only ? (o == 1) : (o <= 0 or o == -1 or o == 2)
-            if not na(val) and side_match and outcome_match
-                array.push(out, val)
-    out
-
-f_filter_tactical_outcome(array<float> bo_data, array<int> sig_sides, array<int> sig_outcomes, int side, bool wins_only) =>
-    f_filter_mae_by_outcome(bo_data, sig_sides, sig_outcomes, side, wins_only)
-
-f_filter_breakout_wins(array<float> bo_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
-    array<float> out = STL.f_build_filtered_by_outcome(bo_data, sig_sides, sig_outcomes, side, 1)
-    //if array.size(out) == 0
-    //    out := STL.f_build_filtered(bo_data)
-    out
-
-f_filter_breakout_all(array<float> bo_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
-    array<float> out = STL.f_build_filtered_by_outcome(bo_data, sig_sides, sig_outcomes, side, 0)
-   // if array.size(out) == 0
-    //    out := STL.f_build_filtered(bo_data)
-    out
-
-f_filter_fakeout_mfe(array<float> bo_mfe_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
-    // Sourced from bo_mfe arrays filtered strictly for fakeout sessions (outcome = 2) for coordinate/anchor purity
-    array<float> out = STL.f_build_filtered_by_outcome(bo_mfe_data, sig_sides, sig_outcomes, side, 2)
-    //if array.size(out) == 0
-    //    out := STL.f_build_filtered(bo_mfe_data)
-    out
-
-f_filter_fakeout_mae(array<float> mae_abs_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
-    // Sourced from session absolute MAE arrays filtered strictly for fakeout sessions (outcome = 2) for OR High/Low anchoring purity
-    array<float> out = STL.f_build_filtered_by_outcome(mae_abs_data, sig_sides, sig_outcomes, side, 2)
-    //if array.size(out) == 0
-    //    out := STL.f_build_filtered(mae_abs_data)
-    out
 
 
 // Helper to handle signal latching, outcome tracking, and pullback activation.
@@ -452,13 +393,13 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
         log.info("SIG_EVAL [{0}] c={1} or_h={2} or_l={3} sig_side={4} sig_outcome={5} sig_bo_side={6}", sp.name, c, st.or_high, st.or_low, st.sig_side, st.sig_outcome, st.sig_breakout_side)
     bool is_breakout_bar = false
     // First breakout is canonical for the session; do not relatch after fakeout.
-    if st.sig_side == 0
+    if st.sig_side == STL.SIDE_NONE
         bool bull_bo = c > st.or_high
         bool bear_bo = c < st.or_low
         
         if bull_bo or bear_bo
             // 1. Latch Signal and Base Price (using breakout bar close for momentum-relative levels)
-            st.sig_side          := bull_bo ? 1 : -1
+            st.sig_side          := bull_bo ? STL.SIDE_BULL : STL.SIDE_BEAR
             st.sig_breakout_side := st.sig_side
             st.sig_breakout_px   := c
             st.sig_breakout_bar  := bar_index
@@ -468,23 +409,23 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
                 log.info("BO_LATCH [{0}] side={1} px={2} c={3} or_h={4} or_l={5}", sp.name, st.sig_side, st.sig_breakout_px, c, st.or_high, st.or_low)
             
             // 2. Seed Trigger-bar Excursion (Measured from breakout close price to align with breakout activation)
-            st.daily_bo_mfe_bull := st.sig_side == 1 ? math.max(0.0, (h - st.sig_breakout_px) / st.sig_breakout_px * 100.0) : na
-            st.daily_bo_mae_bull := st.sig_side == 1 ? math.max(0.0, (st.sig_breakout_px - l) / st.sig_breakout_px * 100.0) : na
-            st.daily_bo_mfe_bear := st.sig_side == -1 ? math.max(0.0, (st.sig_breakout_px - l) / st.sig_breakout_px * 100.0) : na
-            st.daily_bo_mae_bear := st.sig_side == -1 ? math.max(0.0, (h - st.sig_breakout_px) / st.sig_breakout_px * 100.0) : na
+            st.daily_bo_mfe_bull := st.sig_side == STL.SIDE_BULL ? math.max(0.0, (h - st.sig_breakout_px) / st.sig_breakout_px * 100.0) : na
+            st.daily_bo_mae_bull := st.sig_side == STL.SIDE_BULL ? math.max(0.0, (st.sig_breakout_px - l) / st.sig_breakout_px * 100.0) : na
+            st.daily_bo_mfe_bear := st.sig_side == STL.SIDE_BEAR ? math.max(0.0, (st.sig_breakout_px - l) / st.sig_breakout_px * 100.0) : na
+            st.daily_bo_mae_bear := st.sig_side == STL.SIDE_BEAR ? math.max(0.0, (h - st.sig_breakout_px) / st.sig_breakout_px * 100.0) : na
             
             int side = st.sig_side
             
             // 3. Build filtered histories for evaluation levels only (invalidation)
-            array<float> bo_mae_wins = f_filter_breakout_wins(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side)
-            array<float> bo_mae_all  = f_filter_breakout_all(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side)
+            array<float> bo_mae_wins = STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side)
+            array<float> bo_mae_all  = STL.f_filter_breakout_all(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side)
             
             // 4. Compute evaluation percentiles and prices with robust cold-start fallbacks
-            float p80_mae_fallback = f_get_pct_fallback(bo_mae_all, 80, 0.5)
-            float p80_mae = f_get_pct_fallback(bo_mae_all, 80, p80_mae_fallback)
+            float p80_mae_fallback = STL.f_get_pct_fallback(bo_mae_all, 80, 0.5)
+            float p80_mae = STL.f_get_pct_fallback(bo_mae_all, 80, p80_mae_fallback)
             
-            st.sig_target_px  := st.sig_breakout_px * (side == 1 ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
-            st.sig_invalid_px := st.sig_breakout_px * (side == 1 ? 1.0 - p80_mae / 100.0 : 1.0 + p80_mae / 100.0)
+            st.sig_target_px  := st.sig_breakout_px * (side == STL.SIDE_BULL ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
+            st.sig_invalid_px := st.sig_breakout_px * (side == STL.SIDE_BULL ? 1.0 - p80_mae / 100.0 : 1.0 + p80_mae / 100.0)
             
             if i_show_debug
                 log.info("BO_EVAL_LATCH [{0}] side={1} tgt={2} inv={3} ev_tgt={4} p80_mae={5}", sp.name, side, st.sig_target_px, st.sig_invalid_px, i_ev_target_pct, p80_mae)
@@ -496,16 +437,16 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
     //   LOSS (-1) = invalidation wick-touch hit
     //   FAKE (2)  = invalidation hit AND opposite OR wick cross (deeper loss; populates fakeout arrays)
     // EV target is a display level only — NOT a classification criterion.
-    if st.sig_side != 0 and st.sig_outcome <= 0 and not is_breakout_bar
+    if st.sig_side != STL.SIDE_NONE and st.sig_outcome <= 0 and not is_breakout_bar
         // 1. Invalidation wick-touch — primary classification criterion (FAILED)
-        if not na(st.sig_invalid_px) and (st.sig_side == 1 ? l <= st.sig_invalid_px : h >= st.sig_invalid_px)
-            st.sig_outcome := -1 // Straight Loss
+        if not na(st.sig_invalid_px) and (st.sig_side == STL.SIDE_BULL ? l <= st.sig_invalid_px : h >= st.sig_invalid_px)
+            st.sig_outcome := STL.OUTCOME_LOSS // Straight Loss
         // 2. Fakeout — opposite OR wick cross (deeper than invalidation; overrides -1 -> 2 so
         //    f_commit_daily populates fake_mfe/fake_mae/fakeout_reversal arrays for
         //    Pivot / Confirm / Reversal Zone levels. No new variable needed.
-        bool crossed_opposite = st.sig_side == 1 ? l < st.or_low : h > st.or_high
+        bool crossed_opposite = st.sig_side == STL.SIDE_BULL ? l < st.or_low : h > st.or_high
         if crossed_opposite
-            st.sig_outcome := 2 // Fakeout (deep loss; preserves fakeout-dependent levels)
+            st.sig_outcome := STL.OUTCOME_FAKE // Fakeout (deep loss; preserves fakeout-dependent levels)
 
 f_track_range(int idx) =>
     RSL.RangeSpec sp = array.get(specs, idx)
@@ -521,10 +462,10 @@ f_track_range(int idx) =>
     if is_new_session and not st.is_committed and st.ref_set and not na(st.bull_ref)
         float mfe_b_comm = not na(st.daily_bull_mfe) ? st.daily_bull_mfe : na
         float mfe_s_comm = not na(st.daily_bear_mfe) ? st.daily_bear_mfe : na
-        float bo_mfe_b_comm = st.sig_side == 1 ? st.daily_bo_mfe_bull : na
-        float bo_mfe_s_comm = st.sig_side == -1 ? st.daily_bo_mfe_bear : na
-        float bo_mae_b_comm = st.sig_side == 1 ? st.daily_bo_mae_bull : na
-        float bo_mae_s_comm = st.sig_side == -1 ? st.daily_bo_mae_bear : na
+        float bo_mfe_b_comm = st.sig_side == STL.SIDE_BULL ? st.daily_bo_mfe_bull : na
+        float bo_mfe_s_comm = st.sig_side == STL.SIDE_BEAR ? st.daily_bo_mfe_bear : na
+        float bo_mae_b_comm = st.sig_side == STL.SIDE_BULL ? st.daily_bo_mae_bull : na
+        float bo_mae_s_comm = st.sig_side == STL.SIDE_BEAR ? st.daily_bo_mae_bear : na
         float mae_abs_b_comm = st.entry_triggered_bull ? st.daily_mae_bull_abs : na
         float mae_abs_s_comm = st.entry_triggered_bear ? st.daily_mae_bear_abs : na
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
@@ -532,10 +473,10 @@ f_track_range(int idx) =>
 
         // Fix: Cutoff finalization — no invalidation = WIN (FULL). Previously PENDING (0)
         // sessions were silently dropped from win-rate stats (o != 0 filter).
-        if st.sig_side != 0 and st.sig_outcome == 0
-            st.sig_outcome := 1 // WIN (FULL) — no invalidation wick-touch before cutoff
-        bool mid_hit_b_comm = st.sig_side == 1 and st.mid_hit_bull and st.sig_outcome == 1
-        bool mid_hit_s_comm = st.sig_side == -1 and st.mid_hit_bear and st.sig_outcome == 1
+        if st.sig_side != STL.SIDE_NONE and st.sig_outcome == 0
+            st.sig_outcome := STL.OUTCOME_WIN // WIN (FULL) — no invalidation wick-touch before cutoff
+        bool mid_hit_b_comm = st.sig_side == STL.SIDE_BULL and st.mid_hit_bull and st.sig_outcome == 1
+        bool mid_hit_s_comm = st.sig_side == STL.SIDE_BEAR and st.mid_hit_bear and st.sig_outcome == 1
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.sig_side, st.sig_outcome)
         st.is_committed := true
 
@@ -618,10 +559,10 @@ f_track_range(int idx) =>
     if data_just_ended and not st.is_committed and st.ref_set
         float mfe_b_comm = not na(st.daily_bull_mfe) ? st.daily_bull_mfe : na
         float mfe_s_comm = not na(st.daily_bear_mfe) ? st.daily_bear_mfe : na
-        float bo_mfe_b_comm = st.sig_side == 1 ? st.daily_bo_mfe_bull : na
-        float bo_mfe_s_comm = st.sig_side == -1 ? st.daily_bo_mfe_bear : na
-        float bo_mae_b_comm = st.sig_side == 1 ? st.daily_bo_mae_bull : na
-        float bo_mae_s_comm = st.sig_side == -1 ? st.daily_bo_mae_bear : na
+        float bo_mfe_b_comm = st.sig_side == STL.SIDE_BULL ? st.daily_bo_mfe_bull : na
+        float bo_mfe_s_comm = st.sig_side == STL.SIDE_BEAR ? st.daily_bo_mfe_bear : na
+        float bo_mae_b_comm = st.sig_side == STL.SIDE_BULL ? st.daily_bo_mae_bull : na
+        float bo_mae_s_comm = st.sig_side == STL.SIDE_BEAR ? st.daily_bo_mae_bear : na
         float mae_abs_b_comm = st.entry_triggered_bull ? st.daily_mae_bull_abs : na
         float mae_abs_s_comm = st.entry_triggered_bear ? st.daily_mae_bear_abs : na
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
@@ -629,10 +570,10 @@ f_track_range(int idx) =>
 
         // Fix: Cutoff finalization — no invalidation = WIN (FULL). Previously PENDING (0)
         // sessions were silently dropped from win-rate stats (o != 0 filter).
-        if st.sig_side != 0 and st.sig_outcome == 0
-            st.sig_outcome := 1 // WIN (FULL) — no invalidation wick-touch before cutoff
-        bool mid_hit_b_comm = st.sig_side == 1 and st.mid_hit_bull and st.sig_outcome == 1
-        bool mid_hit_s_comm = st.sig_side == -1 and st.mid_hit_bear and st.sig_outcome == 1
+        if st.sig_side != STL.SIDE_NONE and st.sig_outcome == 0
+            st.sig_outcome := STL.OUTCOME_WIN // WIN (FULL) — no invalidation wick-touch before cutoff
+        bool mid_hit_b_comm = st.sig_side == STL.SIDE_BULL and st.mid_hit_bull and st.sig_outcome == 1
+        bool mid_hit_s_comm = st.sig_side == STL.SIDE_BEAR and st.mid_hit_bear and st.sig_outcome == 1
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, mid_hit_b_comm, mid_hit_s_comm, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.sig_side, st.sig_outcome)
         st.is_committed := true
 
@@ -640,7 +581,7 @@ f_track_range(int idx) =>
     if i_show_debug and is_new_session
         Markers.f_draw_text_marker(array.get(drawings, idx), bar_index, high, "NEW: " + sp.name, debug_text_color_resolved, "down", "Normal")
 
-    if array.get(primary_breakout_sides, idx) == 0 and st.sig_side != 0
+    if array.get(primary_breakout_sides, idx) == 0 and st.sig_side != STL.SIDE_NONE
         array.set(primary_breakout_sides, idx, st.sig_side)
 
     array.set(states, idx, st)
@@ -755,7 +696,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
     // Resolve side and anchor for this specific instance (works for live and historical)
     int render_side = st.sig_breakout_side != 0 ? st.sig_breakout_side : st.sig_side
     
-    float render_px = not na(st.sig_breakout_px) ? st.sig_breakout_px : (render_side == 1 ? st.or_high : render_side == -1 ? st.or_low : na)
+    float render_px = not na(st.sig_breakout_px) ? st.sig_breakout_px : (render_side == STL.SIDE_BULL ? st.or_high : render_side == STL.SIDE_BEAR ? st.or_low : na)
 
     
     // OR box
@@ -792,16 +733,16 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
 
         // 2. Multi-excursion Statistical Levels (Optimized side-aware loop)
         int primary_side = array.get(primary_breakout_sides, idx)
-        bool draw_bull = i_show_stat_lines and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == 1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and (primary_side == 1 or primary_side == 0)))
-        bool draw_bear = i_show_stat_lines and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == -1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and (primary_side == -1 or primary_side == 0)))
+        bool draw_bull = i_show_stat_lines and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == STL.SIDE_BULL or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and (primary_side == STL.SIDE_BULL or primary_side == 0)))
+        bool draw_bear = i_show_stat_lines and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == STL.SIDE_BEAR or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and (primary_side == STL.SIDE_BEAR or primary_side == 0)))
 
         // side_arr: Using array.from for v6 compatibility
         for i = 0 to 1
             int side = i == 0 ? 1 : -1
-            bool should_draw = side == 1 ? draw_bull : draw_bear
-            array<float> src_data = side == 1 ? mfe_b : mfe_s
-            float ref_px = side == 1 ? st.bull_ref : st.bear_ref
-            string side_group = m_group + (side == 1 ? "_b" : "_s")
+            bool should_draw = side == STL.SIDE_BULL ? draw_bull : draw_bear
+            array<float> src_data = side == STL.SIDE_BULL ? mfe_b : mfe_s
+            float ref_px = side == STL.SIDE_BULL ? st.bull_ref : st.bear_ref
+            string side_group = m_group + (side == STL.SIDE_BULL ? "_b" : "_s")
             
             if should_draw
                 // Resolved emphasis styles for this side
@@ -810,8 +751,8 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 [c_str, w_str] = f_get_side_styles(side, render_side, i_emphasize_active_side, r_stat_stretch_color)
 
                 // MED/MAX MFE: Use Green (FULL/winning) sessions from BO px — verified 2026-06-30
-                array<float> green_mfe = f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
-                float green_bo_px = not na(st.sig_breakout_px) and st.sig_breakout_side == side ? st.sig_breakout_px : (side == 1 ? st.or_high : st.or_low)
+                array<float> green_mfe = STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
+                float green_bo_px = not na(st.sig_breakout_px) and st.sig_breakout_side == side ? st.sig_breakout_px : (side == STL.SIDE_BULL ? st.or_high : st.or_low)
                 
                 if array.size(green_mfe) > 0
                     float p_med = array.percentile_nearest_rank(green_mfe, 50)
@@ -828,12 +769,12 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
 
         // 3. Tactical Directional Levels (Respect side strategy and suppress pre-breakout)
         bool has_breakout = (render_side != 0)
-        bool draw_tac_bull = has_breakout and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and render_side == 1) or (i_stat_side_strategy == "Primary Only" and primary_side == 1))
-        bool draw_tac_bear = has_breakout and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and render_side == -1) or (i_stat_side_strategy == "Primary Only" and primary_side == -1))
+        bool draw_tac_bull = has_breakout and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and render_side == STL.SIDE_BULL) or (i_stat_side_strategy == "Primary Only" and primary_side == STL.SIDE_BULL))
+        bool draw_tac_bear = has_breakout and (i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and render_side == STL.SIDE_BEAR) or (i_stat_side_strategy == "Primary Only" and primary_side == STL.SIDE_BEAR))
 
         for i = 0 to 1
             int side = i == 0 ? 1 : -1
-            bool should_draw_tac = side == 1 ? draw_tac_bull : draw_tac_bear
+            bool should_draw_tac = side == STL.SIDE_BULL ? draw_tac_bull : draw_tac_bear
             
             if i_show_debug
                 log.info("DEBUG BO ACT [" + str.tostring(idx) + "] " + sp.name + " Side=" + str.tostring(side) + ": should_draw=" + (should_draw_tac ? "true" : "false") + ", render_side=" + str.tostring(render_side))
@@ -842,46 +783,46 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 continue
 
             bool is_active_side = (side == render_side)
-            string side_label = render_side == 0 ? (side == 1 ? "Bull " : "Bear ") : ""
-            string side_group = m_group + (side == 1 ? "_b" : "_s")
+            string side_label = render_side == 0 ? (side == STL.SIDE_BULL ? "Bull " : "Bear ") : ""
+            string side_group = m_group + (side == STL.SIDE_BULL ? "_b" : "_s")
             
             // Reference price for this side's breakout (use latched px if active, else OR boundary)
-            float t_render_px = is_active_side and not na(st.sig_breakout_px) ? st.sig_breakout_px : (side == 1 ? st.or_high : st.or_low)
+            float t_render_px = is_active_side and not na(st.sig_breakout_px) ? st.sig_breakout_px : (side == STL.SIDE_BULL ? st.or_high : st.or_low)
             
             if i_show_debug
                 log.info("TACTICAL LOOP [" + str.tostring(idx) + "] " + sp.name + " Side=" + str.tostring(side) + ": is_active=" + (is_active_side ? "true" : "false") + ", t_render_px=" + str.tostring(t_render_px))
             
             if not na(t_render_px)
                 // Percentile stats (single source of truth — always from history)
-                float p50_bo   = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
+                float p50_bo   = STL.f_get_pct_fallback(STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
                 // Cashflow uses WINS (Green/FULL sessions) — verified 2026-06-30 via Python + Gunship comparison
-                float p20_bo   = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 20)
-                float p50_fake = f_get_pct_fallback(f_filter_fakeout_mfe(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
-                float p75_fake = f_get_pct_fallback(f_filter_fakeout_mfe(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 75)
+                float p20_bo   = STL.f_get_pct_fallback(STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 20)
+                float p50_fake = STL.f_get_pct_fallback(STL.f_filter_fakeout_mfe(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 50)
+                float p75_fake = STL.f_get_pct_fallback(STL.f_filter_fakeout_mfe(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side), 75)
                 
                 // MAE stats (Invalidation/Pullback) with robust cold-start fallbacks
-                float p80_mae_losses = f_get_pct_fallback(f_filter_tactical_outcome(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, false), 80, 0.5)
-                float p80_mae_wins   = f_get_pct_fallback(f_filter_tactical_outcome(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, true), 80, p80_mae_losses)
+                float p80_mae_losses = STL.f_get_pct_fallback(STL.f_build_filtered_by_outcome(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, STL.OUTCOME_NON_WIN), 80, 0.5)
+                float p80_mae_wins   = STL.f_get_pct_fallback(STL.f_build_filtered_by_outcome(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side, STL.OUTCOME_WIN), 80, p80_mae_losses)
                 // Pullback uses WINS (Green/FULL sessions) — verified 2026-06-30 via Python + Gunship comparison
-                float p25_mae        = f_get_pct_fallback(f_filter_breakout_wins(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side), 25, 0.15)
+                float p25_mae        = STL.f_get_pct_fallback(STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, side), 25, 0.15)
 
                 // Derived prices (single source of truth — always from t_render_px)
-                float target_px        = t_render_px * (side == 1 ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
-                float pivot_px         = t_render_px * (side == 1 ? 1.0 + p50_fake / 100.0 : 1.0 - p50_fake / 100.0)
-                float invalid_px_wins  = t_render_px * (side == 1 ? 1.0 - p80_mae_wins / 100.0 : 1.0 + p80_mae_wins / 100.0)
-                float invalid_px_losses = t_render_px * (side == 1 ? 1.0 - p80_mae_losses / 100.0 : 1.0 + p80_mae_losses / 100.0)
-                float pullback_px      = t_render_px * (side == 1 ? 1.0 - p25_mae / 100.0 : 1.0 + p25_mae / 100.0)
+                float target_px        = t_render_px * (side == STL.SIDE_BULL ? 1.0 + i_ev_target_pct / 100.0 : 1.0 - i_ev_target_pct / 100.0)
+                float pivot_px         = t_render_px * (side == STL.SIDE_BULL ? 1.0 + p50_fake / 100.0 : 1.0 - p50_fake / 100.0)
+                float invalid_px_wins  = t_render_px * (side == STL.SIDE_BULL ? 1.0 - p80_mae_wins / 100.0 : 1.0 + p80_mae_wins / 100.0)
+                float invalid_px_losses = t_render_px * (side == STL.SIDE_BULL ? 1.0 - p80_mae_losses / 100.0 : 1.0 + p80_mae_losses / 100.0)
+                float pullback_px      = t_render_px * (side == STL.SIDE_BULL ? 1.0 - p25_mae / 100.0 : 1.0 + p25_mae / 100.0)
                 
-                float rev_p25 = f_get_pct_fallback(f_filter_fakeout_mae(side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side), 25)
-                float rev_p50 = f_get_pct_fallback(f_filter_fakeout_mae(side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side), 50)
-                float rev_p75 = f_get_pct_fallback(f_filter_fakeout_mae(side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side), 75)
+                float rev_p25 = STL.f_get_pct_fallback(STL.f_filter_fakeout_mae(side == STL.SIDE_BULL ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side), 25)
+                float rev_p50 = STL.f_get_pct_fallback(STL.f_filter_fakeout_mae(side == STL.SIDE_BULL ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side), 50)
+                float rev_p75 = STL.f_get_pct_fallback(STL.f_filter_fakeout_mae(side == STL.SIDE_BULL ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side), 75)
 
                 // HARM DEBUG: Percentile values and array sizes for this side
-                array<float> bo_mfe_all_arr = f_filter_breakout_all(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
-                array<float> bo_mfe_win_arr = f_filter_breakout_wins(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
-                array<float> fake_mfe_arr = f_filter_fakeout_mfe(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
-                array<float> fake_mae_arr = f_filter_fakeout_mae(side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side)
-                array<float> mfe_filtered = STL.f_build_filtered(side == 1 ? hist.mfe_bull : hist.mfe_bear)
+                array<float> bo_mfe_all_arr = STL.f_filter_breakout_all(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
+                array<float> bo_mfe_win_arr = STL.f_filter_breakout_wins(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
+                array<float> fake_mfe_arr = STL.f_filter_fakeout_mfe(side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, side)
+                array<float> fake_mae_arr = STL.f_filter_fakeout_mae(side == STL.SIDE_BULL ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side)
+                array<float> mfe_filtered = STL.f_build_filtered(side == STL.SIDE_BULL ? hist.mfe_bull : hist.mfe_bear)
                 log.info("HARM_PCT [{0}] Side={1} | bo_mfe_all N={2} p20={3} | bo_mfe_win N={4} p50={5} | fake_mfe N={6} p50={7} p75={8} | fake_mae N={9} p25={10} p50={11} | mfe_all N={12} p50={13} p90={14} | t_render_px={15}", sp.name, side, array.size(bo_mfe_all_arr), p20_bo, array.size(bo_mfe_win_arr), p50_bo, array.size(fake_mfe_arr), p50_fake, p75_fake, array.size(fake_mae_arr), rev_p25, rev_p50, array.size(mfe_filtered), array.size(mfe_filtered) > 0 ? array.percentile_nearest_rank(mfe_filtered, 50) : na, array.size(mfe_filtered) > 0 ? array.percentile_nearest_rank(mfe_filtered, 90) : na, t_render_px)
 
                 // Resolved emphasis styles for tactical side
@@ -907,11 +848,11 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 if not na(target_px)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, target_px, side_label + "Target BO EV Target " + STL.f_pct_fmt(i_ev_target_pct) + lb_sfx, c_tgt, 78, side_group, 0, strat, "Target — EV target " + STL.f_pct_fmt(i_ev_target_pct) + " from breakout")
 
-                float y_cash = t_render_px * (side == 1 ? 1.0 + p20_bo / 100.0 : 1.0 - p20_bo / 100.0)
+                float y_cash = t_render_px * (side == STL.SIDE_BULL ? 1.0 + p20_bo / 100.0 : 1.0 - p20_bo / 100.0)
                 if not na(y_cash)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_cash, side_label + "BO Cashflow " + STL.f_pct_fmt(p20_bo) + lb_sfx, c_cash, 80, side_group, 0, strat, "BO Cashflow — p20 MFE from breakout (" + STL.f_pct_fmt(p20_bo) + "). 80% of sessions reached this level.")
 
-                float y_conf = t_render_px * (side == 1 ? 1.0 + p75_fake / 100.0 : 1.0 - p75_fake / 100.0)
+                float y_conf = t_render_px * (side == STL.SIDE_BULL ? 1.0 + p75_fake / 100.0 : 1.0 - p75_fake / 100.0)
                 if not na(y_conf)
                     HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", bo_bar, ln_end, y_conf, side_label + "BO Confirm " + STL.f_pct_fmt(p75_fake) + lb_sfx, c_conf, 75, side_group, 0, strat, "BO Confirm — p75 MFE of fakes")
 
@@ -921,8 +862,8 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
 
                 // Reversal Zone — Fix 1+2: Anchor at OR High/Low, range P25-P50 (per Gunship tooltip)
                 if not na(rev_p25) and not na(rev_p50) and rev_p25 > 0
-                    float y_rev25 = side == 1 ? st.or_high * (1.0 - rev_p25 / 100.0) : st.or_low * (1.0 + rev_p25 / 100.0)
-                    float y_rev50 = side == 1 ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0)
+                    float y_rev25 = side == STL.SIDE_BULL ? st.or_high * (1.0 - rev_p25 / 100.0) : st.or_low * (1.0 + rev_p25 / 100.0)
+                    float y_rev50 = side == STL.SIDE_BULL ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0)
                     float z_top = math.max(y_rev25, y_rev50), z_bot = math.min(y_rev25, y_rev50)
                     int z_w = math.max(2, ln_end - bo_bar)
                     Zones.f_draw_hist_band(ds, bo_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
@@ -952,13 +893,13 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             f_render_dist_histogram_internal(ds, lbl_reg, st.bear_ref, mfe_s, -1, bull_color, st.or_start_bar, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name)
 
         if i_show_bo_histogram and render_side != 0 and not na(render_px)
-            array<float> bo_mfe_win = f_filter_breakout_wins(render_side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, render_side)
-            array<float> bo_mae_win = f_filter_breakout_wins(render_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, render_side)
+            array<float> bo_mfe_win = STL.f_filter_breakout_wins(render_side == STL.SIDE_BULL ? hist.bo_mfe_bull : hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, render_side)
+            array<float> bo_mae_win = STL.f_filter_breakout_wins(render_side == STL.SIDE_BULL ? hist.bo_mae_bull : hist.bo_mae_bear, hist.sig_side, hist.sig_outcome, render_side)
 
             int bo_x1 = bo_bar + int(math.round(float(max_profile_width) * i_bo_hist_offset_mult))
             float bo_anchor = render_px
             f_render_dist_histogram_internal(ds, lbl_reg, bo_anchor, bo_mfe_win, render_side, bull_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mfe")
-            f_render_dist_histogram_internal(ds, lbl_reg, bo_anchor, bo_mae_win, -render_side, color.new(render_side == 1 ? bear_color : bull_color, 75), bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mae")
+            f_render_dist_histogram_internal(ds, lbl_reg, bo_anchor, bo_mae_win, -render_side, color.new(render_side == STL.SIDE_BULL ? bear_color : bull_color, 75), bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mae")
 
     // 6. Time Distribution
     if i_show_time_dist and st.ref_set and not na(st.or_start_bar)
@@ -1178,8 +1119,8 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
 
     int n_total_signals = array.size(sig_ag_win_bools)
 
-    array<float> bo_mfe_b_wins = f_filter_breakout_wins(hist.bo_mfe_bull, hist.sig_side, hist.sig_outcome, 1)
-    array<float> bo_mfe_s_wins = f_filter_breakout_wins(hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, -1)
+    array<float> bo_mfe_b_wins = STL.f_filter_breakout_wins(hist.bo_mfe_bull, hist.sig_side, hist.sig_outcome, 1)
+    array<float> bo_mfe_s_wins = STL.f_filter_breakout_wins(hist.bo_mfe_bear, hist.sig_side, hist.sig_outcome, -1)
 
     // Streak stats — 3 scopes: UP Signal, DOWN Signal, Aggregated Signals
     [cs_up, cw_up, bw_up, wf_up, aw_up, af_up] = STL.f_streak_stats(sig_bull_win_bools)
@@ -1252,8 +1193,8 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     f_summary_aggregate_row(t, r, "› Status", status_txt, cell_bg, body_txt, body_txt, body_sz)
     r += 1
     int live_side = st.sig_side
-    string bearing_txt = live_side == 1 ? "UP" : live_side == -1 ? "DOWN" : "NEUTRAL"
-    color bearing_clr = live_side == 1 ? bull_clr : live_side == -1 ? bear_clr : body_txt
+    string bearing_txt = live_side == STL.SIDE_BULL ? "UP" : live_side == STL.SIDE_BEAR ? "DOWN" : "NEUTRAL"
+    color bearing_clr = live_side == STL.SIDE_BULL ? bull_clr : live_side == STL.SIDE_BEAR ? bear_clr : body_txt
     f_summary_aggregate_row(t, r, "› Sig Side", bearing_txt, cell_bg, body_txt, bearing_clr, body_sz)
     r += 1
     f_summary_aggregate_row(t, r, "› FR Zone", "---", cell_bg, body_txt, body_txt, body_sz)

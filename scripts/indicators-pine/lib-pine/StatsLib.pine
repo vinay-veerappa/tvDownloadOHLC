@@ -1,5 +1,17 @@
 //@version=6
 library("StatsLib", overlay=true)
+// Trade Outcome Constants
+export int OUTCOME_ANY     =  0
+export int OUTCOME_WIN     =  1
+export int OUTCOME_LOSS    = -1
+export int OUTCOME_FAKE    =  2
+export int OUTCOME_NON_WIN = -2
+
+// Trade Side / Bias Constants
+export int SIDE_BULL       =  1
+export int SIDE_BEAR       = -1
+export int SIDE_NONE       =  0
+
 
 export type ExcursionHistory
     string range_name
@@ -63,18 +75,39 @@ export f_build_filtered_by_outcome(array<float> src, array<int> side_hist, array
             float val = array.get(src, src_off + i)
             int s = array.get(side_hist, side_off + i)
             int o = array.get(outcome_hist, outcome_off + i)
-            // Filter: Must match side, and (either match outcome OR target_outcome is 0 meaning 'Any')
+            // Filter: Must match side, and (either match outcome OR target_outcome is OUTCOME_ANY OR target_outcome is OUTCOME_NON_WIN)
             bool side_match = s == target_side
-            bool outcome_match = (target_outcome == 0) or (o == target_outcome)
+            bool outcome_match = (target_outcome == OUTCOME_ANY) or (target_outcome == OUTCOME_NON_WIN and o != OUTCOME_WIN) or (o == target_outcome)
             if not na(val) and side_match and outcome_match
                 array.push(out, val)
                 match_count += 1
     
     if n == 0
         log.warning("STL FILTER - Empty arrays! src: {0}, side: {1}, out: {2}", array.size(src), array.size(side_hist), array.size(outcome_hist))
-    //else
-        //log.info("STL FILTER - TargetSide: {0}, TargetOutcome: {1} | Scanned: {2}, Matches: {3}", target_side, target_outcome, n, match_count)
     out
+
+export f_get_pct_fallback(array<float> arr, float pct, float def = 0.0) =>
+    array.size(arr) > 0 ? array.percentile_nearest_rank(arr, pct) : def
+
+export f_filter_breakout_wins(array<float> bo_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
+    f_build_filtered_by_outcome(bo_data, sig_sides, sig_outcomes, side, OUTCOME_WIN)
+
+export f_filter_breakout_all(array<float> bo_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
+    f_build_filtered_by_outcome(bo_data, sig_sides, sig_outcomes, side, OUTCOME_ANY)
+
+export f_filter_fakeout_mfe(array<float> bo_mfe_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
+    f_build_filtered_by_outcome(bo_mfe_data, sig_sides, sig_outcomes, side, OUTCOME_FAKE)
+
+export f_filter_fakeout_mae(array<float> mae_abs_data, array<int> sig_sides, array<int> sig_outcomes, int side) =>
+    f_build_filtered_by_outcome(mae_abs_data, sig_sides, sig_outcomes, side, OUTCOME_FAKE)
+
+// Now accepts a secondary session-wide fallback array to handle historical compatibility for newly added BO metrics.
+export f_filter_tactical(array<float> bo_data, array<float> session_data, array<int> sig_sides, array<int> sig_outcomes, int side, int target_outcome) =>
+    array<float> out_data = f_build_filtered_by_outcome(bo_data, sig_sides, sig_outcomes, side, target_outcome)
+    // Hybrid logic: If breakout-specific data is sparse (< 20 samples), use session-wide data as the statistical base.
+    if array.size(out_data) < 20
+        out_data := f_build_filtered_by_outcome(session_data, sig_sides, sig_outcomes, side, target_outcome)
+    out_data
 
 
 export f_track_mfe(float bar_h, float bar_l, int bar_mins_since_or, float bull_ref, float bear_ref, float prev_bull_mfe, float prev_bear_mfe, int prev_bull_peak, int prev_bear_peak) =>
@@ -217,35 +250,7 @@ export f_double_break_rate(array<bool> double_break, array<bool> trig_bull, arra
                     num += 1
     denom == 0 ? na : (float(num) / float(denom)) * 100.0
 
-export f_fakeout_mfe_percentiles(array<float> mfe_arr, array<bool> mask) =>
-    array<float> f = array.new_float(0)
-    int n = math.min(array.size(mfe_arr), array.size(mask))
-    if n > 0
-        for i = 0 to n - 1
-            bool m = array.get(mask, i)
-            float v = array.get(mfe_arr, i)
-            if m and not na(v)
-                array.push(f, v)
-    float p25 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 25) : na
-    float p50 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 50) : na
-    float p75 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 75) : na
-    float p90 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 90) : na
-    [p25, p50, p75, p90]
 
-export f_fakeout_reversal_percentiles(array<float> reversal_arr, array<bool> mask) =>
-    array<float> f = array.new_float(0)
-    int n = math.min(array.size(reversal_arr), array.size(mask))
-    if n > 0
-        for i = 0 to n - 1
-            bool m = array.get(mask, i)
-            float v = array.get(reversal_arr, i)
-            if m and not na(v)
-                array.push(f, v)
-    float p25 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 25) : na
-    float p50 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 50) : na
-    float p75 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 75) : na
-    float p90 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 90) : na
-    [p25, p50, p75, p90]
 
 
 export f_commit_daily(
