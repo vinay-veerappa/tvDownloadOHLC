@@ -1,16 +1,16 @@
 //@version=6
 library("StatsLib", overlay=true)
 // Trade Outcome Constants
-export int OUTCOME_ANY     =  0
-export int OUTCOME_WIN     =  1
-export int OUTCOME_LOSS    = -1
-export int OUTCOME_FAKE    =  2
-export int OUTCOME_NON_WIN = -2
+export const int OUTCOME_ANY     =  0
+export const int OUTCOME_WIN     =  1
+export const int OUTCOME_LOSS    = -1
+export const int OUTCOME_FAKE    =  2
+export const int OUTCOME_NON_WIN = -2
 
 // Trade Side / Bias Constants
-export int SIDE_BULL       =  1
-export int SIDE_BEAR       = -1
-export int SIDE_NONE       =  0
+export const int SIDE_BULL       =  1
+export const int SIDE_BEAR       = -1
+export const int SIDE_NONE       =  0
 
 
 export type ExcursionHistory
