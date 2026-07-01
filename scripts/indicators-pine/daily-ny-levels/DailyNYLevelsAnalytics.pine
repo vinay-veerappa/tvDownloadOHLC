@@ -1301,9 +1301,9 @@ f_draw_dow_table(int idx, string pos, color bg, color border, color header_bg, c
     RSL.RangeSpec sp = array.get(specs, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
 
-    // Layout: 7 cols (Metric | SUN..FRI). Rows: Title(1) + ColHeader(1) + 8 metrics × 2 directions = 18 rows
+    // Layout: 7 cols (Metric | SUN..FRI). Rows: Title(1) + ColHeader(1) + 8 metrics = 10 rows
     int n_cols = 7
-    int n_rows = 20
+    int n_rows = 10
     table t = Tables.f_new_table(pos, n_cols, n_rows, color.new(bg, 90), color.new(border, 75), 1)
     color cell_bg = color.new(bg, 85)
 
@@ -1319,22 +1319,11 @@ f_draw_dow_table(int idx, string pos, color bg, color border, color header_bg, c
         Tables.f_draw_header_cell(t, d_idx + 1, r, array.get(dow_labels, d_idx), color.new(header_bg, 80), header_txt, body_sz, 1, text.align_center)
     r += 1
 
-    // Per-day stats computation (for each day, split into bull & bear slices)
-    // dow values: 1=SUN, 2=MON, 3=TUE, 4=WED, 5=THU, 6=FRI
-    array<int> dow_values = array.from(1, 2, 3, 4, 5, 6)
-
-    // For each metric row, we iterate over days. Structure: one row per metric, each metric has ▲ and ▼ sub-rows.
-    string metric_names = ""  // (placeholder if needed later)
-
     // Single-pass data aggregation for O(N) performance
-    array<float> mfe_b_bucket_sun = array.new_float(0), mfe_b_bucket_mon = array.new_float(0), mfe_b_bucket_tue = array.new_float(0), mfe_b_bucket_wed = array.new_float(0), mfe_b_bucket_thu = array.new_float(0), mfe_b_bucket_fri = array.new_float(0)
-    array<float> mfe_s_bucket_sun = array.new_float(0), mfe_s_bucket_mon = array.new_float(0), mfe_s_bucket_tue = array.new_float(0), mfe_s_bucket_wed = array.new_float(0), mfe_s_bucket_thu = array.new_float(0), mfe_s_bucket_fri = array.new_float(0)
-    array<float> mae_b_bucket_sun = array.new_float(0), mae_b_bucket_mon = array.new_float(0), mae_b_bucket_tue = array.new_float(0), mae_b_bucket_wed = array.new_float(0), mae_b_bucket_thu = array.new_float(0), mae_b_bucket_fri = array.new_float(0)
-    array<float> mae_s_bucket_sun = array.new_float(0), mae_s_bucket_mon = array.new_float(0), mae_s_bucket_tue = array.new_float(0), mae_s_bucket_wed = array.new_float(0), mae_s_bucket_thu = array.new_float(0), mae_s_bucket_fri = array.new_float(0)
-    array<float> pb_b_bucket_sun = array.new_float(0), pb_b_bucket_mon = array.new_float(0), pb_b_bucket_tue = array.new_float(0), pb_b_bucket_wed = array.new_float(0), pb_b_bucket_thu = array.new_float(0), pb_b_bucket_fri = array.new_float(0)
-    array<float> pb_s_bucket_sun = array.new_float(0), pb_s_bucket_mon = array.new_float(0), pb_s_bucket_tue = array.new_float(0), pb_s_bucket_wed = array.new_float(0), pb_s_bucket_thu = array.new_float(0), pb_s_bucket_fri = array.new_float(0)
+    array<float> mfe_bucket_sun = array.new_float(0), mfe_bucket_mon = array.new_float(0), mfe_bucket_tue = array.new_float(0), mfe_bucket_wed = array.new_float(0), mfe_bucket_thu = array.new_float(0), mfe_bucket_fri = array.new_float(0)
+    array<float> mae_bucket_sun = array.new_float(0), mae_bucket_mon = array.new_float(0), mae_bucket_tue = array.new_float(0), mae_bucket_wed = array.new_float(0), mae_bucket_thu = array.new_float(0), mae_bucket_fri = array.new_float(0)
     
-    array<int> win_b_cnt = array.new_int(6, 0), win_s_cnt = array.new_int(6, 0), tot_b_cnt = array.new_int(6, 0), tot_s_cnt = array.new_int(6, 0)
+    array<int> win_cnt = array.new_int(6, 0), tot_cnt = array.new_int(6, 0)
 
     int n_all = array.size(hist.dow)
     if n_all > 0
@@ -1344,129 +1333,100 @@ f_draw_dow_table(int idx, string pos, color bg, color border, color header_bg, c
             if di < 0 or di > 5
                 continue
             
-            // Bull metrics (using Breakout MFE with Session MFE fallback for historical compatibility)
+            // MFE (using Breakout MFE with Session MFE fallback for historical compatibility)
             float mfe_b_raw = array.get(hist.bo_mfe_bull, i)
             float mfe_b = nz(mfe_b_raw, array.get(hist.sig_side, i) == 1 ? array.get(hist.mfe_bull, i) : na)
-            
-            if not na(mfe_b)
-                array<float> b = di == 0 ? mfe_b_bucket_sun : di == 1 ? mfe_b_bucket_mon : di == 2 ? mfe_b_bucket_tue : di == 3 ? mfe_b_bucket_wed : di == 4 ? mfe_b_bucket_thu : mfe_b_bucket_fri
-                array.push(b, mfe_b)
-                array.set(tot_b_cnt, di, array.get(tot_b_cnt, di) + 1)
-                if array.get(hist.sig_outcome, i) == 1
-                    array.set(win_b_cnt, di, array.get(win_b_cnt, di) + 1)
-            else if array.get(hist.sig_side, i) == 1 // Fallback if bo_mfe is na/null but side is bull
-                float mfe_fallback = array.get(hist.mfe_bull, i)
-                if not na(mfe_fallback)
-                    array<float> b = di == 0 ? mfe_b_bucket_sun : di == 1 ? mfe_b_bucket_mon : di == 2 ? mfe_b_bucket_tue : di == 3 ? mfe_b_bucket_wed : di == 4 ? mfe_b_bucket_thu : mfe_b_bucket_fri
-                    array.push(b, mfe_fallback)
-                    array.set(tot_b_cnt, di, array.get(tot_b_cnt, di) + 1)
-                    if array.get(hist.sig_outcome, i) == 1
-                        array.set(win_b_cnt, di, array.get(win_b_cnt, di) + 1)
-
-            // Bear metrics
             float mfe_s_raw = array.get(hist.bo_mfe_bear, i)
             float mfe_s = nz(mfe_s_raw, array.get(hist.sig_side, i) == -1 ? array.get(hist.mfe_bear, i) : na)
             
-            if not na(mfe_s)
-                array<float> b = di == 0 ? mfe_s_bucket_sun : di == 1 ? mfe_s_bucket_mon : di == 2 ? mfe_s_bucket_tue : di == 3 ? mfe_s_bucket_wed : di == 4 ? mfe_s_bucket_thu : mfe_s_bucket_fri
-                array.push(b, mfe_s)
-                array.set(tot_s_cnt, di, array.get(tot_s_cnt, di) + 1)
-                if array.get(hist.sig_outcome, i) == 1
-                    array.set(win_s_cnt, di, array.get(win_s_cnt, di) + 1)
+            float mfe_val = na
+            if not na(mfe_b)
+                mfe_val := mfe_b
+            else if not na(mfe_s)
+                mfe_val := mfe_s
+            else if array.get(hist.sig_side, i) == 1
+                mfe_val := array.get(hist.mfe_bull, i)
             else if array.get(hist.sig_side, i) == -1
-                float mfe_fallback = array.get(hist.mfe_bear, i)
-                if not na(mfe_fallback)
-                    array<float> b = di == 0 ? mfe_s_bucket_sun : di == 1 ? mfe_s_bucket_mon : di == 2 ? mfe_s_bucket_tue : di == 3 ? mfe_s_bucket_wed : di == 4 ? mfe_s_bucket_thu : mfe_s_bucket_fri
-                    array.push(b, mfe_fallback)
-                    array.set(tot_s_cnt, di, array.get(tot_s_cnt, di) + 1)
-                    if array.get(hist.sig_outcome, i) == 1
-                        array.set(win_s_cnt, di, array.get(win_s_cnt, di) + 1)
+                mfe_val := array.get(hist.mfe_bear, i)
 
-            // MAE Adverse (Adverse MFE during trade)
+            if not na(mfe_val)
+                array<float> b = di == 0 ? mfe_bucket_sun : di == 1 ? mfe_bucket_mon : di == 2 ? mfe_bucket_tue : di == 3 ? mfe_bucket_wed : di == 4 ? mfe_bucket_thu : mfe_bucket_fri
+                array.push(b, mfe_val)
+                array.set(tot_cnt, di, array.get(tot_cnt, di) + 1)
+                if array.get(hist.sig_outcome, i) == 1
+                    array.set(win_cnt, di, array.get(win_cnt, di) + 1)
+
+            // MAE (Adverse MFE during trade)
             float mae_b_raw = array.get(hist.bo_mae_bull, i)
             float mae_b = nz(mae_b_raw, array.get(hist.sig_side, i) == 1 ? array.get(hist.mae_bull_abs, i) : na)
-            if not na(mae_b)
-                array<float> b = di == 0 ? mae_b_bucket_sun : di == 1 ? mae_b_bucket_mon : di == 2 ? mae_b_bucket_tue : di == 3 ? mae_b_bucket_wed : di == 4 ? mae_b_bucket_thu : mae_b_bucket_fri
-                array.push(b, mae_b)
-
             float mae_s_raw = array.get(hist.bo_mae_bear, i)
             float mae_s = nz(mae_s_raw, array.get(hist.sig_side, i) == -1 ? array.get(hist.mae_bear_abs, i) : na)
-            if not na(mae_s)
-                array<float> b = di == 0 ? mae_s_bucket_sun : di == 1 ? mae_s_bucket_mon : di == 2 ? mae_s_bucket_tue : di == 3 ? mae_s_bucket_wed : di == 4 ? mae_s_bucket_thu : mae_s_bucket_fri
-                array.push(b, mae_s)
-                
-            // MAE Pullback (Pullback from peak)
-            float pb_b = array.get(hist.mae_bull_pb, i)
-            if not na(pb_b)
-                array<float> b = di == 0 ? pb_b_bucket_sun : di == 1 ? pb_b_bucket_mon : di == 2 ? pb_b_bucket_tue : di == 3 ? pb_b_bucket_wed : di == 4 ? pb_b_bucket_thu : pb_b_bucket_fri
-                array.push(b, pb_b)
-                
-            float pb_s = array.get(hist.mae_bear_pb, i)
-            if not na(pb_s)
-                array<float> b = di == 0 ? pb_s_bucket_sun : di == 1 ? pb_s_bucket_mon : di == 2 ? pb_s_bucket_tue : di == 3 ? pb_s_bucket_wed : di == 4 ? pb_s_bucket_thu : pb_s_bucket_fri
-                array.push(b, pb_s)
+            
+            float mae_val = na
+            if not na(mae_b)
+                mae_val := mae_b
+            else if not na(mae_s)
+                mae_val := mae_s
+
+            if not na(mae_val)
+                array<float> b = di == 0 ? mae_bucket_sun : di == 1 ? mae_bucket_mon : di == 2 ? mae_bucket_tue : di == 3 ? mae_bucket_wed : di == 4 ? mae_bucket_thu : mae_bucket_fri
+                array.push(b, mae_val)
 
     // Render Rows
-    Tables.f_draw_value_cell(t, 0, r, "› N ▲", cell_bg, body_txt, body_sz, 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "› N", cell_bg, body_txt, body_sz, 1, text.align_left)
     for di = 0 to 5
-        Tables.f_draw_value_cell(t, di + 1, r, str.tostring(array.get(tot_b_cnt, di)), cell_bg, bull_clr, body_sz, 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, str.tostring(array.get(tot_cnt, di)), cell_bg, body_txt, body_sz, 1, text.align_center)
     r += 1
-    Tables.f_draw_value_cell(t, 0, r, "› N ▼", cell_bg, body_txt, body_sz, 1, text.align_left)
+    
+    Tables.f_draw_value_cell(t, 0, r, "› Full%", cell_bg, bull_clr, body_sz, 1, text.align_left)
     for di = 0 to 5
-        Tables.f_draw_value_cell(t, di + 1, r, str.tostring(array.get(tot_s_cnt, di)), cell_bg, bear_clr, body_sz, 1, text.align_center)
-    r += 1
-
-    Tables.f_draw_value_cell(t, 0, r, "› Full% ▲", cell_bg, body_txt, body_sz, 1, text.align_left)
-    for di = 0 to 5
-        float rate = array.get(tot_b_cnt, di) > 0 ? (float(array.get(win_b_cnt, di)) / float(array.get(tot_b_cnt, di))) * 100.0 : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(rate) ? "---" : str.tostring(rate, "#.#") + "%", cell_bg, not na(rate) and rate >= 50 ? bull_clr : bear_clr, body_sz, 1, text.align_center)
-    r += 1
-    Tables.f_draw_value_cell(t, 0, r, "› Full% ▼", cell_bg, body_txt, body_sz, 1, text.align_left)
-    for di = 0 to 5
-        float rate = array.get(tot_s_cnt, di) > 0 ? (float(array.get(win_s_cnt, di)) / float(array.get(tot_s_cnt, di))) * 100.0 : na
+        float rate = array.get(tot_cnt, di) > 0 ? (float(array.get(win_cnt, di)) / float(array.get(tot_cnt, di))) * 100.0 : na
         Tables.f_draw_value_cell(t, di + 1, r, na(rate) ? "---" : str.tostring(rate, "#.#") + "%", cell_bg, not na(rate) and rate >= 50 ? bull_clr : bear_clr, body_sz, 1, text.align_center)
     r += 1
 
-    // p50 BO MFE (Breakout Potential)
-    Tables.f_draw_value_cell(t, 0, r, "› p50 BO MFE ▲", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    // MAE Percentiles
+    Tables.f_draw_value_cell(t, 0, r, "› p50 MAE", cell_bg, body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
-        array<float> arr = di == 0 ? mfe_b_bucket_sun : di == 1 ? mfe_b_bucket_mon : di == 2 ? mfe_b_bucket_tue : di == 3 ? mfe_b_bucket_wed : di == 4 ? mfe_b_bucket_thu : mfe_b_bucket_fri
+        array<float> arr = di == 0 ? mae_bucket_sun : di == 1 ? mae_bucket_mon : di == 2 ? mae_bucket_tue : di == 3 ? mae_bucket_wed : di == 4 ? mae_bucket_thu : mae_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 50) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, bull_clr, "Tiny", 1, text.align_center)
-    r += 1
-    Tables.f_draw_value_cell(t, 0, r, "› p50 BO MFE ▼", cell_bg, body_txt, "Tiny", 1, text.align_left)
-    for di = 0 to 5
-        array<float> arr = di == 0 ? mfe_s_bucket_sun : di == 1 ? mfe_s_bucket_mon : di == 2 ? mfe_s_bucket_tue : di == 3 ? mfe_s_bucket_wed : di == 4 ? mfe_s_bucket_thu : mfe_s_bucket_fri
-        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 50) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, bear_clr, "Tiny", 1, text.align_center)
-    r += 1
-
-    // p80 BO MAE (Adverse Heat)
-    Tables.f_draw_value_cell(t, 0, r, "› p80 Adv MAE ▲", cell_bg, body_txt, "Tiny", 1, text.align_left)
-    for di = 0 to 5
-        array<float> arr = di == 0 ? mae_b_bucket_sun : di == 1 ? mae_b_bucket_mon : di == 2 ? mae_b_bucket_tue : di == 3 ? mae_b_bucket_wed : di == 4 ? mae_b_bucket_thu : mae_b_bucket_fri
-        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 80) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, body_txt, "Tiny", 1, text.align_center)
-    r += 1
-    Tables.f_draw_value_cell(t, 0, r, "› p80 Adv MAE ▼", cell_bg, body_txt, "Tiny", 1, text.align_left)
-    for di = 0 to 5
-        array<float> arr = di == 0 ? mae_s_bucket_sun : di == 1 ? mae_s_bucket_mon : di == 2 ? mae_s_bucket_tue : di == 3 ? mae_s_bucket_wed : di == 4 ? mae_s_bucket_thu : mae_s_bucket_fri
-        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 80) : na
         Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, body_txt, "Tiny", 1, text.align_center)
     r += 1
     
-    // p50 PB MAE (Pullback Depth)
-    Tables.f_draw_value_cell(t, 0, r, "› p50 Pullback ▲", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    Tables.f_draw_value_cell(t, 0, r, "› p75 MAE", cell_bg, body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
-        array<float> arr = di == 0 ? pb_b_bucket_sun : di == 1 ? pb_b_bucket_mon : di == 2 ? pb_b_bucket_tue : di == 3 ? pb_b_bucket_wed : di == 4 ? pb_b_bucket_thu : pb_b_bucket_fri
-        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 50) : na
+        array<float> arr = di == 0 ? mae_bucket_sun : di == 1 ? mae_bucket_mon : di == 2 ? mae_bucket_tue : di == 3 ? mae_bucket_wed : di == 4 ? mae_bucket_thu : mae_bucket_fri
+        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 75) : na
         Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, body_txt, "Tiny", 1, text.align_center)
     r += 1
-    Tables.f_draw_value_cell(t, 0, r, "› p50 Pullback ▼", cell_bg, body_txt, "Tiny", 1, text.align_left)
+
+    Tables.f_draw_value_cell(t, 0, r, "› p90 MAE", cell_bg, body_txt, "Tiny", 1, text.align_left)
     for di = 0 to 5
-        array<float> arr = di == 0 ? pb_s_bucket_sun : di == 1 ? pb_s_bucket_mon : di == 2 ? pb_s_bucket_tue : di == 3 ? pb_s_bucket_wed : di == 4 ? pb_s_bucket_thu : pb_s_bucket_fri
+        array<float> arr = di == 0 ? mae_bucket_sun : di == 1 ? mae_bucket_mon : di == 2 ? mae_bucket_tue : di == 3 ? mae_bucket_wed : di == 4 ? mae_bucket_thu : mae_bucket_fri
+        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 90) : na
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, bear_clr, "Tiny", 1, text.align_center)
+    r += 1
+
+    // MFE Percentiles
+    color mfe_clr = color.aqua
+    Tables.f_draw_value_cell(t, 0, r, "› p25 MFE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    for di = 0 to 5
+        array<float> arr = di == 0 ? mfe_bucket_sun : di == 1 ? mfe_bucket_mon : di == 2 ? mfe_bucket_tue : di == 3 ? mfe_bucket_wed : di == 4 ? mfe_bucket_thu : mfe_bucket_fri
+        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 25) : na
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, mfe_clr, "Tiny", 1, text.align_center)
+    r += 1
+
+    Tables.f_draw_value_cell(t, 0, r, "› p50 MFE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    for di = 0 to 5
+        array<float> arr = di == 0 ? mfe_bucket_sun : di == 1 ? mfe_bucket_mon : di == 2 ? mfe_bucket_tue : di == 3 ? mfe_bucket_wed : di == 4 ? mfe_bucket_thu : mfe_bucket_fri
         float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 50) : na
-        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, body_txt, "Tiny", 1, text.align_center)
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, mfe_clr, "Tiny", 1, text.align_center)
+    r += 1
+
+    Tables.f_draw_value_cell(t, 0, r, "› p75 MFE", cell_bg, body_txt, "Tiny", 1, text.align_left)
+    for di = 0 to 5
+        array<float> arr = di == 0 ? mfe_bucket_sun : di == 1 ? mfe_bucket_mon : di == 2 ? mfe_bucket_tue : di == 3 ? mfe_bucket_wed : di == 4 ? mfe_bucket_thu : mfe_bucket_fri
+        float val = array.size(arr) > 0 ? array.percentile_nearest_rank(arr, 75) : na
+        Tables.f_draw_value_cell(t, di + 1, r, na(val) ? "---" : STL.f_pct_fmt(val), cell_bg, mfe_clr, "Tiny", 1, text.align_center)
     r += 1
 
 
