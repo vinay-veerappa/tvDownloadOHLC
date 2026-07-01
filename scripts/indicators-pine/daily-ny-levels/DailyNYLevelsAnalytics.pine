@@ -20,7 +20,7 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 //   - Rolling section computes from committed history (last 5/10/20 win rate)
 //
 // Libraries required:
-//   - vveerappa/RangeSessionLib/19
+//   - vveerappa/RangeSessionLib/20
 //   - vveerappa/PineDrawingCore/3
 //   - vveerappa/PineDrawingHorizontalLevels/5
 //   - vveerappa/PineDrawingMarkers/3
@@ -30,7 +30,7 @@ indicator("Daily NY Levels Analytics v3 (Phase 2)", overlay=true, max_bars_back=
 //   - vveerappa/StatsLib/20
 // ============================================================================
 
-import vveerappa/RangeSessionLib/19 as RSL
+import vveerappa/RangeSessionLib/20 as RSL
 import vveerappa/PineDrawingCore/3 as Core
 import vveerappa/PineDrawingHorizontalLevels/5 as HLevels
 import vveerappa/PineDrawingMarkers/3 as Markers
