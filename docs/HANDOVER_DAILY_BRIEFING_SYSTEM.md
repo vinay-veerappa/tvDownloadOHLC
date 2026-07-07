@@ -29,7 +29,7 @@
 │              STAGE 2: NARRATIVE                          │
 │                                                          │
 │  weekly_narrative.py  → Ollama LLM → DB + Discord + Disk │
-│  daily_narrative.py   → (PENDING — not yet created)     │
+│  daily_narrative.py   → Ollama LLM → DB + Discord + Disk │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -43,15 +43,15 @@
 | `scripts/trader/briefing_core.py` | ✅ Working | Shared library: data loaders, DB helpers, price context, track alignment, level interactions |
 | `scripts/trader/weekly_briefing.py` | ✅ Working | Stage 1: Weekly aggregation into DB |
 | `scripts/trader/weekly_narrative.py` | ✅ Working | Stage 2: Weekly LLM narrative + Discord delivery |
-| `scripts/trader/daily_eod_update.py` | ✅ Updated | Stage 1: Daily aggregation (Open/EOD) into DB |
-| `scripts/trader/daily_narrative.py` | ❌ NOT CREATED | Stage 2: Daily LLM narrative (PENDING) |
+| `scripts/trader/daily_eod_update.py` | ✅ Working | Stage 1: Daily aggregation (Open/EOD) into DB |
+| `scripts/trader/daily_narrative.py` | ✅ Working | Stage 2: Daily LLM narrative |
 
 ### Prompts
 | File | Status | Purpose |
 |------|--------|---------|
 | `scripts/trader/prompts/weekly_briefing.md` | ✅ Working | Weekly briefing LLM prompt template |
 | `scripts/trader/prompts/daily_eod_update.md` | ✅ Working | Daily EOD progress check prompt template |
-| `scripts/trader/prompts/daily_open_update.md` | ❌ NOT CREATED | Daily Open narrative prompt (PENDING) |
+| `scripts/trader/prompts/daily_open_update.md` | ✅ Working | Daily Open narrative prompt template |
 
 ### Data Files
 | File | Location | Purpose |
@@ -163,7 +163,7 @@ python -m scripts.trader.daily_eod_update --session open --tickers SPX QQQ NVDA
 
 ---
 
-## Pending Tasks
+## Completed Implementation (Historical Tasks)
 
 ### Task 1: Create `daily_narrative.py`
 
@@ -261,7 +261,22 @@ def compute_weekly_ems(unified_entry: dict, spot: float) -> dict:
 
 ---
 
-## How to Run (Current State)
+## How to Run (Automated State)
+
+The entire daily and weekly briefing system is now integrated into the main `run_options_levels.py` `APScheduler` loop using `subprocess`.
+
+To run everything automatically, simply launch the streaming options pipeline with the `--schedule` flag:
+
+```bash
+python -m scripts.streaming.options.run_options_levels --schedule
+```
+
+The system will automatically trigger:
+- **09:31 ET (Mon-Fri)**: `daily_eod_update.py --session open` + `daily_narrative.py --session open`
+- **16:15 ET (Mon-Fri)**: `daily_eod_update.py --session eod` + `daily_narrative.py --session eod`
+- **16:20 ET (Fridays)**: `weekly_briefing.py` + `weekly_narrative.py`
+
+### Manual Overrides
 
 ### Weekly cycle (Friday or weekend)
 ```bash
@@ -277,8 +292,8 @@ python -m scripts.trader.weekly_narrative --model gemma4:31b-cloud
 # 1. Aggregate open snapshot into DB
 python -m scripts.trader.daily_eod_update --session open
 
-# 2. Generate open narrative (PENDING — daily_narrative.py not yet created)
-# python -m scripts.trader.daily_narrative --session open
+# 2. Generate open narrative
+python -m scripts.trader.daily_narrative --session open
 ```
 
 ### Daily cycle (RTH Close ~16:00 ET)
@@ -286,8 +301,8 @@ python -m scripts.trader.daily_eod_update --session open
 # 1. Aggregate EOD snapshot into DB
 python -m scripts.trader.daily_eod_update --session eod
 
-# 2. Generate EOD narrative (PENDING — daily_narrative.py not yet created)
-# python -m scripts.trader.daily_narrative --session eod
+# 2. Generate EOD narrative
+python -m scripts.trader.daily_narrative --session eod
 ```
 
 ---
