@@ -24,8 +24,7 @@ Output a tactical EOD report including a Session Log that grades today's MES and
 [1-2 sentences in simple English: Summarize the largest macro walls and what the structural setup implies for tomorrow based on today's close.]
 
 ### Session Log
-**ALN pattern**: [Identify if any specific pattern formed]
-**Regime call**: [The regime of the day, e.g. Battle Zone, Coiled]
+**Regime call**: [Output the exact `currentRegime` string from the JSON payload]
 **Verdict**: [Win / Loss / Break-even / No Entry]
 **Setups taken**: [List the MES and MNQ trades that were triggered]
 **Result**: [Did they hit stops? Targets?]

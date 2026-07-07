@@ -9,6 +9,7 @@ Output a tactical opening report and a concrete trading plan in simple, clear En
 - Use ET timezone for all references.
 - **Trade Plan Requirements**: 
   - Formulate a precise, directional day-trade plan for MES and MNQ based on the Options Levels table.
+  - **Trade Entries MUST be realistic relative to the CURRENT OPENING SPOT PRICE provided in the JSON payload.** Do not place entry limit orders hundreds of points away that will never trigger today.
   - Define exact Entry Price, Stop Loss (must be beyond a key wall or EM), and Take Profit targets.
   - Base sizing/risk logic around the max $2,000 drawdown limit.
 - **JSON Output**: You MUST output the trade plan inside a `<plan_json>` tag at the very bottom of your response so it can be parsed.
