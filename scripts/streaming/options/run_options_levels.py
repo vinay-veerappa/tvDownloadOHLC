@@ -1061,6 +1061,58 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
         )
         log.info("Scheduled: %s ET", time_str)
 
+    # -----------------------------------------------------------------
+    # NARRATIVE JOBS (Trader Briefing System)
+    # -----------------------------------------------------------------
+    import os
+    import subprocess
+    
+    def _run_subprocess(args: list[str], label: str):
+        if not _is_trading_day():
+            log.info("Non-trading day — skipping %s.", label)
+            return
+        log.info("Running %s...", label)
+        try:
+            # We use subprocess so the LLM generation (which can take a minute)
+            # does not block the apscheduler thread pool or crash the main pipeline
+            from scripts.streaming.options.macro_pipeline import REPO_ROOT
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT)
+            subprocess.run(args, env=env, cwd=str(REPO_ROOT), check=True)
+            log.info("✓ %s completed", label)
+        except Exception as e:
+            log.error("Failed to run %s: %s", label, e)
+
+    # 1. Daily Open Narrative (09:31 ET, Mon-Fri)
+    scheduler.add_job(
+        lambda: _run_subprocess(["python", "-m", "scripts.trader.daily_eod_update", "--session", "open"], "Open Update") or \
+                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "open"], "Open Narrative"),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=9, minute=31, timezone=tz),
+        id="narrative_open",
+        replace_existing=True,
+    )
+    log.info("Scheduled Narrative: 09:31 ET (Open)")
+
+    # 2. Daily EOD Narrative (16:15 ET, Mon-Fri)
+    scheduler.add_job(
+        lambda: _run_subprocess(["python", "-m", "scripts.trader.daily_eod_update", "--session", "eod"], "EOD Update") or \
+                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "eod"], "EOD Narrative"),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=16, minute=15, timezone=tz),
+        id="narrative_eod",
+        replace_existing=True,
+    )
+    log.info("Scheduled Narrative: 16:15 ET (EOD)")
+
+    # 3. Weekly Briefing (16:20 ET, Friday)
+    scheduler.add_job(
+        lambda: _run_subprocess(["python", "-m", "scripts.trader.weekly_briefing"], "Weekly Update") or \
+                _run_subprocess(["python", "-m", "scripts.trader.weekly_narrative"], "Weekly Narrative"),
+        trigger=CronTrigger(day_of_week='fri', hour=16, minute=20, timezone=tz),
+        id="narrative_weekly",
+        replace_existing=True,
+    )
+    log.info("Scheduled Narrative: 16:20 ET (Weekly, Friday)")
+
     log.info("APScheduler started (timezone=%s). Press Ctrl-C to stop.", SCHEDULE_TIMEZONE)
     try:
         scheduler.start()

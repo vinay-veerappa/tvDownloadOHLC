@@ -537,7 +537,7 @@ def fetch_futures_option_chain_data(symbol: str, dte_targets: list[int]) -> Opti
     return OptionChainData(
         ticker=symbol,
         spot=spot,
-        spot_open=spot_info.open,
+        spot_open=spot_info.open_price,
         timestamp=datetime.now(ZoneInfo("UTC")),
         contracts=contracts
     )

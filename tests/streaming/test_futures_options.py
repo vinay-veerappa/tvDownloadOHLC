@@ -3,8 +3,13 @@ import os
 import pprint
 import time
 import threading
+import sys
+from pathlib import Path
 from schwabdev import Client, Stream
 
+# Ensure we can import from the main project
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from scripts.streaming.options.options_fetcher import fetch_futures_option_chain_data
 def test_futures_options():
     # Load secrets
     secrets_path = "secrets.json"
@@ -58,6 +63,44 @@ def test_futures_options():
         stream.stop()
     except Exception as e:
         print(f"Streaming Error: {e}")
+
+    print("\n--- Testing Greeks Data via Hub Proxy ---")
+    try:
+        print("Fetching futures option chain data for /ES (this uses the hub proxy)...")
+        # NOTE: Testing performed on 2026-07-06 during live market hours confirmed that 
+        # Schwab's REST 'quotes' API endpoint does NOT return Greeks (Delta, Gamma, Theta, Vega) 
+        # or Implied Volatility (IV) for futures options. While Bid/Ask/Last stream correctly, 
+        # Greek fields structurally return 0.0. 
+        # To get Greeks for futures options, a local Black-Scholes pricing model must be integrated.
+        chain_data = fetch_futures_option_chain_data("/ES", [10])
+        print(f"\nSuccessfully fetched {len(chain_data.contracts)} contracts!")
+        print("Searching for strike 7580 contracts to verify greeks/quotes:\n")
+        
+        print("Available strikes returned by the API:\n")
+        
+        strikes = sorted(list(set(c.strike for c in chain_data.contracts)))
+        print(f"Strikes found: {strikes}")
+        
+        # Still try to print 7575 if it exists
+        found_7575 = False
+        for contract in chain_data.contracts:
+            if contract.strike == 7575.0:
+                found_7575 = True
+                print(f"\nSymbol: {contract.symbol}")
+                print(f"  Bid:    {contract.bid}")
+                print(f"  Ask:    {contract.ask}")
+                print(f"  Last:   {contract.last}")
+                print(f"  IV:     {contract.iv}")
+                print(f"  Delta:  {contract.delta}")
+                print(f"  Gamma:  {contract.gamma}")
+                print(f"  Theta:  {contract.theta}")
+                print(f"  Vega:   {contract.vega}")
+                
+        if not found_7575:
+            print("\nStrike 7575 still not found.")
+
+    except Exception as e:
+        print(f"Hub Proxy Greeks Error: {e}")
 
 if __name__ == "__main__":
     test_futures_options()
