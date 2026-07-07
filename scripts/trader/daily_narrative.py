@@ -27,6 +27,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from scripts.trader.briefing_core import (
     REPO_ROOT,
+    build_levels_markdown_table,
     load_daily_eod_from_db,
     save_narrative_to_db,
 )
@@ -162,6 +163,101 @@ def write_summary_to_disk(summary: str, session: str) -> Path:
     return latest_path
 
 
+    return latest_path
+
+async def get_trade_plan_for_eod() -> str:
+    """Fetch the morning's Trade Plan from DB and format it for the EOD prompt."""
+    from prisma import Prisma
+    from datetime import datetime, timedelta, timezone
+    
+    db = Prisma()
+    await db.connect()
+    
+    # Get trades created today for the Auto Prop Firm 50K account
+    acc = await db.account.find_first(where={'name': 'Auto Prop Firm 50K'})
+    if not acc:
+        await db.disconnect()
+        return "No Trade Plan found for today."
+        
+    start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    trades = await db.trade.find_many(
+        where={
+            'accountId': acc.id,
+            'createdAt': {'gte': start_of_day}
+        },
+        include={'tradePlan': True},
+        order={'createdAt': 'desc'}
+    )
+    
+    if not trades:
+        await db.disconnect()
+        return "No Trade Plan found for today."
+        
+    res = "Morning Trade Plan Logic:\n"
+    # Just take the first plan logic
+    if trades[0].tradePlan:
+        res += f"{trades[0].tradePlan.setup}\n\n"
+        
+    res += "Trades Scheduled:\n"
+    for t in trades:
+        res += f"- {t.ticker} {t.direction} | Entry: {t.entryPrice} | Stop: {t.stopLoss} | Target: {t.takeProfit}\n"
+            
+    await db.disconnect()
+    return res
+
+async def extract_and_save_trade_plan(summary: str):
+    """Parse JSON plan block and save to DB."""
+    import re
+    import json
+    from prisma import Prisma
+    from datetime import datetime, timezone
+    
+    match = re.search(r'<plan_json>(.*?)</plan_json>', summary, re.DOTALL)
+    if not match:
+        log.warning("No <plan_json> found in Open narrative output.")
+        return
+        
+    try:
+        plan_data = json.loads(match.group(1).strip())
+        db = Prisma()
+        await db.connect()
+        
+        acc = await db.account.find_first(where={'name': 'Auto Prop Firm 50K'})
+        if not acc:
+            log.warning("Account 'Auto Prop Firm 50K' not found!")
+            await db.disconnect()
+            return
+            
+        now = datetime.now(timezone.utc)
+        logic = plan_data.get('logic', 'No logic provided')
+        
+        for trade in plan_data.get('trades', []):
+            asset = trade.get('asset', 'MES')
+            t = await db.trade.create(data={
+                'ticker': asset,
+                'entryDate': now,
+                'quantity': 1,
+                'direction': trade.get('direction', 'LONG'),
+                'status': 'PENDING',
+                'accountId': acc.id,
+                'entryPrice': float(trade.get('entryPrice', 0.0)),
+                'stopLoss': float(trade.get('stopLoss', 0.0)),
+                'takeProfit': float(trade.get('takeProfit', 0.0))
+            })
+            
+            await db.tradeplan.create(data={
+                'date': now,
+                'instrument': asset,
+                'setup': logic,
+                'linkedTradeId': t.id
+            })
+            
+        log.info("✓ Trade Plan saved to DB.")
+        await db.disconnect()
+    except Exception as e:
+        log.error(f"Failed to parse and save Trade Plan: {e}")
+
 async def run_narrative(model: str, session: str, target_date: date | None = None) -> str:
     """Main narrative generation flow.
 
@@ -183,15 +279,29 @@ async def run_narrative(model: str, session: str, target_date: date | None = Non
     toon = build_toon(briefing_data)
     log.info("✓ TOON assembled (%d chars)", len(toon))
 
+    # Build tables
+    nq_table = build_levels_markdown_table("QQQ")
+    es_table = build_levels_markdown_table("SPY")
+    levels_md = f"{nq_table}\n\n{es_table}"
+
     # Build prompt
     prompt_template = load_prompt_template(session)
     placeholder = "{{INSERT_DAILY_OPEN_JSON}}" if session.lower() == "open" else "{{INSERT_DAILY_EOD_JSON}}"
     prompt = prompt_template.replace(placeholder, toon)
+    prompt = prompt.replace("{{INSERT_LEVELS_TABLE}}", levels_md)
+    
+    if session.lower() == "eod":
+        trade_plan_md = await get_trade_plan_for_eod()
+        prompt = prompt.replace("{{INSERT_TRADE_PLAN}}", trade_plan_md)
+        
     log.info("✓ Prompt assembled (%d chars)", len(prompt))
 
     # Call Ollama
     summary = call_ollama(prompt, model)
     log.info("✓ Narrative generated")
+    
+    if session.lower() == "open":
+        await extract_and_save_trade_plan(summary)
 
     # Store in DB
     await save_narrative_to_db(briefing_id="", summary_md=summary, is_daily=True, eod_id=eod_id)

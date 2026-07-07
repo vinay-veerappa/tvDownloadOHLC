@@ -1083,15 +1083,15 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
         except Exception as e:
             log.error("Failed to run %s: %s", label, e)
 
-    # 1. Daily Open Narrative (09:31 ET, Mon-Fri)
+    # 1. Daily Open Narrative (09:35 ET, Mon-Fri)
     scheduler.add_job(
         lambda: _run_subprocess(["python", "-m", "scripts.trader.daily_eod_update", "--session", "open"], "Open Update") or \
                 _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "open"], "Open Narrative"),
-        trigger=CronTrigger(day_of_week='mon-fri', hour=9, minute=31, timezone=tz),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=9, minute=35, timezone=tz),
         id="narrative_open",
         replace_existing=True,
     )
-    log.info("Scheduled Narrative: 09:31 ET (Open)")
+    log.info("Scheduled Narrative: 09:35 ET (Open)")
 
     # 2. Daily EOD Narrative (16:15 ET, Mon-Fri)
     scheduler.add_job(

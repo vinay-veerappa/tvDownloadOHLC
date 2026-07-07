@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import Any
@@ -158,7 +159,166 @@ def get_dataloader(lookback_days: int = 45) -> DataLoader:
 # load_macro_levels is now defined below with session support (live/open/close)
 
 
-# ── ETF Scale Note ────────────────────────────────────────────────
+def format_notional(gex_val: float) -> str:
+    if gex_val is None: return ""
+    b_val = gex_val / 1e9
+    m_val = gex_val / 1e6
+    if abs(b_val) >= 1.0:
+        return f"{b_val:+.1f}B"
+    else:
+        return f"{m_val:+.1f}M"
+
+def get_color(token_label: str) -> str:
+    lbl = token_label.upper()
+    if "CW" in lbl or "CALL WALL" in lbl:
+        return "Blue extra-thick"
+    elif "PW" in lbl or "PUT WALL" in lbl:
+        return "Red extra-thick"
+    elif "EM HI" in lbl or "EM UPPER" in lbl:
+        return "White dashed"
+    elif "EM LO" in lbl or "EM LOWER" in lbl:
+        return "White dashed"
+    elif "FLIP" in lbl:
+        return "Green solid"
+    elif "MAX" in lbl:
+        return "Red extra-thick"
+    elif "CLIFF" in lbl:
+        return "Orange solid"
+    elif "ZERO GEX" in lbl:
+        return "Green solid"
+    return "Gray thin"
+
+def map_label(token_label: str, strike: float, ticker: str, notional: str) -> str:
+    lbl = token_label.upper()
+    prefix = ""
+    desc = lbl
+    
+    if "CW" in lbl:
+        prefix = "🚨 " if "0D" not in lbl else ""
+        desc = "Major Call Wall" if "W" in token_label else "Call Wall"
+    elif "PW" in lbl:
+        prefix = "🚨🚨 "
+        desc = "MASSIVE Put Wall" if "W" in token_label else "Put Wall"
+    elif "MAX" in lbl:
+        desc = "Max Pain"
+    elif "EM HI" in lbl:
+        desc = "Expected Move Upper"
+    elif "EM LO" in lbl:
+        desc = "Expected Move Lower"
+    elif "FLIP" in lbl:
+        desc = "GEX Flip"
+    elif "ZERO GEX DA" in lbl:
+        desc = "Zero GEX (Day Ahead)"
+    elif "ZERO GEX" in lbl:
+        desc = "Zero GEX"
+    elif "CLIFF UP" in lbl:
+        desc = "Vol Cliff Upper"
+    elif "CLIFF DN" in lbl:
+        desc = "Vol Cliff Lower"
+        
+    res = f"{prefix}{desc} ({ticker} {strike})"
+    if notional:
+        res += f" {notional}"
+    return res
+
+def build_levels_markdown_table(ticker: str) -> str:
+    """Build a precise markdown table of option levels mapped to Futures prices."""
+    unified_txt_path = UNIFIED_LEVELS_OPEN_TXT if UNIFIED_LEVELS_OPEN_TXT.exists() else Path(OPTIONS_DATA_DIR / "current" / "unified_levels.txt")
+    if not unified_txt_path.exists():
+        return "No data"
+        
+    unified_txt = unified_txt_path.read_text(encoding="utf-8")
+    line = next((l for l in unified_txt.splitlines() if l.startswith(f"{ticker}:")), None)
+    if not line: return "No data"
+    
+    line = line.split(":", 1)[1]
+    
+    meta = {}
+    tokens = []
+    for part in line.split(", "):
+        if ":" in part:
+            val, label = part.split(":", 1)
+            if val == "0" and label.startswith("META_"):
+                key = label[5:]
+                if "_" in key and not any(k in key for k in ["NOTE", "EXPIRY", "REGIME", "BIAS", "WALL_SCOPE", "VEL", "TRIG"]):
+                    parts = key.rsplit("_", 1)
+                    if len(parts) == 2:
+                        try:
+                            meta[parts[0]] = float(parts[1])
+                        except ValueError:
+                            meta[parts[0]] = parts[1]
+                else:
+                    meta[key] = True
+            elif val != "0" or not label.startswith("META_"):
+                try:
+                    strike = float(val)
+                    if "|" in label:
+                        filter_code, sign, desc = label.split("|", 2)
+                        tokens.append({"strike": strike, "filter": filter_code, "sign": sign, "label": desc})
+                except ValueError:
+                    pass
+    
+    gex_data = {}
+    gex_file = OPTIONS_DATA_DIR / "gex_profiles.json"
+    if gex_file.exists():
+        try:
+            gex_data = json.loads(gex_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+            
+    profiles = gex_data.get("profiles", {}).get(ticker, [])
+    gex_map = {p["strike"]: p for p in profiles}
+    
+    ratio = meta.get("FUTURES_RATIO", 1.0)
+    basis = meta.get("FUTURES_BASIS", 0.0)
+    
+    futures_symbol = "NQ/MNQ" if ticker == "QQQ" else "ES/MES"
+    
+    rows = []
+    for t in tokens:
+        if "EM85" in t["label"] or "LOC" in t["label"] or "DEX" in t["label"] or "HW" in t["label"] or "MAGNET" in t["label"] or "PIN" in t["label"]:
+            continue # Skip noise
+            
+        strike = t["strike"]
+        futures_px = strike * ratio + basis
+        
+        notional_str = ""
+        prof = gex_map.get(strike)
+        if prof:
+            if "CW" in t["label"]:
+                notional_str = format_notional(prof["call_gex"])
+            elif "PW" in t["label"] or "MAX" in t["label"]:
+                notional_str = format_notional(-prof["put_gex"])
+        
+        color = get_color(t["label"])
+        label = map_label(t["label"], strike, ticker, notional_str)
+        rows.append((futures_px, color, label))
+        
+    rows.sort(key=lambda x: x[0], reverse=True)
+    
+    # Remove exact duplicates (favoring emojis like 🚨)
+    seen_strikes = {}
+    dedup = []
+    for px, color, label in rows:
+        key = round(px)
+        if key not in seen_strikes:
+            seen_strikes[key] = (px, color, label)
+            dedup.append((px, color, label))
+        else:
+            # If we already have it, but the new label has the emoji, swap it
+            if "🚨" in label and "🚨" not in seen_strikes[key][2]:
+                seen_strikes[key] = (px, color, label)
+                dedup = [d if round(d[0]) != key else (px, color, label) for d in dedup]
+    
+    md = f"**{futures_symbol} Options Levels:**\n\n"
+    md += f"| {futures_symbol} Level | Color | Type |\n"
+    md += f"|---|---|---|\n"
+    for px, color, label in dedup:
+        md += f"| {px:,.2f} | {color} | {label} |\n"
+        
+    return md
+
+# ── EOD Evaluation Logic ────────────────────────────────────────────────
 # The options pipeline currently fetches the INDEX chain (SPX for SPY,
 # NDX for QQQ) and stores walls/EMs in INDEX scale.
 #
