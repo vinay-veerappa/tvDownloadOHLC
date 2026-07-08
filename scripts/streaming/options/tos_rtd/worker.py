@@ -100,7 +100,7 @@ class RTDWorker:
                 while retry_count < 3:
                     try:
                         if symbol.startswith("."):
-                            # Option symbols — subscribe to Greeks + OI + Volume
+                            # Option symbols — subscribe to Greeks + OI + Volume + IV
                             if self.client.subscribe(QuoteType.GAMMA, symbol):
                                 success_count += 1
                                 self.logger.info("Subscribed to GAMMA for %s", symbol)
@@ -110,6 +110,15 @@ class RTDWorker:
                             if self.client.subscribe(QuoteType.VOLUME, symbol):
                                 success_count += 1
                                 self.logger.info("Subscribed to VOLUME for %s", symbol)
+                            if self.client.subscribe(QuoteType.DELTA, symbol):
+                                success_count += 1
+                                self.logger.info("Subscribed to DELTA for %s", symbol)
+                            if self.client.subscribe(QuoteType.IMPL_VOL, symbol):
+                                success_count += 1
+                                self.logger.info("Subscribed to IMPL_VOL for %s", symbol)
+                            if self.client.subscribe(QuoteType.LAST, symbol):
+                                success_count += 1
+                                self.logger.info("Subscribed to LAST for %s", symbol)
                         else:
                             # Base symbol — subscribe to LAST
                             if symbol.startswith("/") and ":" not in symbol:

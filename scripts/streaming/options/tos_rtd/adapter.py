@@ -232,14 +232,17 @@ class TOSRTDAdapter:
             rtd_symbol: RTD option symbol, e.g. "./NQH25C21000:XCME"
 
         Returns:
-            Dict with keys: GAMMA, OPEN_INT, VOLUME, LAST (values may be None)
+            Dict with keys: GAMMA, DELTA, OPEN_INT, VOLUME, LAST, IMPL_VOL
+            (values may be None if not yet received)
         """
         snapshot = self.get_snapshot()
         return {
             "GAMMA": snapshot.get(f"{rtd_symbol}:GAMMA"),
+            "DELTA": snapshot.get(f"{rtd_symbol}:DELTA"),
             "OPEN_INT": snapshot.get(f"{rtd_symbol}:OPEN_INT"),
             "VOLUME": snapshot.get(f"{rtd_symbol}:VOLUME"),
             "LAST": snapshot.get(f"{rtd_symbol}:LAST"),
+            "IMPL_VOL": snapshot.get(f"{rtd_symbol}:IMPL_VOL"),
         }
 
     def build_chain_snapshot(self, symbol: str) -> Optional[ChainSnapshot]:
