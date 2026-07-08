@@ -618,6 +618,19 @@ model MacroSnapshot {
   @@index([ticker])
 }
 
+model TOSRTDSnapshot {
+  id          String   @id @default(cuid())
+  symbol      String   // RTD symbol, e.g. "./NQH25C21000:XCME" or "/ES:XCME"
+  quoteType   String   // GAMMA, OPEN_INT, VOLUME, LAST, DELTA, IMPL_VOL
+  value       Float
+  source      String   // "tos_rtd"
+  capturedAt  DateTime @default(now())
+
+  @@index([symbol, capturedAt])
+  @@index([capturedAt])
+  @@index([quoteType, capturedAt])
+}
+
 model TradeLeg {
   id          String   @id @default(cuid())
   tradeId     String

@@ -118,6 +118,9 @@ from .formatting import (
     HasLevels,
 )
 
+# TOS RTD hybrid coordinator (optional, Windows-only, opt-in)
+from .tos_rtd.hybrid_coordinator import HybridCoordinator
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -376,6 +379,13 @@ def run_pipeline(
     today_ny = now_ny.date()
     is_eod_run = _is_eod_snapshot(run_label, now_ny)
 
+    # --- Start TOS RTD hybrid coordinator (if enabled) -----------------------
+    rtd_coord = HybridCoordinator()
+    rtd_coord.start()
+    if rtd_coord.is_rtd_active:
+        log.info("TOS RTD active — using real-time futures prices")
+    elif rtd_coord._enabled:
+        log.warning("TOS RTD enabled but not active — check TOS desktop is running")
 
     # --- Process each ticker --------------------------------------------------
     target_tickers = tickers if tickers is not None else ACTIVE_TICKERS
@@ -413,8 +423,18 @@ def run_pipeline(
                     log.error("No fallback available for %s — skipping.", ticker)
                     continue
 
-            # 2. Fetch front-month futures quote
-            fut = fetch_futures_quote(futures_sym)
+            # 2. Fetch front-month futures quote (RTD first, Schwab fallback)
+            schwab_fut = fetch_futures_quote(futures_sym)
+            hybrid_quote = rtd_coord.get_futures_price(futures_sym, schwab_price=schwab_fut.price if schwab_fut else None)
+            if hybrid_quote and hybrid_quote.source == "tos_rtd":
+                log.info("Using RTD futures price for %s: %.2f", futures_sym, hybrid_quote.price)
+                fut = FuturesQuote(
+                    symbol=futures_sym,
+                    price=hybrid_quote.price,
+                    open_price=schwab_fut.open_price if schwab_fut else None,
+                )
+            else:
+                fut = schwab_fut
 
             # 2c. EOD close-price override (16:15 ET snapshot only)
             # At EOD, ES/NQ/RTY/YM keep trading after 4 PM so the live Schwab
@@ -822,11 +842,44 @@ def run_pipeline(
                     send_regime_change_alert(alert_text)
             except Exception as exc:
                 log.error("Regime change alert failed: %s", exc)
+
+        # Send RTD health status if RTD is enabled
+        if rtd_coord._enabled:
+            try:
+                from .discord_notifier import send_rtd_health_alert
+                send_rtd_health_alert(rtd_coord.get_status())
+            except Exception as exc:
+                log.error("RTD health alert failed: %s", exc)
     else:
         if not enable_discord:
             log.info("Discord updates are disabled for this run.")
         else:
             log.info("Discord updates skipped (outside allowed windows: 09:30, 16:15 ET).")
+
+    # --- Greeks drift validation (if RTD active) -----------------------------
+    if rtd_coord.is_rtd_active:
+        for ticker, levels in cash_levels_by_ticker.items():
+            futures_sym = INDEX_TO_FUTURES.get(ticker)
+            if futures_sym:
+                drift_results = rtd_coord.validate_greeks(levels, futures_sym)
+                if drift_results:
+                    drift_summary = rtd_coord.get_drift_summary()
+                    log.info(
+                        "Greeks drift validation for %s: %d contracts, avg drift=%.4f%%, max=%.4f%%",
+                        futures_sym,
+                        drift_summary.get("count", 0),
+                        drift_summary.get("avg_drift_pct", 0),
+                        drift_summary.get("max_drift_pct", 0),
+                    )
+                    if drift_summary.get("high_drift_count", 0) > 0:
+                        log.warning(
+                            "Greeks drift > 5%% on %d contracts for %s — BSM model may need recalibration",
+                            drift_summary["high_drift_count"],
+                            futures_sym,
+                        )
+
+    # --- Stop RTD coordinator ------------------------------------------------
+    rtd_coord.stop()
 
     log.info("Pipeline complete  |  %s", run_label)
 

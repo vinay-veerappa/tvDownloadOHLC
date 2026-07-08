@@ -691,3 +691,57 @@ def send_regime_change_alert(
         content = content[:_DISCORD_MAX_CONTENT - 20] + "\n\n*(truncated)*"
 
     _post_payload(url, {"content": content})
+
+
+def send_rtd_health_alert(
+    rtd_status: dict[str, Any],
+    webhook_url: str | None = None,
+) -> None:
+    """
+    Post a TOS RTD health status alert to Discord.
+
+    Called from run_options_levels.py when RTD is enabled, to show
+    connection state, topic count, and Greeks drift summary.
+
+    Parameters
+    ----------
+    rtd_status : Status dict from HybridCoordinator.get_status()
+    webhook_url : Override URL; uses default when None.
+    """
+    if not rtd_status:
+        return
+
+    url = webhook_url or _load_webhook_url()
+
+    mode = rtd_status.get("mode", "unknown")
+    rtd_active = rtd_status.get("rtd_active", False)
+
+    if rtd_active:
+        adapter = rtd_status.get("adapter", {})
+        validation = rtd_status.get("greeks_validation", {})
+
+        lines = [
+            f"**TOS RTD Status: ACTIVE** (hybrid mode)",
+            f"  Symbols: {adapter.get('base_symbols', [])}",
+            f"  Option subscriptions: {adapter.get('option_symbol_count', 0)}",
+            f"  Data keys: {adapter.get('data_keys', 0)}",
+            f"  Expiry: {adapter.get('expiry', 'N/A')}",
+        ]
+
+        if validation.get("active"):
+            lines.extend([
+                f"  Greeks drift: avg={validation.get('avg_drift_pct', 'N/A')}% max={validation.get('max_drift_pct', 'N/A')}%",
+                f"  High drift contracts: {validation.get('high_drift_count', 0)} (threshold: {validation.get('threshold_pct', 5)}%)",
+            ])
+        else:
+            lines.append("  Greeks drift: no validation data yet")
+    else:
+        lines = [
+            f"**TOS RTD Status: {'ENABLED but INACTIVE' if rtd_status.get('rtd_enabled') else 'DISABLED'}**",
+            f"  Mode: {mode}",
+        ]
+        if rtd_status.get("rtd_enabled"):
+            lines.append("  Check: TOS desktop running? COM initialized?")
+
+    content = "\n".join(lines)
+    _post_payload(url, {"content": content})
