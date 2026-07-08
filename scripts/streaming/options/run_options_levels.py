@@ -645,6 +645,100 @@ def run_pipeline(
                     _attach_weekly_scope(tl_intraday, _translate_weekly_scope_record(weekly_scope_record, tl_intraday))
                     _attach_weekly_scope(tl_macro, _translate_weekly_scope_record(weekly_scope_record, tl_macro))
                 
+                # 6b. RTD GEX — compute dealer levels directly from futures options if RTD active
+                if rtd_coord.is_rtd_active and futures_sym in rtd_coord._symbols:
+                    from .config import TOS_RTD_GEX_AS_PRIMARY
+                    rtd_gex_result = rtd_coord.calculate_rtd_gex(futures_sym)
+                    if rtd_gex_result is not None:
+                        rtd_dl = rtd_gex_result.dealer_levels
+                        log.info(
+                            "RTD GEX for %s: total_gex=%.2f regime=%s call_wall=%s put_wall=%s zero_gamma=%s (%d contracts)",
+                            futures_sym, rtd_dl.total_gex, rtd_dl.gex_regime,
+                            rtd_dl.call_wall, rtd_dl.put_wall, rtd_dl.zero_gamma,
+                            rtd_gex_result.contract_count,
+                        )
+
+                        # Compare RTD vs Schwab-translated
+                        comparison_table = rtd_coord.compare_gex(rtd_gex_result, tl_intraday)
+                        log.info("\n%s", comparison_table)
+
+                        if TOS_RTD_GEX_AS_PRIMARY:
+                            # Use RTD levels as primary — replace Schwab-translated
+                            log.info("Using RTD GEX as PRIMARY for %s (TOS_RTD_GEX_AS_PRIMARY=True)", futures_sym)
+                            # Tag the RTD dealer levels with futures metadata
+                            rtd_dl.futures_symbol = futures_sym
+                            rtd_dl.translation_mode = "rtd_direct"
+                            rtd_dl.basis_spread = 0.0
+                            rtd_dl.basis_ratio = 1.0
+                            # Replace the translated levels with RTD-sourced ones
+                            # We need to construct a TranslatedLevels from the RTD DealerLevels
+                            from .futures_translator import TranslatedLevels
+                            rtd_tl = TranslatedLevels(
+                                futures_symbol=futures_sym,
+                                cash_ticker=futures_sym,  # RTD is direct, no cash proxy
+                                futures_price=rtd_gex_result.futures_price,
+                                cash_spot=rtd_gex_result.futures_price,
+                                basis_spread=0.0,
+                                basis_ratio=1.0,
+                                translation_mode="rtd_direct",
+                                min_tick=0.25,
+                                total_gex=rtd_dl.total_gex,
+                                gex_regime=rtd_dl.gex_regime,
+                                zero_gamma=rtd_dl.zero_gamma,
+                                zero_gamma_delta_adj=rtd_dl.zero_gamma_delta_adj,
+                                gamma_flip_lower=rtd_dl.gamma_flip_lower,
+                                gamma_flip_upper=rtd_dl.gamma_flip_upper,
+                                call_wall=rtd_dl.call_wall,
+                                put_wall=rtd_dl.put_wall,
+                                secondary_call_wall=rtd_dl.secondary_call_wall,
+                                secondary_put_wall=rtd_dl.secondary_put_wall,
+                                local_call_node=rtd_dl.local_call_node,
+                                local_put_node=rtd_dl.local_put_node,
+                                call_wall_0dte=rtd_dl.call_wall_0dte,
+                                put_wall_0dte=rtd_dl.put_wall_0dte,
+                                hedge_wall=rtd_dl.hedge_wall,
+                                max_pain=rtd_dl.max_pain,
+                                em_upper=rtd_dl.em_upper,
+                                em_lower=rtd_dl.em_lower,
+                                em_value=rtd_dl.em_value,
+                                atm_straddle=rtd_dl.atm_straddle,
+                                gamma_magnet=rtd_dl.gamma_magnet,
+                                pin_strike=rtd_dl.pin_strike,
+                                pin_odds=rtd_dl.pin_odds,
+                                wall_separation=rtd_dl.wall_separation,
+                                regime_label=rtd_dl.regime_label,
+                                directional_bias=rtd_dl.directional_bias,
+                                call_gamma_total=rtd_dl.call_gamma_total,
+                                put_gamma_total=rtd_dl.put_gamma_total,
+                                net_vanna_exposure=rtd_dl.net_vanna_exposure,
+                                wall_scope=rtd_dl.wall_scope,
+                                wall_dte_min=rtd_dl.wall_dte_min,
+                                wall_dte_max=rtd_dl.wall_dte_max,
+                                concentration_score=rtd_dl.concentration_score,
+                                call_wall_oi=rtd_dl.call_wall_oi,
+                                put_wall_oi=rtd_dl.put_wall_oi,
+                                pin_strike_oi=rtd_dl.pin_strike_oi,
+                                net_speed_exposure=rtd_dl.net_speed_exposure,
+                                total_gex_delta_adj=rtd_dl.total_gex_delta_adj,
+                                call_volume_centroid=rtd_dl.call_volume_centroid,
+                                put_volume_centroid=rtd_dl.put_volume_centroid,
+                                atm_iv=rtd_dl.atm_iv,
+                                put_25d_iv=rtd_dl.put_25d_iv,
+                                call_25d_iv=rtd_dl.call_25d_iv,
+                                volatility_skew_premium=rtd_dl.volatility_skew_premium,
+                                expected_moves=rtd_dl.expected_moves,
+                            )
+                            # Replace Schwab-translated with RTD-direct
+                            translated_levels[-1] = rtd_tl
+                            # Also replace macro
+                            rtd_tl_macro = replace(rtd_tl, wall_scope="ALL_EXPIRIES_WEIGHTED")
+                            translated_macro_levels[-1] = rtd_tl_macro
+
+                            # Write RTD GEX snapshot to DB
+                            if _is_rth():
+                                from .interval_writer import write_snapshot
+                                write_snapshot(rtd_dl, ticker_override=futures_sym)
+
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
 

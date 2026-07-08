@@ -487,6 +487,12 @@ TOS_RTD_STRIKE_RANGE: int = 20          # ± strikes from ATM
 TOS_RTD_STRIKE_SPACING: float = 1.0
 TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
 
+# When True, RTD-computed futures GEX is used as the PRIMARY dealer levels
+# for /ES and /NQ (instead of Schwab SPX/QQQ→futures translated levels).
+# Schwab-translated levels are still computed for comparison/validation.
+# When False, RTD provides only real-time price + Greeks drift validation.
+TOS_RTD_GEX_AS_PRIMARY: bool = os.environ.get("TOS_RTD_GEX_AS_PRIMARY", "1").lower() in {"1", "true", "yes"}
+
 # Near-duplicate suppression in scored export (price units).
 DEFAULT_NEAR_DUPLICATE_TOLERANCE: float = float(os.environ.get("DEFAULT_NEAR_DUPLICATE_TOLERANCE", "0.0"))
 NEAR_DUPLICATE_TOLERANCE_BY_TICKER: dict[str, float] = {

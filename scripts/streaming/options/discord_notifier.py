@@ -735,6 +735,13 @@ def send_rtd_health_alert(
             ])
         else:
             lines.append("  Greeks drift: no validation data yet")
+
+        # RTD GEX mode
+        gex_mode = rtd_status.get("rtd_gex_mode", "supplementary")
+        if gex_mode == "primary":
+            lines.append("  GEX source: **RTD PRIMARY** (futures options direct)")
+        else:
+            lines.append("  GEX source: Schwab-translated (RTD supplementary)")
     else:
         lines = [
             f"**TOS RTD Status: {'ENABLED but INACTIVE' if rtd_status.get('rtd_enabled') else 'DISABLED'}**",

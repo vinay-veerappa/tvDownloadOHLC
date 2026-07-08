@@ -35,6 +35,7 @@ if sys.platform == "win32":
     try:
         from .tos_rtd.adapter import TOSRTDAdapter, RTDConfig, ChainSnapshot
         from .tos_rtd.symbol_builder import OptionSymbolBuilder, parse_rtd_option_symbol
+        from .tos_rtd.rtd_gex_calculator import calculate_futures_gex, FuturesGEXResult, compare_gex_sources, format_comparison_table
         _RTD_AVAILABLE = True
     except ImportError:
         log.warning("tos_rtd package import failed — RTD disabled")
@@ -99,7 +100,12 @@ class HybridCoordinator:
     # ------------------------------------------------------------------
 
     def start(self, current_prices: dict[str, float] | None = None) -> None:
-        """Start the RTD adapter if enabled and TOS desktop is running."""
+        """Start the RTD adapter if enabled and TOS desktop is running.
+
+        If current_prices is not provided, performs a two-phase start:
+        Phase 1: Subscribe to futures LAST only to get current price.
+        Phase 2: Restart with option symbols built from the live price.
+        """
         if not self._enabled:
             log.info("TOS RTD disabled — running in Schwab-only mode")
             return
@@ -128,15 +134,65 @@ class HybridCoordinator:
         )
         self._adapter = TOSRTDAdapter(config)
 
+        if current_prices:
+            # Prices provided — single-phase start with option symbols
+            self._start_with_prices(current_prices)
+        else:
+            # Two-phase start: get price first, then restart with options
+            self._start_two_phase()
+
+    def _start_with_prices(self, current_prices: dict[str, float]) -> None:
+        """Start RTD with known prices — subscribes to futures + options immediately."""
         try:
             self._adapter.start(
                 symbols=self._symbols,
                 expiry=self._expiry,
                 current_price=current_prices,
             )
-            log.info("HybridCoordinator started with RTD for %s", self._symbols)
+            log.info("HybridCoordinator started with RTD for %s (prices provided)", self._symbols)
         except Exception as e:
             log.error("RTD start failed — falling back to Schwab-only: %s", e)
+            self._enabled = False
+            self._adapter = None
+
+    def _start_two_phase(self) -> None:
+        """Two-phase start: get futures price from RTD, then restart with option symbols."""
+        import time
+        try:
+            # Phase 1: Subscribe to futures LAST only
+            self._adapter.start(symbols=self._symbols, expiry=self._expiry)
+            log.info("RTD Phase 1: Waiting for futures LAST price...")
+
+            prices = {}
+            for i in range(10):
+                time.sleep(1)
+                for sym in self._symbols:
+                    p = self._adapter.get_futures_price(sym)
+                    if p and p > 0:
+                        prices[sym] = p
+                if all(s in prices for s in self._symbols):
+                    break
+
+            if not prices:
+                log.warning("RTD Phase 1: No futures price received after 10s — falling back")
+                self._adapter.stop()
+                self._enabled = False
+                return
+
+            log.info("RTD Phase 1 complete: %s", prices)
+
+            # Phase 2: Restart with option symbols
+            self._adapter.stop()
+            time.sleep(1)
+            self._adapter.start(
+                symbols=self._symbols,
+                expiry=self._expiry,
+                current_price=prices,
+            )
+            log.info("RTD Phase 2: Restarted with option symbols for %s", list(prices.keys()))
+
+        except Exception as e:
+            log.error("RTD two-phase start failed — falling back to Schwab-only: %s", e)
             self._enabled = False
             self._adapter = None
 
@@ -290,6 +346,49 @@ class HybridCoordinator:
         }
 
     # ------------------------------------------------------------------
+    # RTD GEX calculation — compute dealer levels directly from futures options
+    # ------------------------------------------------------------------
+
+    def calculate_rtd_gex(self, symbol: str) -> Optional[Any]:
+        """
+        Calculate dealer levels directly from RTD futures options data.
+
+        This produces "true futures GEX" — levels computed from actual
+        futures options book, not translated from cash/ETF space.
+
+        Args:
+            symbol: Futures symbol, e.g. "/ES"
+
+        Returns:
+            FuturesGEXResult or None if RTD not active or no data.
+        """
+        if not self.is_rtd_active or not _RTD_AVAILABLE:
+            return None
+
+        # Wait a moment for option Greeks to arrive if just started
+        import time
+        time.sleep(2)
+
+        return calculate_futures_gex(self._adapter, symbol)
+
+    def compare_gex(self, rtd_result: Any, translated_levels: Any) -> str:
+        """
+        Compare RTD-computed futures GEX against Schwab-translated levels.
+
+        Args:
+            rtd_result: FuturesGEXResult from calculate_rtd_gex()
+            translated_levels: TranslatedLevels from the Schwab pipeline
+
+        Returns:
+            Formatted comparison table string.
+        """
+        if not rtd_result or not translated_levels:
+            return "Comparison skipped — missing data"
+
+        compare_gex_sources(rtd_result, translated_levels)
+        return format_comparison_table(rtd_result)
+
+    # ------------------------------------------------------------------
     # RTD snapshot access
     # ------------------------------------------------------------------
 
@@ -309,10 +408,19 @@ class HybridCoordinator:
 
         adapter_status = self._adapter.get_status()
         drift = self.get_drift_summary()
+
+        # Check if RTD GEX is primary
+        try:
+            from ..config import TOS_RTD_GEX_AS_PRIMARY
+            gex_mode = "primary" if TOS_RTD_GEX_AS_PRIMARY else "supplementary"
+        except ImportError:
+            gex_mode = "supplementary"
+
         return {
             "mode": "hybrid",
             "rtd_active": True,
             "rtd_enabled": True,
+            "rtd_gex_mode": gex_mode,
             "adapter": adapter_status,
             "greeks_validation": drift,
         }
