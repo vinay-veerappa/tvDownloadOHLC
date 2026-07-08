@@ -1943,6 +1943,16 @@ def build_overnight_context(loader: DataLoader | None = None, ticker: str = "NQ1
     prior_close_df = df_1m.loc[prior_close_mask]
     prior_close = float(prior_close_df["close"].iloc[-1]) if not prior_close_df.empty else session_open
 
+    # Prior day RTH high/low (09:30–16:00 ET of the previous trading day)
+    # Used for RTH Breaks open-scenario classification (nqstats.com/rth_breaks.html)
+    rth_start = globex_start - timedelta(days=1)
+    rth_start = rth_start.replace(hour=9, minute=30)
+    rth_end = rth_start.replace(hour=16, minute=0)
+    prior_rth_mask = (df_1m.index >= rth_start) & (df_1m.index < rth_end)
+    prior_rth_df = df_1m.loc[prior_rth_mask]
+    prior_rth_high = float(prior_rth_df["high"].max()) if not prior_rth_df.empty else None
+    prior_rth_low = float(prior_rth_df["low"].min()) if not prior_rth_df.empty else None
+
     return {
         "ticker": ticker,
         "open": round(session_open, 2),
@@ -1954,6 +1964,8 @@ def build_overnight_context(loader: DataLoader | None = None, ticker: str = "NQ1
         "session_low_time": low_time_str,
         "trajectory": ", ".join(trajectory_parts),
         "prior_close": round(prior_close, 2),
+        "prior_rth_high": round(prior_rth_high, 2) if prior_rth_high is not None else None,
+        "prior_rth_low": round(prior_rth_low, 2) if prior_rth_low is not None else None,
     }
 
 
@@ -2279,6 +2291,26 @@ def build_trader_cheat_sheet(
         )
         overnight_lines.append(f"    Trajectory: {ctx['trajectory']}")
     sections.append("\n".join(overnight_lines))
+
+    # ── RTH Breaks (prior day RTH range vs current open) ──
+    # nqstats.com/rth_breaks.html — classifies the 09:30 open vs pRTH high/low
+    rth_lines = ["== RTH BREAKS (Prior Day RTH Range) =="]
+    for label, ctx in [("NQ", nq_ctx), ("ES", es_ctx)]:
+        prth_h = ctx.get("prior_rth_high")
+        prth_l = ctx.get("prior_rth_low")
+        current = ctx.get("close")
+        if prth_h is None or prth_l is None or not current:
+            rth_lines.append(f"{label}: No pRTH data available")
+            continue
+        if current > prth_h:
+            scenario = "GAP UP (open above pRTH High) — 70% close holds above"
+        elif current < prth_l:
+            scenario = "GAP DOWN (open below pRTH Low) — 60% close holds below"
+        else:
+            scenario = "INSIDE RANGE (open within pRTH) — 74% one side breached"
+        rth_lines.append(f"{label}: pRTH High {prth_h:,.2f} | pRTH Low {prth_l:,.2f}")
+        rth_lines.append(f"    Current {current:,.2f} → {scenario}")
+    sections.append("\n".join(rth_lines))
 
     # ── VIX checkpoint ──
     vix_ctx = get_vix_checkpoint(loader)

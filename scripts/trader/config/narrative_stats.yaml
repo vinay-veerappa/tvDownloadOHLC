@@ -1,0 +1,298 @@
+# Narrative Engine — Static Probability Configuration
+# Version: 2.0
+# Update these when stats are re-verified. See docs/architecture/NARRATIVE_ENGINE_V2_PLAN.md §4.
+# Loaded by scripts/trader/config_loader.py
+
+version: "2.0"
+
+# ── ALN Patterns (NQStats 10-year study, n=2,542) ──────────────────
+aln_patterns:
+  LPEU:
+    break_high: 80.8
+    break_low: 65.5
+    break_both: 47.6
+    break_neither: 1.2
+    if_low_breaks_first: 51.2
+    if_high_breaks_first: 46.4
+    bias: bullish
+  LPED:
+    break_high: 68.6
+    break_low: 75.0
+    break_both: 44.6
+    break_neither: 1.0
+    if_high_breaks_first: 46.2
+    if_low_breaks_first: 44.1
+    bias: bearish
+  LEA:
+    break_high: 71.5
+    break_low: 70.4
+    break_both: 42.5
+    break_neither: 0.0
+    bias: neutral
+  AEL:
+    break_high: 81.1
+    break_low: 74.9
+    break_both: 56.0
+    break_neither: 0.0
+    if_low_breaks_first: 59.8
+    bias: coiled
+
+# ── Held/Broken Volatility Regime (local 20-year, n=4,640) ────────
+held_broken:
+  both_held:
+    ny1_long: 30.7
+    ny1_broken: 25.7
+    read: "low vol, long bias, tight stops viable"
+  both_broken:
+    ny1_long: 13.7
+    ny1_short: 15.2
+    ny1_broken: 51.3
+    read: "chop, no edge, reduce size"
+  asia_broken_london_held:
+    ny1_long: 27.2
+    ny1_broken: 34.0
+    read: "good setup, long bias, moderate vol"
+
+# ── RTH Breaks (NQStats 10-year, n=2,488) ──────────────────────────
+rth_breaks:
+  gap_up:
+    close_above_prth_high: 69.9
+    does_not_breach_prth_low: 88.1
+    read: "bullish continuation, don't fade unless price trades below pRTH High"
+  gap_down:
+    close_below_prth_low: 59.5
+    does_not_breach_prth_high: 90.4
+    read: "bearish continuation, don't fade unless price trades above pRTH Low"
+  inside_range:
+    no_breach: 17.7
+    one_side_breach: 74.0
+    both_side_breach: 8.3
+    read: "expect one-side break, use ALN for direction"
+
+# ── Herman Pre-NY Sweep (6,000+ days) ─────────────────────────────
+herman_pre_ny:
+  break_london_high_bullish: 86.4
+  break_london_low_bearish: 77.9
+  inside_london: 50.0
+  read: "DOMINANT signal — overrides ALN. Trade the chart in front of you."
+
+herman_asia_range:
+  small_threshold_pct: 0.48
+  large_threshold_pct: 0.48
+  small_read: "trend continuation regime"
+  large_read: "mean reversion regime"
+
+herman_london_or:
+  break_high_bullish: 76.5
+  break_low_bearish: 73.8
+  read: "London OR breakout → continuation"
+
+herman_sweep_return:
+  golden_zone_08_09:
+    return_to_open_pct: 79.0
+    action: "FADE the sweep of 08:00 range"
+  london_open_02_03:
+    return_to_open_pct: 72.4
+    action: "FADE the sweep of 02:00 range"
+  globex_open_17_18:
+    return_to_open_pct: 76.0
+    action: "FADE the sweep of 17:00 range"
+
+# ── IB Breaks (NQStats verified) ──────────────────────────────────
+ib_breaks:
+  break_before_close: 96.1
+  break_before_noon: 82.5
+  midpoint_upper_half_high_break: 82.3
+
+# ── Noon Curve (NQStats verified) ─────────────────────────────────
+noon_curve:
+  opposite_side_pct: 72.8
+
+# ── Hourly Personalities (NQStats verified) ───────────────────────
+hourly_personalities:
+  "09":
+    personality: expansion
+    orb_wr: 54.3
+    high_q4: 40
+  "10":
+    personality: reversion
+    orb_wr: 61.6
+    high_q1: 37
+    q1_high_red_close: 85
+  "15":
+    personality: trend_close
+    orb_wr: 58.4
+    high_q4: 41.5
+
+# ── Candle Science ───────────────────────────────────────────────
+candle_science:
+  edge_threshold: 10
+  min_sample: 1
+  report_mfe_mae: true
+  mfe_percentiles: [30, 50, 70]
+  mae_percentiles: [30, 50, 70]
+  source: api/features/candle_science/service.py
+
+# ── VIX Regimes (graduated 6-tier) ────────────────────────────────
+vix_regimes:
+  quiet: 13
+  calm: 17
+  normal: 22
+  elevated: 28
+  high: 35
+  crisis: 999
+
+vix_sizing:
+  quiet: 1.0
+  calm: 1.0
+  normal: 1.0
+  elevated: 0.75
+  high: 0.50
+  crisis: 0.25
+
+# ── VVIX Regimes (graduated 6-tier) ──────────────────────────────
+vvix_regimes:
+  quiet: 80
+  calm: 88
+  normal: 96
+  elevated: 105
+  high: 115
+  crisis: 999
+
+vvix_roc:
+  fear_building: 5.0
+  caution: 2.0
+  neutral: -2.0
+  unwinding: -5.0
+
+vix_vvix_divergence:
+  panic_multiplier: 1.5
+
+# ── Day Types ─────────────────────────────────────────────────────
+day_types:
+  clean:
+    sizing: 1.0
+    killzones: all
+  cpi:
+    sizing: 0.65
+    event_time: "08:30"
+    pre_event_buffer: 15
+    post_event_wait: 15
+    morning_note: "Quiet pre-event. Wait for spike resolution. 1.5-2x range."
+  nfp:
+    sizing: 0.50
+    sizing_afternoon: 1.0
+    event_time: "08:30"
+    first_friday: true
+    pre_event_buffer: 15
+    post_event_wait: 30
+    morning_note: "First direction often fakeout. Wait 09:15 for resolution."
+  fomc:
+    sizing: 0.50
+    event_time: "14:00"
+    statement_window: 30
+    resume_after: "15:00"
+    morning_note: "Quiet AM (50-60% range). Real moves 15:00-16:00."
+  special:
+    sizing: 0.50
+    note: "Event-specific guidance"
+  holiday:
+    sizing: 0.25
+    note: "Killzones unreliable. Skip or minimum size."
+
+# ── Day of Week ───────────────────────────────────────────────────
+day_of_week:
+  Monday:
+    fill_rate: 59
+    read: "Defense prone, direction not established"
+  Tuesday:
+    fill_rate: 65
+    read: "Neutral, standard"
+  Wednesday:
+    fill_rate: 70
+    read: "Cleanest trend day, best for setups"
+  Thursday:
+    fill_rate: 67
+    read: "Good setups, watch for NFP tomorrow"
+  Friday:
+    fill_rate: 63
+    read: "Reduce after 12:00, close by 15:00"
+
+# ── ICT Killzones ─────────────────────────────────────────────────
+killzones:
+  london_open:
+    start: "02:00"
+    end: "05:00"
+    best: "02:00-04:00"
+  ny_open:
+    start: "08:30"
+    end: "11:00"
+    best: "10:00-11:00"
+    name: "Silver Bullet"
+  london_close:
+    start: "10:00"
+    end: "12:00"
+    best: "10:00-11:00"
+
+dead_zones:
+  - start: "11:30"
+    end: "13:30"
+    reason: "NY lunch chop"
+  - start: "14:00"
+    end: "20:00"
+    reason: "CBDR, no institutional flow"
+
+no_trade_rules:
+  - "Outside killzones"
+  - "15 min before HIGH event"
+  - "During FOMC statement (14:00-14:30)"
+  - "NY lunch (11:30-13:30)"
+  - "Friday after 15:00"
+  - "Public holidays (US or UK closed)"
+  - "4+ consecutive gap fills (regime warning)"
+
+# ── ICT Liquidity Raid Rules ─────────────────────────────────────
+ict_liquidity:
+  high_news_target: "Asian lows"
+  medium_news_target: "London lows"
+  no_news_target: "based on Premium/Discount position"
+  raid_then_run: "Entry is AFTER the raid, not before. Explosive move follows the liquidity sweep."
+
+# ── Weekly Profiles ──────────────────────────────────────────────
+weekly_profiles:
+  bullish_run:
+    low_formation: "Mon-Tue"
+    high_formation: "Thu-Fri"
+    read: "Buy dips early week, expect new highs late week"
+  bearish_run:
+    high_formation: "Mon-Tue"
+    low_formation: "Thu-Fri"
+    read: "Sell rallies early week, expect new lows late week"
+  inside_week:
+    read: "Range-bound, fade extremes Tue-Wed, breakout Thu-Fri"
+  outside_week:
+    read: "Expansion week, larger ranges, trend days more likely"
+  balanced:
+    read: "No directional bias, range trade"
+
+# ── Confluence Model ─────────────────────────────────────────────
+confluence:
+  high:
+    signals_agree: 3
+    sizing: 1.0
+    read: "All 3 independent signals agree — normal sizing, full target"
+  medium:
+    signals_agree: 2
+    sizing: 0.50
+    read: "2 of 3 agree — reduce size, tighter target"
+  low:
+    signals_agree: 1
+    sizing: 0.25
+    read: "2+ conflict — skip or wait for resolution"
+
+# ── ML Bias (dropped from v2 per senior trader review) ───────────
+ml_bias:
+  enabled: false
+  accuracy: 60
+  role: confirmation
+  note: "Dropped from v2 — redundant with explicit rule-based signals. Revisit if rules underperform."
