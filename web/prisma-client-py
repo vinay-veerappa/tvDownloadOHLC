@@ -1,0 +1,20 @@
+#!/bin/sh
+# prisma-client-py wrapper — bridges Node.js Prisma CLI to Python prisma generator
+#
+# The Node.js Prisma CLI spawns this as the "prisma-client-py" provider.
+# It sets PRISMA_GENERATOR_INVOCATION and calls python -m prisma which
+# runs Generator.invoke() to process the JSON-RPC generation requests.
+
+# Find Python — prefer venv, fall back to system
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV_PY="$SCRIPT_DIR/../../.venv/bin/python"
+if [ -x "$VENV_PY" ]; then
+    PYTHON_EXE="$VENV_PY"
+else
+    PYTHON_EXE="python"
+fi
+
+# Ensure the invocation env var is set
+export PRISMA_GENERATOR_INVOCATION="${PRISMA_GENERATOR_INVOCATION:-1}"
+
+exec "$PYTHON_EXE" -m prisma "$@"

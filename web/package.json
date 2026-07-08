@@ -9,7 +9,8 @@
     "lint": "next lint",
     "test:contracts": "node --test tests/*.test.mjs",
     "sync:economic-events": "tsx prisma/seed-economic-events.ts",
-    "check:economic-events-coverage": "tsx scripts/check-economic-events-coverage.ts"
+    "check:economic-events-coverage": "tsx scripts/check-economic-events-coverage.ts",
+    "postinstall": "node -e \"try{require('fs').copyFileSync('prisma-client-py.cmd','node_modules/.bin/prisma-client-py.cmd');require('fs').copyFileSync('prisma-client-py','node_modules/.bin/prisma-client-py');console.log('prisma-client-py wrapper installed')}catch(e){console.log('postinstall: prisma-client-py copy skipped')}\""
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
