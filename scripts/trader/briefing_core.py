@@ -311,10 +311,10 @@ def build_levels_markdown_table(ticker: str) -> str:
                 dedup = [d if round(d[0]) != key else (px, color, label) for d in dedup]
     
     md = f"**{futures_symbol} Options Levels:**\n\n"
-    md += f"| {futures_symbol} Level | Color | Type |\n"
-    md += f"|---|---|---|\n"
+    md += f"| {futures_symbol} Level | Type |\n"
+    md += f"|---|---|\n"
     for px, color, label in dedup:
-        md += f"| {px:,.2f} | {color} | {label} |\n"
+        md += f"| {px:,.2f} | {label} |\n"
         
     return md
 
@@ -423,6 +423,27 @@ def parse_meta_fields(unified_entry: dict) -> dict:
                         meta[key] = val_str
 
     return meta
+
+
+def translate_level_to_futures(ticker: str, level: float, meta: dict) -> float:
+    """Translate proxy strike levels into futures scale when mapping is available.
+
+    For SPY/QQQ-derived levels, apply FUTURES_RATIO/FUTURES_BASIS from META fields:
+      futures_px = strike * ratio + basis
+    If mapping is missing or not applicable, return the original level.
+    """
+    if level in (None, 0):
+        return 0.0
+
+    if ticker not in {"SPY", "QQQ"}:
+        return round(float(level), 2)
+
+    ratio = meta.get("FUTURES_RATIO", 0)
+    basis = meta.get("FUTURES_BASIS", 0)
+    if ratio and ratio > 0:
+        return round(float(level) * float(ratio) + float(basis), 2)
+
+    return round(float(level), 2)
 
 
 def load_unified_levels_txt(txt_path: Path) -> dict[str, dict]:
@@ -554,6 +575,8 @@ def compute_weekly_ems(unified_entry: dict, spot: float) -> dict:
     import re
     dte_match = re.search(r"(\d+)d", em_hi_token.get("label", ""))
     weekly_dte = int(dte_match.group(1)) if dte_match else 2
+    if weekly_dte <= 0:
+        weekly_dte = 1
 
     # Compute per-day EM using sqrt(time) scaling
     # Monday = DTE 1, Tuesday = DTE 2, ..., Friday = DTE 5
@@ -574,6 +597,11 @@ def compute_weekly_ems(unified_entry: dict, spot: float) -> dict:
         }
 
     return result
+
+
+def load_weekly_ems(unified_entry: dict, spot: float) -> dict:
+    """Backward-compatible alias for weekly EM envelope computation."""
+    return compute_weekly_ems(unified_entry, spot)
 
 
 def get_friday_em(weekly_ems: dict) -> tuple[float, float]:
@@ -814,15 +842,66 @@ def compute_level_interactions(
 
 # ── Economic Events ───────────────────────────────────────────────
 
+# MEDIUM-impact events are only kept if their name matches one of these
+# keywords — these are the events that historically move equity futures.
+# All HIGH-impact events are kept unconditionally. LOW is always filtered out.
+MEDIUM_ALLOWLIST_KEYWORDS = [
+    "FOMC", "FED", "INTEREST RATE", "POWELL", "BOSTIC", "WILLIAMS",
+    "BOWMAN", "WALLER", "BARR", "COOK", "JEFFERSON", "KASHKARI",
+    "DALY", "LOGAN", "SCHMID", "COLLINS",
+    "CPI", "PCE", "PPI", "INFLATION",
+    "NON-FARM PAYROLL", "NFP", "ADP EMPLOYMENT",
+    "GDP", "GDPNOW",
+    "ISM", "PMI",
+    "RETAIL SALES", "DURABLE GOODS",
+    "JOBLESS CLAIMS", "UNEMPLOYMENT",
+    "CONSUMER SENTIMENT", "CONSUMER CONFIDENCE",
+    "TREASURY AUCTION", "NOTE AUCTION", "BOND AUCTION",
+]
+
+# Always include these events as macro drivers even if the upstream
+# impact classification is not HIGH/MEDIUM.
+CRITICAL_EVENT_KEYWORDS = [
+    "FOMC MEETING MINUTES",
+    "FEDERAL OPEN MARKET COMMITTEE MINUTES",
+    "FOMC MINUTES",
+]
+
+def _is_market_moving_medium(name: str) -> bool:
+    """Check if a MEDIUM-impact event name matches the allowlist."""
+    name_upper = (name or "").upper()
+    return any(kw in name_upper for kw in MEDIUM_ALLOWLIST_KEYWORDS)
+
+
+def _is_critical_event(name: str) -> bool:
+    """Critical macro events that should never be filtered out."""
+    name_upper = (name or "").upper()
+    return any(kw in name_upper for kw in CRITICAL_EVENT_KEYWORDS)
+
+
 async def fetch_week_events(start_date: date, end_date: date) -> list[dict]:
-    """Fetch economic events for a date range from the Prisma SQLite DB."""
+    """Fetch economic events for a date range from the Prisma SQLite DB.
+
+    Filtering rules:
+    - HIGH impact: always kept.
+    - MEDIUM impact: kept only if the event name matches a keyword in
+      MEDIUM_ALLOWLIST_KEYWORDS (e.g. FOMC speeches, ADP, CPI, ISM, etc.).
+    - LOW impact: always filtered out.
+
+    Each event includes a 'passed' flag indicating whether the event time
+    has already occurred relative to the current time, so the LLM can
+    distinguish upcoming from already-released events.
+    """
     db = await get_db()
-    from datetime import datetime as dt_cls
-    
+    from datetime import datetime as dt_cls, timezone as tz_cls
+
     # ET timezone is defined at the top of briefing_core.py
     start_dt = dt_cls.combine(start_date, dt_cls.min.time(), tzinfo=ET)
     end_dt = dt_cls.combine(end_date, dt_cls.max.time(), tzinfo=ET)
-    
+
+    # Current time in ET for the 'passed' flag
+    now_et = dt_cls.now(ET)
+
     try:
         events = await db.economicevent.find_many(
             where={
@@ -833,20 +912,38 @@ async def fetch_week_events(start_date: date, end_date: date) -> list[dict]:
             },
             order={"datetime": "asc"}
         )
-        
+
         res = []
         for e in events:
-            # Filter out low impact news to avoid clutter
-            if e.impact and ( e.impact.upper() == "LOW" or e.impact.upper() == "MEDIUM" ):
+            impact = (e.impact or "").upper()
+            is_critical = _is_critical_event(e.name)
+
+            # Filter out LOW unless event is explicitly marked critical.
+            if impact == "LOW" and not is_critical:
                 continue
-                
+
+            # For MEDIUM, only keep if name matches the allowlist
+            if impact == "MEDIUM" and not (_is_market_moving_medium(e.name) or is_critical):
+                continue
+
             # e.datetime is a python datetime object
-            evt_dt = e.datetime.astimezone(ET) if e.datetime.tzinfo else e.datetime.replace(tzinfo=ET)
+            # If DB datetime is naive, treat it as UTC source time first and
+            # convert to ET. Interpreting naive values as ET can shift weekday.
+            if e.datetime.tzinfo:
+                evt_dt = e.datetime.astimezone(ET)
+            else:
+                evt_dt = e.datetime.replace(tzinfo=tz_cls.utc).astimezone(ET)
+
+            # Flag whether this event has already passed
+            passed = evt_dt < now_et
+
             res.append({
                 "date": evt_dt.strftime("%Y-%m-%d"),
+                "day_of_week": evt_dt.strftime("%A"),
                 "time_et": evt_dt.strftime("%H:%M ET"),
                 "name": e.name,
-                "impact": e.impact.upper()
+                "impact": e.impact.upper() if e.impact else "UNKNOWN",
+                "passed": passed
             })
         return res
     except Exception as e:
@@ -857,15 +954,12 @@ async def fetch_week_events(start_date: date, end_date: date) -> list[dict]:
 # ── Utility ───────────────────────────────────────────────────────
 
 def get_week_label(reference_date: date | None = None) -> str:
-    """Get a human-readable week label (e.g., 'Week of Jun 30 – Jul 4, 2026')."""
+    """Get a human-readable label for the week containing reference_date."""
     if reference_date is None:
         reference_date = datetime.now(ET).date()
 
-    # Find the Monday of the upcoming week
-    days_to_monday = (7 - reference_date.weekday()) % 7
-    if days_to_monday == 0:
-        days_to_monday = 7  # If today is Monday, go to next Monday
-    monday = reference_date + timedelta(days=days_to_monday)
+    # Monday-Friday for the current week anchor.
+    monday = reference_date - timedelta(days=reference_date.weekday())
     friday = monday + timedelta(days=4)
 
     if monday.month == friday.month:
@@ -1144,6 +1238,41 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
         if not briefing:
             return None
 
+        # Enrich DB snapshots with current translation context so narratives can
+        # display both futures-scale and original proxy-scale levels.
+        unified_lookup = load_macro_levels(session="live")
+
+        def _proxy_context(ticker: str, snap) -> dict:
+            if ticker not in {"SPY", "QQQ"}:
+                return {}
+
+            unified_entry = unified_lookup.get(ticker)
+            if not unified_entry:
+                return {}
+
+            meta = parse_meta_fields(unified_entry)
+            ratio = meta.get("FUTURES_RATIO", 0)
+            basis = meta.get("FUTURES_BASIS", 0)
+            if not ratio or ratio <= 0:
+                return {}
+
+            def _inverse(level: float | None) -> float | None:
+                if level is None:
+                    return None
+                return round((float(level) - float(basis)) / float(ratio), 2)
+
+            return {
+                "proxy_symbol": ticker,
+                "futures_symbol": "MES" if ticker == "SPY" else "MNQ",
+                "spot_proxy": _inverse(snap.spotPrice),
+                "call_wall_proxy": _inverse(snap.callWall),
+                "put_wall_proxy": _inverse(snap.putWall),
+                "zero_gamma_proxy": _inverse(snap.zeroGamma),
+                "gamma_magnet_proxy": _inverse(snap.gammaMagnet),
+                "bullish_invalidation_proxy": _inverse(snap.bullishInvalidation),
+                "bearish_invalidation_proxy": _inverse(snap.bearishInvalidation),
+            }
+
         # Assemble TOON in memory
         tickers = []
         for snap in briefing.tickerSnapshots:
@@ -1202,6 +1331,7 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
                     "bearish": snap.scenarioBearish,
                     "neutral": snap.scenarioNeutral,
                 },
+                "proxy_context": _proxy_context(snap.ticker, snap),
                 "institutional_volatility_context": fetch_vol_context(snap.ticker, briefing.weekStartDate.date())
             })
 
@@ -1239,6 +1369,103 @@ async def save_narrative_to_db(briefing_id: str, summary_md: str, is_daily: bool
         log.info("✓ Saved narrative to DB (%s)", "daily" if is_daily else "weekly")
     finally:
         await db.disconnect()
+
+
+# ── Prior Week Performance ──────────────────────────────────────
+
+async def get_prior_week_performance(reference_week_start: date | None = None) -> str:
+    """Query DB for the previous week's closed trades and compute aggregate stats.
+
+    Returns a formatted string for the weekly prompt showing:
+    - Total P&L per instrument
+    - Win rate, trade count
+    - Max drawdown
+    - Level accuracy (from EOD narratives if available)
+    """
+    from prisma import Prisma
+    from datetime import datetime, timedelta, timezone
+
+    db = Prisma()
+    await db.connect()
+
+    acc = await db.account.find_first(where={'name': 'Auto Prop Firm 50K'})
+    if not acc:
+        await db.disconnect()
+        return "No prior week data (account not found)."
+
+    # Get trades from the prior completed week (Mon-Fri), anchored to the
+    # weekly briefing's week_start when provided.
+    if reference_week_start is not None:
+        this_monday_date = reference_week_start
+    else:
+        today = datetime.now(timezone.utc).date()
+        this_monday_date = today - timedelta(days=today.weekday())
+
+    last_monday_date = this_monday_date - timedelta(days=7)
+    last_friday_date = last_monday_date + timedelta(days=4)
+    last_monday = datetime.combine(last_monday_date, datetime.min.time(), tzinfo=timezone.utc)
+    last_friday = datetime.combine(last_friday_date, datetime.max.time(), tzinfo=timezone.utc)
+
+    trades = await db.trade.find_many(
+        where={
+            'accountId': acc.id,
+            'entryDate': {
+                'gte': last_monday,
+                'lte': last_friday,
+            },
+        },
+        order={'entryDate': 'asc'}
+    )
+
+    if not trades:
+        await db.disconnect()
+        return "No trades found for the prior week."
+
+    # Compute stats
+    instruments = {}
+    all_pnl = []
+    for t in trades:
+        ticker = t.ticker or 'UNKNOWN'
+        pnl = t.pnl or 0.0
+        if ticker not in instruments:
+            instruments[ticker] = {'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0.0, 'max_loss': 0.0}
+        instruments[ticker]['trades'] += 1
+        instruments[ticker]['pnl'] += pnl
+        if pnl > 0:
+            instruments[ticker]['wins'] += 1
+        elif pnl < 0:
+            instruments[ticker]['losses'] += 1
+            instruments[ticker]['max_loss'] = min(instruments[ticker]['max_loss'], pnl)
+        all_pnl.append(pnl)
+
+    total_pnl = sum(v['pnl'] for v in instruments.values())
+    total_trades = sum(v['trades'] for v in instruments.values())
+    total_wins = sum(v['wins'] for v in instruments.values())
+    win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+
+    # Compute max drawdown (peak-to-trough on cumulative P&L)
+    cumulative = 0
+    peak = 0
+    max_dd = 0
+    for pnl in all_pnl:
+        cumulative += pnl
+        peak = max(peak, cumulative)
+        dd = peak - cumulative
+        max_dd = max(max_dd, dd)
+
+    lines = [
+        f"Prior Week Performance ({last_monday_date.strftime('%Y-%m-%d')} to {last_friday_date.strftime('%Y-%m-%d')}):",
+        f"  Total P&L: ${total_pnl:,.2f}",
+        f"  Total trades: {total_trades} | Win rate: {win_rate:.1f}%",
+        f"  Max drawdown: ${max_dd:,.2f}",
+    ]
+
+    for ticker, stats in sorted(instruments.items()):
+        wr = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
+        lines.append(f"  {ticker}: {stats['trades']} trades | P&L ${stats['pnl']:,.2f} | WR {wr:.0f}%")
+
+    await db.disconnect()
+    return "\n".join(lines)
 
 
 # ── Daily EOD DB Functions ───────────────────────────────────────
@@ -1435,3 +1662,394 @@ async def load_daily_eod_from_db(eod_date: date | None = None, session_type: str
         }
     finally:
         await db.disconnect()
+
+
+# ── Compact Pre-Processed Summary for LLM ──────────────────────────
+
+def build_compact_briefing(briefing_data: dict) -> str:
+    """Build a compact pre-processed summary that gives the LLM only what it
+    needs for trade plan generation. This replaces the raw TOON JSON to save
+    ~1000+ tokens by:
+    - Filtering to SPY and QQQ only (drops SPX and other tickers)
+    - Extracting only regime, spot, key levels, and bias
+    - Pre-computing level interactions into plain English
+    - Stripping weekly progress, track assessment, and vol context
+      (these are EOD review fields, not trade-plan inputs)
+    """
+    import json as _json
+
+    tickers = {t["ticker"]: t for t in briefing_data.get("tickers", [])}
+    events = briefing_data.get("economic_events", [])
+
+    def _compact_ticker(t: dict) -> dict:
+        """Extract only trade-plan-relevant fields from a ticker snapshot."""
+        if not t:
+            return {}
+        today = t.get("today", {})
+        anchor = t.get("weekly_anchor", {})
+        regime = t.get("regime_check", {})
+        inv = t.get("invalidation_proximity", {})
+        interactions = t.get("level_interactions", {})
+
+        # Pre-compute level interactions into concise English
+        flags = []
+        if interactions.get("call_wall_tested"): flags.append("CW tested")
+        if interactions.get("call_wall_broken"): flags.append("CW broken")
+        if interactions.get("put_wall_tested"): flags.append("PW tested")
+        if interactions.get("put_wall_broken"): flags.append("PW broken")
+        if interactions.get("em_upper_tested"): flags.append("EM+ tested")
+        if interactions.get("em_upper_broken"): flags.append("EM+ broken")
+        if interactions.get("em_lower_tested"): flags.append("EM- tested")
+        if interactions.get("em_lower_broken"): flags.append("EM- broken")
+
+        return {
+            "ticker": t.get("ticker"),
+            "spot": today.get("open"),
+            "change_pct": today.get("change_pct"),
+            "range_pct": today.get("range_pct"),
+            "regime": regime.get("current_regime"),
+            "regime_changed": regime.get("regime_changed"),
+            "bias": anchor.get("mandated_track", ""),
+            "call_wall": anchor.get("call_wall"),
+            "put_wall": anchor.get("put_wall"),
+            "em_upper": anchor.get("today_em_upper"),
+            "em_lower": anchor.get("today_em_lower"),
+            "bullish_inv": inv.get("bullish_invalidation"),
+            "bearish_inv": inv.get("bearish_invalidation"),
+            "level_flags": ", ".join(flags) if flags else "none",
+        }
+
+    compact = {
+        "date": briefing_data.get("meta", {}).get("date", ""),
+        "events": events,
+        "SPY": _compact_ticker(tickers.get("SPY")),
+        "QQQ": _compact_ticker(tickers.get("QQQ")),
+    }
+    return _json.dumps(compact, indent=2, ensure_ascii=False)
+
+
+def build_compact_eod(briefing_data: dict) -> str:
+    """Build a compact EOD briefing for the LLM.
+
+    The EOD narrative needs to grade the morning's trades against today's
+    price action. It needs: regime, today's OHLC, level interactions, and
+    the key levels. It does NOT need: weekly_progress, track_assessment,
+    institutional_volatility_context, or SPX (redundant with SPY).
+
+    Saves ~600 tokens vs raw TOON by dropping SPX and stripping review-only fields.
+    """
+    import json as _json
+
+    tickers = {t["ticker"]: t for t in briefing_data.get("tickers", [])}
+    events = briefing_data.get("economic_events", [])
+
+    def _compact_eod_ticker(t: dict) -> dict:
+        if not t:
+            return {}
+        today = t.get("today", {})
+        anchor = t.get("weekly_anchor", {})
+        regime = t.get("regime_check", {})
+        interactions = t.get("level_interactions", {})
+
+        flags = []
+        if interactions.get("call_wall_tested"): flags.append("CW tested")
+        if interactions.get("call_wall_broken"): flags.append("CW broken")
+        if interactions.get("put_wall_tested"): flags.append("PW tested")
+        if interactions.get("put_wall_broken"): flags.append("PW broken")
+        if interactions.get("em_upper_tested"): flags.append("EM+ tested")
+        if interactions.get("em_upper_broken"): flags.append("EM+ broken")
+        if interactions.get("em_lower_tested"): flags.append("EM- tested")
+        if interactions.get("em_lower_broken"): flags.append("EM- broken")
+
+        return {
+            "ticker": t.get("ticker"),
+            "open": today.get("open"),
+            "high": today.get("high"),
+            "low": today.get("low"),
+            "close": today.get("close"),
+            "change_pct": today.get("change_pct"),
+            "range_pct": today.get("range_pct"),
+            "regime": regime.get("current_regime"),
+            "call_wall": anchor.get("call_wall"),
+            "put_wall": anchor.get("put_wall"),
+            "em_upper": anchor.get("today_em_upper"),
+            "em_lower": anchor.get("today_em_lower"),
+            "level_flags": ", ".join(flags) if flags else "none",
+        }
+
+    compact = {
+        "date": briefing_data.get("meta", {}).get("date", ""),
+        "events": events,
+        "SPY": _compact_eod_ticker(tickers.get("SPY")),
+        "QQQ": _compact_eod_ticker(tickers.get("QQQ")),
+    }
+    return _json.dumps(compact, indent=2, ensure_ascii=False)
+
+
+def build_compact_weekly(briefing_data: dict) -> str:
+    """Build a compact weekly briefing for the LLM.
+
+    The weekly narrative covers multiple tickers (not just SPY/QQQ) because
+    it's a macro horizon briefing. But we can still optimize by:
+    - Dropping pre-written scenario text (bullish/bearish/neutral) — the LLM
+      writes its own scenarios, so feeding it ~300 tokens/ticker of pre-written
+      text is waste.
+    - Dropping institutional_volatility_context (~218 tokens/ticker) — VIX/VVIX
+      is the same for all tickers and can be stated once at the top.
+    - Stripping meta fields (id, generated_at, tickers_covered).
+
+    Saves ~800+ tokens vs raw TOON.
+    """
+    import json as _json
+
+    tickers_raw = briefing_data.get("tickers", [])
+    events = briefing_data.get("economic_events", [])
+
+    # Extract VIX/VVIX once from the first ticker's vol context (same for all)
+    vix = vvix = dist_21ema = dist_200sma = None
+    for t in tickers_raw:
+        vc = t.get("institutional_volatility_context", {})
+        if vc:
+            vix = vc.get("vix")
+            vvix = vc.get("vvix")
+            dist_21ema = vc.get("dist_21_ema_pct")
+            dist_200sma = vc.get("dist_200_sma_pct")
+            break
+
+    def _compact_weekly_ticker(t: dict) -> dict:
+        proxy_context = t.get("proxy_context", {})
+        return {
+            "ticker": t.get("ticker"),
+            "asset": t.get("asset"),
+            "spot": t.get("spot_price"),
+            "proxy_symbol": proxy_context.get("proxy_symbol"),
+            "futures_symbol": proxy_context.get("futures_symbol"),
+            "spot_proxy": proxy_context.get("spot_proxy"),
+            "prior_week_change_pct": t.get("prior_week", {}).get("change_pct"),
+            "prior_week_range_pct": t.get("prior_week", {}).get("range_pct"),
+            "momentum_5d": t.get("recent_momentum", {}).get("last_5d_change_pct"),
+            "momentum_10d": t.get("recent_momentum", {}).get("last_10d_change_pct"),
+            "trend": t.get("recent_momentum", {}).get("trend"),
+            "regime": t.get("gex_regime", {}).get("label"),
+            "gex_sign": t.get("gex_regime", {}).get("gex_sign"),
+            "total_gex": t.get("gex_regime", {}).get("total_gex"),
+            "concentration": t.get("gex_regime", {}).get("concentration_score"),
+            "mandated_track": t.get("mandated_execution_track"),
+            "call_wall": t.get("key_levels", {}).get("call_wall"),
+            "call_wall_proxy": proxy_context.get("call_wall_proxy"),
+            "put_wall": t.get("key_levels", {}).get("put_wall"),
+            "put_wall_proxy": proxy_context.get("put_wall_proxy"),
+            "zero_gamma": t.get("key_levels", {}).get("zero_gamma"),
+            "zero_gamma_proxy": proxy_context.get("zero_gamma_proxy"),
+            "gamma_magnet": t.get("key_levels", {}).get("gamma_magnet"),
+            "gamma_magnet_proxy": proxy_context.get("gamma_magnet_proxy"),
+            "pin_strike": t.get("key_levels", {}).get("pin_strike"),
+            "pin_odds": t.get("key_levels", {}).get("pin_odds"),
+            "wall_separation": t.get("key_levels", {}).get("wall_separation"),
+            "atm_iv": t.get("volatility", {}).get("atm_iv"),
+            "skew_premium": t.get("volatility", {}).get("skew_premium"),
+            "skew_direction": t.get("volatility", {}).get("skew_direction"),
+            "hedge_flow_bias": t.get("hedge_flows", {}).get("bias"),
+            "bullish_inv": t.get("account_invalidation", {}).get("bullish_invalidation"),
+            "bullish_inv_proxy": proxy_context.get("bullish_invalidation_proxy"),
+            "bearish_inv": t.get("account_invalidation", {}).get("bearish_invalidation"),
+            "bearish_inv_proxy": proxy_context.get("bearish_invalidation_proxy"),
+            "dist_to_bullish_inv_pct": t.get("account_invalidation", {}).get("distance_to_bullish_inv_pct"),
+            "dist_to_bearish_inv_pct": t.get("account_invalidation", {}).get("distance_to_bearish_inv_pct"),
+            "invalidation_mandate": t.get("account_invalidation", {}).get("mandate"),
+        }
+
+    compact = {
+        "week_start": briefing_data.get("meta", {}).get("week_start_date", ""),
+        "week_end": briefing_data.get("meta", {}).get("week_end_date", ""),
+        "market_context": {
+            "vix": vix,
+            "vvix": vvix,
+            "dist_21_ema_pct": dist_21ema,
+            "dist_200_sma_pct": dist_200sma,
+        },
+        "events": events,
+        "tickers": [_compact_weekly_ticker(t) for t in tickers_raw],
+    }
+    return _json.dumps(compact, indent=2, ensure_ascii=False)
+
+
+def _fmt_num(value: Any, decimals: int = 2) -> str:
+    """Format a numeric value for markdown output."""
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value):,.{decimals}f}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def _fmt_pct(value: Any, decimals: int = 2) -> str:
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value):.{decimals}f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def format_translated_level_display(
+    translated_value: Any,
+    proxy_symbol: str | None = None,
+    proxy_value: Any = None,
+    decimals: int = 2,
+) -> str:
+    """Format translated futures levels with optional raw proxy value in brackets."""
+    translated = _fmt_num(translated_value, decimals)
+    if proxy_symbol and proxy_value is not None:
+        proxy = _fmt_num(proxy_value, decimals)
+        return f"{translated} ({proxy_symbol} {proxy})"
+    return translated
+
+
+def format_weekly_event_heading(event: dict) -> str:
+    """Render a deterministic event heading for the weekly summary."""
+    day = event.get("day_of_week") or "[Day]"
+    date_str = event.get("date") or "[Date]"
+    time_et = event.get("time_et") or "[Time ET]"
+    name = event.get("name") or "[Event Name]"
+    try:
+        dt = datetime.fromisoformat(date_str)
+        date_label = dt.strftime("%B %d")
+    except ValueError:
+        date_label = date_str
+    return f"- **{day}, {date_label} ({time_et.replace(' ET', '')} ET)** -- {name}"
+
+
+def build_weekly_static_template(briefing_data: dict) -> str:
+    """Build the deterministic weekly markdown skeleton in Python.
+
+    The LLM fills only bounded analysis slots, while Python renders headings,
+    scale-aware numbers, event list formatting, and account protection blocks.
+    """
+    meta = briefing_data.get("meta", {})
+    start_raw = meta.get("week_start_date", "")[:10]
+    end_raw = meta.get("week_end_date", "")[:10]
+    try:
+        start_dt = datetime.fromisoformat(start_raw)
+        end_dt = datetime.fromisoformat(end_raw)
+        header_dates = f"{start_dt.strftime('%B %d')} - {end_dt.strftime('%B %d, %Y')}"
+    except ValueError:
+        header_dates = f"{start_raw} - {end_raw}"
+
+    events = briefing_data.get("economic_events", [])
+    tickers = briefing_data.get("tickers", [])
+
+    lines = [
+        f"## WEEKLY MACRO EXECUTION HORIZON -- {header_dates}",
+        "",
+        "### 0. Prior Week Review",
+        "{{PRIOR_WEEK_REVIEW_ANALYSIS}}",
+        "",
+        "### 1. Executive Risk Core",
+        "{{EXECUTIVE_RISK_CORE}}",
+        "",
+        "### 2. High-Impact Economic Milestones",
+    ]
+
+    if events:
+        for index, event in enumerate(events):
+            lines.append(format_weekly_event_heading(event))
+            lines.append(f"  > **Tactical Impact:** {{{{EVENT_IMPACT_{index}}}}}")
+    else:
+        lines.append("No market-moving economic events scheduled this week.")
+
+    for ticker_block in tickers:
+        ticker = ticker_block.get("ticker", "UNKNOWN")
+        proxy_context = ticker_block.get("proxy_context", {})
+        proxy_symbol = proxy_context.get("proxy_symbol")
+
+        header = f"### 3. {ticker} -- Structural Sandbox"
+        if ticker == "SPY":
+            header = "### 3. SPY (MES levels) -- Structural Sandbox"
+        elif ticker == "QQQ":
+            header = "### 3. QQQ (MNQ levels) -- Structural Sandbox"
+
+        spot = format_translated_level_display(
+            ticker_block.get("spot_price"),
+            proxy_symbol,
+            proxy_context.get("spot_proxy"),
+        )
+        weekly_change = _fmt_pct(ticker_block.get("prior_week", {}).get("change_pct"))
+        total_gex = ticker_block.get("gex_regime", {}).get("total_gex")
+        total_gex_str = _fmt_num(total_gex, 2)
+
+        key_levels = ticker_block.get("key_levels", {})
+        call_wall = format_translated_level_display(
+            key_levels.get("call_wall"),
+            proxy_symbol,
+            proxy_context.get("call_wall_proxy"),
+        )
+        put_wall = format_translated_level_display(
+            key_levels.get("put_wall"),
+            proxy_symbol,
+            proxy_context.get("put_wall_proxy"),
+        )
+        zero_gamma = format_translated_level_display(
+            key_levels.get("zero_gamma"),
+            proxy_symbol,
+            proxy_context.get("zero_gamma_proxy"),
+        )
+
+        friday_em = ticker_block.get("expected_moves", {}).get("friday", {})
+        em_upper = format_translated_level_display(friday_em.get("upper"))
+        em_lower = format_translated_level_display(friday_em.get("lower"))
+        em_value = _fmt_num(friday_em.get("em"), 2)
+
+        lines.extend([
+            "",
+            header,
+            f"**Spot**: {spot} ({weekly_change}) | **GEX Tape**: {ticker_block.get('gex_regime', {}).get('gex_sign', 'N/A')} / {total_gex_str}",
+            f"**Boundaries**: Call Wall {call_wall} | Put Wall {put_wall} | Zero Gamma {zero_gamma}",
+            f"**Risk Envelope**: EM Upper {em_upper} <-> EM Lower {em_lower} (+-{em_value}%)",
+            "",
+            f"**Mandated Track**: {ticker_block.get('mandated_execution_track', 'N/A')} -> {{{{TRACK_NOTE_{ticker}}}}}",
+            "",
+            "**Scenarios**:",
+            f"- Bullish: {{{{BULLISH_SCENARIO_{ticker}}}}}",
+            f"- Bearish: {{{{BEARISH_SCENARIO_{ticker}}}}}",
+            f"- Range: {{{{RANGE_SCENARIO_{ticker}}}}}",
+        ])
+
+    lines.extend([
+        "",
+        "### 4. Account Protection & Invalidation Metrics",
+    ])
+
+    for ticker_block in tickers:
+        ticker = ticker_block.get("ticker", "UNKNOWN")
+        proxy_context = ticker_block.get("proxy_context", {})
+        proxy_symbol = proxy_context.get("proxy_symbol")
+        account_inv = ticker_block.get("account_invalidation", {})
+        bullish_inv = format_translated_level_display(
+            account_inv.get("bullish_invalidation"),
+            proxy_symbol,
+            proxy_context.get("bullish_invalidation_proxy"),
+        )
+        bearish_inv = format_translated_level_display(
+            account_inv.get("bearish_invalidation"),
+            proxy_symbol,
+            proxy_context.get("bearish_invalidation_proxy"),
+        )
+        lines.append(
+            f"- **{ticker}**: Fractures at {bullish_inv} (downside) / {bearish_inv} (upside). {account_inv.get('mandate', 'N/A')}"
+        )
+        lines.append(
+            f"- Dist to bullish inv: {_fmt_pct(account_inv.get('distance_to_bullish_inv_pct'))} | Dist to bearish inv: {_fmt_pct(account_inv.get('distance_to_bearish_inv_pct'))}"
+        )
+
+    lines.extend([
+        "",
+        "### 5. Key Risks This Week",
+        "{{KEY_RISKS}}",
+        "",
+        "### 6. Watch List",
+        "{{WATCH_LIST}}",
+    ])
+
+    return "\n".join(lines)

@@ -39,6 +39,7 @@ from scripts.trader.briefing_core import (
     load_daily_price_context,
     save_daily_eod_to_db,
     load_weekly_briefing_from_db,
+    translate_level_to_futures,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -83,16 +84,27 @@ def build_daily_snapshot(
     em_hi_token = next((t for t in tokens if "EM HI" in t.get("label", "") and "EM85" not in t.get("label", "")), None)
     em_lo_token = next((t for t in tokens if "EM LO" in t.get("label", "") and "EM85" not in t.get("label", "")), None)
 
-    call_wall = cw_token.get("strike", 0) if cw_token else 0
-    put_wall = pw_token.get("strike", 0) if pw_token else 0
-    em_upper = em_hi_token.get("strike", 0) if em_hi_token else 0
-    em_lower = em_lo_token.get("strike", 0) if em_lo_token else 0
+    call_wall_raw = cw_token.get("strike", 0) if cw_token else 0
+    put_wall_raw = pw_token.get("strike", 0) if pw_token else 0
+    em_upper_raw = em_hi_token.get("strike", 0) if em_hi_token else 0
+    em_lower_raw = em_lo_token.get("strike", 0) if em_lo_token else 0
+
+    call_wall = translate_level_to_futures(ticker, call_wall_raw, meta)
+    put_wall = translate_level_to_futures(ticker, put_wall_raw, meta)
+    em_upper = translate_level_to_futures(ticker, em_upper_raw, meta)
+    em_lower = translate_level_to_futures(ticker, em_lower_raw, meta)
 
     # ── Today's price action via DataLoader ────────────────────────
     today_price = load_daily_price_context(loader, ticker)
     if not today_price:
         log.warning("  [SKIP] No price data for %s", ticker)
         return None
+
+    # Keep SPY/QQQ daily price action in futures scale to match translated
+    # structural levels used by narratives and risk logic.
+    if ticker in {"SPY", "QQQ"}:
+        for key in ("open", "high", "low", "close"):
+            today_price[key] = translate_level_to_futures(ticker, today_price.get(key, 0), meta)
 
     # ── Weekly anchor levels ───────────────────────────────────────
     mandated_track = weekly_anchor.get("mandated_track", "")

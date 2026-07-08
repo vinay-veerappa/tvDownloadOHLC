@@ -17,15 +17,19 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
-from datetime import date
+from datetime import date, timedelta
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from scripts.trader.briefing_core import (
     REPO_ROOT,
+    build_weekly_static_template,
+    build_compact_weekly,
+    get_prior_week_performance,
     load_weekly_briefing_from_db,
     save_narrative_to_db,
 )
@@ -41,7 +45,8 @@ DISCORD_WEBHOOKS_PATH = REPO_ROOT / "discord_webhooks.json"
 
 # Ollama config
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "glm-5.2:cloud"
+##DEFAULT_MODEL = "glm-5.2:cloud"
+DEFAULT_MODEL = "gemma4:latest"
 FALLBACK_MODEL = "gemma4:31b-cloud"
 
 
@@ -58,6 +63,55 @@ def build_toon(briefing_data: dict) -> str:
     passed to the LLM, and never persisted as a file.
     """
     return json.dumps(briefing_data, indent=2, ensure_ascii=False)
+
+
+def extract_analysis_json(response: str) -> dict | None:
+    """Extract structured weekly analysis payload from the LLM response."""
+    match = re.search(r"<analysis_json>(.*?)</analysis_json>", response, re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1).strip())
+    except json.JSONDecodeError as exc:
+        log.warning("Failed to decode analysis_json: %s", exc)
+        return None
+
+
+def render_weekly_summary(static_template: str, analysis: dict, tickers: list[dict], events: list[dict]) -> str:
+    """Merge bounded LLM analysis slots into the Python-rendered weekly template."""
+    summary = static_template
+    summary = summary.replace("{{PRIOR_WEEK_REVIEW_ANALYSIS}}", analysis.get("prior_week_review_analysis", "N/A"))
+    summary = summary.replace("{{EXECUTIVE_RISK_CORE}}", analysis.get("executive_risk_core", "N/A"))
+
+    event_impacts = analysis.get("event_impacts", {}) or {}
+    for index, _event in enumerate(events):
+        summary = summary.replace(f"{{{{EVENT_IMPACT_{index}}}}}", event_impacts.get(str(index), "N/A"))
+
+    ticker_analysis = analysis.get("ticker_analysis", {}) or {}
+    for ticker_block in tickers:
+        ticker = ticker_block.get("ticker", "UNKNOWN")
+        entry = ticker_analysis.get(ticker, {}) or {}
+        summary = summary.replace(f"{{{{TRACK_NOTE_{ticker}}}}}", entry.get("track_note", "N/A"))
+        summary = summary.replace(f"{{{{BULLISH_SCENARIO_{ticker}}}}}", entry.get("bullish", "N/A"))
+        summary = summary.replace(f"{{{{BEARISH_SCENARIO_{ticker}}}}}", entry.get("bearish", "N/A"))
+        summary = summary.replace(f"{{{{RANGE_SCENARIO_{ticker}}}}}", entry.get("range", "N/A"))
+
+    key_risks = analysis.get("key_risks", []) or []
+    if isinstance(key_risks, list):
+        key_risks_md = "\n".join(f"- {item}" for item in key_risks) if key_risks else "- N/A"
+    else:
+        key_risks_md = str(key_risks)
+    summary = summary.replace("{{KEY_RISKS}}", key_risks_md)
+
+    watch_list = analysis.get("watch_list", []) or []
+    if isinstance(watch_list, list):
+        watch_list_md = "\n".join(f"{idx}. {item}" for idx, item in enumerate(watch_list, start=1)) if watch_list else "1. N/A"
+    else:
+        watch_list_md = str(watch_list)
+    summary = summary.replace("{{WATCH_LIST}}", watch_list_md)
+
+    summary = re.sub(r"\{\{[^}]+\}\}", "N/A", summary)
+    return summary
 
 
 def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
@@ -82,7 +136,7 @@ def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
                         "temperature": 0.3,
                         "top_p": 0.9,
                         "num_ctx": 32768,
-                        "num_predict": 8192,
+                        "num_predict": 16384,
                     },
                 },
                 timeout=timeout,
@@ -184,25 +238,51 @@ async def run_narrative(model: str, week_start: date | None = None) -> str:
     """
     # 1. Load from DB
     log.info("Loading weekly briefing from DB...")
-    briefing_data = await load_weekly_briefing_from_db(week_start)
+    selected_week_start = week_start
+    if selected_week_start is None:
+        today = date.today()
+        selected_week_start = today - timedelta(days=today.weekday())
+
+    briefing_data = await load_weekly_briefing_from_db(selected_week_start)
+    if not briefing_data:
+        log.warning("No briefing found for week_start=%s; falling back to latest.", selected_week_start)
+        briefing_data = await load_weekly_briefing_from_db(None)
     if not briefing_data:
         raise RuntimeError("No weekly briefing found in DB. Run weekly_briefing.py first.")
 
     briefing_id = briefing_data["meta"]["id"]
     log.info("✓ Loaded briefing %s (%d tickers)", briefing_id, len(briefing_data["tickers"]))
 
-    # 2. Build TOON in memory
-    toon = build_toon(briefing_data)
-    log.info("✓ TOON assembled (%d chars)", len(toon))
+    # 2. Build compact weekly briefing (saves ~800+ tokens vs raw TOON)
+    toon = build_compact_weekly(briefing_data)
+    log.info("✓ Compact briefing assembled (%d chars)", len(toon))
+
+    static_template = build_weekly_static_template(briefing_data)
+    log.info("✓ Static weekly template assembled (%d chars)", len(static_template))
 
     # 3. Build prompt
+    briefing_week_start = date.fromisoformat(briefing_data["meta"]["week_start_date"][0:10])
+    prior_week_review = await get_prior_week_performance(reference_week_start=briefing_week_start)
     prompt_template = load_prompt_template()
     prompt = prompt_template.replace("{{INSERT_STAGE_1_JSON_TOON}}", toon)
+    prompt = prompt.replace("{{INSERT_PRIOR_WEEK_REVIEW}}", prior_week_review)
+    prompt = prompt.replace("{{INSERT_STATIC_WEEKLY_TEMPLATE}}", static_template)
     log.info("✓ Prompt assembled (%d chars)", len(prompt))
 
     # 4. Call Ollama
-    summary = call_ollama(prompt, model)
-    log.info("✓ Narrative generated")
+    llm_response = call_ollama(prompt, model)
+    analysis = extract_analysis_json(llm_response)
+    if analysis:
+        summary = render_weekly_summary(
+            static_template,
+            analysis,
+            briefing_data.get("tickers", []),
+            briefing_data.get("economic_events", []),
+        )
+        log.info("✓ Structured weekly summary rendered")
+    else:
+        summary = llm_response
+        log.warning("Structured analysis missing; falling back to raw LLM output")
 
     # 5. Store in DB
     await save_narrative_to_db(briefing_id, summary, is_daily=False)

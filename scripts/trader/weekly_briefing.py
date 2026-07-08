@@ -43,6 +43,7 @@ from scripts.trader.briefing_core import (
     get_prior_friday,
     save_weekly_briefing_to_db,
     parse_meta_fields,
+    translate_level_to_futures,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -105,14 +106,14 @@ def build_ticker_block(
             zero_gex_token = t
             break
 
-    call_wall = cw_token.get("strike", 0) if cw_token else 0
-    put_wall = pw_token.get("strike", 0) if pw_token else 0
-    gamma_magnet = magnet_token.get("strike", 0) if magnet_token else 0
-    pin_strike = pin_token.get("strike", 0) if pin_token else 0
+    call_wall_raw = cw_token.get("strike", 0) if cw_token else 0
+    put_wall_raw = pw_token.get("strike", 0) if pw_token else 0
+    gamma_magnet_raw = magnet_token.get("strike", 0) if magnet_token else 0
+    pin_strike_raw = pin_token.get("strike", 0) if pin_token else 0
 
     # Determine spot for the sanity check (use magnet or wall midpoint)
-    _ref_spot = gamma_magnet if gamma_magnet > 0 else (
-        (call_wall + put_wall) / 2 if call_wall > 0 and put_wall > 0 else 0
+    _ref_spot = gamma_magnet_raw if gamma_magnet_raw > 0 else (
+        (call_wall_raw + put_wall_raw) / 2 if call_wall_raw > 0 and put_wall_raw > 0 else 0
     )
 
     # Primary: ZERO GEX DA (delta-adjusted) — more relevant for daytrading
@@ -132,7 +133,14 @@ def build_ticker_block(
 
     # Final fallback: gamma magnet
     if zero_gamma == 0:
-        zero_gamma = gamma_magnet
+        zero_gamma = gamma_magnet_raw
+
+    # Convert proxy levels to futures scale where mapping exists.
+    call_wall = translate_level_to_futures(ticker, call_wall_raw, meta)
+    put_wall = translate_level_to_futures(ticker, put_wall_raw, meta)
+    gamma_magnet = translate_level_to_futures(ticker, gamma_magnet_raw, meta)
+    pin_strike = translate_level_to_futures(ticker, pin_strike_raw, meta)
+    zero_gamma = translate_level_to_futures(ticker, zero_gamma, meta)
 
     # Wall separation
     wall_separation = round(call_wall - put_wall, 2) if call_wall > 0 and put_wall > 0 else 0
@@ -169,12 +177,39 @@ def build_ticker_block(
     price_ctx = load_weekly_price_context(loader, ticker)
 
     # Determine spot price — use prior week close if available, else fallback
-    spot = price_ctx.get("prior_week", {}).get("close", 0)
-    if spot == 0:
-        spot = round((call_wall + put_wall) / 2, 2) if call_wall > 0 and put_wall > 0 else 0
+    spot_raw = price_ctx.get("prior_week", {}).get("close", 0)
+    if spot_raw == 0:
+        spot_raw = round((call_wall_raw + put_wall_raw) / 2, 2) if call_wall_raw > 0 and put_wall_raw > 0 else 0
+
+    spot = translate_level_to_futures(ticker, spot_raw, meta)
+
+    # Keep weekly OHLC in the same price scale as levels for SPY/QQQ.
+    if ticker in {"SPY", "QQQ"} and price_ctx.get("prior_week"):
+        pw = price_ctx["prior_week"]
+        for key in ("open", "high", "low", "close"):
+            pw[key] = translate_level_to_futures(ticker, pw.get(key, 0), meta)
 
     # ── Expected Moves (computed from weekly close EM in tokens) ──
-    weekly_ems = load_weekly_ems(unified_entry, spot)
+    # Compute EM envelope in source scale first, then translate once if needed.
+    em_spot = spot_raw if spot_raw > 0 else (
+        round((call_wall_raw + put_wall_raw) / 2, 2) if call_wall_raw > 0 and put_wall_raw > 0 else 0
+    )
+    weekly_ems = load_weekly_ems(unified_entry, em_spot)
+    if ticker in {"SPY", "QQQ"}:
+        ratio = meta.get("FUTURES_RATIO", 0)
+        basis = meta.get("FUTURES_BASIS", 0)
+        if ratio and ratio > 0:
+            converted_ems = {}
+            for day, em_data in weekly_ems.items():
+                upper = em_data.get("upper", 0)
+                lower = em_data.get("lower", 0)
+                em_val = em_data.get("em", 0)
+                converted_ems[day] = {
+                    "upper": round(upper * ratio + basis, 2) if upper else 0,
+                    "lower": round(lower * ratio + basis, 2) if lower else 0,
+                    "em": round(em_val * ratio, 2) if em_val else 0,
+                }
+            weekly_ems = converted_ems
     friday_em_upper, friday_em_lower = get_friday_em(weekly_ems)
 
     # ── Scored levels (filtered by significance) ──────────────────
