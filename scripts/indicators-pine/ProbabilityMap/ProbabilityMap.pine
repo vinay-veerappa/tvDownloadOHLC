@@ -1,0 +1,1535 @@
+//@version=6
+indicator("[VxV]Probability Engine v5", shorttitle="[VxV]ProbMap", overlay=true,
+     max_boxes_count=50, max_lines_count=100, max_labels_count=100)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PROBABILITY ENGINE v5 — Full Refactor
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// REFACTOR NOTES (v5 from v4):
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. [BUG]  clearLabels() now deletes label objects (stale label fix)
+// 2. [BUG]  lblDayH/lblDayL cleaned up on new day
+// 3. [BUG]  Sigma label offset typo fixed via extendLevel()
+// 4. [BUG]  Stray row += 1 in PM dashboard section removed
+// 5. [ARCH] Probability lookups compressed via _gp/_gp_global/_gsp helpers
+// 6. [ARCH] get72ScenarioProb() rewritten with instrument-param helper
+// 7. [ARCH] extendLevel() replaces 66 lines of line/label extension
+// 8. [ARCH] checkHit() replaces 20+ inline hit-check blocks
+// 9. [ARCH] addDashRow() replaces ~180 lines of dashboard boilerplate
+// 10.[ARCH] resetAllHits() eliminates duplicated hit-reset blocks
+// 11.[ARCH] Hit reset consolidated to single trigger point
+//
+// Based on 5,165 NQ trading days (2006-2026)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  INPUTS                                                                     │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+grp_s = "Sessions"
+i_tz = input.string("America/New_York", "Timezone", options=["America/New_York","America/Chicago"], group=grp_s)
+
+grp_t = "═══════ Theme ═══════"
+i_theme    = input.string("Dark", "Chart Theme", options=["Dark","Light","Auto"], group=grp_t)
+i_dashOpac = input.int(10, "Dashboard Background Opacity", minval=0, maxval=100, group=grp_t)
+
+grp_d = "═══════ Dashboard ═══════"
+i_showDash = input.bool(true, "Show Dashboard", group=grp_d)
+i_dashPos  = input.string("Top Right", "Dashboard Position", options=["Top Left","Top Right","Bottom Left","Bottom Right"], group=grp_d)
+i_dashSz   = input.string("Small", "Dashboard Size", options=["Tiny","Small","Normal","Huge"], group=grp_d)
+
+grp_l = "═══════ Lines ═══════"
+i_showLevels = input.bool(true, "Show All Levels", group=grp_l)
+
+i_showLondon = input.bool(true, "  Show London H/L/Mid", group=grp_l, inline="lon")
+i_londonW    = input.int(2, "Width", minval=1, maxval=5, group=grp_l, inline="lon")
+i_londonSty  = input.string("Solid", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="lon")
+
+i_showAsia = input.bool(true, "  Show Asia H/L/Mid", group=grp_l, inline="asia")
+i_asiaW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="asia")
+i_asiaSty  = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="asia")
+
+i_show78Mid = input.bool(true, "  Show 7-8 AM Mid", group=grp_l, inline="78")
+i_78W       = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="78")
+i_78Sty     = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="78")
+
+i_show730 = input.bool(true, "  Show 07:30 Open", group=grp_l, inline="730")
+i_730W    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="730")
+i_730Sty  = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="730")
+
+i_showMN = input.bool(true, "  Show Midnight Open", group=grp_l, inline="mn")
+i_mnW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="mn")
+i_mnSty  = input.string("Dotted", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="mn")
+
+i_showONMid = input.bool(true, "  Show ON Mid", group=grp_l, inline="onm")
+i_onmW      = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="onm")
+i_onmSty    = input.string("Dotted", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="onm")
+
+i_showOTE = input.bool(false, "  Show OTE Zones", group=grp_l, inline="ote")
+i_oteW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="ote")
+i_oteSty  = input.string("Dotted", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="ote")
+
+i_showGlx = input.bool(true, "  Show Globex Open", group=grp_l, inline="glx")
+i_glxW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="glx")
+i_glxSty  = input.string("Dotted", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="glx")
+
+i_showPDC = input.bool(true, "  Show Settlement/PDC", group=grp_l, inline="pdc")
+i_pdcW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="pdc")
+i_pdcSty  = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="pdc")
+
+i_showPDHL = input.bool(true, "  Show PDH/PDL", group=grp_l, inline="pdhl")
+i_pdhlW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="pdhl")
+i_pdhlSty  = input.string("Solid", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="pdhl")
+
+i_showSigma = input.bool(true, "  Show CBDR Sigma", group=grp_l, inline="sig")
+i_sigW      = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="sig")
+i_sigSty    = input.string("Dotted", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="sig")
+
+i_showAM = input.bool(true, "  Show AM H/L (PM only)", group=grp_l, inline="am")
+i_amW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="am")
+i_amSty  = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="am")
+
+i_showLch = input.bool(true, "  Show Lunch H/L (PM only)", group=grp_l, inline="lch")
+i_lchW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="lch")
+i_lchSty  = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="lch")
+
+i_showP12 = input.bool(true, "  Show P12 H/L/Mid", group=grp_l, inline="p12")
+i_p12W    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="p12")
+i_p12Sty  = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="p12")
+
+i_lvlW = input.int(1, "Default Level Width", minval=1, maxval=5, group=grp_l)
+
+grp_lb = "═══════ Labels ═══════"
+i_showLabels = input.bool(true, "Show Level Labels", group=grp_lb)
+i_labelSize  = input.string("Small", "Label Size", options=["Tiny","Small","Normal","Huge"], group=grp_lb)
+i_labelOff   = input.int(12, "Label Offset (bars)", minval=0, maxval=50, group=grp_lb)
+i_lineOff    = input.int(10, "Line Offset (bars)", minval=0, maxval=50, group=grp_lb)
+
+grp_c = "═══════ Colors ═══════"
+i_cLondon  = input.color(#ef4444, "London Levels", group=grp_c)
+i_cAsia    = input.color(#3b82f6, "Asia Levels", group=grp_c)
+i_cIntra   = input.color(#10b981, "Intraday Levels", group=grp_c)
+i_cON      = input.color(#f59e0b, "Overnight Levels", group=grp_c)
+i_cPrior   = input.color(#f97316, "Prior Day Levels", group=grp_c)
+i_cSigUp   = input.color(#16a34a, "Sigma Upside", group=grp_c)
+i_cSigDn   = input.color(#dc2626, "Sigma Downside", group=grp_c)
+
+grp_b = "═══════ Session Boxes ═══════"
+i_showBoxes = input.bool(true, "Show Session Boxes", group=grp_b)
+i_boxTr     = input.int(93, "Box Transparency", minval=80, maxval=98, group=grp_b)
+
+grp_r = "═══════ Range Stats ═══════"
+i_rngLB = input.int(50, "Range Percentile Lookback", minval=5, maxval=100, group=grp_r)
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  TYPES                                                                      │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+type ThemePalette
+    color bg_primary
+    color bg_secondary
+    color bg_border
+    color text_primary
+    color text_secondary
+    color text_dim
+    color asia_primary
+    color london_primary
+    color ny_primary
+    color overnight_primary
+    color prior_primary
+    color bullish
+    color bearish
+    color neutral
+    color caution
+    color confirm
+    color header_bg
+    color header_text
+    color validated_bg
+    color validated_text
+    color pending_bg
+    color pending_text
+    color skip_bg
+    color skip_text
+    int line_tr1
+    int line_tr2
+    int label_tr
+
+type LabelStack
+    array<float> prices
+    array<label> labels
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  THEME PALETTES                                                             │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+getDarkPalette() =>
+    ThemePalette.new(
+     color.new(#0f172a,0), color.new(#1e293b,0), color.new(#334155,60),
+     color.new(#f1f5f9,0), color.new(#cbd5e1,0), color.new(#94a3b8,0),
+     color.new(#0ea5e9,0), color.new(#ef4444,0), color.new(#10b981,0),
+     color.new(#f59e0b,0), color.new(#f97316,0),
+     color.new(#22c55e,0), color.new(#ef4444,0), color.new(#6b7280,0),
+     color.new(#f59e0b,0), color.new(#8b5cf6,0),
+     color.new(#1e3a5f,0), color.new(#60a5fa,0),
+     color.new(#166534,0), color.new(#dcfce7,0),
+     color.new(#92400e,0), color.new(#fef3c7,0),
+     color.new(#7f1d1d,0), color.new(#fecaca,0),
+     25, 40, 0)
+
+getLightPalette() =>
+    ThemePalette.new(
+     color.new(#ffffff,0), color.new(#f8fafc,0), color.new(#cbd5e1,60),
+     color.new(#0f172a,0), color.new(#475569,0), color.new(#78716c,0),
+     color.new(#0369a1,0), color.new(#dc2626,0), color.new(#059669,0),
+     color.new(#d97706,0), color.new(#ea580c,0),
+     color.new(#16a34a,0), color.new(#dc2626,0), color.new(#6b7280,0),
+     color.new(#ea580c,0), color.new(#7c3aed,0),
+     color.new(#e0f2fe,0), color.new(#0369a1,0),
+     color.new(#dcfce7,0), color.new(#166534,0),
+     color.new(#fef3c7,0), color.new(#92400e,0),
+     color.new(#fee2e2,0), color.new(#991b1b,0),
+     35, 50, 0)
+
+isDark = i_theme == "Dark" or i_theme == "Auto"
+getPal() => isDark ? getDarkPalette() : getLightPalette()
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  UTILITY FUNCTIONS                                                          │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+getSz(string s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Huge"   => size.huge
+        "Normal" => size.normal
+        => size.normal
+
+getLnSty(string s) =>
+    switch s
+        "Solid"  => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+getPos(string s) =>
+    switch s
+        "Top Left"     => position.top_left
+        "Top Right"    => position.top_right
+        "Bottom Left"  => position.bottom_left
+        => position.bottom_right
+
+probClr(float p) => p >= 75 ? color.new(#16a34a,0) : p >= 60 ? color.new(#f59e0b,0) : color.new(#6b7280,0)
+
+// Check if price was hit on current bar
+checkHit(float price) => not na(price) and low <= price and price <= high
+
+// Extend a line + its label to current bar
+extendLevel(line ln, label lbl) =>
+    if not na(ln)
+        line.set_x2(ln, bar_index + i_lineOff)
+        if i_showLabels and not na(lbl)
+            label.set_x(lbl, bar_index + i_labelOff)
+
+// Dashboard row helper — returns next row index
+addRow(table t, int r, string name, color clr, float prob, bool hit, string sz, ThemePalette pal) =>
+    table.cell(t, 0, r, name, text_color=clr, bgcolor=pal.bg_secondary, text_size=sz)
+    table.cell(t, 1, r, str.tostring(prob, "#.0") + "%", text_color=probClr(prob), bgcolor=pal.bg_secondary, text_size=sz)
+    color hBg = hit ? pal.validated_bg : pal.pending_bg
+    color hTx = hit ? pal.validated_text : pal.pending_text
+    table.cell(t, 2, r, hit ? "✓ Hit" : "Pending", bgcolor=hBg, text_color=hTx, text_size=sz)
+    r + 1
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  LABEL STACK (anti-overlap system)                                          │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var LStack = LabelStack.new(array.new_float(), array.new_label())
+
+method drawLevelLabel(LabelStack self, float y, string txt, color clr, string szStr) =>
+    if not na(y)
+        int idx = -1
+        if self.prices.size() > 0
+            for i = 0 to self.prices.size() - 1
+                if math.abs(self.prices.get(i) - y) < syminfo.mintick * 2
+                    idx := i
+                    break
+        if idx == -1
+            self.prices.push(y)
+            lbl = label.new(bar_index + i_labelOff, y, txt, style=label.style_none, textcolor=clr, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+            self.labels.push(lbl)
+            lbl
+        else
+            label lbl = self.labels.get(idx)
+            label.set_text(lbl, label.get_text(lbl) + " + " + txt)
+            lbl
+    else
+        label(na)
+
+method clearAll(LabelStack self) =>
+    if self.labels.size() > 0
+        for i = 0 to self.labels.size() - 1
+            label.delete(self.labels.get(i))
+    self.prices.clear()
+    self.labels.clear()
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  TICKER DETECTION                                                           │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+r = syminfo.root
+is_nq  = str.contains(r,"NQ") or str.contains(r,"MNQ")
+is_es  = str.contains(r,"ES") or str.contains(r,"MES")
+is_rty = str.contains(r,"RTY") or str.contains(r,"M2K")
+is_ym  = str.contains(r,"YM") or str.contains(r,"MYM")
+is_cl  = str.contains(r,"CL") or str.contains(r,"MCL")
+is_gc  = str.contains(r,"GC") or str.contains(r,"MGC")
+is_commodity = is_cl or is_gc
+
+// Instrument index for probability lookups: NQ=0 ES=1 RTY=2 YM=3 CL=4 GC=5
+int IX = is_nq ? 0 : is_es ? 1 : is_rty ? 2 : is_ym ? 3 : is_cl ? 4 : is_gc ? 5 : 0
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  TIME HELPERS & SESSION DETECTION                                           │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+curH = hour(time, i_tz)
+curM = minute(time, i_tz)
+hhmm = curH * 100 + curM
+curDay = dayofmonth(time, i_tz)
+curDOW = dayofweek(time, i_tz)
+
+inAsia   = hhmm >= 1930 or hhmm < 230
+inLondon = hhmm >= 230 and hhmm < 800
+inPreMkt = hhmm >= 800 and hhmm < 930
+inNYAM   = hhmm >= 930 and hhmm < 1200
+inLunch  = hhmm >= 1200 and hhmm < 1330
+inNYPM   = hhmm >= 1330 and hhmm < 1600
+inP12    = hhmm >= 1800 or hhmm < 600
+inNY     = inNYAM or inLunch or inNYPM  // convenience
+
+string curSession = inAsia ? "ASIA" : inLondon ? "LONDON" : inPreMkt ? "PRE-MKT" : inNYAM ? "NY AM" : inLunch ? "LUNCH" : inNYPM ? "NY PM" : "CLOSED"
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  SESSION STATE                                                              │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var float asiaH = na, var float asiaL = na, var float asiaMid = na
+var float lonH  = na, var float lonL  = na, var float lonMid = na
+var float amH   = na, var float amL   = na, var float amMid  = na
+var float lchH  = na, var float lchL  = na, var float lchMid = na
+var float pmH   = na, var float pmL   = na
+var float onH   = na, var float onL   = na, var float onMid  = na
+var float p12H  = na, var float p12L  = na, var float p12Mid = na
+var float h78H  = na, var float h78L  = na
+var float glxOpen = na, var float mnOpen = na, var float o730 = na
+var float rthOpen = na, var float pmOpen = na
+var int asiaBar0 = na, var int lonBar0 = na, var int amBar0 = na
+
+// Gap tracking
+var float rthGap = na, var string gapDir = "—"
+var bool gapChasing = false, var float gapPts = na
+
+// London sweep order (Judas detection)
+var int lonHighTime = na, var int lonLowTime = na
+var int lonHighFirst = 0
+var bool isJudas = false
+
+// Daily high/low
+var float dayH = na, var float dayL = na
+var int dayHH = na, var int dayHM = na, var int dayLH = na, var int dayLM = na
+
+// Range percentile arrays
+var array<float> asiaRanges   = array.new_float()
+var array<float> londonRanges = array.new_float()
+var array<float> nyRanges     = array.new_float()
+
+// Daily data
+[pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
+[vvixH, vvixL, vvixC] = request.security("VVIX", "D", [high, low, close], barmerge.gaps_off, barmerge.lookahead_on)
+
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  HIT TRACKING                                                               │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var bool hitLonH = false, var bool hitLonL = false, var bool hitLonMid = false
+var bool hitAsiaH = false, var bool hitAsiaL = false, var bool hitAsiaMid = false
+var bool hitOnMid = false, var bool hit78Mid = false
+var bool hitMnOpen = false, var bool hit730 = false
+var bool hitOTEBull = false, var bool hitOTEBear = false
+var bool hitGlx = false, var bool hitPDC = false
+var bool hitPDH = false, var bool hitPDL = false
+var bool hitSig1P = false, var bool hitSig1N = false
+var bool hitSig2P = false, var bool hitSig2N = false
+var bool hitAMH = false, var bool hitAML = false
+var bool hitLchH = false, var bool hitLchL = false
+var bool hitP12H = false, var bool hitP12L = false, var bool hitP12Mid = false
+var bool londonClosed = false
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  LINE / LABEL STATE                                                         │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var line lnLonH = na, var line lnLonL = na, var line lnLonMid = na
+var line lnAsiaH = na, var line lnAsiaL = na, var line lnAsiaMid = na
+var line ln78Mid = na, var line ln730 = na, var line lnMnOpen = na
+var line lnOnMid = na, var line lnOTEBull = na, var line lnOTEBear = na
+var line lnGlx = na
+var line lnPDC = na, var line lnPDH = na, var line lnPDL = na
+var line lnSig1P = na, var line lnSig1N = na, var line lnSig2P = na, var line lnSig2N = na
+var line lnAMH = na, var line lnAML = na
+var line lnLchH = na, var line lnLchL = na
+var line lnP12H = na, var line lnP12L = na, var line lnP12Mid = na
+
+var label lblLonH = na, var label lblLonL = na, var label lblLonMid = na
+var label lblAsiaH = na, var label lblAsiaL = na, var label lblAsiaMid = na
+var label lbl78Mid = na, var label lbl730 = na, var label lblMnOpen = na
+var label lblOnMid = na, var label lblOTEBull = na, var label lblOTEBear = na
+var label lblGlx = na
+var label lblPDC = na, var label lblPDH = na, var label lblPDL = na
+var label lblSig1P = na, var label lblSig1N = na, var label lblSig2P = na, var label lblSig2N = na
+var label lblAMH = na, var label lblAML = na
+var label lblLchH = na, var label lblLchL = na
+var label lblP12H = na, var label lblP12L = na, var label lblP12Mid = na
+var label lblDayH = na, var label lblDayL = na
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  NEW DAY RESET                                                              │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var int lastDay = -1
+isNewDay = false
+if hhmm >= 1700 and hhmm < 1801 and curDay != lastDay
+    isNewDay := true
+    lastDay  := curDay
+
+if isNewDay
+    // Session prices
+    asiaH := na
+    asiaL := na
+    asiaMid := na
+    lonH  := na
+    lonL  := na
+    lonMid := na
+    amH   := na
+    amL   := na
+    amMid  := na
+    lchH  := na
+    lchL  := na
+    lchMid := na
+    pmH   := na
+    pmL   := na
+    onH   := na
+    onL   := na
+    onMid  := na
+    p12H  := na
+    p12L  := na
+    p12Mid := na
+    h78H  := na
+    h78L  := na
+    glxOpen := open
+    mnOpen := na
+    o730 := na
+    rthOpen := na
+    pmOpen := na
+    asiaBar0 := na
+    lonBar0 := na
+    amBar0 := na
+    // Daily H/L
+    dayH := na
+    dayL := na
+    dayHH := na
+    dayHM := na
+    dayLH := na
+    dayLM := na
+    // Gap / Judas
+    rthGap := na
+    gapDir := "—"
+    gapChasing := false
+    gapPts := na
+    lonHighTime := na
+    lonLowTime := na
+    lonHighFirst := 0
+    isJudas := false
+    londonClosed := false
+    // Labels — delete Day H/L labels explicitly (they bypass LabelStack)
+    label.delete(lblDayH)
+    label.delete(lblDayL)
+    LStack.clearAll()
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  SESSION TRACKING                                                           │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+// Asia
+if inAsia
+    if na(asiaBar0)
+        asiaBar0 := bar_index
+    asiaH := na(asiaH) ? high : math.max(asiaH, high)
+    asiaL := na(asiaL) ? low  : math.min(asiaL, low)
+    asiaMid := (asiaH + asiaL) / 2.0
+
+if not inAsia and inAsia[1] and not na(asiaH) and not na(asiaL)
+    asiaRanges.push(asiaH - asiaL)
+    if asiaRanges.size() > i_rngLB
+        asiaRanges.shift()
+
+// London (with sweep order tracking)
+if inLondon
+    if na(lonBar0)
+        lonBar0 := bar_index
+    if not na(asiaH) and high > asiaH and na(lonHighTime)
+        lonHighTime := time
+    if not na(asiaL) and low < asiaL and na(lonLowTime)
+        lonLowTime  := time
+    lonH   := na(lonH) ? high : math.max(lonH, high)
+    lonL   := na(lonL) ? low  : math.min(lonL, low)
+    lonMid := (lonH + lonL) / 2.0
+
+if not inLondon and inLondon[1]
+    londonClosed := true
+    if not na(lonH) and not na(lonL)
+        londonRanges.push(lonH - lonL)
+        if londonRanges.size() > i_rngLB
+            londonRanges.shift()
+        // Sweep order
+        if not na(lonHighTime) and not na(lonLowTime)
+            lonHighFirst := lonHighTime < lonLowTime ? 1 : -1
+        else if not na(lonHighTime)
+            lonHighFirst := 1
+        else if not na(lonLowTime)
+            lonHighFirst := -1
+        else
+            lonHighFirst := 0
+
+// NY AM
+if inNYAM
+    if na(amBar0)
+        amBar0 := bar_index
+    amH   := na(amH) ? high : math.max(amH, high)
+    amL   := na(amL) ? low  : math.min(amL, low)
+    amMid := (amH + amL) / 2.0
+
+// Lunch
+if inLunch
+    lchH   := na(lchH) ? high : math.max(lchH, high)
+    lchL   := na(lchL) ? low  : math.min(lchL, low)
+    lchMid := (lchH + lchL) / 2.0
+
+// NY PM
+if inNYPM
+    pmH := na(pmH) ? high : math.max(pmH, high)
+    pmL := na(pmL) ? low  : math.min(pmL, low)
+
+// NY range capture at 4PM
+is_4pm = hhmm >= 1600 and hhmm < 1615
+if is_4pm and not is_4pm[1] and not na(amH) and not na(pmL)
+    nyRanges.push(math.max(amH, nz(pmH, amH)) - math.min(amL, nz(pmL, amL)))
+    if nyRanges.size() > i_rngLB
+        nyRanges.shift()
+
+// Overnight
+if hhmm >= 1800 or hhmm < 930
+    onH   := na(onH) ? high : math.max(onH, high)
+    onL   := na(onL) ? low  : math.min(onL, low)
+    onMid := (onH + onL) / 2.0
+
+// 7-8 AM range
+if curH == 7
+    h78H := na(h78H) ? high : math.max(h78H, high)
+    h78L := na(h78L) ? low  : math.min(h78L, low)
+
+// Key opens
+if curH == 0 and curM == 0 and na(mnOpen)
+    mnOpen  := open
+if curH == 7 and curM == 30 and na(o730)
+    o730    := open
+if curH == 9 and curM == 30 and na(rthOpen)
+    rthOpen := open
+    rthGap  := open - pdC
+    gapPts  := math.abs(rthGap)
+    gapDir  := rthGap > 5 ? "UP" : rthGap < -5 ? "DOWN" : "FLAT"
+if curH == 13 and curM == 30 and na(pmOpen)
+    pmOpen := open
+
+// P12 (18:00 to 06:00)
+if inP12
+    p12H   := na(p12H) ? high : math.max(p12H, high)
+    p12L   := na(p12L) ? low  : math.min(p12L, low)
+    p12Mid := (p12H + p12L) / 2.0
+
+// Daily H/L
+if hhmm >= 1800 or hhmm < 1600
+    if na(dayH) or high > dayH
+        dayH := high
+        dayHH := hour(time, i_tz)
+        dayHM := minute(time, i_tz)
+    if na(dayL) or low < dayL
+        dayL := low
+        dayLH := hour(time, i_tz)
+        dayLM := minute(time, i_tz)
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  PERCENTILE / CLASSIFICATION                                                │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+pctRank(float val, array<float> arr) =>
+    if arr.size() < 2 or na(val)
+        50.0
+    else
+        int below = 0
+        for i = 0 to arr.size() - 1
+            if arr.get(i) < val
+                below += 1
+        float(below) / float(arr.size()) * 100.0
+
+float asiaPctl = not na(asiaH) and not na(asiaL) ? pctRank(asiaH - asiaL, asiaRanges) : na
+float lonPctl  = not na(lonH) and not na(lonL)   ? pctRank(lonH - lonL, londonRanges)  : na
+float nyRng    = not na(amH) and not na(amL) ? math.max(amH, nz(pmH, amH)) - math.min(amL, nz(pmL, amL)) : na
+float nyPctl   = not na(nyRng) ? pctRank(nyRng, nyRanges) : na
+
+sizeLabel(float pctl) => na(pctl) ? "—" : pctl < 25 ? "SMALL" : pctl < 50 ? "MED" : pctl < 75 ? "MED-LG" : "LARGE"
+string asiaSize   = sizeLabel(asiaPctl)
+string londonSize = sizeLabel(lonPctl)
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  PATTERN / MANIPULATION / JUDAS                                             │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var string pattern      = "—"
+var string manipulation = "NONE"
+var string nyPos        = "—"
+var string bias         = "WAITING"
+var float  biasPct      = 0.0
+var bool   isAligned    = false
+var bool   isMisaligned = false
+
+if not na(lonH) and not na(asiaH) and not na(asiaL)
+    bool swH = lonH > asiaH, bool swL = lonL < asiaL
+    if swH and not swL
+        pattern := "PARTIAL UP"
+        manipulation := "BEARISH"
+    else if swL and not swH
+        pattern := "PARTIAL DN"
+        manipulation := "BULLISH"
+    else if swH and swL
+        pattern := "ENGULFS"
+        manipulation := close > (asiaH + asiaL) / 2.0 ? "BEARISH" : "BULLISH"
+    else
+        pattern := "INSIDE"
+        manipulation := "NONE"
+    // Judas: faked one direction, committed opposite
+    isJudas := (manipulation == "BULLISH" and lonHighFirst == 1) or
+               (manipulation == "BEARISH" and lonHighFirst == -1)
+
+if not na(lonMid)
+    nyPos := close > lonMid ? "ABOVE" : "BELOW"
+
+// Gap confluence
+gapChasing := (manipulation == "BULLISH" and gapDir == "UP") or
+              (manipulation == "BEARISH" and gapDir == "DOWN")
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  PROBABILITY ENGINE — Compressed Lookup Tables                              │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+// Pick value by instrument index (0=NQ,1=ES,2=RTY,3=YM,4=CL,5=GC)
+_byIx(float a, float b, float c, float d, float e, float f) =>
+    IX == 0 ? a : IX == 1 ? b : IX == 2 ? c : IX == 3 ? d : IX == 4 ? e : f
+
+// Pattern+Position grid helper: 4 patterns × 2 positions = 8 values
+_gp(float p1a, float p1b, float p2a, float p2b, float p3a, float p3b, float p4a, float p4b, string pat, string pos) =>
+    bool above = pos == "ABOVE"
+    if pat == "PARTIAL DN"
+        above ? p1a : p1b
+    else if pat == "PARTIAL UP"
+        above ? p2a : p2b
+    else if pat == "ENGULFS"
+        above ? p3a : p3b
+    else
+        above ? p4a : p4b
+
+// ── 72-Scenario Probability (refactored) ──────────────────────────────────────
+
+get72ScenarioProb(string pat, string pos, string aSz, string lSz) =>
+    float result = 50.0
+    
+    if is_commodity
+        // Commodities: continuation model (trade WITH manipulation)
+        float bullAbove = _byIx(50.0, 50.0, 50.0, 50.0, 58.0, 56.0)
+        float bullBelow = _byIx(50.0, 50.0, 50.0, 50.0, 46.0, 47.0)
+        float bearBelow = _byIx(50.0, 50.0, 50.0, 50.0, 57.0, 55.0)
+        float bearAbove = _byIx(50.0, 50.0, 50.0, 50.0, 45.0, 46.0)
+        float smAdj     = _byIx(0.0,  0.0,  0.0,  0.0,  3.0,  2.0)
+        if manipulation == "BULLISH"
+            result := pos == "ABOVE" ? bullAbove : bullBelow
+            if aSz == "SMALL"
+                result += smAdj
+        else if manipulation == "BEARISH"
+            result := pos == "BELOW" ? bearBelow : bearAbove
+            if aSz == "SMALL"
+                result += smAdj
+    else
+        // Equities: reversal model
+        bool aligned    = (pat == "PARTIAL DN" and pos == "ABOVE") or (pat == "PARTIAL UP" and pos == "BELOW")
+        bool misaligned = (pat == "PARTIAL DN" and pos == "BELOW") or (pat == "PARTIAL UP" and pos == "ABOVE")
+        
+        if aligned
+            result := _byIx(84.0, 82.0, 80.0, 81.0, 50.0, 50.0)
+            // Asia size adjustment
+            if aSz == "SMALL"
+                result += 4.0
+            else if aSz == "MED"
+                result -= 2.0
+            else if aSz == "LARGE" or aSz == "MED-LG"
+                result -= _byIx(6.0, 5.0, 4.0, 5.0, 0.0, 0.0)
+            // London size adjustment
+            if lSz == "SMALL"
+                result += _byIx(3.0, 2.0, 2.0, 2.0, 0.0, 0.0)
+            else if lSz == "LARGE" or lSz == "MED-LG"
+                result -= _byIx(5.0, 4.0, 3.0, 4.0, 0.0, 0.0)
+        
+        else if misaligned
+            result := _byIx(52.0, 51.0, 50.0, 51.0, 50.0, 50.0)
+            if aSz == "SMALL"
+                result += 2.0
+            if lSz == "SMALL"
+                result += 2.0
+        
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? _byIx(68.0, 66.0, 64.0, 65.0, 50.0, 50.0) : _byIx(66.0, 64.0, 62.0, 63.0, 50.0, 50.0)
+            if aSz == "SMALL"
+                result += _byIx(3.0, 2.0, 2.0, 2.0, 0.0, 0.0)
+            if lSz == "LARGE"
+                result -= _byIx(4.0, 4.0, 3.0, 3.0, 0.0, 0.0)
+        
+        else  // INSIDE
+            result := 50.0
+    result
+
+// ── Adjustment Factors ────────────────────────────────────────────────────────
+
+getDOWAdj() =>
+    curDOW == dayofweek.tuesday ? 1.05 : curDOW == dayofweek.wednesday ? 1.03 : curDOW == dayofweek.monday ? 0.96 : curDOW == dayofweek.friday ? 0.98 : 1.0
+
+// ── Conditional Level Probabilities ───────────────────────────────────────────
+
+getCondProbLonH(string pat, string pos) =>
+    if is_nq
+        _gp(77.9,17.4, 77.2,18.5, 74.9,16.1, 80.4,21.8, pat,pos)
+    else if is_es
+        _gp(79.3,17.1, 79.7,20.9, 77.4,13.5, 79.0,23.3, pat,pos)
+    else if is_rty
+        _gp(76.8,19.2, 75.4,20.8, 73.6,17.9, 78.1,24.2, pat,pos)
+    else if is_ym
+        _gp(78.2,18.1, 77.8,19.4, 75.9,15.8, 79.5,22.7, pat,pos)
+    else if is_cl
+        _gp(71.2,24.6, 70.5,26.1, 68.8,22.4, 73.4,28.9, pat,pos)
+    else if is_gc
+        _gp(69.4,26.8, 68.1,28.3, 66.7,24.9, 71.2,31.1, pat,pos)
+    else
+        50.0
+
+getCondProbLonL(string pat, string pos) =>
+    if is_nq
+        _gp(17.4,73.8, 15.1,76.2, 19.9,77.8, 10.1,71.4, pat,pos)
+    else if is_es
+        _gp(13.5,76.7, 11.7,73.4, 15.1,80.4, 12.0,69.8, pat,pos)
+    else if is_rty
+        _gp(18.6,72.4, 16.8,74.9, 20.4,76.1, 14.2,69.7, pat,pos)
+    else if is_ym
+        _gp(16.2,75.1, 14.5,77.3, 18.1,78.6, 11.8,71.2, pat,pos)
+    else if is_cl
+        _gp(22.8,68.4, 24.1,66.9, 20.6,70.2, 26.4,64.8, pat,pos)
+    else if is_gc
+        _gp(25.2,66.1, 27.4,64.3, 23.1,67.8, 29.6,62.4, pat,pos)
+    else
+        50.0
+
+getCondProb78Mid() => _byIx(80.6, 79.5, 80.1, 78.6, 69.7, 64.6)
+
+getCondProbLonMid(string pat, string pos) =>
+    if is_nq
+        _gp(78.8, 75.1, 74.0, 84.1, 79.3, 79.4, 76.2, 83.0, pat, pos)
+    else if is_es
+        _gp(79.1, 73.0, 72.6, 81.8, 73.8, 78.5, 69.3, 76.5, pat, pos)
+    else if is_rty
+        _gp(81.7, 73.2, 78.5, 79.0, 71.6, 77.4, 79.5, 77.3, pat, pos)
+    else if is_ym
+        _gp(79.7, 71.6, 69.5, 79.7, 74.7, 76.6, 74.3, 82.7, pat, pos)
+    else if is_cl
+        _gp(71.2, 62.1, 63.8, 69.1, 64.7, 67.6, 72.0, 64.2, pat, pos)
+    else if is_gc
+        _gp(66.5, 56.5, 57.7, 67.8, 62.6, 61.5, 60.5, 63.6, pat, pos)
+    else
+        78.0
+
+getCondProbAsiaMid(string pat, string pos) =>
+    if is_nq
+        _gp(85.4, 56.2, 57.1, 84.0, 76.3, 75.0, 74.6, 79.6, pat, pos)
+    else if is_es
+        _gp(84.9, 52.5, 51.8, 84.3, 72.1, 75.2, 67.3, 78.6, pat, pos)
+    else if is_rty
+        _gp(83.5, 53.1, 54.8, 82.1, 67.9, 71.9, 76.1, 73.3, pat, pos)
+    else if is_ym
+        _gp(82.3, 50.6, 49.2, 82.3, 72.3, 73.6, 71.5, 82.2, pat, pos)
+    else if is_cl
+        _gp(76.6, 35.8, 39.6, 75.6, 61.7, 64.6, 73.3, 63.2, pat, pos)
+    else if is_gc
+        _gp(71.9, 28.5, 31.6, 72.3, 59.4, 55.8, 58.6, 61.3, pat, pos)
+    else
+        70.0
+
+getCondProbAsiaH(string pat, string pos) =>
+    if is_nq
+        _gp(75.7, 41.3, 72.2, 80.4, 82.1, 63.0, 81.0, 59.7, pat, pos)
+    else if is_es
+        _gp(72.5, 36.7, 70.3, 77.9, 80.9, 61.2, 79.2, 46.5, pat, pos)
+    else if is_rty
+        _gp(71.4, 39.2, 75.2, 76.6, 77.2, 57.3, 85.2, 49.3, pat, pos)
+    else if is_ym
+        _gp(73.1, 34.7, 66.3, 74.9, 77.8, 58.4, 78.2, 47.6, pat, pos)
+    else if is_cl
+        _gp(67.5, 22.1, 56.5, 65.0, 70.4, 49.6, 68.0, 31.6, pat, pos)
+    else if is_gc
+        _gp(55.2, 14.6, 54.0, 61.5, 68.1, 33.7, 60.9, 25.7, pat, pos)
+    else
+        65.0
+
+getCondProbAsiaL(string pat, string pos) =>
+    if is_nq
+        _gp(77.0, 69.8, 43.3, 71.1, 64.4, 82.1, 45.5, 72.8, pat, pos)
+    else if is_es
+        _gp(75.9, 68.7, 36.9, 74.4, 58.0, 82.8, 37.6, 74.9, pat, pos)
+    else if is_rty
+        _gp(79.8, 66.5, 42.7, 76.3, 54.4, 82.4, 51.1, 80.0, pat, pos)
+    else if is_ym
+        _gp(76.0, 68.1, 34.0, 71.1, 58.0, 80.6, 41.9, 74.3, pat, pos)
+    else if is_cl
+        _gp(69.4, 53.4, 26.9, 67.5, 46.3, 72.1, 34.7, 71.6, pat, pos)
+    else if is_gc
+        _gp(60.2, 50.9, 15.8, 51.6, 43.2, 67.9, 32.0, 55.8, pat, pos)
+    else
+        60.0
+
+getCondProbMN(string pat, string pos) =>
+    if is_nq
+        _gp(86.3,63.1, 62.6,87.8, 77.9,81.1, 71.2,76.8, pat,pos)
+    else if is_es
+        _gp(84.7,61.8, 60.9,86.2, 76.4,79.6, 69.8,75.1, pat,pos)
+    else if is_rty
+        _gp(82.4,59.6, 58.2,83.9, 74.1,77.3, 67.5,72.8, pat,pos)
+    else if is_ym
+        _gp(83.8,60.4, 59.7,85.1, 75.6,78.2, 68.4,73.9, pat,pos)
+    else if is_cl
+        _gp(74.2,56.8, 55.4,75.6, 68.1,70.9, 62.3,66.4, pat,pos)
+    else if is_gc
+        _gp(71.6,54.2, 52.8,72.9, 65.4,68.1, 59.7,63.8, pat,pos)
+    else
+        73.0
+
+getP12H() => _byIx(67.4, 63.5, 65.1, 61.1, 51.4, 42.6)
+getP12L() => _byIx(61.1, 58.4, 61.9, 57.5, 51.8, 42.1)
+getP12M() => _byIx(72.7, 70.7, 70.8, 68.6, 60.5, 54.9)
+
+// Global level probabilities
+_gpg(float a, float b, float c, float d, float e, float f, float g, float h, float i2, float j, float k, float l, string lev) =>
+    switch lev
+        "07:30"       => a
+        "ON Mid"      => b
+        "OTE Bull"    => c
+        "OTE Bear"    => d
+        "Globex"      => e
+        "Settlement"  => f
+        "PDH"         => g
+        "PDL"         => h
+        "PM Hit AMH"  => i2
+        "PM Hit AML"  => j
+        "PM Hit LchH" => k
+        "PM Hit LchL" => l
+        => 50.0
+
+getGlobalProb(string lev) =>
+    if is_nq
+        _gpg(79.8,77.6,78.3,76.1,63.9,63.6,47.1,40.0,41.1,33.2,62.3,54.4, lev)
+    else if is_es
+        _gpg(79.3,76.1,76.2,73.9,62.1,61.7,46.2,39.5,42.6,34.6,65.1,56.1, lev)
+    else if is_rty
+        _gpg(79.3,76.3,75.5,75.7,63.1,63.0,44.7,42.7,33.4,29.4,57.9,52.4, lev)
+    else if is_ym
+        _gpg(78.3,74.5,74.5,72.8,61.5,60.8,44.1,40.0,39.1,33.1,63.0,55.6, lev)
+    else if is_cl
+        _gpg(69.2,69.5,68.4,68.3,53.0,52.7,39.7,38.6,31.1,28.1,52.8,48.7, lev)
+    else if is_gc
+        _gpg(63.2,62.9,62.3,61.8,45.7,46.4,36.1,33.3,25.2,24.0,46.5,46.2, lev)
+    else
+        50.0
+
+// Sigma probabilities: +1σ, -1σ, +2σ, -2σ × BEARISH/BULLISH/NEUTRAL
+_gsp(float a,float b,float c, float d,float e,float f, float g,float h,float i2, float j,float k,float l, string sig, string man) =>
+    int m = man == "BEARISH" ? 0 : man == "BULLISH" ? 1 : 2
+    if sig == "+1"
+        m == 0 ? a : m == 1 ? b : c
+    else if sig == "-1"
+        m == 0 ? d : m == 1 ? e : f
+    else if sig == "+2"
+        m == 0 ? g : m == 1 ? h : i2
+    else
+        m == 0 ? j : m == 1 ? k : l
+
+getSigmaProb(string sig, string man) =>
+    if is_nq
+        _gsp(71.4,41.2,61.0, 43.7,73.1,56.2, 56.8,25.6,41.8, 27.2,58.3,40.7, sig,man)
+    else if is_es
+        _gsp(69.8,39.4,59.2, 41.8,71.2,54.6, 54.1,23.8,39.4, 25.4,55.6,38.2, sig,man)
+    else if is_rty
+        _gsp(68.2,40.6,58.4, 42.4,69.8,53.8, 52.4,24.9,38.6, 26.7,54.1,37.4, sig,man)
+    else if is_ym
+        _gsp(70.1,40.2,59.8, 42.1,71.6,55.2, 54.8,24.2,40.1, 25.8,56.2,38.9, sig,man)
+    else if is_cl
+        _gsp(62.4,44.8,54.6, 46.2,64.1,52.8, 46.8,28.4,36.2, 29.8,48.2,35.4, sig,man)
+    else if is_gc
+        _gsp(59.8,46.2,52.4, 47.8,61.4,51.2, 44.2,30.1,34.8, 31.4,45.6,33.6, sig,man)
+    else
+        50.0
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  BIAS CALCULATION                                                           │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+if not na(lonMid) and manipulation != "NONE"
+    float baseProb = get72ScenarioProb(pattern, nyPos, asiaSize, londonSize)
+    float adj = baseProb * getDOWAdj() * (gapChasing ? 1.12 : 1.0) * (isJudas ? 1.08 : 1.0)
+    adj := math.max(math.min(adj, 95.0), 35.0)
+    
+    isAligned    := (manipulation == "BULLISH" and nyPos == "ABOVE") or (manipulation == "BEARISH" and nyPos == "BELOW")
+    isMisaligned := (manipulation == "BULLISH" and nyPos == "BELOW") or (manipulation == "BEARISH" and nyPos == "ABOVE")
+    
+    if is_commodity
+        bias    := manipulation == "BULLISH" ? "LONG (CONT)" : "SHORT (CONT)"
+        biasPct := adj
+    else
+        if isAligned
+            bias    := manipulation == "BULLISH" ? "LONG" : "SHORT"
+            biasPct := adj
+        else if isMisaligned
+            bias    := "⚠ SKIP"
+            biasPct := adj
+        else
+            bias    := "NEUTRAL"
+            biasPct := 50.0
+
+if manipulation == "NONE"
+    bias := "NO SETUP"
+    biasPct := 0.0
+    isAligned := false
+    isMisaligned := false
+
+if isNewDay
+    pattern := "—"
+    manipulation := "NONE"
+    nyPos := "—"
+    bias := "WAITING"
+    biasPct := 0.0
+    isAligned := false
+    isMisaligned := false
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  QUALITY SCORE                                                              │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var int    qualityScore = 0
+var string qualityTxt   = "—"
+
+if not na(lonH) and not na(asiaH) and manipulation != "NONE"
+    qualityScore := 0
+    if isAligned
+        qualityScore += 2
+    if isJudas
+        qualityScore += 1
+    if gapChasing
+        qualityScore += 1
+    if curDOW == dayofweek.tuesday or curDOW == dayofweek.wednesday
+        qualityScore += 1
+    if asiaSize == "SMALL"
+        qualityScore += 1
+    if londonSize == "SMALL"
+        qualityScore += 1
+    if londonSize == "LARGE" or londonSize == "MED-LG"
+        qualityScore -= 1
+    if curDOW == dayofweek.monday
+        qualityScore -= 1
+    if isMisaligned
+        qualityScore -= 2
+    
+    qualityTxt := qualityScore >= 5 ? "★★★★★" : qualityScore >= 4 ? "★★★★" : qualityScore >= 3 ? "★★★" : qualityScore >= 2 ? "★★" : qualityScore >= 1 ? "★" : "—"
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  REVERSAL TIMING                                                            │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var string timingPhase = "—"
+var float  timingPct   = 0.0
+var string timingWarn  = ""
+
+if inNY
+    if hhmm < 1000
+        timingPhase := "OPENING"
+        timingPct := 60.6
+        timingWarn := ""
+    else if hhmm < 1030
+        timingPhase := "MID-MORN"
+        timingPct := 12.8
+        timingWarn := ""
+    else if hhmm < 1100
+        timingPhase := "LATE-MORN"
+        timingPct := 6.8
+        timingWarn := "74% complete"
+    else if hhmm < 1200
+        timingPhase := "CLOSING"
+        timingPct := 7.3
+        timingWarn := "⚠ 81% complete"
+    else if hhmm < 1330
+        timingPhase := "LUNCH"
+        timingPct := 5.4
+        timingWarn := "⚠ 88% complete"
+    else
+        timingPhase := "PM"
+        timingPct := 6.8
+        timingWarn := "⚠ MANAGE ONLY"
+else
+    timingPhase := "—"
+    timingPct := 0.0
+    timingWarn := ""
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  HIT TRACKING — Reset & Check                                               │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+// Single reset point: NY AM open (covers both pre-market and AM)
+if isNewDay and not isNewDay[1]
+    hitLonH    := false
+    hitLonL    := false
+    hitLonMid  := false
+    hitAsiaH   := false
+    hitAsiaL   := false
+    hitAsiaMid := false
+    hitOnMid   := false
+    hit78Mid   := false
+    hitMnOpen  := false
+    hit730     := false
+    hitOTEBull := false
+    hitOTEBear := false
+    hitGlx     := false
+    hitPDC     := false
+    hitPDH     := false
+    hitPDL     := false
+    hitSig1P   := false
+    hitSig1N   := false
+    hitSig2P   := false
+    hitSig2N   := false
+    hitAMH     := false
+    hitAML     := false
+    hitLchH    := false
+    hitLchL    := false
+    hitP12H    := false
+    hitP12L    := false
+    hitP12Mid  := false
+
+if inNYAM or inLunch or inNYPM or inPreMkt
+    if londonClosed
+        if checkHit(lonH)
+            hitLonH := true
+        if checkHit(lonL)
+            hitLonL := true
+        if checkHit(lonMid)
+            hitLonMid := true
+    
+    if checkHit(asiaH)
+        hitAsiaH  := true
+    if checkHit(asiaL)
+        hitAsiaL  := true
+    if checkHit(asiaMid)
+        hitAsiaMid := true
+    if checkHit(onMid)
+        hitOnMid  := true
+    if checkHit(p12H)
+        hitP12H   := true
+    if checkHit(p12L)
+        hitP12L   := true
+    if checkHit(p12Mid)
+        hitP12Mid := true
+    
+    float v78m = not na(h78H) and not na(h78L) ? (h78H + h78L) / 2.0 : na
+    if checkHit(v78m)
+        hit78Mid  := true
+    if checkHit(mnOpen)
+        hitMnOpen := true
+    if checkHit(o730)
+        hit730    := true
+    
+    float vOB = not na(onH) and not na(onL) ? onL + (onH - onL) * 0.62 : na
+    float vOE = not na(onH) and not na(onL) ? onH - (onH - onL) * 0.62 : na
+    if checkHit(vOB)
+        hitOTEBull := true
+    if checkHit(vOE)
+        hitOTEBear := true
+    if checkHit(glxOpen)
+        hitGlx := true
+    if checkHit(pdC)
+        hitPDC := true
+    if checkHit(pdH)
+        hitPDH := true
+    if checkHit(pdL)
+        hitPDL := true
+    
+    float cbdr = not na(asiaH) and not na(asiaL) ? asiaH - asiaL : na
+    if not na(cbdr) and cbdr > 0
+        if checkHit(asiaH + cbdr)
+            hitSig1P := true
+        if checkHit(asiaL - cbdr)
+            hitSig1N := true
+        if checkHit(asiaH + 2*cbdr)
+            hitSig2P := true
+        if checkHit(asiaL - 2*cbdr)
+            hitSig2N := true
+    
+    if (inLunch or inNYPM) and not na(amH)
+        if checkHit(amH)
+            hitAMH := true
+        if checkHit(amL)
+            hitAML := true
+    
+    if inNYPM and not na(lchH)
+        if checkHit(lchH)
+            hitLchH := true
+        if checkHit(lchL)
+            hitLchL := true
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  DRAWING — Level Lines & Labels                                             │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+p = getPal()
+
+// London levels (drawn when London closes)
+if i_showLevels and i_showLondon and not inLondon and inLondon[1] and not na(lonH)
+    line.delete(lnLonH)
+    line.delete(lnLonL)
+    line.delete(lnLonMid)
+    float pLH = getCondProbLonH(pattern, nyPos)
+    float pLL = getCondProbLonL(pattern, nyPos)
+    lnLonH   := line.new(lonBar0, lonH, bar_index + i_lineOff, lonH, color=color.new(i_cLondon, p.line_tr1), style=getLnSty(i_londonSty), width=i_londonW)
+    lnLonL   := line.new(lonBar0, lonL, bar_index + i_lineOff, lonL, color=color.new(i_cLondon, p.line_tr1), style=getLnSty(i_londonSty), width=i_londonW)
+    lnLonMid := line.new(lonBar0, lonMid, bar_index + i_lineOff, lonMid, color=color.new(p.caution, p.line_tr2), style=line.style_dotted, width=1)
+    if i_showLabels
+        lblLonH   := LStack.drawLevelLabel(lonH, str.format("Lon H: {0,number,#.#}%", pLH), i_cLondon, i_labelSize)
+        lblLonL   := LStack.drawLevelLabel(lonL, str.format("Lon L: {0,number,#.#}%", pLL), i_cLondon, i_labelSize)
+        lblLonMid := LStack.drawLevelLabel(lonMid, str.format("Lon Mid: {0,number,#.#}%", getCondProbLonMid(pattern, nyPos)), p.caution, i_labelSize)
+
+// Asia levels (drawn when Asia closes)
+if i_showLevels and i_showAsia and not inAsia and inAsia[1] and not na(asiaH)
+    line.delete(lnAsiaH)
+    line.delete(lnAsiaL)
+    line.delete(lnAsiaMid)
+    lnAsiaH := line.new(asiaBar0, asiaH, bar_index + i_lineOff, asiaH, color=color.new(i_cAsia, p.line_tr2), style=getLnSty(i_asiaSty), width=i_asiaW)
+    lnAsiaL := line.new(asiaBar0, asiaL, bar_index + i_lineOff, asiaL, color=color.new(i_cAsia, p.line_tr2), style=getLnSty(i_asiaSty), width=i_asiaW)
+    lnAsiaMid := line.new(asiaBar0, asiaMid, bar_index + i_lineOff, asiaMid, color=color.new(i_cAsia, p.line_tr2), style=line.style_dotted, width=1)
+    if i_showLabels
+        lblAsiaH := LStack.drawLevelLabel(asiaH, str.format("Asia H: {0,number,#.#}%", getCondProbAsiaH(pattern, nyPos)), i_cAsia, i_labelSize)
+        lblAsiaL := LStack.drawLevelLabel(asiaL, str.format("Asia L: {0,number,#.#}%", getCondProbAsiaL(pattern, nyPos)), i_cAsia, i_labelSize)
+        lblAsiaMid := LStack.drawLevelLabel(asiaMid, str.format("Asia Mid: {0,number,#.#}%", getCondProbAsiaMid(pattern, nyPos)), i_cAsia, i_labelSize)
+
+// P12 levels (drawn when P12 closes)
+if i_showLevels and i_showP12 and not inP12 and inP12[1] and not na(p12H)
+    line.delete(lnP12H)
+    line.delete(lnP12L)
+    line.delete(lnP12Mid)
+    lnP12H   := line.new(bar_index - 1, p12H, bar_index + i_lineOff, p12H, color=color.new(i_cON, p.line_tr2), style=getLnSty(i_p12Sty), width=i_p12W)
+    lnP12L   := line.new(bar_index - 1, p12L, bar_index + i_lineOff, p12L, color=color.new(i_cON, p.line_tr2), style=getLnSty(i_p12Sty), width=i_p12W)
+    lnP12Mid := line.new(bar_index - 1, p12Mid, bar_index + i_lineOff, p12Mid, color=color.new(p.caution, p.line_tr2), style=line.style_dotted, width=1)
+    if i_showLabels
+        lblP12H   := LStack.drawLevelLabel(p12H, str.format("P12 H: {0,number,#.#}%", getP12H()), i_cON, i_labelSize)
+        lblP12L   := LStack.drawLevelLabel(p12L, str.format("P12 L: {0,number,#.#}%", getP12L()), i_cON, i_labelSize)
+        lblP12Mid := LStack.drawLevelLabel(p12Mid, str.format("P12 Mid: {0,number,#.#}%", getP12M()), p.caution, i_labelSize)
+
+// Intraday levels (drawn at pre-market open)
+if i_showLevels and inPreMkt and not inPreMkt[1]
+    // 7-8 Mid
+    float v78 = not na(h78H) and not na(h78L) ? (h78H + h78L) / 2.0 : na
+    if i_show78Mid and not na(v78)
+        line.delete(ln78Mid)
+        ln78Mid := line.new(bar_index, v78, bar_index + i_lineOff, v78, color=color.new(p.confirm, p.line_tr1), style=getLnSty(i_78Sty), width=i_78W)
+        if i_showLabels
+            lbl78Mid := LStack.drawLevelLabel(v78, str.format("78 Mid: {0,number,#.#}%", getCondProb78Mid()), p.confirm, i_labelSize)
+    
+    // 07:30 Open
+    if i_show730 and not na(o730)
+        line.delete(ln730)
+        ln730 := line.new(bar_index, o730, bar_index + i_lineOff, o730, color=color.new(p.caution, p.line_tr1), style=getLnSty(i_730Sty), width=i_730W)
+        if i_showLabels
+            lbl730 := LStack.drawLevelLabel(o730, str.format("07:30: {0,number,#.#}%", getGlobalProb("07:30")), p.caution, i_labelSize)
+    
+    // Midnight Open
+    if i_showMN and not na(mnOpen)
+        line.delete(lnMnOpen)
+        lnMnOpen := line.new(bar_index, mnOpen, bar_index + i_lineOff, mnOpen, color=color.new(p.text_primary, p.line_tr2), style=getLnSty(i_mnSty), width=i_mnW)
+        if i_showLabels
+            lblMnOpen := LStack.drawLevelLabel(mnOpen, str.format("MN: {0,number,#.#}%", getCondProbMN(pattern, nyPos)), p.text_primary, i_labelSize)
+    
+    // ON Mid
+    if i_showONMid and not na(onMid)
+        line.delete(lnOnMid)
+        lnOnMid := line.new(bar_index, onMid, bar_index + i_lineOff, onMid, color=color.new(p.confirm, p.line_tr2), style=getLnSty(i_onmSty), width=i_onmW)
+        if i_showLabels
+            lblOnMid := LStack.drawLevelLabel(onMid, str.format("ON Mid: {0,number,#.#}%", getGlobalProb("ON Mid")), p.confirm, i_labelSize)
+    
+    // OTE Zones
+    float vOB = not na(onH) and not na(onL) ? onL + (onH - onL) * 0.62 : na
+    float vOE = not na(onH) and not na(onL) ? onH - (onH - onL) * 0.62 : na
+    if i_showOTE and not na(vOB)
+        line.delete(lnOTEBull)
+        lnOTEBull := line.new(bar_index, vOB, bar_index + i_lineOff, vOB, color=color.new(p.bullish, p.line_tr2), style=getLnSty(i_oteSty), width=i_oteW)
+        if i_showLabels
+            lblOTEBull := LStack.drawLevelLabel(vOB, str.format("OTE Bull: {0,number,#.#}%", getGlobalProb("OTE Bull")), p.bullish, i_labelSize)
+    if i_showOTE and not na(vOE)
+        line.delete(lnOTEBear)
+        lnOTEBear := line.new(bar_index, vOE, bar_index + i_lineOff, vOE, color=color.new(p.bearish, p.line_tr2), style=getLnSty(i_oteSty), width=i_oteW)
+        if i_showLabels
+            lblOTEBear := LStack.drawLevelLabel(vOE, str.format("OTE Bear: {0,number,#.#}%", getGlobalProb("OTE Bear")), p.bearish, i_labelSize)
+    
+    // Globex Open
+    if i_showGlx and not na(glxOpen)
+        line.delete(lnGlx)
+        lnGlx := line.new(bar_index, glxOpen, bar_index + i_lineOff, glxOpen, color=color.new(p.neutral, p.line_tr2), style=getLnSty(i_glxSty), width=i_glxW)
+        if i_showLabels
+            lblGlx := LStack.drawLevelLabel(glxOpen, str.format("Globex: {0,number,#.#}%", getGlobalProb("Globex")), p.neutral, i_labelSize)
+    
+    // Settlement/PDC
+    if i_showPDC and not na(pdC)
+        line.delete(lnPDC)
+        lnPDC := line.new(bar_index, pdC, bar_index + i_lineOff, pdC, color=color.new(i_cPrior, p.line_tr1), style=getLnSty(i_pdcSty), width=i_pdcW)
+        if i_showLabels
+            lblPDC := LStack.drawLevelLabel(pdC, str.format("Settlement: {0,number,#.#}%", getGlobalProb("Settlement")), i_cPrior, i_labelSize)
+    
+    // PDH / PDL
+    if i_showPDHL and not na(pdH)
+        line.delete(lnPDH)
+        lnPDH := line.new(bar_index, pdH, bar_index + i_lineOff, pdH, color=color.new(i_cPrior, p.line_tr1), style=getLnSty(i_pdhlSty), width=i_pdhlW)
+        if i_showLabels
+            lblPDH := LStack.drawLevelLabel(pdH, str.format("PDH: {0,number,#.#}%", getGlobalProb("PDH")), i_cPrior, i_labelSize)
+    if i_showPDHL and not na(pdL)
+        line.delete(lnPDL)
+        lnPDL := line.new(bar_index, pdL, bar_index + i_lineOff, pdL, color=color.new(i_cPrior, p.line_tr1), style=getLnSty(i_pdhlSty), width=i_pdhlW)
+        if i_showLabels
+            lblPDL := LStack.drawLevelLabel(pdL, str.format("PDL: {0,number,#.#}%", getGlobalProb("PDL")), i_cPrior, i_labelSize)
+    
+    // CBDR Sigma levels
+    float cbdr = not na(asiaH) and not na(asiaL) ? asiaH - asiaL : na
+    if i_showSigma and not na(cbdr) and cbdr > 0
+        line.delete(lnSig1P)
+        line.delete(lnSig1N)
+        line.delete(lnSig2P)
+        line.delete(lnSig2N)
+        lnSig1P := line.new(bar_index, asiaH + cbdr,     bar_index + i_lineOff, asiaH + cbdr,     color=color.new(i_cSigUp, p.line_tr2), style=getLnSty(i_sigSty), width=i_sigW)
+        lnSig1N := line.new(bar_index, asiaL - cbdr,     bar_index + i_lineOff, asiaL - cbdr,     color=color.new(i_cSigDn, p.line_tr2), style=getLnSty(i_sigSty), width=i_sigW)
+        lnSig2P := line.new(bar_index, asiaH + 2*cbdr,   bar_index + i_lineOff, asiaH + 2*cbdr,   color=color.new(i_cSigUp, p.line_tr2), style=getLnSty(i_sigSty), width=i_sigW)
+        lnSig2N := line.new(bar_index, asiaL - 2*cbdr,   bar_index + i_lineOff, asiaL - 2*cbdr,   color=color.new(i_cSigDn, p.line_tr2), style=getLnSty(i_sigSty), width=i_sigW)
+        if i_showLabels
+            lblSig1P := LStack.drawLevelLabel(asiaH + cbdr,   str.format("+1σ: {0,number,#.#}%", getSigmaProb("+1", manipulation)), i_cSigUp, i_labelSize)
+            lblSig1N := LStack.drawLevelLabel(asiaL - cbdr,   str.format("-1σ: {0,number,#.#}%", getSigmaProb("-1", manipulation)), i_cSigDn, i_labelSize)
+            lblSig2P := LStack.drawLevelLabel(asiaH + 2*cbdr, str.format("+2σ: {0,number,#.#}%", getSigmaProb("+2", manipulation)), i_cSigUp, i_labelSize)
+            lblSig2N := LStack.drawLevelLabel(asiaL - 2*cbdr, str.format("-2σ: {0,number,#.#}%", getSigmaProb("-2", manipulation)), i_cSigDn, i_labelSize)
+
+// ── Extend all lines during NY ──────────────────────────────────────────────
+if i_showLevels and inNY
+    extendLevel(lnLonH, lblLonH)
+    extendLevel(lnLonL, lblLonL)
+    extendLevel(lnLonMid, lblLonMid)
+    extendLevel(lnAsiaH, lblAsiaH)
+    extendLevel(lnAsiaL, lblAsiaL)
+    extendLevel(lnAsiaMid, lblAsiaMid)
+    extendLevel(ln78Mid, lbl78Mid)
+    extendLevel(ln730, lbl730)
+    extendLevel(lnMnOpen, lblMnOpen)
+    extendLevel(lnOnMid, lblOnMid)
+    extendLevel(lnOTEBull, lblOTEBull)
+    extendLevel(lnOTEBear, lblOTEBear)
+    extendLevel(lnGlx, lblGlx)
+    extendLevel(lnPDC, lblPDC)
+    extendLevel(lnPDH, lblPDH)
+    extendLevel(lnPDL, lblPDL)
+    extendLevel(lnSig1P, lblSig1P)
+    extendLevel(lnSig1N, lblSig1N)
+    extendLevel(lnSig2P, lblSig2P)
+    extendLevel(lnSig2N, lblSig2N)
+    extendLevel(lnP12H, lblP12H)
+    extendLevel(lnP12L, lblP12L)
+    extendLevel(lnP12Mid, lblP12Mid)
+
+// AM H/L (drawn at lunch start)
+if i_showLevels and i_showAM and inLunch and not inLunch[1] and not na(amH)
+    line.delete(lnAMH)
+    line.delete(lnAML)
+    lnAMH := line.new(amBar0, amH, bar_index + i_lineOff, amH, color=color.new(p.bullish, p.line_tr2), style=getLnSty(i_amSty), width=i_amW)
+    lnAML := line.new(amBar0, amL, bar_index + i_lineOff, amL, color=color.new(p.bearish, p.line_tr2), style=getLnSty(i_amSty), width=i_amW)
+    if i_showLabels
+        lblAMH := LStack.drawLevelLabel(amH, str.format("AM H: {0,number,#.#}%", getGlobalProb("PM Hit AMH")), p.bullish, i_labelSize)
+        lblAML := LStack.drawLevelLabel(amL, str.format("AM L: {0,number,#.#}%", getGlobalProb("PM Hit AML")), p.bearish, i_labelSize)
+
+// Lunch H/L (drawn at PM start)
+if i_showLevels and i_showLch and inNYPM and not inNYPM[1] and not na(lchH)
+    line.delete(lnLchH)
+    line.delete(lnLchL)
+    lnLchH := line.new(bar_index - 10, lchH, bar_index + i_lineOff, lchH, color=color.new(p.text_dim, p.line_tr2), style=getLnSty(i_lchSty), width=i_lchW)
+    lnLchL := line.new(bar_index - 10, lchL, bar_index + i_lineOff, lchL, color=color.new(p.text_dim, p.line_tr2), style=getLnSty(i_lchSty), width=i_lchW)
+    if i_showLabels
+        lblLchH := LStack.drawLevelLabel(lchH, str.format("Lunch H: {0,number,#.#}%", getGlobalProb("PM Hit LchH")), p.text_dim, i_labelSize)
+        lblLchL := LStack.drawLevelLabel(lchL, str.format("Lunch L: {0,number,#.#}%", getGlobalProb("PM Hit LchL")), p.text_dim, i_labelSize)
+
+// Extend AM/Lunch during PM
+if i_showLevels and (inLunch or inNYPM)
+    extendLevel(lnAMH, lblAMH)
+    extendLevel(lnAML, lblAML)
+if i_showLevels and inNYPM
+    extendLevel(lnLchH, lblLchH)
+    extendLevel(lnLchL, lblLchL)
+
+// Daily H/L labels (outside LabelStack — managed explicitly)
+if i_showLevels and (hhmm >= 1800 or hhmm < 1600)
+    if not na(dayH) and not na(dayHH) and dayH != dayH[1]
+        label.delete(lblDayH)
+        lblDayH := label.new(time, dayH, xloc=xloc.bar_time, text=str.format("{0,number,#.#} ({1,number,00}:{2,number,00})", dayH, dayHH, dayHM), style=label.style_label_down, textcolor=p.bullish, color=color.new(p.bullish, 80), size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    if not na(dayL) and not na(dayLH) and dayL != dayL[1]
+        label.delete(lblDayL)
+        lblDayL := label.new(time, dayL, xloc=xloc.bar_time, text=str.format("{0,number,#.#} ({1,number,00}:{2,number,00})", dayL, dayLH, dayLM), style=label.style_label_up, textcolor=p.bearish, color=color.new(p.bearish, 80), size=getSz(i_labelSize), text_font_family=font.family_monospace)
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  SESSION BOXES                                                              │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var box asiaBox = na, var box lonBox = na
+
+if i_showBoxes
+    if inAsia and not na(asiaH)
+        box.delete(asiaBox)
+        asiaBox := box.new(nz(asiaBar0, bar_index), asiaH, bar_index, asiaL, border_color=color.new(p.asia_primary, 50), bgcolor=color.new(p.asia_primary, 93), border_width=1)
+    if inLondon and not na(lonH)
+        box.delete(lonBox)
+        lonBox := box.new(nz(lonBar0, bar_index), lonH, bar_index, lonL, border_color=color.new(p.london_primary, 50), bgcolor=color.new(p.london_primary, 93), border_width=1)
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  DASHBOARD                                                                  │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+var table tbl = na
+
+if i_showDash and barstate.islast
+    if not na(tbl)
+        table.delete(tbl)
+    tbl := table.new(getPos(i_dashPos), 3, 55, bgcolor=color.new(p.bg_primary, i_dashOpac), border_width=1, border_color=p.bg_border)
+    sz = getSz(i_dashSz)
+    int row = 0
+    
+    // ── Header ──
+    table.cell(tbl, 0, row, "PROB ENGINE v5", text_color=p.header_text, bgcolor=p.header_bg, text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    // ── Session / Ticker ──
+    sesClr = inNYAM ? p.ny_primary : inLondon ? p.london_primary : inAsia ? p.asia_primary : inNYPM ? p.caution : p.neutral
+    table.cell(tbl, 0, row, "Session", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, curSession, text_color=sesClr, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, syminfo.root + (is_commodity ? " (CONT)" : ""), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    // ── Pattern / Manipulation ──
+    patClr = manipulation == "BULLISH" ? p.bullish : manipulation == "BEARISH" ? p.bearish : p.neutral
+    table.cell(tbl, 0, row, "Pattern", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, pattern, text_color=patClr, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, manipulation, text_color=patClr, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    // ── Judas Sweep ──
+    if lonHighFirst != 0
+        table.cell(tbl, 0, row, "Sweep", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, lonHighFirst == 1 ? "H→L" : "L→H", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, isJudas ? "✓ JUDAS" : "Standard", text_color=isJudas ? p.bullish : p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // ── Bias ──
+    biasClr = bias == "LONG" or bias == "LONG (CONT)" ? p.bullish : bias == "SHORT" or bias == "SHORT (CONT)" ? p.bearish : bias == "⚠ SKIP" ? p.skip_text : p.neutral
+    biasBg  = bias == "⚠ SKIP" ? p.skip_bg : p.bg_secondary
+    table.cell(tbl, 0, row, "BIAS", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, bias, text_color=biasClr, bgcolor=biasBg, text_size=sz)
+    table.cell(tbl, 2, row, biasPct > 0 ? str.tostring(biasPct, "#.0") + "%" : "—", text_color=probClr(biasPct), bgcolor=biasBg, text_size=sz)
+    row += 1
+    
+    // ── Quality ──
+    table.cell(tbl, 0, row, "Quality", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, qualityTxt, text_color=qualityScore >= 4 ? p.bullish : qualityScore >= 2 ? p.caution : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, str.tostring(qualityScore) + " pts", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    // ── Gap ──
+    if gapDir != "—"
+        table.cell(tbl, 0, row, "Gap", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, gapDir + " " + str.tostring(gapPts, "#") + "pt", text_color=gapDir == "UP" ? p.bullish : gapDir == "DOWN" ? p.bearish : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, gapChasing ? "CHASE +" : "FADE", text_color=gapChasing ? p.bullish : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // ── Timing ──
+    if timingPct > 0
+        table.cell(tbl, 0, row, "Timing", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, timingPhase, text_color=p.confirm, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, timingWarn != "" ? timingWarn : str.tostring(timingPct, "#.0") + "%", text_color=str.contains(timingWarn, "⚠") ? p.caution : p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // ── RANGES section ──
+    table.cell(tbl, 0, row, "── RANGES ──", text_color=p.asia_primary, bgcolor=color.new(p.asia_primary, 85), text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    if not na(asiaH) and not na(asiaL)
+        table.cell(tbl, 0, row, "Asia", text_color=p.asia_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(asiaH - asiaL, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, asiaSize + " " + (na(asiaPctl) ? "" : str.tostring(asiaPctl, "#") + "th"), text_color=asiaSize == "SMALL" ? p.bullish : asiaSize == "LARGE" ? p.bearish : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    if not na(lonH) and not na(lonL)
+        table.cell(tbl, 0, row, "London", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(lonH - lonL, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, londonSize + " " + (na(lonPctl) ? "" : str.tostring(lonPctl, "#") + "th"), text_color=londonSize == "SMALL" ? p.bullish : londonSize == "LARGE" ? p.bearish : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    if not na(nyRng)
+        table.cell(tbl, 0, row, "NY", text_color=p.ny_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(nyRng, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, na(nyPctl) ? "(live)" : str.tostring(nyPctl, "#") + "th", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    dowNames = array.from("Sun","Mon","Tue","Wed","Thu","Fri","Sat")
+    dowClr = curDOW == dayofweek.tuesday or curDOW == dayofweek.wednesday ? p.bullish : curDOW == dayofweek.monday ? p.bearish : p.neutral
+    table.cell(tbl, 0, row, "DOW", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, array.get(dowNames, curDOW - 1), text_color=dowClr, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, curDOW == dayofweek.tuesday ? "+5%" : curDOW == dayofweek.wednesday ? "+3%" : curDOW == dayofweek.monday ? "-4%" : "—", text_color=dowClr, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    // ── NY LEVELS section ──
+    table.cell(tbl, 0, row, "── NY LEVELS ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    table.cell(tbl, 0, row, "Level", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, "Hit %", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, "Status", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    if not na(h78H) and not na(h78L)
+        row := addRow(tbl, row, "7-8 Mid", p.confirm, getCondProb78Mid(), hit78Mid, sz, p)
+    if not na(p12H)
+        row := addRow(tbl, row, "P12 High", p.overnight_primary, getP12H(), hitP12H, sz, p)
+        row := addRow(tbl, row, "P12 Low",  p.overnight_primary, getP12L(), hitP12L, sz, p)
+        row := addRow(tbl, row, "P12 Mid",  p.caution,           getP12M(), hitP12Mid, sz, p)
+    if not na(o730)
+        row := addRow(tbl, row, "07:30", p.caution, getGlobalProb("07:30"), hit730, sz, p)
+    if not na(onH) and not na(onL) and i_showOTE
+        row := addRow(tbl, row, "OTE Bull", p.bullish, getGlobalProb("OTE Bull"), hitOTEBull, sz, p)
+    if not na(onMid)
+        row := addRow(tbl, row, "ON Mid", p.confirm, getGlobalProb("ON Mid"), hitOnMid, sz, p)
+    if not na(lonH)
+        row := addRow(tbl, row, "Lon H", p.london_primary, getCondProbLonH(pattern, nyPos), hitLonH, sz, p)
+    if not na(lonL)
+        row := addRow(tbl, row, "Lon L", p.london_primary, getCondProbLonL(pattern, nyPos), hitLonL, sz, p)
+    if not na(lonMid)
+        row := addRow(tbl, row, "Lon Mid", p.london_primary, getCondProbLonMid(pattern, nyPos), hitLonMid, sz, p)
+    if not na(asiaMid)
+        row := addRow(tbl, row, "Asia Mid", p.asia_primary, getCondProbAsiaMid(pattern, nyPos), hitAsiaMid, sz, p)
+    if not na(asiaH)
+        row := addRow(tbl, row, "Asia H", p.asia_primary, getCondProbAsiaH(pattern, nyPos), hitAsiaH, sz, p)
+    if not na(asiaL)
+        row := addRow(tbl, row, "Asia L", p.asia_primary, getCondProbAsiaL(pattern, nyPos), hitAsiaL, sz, p)
+    if not na(pdC)
+        row := addRow(tbl, row, "Settlement", i_cPrior, getGlobalProb("Settlement"), hitPDC, sz, p)
+    if not na(glxOpen)
+        row := addRow(tbl, row, "Globex", p.neutral, getGlobalProb("Globex"), hitGlx, sz, p)
+    if not na(mnOpen)
+        row := addRow(tbl, row, "MN Open", p.text_primary, getCondProbMN(pattern, nyPos), hitMnOpen, sz, p)
+    if not na(pdH)
+        row := addRow(tbl, row, "PDH", i_cPrior, getGlobalProb("PDH"), hitPDH, sz, p)
+    if not na(pdL)
+        row := addRow(tbl, row, "PDL", i_cPrior, getGlobalProb("PDL"), hitPDL, sz, p)
+    
+    float cbdr = not na(asiaH) and not na(asiaL) ? asiaH - asiaL : na
+    if not na(cbdr) and cbdr > 0
+        row := addRow(tbl, row, "+1σ", i_cSigUp, getSigmaProb("+1", manipulation), hitSig1P, sz, p)
+        row := addRow(tbl, row, "-1σ", i_cSigDn, getSigmaProb("-1", manipulation), hitSig1N, sz, p)
+        row := addRow(tbl, row, "+2σ", i_cSigUp, getSigmaProb("+2", manipulation), hitSig2P, sz, p)
+        row := addRow(tbl, row, "-2σ", i_cSigDn, getSigmaProb("-2", manipulation), hitSig2N, sz, p)
+    
+    // ── PM section ──
+    if (inNYPM or inLunch) and not na(amH)
+        table.cell(tbl, 0, row, "── PM ──", text_color=p.caution, bgcolor=color.new(p.caution, 85), text_size=sz)
+        table.merge_cells(tbl, 0, row, 2, row)
+        row += 1
+        
+        table.cell(tbl, 0, row, "Mode", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, "MANAGE", text_color=p.caution, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, "No new entries", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+        
+        row := addRow(tbl, row, "AM H", p.bullish, getGlobalProb("PM Hit AMH"), hitAMH, sz, p)
+        if not na(amL)
+            row := addRow(tbl, row, "AM L", p.bearish, getGlobalProb("PM Hit AML"), hitAML, sz, p)
+        if inNYPM and not na(lchH)
+            row := addRow(tbl, row, "Lunch H", p.text_dim, getGlobalProb("PM Hit LchH"), hitLchH, sz, p)
+            row := addRow(tbl, row, "Lunch L", p.text_dim, getGlobalProb("PM Hit LchL"), hitLchL, sz, p)
+    
+    // ── Daily H/L section ──
+    table.cell(tbl, 0, row, "── DAILY ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    if not na(dayH) and not na(dayHH)
+        table.cell(tbl, 0, row, "Day H", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(dayH, "#.#"), text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayHH, dayHM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    if not na(dayL) and not na(dayLH)
+        table.cell(tbl, 0, row, "Day L", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(dayL, "#.#"), text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayLH, dayLM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+
+    // ── VVIX H/L section ──
+    table.cell(tbl, 0, row, "── VVIX ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    if not na(vvixH) //and not na(dayHH)
+        table.cell(tbl, 0, row, "VVIX H", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(vvixH, "#.#"), text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+       // table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayHH, dayHM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    if not na(vvixL) //and not na(dayLH)
+        table.cell(tbl, 0, row, "VVIX L", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(vvixL, "#.#"), text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+       // table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayLH, dayLM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    if not na(vvixC) //and not na(dayLH)
+        table.cell(tbl, 0, row, "VVIX Close", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(vvixC, "#.#"), text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        //table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayLH, dayLM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │  ALERTS                                                                     │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+alertcondition(bias == "LONG",              "Long Bias Confirmed",  "Prob Engine: LONG bias confirmed")
+alertcondition(bias == "SHORT",             "Short Bias Confirmed", "Prob Engine: SHORT bias confirmed")
+alertcondition(bias == "⚠ SKIP",            "Misaligned - Skip",    "Prob Engine: Misaligned setup - SKIP")
+alertcondition(isJudas and isAligned,       "Judas + Aligned",      "Prob Engine: JUDAS sweep + aligned!")
+alertcondition(gapChasing and isAligned,    "Gap Chase + Aligned",  "Prob Engine: Gap CHASING + aligned!")
+alertcondition(qualityScore >= 5,           "High Quality Setup",   "Prob Engine: Quality 5+ setup!")

@@ -18,6 +18,8 @@ sess_Time = input('0930-1600', 'Session Time') //Allow user to input custom sess
 sess_TimeZone = input('America/New_York', 'TimeZone') //Allow user to input custom timezone
 toggle = input.bool(false, "Toggle open/close")
 useVOLI = input.bool(false, "Use NASDAQ:VOLI instead of VIX")
+useVIX1D = input.bool(false, "Use CBOE:VIX1D instead of VIX")
+
 
 
 close_day = (toggle and session.isfirstbar_regular)? open: close[1]
@@ -95,11 +97,11 @@ Zones(a, b, Index) =>
         line_transparency = 25
 
         //the first box to be drawn is the 1 std. dev. box above the settlement price
-        Index_BOX_1TOP = box.new(left = time_close, top = Index_ZONE1UP_Res, right = close_time, bottom = Index_ZONE1DN_Res, xloc = xloc.bar_time, bgcolor = box_color_Sup, border_color = box_color_Sup) //the left side of the box in time top = Index_ZONE1UP_Res,   //the top of the box in price right = close_time,    //the right side of the box in time bottom = Index_ZONE1DN_Res,    //the bottom of the box in price xloc = xloc.bar_time,  //we wish to solve the box's x-coordinates in bar time bgcolor = box_color_Sup, border_color = color.new(color.black,0))   //the border of the box to be black
+        Index_BOX_1TOP = box.new(left = time_close, top = Index_ZONE1UP_Res, right = close_time, bottom = Index_ZONE1DN_Res, xloc = xloc.bar_time, bgcolor = box_color_Sup, border_color = box_color_Sup,text ="1SD", text_size = size.normal,text_color = color.red,text_font_family = font.family_monospace) 
         line.new(time_close,Index_ZONE1DN_Res+ (Index_ZONE1UP_Res-Index_ZONE1DN_Res)/2,close_time,Index_ZONE1DN_Res+ (Index_ZONE1UP_Res-Index_ZONE1DN_Res)/2,xloc = xloc.bar_time,color=color.new(color.red, line_transparency),style=line.style_dashed,width=1)
         //the box should be red and as transparent as the user indicates it to be
         //this box is the 1 std. dev. box below the settlement price
-        Index_BOX_1BTM = box.new(left = time_close, top = Index_ZONE1DN_Sup, right = close_time, bottom = Index_ZONE1UP_Sup, xloc = xloc.bar_time, bgcolor = box_color_Res, border_color = box_color_Res)
+        Index_BOX_1BTM = box.new(left = time_close, top = Index_ZONE1DN_Sup, right = close_time, bottom = Index_ZONE1UP_Sup, xloc = xloc.bar_time, bgcolor = box_color_Res, border_color = box_color_Res,text ="1SD", text_size = size.normal,text_color = color.green,text_font_family = font.family_monospace) 
         line.new(time_close,Index_ZONE1DN_Sup+ (Index_ZONE1UP_Sup-Index_ZONE1DN_Sup)/2,close_time,Index_ZONE1DN_Sup+ (Index_ZONE1UP_Sup-Index_ZONE1DN_Sup)/2,xloc = xloc.bar_time,color=color.new(color.green, line_transparency),style=line.style_dashed,width=1)
         //this is the 1.5 std. dev. box above the settlement price
         Index_BOX_2TOP = box.new(left = time_close, top = Index_ZONE150UP_Res, right = close_time, bottom = Index_ZONE150DN_Res, xloc = xloc.bar_time, bgcolor = box_color_Sup, border_color = box_color_Sup)
@@ -155,7 +157,7 @@ if str.contains(syminfo.ticker, 'ES') or str.contains(syminfo.ticker, 'SPY') or 
     //  Request the previous day's settlement on ES
     ES := request.security(syminfo.tickerid, useTF, close_day, gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on,ignore_invalid_symbol = true) //function to request data from a different chart "CME_MINI:ES1!",   //the name of the security requested "1D",  //the timeframe of the request close_day, //the time requested gaps = barmerge.gaps_off,  //merge strategy for requested data lookahead = barmerge.lookahead_on  //merge strategy for the requested data position )
     //  Request the previous day's settlement on VIX
-    VIX := request.security(useVOLI? 'NASDAQ:VOLI' :'CBOE:VIX', useTF, close_day, gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on,ignore_invalid_symbol = true)
+    VIX := request.security(useVOLI? 'NASDAQ:VOLI' :useVIX1D? 'CBOE:VIX1D' :'CBOE:VIX', useTF, close_day, gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on,ignore_invalid_symbol = true)
 
     [VIX_A, VIX_B] = GetVolatility(VIX)
 
