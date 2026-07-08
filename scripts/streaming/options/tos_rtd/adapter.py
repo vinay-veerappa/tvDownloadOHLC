@@ -1,0 +1,325 @@
+"""
+TOSRTDAdapter — bridges TOS RTD real-time data into our options pipeline.
+
+Consumes RTD quotes from the worker thread and provides:
+  - get_snapshot(): Latest {symbol: {GAMMA, OPEN_INT, VOLUME, LAST, ...}}
+  - get_futures_price(symbol): Latest futures LAST price
+  - build_chain_snapshot(): Converts RTD quotes to a chain-like structure
+    compatible with gex_calculator.py expectations
+
+Usage::
+
+    adapter = TOSRTDAdapter()
+    adapter.start(symbols=["/ES", "/NQ"], expiry=date(2026, 7, 17))
+    time.sleep(3)  # Wait for first data
+    price = adapter.get_futures_price("/ES")
+    snapshot = adapter.get_snapshot()
+    adapter.stop()
+"""
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import date
+from queue import Empty, Queue
+from typing import Any, Optional
+
+from .quote_types import QuoteType
+from .settings import SETTINGS
+from .symbol_builder import OptionSymbolBuilder, parse_rtd_option_symbol, OptionContract
+from .worker import RTDWorker
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class RTDConfig:
+    """Configuration for TOSRTDAdapter."""
+
+    strike_range: int = 20          # ± strikes from ATM
+    strike_spacing: float = 1.0     # Spacing between strikes
+    poll_timeout: float = 0.1       # Queue get timeout
+    wait_for_first_data: float = 5.0  # Seconds to wait for first data on start
+
+
+@dataclass
+class ChainSnapshot:
+    """
+    Normalized option chain snapshot from RTD data.
+
+    This is a lightweight structure that can be fed into gex_calculator
+    or used standalone for quick GEX estimates.
+    """
+
+    symbol: str                     # Base futures symbol, e.g. "/ES"
+    futures_price: float            # Latest underlying LAST price
+    expiry: date                     # Expiration date
+    timestamp: float                 # Unix timestamp of snapshot
+    contracts: list[OptionContract] = field(default_factory=list)
+    # Per-contract Greeks: {rtd_symbol: {GAMMA: ..., OPEN_INT: ..., VOLUME: ..., LAST: ...}}
+    greeks: dict[str, dict[str, float | int | None]] = field(default_factory=dict)
+
+    @property
+    def call_strikes(self) -> list[float]:
+        """Sorted list of call strikes with data."""
+        strikes = sorted({
+            c.strike for c in self.contracts if c.option_type == "C"
+            and c.rtd_symbol in self.greeks
+        })
+        return strikes
+
+    @property
+    def put_strikes(self) -> list[float]:
+        """Sorted list of put strikes with data."""
+        strikes = sorted({
+            c.strike for c in self.contracts if c.option_type == "P"
+            and c.rtd_symbol in self.greeks
+        })
+        return strikes
+
+
+class TOSRTDAdapter:
+    """
+    Adapter that manages the RTD worker lifecycle and provides
+    normalized data access for our options pipeline.
+    """
+
+    def __init__(self, config: Optional[RTDConfig] = None):
+        self.config = config or RTDConfig()
+        self._data_queue: Queue = Queue()
+        self._stop_event = threading.Event()
+        self._worker: Optional[RTDWorker] = None
+        self._thread: Optional[threading.Thread] = None
+        self._latest_data: dict[str, Any] = {}
+        self._latest_lock = threading.Lock()
+        self._running = False
+        self._option_symbols: list[str] = []
+        self._base_symbols: list[str] = []
+        self._expiry: Optional[date] = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def start(
+        self,
+        symbols: list[str],
+        expiry: date,
+        current_price: Optional[float] = None,
+    ) -> None:
+        """
+        Start RTD streaming for the given futures symbols.
+
+        Args:
+            symbols: Futures symbols to monitor, e.g. ["/ES", "/NQ"]
+            expiry: Option expiration date
+            current_price: Optional dict {symbol: price} for initial strike
+                          generation. If None, will subscribe to LAST first
+                          and build option symbols after price arrives.
+        """
+        if self._running:
+            log.warning("Adapter already running — stopping first")
+            self.stop()
+
+        self._expiry = expiry
+        self._base_symbols = list(symbols)
+        self._stop_event.clear()
+
+        # Build option symbols if we have prices
+        all_symbols: list[str] = []
+        prices = current_price if isinstance(current_price, dict) else {}
+
+        for sym in symbols:
+            if sym in prices and prices[sym] > 0:
+                option_syms = OptionSymbolBuilder.build_symbols(
+                    sym, expiry, prices[sym],
+                    self.config.strike_range, self.config.strike_spacing,
+                )
+                self._option_symbols.extend(option_syms)
+                all_symbols.extend(option_syms)
+            all_symbols.append(sym)
+
+        self._worker = RTDWorker(self._data_queue, self._stop_event)
+        self._thread = threading.Thread(
+            target=self._worker.start,
+            args=(all_symbols,),
+            daemon=True,
+            name="TOSRTDWorker",
+        )
+        self._thread.start()
+        self._running = True
+        log.info("TOSRTDAdapter started for %s, expiry=%s", symbols, expiry)
+
+    def stop(self) -> None:
+        """Stop RTD streaming and clean up."""
+        if not self._running:
+            return
+
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5.0)
+            self._thread = None
+        self._worker = None
+        self._running = False
+        self._option_symbols = []
+        self._base_symbols = []
+        log.info("TOSRTDAdapter stopped")
+
+    def is_running(self) -> bool:
+        """Check if the adapter is actively streaming."""
+        return self._running and self._thread is not None and self._thread.is_alive()
+
+    # ------------------------------------------------------------------
+    # Data access
+    # ------------------------------------------------------------------
+
+    def _drain_queue(self) -> None:
+        """Pull latest data from the worker queue into _latest_data."""
+        while True:
+            try:
+                data = self._data_queue.get(timeout=self.config.poll_timeout)
+                if "error" in data:
+                    log.error("RTD worker error: %s", data["error"])
+                    continue
+                with self._latest_lock:
+                    self._latest_data = data
+            except Empty:
+                break
+
+    def get_snapshot(self) -> dict[str, Any]:
+        """
+        Get the latest RTD data snapshot.
+
+        Returns:
+            Dict mapping "symbol:quote_type" → value, e.g.:
+            {"./NQH25C21000:XCME:GAMMA": 0.001, "/ES:XCME:LAST": 5500.25}
+        """
+        self._drain_queue()
+        with self._latest_lock:
+            return dict(self._latest_data)
+
+    def get_futures_price(self, symbol: str) -> Optional[float]:
+        """
+        Get the latest LAST price for a futures symbol.
+
+        Args:
+            symbol: Futures symbol, e.g. "/ES" or "/ES:XCME"
+
+        Returns:
+            Latest price as float, or None if no data yet.
+        """
+        snapshot = self.get_snapshot()
+
+        # Try with exchange suffix
+        exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(symbol, "XCBT")
+        key = f"{symbol}:{exchange}:LAST"
+        price = snapshot.get(key)
+
+        if price is None:
+            # Try without exchange
+            key = f"{symbol}:LAST"
+            price = snapshot.get(key)
+
+        return float(price) if price is not None else None
+
+    def get_option_greeks(self, rtd_symbol: str) -> dict[str, float | int | None]:
+        """
+        Get the latest Greeks for a specific option symbol.
+
+        Args:
+            rtd_symbol: RTD option symbol, e.g. "./NQH25C21000:XCME"
+
+        Returns:
+            Dict with keys: GAMMA, OPEN_INT, VOLUME, LAST (values may be None)
+        """
+        snapshot = self.get_snapshot()
+        return {
+            "GAMMA": snapshot.get(f"{rtd_symbol}:GAMMA"),
+            "OPEN_INT": snapshot.get(f"{rtd_symbol}:OPEN_INT"),
+            "VOLUME": snapshot.get(f"{rtd_symbol}:VOLUME"),
+            "LAST": snapshot.get(f"{rtd_symbol}:LAST"),
+        }
+
+    def build_chain_snapshot(self, symbol: str) -> Optional[ChainSnapshot]:
+        """
+        Build a normalized chain snapshot from RTD data for a futures symbol.
+
+        This converts the flat RTD key-value data into a structured
+        ChainSnapshot that can be used by gex_calculator or for
+        quick GEX estimation.
+
+        Args:
+            symbol: Base futures symbol, e.g. "/ES"
+
+        Returns:
+            ChainSnapshot or None if no data available.
+        """
+        if not self._expiry:
+            log.warning("No expiry set — call start() first")
+            return None
+
+        price = self.get_futures_price(symbol)
+        if price is None:
+            log.debug("No futures price yet for %s", symbol)
+            return None
+
+        snapshot = self.get_snapshot()
+
+        # If we haven't built option symbols yet, do it now with the live price
+        if not self._option_symbols:
+            option_syms = OptionSymbolBuilder.build_symbols(
+                symbol, self._expiry, price,
+                self.config.strike_range, self.config.strike_spacing,
+            )
+            self._option_symbols = option_syms
+            # Note: We can't subscribe mid-stream in this version.
+            # The caller should restart with known prices for full coverage.
+            log.warning(
+                "Option symbols built after price arrival — "
+                "restart adapter with prices for full subscription coverage"
+            )
+
+        contracts: list[OptionContract] = []
+        greeks: dict[str, dict] = {}
+
+        for rtd_sym in self._option_symbols:
+            parsed = parse_rtd_option_symbol(rtd_sym)
+            if parsed and parsed.base_symbol == symbol:
+                contracts.append(parsed)
+                greeks[rtd_sym] = self.get_option_greeks(rtd_sym)
+
+        return ChainSnapshot(
+            symbol=symbol,
+            futures_price=price,
+            expiry=self._expiry,
+            timestamp=time.time(),
+            contracts=contracts,
+            greeks=greeks,
+        )
+
+    # ------------------------------------------------------------------
+    # Health
+    # ------------------------------------------------------------------
+
+    def get_status(self) -> dict[str, Any]:
+        """Get adapter health status."""
+        return {
+            "running": self.is_running(),
+            "base_symbols": self._base_symbols,
+            "option_symbol_count": len(self._option_symbols),
+            "expiry": self._expiry.isoformat() if self._expiry else None,
+            "has_data": len(self._latest_data) > 0,
+            "data_keys": len(self._latest_data),
+        }
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> "TOSRTDAdapter":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.stop()

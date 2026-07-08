@@ -444,6 +444,22 @@ DISCORD_COLOR_NEGATIVE: int = 0xD50000   # red    — negative GEX regime
 # Default visibility clamp for scored structural anchors in copy-ready exports.
 MAX_VISIBLE_DTE_DAYS: int = int(os.environ.get("MAX_VISIBLE_DTE_DAYS", "7"))
 
+# ---------------------------------------------------------------------------
+# TOS RTD (Real-Time Data) — optional Windows-only supplementary feed
+# ---------------------------------------------------------------------------
+# When enabled, streams real-time futures options Greeks from ThinkorSwim
+# desktop via COM. Requires Windows + TOS desktop running.
+# See: scripts/streaming/options/tos_rtd/
+import sys as _sys
+ENABLE_TOS_RTD: bool = (
+    _sys.platform == "win32"
+    and os.environ.get("ENABLE_TOS_RTD", "0").lower() in {"1", "true", "yes"}
+)
+TOS_RTD_HEARTBEAT_MS: int = 500
+TOS_RTD_STRIKE_RANGE: int = 20          # ± strikes from ATM
+TOS_RTD_STRIKE_SPACING: float = 1.0
+TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
+
 # Near-duplicate suppression in scored export (price units).
 DEFAULT_NEAR_DUPLICATE_TOLERANCE: float = float(os.environ.get("DEFAULT_NEAR_DUPLICATE_TOLERANCE", "0.0"))
 NEAR_DUPLICATE_TOLERANCE_BY_TICKER: dict[str, float] = {
