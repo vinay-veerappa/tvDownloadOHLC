@@ -451,10 +451,37 @@ MAX_VISIBLE_DTE_DAYS: int = int(os.environ.get("MAX_VISIBLE_DTE_DAYS", "7"))
 # desktop via COM. Requires Windows + TOS desktop running.
 # See: scripts/streaming/options/tos_rtd/
 import sys as _sys
-ENABLE_TOS_RTD: bool = (
-    _sys.platform == "win32"
-    and os.environ.get("ENABLE_TOS_RTD", "0").lower() in {"1", "true", "yes"}
-)
+
+
+def _is_tos_running() -> bool:
+    """Check if ThinkorSwim desktop is running by looking for its process.
+
+    Works on Windows only. Returns False on non-Windows platforms.
+    """
+    if _sys.platform != "win32":
+        return False
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq thinkorswim.exe", "/NH"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return "thinkorswim.exe" in result.stdout.lower()
+    except Exception:
+        return False
+
+
+# Auto-detect: RTD is enabled when (a) env var is set, OR (b) TOS desktop
+# process is detected on Windows. Can be forced off with ENABLE_TOS_RTD=0.
+_env_rtd = os.environ.get("ENABLE_TOS_RTD", "").lower()
+if _env_rtd in {"0", "false", "no"}:
+    ENABLE_TOS_RTD: bool = False
+elif _env_rtd in {"1", "true", "yes"}:
+    ENABLE_TOS_RTD: bool = _sys.platform == "win32"
+else:
+    # Auto-detect: enabled if TOS desktop is running
+    ENABLE_TOS_RTD: bool = _sys.platform == "win32" and _is_tos_running()
+
 TOS_RTD_HEARTBEAT_MS: int = 500
 TOS_RTD_STRIKE_RANGE: int = 20          # ± strikes from ATM
 TOS_RTD_STRIKE_SPACING: float = 1.0

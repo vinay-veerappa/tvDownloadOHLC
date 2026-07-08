@@ -24,6 +24,7 @@ from ..config import (
     TOS_RTD_STRIKE_RANGE,
     TOS_RTD_STRIKE_SPACING,
     TOS_RTD_SYMBOLS,
+    _is_tos_running,
 )
 
 log = logging.getLogger(__name__)
@@ -98,9 +99,18 @@ class HybridCoordinator:
     # ------------------------------------------------------------------
 
     def start(self, current_prices: dict[str, float] | None = None) -> None:
-        """Start the RTD adapter if enabled."""
+        """Start the RTD adapter if enabled and TOS desktop is running."""
         if not self._enabled:
             log.info("TOS RTD disabled — running in Schwab-only mode")
+            return
+
+        # Double-check TOS is actually running before attempting COM connection
+        if not _is_tos_running():
+            log.warning(
+                "TOS RTD enabled but ThinkorSwim desktop is not running — "
+                "falling back to Schwab-only mode"
+            )
+            self._enabled = False
             return
 
         if not self._expiry:
