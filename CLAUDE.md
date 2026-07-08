@@ -2,17 +2,19 @@
 
 ## Core Commands
 * **Start Next.js App**: `cd web && npm run dev`
-* **Prisma Schema Update**: `cd web && npx prisma db push`
+* **Prisma Schema Update**: `cd web && npx prisma db push && npx prisma generate`
 * **FastAPI Backend**: `start_api.bat`
 * **Ollama LLM Server**: `start_llm.bat`
 * **Run Options Levels**: `.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels`
+* **Test TOS RTD Live**: `.\.venv\Scripts\python.exe -m scripts.streaming.options.tos_rtd.live_test --symbol /ES --duration 15`
 
 ## Workspace Context Anchors (Inspect ONLY when required)
 * **Architectural Decisions**: [ADR.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md) (Timezones, normalization, vectorized models, prop-firm liquidation)
 * **Harmonised Trading Architecture**: [HARMONISED_TRADING_ARCHITECTURE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/HARMONISED_TRADING_ARCHITECTURE.md) (3-layer pattern, strategy wrapping adapters)
 * **Trading Domain Rules**: [SecondBrain_Trading.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/SecondBrain_Trading.md) (ALN sessions, NQ personalities, IB probabilities)
 * **Visual Compliance Standard**: [VISUAL_SYSTEM.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md) (Theme palette, scaling, label registry)
-* **Options Infrastructure Inventory**: [OPTIONS_INVENTORY.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/OPTIONS_INVENTORY.md) (Schwab auth, Greeks engine, level scorer)
+* **Options Infrastructure Inventory**: [OPTIONS_INVENTORY.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/OPTIONS_INVENTORY.md) (Schwab auth, Greeks engine, level scorer, TOS RTD real-time feed)
+* **TOS RTD Integration Plan**: [TOS_RTD_INTEGRATION_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TOS_RTD_INTEGRATION_PLAN.md) (4-phase plan, architecture comparison)
 * **Database Schema Reference**: [PRISMA_DATABASE_SCHEMA.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/PRISMA_DATABASE_SCHEMA.md) (SQLite schema catalog)
 
 ## Development Workflow & Guardrails

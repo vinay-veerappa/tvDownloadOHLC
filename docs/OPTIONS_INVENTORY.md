@@ -1,15 +1,16 @@
 # Options Trading & Market Data Infrastructure Inventory
 
-**Last Updated:** May 19, 2026
+**Last Updated:** July 8, 2026
 **Purpose:** Permanent technical blueprint, architectural catalog, and development reference for the Options, Market Data, Price Action, and PERSISTENCE layers of the TCM Trading System.
 
-## Current Runtime Status (May 19, 2026)
+## Current Runtime Status (July 8, 2026)
 
 - Options streaming pipeline is running with direct Prisma writes plus API fallback resilience in the interval writer path.
 - Fresh index snapshots are being persisted for SPY, SPX, QQQ, and IWM in `GexSnapshot` / `MacroSnapshot`.
 - Strategy engine index-entry staleness hard gate is currently enforced at 15 minutes during RTH in the engine loop.
 - Daily strategy routing currently includes `WHEEL`, `EARNINGS_STRANGLE`, `INCOME_CC`, and `LONG_DTE_CREDIT` at 10:00 ET.
 - Handoff alignment documents are present under `docs/features/options_dashboard/` (`HANDOFF.md`, `HANDOFF_v2.md`, `HANDOFF_v3.md`).
+- **TOS RTD integration (Phase 1-4) complete**: `tos_rtd/` package provides real-time futures options Greeks via ThinkorSwim COM. Auto-detects TOS desktop process. Hybrid coordinator uses RTD for futures LAST price (sub-second) with Schwab API fallback. Greeks drift monitor validates BSM model against exchange-quality TOS native gamma. See [§8. TOS RTD Real-Time Data Feed](#-8-tos-rtd-real-time-data-feed).
 
 ---
 
@@ -22,6 +23,10 @@ flowchart TD
         ezSchwab --> |Raw Chains / Quotes| Fetcher["options_fetcher.py"]
         PrismaToken["Prisma: SchwabToken"] <--> |State Sync| Fetcher
         ForexFactory["ForexFactory XML Feed"] --> |Scrapes Calendar| NewsScraper["news_calendar_fetcher.py"]
+        TOSDesktop["TOS Desktop (COM RTD)"] --> |Real-time Greeks / Price| RTDAdapter["tos_rtd/adapter.py"]
+        RTDAdapter --> |Futures LAST price| HybridCoord["hybrid_coordinator.py"]
+        SchwabAPI --> |Futures quote fallback| HybridCoord
+        HybridCoord --> |RTD-first price| Fetcher
     end
 
     subgraph QUANT_MATH["2. Options Analytics & Pricing Engine"]
@@ -90,7 +95,14 @@ c:\Users\vinay\tvDownloadOHLC
 │   │       ├── options_fetcher.py        # Token Auth Synchronizer & Chain Snapshots
 │   │       ├── gex_calculator.py         # Advanced mathematical GEX/BSM analytics
 │   │       ├── level_scorer.py           # Three-Filter triage scoring engine
-│   │       └── run_options_levels.py     # Live multi-ticker pipeline coordinator
+    │   │   ├── run_options_levels.py     # Live multi-ticker pipeline coordinator
+    │   │   └── tos_rtd/                  # TOS RTD real-time COM client (Windows-only)
+    │   │       ├── adapter.py            # TOSRTDAdapter — bridge to pipeline
+    │   │       ├── client.py             # RTDClient — COM subscribe/unsubscribe
+    │   │       ├── worker.py             # RTDWorker — background COM thread
+    │   │       ├── symbol_builder.py     # Futures option symbol construction
+    │   │       ├── hybrid_coordinator.py # Schwab + RTD coordination
+    │   │       └── greeks_drift_monitor.py # BSM vs TOS gamma validation
 │   └── trader/
 │       └── run_daily_prep.py             # Combined pre-market prep dashboard builder
 └── web/
@@ -659,6 +671,202 @@ The computed options levels, calculated in [gex_calculator.py](file:///c:/Users/
 | **Vanna Support** | $\max_K (\text{Vanna}_{\text{Put}, K})$ | **CONTEXTUAL** | Peak downside IV sensitivity. Key for spotting volatility-based sell accelerations. |
 | **Charm Gravity Node** | $\max_K (\text{Charm}_{\text{Call}, K})$ | **CONTEXTUAL** | Peak time-decay sensitivity. Drives passive weekend buyback/selling pressures. |
 | **Liquidity Void** | $\min_K (\text{OI}_K) \text{ inside heavy OI bands}$ | **CONTEXTUAL** | High-velocity zones. Spot price slips rapidly through these voids due to a lack of dealer positioning. |
+
+---
+
+## 📡 8. TOS RTD Real-Time Data Feed
+
+**Added:** July 8, 2026
+**Source:** Ported from [2187Nick/tos-streamlit-dashboard](https://github.com/2187Nick/tos-streamlit-dashboard/tree/futures) (futures branch)
+**Architecture Plan:** [TOS_RTD_INTEGRATION_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TOS_RTD_INTEGRATION_PLAN.md)
+
+### A. Overview
+
+The `tos_rtd/` package provides **real-time futures options Greeks** streaming directly from the ThinkorSwim desktop application via Windows COM (Real-Time Data server). No REST API, no rate limits, no auth tokens — just a local COM connection to the TOS desktop process.
+
+**Key characteristics:**
+
+| Aspect | Schwab API (Primary) | TOS RTD (Supplementary) |
+|---|---|---|
+| **Data source** | Schwab REST API (HTTP polling) | TOS desktop COM RTD (push-based) |
+| **Auth** | OAuth tokens, refresh cycles | None (TOS desktop must be running) |
+| **Rate limits** | Yes (Schwab API limits) | None (local COM) |
+| **Update latency** | T1/T2 interval (60s–600s) | ~50ms first data, ~1s steady state |
+| **Platform** | Cross-platform | **Windows only** (COM/pythoncom) |
+| **Greeks** | Computed via BSM in `gex_calculator.py` | **Native from TOS**: GAMMA, DELTA, OPEN_INT, VOLUME, LAST, MARK, IMPL_VOL |
+| **Role** | Primary source for GEX/wall calculations | Supplementary: real-time price + Greeks validation |
+
+### B. Auto-Detection
+
+The pipeline auto-detects whether TOS desktop is running — no environment variable needed.
+
+```python
+# config.py
+def _is_tos_running() -> bool:
+    """Check if ThinkorSwim desktop is running by looking for thinkorswim.exe process."""
+    # Uses: tasklist /FI "IMAGENAME eq thinkorswim.exe" /NH
+```
+
+| Scenario | `ENABLE_TOS_RTD` | Behavior |
+|---|---|---|
+| TOS desktop running, no env var | `True` | RTD auto-activates |
+| TOS desktop not running, no env var | `False` | Schwab-only mode |
+| `ENABLE_TOS_RTD=0` | `False` | Forced off even if TOS is running |
+| `ENABLE_TOS_RTD=1` | `True` | Forced on (Windows only) |
+| Non-Windows platform | `False` | Always Schwab-only |
+
+### C. Configuration (`config.py`)
+
+```python
+# TOS RTD Configuration
+ENABLE_TOS_RTD: bool = True  # Auto-detected (see above)
+TOS_RTD_HEARTBEAT_MS: int = 500
+TOS_RTD_STRIKE_RANGE: int = 20          # ± strikes from ATM
+TOS_RTD_STRIKE_SPACING: float = 1.0
+TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
+```
+
+### D. Package Structure (`scripts/streaming/options/tos_rtd/`)
+
+| File | Purpose |
+|---|---|
+| `__init__.py` | Windows-only guard, exports `TOSRTDAdapter`, `OptionSymbolBuilder`, `parse_rtd_option_symbol` |
+| `client.py` | `RTDClient` — COM client (subscribe/unsubscribe/refresh via `IRtdServer`) |
+| `worker.py` | `RTDWorker` — background thread with `pythoncom` message pumping |
+| `interfaces.py` | `IRtdServer`, `IRTDUpdateEvent` COM dispatch interface definitions |
+| `symbol_builder.py` | `OptionSymbolBuilder` — futures option symbol construction + `parse_rtd_option_symbol()` reverse parser |
+| `adapter.py` | `TOSRTDAdapter` — bridge to our pipeline, `ChainSnapshot` dataclass |
+| `hybrid_coordinator.py` | `HybridCoordinator` — coordinates Schwab API + TOS RTD, Greeks drift validation |
+| `greeks_drift_monitor.py` | `GreeksDriftMonitor` — compares TOS native gamma vs BSM-computed gamma |
+| `quote.py` | `Quote` dataclass with Treasury futures tick format support (`"109'080"` → 109.25) |
+| `quote_types.py` | `QuoteType` enum (GAMMA, DELTA, OPEN_INT, VOLUME, LAST, MARK, IMPL_VOL, THETA, VEGA, RHO, etc.) |
+| `settings.py` | `RTDSettings` — COM GUIDs, ProgID (`Tos.RTD`), heartbeat, poll intervals |
+| `error_handler.py` | RTD errors, decorators (`handle_com_error`, `validate_connection_state`, `log_method_call`) |
+| `topic.py` | Topic ID generation/lookup (deterministic MD5-based 16-bit IDs) |
+| `cleanup.py` | COM cleanup utilities (`cleanup_com`, `cleanup_topics`) |
+| `live_test.py` | CLI test script (`python -m ...live_test --symbol /ES --duration 15`) |
+| `test_greeks.py` | Option Greeks streaming test script |
+
+### E. Available Quote Types
+
+The `QuoteType` enum defines all TOS RTD quote fields. The pipeline subscribes to these per option symbol:
+
+| QuoteType | Description | Value Type | Our Current Source |
+|---|---|---|---|
+| `GAMMA` | Native gamma from TOS | float | Computed via BSM in `gex_calculator.py` |
+| `DELTA` | Native delta from TOS | float | Computed via BSM |
+| `THETA` | Native theta from TOS | float | Computed via BSM |
+| `VEGA` | Native vega from TOS | float | Computed via BSM |
+| `RHO` | Native rho from TOS | float | Computed via BSM |
+| `IMPL_VOL` | Implied volatility | float (4 decimal) | From Schwab chain JSON |
+| `OPEN_INT` | Open interest | int | From Schwab chain JSON |
+| `VOLUME` | Volume | int | From Schwab chain JSON |
+| `LAST` | Last traded price | float | From Schwab chain JSON |
+| `MARK` | Mark price | float | From Schwab chain JSON |
+| `BID` / `ASK` | Bid/Ask price | float | From Schwab chain JSON |
+| `BID_SIZE` / `ASK_SIZE` | Bid/Ask size | int | From Schwab chain JSON |
+| `STRIKE` | Strike price | float | From Schwab chain JSON |
+| `EXPIRATION` | Expiration date | string | From Schwab chain JSON |
+| `EXCHANGE` | Exchange code | string | From Schwab chain JSON |
+
+### F. Futures Option Symbol Builder
+
+The `OptionSymbolBuilder` handles the complex futures option symbology for TOS RTD:
+
+| Futures | Exchange | Quarterly | Weekly Mon-Thu | Weekly Fri | EOM |
+|---|---|---|---|---|---|
+| `/ES` | XCME | `ESH26` (AM) + `EWH26` (PM) | `E1AH26` | `EWA3N26` | `EWN26` |
+| `/NQ` | XCME | `NQH26` (AM) + `QN3H26` (PM) | `Q1AH26` | `QN3N26` | `QNEN26` |
+| `/ZN` | XCBT | `OZNH26` | `VY1H26` (Mon), `WY1H26` (Wed) | `ZN1H26` | — |
+| `/CL` | XNYM | — | — | — | `CL1Q26` |
+| `/GC` | XCEC | — | — | — | `GC1G26` |
+| `/SI` | XCEC | — | — | — | `SI1G26` |
+| `/RTY` | XCME | — | — | — | `RTY1H26` |
+| `/YM` | XCBT | — | — | — | `YM1H26` |
+
+**Symbol format:** `./{product_code}{C|P}{strike}:{exchange}`
+
+**Examples:**
+- `./NQH25C21000:XCME` — NQ quarterly call, strike 21000
+- `./EWH25P5950:XCME` — ES weekly put, strike 5950
+- `./CL1G25C7500:XNYM` — CL call, strike 7500
+
+**Reverse parser:** `parse_rtd_option_symbol("./NQH25C21000:XCME")` → `OptionContract(product_code="NQH25", option_type="C", strike=21000.0, exchange="XCME", base_symbol="/NQ")`
+
+### G. Hybrid Coordinator
+
+The `HybridCoordinator` class in `hybrid_coordinator.py` coordinates Schwab API and TOS RTD:
+
+| Method | Description |
+|---|---|
+| `start()` | Starts RTD adapter if TOS is running (auto-detects `thinkorswim.exe`) |
+| `stop()` | Clean shutdown (disconnect COM, join thread) |
+| `get_futures_price(symbol, schwab_price)` | RTD first (sub-second), Schwab fallback → `HybridFuturesQuote` |
+| `validate_greeks(dealer_levels, symbol)` | Compares TOS native gamma vs BSM-computed gamma per strike |
+| `get_drift_summary()` | Returns avg/max drift %, high-drift count (>5% threshold) |
+| `get_rtd_snapshot()` | Raw RTD data snapshot dict |
+| `get_status()` | Health status for Discord monitoring |
+
+**Integration in `run_options_levels.py`:**
+- `HybridCoordinator` started at pipeline start, stopped at end
+- Futures price fetch: RTD preferred over Schwab polling
+- Greeks drift validation runs after all tickers processed
+- Logs warning when drift >5% on any contract
+- Discord health alert sent when RTD is enabled
+
+### H. Greeks Drift Monitor
+
+The `GreeksDriftMonitor` in `greeks_drift_monitor.py` validates our BSM model against exchange-quality TOS native Greeks:
+
+$$\text{Drift}_\% = \frac{|\Gamma_{\text{TOS}} - \Gamma_{\text{BSM}}|}{|\Gamma_{\text{TOS}}|} \times 100$$
+
+- **Threshold:** 5% — above this, BSM model assumptions (risk-free rate, dividend yield, DTE) need recalibration
+- **Standalone CLI:** `python -m scripts.streaming.options.tos_rtd.greeks_drift_monitor --symbol /ES --duration 30`
+- **Pipeline integration:** Runs automatically in `run_options_levels.py` when RTD is active
+
+### I. Database Model
+
+```prisma
+model TOSRTDSnapshot {
+  id          String   @id @default(cuid())
+  symbol      String   // RTD symbol, e.g. "./NQH25C21000:XCME" or "/ES:XCME"
+  quoteType   String   // GAMMA, OPEN_INT, VOLUME, LAST, DELTA, IMPL_VOL
+  value       Float
+  source      String   // "tos_rtd"
+  capturedAt  DateTime @default(now())
+
+  @@index([symbol, capturedAt])
+  @@index([capturedAt])
+  @@index([quoteType, capturedAt])
+}
+```
+
+### J. CLI Tools
+
+| Command | Description |
+|---|---|
+| `python -m scripts.streaming.options.tos_rtd.live_test --symbols-only` | Test symbol builder + parser (no TOS needed) |
+| `python -m scripts.streaming.options.tos_rtd.live_test --symbol /ES --duration 15` | Test live RTD connection with TOS desktop |
+| `python -m scripts.streaming.options.tos_rtd.test_greeks` | Test option Greeks streaming (two-phase: price then Greeks) |
+| `python -m scripts.streaming.options.tos_rtd.greeks_drift_monitor --symbol /ES --duration 30` | Standalone Greeks drift monitor |
+
+### K. Dependencies
+
+```
+comtypes>=1.4.8    # Windows COM interface library (already in .venv)
+pywin32>=306       # Windows COM support (pythoncom)
+```
+
+Both are Windows-only and guarded by `sys.platform == 'win32'`. On Linux, the `tos_rtd/` package raises `ImportError` on import and the pipeline runs in Schwab-only mode.
+
+### L. Prisma Generate Fix
+
+The `prisma-client-py` provider in `schema.prisma` requires a wrapper script to bridge the Node.js Prisma CLI to the Python generator:
+
+- `web/prisma-client-py.cmd` (Windows) and `web/prisma-client-py` (Unix) — wrapper scripts
+- `web/package.json` `postinstall` script auto-copies wrappers to `node_modules/.bin/`
+- Schema `py_client` generator has explicit `output = "../../.venv/Lib/site-packages/prisma"` to generate into venv
+- After `npm install` in `web/`, run `npx prisma generate` — both JS + Python clients generate correctly
 
 ---
 
