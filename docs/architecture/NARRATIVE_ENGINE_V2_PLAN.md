@@ -1,8 +1,11 @@
 # Trader Narrative Engine v2 — Unified Architecture Plan
 
-> **Status:** DRAFT — brainstorming & gap analysis  
+> **Status:** PHASE B+C COMPLETE — config + 9 signal modules built, tested, committed  
 > **Date:** 2026-07-08  
-> **Goal:** Re-verify all stats, take a step back, and create a clear plan for the trader narrative that integrates ALL existing work (NQStats, Herman Liquidity/Sweep, Options/GEX, ICT, Profiler, Daily Classification, ML bias, RTH Breaks).
+> **Author:** Vinay Veerappa  
+> **Goal:** Integrate ALL existing work (NQStats, Herman, Options/GEX, ICT, Profiler, Classification, RTH Breaks, Candle Science) into a unified trader narrative.  
+> **Build plan:** `docs/architecture/NARRATIVE_ENGINE_V2_BUILD_PLAN.md`  
+> **Committed:** `83388e21` on main
 
 ---
 
@@ -1590,3 +1593,96 @@ Or: price below put wall (29,500) at 10:00
 | 14 | No bias invalidation | Medium | Add explicit "bias is wrong if..." |
 | 15 | VVIX graduated response missing | High | ✅ Added 6-tier graduated model (quiet → crisis) with sizing/stops per tier |
 | 16 | Candle Science MFE/MAE not reported | High | ✅ Added 30/50/70 percentile reporting for target & drawdown estimation |
+
+---
+
+## 11. Handover — Current State & Next Steps
+
+### What's Done (committed `83388e21`)
+
+| Component | File | Status |
+|-----------|------|--------|
+| Design doc | `docs/architecture/NARRATIVE_ENGINE_V2_PLAN.md` | ✅ This document |
+| Build plan | `docs/architecture/NARRATIVE_ENGINE_V2_BUILD_PLAN.md` | ✅ Script verification + phases |
+| Config YAML | `scripts/trader/config/narrative_stats.yaml` | ✅ 26 sections, v2.0 |
+| Config loader | `scripts/trader/config_loader.py` | ✅ Cached, schema-validated |
+| Staleness guard | `scripts/trader/data_freshness.py` | ✅ Detects stale Herman/classification/EM |
+| VIX+VVIX signal | `scripts/trader/signals/volatility.py` | ✅ 6-tier graduated regime, ROC, divergence |
+| EM completeness | `scripts/trader/signals/expected_move.py` | ✅ Handles empty EM gracefully |
+| GEX regime change | `scripts/trader/signals/gex_regime.py` | ✅ Daily snapshot archive + comparison |
+| ICT context (HTF) | `scripts/trader/signals/ict_context.py` | ✅ PDH/PDL/midnight/weekly from 1d/1W parquet |
+| ICT liquidity map | `scripts/trader/signals/liquidity_map.py` | ✅ Raid target based on bias + news tier |
+| Weekly profile | `scripts/trader/signals/weekly_profile.py` | ✅ HOW/LOW timing → profile classification |
+| Day type classifier | `scripts/trader/signals/day_type.py` | ✅ CPI/NFP/FOMC/SPECIAL/HOLIDAY + killzones |
+| Candle Science | `scripts/trader/signals/candle_science.py` | ✅ Auto-detect from 1d, MFE/MAE percentiles |
+| Confluence | `scripts/trader/signals/confluence.py` | ✅ 3-signal model → HIGH/MEDIUM/LOW → sizing |
+
+### What's Left
+
+| Phase | Task | Effort | Dependencies |
+|-------|------|--------|--------------|
+| **A1-A3** | Re-run stale batch jobs (Herman + classification + EM) | 1h | None |
+| **D** | Wire 9 signal modules into `build_trader_cheat_sheet()` — 12-block assembly with graceful degradation | 3h | A1-A3 (for fresh data) |
+| **E** | Update `trader_morning.md` prompt with confluence + ICT + day-type rules | 1h | D |
+| **F** | Bias grade feedback loop (`bias_grades.jsonl` + close mode grading) | 2h | E |
+| **G** | Integration + scheduling + Discord routing + end-to-end test | 3h | D, E, F |
+| **v1.5** | Intraday mode (`trader_intraday.md` + `build_intraday_context()`) | 1 day | D, E |
+| **v1.5** | Close mode (`trader_close.md` + `build_eod_context()`) | 1 day | D, E, F |
+| **v3** | News actuals tracking + surprise → reaction model | TBD | F |
+
+### Known Issues (blocking)
+
+| Issue | Impact | Fix |
+|-------|--------|-----|
+| Herman stats parquet STALE (last date 2026-01-23) | No Pre-NY sweep data for recent months | Re-run `precompute_herman_stats.py` |
+| Classification parquet STALE (same date) | No daily classification context | Re-run classification batch |
+| Expected moves JSON EMPTY | EM block returns "unavailable" | Check options pipeline is running |
+| Candle Science auto-detect returns broad match (n=6515) | MFE/MAE percentiles not populated | Build finer auto-detect filters (16 dimensions, not just C1/C2 direction) |
+| NQStatsEngine session times may not match updated spec | Asia 18:00 vs 20:00, London 03:00 vs 02:00 | Verify `scripts/libs_py/nqstats/sessions.py` |
+
+### How to Resume
+
+1. **Fresh data first**: Run `python -m scripts.derived.precompute_herman_stats --ticker NQ1` and the classification batch to update parquets
+2. **Verify staleness**: `python -c "from scripts.trader.data_freshness import check_all; [print(c.source, c.is_stale) for c in check_all()]"`
+3. **Test individual signals**: Each signal module can be tested in isolation — see test commands in the build plan
+4. **Assemble cheat sheet**: Wire the 9 `format_*_block()` functions into `build_trader_cheat_sheet()` in `briefing_core.py`
+5. **Update prompt**: Add confluence rules, ICT liquidity rules, day-type rules to `trader_morning.md`
+6. **Test end-to-end**: `python -m scripts.trader.trader_narrative --mode open --no-discord`
+
+### Architecture Summary
+
+```
+scripts/trader/
+├── config/
+│   └── narrative_stats.yaml      # All static probabilities (26 sections)
+├── config_loader.py              # Cached YAML loader with schema validation
+├── data_freshness.py             # Staleness guard for Tier 1 data
+├── signals/
+│   ├── __init__.py
+│   ├── volatility.py             # C1: VIX+VVIX regime + divergence
+│   ├── expected_move.py          # C2: EM position + interpretation
+│   ├── gex_regime.py             # C3: GEX regime change detection
+│   ├── ict_context.py            # C4: ICT levels from 1d/1W parquet
+│   ├── liquidity_map.py          # C5: ICT raid target identification
+│   ├── weekly_profile.py         # C6: ICT weekly profile classification
+│   ├── day_type.py               # C7: CPI/NFP/FOMC + killzones
+│   ├── candle_science.py         # C8: C1→C2→C3 + MFE/MAE
+│   └── confluence.py             # C9: 3-signal confluence → sizing
+├── briefing_core.py              # (existing) — Phase D wires signals here
+├── prompts/
+│   ├── trader_morning.md         # (existing) — Phase E updates this
+│   ├── daily_open_update.md      # (existing, ALN+RTH rules added)
+│   └── daily_eod_update.md       # (existing, ALN+RTH rules added)
+└── trader_narrative.py           # (existing) — main entry point
+```
+
+### Key Design Decisions (for future reference)
+
+1. **Confluence model, not hierarchy** — 3 independent signals (overnight, RTH open, daily chart) determine direction. Context (GEX, ICT, VIX, calendar) adjusts execution only.
+2. **Two-tier data access** — Tier 1 (precomputed parquet/CSV, read-only) + Tier 2 (live compute from 1m/1d parquet). Narrative never recomputes Tier 1.
+3. **Config-driven probabilities** — All static stats in YAML. Update probabilities without code changes.
+4. **Graduated VIX/VVIX** — 6-tier response (quiet → crisis) with sizing/stops per tier. No VVIX/VIX ratio (non-stationary).
+5. **Candle Science: no sample filter** — n=12 is normal on daily. Report MFE/MAE percentiles for target/drawdown estimation.
+6. **ICT liquidity raid** — Bias determines raid target (bullish → lows raided, bearish → highs raided). Entry is AFTER the raid, not before.
+7. **ML dropped from v2** — Redundant with explicit rule-based signals. Revisit if rules underperform.
+8. **Graceful degradation** — Each cheat sheet block wrapped in try/except. Failed blocks skipped, not fatal.
