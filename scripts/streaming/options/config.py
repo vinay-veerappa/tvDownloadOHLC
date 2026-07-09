@@ -523,6 +523,14 @@ TOS_RTD_SYMBOL_CONFIG: dict[str, dict] = {
 # When False, RTD provides only real-time price + Greeks drift validation.
 TOS_RTD_GEX_AS_PRIMARY: bool = os.environ.get("TOS_RTD_GEX_AS_PRIMARY", "1").lower() in {"1", "true", "yes"}
 
+# ── Debug flags — control logging verbosity ───────────────────────
+# Set via env vars: PIPELINE_DEBUG=1, PIPELINE_DEBUG_EM=1, etc.
+# All default to False (minimal production logging).
+PIPELINE_DEBUG: bool = os.environ.get("PIPELINE_DEBUG", "0").lower() in {"1", "true", "yes"}
+PIPELINE_DEBUG_EM: bool = os.environ.get("PIPELINE_DEBUG_EM", "0").lower() in {"1", "true", "yes"}
+PIPELINE_DEBUG_TICKER: bool = os.environ.get("PIPELINE_DEBUG_TICKER", "0").lower() in {"1", "true", "yes"}
+PIPELINE_DEBUG_RTD: bool = os.environ.get("PIPELINE_DEBUG_RTD", "0").lower() in {"1", "true", "yes"}
+
 # Near-duplicate suppression in scored export (price units).
 DEFAULT_NEAR_DUPLICATE_TOLERANCE: float = float(os.environ.get("DEFAULT_NEAR_DUPLICATE_TOLERANCE", "0.0"))
 NEAR_DUPLICATE_TOLERANCE_BY_TICKER: dict[str, float] = {

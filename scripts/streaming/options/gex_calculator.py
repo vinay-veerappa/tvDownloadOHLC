@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
-from .config import CONTRACT_MULTIPLIER, MIN_OI_THRESHOLD
+from .config import CONTRACT_MULTIPLIER, MIN_OI_THRESHOLD, PIPELINE_DEBUG_EM
 from .options_fetcher import OptionChainData, OptionContract
 
 log = logging.getLogger(__name__)
@@ -1052,22 +1052,20 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
 
     # ── DEBUG: log every expiry the chain has so we can diagnose coverage ──
     all_expiries = sorted(by_expiry.keys())
-    log.info(
-        "[EM-DEBUG] %s | spot=%.2f | %d unique expiries in chain: %s",
-        chain.ticker,
-        spot,
-        len(all_expiries),
-        ", ".join(str(e) for e in all_expiries),
-    )
+    if PIPELINE_DEBUG_EM:
+        log.info(
+            "[EM-DEBUG] %s | spot=%.2f | %d unique expiries in chain: %s",
+            chain.ticker, spot, len(all_expiries),
+            ", ".join(str(e) for e in all_expiries),
+        )
     
     for expiry, (calls, puts) in sorted(by_expiry.items()):
         dte = (expiry - now_ny.date()).days
 
         if not calls or not puts:
-            log.info(
-                "[EM-DEBUG] %s | %s (DTE=%d) — SKIP: calls=%d puts=%d",
-                chain.ticker, expiry, dte, len(calls), len(puts),
-            )
+            if PIPELINE_DEBUG_EM:
+                log.info("[EM-DEBUG] %s | %s (DTE=%d) — SKIP: calls=%d puts=%d",
+                    chain.ticker, expiry, dte, len(calls), len(puts))
             continue
 
         # Get ATM call/put for diagnostics before calling _expected_move
@@ -1081,39 +1079,31 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
         move, straddle = _expected_move(calls, puts, spot, dte=dte, is_futures=is_futures, ticker=chain.ticker)
 
         # Sanity check: if straddle > 20% of spot, the bid/ask data is garbage
-        # (e.g. RTD last-price proxy outside RTH). Fall back to TOS formula.
         if move > 0 and straddle > spot * 0.20:
-            log.info(
-                "[EM-DEBUG] %s | %s (DTE=%d) — straddle %.2f > 20%% of spot (%.2f), falling back to TOS",
-                chain.ticker, expiry, dte, straddle, spot,
-            )
+            if PIPELINE_DEBUG_EM:
+                log.info("[EM-DEBUG] %s | %s (DTE=%d) — straddle %.2f > 20%% of spot, falling back to TOS",
+                    chain.ticker, expiry, dte, straddle)
             move = 0.0  # force fallback below
 
-        # Fallback: if straddle-based EM fails (no bid/ask, e.g. RTD outside RTH),
-        # use the TOS volatility-based formula with ATM blended IV
+        # Fallback: TOS volatility-based formula
         if move <= 0 and blended_iv > 0:
             tos_move = calculate_tos_expected_move(spot, expiry.isoformat(), blended_iv * 100, is_futures=is_futures)
             if tos_move > 0:
-                log.info(
-                    "[EM-DEBUG] %s | %s (DTE=%d) — TOS fallback: ±%.2f | blended_iv=%.4f",
-                    chain.ticker, expiry, dte, tos_move, blended_iv,
-                )
+                if PIPELINE_DEBUG_EM:
+                    log.info("[EM-DEBUG] %s | %s (DTE=%d) — TOS fallback: ±%.2f | blended_iv=%.4f",
+                        chain.ticker, expiry, dte, tos_move, blended_iv)
                 move = tos_move
-                straddle = tos_move / 1.10  # approximate straddle from EM/k
+                straddle = tos_move / 1.10
 
         if move <= 0:
-            log.info(
-                "[EM-DEBUG] %s | %s (DTE=%d) — SKIP: move=0 | ATM call_iv=%.4f put_iv=%.4f blended=%.4f straddle=%.2f",
-                chain.ticker, expiry, dte,
-                atm_call_iv, atm_put_iv, blended_iv, straddle,
-            )
+            if PIPELINE_DEBUG_EM:
+                log.info("[EM-DEBUG] %s | %s (DTE=%d) — SKIP: move=0 | blended_iv=%.4f straddle=%.2f",
+                    chain.ticker, expiry, dte, blended_iv, straddle)
             continue
 
-        log.info(
-            "[EM-DEBUG] %s | %s (DTE=%d) — OK: ±%.2f | ATM blended_iv=%.4f (%.2f%%) straddle=%.2f",
-            chain.ticker, expiry, dte,
-            move, blended_iv, blended_iv * 100, straddle,
-        )
+        if PIPELINE_DEBUG_EM:
+            log.info("[EM-DEBUG] %s | %s (DTE=%d) — OK: ±%.2f | blended_iv=%.4f straddle=%.2f",
+                chain.ticker, expiry, dte, move, blended_iv, straddle)
             
         ems.append(ExpectedMove(
             expiry=expiry.isoformat(),
@@ -1126,12 +1116,10 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
             straddle_85_lower=round(spot - straddle * 0.85, 2)
         ))
 
-    log.info(
-        "[EM-DEBUG] %s | %d EMs emitted: %s",
-        chain.ticker,
-        len(ems),
-        ", ".join(f"{e.expiry}(±{e.em_value})" for e in ems),
-    )
+    if PIPELINE_DEBUG_EM:
+        log.info("[EM-DEBUG] %s | %d EMs emitted: %s",
+            chain.ticker, len(ems),
+            ", ".join(f"{e.expiry}(±{e.em_value})" for e in ems))
     return ems
 
 

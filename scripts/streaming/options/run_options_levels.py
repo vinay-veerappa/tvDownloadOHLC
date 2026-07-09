@@ -163,16 +163,20 @@ def _setup_logging() -> None:
     global _logging_configured
     if _logging_configured:
         return
+    from .config import PIPELINE_DEBUG
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        level=logging.DEBUG if PIPELINE_DEBUG else logging.INFO,
+        format="%(asctime)s  %(levelname)-5s  %(message)s" if not PIPELINE_DEBUG else "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
+        datefmt="%H:%M:%S",
         handlers=[
             logging.StreamHandler(sys.stdout),
             logging.FileHandler(LOG_FILE, encoding="utf-8"),
         ],
     )
+    # Suppress noisy third-party loggers
+    for noisy in ("httpx", "httpcore", "urllib3", "apscheduler"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     _logging_configured = True
 
 
@@ -412,7 +416,8 @@ def run_pipeline(
     for ticker in target_tickers:
         futures_sym = INDEX_TO_FUTURES.get(ticker)
         mapping_str = f"-> {futures_sym}" if futures_sym else "(Cash only)"
-        log.info("--- Processing: %s %s ---", ticker, mapping_str)
+        if PIPELINE_DEBUG_TICKER:
+            log.info("--- Processing: %s %s ---", ticker, mapping_str)
 
         try:
             # 1. Fetch macro-scale option chain (covers near-term density + macro targets)
@@ -519,32 +524,31 @@ def run_pipeline(
                 if not reset_anchors and ticker_anchor:
                     anchor_basis = ticker_anchor.get("basis")
                     anchor_ratio = ticker_anchor.get("ratio")
-                    log.info("Using Persistent Basis for %s: %.2f (Ratio: %.4f)", 
-                             ticker, anchor_basis, anchor_ratio)
+                    if PIPELINE_DEBUG_TICKER:
+                        log.info("Using Persistent Basis for %s: %.2f (Ratio: %.4f)", 
+                                 ticker, anchor_basis, anchor_ratio)
                 else:
-                    # Attempt to capture new anchor
-                    # Prefer open prices (Open Price Hack)
                     spot_open = full_chain.spot_open
                     fut_open = fut.open_price
                     
                     if spot_open and fut_open:
                         anchor_basis = fut_open - spot_open
                         anchor_ratio = fut_open / spot_open if spot_open else 1.0
-                        log.info("Captured NEW Opening Basis for %s: %.2f (Ratio: %.4f) [Source: Open Prices]", 
-                                 ticker, anchor_basis, anchor_ratio)
+                        if PIPELINE_DEBUG_TICKER:
+                            log.info("Captured NEW Opening Basis for %s: %.2f (Ratio: %.4f) [Source: Open Prices]", 
+                                     ticker, anchor_basis, anchor_ratio)
                         all_anchors[ticker] = {"basis": anchor_basis, "ratio": anchor_ratio}
                         new_anchors_captured = True
                     elif ticker_anchor:
-                        # Fallback to existing if open prices missing
                         anchor_basis = ticker_anchor.get("basis")
                         anchor_ratio = ticker_anchor.get("ratio")
                         log.warning("Could not capture new open prices for %s. Retaining existing anchor.", ticker)
                     else:
-                        # Final fallback: use current prices as the anchor if no open price yet
                         anchor_basis = fut.price - full_chain.spot_price
                         anchor_ratio = fut.price / full_chain.spot_price if full_chain.spot_price else 1.0
-                        log.info("Captured NEW Basis for %s: %.2f (Ratio: %.4f) [Source: Current Prices]", 
-                                 ticker, anchor_basis, anchor_ratio)
+                        if PIPELINE_DEBUG_TICKER:
+                            log.info("Captured NEW Basis for %s: %.2f (Ratio: %.4f) [Source: Current Prices]", 
+                                     ticker, anchor_basis, anchor_ratio)
                         all_anchors[ticker] = {"basis": anchor_basis, "ratio": anchor_ratio}
                         new_anchors_captured = True
 
@@ -566,7 +570,8 @@ def run_pipeline(
             profile = get_ticker_profile(ticker)
 
             # 4. Calculate Dealer Levels for both timeframes
-            log.info("Calculating [%s] and [MACRO] levels structure...", ticker)
+            if PIPELINE_DEBUG_TICKER:
+                log.info("Calculating [%s] and [MACRO] levels structure...", ticker)
             levels_intraday = calculate_dealer_levels(
                 intraday_chain,
                 source_ticker,
@@ -683,11 +688,12 @@ def run_pipeline(
 
                         # Compare RTD vs Schwab-translated
                         comparison_table = rtd_coord.compare_gex(rtd_gex_result, tl_intraday)
-                        log.info("\n%s", comparison_table.encode('ascii', 'replace').decode('ascii'))
+                        if PIPELINE_DEBUG_RTD:
+                            log.info("\n%s", comparison_table.encode('ascii', 'replace').decode('ascii'))
 
                         if TOS_RTD_GEX_AS_PRIMARY:
-                            # Use RTD levels as primary — replace Schwab-translated
-                            log.info("Using RTD GEX as PRIMARY for %s (TOS_RTD_GEX_AS_PRIMARY=True)", futures_sym)
+                            if PIPELINE_DEBUG_RTD:
+                                log.info("Using RTD GEX as PRIMARY for %s (TOS_RTD_GEX_AS_PRIMARY=True)", futures_sym)
                             # Tag the RTD dealer levels with futures metadata
                             rtd_dl.futures_symbol = futures_sym
                             rtd_dl.translation_mode = "rtd_direct"

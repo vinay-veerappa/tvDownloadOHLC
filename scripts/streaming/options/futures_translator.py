@@ -172,16 +172,14 @@ def translate_to_futures(
     #
     # Threshold: if the ratio deviates from 1.0 by more than 2%, use multiplicative.
     use_scale = abs(ratio - 1.0) > 0.02
-    log.info(
-        "%s %s vs %s: %+.2f  (futures=%.2f  cash=%.2f  ratio=%.4f)",
-        "Scale" if use_scale else "Basis",
-        futures.symbol,
-        levels.ticker,
-        spread,
-        futures.price,
-        levels.spot,
-        ratio,
-    )
+    from .config import PIPELINE_DEBUG_TICKER
+    if PIPELINE_DEBUG_TICKER:
+        log.info(
+            "%s %s vs %s: %+.2f  (futures=%.2f  cash=%.2f  ratio=%.4f)",
+            "Scale" if use_scale else "Basis",
+            futures.symbol, levels.ticker, spread,
+            futures.price, levels.spot, ratio,
+        )
 
     min_tick = get_min_tick(futures.symbol)
 
