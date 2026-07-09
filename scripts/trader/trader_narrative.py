@@ -30,6 +30,8 @@ if hasattr(sys.stdout, "reconfigure"):
 from scripts.trader.briefing_core import (
     REPO_ROOT,
     build_trader_cheat_sheet,
+    build_intraday_context,
+    build_eod_context,
     get_dataloader,
 )
 
@@ -182,11 +184,16 @@ def run_narrative(
     """
     log.info("Building trader cheat sheet (mode: %s)...", mode)
     loader = get_dataloader(lookback_days=5)
-    cheat_sheet = build_trader_cheat_sheet(
-        mode=mode,
-        loader=loader,
-        target_date=target_date,
-    )
+    if mode == "intraday":
+        cheat_sheet = build_intraday_context(loader=loader)
+    elif mode == "close":
+        cheat_sheet = build_eod_context(loader=loader)
+    else:
+        cheat_sheet = build_trader_cheat_sheet(
+            mode=mode,
+            loader=loader,
+            target_date=target_date,
+        )
     log.info("✓ Cheat sheet assembled (%d chars)", len(cheat_sheet))
 
     prompt_template = load_prompt_template(mode)
@@ -231,10 +238,6 @@ def main():
         help="Skip Discord output",
     )
     args = parser.parse_args()
-
-    if args.mode != "open":
-        log.error("Mode '%s' not yet implemented in v1. Use --mode open.", args.mode)
-        sys.exit(1)
 
     target_date = None
     if args.date:

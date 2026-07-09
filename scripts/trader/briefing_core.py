@@ -2736,6 +2736,304 @@ def build_trader_cheat_sheet(
     return "\n\n".join(sections)
 
 
+def build_intraday_context(
+    loader: DataLoader | None = None,
+    nq_ticker: str = "NQ1",
+    es_ticker: str = "ES1",
+) -> str:
+    """Build the intraday cheat sheet for the 12:00 ET update.
+
+    Focuses on: morning bias vs actual, IB status, noon curve, level interactions,
+    calendar update, and what changed from the morning narrative.
+    """
+    if loader is None:
+        loader = get_dataloader(lookback_days=2)
+
+    sections: list[str] = []
+
+    # ── Morning bias (from latest open narrative) ──
+    morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
+    if morning_narrative_path.exists():
+        morning_text = morning_narrative_path.read_text(encoding="utf-8")
+        # Extract first 500 chars as summary
+        morning_summary = morning_text[:500] + "..." if len(morning_text) > 500 else morning_text
+        sections.append("== MORNING BIAS ==\n" + morning_summary)
+    else:
+        sections.append("== MORNING BIAS ==\nNo morning narrative available.")
+
+    # ── Current price (from 1m parquet) ──
+    try:
+        from scripts.utils.fused_data_loader import load_fused_data
+        df_nq = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
+        df_es = load_fused_data(es_ticker, timeframe="1m", require_historical=False)
+
+        nq_current = float(df_nq["close"].iloc[-1]) if df_nq is not None and not df_nq.empty else 0
+        es_current = float(df_es["close"].iloc[-1]) if df_es is not None and not df_es.empty else 0
+
+        # RTH open (09:30 bar)
+        if df_nq is not None and df_nq.index.tz is None:
+            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert("US/Eastern")
+        if df_es is not None and df_es.index.tz is None:
+            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert("US/Eastern")
+        nq_open = 0.0
+        es_open = 0.0
+        today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
+        if df_nq is not None:
+            today_open_nq = df_nq[df_nq.index >= today_930]
+            if not today_open_nq.empty:
+                nq_open = float(today_open_nq["open"].iloc[0])
+        if df_es is not None:
+            today_open_es = df_es[df_es.index >= today_930]
+            if not today_open_es.empty:
+                es_open = float(today_open_es["open"].iloc[0])
+
+        nq_chg = ((nq_current / nq_open - 1) * 100) if nq_open > 0 else 0
+        es_chg = ((es_current / es_open - 1) * 100) if es_open > 0 else 0
+
+        lines = ["== CURRENT PRICE =="]
+        lines.append(f"NQ: {nq_current:,.2f} ({nq_chg:+.2f}% from open) | ES: {es_current:,.2f} ({es_chg:+.2f}% from open)")
+        sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[intraday] Price fetch failed: %s", e)
+        sections.append("== CURRENT PRICE ==\nPrice data unavailable")
+
+    # ── IB Status ──
+    try:
+        from scripts.libs_py.nqstats.engine import NQStatsEngine
+        if df_nq is not None and not df_nq.empty:
+            _cutoff = pd.Timestamp.now() - pd.Timedelta(days=2)
+            df_recent = df_nq[df_nq.index >= _cutoff]
+            engine = NQStatsEngine(df_recent, ticker=nq_ticker)
+            engine.process()
+            status = engine.get_latest_status()
+
+            ib_high = status.get("ib_high")
+            ib_low = status.get("ib_low")
+            ib_mid = (ib_high + ib_low) / 2 if ib_high and ib_low else None
+            ib_broken_high = nq_current > ib_high if ib_high and nq_current else None
+            ib_broken_low = nq_current < ib_low if ib_low and nq_current else None
+
+            lines = ["== IB STATUS =="]
+            if ib_high and ib_low:
+                lines.append(f"IB High: {ib_high:,.2f} | IB Low: {ib_low:,.2f} | Mid: {ib_mid:,.2f}" if ib_mid else "")
+                if ib_broken_high:
+                    lines.append("IB High BROKEN — bullish intraday")
+                elif ib_broken_low:
+                    lines.append("IB Low BROKEN — bearish intraday")
+                else:
+                    lines.append("IB intact — 82.5% break before noon, expect afternoon break")
+                if ib_mid and nq_current > ib_mid:
+                    lines.append("Price in upper half → 82% chance high breaks first")
+                elif ib_mid:
+                    lines.append("Price in lower half → watch for low break")
+            sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[intraday] IB status failed: %s", e)
+
+    # ── Noon Curve ──
+    try:
+        if df_nq is not None and not df_nq.empty:
+            today_rth = df_nq[(df_nq.index >= pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30))]
+            if not today_rth.empty:
+                am_high = float(today_rth["high"].max())
+                am_low = float(today_rth["low"].min())
+                am_high_time = today_rth["high"].idxmax()
+                am_low_time = today_rth["low"].idxmin()
+
+                lines = ["== NOON CURVE =="]
+                lines.append(f"AM High: {am_high:,.2f} at {am_high_time.strftime('%H:%M') if hasattr(am_high_time, 'strftime') else '?'}")
+                lines.append(f"AM Low: {am_low:,.2f} at {am_low_time.strftime('%H:%M') if hasattr(am_low_time, 'strftime') else '?'}")
+                lines.append("72.8% chance opposite side taken in PM")
+                sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[intraday] Noon curve failed: %s", e)
+
+    # ── Level interactions ──
+    try:
+        unified = load_macro_levels(session="open")
+        nq_unified = unified.get("QQQ") or {}
+        nq_gex = _extract_gex_levels(nq_unified, "QQQ")
+        lines = ["== LEVEL INTERACTIONS =="]
+        if nq_gex:
+            cw = nq_gex.get("call_wall")
+            pw = nq_gex.get("put_wall")
+            flip = nq_gex.get("flip") or nq_gex.get("zero_gamma")
+            if cw and nq_current > cw:
+                lines.append(f"Call Wall ({cw:,.2f}) BROKEN — bullish")
+            elif cw:
+                lines.append(f"Call Wall ({cw:,.2f}) overhead — untested")
+            if pw and nq_current < pw:
+                lines.append(f"Put Wall ({pw:,.2f}) BROKEN — bearish")
+            elif pw:
+                lines.append(f"Put Wall ({pw:,.2f}) below — holding")
+            if flip:
+                lines.append(f"Gamma Flip: {flip:,.2f} — {'above' if nq_current > flip else 'below'} ({'negative' if nq_current > flip else 'positive'} gamma)")
+        sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[intraday] Level interactions failed: %s", e)
+
+    # ── Calendar update ──
+    try:
+        events = asyncio.run(fetch_week_events(datetime.now(ET).date(), datetime.now(ET).date()))
+        upcoming = [e for e in events if not e.get("passed", False)]
+        passed = [e for e in events if e.get("passed", False)]
+        lines = ["== CALENDAR UPDATE =="]
+        if passed:
+            lines.append("Passed: " + ", ".join(f"{e.get('time_et','?')} {e.get('name','?')}" for e in passed))
+        if upcoming:
+            lines.append("Upcoming: " + ", ".join(f"{e.get('time_et','?')} {e.get('name','?')} [{e.get('impact','?')}]" for e in upcoming))
+        else:
+            lines.append("No more events today.")
+        sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[intraday] Calendar failed: %s", e)
+
+    return "\n\n".join(sections)
+
+
+def build_eod_context(
+    loader: DataLoader | None = None,
+    nq_ticker: str = "NQ1",
+    es_ticker: str = "ES1",
+) -> str:
+    """Build the EOD cheat sheet for the 16:05 ET close review.
+
+    Focuses on: session summary, morning bias grade, level outcomes,
+    ALN outcome, tomorrow's calendar and setup.
+    """
+    if loader is None:
+        loader = get_dataloader(lookback_days=2)
+
+    sections: list[str] = []
+
+    # ── Morning bias (from latest open narrative) ──
+    morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
+    if morning_narrative_path.exists():
+        morning_text = morning_narrative_path.read_text(encoding="utf-8")
+        morning_summary = morning_text[:400] + "..." if len(morning_text) > 400 else morning_text
+        sections.append("== MORNING BIAS ==\n" + morning_summary)
+    else:
+        sections.append("== MORNING BIAS ==\nNo morning narrative available.")
+
+    # ── Today's session (from 1m parquet) ──
+    try:
+        from scripts.utils.fused_data_loader import load_fused_data
+        df_nq = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
+        df_es = load_fused_data(es_ticker, timeframe="1m", require_historical=False)
+
+        if df_nq is not None and df_nq.index.tz is None:
+            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert("US/Eastern")
+        if df_es is not None and df_es.index.tz is None:
+            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert("US/Eastern")
+
+        today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
+        today_1600 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=16, minutes=0)
+
+        lines = ["== TODAY'S SESSION =="]
+        for label, df in [("NQ", df_nq), ("ES", df_es)]:
+            if df is None or df.empty:
+                lines.append(f"{label}: No data")
+                continue
+            rth = df[(df.index >= today_930) & (df.index <= today_1600)]
+            if rth.empty:
+                lines.append(f"{label}: No RTH data")
+                continue
+            rth_open = float(rth["open"].iloc[0])
+            rth_close = float(rth["close"].iloc[-1])
+            rth_high = float(rth["high"].max())
+            rth_low = float(rth["low"].min())
+            chg = (rth_close / rth_open - 1) * 100
+            body = abs(rth_close - rth_open)
+            lines.append(f"{label}: Open {rth_open:,.2f} → Close {rth_close:,.2f} ({chg:+.2f}%) | H: {rth_high:,.2f} L: {rth_low:,.2f} | Body: {body:,.2f}")
+        sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[eod] Session data failed: %s", e)
+        sections.append("== TODAY'S SESSION ==\nSession data unavailable")
+
+    # ── Level outcomes ──
+    try:
+        unified = load_macro_levels(session="open")
+        nq_unified = unified.get("QQQ") or {}
+        nq_gex = _extract_gex_levels(nq_unified, "QQQ")
+        nq_close = 0.0
+        if df_nq is not None and not df_nq.empty:
+            rth = df_nq[(df_nq.index >= today_930) & (df_nq.index <= today_1600)]
+            if not rth.empty:
+                nq_close = float(rth["close"].iloc[-1])
+
+        lines = ["== LEVEL OUTCOMES =="]
+        if nq_gex and nq_close > 0:
+            cw = nq_gex.get("call_wall")
+            pw = nq_gex.get("put_wall")
+            flip = nq_gex.get("flip") or nq_gex.get("zero_gamma")
+            if cw:
+                lines.append(f"Call Wall ({cw:,.2f}): {'BROKEN' if nq_close > cw else 'HELD'} (close {nq_close:,.2f})")
+            if pw:
+                lines.append(f"Put Wall ({pw:,.2f}): {'BROKEN' if nq_close < pw else 'HELD'} (close {nq_close:,.2f})")
+            if flip:
+                lines.append(f"Gamma Flip ({flip:,.2f}): {'above' if nq_close > flip else 'below'} at close")
+        sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[eod] Level outcomes failed: %s", e)
+
+    # ── ALN outcome ──
+    try:
+        from scripts.libs_py.nqstats.engine import NQStatsEngine
+        if df_nq is not None and not df_nq.empty:
+            _cutoff = pd.Timestamp.now() - pd.Timedelta(days=2)
+            df_recent = df_nq[df_nq.index >= _cutoff]
+            engine = NQStatsEngine(df_recent, ticker=nq_ticker)
+            engine.process()
+            status = engine.get_latest_status()
+            aln = status.get("aln", "N/A")
+            broken = status.get("broken", "N/A")
+            lines = ["== ALN OUTCOME =="]
+            lines.append(f"Pattern: {aln} | Broken: {broken}")
+            lh = status.get("london_high")
+            ll = status.get("london_low")
+            if lh and ll and nq_close > 0:
+                if nq_close > lh:
+                    lines.append(f"NY broke London High ({lh:,.2f}) — bullish resolution")
+                elif nq_close < ll:
+                    lines.append(f"NY broke London Low ({ll:,.2f}) — bearish resolution")
+                else:
+                    lines.append(f"NY stayed within London range ({ll:,.2f}-{lh:,.2f}) — range day")
+            sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[eod] ALN outcome failed: %s", e)
+
+    # ── Tomorrow's calendar ──
+    try:
+        tomorrow = datetime.now(ET).date() + timedelta(days=1)
+        events = asyncio.run(fetch_week_events(tomorrow, tomorrow))
+        lines = ["== TOMORROW'S CALENDAR =="]
+        if events:
+            for e in events:
+                lines.append(f"{e.get('time_et','?')} [{e.get('impact','?')}] {e.get('name','?')}")
+        else:
+            lines.append("No events scheduled.")
+        sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[eod] Tomorrow calendar failed: %s", e)
+
+    # ── Tomorrow's setup ──
+    try:
+        if df_nq is not None and not df_nq.empty:
+            rth = df_nq[(df_nq.index >= today_930) & (df_nq.index <= today_1600)]
+            if not rth.empty:
+                prth_high = float(rth["high"].max())
+                prth_low = float(rth["low"].min())
+                prth_close = float(rth["close"].iloc[-1])
+                lines = ["== TOMORROW'S SETUP =="]
+                lines.append(f"pRTH High: {prth_high:,.2f} | pRTH Low: {prth_low:,.2f} | Close: {prth_close:,.2f}")
+                lines.append(f"Overnight open vs pRTH will determine Gap Up/Down/Inside scenario")
+                sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[eod] Tomorrow setup failed: %s", e)
+
+    return "\n\n".join(sections)
+
+
 def build_compact_weekly(briefing_data: dict) -> str:
     """Build a compact weekly briefing for the LLM.
 
