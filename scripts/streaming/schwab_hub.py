@@ -39,9 +39,13 @@ class SchwabUnifiedHub:
         self.provider = None
         self.is_running = False
         
+        # Periodic event logging stats
+        self._last_log_time = 0.0
+        self._event_counts = {}
+        
         # FastAPI for Local Broadcasting
         self.app = FastAPI() if FastAPI else None
-        self.active_sockets: list[WebSocket] = []
+        self.active_sockets: list[tuple[WebSocket, asyncio.Queue]] = []
         
         # Local Bus: Queue for internal sub-tasks
         self.broadcast_queue = asyncio.Queue()
@@ -54,13 +58,31 @@ class SchwabUnifiedHub:
             @self.app.websocket("/ws")
             async def websocket_endpoint(websocket: WebSocket):
                 await websocket.accept()
-                self.active_sockets.append(websocket)
+                client_queue = asyncio.Queue(maxsize=1000)
+                self.active_sockets.append((websocket, client_queue))
+                
+                async def sender():
+                    try:
+                        while True:
+                            msg = await client_queue.get()
+                            await websocket.send_json(msg)
+                            client_queue.task_done()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        logger.warning(f"WebSocket send task failed: {e}")
+
+                sender_task = asyncio.create_task(sender())
                 try:
                     while True:
                         await websocket.receive_text()
                 except WebSocketDisconnect:
-                    if websocket in self.active_sockets:
-                        self.active_sockets.remove(websocket)
+                    pass
+                finally:
+                    sender_task.cancel()
+                    for pair in list(self.active_sockets):
+                        if pair[0] == websocket:
+                            self.active_sockets.remove(pair)
 
             @self.app.post("/request")
             async def proxy_request(request: dict):
@@ -106,35 +128,59 @@ class SchwabUnifiedHub:
         }
         await self.broadcast_queue.put(payload)
         
-        # Push to all active WebSockets
-        for socket in self.active_sockets:
+        # Push to all active WebSockets queues (non-blocking)
+        for _, q in list(self.active_sockets):
             try:
-                await socket.send_json(payload)
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()
+                    q.put_nowait(payload)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
-        # Log periodically
+        # Log periodically (every 10 seconds) instead of spamming every event
+        import time
         service = event.get("service")
+        if service:
+            self._event_counts[service] = self._event_counts.get(service, 0) + 1
+
+        now = time.monotonic()
+        if now - self._last_log_time >= 10.0:
+            self._last_log_time = now
+            stats_str = ", ".join(f"{k}:{v}" for k, v in self._event_counts.items())
+            logger.info(f"📊 Stream Event Stats (last 10s): {stats_str or 'None'}")
+            self._event_counts.clear()
+
+        # Log detailed events only at DEBUG level to avoid console spam
         if service != "HEARTBEAT":
-            logger.info(f"Received {service} event: {str(event)[:200]}...")
+            logger.debug(f"Received {service} event: {str(event)[:200]}...")
             if service and "TIMESALE" in service:
-                logger.info(f">>> Raw Trade Event: {event}")
+                logger.debug(f">>>> Raw Trade Event: {event}")
+
+    async def _process_request(self, method_name, params, response_queue):
+        try:
+            logger.info(f"Worker calling {self.provider.__class__.__name__}.execute_rest for {method_name}")
+            result = await self.provider.execute_rest(method_name, params)
+            await response_queue.put(result)
+        except Exception as e:
+            logger.error(f"Error in REST worker ({method_name}): {e}")
+            await response_queue.put({"status": "error", "message": str(e)})
 
     async def _rest_worker(self):
-        """Processes REST requests via the provider."""
-        logger.info("🚀 REST Worker started.")
+        """Processes REST requests via the provider concurrently with rate-limited launch intervals."""
+        logger.info("🚀 REST Worker started (Concurrent Execution, Rate-Limited Launches).")
         while True:
             request_data, response_queue = await self.rest_queue.get()
             method_name = request_data.get("method")
             params = request_data.get("params", {})
-            try:
-                logger.info(f"Worker calling {self.provider.__class__.__name__}.execute_rest for {method_name}")
-                result = await self.provider.execute_rest(method_name, params)
-                await response_queue.put(result)
-            except Exception as e:
-                logger.error(f"Error in REST worker ({method_name}): {e}")
-                await response_queue.put({"status": "error", "message": str(e)})
             
+            # Dispatch to run concurrently
+            asyncio.create_task(self._process_request(method_name, params, response_queue))
+            
+            # Enforce 500ms spacing between the start of consecutive API requests
             await asyncio.sleep(self.rate_limit_delay)
             self.rest_queue.task_done()
 
