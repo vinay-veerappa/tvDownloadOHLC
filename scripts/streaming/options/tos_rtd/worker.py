@@ -125,95 +125,87 @@ class RTDWorker:
                 self.logger.warning("No symbols provided!")
                 return
 
-            success_count = 0
-            subscription_errors: list[str] = []
-
+            # Build flat list of all subscriptions
+            subscriptions = []
             for symbol in all_symbols:
-                retry_count = 0
-                while retry_count < 3:
-                    try:
-                        if symbol.startswith("."):
-                            # Option symbols — subscribe to Greeks + OI + Volume + IV
-                            if self.client.subscribe(QuoteType.GAMMA, symbol):
-                                success_count += 1
-                                self.logger.info("Subscribed to GAMMA for %s", symbol)
-                            if self.client.subscribe(QuoteType.OPEN_INT, symbol):
-                                success_count += 1
-                                self.logger.info("Subscribed to OPEN_INT for %s", symbol)
-                            if self.client.subscribe(QuoteType.VOLUME, symbol):
-                                success_count += 1
-                                self.logger.info("Subscribed to VOLUME for %s", symbol)
-                            if self.client.subscribe(QuoteType.DELTA, symbol):
-                                success_count += 1
-                                self.logger.info("Subscribed to DELTA for %s", symbol)
-                            if self.client.subscribe(QuoteType.IMPL_VOL, symbol):
-                                success_count += 1
-                                self.logger.info("Subscribed to IMPL_VOL for %s", symbol)
-                            if self.client.subscribe(QuoteType.LAST, symbol):
-                                success_count += 1
-                                self.logger.info("Subscribed to LAST for %s", symbol)
-                        else:
-                            # Base symbol — subscribe to LAST
-                            if symbol.startswith("/") and ":" not in symbol:
-                                exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(
-                                    symbol, "XCBT"
-                                )
-                                full_symbol = f"{symbol}:{exchange}"
-                                self.logger.info(
-                                    "Subscribing to LAST for futures: %s", full_symbol
-                                )
-                                if self.client.subscribe(QuoteType.LAST, full_symbol):
-                                    success_count += 1
-                                    self.logger.info("Subscribed to %s", full_symbol)
-                            else:
-                                self.logger.info("Subscribing to LAST for %s", symbol)
-                                if self.client.subscribe(QuoteType.LAST, symbol):
-                                    success_count += 1
-                                    self.logger.info("Subscribed to %s", symbol)
+                if symbol.startswith("."):
+                    # Option symbols — subscribe to Greeks + OI + Volume + IV
+                    for qt in [
+                        QuoteType.GAMMA,
+                        QuoteType.OPEN_INT,
+                        QuoteType.VOLUME,
+                        QuoteType.DELTA,
+                        QuoteType.IMPL_VOL,
+                        QuoteType.LAST,
+                    ]:
+                        subscriptions.append((qt, symbol))
+                else:
+                    # Base symbol — subscribe to LAST
+                    if symbol.startswith("/") and ":" not in symbol:
+                        exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(
+                            symbol, "XCBT"
+                        )
+                        subscriptions.append((QuoteType.LAST, f"{symbol}:{exchange}"))
+                    else:
+                        subscriptions.append((QuoteType.LAST, symbol))
+
+            self.logger.info("Subscribing to %d topics...", len(subscriptions))
+            results = self.client.batch_subscribe(subscriptions)
+            
+            # Retry failed subscriptions (up to 2 attempts)
+            failed_subs = [(qt, sym) for (qt_str, sym), success in results.items() for qt in [QuoteType[qt_str] if qt_str in QuoteType.__members__ else qt_str] if not success]
+            # Simple list comprehension check to reconstruct original QuoteType/str
+            failed_subs = []
+            for (qt_str, sym), success in results.items():
+                if not success:
+                    # Resolve to QuoteType enum if possible
+                    qt_resolved = qt_str
+                    for qt_enum in QuoteType:
+                        if qt_enum.value == qt_str:
+                            qt_resolved = qt_enum
+                            break
+                    failed_subs.append((qt_resolved, sym))
+
+            if failed_subs:
+                self.logger.warning("Retrying %d failed subscriptions...", len(failed_subs))
+                for attempt in range(2):
+                    time.sleep(0.1)
+                    retry_results = self.client.batch_subscribe(failed_subs)
+                    failed_subs = []
+                    for (qt_str, sym), success in retry_results.items():
+                        if not success:
+                            qt_resolved = qt_str
+                            for qt_enum in QuoteType:
+                                if qt_enum.value == qt_str:
+                                    qt_resolved = qt_enum
+                                    break
+                            failed_subs.append((qt_resolved, sym))
+                    if not failed_subs:
                         break
-                    except Exception as sub_error:
-                        retry_count += 1
-                        if retry_count == 3:
-                            error_msg = f"Failed to subscribe to {symbol} after 3 attempts: {sub_error}"
-                            subscription_errors.append(error_msg)
-                            self.logger.error(error_msg)
-                        time.sleep(0.1)
 
-            if subscription_errors:
-                self.data_queue.put({"error": "\n".join(subscription_errors)})
-                return
+            success_count = len(subscriptions) - len(failed_subs)
+            if failed_subs:
+                self.logger.error("%d subscriptions failed: %s", len(failed_subs), failed_subs)
+                # Still proceed if some succeeded
+                if success_count == 0:
+                    self.data_queue.put({"error": f"All {len(subscriptions)} subscriptions failed"})
+                    return
+            else:
+                self.logger.info("Successfully subscribed to all %d topics", success_count)
 
-            self.logger.info("Successfully subscribed to %d topics", success_count)
             time.sleep(0.3)
-
-            last_data: dict = {}
 
             while not self.stop_event.is_set():
                 pythoncom.PumpWaitingMessages()
 
                 try:
-                    with self.client._value_lock:
-                        if self.client._latest_values:
-                            current_data = {}
-                            for topic_str, quote in self.client._latest_values.items():
-                                symbol, quote_type = topic_str
-                                key = f"{symbol}:{quote_type}"
-                                current_data[key] = quote.value
+                    updates = self.client.get_pending_updates()
+                    if updates:
+                        self.data_queue.put(updates)
 
-                            if current_data != last_data:
-                                # Clear old data from queue
-                                while not self.data_queue.empty():
-                                    try:
-                                        self.data_queue.get_nowait()
-                                    except Exception:
-                                        break
-
-                                self.data_queue.put(current_data)
-                                last_data = current_data.copy()
-
-                                if not self._first_data_received:
-                                    self._first_data_received = True
-                                    self.logger.info("First data received — switching to normal poll rate")
+                        if not self._first_data_received:
+                            self._first_data_received = True
+                            self.logger.info("First data received — switching to normal poll rate")
 
                 except Exception as e:
                     self.logger.error("Data processing error: %s", e)

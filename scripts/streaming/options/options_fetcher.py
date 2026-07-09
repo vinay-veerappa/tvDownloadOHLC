@@ -172,6 +172,8 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
     spot: float = 0.0
     spot_open: float = 0.0
     
+    # Generate chunks
+    chunks = []
     current_dte = 0
     while current_dte <= max_dte:
         from_dte = current_dte
@@ -186,17 +188,45 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
             "toDate": to_date.isoformat(),
             "strikeCount": strike_count
         }
+        chunks.append((from_dte, to_dte, params))
         
-        log.info(f"Fetching chain chunk for {symbol}: DTE {from_dte}-{to_dte}...")
+        current_dte = to_dte + 1
+        if current_dte > max_dte:
+            break
+
+    # Fetch chunks concurrently
+    from concurrent.futures import ThreadPoolExecutor
+    
+    def fetch_chunk(chunk_info):
+        from_dte, to_dte, params = chunk_info
+        log.debug(f"Fetching chain chunk for {symbol}: DTE {from_dte}-{to_dte}...")
         try:
             payload = _hub_request("get_option_chain", params)
+            return payload
         except RuntimeError as e:
-            if "TooBigBody" in str(e) and strike_count > 20:
-                log.warning(f"Body too big for {symbol} at strikeCount={strike_count}. Reducing and retrying...")
-                params["strikeCount"] = 25
-                payload = _hub_request("get_option_chain", params)
+            if "TooBigBody" in str(e) and params["strikeCount"] > 20:
+                log.debug(f"Body too big for {symbol} at strikeCount={params['strikeCount']}. Reducing and retrying...")
+                params_copy = params.copy()
+                params_copy["strikeCount"] = 25
+                try:
+                    payload = _hub_request("get_option_chain", params_copy)
+                    return payload
+                except Exception as retry_err:
+                    log.error(f"Retry chunk failed for {symbol}: {retry_err}")
+                    return None
             else:
-                raise
+                log.error(f"Chunk fetch failed for {symbol}: {e}")
+                return None
+        except Exception as e:
+            log.error(f"Chunk fetch failed for {symbol}: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(len(chunks), 10)) as executor:
+        payloads = list(executor.map(fetch_chunk, chunks))
+
+    for payload in payloads:
+        if not payload:
+            continue
 
         # Extract underlying metrics from the first successful chunk
         if spot == 0:
@@ -222,9 +252,9 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
                     fetched_open = _safe_float(q_val.get("openPrice") or q_val.get("sessionOpen"))
                     if fetched_open:
                         spot_open = fetched_open
-                        log.info("Fetched spot open price for %s via get_quotes fallback: %.2f", symbol, spot_open)
+                        log.debug("Fetched spot open price for %s via get_quotes fallback: %.2f", symbol, spot_open)
                 except Exception as e:
-                    log.warning("Could not fetch spot open price for %s via get_quotes fallback: %s", symbol, e)
+                    log.debug("Could not fetch spot open price for %s via get_quotes fallback: %s", symbol, e)
 
         call_map = payload.get("callExpDateMap", {})
         put_map = payload.get("putExpDateMap", {})
@@ -245,10 +275,6 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
                 for strike_str, strike_list in put_map[exp_key].items():
                     for c in strike_list:
                         all_contracts.append(_map_contract(c, "PUT"))
-
-        current_dte = to_dte + 1
-        if current_dte > max_dte:
-            break
 
     if spot == 0:
         log.warning("Spot price is zero for %s — levels may be inaccurate.", symbol)
@@ -282,7 +308,7 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
         mapping = res.get(symbol) or res.get("data", {}).get(symbol, {})
         active = mapping.get("active", symbol)
         
-        log.info(f"Resolved {symbol} to {active} for quoting.")
+        log.debug(f"Resolved {symbol} to {active} for quoting.")
         
         qres = _hub_request("get_quotes", {"symbols": [active]})
         data = qres.get(active, {})
@@ -290,9 +316,9 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
         
         last = _safe_float(q.get("mark") or q.get("lastPrice"))
         open_p = _safe_float(q.get("sessionOpen") or q.get("openPrice"))
-        
-        log.info(f"Quote for {active}: last={last}, open={open_p}")
-        
+
+        log.debug(f"Quote for {active}: last={last}, open={open_p}")
+
         return FuturesQuote(symbol=symbol, price=last, open_price=open_p)
     except Exception as e:
         log.error("Failed to fetch futures quote for %s from Hub: %s", symbol, e)
@@ -351,7 +377,7 @@ def get_eod_close_price(symbol: str, target_dt_utc: datetime) -> float | None:
                     row = df[df["timestamp"] == target_ts]
                     if not row.empty:
                         close_val = float(row.iloc[0]["close"])
-                        log.info("get_eod_close_price SPX: found %.2f at %s UTC (parquet)", close_val, target_ts)
+                        log.debug("get_eod_close_price SPX: found %.2f at %s UTC (parquet)", close_val, target_ts)
                         return close_val
                     else:
                         # Fallback to the last available candle on target day in parquet
@@ -359,16 +385,16 @@ def get_eod_close_price(symbol: str, target_dt_utc: datetime) -> float | None:
                         if not df_today.empty:
                             last_row = df_today.sort_values("timestamp").iloc[-1]
                             close_val = float(last_row["close"])
-                            log.warning(
+                            log.debug(
                                 "get_eod_close_price SPX: target %s UTC not found in parquet. Falling back to last bar of the day: %.2f at %s UTC",
                                 target_ts, close_val, last_row["timestamp"]
                             )
                             return close_val
                 except Exception as e:
-                    log.warning("get_eod_close_price SPX: error reading parquet %s: %s", path, e)
+                    log.debug("get_eod_close_price SPX: error reading parquet %s: %s", path, e)
 
             # 2. Fallback: fetch from Hub REST API
-            log.info("get_eod_close_price SPX: %s not found in parquet, querying Hub REST API...", target_ts)
+            log.debug("get_eod_close_price SPX: %s not found in parquet, querying Hub REST API...", target_ts)
             try:
                 resp = _hub_request("get_price_history", {
                     "symbol": "$SPX",
@@ -399,26 +425,26 @@ def get_eod_close_price(symbol: str, target_dt_utc: datetime) -> float | None:
                     target_row = new_df[new_df["timestamp"] == target_ts]
                     if not target_row.empty:
                         close_val = float(target_row.iloc[0]["close"])
-                        log.info("get_eod_close_price SPX: found %.2f at %s UTC (Hub REST)", close_val, target_ts)
+                        log.debug("get_eod_close_price SPX: found %.2f at %s UTC (Hub REST)", close_val, target_ts)
                     else:
                         # Fallback to the last available candle on target day from API response
                         df_today = new_df[new_df["timestamp"].dt.date == target_ts.date()]
                         if not df_today.empty:
                             last_row = df_today.sort_values("timestamp").iloc[-1]
                             close_val = float(last_row["close"])
-                            log.warning(
+                            log.debug(
                                 "get_eod_close_price SPX: target %s UTC not found. Falling back to last bar of the day: %.2f at %s UTC",
                                 target_ts, close_val, last_row["timestamp"]
                             )
-                    
+
                     # Cache/save to parquet
                     if not path.exists():
                         new_df.to_parquet(path, index=False)
                     else:
                         existing_df = pd.read_parquet(path)
                         pd.concat([existing_df, new_df]).drop_duplicates(subset=["time"], keep="last").sort_values("time").to_parquet(path, index=False)
-                    log.info("get_eod_close_price SPX: Cached %d candles to %s", len(new_df), path)
-                    
+                    log.debug("get_eod_close_price SPX: Cached %d candles to %s", len(new_df), path)
+
                     if close_val is not None:
                         return close_val
             except Exception as e:
@@ -447,7 +473,7 @@ def get_eod_close_price(symbol: str, target_dt_utc: datetime) -> float | None:
             log.warning("get_eod_close_price %s: bar %s UTC not found", symbol, target_ts)
             return None
         close = float(row.iloc[0]["close"])
-        log.info("get_eod_close_price %s: found %.2f at %s UTC", symbol, close, target_ts)
+        log.debug("get_eod_close_price %s: found %.2f at %s UTC", symbol, close, target_ts)
         return close
 
     except Exception as exc:
@@ -466,27 +492,27 @@ def fetch_futures_option_chain_data(symbol: str, dte_targets: list[int]) -> Opti
     mapping = res.get(symbol) or res.get("data", {}).get(symbol, {})
     active_contract = mapping.get("active", symbol)
     
-    root_clean = active_contract.replace("/", "") 
-    log.info(f"Using active contract {active_contract} (clean: {root_clean}) for option resolution.")
-    
+    root_clean = active_contract.replace("/", "")
+    log.debug(f"Using active contract {active_contract} (clean: {root_clean}) for option resolution.")
+
     spot_info = fetch_futures_quote(symbol)
     if not spot_info or spot_info.price is None:
         raise RuntimeError(f"Could not get spot price for {symbol} to generate strikes.")
-    
+
     spot = spot_info.price
-    
+
     increment = 100 if "NQ" in symbol else 5
     base_strike = round(spot / increment) * increment
     strikes = [base_strike + (i * increment) for i in range(-50, 51)]
-    
-    log.info(f"Generating symbols for {symbol} (root: {root_clean}) centered at {base_strike}...")
+
+    log.debug(f"Generating symbols for {symbol} (root: {root_clean}) centered at {base_strike}...")
     symbols = []
     for s in strikes:
         symbols.append(f"./{root_clean}C{s}")
         symbols.append(f"./{root_clean}P{s}")
-    
-    log.info(f"Generated {len(symbols)} symbols. Sample: {symbols[:4]}")
-        
+
+    log.debug(f"Generated {len(symbols)} symbols. Sample: {symbols[:4]}")
+
     all_quotes = {}
     for i in range(0, len(symbols), 400):
         batch = symbols[i:i+400]
@@ -494,7 +520,7 @@ def fetch_futures_option_chain_data(symbol: str, dte_targets: list[int]) -> Opti
         if isinstance(resp, dict):
             # If the Hub returns direct Schwab format, it's { "symbol": { "quote": ... } }
             results_in_batch = len(resp)
-            log.info(f"Batch {i//400} (size {len(batch)}) returned {results_in_batch} results.")
+            log.debug(f"Batch {i//400} (size {len(batch)}) returned {results_in_batch} results.")
             all_quotes.update(resp)
         else:
             log.warning(f"Batch {i//400} returned non-dict response: {type(resp)}")
@@ -620,7 +646,7 @@ def _fetch_futures_from_yfinance(symbol: str) -> tuple[float | None, float | Non
             return None, None
         last = float(hist['Close'].iloc[-1])
         open_p = float(hist['Open'].iloc[0])
-        log.info(f'yfinance fallback for {symbol} ({yf_symbol}): last={last}, open={open_p}')
+        log.debug(f'yfinance fallback for {symbol} ({yf_symbol}): last={last}, open={open_p}')
         return last, open_p
     except Exception as e: 
         log.error(f'yfinance fetch failed for {yf_symbol}: {e}')

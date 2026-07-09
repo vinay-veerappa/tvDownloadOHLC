@@ -645,17 +645,17 @@ def write_levels(
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_data = json.dumps(doc, indent=2)
     json_path.write_text(json_data, encoding="utf-8")
-    log.info("JSON written -> %s  (%d levels)", json_path, len(all_entries))
+    log.debug("JSON written -> %s  (%d levels)", json_path, len(all_entries))
 
     if versioned:
         v_json_path = _sidecar_path(json_path, "versioned")
         v_json_path.write_text(json_data, encoding="utf-8")
-        log.info("Versioned JSON written -> %s", v_json_path)
+        log.debug("Versioned JSON written -> %s", v_json_path)
 
     if snapshot_suffix:
         s_json_path = _sidecar_path(json_path, snapshot_suffix)
         s_json_path.write_text(json_data, encoding="utf-8")
-        log.info("Snapshot JSON written -> %s (overwrites daily)", s_json_path)
+        log.debug("Snapshot JSON written -> %s (overwrites daily)", s_json_path)
 
     # ── GEX Profiles JSON output ───────────────────────────────────────────
     profiles_doc = {
@@ -736,17 +736,17 @@ def write_levels(
     GEX_PROFILES_JSON.parent.mkdir(parents=True, exist_ok=True)
     profiles_data = json.dumps(profiles_doc, indent=2)
     GEX_PROFILES_JSON.write_text(profiles_data, encoding="utf-8")
-    log.info("GEX Profiles written -> %s", GEX_PROFILES_JSON)
+    log.debug("GEX Profiles written -> %s", GEX_PROFILES_JSON)
 
     if versioned:
         v_profiles_path = _sidecar_path(GEX_PROFILES_JSON, "versioned")
         v_profiles_path.write_text(profiles_data, encoding="utf-8")
-        log.info("Versioned GEX Profiles written -> %s", v_profiles_path)
+        log.debug("Versioned GEX Profiles written -> %s", v_profiles_path)
 
     if snapshot_suffix:
         s_profiles_path = _sidecar_path(GEX_PROFILES_JSON, snapshot_suffix)
         s_profiles_path.write_text(profiles_data, encoding="utf-8")
-        log.info("Snapshot GEX Profiles written -> %s", s_profiles_path)
+        log.debug("Snapshot GEX Profiles written -> %s", s_profiles_path)
 
     # ── Live Trend JSON Append (RTH only) ────────────────────────────────────
     # We only write trend data during Regular Trading Hours to avoid polluting
@@ -789,7 +789,7 @@ def write_levels(
 
         LIVE_TREND_JSON.parent.mkdir(parents=True, exist_ok=True)
         LIVE_TREND_JSON.write_text(json.dumps(trend_doc, indent=2), encoding="utf-8")
-        log.info("Live Trend written -> %s  (RTH only)", LIVE_TREND_JSON)
+        log.debug("Live Trend written -> %s  (RTH only)", LIVE_TREND_JSON)
     else:
         log.debug("Skipping live_trend.json update — outside RTH.")
 
@@ -863,20 +863,20 @@ def write_levels(
         txt_path.parent.mkdir(parents=True, exist_ok=True)
         txt_data = "\n".join(lines)
         txt_path.write_text(txt_data, encoding="utf-8")
-        log.info("TXT written  -> %s", txt_path)
+        log.debug("TXT written  -> %s", txt_path)
         current_txt_path = _sync_current_txt(txt_path, txt_data)
-        log.info("Current TXT mirror written -> %s", current_txt_path)
+        log.debug("Current TXT mirror written -> %s", current_txt_path)
 
         if versioned:
             v_txt_path = _sidecar_path(txt_path, "versioned")
             v_txt_path.write_text(txt_data, encoding="utf-8")
-            log.info("Versioned TXT written -> %s", v_txt_path)
+            log.debug("Versioned TXT written -> %s", v_txt_path)
 
         if snapshot_suffix:
             s_txt_path = _snapshot_history_path(txt_path, snapshot_suffix)
             s_txt_path.parent.mkdir(parents=True, exist_ok=True)
             s_txt_path.write_text(txt_data, encoding="utf-8")
-            log.info("Snapshot TXT written -> %s", s_txt_path)
+            log.debug("Snapshot TXT written -> %s", s_txt_path)
 
 
 def write_macro_levels(
@@ -946,7 +946,7 @@ def write_macro_levels(
         v_path = _sidecar_path(path, "versioned")
         _upsert_ticker_line(v_path, ticker, final_string)
         
-    log.info("Macro Levels written to %s (versioned=%s)", path, versioned)
+    log.debug("Macro Levels written to %s (versioned=%s)", path, versioned)
 
 
 def write_quant_json(
@@ -987,12 +987,12 @@ def write_quant_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     json_data = json.dumps(existing, indent=2)
     path.write_text(json_data, encoding="utf-8")
-    log.info("Quant JSON updated for %s -> %s", ticker, path)
+    log.debug("Quant JSON updated for %s -> %s", ticker, path)
 
     if versioned:
         v_path = _sidecar_path(path, "versioned")
-        # Note: if multiple tickers call this with versioned=True in one run, 
-        # we'd want to read the versioned file first. 
+        # Note: if multiple tickers call this with versioned=True in one run,
+        # we'd want to read the versioned file first.
         # But for simplicity, if it's the same run, the versioned file name should be identical.
         v_existing = {}
         if v_path.exists():
@@ -1000,7 +1000,7 @@ def write_quant_json(
             except: pass
         v_existing[ticker] = quant_payload
         v_path.write_text(json.dumps(v_existing, indent=2), encoding="utf-8")
-        log.info("Versioned Quant JSON updated -> %s", v_path)
+        log.debug("Versioned Quant JSON updated -> %s", v_path)
  
  
 def write_scored_levels_txt(
@@ -1048,7 +1048,7 @@ def write_scored_levels_txt(
     )
  
     if not tokens:
-        log.info("No scored levels to write for %s", ticker)
+        log.debug("No scored levels to write for %s", ticker)
         return
 
     source_levels = metadata_levels if metadata_levels is not None else scored
@@ -1079,15 +1079,15 @@ def write_scored_levels_txt(
     if versioned:
         v_path = _sidecar_path(path, "versioned")
         _upsert_ticker_line(v_path, ticker, final_string)
-        log.info("Versioned scored levels TXT written -> %s", v_path)
+        log.debug("Versioned scored levels TXT written -> %s", v_path)
 
     if snapshot_suffix:
         s_path = _snapshot_history_path(path, snapshot_suffix)
         s_path.parent.mkdir(parents=True, exist_ok=True)
         _upsert_ticker_line(s_path, ticker, final_string)
-        log.info("Snapshot scored levels TXT written -> %s", s_path)
+        log.debug("Snapshot scored levels TXT written -> %s", s_path)
 
-    log.info("Scored levels TXT appended for %s -> %s (%d levels)", ticker, path, len(tokens))
+    log.debug("Scored levels TXT appended for %s -> %s (%d levels)", ticker, path, len(tokens))
 
 
 def _build_scored_tokens(
@@ -1448,13 +1448,13 @@ def write_unified_levels_txt(
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(final_text, encoding="utf-8")
-        log.info("Unified levels TXT written -> %s (%d tickers)", path, len(lines))
+        log.debug("Unified levels TXT written -> %s (%d tickers)", path, len(lines))
     except IOError as e:
         log.error("Failed to write unified levels main file: %s", e)
 
     try:
         current_path = _sync_current_txt(path, final_text)
-        log.info("Current unified TXT mirror written -> %s", current_path)
+        log.debug("Current unified TXT mirror written -> %s", current_path)
     except IOError as e:
         log.error("Failed to write current unified TXT mirror: %s", e)
 
@@ -1462,7 +1462,7 @@ def write_unified_levels_txt(
         try:
             v_path = _sidecar_path(path, "versioned")
             v_path.write_text(final_text, encoding="utf-8")
-            log.info("Versioned unified levels TXT written -> %s", v_path)
+            log.debug("Versioned unified levels TXT written -> %s", v_path)
         except IOError as e:
             log.error("Failed to write versioned unified levels TXT: %s", e)
 
@@ -1471,7 +1471,7 @@ def write_unified_levels_txt(
             s_path = _snapshot_history_path(path, snapshot_suffix)
             s_path.parent.mkdir(parents=True, exist_ok=True)
             s_path.write_text(final_text, encoding="utf-8")
-            log.info("Snapshot unified levels TXT written -> %s", s_path)
+            log.debug("Snapshot unified levels TXT written -> %s", s_path)
         except IOError as e:
             log.error("Failed to write snapshot unified levels TXT: %s", e)
 
@@ -1482,7 +1482,7 @@ def write_unified_levels_txt(
                 alias_path = path.parent / "current" / alias_name
                 alias_path.parent.mkdir(parents=True, exist_ok=True)
                 alias_path.write_text(final_text, encoding="utf-8")
-                log.info("Current unified session alias written -> %s", alias_path)
+                log.debug("Current unified session alias written -> %s", alias_path)
         except IOError as e:
             log.error("Failed to write current unified session alias: %s", e)
 
@@ -1576,17 +1576,17 @@ def write_unified_levels_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     json_data = json.dumps(doc, indent=2)
     path.write_text(json_data, encoding="utf-8")
-    log.info("Unified levels JSON written -> %s (%d tickers)", path, len(rows))
+    log.debug("Unified levels JSON written -> %s (%d tickers)", path, len(rows))
 
     if versioned:
         v_path = _sidecar_path(path, "versioned")
         v_path.write_text(json_data, encoding="utf-8")
-        log.info("Versioned unified levels JSON written -> %s", v_path)
+        log.debug("Versioned unified levels JSON written -> %s", v_path)
 
     if snapshot_suffix:
         s_path = _sidecar_path(path, snapshot_suffix)
         s_path.write_text(json_data, encoding="utf-8")
-        log.info("Snapshot unified levels JSON written -> %s", s_path)
+        log.debug("Snapshot unified levels JSON written -> %s", s_path)
 
 
 def unified_payload_fingerprint(path: Path) -> dict[str, Any]:

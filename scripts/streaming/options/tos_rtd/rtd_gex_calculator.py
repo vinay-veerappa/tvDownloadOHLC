@@ -267,7 +267,7 @@ def format_comparison_table(rtd_result: FuturesGEXResult) -> str:
     lines = [
         f"**{rtd_result.symbol} GEX Source Comparison** (RTD vs Schwab-translated)",
         f"",
-        f"| Level | RTD (futures options) | Schwab (SPY/SPX→futures) | Difference |",
+        f"| Level | RTD (futures options) | Schwab (SPY/SPX->futures) | Difference |",
         f"|---|---|---|---|",
     ]
 
@@ -281,7 +281,7 @@ def format_comparison_table(rtd_result: FuturesGEXResult) -> str:
     lines.append(_row("Put Wall", rtd_dl.put_wall, getattr(tr, "put_wall", None), rtd_result.put_wall_diff))
     lines.append(_row("Zero Gamma", rtd_dl.zero_gamma, getattr(tr, "zero_gamma", None), rtd_result.zero_gamma_diff))
     lines.append(_row("Total GEX", rtd_dl.total_gex, getattr(tr, "total_gex", None), rtd_result.total_gex_diff))
-    lines.append(f"| Contracts | {rtd_result.contract_count} | (Schwab chain) | — |")
-    lines.append(f"| Spot | {rtd_result.futures_price:,.2f} | {getattr(tr, 'futures_price', 'N/A')} | — |")
+    lines.append(f"| Contracts | {rtd_result.contract_count} | (Schwab chain) | - |")
+    lines.append(f"| Spot | {rtd_result.futures_price:,.2f} | {getattr(tr, 'futures_price', 'N/A')} | - |")
 
     return "\n".join(lines)

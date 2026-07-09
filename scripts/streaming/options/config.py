@@ -523,6 +523,9 @@ TOS_RTD_SYMBOL_CONFIG: dict[str, dict] = {
 # When False, RTD provides only real-time price + Greeks drift validation.
 TOS_RTD_GEX_AS_PRIMARY: bool = os.environ.get("TOS_RTD_GEX_AS_PRIMARY", "1").lower() in {"1", "true", "yes"}
 
+# Legacy diagnostic features.  Leave disabled in production.
+TOS_RTD_ENABLE_DRIFT_VALIDATION: bool = os.environ.get("TOS_RTD_ENABLE_DRIFT_VALIDATION", "0").lower() in {"1", "true", "yes"}
+
 # ── Debug flags — control logging verbosity ───────────────────────
 # Set via env vars: PIPELINE_DEBUG=1, PIPELINE_DEBUG_EM=1, etc.
 # All default to False (minimal production logging).

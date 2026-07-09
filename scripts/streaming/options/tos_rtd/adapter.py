@@ -200,13 +200,13 @@ class TOSRTDAdapter:
             try:
                 data = self._data_queue.get_nowait()
                 if "debug" in data:
-                    log.info("CHILD DEBUG: %s", data["debug"])
+                    log.debug("[RTD child] %s", data["debug"])
                     continue
                 if "error" in data:
                     log.error("RTD worker error: %s", data["error"])
                     continue
                 with self._latest_lock:
-                    self._latest_data = data
+                    self._latest_data.update(data)
             except Empty:
                 break
 
@@ -313,7 +313,14 @@ class TOSRTDAdapter:
             parsed = parse_rtd_option_symbol(rtd_sym)
             if parsed and parsed.base_symbol == symbol:
                 contracts.append(parsed)
-                greeks[rtd_sym] = self.get_option_greeks(rtd_sym)
+                greeks[rtd_sym] = {
+                    "GAMMA": snapshot.get(f"{rtd_sym}:GAMMA"),
+                    "DELTA": snapshot.get(f"{rtd_sym}:DELTA"),
+                    "OPEN_INT": snapshot.get(f"{rtd_sym}:OPEN_INT"),
+                    "VOLUME": snapshot.get(f"{rtd_sym}:VOLUME"),
+                    "LAST": snapshot.get(f"{rtd_sym}:LAST"),
+                    "IMPL_VOL": snapshot.get(f"{rtd_sym}:IMPL_VOL"),
+                }
 
         return ChainSnapshot(
             symbol=symbol,

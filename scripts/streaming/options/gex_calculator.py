@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
@@ -536,101 +538,133 @@ def _find_front_dte_contracts(calls: list[OptionContract], puts: list[OptionCont
     return [c for c in calls if c.dte == front_dte], [p for p in puts if p.dte == front_dte]
 
 
-def _calculate_hypothetical_total_gex(calls: list[OptionContract], puts: list[OptionContract], S_hypo: float, delta_adjusted: bool = False) -> float:
-    from zoneinfo import ZoneInfo
-    from datetime import datetime, time
-    tz_et = ZoneInfo("America/New_York")
-    now_et = datetime.now(tz_et)
-    contract_size = 100
-    r, q = 0.02, 0.0
-    
-    total = 0.0
-    
-    # Process calls
-    for c in calls:
-        try:
-            exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
-            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
-        except Exception:
-            t = 1e-5
-        iv = max(c.iv, 1e-4)
-        K = c.strike
-        d1, d2, norm_d1 = _bsm_d1d2(S_hypo, K, t, iv, r, q)
-        if d1 is not None and norm_d1 is not None:
-            gamma = math.exp(-q * t) * norm_d1 / (S_hypo * iv * math.sqrt(t))
-            gex = gamma * c.open_interest * contract_size * S_hypo
-            if delta_adjusted:
-                delta = 0.5 * math.erfc(-d1 / math.sqrt(2))
-                total += gex * abs(delta)
-            else:
-                total += gex
+def _calculate_hypothetical_total_gex_numpy(
+    S_hypo: float,
+    call_strikes: np.ndarray, call_t: np.ndarray, call_iv: np.ndarray, call_oi: np.ndarray,
+    put_strikes: np.ndarray, put_t: np.ndarray, put_iv: np.ndarray, put_oi: np.ndarray,
+    delta_adjusted: bool = False
+) -> float:
+    if len(call_strikes) == 0 and len(put_strikes) == 0:
+        return 0.0
 
-    # Process puts
-    for p in puts:
-        try:
-            exp_dt = datetime.combine(p.expiry, time(16, 0), tzinfo=tz_et)
-            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
-        except Exception:
-            t = 1e-5
-        iv = max(p.iv, 1e-4)
-        K = p.strike
-        d1, d2, norm_d1 = _bsm_d1d2(S_hypo, K, t, iv, r, q)
-        if d1 is not None and norm_d1 is not None:
-            gamma = math.exp(-q * t) * norm_d1 / (S_hypo * iv * math.sqrt(t))
-            gex = gamma * p.open_interest * contract_size * S_hypo
-            if delta_adjusted:
-                delta = 0.5 * math.erfc(-d1 / math.sqrt(2)) - 1.0
-                total -= gex * abs(delta)
-            else:
-                total -= gex
-                
-    return total
-
-
-def _calculate_hypothetical_overnight_delta_imbalance(calls: list[OptionContract], puts: list[OptionContract], S_hypo: float) -> float:
-    from zoneinfo import ZoneInfo
-    from datetime import datetime, time
-    tz_et = ZoneInfo("America/New_York")
-    now_et = datetime.now(tz_et)
-    contract_size = 100
+    contract_size = 100.0
     r, q = 0.02, 0.0
     total = 0.0
-    
-    for c in calls:
-        try:
-            exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
-            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
-        except Exception:
-            t = 1e-5
-        iv = max(c.iv, 1e-4)
-        charm = _analytical_charm('c', S_hypo, c.strike, t, iv, r, q)
-        total += charm * c.open_interest * contract_size * S_hypo / 365.0
-        
-    for p in puts:
-        try:
-            exp_dt = datetime.combine(p.expiry, time(16, 0), tzinfo=tz_et)
-            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
-        except Exception:
-            t = 1e-5
-        iv = max(p.iv, 1e-4)
-        charm = _analytical_charm('p', S_hypo, p.strike, t, iv, r, q)
-        total += charm * p.open_interest * contract_size * S_hypo / 365.0
-        
-    return total
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        # Vectorized function for one side
+        def calc_side_gex(strikes, t, iv, oi, is_call):
+            if len(strikes) == 0:
+                return 0.0
+            t_sqrt = np.sqrt(t)
+            d1 = (np.log(S_hypo / strikes) + (r - q + 0.5 * iv ** 2) * t) / (iv * t_sqrt)
+            
+            norm_d1 = np.exp(-0.5 * d1 ** 2) / np.sqrt(2.0 * np.pi)
+            gamma = np.exp(-q * t) * norm_d1 / (S_hypo * iv * t_sqrt)
+            gex = gamma * oi * contract_size * S_hypo
+
+            if delta_adjusted:
+                import math
+                erf_vec = np.vectorize(math.erf)
+                cdf_d1 = 0.5 * (1.0 + erf_vec(d1 / np.sqrt(2.0)))
+                if is_call:
+                    delta = np.exp(-q * t) * cdf_d1
+                else:
+                    delta = np.exp(-q * t) * (cdf_d1 - 1.0)
+                return np.sum(gex * np.abs(delta))
+            else:
+                return np.sum(gex)
+
+        total += calc_side_gex(call_strikes, call_t, call_iv, call_oi, is_call=True)
+        total -= calc_side_gex(put_strikes, put_t, put_iv, put_oi, is_call=False)
+
+    return float(total)
+
+
+def _calculate_hypothetical_overnight_delta_imbalance_numpy(
+    S_hypo: float,
+    call_strikes: np.ndarray, call_t: np.ndarray, call_iv: np.ndarray, call_oi: np.ndarray,
+    put_strikes: np.ndarray, put_t: np.ndarray, put_iv: np.ndarray, put_oi: np.ndarray
+) -> float:
+    if len(call_strikes) == 0 and len(put_strikes) == 0:
+        return 0.0
+
+    contract_size = 100.0
+    r, q = 0.02, 0.0
+    total = 0.0
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        import math
+        erfc_vec = np.vectorize(math.erfc)
+
+        def calc_side_charm(strikes, t, iv, oi, is_call):
+            if len(strikes) == 0:
+                return 0.0
+            t_sqrt = np.sqrt(t)
+            d1 = (np.log(S_hypo / strikes) + (r - q + 0.5 * iv ** 2) * t) / (iv * t_sqrt)
+            d2 = d1 - iv * t_sqrt
+            
+            norm_d1 = np.exp(-0.5 * d1 ** 2) / np.sqrt(2.0 * np.pi)
+            inner = (2.0 * (r - q) * t - d2 * iv * t_sqrt) / (2.0 * t * iv * t_sqrt)
+
+            if is_call:
+                N_d1 = 0.5 * erfc_vec(-d1 / np.sqrt(2.0))
+                charm = -np.exp(-q * t) * (norm_d1 * inner - q * N_d1)
+            else:
+                N_neg_d1 = 0.5 * erfc_vec(d1 / np.sqrt(2.0))
+                charm = -np.exp(-q * t) * (norm_d1 * inner + q * N_neg_d1)
+
+            return np.sum(charm * oi * contract_size * S_hypo / 365.0)
+
+        total += calc_side_charm(call_strikes, call_t, call_iv, call_oi, is_call=True)
+        total += calc_side_charm(put_strikes, put_t, put_iv, put_oi, is_call=False)
+
+    return float(total)
 
 
 def _calculate_opening_gap_target(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> float | None:
     if not calls and not puts:
         return None
 
+    # Pre-extract NumPy arrays once
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, time
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+
+    def extract_arrays(contracts):
+        if not contracts:
+            return np.array([]), np.array([]), np.array([]), np.array([])
+        strikes = np.array([c.strike for c in contracts], dtype=float)
+        t_list = []
+        for c in contracts:
+            try:
+                exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+                t_list.append(max((exp_dt - now_et).total_seconds() / (365.0 * 24.0 * 3600.0), 1e-5))
+            except Exception:
+                t_list.append(1e-5)
+        t = np.array(t_list, dtype=float)
+        iv = np.array([max(c.iv, 1e-4) for c in contracts], dtype=float)
+        oi = np.array([c.open_interest for c in contracts], dtype=float)
+        return strikes, t, iv, oi
+
+    c_strikes, c_t, c_iv, c_oi = extract_arrays(calls)
+    p_strikes, p_t, p_iv, p_oi = extract_arrays(puts)
+
     def _bisect(lo: float, hi: float) -> float | None:
-        g_lo = _calculate_hypothetical_overnight_delta_imbalance(calls, puts, lo)
-        g_hi = _calculate_hypothetical_overnight_delta_imbalance(calls, puts, hi)
+        g_lo = _calculate_hypothetical_overnight_delta_imbalance_numpy(
+            lo, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi
+        )
+        g_hi = _calculate_hypothetical_overnight_delta_imbalance_numpy(
+            hi, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi
+        )
         if g_lo * g_hi > 0:
             return None
         for _ in range(50):
             mid = (lo + hi) / 2.0
-            g_mid = _calculate_hypothetical_overnight_delta_imbalance(calls, puts, mid)
+            g_mid = _calculate_hypothetical_overnight_delta_imbalance_numpy(
+                mid, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi
+            )
             if abs(g_mid) < 1e-2:
                 return round(mid, 2)
             if (g_mid < 0 and g_lo < 0) or (g_mid > 0 and g_lo > 0):
@@ -652,28 +686,48 @@ def _calculate_opening_gap_target(calls: list[OptionContract], puts: list[Option
 
 
 def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContract], spot: float, delta_adjusted: bool = False) -> float | None:
-    """Find the zero-gamma level nearest to spot using a cascaded bounded binary search.
-
-    Problem with the old [0.5x, 1.5x] approach: when a full option chain (including
-    LEAPS) is passed, the GEX profile can have *multiple* sign crossings. The binary
-    search would arbitrarily converge to whichever crossing happened to straddle the
-    midpoint of the search range — often a spurious far-OTM LEAPS crossing (~1.25x
-    spot) instead of the economically relevant near-ATM crossing (~1.01x spot).
-
-    Fix: search three progressively wider bands centered on spot, collecting all
-    candidate crossings, then return the one nearest to spot.
-    """
     if not calls and not puts:
         return None
 
+    # Pre-extract NumPy arrays once
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, time
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+
+    def extract_arrays(contracts):
+        if not contracts:
+            return np.array([]), np.array([]), np.array([]), np.array([])
+        strikes = np.array([c.strike for c in contracts], dtype=float)
+        t_list = []
+        for c in contracts:
+            try:
+                exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+                t_list.append(max((exp_dt - now_et).total_seconds() / (365.0 * 24.0 * 3600.0), 1e-5))
+            except Exception:
+                t_list.append(1e-5)
+        t = np.array(t_list, dtype=float)
+        iv = np.array([max(c.iv, 1e-4) for c in contracts], dtype=float)
+        oi = np.array([c.open_interest for c in contracts], dtype=float)
+        return strikes, t, iv, oi
+
+    c_strikes, c_t, c_iv, c_oi = extract_arrays(calls)
+    p_strikes, p_t, p_iv, p_oi = extract_arrays(puts)
+
     def _bisect(lo: float, hi: float) -> float | None:
-        g_lo = _calculate_hypothetical_total_gex(calls, puts, lo, delta_adjusted)
-        g_hi = _calculate_hypothetical_total_gex(calls, puts, hi, delta_adjusted)
+        g_lo = _calculate_hypothetical_total_gex_numpy(
+            lo, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted
+        )
+        g_hi = _calculate_hypothetical_total_gex_numpy(
+            hi, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted
+        )
         if g_lo * g_hi > 0:
             return None
         for _ in range(50):
             mid = (lo + hi) / 2.0
-            g_mid = _calculate_hypothetical_total_gex(calls, puts, mid, delta_adjusted)
+            g_mid = _calculate_hypothetical_total_gex_numpy(
+                mid, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted
+            )
             if abs(g_mid) < 1e-2:
                 return round(mid, 2)
             if (g_mid < 0 and g_lo < 0) or (g_mid > 0 and g_lo > 0):
@@ -1028,12 +1082,14 @@ def _expected_move(
     
     # 5. Compute Expected Move
     em_value = k * straddle_mid
-    
+
     # 6. Capture log
     expiry = c.expiry
-    _log_em_calibration_record(ticker, expiry, dte, spot, atm_strike, c_mid, p_mid, straddle_mid, em_value)
-    
+    if os.environ.get("PIPELINE_DEBUG_EM", "0") == "1":
+        _log_em_calibration_record(ticker, expiry, dte, spot, atm_strike, c_mid, p_mid, straddle_mid, em_value)
+
     return em_value, straddle_mid
+
 
 def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
     """Calculate the Expected Move for every unique expiry in the chain."""
@@ -1639,29 +1695,30 @@ def calculate_dealer_levels(
         skew_premium=skew_premium, total_gex_delta_adj=total_gex_delta_adj
     )
 
-    log.info(
-        "%s levels: spot=%.2f gex=%.0f regime=%s(%s %s) zg=%s cw=%s pw=%s "
-        "mp=%s em=±%.2f magnet=%s pin=%s(%.0f%%) sep=%s vanna=%.0f skew=%.4f (P:%.4f C:%.4f)",
-        ticker,
-        spot,
-        total_gex,
-        gex_regime,
-        regime_label,
-        directional_bias,
-        zero_gamma,
-        call_wall,
-        put_wall,
-        max_pain,
-        em_value,
-        gamma_magnet,
-        pin_strike,
-        pin_odds * 100,
-        separation,
-        net_vanna,
-        skew_premium or 0.0,
-        put_25d_iv or 0.0,
-        call_25d_iv or 0.0
-    )
+    if os.environ.get("PIPELINE_DEBUG_GEX", "0") == "1":
+        log.info(
+            "%s levels: spot=%.2f gex=%.0f regime=%s(%s %s) zg=%s cw=%s pw=%s "
+            "mp=%s em=±%.2f magnet=%s pin=%s(%.0f%%) sep=%s vanna=%.0f skew=%.4f (P:%.4f C:%.4f)",
+            ticker,
+            spot,
+            total_gex,
+            gex_regime,
+            regime_label,
+            directional_bias,
+            zero_gamma,
+            call_wall,
+            put_wall,
+            max_pain,
+            em_value,
+            gamma_magnet,
+            pin_strike,
+            pin_odds * 100,
+            separation,
+            net_vanna,
+            skew_premium or 0.0,
+            put_25d_iv or 0.0,
+            call_25d_iv or 0.0
+        )
 
     return DealerLevels(
         ticker=ticker,
@@ -1923,18 +1980,6 @@ def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_
         return 0.0
 
     return spot_price * vol_decimal * math.sqrt(t_eff_yr)
-    
-    # 4. Output to screen for verification
-    #print("\n" + "="*50)
-    # print(f"TOS EXPECTED MOVE VERIFICATION")
-    # print(f"Spot Price:        ${spot_price:.2f}")
-    # print(f"Expiry Date:       {clean_date_str}")
-    # print(f"Blended Vol (IV):  {vol_decimal:.4f} ({vol_decimal*100:.2f}%)")
-    # print(f"Fractional DTE:    {fractional_dte:.4f} days")
-    # print(f"Calculated TOS EM: ±${tos_expected_move:.2f}")
-    # print("="*50 + "\n")
-    
-    return tos_expected_move
 
 
 def extract_dominant_oi_nodes(

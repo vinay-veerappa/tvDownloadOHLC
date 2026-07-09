@@ -359,6 +359,7 @@ def run_pipeline(
     reset_anchors: bool = False,
     snapshot_suffix: str | None = None,
     intraday_only: bool = False,
+    rtd_coord: "HybridCoordinator | None" = None,
 ) -> None:
     """
     Execute one complete fetch -> calculate -> output cycle.
@@ -367,6 +368,9 @@ def run_pipeline(
     ----------
     run_label : Short human-readable label embedded in all outputs.
                 Auto-generated from current Eastern time when empty.
+    rtd_coord : Optional pre-started HybridCoordinator. When supplied, the
+                pipeline will reuse it and will not stop it on exit. This
+                avoids repeated COM spawn/teardown in loop mode.
     """
     _setup_logging()
     if enable_discord is None:
@@ -382,6 +386,15 @@ def run_pipeline(
     log.info("Dealer Levels pipeline starting  |  %s", run_label)
     log.info("=" * 60)
 
+    _tic_total = time.time()
+    timings: dict[str, float] = {}
+
+    def _t(name: str) -> None:
+        timings[name] = time.time()
+
+    def _dt(a: str, b: str) -> float:
+        return timings.get(b, time.time()) - timings.get(a, 0.0)
+
     # --- Create Schwab client -----------------------------------------------
     try:
         client = create_client(SECRETS_PATH, TOKEN_PATH)
@@ -395,6 +408,9 @@ def run_pipeline(
     macro_levels_by_ticker: dict[str, DealerLevels] = {}
     scored_intraday_by_ticker: dict[str, ScoredLevels] = {}
     scored_macro_by_ticker: dict[str, ScoredLevels] = {}
+    futures_quotes = {}
+    eod_close_prices = {}
+    rtd_gex_results = {}
 
     # --- Load existing anchors ----------------------------------------------
     all_anchors = load_basis_anchors()
@@ -405,9 +421,11 @@ def run_pipeline(
     today_ny = now_ny.date()
     is_eod_run = _is_eod_snapshot(run_label, now_ny)
 
-    # --- Start TOS RTD hybrid coordinator (if enabled) -----------------------
-    rtd_coord = HybridCoordinator()
-    rtd_coord.start()
+    # --- Start / reuse TOS RTD hybrid coordinator (if enabled) -----------------
+    rtd_started_here = rtd_coord is None
+    if rtd_coord is None:
+        rtd_coord = HybridCoordinator()
+        rtd_coord.start()
     if rtd_coord.is_rtd_active:
         log.info("TOS RTD active — using real-time futures prices")
     elif rtd_coord._enabled:
@@ -415,6 +433,25 @@ def run_pipeline(
 
     # --- Process each ticker --------------------------------------------------
     target_tickers = tickers if tickers is not None else ACTIVE_TICKERS
+
+    # Pre-fetch all options chains concurrently to minimize network latency
+    log.info("Pre-fetching options chains for %d tickers concurrently...", len(target_tickers))
+    chains_by_ticker = {}
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch_one(t):
+        try:
+            return t, fetch_option_chain_data(client, t, dte_targets)
+        except Exception as e:
+            log.error("Failed to fetch option chain for %s: %s", t, e)
+            return t, None
+
+    with ThreadPoolExecutor(max_workers=min(len(target_tickers), 10)) as executor:
+        results = executor.map(fetch_one, target_tickers)
+        for t, chain_data in results:
+            if chain_data:
+                chains_by_ticker[t] = chain_data
+
     for ticker in target_tickers:
         futures_sym = INDEX_TO_FUTURES.get(ticker)
         mapping_str = f"-> {futures_sym}" if futures_sym else "(Cash only)"
@@ -422,8 +459,18 @@ def run_pipeline(
             log.info("--- Processing: %s %s ---", ticker, mapping_str)
 
         try:
-            # 1. Fetch macro-scale option chain (covers near-term density + macro targets)
-            full_chain = fetch_option_chain_data(client, ticker, dte_targets)
+            _t(f"chain_start_{ticker}")
+            # Retrieve pre-fetched option chain
+            full_chain = chains_by_ticker.get(ticker)
+            if not full_chain:
+                # Fallback: fetch sequentially if concurrent fetch failed
+                try:
+                    full_chain = fetch_option_chain_data(client, ticker, dte_targets)
+                except Exception as e:
+                    log.error("Failed to fetch option chain fallback for %s: %s — skipping.", ticker, e)
+                    continue
+
+            _t(f"chain_fetch_{ticker}")
             chain = full_chain
             target_cash_spot = full_chain.spot_price
             source_ticker = ticker
@@ -444,17 +491,29 @@ def run_pipeline(
                         ticker,
                         fallback,
                     )
-                    chain = fetch_option_chain_data(client, fallback, dte_targets)
+                    # Check pre-fetched cache first
+                    chain = chains_by_ticker.get(fallback)
+                    if not chain:
+                        chain = fetch_option_chain_data(client, fallback, dte_targets)
                     source_ticker = fallback
                 else:
                     log.error("No fallback available for %s — skipping.", ticker)
                     continue
 
-            # 2. Fetch front-month futures quote (RTD first, Schwab fallback)
-            schwab_fut = fetch_futures_quote(futures_sym)
+            # 2. Fetch front-month futures quote (RTD first, Schwab fallback cached)
+            _t(f"quote_start_{ticker}")
+            if futures_sym in futures_quotes:
+                schwab_fut = futures_quotes[futures_sym]
+            else:
+                schwab_fut = fetch_futures_quote(futures_sym) if futures_sym else None
+                if futures_sym:
+                    futures_quotes[futures_sym] = schwab_fut
+            _t(f"quote_schwab_{ticker}")
             hybrid_quote = rtd_coord.get_futures_price(futures_sym, schwab_price=schwab_fut.price if schwab_fut else None)
+            _t(f"quote_rtd_{ticker}")
             if hybrid_quote and hybrid_quote.source == "tos_rtd":
-                log.info("Using RTD futures price for %s: %.2f", futures_sym, hybrid_quote.price)
+                if PIPELINE_DEBUG_RTD:
+                    log.info("Using RTD futures price for %s: %.2f", futures_sym, hybrid_quote.price)
                 fut = FuturesQuote(
                     symbol=futures_sym,
                     price=hybrid_quote.price,
@@ -478,7 +537,14 @@ def run_pipeline(
                     now_ny.date(), EOD_FUTURES_CLOSE_TIME
                 ).replace(tzinfo=tz_ny)
                 eod_close_utc = eod_close_et.astimezone(tz_utc).replace(tzinfo=None)
-                parquet_close = get_eod_close_price(futures_sym, eod_close_utc)
+                
+                cache_key = (futures_sym, eod_close_utc)
+                if cache_key in eod_close_prices:
+                    parquet_close = eod_close_prices[cache_key]
+                else:
+                    parquet_close = get_eod_close_price(futures_sym, eod_close_utc)
+                    eod_close_prices[cache_key] = parquet_close
+
                 if parquet_close is not None:
                     log.info(
                         "EOD parquet override %s: 15:59 close=%.2f  (live mark was %.2f)",
@@ -501,7 +567,14 @@ def run_pipeline(
                         now_ny.date(), EOD_SPX_CLOSE_TIME
                     ).replace(tzinfo=tz_ny)
                     spx_close_utc = spx_close_et.astimezone(tz_utc).replace(tzinfo=None)
-                    spx_parquet_close = get_eod_close_price("SPX", spx_close_utc)
+                    
+                    spx_cache_key = ("SPX", spx_close_utc)
+                    if spx_cache_key in eod_close_prices:
+                        spx_parquet_close = eod_close_prices[spx_cache_key]
+                    else:
+                        spx_parquet_close = get_eod_close_price("SPX", spx_close_utc)
+                        eod_close_prices[spx_cache_key] = spx_parquet_close
+
                     if spx_parquet_close is not None:
                         log.info(
                             "EOD SPX spot override: 16:04 close=%.2f  (chain mark was %.2f)",
@@ -581,6 +654,7 @@ def run_pipeline(
                 wall_scope="FRONT_WEEK_WEIGHTED",
                 wall_dte_range=INTRADAY_VIEW.dte_range,
             )
+            _t(f"calc_intraday_{ticker}")
             levels_macro = calculate_dealer_levels(
                 chain,
                 source_ticker,
@@ -588,6 +662,7 @@ def run_pipeline(
                 wall_scope="ALL_EXPIRIES_WEIGHTED",
                 wall_dte_range=MACRO_VIEW.dte_range,
             )
+            _t(f"calc_macro_{ticker}")
 
             # 3b. If fallback source differs from target ticker, rescale levels
             # back into target cash index space before futures translation.
@@ -606,7 +681,7 @@ def run_pipeline(
                     levels_intraday = replace(levels_intraday, **direct_price_metrics)
                     levels_macro = replace(levels_macro, **direct_price_metrics)
 
-                log.info("Rescaled %s-derived levels into %s space.", source_ticker, ticker)
+                log.debug("Rescaled %s-derived levels into %s space.", source_ticker, ticker)
 
             weekly_scope_record = None
             if is_eod_run and today_ny.weekday() == 4:
@@ -627,7 +702,7 @@ def run_pipeline(
                     if weekly_scope_cache.get(ticker) != weekly_scope_record:
                         weekly_scope_cache[ticker] = weekly_scope_record
                         weekly_scope_cache_updated = True
-                        log.info(
+                        log.debug(
                             "Captured Friday weekly scope for %s -> %s [%.2f, %.2f]",
                             ticker,
                             weekly_scope_record["expiry"],
@@ -677,21 +752,28 @@ def run_pipeline(
                 rtd_dl_primary = None
                 if rtd_coord.is_rtd_active and futures_sym in rtd_coord._symbols:
                     from .config import TOS_RTD_GEX_AS_PRIMARY
-                    rtd_gex_result = rtd_coord.calculate_rtd_gex(futures_sym)
+                    if futures_sym in rtd_gex_results:
+                        rtd_gex_result = rtd_gex_results[futures_sym]
+                        if rtd_gex_result and PIPELINE_DEBUG_RTD:
+                            log.info("Reusing cached RTD GEX result for %s", futures_sym)
+                    else:
+                        _t(f"rtd_gex_start_{ticker}")
+                        rtd_gex_result = rtd_coord.calculate_rtd_gex(futures_sym)
+                        _t(f"rtd_gex_done_{ticker}")
+                        rtd_gex_results[futures_sym] = rtd_gex_result
+
                     if rtd_gex_result is not None:
                         rtd_dl = rtd_gex_result.dealer_levels
                         rtd_dl_primary = rtd_dl
-                        log.info(
-                            "RTD GEX for %s: total_gex=%.2f regime=%s call_wall=%s put_wall=%s zero_gamma=%s (%d contracts)",
-                            futures_sym, rtd_dl.total_gex, rtd_dl.gex_regime,
-                            rtd_dl.call_wall, rtd_dl.put_wall, rtd_dl.zero_gamma,
-                            rtd_gex_result.contract_count,
-                        )
-
-                        # Compare RTD vs Schwab-translated
-                        comparison_table = rtd_coord.compare_gex(rtd_gex_result, tl_intraday)
                         if PIPELINE_DEBUG_RTD:
-                            log.info("\n%s", comparison_table.encode('ascii', 'replace').decode('ascii'))
+                            log.info(
+                                "RTD GEX for %s: total_gex=%.2f regime=%s call_wall=%s put_wall=%s zero_gamma=%s (%d contracts)",
+                                futures_sym, rtd_dl.total_gex, rtd_dl.gex_regime,
+                                rtd_dl.call_wall, rtd_dl.put_wall, rtd_dl.zero_gamma,
+                                rtd_gex_result.contract_count,
+                            )
+
+
 
                         if TOS_RTD_GEX_AS_PRIMARY:
                             if PIPELINE_DEBUG_RTD:
@@ -1007,30 +1089,38 @@ def run_pipeline(
         else:
             log.info("Discord updates skipped (outside allowed windows: 09:30, 16:15 ET).")
 
-    # --- Greeks drift validation (if RTD active) -----------------------------
-    if rtd_coord.is_rtd_active:
+    # --- Greeks drift validation (legacy diagnostic, off by default) ---------
+    from .config import TOS_RTD_ENABLE_DRIFT_VALIDATION
+    if rtd_coord.is_rtd_active and TOS_RTD_ENABLE_DRIFT_VALIDATION:
+        validated_syms = set()
         for ticker, levels in cash_levels_by_ticker.items():
             futures_sym = INDEX_TO_FUTURES.get(ticker)
-            if futures_sym:
-                drift_results = rtd_coord.validate_greeks(levels, futures_sym)
-                if drift_results:
-                    drift_summary = rtd_coord.get_drift_summary()
-                    log.info(
-                        "Greeks drift validation for %s: %d contracts, avg drift=%.4f%%, max=%.4f%%",
+            if not futures_sym or futures_sym in validated_syms:
+                continue
+            drift_results = rtd_coord.validate_greeks(levels, futures_sym)
+            validated_syms.add(futures_sym)
+            if drift_results:
+                drifts = [r.gamma_drift_pct for r in drift_results if r.gamma_drift_pct is not None]
+                avg_drift = sum(drifts) / len(drifts) if drifts else 0.0
+                max_drift = max(drifts) if drifts else 0.0
+                high_drift_count = sum(1 for d in drifts if d > 5.0)
+                log.info(
+                    "Greeks drift validation for %s: %d contracts, avg drift=%.4f%%, max=%.4f%%",
+                    futures_sym,
+                    len(drift_results),
+                    avg_drift,
+                    max_drift,
+                )
+                if high_drift_count > 0:
+                    log.warning(
+                        "Greeks drift > 5%% on %d contracts for %s — BSM model may need recalibration",
+                        high_drift_count,
                         futures_sym,
-                        drift_summary.get("count", 0),
-                        drift_summary.get("avg_drift_pct", 0),
-                        drift_summary.get("max_drift_pct", 0),
                     )
-                    if drift_summary.get("high_drift_count", 0) > 0:
-                        log.warning(
-                            "Greeks drift > 5%% on %d contracts for %s — BSM model may need recalibration",
-                            drift_summary["high_drift_count"],
-                            futures_sym,
-                        )
 
-    # --- Stop RTD coordinator ------------------------------------------------
-    rtd_coord.stop()
+    # --- Stop RTD coordinator only if we started it --------------------------
+    if rtd_started_here:
+        rtd_coord.stop()
 
     log.info("Pipeline complete  |  %s", run_label)
 
@@ -1074,126 +1164,152 @@ def run_loop(enable_discord: bool = False) -> None:
         log.critical("Cannot create Schwab client: %s", exc)
         return
 
+    # --- TOS RTD coordinator: start once and reuse across all loop cycles ---
+    loop_rtd_coord: HybridCoordinator | None = None
+    try:
+        loop_rtd_coord = HybridCoordinator()
+        loop_rtd_coord.start()
+        if loop_rtd_coord.is_rtd_active:
+            log.info("Loop RTD coordinator active — real-time futures prices enabled")
+        elif loop_rtd_coord._enabled:
+            log.warning("Loop RTD coordinator enabled but not active — check TOS desktop")
+    except Exception as exc:
+        log.warning("Failed to start loop RTD coordinator: %s", exc)
+
     # --- Pulse Scheduling ---
     # We want to force a FULL versioned run at exactly these times.
     # We now pull these from config.SCHEDULE_TIMES
     snapshot_targets = SCHEDULE_TIMES # ["08:30", "09:30", "10:00", ...]
     last_pulse_date: dict[str, str] = {} # "08:30" -> "2026-05-06"
 
-    while True:
-        ny_now = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE))
-        now = time.time() # Current timestamp for interval checks
-        today_str = ny_now.strftime("%Y-%m-%d")
-        
-        # Futures Market Weekend Timing: Friday 17:00 ET to Sunday 18:00 ET
-        is_weekend_closed = (
-            (ny_now.weekday() == 4 and ny_now.time() >= FUTURES_CLOSE_FRIDAY_TIME) or  # Friday after 5pm
-            (ny_now.weekday() == 5) or                                                # Saturday
-            (ny_now.weekday() == 6 and ny_now.time() < FUTURES_OPEN_SUNDAY_TIME)      # Sunday before 6pm
-        )
-        
-        # Regular Trading Hours (Equity RTH)
-        is_equity_rth = (EQUITY_RTH_START_TIME <= ny_now.time() <= EQUITY_RTH_END_TIME) and not is_weekend_closed
+    # Initialize past targets on startup to prevent backlog replay storm
+    init_ny_now = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE))
+    init_time_str = init_ny_now.strftime("%H:%M")
+    init_today_str = init_ny_now.strftime("%Y-%m-%d")
+    for s_time in snapshot_targets:
+        if s_time <= init_time_str:
+            last_pulse_date[s_time] = init_today_str
+            log.info("Loop startup: marked past scheduled pulse %s as completed for today.", s_time)
 
-        # --- Adaptive Intervals ---
-        if is_equity_rth:
-            t1_interval = RTH_T1_INTERVAL
-            t2_interval = RTH_T2_INTERVAL
-        elif is_weekend_closed:
-            t1_interval = WEEKEND_T1_INTERVAL
-            t2_interval = WEEKEND_T2_INTERVAL
-        else:
-            # Active futures but not equity RTH (e.g. overnight/pre-market)
-            t1_interval = OFF_HOURS_T1_INTERVAL
-            t2_interval = OFF_HOURS_T2_INTERVAL
+    try:
+        while True:
+            ny_now = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE))
+            now = time.time() # Current timestamp for interval checks
+            today_str = ny_now.strftime("%Y-%m-%d")
 
-        # Reload priority tickers dynamically
-        from .config import get_priority_tickers
-        dynamic_priority = get_priority_tickers()
-        
-        # Merge hardcoded indices with user-specified priority
-        tier1_tickers = list(set(TIER1_TICKERS_DEFAULT + dynamic_priority))
-        tier2_tickers = [t for t in ACTIVE_TICKERS if t not in tier1_tickers]
+            # Futures Market Weekend Timing: Friday 17:00 ET to Sunday 18:00 ET
+            is_weekend_closed = (
+                (ny_now.weekday() == 4 and ny_now.time() >= FUTURES_CLOSE_FRIDAY_TIME) or  # Friday after 5pm
+                (ny_now.weekday() == 5) or                                                # Saturday
+                (ny_now.weekday() == 6 and ny_now.time() < FUTURES_OPEN_SUNDAY_TIME)      # Sunday before 6pm
+            )
 
-        is_pulse_cycle = False
-        pulse_suffix = None
-        pulse_time_str = None
-        current_time_str = ny_now.strftime("%H:%M") # "08:30"
-        for s_time in snapshot_targets:
-            # If we are AT or PAST a snapshot time today, and haven't run it yet
-            if current_time_str >= s_time and last_pulse_date.get(s_time) != today_str:
-                # On weekdays, trigger the pulse
-                if ny_now.weekday() < 5:
-                    is_pulse_cycle = True
-                    pulse_time_str = s_time
-                    pulse_suffix = _build_snapshot_suffix(ny_now, s_time)
-                    last_pulse_date[s_time] = today_str
-                    log.info("SCHEDULED PULSE DETECTED: %s snapshot triggered.", s_time)
-                    break
+            # Regular Trading Hours (Equity RTH)
+            is_equity_rth = (EQUITY_RTH_START_TIME <= ny_now.time() <= EQUITY_RTH_END_TIME) and not is_weekend_closed
 
-        # Check for manual trigger file (e.g., from UI 'Refresh' button)
-        manual_trigger_file = REPO_ROOT / MANUAL_TRIGGER_FILENAME
-        manual_tickers = []
-        if manual_trigger_file.exists():
-            try:
-                with open(manual_trigger_file, "r") as f:
-                    manual_tickers = json.load(f)
-                manual_trigger_file.unlink() # consume the trigger
-                log.info("Manual trigger detected for: %s", ", ".join(manual_tickers))
-            except Exception as e:
-                log.error("Failed to read/delete manual trigger file: %s", e)
+            # --- Adaptive Intervals ---
+            if is_equity_rth:
+                t1_interval = RTH_T1_INTERVAL
+                t2_interval = RTH_T2_INTERVAL
+            elif is_weekend_closed:
+                t1_interval = WEEKEND_T1_INTERVAL
+                t2_interval = WEEKEND_T2_INTERVAL
+            else:
+                # Active futures but not equity RTH (e.g. overnight/pre-market)
+                t1_interval = OFF_HOURS_T1_INTERVAL
+                t2_interval = OFF_HOURS_T2_INTERVAL
 
-        # Decide what is due
-        due_tier1 = tier1_tickers if (now - tier1_last_run) >= t1_interval else []
-        
-        # Restriction logic:
-        # 1. Pulse Cycle -> ALL TICKERS (Full snapshot)
-        # 2. Manual Trigger -> TIER 1 + Manual Tickers
-        # 3. Normal Loop -> TIER 1 Only (if due)
-        is_intraday_only = False
-        if is_pulse_cycle:
-            active_this_cycle = ACTIVE_TICKERS
-            is_versioned = True
-        elif manual_tickers:
-            active_this_cycle = list(set(due_tier1 + manual_tickers))
-            is_versioned = False
-        else:
-            active_this_cycle = due_tier1
-            is_versioned = False
-            is_intraday_only = True
+            # Reload priority tickers dynamically
+            from .config import get_priority_tickers
+            dynamic_priority = get_priority_tickers()
 
-        if active_this_cycle:
-            run_label = ny_now.strftime("%Y-%m-%d %H:%M ET")
-            log.info("Cycle start — processing %d tickers: %s (Pulse=%s, Versioned=%s, IntradayOnly=%s)", 
-                     len(active_this_cycle), ", ".join(active_this_cycle), is_pulse_cycle, is_versioned, is_intraday_only)
+            # Merge hardcoded indices with user-specified priority
+            tier1_tickers = list(set(TIER1_TICKERS_DEFAULT + dynamic_priority))
+            tier2_tickers = [t for t in ACTIVE_TICKERS if t not in tier1_tickers]
 
-            # Temporarily restrict ACTIVE_TICKERS to our cycle subset
-            import scripts.streaming.options.config as _cfg
-            original = _cfg.ACTIVE_TICKERS
-            _cfg.ACTIVE_TICKERS = active_this_cycle
+            is_pulse_cycle = False
+            pulse_suffix = None
+            pulse_time_str = None
+            current_time_str = ny_now.strftime("%H:%M") # "08:30"
+            for s_time in snapshot_targets:
+                # If we are AT or PAST a snapshot time today, and haven't run it yet
+                if current_time_str >= s_time and last_pulse_date.get(s_time) != today_str:
+                    # On weekdays, trigger the pulse
+                    if ny_now.weekday() < 5:
+                        is_pulse_cycle = True
+                        pulse_time_str = s_time
+                        pulse_suffix = _build_snapshot_suffix(ny_now, s_time)
+                        last_pulse_date[s_time] = today_str
+                        log.info("SCHEDULED PULSE DETECTED: %s snapshot triggered.", s_time)
+                        break
 
-            try:
-                # During the 09:30 pulse, we force an anchor reset
-                should_reset_anchors = (is_pulse_cycle and pulse_time_str == "09:30")
-                
-                run_pipeline(
-                    run_label=run_label, 
-                    enable_discord=enable_discord, 
-                    versioned=is_versioned,
-                    reset_anchors=should_reset_anchors,
-                    snapshot_suffix=pulse_suffix,
-                    intraday_only=is_intraday_only
-                )
-                # Successful run! Update timestamps
-                if due_tier1 or is_pulse_cycle:
-                    tier1_last_run = now
-            except Exception as exc:
-                log.error("Pipeline cycle failed: %s", exc)
-            finally:
-                _cfg.ACTIVE_TICKERS = original
+            # Check for manual trigger file (e.g., from UI 'Refresh' button)
+            manual_trigger_file = REPO_ROOT / MANUAL_TRIGGER_FILENAME
+            manual_tickers = []
+            if manual_trigger_file.exists():
+                try:
+                    with open(manual_trigger_file, "r") as f:
+                        manual_tickers = json.load(f)
+                    manual_trigger_file.unlink() # consume the trigger
+                    log.info("Manual trigger detected for: %s", ", ".join(manual_tickers))
+                except Exception as e:
+                    log.error("Failed to read/delete manual trigger file: %s", e)
 
-        # Sleep for a short beat to check for manual triggers frequently
-        time.sleep(LOOP_BEAT_SECONDS)
+            # Decide what is due
+            due_tier1 = tier1_tickers if (now - tier1_last_run) >= t1_interval else []
+
+            # Restriction logic:
+            # 1. Pulse Cycle -> ALL TICKERS (Full snapshot)
+            # 2. Manual Trigger -> TIER 1 + Manual Tickers
+            # 3. Normal Loop -> TIER 1 Only (if due)
+            is_intraday_only = False
+            if is_pulse_cycle:
+                active_this_cycle = ACTIVE_TICKERS
+                is_versioned = True
+            elif manual_tickers:
+                active_this_cycle = list(set(due_tier1 + manual_tickers))
+                is_versioned = False
+            else:
+                active_this_cycle = due_tier1
+                is_versioned = False
+                is_intraday_only = True
+
+            if active_this_cycle:
+                run_label = ny_now.strftime("%Y-%m-%d %H:%M ET")
+                log.info("Cycle start — processing %d tickers: %s (Pulse=%s, Versioned=%s, IntradayOnly=%s)", 
+                         len(active_this_cycle), ", ".join(active_this_cycle), is_pulse_cycle, is_versioned, is_intraday_only)
+
+                # Temporarily restrict ACTIVE_TICKERS to our cycle subset
+                import scripts.streaming.options.config as _cfg
+                original = _cfg.ACTIVE_TICKERS
+                _cfg.ACTIVE_TICKERS = active_this_cycle
+
+                try:
+                    # During the 09:30 pulse, we force an anchor reset
+                    should_reset_anchors = (is_pulse_cycle and pulse_time_str == "09:30")
+
+                    run_pipeline(
+                        run_label=run_label, 
+                        enable_discord=enable_discord, 
+                        versioned=is_versioned,
+                        reset_anchors=should_reset_anchors,
+                        snapshot_suffix=pulse_suffix,
+                        intraday_only=is_intraday_only,
+                        rtd_coord=loop_rtd_coord,
+                    )
+                    # Successful run! Update timestamps
+                    if due_tier1 or is_pulse_cycle:
+                        tier1_last_run = now
+                except Exception as exc:
+                    log.error("Pipeline cycle failed: %s", exc)
+                finally:
+                    _cfg.ACTIVE_TICKERS = original
+
+            # Sleep for a short beat to check for manual triggers frequently
+            time.sleep(LOOP_BEAT_SECONDS)
+    finally:
+        if loop_rtd_coord is not None:
+            loop_rtd_coord.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -1274,8 +1390,8 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
     # -----------------------------------------------------------------
     import os
     import subprocess
-    
-    def _run_subprocess(args: list[str], label: str):
+
+    def _run_subprocess(args: list[str], label: str) -> None:
         if not _is_trading_day():
             log.info("Non-trading day — skipping %s.", label)
             return
@@ -1291,20 +1407,32 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
         except Exception as e:
             log.error("Failed to run %s: %s", label, e)
 
+    def _run_narrative_chain(jobs: list[tuple[list[str], str]]) -> None:
+        """Run a sequence of narrative subprocesses (no short-circuiting)."""
+        if not _is_trading_day():
+            log.info("Non-trading day — skipping narrative chain.")
+            return
+        for args, label in jobs:
+            _run_subprocess(args, label)
+
     # 1. Daily Open Narrative (09:35 ET, Mon-Fri)
     scheduler.add_job(
-        lambda: _run_subprocess(["python", "-m", "scripts.trader.daily_eod_update", "--session", "open"], "Open Update") or \
-                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "open"], "Open Narrative") or \
-                _run_subprocess(["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Open"),
+        lambda: _run_narrative_chain([
+            (["python", "-m", "scripts.trader.daily_eod_update", "--session", "open"], "Open Update"),
+            (["python", "-m", "scripts.trader.daily_narrative", "--session", "open"], "Open Narrative"),
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Open"),
+        ]),
         trigger=CronTrigger(day_of_week='mon-fri', hour=9, minute=35, timezone=tz),
         id="narrative_open",
         replace_existing=True,
     )
     log.info("Scheduled Narrative: 09:35 ET (Open)")
 
-    # 2. Intraday Narrative (12:00 ET, Mon-Fri) — Phase 2 placeholder
+    # 2. Intraday Narrative (12:00 ET, Mon-Fri)
     scheduler.add_job(
-        lambda: _run_subprocess(["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Intraday"),
+        lambda: _run_narrative_chain([
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "intraday", "--no-discord"], "Trader Narrative Intraday"),
+        ]),
         trigger=CronTrigger(day_of_week='mon-fri', hour=12, minute=0, timezone=tz),
         id="narrative_intraday",
         replace_existing=True,
@@ -1313,19 +1441,23 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
 
     # 3. Daily EOD Narrative (16:15 ET, Mon-Fri)
     scheduler.add_job(
-        lambda: _run_subprocess(["python", "-m", "scripts.trader.daily_eod_update", "--session", "eod"], "EOD Update") or \
-                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "eod"], "EOD Narrative") or \
-                _run_subprocess(["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Close"),
+        lambda: _run_narrative_chain([
+            (["python", "-m", "scripts.trader.daily_eod_update", "--session", "eod"], "EOD Update"),
+            (["python", "-m", "scripts.trader.daily_narrative", "--session", "eod"], "EOD Narrative"),
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "close", "--no-discord"], "Trader Narrative Close"),
+        ]),
         trigger=CronTrigger(day_of_week='mon-fri', hour=16, minute=15, timezone=tz),
         id="narrative_eod",
         replace_existing=True,
     )
     log.info("Scheduled Narrative: 16:15 ET (EOD)")
 
-    # 3. Weekly Briefing (16:20 ET, Friday)
+    # 4. Weekly Briefing (16:20 ET, Friday)
     scheduler.add_job(
-        lambda: _run_subprocess(["python", "-m", "scripts.trader.weekly_briefing"], "Weekly Update") or \
-                _run_subprocess(["python", "-m", "scripts.trader.weekly_narrative"], "Weekly Narrative"),
+        lambda: _run_narrative_chain([
+            (["python", "-m", "scripts.trader.weekly_briefing"], "Weekly Update"),
+            (["python", "-m", "scripts.trader.weekly_narrative"], "Weekly Narrative"),
+        ]),
         trigger=CronTrigger(day_of_week='fri', hour=16, minute=20, timezone=tz),
         id="narrative_weekly",
         replace_existing=True,

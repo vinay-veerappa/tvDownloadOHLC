@@ -77,6 +77,10 @@ class RTDClient(COMObject):
         self._latest_values: Dict[Tuple[str, str], Quote] = {}
         self._value_lock = Lock()
 
+        # Pending updates for incremental delta updates
+        self._pending_updates: Dict[str, Any] = {}
+        self._pending_lock = Lock()
+
         # Heartbeat
         self._heartbeat_interval = heartbeat_ms or SETTINGS.initial_heartbeat
 
@@ -233,7 +237,7 @@ class RTDClient(COMObject):
             topic_id = topic.generate_topic_id(quote_type_str, symbol)
 
             if topic_id in self.topics:
-                self.logger.info("Already subscribed to %s %s", symbol, quote_type_str)
+                self.logger.debug("Already subscribed to %s %s", symbol, quote_type_str)
                 return topic_id
 
             strings = (VARIANT * 2)()
@@ -242,13 +246,13 @@ class RTDClient(COMObject):
             get_new_values = VARIANT_BOOL(True)
 
             try:
-                self.logger.info("Subscribing to %s %s", symbol, quote_type_str)
+                self.logger.debug("Subscribing to %s %s", symbol, quote_type_str)
                 result = self.server.ConnectData(topic_id, strings, get_new_values)
                 self.logger.debug("Subscription raw result for %s: %s", symbol, result)
 
                 if isinstance(result, list) and len(result) >= 1 and result[0]:
                     self.topics[topic_id] = (symbol, quote_type_str)
-                    self.logger.info(
+                    self.logger.debug(
                         "Subscribed to %s %s with ID %d",
                         symbol,
                         quote_type_str,
@@ -368,8 +372,22 @@ class RTDClient(COMObject):
                 else:
                     self._latest_values[key] = quote
 
+            with self._pending_lock:
+                key_str = f"{symbol}:{quote_type}"
+                self._pending_updates[key_str] = quote.value
+                if ":" in symbol:
+                    base_symbol = symbol.split(":")[0]
+                    self._pending_updates[f"{base_symbol}:{quote_type}"] = quote.value
+
         except Exception as e:
             self.logger.error("Error handling quote update: %s", e)
+
+    def get_pending_updates(self) -> Dict[str, Any]:
+        """Get and clear all pending quote updates since last call."""
+        with self._pending_lock:
+            updates = self._pending_updates
+            self._pending_updates = {}
+            return updates
 
     # ------------------------------------------------------------------
     # Heartbeat

@@ -38,7 +38,7 @@ class RTDSettings:
 
     # Worker poll intervals (seconds)
     fast_poll_interval: float = 0.05  # Before first data arrives
-    normal_poll_interval: float = 1.0  # After first data arrives
+    normal_poll_interval: float = 0.1  # After first data arrives
 
     # Init retry
     max_init_retries: int = 3

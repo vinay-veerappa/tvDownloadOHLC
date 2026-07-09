@@ -41,7 +41,46 @@ def _patch_pipeline_basics(monkeypatch) -> dict[str, list]:
     monkeypatch.setattr(rol, "_chain_has_actionable_oi", lambda _chain: True)
     monkeypatch.setattr(rol, "calculate_price_metrics", lambda _chain: {})
     monkeypatch.setattr(rol, "replace", lambda obj, **kwargs: obj)
-    monkeypatch.setattr(rol, "calculate_dealer_levels", lambda _chain, ticker: SimpleNamespace(ticker=ticker, spot=100.0))
+    
+    # Force HybridCoordinator to return None to avoid picking up live host RTD prices during test runs
+    monkeypatch.setattr(rol.HybridCoordinator, "start", lambda self: None)
+    monkeypatch.setattr(rol.HybridCoordinator, "stop", lambda self: None)
+    monkeypatch.setattr(rol.HybridCoordinator, "get_futures_price", lambda self, symbol, schwab_price=None: None)
+    
+    # Mock a complete DealerLevels structure to prevent AttributeError if translate_to_futures is called
+    monkeypatch.setattr(
+        rol, 
+        "calculate_dealer_levels", 
+        lambda _chain, ticker, *args, **kwargs: SimpleNamespace(
+            ticker=ticker,
+            spot=100.0,
+            total_gex=0.0,
+            gex_regime="POSITIVE",
+            zero_gamma=100.0,
+            gamma_flip_lower=100.0,
+            gamma_flip_upper=100.0,
+            call_wall=100.0,
+            put_wall=100.0,
+            secondary_call_wall=100.0,
+            secondary_put_wall=100.0,
+            local_call_node=100.0,
+            local_put_node=100.0,
+            call_wall_0dte=100.0,
+            put_wall_0dte=100.0,
+            hedge_wall=100.0,
+            max_pain=100.0,
+            em_upper=100.0,
+            em_lower=100.0,
+            em_value=0.0,
+            atm_straddle=0.0,
+            vol_trigger_upper_05=100.0,
+            vol_trigger_lower_05=100.0,
+            vol_trigger_upper_10=100.0,
+            vol_trigger_lower_10=100.0,
+            gamma_magnet=100.0,
+            zero_gamma_delta_adj=100.0,
+        )
+    )
     monkeypatch.setattr(
         rol,
         "score_levels",
@@ -56,6 +95,7 @@ def _patch_pipeline_basics(monkeypatch) -> dict[str, list]:
     monkeypatch.setattr(rol, "write_scored_levels_txt", lambda *args, **kwargs: None)
     monkeypatch.setattr(rol, "write_levels", lambda *args, **kwargs: None)
     monkeypatch.setattr(rol, "_is_rth", lambda: False)
+    monkeypatch.setattr(rol, "_discord_window_allowed", lambda *args, **kwargs: True)
 
     monkeypatch.setattr(
         rol,
