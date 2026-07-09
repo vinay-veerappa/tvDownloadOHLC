@@ -97,6 +97,8 @@ if not _IS_RTD_CHILD:
         UNIFIED_LEVELS_JSON,
         ENABLE_UNIFIED_CONTRACT_OUTPUTS,
         ENABLE_SCORED_CONTRACT_OUTPUTS,
+        PIPELINE_DEBUG_TICKER,
+        PIPELINE_DEBUG_RTD,
     )
     from .discord_notifier import send_discord_update, send_regime_change_alert
     from .file_writer import (
