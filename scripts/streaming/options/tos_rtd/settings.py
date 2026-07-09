@@ -23,6 +23,10 @@ class RTDSettings:
     typelib_guid: str = "{BA792DC8-807E-43E3-B484-47465D82C4D1}"
 
     # IRtdServer interface GUID
+    # NOTE: This is the standard Excel RTD CLSID, but TOS uses a different one!
+    # The actual TOS RTD CLSID (registered in Windows) is {1B415BA9-E543-41BD-8EB1-CB12A5B7678F}
+    # We keep the standard one for interface definition, but CreateObject uses the ProgID
+    # which automatically resolves to the correct CLSID via the registry.
     server_guid: str = "{EC0E6191-DB51-11D3-8F3E-00C04F3651B8}"
 
     # IRTDUpdateEvent callback interface GUID

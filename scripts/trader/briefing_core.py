@@ -34,6 +34,7 @@ import pandas as pd
 
 from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
+from scripts.trader.signals.expected_move import get_em_context, format_em_block
 
 log = logging.getLogger(__name__)
 
@@ -2433,6 +2434,23 @@ def build_trader_cheat_sheet(
 
     # ── Key levels hierarchy ──
     sections.append(_format_key_levels_hierarchy(nq_gex, es_gex, aln_data, nq_spot))
+
+    # ── Expected Move (C2 Signal) ──
+    try:
+        # EM is indexed to the ETF proxy, not futures price
+        # Map futures to their ETF spot price for EM calculation
+        em_ticker = nq_ticker  # Signal will map to QQQ
+        
+        # For now, use a simple proxy lookup
+        # In production, could fetch live ETF spot from DataLoader
+        # Since pipeline computes EM for QQQ/SPY/etc., we trust that
+        # We'll just get EM context without a specific spot price
+        # (it will return raw EM from daily_levels.json regardless of spot)
+        em_data = get_em_context(spot=0, ticker=em_ticker)  # spot=0 means we just get EM range
+        sections.append(format_em_block(em_data))
+    except Exception as e:
+        log.warning("[cheat_sheet] EM signal failed: %s", e)
+        sections.append("== EXPECTED MOVE ==\nEM calculation failed")
 
     # ── Prior EOD plan (overnight continuity) ──
     try:

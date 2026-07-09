@@ -76,10 +76,10 @@ def test_symbol_builder() -> None:
     for sym in test_cases:
         parsed = parse_rtd_option_symbol(sym)
         if parsed:
-            print(f"  {sym} → product={parsed.product_code}, type={parsed.option_type}, "
+            print(f"  {sym} -> product={parsed.product_code}, type={parsed.option_type}, "
                   f"strike={parsed.strike}, exchange={parsed.exchange}, base={parsed.base_symbol}")
         else:
-            print(f"  {sym} → PARSE FAILED")
+            print(f"  {sym} -> PARSE FAILED")
 
 
 def test_live_rtd(symbols: list[str], duration: int) -> None:

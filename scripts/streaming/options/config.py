@@ -483,9 +483,39 @@ else:
     ENABLE_TOS_RTD: bool = _sys.platform == "win32" and _is_tos_running()
 
 TOS_RTD_HEARTBEAT_MS: int = 500
-TOS_RTD_STRIKE_RANGE: int = 20          # ± strikes from ATM
-TOS_RTD_STRIKE_SPACING: float = 1.0
+TOS_RTD_STRIKE_RANGE: int = 20          # ± strikes from ATM (legacy — overridden by per-symbol config below)
+TOS_RTD_STRIKE_SPACING: float = 1.0     # Spacing between strikes (legacy — overridden by per-symbol config below)
 TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
+# Per-symbol RTD config with tiered strike spacing (CME standard)
+# NQ tiers: 5-pt within ±200, 10-pt within ±500, 25-pt within ±1000, 50-pt beyond
+# ES tiers: 5-pt within ±100, 10-pt within ±300, 25-pt beyond
+# Each tier is (max_distance_from_atm, spacing). Tiers are applied cumulatively.
+TOS_RTD_SYMBOL_CONFIG: dict[str, dict] = {
+    "/NQ": {
+        "strike_tiers": [(200, 5.0), (500, 10.0), (1000, 25.0), (2000, 50.0)],
+        "num_expiries": 2,
+    },
+    "/ES": {
+        "strike_tiers": [(100, 5.0), (300, 10.0), (600, 25.0)],
+        "num_expiries": 2,
+    },
+    "/YM": {
+        "strike_tiers": [(200, 5.0), (500, 10.0), (2000, 100.0)],
+        "num_expiries": 2,
+    },
+    "/RTY": {
+        "strike_tiers": [(100, 5.0), (200, 10.0), (500, 50.0)],
+        "num_expiries": 2,
+    },
+    "/GC": {
+        "strike_tiers": [(100, 5.0), (200, 10.0), (500, 25.0)],
+        "num_expiries": 2,
+    },
+    "/CL": {
+        "strike_tiers": [(5, 0.25), (20, 0.5), (50, 1.0), (70, 2.5)],
+        "num_expiries": 2,
+    },
+}
 
 # When True, RTD-computed futures GEX is used as the PRIMARY dealer levels
 # for /ES and /NQ (instead of Schwab SPX/QQQ→futures translated levels).

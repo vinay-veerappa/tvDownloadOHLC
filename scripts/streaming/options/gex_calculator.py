@@ -1080,6 +1080,18 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
         is_futures = any(chain.ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
         move, straddle = _expected_move(calls, puts, spot, dte=dte, is_futures=is_futures, ticker=chain.ticker)
 
+        # Fallback: if straddle-based EM fails (no bid/ask, e.g. RTD outside RTH),
+        # use the TOS volatility-based formula with ATM blended IV
+        if move <= 0 and blended_iv > 0:
+            tos_move = calculate_tos_expected_move(spot, expiry.isoformat(), blended_iv * 100, is_futures=is_futures)
+            if tos_move > 0:
+                log.info(
+                    "[EM-DEBUG] %s | %s (DTE=%d) — TOS fallback: ±%.2f | blended_iv=%.4f",
+                    chain.ticker, expiry, dte, tos_move, blended_iv,
+                )
+                move = tos_move
+                straddle = tos_move / 1.10  # approximate straddle from EM/k
+
         if move <= 0:
             log.info(
                 "[EM-DEBUG] %s | %s (DTE=%d) — SKIP: move=0 | ATM call_iv=%.4f put_iv=%.4f blended=%.4f straddle=%.2f",
@@ -1905,9 +1917,10 @@ def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_
         
     vol_decimal = expiry_volatility / 100.0 if expiry_volatility > 1.0 else expiry_volatility
     
-    # EM = Price * IV * sqrt((0.637 * DTE + intercept) / 365)
-    intercept = 0.69 if is_futures else 0.24
-    t_eff_yr = (0.637 * dte + intercept) / 365.0
+    # EM = Price × IV × sqrt(DTE / 365)
+    # TOS uses the simple Black-Scholes 1-SD formula without intercept.
+    # Verified against actual TOS values: NQ 329.87 (21.51% IV) and ES 46.35 (11.86% IV).
+    t_eff_yr = dte / 365.0
     
     if t_eff_yr <= 0:
         return 0.0

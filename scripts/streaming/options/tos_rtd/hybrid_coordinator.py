@@ -24,6 +24,7 @@ from ..config import (
     TOS_RTD_STRIKE_RANGE,
     TOS_RTD_STRIKE_SPACING,
     TOS_RTD_SYMBOLS,
+    TOS_RTD_SYMBOL_CONFIG,
     _is_tos_running,
 )
 
@@ -33,9 +34,9 @@ log = logging.getLogger(__name__)
 _RTD_AVAILABLE = False
 if sys.platform == "win32":
     try:
-        from .tos_rtd.adapter import TOSRTDAdapter, RTDConfig, ChainSnapshot
-        from .tos_rtd.symbol_builder import OptionSymbolBuilder, parse_rtd_option_symbol
-        from .tos_rtd.rtd_gex_calculator import calculate_futures_gex, FuturesGEXResult, compare_gex_sources, format_comparison_table
+        from .adapter import TOSRTDAdapter, RTDConfig, ChainSnapshot
+        from .symbol_builder import OptionSymbolBuilder, parse_rtd_option_symbol
+        from .rtd_gex_calculator import calculate_futures_gex, FuturesGEXResult, compare_gex_sources, format_comparison_table
         _RTD_AVAILABLE = True
     except ImportError:
         log.warning("tos_rtd package import failed — RTD disabled")
@@ -128,26 +129,38 @@ class HybridCoordinator:
                 days_ahead += 7
             self._expiry = today + timedelta(days=days_ahead)
 
+        # Build expiry list: nearest Friday + next monthly (3rd Friday)
+        expiries = [self._expiry]
+        # Find next monthly expiration (3rd Friday of month)
+        monthly = self._expiry
+        for _ in range(5):  # Try up to 5 weeks ahead
+            monthly = monthly + timedelta(days=7)
+            if 15 <= monthly.day <= 21 and monthly.weekday() == 4:
+                expiries.append(monthly)
+                break
+
         config = RTDConfig(
             strike_range=TOS_RTD_STRIKE_RANGE,
             strike_spacing=TOS_RTD_STRIKE_SPACING,
+            symbol_configs=TOS_RTD_SYMBOL_CONFIG,
         )
         self._adapter = TOSRTDAdapter(config)
 
         if current_prices:
             # Prices provided — single-phase start with option symbols
-            self._start_with_prices(current_prices)
+            self._start_with_prices(current_prices, expiries)
         else:
             # Two-phase start: get price first, then restart with options
-            self._start_two_phase()
+            self._start_two_phase(expiries)
 
-    def _start_with_prices(self, current_prices: dict[str, float]) -> None:
+    def _start_with_prices(self, current_prices: dict[str, float], expiries: list[date] | None = None) -> None:
         """Start RTD with known prices — subscribes to futures + options immediately."""
         try:
             self._adapter.start(
                 symbols=self._symbols,
                 expiry=self._expiry,
                 current_price=current_prices,
+                expiries=expiries,
             )
             log.info("HybridCoordinator started with RTD for %s (prices provided)", self._symbols)
         except Exception as e:
@@ -155,7 +168,7 @@ class HybridCoordinator:
             self._enabled = False
             self._adapter = None
 
-    def _start_two_phase(self) -> None:
+    def _start_two_phase(self, expiries: list[date] | None = None) -> None:
         """Two-phase start: get futures price from RTD, then restart with option symbols."""
         import time
         try:
@@ -166,6 +179,11 @@ class HybridCoordinator:
             prices = {}
             for i in range(10):
                 time.sleep(1)
+                
+                if self._adapter._process and not self._adapter._process.is_alive():
+                    log.error(f"RTD Phase 1: Child process died unexpectedly! Exit code: {self._adapter._process.exitcode}")
+                    break
+
                 for sym in self._symbols:
                     p = self._adapter.get_futures_price(sym)
                     if p and p > 0:
@@ -188,6 +206,7 @@ class HybridCoordinator:
                 symbols=self._symbols,
                 expiry=self._expiry,
                 current_price=prices,
+                expiries=expiries,
             )
             log.info("RTD Phase 2: Restarted with option symbols for %s", list(prices.keys()))
 
@@ -295,7 +314,7 @@ class HybridCoordinator:
             rtd_oi = greeks.get("OPEN_INT")
 
             # Find matching contract
-            from .tos_rtd.symbol_builder import parse_rtd_option_symbol
+            from .symbol_builder import parse_rtd_option_symbol
             parsed = parse_rtd_option_symbol(rtd_sym)
             if not parsed or parsed.base_symbol != symbol:
                 continue

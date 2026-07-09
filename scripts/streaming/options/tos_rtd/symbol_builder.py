@@ -280,12 +280,44 @@ class OptionSymbolBuilder:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _generate_tiered_strikes(
+        current_price: float,
+        strike_tiers: list[tuple[float, float]],
+    ) -> list[float]:
+        """
+        Generate strikes using tiered spacing (CME standard).
+
+        Args:
+            current_price: ATM price
+            strike_tiers: list of (max_distance_from_atm, spacing) tuples.
+                         e.g. [(200, 5.0), (500, 10.0), (1000, 25.0)]
+                         Tiers are applied cumulatively from ATM outward.
+
+        Returns:
+            Sorted list of unique strike prices.
+        """
+        strikes: set[float] = set()
+        atm = OptionSymbolBuilder._round_to_nearest_strike(current_price, strike_tiers[0][1])
+
+        for max_dist, spacing in strike_tiers:
+            # Generate strikes from ATM to max_dist at this spacing
+            n = int(max_dist / spacing)
+            for i in range(-n, n + 1):
+                strike = atm + i * spacing
+                # Only include if within this tier's range
+                if abs(strike - atm) <= max_dist:
+                    strikes.add(strike)
+
+        return sorted(strikes)
+
+    @staticmethod
     def build_symbols(
         base_symbol: str,
         expiry: date,
         current_price: float,
         strike_range: int,
         strike_spacing: float,
+        strike_tiers: list[tuple[float, float]] | None = None,
     ) -> list[str]:
         """
         Build a list of option symbols for both calls and puts.
@@ -294,8 +326,10 @@ class OptionSymbolBuilder:
             base_symbol: Underlying symbol (e.g. "/ES", "/NQ", "SPY")
             expiry: Contract expiration date
             current_price: Current price of the underlying
-            strike_range: ± strike range to monitor
-            strike_spacing: Spacing between strikes
+            strike_range: ± strike range to monitor (fallback if no tiers)
+            strike_spacing: Spacing between strikes (fallback if no tiers)
+            strike_tiers: Optional tiered spacing [(max_dist, spacing), ...].
+                         If provided, overrides strike_range/strike_spacing.
 
         Returns:
             List of RTD option symbols (e.g. "./NQH25C21000:XCME")
@@ -303,33 +337,39 @@ class OptionSymbolBuilder:
         if not current_price or current_price <= 0:
             log.warning("Invalid current price: %s", current_price)
             return []
-        if not strike_range or strike_range <= 0:
-            log.warning("Invalid strike range: %s", strike_range)
-            return []
-        if not strike_spacing or strike_spacing <= 0:
-            log.warning("Invalid strike spacing: %s", strike_spacing)
-            return []
 
         exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(base_symbol, "XCBT")
 
-        rounded_price = OptionSymbolBuilder._round_to_nearest_strike(current_price, strike_spacing)
-        log.debug(
-            "Rounded price: %s, Range: ±%d, Spacing: %s",
-            rounded_price, strike_range, strike_spacing,
-        )
+        # Generate strikes — tiered if available, flat otherwise
+        if strike_tiers:
+            strikes = OptionSymbolBuilder._generate_tiered_strikes(current_price, strike_tiers)
+            log.debug(
+                "Tiered strikes for %s: %d strikes from %.0f to %.0f (tiers=%s)",
+                base_symbol, len(strikes), strikes[0], strikes[-1], strike_tiers,
+            )
+        else:
+            if not strike_range or strike_range <= 0:
+                log.warning("Invalid strike range: %s", strike_range)
+                return []
+            if not strike_spacing or strike_spacing <= 0:
+                log.warning("Invalid strike spacing: %s", strike_spacing)
+                return []
 
-        num_strikes = int(2 * strike_range / strike_spacing) + 1
-        strikes = np.linspace(
-            rounded_price - strike_range,
-            rounded_price + strike_range,
-            num_strikes,
-        )
+            rounded_price = OptionSymbolBuilder._round_to_nearest_strike(current_price, strike_spacing)
+            num_strikes = int(2 * strike_range / strike_spacing) + 1
+            strikes = list(np.linspace(
+                rounded_price - strike_range,
+                rounded_price + strike_range,
+                num_strikes,
+            ))
+            log.debug(
+                "Flat strikes for %s: %d strikes from %.0f to %.0f (range=±%d, spacing=%.1f)",
+                base_symbol, len(strikes), strikes[0], strikes[-1], strike_range, strike_spacing,
+            )
 
         if len(strikes) == 0:
             log.warning("No strikes generated")
             return []
-
-        log.debug("Generated %d strikes from %s to %s", len(strikes), strikes[0], strikes[-1])
 
         symbols: list[str] = []
 

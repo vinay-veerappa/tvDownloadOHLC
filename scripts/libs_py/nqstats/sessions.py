@@ -1,6 +1,35 @@
 """
 NQ1 Statistics Logic - Session Definition and Range Extraction
 Based on NQStats Unified Bias Algorithm.
+
+SESSION CONVENTION NOTE (ADR for narrative engine v2, 2026-07-08):
+
+These windows are the **NQStats Unified Bias Algorithm** convention, used for
+ALN pattern detection and the 4-quadrant profiler. They are intentionally
+DIFFERENT from the Herman liquidity-study windows and must not be "aligned":
+
+  | Session   | NQStats (this file)    | Herman (liquidity study)          |
+  |-----------|------------------------|-----------------------------------|
+  | Asia      | 18:00 -> 02:00 (Globex)| 20:00 -> 00:00 (Asian cash)       |
+  | London   | 03:00 -> 08:00         | 02:00 -> 05:00 (London killzone)  |
+  | Pre-NY    | 08:00 -> 09:30         | 05:00 -> 08:00 (NY AM killzone)   |
+
+Why they differ:
+  * NQStats Asia = full Globex overnight (18:00) for ALN pattern locking.
+  * Herman Asia = Asian cash session (20:00) for sweep-vs-range statistics.
+  * Herman London opens earlier (02:00) because the sweep study counts the
+    02:00-03:00 opening range as part of London expansion.
+  * Herman Pre-NY = 05:00-08:00 is the DOMINANT directional signal (86.4%/
+    77.9%) and is a different window from NQStats Pre-NY (08:00-09:30).
+
+The Herman windows are defined independently in:
+  * `scripts/derived/precompute_herman_stats.py` (batch study)
+  * `scripts/trader/config/narrative_stats.yaml` (static probabilities)
+  * `scripts/trader/retrieve_ict_context.py` (live Pre-NY sweep detection)
+
+Do NOT change these windows to match Herman — it would break ALN detection.
+Do NOT change Herman windows to match these — it would invalidate the
+86.4%/77.9% sweep probabilities. Both are correct for their purpose.
 """
 
 import pandas as pd

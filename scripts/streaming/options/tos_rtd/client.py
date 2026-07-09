@@ -148,7 +148,7 @@ class RTDClient(COMObject):
             pythoncom.CoInitialize()
 
             self.server = CreateObject(
-                GUID(SETTINGS.progid),
+                SETTINGS.progid,
                 interface=IRtdServer,
             )
             self.logger.debug("COM server instance created")

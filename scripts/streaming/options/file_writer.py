@@ -430,13 +430,30 @@ def write_levels(
     for levels in cash_levels or []:
         cash_levels_lookup[levels.ticker] = levels
 
+    # Build a lookup of translated levels by cash_ticker for translation metadata
+    # (futures_symbol, basis_ratio, translation_mode, futures_price, cash_spot)
+    tl_by_cash: dict[str, Any] = {}
+    for tl in translated_levels:
+        if tl.cash_ticker:
+            tl_by_cash[tl.cash_ticker] = tl
+
     # 1. Add cash levels FIRST (ETF-scale) — these are the primary source
     cash_tickers_seen = set()
     for levels in cash_levels or []:
         cash_tickers_seen.add(levels.ticker)
+        # Read translation metadata from the DealerLevels object directly.
+        # translate_to_futures() attaches futures_symbol, basis_ratio,
+        # translation_mode, basis_spread to the DealerLevels before
+        # constructing the TranslatedLevels. This survives RTD replacement.
         market_structure.append({
             "asset": levels.ticker,
             "cash_ticker": levels.ticker,
+            # Translation metadata (for ETF→futures scaling by consumers)
+            "futures_symbol": getattr(levels, 'futures_symbol', None),
+            "translation_mode": getattr(levels, 'translation_mode', None),
+            "basis_ratio": getattr(levels, 'basis_ratio', None),
+            "futures_price": getattr(levels, 'futures_price', None),
+            "cash_spot": getattr(levels, 'spot', None),
             "regime_label": getattr(levels, 'regime_label', 'NEUTRAL'),
             "gex_regime": levels.gex_regime,
             "total_gex": levels.total_gex,

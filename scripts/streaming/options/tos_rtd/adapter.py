@@ -21,15 +21,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import multiprocessing as mp
 from dataclasses import dataclass, field
 from datetime import date
-from queue import Empty, Queue
+from queue import Empty
 from typing import Any, Optional
 
 from .quote_types import QuoteType
 from .settings import SETTINGS
 from .symbol_builder import OptionSymbolBuilder, parse_rtd_option_symbol, OptionContract
-from .worker import RTDWorker
 
 log = logging.getLogger(__name__)
 
@@ -38,10 +38,12 @@ log = logging.getLogger(__name__)
 class RTDConfig:
     """Configuration for TOSRTDAdapter."""
 
-    strike_range: int = 20          # ± strikes from ATM
-    strike_spacing: float = 1.0     # Spacing between strikes
+    strike_range: int = 20          # ± strikes from ATM (fallback)
+    strike_spacing: float = 1.0     # Spacing between strikes (fallback)
     poll_timeout: float = 0.1       # Queue get timeout
     wait_for_first_data: float = 5.0  # Seconds to wait for first data on start
+    # Per-symbol overrides: {"/NQ": {"strike_range": 500, "strike_spacing": 25.0}, ...}
+    symbol_configs: dict[str, dict] | None = None
 
 
 @dataclass
@@ -88,10 +90,9 @@ class TOSRTDAdapter:
 
     def __init__(self, config: Optional[RTDConfig] = None):
         self.config = config or RTDConfig()
-        self._data_queue: Queue = Queue()
-        self._stop_event = threading.Event()
-        self._worker: Optional[RTDWorker] = None
-        self._thread: Optional[threading.Thread] = None
+        self._data_queue = mp.Queue()
+        self._stop_event = mp.Event()
+        self._process: Optional[mp.Process] = None
         self._latest_data: dict[str, Any] = {}
         self._latest_lock = threading.Lock()
         self._running = False
@@ -108,47 +109,63 @@ class TOSRTDAdapter:
         symbols: list[str],
         expiry: date,
         current_price: Optional[float] = None,
+        expiries: list[date] | None = None,
     ) -> None:
         """
         Start RTD streaming for the given futures symbols.
 
         Args:
             symbols: Futures symbols to monitor, e.g. ["/ES", "/NQ"]
-            expiry: Option expiration date
+            expiry: Primary option expiration date (for backward compat)
             current_price: Optional dict {symbol: price} for initial strike
                           generation. If None, will subscribe to LAST first
                           and build option symbols after price arrives.
+            expiries: Optional list of expiration dates. If provided, option
+                     symbols are built for ALL expiries (not just primary).
         """
         if self._running:
             log.warning("Adapter already running — stopping first")
             self.stop()
 
         self._expiry = expiry
+        self._expiries = expiries or [expiry]
         self._base_symbols = list(symbols)
         self._stop_event.clear()
 
         # Build option symbols if we have prices
         all_symbols: list[str] = []
         prices = current_price if isinstance(current_price, dict) else {}
+        sym_configs = self.config.symbol_configs or {}
 
         for sym in symbols:
             if sym in prices and prices[sym] > 0:
-                option_syms = OptionSymbolBuilder.build_symbols(
-                    sym, expiry, prices[sym],
-                    self.config.strike_range, self.config.strike_spacing,
-                )
-                self._option_symbols.extend(option_syms)
-                all_symbols.extend(option_syms)
+                sc = sym_configs.get(sym, {})
+                sr = sc.get("strike_range", self.config.strike_range)
+                ss = sc.get("strike_spacing", self.config.strike_spacing)
+                tiers = sc.get("strike_tiers")  # tiered spacing: [(max_dist, spacing), ...]
+                for exp in self._expiries:
+                    option_syms = OptionSymbolBuilder.build_symbols(
+                        sym, exp, prices[sym], sr, ss,
+                        strike_tiers=tiers,
+                    )
+                    self._option_symbols.extend(option_syms)
+                    all_symbols.extend(option_syms)
             all_symbols.append(sym)
 
-        self._worker = RTDWorker(self._data_queue, self._stop_event)
-        self._thread = threading.Thread(
-            target=self._worker.start,
-            args=(all_symbols,),
+        log.info(
+            "TOSRTDAdapter: %d base symbols + %d option symbols across %d expiries",
+            len(symbols), len(self._option_symbols), len(self._expiries),
+        )
+
+        from _rtd_worker_entry import run_rtd_worker_process
+
+        self._process = mp.Process(
+            target=run_rtd_worker_process,
+            args=(self._data_queue, self._stop_event, all_symbols),
             daemon=True,
             name="TOSRTDWorker",
         )
-        self._thread.start()
+        self._process.start()
         self._running = True
         log.info("TOSRTDAdapter started for %s, expiry=%s", symbols, expiry)
 
@@ -158,10 +175,11 @@ class TOSRTDAdapter:
             return
 
         self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=5.0)
-            self._thread = None
-        self._worker = None
+        if self._process:
+            self._process.join(timeout=5.0)
+            if self._process.is_alive():
+                self._process.terminate()
+            self._process = None
         self._running = False
         self._option_symbols = []
         self._base_symbols = []
@@ -169,7 +187,7 @@ class TOSRTDAdapter:
 
     def is_running(self) -> bool:
         """Check if the adapter is actively streaming."""
-        return self._running and self._thread is not None and self._thread.is_alive()
+        return self._running and self._process is not None and self._process.is_alive()
 
     # ------------------------------------------------------------------
     # Data access
@@ -177,9 +195,13 @@ class TOSRTDAdapter:
 
     def _drain_queue(self) -> None:
         """Pull latest data from the worker queue into _latest_data."""
+        from queue import Empty
         while True:
             try:
-                data = self._data_queue.get(timeout=self.config.poll_timeout)
+                data = self._data_queue.get_nowait()
+                if "debug" in data:
+                    log.info("CHILD DEBUG: %s", data["debug"])
+                    continue
                 if "error" in data:
                     log.error("RTD worker error: %s", data["error"])
                     continue

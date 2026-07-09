@@ -29,97 +29,110 @@ extending ``config.PRIMARY_INDEX_TICKERS`` / ``config.INDEX_TO_FUTURES``.
 """
 from __future__ import annotations
 
-import argparse
+# ---------------------------------------------------------------------------
+# MULTIPROCESSING GUARD
+# On Windows, multiprocessing.spawn re-imports this module as __main__ in the
+# child process.  We want the child to skip all heavy imports (Prisma, Schwab,
+# GEX calculator …) and just run the RTD worker.  The child sets this env var
+# before importing so we can detect that case and bail out early.
+# ---------------------------------------------------------------------------
+import os as _os
 import logging
 import sys
-import json
 import time
-from dataclasses import replace
-from datetime import datetime, date
-from pathlib import Path
-from zoneinfo import ZoneInfo
-from typing import Any
 
-from .config import (
-    ACTIVE_TICKERS,
-    DTE_TARGETS,
-    ENABLE_DISCORD_UPDATES,
-    ETF_FALLBACK,
-    INDEX_TO_FUTURES,
-    EOD_FUTURES_CLOSE_TIME,
-    EOD_SPX_CLOSE_TIME,
-    LOG_FILE,
-    MIN_NONZERO_OI_CONTRACTS,
-    PRIORITY_TICKERS,
-    REPO_ROOT,
-    SCHEDULE_TIMES,
-    SCHEDULE_TIMEZONE,
-    SECRETS_PATH,
-    TIER2_INTERVAL_SECONDS,
-    TOKEN_PATH,
-    USE_OPENING_BASIS,
-    RTH_T1_INTERVAL,
-    RTH_T2_INTERVAL,
-    OFF_HOURS_T1_INTERVAL,
-    OFF_HOURS_T2_INTERVAL,
-    WEEKEND_T1_INTERVAL,
-    WEEKEND_T2_INTERVAL,
-    EQUITY_RTH_START_TIME,
-    EQUITY_RTH_END_TIME,
-    FUTURES_CLOSE_FRIDAY_TIME,
-    FUTURES_OPEN_SUNDAY_TIME,
-    MANUAL_TRIGGER_FILENAME,
-    TIER1_TICKERS_DEFAULT,
-    LOOP_BEAT_SECONDS,
-    SCHEDULER_MISFIRE_GRACE_TIME,
-    MACRO_DTE_TARGETS,
-    PIPELINE_DTE_TARGETS,
-    MACRO_VIEW,
-    INTRADAY_VIEW,
-    get_ticker_profile,
-    SCORED_LEVELS_TXT,
-    SCORED_MACRO_LEVELS_TXT,
-    BASIS_ANCHORS_JSON,
-    UNIFIED_LEVELS_TXT,
-    UNIFIED_LEVELS_JSON,
-    ENABLE_UNIFIED_CONTRACT_OUTPUTS,
-    ENABLE_SCORED_CONTRACT_OUTPUTS,
-)
-from .discord_notifier import send_discord_update, send_regime_change_alert
-from .file_writer import (
-    write_levels,
-    _is_rth,
-    write_scored_levels_txt,
-    write_unified_levels_txt,
-    write_unified_levels_json,
-    unified_payload_fingerprint,
-)
-from .futures_translator import translate_to_futures
-from .gex_calculator import (
-    DealerLevels,
-    calculate_dealer_levels,
-    calculate_price_metrics,
-    rescale_levels_to_target_spot,
-)
-from .level_scorer import score_levels, ScoredLevels
-from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data, get_eod_close_price, FuturesQuote
-from .state_tracker import (
-    build_current_state,
-    detect_changes,
-    format_change_alert,
-    load_previous_state,
-    save_current_state,
-)
-from .macro_pipeline import run_macro_pipeline
-from .formatting import (
-    build_plan,
-    copy_ready_line,
-    fmt,
-    HasLevels,
-)
+_IS_RTD_CHILD = _os.environ.get("_RTD_WORKER_CHILD") == "1"
 
-# TOS RTD hybrid coordinator (optional, Windows-only, opt-in)
-from .tos_rtd.hybrid_coordinator import HybridCoordinator
+if not _IS_RTD_CHILD:
+    import argparse
+    import json
+    from dataclasses import replace
+    from datetime import datetime, date
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+    from typing import Any
+
+if not _IS_RTD_CHILD:
+    from .config import (
+        ACTIVE_TICKERS,
+        DTE_TARGETS,
+        ENABLE_DISCORD_UPDATES,
+        ETF_FALLBACK,
+        INDEX_TO_FUTURES,
+        EOD_FUTURES_CLOSE_TIME,
+        EOD_SPX_CLOSE_TIME,
+        LOG_FILE,
+        MIN_NONZERO_OI_CONTRACTS,
+        PRIORITY_TICKERS,
+        REPO_ROOT,
+        SCHEDULE_TIMES,
+        SCHEDULE_TIMEZONE,
+        SECRETS_PATH,
+        TIER2_INTERVAL_SECONDS,
+        TOKEN_PATH,
+        USE_OPENING_BASIS,
+        RTH_T1_INTERVAL,
+        RTH_T2_INTERVAL,
+        OFF_HOURS_T1_INTERVAL,
+        OFF_HOURS_T2_INTERVAL,
+        WEEKEND_T1_INTERVAL,
+        WEEKEND_T2_INTERVAL,
+        EQUITY_RTH_START_TIME,
+        EQUITY_RTH_END_TIME,
+        FUTURES_CLOSE_FRIDAY_TIME,
+        FUTURES_OPEN_SUNDAY_TIME,
+        MANUAL_TRIGGER_FILENAME,
+        TIER1_TICKERS_DEFAULT,
+        LOOP_BEAT_SECONDS,
+        SCHEDULER_MISFIRE_GRACE_TIME,
+        MACRO_DTE_TARGETS,
+        PIPELINE_DTE_TARGETS,
+        MACRO_VIEW,
+        INTRADAY_VIEW,
+        get_ticker_profile,
+        SCORED_LEVELS_TXT,
+        SCORED_MACRO_LEVELS_TXT,
+        BASIS_ANCHORS_JSON,
+        UNIFIED_LEVELS_TXT,
+        UNIFIED_LEVELS_JSON,
+        ENABLE_UNIFIED_CONTRACT_OUTPUTS,
+        ENABLE_SCORED_CONTRACT_OUTPUTS,
+    )
+    from .discord_notifier import send_discord_update, send_regime_change_alert
+    from .file_writer import (
+        write_levels,
+        _is_rth,
+        write_scored_levels_txt,
+        write_unified_levels_txt,
+        write_unified_levels_json,
+        unified_payload_fingerprint,
+    )
+    from .futures_translator import translate_to_futures
+    from .gex_calculator import (
+        DealerLevels,
+        calculate_dealer_levels,
+        calculate_price_metrics,
+        rescale_levels_to_target_spot,
+    )
+    from .level_scorer import score_levels, ScoredLevels
+    from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data, get_eod_close_price, FuturesQuote
+    from .state_tracker import (
+        build_current_state,
+        detect_changes,
+        format_change_alert,
+        load_previous_state,
+        save_current_state,
+    )
+    from .macro_pipeline import run_macro_pipeline
+    from .formatting import (
+        build_plan,
+        copy_ready_line,
+        fmt,
+        HasLevels,
+    )
+
+    # TOS RTD hybrid coordinator (optional, Windows-only, opt-in)
+    from .tos_rtd.hybrid_coordinator import HybridCoordinator
 
 log = logging.getLogger(__name__)
 
@@ -133,8 +146,9 @@ log = logging.getLogger(__name__)
 # 3) pipeline_state.json (via state_tracker): previous vs current regime state
 #    for change detection and alerting.
 # ---------------------------------------------------------------------------
-WEEKLY_SCOPE_CACHE_JSON = REPO_ROOT / "data" / "options" / "weekly_em_scope.json"
-DISCORD_ALLOWED_SNAPSHOT_SUFFIXES = {"0930", "1615"}
+if not _IS_RTD_CHILD:
+    WEEKLY_SCOPE_CACHE_JSON = REPO_ROOT / "data" / "options" / "weekly_em_scope.json"
+    DISCORD_ALLOWED_SNAPSHOT_SUFFIXES = {"0930", "1615"}
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +219,9 @@ def save_basis_anchors(anchors: dict[str, dict]) -> None:
         log.error("Failed to save basis anchors: %s", e)
 
 
-def _load_weekly_scope_cache(path: Path = WEEKLY_SCOPE_CACHE_JSON) -> dict[str, dict[str, Any]]:
+def _load_weekly_scope_cache(path: "Path | None" = None) -> "dict[str, dict[str, Any]]":
+    if path is None:
+        path = WEEKLY_SCOPE_CACHE_JSON
     if not path.exists():
         return {}
     try:
@@ -217,7 +233,9 @@ def _load_weekly_scope_cache(path: Path = WEEKLY_SCOPE_CACHE_JSON) -> dict[str, 
         return {}
 
 
-def _save_weekly_scope_cache(cache: dict[str, dict[str, Any]], path: Path = WEEKLY_SCOPE_CACHE_JSON) -> None:
+def _save_weekly_scope_cache(cache: "dict[str, dict[str, Any]]", path: "Path | None" = None) -> None:
+    if path is None:
+        path = WEEKLY_SCOPE_CACHE_JSON
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -328,7 +346,7 @@ def _build_snapshot_suffix(now_ny: datetime, time_str: str) -> str:
 def run_pipeline(
     tickers: list[str] | None = None,
     run_label: str = "",
-    enable_discord: bool = ENABLE_DISCORD_UPDATES,
+    enable_discord: "bool | None" = None,
     full_discord: bool = False,
     discord_target_key: str | None = None,
     versioned: bool = False,
@@ -345,6 +363,8 @@ def run_pipeline(
                 Auto-generated from current Eastern time when empty.
     """
     _setup_logging()
+    if enable_discord is None:
+        enable_discord = ENABLE_DISCORD_UPDATES
     
     dte_targets = DTE_TARGETS if intraday_only else PIPELINE_DTE_TARGETS
 
@@ -646,11 +666,14 @@ def run_pipeline(
                     _attach_weekly_scope(tl_macro, _translate_weekly_scope_record(weekly_scope_record, tl_macro))
                 
                 # 6b. RTD GEX — compute dealer levels directly from futures options if RTD active
+                rtd_tl = None
+                rtd_dl_primary = None
                 if rtd_coord.is_rtd_active and futures_sym in rtd_coord._symbols:
                     from .config import TOS_RTD_GEX_AS_PRIMARY
                     rtd_gex_result = rtd_coord.calculate_rtd_gex(futures_sym)
                     if rtd_gex_result is not None:
                         rtd_dl = rtd_gex_result.dealer_levels
+                        rtd_dl_primary = rtd_dl
                         log.info(
                             "RTD GEX for %s: total_gex=%.2f regime=%s call_wall=%s put_wall=%s zero_gamma=%s (%d contracts)",
                             futures_sym, rtd_dl.total_gex, rtd_dl.gex_regime,
@@ -660,7 +683,7 @@ def run_pipeline(
 
                         # Compare RTD vs Schwab-translated
                         comparison_table = rtd_coord.compare_gex(rtd_gex_result, tl_intraday)
-                        log.info("\n%s", comparison_table)
+                        log.info("\n%s", comparison_table.encode('ascii', 'replace').decode('ascii'))
 
                         if TOS_RTD_GEX_AS_PRIMARY:
                             # Use RTD levels as primary — replace Schwab-translated
@@ -726,21 +749,47 @@ def run_pipeline(
                                 put_25d_iv=rtd_dl.put_25d_iv,
                                 call_25d_iv=rtd_dl.call_25d_iv,
                                 volatility_skew_premium=rtd_dl.volatility_skew_premium,
+                                vol_trigger_upper_05=getattr(rtd_dl, 'vol_trigger_upper_05', None),
+                                vol_trigger_lower_05=getattr(rtd_dl, 'vol_trigger_lower_05', None),
+                                vol_trigger_upper_10=getattr(rtd_dl, 'vol_trigger_upper_10', None),
+                                vol_trigger_lower_10=getattr(rtd_dl, 'vol_trigger_lower_10', None),
+                                vol_trigger_upper_15=getattr(rtd_dl, 'vol_trigger_upper_15', None),
+                                vol_trigger_lower_15=getattr(rtd_dl, 'vol_trigger_lower_15', None),
+                                gamma_cliff_up=getattr(rtd_dl, 'gamma_cliff_up', None),
+                                gamma_cliff_down=getattr(rtd_dl, 'gamma_cliff_down', None),
+                                vanna_call_node=getattr(rtd_dl, 'vanna_call_node', None),
+                                vanna_put_node=getattr(rtd_dl, 'vanna_put_node', None),
+                                charm_call_node=getattr(rtd_dl, 'charm_call_node', None),
+                                charm_put_node=getattr(rtd_dl, 'charm_put_node', None),
+                                volume_imbalance_call_node=getattr(rtd_dl, 'volume_imbalance_call_node', None),
+                                volume_imbalance_put_node=getattr(rtd_dl, 'volume_imbalance_put_node', None),
+                                dex_call_node=getattr(rtd_dl, 'dex_call_node', None),
+                                dex_put_node=getattr(rtd_dl, 'dex_put_node', None),
+                                liquidity_vacuum_lower=getattr(rtd_dl, 'liquidity_vacuum_lower', None),
+                                liquidity_vacuum_upper=getattr(rtd_dl, 'liquidity_vacuum_upper', None),
+                                skew_pivot_put_25d=getattr(rtd_dl, 'skew_pivot_put_25d', None),
+                                skew_pivot_call_25d=getattr(rtd_dl, 'skew_pivot_call_25d', None),
+                                hedge_flow_up_10=getattr(rtd_dl, 'hedge_flow_up_10', 0.0),
+                                hedge_flow_up_25=getattr(rtd_dl, 'hedge_flow_up_25', 0.0),
+                                hedge_flow_up_50=getattr(rtd_dl, 'hedge_flow_up_50', 0.0),
+                                hedge_flow_dn_10=getattr(rtd_dl, 'hedge_flow_dn_10', 0.0),
+                                hedge_flow_dn_25=getattr(rtd_dl, 'hedge_flow_dn_25', 0.0),
+                                hedge_flow_dn_50=getattr(rtd_dl, 'hedge_flow_dn_50', 0.0),
+                                hourly_flow_curve=getattr(rtd_dl, 'hourly_flow_curve', []),
+                                iv_change=getattr(rtd_dl, 'iv_change', 0.0),
                                 expected_moves=rtd_dl.expected_moves,
                             )
-                            # Replace Schwab-translated with RTD-direct
-                            translated_levels[-1] = rtd_tl
-                            # Also replace macro
-                            rtd_tl_macro = replace(rtd_tl, wall_scope="ALL_EXPIRIES_WEIGHTED")
-                            translated_macro_levels[-1] = rtd_tl_macro
-
-                            # Write RTD GEX snapshot to DB
-                            if _is_rth():
-                                from .interval_writer import write_snapshot
-                                write_snapshot(rtd_dl, ticker_override=futures_sym)
-
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
+
+                # 6c. If RTD GEX is primary, replace the just-appended Schwab levels
+                if rtd_tl is not None and TOS_RTD_GEX_AS_PRIMARY:
+                    translated_levels[-1] = rtd_tl
+                    translated_macro_levels[-1] = replace(rtd_tl, wall_scope="ALL_EXPIRIES_WEIGHTED")
+                    # Write RTD GEX snapshot to DB
+                    if _is_rth() and rtd_dl_primary is not None:
+                        from .interval_writer import write_snapshot
+                        write_snapshot(rtd_dl_primary, ticker_override=futures_sym)
 
             # 7. Write per-ticker snapshot to DB (now includes futures translation fields)
             if _is_rth():
@@ -1143,7 +1192,9 @@ def run_loop(enable_discord: bool = False) -> None:
 # Scheduler
 # ---------------------------------------------------------------------------
 
-def _is_trading_day(tz_name: str = SCHEDULE_TIMEZONE) -> bool:
+def _is_trading_day(tz_name: "str | None" = None) -> bool:
+    if tz_name is None:
+        tz_name = SCHEDULE_TIMEZONE
     """
     Return True when today is a Monday–Friday trading day.
     Market holidays are not accounted for; add a trading-calendar library
@@ -1152,7 +1203,7 @@ def _is_trading_day(tz_name: str = SCHEDULE_TIMEZONE) -> bool:
     return datetime.now(ZoneInfo(tz_name)).weekday() < 5
 
 
-def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
+def run_scheduled(enable_discord: "bool | None" = None) -> None:
     """
     Block and run the pipeline at the configured schedule times (APScheduler).
     The process runs on weekdays only; weekends are silently skipped.
@@ -1160,6 +1211,8 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
     Raises SystemExit when APScheduler is not installed.
     """
     _setup_logging()
+    if enable_discord is None:
+        enable_discord = ENABLE_DISCORD_UPDATES
 
     try:
         from apscheduler.schedulers.blocking import BlockingScheduler
@@ -1348,6 +1401,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    import multiprocessing
+    multiprocessing.freeze_support()
     _setup_logging()
     args = _build_parser().parse_args()
     if args.discord and args.no_discord:

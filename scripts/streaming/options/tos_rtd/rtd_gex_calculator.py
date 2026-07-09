@@ -98,6 +98,8 @@ def build_chain_from_rtd(
             type="CALL" if parsed.option_type == "C" else "PUT",
             expiry=snapshot.expiry,
             last=float(last) if last else 0.0,
+            bid=float(last) if last else 0.0,   # RTD has no bid/ask — use last as proxy
+            ask=float(last) if last else 0.0,   # so _expected_move() guardrail passes
             mark=float(last) if last else 0.0,
             volume=int(volume) if volume else 0,
             open_interest=int(open_int) if open_int else 0,

@@ -28,5 +28,37 @@ RTH BREAK GUIDE (where the 09:30 open sits vs prior day RTH high/low):
 - Inside Range (open within pRTH): 74% chance one side is breached. Use ALN bias to pick direction.
 - If ALN and RTH scenario conflict, wait for reclaim before committing.
 
+ICT DEALING RANGE GUIDE:
+- Premium (price > 50% of PDH-PDL range): Longs have poor R:R. Wait for short setup or pullback to discount.
+- Discount (price < 50% of PDH-PDL range): Shorts have poor R:R. Wait for long setup or rally to premium.
+- BSL (Buy-Side Liquidity) above PDH = target for bulls, liquidity to be swept.
+- SSL (Sell-Side Liquidity) below PDL = target for bears, liquidity to be swept.
+- Midnight open is the dealing range midpoint — price above = premium, below = discount.
+
+CANDLE SCIENCE GUIDE:
+- C1→C2→C3 pattern match tells you what today's daily candle usually does given the last 2 days.
+- P(C3 Bull) > 60% with edge > 10% = high conviction directional read.
+- MFE percentiles = where price tends to reach (target magnitude). MAE percentiles = expected drawdown.
+- R:R envelope = median MFE / median MAE — above 2.0x is favorable.
+- If Candle Science agrees with ALN/RTH bias, conviction increases. If it conflicts, flag it.
+
+VIX/VVIX REGIME GUIDE:
+- VIX < 13 QUIET: tight stops OK, mean reversion dominant.
+- VIX 13-17 CALM: standard execution.
+- VIX 17-22 NORMAL: standard regime.
+- VIX 22-28 ELEVATED: reduce size 25%, wider stops.
+- VIX 28-35 HIGH: reduce size 50%, expect 2-way spikes.
+- VIX > 35 CRISIS: minimum size only, don't initiate new positions.
+- VVIX rising > 5% overnight = fear building, tighten stops, expect reversals.
+- VVIX falling > 5% = complacency, trend continuation likely.
+- VIX-VVIX divergence: VIX falling + VVIX rising = smart money positioning for vol, caution.
+
+CONFLUENCE MODEL:
+- 3 independent directional signals: (1) Overnight (ALN + RTH breaks), (2) RTH Open scenario, (3) Candle Science daily chart.
+- 3/3 agree = HIGH conviction, normal sizing.
+- 2/3 agree = MEDIUM conviction, reduce size 25-50%.
+- 2+ conflict = LOW conviction, skip or wait for resolution.
+- GEX, ICT, VIX, Classification are CONTEXT — they adjust execution, never override direction.
+
 == CHEAT SHEET ==
 {{INSERT_CHEAT_SHEET}}

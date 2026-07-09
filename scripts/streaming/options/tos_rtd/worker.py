@@ -28,11 +28,44 @@ log = logging.getLogger(__name__)
 MAX_INIT_RETRIES = SETTINGS.max_init_retries
 INIT_RETRY_DELAYS = SETTINGS.init_retry_delays
 
+def run_rtd_worker_process(data_queue, stop_event, all_symbols):
+    """Entry point for the multiprocessing worker."""
+    import signal
+    import sys
+    
+    # Try to send a debug message through the queue immediately
+    try:
+        data_queue.put({"debug": "Child process successfully started and queue is accessible!"})
+    except Exception as e:
+        print(f"Failed to put to queue: {e}", file=sys.stderr)
+
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except Exception:
+        pass
+        
+    import logging
+    class QueueHandler(logging.Handler):
+        def emit(self, record):
+            try:
+                data_queue.put({"debug": self.format(record)})
+            except:
+                pass
+                
+    logger = logging.getLogger("RTDWorker")
+    logger.setLevel(logging.DEBUG)
+    qh = QueueHandler()
+    qh.setFormatter(logging.Formatter('[CHILD] %(levelname)s: %(message)s'))
+    logger.addHandler(qh)
+    
+    worker = RTDWorker(data_queue, stop_event)
+    worker.logger = logger
+    worker.start(all_symbols)
 
 class RTDWorker:
     """Background worker that manages COM lifecycle and data polling."""
 
-    def __init__(self, data_queue: Queue, stop_event: threading.Event):
+    def __init__(self, data_queue, stop_event):
         self.data_queue = data_queue
         self.stop_event = stop_event
         self.client: RTDClient | None = None
