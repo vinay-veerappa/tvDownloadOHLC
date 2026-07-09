@@ -29,15 +29,22 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from prisma import Prisma
 
+from logging.handlers import RotatingFileHandler
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("strategy_engine.log", encoding="utf-8"),
+        RotatingFileHandler("strategy_engine.log", maxBytes=10*1024*1024, backupCount=5, encoding="utf-8"),
     ],
 )
+
+# Suppress chatty third-party loggers
+for noisy in ("httpx", "httpcore", "urllib3", "apscheduler", "prisma"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger("strategy_engine.runner")
 
 # Load env variables before Prisma import
