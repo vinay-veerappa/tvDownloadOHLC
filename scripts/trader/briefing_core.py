@@ -2363,12 +2363,26 @@ def _format_candle_science_block(cs: dict) -> str:
     if not cs or cs.get("n_matches", 0) == 0:
         return "== CANDLE SCIENCE ==\nNo pattern match available"
     lines = ["== CANDLE SCIENCE =="]
-    lines.append(f"C1: {cs['c1_dir']} | C2: {cs['c2_dir']} → P(C3 Bull): {cs['p_bull']}% (n={cs['n_matches']}, edge={cs['edge']}%)")
+    lines.append(
+        f"C1: {cs['c1_dir']} | C2: {cs['c2_dir']} | preset={cs.get('preset', '?')} "
+        f"(n={cs['n_matches']}, edge={cs['edge']}%)"
+    )
+    lines.append(f"P(C3 Bull): {cs['p_bull']}% | P(C3 Bear): {cs['p_bear']}%")
+    if cs.get("p_break_high") is not None or cs.get("p_break_low") is not None:
+        lines.append(
+            f"P(C3H>C2H): {cs.get('p_break_high', '?')}% | "
+            f"P(C3L<C2L): {cs.get('p_break_low', '?')}% | "
+            f"P(C3C>C2C): {cs.get('p_close_gt_c2c', '?')}%"
+        )
     mfe = cs.get("mfe", {})
     mae = cs.get("mae", {})
-    if mfe.get("p50") and mae.get("p50"):
-        rr = round(mfe["p50"] / abs(mae["p50"]), 1) if mae["p50"] else 0
-        lines.append(f"MFE: p50={mfe.get('p50','?')}% | MAE: p50={mae.get('p50','?')}% | R:R={rr}x")
+    if mfe or mae:
+        mfe_str = " ".join(f"{k}={v:+.2f}%" for k, v in mfe.items()) if mfe else "—"
+        mae_str = " ".join(f"{k}={v:+.2f}%" for k, v in mae.items()) if mae else "—"
+        rr = cs.get("rr_envelope")
+        rr_str = f" | R:R={rr}x" if rr else ""
+        lines.append(f"MFE: {mfe_str}")
+        lines.append(f"MAE: {mae_str}{rr_str}")
     return "\n".join(lines)
 
 
@@ -2544,9 +2558,15 @@ def build_trader_cheat_sheet(
 
         df_nq = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
         if df_nq is not None and not df_nq.empty:
+            # Ensure ET-aware index before any datetime comparison.
+            if df_nq.index.tz is None:
+                df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert(ET)
+            elif df_nq.index.tz != ET:
+                df_nq.index = df_nq.index.tz_convert(ET)
+
             # Limit to last 10 days for P12 context (ADR-017: avoid processing
             # millions of rows when only today's session is needed).
-            _cutoff = pd.Timestamp.now() - timedelta(days=10)
+            _cutoff = pd.Timestamp.now(ET) - timedelta(days=10)
             df_nq_recent = df_nq[df_nq.index >= _cutoff]
             if df_nq_recent.empty:
                 df_nq_recent = df_nq
@@ -2772,9 +2792,13 @@ def build_intraday_context(
 
         # RTH open (09:30 bar)
         if df_nq is not None and df_nq.index.tz is None:
-            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert("US/Eastern")
+            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert(ET)
+        elif df_nq is not None and df_nq.index.tz != ET:
+            df_nq.index = df_nq.index.tz_convert(ET)
         if df_es is not None and df_es.index.tz is None:
-            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert("US/Eastern")
+            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert(ET)
+        elif df_es is not None and df_es.index.tz != ET:
+            df_es.index = df_es.index.tz_convert(ET)
         nq_open = 0.0
         es_open = 0.0
         today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
@@ -2801,7 +2825,7 @@ def build_intraday_context(
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
         if df_nq is not None and not df_nq.empty:
-            _cutoff = pd.Timestamp.now() - pd.Timedelta(days=2)
+            _cutoff = pd.Timestamp.now(ET) - pd.Timedelta(days=2)
             df_recent = df_nq[df_nq.index >= _cutoff]
             engine = NQStatsEngine(df_recent, ticker=nq_ticker)
             engine.process()
@@ -2922,9 +2946,13 @@ def build_eod_context(
         df_es = load_fused_data(es_ticker, timeframe="1m", require_historical=False)
 
         if df_nq is not None and df_nq.index.tz is None:
-            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert("US/Eastern")
+            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert(ET)
+        elif df_nq is not None and df_nq.index.tz != ET:
+            df_nq.index = df_nq.index.tz_convert(ET)
         if df_es is not None and df_es.index.tz is None:
-            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert("US/Eastern")
+            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert(ET)
+        elif df_es is not None and df_es.index.tz != ET:
+            df_es.index = df_es.index.tz_convert(ET)
 
         today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
         today_1600 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=16, minutes=0)
@@ -2980,7 +3008,7 @@ def build_eod_context(
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
         if df_nq is not None and not df_nq.empty:
-            _cutoff = pd.Timestamp.now() - pd.Timedelta(days=2)
+            _cutoff = pd.Timestamp.now(ET) - pd.Timedelta(days=2)
             df_recent = df_nq[df_nq.index >= _cutoff]
             engine = NQStatsEngine(df_recent, ticker=nq_ticker)
             engine.process()
@@ -3030,6 +3058,109 @@ def build_eod_context(
                 sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[eod] Tomorrow setup failed: %s", e)
+
+    # ── Phase F: Bias grade feedback loop ──
+    try:
+        # Morning bias: read the dominant directional lean from the open-mode
+        # confluence block (written this morning to the open narrative file).
+        morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
+        morning_confluence = "NEUTRAL"
+        morning_confluence_level = "LOW"
+        if morning_narrative_path.exists():
+            morning_text = morning_narrative_path.read_text(encoding="utf-8")
+            # Extract Confluence line if present, e.g.:
+            # "Confluence: HIGH → sizing 100%" or "Confluence: HIGH | Sizing: 100%"
+            for line in morning_text.splitlines():
+                if line.startswith("Confluence:"):
+                    parts = line.split("|")
+                    first = parts[0].strip()
+                    # Handle old and new formats
+                    level = first.replace("Confluence:", "").strip().split()[0]
+                    morning_confluence_level = level if level in {"HIGH", "MEDIUM", "LOW"} else "LOW"
+                    break
+
+        # Determine actual directional outcome from today's close vs RTH open.
+        actual_outcome = "NEUTRAL"
+        if df_nq is not None and not df_nq.empty:
+            rth = df_nq[(df_nq.index >= today_930) & (df_nq.index <= today_1600)]
+            if not rth.empty:
+                rth_open = float(rth["open"].iloc[0])
+                rth_close = float(rth["close"].iloc[-1])
+                if rth_close > rth_open:
+                    actual_outcome = "BULLISH"
+                elif rth_close < rth_open:
+                    actual_outcome = "BEARISH"
+
+        # Morning bias direction is the confluence-dominant direction from open.
+        # We recompute it from the same raw signals used by build_trader_cheat_sheet
+        # so the grade is deterministic and not prompt-dependent.
+        s1 = "NEUTRAL"
+        s2 = "NEUTRAL"
+        s3 = "NEUTRAL"
+        aln_pattern = ""
+        try:
+            # Reuse open-mode logic with fresh data for today only.
+            nq_ctx_morning = build_overnight_context(loader, nq_ticker)
+            df_nq_recent = df_nq[df_nq.index >= (pd.Timestamp.now(ET) - timedelta(days=10))]
+            if df_nq_recent.empty:
+                df_nq_recent = df_nq
+            engine = NQStatsEngine(df_nq_recent, ticker=nq_ticker)
+            engine.process()
+            latest = engine.get_latest_status()
+            aln_bias = "NEUTRAL"
+            aln_pattern = latest.get("aln", "N/A")
+            broken = latest.get("broken", "N/A")
+            if aln_pattern == "LPEU" and "Held/Held" in broken:
+                aln_bias = "BULLISH"
+            elif aln_pattern == "LPEU" and "Broken/Held" in broken:
+                aln_bias = "STRONG BEARISH (REVERSAL)"
+            elif aln_pattern == "LPED":
+                aln_bias = "BEARISH"
+            elif "Broken/Broken" in broken:
+                aln_bias = "NEUTRAL"
+            s1 = "BULLISH" if "BULLISH" in aln_bias else ("BEARISH" if "BEARISH" in aln_bias else "NEUTRAL")
+
+            rth_scenario = "INSIDE"
+            if nq_ctx_morning:
+                prth_h = nq_ctx_morning.get("prior_rth_high")
+                prth_l = nq_ctx_morning.get("prior_rth_low")
+                cur = nq_ctx_morning.get("close", 0)
+                if prth_h and prth_l and cur:
+                    if cur > prth_h:
+                        rth_scenario = "GAP_UP"
+                    elif cur < prth_l:
+                        rth_scenario = "GAP_DOWN"
+            s2 = "BULLISH" if rth_scenario == "GAP_UP" else ("BEARISH" if rth_scenario == "GAP_DOWN" else "NEUTRAL")
+
+            try:
+                cs = get_candle_science_read(ticker=nq_ticker)
+                s3 = "BULLISH" if (cs and cs.get("p_bull", 50) > cs.get("p_bear", 50)) else ("BEARISH" if (cs and cs.get("p_bear", 50) > cs.get("p_bull", 50)) else "NEUTRAL")
+            except Exception:
+                pass
+
+            conf = assess_confluence(s1, s2, s3)
+            morning_bias = "NEUTRAL"
+            if conf.get("confluence") == "HIGH":
+                morning_bias = conf.get("overnight_signal", "NEUTRAL")
+            elif conf.get("confluence") == "MEDIUM":
+                signals = [conf.get("overnight_signal"), conf.get("rth_open_signal"), conf.get("daily_chart_signal")]
+                bull = signals.count("BULLISH")
+                bear = signals.count("BEARISH")
+                morning_bias = "BULLISH" if bull > bear else ("BEARISH" if bear > bull else "NEUTRAL")
+            # If confluence is LOW, leave bias NEUTRAL — no directional call was made.
+
+            correct = (morning_bias == actual_outcome) and morning_bias != "NEUTRAL"
+            write_bias_grade(
+                morning_bias=morning_bias,
+                actual_outcome=actual_outcome,
+                correct=correct,
+                pattern=aln_pattern,
+                confluence_level=morning_confluence_level,
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        log.warning("[eod] Bias grade recording failed: %s", e)
 
     return "\n\n".join(sections)
 

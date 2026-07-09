@@ -129,6 +129,7 @@ candle_science:
   edge_threshold: 10
   min_sample: 1
   report_mfe_mae: true
+  auto_preset: standard          # minimal | standard | detailed | full
   mfe_percentiles: [30, 50, 70]
   mae_percentiles: [30, 50, 70]
   source: api/features/candle_science/service.py
