@@ -99,6 +99,7 @@ class TOSRTDAdapter:
         self._option_symbols: list[str] = []
         self._base_symbols: list[str] = []
         self._expiry: Optional[date] = None
+        self._drain_thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -167,6 +168,15 @@ class TOSRTDAdapter:
         )
         self._process.start()
         self._running = True
+
+        # Start background drain thread
+        self._drain_thread = threading.Thread(
+            target=self._drain_loop,
+            daemon=True,
+            name="RTDDrainThread"
+        )
+        self._drain_thread.start()
+
         log.info("TOSRTDAdapter started for %s, expiry=%s", symbols, expiry)
 
     def stop(self) -> None:
@@ -175,6 +185,10 @@ class TOSRTDAdapter:
             return
 
         self._stop_event.set()
+        if self._drain_thread:
+            self._drain_thread.join(timeout=2.0)
+            self._drain_thread = None
+
         if self._process:
             self._process.join(timeout=5.0)
             if self._process.is_alive():
@@ -193,12 +207,12 @@ class TOSRTDAdapter:
     # Data access
     # ------------------------------------------------------------------
 
-    def _drain_queue(self) -> None:
-        """Pull latest data from the worker queue into _latest_data."""
+    def _drain_loop(self) -> None:
+        """Background thread that continuously drains the queue to prevent memory leaks in the child process."""
         from queue import Empty
-        while True:
+        while self._running:
             try:
-                data = self._data_queue.get_nowait()
+                data = self._data_queue.get(timeout=0.1)
                 if "debug" in data:
                     log.debug("[RTD child] %s", data["debug"])
                     continue
@@ -208,6 +222,12 @@ class TOSRTDAdapter:
                 with self._latest_lock:
                     self._latest_data.update(data)
             except Empty:
+                continue
+            except EOFError:
+                break
+            except Exception as e:
+                if self._running:
+                    log.error("Error draining RTD queue: %s", e)
                 break
 
     def get_snapshot(self) -> dict[str, Any]:
@@ -218,7 +238,6 @@ class TOSRTDAdapter:
             Dict mapping "symbol:quote_type" → value, e.g.:
             {"./NQH25C21000:XCME:GAMMA": 0.001, "/ES:XCME:LAST": 5500.25}
         """
-        self._drain_queue()
         with self._latest_lock:
             return dict(self._latest_data)
 
