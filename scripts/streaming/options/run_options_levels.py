@@ -1294,17 +1294,28 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
     # 1. Daily Open Narrative (09:35 ET, Mon-Fri)
     scheduler.add_job(
         lambda: _run_subprocess(["python", "-m", "scripts.trader.daily_eod_update", "--session", "open"], "Open Update") or \
-                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "open"], "Open Narrative"),
+                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "open"], "Open Narrative") or \
+                _run_subprocess(["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Open"),
         trigger=CronTrigger(day_of_week='mon-fri', hour=9, minute=35, timezone=tz),
         id="narrative_open",
         replace_existing=True,
     )
     log.info("Scheduled Narrative: 09:35 ET (Open)")
 
-    # 2. Daily EOD Narrative (16:15 ET, Mon-Fri)
+    # 2. Intraday Narrative (12:00 ET, Mon-Fri) — Phase 2 placeholder
+    scheduler.add_job(
+        lambda: _run_subprocess(["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Intraday"),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=12, minute=0, timezone=tz),
+        id="narrative_intraday",
+        replace_existing=True,
+    )
+    log.info("Scheduled Narrative: 12:00 ET (Intraday)")
+
+    # 3. Daily EOD Narrative (16:15 ET, Mon-Fri)
     scheduler.add_job(
         lambda: _run_subprocess(["python", "-m", "scripts.trader.daily_eod_update", "--session", "eod"], "EOD Update") or \
-                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "eod"], "EOD Narrative"),
+                _run_subprocess(["python", "-m", "scripts.trader.daily_narrative", "--session", "eod"], "EOD Narrative") or \
+                _run_subprocess(["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Close"),
         trigger=CronTrigger(day_of_week='mon-fri', hour=16, minute=15, timezone=tz),
         id="narrative_eod",
         replace_existing=True,
