@@ -1080,6 +1080,15 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
         is_futures = any(chain.ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
         move, straddle = _expected_move(calls, puts, spot, dte=dte, is_futures=is_futures, ticker=chain.ticker)
 
+        # Sanity check: if straddle > 20% of spot, the bid/ask data is garbage
+        # (e.g. RTD last-price proxy outside RTH). Fall back to TOS formula.
+        if move > 0 and straddle > spot * 0.20:
+            log.info(
+                "[EM-DEBUG] %s | %s (DTE=%d) — straddle %.2f > 20%% of spot (%.2f), falling back to TOS",
+                chain.ticker, expiry, dte, straddle, spot,
+            )
+            move = 0.0  # force fallback below
+
         # Fallback: if straddle-based EM fails (no bid/ask, e.g. RTD outside RTH),
         # use the TOS volatility-based formula with ATM blended IV
         if move <= 0 and blended_iv > 0:

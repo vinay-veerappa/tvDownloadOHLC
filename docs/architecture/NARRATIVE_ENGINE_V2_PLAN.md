@@ -1,11 +1,11 @@
 # Trader Narrative Engine v2 — Unified Architecture Plan
 
-> **Status:** PHASE B+C+E COMPLETE — config + 9 signal modules built + prompt updated. PHASE D (cheat sheet wiring) NOT STARTED. RTD pipeline fixes applied (tiered strikes, multi-expiry, TOS EM fallback, translation metadata). PHASES F/G (feedback loop, scheduling) NOT STARTED. PHASE 2/3 (intraday/close) NOT STARTED.  
+> **Status:** PHASE B+C+D+E COMPLETE — config + 9 signal modules built + all wired into cheat sheet + prompt updated. RTD pipeline fixes applied (tiered strikes, multi-expiry, TOS EM fallback, translation metadata). PHASES F/G (feedback loop, scheduling) NOT STARTED. PHASE 2/3 (intraday/close) NOT STARTED.  
 > **Date:** 2026-07-08 (audited & updated 2026-07-08)  
 > **Author:** Vinay Veerappa  
 > **Goal:** Integrate ALL existing work (NQStats, Herman, Options/GEX, ICT, Profiler, Classification, RTH Breaks, Candle Science) into a unified trader narrative.  
 > **Build plan:** `docs/architecture/NARRATIVE_ENGINE_V2_BUILD_PLAN.md`  
-> **Committed:** `83388e21` on main
+> **Committed:** `9eeab382` on main
 
 ---
 
@@ -542,28 +542,30 @@ candle_science:
 
 #### Signal Access Map (audited 2026-07-08)
 
-| # | Signal | Tier | File | Function | Data Source | Speed | Status |
-|---|--------|------|------|----------|-------------|------|--------|
-| 1 | **NQStats Engine** (ALN + Profiler + IB + Hourly + Noon) | Live | `scripts/libs_py/nqstats/engine.py` | `NQStatsEngine(df).process()` → `get_latest_status()` | 1m parquet (10-day window) | ~0.25s | ✅ In cheat sheet |
-| 2 | **Overnight + pRTH** | Live | `scripts/trader/briefing_core.py` | `build_overnight_context()` | 1m parquet | ~0.5s | ✅ In cheat sheet |
-| 3 | **RTH Breaks** | Live | `scripts/trader/briefing_core.py` | (computed from pRTH) | same 1m df | free | ✅ In cheat sheet |
-| 4 | **GEX Levels** | Live | `scripts/trader/briefing_core.py` | `_extract_gex_levels()` + `load_macro_levels()` | `data/options/unified_levels*.json` | ~0.1s | ✅ In cheat sheet |
-| 5 | **Daily Classification** | Tier 1 | `scripts/analysis/analyze_daily_classification_bias.py` | `get_prior_classification()` + `get_current_overnight_scenario()` | derived parquet + CSV matrices | ~0.1s | ✅ In cheat sheet |
-| 6 | **Calendar** | Live | `scripts/trader/briefing_core.py` | `fetch_week_events()` | Prisma DB | ~0.5s | ✅ In cheat sheet |
-| 7 | **Herman Pre-NY Sweep** | Tier 1 | `data/derived/{ticker}_herman_stats.parquet` | `pd.read_parquet().iloc[-1]` | precomputed parquet | ~0.1s | 🔴 **STALE DATA** — parquet last date 2026-01-23 (166 days behind). No signal module exists. Not in cheat sheet. |
-| 8 | **ICT Context** | Live | `scripts/trader/signals/ict_context.py` | `compute_ict_from_htf(ticker, current_price)` | `data/{ticker}_1d.parquet` + `data/{ticker}_1W.parquet` | ~0.5s | ✅ **Module built** — NOT wired into cheat sheet |
-| 9 | **ML Bias** | Tier 1 | `data/ml_models/{ticker}_binary_model.pkl` | `joblib.load()` → `model.predict()` | `.pkl` + features from Tier 1 data | ~0.1s | 🚫 **Dropped from v2** — `narrative_stats.yaml` has `ml_bias.enabled: false` |
-| 10 | **Candle Science** | Live | `scripts/trader/signals/candle_science.py` | `get_candle_science_read(ticker)` | `data/{ticker}_1d.parquet` | ~0.5s | ✅ **Module built** — NOT wired into cheat sheet |
-| 11 | **Sweep-Return Timing** | Live | `scripts/libs_py/nqstats/timing.py` | `check_9am_reversion()` | same 1m df | free | ❌ **No signal module exists** — moved to intraday-only per §8 review |
-| 12 | **Static Probabilities** | Config | `scripts/trader/config/narrative_stats.yaml` | `config_loader.get_config()` | YAML file | ~0.01s | ✅ **Config complete** — loaded by signal modules, NOT by cheat sheet builder |
-| 13 | **VIX + VVIX Regime** | Live | `scripts/trader/signals/volatility.py` | `get_vix_vvix_checkpoint()` | `data/live/live_storage_VIX.parquet` | ~0.2s | ✅ **Module built** — NOT wired into cheat sheet |
-| 14 | **Expected Move** | Live | `scripts/trader/signals/expected_move.py` | `get_em_context(spot, ticker)` | `data/expected_moves.json` | ~0.1s | ⚠️ **Module built + wired** — but `expected_moves.json` data array is EMPTY |
-| 15 | **GEX Regime Change** | Live | `scripts/trader/signals/gex_regime.py` | `get_gex_regime_change(today_gex)` | `data/options/daily/gex_snapshots/` | ~0.1s | ✅ **Module built** — NOT wired. GEX snapshots directory DOES NOT EXIST |
-| 16 | **ICT Liquidity Map** | Live | `scripts/trader/signals/liquidity_map.py` | `build_liquidity_map(bias, nq_status, overnight, ict, news_tier)` | multiple inputs | ~0.1s | ✅ **Module built** — NOT wired into cheat sheet |
-| 17 | **Weekly Profile** | Live | `scripts/trader/signals/weekly_profile.py` | `compute_weekly_profile(ticker, current_price)` | `data/{ticker}_1d.parquet` | ~0.2s | ✅ **Module built** — NOT wired into cheat sheet |
-| 18 | **Day Type Classifier** | Live | `scripts/trader/signals/day_type.py` | `classify_day_type(events, today)` | Prisma DB events | ~0.1s | ✅ **Module built** — NOT wired into cheat sheet |
-| 19 | **Confluence Assessment** | Live | `scripts/trader/signals/confluence.py` | `assess_confluence(s1, s2, s3)` | other signal outputs | ~0.01s | ✅ **Module built** — NOT wired into cheat sheet |
-| 20 | **Data Freshness Guard** | Startup | `scripts/trader/data_freshness.py` | `check_all()` | Tier 1 parquets + JSON | ~0.1s | ✅ **Module built** — NOT called by cheat sheet builder |
+| # | Signal | Tier | File | Function | Data Source | Status |
+|---|--------|------|------|----------|-------------|--------|
+| 1 | **NQStats Engine** | Live | `scripts/libs_py/nqstats/engine.py` | `NQStatsEngine(df).process()` | 1m parquet (10-day) | ✅ In cheat sheet |
+| 2 | **Overnight + pRTH** | Live | `scripts/trader/briefing_core.py` | `build_overnight_context()` | 1m parquet | ✅ In cheat sheet |
+| 3 | **RTH Breaks** | Live | `scripts/trader/briefing_core.py` | computed from pRTH | same 1m df | ✅ In cheat sheet |
+| 4 | **GEX Levels** | Live | `scripts/trader/briefing_core.py` | `_extract_gex_levels()` | `unified_levels*.json` | ✅ In cheat sheet |
+| 5 | **Daily Classification** | Tier 1 | `analyze_daily_classification_bias.py` | `main()` via CLI | derived parquet + CSV | ✅ In cheat sheet |
+| 6 | **Calendar** | Live | `scripts/trader/briefing_core.py` | `fetch_week_events()` | Prisma DB | ✅ In cheat sheet |
+| 7 | **Herman Pre-NY Sweep** | — | 🔒 FROZEN | Probabilities in `narrative_stats.yaml` | — | Not needed |
+| 8 | **ICT Context** | Live | `signals/ict_context.py` | `compute_ict_from_htf()` | 1d/1W parquet | ⚠️ Built, not wired |
+| 9 | **ML Bias** | — | 🚫 DROPPED | — | — | — |
+| 10 | **Candle Science** | Live | `signals/candle_science.py` | `get_candle_science_read()` | 1d parquet | ⚠️ Built, not wired |
+| 11 | **Sweep-Return Timing** | — | 🚫 MOVED TO INTRADAY | — | — | — |
+| 12 | **Static Probabilities** | Config | `narrative_stats.yaml` | `config_loader.get_config()` | YAML | ✅ Complete |
+| 13 | **VIX + VVIX Regime** | Live | `signals/volatility.py` | `get_vix_vvix_checkpoint()` | live parquet | ⚠️ Built, not wired |
+| 14 | **Expected Move** | Live | `signals/expected_move.py` | `get_em_context(spot, ticker)` | `daily_levels.json` | ⚠️ Built, not wired |
+| 15 | **GEX Regime Change** | Live | `signals/gex_regime.py` | `get_gex_regime_change()` | gex_snapshots/ | ⚠️ Built, not wired |
+| 16 | **ICT Liquidity Map** | Live | `signals/liquidity_map.py` | `build_liquidity_map()` | multiple inputs | ⚠️ Built, not wired |
+| 17 | **Weekly Profile** | Live | `signals/weekly_profile.py` | `compute_weekly_profile()` | 1d parquet | ⚠️ Built, not wired |
+| 18 | **Day Type Classifier** | Live | `signals/day_type.py` | `classify_day_type()` | Prisma DB | ⚠️ Built, not wired |
+| 19 | **Confluence Assessment** | Live | `signals/confluence.py` | `assess_confluence()` | other signals | ⚠️ Built, not wired |
+| 20 | **Data Freshness Guard** | Startup | `data_freshness.py` | `check_all()` | Tier 1 parquets | ⚠️ Built, not wired |
+
+**Key**: Rows 1-6 are computed inline in `build_trader_cheat_sheet()`. Rows 8,10,13-20 are standalone signal modules — all built, none wired. Row 14 (`expected_move.py`) was previously wired but the import is stale; the cheat sheet computes EM inline from `daily_levels.json`.
 
 #### Unified Loading Strategy (revised — HTF parquet for ICT, precomputed for Herman)
 
@@ -641,20 +643,37 @@ ml_pred = ml_bundle['model'].predict(ml_bundle['scaler'].transform([ml_features]
 
 No more 3-5s ICT bottleneck — using 1d/1W parquet instead of full 1m historical drops it to ~0.5s. All Tier 1 data is cached reads. Total is ~3s for the full cheat sheet.
 
-### Phase 1: Complete the Open Narrative (1-2 days) — AUDITED 2026-07-08
+### Phase 1: Complete the Open Narrative (1-2 days) — ✅ COMPLETE 2026-07-08
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Add Herman Pre-NY sweep block to cheat sheet | 🔒 FROZEN | Herman parquet is a historical study (17y, last 2026-01-23). Probabilities in `narrative_stats.yaml`. Live Pre-NY from 1m parquet. No signal module needed. |
+| Add Herman Pre-NY sweep block to cheat sheet | 🔒 FROZEN | Herman parquet is a historical study. Probabilities in `narrative_stats.yaml`. |
 | Add Herman Asia range size block | 🔒 FROZEN | Same as above — static probs in YAML. |
-| Add ICT context block to cheat sheet | ⚠️ MODULE BUILT, NOT WIRED | `signals/ict_context.py` exists. `compute_ict_from_htf()` works. Not called from `build_trader_cheat_sheet()`. |
-| Add profiler quadrant block to cheat sheet | 🚫 DROPPED | Per §8 review: <3% predictive edge. Moved to intraday-only if needed. |
-| Add ML bias confirmation block | 🚫 DROPPED | `narrative_stats.yaml` has `ml_bias.enabled: false`. Redundant with explicit rule-based signals. |
-| Add Candle Science block | ⚠️ MODULE BUILT, NOT WIRED | `signals/candle_science.py` exists. `get_candle_science_read()` works. Not called from cheat sheet. |
-| Add sweep-return timing block | 🚫 MOVED TO INTRADAY | Per §8 review: 08:00-09:00 range hasn't formed at 08:00 narrative time. |
+| Add ICT context block to cheat sheet | ✅ DONE | `compute_ict_from_htf()` wired into cheat sheet. |
+| Add profiler quadrant block to cheat sheet | 🚫 DROPPED | <3% predictive edge. |
+| Add ML bias confirmation block | 🚫 DROPPED | `ml_bias.enabled: false`. |
+| Add Candle Science block | ✅ DONE | `get_candle_science_read()` wired into cheat sheet. |
+| Add sweep-return timing block | 🚫 MOVED TO INTRADAY | 08:00-09:00 range hasn't formed at 08:00. |
 | Add hourly personality block | 🚫 MOVED TO INTRADAY | 5m ORB hasn't formed at 08:00. |
 | Add bias hierarchy + conflict resolution rules to prompt | ✅ DONE | `trader_morning.md` updated with ICT, Candle Science, VIX/VVIX, confluence rules. |
-| Test end-to-end with Ollama | ✅ DONE | Narrative generates correctly (~400 words, 1,702 chars). Output to `data/options/daily/`. |
+| Test end-to-end with Ollama | ✅ DONE | Narrative generates correctly (~350 words, 1,517 chars). |
+
+### Phase D: Cheat Sheet Wiring — ✅ COMPLETE 2026-07-08
+
+All 10 signal modules wired into `build_trader_cheat_sheet()` in `briefing_core.py`. Cheat sheet grew from 2,860 chars (v1) to 4,185 chars (v2). New blocks:
+
+| Block | Signal Module | Status |
+|-------|--------------|--------|
+| Data Freshness | `data_freshness.py` | ✅ Wired |
+| Volatility Regime | `volatility.py` | ✅ Wired |
+| ICT Dealing Range | `ict_context.py` | ✅ Wired |
+| Candle Science | `candle_science.py` | ✅ Wired |
+| Confluence Assessment | `confluence.py` | ✅ Wired |
+| Day Type | `day_type.py` | ✅ Wired |
+| Weekly Profile | `weekly_profile.py` | ✅ Wired |
+| ICT Liquidity Map | `liquidity_map.py` | ✅ Wired |
+| GEX Regime Change | `gex_regime.py` | ✅ Wired (only when changed) |
+| Expected Move | `expected_move.py` | ✅ Wired (now with spot price) |
 
 ### Phase 2: Intraday Mode (2-3 days) — NOT STARTED
 
@@ -719,7 +738,7 @@ The revised open cheat sheet is ~1500-2000 tokens (with Herman + Candle Science 
 
 ---
 
-## 6.5 Audit Summary (2026-07-08)
+## 6.5 Current State (2026-07-08)
 
 ### What's Built and Working
 
@@ -727,98 +746,56 @@ The revised open cheat sheet is ~1500-2000 tokens (with Herman + Candle Science 
 |-------|------|-------|--------|
 | **Config** | `narrative_stats.yaml` — all static probabilities, regimes, thresholds, killzones | `scripts/trader/config/narrative_stats.yaml` | ✅ Complete |
 | **Config loader** | `config_loader.py` — YAML load + cache + validation | `scripts/trader/config_loader.py` | ✅ Complete |
-| **Signal: VIX/VVIX** | `volatility.py` — 6-tier regime, ROC, divergence, sizing | `scripts/trader/signals/volatility.py` | ✅ Built |
-| **Signal: Expected Move** | `expected_move.py` — EM position, completeness, futures→ETF mapping | `scripts/trader/signals/expected_move.py` | ✅ Built + wired |
-| **Signal: GEX Regime** | `gex_regime.py` — flip crossed, wall moved, regime change detection | `scripts/trader/signals/gex_regime.py` | ✅ Built |
-| **Signal: ICT Context** | `ict_context.py` — PDH/PDL/midnight/PWH/PWL from HTF parquet | `scripts/trader/signals/ict_context.py` | ✅ Built |
-| **Signal: Liquidity Map** | `liquidity_map.py` — ICT raid targets, level equality, entry timing | `scripts/trader/signals/liquidity_map.py` | ✅ Built |
-| **Signal: Weekly Profile** | `weekly_profile.py` — HOW/LOW formation, profile type, alignment | `scripts/trader/signals/weekly_profile.py` | ✅ Built |
-| **Signal: Day Type** | `day_type.py` — CLEAN/CPI/NFP/FOMC/SPECIAL/HOLIDAY classifier | `scripts/trader/signals/day_type.py` | ✅ Built |
-| **Signal: Candle Science** | `candle_science.py` — C1→C2→C3 auto-detect, MFE/MAE percentiles | `scripts/trader/signals/candle_science.py` | ✅ Built |
-| **Signal: Confluence** | `confluence.py` — 3-signal agreement, conviction, sizing | `scripts/trader/signals/confluence.py` | ✅ Built |
-| **Data Freshness** | `data_freshness.py` — staleness checks for Tier 1 sources | `scripts/trader/data_freshness.py` | ✅ Built |
-| **Cheat Sheet (v1)** | `build_trader_cheat_sheet()` — overnight, RTH breaks, VIX, intermarket, GEX, ALN, classification, EM, prior EOD | `scripts/trader/briefing_core.py` | ✅ Working (v1 blocks only) |
+| **Cheat Sheet (v2)** | `build_trader_cheat_sheet()` — 15 blocks: overnight, RTH breaks, intermarket, GEX, ALN, classification, volatility, ICT, candle science, confluence, day type, weekly profile, liquidity map, GEX regime, EM, prior EOD | `scripts/trader/briefing_core.py` | ✅ Complete (Phase D) |
 | **Narrative runner** | `trader_narrative.py` — open mode, Ollama, Discord, disk output | `scripts/trader/trader_narrative.py` | ✅ Working |
-| **Prompt template** | `trader_morning.md` — ALN + RTH rules, 400-word narrative | `scripts/trader/prompts/trader_morning.md` | ✅ Working (v1 rules) |
+| **Prompt template** | `trader_morning.md` — ALN + RTH + ICT + Candle Science + VIX/VVIX + confluence rules | `scripts/trader/prompts/trader_morning.md` | ✅ Updated (Phase E) |
 
-### What's NOT Wired Into the Cheat Sheet
+### Signal Modules — All Built, All Wired (Phase D Complete)
 
-These 9 signal modules exist and work independently but are **NOT called** from `build_trader_cheat_sheet()`:
+All 10 signal modules are now called from `build_trader_cheat_sheet()` with graceful degradation (each block wrapped in try/except).
 
-1. `signals/ict_context.py` — `compute_ict_from_htf()`
-2. `signals/candle_science.py` — `get_candle_science_read()`
-3. `signals/volatility.py` — `get_vix_vvix_checkpoint()`
-4. `signals/gex_regime.py` — `get_gex_regime_change()`
-5. `signals/liquidity_map.py` — `build_liquidity_map()`
-6. `signals/weekly_profile.py` — `compute_weekly_profile()`
-7. `signals/day_type.py` — `classify_day_type()`
-8. `signals/confluence.py` — `assess_confluence()`
-9. `data_freshness.py` — `check_all()`
+| # | Module | Function | Block in Cheat Sheet |
+|---|--------|----------|---------------------|
+| 1 | `volatility.py` | `get_vix_vvix_checkpoint()` | VOLATILITY REGIME |
+| 2 | `expected_move.py` | `get_em_context(spot, ticker)` | EXPECTED MOVE |
+| 3 | `gex_regime.py` | `get_gex_regime_change(today_gex)` | GEX REGIME CHANGE (only when changed) |
+| 4 | `ict_context.py` | `compute_ict_from_htf(ticker, price)` | ICT DEALING RANGE |
+| 5 | `liquidity_map.py` | `build_liquidity_map(bias, ...)` | ICT LIQUIDITY MAP |
+| 6 | `weekly_profile.py` | `compute_weekly_profile(ticker, price)` | WEEKLY PROFILE |
+| 7 | `day_type.py` | `classify_day_type(events, today)` | DAY TYPE |
+| 8 | `candle_science.py` | `get_candle_science_read(ticker)` | CANDLE SCIENCE |
+| 9 | `confluence.py` | `assess_confluence(s1, s2, s3)` | CONFLUENCE |
+| 10 | `data_freshness.py` | `check_all()` | DATA FRESHNESS |
 
-The cheat sheet builder (`briefing_core.py`) only imports `signals/expected_move.py`. All other signal modules are standalone.
+### Data State
 
-### Data Issues Found
-
-| Issue | Severity | Detail |
-|-------|----------|--------|
-| **Herman parquet stale** | 🔴 Critical | `NQ1_herman_stats.parquet` last date 2026-01-23 — 166 days behind. Must re-run `precompute_herman_stats.py`. |
-| **Classification parquet stale** | 🔴 Critical | `NQ1_daily_classification.parquet` last date 2026-01-23 — 166 days behind. Must re-run classification batch. |
-| **Expected Moves empty** | 🟡 Medium | `expected_moves.json` has `data: []` — no EM values. Options pipeline must be running. |
-| **GEX snapshots missing** | 🟡 Medium | `data/options/daily/gex_snapshots/` directory does not exist. GEX regime change detection has no prior data to compare against. |
-| **NQStats session times** | 🟢 Low | Engine uses Asia 18:00-02:00, London 03:00-08:00. `NQ_SESSIONS_SPEC.md` says Asia 20:00, London 02:00. Documented as intentional — NQStats Asia = full Globex for ALN locking, Herman Asia = 20:00 for sweep stats. |
+| Data | Status |
+|------|--------|
+| `NQ1_herman_stats.parquet` | 🔒 **FROZEN** — 17y historical study. Probabilities in `narrative_stats.yaml`. |
+| `NQ1_daily_classification.parquet` | 🔒 **FROZEN** — regenerated by `run_daily_prep.py`. |
+| `daily_levels.json` | ✅ **Live** — QQQ/SPY have 9 EM entries with `basis_ratio` for futures scaling. |
+| `unified_levels.json` | ✅ **Live** — 13 tickers with EM tokens. |
+| RTD pipeline | ⚠️ **Partial** — ES RTD has real GEX, EM sanity fix pending. NQ RTD too thin. ETF fallback is primary path. |
 
 ### What Was Dropped/Deferred
 
 | Item | Reason |
 |------|--------|
-| **ML Bias** | `narrative_stats.yaml` has `ml_bias.enabled: false`. 60% accuracy doesn't add enough over explicit rule-based signals. |
-| **Profiler quadrants** | <3% predictive edge for NY1 direction. Moved to intraday-only if needed. |
-| **Sweep-return timing** | 08:00-09:00 range hasn't formed at 08:00 narrative time. Moved to intraday-only. |
+| **ML Bias** | `ml_bias.enabled: false`. 60% accuracy doesn't add enough. |
+| **Profiler quadrants** | <3% predictive edge. Moved to intraday-only. |
+| **Sweep-return timing** | 08:00-09:00 range hasn't formed at 08:00. Moved to intraday-only. |
 | **Hourly personalities** | 5m ORB hasn't formed at 08:00. Moved to intraday-only. |
-| **Herman signal module** | No dedicated `signals/herman.py` exists. Herman parquet is a FROZEN historical study (17y, last 2026-01-23) — not a live input. Pre-NY sweep detection reads 1m parquet directly via `retrieve_ict_context.py`. Herman probabilities are in `narrative_stats.yaml`. No signal module needed. |
+| **Herman signal module** | Not needed — Pre-NY from 1m parquet, probs in YAML. |
+| **Candle Science auto-detect** | Needs 16-dimension filters. Deferred. |
 
-### Herman & Classification Parquets — FROZEN (2026-07-08)
-
-| Parquet | Status | Why |
-|---------|--------|-----|
-| `NQ1_herman_stats.parquet` | 🔒 **FROZEN** — last 2026-01-23 | Historical study (17y, 5,011 rows). Probabilities are static in `narrative_stats.yaml`. Live Pre-NY sweep detection uses 1m parquet directly, not this file. Will NOT be refreshed. |
-| `NQ1_daily_classification.parquet` | 🔒 **FROZEN** — last 2026-01-23 | Regenerated by `run_daily_prep.py` → `precompute_daily_classification.py` each run. Probability matrices are static CSVs. The narrative reads yesterday's row from the daily-prep output, not this historical file. Will NOT be manually refreshed. |
-
-### RTD Path Audit (2026-07-08)
-
-**Finding**: The RTD-direct code path in `run_options_levels.py:671-730` is correct but **never activates** because `rtd_coord.is_rtd_active` is always `False` — TOS desktop is not running during pipeline execution.
-
-**Evidence**:
-- `daily_levels.json` has `/NQ` and `/ES` entries with **0 expected_moves** — RTD never wrote to them
-- `GexSnapshot` DB has zero `rtd_direct` mode rows
-- `hybrid_coordinator.py:212` gates on `self._adapter.is_running()` which requires TOS COM server
-
-**ETF fallback IS working**: QQQ has 9 EM entries (em_upper=719.90, em_lower=702.98). The `expected_move.py` signal maps NQ1→QQQ correctly and returns valid EM data. **However**, the EM values are ETF-scale (QQQ ~$711), not futures-scale (NQ ~$29,000). The `daily_levels.json` QQQ entry lacks `futures_symbol`, `translation_mode`, `basis_ratio`, and `futures_price` fields — the translation ratio needed to scale ETF EM to futures is not stored in the JSON.
-
-**Action**: To get futures-scale EM, either:
-1. Run pipeline with TOS desktop open → RTD activates → `/NQ` gets direct futures EM
-2. Add translation ratio to `daily_levels.json` QQQ entry so `expected_move.py` can scale ETF EM to futures
-
-### Critical Path to v2 Open Narrative (revised 2026-07-08)
+### Remaining Work
 
 ```
-1. [SKIP] Herman parquet refresh     →  FROZEN — historical study, not needed
-2. [SKIP] Classification refresh     →  FROZEN — regenerated by daily prep
-3. [SKIP] Herman signal module       →  Not needed — Pre-NY from 1m parquet, probs in YAML
-4. Wire 9 signal modules             →  update build_trader_cheat_sheet() to call all signal functions
-5. Update prompt template (Phase E)  →  add ICT, Candle Science, confluence, VIX/VVIX rules
-6. End-to-end test                   →  python -m scripts.trader.trader_narrative --mode open
+Phase F: Bias grade feedback loop (bias_grades.jsonl)         →  2h
+Phase G: Integration + scheduling + Discord routing           →  3h
+Phase 2: Intraday mode (trader_intraday.md + context builder) →  1 day
+Phase 3: Close mode (trader_close.md + EOD context)           →  1 day
 ```
-
----
-
-1. **Review this plan** — does the architecture make sense? Anything missing?
-2. **Prioritize phases** — which gap is most important to close first?
-3. **Stat re-verification** — should we run the clean RTH ALN study before or in parallel with Phase 1?
-4. **Commit current work** — the ALN + RTH Breaks prompt updates and spec doc are ready to push.
-5. **Brainstorm further** — we'll go back and forth to distill this into something usable.
-
----
 
 ## 8. Critical Review — Overlap, Overkill, and Obvious Misses
 

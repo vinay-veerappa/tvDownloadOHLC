@@ -35,6 +35,15 @@ import pandas as pd
 from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
 from scripts.trader.signals.expected_move import get_em_context, format_em_block
+from scripts.trader.signals.volatility import get_vix_vvix_checkpoint
+from scripts.trader.signals.ict_context import compute_ict_from_htf
+from scripts.trader.signals.candle_science import get_candle_science_read
+from scripts.trader.signals.confluence import assess_confluence
+from scripts.trader.signals.day_type import classify_day_type
+from scripts.trader.signals.weekly_profile import compute_weekly_profile
+from scripts.trader.signals.liquidity_map import build_liquidity_map
+from scripts.trader.signals.gex_regime import get_gex_regime_change
+from scripts.trader.data_freshness import check_all
 
 log = logging.getLogger(__name__)
 
@@ -2252,6 +2261,109 @@ def _format_key_levels_hierarchy(
     return "\n".join(lines)
 
 
+# ── Signal block formatters (Phase D) ──────────────────────────────
+
+def _format_volatility_block(vv: dict) -> str:
+    """Format VIX/VVIX regime + divergence into cheat-sheet block."""
+    if not vv or vv.get("vix_regime") == "unknown":
+        return "== VOLATILITY REGIME ==\nVIX/VVIX data unavailable"
+    lines = ["== VOLATILITY REGIME =="]
+    lines.append(f"VIX: {vv['vix_close']} [{vv['vix_regime'].upper()}] | VVIX: {vv['vvix_close']} [{vv['vvix_regime'].upper()}]")
+    lines.append(f"VVIX overnight: {vv['vvix_chg']:+.1f}% → {vv['vvix_roc_regime'].replace('_',' ')}")
+    lines.append(f"Divergence: {vv['divergence_read'].replace('_',' ')}")
+    lines.append(f"Sizing: {vv['sizing_multiplier']:.0%}")
+    return "\n".join(lines)
+
+
+def _format_ict_block(ict: dict, spot: float) -> str:
+    """Format ICT dealing range into cheat-sheet block."""
+    if not ict or not ict.get("pdh"):
+        return "== ICT DEALING RANGE ==\nICT data unavailable"
+    lines = ["== ICT DEALING RANGE =="]
+    lines.append(f"PDH: {ict['pdh']:,.2f} | PDL: {ict['pdl']:,.2f} | Midnight: {ict.get('midnight_open') or 'N/A'}")
+    lines.append(f"Price in {ict.get('premium_discount','unknown')} ({ict.get('dealing_range_pct','?')}% of range)")
+    if ict.get("bsl_target"):
+        lines.append(f"BSL: {ict['bsl_target']:,.2f} | SSL: {ict['ssl_target']:,.2f}")
+    return "\n".join(lines)
+
+
+def _format_candle_science_block(cs: dict) -> str:
+    """Format Candle Science C1→C2→C3 into cheat-sheet block."""
+    if not cs or cs.get("n_matches", 0) == 0:
+        return "== CANDLE SCIENCE ==\nNo pattern match available"
+    lines = ["== CANDLE SCIENCE =="]
+    lines.append(f"C1: {cs['c1_dir']} | C2: {cs['c2_dir']} → P(C3 Bull): {cs['p_bull']}% (n={cs['n_matches']}, edge={cs['edge']}%)")
+    mfe = cs.get("mfe", {})
+    mae = cs.get("mae", {})
+    if mfe.get("p50") and mae.get("p50"):
+        rr = round(mfe["p50"] / abs(mae["p50"]), 1) if mae["p50"] else 0
+        lines.append(f"MFE: p50={mfe.get('p50','?')}% | MAE: p50={mae.get('p50','?')}% | R:R={rr}x")
+    return "\n".join(lines)
+
+
+def _format_confluence_block(conf: dict) -> str:
+    """Format confluence assessment into cheat-sheet block."""
+    if not conf:
+        return "== CONFLUENCE ==\nNo confluence data"
+    lines = ["== CONFLUENCE =="]
+    lines.append(f"Signal 1 (Overnight): {conf.get('overnight_signal','?')}")
+    lines.append(f"Signal 2 (RTH Open): {conf.get('rth_open_signal','?')}")
+    lines.append(f"Signal 3 (Daily Chart): {conf.get('daily_chart_signal','?')}")
+    lines.append(f"Confluence: {conf.get('confluence','?')} | Sizing: {conf.get('sizing',1.0):.0%}")
+    lines.append(f"Note: {conf.get('conviction_note','')}")
+    return "\n".join(lines)
+
+
+def _format_day_type_block(dt: dict) -> str:
+    """Format day type + killzones into cheat-sheet block."""
+    if not dt:
+        return "== DAY TYPE ==\nNo day type data"
+    lines = ["== DAY TYPE =="]
+    lines.append(f"Type: {dt.get('day_type','clean').upper()} | Sizing: {dt.get('sizing_multiplier',1.0):.0%}")
+    if dt.get("events_today"):
+        lines.append("Events: " + ", ".join(f"{e.get('time_et','?')} {e.get('name','?')}" for e in dt["events_today"]))
+    if dt.get("guidance"):
+        lines.append(f"Guidance: {dt['guidance']}")
+    return "\n".join(lines)
+
+
+def _format_weekly_profile_block(wp: dict) -> str:
+    """Format weekly profile into cheat-sheet block."""
+    if not wp or not wp.get("week_high"):
+        return "== WEEKLY PROFILE ==\nNo weekly data"
+    lines = ["== WEEKLY PROFILE =="]
+    lines.append(f"HOW: {wp['week_high']:,.2f} ({wp.get('week_high_day','?')}) | LOW: {wp['week_low']:,.2f} ({wp.get('week_low_day','?')})")
+    lines.append(f"Profile: {wp.get('profile_type','balanced').replace('_',' ')} | Position: {wp.get('current_position','?')}")
+    lines.append(f"Day context: {wp.get('day_context','?')} | Alignment: {wp.get('alignment','?')}")
+    return "\n".join(lines)
+
+
+def _format_liquidity_map_block(lm: dict) -> str:
+    """Format ICT liquidity raid map into cheat-sheet block."""
+    if not lm or lm.get("raid_target") == "unknown":
+        return "== ICT LIQUIDITY MAP ==\nNo liquidity data"
+    lines = ["== ICT LIQUIDITY MAP =="]
+    lines.append(f"Bias: {lm.get('bias','?')} → Raid target: {lm.get('raid_target','?')}")
+    if lm.get("raid_target_level"):
+        lines.append(f"Target level: {lm['raid_target_level']:,.2f}")
+    lines.append(f"Level equality: {lm.get('level_equality','?')} | Weekly: {lm.get('weekly_position','?')}")
+    lines.append(f"Timing: {lm.get('entry_timing','?')}")
+    return "\n".join(lines)
+
+
+def _format_gex_regime_block(gr: dict) -> str:
+    """Format GEX regime change into cheat-sheet block."""
+    if not gr:
+        return ""
+    lines = ["== GEX REGIME CHANGE =="]
+    lines.append(f"Regime: {gr.get('regime_change','stable')}")
+    if gr.get("flip_crossed"):
+        lines.append("Flip crossed — gamma regime changed")
+    if gr.get("wall_moved"):
+        lines.append(f"Wall moved: {gr['wall_moved']}")
+    return "\n".join(lines)
+
+
 def build_trader_cheat_sheet(
     mode: str = "open",
     loader: DataLoader | None = None,
@@ -2435,18 +2547,99 @@ def build_trader_cheat_sheet(
     # ── Key levels hierarchy ──
     sections.append(_format_key_levels_hierarchy(nq_gex, es_gex, aln_data, nq_spot))
 
-    # ── Expected Move (C2 Signal) ──
+    # ── Phase D: Signal module blocks ──
+
+    # Data freshness check
     try:
-        # EM is indexed to the ETF proxy, not futures price
-        # Map futures to their ETF spot price for EM calculation
-        em_ticker = nq_ticker  # Signal will map to QQQ
-        
-        # For now, use a simple proxy lookup
-        # In production, could fetch live ETF spot from DataLoader
-        # Since pipeline computes EM for QQQ/SPY/etc., we trust that
-        # We'll just get EM context without a specific spot price
-        # (it will return raw EM from daily_levels.json regardless of spot)
-        em_data = get_em_context(spot=0, ticker=em_ticker)  # spot=0 means we just get EM range
+        freshness = check_all()
+        stale = [f for f in freshness if f.is_stale]
+        if stale:
+            sections.append("== DATA FRESHNESS ==\n" + "\n".join(f"⚠ {s.source}: {s.days_stale}d stale (last {s.last_date})" for s in stale))
+    except Exception as e:
+        log.warning("[cheat_sheet] Freshness check failed: %s", e)
+
+    # VIX/VVIX volatility regime
+    try:
+        vv = get_vix_vvix_checkpoint()
+        sections.append(_format_volatility_block(vv))
+    except Exception as e:
+        log.warning("[cheat_sheet] Volatility signal failed: %s", e)
+
+    # ICT context
+    try:
+        ict = compute_ict_from_htf(ticker=nq_ticker, current_price=nq_spot)
+        sections.append(_format_ict_block(ict, nq_spot))
+    except Exception as e:
+        log.warning("[cheat_sheet] ICT context failed: %s", e)
+
+    # Candle Science
+    try:
+        cs = get_candle_science_read(ticker=nq_ticker)
+        sections.append(_format_candle_science_block(cs))
+    except Exception as e:
+        log.warning("[cheat_sheet] Candle Science failed: %s", e)
+
+    # Confluence assessment
+    try:
+        # Derive signal directions from existing data
+        aln_bias = aln_data.get("bias", "NEUTRAL")
+        s1 = "BULLISH" if "BULLISH" in aln_bias else ("BEARISH" if "BEARISH" in aln_bias else "NEUTRAL")
+        # RTH open scenario
+        rth_scenario = "INSIDE"
+        if nq_ctx:
+            prth_h = nq_ctx.get("prior_rth_high")
+            prth_l = nq_ctx.get("prior_rth_low")
+            cur = nq_ctx.get("close", 0)
+            if prth_h and prth_l and cur:
+                if cur > prth_h: rth_scenario = "GAP_UP"
+                elif cur < prth_l: rth_scenario = "GAP_DOWN"
+        s2 = "BULLISH" if rth_scenario == "GAP_UP" else ("BEARISH" if rth_scenario == "GAP_DOWN" else "NEUTRAL")
+        # Candle Science direction
+        s3 = "BULLISH" if (cs and cs.get("p_bull", 50) > cs.get("p_bear", 50)) else ("BEARISH" if (cs and cs.get("p_bear", 50) > cs.get("p_bull", 50)) else "NEUTRAL")
+        conf = assess_confluence(s1, s2, s3)
+        sections.append(_format_confluence_block(conf))
+    except Exception as e:
+        log.warning("[cheat_sheet] Confluence failed: %s", e)
+
+    # Day type
+    try:
+        dt = classify_day_type(events, target_date)
+        sections.append(_format_day_type_block(dt))
+    except Exception as e:
+        log.warning("[cheat_sheet] Day type failed: %s", e)
+
+    # Weekly profile
+    try:
+        wp = compute_weekly_profile(ticker=nq_ticker, current_price=nq_spot)
+        sections.append(_format_weekly_profile_block(wp))
+    except Exception as e:
+        log.warning("[cheat_sheet] Weekly profile failed: %s", e)
+
+    # ICT liquidity map
+    try:
+        lm = build_liquidity_map(
+            bias=s1,
+            nq_status=aln_data,
+            overnight=nq_ctx or {},
+            ict=ict,
+            news_tier="HIGH" if any(e.get("impact") == "HIGH" for e in events) else ("MEDIUM" if any(e.get("impact") == "MEDIUM" for e in events) else "NONE"),
+        )
+        sections.append(_format_liquidity_map_block(lm))
+    except Exception as e:
+        log.warning("[cheat_sheet] Liquidity map failed: %s", e)
+
+    # GEX regime change
+    try:
+        nq_gex_full = nq_unified if isinstance(nq_unified, dict) else {}
+        gr = get_gex_regime_change(nq_gex_full)
+        if gr.get("regime_change") and gr["regime_change"] != "stable":
+            sections.append(_format_gex_regime_block(gr))
+    except Exception as e:
+        log.warning("[cheat_sheet] GEX regime change failed: %s", e)
+
+    # ── Expected Move ──
+    try:
+        em_data = get_em_context(spot=nq_spot, ticker=nq_ticker)
         sections.append(format_em_block(em_data))
     except Exception as e:
         log.warning("[cheat_sheet] EM signal failed: %s", e)
