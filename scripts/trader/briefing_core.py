@@ -57,6 +57,77 @@ UNIFIED_LEVELS_JSON = OPTIONS_DATA_DIR / "unified_levels.json"
 UNIFIED_LEVELS_OPEN_TXT = OPTIONS_DATA_DIR / "current" / "unified_levels_open.txt"
 UNIFIED_LEVELS_CLOSE_TXT = OPTIONS_DATA_DIR / "current" / "unified_levels_close.txt"
 DB_PATH = REPO_ROOT / "web" / "prisma" / "dev.db"
+BIAS_GRADES_PATH = OPTIONS_DATA_DIR / "daily" / "bias_grades.jsonl"
+
+# ── Bias Grade Feedback Loop (Phase F) ─────────────────────────────
+
+def write_bias_grade(
+    morning_bias: str,
+    actual_outcome: str,
+    correct: bool,
+    pattern: str = "",
+    confluence_level: str = "",
+) -> None:
+    """Append a bias grade record to the JSONL log."""
+    BIAS_GRADES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "date": datetime.now(ET).strftime("%Y-%m-%d"),
+        "morning_bias": morning_bias,
+        "actual_outcome": actual_outcome,
+        "correct": correct,
+        "pattern": pattern,
+        "confluence_level": confluence_level,
+    }
+    with open(BIAS_GRADES_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    log.info("[bias_grade] Recorded: %s -> %s (correct=%s)", morning_bias, actual_outcome, correct)
+
+
+def get_recent_bias_accuracy(n: int = 5) -> dict:
+    """Read last N bias grades and compute accuracy.
+
+    Returns:
+        dict with {recent_grades: list, correct: int, total: int, accuracy_pct: float, summary: str}
+    """
+    if not BIAS_GRADES_PATH.exists():
+        return {"recent_grades": [], "correct": 0, "total": 0, "accuracy_pct": 0.0, "summary": "No prior bias grades available."}
+
+    grades = []
+    with open(BIAS_GRADES_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    grades.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+    recent = grades[-n:] if len(grades) >= n else grades
+    correct = sum(1 for g in recent if g.get("correct"))
+    total = len(recent)
+    pct = round(correct / total * 100, 1) if total > 0 else 0.0
+
+    summary = f"Recent bias accuracy: {correct}/{total} correct ({pct}%)" if total > 0 else "No prior bias grades available."
+    return {
+        "recent_grades": recent,
+        "correct": correct,
+        "total": total,
+        "accuracy_pct": pct,
+        "summary": summary,
+    }
+
+
+def _format_bias_grade_block(grades: dict) -> str:
+    """Format recent bias accuracy into cheat-sheet block."""
+    if not grades or grades["total"] == 0:
+        return ""
+    lines = ["== BIAS GRADE FEEDBACK =="]
+    lines.append(grades["summary"])
+    for g in grades["recent_grades"]:
+        mark = "✓" if g.get("correct") else "✗"
+        lines.append(f"  {g['date']}: {g['morning_bias']} -> {g['actual_outcome']} {mark}")
+    return "\n".join(lines)
+
 
 # ── Track Mandate Resolution ───────────────────────────────────────
 # Hardcoded mapping: (gex_regime, regime_label) → mandated execution track.
@@ -2653,6 +2724,14 @@ def build_trader_cheat_sheet(
         log.warning("[cheat_sheet] Prior EOD plan fetch failed: %s", e)
         prior_plan = "No previous EOD plan available."
     sections.append("== PRIOR EOD PLAN (overnight continuity) ==\n" + prior_plan)
+
+    # ── Bias grade feedback (Phase F) ──
+    try:
+        grades = get_recent_bias_accuracy(n=5)
+        if grades["total"] > 0:
+            sections.append(_format_bias_grade_block(grades))
+    except Exception as e:
+        log.warning("[cheat_sheet] Bias grades failed: %s", e)
 
     return "\n\n".join(sections)
 
