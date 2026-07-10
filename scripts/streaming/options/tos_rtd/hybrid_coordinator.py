@@ -95,6 +95,10 @@ class HybridCoordinator:
         self._adapter: Optional[Any] = None  # TOSRTDAdapter if enabled
         self._schwab_prices: dict[str, float] = {}  # Fallback cache
         self._validation_results: list[GreeksValidationResult] = []
+        # Cached expiry list from Schwab discovery (avoids re-querying every start)
+        self._cached_expiries: list[date] | None = None
+        self._expiry_cache_time: float = 0.0  # When the cache was populated
+        _EXPIRY_CACHE_TTL_SECONDS = 3600  # 1 hour — expiries change slowly
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -151,86 +155,139 @@ class HybridCoordinator:
             default=4,
         )
 
-        # ── Attempt Schwab expiry discovery ──
-        # Query the Hub for the futures option chain to get actual available
-        # expiries.  This is a lightweight call (just needs the expiry dates,
-        # not full chain data).  If it fails, fall back to theoretical ladder.
-        schwab_expiries: dict[str, list[date]] = {}
-        try:
-            from ..options_fetcher import fetch_futures_option_chain_data, _hub_request
-            from ..config import PIPELINE_DTE_TARGETS
-            for sym in self._symbols:
-                try:
-                    # Use a small DTE target set for discovery — we just need
-                    # the available expiries, not the full year's chain.
-                    discovery_dte = list(range(0, 45))  # 0-44 DTE covers 0DTE through ~6 weeks
-                    chain = fetch_futures_option_chain_data(sym, discovery_dte)
-                    if chain and chain.contracts:
-                        # Extract unique expiry dates from the contracts
-                        expiry_dates = sorted({
-                            c.expiry for c in chain.contracts
-                            if isinstance(c.expiry, date) and c.expiry >= date.today()
-                        })
-                        if expiry_dates:
-                            schwab_expiries[sym] = expiry_dates
-                            log.info(
-                                "Schwab discovery for %s: %d actual expiries found (%s)",
-                                sym, len(expiry_dates),
-                                ", ".join(e.isoformat() for e in expiry_dates[:max_expiries]),
-                            )
-                except Exception as exc:
-                    log.debug("Schwab expiry discovery failed for %s: %s", sym, exc)
-        except ImportError:
-            log.debug("Schwab fetcher not available for expiry discovery — using theoretical ladder")
+        # ── Attempt Schwab expiry discovery (with caching) ──
+        # Query the Schwab API to get the actual available expiries for each
+        # futures symbol.  This avoids wasting COM subscriptions on non-existent
+        # option symbols.  Results are cached for 1 hour since expiries change
+        # slowly (only when an expiry date passes).
+        import time as _time_mod
+        _EXPIRY_CACHE_TTL = 3600  # 1 hour
 
-        # Build the expiry list
-        if schwab_expiries:
-            # Use Schwab-discovered expiries — merge across all symbols, trim to max
-            all_discovered: set[date] = set()
-            for exp_list in schwab_expiries.values():
-                all_discovered.update(exp_list)
-            expiries = sorted(all_discovered)[:max_expiries]
-            if not expiries:
-                # Fallback if discovery returned empty
-                expiries = [self._expiry]
+        if (self._cached_expiries is not None
+                and (_time_mod.time() - self._expiry_cache_time) < _EXPIRY_CACHE_TTL):
+            expiries = self._cached_expiries
             log.info(
-                "RTD expiry ladder (Schwab-discovered): %d expiries (%s)",
+                "RTD expiry ladder (cached, %ds old): %d expiries (%s)",
+                int(_time_mod.time() - self._expiry_cache_time),
                 len(expiries),
                 ", ".join(e.isoformat() for e in expiries),
             )
         else:
-            # Fallback: theoretical ladder (0DTE + weekly Fridays + monthly)
-            today = date.today()
-            expiries_set: set[date] = set()
+            schwab_expiries: dict[str, list[date]] = {}
+            try:
+                from ..options_fetcher import _hub_request
+                for sym in self._symbols:
+                    try:
+                        # Try get_option_chain first — it returns all available
+                        # expiries if Schwab supports it for futures.
+                        from datetime import timedelta as _td2
+                        today_d = date.today()
+                        chain_resp = _hub_request("get_option_chain", {
+                            "symbol": sym,
+                            "fromDate": today_d.isoformat(),
+                            "toDate": (today_d + _td2(days=90)).isoformat(),
+                            "strikeCount": 5,  # minimal — we just need expiry keys
+                        })
+                        call_map = chain_resp.get("callExpDateMap", {})
+                        put_map = chain_resp.get("putExpDateMap", {})
+                        all_exp_keys = sorted(set(call_map.keys()) | set(put_map.keys()))
 
-            # Add today as a 0DTE expiry if it's a weekday
-            if today.weekday() < 5:
-                expiries_set.add(today)
+                        if all_exp_keys:
+                            # Parse expiry dates from keys like "2026-07-11:1"
+                            expiry_dates = []
+                            for k in all_exp_keys:
+                                try:
+                                    exp_str = k.split(":")[0]
+                                    exp_d = date.fromisoformat(exp_str)
+                                    if exp_d >= today_d:
+                                        expiry_dates.append(exp_d)
+                                except (ValueError, IndexError):
+                                    continue
+                            expiry_dates = sorted(set(expiry_dates))
+                            if expiry_dates:
+                                schwab_expiries[sym] = expiry_dates
+                                log.info(
+                                    "Schwab get_option_chain discovery for %s: %d expiries (%s)",
+                                    sym, len(expiry_dates),
+                                    ", ".join(e.isoformat() for e in expiry_dates[:max_expiries]),
+                                )
+                                continue  # Skip get_quotes fallback
+                    except Exception as exc:
+                        log.debug("Schwab get_option_chain discovery failed for %s: %s", sym, exc)
 
-            # Add the nearest Friday
-            expiries_set.add(self._expiry)
+                    # Fallback: try fetch_futures_option_chain_data (get_quotes)
+                    # This only returns the front-month contract, but it's
+                    # better than nothing.
+                    try:
+                        from ..options_fetcher import fetch_futures_option_chain_data
+                        discovery_dte = list(range(0, 45))
+                        chain = fetch_futures_option_chain_data(sym, discovery_dte)
+                        if chain and chain.contracts:
+                            expiry_dates = sorted({
+                                c.expiry for c in chain.contracts
+                                if isinstance(c.expiry, date) and c.expiry >= date.today()
+                            })
+                            if expiry_dates:
+                                schwab_expiries[sym] = expiry_dates
+                                log.info(
+                                    "Schwab get_quotes discovery for %s: %d expiries",
+                                    sym, len(expiry_dates),
+                                )
+                    except Exception as exc:
+                        log.debug("Schwab get_quotes discovery failed for %s: %s", sym, exc)
+            except ImportError:
+                log.debug("Schwab fetcher not available for expiry discovery")
 
-            # Add weekly Fridays up to ~6 weeks out
-            next_fri = self._expiry
-            for _ in range(6):
-                next_fri = next_fri + _td(days=7)
-                expiries_set.add(next_fri)
+            # Build the expiry list
+            if schwab_expiries:
+                all_discovered: set[date] = set()
+                for exp_list in schwab_expiries.values():
+                    all_discovered.update(exp_list)
+                expiries = sorted(all_discovered)[:max_expiries]
+                if not expiries:
+                    expiries = [self._expiry]
+                self._cached_expiries = expiries
+                self._expiry_cache_time = _time_mod.time()
+                log.info(
+                    "RTD expiry ladder (Schwab-discovered): %d expiries (%s)",
+                    len(expiries),
+                    ", ".join(e.isoformat() for e in expiries),
+                )
+            else:
+                # Fallback: theoretical ladder (0DTE + weekly Fridays + monthly)
+                today = date.today()
+                expiries_set: set[date] = set()
 
-            # Add monthly (3rd Friday) expiries for the next N months
-            for months_ahead in range(0, max_expiries + 2):
-                m = today.month + months_ahead
-                y = today.year + (m - 1) // 12
-                m = ((m - 1) % 12) + 1
-                monthly = _third_friday(y, m)
-                if monthly >= today:
-                    expiries_set.add(monthly)
+                # Add today as a 0DTE expiry if it's a weekday
+                if today.weekday() < 5:
+                    expiries_set.add(today)
 
-            expiries = sorted(expiries_set)[:max_expiries]
-            log.info(
-                "RTD expiry ladder (theoretical fallback): %d expiries (%s)",
-                len(expiries),
-                ", ".join(e.isoformat() for e in expiries),
-            )
+                # Add the nearest Friday
+                expiries_set.add(self._expiry)
+
+                # Add weekly Fridays up to ~6 weeks out
+                next_fri = self._expiry
+                for _ in range(6):
+                    next_fri = next_fri + _td(days=7)
+                    expiries_set.add(next_fri)
+
+                # Add monthly (3rd Friday) expiries for the next N months
+                for months_ahead in range(0, max_expiries + 2):
+                    m = today.month + months_ahead
+                    y = today.year + (m - 1) // 12
+                    m = ((m - 1) % 12) + 1
+                    monthly = _third_friday(y, m)
+                    if monthly >= today:
+                        expiries_set.add(monthly)
+
+                expiries = sorted(expiries_set)[:max_expiries]
+                self._cached_expiries = expiries
+                self._expiry_cache_time = _time_mod.time()
+                log.info(
+                    "RTD expiry ladder (theoretical fallback): %d expiries (%s)",
+                    len(expiries),
+                    ", ".join(e.isoformat() for e in expiries),
+                )
 
         config = RTDConfig(
             strike_range=TOS_RTD_STRIKE_RANGE,
@@ -495,9 +552,31 @@ class HybridCoordinator:
             sym_config = TOS_RTD_SYMBOL_CONFIG.get(symbol, {})
             min_oi_floor = sym_config.get("min_oi_floor", 25)
 
-        # Wait a moment for option Greeks to arrive if just started
+        # Adaptive wait for option Greeks to arrive.
+        # Instead of a hardcoded sleep, check if the adapter already has
+        # GAMMA/OPEN_INT data for this symbol.  If data is already fresh,
+        # skip the wait entirely.  Otherwise poll with a short timeout.
         import time
-        time.sleep(2)
+        if self.is_rtd_active and self._adapter is not None:
+            snapshot = self._adapter.get_snapshot()
+            # Check if we already have option data for this symbol
+            has_option_data = any(
+                f":{symbol}" in key and (":GAMMA" in key or ":OPEN_INT" in key)
+                for key in snapshot
+            )
+            if not has_option_data:
+                # No data yet — poll for up to 3 seconds (1s increments)
+                for _ in range(3):
+                    time.sleep(1)
+                    snapshot = self._adapter.get_snapshot()
+                    has_option_data = any(
+                        f":{symbol}" in key and (":GAMMA" in key or ":OPEN_INT" in key)
+                        for key in snapshot
+                    )
+                    if has_option_data:
+                        break
+                if not has_option_data:
+                    log.debug("No RTD option data for %s after 3s — proceeding with BSM fallback")
 
         return calculate_futures_gex(self._adapter, symbol, min_oi_floor=min_oi_floor)
 
