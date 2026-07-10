@@ -129,15 +129,64 @@ class HybridCoordinator:
                 days_ahead += 7
             self._expiry = today + timedelta(days=days_ahead)
 
-        # Build expiry list: nearest Friday + next monthly (3rd Friday)
-        expiries = [self._expiry]
-        # Find next monthly expiration (3rd Friday of month)
-        monthly = self._expiry
-        for _ in range(5):  # Try up to 5 weeks ahead
-            monthly = monthly + timedelta(days=7)
-            if 15 <= monthly.day <= 21 and monthly.weekday() == 4:
-                expiries.append(monthly)
-                break
+        # Build a proper expiry ladder: nearest Friday, then all Fridays up
+        # to the configured horizon.  This gives the RTD path coverage
+        # comparable to the Schwab PIPELINE_DTE_TARGETS (0-365 DTE).
+        #
+        # The number of expiries per symbol is controlled by the
+        # ``num_expiries`` key in ``TOS_RTD_SYMBOL_CONFIG``.  Each expiry
+        # adds ~2× strikes (calls+puts) worth of COM topics, so the limit
+        # is a trade-off between term-structure coverage and COM capacity.
+        # On a typical /ES+/NQ setup with tiered strikes, each expiry adds
+        # ~200-400 topics.  6 expiries per symbol × 2 symbols ≈ 2400-4800
+        # topics — well within COM RTD capacity (tested up to ~5000).
+        from datetime import timedelta as _td
+
+        def _third_friday(y: int, m: int) -> date:
+            """Return the 3rd Friday of the given year/month."""
+            d = date(y, m, 15)
+            while d.weekday() != 4:
+                d += _td(days=1)
+            return d
+
+        def _next_friday(d: date) -> date:
+            days_ahead = 4 - d.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return d + _td(days=days_ahead)
+
+        # Determine the max number of expiries across all symbols we monitor.
+        # Use the max so all symbols get the same expiry ladder.
+        max_expiries = max(
+            (sc.get("num_expiries", 4) for sc in TOS_RTD_SYMBOL_CONFIG.values()),
+            default=4,
+        )
+
+        # Build the ladder: nearest Friday, then weekly Fridays, then monthly
+        # (3rd Friday) expiries, deduplicated and sorted.
+        expiries_set: set[date] = {self._expiry}
+
+        # Add weekly Fridays up to ~6 weeks out
+        next_fri = self._expiry
+        for _ in range(6):
+            next_fri = next_fri + _td(days=7)
+            expiries_set.add(next_fri)
+
+        # Add monthly (3rd Friday) expiries for the next N months
+        today = date.today()
+        for months_ahead in range(0, max_expiries + 2):
+            m = today.month + months_ahead
+            y = today.year + (m - 1) // 12
+            m = ((m - 1) % 12) + 1
+            monthly = _third_friday(y, m)
+            if monthly >= today:
+                expiries_set.add(monthly)
+
+        # Sort and trim to the configured max
+        expiries = sorted(expiries_set)[:max_expiries]
+
+        log.info("RTD expiry ladder: %d expiries (%s)", len(expiries),
+                 ", ".join(e.isoformat() for e in expiries))
 
         config = RTDConfig(
             strike_range=TOS_RTD_STRIKE_RANGE,
@@ -304,10 +353,21 @@ class HybridCoordinator:
         if bsm_greeks:
             for strike, greeks in bsm_greeks.items():
                 bsm_gamma_lookup[strike] = greeks.get("GAMMA", 0.0)
-        elif hasattr(dealer_levels, "gex_by_strike"):
-            # Extract from dealer levels if available
-            for item in dealer_levels.gex_by_strike:
-                bsm_gamma_lookup[item.strike] = getattr(item, "gamma", 0.0)
+        elif hasattr(dealer_levels, "strike_gex"):
+            # Extract from DealerLevels.strike_gex (list of StrikeGEX).
+            # StrikeGEX stores per-strike call/put GEX, not raw gamma.
+            # We reconstruct an approximate per-strike gamma by normalising
+            # the net_gex by OI * multiplier * spot.  This is an approximation
+            # but sufficient for drift comparison.
+            from ..config import CONTRACT_MULTIPLIER
+            spot = getattr(dealer_levels, "spot", 0.0) or 1.0
+            for sg in dealer_levels.strike_gex:
+                total_oi = (sg.call_oi + sg.put_oi)
+                if total_oi > 0 and spot > 0:
+                    # gamma ~ net_gex / (oi * multiplier * spot)
+                    bsm_gamma_lookup[sg.strike] = abs(sg.net_gex) / (total_oi * CONTRACT_MULTIPLIER * spot)
+                else:
+                    bsm_gamma_lookup[sg.strike] = 0.0
 
         for rtd_sym, greeks in chain_snap.greeks.items():
             rtd_gamma = greeks.get("GAMMA")
@@ -368,7 +428,7 @@ class HybridCoordinator:
     # RTD GEX calculation — compute dealer levels directly from futures options
     # ------------------------------------------------------------------
 
-    def calculate_rtd_gex(self, symbol: str) -> Optional[Any]:
+    def calculate_rtd_gex(self, symbol: str, min_oi_floor: int | None = None) -> Optional[Any]:
         """
         Calculate dealer levels directly from RTD futures options data.
 
@@ -377,6 +437,8 @@ class HybridCoordinator:
 
         Args:
             symbol: Futures symbol, e.g. "/ES"
+            min_oi_floor: Minimum OI for wall detection.  If None, looks up
+                         per-symbol default from TOS_RTD_SYMBOL_CONFIG.
 
         Returns:
             FuturesGEXResult or None if RTD not active or no data.
@@ -384,11 +446,16 @@ class HybridCoordinator:
         if not self.is_rtd_active or not _RTD_AVAILABLE:
             return None
 
+        # Resolve per-symbol OI floor from config if not explicitly provided
+        if min_oi_floor is None:
+            sym_config = TOS_RTD_SYMBOL_CONFIG.get(symbol, {})
+            min_oi_floor = sym_config.get("min_oi_floor", 25)
+
         # Wait a moment for option Greeks to arrive if just started
         import time
         time.sleep(2)
 
-        return calculate_futures_gex(self._adapter, symbol)
+        return calculate_futures_gex(self._adapter, symbol, min_oi_floor=min_oi_floor)
 
     def compare_gex(self, rtd_result: Any, translated_levels: Any) -> str:
         """

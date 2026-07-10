@@ -49,6 +49,7 @@ graph TD;
 
 ## 4. Key Components
 - **`scripts/trader/briefing_core.py`**: The central data fetcher. Contains logic like `fetch_week_events` to retrieve MEDIUM/HIGH impact economic events for specific sessions, properly parsing Prisma `DateTime` objects. Handles TOON JSON generation.
+- **Daily Bar Alignment & Scenarios**: Detailed in [DAILY_BAR_ALIGNMENT_AND_SCENARIOS.md](file:///C:/Users/vinay/tvDownloadOHLC/docs/architecture/DAILY_BAR_ALIGNMENT_AND_SCENARIOS.md). Manages timezone-aware daily bar slicing and generates Tomorrow's Open scenarios in Close Mode.
 - **`scripts/trader/weekly_narrative.py`**: Initiates the weekly brief. Maps data to `prompts/weekly_briefing.md`.
 - **`scripts/trader/daily_narrative.py`**: Initiates daily briefs. Accepts `--session open` or `--session eod`. Uses `prompts/daily_open_update.md` and `prompts/daily_eod_update.md`. The EOD session dynamically shifts the target date forward by 1 day to fetch the next day's economic events.
 - **`scripts/market_data/fetch_economic_calendar.py`**: Fetches a rolling 14-day window of US economic events from the Investing.com occurrences API, storing them into the `EconomicEvent` table.

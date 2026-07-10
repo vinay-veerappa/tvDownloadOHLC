@@ -29,10 +29,19 @@ def get_gex_regime_change(today_gex: dict) -> dict:
     result = {"regime_change": "stable", "flip_crossed": False, "wall_moved": None}
 
     today = date.today()
-    yesterday = date(today.year, today.month, today.day - 1)
-    yest_path = _SNAPSHOT_DIR / f"{yesterday.isoformat()}.json"
+    yest_path = None
+    if _SNAPSHOT_DIR.exists():
+        try:
+            snapshots = sorted([
+                f for f in _SNAPSHOT_DIR.glob("*.json")
+                if f.stem < today.isoformat()
+            ])
+            if snapshots:
+                yest_path = snapshots[-1]
+        except Exception as e:
+            log.warning("[gex_regime] Error listing snapshots: %s", e)
 
-    if not yest_path.exists():
+    if not yest_path or not yest_path.exists():
         result["regime_change"] = "no prior snapshot for comparison"
         return result
 

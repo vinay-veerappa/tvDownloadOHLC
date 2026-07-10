@@ -50,22 +50,6 @@ def check_classification(ticker: str = "NQ1") -> FreshnessCheck:
     return _build_check("classification", last_date)
 
 
-def check_em() -> FreshnessCheck:
-    import json
-    p = _REPO / "data" / "expected_moves.json"
-    if not p.exists():
-        return FreshnessCheck("expected_moves", warning="File not found")
-    try:
-        em = json.load(open(p, "r", encoding="utf-8"))
-        data = em.get("data", [])
-        if not data:
-            return FreshnessCheck("expected_moves", warning="EM data array is empty")
-        ts = em.get("timestamp", "")
-        return FreshnessCheck("expected_moves", last_date=str(ts)[:10], days_stale=0, is_stale=False)
-    except Exception as e:
-        return FreshnessCheck("expected_moves", warning=str(e))
-
-
 def check_gex_levels() -> FreshnessCheck:
     p = _REPO / "data" / "options" / "unified_levels.json"
     if not p.exists():
@@ -93,7 +77,6 @@ def check_all(ticker: str = "NQ1") -> list[FreshnessCheck]:
     checks = [
         check_herman(ticker),
         check_classification(ticker),
-        check_em(),
         check_gex_levels(),
     ]
     for c in checks:

@@ -32,6 +32,7 @@ from scripts.trader.briefing_core import (
     build_trader_cheat_sheet,
     build_intraday_context,
     build_eod_context,
+    build_premarket_context,
     get_dataloader,
 )
 
@@ -42,6 +43,7 @@ ET_TZ = "America/New_York"
 
 PROMPT_DIR = REPO_ROOT / "scripts" / "trader" / "prompts"
 PROMPT_PATHS = {
+    "premarket": PROMPT_DIR / "trader_premarket.md",
     "open": PROMPT_DIR / "trader_morning.md",
     # v1.5/v2 placeholders — not yet implemented
     "intraday": PROMPT_DIR / "trader_intraday.md",
@@ -50,11 +52,42 @@ PROMPT_PATHS = {
 
 OUTPUT_DIR = REPO_ROOT / "data" / "options" / "daily"
 DISCORD_WEBHOOKS_PATH = REPO_ROOT / "discord_webhooks.json"
+UNIFIED_LEVELS_OPEN_TXT = REPO_ROOT / "data" / "options" / "current" / "unified_levels_open.txt"
 
 # Ollama config (mirrors daily_narrative.py)
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "gemma4:latest"
-FALLBACK_MODEL = "gemma4:31b-cloud"
+DEFAULT_MODEL = "deepseek-v4-pro:cloud"
+FALLBACK_MODEL = "deepseek-v4-flash:cloud"
+LOCAL_FALLBACK_MODEL = "gemma4:latest"
+
+# Sync gate: max seconds to wait for the 09:30 open snapshot
+OPEN_SNAPSHOT_TIMEOUT_SECONDS = 120
+OPEN_SNAPSHOT_POLL_INTERVAL = 5
+
+
+def _wait_for_open_snapshot(timeout: int = OPEN_SNAPSHOT_TIMEOUT_SECONDS) -> bool:
+    """Block until the 09:30 unified_levels_open.txt snapshot is fresh.
+
+    Returns True if the file exists and was modified after 09:30 ET today.
+    Returns False if timeout expires.
+    """
+    import time as _time
+    from datetime import datetime as _dt
+
+    deadline = _time.monotonic() + timeout
+    today_930 = _dt.now(ET).replace(hour=9, minute=30, second=0, microsecond=0)
+
+    while _time.monotonic() < deadline:
+        if UNIFIED_LEVELS_OPEN_TXT.exists():
+            mtime = _dt.fromtimestamp(UNIFIED_LEVELS_OPEN_TXT.stat().st_mtime, tz=ET)
+            if mtime >= today_930:
+                log.info("✓ Open snapshot ready (mtime: %s)", mtime.strftime("%H:%M:%S ET"))
+                return True
+        log.info("Waiting for 09:30 open snapshot... (%s)", UNIFIED_LEVELS_OPEN_TXT)
+        _time.sleep(OPEN_SNAPSHOT_POLL_INTERVAL)
+
+    log.warning("Timed out waiting for open snapshot after %ds — proceeding with available data", timeout)
+    return False
 
 
 def load_prompt_template(mode: str) -> str:
@@ -69,14 +102,19 @@ def load_prompt_template(mode: str) -> str:
 def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
     """Call the local Ollama instance to generate the narrative.
 
-    Mirrors daily_narrative.py: tries the requested model first, falls back
-    to FALLBACK_MODEL if the primary fails.
+    Fallback chain: requested model → FALLBACK_MODEL (cloud) → LOCAL_FALLBACK_MODEL (local).
     """
     import requests
 
-    for attempt_model in [model, FALLBACK_MODEL if model != FALLBACK_MODEL else None]:
-        if not attempt_model:
-            continue
+    # Build ordered fallback chain, deduplicating
+    candidates = []
+    seen = set()
+    for m in [model, FALLBACK_MODEL, LOCAL_FALLBACK_MODEL]:
+        if m and m not in seen:
+            candidates.append(m)
+            seen.add(m)
+
+    for attempt_model in candidates:
         try:
             log.info("Calling Ollama with model: %s ...", attempt_model)
             response = requests.post(
@@ -184,10 +222,17 @@ def run_narrative(
     """
     log.info("Building trader cheat sheet (mode: %s)...", mode)
     loader = get_dataloader(lookback_days=5)
+
+    # Sync gate: for open mode, wait for the 09:30 snapshot to be written
+    if mode == "open":
+        _wait_for_open_snapshot()
+
     if mode == "intraday":
         cheat_sheet = build_intraday_context(loader=loader)
     elif mode == "close":
         cheat_sheet = build_eod_context(loader=loader)
+    elif mode == "premarket":
+        cheat_sheet = build_premarket_context(loader=loader)
     else:
         cheat_sheet = build_trader_cheat_sheet(
             mode=mode,
@@ -218,7 +263,7 @@ def main():
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["open", "intraday", "close"],
+        choices=["premarket", "open", "intraday", "close"],
         help="Narrative mode (v1: open only)",
     )
     parser.add_argument(

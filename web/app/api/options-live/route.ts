@@ -7,7 +7,7 @@ const DATA_DIR = path.join(process.cwd(), "..", "data", "options"); // Point to 
 
 export async function GET() {
   try {
-    const dailyLevelsPath = path.join(DATA_DIR, "daily_levels.json");
+    const dailyLevelsPath = path.join(DATA_DIR, "intraday_levels.json");
     const pipelineStatePath = path.join(DATA_DIR, "pipeline_state.json");
     const gexProfilesPath = path.join(DATA_DIR, "gex_profiles.json");
     const liveTrendPath = path.join(DATA_DIR, "live_trend.json");
@@ -21,7 +21,7 @@ export async function GET() {
       const dailyLevelsContent = await fs.readFile(dailyLevelsPath, "utf-8");
       dailyLevels = JSON.parse(dailyLevelsContent);
     } catch (e) {
-      console.warn("Could not read daily_levels.json", e);
+      console.warn("Could not read intraday_levels.json", e);
     }
 
     try {

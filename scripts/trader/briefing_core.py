@@ -37,12 +37,12 @@ from scripts.trading_framework.config.config_loader import load_config
 from scripts.trader.signals.expected_move import get_em_context, format_em_block
 from scripts.trader.signals.volatility import get_vix_vvix_checkpoint
 from scripts.trader.signals.ict_context import compute_ict_from_htf
-from scripts.trader.signals.candle_science import get_candle_science_read
+from scripts.trader.signals.candle_science import get_candle_science_read, format_candle_science_block
 from scripts.trader.signals.confluence import assess_confluence
 from scripts.trader.signals.day_type import classify_day_type
 from scripts.trader.signals.weekly_profile import compute_weekly_profile
 from scripts.trader.signals.liquidity_map import build_liquidity_map
-from scripts.trader.signals.gex_regime import get_gex_regime_change
+from scripts.trader.signals.gex_regime import get_gex_regime_change, save_today_snapshot
 from scripts.trader.data_freshness import check_all
 
 log = logging.getLogger(__name__)
@@ -2217,9 +2217,11 @@ def _format_gex_block(ticker_label: str, levels: dict, spot: float) -> str:
     bias = levels.get("bias", "N/A")
 
     if cw:
-        lines.append(f"Call Wall: {cw:,.2f} ({_pct_from_spot(cw)} from spot) — overhead resistance")
+        desc = "overhead resistance" if (spot and cw > spot) else "breached (below spot support)"
+        lines.append(f"Call Wall: {cw:,.2f} ({_pct_from_spot(cw)} from spot) — {desc}")
     if pw:
-        lines.append(f"Put Wall: {pw:,.2f} ({_pct_from_spot(pw)} from spot) — below/at current price")
+        desc = "below/at current price (support)" if (spot and pw <= spot) else "breached (overhead resistance)"
+        lines.append(f"Put Wall: {pw:,.2f} ({_pct_from_spot(pw)} from spot) — {desc}")
     if flip:
         pos = "above" if (spot and flip > spot) else "below"
         lines.append(f"Gamma Flip: {flip:,.2f} — we're {pos} it ({'negative' if (spot and flip > spot) else 'positive'} gamma, {'amplification' if (spot and flip > spot) else 'pinning'} regime)")
@@ -2229,10 +2231,10 @@ def _format_gex_block(ticker_label: str, levels: dict, spot: float) -> str:
     return "\n".join(lines)
 
 
-def _format_aln_block(aln_data: dict, spot: float) -> str:
+def _format_aln_block(ticker_label: str, aln_data: dict, spot: float) -> str:
     """Format ALN/session pattern data into the cheat-sheet block."""
     if not aln_data:
-        return "== ALN / SESSION PATTERNS ==\nNo ALN data available."
+        return f"== ALN / SESSION PATTERNS ({ticker_label}) ==\nNo ALN data available."
 
     aln = aln_data.get("aln", "N/A")
     bias = aln_data.get("bias", "N/A")
@@ -2247,7 +2249,7 @@ def _format_aln_block(aln_data: dict, spot: float) -> str:
     ib_conviction = aln_data.get("ib_conviction", 0)
     p12 = aln_data.get("p12")
 
-    lines = ["== ALN / SESSION PATTERNS =="]
+    lines = [f"== ALN / SESSION PATTERNS ({ticker_label}) =="]
     lines.append(f"Pattern: {aln}")
     lines.append(f"Broken: {broken}")
     if lh and ll:
@@ -2269,10 +2271,10 @@ def _format_aln_block(aln_data: dict, spot: float) -> str:
     return "\n".join(lines)
 
 
-def _format_classification_block(class_data: dict) -> str:
+def _format_classification_block(ticker_label: str, class_data: dict) -> str:
     """Format daily classification data into the cheat-sheet block."""
     if not class_data:
-        return "== CLASSIFICATION ==\nNo classification data available."
+        return f"== CLASSIFICATION ({ticker_label}) ==\nNo classification data available."
 
     prior_type = class_data.get("prior_type", "N/A")
     overnight_key = class_data.get("overnight_key", "N/A")
@@ -2280,7 +2282,7 @@ def _format_classification_block(class_data: dict) -> str:
     over_probs = class_data.get("overnight_probs", {}) or {}
     most_likely = class_data.get("most_likely", "N/A")
 
-    lines = ["== CLASSIFICATION =="]
+    lines = [f"== CLASSIFICATION ({ticker_label}) =="]
     lines.append(f"Yesterday: {prior_type}")
     lines.append(f"Overnight Key: {overnight_key}")
     if seq_probs:
@@ -2292,10 +2294,10 @@ def _format_classification_block(class_data: dict) -> str:
 
 
 def _format_key_levels_hierarchy(
-    nq_levels: dict,
-    es_levels: dict,
+    ticker_label: str,
+    levels: dict,
     aln_data: dict,
-    nq_spot: float,
+    spot: float,
 ) -> str:
     """Merge all level sources and sort into overhead/support ladder."""
     overhead: list[tuple[float, str]] = []
@@ -2309,20 +2311,20 @@ def _format_key_levels_hierarchy(
         else:
             support.append((level, label))
 
-    if nq_levels:
-        _add(nq_levels.get("call_wall"), "NQ Call Wall", nq_spot)
-        _add(nq_levels.get("flip"), "NQ Gamma Flip", nq_spot)
-        _add(nq_levels.get("put_wall"), "NQ Put Wall", nq_spot)
-        _add(nq_levels.get("gamma_magnet"), "NQ Magnet", nq_spot)
+    if levels:
+        _add(levels.get("call_wall"), f"{ticker_label} Call Wall", spot)
+        _add(levels.get("flip"), f"{ticker_label} Gamma Flip", spot)
+        _add(levels.get("put_wall"), f"{ticker_label} Put Wall", spot)
+        _add(levels.get("gamma_magnet"), f"{ticker_label} Magnet", spot)
     if aln_data:
         lvls = aln_data.get("levels", {}) or {}
-        _add(lvls.get("lh"), "London High", nq_spot)
-        _add(lvls.get("ll"), "London Low", nq_spot)
+        _add(lvls.get("lh"), "London High", spot)
+        _add(lvls.get("ll"), "London Low", spot)
 
     overhead.sort(key=lambda x: x[0])
     support.sort(key=lambda x: x[0], reverse=True)
 
-    lines = ["== KEY LEVELS TO WATCH (NQ) =="]
+    lines = [f"== KEY LEVELS TO WATCH ({ticker_label}) =="]
     if overhead:
         lines.append("Overhead: " + " → ".join(f"{px:,.2f} ({lbl})" for px, lbl in overhead))
     if support:
@@ -2346,11 +2348,11 @@ def _format_volatility_block(vv: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_ict_block(ict: dict, spot: float) -> str:
+def _format_ict_block(ticker_label: str, ict: dict, spot: float) -> str:
     """Format ICT dealing range into cheat-sheet block."""
     if not ict or not ict.get("pdh"):
-        return "== ICT DEALING RANGE ==\nICT data unavailable"
-    lines = ["== ICT DEALING RANGE =="]
+        return f"== ICT DEALING RANGE ({ticker_label}) ==\nICT data unavailable"
+    lines = [f"== ICT DEALING RANGE ({ticker_label}) =="]
     lines.append(f"PDH: {ict['pdh']:,.2f} | PDL: {ict['pdl']:,.2f} | Midnight: {ict.get('midnight_open') or 'N/A'}")
     lines.append(f"Price in {ict.get('premium_discount','unknown')} ({ict.get('dealing_range_pct','?')}% of range)")
     if ict.get("bsl_target"):
@@ -2358,11 +2360,11 @@ def _format_ict_block(ict: dict, spot: float) -> str:
     return "\n".join(lines)
 
 
-def _format_candle_science_block(cs: dict) -> str:
+def _format_candle_science_block(ticker_label: str, cs: dict) -> str:
     """Format Candle Science C1→C2→C3 into cheat-sheet block."""
     if not cs or cs.get("n_matches", 0) == 0:
-        return "== CANDLE SCIENCE ==\nNo pattern match available"
-    lines = ["== CANDLE SCIENCE =="]
+        return f"== CANDLE SCIENCE ({ticker_label}) ==\nNo pattern match available"
+    lines = [f"== CANDLE SCIENCE ({ticker_label}) =="]
     lines.append(
         f"C1: {cs['c1_dir']} | C2: {cs['c2_dir']} | preset={cs.get('preset', '?')} "
         f"(n={cs['n_matches']}, edge={cs['edge']}%)"
@@ -2386,11 +2388,11 @@ def _format_candle_science_block(cs: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_confluence_block(conf: dict) -> str:
+def _format_confluence_block(ticker_label: str, conf: dict) -> str:
     """Format confluence assessment into cheat-sheet block."""
     if not conf:
-        return "== CONFLUENCE ==\nNo confluence data"
-    lines = ["== CONFLUENCE =="]
+        return f"== CONFLUENCE ({ticker_label}) ==\nNo confluence data"
+    lines = [f"== CONFLUENCE ({ticker_label}) =="]
     lines.append(f"Signal 1 (Overnight): {conf.get('overnight_signal','?')}")
     lines.append(f"Signal 2 (RTH Open): {conf.get('rth_open_signal','?')}")
     lines.append(f"Signal 3 (Daily Chart): {conf.get('daily_chart_signal','?')}")
@@ -2412,11 +2414,11 @@ def _format_day_type_block(dt: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_weekly_profile_block(wp: dict) -> str:
+def _format_weekly_profile_block(ticker_label: str, wp: dict) -> str:
     """Format weekly profile into cheat-sheet block."""
     if not wp or not wp.get("week_high"):
-        return "== WEEKLY PROFILE ==\nNo weekly data"
-    lines = ["== WEEKLY PROFILE =="]
+        return f"== WEEKLY PROFILE ({ticker_label}) ==\nNo weekly data"
+    lines = [f"== WEEKLY PROFILE ({ticker_label}) =="]
     lines.append(f"HOW: {wp['week_high']:,.2f} ({wp.get('week_high_day','?')}) | LOW: {wp['week_low']:,.2f} ({wp.get('week_low_day','?')})")
     lines.append(f"Profile: {wp.get('profile_type','balanced').replace('_',' ')} | Position: {wp.get('current_position','?')}")
     lines.append(f"Day context: {wp.get('day_context','?')} | Alignment: {wp.get('alignment','?')}")
@@ -2447,6 +2449,79 @@ def _format_gex_regime_block(gr: dict) -> str:
     if gr.get("wall_moved"):
         lines.append(f"Wall moved: {gr['wall_moved']}")
     return "\n".join(lines)
+
+
+def build_premarket_context(
+    loader: DataLoader | None = None,
+    nq_ticker: str = "NQ1",
+    es_ticker: str = "ES1",
+) -> str:
+    """Build the premarket cheat sheet — runs before 09:30 ET open.
+
+    Focuses on: overnight Globex action, GEX structure (live JSON),
+    prior EOD classification, today's calendar. No RTH data.
+    """
+    if loader is None:
+        loader = get_dataloader(lookback_days=5)
+
+    sections: list[str] = []
+
+    # ── Overnight context (NQ + ES) ──
+    nq_ctx = build_overnight_context(loader, nq_ticker)
+    es_ctx = build_overnight_context(loader, es_ticker)
+
+    overnight_lines = ["== OVERNIGHT (Globex 18:00 → 08:30 ET) =="]
+    for label, ctx in [("NQ", nq_ctx), ("ES", es_ctx)]:
+        if not ctx:
+            overnight_lines.append(f"{label}: No data available")
+            continue
+        overnight_lines.append(
+            f"{label}: Open {ctx['open']:,.2f} → Current {ctx['close']:,.2f} ({ctx['change_pct']}%)"
+        )
+        overnight_lines.append(
+            f"    Session Low: {ctx['low']:,.2f} at {ctx['session_low_time']} | Session High: {ctx['high']:,.2f} at {ctx['session_high_time']}"
+        )
+        overnight_lines.append(f"    Trajectory: {ctx['trajectory']}")
+    sections.append("\n".join(overnight_lines))
+
+    # ── GEX structure (NQ + ES) from live JSON ──
+    unified = load_macro_levels(session="live")
+    nq_unified = unified.get("NQ") or unified.get("QQQ") or {}
+    es_unified = unified.get("ES") or unified.get("SPY") or {}
+
+    nq_spot = nq_ctx.get("close", 0) or 0
+    es_spot = es_ctx.get("close", 0) or 0
+
+    nq_gex = _extract_gex_levels(nq_unified, "NQ" if "NQ" in unified else "QQQ")
+    es_gex = _extract_gex_levels(es_unified, "ES" if "ES" in unified else "SPY")
+
+    sections.append(_format_gex_block("NQ", nq_gex, nq_spot))
+    sections.append(_format_gex_block("ES", es_gex, es_spot))
+
+    # ── Prior EOD classification ──
+    try:
+        import scripts.analysis.analyze_daily_classification_bias as class_module
+        import sys as _sys
+        _orig_argv = _sys.argv
+        yesterday = (datetime.now(ET) - timedelta(days=1)).date()
+        _sys.argv = ["analyze_daily_classification_bias.py", "--ticker", nq_ticker, "--date", yesterday.isoformat()]
+        class_data = class_module.main()
+        _sys.argv = _orig_argv
+    except Exception as e:
+        log.warning("[premarket] Classification analysis failed: %s", e)
+        class_data = {}
+    sections.append(_format_classification_block("NQ", class_data))
+
+    # ── Calendar ──
+    try:
+        today = datetime.now(ET).date()
+        events = asyncio.run(fetch_week_events(today, today))
+    except Exception as e:
+        log.warning("[premarket] Calendar fetch failed: %s", e)
+        events = []
+    sections.append("== TODAY'S CALENDAR ==\n" + _format_calendar_for_cheat_sheet(events))
+
+    return "\n\n".join(sections)
 
 
 def build_trader_cheat_sheet(
@@ -2725,6 +2800,8 @@ def build_trader_cheat_sheet(
         gr = get_gex_regime_change(nq_gex_full)
         if gr.get("regime_change") and gr["regime_change"] != "stable":
             sections.append(_format_gex_regime_block(gr))
+        if nq_gex_full:
+            save_today_snapshot(nq_gex_full)
     except Exception as e:
         log.warning("[cheat_sheet] GEX regime change failed: %s", e)
 
@@ -2874,24 +2951,44 @@ def build_intraday_context(
 
     # ── Level interactions ──
     try:
-        unified = load_macro_levels(session="open")
-        nq_unified = unified.get("QQQ") or {}
-        nq_gex = _extract_gex_levels(nq_unified, "QQQ")
+        # Use live JSON for intraday — the 09:30 open snapshot is stale by noon
+        unified = load_macro_levels(session="live")
+        # Prefer direct RTD NQ/ES keys; fall back to QQQ/SPY proxy for backward compat
+        nq_unified = unified.get("NQ") or unified.get("QQQ") or {}
+        es_unified = unified.get("ES") or unified.get("SPY") or {}
+        nq_gex = _extract_gex_levels(nq_unified, "NQ" if "NQ" in unified else "QQQ")
+        es_gex = _extract_gex_levels(es_unified, "ES" if "ES" in unified else "SPY")
         lines = ["== LEVEL INTERACTIONS =="]
+        # NQ
         if nq_gex:
             cw = nq_gex.get("call_wall")
             pw = nq_gex.get("put_wall")
             flip = nq_gex.get("flip") or nq_gex.get("zero_gamma")
             if cw and nq_current > cw:
-                lines.append(f"Call Wall ({cw:,.2f}) BROKEN — bullish")
+                lines.append(f"NQ Call Wall ({cw:,.2f}) BROKEN — bullish")
             elif cw:
-                lines.append(f"Call Wall ({cw:,.2f}) overhead — untested")
+                lines.append(f"NQ Call Wall ({cw:,.2f}) overhead — untested")
             if pw and nq_current < pw:
-                lines.append(f"Put Wall ({pw:,.2f}) BROKEN — bearish")
+                lines.append(f"NQ Put Wall ({pw:,.2f}) BROKEN — bearish")
             elif pw:
-                lines.append(f"Put Wall ({pw:,.2f}) below — holding")
+                lines.append(f"NQ Put Wall ({pw:,.2f}) below — holding")
             if flip:
-                lines.append(f"Gamma Flip: {flip:,.2f} — {'above' if nq_current > flip else 'below'} ({'negative' if nq_current > flip else 'positive'} gamma)")
+                lines.append(f"NQ Gamma Flip: {flip:,.2f} — {'above' if nq_current > flip else 'below'} ({'negative' if nq_current > flip else 'positive'} gamma)")
+        # ES
+        if es_gex:
+            cw = es_gex.get("call_wall")
+            pw = es_gex.get("put_wall")
+            flip = es_gex.get("flip") or es_gex.get("zero_gamma")
+            if cw and es_current > cw:
+                lines.append(f"ES Call Wall ({cw:,.2f}) BROKEN — bullish")
+            elif cw:
+                lines.append(f"ES Call Wall ({cw:,.2f}) overhead — untested")
+            if pw and es_current < pw:
+                lines.append(f"ES Put Wall ({pw:,.2f}) BROKEN — bearish")
+            elif pw:
+                lines.append(f"ES Put Wall ({pw:,.2f}) below — holding")
+            if flip:
+                lines.append(f"ES Gamma Flip: {flip:,.2f} — {'above' if es_current > flip else 'below'} ({'negative' if es_current > flip else 'positive'} gamma)")
         sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[intraday] Level interactions failed: %s", e)
@@ -3055,6 +3152,15 @@ def build_eod_context(
                 lines = ["== TOMORROW'S SETUP =="]
                 lines.append(f"pRTH High: {prth_high:,.2f} | pRTH Low: {prth_low:,.2f} | Close: {prth_close:,.2f}")
                 lines.append(f"Overnight open vs pRTH will determine Gap Up/Down/Inside scenario")
+                
+                # Fetch Candle Science scenarios for tomorrow's open
+                try:
+                    cs = get_candle_science_read(ticker=nq_ticker, mode="close")
+                    lines.append("")  # blank line separator
+                    lines.append(format_candle_science_block(cs))
+                except Exception as cs_err:
+                    log.warning("[eod] Candle science scenarios failed: %s", cs_err)
+                
                 sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[eod] Tomorrow setup failed: %s", e)

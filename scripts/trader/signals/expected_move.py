@@ -66,10 +66,13 @@ def get_em_context(spot: float, ticker: str = "NQ1") -> dict:
     if lookup_ticker in FUTURES_TO_ETF:
         lookup_ticker = FUTURES_TO_ETF[lookup_ticker]
     
-    # Try pipeline-generated daily_levels.json first
-    p = _REPO / "data" / "options" / "daily_levels.json"
+    # Try pipeline-generated intraday_levels.json (canonical path) first,
+    # then fall back to daily_levels.json (legacy alias) for backwards compat.
+    p = _REPO / "data" / "options" / "intraday_levels.json"
     if not p.exists():
-        log.warning(f"[em] Pipeline file not found: {p}")
+        p = _REPO / "data" / "options" / "daily_levels.json"
+    if not p.exists():
+        log.warning(f"[em] Pipeline file not found: intraday_levels.json or daily_levels.json")
         # Fall back to legacy expected_moves.json
         p = _REPO / "data" / "expected_moves.json"
         if not p.exists():

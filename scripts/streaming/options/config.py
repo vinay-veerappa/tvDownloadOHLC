@@ -53,7 +53,10 @@ RTY_FUTURES_SYMBOL: str = "/RTY"
 ACTIVE_TICKERS: list[str] = [
     "SPX",
     "SPY",
+    "NDX",
     "QQQ",
+    "NQ",
+    "ES",
     "IWM",
     "DIA",
     "AAPL",
@@ -170,12 +173,19 @@ VIEW_MODES: dict[str, ViewModeConfig] = {
 
 # ── Library of Ticker Profiles ─────────────────────────────────────
 
+# Index→futures uses additive basis (same scale, e.g. SPX→/ES).
+# ETF→futures uses multiplicative scaling (different scale, e.g. QQQ→/NQ)
+# — this is a backup/perspective view.  Both are valid; the key distinction
+# is that ETF→INDEX rescaling (e.g. QQQ levels pretending to be NDX levels)
+# is NOT valid and has been removed (see rescale_levels_to_target_spot).
 TICKER_PROFILES: dict[str, TickerProfile] = {
     "SPX": TickerProfile("SPX", "SPX", "/ES", "additive", book_depth_contracts=4500, flow_significance_pct=0.12, contract_value_per_point=50, min_oi_floor=500, strike_relevance_pct=0.12, oi_node_zscore=2.8, known_programs=["JHEQX"]),
     "SPY": TickerProfile("SPY", "SPY", "/ES", "multiplicative", book_depth_contracts=25000, contract_value_per_point=100, min_oi_floor=500),
     "NDX": TickerProfile("NDX", "NDX", "/NQ", "additive", book_depth_contracts=1200, flow_significance_pct=0.10, contract_value_per_point=20, min_oi_floor=200, strike_relevance_pct=0.12, oi_node_zscore=2.5),
     "QQQ": TickerProfile("QQQ", "QQQ", "/NQ", "multiplicative", book_depth_contracts=15000, contract_value_per_point=100, min_oi_floor=300),
+    "RUT": TickerProfile("RUT", "RUT", "/RTY", "additive", book_depth_contracts=800, flow_significance_pct=0.12, contract_value_per_point=100, min_oi_floor=200, strike_relevance_pct=0.12),
     "IWM": TickerProfile("IWM", "IWM", "/RTY", "multiplicative", book_depth_contracts=800, flow_significance_pct=0.12, contract_value_per_point=100, min_oi_floor=200, strike_relevance_pct=0.12),
+    "DJX": TickerProfile("DJX", "DJX", "/YM", "additive", book_depth_contracts=600, flow_significance_pct=0.12, contract_value_per_point=100, min_oi_floor=100, strike_relevance_pct=0.10),
     "DIA": TickerProfile("DIA", "DIA", "/YM", "multiplicative", book_depth_contracts=600, flow_significance_pct=0.12, contract_value_per_point=100, min_oi_floor=100, strike_relevance_pct=0.10),
     "AAPL": TickerProfile("AAPL", "AAPL", None, book_depth_contracts=5000, flow_significance_pct=0.08, contract_value_per_point=100, min_oi_floor=500, strike_relevance_pct=0.08),
     "NVDA": TickerProfile("NVDA", "NVDA", None, book_depth_contracts=4000, flow_significance_pct=0.08, contract_value_per_point=100, min_oi_floor=500, strike_relevance_pct=0.10),
@@ -242,13 +252,25 @@ def get_priority_tickers() -> list[str]:
 PRIORITY_TICKERS: list[str] = get_priority_tickers()
 TIER2_INTERVAL_SECONDS: int = 600   # 10 minutes for lower-priority tickers
 
-# Maps each primary index to its corresponding futures symbol.
+# Maps cash indices AND ETFs to their corresponding futures symbol.
+# Index→futures (SPX→/ES, NDX→/NQ) uses additive basis (same scale).
+# ETF→futures (QQQ→/NQ, SPY→/ES, IWM→/RTY, DIA→/YM) uses multiplicative
+# scaling (different scale) — this is a backup/perspective view, not the
+# primary source.  The primary futures levels come from the index chain
+# when available.
 INDEX_TO_FUTURES: dict[str, str] = {
     "SPX": ES_FUTURES_SYMBOL,
+    "NDX": NQ_FUTURES_SYMBOL,
+    "RUT": RTY_FUTURES_SYMBOL,
+    "DJX": YM_FUTURES_SYMBOL,
+    # ETF→futures (backup/perspective — multiplicative scaling)
     "SPY": ES_FUTURES_SYMBOL,
     "QQQ": NQ_FUTURES_SYMBOL,
-    "DIA": YM_FUTURES_SYMBOL,
     "IWM": RTY_FUTURES_SYMBOL,
+    "DIA": YM_FUTURES_SYMBOL,
+    # Direct futures pass-throughs — when user passes NQ/ES explicitly as tickers
+    "NQ": NQ_FUTURES_SYMBOL,
+    "ES": ES_FUTURES_SYMBOL,
 }
 
 # Reverse map for navigating from futures to indices for mapped variants.
@@ -285,11 +307,10 @@ FUTURES_MULTIPLIER: dict[str, int] = {
     "/SI": 5000,
 }
 
-# Fallback tickers used when the primary index has low liquidity/OI.
-ETF_FALLBACK: dict[str, str] = {
-    "SPX": "SPY", 
-    "NDX": "QQQ",
-}
+# ETF fallback disabled — rescaling ETF levels into index space via
+# multiplicative ratio is mathematically wrong (different option books,
+# OI distributions, and Greeks).  If an index chain is thin, we skip it.
+ETF_FALLBACK: dict[str, str] = {}
 
 # Schwab API requires a leading "$" for cash CBOE indices.
 # NOTE: VIX ($VIX) is mapped here so the symbol reaches Schwab correctly, but
@@ -365,17 +386,18 @@ EM_STRADDLE_MULTIPLE_OVERRIDES: dict[str, float] = {
 # for the entire session. If False, use the dynamic real-time basis.
 USE_OPENING_BASIS: bool = True
 
-# At the 16:15 ET EOD snapshot, pin the futures basis ratio to the last
-# traded close of the RTH session rather than the live Schwab mark (which
-# drifts after 4 PM).  Futures trade through 4:15 PM ET so their mark can
-# be 10-40 pts above the official 15:59 close by the time we query.
+# At the 16:15 ET EOD snapshot, pin the futures price and SPX cash spot to
+# the 16:14 ET 1-min candle close — the time at which Cboe publishes the
+# official SPX close.  Using the same timestamp for both futures and index
+# eliminates the EOD basis mismatch (previously futures used 15:59 and SPX
+# used 16:04, a 5-minute gap that created 10-40 pt basis drift).
 #
-# ETF/Index → Futures  : use the 15:59 ET 1-min candle close from
-#                         data/live/live_storage_{sym}.parquet
-# SPX cash spot         : use the 16:04 ET 1-min candle close from
-#                         data/SPX_1m.parquet (ET-indexed DatetimeIndex)
-EOD_FUTURES_CLOSE_TIME: time = time(15, 59)   # last RTH futures candle
-EOD_SPX_CLOSE_TIME:     time = time(16,  4)   # last full SPX 1-min bar
+# Futures (/ES, /NQ, /RTY, /YM): 16:14 ET candle close from
+#     data/live/live_storage_{sym}.parquet (CME trades until 17:00 ET)
+# SPX cash spot: 16:14 ET candle close from
+#     data/live/live_storage_SPX.parquet or data/SPX_1m.parquet
+EOD_FUTURES_CLOSE_TIME: time = time(16, 14)   # sync to official SPX close publication (16:14 ET)
+EOD_SPX_CLOSE_TIME:     time = time(16, 14)   # official SPX close disseminated at ~16:14 ET
 
 # Directories used by the EOD close-price parquet lookup.
 LIVE_STORAGE_DIR: Path = REPO_ROOT / "data" / "live"   # live_storage_-ES.parquet etc.
@@ -493,27 +515,37 @@ TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
 TOS_RTD_SYMBOL_CONFIG: dict[str, dict] = {
     "/NQ": {
         "strike_tiers": [(200, 5.0), (500, 10.0), (1000, 25.0), (2000, 50.0)],
-        "num_expiries": 2,
+        # 6 expiries: nearest Friday + 5 weekly/monthly expiries.
+        # This covers ~6-8 weeks of term structure, giving the RTD-native
+        # path enough expiries for meaningful macro wall detection.
+        # Each expiry adds ~400 COM topics (200 strikes × C+P).
+        "num_expiries": 6,
+        "min_oi_floor": 25,
     },
     "/ES": {
         "strike_tiers": [(100, 5.0), (300, 10.0), (600, 25.0)],
-        "num_expiries": 2,
+        "num_expiries": 6,
+        "min_oi_floor": 50,
     },
     "/YM": {
         "strike_tiers": [(200, 5.0), (500, 10.0), (2000, 100.0)],
-        "num_expiries": 2,
+        "num_expiries": 4,
+        "min_oi_floor": 25,
     },
     "/RTY": {
         "strike_tiers": [(100, 5.0), (200, 10.0), (500, 50.0)],
-        "num_expiries": 2,
+        "num_expiries": 4,
+        "min_oi_floor": 25,
     },
     "/GC": {
         "strike_tiers": [(100, 5.0), (200, 10.0), (500, 25.0)],
-        "num_expiries": 2,
+        "num_expiries": 4,
+        "min_oi_floor": 10,
     },
     "/CL": {
         "strike_tiers": [(5, 0.25), (20, 0.5), (50, 1.0), (70, 2.5)],
-        "num_expiries": 2,
+        "num_expiries": 4,
+        "min_oi_floor": 10,
     },
 }
 
@@ -557,7 +589,7 @@ NEAR_DUPLICATE_TOLERANCE_BY_TICKER: dict[str, float] = {
 # ---------------------------------------------------------------------------
 SCHEDULE_TIMEZONE: str = "America/New_York"
 # --- Adaptive Refreshing ---
-# (RTH: 9:20 - 16:10 ET Weekdays)
+# (RTH: 8:20 - 16:10 ET Weekdays — early start for pre-market scoop)
 EQUITY_RTH_START_TIME: time = time(8, 20)
 EQUITY_RTH_END_TIME: time = time(16, 10)
 RTH_T1_INTERVAL: int = 60          # Tier-1 (Priority) 1 min
@@ -580,6 +612,13 @@ NY_SESSION_ROLLOVER_TIME: time = time(16, 15)
 MANUAL_TRIGGER_FILENAME: str = "manual_trigger.json"
 TIER1_TICKERS_DEFAULT: list[str] = ["SPX", "SPY", "QQQ"]
 LOOP_BEAT_SECONDS: int = 5 
+
+# --- RTD Chain Settling ---
+# Seconds to wait for RTD chain data to settle on first empty read.
+# NQ/ES chains may be empty on the first RTD call if phase 2 data hasn't
+# streamed in yet. Increase if 3s proves unreliable in production.
+RTD_SETTLE_SECONDS: int = 3
+RTD_SETTLE_MAX_RETRIES: int = 2
 
 # --- Options Chain ---
 OPTION_CHAIN_WIDE_WINDOW: int = 10

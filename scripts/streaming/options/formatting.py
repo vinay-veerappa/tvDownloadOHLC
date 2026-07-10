@@ -132,22 +132,22 @@ def first_level(*values: float | None) -> float | None:
 
 
 def nearest_below(reference: float | None, *values: float | None) -> float | None:
-    """Return the highest value strictly below *reference*, or fall back to first_level."""
+    """Return the highest value strictly below *reference*."""
     if reference is None:
         return first_level(*values)
     candidates = [v for v in values if v is not None and v < reference]
     if not candidates:
-        return first_level(*values)
+        return None
     return max(candidates)
 
 
 def nearest_above(reference: float | None, *values: float | None) -> float | None:
-    """Return the lowest value strictly above *reference*, or fall back to first_level."""
+    """Return the lowest value strictly above *reference*."""
     if reference is None:
         return first_level(*values)
     candidates = [v for v in values if v is not None and v > reference]
     if not candidates:
-        return first_level(*values)
+        return None
     return min(candidates)
 
 
@@ -229,8 +229,8 @@ def _calculate_tactical_levels(levels: HasLevels) -> dict[str, float | None]:
         # Track A: Breakout Expansion
         l_trig = first_level(levels.call_wall_0dte, levels.call_wall, levels.em_upper)
         s_trig = first_level(levels.put_wall_0dte, levels.put_wall, levels.em_lower)
-        l_tgt = first_level(levels.vol_trigger_upper_05, levels.em_upper)
-        s_tgt = first_level(levels.vol_trigger_lower_05, levels.em_lower)
+        l_tgt = nearest_above(l_trig, levels.vol_trigger_upper_05, levels.em_upper)
+        s_tgt = nearest_below(s_trig, levels.vol_trigger_lower_05, levels.em_lower)
 
     # Fallbacks to guarantee non-None if levels exist
     if s_trig is None:

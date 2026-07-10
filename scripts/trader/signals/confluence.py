@@ -95,7 +95,13 @@ def assess_confluence(signal_1: str, signal_2: str, signal_3: str) -> dict:
     else:
         level = "LOW"
         sizing = cfg["low"]["sizing"]
-        note = f"Bull/bear conflict — {cfg['low']['read']}"
+        if "BULLISH" in signals and "BEARISH" in signals:
+            note = f"Bull/bear conflict — {cfg['low']['read']}"
+        elif bull_count > 0 or bear_count > 0:
+            dominant = "BULLISH" if bull_count > 0 else "BEARISH"
+            note = f"Low conviction: single directional signal ({dominant}) without confirmation. Sizing reduced."
+        else:
+            note = "All neutral — no directional signals. Wait for open to resolve."
 
     return {
         "overnight_signal": signal_1,

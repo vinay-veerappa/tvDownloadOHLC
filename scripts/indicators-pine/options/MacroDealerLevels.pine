@@ -232,7 +232,9 @@ f_nearestBelow(float ref, float v1, float v2, float v3) =>
             b := v2
         if not na(v3) and v3 < ref and (na(b) or v3 > b)
             b := v3
-    na(b) ? f_pick(v1, v2, v3) : b
+        b
+    else
+        f_pick(v1, v2, v3)
 
 f_nearestAbove(float ref, float v1, float v2, float v3) =>
     float b = na
@@ -243,7 +245,9 @@ f_nearestAbove(float ref, float v1, float v2, float v3) =>
             b := v2
         if not na(v3) and v3 > ref and (na(b) or v3 < b)
             b := v3
-    na(b) ? f_pick(v1, v2, v3) : b
+        b
+    else
+        f_pick(v1, v2, v3)
 
 f_bestShortTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
     float b = na

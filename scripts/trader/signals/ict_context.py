@@ -43,7 +43,18 @@ def compute_ict_from_htf(ticker: str = "NQ1", current_price: float = 0) -> dict:
             df_1d.index = df_1d.index.tz_localize("UTC").tz_convert("US/Eastern")
 
         if len(df_1d) >= 2:
-            prior = df_1d.iloc[-2]
+            last_bar_date = df_1d.index[-1].date()
+            import pytz
+            from datetime import datetime
+            today_et = datetime.now(pytz.timezone("America/New_York")).date()
+
+            if last_bar_date == today_et:
+                # Today's active bar is already in the file; yesterday's completed bar is at iloc[-2]
+                prior = df_1d.iloc[-2]
+            else:
+                # Today's bar is not in the file; yesterday's completed bar is at iloc[-1]
+                prior = df_1d.iloc[-1]
+
             result["pdh"] = round(float(prior["high"]), 2)
             result["pdl"] = round(float(prior["low"]), 2)
             result["pdc"] = round(float(prior["close"]), 2)

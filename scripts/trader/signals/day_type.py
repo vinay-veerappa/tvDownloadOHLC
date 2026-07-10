@@ -48,8 +48,11 @@ def classify_day_type(events: list[dict], today: date) -> dict:
         "post_event_wait": None,
     }
 
-    # Filter to today's events
-    today_ms_start = int(datetime(today.year, today.month, today.day).timestamp() * 1000)
+    # Filter to today's events (aligned to America/New_York / Eastern Time)
+    import pytz
+    eastern = pytz.timezone("America/New_York")
+    dt_start = eastern.localize(datetime(today.year, today.month, today.day, 0, 0, 0))
+    today_ms_start = int(dt_start.timestamp() * 1000)
     today_ms_end = today_ms_start + 86400000
     todays_events = [e for e in events if e.get("datetime", 0) >= today_ms_start and e.get("datetime", 0) < today_ms_end]
 

@@ -168,7 +168,11 @@ def translate_to_futures(
 
     # Use multiplicative scaling when cash source and futures trade at different
     # scales (e.g. QQQ ~600 -> NQ ~24400, ratio ~41).  Additive basis is correct
-    # only when they trade at the same scale (e.g. SPX ~6632 -> ES ~6636, ratio ~1).
+    # when they trade at the same scale (e.g. SPX ~6632 -> ES ~6636, ratio ~1).
+    #
+    # The ETF→futures multiplicative translation is a backup/perspective view.
+    # The primary futures levels should come from the index chain (SPX→/ES,
+    # NDX→/NQ) using additive basis when available.
     #
     # Threshold: if the ratio deviates from 1.0 by more than 2%, use multiplicative.
     use_scale = abs(ratio - 1.0) > 0.02

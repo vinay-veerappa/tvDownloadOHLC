@@ -41,6 +41,7 @@ class FuturesGEXResult:
     expiry: date
     dealer_levels: DealerLevels     # Full dealer levels from gex_calculator
     contract_count: int            # How many option contracts had data
+    chain_data: Optional[Any] = None # Native OptionChainData object
     source: str = "tos_rtd"        # Data source tag
     timestamp: float = field(default_factory=time.time)
 
@@ -85,6 +86,9 @@ def build_chain_from_rtd(
         last = greeks.get("LAST") or 0.0
         # IV and delta may not be subscribed — default to 0
         iv = greeks.get("IMPL_VOL") or 0.0
+        iv = float(iv) if iv else 0.0
+        if iv > 1.0:
+            iv = iv / 100.0
         delta = greeks.get("DELTA") or 0.0
 
         # Skip contracts with no OI (they don't contribute to GEX)
@@ -103,7 +107,7 @@ def build_chain_from_rtd(
             mark=float(last) if last else 0.0,
             volume=int(volume) if volume else 0,
             open_interest=int(open_int) if open_int else 0,
-            iv=float(iv) if iv else 0.0,
+            iv=iv,
             delta=float(delta) if delta else 0.0,
             gamma=float(gamma) if gamma else 0.0,
             theta=0.0,  # Not subscribed via RTD by default
@@ -187,6 +191,7 @@ def calculate_futures_gex(
             expiry=chain_snap.expiry,
             dealer_levels=dealer_levels,
             contract_count=len(chain.contracts),
+            chain_data=chain,
         )
 
         log.info(

@@ -114,7 +114,6 @@ if not _IS_RTD_CHILD:
         DealerLevels,
         calculate_dealer_levels,
         calculate_price_metrics,
-        rescale_levels_to_target_spot,
     )
     from .level_scorer import score_levels, ScoredLevels
     from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data, get_eod_close_price, FuturesQuote
@@ -434,8 +433,16 @@ def run_pipeline(
     # --- Process each ticker --------------------------------------------------
     target_tickers = tickers if tickers is not None else ACTIVE_TICKERS
 
+    # Tickers that are pure futures — no Schwab cash options chain; sourced entirely from RTD.
+    RTD_NATIVE_TICKERS: set[str] = {"NQ", "ES"}
+
     # Pre-fetch all options chains concurrently to minimize network latency
-    log.info("Pre-fetching options chains for %d tickers concurrently...", len(target_tickers))
+    etf_tickers = [t for t in target_tickers if t not in RTD_NATIVE_TICKERS]
+    rtd_only_tickers = [t for t in target_tickers if t in RTD_NATIVE_TICKERS]
+    log.info(
+        "Pre-fetching options chains for %d tickers concurrently... (%d RTD-native: %s)",
+        len(etf_tickers), len(rtd_only_tickers), rtd_only_tickers or "none",
+    )
     chains_by_ticker = {}
     from concurrent.futures import ThreadPoolExecutor
 
@@ -446,8 +453,8 @@ def run_pipeline(
             log.error("Failed to fetch option chain for %s: %s", t, e)
             return t, None
 
-    with ThreadPoolExecutor(max_workers=min(len(target_tickers), 10)) as executor:
-        results = executor.map(fetch_one, target_tickers)
+    with ThreadPoolExecutor(max_workers=min(len(etf_tickers), 10) or 1) as executor:
+        results = executor.map(fetch_one, etf_tickers)
         for t, chain_data in results:
             if chain_data:
                 chains_by_ticker[t] = chain_data
@@ -457,6 +464,271 @@ def run_pipeline(
         mapping_str = f"-> {futures_sym}" if futures_sym else "(Cash only)"
         if PIPELINE_DEBUG_TICKER:
             log.info("--- Processing: %s %s ---", ticker, mapping_str)
+
+        # ── RTD-native tickers (NQ, ES) — scored entirely from RTD, no Schwab chain ──
+        if ticker in RTD_NATIVE_TICKERS:
+            if not rtd_coord.is_rtd_active:
+                log.warning("RTD-native ticker %s requested but RTD is not active — skipping.", ticker)
+                continue
+            try:
+                rtd_gex_result = rtd_gex_results.get(futures_sym)
+                if rtd_gex_result is None:
+                    _t(f"rtd_gex_start_{ticker}")
+                    # Retry with configurable settle time — RTD chain data may not have streamed in yet
+                    from scripts.streaming.options.config import RTD_SETTLE_SECONDS, RTD_SETTLE_MAX_RETRIES
+                    for attempt in range(RTD_SETTLE_MAX_RETRIES):
+                        rtd_gex_result = rtd_coord.calculate_rtd_gex(futures_sym)
+                        if rtd_gex_result and rtd_gex_result.chain_data and rtd_gex_result.contract_count > 0:
+                            break
+                        if attempt < RTD_SETTLE_MAX_RETRIES - 1:
+                            log.info("RTD chain for %s empty on attempt %d/%d — waiting %ds before retry...",
+                                     futures_sym, attempt + 1, RTD_SETTLE_MAX_RETRIES, RTD_SETTLE_SECONDS)
+                            time.sleep(RTD_SETTLE_SECONDS)
+                    _t(f"rtd_gex_done_{ticker}")
+                    rtd_gex_results[futures_sym] = rtd_gex_result
+                if rtd_gex_result is None or rtd_gex_result.chain_data is None or rtd_gex_result.contract_count == 0:
+                    log.warning("RTD GEX result unavailable or empty for %s — skipping.", ticker)
+                    continue
+                ticker_profile = get_ticker_profile(ticker)
+
+                # Compute separate intraday and macro dealer levels from the same
+                # RTD chain.  Intraday uses FRONT_WEEK_WEIGHTED (0-14 DTE) for
+                # tactical walls; macro uses ALL_EXPIRIES_WEIGHTED for structural
+                # levels.  RTD only has 2 expiries so macro coverage is thinner
+                # than the Schwab path (which has 0-365 DTE), but it's still
+                # better to compute what we can than to skip it.
+                from .gex_calculator import calculate_dealer_levels as _calc_dl
+                from .config import MACRO_VIEW as _MACRO_VIEW
+
+                rtd_dl_intraday = rtd_gex_result.dealer_levels  # already computed with (0, 14)
+                rtd_dl_macro = _calc_dl(
+                    rtd_gex_result.chain_data,
+                    ticker,
+                    min_oi_floor=ticker_profile.min_oi_floor,
+                    wall_scope="ALL_EXPIRIES_WEIGHTED",
+                    wall_dte_range=_MACRO_VIEW.dte_range,
+                )
+
+                # Weekly scope capture/attachment (same as Schwab path)
+                weekly_scope_record = None
+                if is_eod_run and today_ny.weekday() == 4:
+                    weekly_candidate = _select_weekly_scope_candidate(rtd_dl_macro, today_ny)
+                    if weekly_candidate is None:
+                        weekly_candidate = _select_weekly_scope_candidate(rtd_dl_intraday, today_ny)
+                    if weekly_candidate is not None:
+                        weekly_em, weekly_expiry = weekly_candidate
+                        weekly_scope_record = {
+                            "expiry": weekly_expiry.strftime("%Y-%m-%d"),
+                            "captured_on": today_ny.strftime("%Y-%m-%d"),
+                            "source": "FRIDAY_EOD_CAPTURE",
+                            "em_upper": round(float(weekly_em.em_upper), 2),
+                            "em_lower": round(float(weekly_em.em_lower), 2),
+                            "straddle_85_upper": round(float(getattr(weekly_em, "straddle_85_upper", 0.0) or 0.0), 2),
+                            "straddle_85_lower": round(float(getattr(weekly_em, "straddle_85_lower", 0.0) or 0.0), 2),
+                        }
+                        if weekly_scope_cache.get(ticker) != weekly_scope_record:
+                            weekly_scope_cache[ticker] = weekly_scope_record
+                            weekly_scope_cache_updated = True
+
+                if weekly_scope_record is None:
+                    candidate_record = weekly_scope_cache.get(ticker)
+                    expiry = _parse_iso_date(candidate_record.get("expiry") if candidate_record else None)
+                    if candidate_record and expiry and expiry >= today_ny:
+                        weekly_scope_record = candidate_record
+                    elif ticker in weekly_scope_cache:
+                        del weekly_scope_cache[ticker]
+                        weekly_scope_cache_updated = True
+
+                _attach_weekly_scope(rtd_dl_intraday, weekly_scope_record)
+                _attach_weekly_scope(rtd_dl_macro, weekly_scope_record)
+
+                rtd_scored_intraday = score_levels(
+                    rtd_dl_intraday, rtd_gex_result.chain_data, ticker, ticker_profile, INTRADAY_VIEW
+                )
+                rtd_scored_macro = score_levels(
+                    rtd_dl_macro, rtd_gex_result.chain_data, ticker, ticker_profile, MACRO_VIEW
+                )
+                scored_intraday_by_ticker[ticker] = rtd_scored_intraday
+                scored_macro_by_ticker[ticker] = rtd_scored_macro
+
+                # Populate the metadata dicts so the unified output writer can
+                # generate structural tokens and META_ tokens for NQ/ES —
+                # same as the Schwab path does for SPY/QQQ/etc.
+                # Also tag the DealerLevels with futures metadata so that
+                # interval_writer.write_snapshot persists futures_symbol etc.
+                rtd_dl_intraday.futures_symbol = futures_sym
+                rtd_dl_intraday.translation_mode = "rtd_direct"
+                rtd_dl_intraday.basis_spread = 0.0
+                rtd_dl_intraday.basis_ratio = 1.0
+                rtd_dl_macro.futures_symbol = futures_sym
+                rtd_dl_macro.translation_mode = "rtd_direct"
+                rtd_dl_macro.basis_spread = 0.0
+                rtd_dl_macro.basis_ratio = 1.0
+
+                cash_levels_by_ticker[ticker] = rtd_dl_intraday
+                macro_levels_by_ticker[ticker] = rtd_dl_macro
+
+                # Append to translated_levels so NQ/ES appear in JSON outputs,
+                # pipeline_state change detection, and Discord embeds.
+                from .futures_translator import TranslatedLevels
+                from dataclasses import replace as _replace
+
+                def _build_rtd_translated(dl, scope_label):
+                    """Build a full TranslatedLevels from a DealerLevels for RTD-native path."""
+                    return TranslatedLevels(
+                        futures_symbol=futures_sym,
+                        cash_ticker=ticker,
+                        futures_price=rtd_gex_result.futures_price,
+                        cash_spot=rtd_gex_result.futures_price,
+                        basis_spread=0.0,
+                        basis_ratio=1.0,
+                        translation_mode="rtd_direct",
+                        min_tick=0.25,
+                        total_gex=dl.total_gex,
+                        gex_regime=dl.gex_regime,
+                        zero_gamma=dl.zero_gamma,
+                        zero_gamma_delta_adj=dl.zero_gamma_delta_adj,
+                        gamma_flip_lower=dl.gamma_flip_lower,
+                        gamma_flip_upper=dl.gamma_flip_upper,
+                        call_wall=dl.call_wall,
+                        put_wall=dl.put_wall,
+                        secondary_call_wall=dl.secondary_call_wall,
+                        secondary_put_wall=dl.secondary_put_wall,
+                        local_call_node=dl.local_call_node,
+                        local_put_node=dl.local_put_node,
+                        call_wall_0dte=dl.call_wall_0dte,
+                        put_wall_0dte=dl.put_wall_0dte,
+                        hedge_wall=dl.hedge_wall,
+                        max_pain=dl.max_pain,
+                        em_upper=dl.em_upper,
+                        em_lower=dl.em_lower,
+                        em_value=dl.em_value,
+                        atm_straddle=dl.atm_straddle,
+                        gamma_magnet=dl.gamma_magnet,
+                        pin_strike=dl.pin_strike,
+                        pin_odds=dl.pin_odds,
+                        wall_separation=dl.wall_separation,
+                        regime_label=dl.regime_label,
+                        directional_bias=dl.directional_bias,
+                        call_gamma_total=dl.call_gamma_total,
+                        put_gamma_total=dl.put_gamma_total,
+                        net_vanna_exposure=dl.net_vanna_exposure,
+                        wall_scope=scope_label,
+                        wall_dte_min=dl.wall_dte_min,
+                        wall_dte_max=dl.wall_dte_max,
+                        concentration_score=dl.concentration_score,
+                        call_wall_oi=dl.call_wall_oi,
+                        put_wall_oi=dl.put_wall_oi,
+                        pin_strike_oi=dl.pin_strike_oi,
+                        net_speed_exposure=dl.net_speed_exposure,
+                        total_gex_delta_adj=dl.total_gex_delta_adj,
+                        call_volume_centroid=dl.call_volume_centroid,
+                        put_volume_centroid=dl.put_volume_centroid,
+                        atm_iv=dl.atm_iv,
+                        put_25d_iv=dl.put_25d_iv,
+                        call_25d_iv=dl.call_25d_iv,
+                        volatility_skew_premium=dl.volatility_skew_premium,
+                        vol_trigger_upper_05=getattr(dl, 'vol_trigger_upper_05', None),
+                        vol_trigger_lower_05=getattr(dl, 'vol_trigger_lower_05', None),
+                        vol_trigger_upper_10=getattr(dl, 'vol_trigger_upper_10', None),
+                        vol_trigger_lower_10=getattr(dl, 'vol_trigger_lower_10', None),
+                        vol_trigger_upper_15=getattr(dl, 'vol_trigger_upper_15', None),
+                        vol_trigger_lower_15=getattr(dl, 'vol_trigger_lower_15', None),
+                        gamma_cliff_up=getattr(dl, 'gamma_cliff_up', None),
+                        gamma_cliff_down=getattr(dl, 'gamma_cliff_down', None),
+                        vanna_call_node=getattr(dl, 'vanna_call_node', None),
+                        vanna_put_node=getattr(dl, 'vanna_put_node', None),
+                        charm_call_node=getattr(dl, 'charm_call_node', None),
+                        charm_put_node=getattr(dl, 'charm_put_node', None),
+                        volume_imbalance_call_node=getattr(dl, 'volume_imbalance_call_node', None),
+                        volume_imbalance_put_node=getattr(dl, 'volume_imbalance_put_node', None),
+                        dex_call_node=getattr(dl, 'dex_call_node', None),
+                        dex_put_node=getattr(dl, 'dex_put_node', None),
+                        liquidity_vacuum_lower=getattr(dl, 'liquidity_vacuum_lower', None),
+                        liquidity_vacuum_upper=getattr(dl, 'liquidity_vacuum_upper', None),
+                        skew_pivot_put_25d=getattr(dl, 'skew_pivot_put_25d', None),
+                        skew_pivot_call_25d=getattr(dl, 'skew_pivot_call_25d', None),
+                        hedge_flow_up_10=getattr(dl, 'hedge_flow_up_10', 0.0),
+                        hedge_flow_up_25=getattr(dl, 'hedge_flow_up_25', 0.0),
+                        hedge_flow_up_50=getattr(dl, 'hedge_flow_up_50', 0.0),
+                        hedge_flow_dn_10=getattr(dl, 'hedge_flow_dn_10', 0.0),
+                        hedge_flow_dn_25=getattr(dl, 'hedge_flow_dn_25', 0.0),
+                        hedge_flow_dn_50=getattr(dl, 'hedge_flow_dn_50', 0.0),
+                        hourly_flow_curve=getattr(dl, 'hourly_flow_curve', []),
+                        iv_change=getattr(dl, 'iv_change', 0.0),
+                        expected_moves=dl.expected_moves,
+                    )
+
+                rtd_tl_intraday = _build_rtd_translated(rtd_dl_intraday, "FRONT_WEEK_WEIGHTED")
+                rtd_tl_macro = _build_rtd_translated(rtd_dl_macro, "ALL_EXPIRIES_WEIGHTED")
+                translated_levels.append(rtd_tl_intraday)
+                translated_macro_levels.append(rtd_tl_macro)
+
+                log.info("RTD-native scored levels saved for %s (spot=%.2f)", ticker, rtd_gex_result.futures_price)
+
+                # ── EOD parquet close-price pinning for RTD-native futures ──
+                # At the 16:15 ET snapshot, pin the futures price to the 16:14 ET
+                # close from our local parquet — same logic as the Schwab path below.
+                # This keeps RTD-native /ES and /NQ in sync with SPX/NDX closes.
+                is_eod_snapshot = (snapshot_suffix == "1615")
+                if is_eod_snapshot and futures_sym:
+                    tz_ny = ZoneInfo("America/New_York")
+                    tz_utc = ZoneInfo("UTC")
+                    now_ny_local = datetime.now(tz_ny)
+                    eod_close_et = datetime.combine(
+                        now_ny_local.date(), EOD_FUTURES_CLOSE_TIME
+                    ).replace(tzinfo=tz_ny)
+                    eod_close_utc = eod_close_et.astimezone(tz_utc).replace(tzinfo=None)
+
+                    cache_key = (futures_sym, eod_close_utc)
+                    if cache_key in eod_close_prices:
+                        parquet_close = eod_close_prices[cache_key]
+                    else:
+                        parquet_close = get_eod_close_price(futures_sym, eod_close_utc)
+                        eod_close_prices[cache_key] = parquet_close
+
+                    if parquet_close is not None:
+                        log.info(
+                            "EOD parquet override %s (RTD): 16:14 close=%.2f  (RTD price was %.2f)",
+                            futures_sym, parquet_close, rtd_gex_result.futures_price,
+                        )
+                        rtd_gex_result.futures_price = parquet_close
+                        # Re-compute dealer levels with the pinned spot
+                        from dataclasses import replace as _replace
+                        from .gex_calculator import calculate_dealer_levels as _calc_dl
+                        from .config import MACRO_VIEW as _MACRO_VIEW
+                        rtd_dl_intraday = _replace(rtd_gex_result.dealer_levels, spot=parquet_close)
+                        rtd_dl_macro = _calc_dl(
+                            rtd_gex_result.chain_data, ticker,
+                            min_oi_floor=ticker_profile.min_oi_floor,
+                            wall_scope="ALL_EXPIRIES_WEIGHTED",
+                            wall_dte_range=_MACRO_VIEW.dte_range,
+                        )
+                        rtd_dl_macro = _replace(rtd_dl_macro, spot=parquet_close)
+                        # Re-score with the pinned spot
+                        scored_intraday_by_ticker[ticker] = score_levels(
+                            rtd_dl_intraday, rtd_gex_result.chain_data, ticker, ticker_profile, INTRADAY_VIEW
+                        )
+                        scored_macro_by_ticker[ticker] = score_levels(
+                            rtd_dl_macro, rtd_gex_result.chain_data, ticker, ticker_profile, MACRO_VIEW
+                        )
+                        # Update metadata dicts with pinned dealer_levels
+                        cash_levels_by_ticker[ticker] = rtd_dl_intraday
+                        macro_levels_by_ticker[ticker] = rtd_dl_macro
+                    else:
+                        log.warning(
+                            "EOD parquet override: no 16:14 bar for %s — keeping RTD price %.2f",
+                            futures_sym, rtd_gex_result.futures_price,
+                        )
+
+                # Write per-ticker snapshot to DB (RTH only)
+                if _is_rth():
+                    from .interval_writer import write_snapshot
+                    write_snapshot(rtd_dl_intraday, ticker_override=futures_sym)
+
+            except Exception as e:
+                log.error("RTD-native processing failed for %s: %s", ticker, e)
+            continue  # Skip the Schwab/ETF path entirely
 
         try:
             _t(f"chain_start_{ticker}")
@@ -524,15 +796,17 @@ def run_pipeline(
 
             # 2c. EOD close-price override (16:15 ET snapshot only)
             # At EOD, ES/NQ/RTY/YM keep trading after 4 PM so the live Schwab
-            # mark drifts away from the official 15:59 RTH close.  Pin the
-            # futures price to the 15:59 candle close from our local parquet.
-            # This also overrides the SPX cash spot to the 16:04 ET close.
+            # mark drifts away from the official RTH close.  Pin the futures
+            # price to the 16:14 ET candle close from our local parquet —
+            # the same timestamp as the official SPX close publication (16:14 ET).
+            # This synchronises futures and index price references so the basis
+            # spread is zero at EOD, keeping translated levels in sync.
             is_eod_snapshot = (snapshot_suffix == "1615")
             if is_eod_snapshot and futures_sym and fut and fut.price is not None:
                 tz_ny = ZoneInfo("America/New_York")
                 tz_utc = ZoneInfo("UTC")
                 now_ny = datetime.now(tz_ny)
-                # Build UTC-naive timestamp for the 15:59 ET candle
+                # Build UTC-naive timestamp for the 16:14 ET candle
                 eod_close_et = datetime.combine(
                     now_ny.date(), EOD_FUTURES_CLOSE_TIME
                 ).replace(tzinfo=tz_ny)
@@ -547,7 +821,7 @@ def run_pipeline(
 
                 if parquet_close is not None:
                     log.info(
-                        "EOD parquet override %s: 15:59 close=%.2f  (live mark was %.2f)",
+                        "EOD parquet override %s: 16:14 close=%.2f  (live mark was %.2f)",
                         futures_sym, parquet_close, fut.price,
                     )
                     fut = FuturesQuote(
@@ -557,11 +831,11 @@ def run_pipeline(
                     )
                 else:
                     log.warning(
-                        "EOD parquet override: no 15:59 bar for %s — keeping live mark %.2f",
+                        "EOD parquet override: no 16:14 bar for %s — keeping live mark %.2f",
                         futures_sym, fut.price,
                     )
 
-                # SPX cash spot: pin to 16:04 ET close
+                # SPX cash spot: pin to 16:14 ET close (official SPX close time)
                 if ticker == "SPX":
                     spx_close_et = datetime.combine(
                         now_ny.date(), EOD_SPX_CLOSE_TIME
@@ -577,14 +851,14 @@ def run_pipeline(
 
                     if spx_parquet_close is not None:
                         log.info(
-                            "EOD SPX spot override: 16:04 close=%.2f  (chain mark was %.2f)",
+                            "EOD SPX spot override: 16:14 close=%.2f  (chain mark was %.2f)",
                             spx_parquet_close, full_chain.spot_price,
                         )
                         target_cash_spot = spx_parquet_close
                         full_chain = replace(full_chain, spot=spx_parquet_close)
                     else:
                         log.warning(
-                            "EOD SPX spot override: no 16:04 bar — keeping chain mark %.2f",
+                            "EOD SPX spot override: no 16:14 bar — keeping chain mark %.2f",
                             full_chain.spot_price,
                         )
 
@@ -664,24 +938,11 @@ def run_pipeline(
             )
             _t(f"calc_macro_{ticker}")
 
-            # 3b. If fallback source differs from target ticker, rescale levels
-            # back into target cash index space before futures translation.
-            if source_ticker != ticker and target_cash_spot > 0:
-                levels_intraday = rescale_levels_to_target_spot(
-                    levels_intraday,
-                    target_ticker=ticker,
-                    target_spot=target_cash_spot,
-                )
-                levels_macro = rescale_levels_to_target_spot(
-                    levels_macro,
-                    target_ticker=ticker,
-                    target_spot=target_cash_spot,
-                )
-                if direct_price_metrics is not None:
-                    levels_intraday = replace(levels_intraday, **direct_price_metrics)
-                    levels_macro = replace(levels_macro, **direct_price_metrics)
-
-                log.debug("Rescaled %s-derived levels into %s space.", source_ticker, ticker)
+            # NOTE: ETF→index rescaling (rescale_levels_to_target_spot) has been
+            # removed.  Scaling ETF option levels into index space by a ratio is
+            # mathematically invalid — the option books, OI, and Greeks are
+            # fundamentally different.  If an index chain is thin, we use whatever
+            # source_ticker produced and label it as that source (not the target).
 
             weekly_scope_record = None
             if is_eod_run and today_ny.weekday() == 4:
@@ -765,6 +1026,31 @@ def run_pipeline(
                     if rtd_gex_result is not None:
                         rtd_dl = rtd_gex_result.dealer_levels
                         rtd_dl_primary = rtd_dl
+                        
+                        # Score and save direct RTD levels under futures ticker (e.g. 'NQ' or 'ES')
+                        # Only inject when the user explicitly requested this futures ticker.
+                        if rtd_gex_result.chain_data is not None:
+                            clean_fut_sym = futures_sym.lstrip('/')
+                            if clean_fut_sym in target_tickers:
+                                try:
+                                    rtd_scored_intraday = score_levels(
+                                        rtd_dl, rtd_gex_result.chain_data, clean_fut_sym, profile, INTRADAY_VIEW
+                                    )
+                                    rtd_scored_macro = score_levels(
+                                        rtd_dl, rtd_gex_result.chain_data, clean_fut_sym, profile, MACRO_VIEW
+                                    )
+                                    scored_intraday_by_ticker[clean_fut_sym] = rtd_scored_intraday
+                                    scored_macro_by_ticker[clean_fut_sym] = rtd_scored_macro
+                                    log.info("Direct RTD scored levels saved for ticker: %s", clean_fut_sym)
+                                except Exception as e:
+                                    log.error("Failed to score direct RTD levels for %s: %s", clean_fut_sym, e)
+                            else:
+                                log.debug(
+                                    "RTD levels computed for %s (used for GEX/price context) but not saved "
+                                    "— add '%s' to --tickers to include it in output.",
+                                    clean_fut_sym, clean_fut_sym,
+                                )
+
                         if PIPELINE_DEBUG_RTD:
                             log.info(
                                 "RTD GEX for %s: total_gex=%.2f regime=%s call_wall=%s put_wall=%s zero_gamma=%s (%d contracts)",
@@ -937,32 +1223,26 @@ def run_pipeline(
     if weekly_scope_cache_updated:
         _save_weekly_scope_cache(weekly_scope_cache)
 
-    if not translated_levels and not cash_levels_by_ticker:
+    if not translated_levels and not cash_levels_by_ticker and not scored_intraday_by_ticker:
         log.error("No levels were computed — all outputs skipped.")
         return
 
     # --- Persist to disk ----------------------------------------------------
     try:
-        from .config import DATA_DIR, DAILY_LEVELS_JSON, DAILY_LEVELS_TXT, INTRADAY_LEVELS_JSON, MACRO_LEVELS_JSON
-        
-        # 1. Intraday View (Legacy paths + Intraday JSON)
-        write_levels(
-            translated_levels,
-            run_label,
-            cash_levels=list(cash_levels_by_ticker.values()),
-            scored_levels=list(scored_intraday_by_ticker.values()),
-            json_path=DAILY_LEVELS_JSON, # Legacy
-            txt_path=None, # Legacy TXT deprecated
-            versioned=versioned,
-            snapshot_suffix=snapshot_suffix,
+        from .config import (
+            DATA_DIR, DAILY_LEVELS_TXT, INTRADAY_LEVELS_JSON, MACRO_LEVELS_JSON,
         )
+
+        # 1. Intraday View — canonical write to intraday_levels.json.
+        #    daily_levels.json is no longer written (it was an identical duplicate).
+        #    Web consumers read intraday_levels.json directly.
         write_levels(
             translated_levels,
             run_label,
             cash_levels=list(cash_levels_by_ticker.values()),
             scored_levels=list(scored_intraday_by_ticker.values()),
-            json_path=INTRADAY_LEVELS_JSON, # Explicit
-            txt_path=None,
+            json_path=INTRADAY_LEVELS_JSON,
+            txt_path=None,  # Legacy TXT deprecated — unified_levels.txt is the canonical text output
             versioned=versioned,
             snapshot_suffix=snapshot_suffix,
         )
@@ -1317,13 +1597,13 @@ def run_loop(enable_discord: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 def _is_trading_day(tz_name: "str | None" = None) -> bool:
-    if tz_name is None:
-        tz_name = SCHEDULE_TIMEZONE
-    """
-    Return True when today is a Monday–Friday trading day.
+    """Return True when today is a Monday–Friday trading day.
+
     Market holidays are not accounted for; add a trading-calendar library
     (e.g. pandas-market-calendars) for full holiday awareness.
     """
+    if tz_name is None:
+        tz_name = SCHEDULE_TIMEZONE
     return datetime.now(ZoneInfo(tz_name)).weekday() < 5
 
 
@@ -1414,6 +1694,17 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
             return
         for args, label in jobs:
             _run_subprocess(args, label)
+
+    # 0. Premarket Narrative (08:45 ET, Mon-Fri) — runs after 08:30 pipeline, before 09:30 open
+    scheduler.add_job(
+        lambda: _run_narrative_chain([
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "premarket", "--no-discord"], "Trader Narrative Premarket"),
+        ]),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=8, minute=45, timezone=tz),
+        id="narrative_premarket",
+        replace_existing=True,
+    )
+    log.info("Scheduled Narrative: 08:45 ET (Premarket)")
 
     # 1. Daily Open Narrative (09:35 ET, Mon-Fri)
     scheduler.add_job(

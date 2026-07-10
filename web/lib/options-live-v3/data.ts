@@ -112,7 +112,7 @@ export async function loadPipelineState(): Promise<PipelineState | null> {
 }
 
 export async function loadDailyLevels(): Promise<DailyLevels | null> {
-  return readJsonFromRoots<DailyLevels>("daily_levels.json");
+  return readJsonFromRoots<DailyLevels>("intraday_levels.json");
 }
 
 export async function loadGexProfiles(): Promise<GexProfiles | null> {

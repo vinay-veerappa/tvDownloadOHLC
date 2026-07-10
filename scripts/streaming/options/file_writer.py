@@ -716,7 +716,7 @@ def write_levels(
                 _sg_to_dict(sg)
                 for sg in levels.strike_gex
             ]
-        elif tl and tl.translation_mode == "additive":
+        elif tl and tl.translation_mode == "additive" and tl.basis_spread is not None:
             spread = tl.basis_spread
             futures_key = cash_tag(tl.futures_symbol)
             profiles_doc["profiles"][futures_key] = [
@@ -1324,6 +1324,115 @@ def _extract_structural_tokens_from_copy_line(ticker: str, levels: Any) -> list[
     return structural_tokens
 
 
+def translate_unified_tokens_to_futures(proxy_ticker: str, target_ticker: str, tokens: list[str]) -> list[str]:
+    """Translates a list of unified levels tokens from an equity ETF proxy (QQQ, SPY) 
+    or index (SPX) to its corresponding futures ticker (NQ, ES).
+    """
+    ratio = None
+    basis = None
+    for token in tokens:
+        if token.startswith("0:META_FUTURES_RATIO_") or (":" in token and token.split(":", 1)[1].startswith("META_FUTURES_RATIO_")):
+            parts = token.split(":")
+            meta_part = parts[1] if len(parts) > 1 else parts[0]
+            try:
+                ratio = float(meta_part.split("_")[-1])
+            except ValueError:
+                pass
+        elif token.startswith("0:META_FUTURES_BASIS_") or (":" in token and token.split(":", 1)[1].startswith("META_FUTURES_BASIS_")):
+            parts = token.split(":")
+            meta_part = parts[1] if len(parts) > 1 else parts[0]
+            try:
+                basis = float(meta_part.split("_")[-1])
+            except ValueError:
+                pass
+
+    if ratio is None and basis is None:
+        # Fallback hardcoded ratios for ETF→futures when no META_ token is present.
+        # These are approximate and used only as a last-resort perspective view.
+        if proxy_ticker == "QQQ" and target_ticker == "NQ":
+            ratio = 40.0
+        elif proxy_ticker in ("SPY", "SPX") and target_ticker == "ES":
+            if proxy_ticker == "SPY":
+                ratio = 10.0
+            else:
+                basis = 0.0
+        else:
+            return []
+
+    translated_tokens = []
+    for token in tokens:
+        if not token:
+            continue
+        if ":" not in token:
+            translated_tokens.append(token)
+            continue
+
+        parts = token.split(":", 1)
+        price_str, content = parts[0], parts[1]
+
+        # Check if it's a numeric level token
+        is_level = False
+        try:
+            val = float(price_str)
+            if val > 0:
+                is_level = True
+        except ValueError:
+            pass
+
+        if is_level:
+            price_val = float(price_str)
+            if ratio is not None:
+                new_price = price_val * ratio
+            else:
+                new_price = price_val + basis
+            translated_tokens.append(f"{new_price:.2f}:{content}")
+        else:
+            # It's a metadata token (price_str == "0") or header
+            if content.startswith("META_"):
+                # We need to scale numeric values in metadata
+                keys_to_scale = [
+                    "META_OGT_", "META_VOL_EXPANSION_UP_", "META_VOL_EXPANSION_DN_",
+                    "META_S_TRIG_", "META_L_TRIG_", "META_S_TGT_", "META_L_TGT_",
+                    "META_S_INV_", "META_L_INV_", "META_OI_CALLWALL_", "META_OI_PUTWALL_",
+                    "META_OI_PIN_"
+                ]
+                scaled = False
+                for key in keys_to_scale:
+                    if content.startswith(key):
+                        val_str = content[len(key):]
+                        sub_label = ""
+                        if ":" in val_str:
+                            sub_val_str, sub_label = val_str.split(":", 1)
+                        else:
+                            sub_val_str = val_str
+                        try:
+                            val_float = float(sub_val_str)
+                            if ratio is not None:
+                                new_val = val_float * ratio
+                            else:
+                                new_val = val_float + basis
+                            if "META_OI_" in key:
+                                new_val_str = f"{int(round(new_val))}"
+                            else:
+                                new_val_str = f"{new_val:.2f}"
+                                
+                            if sub_label:
+                                new_content = f"{key}{new_val_str}:{sub_label}"
+                            else:
+                                new_content = f"{key}{new_val_str}"
+                            translated_tokens.append(f"0:{new_content}")
+                            scaled = True
+                        except ValueError:
+                            pass
+                        break
+                if not scaled:
+                    translated_tokens.append(token)
+            else:
+                translated_tokens.append(token)
+
+    return translated_tokens
+
+
 def _compose_unified_tokens_for_ticker(
     ticker: str,
     scored: Any,
@@ -1441,6 +1550,26 @@ def write_unified_levels_txt(
             
         clean_tokens[0] = f"{ticker}:{clean_tokens[0]}"
         lines.append(", ".join(clean_tokens))
+
+        # Generate translated NQ entry from QQQ (backup/perspective view)
+        if ticker == "QQQ" and "NQ" not in scored_lookup:
+            nq_tokens = translate_unified_tokens_to_futures("QQQ", "NQ", tokens)
+            if nq_tokens:
+                clean_nq = [t.replace("\r\n", " ").replace("\n", " ").replace(",", "") for t in nq_tokens if t]
+                clean_nq = [t for t in clean_nq if t]
+                if clean_nq:
+                    clean_nq[0] = f"NQ:{clean_nq[0]}"
+                    lines.append(", ".join(clean_nq))
+                    
+        # Generate translated ES entry from SPY (backup/perspective view)
+        if (ticker == "SPY" or (ticker == "SPX" and "SPY" not in scored_lookup)) and "ES" not in scored_lookup:
+            es_tokens = translate_unified_tokens_to_futures(ticker, "ES", tokens)
+            if es_tokens:
+                clean_es = [t.replace("\r\n", " ").replace("\n", " ").replace(",", "") for t in es_tokens if t]
+                clean_es = [t for t in clean_es if t]
+                if clean_es:
+                    clean_es[0] = f"ES:{clean_es[0]}"
+                    lines.append(", ".join(clean_es))
 
     text = "\n".join(lines)
     final_text = text + ("\n" if text else "")
@@ -1563,8 +1692,25 @@ def write_unified_levels_json(
         )
         if not tokens:
             continue
+        # Save clean tokens before ticker prefix is prepended — needed for
+        # the ETF→futures translation fallback below.
+        clean_tokens = list(tokens)
         tokens[0] = f"{ticker}:{tokens[0]}"
         lines.append(", ".join(tokens))
+
+        # Generate translated NQ entry from QQQ — only if no direct RTD entry exists
+        if ticker == "QQQ" and "NQ" not in scored_lookup:
+            nq_tokens = translate_unified_tokens_to_futures("QQQ", "NQ", clean_tokens)
+            if nq_tokens:
+                nq_tokens[0] = f"NQ:{nq_tokens[0]}"
+                lines.append(", ".join(nq_tokens))
+
+        # Generate translated ES entry from SPY — only if no direct RTD entry exists
+        if (ticker == "SPY" or (ticker == "SPX" and "SPY" not in scored_lookup)) and "ES" not in scored_lookup:
+            es_tokens = translate_unified_tokens_to_futures(ticker, "ES", clean_tokens)
+            if es_tokens:
+                es_tokens[0] = f"ES:{es_tokens[0]}"
+                lines.append(", ".join(es_tokens))
 
     rows = [_parse_unified_line(line) for line in lines]
     doc = {

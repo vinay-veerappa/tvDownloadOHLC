@@ -121,6 +121,10 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
         "putVolumeCentroid": levels.put_volume_centroid,
         "netSpeedExposure": levels.net_speed_exposure,
         "netVannaExposure": levels.net_vanna_exposure,
+        # Institutional skew metrics (were silently dropped — fixed)
+        "put25dIv": levels.put_25d_iv,
+        "call25dIv": levels.call_25d_iv,
+        "volatilitySkewPremium": levels.volatility_skew_premium,
         # Futures translation matrix
         "futuresSymbol": getattr(levels, "futures_symbol", None),
         "futuresTranslationMode": getattr(levels, "translation_mode", None),
