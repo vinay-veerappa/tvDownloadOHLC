@@ -401,8 +401,9 @@ def main() -> None:
     if args.append and _OUTPUT_PATH.exists():
         existing = pd.read_parquet(_OUTPUT_PATH)
         final = pd.concat([existing, final], ignore_index=True)
-        final.drop_duplicates(
-            subset=["symbol", "range_name", "trading_date"], keep="last", inplace=True)
+        final = final.drop_duplicates(
+            subset=["symbol", "range_name", "trading_date"], keep="last", inplace=False)
+
 
     print(f"\nSaving {len(final)} records to {_OUTPUT_PATH}...")
     final.to_parquet(_OUTPUT_PATH, index=False)

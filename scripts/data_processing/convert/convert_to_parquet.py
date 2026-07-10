@@ -36,8 +36,8 @@ def convert_csv_to_parquet(ticker, timeframe="1m"):
         df['datetime'] = df['datetime'].dt.tz_convert('US/Eastern')
     else:
         df['datetime'] = pd.to_datetime(df['datetime'])
-    df.set_index('datetime', inplace=True)
-    df.sort_index(inplace=True)
+    df = df.set_index('datetime', inplace=False)
+    df = df.sort_index(inplace=False)
     
     # Create data directory
     data_dir = Path("data")
@@ -48,9 +48,9 @@ def convert_csv_to_parquet(ticker, timeframe="1m"):
     if 'volume' in df.columns:
         ohlc_columns.append('volume')
     if 'vol' in df.columns: # Sometimes named 'vol'
-        df.rename(columns={'vol': 'volume'}, inplace=True)
+        df = df.rename(columns={'vol': 'volume'}, inplace=False)
     if 'Volume' in df.columns: # Sometimes named 'Volume'
-        df.rename(columns={'Volume': 'volume'}, inplace=True)
+        df = df.rename(columns={'Volume': 'volume'}, inplace=False)
         
     # Volume added above if present
         

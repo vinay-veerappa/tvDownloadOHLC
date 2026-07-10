@@ -29,7 +29,7 @@ def load_data(ticker):
         # Standardize index
         if 'time' in df.columns:
             df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
-            df.set_index('datetime', inplace=True)
+            df = df.set_index('datetime', inplace=False)
         
         # Convert to US/Eastern
         df = df.tz_convert('US/Eastern')

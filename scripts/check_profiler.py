@@ -20,7 +20,7 @@ def check_symbol(symbol):
     df = pd.read_parquet(path)
     if 'timestamp' in df.columns:
          df['timestamp'] = pd.to_datetime(df['timestamp'])
-         df.set_index('timestamp', inplace=True)
+         df = df.set_index('timestamp', inplace=False)
         
     # 0. NORMALIZE TO US/EASTERN
     if df.index.tz is None:

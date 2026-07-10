@@ -11,7 +11,7 @@ def process_adjustment():
     print("Loading Raw 1m Data...")
     df_raw = pd.read_csv(raw_1m_file)
     df_raw['datetime'] = pd.to_datetime(df_raw['datetime'])
-    df_raw.set_index('datetime', inplace=True)
+    df_raw = df_raw.set_index('datetime', inplace=False)
     
     # Store Raw 'date' for merging
     df_raw['date'] = df_raw.index.date
@@ -44,7 +44,7 @@ def process_adjustment():
     
     # We only need reference close
     ref_daily = df_ref[['date', 'close']].copy()
-    ref_daily.rename(columns={'close': 'ref_close'}, inplace=True)
+    ref_daily = ref_daily.rename(columns={'close': 'ref_close'}, inplace=False)
     
     print(f"Syncing {len(raw_daily)} raw days with Reference...")
     
@@ -69,7 +69,7 @@ def process_adjustment():
     
     # We need to broadcast the daily delta to all 1m bars of that day
     # Reset index to preserve datetime
-    df_raw.reset_index(inplace=True) 
+    df_raw = df_raw.reset_index(inplace=False) 
     
     df_adjusted = pd.merge(df_raw, merged_daily[['date', 'delta']], on='date', how='inner')
     
@@ -79,7 +79,7 @@ def process_adjustment():
         df_adjusted[col] = df_adjusted[col] + df_adjusted['delta']
         
     # Restore Index
-    df_adjusted.set_index('datetime', inplace=True)
+    df_adjusted = df_adjusted.set_index('datetime', inplace=False)
     
     print("Resampling to 1 Hour...")
     # Resample

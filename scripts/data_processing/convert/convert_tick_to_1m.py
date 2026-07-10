@@ -21,7 +21,7 @@ def convert_tick_to_1m_csv():
     df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], format='%m/%d/%Y %H:%M:%S.%f')
     
     # Set Index
-    df.set_index('datetime', inplace=True)
+    df = df.set_index('datetime', inplace=False)
     
     # Resample to 1 Minute
     print("Resampling to 1min OHLCV...")
@@ -40,10 +40,10 @@ def convert_tick_to_1m_csv():
     # Usually for OHLC files used in backtesting/charting, we might want to drop empty rows
     # or forward fill close, etc.
     # For now, we dropna to only produce bars where ticks existed.
-    result.dropna(inplace=True)
+    result = result.dropna(inplace=False)
     
     # Reset index to make datetime a column
-    result.reset_index(inplace=True)
+    result = result.reset_index(inplace=False)
     
     # Rename columns to standard lowercase
     result.columns = ['datetime', 'open', 'high', 'low', 'close', 'volume']

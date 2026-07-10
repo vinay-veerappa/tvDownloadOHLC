@@ -1,4 +1,4 @@
-﻿
+
 import pandas as pd
 import numpy as np
 import os
@@ -95,7 +95,7 @@ def load_data(ticker, timeframe):
          # Try to find a datetime-like column
          for col in df.columns:
              if 'date' in col or 'time' in col:
-                 df.rename(columns={col: 'datetime'}, inplace=True)
+                 df = df.rename(columns={col: 'datetime'}, inplace=False)
                  break
                  
     if 'datetime' not in df.columns:

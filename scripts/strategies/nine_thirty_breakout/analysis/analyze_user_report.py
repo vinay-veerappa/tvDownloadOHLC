@@ -52,7 +52,7 @@ def analyze_trade_report():
                 if 'Profit' not in df.columns:
                      df.columns = df.columns.astype(str).str.replace('\n', ' ').str.replace('  ', ' ').str.strip()
                      pnl_col = next((c for c in df.columns if 'Net P&L' in c and 'USD' in c), None)
-                     if pnl_col: df.rename(columns={pnl_col: 'Profit'}, inplace=True)
+                     if pnl_col: df = df.rename(columns={pnl_col: 'Profit'}, inplace=False)
                      
                 if 'Profit' in df.columns:
                      if df['Profit'].dtype == object:
@@ -60,7 +60,7 @@ def analyze_trade_report():
                      
                      # Find Date column
                      date_col = next((c for c in df.columns if 'Date' in c and 'time' in c), None)
-                     if date_col: df.rename(columns={date_col: 'Date/Time'}, inplace=True)
+                     if date_col: df = df.rename(columns={date_col: 'Date/Time'}, inplace=False)
 
                      # Deduplicate Partials
                      if 'Trade #' in df.columns:

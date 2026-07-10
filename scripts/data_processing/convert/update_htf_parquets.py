@@ -41,12 +41,12 @@ for csv_path in sorted(source_dir.glob("*.csv")):
     
     # Use the pure CSV UTC time as the index as the user requested
     df_new['datetime'] = pd.to_datetime(df_new['time'], unit='s', utc=True)
-    df_new.set_index('datetime', inplace=True)
+    df_new = df_new.set_index('datetime', inplace=False)
     
     # Create an artificial session_date just for overlapping math
     # +4 hours safely pushes 22:00 UTC into the next calendar day (the correct Trading Session)
     df_new['session_date'] = (df_new.index + pd.Timedelta(hours=4)).floor('d')
-    df_new.drop(columns=['time'], inplace=True, errors='ignore')
+    df_new = df_new.drop(columns=['time'], inplace=False, errors='ignore')
 
     # 2. Load Old Data
     parquet_path = output_dir / f"{ticker}_{timeframe}.parquet"

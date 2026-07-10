@@ -5,8 +5,8 @@ def load_data():
     file_path = "data/NinjaTrader/24Dec2025/NQ Thursday 90.csv"
     print(f"Loading {file_path}...")
     df = pd.read_csv(file_path, parse_dates=[['Date', 'Time']], usecols=[0,1,2,3,4,5], names=['Date', 'Time', 'Open', 'High', 'Low', 'Close'], header=0, on_bad_lines='skip')
-    df.rename(columns={'Date_Time': 'datetime', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close'}, inplace=True)
-    df.set_index('datetime', inplace=True)
+    df = df.rename(columns={'Date_Time': 'datetime', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close'}, inplace=False)
+    df = df.set_index('datetime', inplace=False)
     df = df.sort_index()
     df = df['2025-01-01':]
     print(f"Loaded {len(df)} bars from 2025.")

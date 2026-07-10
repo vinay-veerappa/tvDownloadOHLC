@@ -82,7 +82,7 @@ def load_bars_duckdb(instrument: str, start_date=None, end_date=None) -> pd.Data
     else:
         df['dt_et'] = df['dt_et'].dt.tz_convert(ET_TZ)
         
-    df.set_index('dt_et', inplace=True)
+    df = df.set_index('dt_et', inplace=False)
     return df
 
 def get_session_bars(df: pd.DataFrame, trading_day) -> pd.DataFrame:

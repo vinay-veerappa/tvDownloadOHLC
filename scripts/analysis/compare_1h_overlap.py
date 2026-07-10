@@ -8,7 +8,7 @@ def compare_adjusted_vs_spx():
     print("Loading Adjusted 1H...")
     df_adj = pd.read_csv(adjusted_file)
     df_adj['datetime'] = pd.to_datetime(df_adj['datetime'])
-    df_adj.set_index('datetime', inplace=True)
+    df_adj = df_adj.set_index('datetime', inplace=False)
     
     print("Loading SPX 1H...")
     df_spx = pd.read_parquet(spx_file)
@@ -25,7 +25,7 @@ def compare_adjusted_vs_spx():
     if df_spx['datetime'].dt.tz is not None:
         df_spx['datetime'] = df_spx['datetime'].dt.tz_convert(None)
         
-    df_spx.set_index('datetime', inplace=True)
+    df_spx = df_spx.set_index('datetime', inplace=False)
     
     # Intersect
     common_idx = df_adj.index.intersection(df_spx.index)

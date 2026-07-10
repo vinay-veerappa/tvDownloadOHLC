@@ -16,13 +16,13 @@ def audit_compare(csv_path, parquet_path):
         'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume',
         'vol': 'volume', 'date': 'date_str', 'time': 'time_str'
     }
-    df_csv.rename(columns=rename_map, inplace=True)
+    df_csv = df_csv.rename(columns=rename_map, inplace=False)
     
     # Parse Dates Quick (Assuming established format for speed)
     # The error was here: using 'date' instead of 'date_str'
     df_csv['datetime'] = pd.to_datetime(df_csv['date_str'] + ' ' + df_csv['time_str'])
-    df_csv.set_index('datetime', inplace=True)
-    df_csv.sort_index(inplace=True)
+    df_csv = df_csv.set_index('datetime', inplace=False)
+    df_csv = df_csv.sort_index(inplace=False)
     
     # TRANSFORMATION 1: Timezone (Exchange -> NY)
     if df_csv.index.tz is None:

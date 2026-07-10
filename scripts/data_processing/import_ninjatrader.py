@@ -135,8 +135,8 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
         return
 
     # Set Index & Sort
-    df.set_index('datetime', inplace=True)
-    df.sort_index(inplace=True)
+    df = df.set_index('datetime', inplace=False)
+    df = df.sort_index(inplace=False)
     
     # 2. Handle Timezone & Shift
     # A. Timezone Conversion (User Local -> America/New_York)
@@ -219,7 +219,7 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
         # keep='first' -> If index repeats, keep the FIRST occurrence.
         # If we concat [df_old, df], first is df_old. So Yahoo wins. Good.
         df_combined = df_combined[~df_combined.index.duplicated(keep='first')]
-        df_combined.sort_index(inplace=True)
+        df_combined = df_combined.sort_index(inplace=False)
         df_combined = ensure_utc_naive_index(df_combined)
         
         print(f"  Merged Total: {len(df_combined)} rows")

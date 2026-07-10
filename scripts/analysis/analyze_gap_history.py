@@ -40,7 +40,7 @@ def analyze_gap_history(ticker="NQ1"):
     df_1m = load_fused_data(ticker, timeframe="1m", require_historical=True)
     if 'datetime' in df_1m.columns:
         df_1m['datetime'] = pd.to_datetime(df_1m['datetime'], utc=True)
-        df_1m.set_index('datetime', inplace=True)
+        df_1m = df_1m.set_index('datetime', inplace=False)
     try:
         df_1m = df_1m.tz_convert('US/Eastern')
     except:
@@ -81,7 +81,7 @@ def analyze_gap_history(ticker="NQ1"):
     if not vix_df.empty:
         if 'datetime' in vix_df.columns:
             vix_df['datetime'] = pd.to_datetime(vix_df['datetime'], utc=True)
-            vix_df.set_index('datetime', inplace=True)
+            vix_df = vix_df.set_index('datetime', inplace=False)
         try: vix_df = vix_df.tz_convert('US/Eastern')
         except: vix_df = vix_df.tz_localize('UTC').tz_convert('US/Eastern')
         vix_daily = vix_df.groupby(vix_df.index.date)['close'].first()
@@ -91,7 +91,7 @@ def analyze_gap_history(ticker="NQ1"):
     if not vvix_df.empty:
         if 'datetime' in vvix_df.columns:
             vvix_df['datetime'] = pd.to_datetime(vvix_df['datetime'], utc=True)
-            vvix_df.set_index('datetime', inplace=True)
+            vvix_df = vvix_df.set_index('datetime', inplace=False)
         vvix_daily = vvix_df.groupby(vvix_df.index.date)['close'].last()
         for d, val in vvix_daily.items(): vvix_by_date[str(d)] = val
             

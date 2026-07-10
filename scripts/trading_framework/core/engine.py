@@ -145,7 +145,7 @@ class BacktestEngine:
         gross_loss = abs(sum(losses)) if losses else 0.0001
         
         df_trades = pd.DataFrame([{"time": t.entry_time, "pnl": t.realized_pnl} for t in trades if t.entry_time])
-        df_trades.set_index("time", inplace=True)
+        df_trades = df_trades.set_index("time", inplace=False)
         cur = df_trades["pnl"].cumsum()
         daily = df_trades["pnl"].resample('D').sum().dropna()
         daily = daily[daily != 0]

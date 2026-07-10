@@ -50,7 +50,7 @@ if len(dups) == 0:
     df_json = pd.read_csv(csv_path)
     df_json.columns = [c.lower() for c in df_json.columns]
     df_json = df_json[['time', 'open', 'high', 'low', 'close']]
-    df_json.sort_values('time', inplace=True)
+    df_json = df_json.sort_values('time', inplace=False)
     
     # Clear and create output dir
     if output_dir.exists():

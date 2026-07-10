@@ -39,7 +39,7 @@ def load_nt_trades(filepath):
     df = pd.read_csv(filepath)
     
     # Rename columns
-    df.rename(columns={
+    df = df.rename(columns={
         'Trade number': 'Trade #',
         'Entry time': 'Entry Time',
         'Exit time': 'Exit Time',
@@ -49,7 +49,17 @@ def load_nt_trades(filepath):
         'Market pos.': 'Direction',
         'Exit name': 'Exit Signal',
         'Commission': 'Commission',
-    }, inplace=True)
+    }, inplace=False)
+
+
+
+
+
+
+
+
+
+
     
     # Parse columns
     df['Entry Time'] = pd.to_datetime(df['Entry Time'])
@@ -86,8 +96,9 @@ def load_tv_trades(filepath):
     exit_cols = ['Trade #', 'Date and time', 'Type', 'Signal', 'Price USD', 'Net P&L USD']
     exit_cols = [c for c in exit_cols if c in exits.columns]
     exits = exits[exit_cols].copy()
-    exits.rename(columns={'Date and time': 'Exit Time', 'Price USD': 'Exit Price', 
-                          'Net P&L USD': 'Net P&L', 'Signal': 'Exit Signal'}, inplace=True)
+    exits = exits.rename(columns={'Date and time': 'Exit Time', 'Price USD': 'Exit Price', 
+                          'Net P&L USD': 'Net P&L', 'Signal': 'Exit Signal'}, inplace=False)
+
     
     merged = pd.merge(exits, entries, on='Trade #', how='left')
     merged['Entry Time'] = pd.to_datetime(merged['Entry Time'])

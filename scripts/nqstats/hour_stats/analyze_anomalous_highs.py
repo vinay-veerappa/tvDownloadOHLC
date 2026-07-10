@@ -15,7 +15,7 @@ def load_data(ticker):
     df = pd.read_parquet(path)
     if 'time' in df.columns:
         df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     df = df.tz_convert('US/Eastern')
     return df[df.index.year >= START_YEAR]
 
@@ -26,7 +26,7 @@ def analyze_anomalous_highs(df):
     h_df = df.resample('1h').agg({
         'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'
     })
-    h_df.dropna(inplace=True)
+    h_df = h_df.dropna(inplace=False)
     
     h_df['Color'] = np.where(h_df['close'] > h_df['open'], 'Green', 'Red')
     h_df['Prev_Color'] = h_df['Color'].shift(1)

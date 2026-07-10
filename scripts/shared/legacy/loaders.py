@@ -78,7 +78,7 @@ def load_strategy_data(filepath, name=None):
     
     # Rename
     rename_map = { 'Date and time': 'Exit Time', 'Price USD': 'Exit Price', 'Signal': 'Exit Signal' }
-    exits.rename(columns=rename_map, inplace=True)
+    exits = exits.rename(columns=rename_map, inplace=False)
     
     # Merge
     merged = pd.merge(exits, entries, on='Trade #', how='left')

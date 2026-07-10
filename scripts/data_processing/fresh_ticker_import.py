@@ -42,14 +42,14 @@ def fresh_import(ticker: str, csv_path: str):
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # 6. Set index, sort, deduplicate
-    df.set_index('datetime', inplace=True)
-    df.sort_index(inplace=True)
+    df = df.set_index('datetime', inplace=False)
+    df = df.sort_index(inplace=False)
     before_dedup = len(df)
     df = df[~df.index.duplicated(keep='last')]
     print(f"Deduplicated: {before_dedup - len(df):,} duplicates removed")
     
     # 7. Drop NaN
-    df.dropna(subset=['close'], inplace=True)
+    df = df.dropna(subset=['close'], inplace=False)
     
     print(f"Final rows: {len(df):,}")
     print(f"Date range: {df.index.min()} to {df.index.max()}")

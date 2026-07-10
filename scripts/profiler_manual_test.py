@@ -116,7 +116,7 @@ def verify_live_data(args):
     print(f"\n[+] Extracting Live Reality: {ticker} | {target_date}...")
     df = pd.read_parquet(path, columns=cols)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df.set_index('timestamp', inplace=True)
+    df = df.set_index('timestamp', inplace=False)
     
     # Filter to the specific day (+/- buffer for 18:00 start)
     target_dt = pd.to_datetime(target_date).date()

@@ -25,7 +25,7 @@ def verify_overlap(csv_path, ticker, timezone="America/Los_Angeles"):
             print(df_csv.columns)
             return
 
-        df_csv.set_index('datetime', inplace=True)
+        df_csv = df_csv.set_index('datetime', inplace=False)
         # Localize
         df_csv.index = df_csv.index.tz_localize(timezone) # Source TZ
         

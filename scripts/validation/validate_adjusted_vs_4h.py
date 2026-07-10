@@ -8,7 +8,7 @@ def validate_4h_overlap():
     print("Loading Adjusted 1H Data...")
     df_adj = pd.read_csv(adjusted_1h_file)
     df_adj['datetime'] = pd.to_datetime(df_adj['datetime'])
-    df_adj.set_index('datetime', inplace=True)
+    df_adj = df_adj.set_index('datetime', inplace=False)
     
     print("Loading ES1 4H Data...")
     df_es4 = pd.read_parquet(es1_4h_file)
@@ -24,7 +24,7 @@ def validate_4h_overlap():
         
     if df_es4['datetime'].dt.tz is not None:
         df_es4['datetime'] = df_es4['datetime'].dt.tz_convert(None)
-    df_es4.set_index('datetime', inplace=True)
+    df_es4 = df_es4.set_index('datetime', inplace=False)
     
     print(f"ES4 Range: {df_es4.index.min()} to {df_es4.index.max()}")
     

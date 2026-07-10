@@ -30,7 +30,7 @@ def verify_alignment(csv_path: str, ticker: str, timezone: str = "America/Los_An
             print(f"Columns: {df_csv.columns}")
             return
 
-        df_csv.set_index('datetime', inplace=True)
+        df_csv = df_csv.set_index('datetime', inplace=False)
         # Localize & Convert
         df_csv.index = df_csv.index.tz_localize(timezone)
         df_csv.index = df_csv.index.tz_convert('US/Eastern')

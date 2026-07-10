@@ -9,7 +9,7 @@ def compare_data():
     print("Loading New CSV...")
     df_new = pd.read_csv(csv_file)
     df_new['datetime'] = pd.to_datetime(df_new['datetime'])
-    df_new.set_index('datetime', inplace=True)
+    df_new = df_new.set_index('datetime', inplace=False)
     
     print("Loading Existing Parquet...")
     df_old = pd.read_parquet(parquet_file)
@@ -20,7 +20,7 @@ def compare_data():
              df_old['datetime'] = pd.to_datetime(df_old['time'], unit='s')
         else:
              df_old['datetime'] = pd.to_datetime(df_old['time'])
-        df_old.set_index('datetime', inplace=True)
+        df_old = df_old.set_index('datetime', inplace=False)
         
     print("Resampling to 15min...")
     # Resample New

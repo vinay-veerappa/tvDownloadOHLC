@@ -80,7 +80,7 @@ def compute_levels(df):
     df['day_key'] = df.index.normalize()
     df['pdh'] = df['day_key'].map(daily['pdh'].to_dict())
     df['pdl'] = df['day_key'].map(daily['pdl'].to_dict())
-    df.drop(columns=['hour_key','day_key'], inplace=True)
+    df = df.drop(columns=['hour_key','day_key'], inplace=False)
     return df
 
 

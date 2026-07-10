@@ -10,7 +10,7 @@ df_d = df_d.sort_values('time').reset_index(drop=True)
 # Build weekly series exact same way Pine Script does:
 # Weekly bars in Pine script are just aggregation of daily bars (Mon-Sun).
 # Let's resample daily to weekly (ending on Sunday, label='left' like TV)
-df_d.set_index('time', inplace=True)
+df_d = df_d.set_index('time', inplace=False)
 # TradingView weekly starts on Monday for most assets, or Sunday 18:00
 # Let's use W-SUN or W-MON.
 df_w = df_d.resample('W-MON', closed='left', label='left').agg({

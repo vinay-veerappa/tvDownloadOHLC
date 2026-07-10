@@ -88,7 +88,7 @@ async def run_comparison():
     # 2. Timezone Conversion (UTC -> US/Eastern)
     # The 'time' column is Unix timestamp (UTC).
     df['datetime'] = pd.to_datetime(df['time'], unit='s').dt.tz_localize('UTC').dt.tz_convert('US/Eastern')
-    df.dropna(subset=['datetime'], inplace=True)
+    df = df.dropna(subset=['datetime'], inplace=False)
     
     # 3. Filter for Session Start (18:00 EST)
     sess_start_mask = (df['datetime'].dt.hour == 18) & (df['datetime'].dt.minute == 0)

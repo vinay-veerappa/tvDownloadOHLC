@@ -30,7 +30,7 @@ def plot_verification_chart(ticker="NQ1", days=14):
     # Ensure UTC -> ET
     if 'datetime' in df.columns:
         df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     
     try:
         df.index = df.index.tz_convert('US/Eastern')

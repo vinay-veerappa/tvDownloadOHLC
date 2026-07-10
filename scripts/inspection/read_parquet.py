@@ -29,16 +29,16 @@ def read_parquet_to_json(file_path, max_rows=None, offset=0):
         total_rows = len(df)
         
         # Reset index to move time/date/datetime from index to column
-        df.reset_index(inplace=True)
+        df = df.reset_index(inplace=False)
             
         # Rename columns if necessary (case insensitive)
         df.columns = [c.lower() for c in df.columns]
         
         # Map common time column names to 'time'
         if 'datetime' in df.columns:
-            df.rename(columns={'datetime': 'time'}, inplace=True)
+            df = df.rename(columns={'datetime': 'time'}, inplace=False)
         elif 'date' in df.columns:
-            df.rename(columns={'date': 'time'}, inplace=True)
+            df = df.rename(columns={'date': 'time'}, inplace=False)
             
         # Convert time to UNIX timestamp (seconds) for compatibility
         if pd.api.types.is_datetime64_any_dtype(df['time']):
@@ -46,7 +46,7 @@ def read_parquet_to_json(file_path, max_rows=None, offset=0):
             df['time'] = (df['time'].astype('int64') // 10**9).astype(int)
             
         # Ensure data is sorted by time
-        df.sort_values('time', inplace=True)
+        df = df.sort_values('time', inplace=False)
         df = df.reset_index(drop=True)
         
         # Calculate slice indices for pagination
@@ -88,5 +88,4 @@ if __name__ == "__main__":
         max_rows = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
         offset = int(sys.argv[3]) if len(sys.argv) > 3 else 0
         read_parquet_to_json(file_path, max_rows, offset)
-
 

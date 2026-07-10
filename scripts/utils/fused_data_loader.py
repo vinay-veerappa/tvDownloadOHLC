@@ -93,10 +93,10 @@ def _normalize_index(df):
     # 3. Handle other datetime columns
     if 'datetime' in df.columns:
         df['datetime'] = pd.to_datetime(df['datetime'])
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     elif 'date' in df.columns:
         df['datetime'] = pd.to_datetime(df['date'])
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     # 3. Handle 'time' column (Epoch ms/s)
     if 'time' in df.columns:
         # Live Storage uses 'time' column with epoch float/int
@@ -107,7 +107,7 @@ def _normalize_index(df):
             df['datetime'] = pd.to_datetime(df['time'], unit='s')
         else:
             df['datetime'] = pd.to_datetime(df['time'])
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
         return df
     
     # 4. Find other datetime columns
@@ -115,7 +115,7 @@ def _normalize_index(df):
     first_col = df.columns[0]
     try:
         df['datetime'] = pd.to_datetime(df[first_col])
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     except:
         pass
     

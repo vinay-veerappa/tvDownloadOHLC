@@ -32,8 +32,8 @@ df['datetime'] = pd.to_datetime(df['date_str'] + ' ' + df['time_str'], dayfirst=
 # Convert Chicago -> UTC -> strip TZ
 df['datetime'] = df['datetime'].dt.tz_localize('America/Chicago').dt.tz_convert('UTC').dt.tz_localize(None)
 
-df.set_index('datetime', inplace=True)
-df.sort_index(inplace=True)
+df = df.set_index('datetime', inplace=False)
+df = df.sort_index(inplace=False)
 
 print(f"Date range: {df.index.min()} to {df.index.max()}")
 

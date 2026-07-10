@@ -51,7 +51,7 @@ def calculate_rth_gaps(ticker):
     # Ensure UTC -> ET
     if 'datetime' in df.columns:
         df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     
     try:
         df = df.tz_convert('US/Eastern')
@@ -88,11 +88,11 @@ def calculate_rth_gaps(ticker):
     # Resample to Daily
     # For Opens, we want the FIRST open in the window
     daily_opens = opens_df.resample('1D').first()
-    daily_opens.dropna(inplace=True)
+    daily_opens = daily_opens.dropna(inplace=False)
     
     # For Closes, we want the LAST close in the window
     daily_closes = closes_df.resample('1D').last()
-    daily_closes.dropna(inplace=True)
+    daily_closes = daily_closes.dropna(inplace=False)
     
     # Align: Gap = Today's Open - Yesterday's Close
     # Shift closes forward by 1 day so "Yesterday" aligns with "Today"
@@ -101,7 +101,7 @@ def calculate_rth_gaps(ticker):
     # Merge
     merged = pd.concat([daily_opens, prev_daily_closes], axis=1)
     merged.columns = ['curr_open', 'prev_close']
-    merged.dropna(inplace=True)
+    merged = merged.dropna(inplace=False)
     
     if merged.empty:
         print(f"[{ticker}] No aligned gaps found.")

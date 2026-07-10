@@ -122,7 +122,7 @@ def analyze_open_levels_v2():
     
     # Merge Outcomes
     df_final = df_levels.join(df_outcomes[['London_Outcome', 'NY1_Outcome']])
-    df_final.dropna(inplace=True)
+    df_final = df_final.dropna(inplace=False)
     
     print(f"Total Correlation Points: {len(df_final)}")
     

@@ -182,11 +182,15 @@ def main() -> None:
     if args.append and _OUTPUT_PATH.exists():
         existing = pd.read_parquet(_OUTPUT_PATH)
         out = pd.concat([existing, out], ignore_index=True)
-        out.drop_duplicates(
+        out = out.drop_duplicates(
             subset=["symbol", "range_name", "strategy_name", "trading_date"],
             keep="last",
-            inplace=True,
+            inplace=False,
         )
+
+
+
+
 
     _DERIVED_DIR.mkdir(parents=True, exist_ok=True)
     out.to_parquet(_OUTPUT_PATH, index=False)

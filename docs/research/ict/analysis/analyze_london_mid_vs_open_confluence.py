@@ -107,7 +107,7 @@ def analyze_confluence():
     df_globex_shifted.index = df_globex_shifted.index.astype(str)
     df_final = df_final.join(df_globex_shifted)
     
-    df_final.dropna(inplace=True)
+    df_final = df_final.dropna(inplace=False)
     print(f"Total Combined Days: {len(df_final)}")
     
     # --- ANALYSIS ---

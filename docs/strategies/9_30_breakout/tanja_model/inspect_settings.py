@@ -53,7 +53,7 @@ def main():
 
     # Create DataFrame
     df = pd.DataFrame(all_data)
-    df.set_index('FileID', inplace=True)
+    df = df.set_index('FileID', inplace=False)
 
     # Remove columns where all values are the same (to highlight differences)
     nunique = df.apply(pd.Series.nunique)

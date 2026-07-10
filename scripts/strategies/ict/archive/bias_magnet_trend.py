@@ -1,4 +1,4 @@
-﻿
+
 import pandas as pd
 import numpy as np
 import os
@@ -25,13 +25,13 @@ def load_data(ticker):
     if isinstance(df.index, pd.DatetimeIndex):
         df = df.reset_index()
         if 'time' not in df.columns and 'datetime' not in df.columns:
-             df.rename(columns={df.columns[0]: 'datetime'}, inplace=True)
+             df = df.rename(columns={df.columns[0]: 'datetime'}, inplace=False)
     if 'time' in df.columns and 'datetime' not in df.columns:
         df['datetime'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] > 1e10 else 'ms', utc=True)
     if 'datetime' not in df.columns:
          for col in df.columns:
              if pd.api.types.is_datetime64_any_dtype(df[col]):
-                 df.rename(columns={col: 'datetime'}, inplace=True)
+                 df = df.rename(columns={col: 'datetime'}, inplace=False)
                  break
     if 'datetime' in df.columns:
         df = df.sort_values('datetime').reset_index(drop=True)

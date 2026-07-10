@@ -44,7 +44,7 @@ def load_1m_data(ticker: str) -> pd.DataFrame:
         # Find any column that looks like datetime
         for col in df.columns:
             if 'date' in col.lower() or 'time' in col.lower():
-                df.rename(columns={col: 'datetime'}, inplace=True)
+                df = df.rename(columns={col: 'datetime'}, inplace=False)
                 df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
                 break
     

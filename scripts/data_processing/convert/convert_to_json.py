@@ -14,23 +14,23 @@ def convert_parquet_to_json(parquet_path, json_path):
     df = pd.read_parquet(parquet_path)
     
     # Reset index to move datetime from index to column
-    df.reset_index(inplace=True)
+    df = df.reset_index(inplace=False)
     
     # Standardize column names
     df.columns = [c.lower() for c in df.columns]
     
     # Map time column names
     if 'datetime' in df.columns:
-        df.rename(columns={'datetime': 'time'}, inplace=True)
+        df = df.rename(columns={'datetime': 'time'}, inplace=False)
     elif 'date' in df.columns:
-        df.rename(columns={'date': 'time'}, inplace=True)
+        df = df.rename(columns={'date': 'time'}, inplace=False)
     
     # Convert time to Unix timestamp (seconds)
     if pd.api.types.is_datetime64_any_dtype(df['time']):
         df['time'] = (df['time'].astype('int64') // 10**9).astype(int)
     
     # Sort by time
-    df.sort_values('time', inplace=True)
+    df = df.sort_values('time', inplace=False)
     
     # Select only OHLC columns (no volume to reduce size)
     df = df[['time', 'open', 'high', 'low', 'close']]

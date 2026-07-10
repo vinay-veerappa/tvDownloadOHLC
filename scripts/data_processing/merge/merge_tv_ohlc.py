@@ -139,8 +139,8 @@ def merge_history(ticker, timeframe, parquet_path):
     # Convert to US/Eastern to match project standard
     source_df['datetime'] = source_df['datetime'].dt.tz_convert('US/Eastern')
     
-    source_df.set_index('datetime', inplace=True)
-    source_df.sort_index(inplace=True)
+    source_df = source_df.set_index('datetime', inplace=False)
+    source_df = source_df.sort_index(inplace=False)
     source_df = source_df[~source_df.index.duplicated(keep='first')]
     
     if 'volume' not in source_df.columns:
@@ -173,7 +173,7 @@ def merge_history(ticker, timeframe, parquet_path):
         if len(new_rows) > 0:
             print(f"  Adding {len(new_rows)} new rows from history.")
             final_df = pd.concat([target_df, new_rows])
-            final_df.sort_index(inplace=True)
+            final_df = final_df.sort_index(inplace=False)
         else:
             print("  No new history rows to add.")
             final_df = target_df

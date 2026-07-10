@@ -36,10 +36,10 @@ async def main():
         prices_df = pd.read_parquet(parquet_path)
         # Normalize columns: time, close
         if 'time' not in prices_df.columns and 'Date' in prices_df.columns:
-             prices_df.rename(columns={'Date': 'time'}, inplace=True)
+             prices_df = prices_df.rename(columns={'Date': 'time'}, inplace=False)
         # Normalize Close
         if 'Close' in prices_df.columns:
-             prices_df.rename(columns={'Close': 'close'}, inplace=True)
+             prices_df = prices_df.rename(columns={'Close': 'close'}, inplace=False)
              
         # Create map: Date(str) -> Close
         prices_df['date_str'] = pd.to_datetime(prices_df['time']).dt.strftime('%Y-%m-%d')
@@ -98,8 +98,8 @@ async def process_all_tickers_efficiently():
         
         # Normalize
         cols = {c: c.lower() for c in df.columns}
-        df.rename(columns=cols, inplace=True)
-        if 'date' in df.columns: df.rename(columns={'date': 'time'}, inplace=True)
+        df = df.rename(columns=cols, inplace=False)
+        if 'date' in df.columns: df = df.rename(columns={'date': 'time'}, inplace=False)
         
         # Handle Index if time column missing
         if 'time' not in df.columns and isinstance(df.index, pd.DatetimeIndex):

@@ -101,7 +101,7 @@ def load_ninjatrader_trades(filepath, name="NinjaTrader"):
         'MFE': 'MFE USD',
     }
     
-    df.rename(columns=rename_map, inplace=True)
+    df = df.rename(columns=rename_map, inplace=False)
     
     # Parse currency columns
     def parse_currency(val):

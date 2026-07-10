@@ -19,8 +19,8 @@ def load_data(parquet_path):
     elif isinstance(df.index, pd.DatetimeIndex):
         df['datetime'] = df.index
     
-    df.set_index('datetime', inplace=True)
-    df.sort_index(inplace=True)
+    df = df.set_index('datetime', inplace=False)
+    df = df.sort_index(inplace=False)
     return df
 
 def scan_anomalies(df, ticker):
@@ -98,7 +98,7 @@ def verify_against_csv(parquet_path, csv_path, ticker):
         # If headers are missing, we might have issues.
         # Let's rely on common NT output
         rename_map = {'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'vol': 'volume', 'volume': 'volume'}
-        df_csv.rename(columns=rename_map, inplace=True)
+        df_csv = df_csv.rename(columns=rename_map, inplace=False)
         
         # Build datetime
         # Assuming format from Peek: 20241209;000000
@@ -122,7 +122,7 @@ def verify_against_csv(parquet_path, csv_path, ticker):
              # Try fallback
              df_csv['datetime'] = pd.to_datetime(df_csv.iloc[:,0].astype(str) + ' ' + df_csv.iloc[:,1].astype(str).str.zfill(6))
              
-        df_csv.set_index('datetime', inplace=True)
+        df_csv = df_csv.set_index('datetime', inplace=False)
         
         # Timezone Shift (US/Central -> NY)
         # NT Export 'Time' is usually Exchange Time (Central)

@@ -138,7 +138,7 @@ def _build_master(symbols: List[str]) -> pd.DataFrame:
         # drop context's own gap cols if present, use dedicated file
         for gc in ["gap_filled", "gap_direction", "gap_size_bucket", "open_vs_pd_range"]:
             if gc in df.columns:
-                df.drop(columns=[gc], inplace=True)
+                df = df.drop(columns=[gc], inplace=False)
         df = df.merge(gap, on=["symbol", "trading_date"], how="left")
 
     # 3. Reference levels — PDH/PDL/MOP details
@@ -152,10 +152,11 @@ def _build_master(symbols: List[str]) -> pd.DataFrame:
         })
         for col in ["pdh_broken", "pdl_broken"]:
             if col in df.columns:
-                df.drop(columns=[col], inplace=True)
+                df = df.drop(columns=[col], inplace=False)
         df = df.merge(ref, on=["symbol", "trading_date"], how="left")
-        df.rename(columns={"ref_pdh_broken": "pdh_broken",
-                            "ref_pdl_broken": "pdl_broken"}, inplace=True)
+        df = df.rename(columns={"ref_pdh_broken": "pdh_broken",
+                            "ref_pdl_broken": "pdl_broken"}, inplace=False)
+
 
     # 4. Range trades — OR-15 and IB-60 BO_1X day outcomes
     # Count non-trigger days as non-wins so probability reflects day-level edge.
@@ -407,7 +408,7 @@ def compute_confluence(df: pd.DataFrame) -> pd.DataFrame:
     df["confidence"] = np.select(conditions, ["HIGH", "MEDIUM", "LOW"], default="LOW")
 
     # ── Clean up internal columns ─────────────────────────────────────────────
-    df.drop(columns=vote_cols + ["_pd_level_broken"], inplace=True, errors="ignore")
+    df = df.drop(columns=vote_cols + ["_pd_level_broken"], inplace=False, errors="ignore")
 
     return df
 

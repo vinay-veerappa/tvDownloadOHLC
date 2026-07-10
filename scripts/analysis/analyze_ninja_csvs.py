@@ -16,7 +16,7 @@ def analyze_csv(path):
     
     # Parse datetime
     df['datetime'] = pd.to_datetime(df['date_str'].astype(str) + ' ' + df['time_str'].astype(str), format='%m/%d/%Y %H:%M:%S')
-    df.sort_values('datetime', inplace=True)
+    df = df.sort_values('datetime', inplace=False)
     
     print(f"Rows: {len(df):,}")
     print(f"Start: {df['datetime'].min()}")

@@ -44,19 +44,19 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
             
     if has_time_col:
         # If time column exists, we can drop the index to avoid conflicts
-        df.reset_index(drop=True, inplace=True)
+        df = df.reset_index(drop=True, inplace=False)
     else:
         # If no time column, the index likely holds the time
-        df.reset_index(inplace=True)
+        df = df.reset_index(inplace=False)
         # Re-normalize columns because reset_index might have introduced a capitalized column (e.g. 'Datetime')
         df.columns = [c.lower() for c in df.columns]
     
     if 'datetime' in df.columns:
-        df.rename(columns={'datetime': 'time'}, inplace=True)
+        df = df.rename(columns={'datetime': 'time'}, inplace=False)
     elif 'date' in df.columns:
-        df.rename(columns={'date': 'time'}, inplace=True)
+        df = df.rename(columns={'date': 'time'}, inplace=False)
     elif 'index' in df.columns:
-        df.rename(columns={'index': 'time'}, inplace=True)
+        df = df.rename(columns={'index': 'time'}, inplace=False)
     
     # Fallback: If no 'time' column but index is datetime-like
     if 'time' not in df.columns:
@@ -69,7 +69,7 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
     if pd.api.types.is_datetime64_any_dtype(df['time']):
         df['time'] = (df['time'].astype('int64') // 10**9).astype(int)
     
-    df.sort_values('time', inplace=True)
+    df = df.sort_values('time', inplace=False)
     
     # Extract timeframe from filename for deduplication logic
     timeframe = parquet_path.stem.split('_')[-1]  # e.g., "1D" from "ES1_1D"
@@ -100,7 +100,7 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
             df = df.groupby('period').last().reset_index()
         
         # Sort again after deduplication
-        df.sort_values('time', inplace=True)
+        df = df.sort_values('time', inplace=False)
         df = df.drop(columns=['datetime', 'period'])
         
         print(f"  Deduplicated {timeframe}: {len(df)} bars (1 per {'day' if timeframe == '1D' else 'week'})")
@@ -116,7 +116,7 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
 
     # Sanitize: Drop NaNs in critical columns
     before_drop = len(df)
-    df.dropna(subset=['time', 'close'], inplace=True)
+    df = df.dropna(subset=['time', 'close'], inplace=False)
     after_time_drop = len(df)
     if before_drop != after_time_drop:
         print(f"  WARNING: Dropped {before_drop - after_time_drop} rows due to NaN time/close")
@@ -125,18 +125,18 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
     if not pd.api.types.is_integer_dtype(df['time']):
          # Try converting to int, coercing errors
          df['time'] = pd.to_numeric(df['time'], errors='coerce')
-         df.dropna(subset=['time'], inplace=True)
+         df = df.dropna(subset=['time'], inplace=False)
          after_coerce = len(df)
          if after_time_drop != after_coerce:
             print(f"  WARNING: Dropped {after_time_drop - after_coerce} rows due to invalid Time format")
          df['time'] = df['time'].astype(int)
          
     # Final sort
-    df.sort_values('time', inplace=True)
+    df = df.sort_values('time', inplace=False)
     
     # Deduplicate by time (keep last bar for each timestamp)
     before_dedup = len(df)
-    df.drop_duplicates(subset=['time'], keep='last', inplace=True)
+    df = df.drop_duplicates(subset=['time'], keep='last', inplace=False)
     if before_dedup != len(df):
         print(f"  Deduplicated: removed {before_dedup - len(df)} duplicate timestamps")
 

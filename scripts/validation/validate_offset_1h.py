@@ -26,7 +26,7 @@ def validate_offset_1h():
     
     # Floor to Day for key
     df_ref['date_key'] = df_ref['datetime'].dt.floor('D')
-    df_ref.set_index('date_key', inplace=True)
+    df_ref = df_ref.set_index('date_key', inplace=False)
     
     # 2. Daily Delta
     raw_daily = df_raw.resample('1D').last().dropna()
@@ -36,11 +36,11 @@ def validate_offset_1h():
     merged_daily['delta'] = merged_daily['close_ref'] - merged_daily['close_raw']
     
     # 3. Apply to Intraday
-    df_raw.reset_index(inplace=True)
+    df_raw = df_raw.reset_index(inplace=False)
     df_adj = pd.merge(df_raw, merged_daily[['delta']], left_on='date_key', right_index=True, how='inner')
     
     df_adj['close_adj'] = df_adj['close'] + df_adj['delta']
-    df_adj.set_index('datetime', inplace=True)
+    df_adj = df_adj.set_index('datetime', inplace=False)
     
     print("2. Resampling Adjusted Intraday to 1H (Offset 30min)...")
     # Resample
@@ -57,7 +57,7 @@ def validate_offset_1h():
         df_spx['datetime'] = df_spx.index
     if df_spx['datetime'].dt.tz is not None:
         df_spx['datetime'] = df_spx['datetime'].dt.tz_convert(None)
-    df_spx.set_index('datetime', inplace=True)
+    df_spx = df_spx.set_index('datetime', inplace=False)
     
     # 4. Compare
     common = df_1h_adj.index.intersection(df_spx.index)

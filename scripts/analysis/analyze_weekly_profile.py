@@ -48,7 +48,7 @@ def analyze_weekly_profile():
             if not isinstance(df_live.index, pd.DatetimeIndex):
                 if 'time' in df_live.columns:
                      df_live['datetime'] = pd.to_datetime(df_live['time'], unit='ms', utc=True)
-                     df_live.set_index('datetime', inplace=True)
+                     df_live = df_live.set_index('datetime', inplace=False)
             
             if df_live.index.tz is None:
                 df_live.index = df_live.index.tz_localize('UTC')
@@ -73,14 +73,14 @@ def analyze_weekly_profile():
         if df.index.tz is None:
             df.index = df.index.tz_localize('UTC')
         df.index = df.index.tz_convert('US/Eastern')
-        df.sort_index(inplace=True)
+        df = df.sort_index(inplace=False)
         if i == 0: df_1d = df
         else: df_1h = df
         
     if not df_live_1h.empty:
         df_1h = pd.concat([df_1h, df_live_1h])
         df_1h = df_1h[~df_1h.index.duplicated(keep='last')]
-        df_1h.sort_index(inplace=True)
+        df_1h = df_1h.sort_index(inplace=False)
 
     last_date = df_1d.index[-1]
     current_year, current_week, _ = last_date.isocalendar()

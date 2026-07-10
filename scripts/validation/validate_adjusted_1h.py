@@ -9,7 +9,7 @@ def validate_adjusted_vs_daily():
     print("Loading Adjusted 1H CSV...")
     df_1h = pd.read_csv(adjusted_1h_file)
     df_1h['datetime'] = pd.to_datetime(df_1h['datetime'])
-    df_1h.set_index('datetime', inplace=True)
+    df_1h = df_1h.set_index('datetime', inplace=False)
     
     print("Aggregating Adjusted 1H to Daily...")
     # Resample to Daily
@@ -40,7 +40,7 @@ def validate_adjusted_vs_daily():
         df_ref['datetime'] = df_ref['datetime'].dt.tz_convert(None)
         
     df_ref['date'] = df_ref['datetime'].dt.date
-    df_ref.set_index('date', inplace=True)
+    df_ref = df_ref.set_index('date', inplace=False)
     
     print(f"Reference Rows: {len(df_ref)}")
     

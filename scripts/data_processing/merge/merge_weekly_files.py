@@ -38,8 +38,8 @@ def merge_weekly_files():
 
         # Basic cleanup: Ensure index is datetime
         if not isinstance(df_old.index, pd.DatetimeIndex):
-             if 'datetime' in df_old.columns: df_old.set_index('datetime', inplace=True)
-             elif 'date' in df_old.columns: df_old.set_index(pd.to_datetime(df_old['date']), inplace=True)
+             if 'datetime' in df_old.columns: df_old = df_old.set_index('datetime', inplace=False)
+             elif 'date' in df_old.columns: df_old = df_old.set_index(pd.to_datetime(df_old['date']), inplace=False)
              
         if not df_new.empty and not isinstance(df_new.index, pd.DatetimeIndex):
              # 1wk might be timezone aware, check script logic. Usually it is.
@@ -69,11 +69,11 @@ def merge_weekly_files():
             merged = pd.concat([df_old, df_new])
             # Deduplicate by Index
             merged = merged[~merged.index.duplicated(keep='last')]
-            merged.sort_index(inplace=True)
+            merged = merged.sort_index(inplace=False)
             print(f"  Merged:    {len(merged)} rows")
         else:
             merged = df_old
-            merged.sort_index(inplace=True)
+            merged = merged.sort_index(inplace=False)
             print(f"  Migrating 1W to 1wk (No existing 1wk found)")
 
         # Verify Integrity

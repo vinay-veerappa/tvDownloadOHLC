@@ -148,7 +148,7 @@ def main():
         existing_df = pd.read_parquet(MACRO_RECORDS_PATH)
         final_df = pd.concat([existing_df, final_df], ignore_index=True)
         # Drop duplicates if any by macro_id
-        final_df.drop_duplicates(subset=["macro_id"], keep="last", inplace=True)
+        final_df = final_df.drop_duplicates(subset=["macro_id"], keep="last", inplace=False)
     
     print(f"\nSaving {len(final_df)} total records to {MACRO_RECORDS_PATH}...")
     final_df.to_parquet(MACRO_RECORDS_PATH, index=False)

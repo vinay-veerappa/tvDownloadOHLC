@@ -15,7 +15,7 @@ def load_data(ticker):
     df = pd.read_parquet(path)
     if 'time' in df.columns:
         df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     df = df.tz_convert('US/Eastern')
     return df[df.index.year >= START_YEAR]
 
@@ -51,7 +51,7 @@ def get_stats_for_period(df, timeframe='1h', first_n_minutes=5, origin='start_da
         print(f"Resample Error: {e}")
         return pd.DataFrame()
 
-    period_df.dropna(inplace=True)
+    period_df = period_df.dropna(inplace=False)
     
     period_df['Color'] = np.where(period_df['close'] > period_df['open'], 'Green', 'Red')
     period_df['Mid'] = (period_df['high'] + period_df['low']) / 2

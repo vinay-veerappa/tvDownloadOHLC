@@ -50,7 +50,7 @@ class DataLoader:
                      # Rename index column to 'datetime' if it isn't named or named something else
                      # If index name was None, reset_index creates 'index' col.
                      if 'index' in df.columns and 'datetime' not in df.columns:
-                         df.rename(columns={'index': 'datetime'}, inplace=True)
+                         df = df.rename(columns={'index': 'datetime'}, inplace=False)
             
             # Now normalize column name to 'datetime'
             if 'time' in df.columns and 'datetime' not in df.columns:

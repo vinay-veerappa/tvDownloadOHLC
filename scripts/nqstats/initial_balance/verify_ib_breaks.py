@@ -17,7 +17,7 @@ def load_data(ticker):
     df = pd.read_parquet(path)
     if 'time' in df.columns:
         df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime', inplace=False)
     df = df.tz_convert('US/Eastern')
     return df[df.index.year >= START_YEAR]
 

@@ -65,7 +65,7 @@ def run_decision_tree_analysis():
         
     analysis_df = pd.DataFrame.from_dict(daily_records, orient='index')
     analysis_df.index.name = 'date'
-    analysis_df.reset_index(inplace=True)
+    analysis_df = analysis_df.reset_index(inplace=False)
     
     # Filter for full days (must have Asia, London, NY_AM)
     analysis_df = analysis_df.dropna(subset=['Asia_Status', 'London_Status', 'NY_AM_Status'])

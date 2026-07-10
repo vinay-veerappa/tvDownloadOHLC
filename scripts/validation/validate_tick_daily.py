@@ -8,7 +8,7 @@ def validate_daily():
     print("Loading 1m CSV...")
     df_1m = pd.read_csv(csv_file)
     df_1m['datetime'] = pd.to_datetime(df_1m['datetime'])
-    df_1m.set_index('datetime', inplace=True)
+    df_1m = df_1m.set_index('datetime', inplace=False)
     
     print("Aggregating 1m to Daily...")
     # Resample to Daily. Using '1D' or '1d'? 
@@ -44,7 +44,7 @@ def validate_daily():
         df_old['datetime'] = df_old['datetime'].dt.tz_convert(None) # Make naive for comparison
         
     df_old['date'] = df_old['datetime'].dt.date
-    df_old.set_index('date', inplace=True)
+    df_old = df_old.set_index('date', inplace=False)
     
     print(f"Reference Rows: {len(df_old)}")
     
