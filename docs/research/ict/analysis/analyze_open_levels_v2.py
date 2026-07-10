@@ -61,8 +61,8 @@ def analyze_open_levels_v2():
 
     print("Converting to US/Eastern...")
     df_1m['datetime'] = df_1m['datetime'].dt.tz_convert('US/Eastern')
-    df_1m.set_index('datetime', inplace=True)
-    df_1m.sort_index(inplace=True)
+    df_1m = df_1m.set_index('datetime')
+    df_1m = df_1m.sort_index()
     
     # --- EXTRACT LEVELS VECTORIZED ---
     print("2. Extracting Levels (Vectorized)...")

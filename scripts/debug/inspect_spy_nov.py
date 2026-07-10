@@ -22,10 +22,10 @@ def inspect_data():
     if not isinstance(df.index, pd.DatetimeIndex):
         if 'time' in df.columns:
             df['datetime'] = pd.to_datetime(df['time'], unit='s')
-            df.set_index('datetime', inplace=True)
+            df = df.set_index('datetime')
         elif 'datetime' in df.columns:
             df['datetime'] = pd.to_datetime(df['datetime'])
-            df.set_index('datetime', inplace=True)
+            df = df.set_index('datetime')
             
     # Filter
     print(f"Index Type: {df.index.dtype}")

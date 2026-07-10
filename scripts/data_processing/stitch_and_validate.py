@@ -53,7 +53,7 @@ def stitch_and_validate(ticker, timeframe="1m"):
             else:
                 df['datetime'] = pd.to_datetime(df[time_col])
                 
-            df.set_index('datetime', inplace=True)
+            df = df.set_index('datetime')
             dfs.append(df)
         except Exception as e:
             print(f"Error reading {f}: {e}")
@@ -69,7 +69,7 @@ def stitch_and_validate(ticker, timeframe="1m"):
     full_df = full_df[~full_df.index.duplicated(keep='first')]
     
     # Sort
-    full_df.sort_index(inplace=True)
+    full_df = full_df.sort_index()
     
     print(f"Total rows: {len(full_df)}")
     if not full_df.empty:

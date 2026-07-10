@@ -17,7 +17,7 @@ def inspect_daily():
          time_cols = [c for c in df.columns if 'time' in c.lower() or 'date' in c.lower()]
          if time_cols:
              df['datetime'] = pd.to_datetime(df[time_cols[0]])
-             df.set_index('datetime', inplace=True)
+             df = df.set_index('datetime')
     
     # Filter for Nov 2025
     start_date = "2025-11-03"

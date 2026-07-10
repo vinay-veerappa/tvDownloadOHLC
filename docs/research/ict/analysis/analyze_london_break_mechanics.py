@@ -68,8 +68,8 @@ def analyze_london_break_mechanics():
 
     print("Converting to US/Eastern...")
     df_1m['datetime'] = df_1m['datetime'].dt.tz_convert('US/Eastern')
-    df_1m.set_index('datetime', inplace=True)
-    df_1m.sort_index(inplace=True)
+    df_1m = df_1m.set_index('datetime')
+    df_1m = df_1m.sort_index()
     
     # Filter 1m data to only NY1 Session Times (09:30 - 12:00)
     # We want to check if/when London High/Low is broken.

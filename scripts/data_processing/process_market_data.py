@@ -38,7 +38,7 @@ def process_market_data():
                 df['datetime'] = pd.to_datetime(df[time_col])
                 
             # Set index
-            df.set_index('datetime', inplace=True)
+            df = df.set_index('datetime')
             
             # Keep only OHLCV columns (optional, but good for cleaning)
             # For now, keep all
@@ -55,7 +55,7 @@ def process_market_data():
 
     # 2. Stitch and Sort
     full_df = pd.concat(dfs)
-    full_df.sort_index(inplace=True)
+    full_df = full_df.sort_index()
     
     total_raw_rows = len(full_df)
     print(f"\nTotal raw rows: {total_raw_rows}")
@@ -97,7 +97,7 @@ def process_market_data():
         
     # 5. Save
     # Remove the helper column
-    full_df.drop(columns=['time_diff'], inplace=True)
+    full_df = full_df.drop(columns=['time_diff'])
     
     full_df.to_csv(output_file)
     print(f"\nSaved clean data to: {output_file}")

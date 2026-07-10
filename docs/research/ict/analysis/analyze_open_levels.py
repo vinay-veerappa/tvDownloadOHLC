@@ -63,8 +63,8 @@ def analyze_open_levels():
     # Convert to US/Eastern
     print("Converting to US/Eastern...")
     df_1m['datetime'] = df_1m['datetime'].dt.tz_convert('US/Eastern')
-    df_1m.set_index('datetime', inplace=True)
-    df_1m.sort_index(inplace=True)
+    df_1m = df_1m.set_index('datetime')
+    df_1m = df_1m.sort_index()
     
     print("2. Extracting Key Levels (Midnight & Globex Open)...")
     

@@ -80,9 +80,9 @@ The BSM/Black-76 fallback was implemented because RTD returned GAMMA=0. But we c
 **How to test:** Start the Hub + TOS, run `python -m scripts.streaming.options.run_options_levels --tickers NQ,ES`, check `dealer_levels.log` for "Black-76 fallback" messages. If no fallback messages, RTD GAMMA is working.
 
 #### 2. Verify Schwab `get_option_chain` works for futures symbols
-The Schwab expiry discovery tries `get_option_chain` for `/ES` and `/NQ` first. If Schwab supports it, we get the full available expiry list in one call. If not, it falls back to `get_quotes` (which only returns front-month). 
-
-**How to test:** Start the Hub, run the pipeline, check logs for "Schwab get_option_chain discovery for /ES: N expiries" vs "Schwab get_quotes discovery". If get_option_chain works, we also get OI data per strike for pruning.
+- [x] **Status:** Verified — `get_option_chain` consistently returns 400 Bad Request for futures symbols.
+- [x] **Resolution:** Removed the call from `hybrid_coordinator.py`. The system now proceeds directly to `get_quotes` (via `fetch_futures_option_chain_data`) for expiry discovery on futures.
+- [ ] **Pending:** OI-based strike pruning (Item 4) is now deferred until a working high-OI discovery method is found, as `get_option_chain` was the intended source.
 
 #### 3. Test the full pipeline end-to-end with Hub running
 All changes were made and verified at the code level, but the full pipeline (Hub → Schwab chains → RTD Greeks → GEX calculation → unified output → DB write → web display) hasn't been tested end-to-end with all components running simultaneously.

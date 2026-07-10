@@ -19,9 +19,9 @@ def debug_spike():
     df = pd.read_parquet(PARQUET_FILE)
     print("Columns:", df.columns)
     if 'datetime' in df.columns:
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime')
     elif 'time' in df.columns:
-        df.set_index('time', inplace=True)
+        df = df.set_index('time')
     elif not isinstance(df.index, pd.DatetimeIndex):
          # Try to find a date column
          print("Index is not datetime. Inspect structure.")

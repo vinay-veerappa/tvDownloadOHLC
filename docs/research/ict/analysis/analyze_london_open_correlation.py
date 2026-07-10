@@ -44,14 +44,14 @@ def analyze_london_open_correlation():
         df_1m['datetime'] = pd.to_datetime(df_1m['datetime'])
     else:
         # Assuming index is time if no column
-        df_1m.reset_index(inplace=True) 
+        df_1m = df_1m.reset_index() 
         if 'time' in df_1m.columns:
            df_1m['datetime'] = pd.to_datetime(df_1m['time'])
         elif 'date' in df_1m.columns: 
            df_1m['datetime'] = pd.to_datetime(df_1m['date'])
 
-    df_1m.set_index('datetime', inplace=True)
-    df_1m.sort_index(inplace=True)
+    df_1m = df_1m.set_index('datetime')
+    df_1m = df_1m.sort_index()
     
     # We need to process day by day
     # Times to check (ET): 03:00 (London Open), 08:00, 08:30, 09:00, 09:15, 09:30, 09:45, 10:00

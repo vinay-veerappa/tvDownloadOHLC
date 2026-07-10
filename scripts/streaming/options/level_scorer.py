@@ -269,7 +269,7 @@ def _score_mechanical_walls(
     """Filter 1: Detect primary and tactical gamma walls."""
     walls: list[MechanicalWall] = []
     # Build a quick lookup from strike_gex
-    _gex_by_strike = {round(sg.strike, 2): sg.net_gex for sg in levels.strike_gex} if levels.strike_gex else {}
+    _gex_by_strike = {round(sg.strike, 2): sg.net_gex for sg in levels.strike_gex} if levels.strike_gex and all(sg.strike is not None for sg in levels.strike_gex) else {}
     # Absolute Walls
     if levels.call_wall is not None and lo <= levels.call_wall <= hi:
         walls.append(MechanicalWall(
@@ -277,7 +277,7 @@ def _score_mechanical_walls(
             label="Absolute Call Wall",
             significance="PRIMARY",
             side="CALL",
-            net_gex=_gex_by_strike.get(round(levels.call_wall, 2), 0.0),
+            net_gex=_gex_by_strike.get(round(levels.call_wall, 2), 0.0) if levels.call_wall is not None else 0.0,
             field_name="call_wall"
         ))
     
@@ -287,13 +287,15 @@ def _score_mechanical_walls(
             label="Absolute Put Wall",
             significance="PRIMARY",
             side="PUT",
-            net_gex=_gex_by_strike.get(round(levels.put_wall, 2), 0.0),
+            net_gex=_gex_by_strike.get(round(levels.put_wall, 2), 0.0) if levels.put_wall is not None else 0.0,
             field_name="put_wall"
         ))
 
     # Tactical (0DTE/Near-term) Walls
     if hasattr(levels, "call_wall_0dte") and levels.call_wall_0dte is not None and lo <= levels.call_wall_0dte <= hi:
-        if round(levels.call_wall_0dte, 2) != round(levels.call_wall, 2):
+        # Ensure we don't round None
+        call_wall_val = round(levels.call_wall, 2) if levels.call_wall is not None else None
+        if round(levels.call_wall_0dte, 2) != call_wall_val:
             walls.append(MechanicalWall(
                 strike=levels.call_wall_0dte,
                 label="Tactical Call Wall",
@@ -303,7 +305,9 @@ def _score_mechanical_walls(
             ))
 
     if hasattr(levels, "put_wall_0dte") and levels.put_wall_0dte is not None and lo <= levels.put_wall_0dte <= hi:
-        if round(levels.put_wall_0dte, 2) != round(levels.put_wall, 2):
+        # Ensure we don't round None
+        put_wall_val = round(levels.put_wall, 2) if levels.put_wall is not None else None
+        if round(levels.put_wall_0dte, 2) != put_wall_val:
             walls.append(MechanicalWall(
                 strike=levels.put_wall_0dte,
                 label="Tactical Put Wall",
@@ -571,6 +575,8 @@ def score_levels(
             continue
         
         # Round strike for dedup
+        if l.strike is None:
+            continue
         s_rounded = round(l.strike, 1)
         if s_rounded in seen_strikes:
             continue

@@ -23,11 +23,11 @@ def debug_chunking():
     
     # Reset Index logic
     if has_time:
-        df.reset_index(drop=True, inplace=True)
+        df = df.reset_index(drop=True)
     else:
-        df.reset_index(inplace=True)
+        df = df.reset_index()
         if 'index' in df.columns:
-             df.rename(columns={'index': 'time'}, inplace=True)
+             df = df.rename(columns={'index': 'time'})
 
     print(f"After Reset Index, Columns: {df.columns}")
     
@@ -38,7 +38,7 @@ def debug_chunking():
     
     # Sort
     print("Sorting by time...")
-    df.sort_values('time', inplace=True)
+    df = df.sort_values('time')
     
     print(f"Sorted Time Head: {df['time'].iloc[0]}")
     print(f"Sorted Time Tail: {df['time'].iloc[-1]}")

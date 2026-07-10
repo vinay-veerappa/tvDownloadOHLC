@@ -178,47 +178,8 @@ class HybridCoordinator:
                 from ..options_fetcher import _hub_request
                 for sym in self._symbols:
                     try:
-                        # Try get_option_chain first — it returns all available
-                        # expiries if Schwab supports it for futures.
-                        from datetime import timedelta as _td2
-                        today_d = date.today()
-                        chain_resp = _hub_request("get_option_chain", {
-                            "symbol": sym,
-                            "fromDate": today_d.isoformat(),
-                            "toDate": (today_d + _td2(days=90)).isoformat(),
-                            "strikeCount": 5,  # minimal — we just need expiry keys
-                        })
-                        call_map = chain_resp.get("callExpDateMap", {})
-                        put_map = chain_resp.get("putExpDateMap", {})
-                        all_exp_keys = sorted(set(call_map.keys()) | set(put_map.keys()))
-
-                        if all_exp_keys:
-                            # Parse expiry dates from keys like "2026-07-11:1"
-                            expiry_dates = []
-                            for k in all_exp_keys:
-                                try:
-                                    exp_str = k.split(":")[0]
-                                    exp_d = date.fromisoformat(exp_str)
-                                    if exp_d >= today_d:
-                                        expiry_dates.append(exp_d)
-                                except (ValueError, IndexError):
-                                    continue
-                            expiry_dates = sorted(set(expiry_dates))
-                            if expiry_dates:
-                                schwab_expiries[sym] = expiry_dates
-                                log.info(
-                                    "Schwab get_option_chain discovery for %s: %d expiries (%s)",
-                                    sym, len(expiry_dates),
-                                    ", ".join(e.isoformat() for e in expiry_dates[:max_expiries]),
-                                )
-                                continue  # Skip get_quotes fallback
-                    except Exception as exc:
-                        log.debug("Schwab get_option_chain discovery failed for %s: %s", sym, exc)
-
-                    # Fallback: try fetch_futures_option_chain_data (get_quotes)
-                    # This only returns the front-month contract, but it's
-                    # better than nothing.
-                    try:
+                        # Only use get_quotes fallback for futures discovery.
+                        # get_option_chain consistently returns 400 for futures symbols.
                         from ..options_fetcher import fetch_futures_option_chain_data
                         discovery_dte = list(range(0, 45))
                         chain = fetch_futures_option_chain_data(sym, discovery_dte)
@@ -234,7 +195,7 @@ class HybridCoordinator:
                                     sym, len(expiry_dates),
                                 )
                     except Exception as exc:
-                        log.debug("Schwab get_quotes discovery failed for %s: %s", sym, exc)
+                        log.debug("Schwab discovery failed for %s: %s", sym, exc)
             except ImportError:
                 log.debug("Schwab fetcher not available for expiry discovery")
 
