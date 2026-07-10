@@ -129,17 +129,13 @@ class HybridCoordinator:
                 days_ahead += 7
             self._expiry = today + timedelta(days=days_ahead)
 
-        # Build a proper expiry ladder: nearest Friday, then all Fridays up
-        # to the configured horizon.  This gives the RTD path coverage
-        # comparable to the Schwab PIPELINE_DTE_TARGETS (0-365 DTE).
+        # Build a proper expiry ladder using Schwab-discovered expiries when
+        # available, falling back to a theoretical ladder otherwise.
         #
-        # The number of expiries per symbol is controlled by the
-        # ``num_expiries`` key in ``TOS_RTD_SYMBOL_CONFIG``.  Each expiry
-        # adds ~2× strikes (calls+puts) worth of COM topics, so the limit
-        # is a trade-off between term-structure coverage and COM capacity.
-        # On a typical /ES+/NQ setup with tiered strikes, each expiry adds
-        # ~200-400 topics.  6 expiries per symbol × 2 symbols ≈ 2400-4800
-        # topics — well within COM RTD capacity (tested up to ~5000).
+        # Schwab discovery: do a lightweight API call to get the actual
+        # available expiries for each futures symbol.  This avoids wasting
+        # COM subscriptions on non-existent option symbols (previously ~77%
+        # of /ES and ~96% of /NQ subscriptions returned no data).
         from datetime import timedelta as _td
 
         def _third_friday(y: int, m: int) -> date:
@@ -149,53 +145,92 @@ class HybridCoordinator:
                 d += _td(days=1)
             return d
 
-        def _next_friday(d: date) -> date:
-            days_ahead = 4 - d.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            return d + _td(days=days_ahead)
-
         # Determine the max number of expiries across all symbols we monitor.
-        # Use the max so all symbols get the same expiry ladder.
         max_expiries = max(
             (sc.get("num_expiries", 4) for sc in TOS_RTD_SYMBOL_CONFIG.values()),
             default=4,
         )
 
-        # Build the ladder: 0DTE (today if trading day), nearest Friday,
-        # then weekly Fridays, then monthly (3rd Friday) expiries,
-        # deduplicated and sorted.
-        today = date.today()
-        expiries_set: set[date] = set()
+        # ── Attempt Schwab expiry discovery ──
+        # Query the Hub for the futures option chain to get actual available
+        # expiries.  This is a lightweight call (just needs the expiry dates,
+        # not full chain data).  If it fails, fall back to theoretical ladder.
+        schwab_expiries: dict[str, list[date]] = {}
+        try:
+            from ..options_fetcher import fetch_futures_option_chain_data, _hub_request
+            from ..config import PIPELINE_DTE_TARGETS
+            for sym in self._symbols:
+                try:
+                    # Use a small DTE target set for discovery — we just need
+                    # the available expiries, not the full year's chain.
+                    discovery_dte = list(range(0, 45))  # 0-44 DTE covers 0DTE through ~6 weeks
+                    chain = fetch_futures_option_chain_data(sym, discovery_dte)
+                    if chain and chain.contracts:
+                        # Extract unique expiry dates from the contracts
+                        expiry_dates = sorted({
+                            c.expiry for c in chain.contracts
+                            if isinstance(c.expiry, date) and c.expiry >= date.today()
+                        })
+                        if expiry_dates:
+                            schwab_expiries[sym] = expiry_dates
+                            log.info(
+                                "Schwab discovery for %s: %d actual expiries found (%s)",
+                                sym, len(expiry_dates),
+                                ", ".join(e.isoformat() for e in expiry_dates[:max_expiries]),
+                            )
+                except Exception as exc:
+                    log.debug("Schwab expiry discovery failed for %s: %s", sym, exc)
+        except ImportError:
+            log.debug("Schwab fetcher not available for expiry discovery — using theoretical ladder")
 
-        # Add today as a 0DTE expiry if it's a weekday (Mon-Fri).
-        # CME offers daily expiries for /ES and /NQ options.
-        if today.weekday() < 5:
-            expiries_set.add(today)
+        # Build the expiry list
+        if schwab_expiries:
+            # Use Schwab-discovered expiries — merge across all symbols, trim to max
+            all_discovered: set[date] = set()
+            for exp_list in schwab_expiries.values():
+                all_discovered.update(exp_list)
+            expiries = sorted(all_discovered)[:max_expiries]
+            if not expiries:
+                # Fallback if discovery returned empty
+                expiries = [self._expiry]
+            log.info(
+                "RTD expiry ladder (Schwab-discovered): %d expiries (%s)",
+                len(expiries),
+                ", ".join(e.isoformat() for e in expiries),
+            )
+        else:
+            # Fallback: theoretical ladder (0DTE + weekly Fridays + monthly)
+            today = date.today()
+            expiries_set: set[date] = set()
 
-        # Add the nearest Friday (computed above)
-        expiries_set.add(self._expiry)
+            # Add today as a 0DTE expiry if it's a weekday
+            if today.weekday() < 5:
+                expiries_set.add(today)
 
-        # Add weekly Fridays up to ~6 weeks out
-        next_fri = self._expiry
-        for _ in range(6):
-            next_fri = next_fri + _td(days=7)
-            expiries_set.add(next_fri)
+            # Add the nearest Friday
+            expiries_set.add(self._expiry)
 
-        # Add monthly (3rd Friday) expiries for the next N months
-        for months_ahead in range(0, max_expiries + 2):
-            m = today.month + months_ahead
-            y = today.year + (m - 1) // 12
-            m = ((m - 1) % 12) + 1
-            monthly = _third_friday(y, m)
-            if monthly >= today:
-                expiries_set.add(monthly)
+            # Add weekly Fridays up to ~6 weeks out
+            next_fri = self._expiry
+            for _ in range(6):
+                next_fri = next_fri + _td(days=7)
+                expiries_set.add(next_fri)
 
-        # Sort and trim to the configured max
-        expiries = sorted(expiries_set)[:max_expiries]
+            # Add monthly (3rd Friday) expiries for the next N months
+            for months_ahead in range(0, max_expiries + 2):
+                m = today.month + months_ahead
+                y = today.year + (m - 1) // 12
+                m = ((m - 1) % 12) + 1
+                monthly = _third_friday(y, m)
+                if monthly >= today:
+                    expiries_set.add(monthly)
 
-        log.info("RTD expiry ladder: %d expiries (%s)", len(expiries),
-                 ", ".join(e.isoformat() for e in expiries))
+            expiries = sorted(expiries_set)[:max_expiries]
+            log.info(
+                "RTD expiry ladder (theoretical fallback): %d expiries (%s)",
+                len(expiries),
+                ", ".join(e.isoformat() for e in expiries),
+            )
 
         config = RTDConfig(
             strike_range=TOS_RTD_STRIKE_RANGE,

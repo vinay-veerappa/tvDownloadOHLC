@@ -358,13 +358,15 @@ class TOSRTDAdapter:
                 expiry_map[rtd_sym] = exp
                 greeks[rtd_sym] = {
                     "GAMMA": snapshot.get(f"{rtd_sym}:GAMMA"),
-                    "DELTA": snapshot.get(f"{rtd_sym}:DELTA"),
                     "OPEN_INT": snapshot.get(f"{rtd_sym}:OPEN_INT"),
                     "VOLUME": snapshot.get(f"{rtd_sym}:VOLUME"),
                     "LAST": snapshot.get(f"{rtd_sym}:LAST"),
                     "IMPL_VOL": snapshot.get(f"{rtd_sym}:IMPL_VOL"),
-                    "VEGA": snapshot.get(f"{rtd_sym}:VEGA"),
-                    "THETA": snapshot.get(f"{rtd_sym}:THETA"),
+                    # DELTA, VEGA, THETA not subscribed via RTD to reduce COM topics.
+                    # These are computed via BSM fallback in build_chain_from_rtd.
+                    "DELTA": None,
+                    "VEGA": None,
+                    "THETA": None,
                 }
 
         return ChainSnapshot(

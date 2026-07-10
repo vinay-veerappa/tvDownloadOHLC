@@ -180,20 +180,17 @@ def build_chain_from_rtd(
 
         rtd_vega = greeks.get("VEGA")
         rtd_theta = greeks.get("THETA")
+        # Note: DELTA is not subscribed via RTD (reduced to 5 quote types).
+        # It's always computed via BSM below.
 
         if rtd_gamma_val > 0 and iv > 0:
             # RTD gamma is available — use it directly
             gamma = rtd_gamma_val
-            delta = float(rtd_delta) if rtd_delta else 0.0
-            # Prefer native vega/theta from RTD if available, else BSM
-            vega = float(rtd_vega) if rtd_vega else 0.0
-            theta = float(rtd_theta) if rtd_theta else 0.0
-            if (vega == 0.0 or theta == 0.0) and iv > 0:
-                bsm = _compute_bsm_greeks(spot, parsed.strike, t, iv, flag)
-                if vega == 0.0:
-                    vega = bsm["vega"]
-                if theta == 0.0:
-                    theta = bsm["theta"]
+            # Compute delta, vega, theta via BSM (not subscribed from RTD)
+            bsm = _compute_bsm_greeks(spot, parsed.strike, t, iv, flag)
+            delta = bsm["delta"]
+            vega = bsm["vega"]
+            theta = bsm["theta"]
         elif iv > 0:
             # RTD gamma is 0/None but IV is available — compute all Greeks via BSM
             bsm = _compute_bsm_greeks(spot, parsed.strike, t, iv, flag)
@@ -209,7 +206,7 @@ def build_chain_from_rtd(
         else:
             # No gamma and no IV — can't compute anything meaningful
             gamma = 0.0
-            delta = float(rtd_delta) if rtd_delta else 0.0
+            delta = 0.0
             vega = 0.0
             theta = 0.0
 

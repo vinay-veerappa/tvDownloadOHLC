@@ -129,19 +129,18 @@ class RTDWorker:
             subscriptions = []
             for symbol in all_symbols:
                 if symbol.startswith("."):
-                    # Option symbols — subscribe to Greeks + OI + Volume + IV
-                    # VEGA and THETA are subscribed so we can use native values
-                    # when available; BSM fallback covers cases where TOS
-                    # returns 0 or doesn't stream them.
+                    # Option symbols — subscribe to only the 4 critical quote
+                    # types for GEX: GAMMA, OPEN_INT, VOLUME, IMPL_VOL.
+                    # DELTA, VEGA, THETA are computed via BSM fallback from IV
+                    # (which RTD provides reliably).  This cuts COM topics by
+                    # ~50% compared to subscribing to all 8 quote types.
+                    # LAST is added for mark/straddle calculations.
                     for qt in [
                         QuoteType.GAMMA,
                         QuoteType.OPEN_INT,
                         QuoteType.VOLUME,
-                        QuoteType.DELTA,
                         QuoteType.IMPL_VOL,
                         QuoteType.LAST,
-                        QuoteType.VEGA,
-                        QuoteType.THETA,
                     ]:
                         subscriptions.append((qt, symbol))
                 else:
