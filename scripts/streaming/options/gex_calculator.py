@@ -25,7 +25,11 @@ log = logging.getLogger(__name__)
 
 def _bsm_d1d2(S: float, K: float, t: float, sigma: float,
                r: float = 0.02, q: float = 0.0) -> tuple:
-    """Return (d1, d2, N'(d1)) for BSM. Returns (None,None,None) on error."""
+    """Return (d1, d2, N'(d1)) for Black-Scholes-Merton. Returns (None,None,None) on error.
+
+    Used for spot-underlying options (equities, ETFs, cash indices) where
+    the cost-of-carry (r - q) is explicit.
+    """
     try:
         t = max(t, 1e-5)
         sigma = max(sigma, 1e-4)
@@ -37,10 +41,77 @@ def _bsm_d1d2(S: float, K: float, t: float, sigma: float,
         return None, None, None
 
 
+def _black76_d1d2(F: float, K: float, t: float, sigma: float) -> tuple:
+    """Return (d1, d2, N'(d1)) for the Black-76 futures option model.
+
+    Black-76 is the industry standard for futures options pricing.  It
+    replaces the spot price S with the futures price F and eliminates the
+    cost-of-carry drift (r - q) from d1, since the futures price already
+    embeds the forward curve.
+
+    d1 = [ln(F/K) + σ²t/2] / (σ√t)
+    d2 = d1 - σ√t
+
+    Used for RTD-native futures options (/ES, /NQ) where the underlying
+    is the futures price, not a spot index.
+    """
+    try:
+        t = max(t, 1e-5)
+        sigma = max(sigma, 1e-4)
+        d1 = (math.log(F / K) + 0.5 * sigma ** 2 * t) / (sigma * math.sqrt(t))
+        d2 = d1 - sigma * math.sqrt(t)
+        norm_d1 = math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)
+        return d1, d2, norm_d1
+    except Exception:
+        return None, None, None
+
+
+def _black76_gamma(F: float, K: float, t: float, sigma: float,
+                     r: float = 0.02) -> float:
+    """Black-76 gamma for futures options.
+
+    Gamma = e^{-rt} * N'(d1) / (F * σ * √t)
+
+    The e^{-rt} discount factor accounts for the present value of the
+    option payoff.  Unlike BSM, there is no dividend yield q because the
+    futures price already incorporates cost-of-carry.
+    """
+    try:
+        t = max(t, 1e-5)
+        sigma = max(sigma, 1e-4)
+        d1, d2, norm_d1 = _black76_d1d2(F, K, t, sigma)
+        if d1 is None:
+            return 0.0
+        return math.exp(-r * t) * norm_d1 / (F * sigma * math.sqrt(t))
+    except Exception:
+        return 0.0
+
+
+def _black76_delta(F: float, K: float, t: float, sigma: float, flag: str,
+                     r: float = 0.02) -> float:
+    """Black-76 delta for futures options.
+
+    Call Delta = e^{-rt} * N(d1)
+    Put  Delta = e^{-rt} * (N(d1) - 1)
+    """
+    try:
+        from math import erfc
+        d1, d2, _ = _black76_d1d2(F, K, t, sigma)
+        if d1 is None:
+            return 0.0
+        discount = math.exp(-r * t)
+        if flag == 'c':
+            return discount * 0.5 * erfc(-d1 / math.sqrt(2))
+        else:
+            return discount * (0.5 * erfc(-d1 / math.sqrt(2)) - 1)
+    except Exception:
+        return 0.0
+
+
 def _analytical_charm(flag: str, S: float, K: float, t: float, sigma: float,
                        r: float = 0.02, q: float = 0.0) -> float:
     """Charm = d(delta)/d(t) — rate of delta decay (per calendar day).
-    Analytical formula from Hull's Options textbook.
+    Analytical formula from Hull's Options textbook (BSM model).
     """
     try:
         from math import erfc
@@ -55,6 +126,35 @@ def _analytical_charm(flag: str, S: float, K: float, t: float, sigma: float,
         else:
             N_neg_d1 = 0.5 * erfc(d1 / math.sqrt(2))
             charm = -math.exp(-q * t) * (norm_d1 * inner + q * N_neg_d1)
+        return charm
+    except Exception:
+        return 0.0
+
+
+def _black76_charm(flag: str, F: float, K: float, t: float, sigma: float,
+                     r: float = 0.02) -> float:
+    """Black-76 Charm = d(delta)/d(t) for futures options.
+
+    Charm = e^{-rt} * [N'(d1) * (d2/(2tσ√t) - r/σ√t) + r * N(d1)]  (call)
+    Charm = e^{-rt} * [N'(d1) * (d2/(2tσ√t) - r/σ√t) - r * N(-d1)] (put)
+    """
+    try:
+        from math import erfc
+        d1, d2, norm_d1 = _black76_d1d2(F, K, t, sigma)
+        if d1 is None:
+            return 0.0
+        t = max(t, 1e-5)
+        sqrt_t = math.sqrt(t)
+        discount = math.exp(-r * t)
+        # ∂d1/∂t = -d2 / (2tσ√t)  (from d1 = ln(F/K)/(σ√t) + σ√t/2)
+        dd1_dt = -d2 / (2 * t * sigma * sqrt_t)
+        if flag == 'c':
+            N_d1 = 0.5 * erfc(-d1 / math.sqrt(2))
+            # Charm = ∂(e^{-rt} N(d1))/∂t = -r*e^{-rt}*N(d1) + e^{-rt}*N'(d1)*∂d1/∂t
+            charm = discount * (norm_d1 * dd1_dt - r * N_d1)
+        else:
+            N_neg_d1 = 0.5 * erfc(d1 / math.sqrt(2))
+            charm = discount * (norm_d1 * dd1_dt + r * N_neg_d1)
         return charm
     except Exception:
         return 0.0
@@ -313,7 +413,8 @@ def _normal_cdf(x: float) -> float:
     return 0.5 * math.erfc(-x / math.sqrt(2.0))
 
 
-def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> list[StrikeGEX]:
+def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], spot: float,
+                       is_futures: bool = False) -> list[StrikeGEX]:
     from .config import WEIGHT_MODE
 
     def _weight(c: OptionContract) -> float:
@@ -327,7 +428,8 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
             return max(oi, vol)
         return oi  # default: "OI"
 
-    def _calc_per_strike_exposures(c: OptionContract, flag: str, spot: float, weight: int) -> dict:
+    def _calc_per_strike_exposures(c: OptionContract, flag: str, spot: float, weight: int,
+                                     use_black76: bool = False) -> dict:
         """Compute all per-strike Greek exposures using the same methodology as ezoptionsschwab.py.
         Exposures are in notional (dollar) terms: Greek × weight × 100 × scale_factor.
         """
@@ -343,39 +445,69 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
         iv = max(c.iv, 1e-4)
         K = c.strike
 
-        d1, d2, norm_d1_val = _bsm_d1d2(spot, K, t, iv, r, q)
-        if d1 is None:
-            return {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
-
-        # Delta (BSM)
-        try:
-            import math
-            from math import erfc
-            if flag == 'c':
-                delta = math.exp(-q * t) * 0.5 * erfc(-d1 / math.sqrt(2))
-            else:
-                delta = math.exp(-q * t) * (0.5 * erfc(-d1 / math.sqrt(2)) - 1)
-        except Exception:
-            delta = 0.0
-
-        # Vanna: -exp(-q*t) * N'(d1) * d2 / sigma
-        try:
-            vanna = -math.exp(-q * t) * norm_d1_val * d2 / iv
-        except Exception:
-            vanna = 0.0
-
-        # Vomma: vega * d1 * d2 / sigma
-        try:
-            vega = spot * math.exp(-q * t) * norm_d1_val * math.sqrt(t)
-            vomma = vega * (d1 * d2) / iv
-        except Exception:
-            vomma = 0.0
-
-        # Charm
-        charm = _analytical_charm(flag, spot, K, t, iv, r, q)
-
-        # Speed: d(gamma)/dS
-        speed = _analytical_speed(spot, K, t, iv, r, q)
+        if use_black76:
+            # Black-76 model for futures options — no cost-of-carry drift
+            d1, d2, norm_d1_val = _black76_d1d2(spot, K, t, iv)
+            if d1 is None:
+                return {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
+            discount = math.exp(-r * t)
+            # Delta (Black-76): e^{-rt} * N(d1) for call, e^{-rt}*(N(d1)-1) for put
+            try:
+                from math import erfc
+                if flag == 'c':
+                    delta = discount * 0.5 * erfc(-d1 / math.sqrt(2))
+                else:
+                    delta = discount * (0.5 * erfc(-d1 / math.sqrt(2)) - 1)
+            except Exception:
+                delta = 0.0
+            # Vanna: -e^{-rt} * N'(d1) * d2 / sigma
+            try:
+                vanna = -discount * norm_d1_val * d2 / iv
+            except Exception:
+                vanna = 0.0
+            # Vomma: vega * d1 * d2 / sigma (Black-76 vega = F * e^{-rt} * N'(d1) * √t)
+            try:
+                vega = spot * discount * norm_d1_val * math.sqrt(t)
+                vomma = vega * (d1 * d2) / iv
+            except Exception:
+                vomma = 0.0
+            # Charm (Black-76)
+            charm = _black76_charm(flag, spot, K, t, iv, r)
+            # Speed: d(gamma)/dF for Black-76 = -gamma * (d1/(σ√t) + 1) / F
+            try:
+                b76_gamma = _black76_gamma(spot, K, t, iv, r)
+                speed = -b76_gamma * (d1 / (iv * math.sqrt(t)) + 1) / spot
+            except Exception:
+                speed = 0.0
+        else:
+            # BSM model for spot-underlying options (equities, ETFs, indices)
+            d1, d2, norm_d1_val = _bsm_d1d2(spot, K, t, iv, r, q)
+            if d1 is None:
+                return {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
+            # Delta (BSM)
+            try:
+                from math import erfc
+                if flag == 'c':
+                    delta = math.exp(-q * t) * 0.5 * erfc(-d1 / math.sqrt(2))
+                else:
+                    delta = math.exp(-q * t) * (0.5 * erfc(-d1 / math.sqrt(2)) - 1)
+            except Exception:
+                delta = 0.0
+            # Vanna: -exp(-q*t) * N'(d1) * d2 / sigma
+            try:
+                vanna = -math.exp(-q * t) * norm_d1_val * d2 / iv
+            except Exception:
+                vanna = 0.0
+            # Vomma: vega * d1 * d2 / sigma
+            try:
+                vega = spot * math.exp(-q * t) * norm_d1_val * math.sqrt(t)
+                vomma = vega * (d1 * d2) / iv
+            except Exception:
+                vomma = 0.0
+            # Charm (BSM)
+            charm = _analytical_charm(flag, spot, K, t, iv, r, q)
+            # Speed: d(gamma)/dS
+            speed = _analytical_speed(spot, K, t, iv, r, q)
 
         # ── Institutional Exposure Formulas (from ezoptionsschwab.py) ────────
         # All exposures are in Notional ($) terms per $1 move in underlying.
@@ -424,8 +556,8 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
         call_gex = abs(call.gamma) * call_wt * CONTRACT_MULTIPLIER * spot if call else 0.0
         put_gex  = abs(put.gamma)  * put_wt  * CONTRACT_MULTIPLIER * spot if put  else 0.0
 
-        c_exp = _calc_per_strike_exposures(call, 'c', spot, call_wt) if call else {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
-        p_exp = _calc_per_strike_exposures(put,  'p', spot, put_wt)  if put  else {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
+        c_exp = _calc_per_strike_exposures(call, 'c', spot, call_wt, use_black76=is_futures) if call else {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
+        p_exp = _calc_per_strike_exposures(put,  'p', spot, put_wt,  use_black76=is_futures) if put  else {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
 
         rows.append(
             StrikeGEX(
@@ -1580,7 +1712,7 @@ def calculate_dealer_levels(
     if spot <= 0:
         raise ValueError(f"Spot price is zero for {ticker} — cannot calculate levels.")
 
-    strikes = _build_cumulative_profile(_build_strike_gex(chain.calls, chain.puts, spot))
+    strikes = _build_cumulative_profile(_build_strike_gex(chain.calls, chain.puts, spot, is_futures=getattr(chain, 'is_futures', False)))
     total_gex = sum(row.net_gex for row in strikes)
     gex_regime = "POSITIVE" if total_gex >= 0 else "NEGATIVE"
 

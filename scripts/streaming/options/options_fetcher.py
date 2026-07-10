@@ -99,6 +99,7 @@ class OptionChainData:
     contracts: list[OptionContract] = field(default_factory=list)
     underlying_symbol: str = ""
     spot_price: float = 0.0
+    is_futures: bool = False  # True for RTD-native futures chains → use Black-76 pricing
 
     def __post_init__(self):
         if not self.underlying_symbol:

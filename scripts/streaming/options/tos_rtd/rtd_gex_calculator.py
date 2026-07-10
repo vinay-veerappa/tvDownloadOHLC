@@ -21,7 +21,11 @@ from datetime import date, datetime, time as dtime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from ..gex_calculator import DealerLevels, calculate_dealer_levels, _bsm_d1d2, _analytical_charm, _analytical_speed
+from ..gex_calculator import (
+    DealerLevels, calculate_dealer_levels,
+    _bsm_d1d2, _analytical_charm, _analytical_speed,
+    _black76_d1d2, _black76_gamma, _black76_delta, _black76_charm,
+)
 from ..options_fetcher import OptionChainData, OptionContract
 from ..config import PIPELINE_DEBUG_RTD
 from .adapter import TOSRTDAdapter, RTDConfig, ChainSnapshot
@@ -33,16 +37,26 @@ log = logging.getLogger(__name__)
 PIPELINE_DEBUG_RTD_GREEKS = PIPELINE_DEBUG_RTD
 
 # Quote types we need from RTD for full GEX calculation
-RTD_GEX_QUOTE_TYPES = ["GAMMA", "OPEN_INT", "VOLUME", "LAST", "MARK", "IMPL_VOL", "DELTA"]
+RTD_GEX_QUOTE_TYPES = ["GAMMA", "OPEN_INT", "VOLUME", "LAST", "MARK", "IMPL_VOL"]
 
 
-def _compute_bsm_greeks(spot: float, strike: float, t: float, iv: float,
-                         flag: str, r: float = 0.02, q: float = 0.0) -> dict:
-    """Compute BSM Greeks when RTD native values are unavailable.
+def _compute_black76_greeks(F: float, strike: float, t: float, iv: float,
+                              flag: str, r: float = 0.02) -> dict:
+    """Compute Black-76 Greeks for futures options.
 
-    Returns dict with gamma, delta, theta, vega, vanna — all computed
-    analytically from the Black-Scholes-Merton model using the IV that
-    RTD does provide.
+    This is the correct pricing model for futures options where the
+    underlying is the futures price F (not a spot price).  Unlike BSM,
+    Black-76 eliminates the cost-of-carry drift (r - q) from d1 since
+    the futures price already embeds the forward curve.
+
+    d1 = [ln(F/K) + σ²t/2] / (σ√t)
+    d2 = d1 - σ√t
+
+    Call Delta = e^{-rt} * N(d1)
+    Put  Delta = e^{-rt} * (N(d1) - 1)
+    Gamma = e^{-rt} * N'(d1) / (F * σ * √t)
+    Vega  = F * e^{-rt} * N'(d1) * √t * 0.01
+    Vanna = -e^{-rt} * N'(d1) * d2 / σ
     """
     import math
     from math import erfc, exp, log, sqrt, pi
@@ -50,34 +64,38 @@ def _compute_bsm_greeks(spot: float, strike: float, t: float, iv: float,
     try:
         t = max(t, 1e-5)
         iv = max(iv, 1e-4)
-        d1, d2, norm_d1 = _bsm_d1d2(spot, strike, t, iv, r, q)
+        d1, d2, norm_d1 = _black76_d1d2(F, strike, t, iv)
         if d1 is None:
             return {"gamma": 0.0, "delta": 0.0, "theta": 0.0, "vega": 0.0, "vanna": 0.0}
 
+        discount = exp(-r * t)
+
         # Gamma
-        gamma = exp(-q * t) * norm_d1 / (spot * iv * sqrt(t))
+        gamma = discount * norm_d1 / (F * iv * sqrt(t))
 
         # Delta
         if flag == 'c':
-            delta = exp(-q * t) * 0.5 * erfc(-d1 / sqrt(2))
+            delta = discount * 0.5 * erfc(-d1 / sqrt(2))
         else:
-            delta = exp(-q * t) * (0.5 * erfc(-d1 / sqrt(2)) - 1)
+            delta = discount * (0.5 * erfc(-d1 / sqrt(2)) - 1)
 
         # Vega (per 1% change in IV)
-        vega = spot * exp(-q * t) * norm_d1 * sqrt(t) * 0.01
+        vega = F * discount * norm_d1 * sqrt(t) * 0.01
 
         # Theta (per calendar day)
-        term1 = -(spot * exp(-q * t) * norm_d1 * iv) / (2 * sqrt(t))
+        # Black-76 call theta = -F*e^{-rt}*φ(d1)*σ/(2√t) + r*F*e^{-rt}*N(d1) - r*K*e^{-rt}*N(d2)
+        term1 = -(F * discount * norm_d1 * iv) / (2 * sqrt(t))
         if flag == 'c':
-            term2 = -r * strike * exp(-r * t) * 0.5 * erfc(-d2 / sqrt(2))
-            term3 = q * spot * exp(-q * t) * 0.5 * erfc(-d1 / sqrt(2))
+            N_d1 = 0.5 * erfc(-d1 / sqrt(2))
+            N_d2 = 0.5 * erfc(-d2 / sqrt(2))
+            theta = (term1 + r * F * discount * N_d1 - r * strike * discount * N_d2) / 365.0
         else:
-            term2 = r * strike * exp(-r * t) * 0.5 * erfc(d2 / sqrt(2))
-            term3 = -q * spot * exp(-q * t) * 0.5 * erfc(d1 / sqrt(2))
-        theta = (term1 + term2 + term3) / 365.0
+            N_neg_d1 = 0.5 * erfc(d1 / sqrt(2))
+            N_neg_d2 = 0.5 * erfc(d2 / sqrt(2))
+            theta = (term1 - r * F * discount * N_neg_d1 + r * strike * discount * N_neg_d2) / 365.0
 
         # Vanna
-        vanna = -exp(-q * t) * norm_d1 * d2 / iv
+        vanna = -discount * norm_d1 * d2 / iv
 
         return {
             "gamma": gamma,
@@ -186,21 +204,21 @@ def build_chain_from_rtd(
         if rtd_gamma_val > 0 and iv > 0:
             # RTD gamma is available — use it directly
             gamma = rtd_gamma_val
-            # Compute delta, vega, theta via BSM (not subscribed from RTD)
-            bsm = _compute_bsm_greeks(spot, parsed.strike, t, iv, flag)
+            # Compute delta, vega, theta via Black-76 (not subscribed from RTD)
+            bsm = _compute_black76_greeks(spot, parsed.strike, t, iv, flag)
             delta = bsm["delta"]
             vega = bsm["vega"]
             theta = bsm["theta"]
         elif iv > 0:
-            # RTD gamma is 0/None but IV is available — compute all Greeks via BSM
-            bsm = _compute_bsm_greeks(spot, parsed.strike, t, iv, flag)
+            # RTD gamma is 0/None but IV is available — compute all Greeks via Black-76
+            bsm = _compute_black76_greeks(spot, parsed.strike, t, iv, flag)
             gamma = bsm["gamma"]
             delta = bsm["delta"]
             vega = bsm["vega"]
             theta = bsm["theta"]
             if PIPELINE_DEBUG_RTD_GREEKS:
                 log.debug(
-                    "BSM fallback for %s: gamma=%.6f delta=%.4f vega=%.2f iv=%.4f t=%.6f",
+                    "Black-76 fallback for %s: gamma=%.6f delta=%.4f vega=%.2f iv=%.4f t=%.6f",
                     rtd_sym, gamma, delta, vega, iv, t,
                 )
         else:
@@ -240,6 +258,7 @@ def build_chain_from_rtd(
         contracts=contracts,
         underlying_symbol=snapshot.symbol,
         spot_price=snapshot.futures_price,
+        is_futures=True,  # Mark as futures chain → Black-76 pricing in gex_calculator
     )
 
     log.info(
