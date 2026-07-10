@@ -11,11 +11,14 @@ When RTD is unavailable, it transparently falls back to Schwab-only mode.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import sys
 import time
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Any, Optional
 
 from ..config import (
@@ -98,7 +101,45 @@ class HybridCoordinator:
         # Cached expiry list from Schwab discovery (avoids re-querying every start)
         self._cached_expiries: list[date] | None = None
         self._expiry_cache_time: float = 0.0  # When the cache was populated
+        self._expiry_cache_path = Path("data/options/.rtd_expiry_cache.json")
         _EXPIRY_CACHE_TTL_SECONDS = 3600  # 1 hour — expiries change slowly
+
+    def _load_disk_cache(self) -> list[date] | None:
+        """Load the expiry cache from disk if it exists and is not stale."""
+        try:
+            if not self._expiry_cache_path.exists():
+                return None
+            data = json.loads(self._expiry_cache_path.read_text())
+            cached_time = float(data.get("cached_at", 0.0))
+            if (time.time() - cached_time) > 3600:
+                log.debug("RTD expiry disk cache is stale (age=%ds)", int(time.time() - cached_time))
+                return None
+            dates = [date.fromisoformat(d) for d in data.get("expiries", [])]
+            if dates:
+                self._cached_expiries = dates
+                self._expiry_cache_time = cached_time
+                log.info(
+                    "RTD expiry ladder (disk cache, %ds old): %d expiries (%s)",
+                    int(time.time() - cached_time),
+                    len(dates),
+                    ", ".join(d.isoformat() for d in dates),
+                )
+            return dates
+        except Exception as exc:
+            log.debug("Failed to load RTD expiry disk cache: %s", exc)
+            return None
+
+    def _save_disk_cache(self, expiries: list[date]) -> None:
+        """Persist the expiry list to disk."""
+        try:
+            self._expiry_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "expiries": [d.isoformat() for d in expiries],
+                "cached_at": time.time(),
+            }
+            self._expiry_cache_path.write_text(json.dumps(payload))
+        except Exception as exc:
+            log.debug("Failed to save RTD expiry disk cache: %s", exc)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -167,11 +208,13 @@ class HybridCoordinator:
                 and (_time_mod.time() - self._expiry_cache_time) < _EXPIRY_CACHE_TTL):
             expiries = self._cached_expiries
             log.info(
-                "RTD expiry ladder (cached, %ds old): %d expiries (%s)",
+                "RTD expiry ladder (memory cache, %ds old): %d expiries (%s)",
                 int(_time_mod.time() - self._expiry_cache_time),
                 len(expiries),
                 ", ".join(e.isoformat() for e in expiries),
             )
+        elif self._load_disk_cache():
+            expiries = self._cached_expiries
         else:
             schwab_expiries: dict[str, list[date]] = {}
             try:
@@ -209,6 +252,7 @@ class HybridCoordinator:
                     expiries = [self._expiry]
                 self._cached_expiries = expiries
                 self._expiry_cache_time = _time_mod.time()
+                self._save_disk_cache(expiries)
                 log.info(
                     "RTD expiry ladder (Schwab-discovered): %d expiries (%s)",
                     len(expiries),
@@ -244,6 +288,7 @@ class HybridCoordinator:
                 expiries = sorted(expiries_set)[:max_expiries]
                 self._cached_expiries = expiries
                 self._expiry_cache_time = _time_mod.time()
+                self._save_disk_cache(expiries)
                 log.info(
                     "RTD expiry ladder (theoretical fallback): %d expiries (%s)",
                     len(expiries),
