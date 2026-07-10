@@ -162,9 +162,19 @@ class HybridCoordinator:
             default=4,
         )
 
-        # Build the ladder: nearest Friday, then weekly Fridays, then monthly
-        # (3rd Friday) expiries, deduplicated and sorted.
-        expiries_set: set[date] = {self._expiry}
+        # Build the ladder: 0DTE (today if trading day), nearest Friday,
+        # then weekly Fridays, then monthly (3rd Friday) expiries,
+        # deduplicated and sorted.
+        today = date.today()
+        expiries_set: set[date] = set()
+
+        # Add today as a 0DTE expiry if it's a weekday (Mon-Fri).
+        # CME offers daily expiries for /ES and /NQ options.
+        if today.weekday() < 5:
+            expiries_set.add(today)
+
+        # Add the nearest Friday (computed above)
+        expiries_set.add(self._expiry)
 
         # Add weekly Fridays up to ~6 weeks out
         next_fri = self._expiry
@@ -173,7 +183,6 @@ class HybridCoordinator:
             expiries_set.add(next_fri)
 
         # Add monthly (3rd Friday) expiries for the next N months
-        today = date.today()
         for months_ahead in range(0, max_expiries + 2):
             m = today.month + months_ahead
             y = today.year + (m - 1) // 12

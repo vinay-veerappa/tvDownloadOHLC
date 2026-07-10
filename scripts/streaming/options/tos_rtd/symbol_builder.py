@@ -33,6 +33,7 @@ class OptionContract:
     strike: float              # e.g. 21000.0
     exchange: str              # e.g. "XCME"
     base_symbol: str           # e.g. "/NQ" (inferred from product code)
+    expiry: Optional[date] = None  # Expiration date (set by build_chain_snapshot)
 
 
 class OptionSymbolBuilder:

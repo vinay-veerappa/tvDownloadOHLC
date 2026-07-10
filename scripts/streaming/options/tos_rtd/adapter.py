@@ -57,11 +57,14 @@ class ChainSnapshot:
 
     symbol: str                     # Base futures symbol, e.g. "/ES"
     futures_price: float            # Latest underlying LAST price
-    expiry: date                     # Expiration date
+    expiry: date                     # Primary expiration date (nearest)
     timestamp: float                 # Unix timestamp of snapshot
     contracts: list[OptionContract] = field(default_factory=list)
     # Per-contract Greeks: {rtd_symbol: {GAMMA: ..., OPEN_INT: ..., VOLUME: ..., LAST: ...}}
     greeks: dict[str, dict[str, float | int | None]] = field(default_factory=dict)
+    # Per-symbol expiry mapping: {rtd_symbol: expiry_date}
+    # Used by build_chain_from_rtd to assign correct expiry per contract
+    expiry_map: dict[str, date] = field(default_factory=dict)
 
     @property
     def call_strikes(self) -> list[float]:
@@ -327,11 +330,32 @@ class TOSRTDAdapter:
 
         contracts: list[OptionContract] = []
         greeks: dict[str, dict] = {}
+        expiry_map: dict[str, date] = {}
+
+        # Build a reverse lookup: rtd_symbol → expiry
+        # by re-running build_symbols for each expiry and matching
+        sym_configs = self.config.symbol_configs or {}
+        sc = sym_configs.get(symbol, {})
+        sr = sc.get("strike_range", self.config.strike_range)
+        ss = sc.get("strike_spacing", self.config.strike_spacing)
+        tiers = sc.get("strike_tiers")
+        _symbol_to_expiry: dict[str, date] = {}
+        if price and price > 0:
+            for exp in self._expiries:
+                syms_for_exp = OptionSymbolBuilder.build_symbols(
+                    symbol, exp, price, sr, ss, strike_tiers=tiers,
+                )
+                for s in syms_for_exp:
+                    _symbol_to_expiry[s] = exp
 
         for rtd_sym in self._option_symbols:
             parsed = parse_rtd_option_symbol(rtd_sym)
             if parsed and parsed.base_symbol == symbol:
+                # Assign the correct expiry for this symbol
+                exp = _symbol_to_expiry.get(rtd_sym, self._expiry)
+                parsed.expiry = exp
                 contracts.append(parsed)
+                expiry_map[rtd_sym] = exp
                 greeks[rtd_sym] = {
                     "GAMMA": snapshot.get(f"{rtd_sym}:GAMMA"),
                     "DELTA": snapshot.get(f"{rtd_sym}:DELTA"),
@@ -339,6 +363,8 @@ class TOSRTDAdapter:
                     "VOLUME": snapshot.get(f"{rtd_sym}:VOLUME"),
                     "LAST": snapshot.get(f"{rtd_sym}:LAST"),
                     "IMPL_VOL": snapshot.get(f"{rtd_sym}:IMPL_VOL"),
+                    "VEGA": snapshot.get(f"{rtd_sym}:VEGA"),
+                    "THETA": snapshot.get(f"{rtd_sym}:THETA"),
                 }
 
         return ChainSnapshot(
@@ -348,6 +374,7 @@ class TOSRTDAdapter:
             timestamp=time.time(),
             contracts=contracts,
             greeks=greeks,
+            expiry_map=expiry_map,
         )
 
     # ------------------------------------------------------------------

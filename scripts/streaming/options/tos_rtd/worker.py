@@ -130,6 +130,9 @@ class RTDWorker:
             for symbol in all_symbols:
                 if symbol.startswith("."):
                     # Option symbols — subscribe to Greeks + OI + Volume + IV
+                    # VEGA and THETA are subscribed so we can use native values
+                    # when available; BSM fallback covers cases where TOS
+                    # returns 0 or doesn't stream them.
                     for qt in [
                         QuoteType.GAMMA,
                         QuoteType.OPEN_INT,
@@ -137,6 +140,8 @@ class RTDWorker:
                         QuoteType.DELTA,
                         QuoteType.IMPL_VOL,
                         QuoteType.LAST,
+                        QuoteType.VEGA,
+                        QuoteType.THETA,
                     ]:
                         subscriptions.append((qt, symbol))
                 else:

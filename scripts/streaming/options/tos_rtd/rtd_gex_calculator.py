@@ -21,15 +21,73 @@ from datetime import date, datetime, time as dtime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from ..gex_calculator import DealerLevels, calculate_dealer_levels
+from ..gex_calculator import DealerLevels, calculate_dealer_levels, _bsm_d1d2, _analytical_charm, _analytical_speed
 from ..options_fetcher import OptionChainData, OptionContract
+from ..config import PIPELINE_DEBUG_RTD
 from .adapter import TOSRTDAdapter, RTDConfig, ChainSnapshot
 from .symbol_builder import OptionSymbolBuilder, parse_rtd_option_symbol, OptionContract as RTDOptionContract
 
 log = logging.getLogger(__name__)
 
+# Debug flag for BSM fallback logging
+PIPELINE_DEBUG_RTD_GREEKS = PIPELINE_DEBUG_RTD
+
 # Quote types we need from RTD for full GEX calculation
 RTD_GEX_QUOTE_TYPES = ["GAMMA", "OPEN_INT", "VOLUME", "LAST", "MARK", "IMPL_VOL", "DELTA"]
+
+
+def _compute_bsm_greeks(spot: float, strike: float, t: float, iv: float,
+                         flag: str, r: float = 0.02, q: float = 0.0) -> dict:
+    """Compute BSM Greeks when RTD native values are unavailable.
+
+    Returns dict with gamma, delta, theta, vega, vanna — all computed
+    analytically from the Black-Scholes-Merton model using the IV that
+    RTD does provide.
+    """
+    import math
+    from math import erfc, exp, log, sqrt, pi
+
+    try:
+        t = max(t, 1e-5)
+        iv = max(iv, 1e-4)
+        d1, d2, norm_d1 = _bsm_d1d2(spot, strike, t, iv, r, q)
+        if d1 is None:
+            return {"gamma": 0.0, "delta": 0.0, "theta": 0.0, "vega": 0.0, "vanna": 0.0}
+
+        # Gamma
+        gamma = exp(-q * t) * norm_d1 / (spot * iv * sqrt(t))
+
+        # Delta
+        if flag == 'c':
+            delta = exp(-q * t) * 0.5 * erfc(-d1 / sqrt(2))
+        else:
+            delta = exp(-q * t) * (0.5 * erfc(-d1 / sqrt(2)) - 1)
+
+        # Vega (per 1% change in IV)
+        vega = spot * exp(-q * t) * norm_d1 * sqrt(t) * 0.01
+
+        # Theta (per calendar day)
+        term1 = -(spot * exp(-q * t) * norm_d1 * iv) / (2 * sqrt(t))
+        if flag == 'c':
+            term2 = -r * strike * exp(-r * t) * 0.5 * erfc(-d2 / sqrt(2))
+            term3 = q * spot * exp(-q * t) * 0.5 * erfc(-d1 / sqrt(2))
+        else:
+            term2 = r * strike * exp(-r * t) * 0.5 * erfc(d2 / sqrt(2))
+            term3 = -q * spot * exp(-q * t) * 0.5 * erfc(d1 / sqrt(2))
+        theta = (term1 + term2 + term3) / 365.0
+
+        # Vanna
+        vanna = -exp(-q * t) * norm_d1 * d2 / iv
+
+        return {
+            "gamma": gamma,
+            "delta": delta,
+            "theta": theta,
+            "vega": vega,
+            "vanna": vanna,
+        }
+    except Exception:
+        return {"gamma": 0.0, "delta": 0.0, "theta": 0.0, "vega": 0.0, "vanna": 0.0}
 
 
 @dataclass
@@ -74,13 +132,24 @@ def build_chain_from_rtd(
     """
     contracts: list[OptionContract] = []
 
+    # Get spot and current time for BSM fallback computations
+    spot = snapshot.futures_price
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    # Per-symbol expiry map (may differ across expiries)
+    expiry_map = getattr(snapshot, 'expiry_map', {})
+
     for rtd_sym, greeks in snapshot.greeks.items():
         parsed = parse_rtd_option_symbol(rtd_sym)
         if not parsed:
             continue
 
+        # Use per-contract expiry from the expiry_map if available;
+        # fall back to the snapshot's primary expiry
+        contract_expiry = expiry_map.get(rtd_sym, snapshot.expiry)
+
         # Extract Greeks from RTD data
-        gamma = greeks.get("GAMMA")
+        rtd_gamma = greeks.get("GAMMA")
         open_int = greeks.get("OPEN_INT") or 0
         volume = greeks.get("VOLUME") or 0
         last = greeks.get("LAST") or 0.0
@@ -89,18 +158,67 @@ def build_chain_from_rtd(
         iv = float(iv) if iv else 0.0
         if iv > 1.0:
             iv = iv / 100.0
-        delta = greeks.get("DELTA") or 0.0
+        rtd_delta = greeks.get("DELTA") or 0.0
 
         # Skip contracts with no OI (they don't contribute to GEX)
         if open_int == 0:
             continue
+
+        # ── BSM Fallback: If RTD gamma is 0/None, compute Greeks analytically ──
+        # TOS RTD may return GAMMA=0 outside RTH or for illiquid strikes.
+        # We use the IV (which RTD does provide reliably) to compute gamma,
+        # vega, and theta via BSM — ensuring GEX is always meaningful.
+        flag = 'c' if parsed.option_type == "C" else 'p'
+        rtd_gamma_val = float(rtd_gamma) if rtd_gamma else 0.0
+
+        # Compute time to expiry in years
+        try:
+            exp_dt = datetime.combine(contract_expiry, dtime(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+        except Exception:
+            t = 1e-5
+
+        rtd_vega = greeks.get("VEGA")
+        rtd_theta = greeks.get("THETA")
+
+        if rtd_gamma_val > 0 and iv > 0:
+            # RTD gamma is available — use it directly
+            gamma = rtd_gamma_val
+            delta = float(rtd_delta) if rtd_delta else 0.0
+            # Prefer native vega/theta from RTD if available, else BSM
+            vega = float(rtd_vega) if rtd_vega else 0.0
+            theta = float(rtd_theta) if rtd_theta else 0.0
+            if (vega == 0.0 or theta == 0.0) and iv > 0:
+                bsm = _compute_bsm_greeks(spot, parsed.strike, t, iv, flag)
+                if vega == 0.0:
+                    vega = bsm["vega"]
+                if theta == 0.0:
+                    theta = bsm["theta"]
+        elif iv > 0:
+            # RTD gamma is 0/None but IV is available — compute all Greeks via BSM
+            bsm = _compute_bsm_greeks(spot, parsed.strike, t, iv, flag)
+            gamma = bsm["gamma"]
+            delta = bsm["delta"]
+            vega = bsm["vega"]
+            theta = bsm["theta"]
+            if PIPELINE_DEBUG_RTD_GREEKS:
+                log.debug(
+                    "BSM fallback for %s: gamma=%.6f delta=%.4f vega=%.2f iv=%.4f t=%.6f",
+                    rtd_sym, gamma, delta, vega, iv, t,
+                )
+        else:
+            # No gamma and no IV — can't compute anything meaningful
+            gamma = 0.0
+            delta = float(rtd_delta) if rtd_delta else 0.0
+            vega = 0.0
+            theta = 0.0
 
         contract = OptionContract(
             symbol=rtd_sym,
             strike=parsed.strike,
             contract_type="CALL" if parsed.option_type == "C" else "PUT",
             type="CALL" if parsed.option_type == "C" else "PUT",
-            expiry=snapshot.expiry,
+            expiry=contract_expiry,
             last=float(last) if last else 0.0,
             bid=float(last) if last else 0.0,   # RTD has no bid/ask — use last as proxy
             ask=float(last) if last else 0.0,   # so _expected_move() guardrail passes
@@ -108,12 +226,12 @@ def build_chain_from_rtd(
             volume=int(volume) if volume else 0,
             open_interest=int(open_int) if open_int else 0,
             iv=iv,
-            delta=float(delta) if delta else 0.0,
-            gamma=float(gamma) if gamma else 0.0,
-            theta=0.0,  # Not subscribed via RTD by default
-            vega=0.0,   # Not subscribed via RTD by default
-            rho=0.0,    # Not subscribed via RTD by default
-            dte=max(0, (snapshot.expiry - date.today()).days),
+            delta=delta,
+            gamma=gamma,
+            theta=theta,
+            vega=vega,
+            rho=0.0,    # Not subscribed via RTD, low impact
+            dte=max(0, (contract_expiry - date.today()).days),
         )
         contracts.append(contract)
 
