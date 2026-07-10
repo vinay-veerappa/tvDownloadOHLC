@@ -176,7 +176,7 @@ def main(ticker, next_day=False):
     # Ensure Datetime Index
     if 'datetime' in df.columns:
         df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime')
     
     # Convert to Eastern Time
     try:

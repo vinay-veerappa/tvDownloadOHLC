@@ -26,14 +26,14 @@ def fetch_daily():
                 # If checking just one ticker, we can drop the ticker level
                 df.columns = df.columns.get_level_values(0)
             
-            df.reset_index(inplace=True)
+            df = df.reset_index()
             df.columns = [c.lower() for c in df.columns] # Date, Open, High, Low, Close, Adj Close, Volume
             
             # Ensure 'close' is used (Yahoo gives Adj Close too, usually 'Close' is settlement)
             # Rename 'Date' -> 'time'? Or keep 'date'?
             # Parquet schema usually expects 'time' as int or datetime
             if 'date' in df.columns:
-                df.rename(columns={'date': 'time'}, inplace=True)
+                df = df.rename(columns={'date': 'time'})
             
             # Save
             path = os.path.join(DATA_DIR, f"{ticker}_1d.parquet")

@@ -152,7 +152,7 @@ async def fetch_data(symbol, timeframe, start_dt, end_dt):
         df = pd.DataFrame(candles)
         # Schwab 'datetime' is milliseconds (int)
         df['time'] = pd.to_datetime(df['datetime'], unit='ms')
-        df.set_index('time', inplace=True)
+        df = df.set_index('time')
         
         # Ensure only necessary columns
         df = df[['open', 'high', 'low', 'close', 'volume']]
@@ -256,7 +256,7 @@ async def update_ticker(ticker, timeframe):
         combined = pd.concat([existing_df, new_df])
         # Remove duplicates based on index
         combined = combined[~combined.index.duplicated(keep='last')]
-        combined.sort_index(inplace=True)
+        combined = combined.sort_index()
         # Ensure index has a name for the JSON converter
         combined.index.name = 'datetime'
     else:

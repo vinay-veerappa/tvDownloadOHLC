@@ -316,7 +316,7 @@ class IctService:
         # Check if 'time' is Unix timestamp (seconds)
         try:
             df_slice["datetime"] = pd.to_datetime(df_slice["time"], unit="s", utc=True)
-            df_slice.set_index("datetime", inplace=True)
+            df_slice = df_slice.set_index("datetime")
             df_slice.index = df_slice.index.tz_convert("US/Eastern")
         except Exception as e:
             logger.warning(f"Error converting time to DatetimeIndex: {e}. Trying raw localize.")

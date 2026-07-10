@@ -110,11 +110,11 @@ async def fetch_15m_history(symbol):
         
         # Normalize to App Standard
         df['datetime'] = pd.to_datetime(df['datetime'], unit='ms')
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime')
         
-        df.rename(columns={
+        df = df.rename(columns={
             "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"
-        }, inplace=True)
+        })
         
         return df[['open', 'high', 'low', 'close', 'volume']]
         
@@ -141,12 +141,12 @@ async def update_deep_history():
                 if not isinstance(old_df.index, pd.DatetimeIndex):
                     if 'datetime' in old_df.columns:
                         old_df['datetime'] = pd.to_datetime(old_df['datetime'])
-                        old_df.set_index('datetime', inplace=True)
+                        old_df = old_df.set_index('datetime')
                 
                 print(f"  Merging with existing {len(old_df)} rows...")
                 combined = pd.concat([old_df, new_df])
                 combined = combined[~combined.index.duplicated(keep='last')] # Keep new data for overlaps
-                combined.sort_index(inplace=True)
+                combined = combined.sort_index()
             except Exception as e:
                 print(f"  Merge error: {e}. Overwriting.")
                 combined = new_df

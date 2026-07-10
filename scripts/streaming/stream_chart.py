@@ -559,7 +559,7 @@ def normalize_htf_dataframe(df):
     if 'datetime' in normalized.columns:
         normalized['datetime'] = pd.to_datetime(normalized['datetime'], utc=True, errors='coerce')
         normalized = normalized.dropna(subset=['datetime'])
-        normalized.set_index('datetime', inplace=True)
+        normalized = normalized.set_index('datetime')
     elif 'time' in normalized.columns:
         time_series = normalized['time']
         if pd.api.types.is_numeric_dtype(time_series):
@@ -568,7 +568,7 @@ def normalize_htf_dataframe(df):
         else:
             normalized['datetime'] = pd.to_datetime(time_series, utc=True, errors='coerce')
         normalized = normalized.dropna(subset=['datetime'])
-        normalized.set_index('datetime', inplace=True)
+        normalized = normalized.set_index('datetime')
     elif not isinstance(normalized.index, pd.DatetimeIndex):
         normalized.index = pd.to_datetime(normalized.index, utc=True, errors='coerce')
         normalized = normalized[~normalized.index.isna()]
@@ -750,7 +750,7 @@ async def fetch_schwab_daily_history(symbol, start_dt, end_dt, now_utc):
     
     df = pd.DataFrame(candles)
     df['datetime'] = pd.to_datetime(df['datetime'], unit='ms', utc=True)
-    df.set_index('datetime', inplace=True)
+    df = df.set_index('datetime')
     return df
 
 def get_week_start_for_trade_date(trade_date, symbol):

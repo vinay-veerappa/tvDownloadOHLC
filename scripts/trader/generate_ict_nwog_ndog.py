@@ -25,7 +25,7 @@ def get_market_gaps(ticker, lookback_days=365):
     # Ensure UTC -> ET
     if 'datetime' in df.columns:
         df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
-        df.set_index('datetime', inplace=True)
+        df = df.set_index('datetime')
     
     try:
         df = df.tz_convert('US/Eastern')

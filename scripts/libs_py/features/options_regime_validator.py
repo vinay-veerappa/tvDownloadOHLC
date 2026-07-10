@@ -61,8 +61,8 @@ class OptionsRegimeValidator:
         
         if not df.empty:
             df['datetime'] = _safe_to_datetime(df['timestamp']).dt.tz_convert('US/Eastern')
-            df.set_index('datetime', inplace=True)
-            df.drop(columns=['timestamp'], inplace=True)
+            df = df.set_index('datetime')
+            df = df.drop(columns=['timestamp'])
         return df
 
     def _fetch_macro_snapshots(self, ticker: str) -> pd.DataFrame:
@@ -105,7 +105,7 @@ class OptionsRegimeValidator:
         
         if not df.empty:
             df['tradingDate'] = _safe_to_datetime(df['tradingDate']).dt.tz_convert('US/Eastern').dt.normalize()
-            df.set_index('tradingDate', inplace=True)
+            df = df.set_index('tradingDate')
         return df
 
     def _fetch_expected_moves(self, ticker: str) -> pd.DataFrame:
@@ -121,7 +121,7 @@ class OptionsRegimeValidator:
         
         if not df.empty:
             df['date'] = _safe_to_datetime(df['date']).dt.tz_convert('US/Eastern').dt.normalize()
-            df.set_index('date', inplace=True)
+            df = df.set_index('date')
         return df
 
     def vectorize_features(self, df_ohlc: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -234,7 +234,7 @@ class OptionsRegimeValidator:
 
         # Restore index from the orig_index column
         if 'orig_index' in df.columns:
-            df.set_index('orig_index', inplace=True)
+            df = df.set_index('orig_index')
             df.index.name = None
 
         # Restore original index to preserve time-series index structure

@@ -74,7 +74,7 @@ def fetch_data(client, symbol, timeframe, start_dt, end_dt):
         
     df = pd.DataFrame(candles)
     df['time'] = pd.to_datetime(df['datetime'], unit='ms')
-    df.set_index('time', inplace=True)
+    df = df.set_index('time')
     df = df[['open', 'high', 'low', 'close', 'volume']]
     df = df.dropna(subset=['open', 'high', 'low', 'close'])
     return df
@@ -108,7 +108,7 @@ def update_ticker(client, ticker, timeframe):
             new_df.index = new_df.index.tz_convert(None)
         combined = pd.concat([existing_df, new_df])
         combined = combined[~combined.index.duplicated(keep='last')]
-        combined.sort_index(inplace=True)
+        combined = combined.sort_index()
     else:
         combined = new_df
         if combined.index.tz is not None:

@@ -117,7 +117,7 @@ async def fetch_data(symbol, timeframe, start_dt, end_dt):
         # Schwab 'datetime' is milliseconds (int)
         df['time'] = df['datetime'] // 1000
         df['datetime_idx'] = pd.to_datetime(df['datetime'], unit='ms')
-        df.set_index('datetime_idx', inplace=True)
+        df = df.set_index('datetime_idx')
         
         # Ensure only necessary columns
         df = df[['time', 'open', 'high', 'low', 'close', 'volume']]
@@ -204,7 +204,7 @@ async def update_ticker(ticker, timeframe):
         combined = pd.concat([existing_df, new_df])
         # Remove duplicates based on index
         combined = combined[~combined.index.duplicated(keep='last')]
-        combined.sort_index(inplace=True)
+        combined = combined.sort_index()
     else:
         combined = new_df
         if combined.index.tz is not None:

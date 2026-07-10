@@ -61,10 +61,10 @@ def update_ticker_intraday(ticker_key, interval, period):
             if not isinstance(old_df.index, pd.DatetimeIndex):
                  if 'date' in old_df.columns:
                      old_df['datetime'] = pd.to_datetime(old_df['date'])
-                     old_df.set_index('datetime', inplace=True)
+                     old_df = old_df.set_index('datetime')
                  elif 'time' in old_df.columns:
                       old_df['datetime'] = pd.to_datetime(old_df['time'])
-                      old_df.set_index('datetime', inplace=True)
+                      old_df = old_df.set_index('datetime')
                       
             last_date = old_df.index.max()
             print(f"Existing data end: {last_date}")
@@ -91,9 +91,9 @@ def update_ticker_intraday(ticker_key, interval, period):
         if isinstance(new_df.columns, pd.MultiIndex):
             new_df.columns = new_df.columns.get_level_values(0)
             
-        new_df.rename(columns={
+        new_df = new_df.rename(columns={
             "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"
-        }, inplace=True)
+        })
         
         # Timezone Alignment
         # Yahoo often returns UTC or Market Time.
@@ -126,7 +126,7 @@ def update_ticker_intraday(ticker_key, interval, period):
         # Concatenate and drop duplicates by index
         combined = pd.concat([old_df, new_df])
         combined = combined[~combined.index.duplicated(keep='last')]
-        combined.sort_index(inplace=True)
+        combined = combined.sort_index()
     else:
         combined = new_df
 
