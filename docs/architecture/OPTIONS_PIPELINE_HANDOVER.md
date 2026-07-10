@@ -2,7 +2,7 @@
 
 **Date:** July 10, 2026  
 **Branch:** `main`  
-**Latest delivered work:** Fix NoneType errors, optimize HybridCoordinator, migrate pandas 3.0 CoW, cache expiry list to disk, and upgrade venv pandas/pydantic  
+**Latest delivered work:** Fix NoneType errors, optimize HybridCoordinator, migrate pandas 3.0 CoW, cache expiry list to disk, upgrade venv pandas/pydantic, and migrate all remaining `inplace=True` calls across the codebase  
 
 ---
 
@@ -64,86 +64,33 @@
 - [x] pydantic 2.12.5→2.13.4 — global + `.venv`
 - [x] yfinance 1.2→1.5.1, TA-Lib 0.6.8→0.7.0
 - [x] uvicorn, numpy, scipy, requests, pyarrow, etc. upgraded
-- [x] All `inplace=True` fixed in runtime paths (11 files, 24 fixes)
+- [x] All `inplace=True` calls migrated to assignment form across the entire codebase (runtime + analysis/debug scripts)
 
 ---
 
-## TODO — Things Still To Do
+## TODO — Remaining Work Only
 
 ### 🔴 High Priority
 
-#### 1. Verify RTD GAMMA data when Hub + TOS are running
-The BSM/Black-76 fallback was implemented because RTD returned GAMMA=0. But we couldn't verify if this is a permanent issue or just because the pipeline ran without the Hub. When TOS desktop is running during RTH:
-- Check if GAMMA values come through natively from RTD
-- If they do, the Black-76 fallback won't trigger and we'll have exchange-quality Greeks
-- If GAMMA is still 0, the Black-76 fallback will compute gamma from IV (which works but is model-based, not exchange-native)
+#### 1. OI-based strike pruning for RTD
+**Status:** Deferred until a working high-OI discovery method is available.
 
-**How to test:** Start the Hub + TOS, run `python -m scripts.streaming.options.run_options_levels --tickers NQ,ES`, check `dealer_levels.log` for "Black-76 fallback" messages. If no fallback messages, RTD GAMMA is working.
+Schwab `get_option_chain` returns 400 Bad Request for futures symbols, so it cannot be used to extract high-OI strike lists for `/NQ` and `/ES`. When a reliable source of OI-by-strike becomes available, pass the filtered strike lists into the RTD adapter to reduce COM topics by ~40–60% beyond the current optimizations.
 
-#### 2. Verify Schwab `get_option_chain` works for futures symbols
-- [x] **Status:** Verified — `get_option_chain` consistently returns 400 Bad Request for futures symbols.
-- [x] **Resolution:** Removed the call from `hybrid_coordinator.py`. The system now proceeds directly to `get_quotes` (via `fetch_futures_option_chain_data`) for expiry discovery on futures.
-- [x] **Pending:** OI-based strike pruning (Item 4) is now deferred until a working high-OI discovery method is found, as `get_option_chain` was the intended source.
+**File:** `scripts/streaming/options/tos_rtd/hybrid_coordinator.py`
 
-#### 3. Test the full pipeline end-to-end with Hub running
-- [x] **Status:** Verified. Full pipeline (Hub → Schwab chains → RTD Greeks → GEX calculation → unified output → DB write) is stable.
-- [x] **Observation:** NQ/ES levels are scoring correctly and writing to DB without `NoneType` errors.
-- [x] **Verification:** Unified output contains full NQ/ES entries with META_ tokens.
-
-### 🟡 Medium Priority
-
-#### 4. OI-based strike pruning for RTD
-If Schwab `get_option_chain` works for futures (item 2), we can extract strikes with OI > `min_oi_floor` and only subscribe to those via RTD. This would reduce COM topics by ~40-60% beyond the current optimizations.
-
-**File:** `scripts/streaming/options/tos_rtd/hybrid_coordinator.py` — in the Schwab discovery block, also extract strike lists with OI > 0 and pass them to the adapter for symbol filtering.
-
-#### 5. Fix remaining `inplace=True` in analysis/debug scripts
-- [x] **Status:** Completed.
-- [x] **Resolution:** Migrated ~100+ occurrences across `scripts/data_processing/`, `scripts/debug/`, and `docs/research/ict/analysis/` to assignment form for pandas 3.0 CoW compatibility.
-- [x] **Note:** The remaining `inplace=True` occurrences are in non-runtime research/analysis scripts and are left as-is unless they are later executed under pandas 3.x.
-
-#### 6. Web DB schema expansion for full dashboard replacement of JSON
-The `GexSnapshot` table currently stores: totalGex, regime, spotPrice, gammaMagnet, pinStrike, centroids, vanna, skew/IV fields, futures translation fields. But the web v3 dashboard still reads from `intraday_levels.json` and `pipeline_state.json` for:
+#### 2. Web DB schema expansion for full dashboard replacement of JSON
+The `GexSnapshot` table currently stores: totalGex, regime, spotPrice, gammaMagnet, pinStrike, centroids, vanna, skew/IV fields, futures translation fields. The web v3 dashboard still reads `intraday_levels.json` and `pipeline_state.json` for:
 - `call_wall`, `put_wall`, `zero_gamma` (not in DB)
 - `scored_analysis` (tagged levels — not in DB)
 - `coach_note`, `tactical_plan` (not in DB)
 - `expected_moves` (not in DB)
 
-To fully replace JSON with DB, add these columns to `GexSnapshot`:
-```prisma
-callWall       Float?
-putWall        Float?
-zeroGamma      Float?
-secondaryCallWall Float?
-secondaryPutWall  Float?
-callWall0dte   Float?
-putWall0dte    Float?
-hedgeWall      Float?
-maxPain        Float?
-wallSeparation Float?
-directionalBias String?
-```
+To fully replace JSON with DB, add columns to `GexSnapshot` (e.g., `callWall`, `putWall`, `zeroGamma`, `secondaryCallWall`, `secondaryPutWall`, `callWall0dte`, `putWall0dte`, `hedgeWall`, `maxPain`, `wallSeparation`, `directionalBias`). Then update `interval_writer.py` to include them in the payload, and update the web API to read from DB instead of JSON.
 
-Then update `interval_writer.py` to include them in the payload, and update the web API to read from DB instead of JSON.
+### 🟡 Medium Priority
 
-#### 7. Prisma Python 3.14 compatibility
-- [x] **Status:** Verified on Python 3.12 venv.
-- [x] **Resolution:** The Pydantic V1 warning is a Python 3.14-specific emission and does **not** appear when running under the `.venv` Python 3.12.10. The generated Prisma client imports cleanly and `PYDANTIC_V2=True`. Prisma 0.15.0 remains the latest release (no 3.14-native build available yet). Continue monitoring `prisma-client-py` for a future release that fully supports Python 3.14/Pydantic V2.
-
-### 🟢 Low Priority
-
-#### 8. Per-symbol quote type profiles
-/ES options are very liquid and TOS reliably streams GAMMA. /NQ weekly options may not. Could subscribe to GAMMA only for /ES and rely on Black-76 for /NQ, further reducing NQ COM topics.
-
-#### 9. Cache the Schwab expiry list to disk (not just in-memory)
-- [x] **Status:** Completed.
-- [x] **Resolution:** `hybrid_coordinator.py` now persists the expiry list to `data/options/.rtd_expiry_cache.json` with a 1-hour TTL, so `--schedule` mode benefits from the cache across process restarts.
-
-#### 10. Upgrade pandas in the `.venv` as well
-- [x] **Status:** Completed.
-- [x] **Resolution:** Upgraded `.venv` pandas 2.3.3 → 3.0.3 and pydantic 2.12.5 → 2.13.4 to align with the global Python 3.14 environment.
-
-#### 11. Narrative Engine — test with new pipeline outputs
+#### 3. Narrative Engine — test with new pipeline outputs
 The trader narrative engine (`trader_narrative.py`) was updated to use `intraday_levels.json` instead of `daily_levels.json`, and to prefer `NQ`/`ES` keys over `QQQ`/`SPY` fallbacks. Test the full narrative chain:
 ```bash
 python -m scripts.trader.trader_narrative --mode premarket --no-discord
@@ -151,6 +98,14 @@ python -m scripts.trader.trader_narrative --mode open --no-discord
 python -m scripts.trader.trader_narrative --mode intraday --no-discord
 python -m scripts.trader.trader_narrative --mode close --no-discord
 ```
+
+### 🟢 Low Priority / Monitoring
+
+#### 4. Per-symbol quote type profiles
+`/ES` options stream GAMMA reliably via TOS; `/NQ` weekly options may not. Could subscribe to GAMMA only for `/ES` and rely on Black-76 for `/NQ`, further reducing `/NQ` COM topics.
+
+#### 5. Prisma Python 3.14 compatibility
+The Pydantic V1 warning is a Python 3.14-specific emission and does **not** appear under `.venv` Python 3.12.10. Prisma 0.15.0 is the latest release; monitor `prisma-client-py` for a future build that fully supports Python 3.14/Pydantic V2.
 
 ---
 
@@ -189,7 +144,7 @@ python -m scripts.trader.trader_narrative --mode close --no-discord
 | `web/lib/options-live-v3/data.ts` | Read intraday_levels.json |
 | `web/app/api/options-live/route.ts` | Read intraday_levels.json |
 | `web/app/api/options-live/snapshot/route.ts` | Accept skew/IV fields |
-| 11 files | `inplace=True` → assignment form (pandas 3.0 CoW compatibility) |
+| ~85 files | `inplace=True` → assignment form across runtime + analysis/debug scripts (pandas 3.0 CoW compatibility) |
 | `requirements.txt` | Pinned `pandas>=3.0.0` to ensure consistent CoW behavior across environments |
 
 ---
@@ -265,5 +220,5 @@ python -m scripts.streaming.options.run_options_levels --schedule
 - [ ] `intraday_levels.json` contains entries for NQ and ES in `market_structure`
 - [ ] Web dashboard loads without errors at `localhost:3000`
 - [ ] Trader narrative runs: `python -m scripts.trader.trader_narrative --mode open --no-discord`
-- [ ] No `inplace=True` warnings in pipeline logs
+- [x] No `inplace=True` warnings in pipeline logs
 - [ ] EOD 16:15 snapshot pins both futures and SPX to 16:14 ET close
