@@ -225,8 +225,9 @@ class AnalyticsService:
                         f"* **Total Trades:** {total_trades}"
                     )
                     
-                    # Attach equity curve if generated
-                    files = [equity_curve_path] if (equity_curve_path and os.path.exists(equity_curve_path)) else None
+                    # Attach equity curve PNG if generated
+                    png_path = equity_curve_path.replace('.json', '.png') if equity_curve_path else None
+                    files = [png_path] if (png_path and os.path.exists(png_path)) else None
                     self._notify_discord(eod_msg, files=files, event_type="daily_rollup")
                 except Exception as de:
                     logger.warning(f"Analytics: Failed to send EOD notification for {name}: {de}")
@@ -587,9 +588,39 @@ class AnalyticsService:
             return "F"
 
     async def _generate_equity_curve(self, silo_name: str, initial_balance: float, closed_trades: list) -> str:
-        """Generates a premium dark-mode equity curve image using matplotlib."""
+        """Generates a premium dark-mode equity curve image AND a JSON data file.
+
+        Returns the path to the JSON file (consumed by the research dashboard
+        equity API endpoint).  The PNG is also saved for Discord notifications.
+        """
+        # --- Build chronological equity data ---
         if not closed_trades:
-            # Generate static image with just the initial balance line
+            sorted_trades = []
+            dates = []
+            equity = [initial_balance]
+        else:
+            sorted_trades = sorted(closed_trades, key=lambda x: x.exitDate or x.createdAt)
+            dates = []
+            equity = []
+            current = initial_balance
+            # Add initial point
+            dates.append(sorted_trades[0].entryDate - timedelta(days=1))
+            equity.append(initial_balance)
+            for t in sorted_trades:
+                current += t.pnl or 0.0
+                dates.append(t.exitDate or t.createdAt)
+                equity.append(current)
+
+        # --- Save JSON data file (for the web equity API) ---
+        timestamps = [d.isoformat() for d in dates] if dates else []
+        if not timestamps:
+            timestamps = ["1970-01-01T00:00:00"]
+        json_path = os.path.join(self.assets_dir, f"{silo_name}_equity.json")
+        with open(json_path, 'w') as f:
+            json.dump({"timestamps": timestamps, "values": equity}, f)
+
+        # --- Generate PNG (for Discord / legacy) ---
+        if not sorted_trades:
             fig, ax = plt.subplots(figsize=(8, 4), facecolor="#121212")
             ax.set_facecolor("#1e1e1e")
             ax.plot([0, 10], [initial_balance, initial_balance], color="#2962FF", linewidth=2.5)
@@ -600,56 +631,28 @@ class AnalyticsService:
             ax.spines['right'].set_visible(False)
             ax.tick_params(colors='white')
             ax.grid(True, color='#2c2c2c', linestyle='--')
-            
-            filepath = os.path.join(self.assets_dir, f"{silo_name}_equity.png")
-            plt.savefig(filepath, facecolor="#121212", bbox_inches='tight', dpi=100)
-            plt.close()
-            return filepath
+        else:
+            plt.style.use('dark_background')
+            fig, ax = plt.subplots(figsize=(10, 5), facecolor="#121212")
+            ax.set_facecolor("#1e1e1e")
 
-        # Calculate chronological equity curve
-        sorted_trades = sorted(closed_trades, key=lambda x: x.exitDate or x.createdAt)
-        
-        dates = []
-        equity = []
-        current = initial_balance
-        
-        # Add initial point
-        dates.append(sorted_trades[0].entryDate - timedelta(days=1))
-        equity.append(initial_balance)
-        
-        for t in sorted_trades:
-            current += t.pnl or 0.0
-            dates.append(t.exitDate or t.createdAt)
-            equity.append(current)
+            line_color = "#00C853" if equity[-1] >= initial_balance else "#D50000"
+            ax.plot(dates, equity, color=line_color, linewidth=2.5, marker='o', markersize=4, label="Silo Equity")
+            ax.fill_between(dates, equity, initial_balance, color=line_color, alpha=0.15)
+            ax.axhline(y=initial_balance, color="#555555", linestyle="--", linewidth=1.2, label="Starting Capital")
+            ax.set_title(f"Equity Curve - {silo_name}", color="white", fontsize=14, fontweight="bold", pad=20)
+            ax.spines['bottom'].set_color('#333333')
+            ax.spines['left'].set_color('#333333')
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.tick_params(colors='white', labelsize=9)
+            ax.grid(True, color='#2c2c2c', linestyle='--', alpha=0.7)
+            ax.legend(facecolor="#1e1e1e", edgecolor="#333333", loc="upper left")
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+            fig.autofmt_xdate()
 
-        # Matplotlib plot
-        plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(10, 5), facecolor="#121212")
-        ax.set_facecolor("#1e1e1e")
-        
-        # Plot styling
-        line_color = "#00C853" if current >= initial_balance else "#D50000"
-        ax.plot(dates, equity, color=line_color, linewidth=2.5, marker='o', markersize=4, label="Silo Equity")
-        ax.fill_between(dates, equity, initial_balance, color=line_color, alpha=0.15)
-        
-        # Reference baseline
-        ax.axhline(y=initial_balance, color="#555555", linestyle="--", linewidth=1.2, label="Starting Capital")
-
-        # Labels & Ticks
-        ax.set_title(f"Equity Curve - {silo_name}", color="white", fontsize=14, fontweight="bold", pad=20)
-        ax.spines['bottom'].set_color('#333333')
-        ax.spines['left'].set_color('#333333')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.tick_params(colors='white', labelsize=9)
-        ax.grid(True, color='#2c2c2c', linestyle='--', alpha=0.7)
-        ax.legend(facecolor="#1e1e1e", edgecolor="#333333", loc="upper left")
-
-        # Date formatting
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-        fig.autofmt_xdate()
-
-        filepath = os.path.join(self.assets_dir, f"{silo_name}_equity.png")
-        plt.savefig(filepath, facecolor="#121212", bbox_inches='tight', dpi=120)
+        png_path = os.path.join(self.assets_dir, f"{silo_name}_equity.png")
+        plt.savefig(png_path, facecolor="#121212", bbox_inches='tight', dpi=120 if sorted_trades else 100)
         plt.close()
-        return filepath
+
+        return json_path
