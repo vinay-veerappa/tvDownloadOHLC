@@ -279,11 +279,11 @@ export default function ExpectedMovePage() {
                                                     let etfEm = undefined;
 
                                                     if (exp.basis) {
-                                                        displayEm = exp.basis.close.index_em;
-                                                        etfEm = exp.basis.close.etf_em;
+                                                        displayEm = exp.basis.close?.index_em ?? null;
+                                                        etfEm = exp.basis.close?.etf_em ?? null;
                                                     }
 
-                                                    const effectiveEm = exp.manual_em || displayEm;
+                                                    const effectiveEm = exp.manual_em || displayEm || exp.adj_em || 0;
                                                     const lower = (item.price - effectiveEm).toFixed(2);
                                                     const upper = (item.price + effectiveEm).toFixed(2);
                                                     const isManual = !!exp.manual_em;
@@ -292,19 +292,19 @@ export default function ExpectedMovePage() {
                                                         <TableRow key={exp.date}>
                                                             <TableCell className="font-medium">{exp.date}</TableCell>
                                                             <TableCell>{exp.dte}</TableCell>
-                                                            <TableCell className="text-right text-muted-foreground">${exp.straddle.toFixed(2)}</TableCell>
-                                                            <TableCell className="text-right text-muted-foreground">${exp.em_365.toFixed(2)}</TableCell>
-                                                            <TableCell className="text-right text-muted-foreground">${exp.em_252.toFixed(2)}</TableCell>
+                                                            <TableCell className="text-right text-muted-foreground">${(exp.straddle ?? 0).toFixed(2)}</TableCell>
+                                                            <TableCell className="text-right text-muted-foreground">${(exp.em_365 ?? 0).toFixed(2)}</TableCell>
+                                                            <TableCell className="text-right text-muted-foreground">${(exp.em_252 ?? 0).toFixed(2)}</TableCell>
                                                             <TableCell className="text-right">
 
                                                                 {exp.basis ? (
                                                                     <Tooltip>
                                                                         <TooltipTrigger asChild>
                                                                             <div className="flex flex-col items-end cursor-help">
-                                                                                <span className={`font-bold ${exp.adj_em > 0 ? 'text-primary' : 'text-gray-400'}`}>
-                                                                                    ${displayEm.toFixed(2)}
+                                                                                <span className={`font-bold ${(exp.adj_em ?? 0) > 0 ? 'text-primary' : 'text-gray-400'}`}>
+                                                                                    ${(displayEm ?? 0).toFixed(2)}
                                                                                 </span>
-                                                                                {etfEm && (
+                                                                                {etfEm != null && (
                                                                                     <span className="text-xs text-muted-foreground">
                                                                                         ETF: ${etfEm.toFixed(2)}
                                                                                     </span>
@@ -316,23 +316,22 @@ export default function ExpectedMovePage() {
                                                                                 <h4 className="font-semibold text-sm border-b pb-1 mb-1">Calculation Basis</h4>
                                                                                 <div className="grid grid-cols-2 gap-2 text-xs">
                                                                                     <div className="font-medium">Index Close</div>
-                                                                                    <div className="text-right font-bold">${exp.basis.close.index_em.toFixed(2)}</div>
-
+                                                                                <div className="text-right font-bold">${(exp.basis.close?.index_em ?? 0).toFixed(2)}</div>
                                                                                     <div className="font-medium text-muted-foreground">ETF Close</div>
-                                                                                    <div className="text-right text-muted-foreground">${exp.basis.close.etf_em?.toFixed(2)}</div>
+                                                                                    <div className="text-right text-muted-foreground">${(exp.basis.close?.etf_em ?? 0).toFixed(2)}</div>
 
                                                                                     <div className="font-medium mt-2">Index Open</div>
-                                                                                    <div className="text-right mt-2 font-bold">${exp.basis.open.index_em.toFixed(2)}</div>
+                                                                                    <div className="text-right mt-2 font-bold">${(exp.basis.open?.index_em ?? 0).toFixed(2)}</div>
 
                                                                                     <div className="font-medium text-muted-foreground">ETF Open</div>
-                                                                                    <div className="text-right text-muted-foreground">${exp.basis.open.etf_em?.toFixed(2)}</div>
+                                                                                    <div className="text-right text-muted-foreground">${(exp.basis.open?.etf_em ?? 0).toFixed(2)}</div>
                                                                                 </div>
                                                                             </div>
                                                                         </TooltipContent>
                                                                     </Tooltip>
                                                                 ) : (
-                                                                    <span className={`font-bold ${exp.adj_em > 0 ? 'text-primary' : 'text-gray-400'}`}>
-                                                                        ${displayEm.toFixed(2)}
+                                                                    <span className={`font-bold ${(exp.adj_em ?? 0) > 0 ? 'text-primary' : 'text-gray-400'}`}>
+                                                                        ${(displayEm ?? 0).toFixed(2)}
                                                                     </span>
                                                                 )}
 

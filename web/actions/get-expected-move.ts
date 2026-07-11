@@ -168,7 +168,7 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
                             straddle: exp.straddle,
                             em365: exp.em_365,
                             em252: exp.em_252,
-                            adjEm: exp.adj_em,
+                            adjEm: exp.adj_em ?? 0,
                             basis: exp.basis ? JSON.stringify(exp.basis) : null,
                             note: exp.note
                         } as any,
@@ -180,7 +180,7 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
                             straddle: exp.straddle,
                             em365: exp.em_365,
                             em252: exp.em_252,
-                            adjEm: exp.adj_em,
+                            adjEm: exp.adj_em ?? 0,
                             manualEm: null,
                             basis: exp.basis ? JSON.stringify(exp.basis) : null,
                             note: exp.note
