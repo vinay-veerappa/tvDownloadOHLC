@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import ORJSONResponse
 from typing import List, Optional
 import pandas as pd
 import math
@@ -73,7 +72,7 @@ async def get_sessions(
         if has_precomputed_hourly(ticker):
             sessions = load_precomputed_hourly(ticker, start_ts, end_ts)
             if sessions is not None:
-                return ORJSONResponse(sessions)
+                return sessions
         
         # Fall back to on-demand calculation
         df = load_parquet(ticker, "1m")
@@ -87,7 +86,7 @@ async def get_sessions(
             df = df[df['time'] <= end_ts]
         
         if df.empty:
-            return ORJSONResponse([])
+            return []
         
         # Prepare DataFrame for Service
         df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
@@ -95,7 +94,7 @@ async def get_sessions(
         df.index = df.index.tz_convert('US/Eastern')
         
         sessions = SessionService.calculate_hourly(df)
-        return ORJSONResponse(sanitize_for_json(sessions))
+        return sanitize_for_json(sessions)
     
     # =========================================================================
     # DAILY (ALL): Try pre-computed first
@@ -104,7 +103,7 @@ async def get_sessions(
         if has_precomputed_daily(ticker):
             sessions = load_precomputed_daily(ticker, start_ts, end_ts)
             if sessions is not None:
-                return ORJSONResponse(sessions)
+                return sessions
         
         # Fall back to on-demand calculation
         df = load_parquet(ticker, "1m")
@@ -118,7 +117,7 @@ async def get_sessions(
             df = df[df['time'] <= end_ts]
         
         if df.empty:
-            return ORJSONResponse([])
+            return []
         
         # Prepare DataFrame for Service
         df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
@@ -126,7 +125,7 @@ async def get_sessions(
         df.index = df.index.tz_convert('US/Eastern')
         
         sessions = SessionService.calculate_sessions(df, clean_ticker)
-        return ORJSONResponse(sanitize_for_json(sessions))
+        return sanitize_for_json(sessions)
     
     # =========================================================================
     # OPENING RANGE: Always calculate on-demand (small dataset)
@@ -143,7 +142,7 @@ async def get_sessions(
             df = df[df['time'] <= end_ts]
         
         if df.empty:
-            return ORJSONResponse([])
+            return []
         
         # Prepare DataFrame
         df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
@@ -151,9 +150,9 @@ async def get_sessions(
         df.index = df.index.tz_convert('US/Eastern')
         
         sessions = SessionService.calculate_opening_range(df, start_time, duration)
-        return ORJSONResponse(sanitize_for_json(sessions))
+        return sanitize_for_json(sessions)
     
-    return ORJSONResponse([])
+    return []
 
 
 

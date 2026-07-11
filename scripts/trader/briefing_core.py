@@ -2693,7 +2693,7 @@ def build_trader_cheat_sheet(
                 aln_data["reasoning"] = f"{aln_pattern} + {broken} — no high-conviction edge."
     except Exception as e:
         log.warning("[cheat_sheet] ALN engine failed: %s", e)
-    sections.append(_format_aln_block(aln_data, nq_spot))
+    sections.append(_format_aln_block("NQ", aln_data, nq_spot))
 
     # ── Classification (NQ) ──
     class_data: dict = {}
@@ -2708,7 +2708,7 @@ def build_trader_cheat_sheet(
             _sys.argv = orig_argv
     except Exception as e:
         log.warning("[cheat_sheet] Classification analysis failed: %s", e)
-    sections.append(_format_classification_block(class_data))
+    sections.append(_format_classification_block("NQ", class_data))
 
     # ── Key levels hierarchy ──
     sections.append(_format_key_levels_hierarchy(nq_gex, es_gex, aln_data, nq_spot))
@@ -2734,14 +2734,14 @@ def build_trader_cheat_sheet(
     # ICT context
     try:
         ict = compute_ict_from_htf(ticker=nq_ticker, current_price=nq_spot)
-        sections.append(_format_ict_block(ict, nq_spot))
+        sections.append(_format_ict_block("NQ", ict, nq_spot))
     except Exception as e:
         log.warning("[cheat_sheet] ICT context failed: %s", e)
 
     # Candle Science
     try:
         cs = get_candle_science_read(ticker=nq_ticker)
-        sections.append(_format_candle_science_block(cs))
+        sections.append(_format_candle_science_block("NQ", cs))
     except Exception as e:
         log.warning("[cheat_sheet] Candle Science failed: %s", e)
 
@@ -2763,7 +2763,7 @@ def build_trader_cheat_sheet(
         # Candle Science direction
         s3 = "BULLISH" if (cs and cs.get("p_bull", 50) > cs.get("p_bear", 50)) else ("BEARISH" if (cs and cs.get("p_bear", 50) > cs.get("p_bull", 50)) else "NEUTRAL")
         conf = assess_confluence(s1, s2, s3)
-        sections.append(_format_confluence_block(conf))
+        sections.append(_format_confluence_block("NQ", conf))
     except Exception as e:
         log.warning("[cheat_sheet] Confluence failed: %s", e)
 
@@ -2777,7 +2777,7 @@ def build_trader_cheat_sheet(
     # Weekly profile
     try:
         wp = compute_weekly_profile(ticker=nq_ticker, current_price=nq_spot)
-        sections.append(_format_weekly_profile_block(wp))
+        sections.append(_format_weekly_profile_block("NQ", wp))
     except Exception as e:
         log.warning("[cheat_sheet] Weekly profile failed: %s", e)
 

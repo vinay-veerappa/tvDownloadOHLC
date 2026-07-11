@@ -415,10 +415,15 @@ class ProfilerService:
                     time_idxs = (time_deltas_m // bucket_minutes) * bucket_minutes
                 else:
                     time_idxs = time_deltas_m
-                    
-                all_time_idxs.append(time_idxs)
-                all_norm_highs.append(norm_high)
-                all_norm_lows.append(norm_low)
+
+                # Drop points before the session start (negative minute offsets) to match
+                # the matrix-branch mask and avoid invalid group keys / time labels.
+                valid_mask = time_idxs >= 0
+                if not valid_mask.any():
+                    continue
+                all_time_idxs.append(time_idxs[valid_mask])
+                all_norm_highs.append(norm_high[valid_mask])
+                all_norm_lows.append(norm_low[valid_mask])
 
         # Helper to format time
         base_dt = None
@@ -511,7 +516,7 @@ class ProfilerService:
             # Precompute time strings
             time_strs = []
             if base_dt:
-                max_idx = int(stats.index.max()) + 100
+                max_idx = int(stats.index.max()) + 1 + 100
                 for m in range(max_idx):
                     curr_dt = base_dt + timedelta(minutes=m)
                     time_strs.append(curr_dt.strftime("%H:%M"))
@@ -521,8 +526,11 @@ class ProfilerService:
             max_hs = stats[('norm_high', 'max')].to_numpy()
             avg_ls = stats[('norm_low', 'median')].to_numpy()
             min_ls = stats[('norm_low', 'min')].to_numpy()
-            
+
             for i, idx in enumerate(indices):
+                # Defensive: skip any index that falls outside the precomputed time labels.
+                if base_dt and (idx < 0 or idx >= len(time_strs)):
+                    continue
                 time_str = time_strs[idx] if base_dt else ""
                 avg_path.append({
                     "time_idx": int(idx),
@@ -1338,7 +1346,9 @@ class ProfilerService:
                 )
             print(f"[Pre-Warm] Successfully warmed cache for {ticker}")
         except Exception as e:
+            import traceback
             print(f"[Pre-Warm] Failed to warm cache: {e}")
+            traceback.print_exc()
 
     @staticmethod
     def _load_df(ticker: str) -> Optional[pd.DataFrame]:

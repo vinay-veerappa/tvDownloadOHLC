@@ -73,13 +73,15 @@ def _wait_for_open_snapshot(timeout: int = OPEN_SNAPSHOT_TIMEOUT_SECONDS) -> boo
     """
     import time as _time
     from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
 
+    et = ZoneInfo(ET_TZ)
     deadline = _time.monotonic() + timeout
-    today_930 = _dt.now(ET).replace(hour=9, minute=30, second=0, microsecond=0)
+    today_930 = _dt.now(et).replace(hour=9, minute=30, second=0, microsecond=0)
 
     while _time.monotonic() < deadline:
         if UNIFIED_LEVELS_OPEN_TXT.exists():
-            mtime = _dt.fromtimestamp(UNIFIED_LEVELS_OPEN_TXT.stat().st_mtime, tz=ET)
+            mtime = _dt.fromtimestamp(UNIFIED_LEVELS_OPEN_TXT.stat().st_mtime, tz=et)
             if mtime >= today_930:
                 log.info("✓ Open snapshot ready (mtime: %s)", mtime.strftime("%H:%M:%S ET"))
                 return True

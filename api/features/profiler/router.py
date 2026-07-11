@@ -1,6 +1,5 @@
 
 from fastapi import APIRouter, HTTPException, Query, Body
-from fastapi.responses import ORJSONResponse
 from .service import ProfilerService
 from scripts.libs_py.nqstats.engine import NQStatsEngine
 from api.features.shared.data_loader import load_parquet
@@ -40,7 +39,7 @@ def get_profiler_live_status(ticker: str):
     engine.process()
     latest = engine.get_latest_status()
     # Convert numpy types to native Python for JSON serialization
-    return ORJSONResponse({k: (v.item() if hasattr(v, 'item') else v) for k, v in latest.items()})
+    return ({k: (v.item() if hasattr(v, 'item') else v) for k, v in latest.items()})
 
 
 @router.get("/stats/profiler/{ticker}", tags=["Stats"])
@@ -53,7 +52,7 @@ def get_profiler_stats(ticker: str, days: int = Query(50)):
     result = ProfilerService.analyze_profiler_stats(ticker, days=days)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 
 
@@ -84,7 +83,7 @@ def get_profiler_filtered_stats(
     
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 
 @router.post("/{ticker}/price-model", tags=["Stats"])
@@ -113,7 +112,7 @@ def get_profiler_filtered_price_model(
     
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 @router.get("/stats/hod-lod/{ticker}", tags=["Stats"])
 def get_hod_lod_stats(ticker: str):
@@ -129,7 +128,7 @@ def get_hod_lod_stats(ticker: str):
     with open(json_path, 'r') as f:
         data = json.load(f)
     
-    return ORJSONResponse(data)
+    return data
 
 @router.get("/stats/profiler/{ticker}/levels", tags=["Stats"])
 def get_profiler_level_stats(ticker: str):
@@ -142,7 +141,7 @@ def get_profiler_level_stats(ticker: str):
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
         
-    return ORJSONResponse(result)
+    return result
 
 @router.get("/stats/range-dist/{ticker}", tags=["Stats"])
 def get_range_distribution(ticker: str):
@@ -158,7 +157,7 @@ def get_range_distribution(ticker: str):
     with open(json_path, 'r') as f:
         data = json.load(f)
     
-    return ORJSONResponse(data)
+    return data
 
 @router.post("/stats/clear-cache/{ticker}", tags=["Stats"])
 def clear_profiler_cache(ticker: str = "NQ1"):
@@ -190,7 +189,7 @@ def get_daily_hod_lod(
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
         
-    return ORJSONResponse(data)
+    return data
 
 @router.get("/stats/level-touches/{ticker}", tags=["Stats"])
 def get_level_touches(
@@ -206,7 +205,7 @@ def get_level_touches(
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
         
-    return ORJSONResponse(data)
+    return data
 
 @router.get("/stats/reference", tags=["Stats"])
 def get_reference_stats():
@@ -226,10 +225,10 @@ def get_reference_stats():
     with open(ref_med_path, 'r') as f:
         ref_med = json.load(f)
         
-    return ORJSONResponse({
+    return {
         "stats": ref_all,
         "median": ref_med
-    })
+    }
 
 @router.get("/{ticker}/price-model", tags=["Stats"])
 def get_price_model(
@@ -245,7 +244,7 @@ def get_price_model(
     result = ProfilerService.get_price_model_data(ticker, session, outcome, days)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 
 
@@ -284,7 +283,7 @@ def get_filtered_profiler_stats(
     
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 
 @router.post("/stats/filtered-price-model", tags=["Stats"])
@@ -319,7 +318,7 @@ def get_filtered_price_model(
     
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 
 @router.post("/stats/custom-price-model", tags=["Stats"])
@@ -350,7 +349,7 @@ def get_custom_price_model(
     
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 
 # ============================================================================
@@ -368,7 +367,7 @@ def get_asia_prediction(
     result = ProfilerService.get_asia_prediction(prev_ny1, prev_ny2)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result
 
 @router.get("/stats/prediction/london", tags=["Stats"])
 def get_london_prediction(
@@ -381,4 +380,4 @@ def get_london_prediction(
     result = ProfilerService.get_london_prediction(prev_ny2, asia_status)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    return ORJSONResponse(result)
+    return result

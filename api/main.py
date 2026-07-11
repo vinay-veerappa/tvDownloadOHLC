@@ -8,7 +8,6 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import ORJSONResponse
 from api.features.indicators import router as indicators
 from api.features.sessions import router as sessions
 from api.features.profiler import router as profiler
@@ -17,7 +16,6 @@ app = FastAPI(
     title="Trading Indicators API",
     description="Technical indicator calculations for chart display and backtesting",
     version="1.0.0",
-    default_response_class=ORJSONResponse
 )
 
 # Enable GZip Compression for payloads > 1KB
