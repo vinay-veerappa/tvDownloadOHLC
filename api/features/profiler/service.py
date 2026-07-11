@@ -323,8 +323,12 @@ class ProfilerService:
         np_high = df['high'].values
         np_low = df['low'].values
         
-        # Use absolute Unix seconds for the index (converts US/Eastern -> UTC Unix)
-        np_ts_unix = df.index.astype('int64').to_numpy() // 10**9
+        # Use absolute Unix seconds for the index.
+        # For a tz-aware DatetimeIndex, .astype('int64') / .asi8 return local
+        # wall-clock nanoseconds (without timezone offset), NOT UTC epoch.
+        # Convert via numpy datetime64[s] so values match base_ts_unix (which
+        # comes from .timestamp() = UTC epoch seconds).
+        np_ts_unix = np.array(df.index.tz_convert('UTC'), dtype='datetime64[s]').astype('int64')
 
         is_daily = len(valid_sessions) > 0 and valid_sessions[0].get('session') == 'Daily'
         for i, (start_idx, end_idx) in enumerate(zip(start_locs, end_locs)):
@@ -1353,27 +1357,79 @@ class ProfilerService:
     @staticmethod
     def _load_df(ticker: str) -> Optional[pd.DataFrame]:
         """
-        Unified method to load OHLCV data with perfect Unix -> EST alignment.
+        Load historical 1m OHLCV data for composite path generation.
+
+        Reads the historical parquet directly from the data_loader's
+        ``_HISTORICAL_CACHE`` (which is already NaN-cleaned and sorted)
+        and does NOT fuse live storage data.  The profiler operates on
+        precomputed historical data only; fusing live bars (which can
+        contain incomplete/NaN timestamps) breaks the searchsorted bounds
+        check in generate_composite_path and causes empty price models.
         """
         # Check Cache
         cached_df = ProfilerService._cache_get(ProfilerService._cache, ticker)
         if cached_df is not None:
             return cached_df
-            
+
         try:
-            # Use robust loader to get synchronized Unix timestamps
-            from api.features.shared.data_loader import load_parquet
-            df = load_parquet(ticker, "1m", columns=["time", "high", "low"])
-            
-            if df is None or df.empty:
-                return None
-            
+            from api.features.shared.data_loader import _HISTORICAL_CACHE, DATA_DIR
+
+            clean_ticker = ProfilerService._normalize_ticker(ticker)
+            cache_key = f"{clean_ticker}_1m_cols_high_low_time"
+
+            # Reuse the data_loader's historical cache if already populated
+            if cache_key in _HISTORICAL_CACHE:
+                df = _HISTORICAL_CACHE[cache_key].copy()
+            else:
+                parquet_path = DATA_DIR / f"{clean_ticker}_1m.parquet"
+                if not parquet_path.exists():
+                    print(f"[Profiling] Historical parquet not found: {parquet_path}")
+                    return None
+
+                df = pd.read_parquet(parquet_path, columns=["time", "high", "low"])
+                if df is None or df.empty:
+                    return None
+
+                # Normalize datetime index -> 'time' (Unix seconds), drop NaN, sort
+                if df.index.name in ['datetime', 'time', 'timestamp'] or (
+                    not df.index.empty and isinstance(df.index, pd.DatetimeIndex)
+                ):
+                    old_cols = set(df.columns)
+                    df = df.reset_index()
+                    new_cols = set(df.columns) - old_cols
+                    if new_cols:
+                        reset_col = list(new_cols)[0]
+                        if 'time' not in df.columns:
+                            df = df.rename(columns={reset_col: 'time'})
+                        elif reset_col != 'time':
+                            if df['time'].isna().all() or (
+                                df['time'].dtype == 'float64' and df['time'].isna().sum() > 0
+                            ):
+                                df = df.drop(columns=['time'])
+                                df = df.rename(columns={reset_col: 'time'})
+
+                if 'datetime' in df.columns and 'time' in df.columns:
+                    df = df.drop(columns=['datetime'])
+                elif 'datetime' in df.columns:
+                    df = df.rename(columns={'datetime': 'time'})
+                elif 'timestamp' in df.columns and 'time' in df.columns:
+                    df = df.drop(columns=['timestamp'])
+                elif 'timestamp' in df.columns:
+                    df = df.rename(columns={'timestamp': 'time'})
+
+                if 'time' in df.columns and pd.api.types.is_datetime64_any_dtype(df['time']):
+                    df['time'] = df['time'].astype('int64') // 10**9
+
+                df = df.dropna(subset=['time'])
+                df = df.sort_values('time').reset_index(drop=True)
+                _HISTORICAL_CACHE[cache_key] = df
+                df = df.copy()
+
             required = {"time", "high", "low"}
             if not required.issubset(df.columns):
                 return None
 
             # Keep only columns required for composite path generation.
-            # This avoids holding millions of unnecessary string/numeric fields in memory.
             df = df[["time", "high", "low"]].copy()
             idx = pd.to_datetime(df["time"].to_numpy(), unit='s', utc=True).tz_convert('US/Eastern')
             df = df.drop(columns=["time"])

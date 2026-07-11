@@ -71,11 +71,11 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
 
     const [startDate, setStartDate] = useState<string>('');
     const [endDate, setEndDate] = useState<string>('');
-    const [datePreset, setDatePreset] = useState<string>('last90');
+    const [datePreset, setDatePreset] = useState<string>('all');
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
     useEffect(() => {
-        const savedPreset = localStorage.getItem('profiler-date-preset') || 'last90';
+        const savedPreset = localStorage.getItem('profiler-date-preset') || 'all';
         setDatePreset(savedPreset);
         if (savedPreset === 'custom') {
             setStartDate(localStorage.getItem('profiler-start-date') || '');
@@ -245,7 +245,7 @@ function ProfilerViewContent({
     const handleReset = useMemo(() => () => {
         setFilters({});
         setBrokenFilters({});
-        const defaultPreset = 'last90';
+        const defaultPreset = 'all';
         setDatePreset(defaultPreset);
         const { start, end } = getPresetDates(defaultPreset);
         setStartDate(start);
