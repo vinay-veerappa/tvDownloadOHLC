@@ -133,7 +133,7 @@ export default function ResearchDetailPage() {
             <ShieldCheck className="h-5 w-5 text-emerald-500 opacity-50" />
             <div>
               <div className="text-[10px] uppercase font-bold text-muted-foreground">Sharp</div>
-              <div className="text-xl font-bold text-emerald-500">{metrics.sharpe?.toFixed(2)}</div>
+              <div className="text-xl font-bold text-emerald-500">{(metrics.sharpe ?? metrics.sharpe_ratio ?? 0).toFixed(2)}</div>
             </div>
           </div>
         </div>
@@ -161,8 +161,8 @@ export default function ResearchDetailPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <MetricBox label="Profit Factor" value={metrics.profit_factor} symbol="" />
             <MetricBox label="Win Rate" value={`${metrics.win_rate?.toFixed(1)}%`} symbol="" />
-            <MetricBox label="Max Drawdown" value={`${metrics.drawdown?.toFixed(2)}%`} symbol="" isNegative />
-            <MetricBox label="Profit/Loss" value={metrics.grade} symbol="" isGrade />
+            <MetricBox label="Max Drawdown" value={`${(metrics.drawdown ?? metrics.max_drawdown ?? 0).toFixed(2)}%`} symbol="" isNegative />
+            <MetricBox label="Profit/Loss" value={metadata?.grade ?? 'N/A'} symbol="" isGrade />
           </div>
         </div>
 

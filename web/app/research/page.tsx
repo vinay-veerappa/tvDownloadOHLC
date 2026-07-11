@@ -278,13 +278,30 @@ export default function ResearchDashboard() {
 
 function RunCard({ run }: { run: ResearchRun }) {
   const metrics = JSON.parse(run.metricsJson || '{}');
-  const thumbnail = JSON.parse(run.thumbnailJson || '{"timestamps":[], "values":[]}');
-  
-  // Transform thumbnail for Recharts
-  const chartData = thumbnail.values.map((v: number, i: number) => ({
-    val: v,
-    time: thumbnail.timestamps[i]
-  }));
+  const [equityData, setEquityData] = useState<{val: number, time: string}[]>([]);
+
+  // Fetch equity curve on mount (replaces null thumbnailJson)
+  useEffect(() => {
+    if (run.thumbnailJson) {
+      try {
+        const thumb = JSON.parse(run.thumbnailJson);
+        setEquityData(thumb.values.map((v: number, i: number) => ({ val: v, time: thumb.timestamps[i] })));
+      } catch { /* fall through to fetch */ }
+    } else {
+      fetch(`/api/research/run/${run.id}/equity`)
+        .then(res => res.json())
+        .then(data => {
+          if (data?.values && data?.timestamps) {
+            setEquityData(data.values.map((v: number, i: number) => ({ val: v, time: data.timestamps[i] })));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [run.id, run.thumbnailJson]);
+
+  // Handle both metric field name variants
+  const sharpe = metrics.sharpe ?? metrics.sharpe_ratio ?? 0;
+  const drawdown = metrics.drawdown ?? metrics.max_drawdown ?? 0;
 
   const gradeColors: Record<string, string> = {
     'A': 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
@@ -323,7 +340,7 @@ function RunCard({ run }: { run: ResearchRun }) {
         {/* Thumbnail Chart */}
         <div className="h-24 w-full -mx-2">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
+            <LineChart data={equityData}>
               <Line 
                 type="monotone" 
                 dataKey="val" 
@@ -341,11 +358,11 @@ function RunCard({ run }: { run: ResearchRun }) {
         <div className="grid grid-cols-2 gap-4 pt-2 border-t border-primary/5">
           <div className="space-y-0.5">
             <span className="text-[10px] uppercase font-bold text-muted-foreground opacity-60">Sharpe Ratio</span>
-            <div className="text-sm font-mono font-bold text-primary">{metrics.sharpe?.toFixed(2)}</div>
+            <div className="text-sm font-mono font-bold text-primary">{sharpe.toFixed(2)}</div>
           </div>
           <div className="space-y-0.5">
             <span className="text-[10px] uppercase font-bold text-muted-foreground opacity-60">Max DD</span>
-            <div className="text-sm font-mono font-bold text-rose-500">{metrics.drawdown?.toFixed(2)}%</div>
+            <div className="text-sm font-mono font-bold text-rose-500">{drawdown.toFixed(2)}%</div>
           </div>
         </div>
       </div>
