@@ -1032,18 +1032,28 @@ def run_pipeline(
                         if rtd_gex_result.chain_data is not None:
                             clean_fut_sym = futures_sym.lstrip('/')
                             if clean_fut_sym in target_tickers:
-                                try:
-                                    rtd_scored_intraday = score_levels(
-                                        rtd_dl, rtd_gex_result.chain_data, clean_fut_sym, profile, INTRADAY_VIEW
-                                    )
-                                    rtd_scored_macro = score_levels(
-                                        rtd_dl, rtd_gex_result.chain_data, clean_fut_sym, profile, MACRO_VIEW
-                                    )
-                                    scored_intraday_by_ticker[clean_fut_sym] = rtd_scored_intraday
-                                    scored_macro_by_ticker[clean_fut_sym] = rtd_scored_macro
-                                    log.info("Direct RTD scored levels saved for ticker: %s", clean_fut_sym)
-                                except Exception as e:
-                                    log.error("Failed to score direct RTD levels for %s: %s", clean_fut_sym, e)
+                                # Don't overwrite if the RTD-native path already
+                                # scored this ticker with its own profile (line 551).
+                                # The RTD-native path uses get_ticker_profile("ES")
+                                # while the Schwab-ETF loop here uses the ETF's
+                                # profile (e.g. SPY), which has different min_oi
+                                # thresholds and would produce different walls.
+                                if clean_fut_sym in RTD_NATIVE_TICKERS and clean_fut_sym in scored_intraday_by_ticker:
+                                    log.info("RTD-native scored levels already exist for %s — not overwriting from %s loop",
+                                             clean_fut_sym, ticker)
+                                else:
+                                    try:
+                                        rtd_scored_intraday = score_levels(
+                                            rtd_dl, rtd_gex_result.chain_data, clean_fut_sym, profile, INTRADAY_VIEW
+                                        )
+                                        rtd_scored_macro = score_levels(
+                                            rtd_dl, rtd_gex_result.chain_data, clean_fut_sym, profile, MACRO_VIEW
+                                        )
+                                        scored_intraday_by_ticker[clean_fut_sym] = rtd_scored_intraday
+                                        scored_macro_by_ticker[clean_fut_sym] = rtd_scored_macro
+                                        log.info("Direct RTD scored levels saved for ticker: %s", clean_fut_sym)
+                                    except Exception as e:
+                                        log.error("Failed to score direct RTD levels for %s: %s", clean_fut_sym, e)
                             else:
                                 log.debug(
                                     "RTD levels computed for %s (used for GEX/price context) but not saved "
@@ -1155,17 +1165,34 @@ def run_pipeline(
                                 iv_change=getattr(rtd_dl, 'iv_change', 0.0),
                                 expected_moves=rtd_dl.expected_moves,
                             )
-                translated_levels.append(tl_intraday)
-                translated_macro_levels.append(tl_macro)
 
-                # 6c. If RTD GEX is primary, replace the just-appended Schwab levels
-                if rtd_tl is not None and TOS_RTD_GEX_AS_PRIMARY:
-                    translated_levels[-1] = rtd_tl
-                    translated_macro_levels[-1] = replace(rtd_tl, wall_scope="ALL_EXPIRIES_WEIGHTED")
-                    # Write RTD GEX snapshot to DB
-                    if _is_rth() and rtd_dl_primary is not None:
-                        from .interval_writer import write_snapshot
-                        write_snapshot(rtd_dl_primary, ticker_override=futures_sym)
+                # Don't append a duplicate futures entry if the RTD-native
+                # path already added one (line 664).  The RTD-native path
+                # produces the authoritative /ES and /NQ entries; the Schwab
+                # ETF loop's translated entry would be overwritten in
+                # build_current_state anyway, and having two entries for the
+                # same futures_symbol causes the SPY-translated values to
+                # silently replace the RTD-direct ones in pipeline_state.
+                _fut_already_added = any(
+                    getattr(tl, 'futures_symbol', None) == futures_sym
+                    and getattr(tl, 'translation_mode', None) == 'rtd_direct'
+                    for tl in translated_levels
+                )
+                if _fut_already_added:
+                    log.info("RTD-direct entry already exists for %s — skipping Schwab-translated append",
+                             futures_sym)
+                else:
+                    translated_levels.append(tl_intraday)
+                    translated_macro_levels.append(tl_macro)
+
+                    # 6c. If RTD GEX is primary, replace the just-appended Schwab levels
+                    if rtd_tl is not None and TOS_RTD_GEX_AS_PRIMARY:
+                        translated_levels[-1] = rtd_tl
+                        translated_macro_levels[-1] = replace(rtd_tl, wall_scope="ALL_EXPIRIES_WEIGHTED")
+                        # Write RTD GEX snapshot to DB
+                        if _is_rth() and rtd_dl_primary is not None:
+                            from .interval_writer import write_snapshot
+                            write_snapshot(rtd_dl_primary, ticker_override=futures_sym)
 
             # 7. Write per-ticker snapshot to DB (now includes futures translation fields)
             if _is_rth():

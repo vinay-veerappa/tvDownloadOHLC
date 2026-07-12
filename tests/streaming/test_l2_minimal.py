@@ -1,84 +1,56 @@
-import asyncio
-import json
+"""
+Hub REST health probe.
+
+The internal Schwab Hub does not expose a streaming socket, so this test
+replaces the legacy schwab-py StreamClient smoke test with REST-only checks
+that mirror the production code path.
+
+DO NOT add direct schwabdev / schwab-py / schwab.auth calls here. This file
+must remain Hub-only so it never prompts for a token.
+"""
 import os
-import logging
-from schwab.auth import client_from_token_file
-from schwab.streaming import StreamClient
+import requests
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("TestL2")
+from scripts.streaming.options.config import HUB_URL
 
-async def test_l2():
-    # 1. Load client
-    token_path = "token.json"
-    if not os.path.exists(token_path):
-        print(f"Error: Token file {token_path} not found.")
+
+def _hub_request(method: str, params: dict) -> dict:
+    """Mirror the production Hub request helper."""
+    resp = requests.post(
+        f"{HUB_URL}/request",
+        json={"method": method, "params": params},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    if isinstance(result, dict) and "status" in result:
+        if result.get("status") != "success":
+            raise RuntimeError(f"Hub proxy error: {result.get('message')}")
+        return result.get("data") or {}
+    return result or {}
+
+
+def test_l2():
+    if not os.path.exists("secrets.json"):
+        print("secrets.json not found")
         return
 
-    print("Loading secrets...")
-    with open("secrets.json", "r") as f:
-        secrets = json.load(f)
-    app_key = secrets["app_key"]
-    app_secret = secrets["app_secret"]
+    # Resolve and quote equities and futures
+    symbols = ["AAPL", "/ES", "/NQ"]
+    resolved = _hub_request("resolve", {"symbols": symbols})
+    assert resolved, "Hub resolve returned no data"
 
-    print("Loading client from token...")
-    client = client_from_token_file(token_path, app_key, app_secret)
-    
-    # 2. Setup StreamClient
-    print("Initializing StreamClient...")
-    stream_client = StreamClient(client)
-    
-    print("Attempting login()...")
-    await stream_client.login()
-    print("Login successful!")
-    def on_message(msg):
-        print(f"STREAM DATA: {json.dumps(msg)}")
+    active_symbols = []
+    for sym in symbols:
+        mapping = resolved.get(sym, {})
+        active = mapping.get("active", sym)
+        active_symbols.append(active)
 
-    # 3. Test symbols and services
-    plans = [
-        ("LEVELONE_EQUITIES", ["AAPL"]),
-        ("LEVELONE_FUTURES", ["/ES"]),
-        ("NASDAQ_BOOK", ["AAPL"]),
-        ("LEVELTWO_FUTURES", ["/ES"]),
-    ]
-    
-    # Try subscriptions
-    for svc, syms in plans:
-        try:
-            print(f"\n--- Testing Service: {svc} for {syms} ---")
-            if "BOOK" in svc:
-                await stream_client._service_op(syms, svc, "SUBS", stream_client.BookFields, fields=stream_client.BookFields.all_fields())
-            elif svc == "LEVELTWO_FUTURES":
-                await stream_client._service_op(syms, svc, "SUBS", stream_client.BookFields, fields=stream_client.BookFields.all_fields())
-            elif "FUTURES" in svc:
-                await stream_client._service_op(syms, svc, "SUBS", stream_client.LevelOneFuturesFields, fields=stream_client.LevelOneFuturesFields.all_fields())
-            else:
-                # Corrected: LevelOneEquityFields (singular in schwab-py? Let's check)
-                # It is LevelOneEquityFields in some versions, LevelOneEquitiesFields in others.
-                f_type = getattr(stream_client, "LevelOneEquityFields", getattr(stream_client, "LevelOneEquitiesFields", None))
-                await stream_client._service_op(syms, svc, "SUBS", f_type, fields=f_type.all_fields())
-            
-            print(f"OK: Subscription request sent for {svc}!")
-            
-            # Wait for data
-            print("Waiting 10s for ANY message...")
-            for _ in range(15):
-                try:
-                    raw_msg = await asyncio.wait_for(stream_client._socket.recv(), timeout=2.0)
-                    print(f"RAW MSG: {raw_msg}")
-                    if svc in str(raw_msg):
-                        print(f"MATCH: Found {svc} in message")
-                        # If we get a response indicating success or data, we can move to next plan
-                        if "response" in str(raw_msg) or "data" in str(raw_msg):
-                            break
-                except asyncio.TimeoutError:
-                    pass
-                
-        except Exception as e:
-            print(f"ERROR for {svc}: {e}")
+    quotes = _hub_request("get_quotes", {"symbols": active_symbols})
+    assert quotes, "Hub get_quotes returned no data"
+    for sym in active_symbols:
+        assert sym in quotes, f"Missing quote for {sym}: {quotes}"
 
-    await stream_client.logout()
 
 if __name__ == "__main__":
-    asyncio.run(test_l2())
+    test_l2()

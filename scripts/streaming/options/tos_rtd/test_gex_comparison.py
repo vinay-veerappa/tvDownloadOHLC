@@ -124,12 +124,17 @@ def main() -> None:
             from ..gex_calculator import calculate_dealer_levels
             from ..futures_translator import translate_to_futures
 
-            # Map futures symbol to cash ticker
+            # Map futures symbol to ETF proxy for reliable Schwab Greeks
             cash_ticker = None
-            for ct, fs in INDEX_TO_FUTURES.items():
-                if fs == symbol:
-                    cash_ticker = ct
-                    break
+            if symbol == "/ES":
+                cash_ticker = "SPY"
+            elif symbol == "/NQ":
+                cash_ticker = "QQQ"
+            else:
+                for ct, fs in INDEX_TO_FUTURES.items():
+                    if fs == symbol:
+                        cash_ticker = ct
+                        break
 
             if not cash_ticker:
                 print(f"No cash ticker mapping for {symbol} — skipping comparison")
@@ -137,6 +142,7 @@ def main() -> None:
 
             print(f"Fetching Schwab chain for {cash_ticker} (proxy for {symbol})...")
             client = create_client(SECRETS_PATH, TOKEN_PATH)
+            # Use front-week targets (e.g. 7 DTE)
             schwab_chain = fetch_option_chain_data(client, cash_ticker, [7])
 
             # Filter to near-term
@@ -161,15 +167,23 @@ def main() -> None:
             if fut and fut.price:
                 translated = translate_to_futures(schwab_levels, fut)
                 print(f"\nSchwab translated levels for {symbol}:")
-                print(f"  Call Wall:  {translated.call_wall:,.2f}" if translated.call_wall else "  Call Wall:  N/A")
-                print(f"  Put Wall:   {translated.put_wall:,.2f}" if translated.put_wall else "  Put Wall:   N/A")
-                print(f"  Zero Gamma: {translated.zero_gamma:,.2f}" if translated.zero_gamma else "  Zero Gamma: N/A")
-                print(f"  Total GEX:  {translated.total_gex:,.2f}")
+                print(f"  Call Wall:     {translated.call_wall:,.2f}" if translated.call_wall else "  Call Wall:     N/A")
+                print(f"  Put Wall:      {translated.put_wall:,.2f}" if translated.put_wall else "  Put Wall:      N/A")
+                print(f"  Zero Gamma:    {translated.zero_gamma:,.2f}" if translated.zero_gamma else "  Zero Gamma:    N/A")
+                print(f"  Zero Gamma DA: {translated.zero_gamma_delta_adj:,.2f}" if translated.zero_gamma_delta_adj else "  Zero Gamma DA: N/A")
+                print(f"  Total GEX:     {translated.total_gex:,.2f}")
 
                 # Compare
                 from .rtd_gex_calculator import compare_gex_sources
                 result = compare_gex_sources(result, translated)
 
+                # Add Zero Gamma DA comparison
+                rtd_da = dl.zero_gamma_delta_adj
+                trans_da = translated.zero_gamma_delta_adj
+                rtd_da_str = f"{rtd_da:,.2f}" if rtd_da is not None else "N/A"
+                trans_da_str = f"{trans_da:,.2f}" if trans_da is not None else "N/A"
+                diff_da_str = f"{rtd_da - trans_da:,.2f}" if (rtd_da is not None and trans_da is not None) else "N/A"
+                print(f"  Zero Gamma DA: RTD={rtd_da_str}  Translated={trans_da_str}  diff={diff_da_str}")
                 print(f"\n{format_comparison_table(result)}")
             else:
                 print(f"No Schwab futures quote for {symbol}")

@@ -132,6 +132,8 @@ class FuturesGEXResult:
 def build_chain_from_rtd(
     snapshot: ChainSnapshot,
     ticker: str = "",
+    static_oi: dict[str, int] | None = None,
+    static_iv: dict[str, float] | None = None,
 ) -> OptionChainData:
     """
     Convert an RTD ChainSnapshot into an OptionChainData compatible with
@@ -144,10 +146,16 @@ def build_chain_from_rtd(
     Args:
         snapshot: ChainSnapshot from TOSRTDAdapter.build_chain_snapshot()
         ticker: Ticker label for the chain (e.g. "/ES" or "ES")
+        static_oi: Optional fallback {rtd_symbol: OI} for contracts not in
+                   the live subscription set (back-expiry cached OI).
+        static_iv: Optional fallback {rtd_symbol: IV} for back-expiry contracts
+                   where IMPL_VOL is not streamed live.
 
     Returns:
         OptionChainData ready for calculate_dealer_levels()
     """
+    static_oi = static_oi or {}
+    static_iv = static_iv or {}
     contracts: list[OptionContract] = []
 
     # Get spot and current time for BSM fallback computations
@@ -166,13 +174,15 @@ def build_chain_from_rtd(
         # fall back to the snapshot's primary expiry
         contract_expiry = expiry_map.get(rtd_sym, snapshot.expiry)
 
-        # Extract Greeks from RTD data
+        # Extract Greeks from RTD data, falling back to cached static maps
+        # for contracts that are not part of the live subscription set.
         rtd_gamma = greeks.get("GAMMA")
-        open_int = greeks.get("OPEN_INT") or 0
+        open_int = greeks.get("OPEN_INT") if greeks.get("OPEN_INT") is not None else static_oi.get(rtd_sym, 0)
         volume = greeks.get("VOLUME") or 0
         last = greeks.get("LAST") or 0.0
+        mark_price = greeks.get("MARK") or 0.0
         # IV and delta may not be subscribed — default to 0
-        iv = greeks.get("IMPL_VOL") or 0.0
+        iv = greeks.get("IMPL_VOL") if greeks.get("IMPL_VOL") is not None else static_iv.get(rtd_sym, 0.0)
         iv = float(iv) if iv else 0.0
         if iv > 1.0:
             iv = iv / 100.0
@@ -228,6 +238,12 @@ def build_chain_from_rtd(
             vega = 0.0
             theta = 0.0
 
+        # Use MARK for bid/ask/mark when available (TOS calculates mark from
+        # mid-market even when no recent trades exist).  Fall back to LAST
+        # only when MARK is zero — this fixes the EM calculation which needs
+        # non-zero bid/ask for the ATM straddle.
+        pricing_price = mark_price if mark_price > 0 else last
+
         contract = OptionContract(
             symbol=rtd_sym,
             strike=parsed.strike,
@@ -235,9 +251,9 @@ def build_chain_from_rtd(
             type="CALL" if parsed.option_type == "C" else "PUT",
             expiry=contract_expiry,
             last=float(last) if last else 0.0,
-            bid=float(last) if last else 0.0,   # RTD has no bid/ask — use last as proxy
-            ask=float(last) if last else 0.0,   # so _expected_move() guardrail passes
-            mark=float(last) if last else 0.0,
+            bid=float(pricing_price) if pricing_price else 0.0,
+            ask=float(pricing_price) if pricing_price else 0.0,
+            mark=float(pricing_price) if pricing_price else 0.0,
             volume=int(volume) if volume else 0,
             open_interest=int(open_int) if open_int else 0,
             iv=iv,
@@ -302,8 +318,11 @@ def calculate_futures_gex(
         log.warning("No option contracts in RTD snapshot for %s", symbol)
         return None
 
-    # Convert to OptionChainData
-    chain = build_chain_from_rtd(chain_snap, ticker=symbol)
+    # Pass cached static OI/IV maps for back-expiry contracts that are not
+    # part of the live subscription set.
+    static_oi = getattr(adapter, "_static_oi", None) or {}
+    static_iv = getattr(adapter, "_static_iv", None) or {}
+    chain = build_chain_from_rtd(chain_snap, ticker=symbol, static_oi=static_oi, static_iv=static_iv)
 
     if not chain.calls and not chain.puts:
         log.warning("No calls/puts in RTD chain for %s", symbol)

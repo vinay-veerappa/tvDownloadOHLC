@@ -499,7 +499,9 @@ def test_write_unified_levels_txt_writes_stable_lines(tmp_path: Path) -> None:
     file_writer._compose_unified_tokens_for_ticker = lambda *args, **kwargs: ["100.00:A|P|U"]
     try:
         out = tmp_path / "unified_levels.txt"
-        file_writer.write_unified_levels_txt(scored_levels, path=out)
+        file_writer.write_unified_levels_txt(
+            scored_levels, path=out, enable_futures_fallbacks=False
+        )
         text = out.read_text(encoding="utf-8")
     finally:
         file_writer._compose_unified_tokens_for_ticker = original

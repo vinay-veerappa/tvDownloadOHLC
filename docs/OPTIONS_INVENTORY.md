@@ -1,6 +1,6 @@
 # Options Trading & Market Data Infrastructure Inventory
 
-**Last Updated:** July 9, 2026
+**Last Updated:** July 11, 2026
 **Purpose:** Permanent technical blueprint, architectural catalog, and development reference for the Options, Market Data, Price Action, and PERSISTENCE layers of the TCM Trading System.
 
 ## Current Runtime Status (July 8, 2026)
@@ -165,8 +165,9 @@ Handles historical database updates, real-time option chain snapshotting, VIX in
     $$\text{/YM} \rightarrow (\text{Index: DJI, ETF: DIA})$$
     $$\text{/RTY} \rightarrow (\text{Index: RUT, ETF: IWM})$$
 * **Key Functions:**
-  * `calculate_em_values(spot, iv, dte)`: Standard Expected Move (EM) calculation using Black-Scholes-Merton DTE scaling factors:
-    $$\text{EM}_{\text{std}} = \text{Spot} \times \text{IV} \times \sqrt{\frac{\text{DTE}}{365}}$$
+  * `calculate_em_values(spot, iv, dte)` / `calculate_tos_expected_move(...)`: Expected Move calculation using the empirically calibrated Thinkorswim time-scaling model with weekend/after-hours intercept decay:
+    $$\text{EM}_{\text{TOS}} = \text{Spot} \times \text{IV} \times \sqrt{\frac{0.6368 \times \text{DTE} + \text{Intercept}}{365}}$$
+    *(Intercept shifts dynamically based on time-of-week. Weekday: 0.24 equity / 0.69 futures. Weekend decay: -0.037 equity / 0.420 futures)*
   * `get_adjusted_em(straddle_cost)`: Expected Move rule-of-thumb adjusted bounds:
     $$\text{EM}_{\text{adj}} = 0.85 \times \text{Straddle Cost}$$
   * `normalize_proxy_move(etf_straddle, etf_spot, index_spot)`: Maps highly active ETF straddles back to Cash Index levels:
@@ -263,6 +264,7 @@ $$\text{Centroid}_{\text{Put}} = \frac{\sum (K \times \text{Volume}_{\text{Put}}
 #### 💻 [gex_calculator.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/gex_calculator.py)
 * **Description:** Calculations for BSM parameters, analytical Charm, Speed, volume centroids, Delta-adjusted gamma, and volatility triggers.
 * **Key Functions:**
+  * `calculate_tos_expected_move(spot, expiry, iv)`: Empirically calculates the TOS Expected Move using the calibrated time-scaling model (0.6368 slope) with weekend decay logic.
   * `_analytical_charm(flag, S, K, t, sigma, r, q)`: Returns the exact Charm decay factor.
   * `_analytical_speed(S, K, t, sigma, r, q)`: Returns the Gamma sensitivity rate.
   * `_delta_adjusted_gex(chain_data)`: Returns delta-adjusted call and put gamma levels.
@@ -301,6 +303,54 @@ graph TD
   * `MechanicalWall(TaggedLevel)`: Adds `net_gex`, `pct_of_book`, `hedge_contracts`, `proximity_score`.
   * `StructuralAnchor(TaggedLevel)`: Adds `open_interest`, `matched_program`, `oi_zscore`, `relevance` (DORMANT, APPROACHING, ACTIVE, CRITICAL), `days_to_expiry`.
   * `InflectionPoint(TaggedLevel)`: Adds `inflection_type` (FLIP, MAGNET, VOID), `slope_magnitude`, `gamma_velocity`.
+
+### C. Cash-to-Futures Translation, Walls, and Dealer Levels
+
+Because most actionable trading occurs in futures, the pipeline computes levels in the **native cash/options source space** (SPX, NDX, QQQ) and then translates them into the matching futures price scale (`/ES`, `/NQ`, `/RTY`, `/YM`).
+
+#### 1. Translation Modes
+Defined per ticker in [`config.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/config.py) via `TickerProfile.basis_mode`:
+
+| Source Ticker | Futures Target | `basis_mode` | Reason |
+|---------------|----------------|--------------|--------|
+| SPX, NDX, RUT, DJX | `/ES`, `/NQ`, `/RTY`, `/YM` | `additive` | Index and futures trade at the same price scale (ES ≈ SPX, NQ ≈ NDX). |
+| SPY, QQQ, IWM, DIA | `/ES`, `/NQ`, `/RTY`, `/YM` | `multiplicative` | ETF share price is a different scale than the futures contract. |
+| AAPL, NVDA, TSLA, etc. | None | — | Single-stock cash levels, no futures translation. |
+
+The translation module [`futures_translator.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/futures_translator.py) exports:
+
+* `TranslatedLevels` dataclass — a mirror of `DealerLevels` with all price levels converted into futures ticks.
+* `translate_to_futures(levels, futures, anchor_basis, anchor_ratio)` — converts each level using either:
+  * **Additive:** `futures_price = cash_price + basis_spread`
+  * **Multiplicative:** `futures_price = cash_price × basis_ratio`
+
+An anchor basis/ratio can be supplied to **pin** the translation to the market-open basis instead of drifting with intraday futures cash-price divergence. The mode is selected dynamically if no anchor is given: if `abs(futures/cash − 1) > 0.02` the translator switches from additive to multiplicative.
+
+#### 2. Wall and Zero-Gamma Selection
+Walls are dealer-side strikes selected inside [`gex_calculator.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/gex_calculator.py) by the `_find_walls` helper:
+
+* Each candidate contract must pass `min_oi_floor`.
+* Calls are restricted to strikes ≥ spot (resistance); puts to strikes ≤ spot (support).
+* Contracts are ranked by `open_interest × abs(gamma)`. The top strike becomes the **primary wall**, the next becomes the **secondary wall**.
+* `zero_gamma` is found by locating the sign flip of net GEX across the strike ladder. A delta-adjusted variant, `zero_gamma_delta_adj`, is also computed and passed through.
+
+Recent additions to the `DealerLevels` dataclass carry both wall series and translation metadata:
+
+| Field | Meaning |
+|-------|---------|
+| `call_wall` / `put_wall` | Primary resistance/support strikes. |
+| `secondary_call_wall` / `secondary_put_wall` | Next-ranked OI×Γ strikes. |
+| `call_wall_0dte` / `put_wall_0dte` | 0-DTE tactical walls. |
+| `zero_gamma` | Net GEX sign-flip level. |
+| `zero_gamma_delta_adj` | Delta-adjusted sign-flip level. |
+| `wall_scope` / `wall_dte_min` / `wall_dte_max` | Metadata describing which DTE bucket built the walls. |
+| `futures_symbol` / `translation_mode` / `basis_spread` / `basis_ratio` | Translation matrix written back onto the original `DealerLevels` object. |
+
+#### 3. Futures Black-76 Path
+Recent production work added a Black-76 (futures-style) pricing branch in `_calculate_hypothetical_total_gex_numpy`. When the chain source is a futures contract, the underlying is treated as the forward price and the cost-of-carry dividend yield is dropped, so GEX from `/ES` and `/NQ` option chains is priced consistently with CME-listed options.
+
+#### 4. Output Anchoring
+The `BASIS_ANCHORS_JSON` file (`data/options/basis_anchors.json`) records the per-ticker basis/ratio used each session. The `enable_futures_fallbacks` flag in `file_writer.py` controls whether missing futures entries can receive ETF-translated fallbacks.
 
 ---
 
@@ -436,6 +486,11 @@ model GexSnapshot {
   futuresBasisSpread    Float?
   futuresBasisRatio     Float?
   createdAt             DateTime @default(now())
+
+  // NOTE: This model stores aggregate GEX and the futures-translation matrix.
+  // Individual wall strikes and per-strike OI live in the DealerLevels / TranslatedLevels
+  // runtime objects and, for macro walls, in MacroSnapshot. Per-contract OI/IV for
+  // RTD futures lives in data/options/.rtd_market_cache.json.
 
   @@index([ticker, tradingDate])
   @@index([ticker, timestamp])
@@ -634,6 +689,50 @@ model EconomicEvent {
   * `daily_levels.txt`: Copy-ready formatted strings.
   * `weekly_em_pinescript.txt`: Unified Pine Script v6 `array.new` strings, enabling copy-paste input for TradingView indicators.
   * `unified_levels`: Feeds Pine Script with native cash-space pricing alongside dynamic `META_FUTURES_RATIO` and `META_FUTURES_BASIS_` metadata tokens to execute live client-side translation without double-conversion.
+  * `enable_futures_fallbacks` flag (default `True`) gates whether missing `ES`/`NQ` entries receive SPY/QQQ-translated fallbacks. When disabled, RTD-native futures entries are not silently replaced by ETF-translated perspective levels.
+
+#### 💻 [hybrid_coordinator.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/tos_rtd/hybrid_coordinator.py) — RTD Market Cache
+* **File:** `data/options/.rtd_market_cache.json`
+* **Description:** Session-keyed JSON cache that stores the **expiries ladder and per-contract open-interest (OI) snapshot** discovered during the RTD pre-market scan. Because TOS RTD can only stream a limited COM topic budget, the pipeline performs a one-time OI completeness scan per NY trading session, then persists the results so subsequent restarts (or warm-respawns) can reuse the scan without re-querying Schwab or rebuilding all COM subscriptions.
+* **Cache key:** `_session_key()` rolls at `NY_SESSION_ROLLOVER_TIME` (16:15 ET). Any run between today 16:15 ET and tomorrow 16:15 ET maps to tomorrow's session key, so overnight restarts stay on the same logical session.
+* **Payload structure:**
+
+```json
+{
+  "session_key": "2026-07-11",
+  "cached_at": 1752076800.0,
+  "expiries": ["2026-07-11", "2026-07-17", "2026-07-24", "2026-07-31", "2026-08-21", "2026-09-18"],
+  "open_interest": {
+    "/ES": { "./ESW26C6000:XCME": 1427, "./ESW26P5900:XCME": 983, ... },
+    "/NQ": { "./NQW26C21000:XCME": 651, ... }
+  },
+  "schwab_iv_snapshot": {
+    "/ES": { "./ESW26C6000:XCME": 0.1875, ... },
+    "/NQ": { ... }
+  },
+  "basis_at_scan": {
+    "/ES": {"mode": "additive", "spread": 4.25, "ratio": 1.0},
+    "/NQ": {"mode": "multiplicative", "spread": 0.0, "ratio": 41.1234}
+  },
+  "scan_quality": {
+    "total_symbols_scanned": 480,
+    "non_zero_count": 412,
+    "non_zero_pct": 0.8583
+  }
+}
+```
+
+* **Lifecycle:**
+  1. `_resolve_expiries()` → memory cache → disk market cache → Schwab futures discovery + theoretical ladder.
+  2. If no valid session cache exists, `_run_oi_scan()` subscribes to `OPEN_INT` for all candidate symbols and waits for ≥80% completeness (10 s timeout).
+  3. `_filter_top_oi_contracts()` keeps contracts covering ≥90% of total OI plus a ±5-strike ATM band.
+  4. `_save_market_cache()` writes the unified payload to `data/options/.rtd_market_cache.json`.
+  5. `_start_with_filtered_data()` starts live RTD with a **reduced subscription set**: futures `LAST`, front-expiry `IMPL_VOL`, and ATM `LAST` only. Back-expiry OI/IV are served from the cache.
+
+* **Important constraints:**
+  * The cache stores **raw per-contract OI/IV**, not aggregated snapshots. Per-strike OI is **not** persisted to the SQLite `GexSnapshot` table; the DB only stores aggregated GEX metrics.
+  * The cache is **RTD-futures only** (`/ES`, `/NQ`, etc.). Cash/ETF chains (SPY, QQQ, SPX) are not cached here; they come directly from Schwab Hub REST.
+  * A degeneracy guard (`non_zero_pct < 0.50`) keeps the prior session cache if available, preventing a bad scan from replacing good data.
 
 ---
 
@@ -733,10 +832,11 @@ TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
 | `__init__.py` | Windows-only guard, exports `TOSRTDAdapter`, `OptionSymbolBuilder`, `parse_rtd_option_symbol` |
 | `client.py` | `RTDClient` — COM client (subscribe/unsubscribe/refresh via `IRtdServer`) |
 | `worker.py` | `RTDWorker` — background thread with `pythoncom` message pumping |
+| `_rtd_worker_entry.py` | Spawned-subprocess entry point for isolated `pythoncom` worker |
 | `interfaces.py` | `IRtdServer`, `IRTDUpdateEvent` COM dispatch interface definitions |
 | `symbol_builder.py` | `OptionSymbolBuilder` — futures option symbol construction + `parse_rtd_option_symbol()` reverse parser |
-| `adapter.py` | `TOSRTDAdapter` — bridge to our pipeline, `ChainSnapshot` dataclass |
-| `hybrid_coordinator.py` | `HybridCoordinator` — coordinates Schwab API + TOS RTD, Greeks drift validation |
+| `adapter.py` | `TOSRTDAdapter` — bridge to our pipeline; `ChainSnapshot` + explicit `subscriptions` parameter |
+| `hybrid_coordinator.py` | `HybridCoordinator` — coordinates Schwab API + TOS RTD, market cache, Greeks drift validation |
 | `greeks_drift_monitor.py` | `GreeksDriftMonitor` — compares TOS native gamma vs BSM-computed gamma |
 | `quote.py` | `Quote` dataclass with Treasury futures tick format support (`"109'080"` → 109.25) |
 | `quote_types.py` | `QuoteType` enum (GAMMA, DELTA, OPEN_INT, VOLUME, LAST, MARK, IMPL_VOL, THETA, VEGA, RHO, etc.) |
@@ -746,6 +846,19 @@ TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
 | `cleanup.py` | COM cleanup utilities (`cleanup_com`, `cleanup_topics`) |
 | `live_test.py` | CLI test script (`python -m ...live_test --symbol /ES --duration 15`) |
 | `test_greeks.py` | Option Greeks streaming test script |
+
+### D.1. Subscription Model and Market Cache
+
+The RTD package now works with an **explicit subscription model** rather than subscribing to the entire option chain for live tick-by-tick updates.
+
+* `TOSRTDAdapter` and `RTDClient` accept an explicit list of `(symbol, topic_string)` subscriptions to avoid COM topic budget overload.
+* `adapter.py` exposes `static_oi_map` and `static_iv_map` for contracts whose open interest or implied volatility is loaded from the persisted market cache instead of being streamed live.
+* `hybrid_coordinator.py` builds the reduced live subscription set after the OI/IV scan (`futures LAST`, ATM `LAST`, front-expiry `IMPL_VOL`) and serves back-expiry OI/IV from `data/options/.rtd_market_cache.json`.
+* The cache is keyed by NY session rollover (16:15 ET) and contains the full futures-options expiry ladder plus per-contract OI/IV snapshots. See §6.C for the full schema and lifecycle.
+
+### D.2. Duplicate-Entry Guard in `run_options_levels.py`
+
+A new RTD-native deduplication guard prevents the same underlying futures ticker from being processed twice when both the cash-source ticker (`SPX`) and its futures target (`/ES`) are configured. The pipeline now ensures only one entry per futures symbol is emitted into `daily_levels.json`, with the RTD-native futures entry taking precedence over ETF-translated fallbacks when `enable_futures_fallbacks` is `True`.
 
 ### E. Available Quote Types
 
@@ -758,11 +871,11 @@ The `QuoteType` enum defines all TOS RTD quote fields. The pipeline subscribes t
 | `THETA` | Native theta from TOS | float | Computed via BSM |
 | `VEGA` | Native vega from TOS | float | Computed via BSM |
 | `RHO` | Native rho from TOS | float | Computed via BSM |
-| `IMPL_VOL` | Implied volatility | float (4 decimal) | From Schwab chain JSON |
-| `OPEN_INT` | Open interest | int | From Schwab chain JSON |
+| `OPEN_INT` | Open interest | int | Schwab chain JSON or persisted RTD market cache |
 | `VOLUME` | Volume | int | From Schwab chain JSON |
-| `LAST` | Last traded price | float | From Schwab chain JSON |
+| `LAST` | Last traded price | float | RTD live tick or Schwab chain JSON |
 | `MARK` | Mark price | float | From Schwab chain JSON |
+| `IMPL_VOL` | Implied volatility | float (4 decimal) | Schwab chain JSON or persisted RTD market cache |
 | `BID` / `ASK` | Bid/Ask price | float | From Schwab chain JSON |
 | `BID_SIZE` / `ASK_SIZE` | Bid/Ask size | int | From Schwab chain JSON |
 | `STRIKE` | Strike price | float | From Schwab chain JSON |
@@ -806,13 +919,17 @@ The `HybridCoordinator` class in `hybrid_coordinator.py` coordinates Schwab API 
 | `get_drift_summary()` | Returns avg/max drift %, high-drift count (>5% threshold) |
 | `get_rtd_snapshot()` | Raw RTD data snapshot dict |
 | `get_status()` | Health status for Discord monitoring |
+| `_run_oi_scan()` | One-time per-session RTD OI/IV scan for all candidate symbols |
+| `_save_market_cache()` / `_load_market_cache()` | Persists/loads `data/options/.rtd_market_cache.json` |
+| `_start_with_filtered_data()` | Starts live RTD with the reduced subscription set post-scan |
 
 **Integration in `run_options_levels.py`:**
-- `HybridCoordinator` started at pipeline start, stopped at end
-- Futures price fetch: RTD preferred over Schwab polling
-- Greeks drift validation runs after all tickers processed
-- Logs warning when drift >5% on any contract
-- Discord health alert sent when RTD is enabled
+- `HybridCoordinator` started at pipeline start, stopped at end.
+- At startup it performs an OI/IV scan and persists the RTD market cache.
+- Futures price fetch: RTD preferred over Schwab polling.
+- Greeks drift validation runs after all tickers processed.
+- Logs warning when drift >5% on any contract.
+- Discord health alert sent when RTD is enabled.
 
 ### H. Greeks Drift Monitor
 
@@ -890,7 +1007,7 @@ The continuous loop scheduler (`run_loop`) has been updated to initialize past t
 
 ---
 
-### L. Prisma Generate Fix
+### F. Prisma Generate Fix
 
 The `prisma-client-py` provider in `schema.prisma` requires a wrapper script to bridge the Node.js Prisma CLI to the Python generator:
 

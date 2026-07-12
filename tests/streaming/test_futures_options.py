@@ -1,3 +1,9 @@
+# ⚠️ MIXED AUTH PATH
+# The streaming section below uses schwabdev.Client + Stream directly because
+# the Schwab Hub does not expose a streaming WebSocket. The Greeks section
+# routes through fetch_futures_option_chain_data(), which uses the internal
+# Schwab Hub proxy. If the direct-streaming portion prompts for a token,
+# refresh tokens.db separately.
 import json
 import os
 import pprint

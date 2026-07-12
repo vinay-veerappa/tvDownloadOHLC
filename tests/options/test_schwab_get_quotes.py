@@ -1,49 +1,82 @@
-import logging
-import json
-from scripts.streaming.options.config import SECRETS_PATH, TOKEN_PATH
-from scripts.streaming.options.options_fetcher import create_client
+"""
+Hub REST option-chain smoke test.
 
-# Set up logging to see the output clearly
+The internal pipeline no longer uses a direct Schwab REST client
+(options_fetcher.create_client() returns None), so this test routes
+ALL requests through the Schwab Hub proxy instead.
+
+DO NOT add direct schwabdev / schwab-py / schwab.auth calls here. This file
+must remain Hub-only so it never prompts for a token.
+"""
+import logging
+import os
+import requests
+
+from scripts.streaming.options.config import HUB_URL
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
+
+def _hub_request(method: str, params: dict) -> dict:
+    """Mirror the production Hub request helper."""
+    resp = requests.post(
+        f"{HUB_URL}/request",
+        json={"method": method, "params": params},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    if isinstance(result, dict) and "status" in result:
+        if result.get("status") != "success":
+            raise RuntimeError(f"Hub proxy error: {result.get('message')}")
+        return result.get("data") or {}
+    return result or {}
+
+
 def test_legacy_futures_symbols():
-    client = create_client(SECRETS_PATH, TOKEN_PATH)
-    
-    # Testing variations of the weekly/continuous options roots
-    test_symbols = ["NQH0", "/NQW0", "EW0", "/EW0", "NQM", "/NQW"]
-    
-    log.info("Testing Legacy TOS Futures Options Roots...")
-    log.info("=" * 50)
-    
-    for sym in test_symbols:
-        log.info(f"Pinging API for symbol: {sym}")
-        
-        response = client.get_option_chain(
-            symbol=sym,
-            contract_type="ALL",
-            include_underlying_quote=True,
-            strategy="SINGLE",
-            strike_count=5 
-        )
-        
-        if response.status_code == 200:
-            payload = response.json()
-            status = payload.get("status")
-            call_map = payload.get("callExpDateMap", {})
-            
-            if status == "SUCCESS" and call_map:
-                log.info(f"  [✓] SUCCESS! Schwab accepted '{sym}'")
-                log.info(f"  ↳ Returned {len(call_map)} expiration dates.")
-                
-                # Print the first available expiration date to verify it's current
-                first_exp = list(call_map.keys())[0]
-                log.info(f"  ↳ First available expiry: {first_exp}\n")
-            else:
-                log.info(f"  [!] 200 OK, but chain was empty. Status: {status}\n")
-                
-        else:
-            log.error(f"  [X] HTTP {response.status_code} - API Rejected.\n")
+    if not os.path.exists("secrets.json"):
+        log.info("secrets.json not found")
+        return
+
+    # Legacy TOS roots are not accepted by the Hub/Schwab API.
+    # Verify the production path: root -> active contract -> quote,
+    # plus a small cash option chain (the only kind the Hub REST path pulls).
+    resolve_data = _hub_request("resolve", {"symbols": ["/NQ"]})
+    assert resolve_data, "Hub resolve returned no data"
+
+    nq_active = resolve_data.get("/NQ", {}).get("active")
+    assert nq_active, f"Could not resolve /NQ via Hub: {resolve_data}"
+
+    log.info("Resolved /NQ to active contract: %s", nq_active)
+
+    quotes = _hub_request("get_quotes", {"symbols": [nq_active]})
+    assert quotes, "Hub get_quotes returned no data"
+    assert nq_active in quotes, f"Missing quote for {nq_active}: {quotes}"
+
+    log.info("[✓] Hub returned quote for %s", nq_active)
+
+    payload = _hub_request(
+        "get_option_chain",
+        {
+            "symbol": "SPY",
+            "fromDate": "2026-07-11",
+            "toDate": "2026-07-18",
+            "strikeCount": 5,
+        },
+    )
+    assert payload, "Hub get_option_chain returned no data"
+
+    status = payload.get("status")
+    call_map = payload.get("callExpDateMap", {})
+    assert status == "SUCCESS", f"Option chain status was {status}: {payload}"
+    assert call_map, f"Option chain had no callExpDateMap: {payload}"
+
+    first_exp = list(call_map.keys())[0]
+    log.info("[✓] Hub returned SPY option chain")
+    log.info("  ↳ Returned %d expiration dates.", len(call_map))
+    log.info("  ↳ First available expiry: %s", first_exp)
+
 
 if __name__ == "__main__":
     test_legacy_futures_symbols()

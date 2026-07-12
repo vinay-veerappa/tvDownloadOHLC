@@ -1,24 +1,51 @@
-import asyncio
+"""
+Hub REST futures resolution test.
+
+Replaces the direct schwab-py provider path with the internal Schwab Hub
+proxy used by the production pipeline.
+
+DO NOT add direct schwabdev / schwab-py / schwab.auth calls here. This file
+must remain Hub-only so it never prompts for a token.
+"""
 import json
 import os
-from scripts.streaming.providers.schwab_py_provider import SchwabPyProvider
+import requests
 
-async def test_futures_resolution():
-    provider = SchwabPyProvider("secrets.json", "token.json")
-    await provider.initialize()
-    
-    # Try to get quotes for the root symbol to see if it resolves or provides the active contract
-    # Normally, you fetch /ES and look for the 'activeLink' or similar, 
-    # OR you fetch a list of futures to find the one with the highest volume/OI.
-    
+from scripts.streaming.options.config import HUB_URL
+
+
+def _hub_request(method: str, params: dict) -> dict:
+    """Mirror the production Hub request helper."""
+    resp = requests.post(
+        f"{HUB_URL}/request",
+        json={"method": method, "params": params},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    if isinstance(result, dict) and "status" in result:
+        if result.get("status") != "success":
+            raise RuntimeError(f"Hub proxy error: {result.get('message')}")
+        return result.get("data") or {}
+    return result or {}
+
+
+def test_futures_resolution():
+    if not os.path.exists("secrets.json"):
+        print("secrets.json not found")
+        return
+
     symbols = ["/ES", "/NQ"]
-    print(f"Fetching quotes for: {symbols}")
-    
-    result = await provider.send_rest_request("get_quotes", {"symbols": symbols})
+    result = _hub_request("resolve", {"symbols": symbols})
+    assert result, "Hub resolve returned no data"
+
     print(json.dumps(result, indent=2))
-    
-    # Also try get_futures_status or similar if available
-    # In schwab-py, we usually check the response for alternative symbols or 'active' status.
+
+    for sym in symbols:
+        mapping = result.get(sym, {})
+        assert "active" in mapping, f"Hub did not resolve active contract for {sym}: {mapping}"
+        assert mapping["active"], f"Hub returned empty active contract for {sym}"
+
 
 if __name__ == "__main__":
-    asyncio.run(test_futures_resolution())
+    test_futures_resolution()

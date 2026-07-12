@@ -27,8 +27,14 @@ import time
 import pythoncom
 
 
-def run_rtd_worker_process(data_queue, stop_event, all_symbols):
-    """Entry point called by mp.Process in the child process."""
+def run_rtd_worker_process(data_queue, stop_event, subscriptions):
+    """Entry point called by mp.Process in the child process.
+
+    Args:
+        data_queue: multiprocessing.Queue for outgoing RTD updates.
+        stop_event: multiprocessing.Event that signals shutdown.
+        subscriptions: list of (QuoteType, symbol) tuples to subscribe to.
+    """
 
     # Immediately confirm the child is alive and the queue works
     try:
@@ -61,4 +67,4 @@ def run_rtd_worker_process(data_queue, stop_event, all_symbols):
 
     worker = RTDWorker(data_queue, stop_event)
     worker.logger = logger
-    worker.start(all_symbols)
+    worker.start(subscriptions)

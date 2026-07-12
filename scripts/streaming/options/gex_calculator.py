@@ -674,7 +674,8 @@ def _calculate_hypothetical_total_gex_numpy(
     S_hypo: float,
     call_strikes: np.ndarray, call_t: np.ndarray, call_iv: np.ndarray, call_oi: np.ndarray,
     put_strikes: np.ndarray, put_t: np.ndarray, put_iv: np.ndarray, put_oi: np.ndarray,
-    delta_adjusted: bool = False
+    delta_adjusted: bool = False,
+    is_futures: bool = False,
 ) -> float:
     if len(call_strikes) == 0 and len(put_strikes) == 0:
         return 0.0
@@ -689,23 +690,43 @@ def _calculate_hypothetical_total_gex_numpy(
             if len(strikes) == 0:
                 return 0.0
             t_sqrt = np.sqrt(t)
-            d1 = (np.log(S_hypo / strikes) + (r - q + 0.5 * iv ** 2) * t) / (iv * t_sqrt)
-            
-            norm_d1 = np.exp(-0.5 * d1 ** 2) / np.sqrt(2.0 * np.pi)
-            gamma = np.exp(-q * t) * norm_d1 / (S_hypo * iv * t_sqrt)
-            gex = gamma * oi * contract_size * S_hypo
+            if is_futures:
+                # Black-76: no cost-of-carry drift, discount by e^{-rt}
+                d1 = (np.log(S_hypo / strikes) + 0.5 * iv ** 2 * t) / (iv * t_sqrt)
+                norm_d1 = np.exp(-0.5 * d1 ** 2) / np.sqrt(2.0 * np.pi)
+                gamma = np.exp(-r * t) * norm_d1 / (S_hypo * iv * t_sqrt)
+                gex = gamma * oi * contract_size * S_hypo
 
-            if delta_adjusted:
-                import math
-                erf_vec = np.vectorize(math.erf)
-                cdf_d1 = 0.5 * (1.0 + erf_vec(d1 / np.sqrt(2.0)))
-                if is_call:
-                    delta = np.exp(-q * t) * cdf_d1
+                if delta_adjusted:
+                    import math
+                    erf_vec = np.vectorize(math.erf)
+                    cdf_d1 = 0.5 * (1.0 + erf_vec(d1 / np.sqrt(2.0)))
+                    if is_call:
+                        delta = np.exp(-r * t) * cdf_d1
+                    else:
+                        delta = np.exp(-r * t) * (cdf_d1 - 1.0)
+                    return np.sum(gex * np.abs(delta))
                 else:
-                    delta = np.exp(-q * t) * (cdf_d1 - 1.0)
-                return np.sum(gex * np.abs(delta))
+                    return np.sum(gex)
             else:
-                return np.sum(gex)
+                # BSM: cost-of-carry drift (r-q), discount by e^{-qt}
+                d1 = (np.log(S_hypo / strikes) + (r - q + 0.5 * iv ** 2) * t) / (iv * t_sqrt)
+                
+                norm_d1 = np.exp(-0.5 * d1 ** 2) / np.sqrt(2.0 * np.pi)
+                gamma = np.exp(-q * t) * norm_d1 / (S_hypo * iv * t_sqrt)
+                gex = gamma * oi * contract_size * S_hypo
+
+                if delta_adjusted:
+                    import math
+                    erf_vec = np.vectorize(math.erf)
+                    cdf_d1 = 0.5 * (1.0 + erf_vec(d1 / np.sqrt(2.0)))
+                    if is_call:
+                        delta = np.exp(-q * t) * cdf_d1
+                    else:
+                        delta = np.exp(-q * t) * (cdf_d1 - 1.0)
+                    return np.sum(gex * np.abs(delta))
+                else:
+                    return np.sum(gex)
 
         total += calc_side_gex(call_strikes, call_t, call_iv, call_oi, is_call=True)
         total -= calc_side_gex(put_strikes, put_t, put_iv, put_oi, is_call=False)
@@ -817,7 +838,7 @@ def _calculate_opening_gap_target(calls: list[OptionContract], puts: list[Option
     return min(candidates, key=lambda x: abs(x - spot))
 
 
-def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContract], spot: float, delta_adjusted: bool = False) -> float | None:
+def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContract], spot: float, delta_adjusted: bool = False, is_futures: bool = False) -> float | None:
     if not calls and not puts:
         return None
 
@@ -846,19 +867,44 @@ def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContr
     c_strikes, c_t, c_iv, c_oi = extract_arrays(calls)
     p_strikes, p_t, p_iv, p_oi = extract_arrays(puts)
 
+    # Determine traded strike range to prevent numerical underflow outside the traded chain.
+    # We add a 50% strike span padding to allow breathing room for crossings near the borders.
+    all_strikes_list = []
+    if len(c_strikes) > 0:
+        all_strikes_list.append(c_strikes)
+    if len(p_strikes) > 0:
+        all_strikes_list.append(p_strikes)
+    
+    if not all_strikes_list:
+        return None
+        
+    all_strikes = np.concatenate(all_strikes_list)
+    min_strike = float(np.min(all_strikes))
+    max_strike = float(np.max(all_strikes))
+    strike_span = max_strike - min_strike
+    pad = strike_span * 0.5 if strike_span > 0 else spot * 0.1
+    min_search = min_strike - pad
+    max_search = max_strike + pad
+
     def _bisect(lo: float, hi: float) -> float | None:
         g_lo = _calculate_hypothetical_total_gex_numpy(
-            lo, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted
+            lo, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted, is_futures=is_futures
         )
         g_hi = _calculate_hypothetical_total_gex_numpy(
-            hi, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted
+            hi, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted, is_futures=is_futures
         )
+        
+        # Safeguard: if GEX at both bounds is practically zero, the entire range is in the underflow zone.
+        # Returning None prevents bisection from getting trapped and returning a fake midpoint crossing.
+        if abs(g_lo) < 1e-2 and abs(g_hi) < 1e-2:
+            return None
+            
         if g_lo * g_hi > 0:
             return None
         for _ in range(50):
             mid = (lo + hi) / 2.0
             g_mid = _calculate_hypothetical_total_gex_numpy(
-                mid, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted
+                mid, c_strikes, c_t, c_iv, c_oi, p_strikes, p_t, p_iv, p_oi, delta_adjusted, is_futures=is_futures
             )
             if abs(g_mid) < 1e-2:
                 return round(mid, 2)
@@ -870,9 +916,14 @@ def _find_dynamic_zero_gamma(calls: list[OptionContract], puts: list[OptionContr
 
     # Search three bands, picking the crossing nearest to spot.
     # Tighter bands first so we find near-ATM crossings before LEAPS crossings.
+    # We constrain the bounds of each band to the padded traded strike range to prevent underflow.
     candidates: list[float] = []
     for lo_scale, hi_scale in [(0.90, 1.10), (0.80, 1.20), (0.50, 1.50)]:
-        result = _bisect(spot * lo_scale, spot * hi_scale)
+        lo = max(spot * lo_scale, min_search)
+        hi = min(spot * hi_scale, max_search)
+        if lo >= hi:
+            continue
+        result = _bisect(lo, hi)
         if result is not None:
             candidates.append(result)
 
@@ -1199,10 +1250,12 @@ def _expected_move(
         )
         return 0.0, 0.0
         
-    if c.bid >= c.ask or p.bid >= p.ask:
+    # Crossed market is bid > ask (not >=).  When bid == ask (e.g. RTD MARK
+    # pricing where both are set to the same mid-price), the quote is valid.
+    if c.bid > c.ask or p.bid > p.ask:
         log.warning(
             "LOUD WARNING: Crossed bid/ask for expected move at strike %.2f. "
-            "Call: %.2f >= %.2f, Put: %.2f >= %.2f",
+            "Call: %.2f > %.2f, Put: %.2f > %.2f",
             atm_strike, c.bid, c.ask, p.bid, p.ask
         )
         return 0.0, 0.0
@@ -1213,7 +1266,17 @@ def _expected_move(
     straddle_mid = c_mid + p_mid
     
     # 5. Compute Expected Move
-    em_value = k * straddle_mid
+    # Calculate using the calibrated IV-based TOS model primarily,
+    # falling back to the straddle-based model if IV is missing.
+    c_iv = getattr(c, 'iv', 0.0) or 0.0
+    p_iv = getattr(p, 'iv', 0.0) or 0.0
+    blended_iv = (c_iv + p_iv) / 2.0 if (c_iv > 0 and p_iv > 0) else max(c_iv, p_iv)
+    
+    if blended_iv > 0:
+        expiry_str = c.expiry.strftime("%Y-%m-%d") if hasattr(c.expiry, "strftime") else str(c.expiry)
+        em_value = calculate_tos_expected_move(spot, expiry_str, blended_iv * 100, is_futures=is_futures)
+    else:
+        em_value = k * straddle_mid
 
     # 6. Capture log
     expiry = c.expiry
@@ -1712,12 +1775,22 @@ def calculate_dealer_levels(
     if spot <= 0:
         raise ValueError(f"Spot price is zero for {ticker} — cannot calculate levels.")
 
-    strikes = _build_cumulative_profile(_build_strike_gex(chain.calls, chain.puts, spot, is_futures=getattr(chain, 'is_futures', False)))
+    is_futures = getattr(chain, 'is_futures', False) or any(ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
+    strikes = _build_cumulative_profile(_build_strike_gex(chain.calls, chain.puts, spot, is_futures=is_futures))
     total_gex = sum(row.net_gex for row in strikes)
     gex_regime = "POSITIVE" if total_gex >= 0 else "NEGATIVE"
 
     wall_calls = _filter_contracts_by_dte(chain.calls, wall_dte_range)
     wall_puts = _filter_contracts_by_dte(chain.puts, wall_dte_range)
+    # When the RTD chain only has far-dated expiries (e.g. quarterly only),
+    # the DTE filter produces an empty set.  Fall back to all contracts so
+    # walls can still be computed from whatever OI is available.
+    if not wall_calls and chain.calls:
+        log.info("Wall calls empty after DTE filter (%s) — using all %d calls", wall_dte_range, len(chain.calls))
+        wall_calls = chain.calls
+    if not wall_puts and chain.puts:
+        log.info("Wall puts empty after DTE filter (%s) — using all %d puts", wall_dte_range, len(chain.puts))
+        wall_puts = chain.puts
     call_wall, secondary_call_wall = _find_walls(wall_calls, min_oi_floor, spot=spot, side="CALL")
     put_wall, secondary_put_wall = _find_walls(wall_puts, min_oi_floor, spot=spot, side="PUT")
     local_call_node, local_put_node = _find_local_nodes(strikes, spot)
@@ -1727,8 +1800,8 @@ def calculate_dealer_levels(
     put_wall_0dte, _ = _find_walls(front_puts, min_oi_floor, spot=spot, side="PUT")
 
     gamma_flip_lower, gamma_flip_upper, _ = _find_gamma_flip_zone(strikes, spot, min_oi_floor)
-    zero_gamma = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=False)
-    zero_gamma_delta_adj = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=True)
+    zero_gamma = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=False, is_futures=is_futures)
+    zero_gamma_delta_adj = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=True, is_futures=is_futures)
     opening_gap_target = _calculate_opening_gap_target(chain.calls, chain.puts, spot)
     hedge_wall = _find_hedge_wall(strikes, spot)
     max_pain = _find_max_pain(front_calls or chain.calls, front_puts or chain.puts)
@@ -1737,8 +1810,28 @@ def calculate_dealer_levels(
     now_et = datetime.now(tz_et)
     front_expiry = min(c.expiry for c in chain.contracts) if chain.contracts else None
     front_dte = max(0, (front_expiry - now_et.date()).days) if front_expiry else 0
-    is_futures = any(ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
     em_value, straddle = _expected_move(chain.calls, chain.puts, spot, front_dte, is_futures=is_futures, ticker=ticker)
+
+    # IV-based EM fallback: when the straddle-based EM
+    # is zero (illiquid ATM options with no MARK/LAST), use the TOS volatility
+    # formula.  This ensures the dealer levels always have a meaningful EM
+    # even when options pricing data is sparse.
+    if em_value <= 0 and front_expiry is not None:
+        # Blend ATM IV from the nearest call and put to spot
+        atm_call = min(chain.calls, key=lambda c: abs(c.strike - spot)) if chain.calls else None
+        atm_put = min(chain.puts, key=lambda p: abs(p.strike - spot)) if chain.puts else None
+        call_iv = atm_call.iv if atm_call and atm_call.iv > 0 else 0.0
+        put_iv = atm_put.iv if atm_put and atm_put.iv > 0 else 0.0
+        blended_iv = (call_iv + put_iv) / 2.0 if (call_iv > 0 and put_iv > 0) else max(call_iv, put_iv)
+        if blended_iv > 0:
+            tos_em = calculate_tos_expected_move(spot, front_expiry.isoformat(), blended_iv * 100, is_futures=is_futures)
+            if tos_em > 0:
+                log.info(
+                    "IV-based EM fallback for %s: ±%.2f (IV=%.4f, DTE=%d, straddle was %.2f)",
+                    ticker, tos_em, blended_iv, front_dte, straddle,
+                )
+                em_value = tos_em
+                straddle = tos_em / 1.10  # approximate straddle from EM
 
     cliff_up, cliff_down = _find_gamma_cliffs(strikes, spot)
 
@@ -2083,13 +2176,14 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
 def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_volatility: float, is_futures: bool = False) -> float:
     """
     Calculates the Thinkorswim (TOS) Expected Move using the empirically
-    calibrated linear time-scaling model (2026-05-09).
+    calibrated linear time-scaling model, adjusting for weekend decay.
     
-    expiry_date_str: 'YYYY-MM-DD'
+    expiry_date_str: 'YYYY-MM-DD' or 'YYYY-MM-DD:Days'
     expiry_volatility: The volatility number (percentage or decimal).
     """
     tz = ZoneInfo("America/New_York")
-    today = datetime.now(tz).date()
+    now_ny = datetime.now(tz)
+    today = now_ny.date()
     
     try:
         clean_date_str = expiry_date_str.split(':')[0] 
@@ -2103,10 +2197,29 @@ def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_
         
     vol_decimal = expiry_volatility / 100.0 if expiry_volatility > 1.0 else expiry_volatility
     
-    # EM = Price × IV × sqrt(DTE / 365)
-    # TOS uses the simple Black-Scholes 1-SD formula without intercept.
-    # Verified against actual TOS values: NQ 329.87 (21.51% IV) and ES 46.35 (11.86% IV).
-    t_eff_yr = dte / 365.0
+    # Determine weekend/market-hours state for intercept scaling
+    day_of_week = now_ny.weekday()  # 0=Monday, 5=Saturday, 6=Sunday
+    hour = now_ny.hour
+    
+    is_weekend = False
+    if day_of_week == 4 and hour >= 16:  # Friday after-hours
+        is_weekend = True
+    elif day_of_week in [5, 6]:          # Saturday or Sunday
+        if day_of_week == 6 and hour >= 18:
+            is_weekend = False  # Futures are open
+        else:
+            is_weekend = True
+            
+    # Apply fitted TOS time-scaling coefficients
+    # Weekday trading hours vs. Weekend/market-closed decay
+    slope = 0.6368
+    if is_weekend:
+        intercept = 0.4203 if is_futures else -0.0373
+    else:
+        intercept = 0.6900 if is_futures else 0.2400
+        
+    t_eff = slope * dte + intercept
+    t_eff_yr = t_eff / 365.0
     
     if t_eff_yr <= 0:
         return 0.0

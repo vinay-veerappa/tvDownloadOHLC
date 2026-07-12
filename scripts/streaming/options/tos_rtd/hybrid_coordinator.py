@@ -17,12 +17,14 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from ..config import (
     ENABLE_TOS_RTD,
+    NY_SESSION_ROLLOVER_TIME,
     TOS_RTD_HEARTBEAT_MS,
     TOS_RTD_STRIKE_RANGE,
     TOS_RTD_STRIKE_SPACING,
@@ -32,6 +34,30 @@ from ..config import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _session_key() -> str:
+    """Return the trading-session key for the current moment.
+
+    Sessions roll at NY_SESSION_ROLLOVER_TIME (16:15 ET). Everything between
+    today 16:15 ET and tomorrow 16:15 ET belongs to tomorrow's session. This
+    means an overnight run at 02:00 ET on July 12 still maps to the July 12
+    session, not July 11.
+    """
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    rollover = now_et.replace(
+        hour=NY_SESSION_ROLLOVER_TIME.hour,
+        minute=NY_SESSION_ROLLOVER_TIME.minute,
+        second=0, microsecond=0,
+    )
+    # Before rollover → this calendar date is the session.
+    # After rollover  → next calendar date is the session.
+    if now_et >= rollover:
+        session_date = (now_et + timedelta(days=1)).date()
+    else:
+        session_date = now_et.date()
+    return session_date.isoformat()
+
 
 # Guard: only import RTD on Windows
 _RTD_AVAILABLE = False
@@ -101,45 +127,72 @@ class HybridCoordinator:
         # Cached expiry list from Schwab discovery (avoids re-querying every start)
         self._cached_expiries: list[date] | None = None
         self._expiry_cache_time: float = 0.0  # When the cache was populated
-        self._expiry_cache_path = Path("data/options/.rtd_expiry_cache.json")
+        # Unified market cache: expiries, static OI, Schwab IV, basis per session
+        self._market_cache_path = Path("data/options/.rtd_market_cache.json")
+        self._market_cache: dict[str, Any] | None = None
+        self._session_open_interest: dict[str, dict[str, int]] = {}
+        self._session_iv_snapshot: dict[str, dict[str, float]] = {}
+        self._basis_at_scan: dict[str, dict[str, Any]] = {}
+        self._scan_quality: dict[str, Any] = {}
         _EXPIRY_CACHE_TTL_SECONDS = 3600  # 1 hour — expiries change slowly
 
-    def _load_disk_cache(self) -> list[date] | None:
-        """Load the expiry cache from disk if it exists and is not stale."""
+    def _load_market_cache(self) -> dict[str, Any] | None:
+        """Load the unified market cache from disk if valid for this session."""
         try:
-            if not self._expiry_cache_path.exists():
+            if not self._market_cache_path.exists():
                 return None
-            data = json.loads(self._expiry_cache_path.read_text())
-            cached_time = float(data.get("cached_at", 0.0))
-            if (time.time() - cached_time) > 3600:
-                log.debug("RTD expiry disk cache is stale (age=%ds)", int(time.time() - cached_time))
+            data = json.loads(self._market_cache_path.read_text())
+            cached_key = data.get("session_key", "")
+            if cached_key != _session_key():
+                log.debug("RTD market cache session key mismatch: %s != %s", cached_key, _session_key())
                 return None
-            dates = [date.fromisoformat(d) for d in data.get("expiries", [])]
-            if dates:
-                self._cached_expiries = dates
-                self._expiry_cache_time = cached_time
-                log.info(
-                    "RTD expiry ladder (disk cache, %ds old): %d expiries (%s)",
-                    int(time.time() - cached_time),
-                    len(dates),
-                    ", ".join(d.isoformat() for d in dates),
-                )
-            return dates
+            self._market_cache = data
+            self._cached_expiries = [date.fromisoformat(d) for d in data.get("expiries", [])]
+            self._expiry_cache_time = float(data.get("cached_at", 0.0))
+            self._session_open_interest = data.get("open_interest", {})
+            self._session_iv_snapshot = data.get("schwab_iv_snapshot", {})
+            self._basis_at_scan = data.get("basis_at_scan", {})
+            self._scan_quality = data.get("scan_quality", {})
+            log.info(
+                "RTD market cache loaded (%ds old): session=%s, %d expiries, "
+                "OI symbols ES=%d NQ=%d",
+                int(time.time() - self._expiry_cache_time),
+                cached_key,
+                len(self._cached_expiries),
+                len(self._session_open_interest.get("/ES", {})),
+                len(self._session_open_interest.get("/NQ", {})),
+            )
+            return data
         except Exception as exc:
-            log.debug("Failed to load RTD expiry disk cache: %s", exc)
+            log.debug("Failed to load RTD market cache: %s", exc)
             return None
 
-    def _save_disk_cache(self, expiries: list[date]) -> None:
-        """Persist the expiry list to disk."""
+    def _save_market_cache(
+        self,
+        session_key: str,
+        expiries: list[date],
+        open_interest: dict[str, dict[str, int]],
+        iv_snapshot: dict[str, dict[str, float]],
+        basis: dict[str, dict[str, Any]],
+        scan_quality: dict[str, Any],
+    ) -> None:
+        """Persist the unified market cache to disk."""
         try:
-            self._expiry_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self._market_cache_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "expiries": [d.isoformat() for d in expiries],
+                "session_key": session_key,
                 "cached_at": time.time(),
+                "expiries": [d.isoformat() for d in expiries],
+                "open_interest": open_interest,
+                "schwab_iv_snapshot": iv_snapshot,
+                "basis_at_scan": basis,
+                "scan_quality": scan_quality,
             }
-            self._expiry_cache_path.write_text(json.dumps(payload))
+            self._market_cache_path.write_text(json.dumps(payload))
+            self._market_cache = payload
+            log.debug("RTD market cache saved for session %s", session_key)
         except Exception as exc:
-            log.debug("Failed to save RTD expiry disk cache: %s", exc)
+            log.debug("Failed to save RTD market cache: %s", exc)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -148,9 +201,12 @@ class HybridCoordinator:
     def start(self, current_prices: dict[str, float] | None = None) -> None:
         """Start the RTD adapter if enabled and TOS desktop is running.
 
-        If current_prices is not provided, performs a two-phase start:
-        Phase 1: Subscribe to futures LAST only to get current price.
-        Phase 2: Restart with option symbols built from the live price.
+        Uses a unified session-key market cache to avoid re-scanning OI every
+        restart. The live subscription set is reduced to:
+          - futures LAST for each base symbol
+          - IMPL_VOL for Top-N OI front-expiry contracts (+ ATM force-inclusion)
+          - LAST for the ±2 ATM front-expiry options
+        Back-expiry contracts are served from cached OI + Schwab IV snapshots.
         """
         if not self._enabled:
             log.info("TOS RTD disabled — running in Schwab-only mode")
@@ -166,134 +222,18 @@ class HybridCoordinator:
             return
 
         if not self._expiry:
-            # Default to nearest Friday
-            from datetime import timedelta
             today = date.today()
             days_ahead = 4 - today.weekday()
             if days_ahead <= 0:
                 days_ahead += 7
             self._expiry = today + timedelta(days=days_ahead)
 
-        # Build a proper expiry ladder using Schwab-discovered expiries when
-        # available, falling back to a theoretical ladder otherwise.
-        #
-        # Schwab discovery: do a lightweight API call to get the actual
-        # available expiries for each futures symbol.  This avoids wasting
-        # COM subscriptions on non-existent option symbols (previously ~77%
-        # of /ES and ~96% of /NQ subscriptions returned no data).
-        from datetime import timedelta as _td
+        session_key = _session_key()
 
-        def _third_friday(y: int, m: int) -> date:
-            """Return the 3rd Friday of the given year/month."""
-            d = date(y, m, 15)
-            while d.weekday() != 4:
-                d += _td(days=1)
-            return d
-
-        # Determine the max number of expiries across all symbols we monitor.
-        max_expiries = max(
-            (sc.get("num_expiries", 4) for sc in TOS_RTD_SYMBOL_CONFIG.values()),
-            default=4,
-        )
-
-        # ── Attempt Schwab expiry discovery (with caching) ──
-        # Query the Schwab API to get the actual available expiries for each
-        # futures symbol.  This avoids wasting COM subscriptions on non-existent
-        # option symbols.  Results are cached for 1 hour since expiries change
-        # slowly (only when an expiry date passes).
-        import time as _time_mod
-        _EXPIRY_CACHE_TTL = 3600  # 1 hour
-
-        if (self._cached_expiries is not None
-                and (_time_mod.time() - self._expiry_cache_time) < _EXPIRY_CACHE_TTL):
-            expiries = self._cached_expiries
-            log.info(
-                "RTD expiry ladder (memory cache, %ds old): %d expiries (%s)",
-                int(_time_mod.time() - self._expiry_cache_time),
-                len(expiries),
-                ", ".join(e.isoformat() for e in expiries),
-            )
-        elif self._load_disk_cache():
-            expiries = self._cached_expiries
-        else:
-            schwab_expiries: dict[str, list[date]] = {}
-            try:
-                from ..options_fetcher import _hub_request
-                for sym in self._symbols:
-                    try:
-                        # Only use get_quotes fallback for futures discovery.
-                        # get_option_chain consistently returns 400 for futures symbols.
-                        from ..options_fetcher import fetch_futures_option_chain_data
-                        discovery_dte = list(range(0, 45))
-                        chain = fetch_futures_option_chain_data(sym, discovery_dte)
-                        if chain and chain.contracts:
-                            expiry_dates = sorted({
-                                c.expiry for c in chain.contracts
-                                if isinstance(c.expiry, date) and c.expiry >= date.today()
-                            })
-                            if expiry_dates:
-                                schwab_expiries[sym] = expiry_dates
-                                log.info(
-                                    "Schwab get_quotes discovery for %s: %d expiries",
-                                    sym, len(expiry_dates),
-                                )
-                    except Exception as exc:
-                        log.debug("Schwab discovery failed for %s: %s", sym, exc)
-            except ImportError:
-                log.debug("Schwab fetcher not available for expiry discovery")
-
-            # Build the expiry list
-            if schwab_expiries:
-                all_discovered: set[date] = set()
-                for exp_list in schwab_expiries.values():
-                    all_discovered.update(exp_list)
-                expiries = sorted(all_discovered)[:max_expiries]
-                if not expiries:
-                    expiries = [self._expiry]
-                self._cached_expiries = expiries
-                self._expiry_cache_time = _time_mod.time()
-                self._save_disk_cache(expiries)
-                log.info(
-                    "RTD expiry ladder (Schwab-discovered): %d expiries (%s)",
-                    len(expiries),
-                    ", ".join(e.isoformat() for e in expiries),
-                )
-            else:
-                # Fallback: theoretical ladder (0DTE + weekly Fridays + monthly)
-                today = date.today()
-                expiries_set: set[date] = set()
-
-                # Add today as a 0DTE expiry if it's a weekday
-                if today.weekday() < 5:
-                    expiries_set.add(today)
-
-                # Add the nearest Friday
-                expiries_set.add(self._expiry)
-
-                # Add weekly Fridays up to ~6 weeks out
-                next_fri = self._expiry
-                for _ in range(6):
-                    next_fri = next_fri + _td(days=7)
-                    expiries_set.add(next_fri)
-
-                # Add monthly (3rd Friday) expiries for the next N months
-                for months_ahead in range(0, max_expiries + 2):
-                    m = today.month + months_ahead
-                    y = today.year + (m - 1) // 12
-                    m = ((m - 1) % 12) + 1
-                    monthly = _third_friday(y, m)
-                    if monthly >= today:
-                        expiries_set.add(monthly)
-
-                expiries = sorted(expiries_set)[:max_expiries]
-                self._cached_expiries = expiries
-                self._expiry_cache_time = _time_mod.time()
-                self._save_disk_cache(expiries)
-                log.info(
-                    "RTD expiry ladder (theoretical fallback): %d expiries (%s)",
-                    len(expiries),
-                    ", ".join(e.isoformat() for e in expiries),
-                )
+        # ── 1. Resolve expiry ladder (memory → disk market cache → discovery) ──
+        expiries = self._resolve_expiries()
+        if not expiries:
+            expiries = [self._expiry]
 
         config = RTDConfig(
             strike_range=TOS_RTD_STRIKE_RANGE,
@@ -302,74 +242,633 @@ class HybridCoordinator:
         )
         self._adapter = TOSRTDAdapter(config)
 
+        # ── 2. Resolve current futures prices ──
         if current_prices:
-            # Prices provided — single-phase start with option symbols
-            self._start_with_prices(current_prices, expiries)
+            futures_prices = current_prices
         else:
-            # Two-phase start: get price first, then restart with options
-            self._start_two_phase(expiries)
+            futures_prices = self._fetch_futures_prices(self._symbols)
 
-    def _start_with_prices(self, current_prices: dict[str, float], expiries: list[date] | None = None) -> None:
-        """Start RTD with known prices — subscribes to futures + options immediately."""
+        if not futures_prices:
+            log.warning("No futures prices available — falling back to Schwab-only mode")
+            self._enabled = False
+            self._adapter = None
+            return
+
+        # ── 3. Load or build the session market cache ──
+        if self._load_market_cache() and self._market_cache:
+            log.info("Using cached market data for session %s", session_key)
+            self._start_with_cached_market_data(futures_prices, expiries)
+            return
+
+        # ── 4. No valid cache — perform a fresh market scan ──
+        log.info("No valid market cache for session %s — running fresh scan", session_key)
+
+        # Schwab ETF OI hints reduce the RTD scan universe.
+        schwab_hints, schwab_iv_by_key = self._get_schwab_oi_hints(expiries, futures_prices)
+
+        # Build candidate symbols filtered by Schwab ETF hints.
+        candidate_symbols = self._build_candidate_symbols(
+            self._symbols, expiries, futures_prices, schwab_hints
+        )
+
+        # Completeness-gated OI scan.
+        raw_oi_map = self._run_oi_scan(candidate_symbols)
+
+        # Per-symbol OI-weighted Top-N filtering with ATM force-inclusion.
+        selected_oi: dict[str, dict[str, int]] = {}
+        for sym in self._symbols:
+            sym_oi = {
+                s: oi for s, oi in raw_oi_map.items()
+                if self._rtd_symbol_belongs_to(s, sym)
+            }
+            if not sym_oi:
+                continue
+            selected_oi[sym] = self._filter_top_oi_contracts(
+                sym_oi,
+                futures_price=futures_prices[sym],
+                symbol=sym,
+            )
+
+        # Degenerate scan guard.
+        total_candidates = len(candidate_symbols)
+        total_nonzero = len(raw_oi_map)
+        non_zero_pct = total_nonzero / total_candidates if total_candidates else 0.0
+        self._scan_quality = {
+            "total_symbols_scanned": total_candidates,
+            "non_zero_count": total_nonzero,
+            "non_zero_pct": round(non_zero_pct, 4),
+        }
+
+        if non_zero_pct < 0.50:
+            log.warning(
+                "OI scan degenerate: only %.0f%% non-zero (%d/%d). "
+                "Keeping existing cache if available.",
+                non_zero_pct * 100, total_nonzero, total_candidates,
+            )
+            existing = self._load_market_cache()
+            if existing is not None:
+                self._start_with_cached_market_data(futures_prices, expiries)
+                return
+            log.warning("No prior cache exists — saving sparse scan as fallback.")
+
+        # Map Schwab ETF IVs to the selected RTD symbols by (expiry, strike, type).
+        selected_iv: dict[str, dict[str, float]] = {}
+        for sym, oi_map in selected_oi.items():
+            iv_map: dict[str, float] = {}
+            iv_by_key_sym = schwab_iv_by_key.get(sym, {})
+            for rtd_sym in oi_map:
+                parsed = parse_rtd_option_symbol(rtd_sym)
+                if not parsed or parsed.expiry is None:
+                    continue
+                key = (parsed.expiry, parsed.strike, parsed.option_type)
+                if key in iv_by_key_sym:
+                    iv_map[rtd_sym] = iv_by_key_sym[key]
+            selected_iv[sym] = iv_map
+
+        # Capture basis at scan time.
+        basis_at_scan = self._capture_basis(futures_prices)
+
+        # Persist the unified market cache.
+        self._save_market_cache(
+            session_key=session_key,
+            expiries=expiries,
+            open_interest=selected_oi,
+            iv_snapshot=selected_iv,
+            basis=basis_at_scan,
+            scan_quality=self._scan_quality,
+        )
+
+        # ── 5. Start live streaming with reduced subscription set ──
+        self._start_with_filtered_data(
+            futures_prices=futures_prices,
+            expiries=expiries,
+            open_interest=selected_oi,
+            iv_snapshot=selected_iv,
+        )
+
+    # ------------------------------------------------------------------
+    # Market-cache helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_expiries(self) -> list[date]:
+        """Return the expiry ladder, preferring memory/disk cache then discovery."""
+        _EXPIRY_CACHE_TTL = 3600  # 1 hour
+        now = time.time()
+
+        if (self._cached_expiries is not None
+                and (now - self._expiry_cache_time) < _EXPIRY_CACHE_TTL):
+            log.info(
+                "RTD expiry ladder (memory cache, %ds old): %d expiries (%s)",
+                int(now - self._expiry_cache_time),
+                len(self._cached_expiries),
+                ", ".join(e.isoformat() for e in self._cached_expiries),
+            )
+            return self._cached_expiries
+
+        if self._load_market_cache() and self._cached_expiries:
+            return self._cached_expiries
+
+        return self._discover_expiries()
+
+    def _discover_expiries(self) -> list[date]:
+        """Discover available futures option expiries via Schwab + theoretical ladder."""
+        from ..options_fetcher import fetch_futures_option_chain_data
+
+        max_expiries = max(
+            (sc.get("num_expiries", 4) for sc in TOS_RTD_SYMBOL_CONFIG.values()),
+            default=4,
+        )
+
+        schwab_expiries: dict[str, list[date]] = {}
+        for sym in self._symbols:
+            try:
+                chain = fetch_futures_option_chain_data(sym, list(range(0, 45)))
+                if chain and chain.contracts:
+                    expiry_dates = sorted({
+                        c.expiry for c in chain.contracts
+                        if isinstance(c.expiry, date) and c.expiry >= date.today()
+                    })
+                    if expiry_dates:
+                        schwab_expiries[sym] = expiry_dates
+                        log.info(
+                            "Schwab futures discovery for %s: %d expiries",
+                            sym, len(expiry_dates),
+                        )
+            except Exception as exc:
+                log.debug("Schwab expiry discovery failed for %s: %s", sym, exc)
+
+        all_expiries: set[date] = set()
+        for exp_list in schwab_expiries.values():
+            all_expiries.update(exp_list)
+
+        today = date.today()
+        nearest_fri = today
+        while nearest_fri.weekday() != 4:
+            nearest_fri += timedelta(days=1)
+        all_expiries.add(nearest_fri)
+
+        next_fri = nearest_fri
+        for _ in range(6):
+            next_fri = next_fri + timedelta(days=7)
+            all_expiries.add(next_fri)
+
+        def _third_friday(y: int, m: int) -> date:
+            d = date(y, m, 15)
+            while d.weekday() != 4:
+                d += timedelta(days=1)
+            return d
+
+        for months_ahead in range(0, max_expiries + 2):
+            y = today.year + (today.month - 1 + months_ahead) // 12
+            m = (today.month - 1 + months_ahead) % 12 + 1
+            all_expiries.add(_third_friday(y, m))
+
+        expiries = sorted(d for d in all_expiries if d >= today)[:max_expiries]
+        self._cached_expiries = expiries
+        self._expiry_cache_time = time.time()
+        log.info(
+            "RTD expiry ladder (Schwab+theoretical): %d expiries (%s)",
+            len(expiries),
+            ", ".join(e.isoformat() for e in expiries),
+        )
+        return expiries
+
+    def _fetch_futures_prices(self, symbols: list[str]) -> dict[str, float]:
+        """Fetch current futures prices via RTD (fast) or Schwab fallback."""
+        from ..options_fetcher import fetch_futures_quote
+
+        prices: dict[str, float] = {}
+
+        # Try Schwab first — no COM startup latency.
+        for sym in symbols:
+            try:
+                fq = fetch_futures_quote(sym)
+                if fq and fq.price and fq.price > 0:
+                    prices[sym] = float(fq.price)
+            except Exception as exc:
+                log.debug("Schwab futures quote failed for %s: %s", sym, exc)
+
+        if all(s in prices for s in symbols):
+            return prices
+
+        # Fallback to a quick RTD LAST-only scan.
+        try:
+            from .quote_types import QuoteType
+            subscriptions = []
+            for sym in symbols:
+                exchange = self._exchange_for_symbol(sym)
+                subscriptions.append((QuoteType.LAST, f"{sym}:{exchange}"))
+            self._adapter.start_raw(subscriptions=subscriptions)
+            for _ in range(20):  # 10s max
+                time.sleep(0.5)
+                for sym in symbols:
+                    if sym in prices:
+                        continue
+                    p = self._adapter.get_futures_price(sym)
+                    if p and p > 0:
+                        prices[sym] = float(p)
+                if all(s in prices for s in symbols):
+                    break
+            self._adapter.stop()
+        except Exception as exc:
+            log.warning("RTD futures price scan failed: %s", exc)
+
+        return prices
+
+    def _exchange_for_symbol(self, symbol: str) -> str:
+        """Return the RTD exchange suffix for a futures symbol."""
+        return OptionSymbolBuilder.FUTURES_EXCHANGES.get(symbol, "XCBT")
+
+    def _rtd_symbol_belongs_to(self, rtd_sym: str, symbol: str) -> bool:
+        """Check if an RTD option symbol belongs to a base futures symbol."""
+        parsed = parse_rtd_option_symbol(rtd_sym)
+        return parsed is not None and parsed.base_symbol == symbol
+
+    def _expiry_bucket(self, expiry: date) -> str:
+        """Classify an expiry date as 'front' (0-7 DTE) or 'back' (8-45 DTE)."""
+        today = date.today()
+        dte = (expiry - today).days
+        if dte <= 7:
+            return "front"
+        return "back"
+
+    def _capture_basis(self, futures_prices: dict[str, float]) -> dict[str, dict[str, Any]]:
+        """Capture the live basis/translation mode used at scan time."""
+        from ..config import BASIS_ANCHORS_JSON, USE_OPENING_BASIS
+        from ..futures_translator import get_min_tick
+
+        basis: dict[str, dict[str, Any]] = {}
+        etf_proxy = {"/ES": "SPY", "/NQ": "QQQ"}
+
+        anchors: dict[str, Any] = {}
+        if USE_OPENING_BASIS and BASIS_ANCHORS_JSON.exists():
+            try:
+                anchors = json.loads(BASIS_ANCHORS_JSON.read_text()).get("anchors", {})
+            except Exception as exc:
+                log.debug("Failed to load basis anchors: %s", exc)
+
+        for sym, fut_price in futures_prices.items():
+            proxy = etf_proxy.get(sym)
+            if proxy and proxy in anchors:
+                anchor = anchors[proxy]
+                ratio = float(anchor.get("ratio", 1.0))
+                # ETF→futures translation is multiplicative when scales differ.
+                if abs(ratio - 1.0) > 0.02:
+                    basis[sym] = {
+                        "mode": "multiplicative",
+                        "spread": 0.0,
+                        "ratio": round(ratio, 4),
+                    }
+                else:
+                    # Same-scale (e.g. SPX→/ES) additive basis.
+                    spread = float(anchor.get("basis", 0.0))
+                    basis[sym] = {
+                        "mode": "additive",
+                        "spread": round(spread, 2),
+                        "ratio": 1.0,
+                    }
+            else:
+                basis[sym] = {"mode": "additive", "spread": 0.0, "ratio": 1.0}
+
+        return basis
+
+    def _start_with_cached_market_data(
+        self,
+        futures_prices: dict[str, float],
+        expiries: list[date],
+    ) -> None:
+        """Start streaming using cached OI/IV and reduced live subscriptions."""
+        self._start_with_filtered_data(
+            futures_prices=futures_prices,
+            expiries=expiries,
+            open_interest=self._session_open_interest,
+            iv_snapshot=self._session_iv_snapshot,
+        )
+
+    def _start_with_filtered_data(
+        self,
+        futures_prices: dict[str, float],
+        expiries: list[date],
+        open_interest: dict[str, dict[str, int]],
+        iv_snapshot: dict[str, dict[str, float]],
+    ) -> None:
+        """Build the minimal live subscription set and start the adapter."""
+        from .quote_types import QuoteType
+
+        all_option_symbols: list[str] = []
+        live_subscriptions: list[tuple[Any, str]] = []
+
+        for sym in self._symbols:
+            if sym not in futures_prices:
+                continue
+            sym_oi = open_interest.get(sym, {})
+            sym_iv = iv_snapshot.get(sym, {})
+            if not sym_oi:
+                continue
+
+            all_option_symbols.extend(sym_oi.keys())
+
+            front_contracts: list[str] = []
+            atm_contracts: list[str] = []
+            for rtd_sym in sym_oi.keys():
+                parsed = parse_rtd_option_symbol(rtd_sym)
+                if not parsed or parsed.expiry is None:
+                    continue
+                bucket = self._expiry_bucket(parsed.expiry)
+                if bucket == "front":
+                    front_contracts.append(rtd_sym)
+                    if abs(parsed.strike - futures_prices[sym]) <= 2 * self._strike_spacing_for(sym):
+                        atm_contracts.append(rtd_sym)
+
+            # Front expiry: live IMPL_VOL for all selected front contracts.
+            for rtd_sym in front_contracts:
+                live_subscriptions.append((QuoteType.IMPL_VOL, rtd_sym))
+
+            # ATM straddle LAST for expected-move calculation.
+            for rtd_sym in atm_contracts:
+                live_subscriptions.append((QuoteType.LAST, rtd_sym))
+
+            # Base futures LAST.
+            exchange = self._exchange_for_symbol(sym)
+            live_subscriptions.append((QuoteType.LAST, f"{sym}:{exchange}"))
+
+        if not live_subscriptions:
+            log.warning("No live subscriptions generated — falling back to Schwab-only")
+            self._enabled = False
+            self._adapter = None
+            return
+
+        # Flatten static maps across symbols.
+        static_oi: dict[str, int] = {}
+        static_iv: dict[str, float] = {}
+        for sym in self._symbols:
+            static_oi.update(open_interest.get(sym, {}))
+            static_iv.update(iv_snapshot.get(sym, {}))
+
         try:
             self._adapter.start(
                 symbols=self._symbols,
                 expiry=self._expiry,
-                current_price=current_prices,
+                current_price=futures_prices,
                 expiries=expiries,
+                option_symbols=all_option_symbols,
+                live_subscriptions=live_subscriptions,
+                static_oi=static_oi,
+                static_iv=static_iv,
             )
-            log.info("HybridCoordinator started with RTD for %s (prices provided)", self._symbols)
+            log.info(
+                "HybridCoordinator started with %d live subscriptions across %d option symbols",
+                len(live_subscriptions), len(all_option_symbols),
+            )
         except Exception as e:
             log.error("RTD start failed — falling back to Schwab-only: %s", e)
             self._enabled = False
             self._adapter = None
 
-    def _start_two_phase(self, expiries: list[date] | None = None) -> None:
-        """Two-phase start: get futures price from RTD, then restart with option symbols."""
-        import time
-        try:
-            # Phase 1: Subscribe to futures LAST only
-            self._adapter.start(symbols=self._symbols, expiry=self._expiry)
-            log.info("RTD Phase 1: Waiting for futures LAST price...")
+    def _strike_spacing_for(self, symbol: str) -> float:
+        """Return the base strike spacing for a symbol."""
+        sym_configs = TOS_RTD_SYMBOL_CONFIG or {}
+        sc = sym_configs.get(symbol, {})
+        tiers = sc.get("strike_tiers")
+        if tiers:
+            return float(tiers[0][1])
+        return float(sc.get("strike_spacing", TOS_RTD_STRIKE_SPACING))
 
-            prices = {}
-            for i in range(10):
-                time.sleep(1)
-                
-                if self._adapter._process and not self._adapter._process.is_alive():
-                    log.error(f"RTD Phase 1: Child process died unexpectedly! Exit code: {self._adapter._process.exitcode}")
-                    break
+    # ------------------------------------------------------------------
+    # Schwab ETF OI pre-filter
+    # ------------------------------------------------------------------
 
-                for sym in self._symbols:
-                    p = self._adapter.get_futures_price(sym)
-                    if p and p > 0:
-                        prices[sym] = p
-                if all(s in prices for s in self._symbols):
-                    break
+    def _get_schwab_oi_hints(
+        self,
+        expiries: list[date],
+        futures_prices: dict[str, float],
+        top_n_per_symbol: int = 40,
+    ) -> tuple[dict[str, list[float]], dict[str, dict[tuple[date, float, str], float]]]:
+        """Fetch SPY/QQQ chains and translate top-OI strikes into futures space.
 
-            if not prices:
-                log.warning("RTD Phase 1: No futures price received after 10s — falling back")
-                self._adapter.stop()
-                self._enabled = False
-                return
+        Returns:
+            hints: {futures_symbol: [candidate_strike, ...]}
+            iv_by_key: {futures_symbol: {(expiry, strike, option_type): iv}}
+        """
+        from ..config import BASIS_ANCHORS_JSON, USE_OPENING_BASIS
+        from ..futures_translator import get_min_tick, round_to_tick
+        from ..options_fetcher import fetch_option_chain_data
 
-            log.info("RTD Phase 1 complete: %s", prices)
+        etf_proxy = {"/ES": "SPY", "/NQ": "QQQ"}
+        hints: dict[str, list[float]] = {}
+        iv_by_key: dict[str, dict[tuple[date, float, str], float]] = {}
 
-            # Phase 2: Restart with option symbols
-            self._adapter.stop()
-            time.sleep(1)
-            self._adapter.start(
-                symbols=self._symbols,
-                expiry=self._expiry,
-                current_price=prices,
-                expiries=expiries,
+        anchors: dict[str, Any] = {}
+        if USE_OPENING_BASIS and BASIS_ANCHORS_JSON.exists():
+            try:
+                anchors = json.loads(BASIS_ANCHORS_JSON.read_text()).get("anchors", {})
+            except Exception as exc:
+                log.debug("Failed to load basis anchors for OI hints: %s", exc)
+
+        for sym, fut_price in futures_prices.items():
+            proxy = etf_proxy.get(sym)
+            if not proxy:
+                continue
+
+            ratio = 1.0
+            if proxy in anchors:
+                ratio = float(anchors[proxy].get("ratio", 1.0))
+            if abs(ratio - 1.0) <= 0.02:
+                log.debug("No usable translation ratio for %s→%s, skipping ETF hints", proxy, sym)
+                continue
+
+            min_tick = get_min_tick(sym)
+            try:
+                # Lightweight client creation; Schwab hub request path is used internally.
+                from ..options_fetcher import create_client
+                from ..config import SECRETS_PATH, TOKEN_PATH
+                client = create_client(SECRETS_PATH, TOKEN_PATH)
+                chain = fetch_option_chain_data(client, proxy, [0, 7, 14, 30, 45])
+            except Exception as exc:
+                log.debug("Schwab ETF chain fetch failed for %s: %s", proxy, exc)
+                continue
+
+            if not chain or not chain.contracts:
+                continue
+
+            # Top-OI strikes across all expiries, translated to futures space.
+            sorted_contracts = sorted(
+                chain.contracts,
+                key=lambda c: c.open_interest or 0,
+                reverse=True,
             )
-            log.info("RTD Phase 2: Restarted with option symbols for %s", list(prices.keys()))
+            top_contracts = sorted_contracts[:top_n_per_symbol]
+            candidate_strikes: set[float] = set()
+            for c in top_contracts:
+                if c.open_interest and c.open_interest > 0:
+                    translated = round_to_tick(c.strike * ratio, min_tick)
+                    candidate_strikes.add(translated)
+            hints[sym] = sorted(candidate_strikes)
 
-        except Exception as e:
-            log.error("RTD two-phase start failed — falling back to Schwab-only: %s", e)
-            self._enabled = False
-            self._adapter = None
+            # Map ETF IV by (expiry, strike, option_type) for later matching to
+            # selected RTD symbols. This avoids building RTD symbols twice.
+            iv_map: dict[tuple[date, float, str], float] = {}
+            expiry_set = set(expiries)
+            for c in chain.contracts:
+                if not c.iv or c.iv <= 0:
+                    continue
+                if c.expiry not in expiry_set:
+                    continue
+                translated_strike = round_to_tick(c.strike * ratio, min_tick)
+                opt_type = "C" if c.contract_type == "CALL" else "P"
+                iv_map[(c.expiry, translated_strike, opt_type)] = float(c.iv)
+            iv_by_key[sym] = iv_map
+
+            log.info(
+                "Schwab ETF hints for %s: %d candidate strikes from %s, %d IV mappings",
+                sym, len(candidate_strikes), proxy, len(iv_map),
+            )
+
+        return hints, iv_by_key
+
+    def _build_candidate_symbols(
+        self,
+        symbols: list[str],
+        expiries: list[date],
+        futures_prices: dict[str, float],
+        hints: dict[str, list[float]],
+        hint_tolerance_mult: float = 1.5,
+    ) -> list[str]:
+        """Build option RTD symbols, keeping only those near Schwab ETF hint strikes."""
+        candidates: list[str] = []
+        for sym in symbols:
+            if sym not in futures_prices:
+                continue
+            price = futures_prices[sym]
+            sc = TOS_RTD_SYMBOL_CONFIG.get(sym, {})
+            sr = sc.get("strike_range", TOS_RTD_STRIKE_RANGE)
+            ss = sc.get("strike_spacing", TOS_RTD_STRIKE_SPACING)
+            tiers = sc.get("strike_tiers")
+
+            sym_hints = set(hints.get(sym, []))
+            tolerance = hint_tolerance_mult * self._strike_spacing_for(sym)
+
+            for exp in expiries:
+                option_syms = OptionSymbolBuilder.build_symbols(
+                    sym, exp, price, sr, ss, strike_tiers=tiers
+                )
+                if sym_hints:
+                    for rtd_sym in option_syms:
+                        parsed = parse_rtd_option_symbol(rtd_sym)
+                        if parsed and any(abs(parsed.strike - h) <= tolerance for h in sym_hints):
+                            candidates.append(rtd_sym)
+                else:
+                    candidates.extend(option_syms)
+
+        log.info("Candidate RTD symbols after Schwab ETF pre-filter: %d", len(candidates))
+        return candidates
+
+    # ------------------------------------------------------------------
+    # Completeness-gated OI scan
+    # ------------------------------------------------------------------
+
+    def _run_oi_scan(
+        self,
+        option_symbols: list[str],
+        timeout: float = 10.0,
+        completeness_pct: float = 0.80,
+    ) -> dict[str, int]:
+        """Subscribe to OPEN_INT for all symbols, wait for completeness, return OI map."""
+        from .quote_types import QuoteType
+
+        if not option_symbols:
+            return {}
+
+        subscriptions = [(QuoteType.OPEN_INT, sym) for sym in option_symbols]
+        self._adapter.start_raw(subscriptions=subscriptions)
+
+        target_count = int(len(option_symbols) * completeness_pct)
+        start = time.time()
+
+        try:
+            while time.time() - start < timeout:
+                time.sleep(0.5)
+                snapshot = self._adapter.get_snapshot()
+                oi_keys = [
+                    k for k in snapshot
+                    if k.endswith(":OPEN_INT") and snapshot[k] is not None
+                ]
+                if len(oi_keys) >= target_count:
+                    log.info(
+                        "OI scan reached %.0f%% completeness (%d/%d) after %.1fs",
+                        completeness_pct * 100, len(oi_keys), len(option_symbols),
+                        time.time() - start,
+                    )
+                    break
+            else:
+                log.warning(
+                    "OI scan timed out after %.1fs (target %d/%d)",
+                    timeout, target_count, len(option_symbols),
+                )
+        finally:
+            # Collect final OI values before stopping.
+            snapshot = self._adapter.get_snapshot()
+            self._adapter.stop()
+
+        oi_map: dict[str, int] = {}
+        for sym in option_symbols:
+            val = snapshot.get(f"{sym}:OPEN_INT")
+            if val is not None and int(val) > 0:
+                oi_map[sym] = int(val)
+
+        log.info("OI scan complete: %d/%d contracts with non-zero OI", len(oi_map), len(option_symbols))
+        return oi_map
+
+    # ------------------------------------------------------------------
+    # OI-weighted Top-N filter with ATM force-inclusion
+    # ------------------------------------------------------------------
+
+    def _filter_top_oi_contracts(
+        self,
+        oi_map: dict[str, int],
+        futures_price: float,
+        symbol: str,
+        coverage_pct: float = 0.90,
+        atm_band_strikes: int = 5,
+    ) -> dict[str, int]:
+        """Keep contracts covering ≥coverage_pct of total OI, plus ±atm_band ATM strikes."""
+        if not oi_map:
+            return {}
+
+        strike_spacing = self._strike_spacing_for(symbol)
+        atm_band_width = atm_band_strikes * strike_spacing
+
+        # 1. Force-include ATM band regardless of OI rank.
+        atm_symbols = set()
+        for sym, _ in oi_map.items():
+            parsed = parse_rtd_option_symbol(sym)
+            if parsed and abs(parsed.strike - futures_price) <= atm_band_width:
+                atm_symbols.add(sym)
+
+        # 2. Sort remaining by OI descending, accumulate until coverage_pct.
+        total_oi = sum(oi_map.values())
+        sorted_contracts = sorted(oi_map.items(), key=lambda x: x[1], reverse=True)
+
+        cumulative = 0
+        selected: dict[str, int] = {}
+        for sym, oi in sorted_contracts:
+            selected[sym] = oi
+            cumulative += oi
+            if cumulative >= total_oi * coverage_pct:
+                break
+
+        # 3. Merge ATM band (may already be in selected).
+        for sym in atm_symbols:
+            if sym not in selected:
+                selected[sym] = oi_map[sym]
+
+        log.info(
+            "Top-N OI filter for %s: %d → %d contracts (%.0f%% OI coverage, +%d ATM forced)",
+            symbol, len(oi_map), len(selected),
+            (sum(selected.values()) / total_oi * 100) if total_oi else 0,
+            len(atm_symbols - set(selected.keys())),
+        )
+        return selected
 
     def stop(self) -> None:
         """Stop the RTD adapter."""

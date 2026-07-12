@@ -1,4 +1,8 @@
 
+# ⚠️ DIRECT SCHWAB AUTH - BYPASSES THE HUB
+# This test intentionally uses schwab.auth.client_from_token_file because
+# the Schwab Hub does not expose account endpoints. If this prompts for a
+# token, refresh token.json separately; the rest of the suite uses the Hub.
 import schwab
 import json
 import os

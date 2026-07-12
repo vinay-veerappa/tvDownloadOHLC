@@ -28,11 +28,17 @@ log = logging.getLogger(__name__)
 MAX_INIT_RETRIES = SETTINGS.max_init_retries
 INIT_RETRY_DELAYS = SETTINGS.init_retry_delays
 
-def run_rtd_worker_process(data_queue, stop_event, all_symbols):
-    """Entry point for the multiprocessing worker."""
+def run_rtd_worker_process(data_queue, stop_event, subscriptions):
+    """Entry point for the multiprocessing worker.
+
+    Args:
+        data_queue: multiprocessing.Queue for outgoing RTD updates.
+        stop_event: multiprocessing.Event that signals shutdown.
+        subscriptions: list of (QuoteType, symbol) tuples to subscribe to.
+    """
     import signal
     import sys
-    
+
     # Try to send a debug message through the queue immediately
     try:
         data_queue.put({"debug": "Child process successfully started and queue is accessible!"})
@@ -43,7 +49,7 @@ def run_rtd_worker_process(data_queue, stop_event, all_symbols):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     except Exception:
         pass
-        
+
     import logging
     class QueueHandler(logging.Handler):
         def emit(self, record):
@@ -51,16 +57,16 @@ def run_rtd_worker_process(data_queue, stop_event, all_symbols):
                 data_queue.put({"debug": self.format(record)})
             except:
                 pass
-                
+
     logger = logging.getLogger("RTDWorker")
     logger.setLevel(logging.DEBUG)
     qh = QueueHandler()
     qh.setFormatter(logging.Formatter('[CHILD] %(levelname)s: %(message)s'))
     logger.addHandler(qh)
-    
+
     worker = RTDWorker(data_queue, stop_event)
     worker.logger = logger
-    worker.start(all_symbols)
+    worker.start(subscriptions)
 
 class RTDWorker:
     """Background worker that manages COM lifecycle and data polling."""
@@ -111,8 +117,14 @@ class RTDWorker:
                 else:
                     raise
 
-    def start(self, all_symbols: list) -> None:
-        """Start RTD worker — subscribes to all symbols and polls for updates."""
+    def start(self, subscriptions: list[tuple[QuoteType, str]]) -> None:
+        """Start RTD worker — subscribes to the provided quote tuples and polls for updates.
+
+        The caller is responsible for assembling the exact (QuoteType, symbol)
+        subscriptions. This lets the coordinator differentiate live streaming
+        subscriptions (front-expiry IV/LAST) from cached/static back-expiry
+        contracts, dramatically reducing COM topic usage.
+        """
         try:
             if self.initialized:
                 self.logger.info("Cleaning up previous instance...")
@@ -121,37 +133,9 @@ class RTDWorker:
             self._first_data_received = False
             self._init_com_with_retry()
 
-            if not all_symbols:
-                self.logger.warning("No symbols provided!")
+            if not subscriptions:
+                self.logger.warning("No subscriptions provided!")
                 return
-
-            # Build flat list of all subscriptions
-            subscriptions = []
-            for symbol in all_symbols:
-                if symbol.startswith("."):
-                    # Option symbols — subscribe to only the 4 critical quote
-                    # types for GEX: GAMMA, OPEN_INT, VOLUME, IMPL_VOL.
-                    # DELTA, VEGA, THETA are computed via BSM fallback from IV
-                    # (which RTD provides reliably).  This cuts COM topics by
-                    # ~50% compared to subscribing to all 8 quote types.
-                    # LAST is added for mark/straddle calculations.
-                    for qt in [
-                        QuoteType.GAMMA,
-                        QuoteType.OPEN_INT,
-                        QuoteType.VOLUME,
-                        QuoteType.IMPL_VOL,
-                        QuoteType.LAST,
-                    ]:
-                        subscriptions.append((qt, symbol))
-                else:
-                    # Base symbol — subscribe to LAST
-                    if symbol.startswith("/") and ":" not in symbol:
-                        exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(
-                            symbol, "XCBT"
-                        )
-                        subscriptions.append((QuoteType.LAST, f"{symbol}:{exchange}"))
-                    else:
-                        subscriptions.append((QuoteType.LAST, symbol))
 
             self.logger.info("Subscribing to %d topics...", len(subscriptions))
             results = self.client.batch_subscribe(subscriptions)

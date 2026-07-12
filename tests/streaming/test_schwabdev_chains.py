@@ -1,3 +1,8 @@
+# ⚠️ DIRECT SCHWAB AUTH - BYPASSES THE HUB
+# This test remains on the legacy schwabdev.Client path because it validates
+# the raw option_chains endpoint behavior. If it prompts for a token, refresh
+# tokens.db separately; all currently-broken market tests have been moved to the
+# Hub proxy. Consider migrating this to the Hub if direct auth becomes flaky.
 import json
 import os
 import pprint

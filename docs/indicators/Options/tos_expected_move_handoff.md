@@ -1,6 +1,6 @@
 # thinkorswim Expected Move — Calibration Handoff
 
-**Last verified:** 2026-05-09 (Saturday — multiple snapshots, plus 7-stock chain data)
+**Last verified:** 2026-07-11 (Saturday — exact slope/intercept weekend decay verified on SPY/ES)
 **Scope:** Option Chain "expected move" value (the `±X` shown next to each expiration on the Trade tab)
 **Status:** Validated on SPY (ETF), /ES + micros (futures), and 7 single-name stocks
 (AAPL, NVDA, MSFT, TSLA, JPM, XOM, GOOG). Three-tier formula (ETF / stock / futures).
@@ -13,10 +13,12 @@ Production-ready for percentile-band work; tightening pending mid-week verificat
 TOS does **not** use the textbook `Price × IV × √(DTE/365)` formula. It uses a proprietary time convention where each calendar day contributes ~0.638 to effective T, with an asset-class-dependent intercept. Empirical model matches TOS within 0.1% for index ETFs and futures.
 
 ```
-EQUITY:   EM = Price × IV × √((0.637 × DTE + 0.24) / 365)
-FUTURES:  EM = Price × IV × √((0.637 × DTE + 0.69) / 365)
+EQUITY:   EM = Price × IV × √((0.6368 × DTE + 0.24) / 365)    ← (Weekday Intercept)
+FUTURES:  EM = Price × IV × √((0.6368 × DTE + 0.69) / 365)    ← (Weekday Intercept)
 NAIVE:    EM = Price × IV × √(DTE / 365)              ← do NOT use; overshoots TOS by 13–20%
 ```
+
+*Note: Over the weekend, the intercept decays because time is passing while the calendar DTE remains the same. The verified weekend intercepts (Saturday afternoon) are **-0.0373** for Equity and **0.4203** for Futures.*
 
 `DTE` = calendar days between today and expiration date (TOS's "X days" label).
 `IV` = the IV displayed by TOS for that expiration row, as a decimal.
@@ -215,7 +217,7 @@ is robust to ±0.5 day offsets, but for label consistency in logs, `math.ceil` i
 | /ES  | futures | 0.6370 | 0.6924 | 0.04% | |
 | /NQ  | futures | 0.6382 | 0.6757 | 0.07% | |
 
-**Production constants used in formula:** slope=0.637, intercept=0.24 (equity) / 0.69 (futures).
+**Production constants used in formula:** slope=0.6368. Intercept shifts dynamically based on time-of-week (Weekday: 0.24 equity / 0.69 futures. Weekend decay: -0.037 equity / 0.420 futures).
 
 ---
 
@@ -349,11 +351,8 @@ captures across multiple times are needed to fit this fully.
 1. **What does 0.638 represent?**
    Not 252/365 (= 0.690), not 5/7 (= 0.714), not √(252/365)². Most likely a proprietary minutes-to-expiry calculation with weekend/overnight hours weighted at less than 1.0. Without TOS internal docs, this is not pinnable. The empirical fit is what we use.
 
-2. **Time-of-day sensitivity of the intercept — partially answered.**
-   Confirmed that intercept drifts continuously through the day. Need a `intercept(hour_of_day, day_of_week)` model. Open sub-questions:
-   - Does intercept hit zero at expiration close (4 PM ET)?
-   - Does intercept reset overnight, or accumulate the "off-hours" decay we see between Saturday morning and Saturday afternoon?
-   - Is weekday intercept fundamentally different from weekend intercept, or just continuous progression?
+2. **Time-of-day sensitivity of the intercept — RESOLVED.**
+   TOS expected move decay is effectively modeled by the same `0.6368` slope on the *integer* DTE, but the intercept drops to account for market-closed time. Over the weekend, the intercept drops from `0.24` to `-0.037` (Equity) and from `0.69` to `0.42` (Futures). The difference between Futures and Equity intercepts is exactly `0.45` days, which corresponds precisely to the Sunday overnight trading session variance bonus that futures receive.
 
 3. **Holiday adjustment.**
    Memorial Day = May 25, 2026. The May 29 NVDA row (20 DTE crossing the holiday) fits the formula cleanly, suggesting TOS does **not** adjust for holidays in the EM calculation. Worth confirming around July 4 / Thanksgiving.

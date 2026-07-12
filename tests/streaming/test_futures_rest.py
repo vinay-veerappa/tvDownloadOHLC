@@ -1,50 +1,58 @@
-import requests
-import json
-import logging
-import sys
+"""
+Hub REST smoke tests for futures resolution and quoting.
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("TestFuturesREST")
+These tests use the internal Schwab Hub proxy, matching the production
+pipeline path, and avoid direct schwabdev or schwab-py streaming clients.
+
+DO NOT add direct schwabdev / schwab-py / schwab.auth calls here. This file
+must remain Hub-only so it never prompts for a token.
+"""
+import json
+import requests
 
 from scripts.streaming.options.config import HUB_URL
 
-def hub_request(method, params):
-    try:
-        resp = requests.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        logger.error(f"Request failed: {e}")
-        return None
+
+def _hub_request(method: str, params: dict) -> dict:
+    """Mirror the production Hub request helper."""
+    resp = requests.post(
+        f"{HUB_URL}/request",
+        json={"method": method, "params": params},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    if isinstance(result, dict) and "status" in result:
+        if result.get("status") != "success":
+            raise RuntimeError(f"Hub proxy error: {result.get('message')}")
+        return result.get("data") or {}
+    return result or {}
+
 
 def test_resolve():
-    logger.info("--- Testing Resolve ---")
-    res = hub_request("resolve", {"symbols": ["/NQ", "/ES"]})
+    res = _hub_request("resolve", {"symbols": ["/NQ", "/ES"]})
+    assert res, "Hub resolve returned no data"
     print(json.dumps(res, indent=2))
-    return res
 
-def test_quotes(symbols):
-    logger.info(f"--- Testing Quotes for {symbols} ---")
-    res = hub_request("get_quotes", {"symbols": symbols})
+    for sym in ["/NQ", "/ES"]:
+        mapping = res.get(sym, {})
+        assert "active" in mapping, f"Hub did not resolve active contract for {sym}: {mapping}"
+        assert mapping["active"], f"Hub returned empty active contract for {sym}"
+
+
+def test_quotes():
+    resolve_data = _hub_request("resolve", {"symbols": ["/NQ"]})
+    assert resolve_data, "Hub resolve returned no data"
+
+    nq_active = resolve_data.get("/NQ", {}).get("active")
+    assert nq_active, f"Could not resolve /NQ via Hub: {resolve_data}"
+
+    res = _hub_request("get_quotes", {"symbols": [nq_active]})
+    assert res, "Hub get_quotes returned no data"
     print(json.dumps(res, indent=2))
-    return res
+    assert nq_active in res, f"Missing quote for {nq_active}: {res}"
+
 
 if __name__ == "__main__":
-    # 1. Test Resolve
-    resolve_data = test_resolve()
-    
-    if resolve_data and resolve_data.get("status") == "success":
-        data = resolve_data.get("data", {})
-        nq_active = data.get("/NQ", {}).get("active")
-        if nq_active:
-            # 2. Test Quote for active contract
-            test_quotes([nq_active])
-            
-            # 3. Test Quote for a hypothetical futures option symbol
-            # We'll just try a guess based on the format provided: ./ROOT{month}{year}{C/P}{strike}
-            # For NQM26, strike 18000
-            opt_sym = f"./{nq_active.replace('/', '')}C18000"
-            logger.info(f"Testing hypothetical option: {opt_sym}")
-            test_quotes([opt_sym])
-    else:
-        logger.error("Resolve failed, cannot proceed with quote tests.")
+    test_resolve()
+    test_quotes()

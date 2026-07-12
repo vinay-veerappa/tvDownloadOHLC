@@ -102,6 +102,10 @@ class TOSRTDAdapter:
         self._option_symbols: list[str] = []
         self._base_symbols: list[str] = []
         self._expiry: Optional[date] = None
+        self._expiries: list[date] = []
+        self._static_oi: dict[str, int] = {}
+        self._static_iv: dict[str, float] = {}
+        self._live_subscription_count: int = 0
         self._drain_thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------
@@ -114,6 +118,10 @@ class TOSRTDAdapter:
         expiry: date,
         current_price: Optional[float] = None,
         expiries: list[date] | None = None,
+        option_symbols: list[str] | None = None,
+        live_subscriptions: list[tuple[QuoteType, str]] | None = None,
+        static_oi: dict[str, int] | None = None,
+        static_iv: dict[str, float] | None = None,
     ) -> None:
         """
         Start RTD streaming for the given futures symbols.
@@ -126,6 +134,13 @@ class TOSRTDAdapter:
                           and build option symbols after price arrives.
             expiries: Optional list of expiration dates. If provided, option
                      symbols are built for ALL expiries (not just primary).
+            option_symbols: Exact list of option RTD symbols to include in the
+                           chain snapshot. Overrides internally generated symbols.
+            live_subscriptions: Exact (QuoteType, symbol) tuples to subscribe to
+                               live. When provided, only these topics are active.
+            static_oi: Optional {rtd_symbol: OI} map used for contracts that are
+                       not part of the live subscription set (e.g., back expiry).
+            static_iv: Optional {rtd_symbol: IV} map for back-expiry contracts.
         """
         if self._running:
             log.warning("Adapter already running — stopping first")
@@ -134,43 +149,76 @@ class TOSRTDAdapter:
         self._expiry = expiry
         self._expiries = expiries or [expiry]
         self._base_symbols = list(symbols)
+        self._static_oi = static_oi or {}
+        self._static_iv = static_iv or {}
         self._stop_event.clear()
 
-        # Build option symbols if we have prices
-        all_symbols: list[str] = []
         prices = current_price if isinstance(current_price, dict) else {}
         sym_configs = self.config.symbol_configs or {}
 
-        for sym in symbols:
-            if sym in prices and prices[sym] > 0:
-                sc = sym_configs.get(sym, {})
-                sr = sc.get("strike_range", self.config.strike_range)
-                ss = sc.get("strike_spacing", self.config.strike_spacing)
-                tiers = sc.get("strike_tiers")  # tiered spacing: [(max_dist, spacing), ...]
-                for exp in self._expiries:
-                    option_syms = OptionSymbolBuilder.build_symbols(
-                        sym, exp, prices[sym], sr, ss,
-                        strike_tiers=tiers,
-                    )
-                    self._option_symbols.extend(option_syms)
-                    all_symbols.extend(option_syms)
-            all_symbols.append(sym)
+        # Build option symbols if not explicitly provided
+        if option_symbols is None:
+            for sym in symbols:
+                if sym in prices and prices[sym] > 0:
+                    sc = sym_configs.get(sym, {})
+                    sr = sc.get("strike_range", self.config.strike_range)
+                    ss = sc.get("strike_spacing", self.config.strike_spacing)
+                    tiers = sc.get("strike_tiers")
+                    for exp in self._expiries:
+                        option_syms = OptionSymbolBuilder.build_symbols(
+                            sym, exp, prices[sym], sr, ss,
+                            strike_tiers=tiers,
+                        )
+                        self._option_symbols.extend(option_syms)
+        else:
+            self._option_symbols = list(option_symbols)
+
+        # Build live subscriptions if not explicitly provided (backward compat)
+        if live_subscriptions is None:
+            live_subscriptions = self._build_legacy_subscriptions(
+                symbols, self._option_symbols
+            )
 
         log.info(
-            "TOSRTDAdapter: %d base symbols + %d option symbols across %d expiries",
+            "TOSRTDAdapter: %d base symbols + %d option symbols across %d expiries, "
+            "%d live subscriptions",
             len(symbols), len(self._option_symbols), len(self._expiries),
+            len(live_subscriptions),
         )
 
+        self._start_worker(live_subscriptions)
+
+    def start_raw(self, subscriptions: list[tuple[QuoteType, str]]) -> None:
+        """Start the RTD worker with an explicit subscription list.
+
+        This is used for one-off scans (e.g., the OI pre-fetch scan) where the
+        caller only needs a specific quote type and will stop the adapter after.
+        """
+        if self._running:
+            log.warning("Adapter already running — stopping first")
+            self.stop()
+
+        self._base_symbols = []
+        self._option_symbols = []
+        self._expiries = []
+        self._static_oi = {}
+        self._static_iv = {}
+        self._stop_event.clear()
+        self._start_worker(subscriptions)
+
+    def _start_worker(self, subscriptions: list[tuple[QuoteType, str]]) -> None:
+        """Launch the worker process and drain thread."""
         from _rtd_worker_entry import run_rtd_worker_process
 
         self._process = mp.Process(
             target=run_rtd_worker_process,
-            args=(self._data_queue, self._stop_event, all_symbols),
+            args=(self._data_queue, self._stop_event, subscriptions),
             daemon=True,
             name="TOSRTDWorker",
         )
         self._process.start()
         self._running = True
+        self._live_subscription_count = len(subscriptions)
 
         # Start background drain thread
         self._drain_thread = threading.Thread(
@@ -180,7 +228,31 @@ class TOSRTDAdapter:
         )
         self._drain_thread.start()
 
-        log.info("TOSRTDAdapter started for %s, expiry=%s", symbols, expiry)
+        log.info("TOSRTDAdapter started with %d live subscriptions", len(subscriptions))
+
+    @staticmethod
+    def _build_legacy_subscriptions(
+        base_symbols: list[str],
+        option_symbols: list[str],
+    ) -> list[tuple[QuoteType, str]]:
+        """Build the legacy full-subscription list for backward compatibility."""
+        subscriptions: list[tuple[QuoteType, str]] = []
+        for symbol in option_symbols:
+            for qt in [
+                QuoteType.GAMMA,
+                QuoteType.OPEN_INT,
+                QuoteType.VOLUME,
+                QuoteType.IMPL_VOL,
+                QuoteType.LAST,
+            ]:
+                subscriptions.append((qt, symbol))
+        for symbol in base_symbols:
+            if symbol.startswith("/") and ":" not in symbol:
+                exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(symbol, "XCBT")
+                subscriptions.append((QuoteType.LAST, f"{symbol}:{exchange}"))
+            else:
+                subscriptions.append((QuoteType.LAST, symbol))
+        return subscriptions
 
     def stop(self) -> None:
         """Stop RTD streaming and clean up."""
@@ -200,6 +272,7 @@ class TOSRTDAdapter:
         self._running = False
         self._option_symbols = []
         self._base_symbols = []
+        self._live_subscription_count = 0
         log.info("TOSRTDAdapter stopped")
 
     def is_running(self) -> bool:
@@ -356,12 +429,21 @@ class TOSRTDAdapter:
                 parsed.expiry = exp
                 contracts.append(parsed)
                 expiry_map[rtd_sym] = exp
+
+                # Live values take precedence; fall back to cached static data
+                # for contracts that are not part of the live subscription set.
+                live_oi = snapshot.get(f"{rtd_sym}:OPEN_INT")
+                oi_val = live_oi if live_oi is not None else self._static_oi.get(rtd_sym)
+
+                live_iv = snapshot.get(f"{rtd_sym}:IMPL_VOL")
+                iv_val = live_iv if live_iv is not None else self._static_iv.get(rtd_sym)
+
                 greeks[rtd_sym] = {
                     "GAMMA": snapshot.get(f"{rtd_sym}:GAMMA"),
-                    "OPEN_INT": snapshot.get(f"{rtd_sym}:OPEN_INT"),
+                    "OPEN_INT": oi_val,
                     "VOLUME": snapshot.get(f"{rtd_sym}:VOLUME"),
                     "LAST": snapshot.get(f"{rtd_sym}:LAST"),
-                    "IMPL_VOL": snapshot.get(f"{rtd_sym}:IMPL_VOL"),
+                    "IMPL_VOL": iv_val,
                     # DELTA, VEGA, THETA not subscribed via RTD to reduce COM topics.
                     # These are computed via BSM fallback in build_chain_from_rtd.
                     "DELTA": None,
@@ -389,6 +471,9 @@ class TOSRTDAdapter:
             "running": self.is_running(),
             "base_symbols": self._base_symbols,
             "option_symbol_count": len(self._option_symbols),
+            "static_oi_count": len(self._static_oi),
+            "static_iv_count": len(self._static_iv),
+            "live_subscription_count": self._live_subscription_count,
             "expiry": self._expiry.isoformat() if self._expiry else None,
             "has_data": len(self._latest_data) > 0,
             "data_keys": len(self._latest_data),

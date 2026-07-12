@@ -1519,6 +1519,7 @@ def write_unified_levels_txt(
     enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
     show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
     macro_extension_band_pct: float = MACRO_EXTENSION_BAND_PCT,
+    enable_futures_fallbacks: bool = True,
 ) -> None:
     scored_lookup = {s.ticker: s for s in scored_levels}
     macro_lookup = {s.ticker: s for s in (macro_scored_levels or [])}
@@ -1552,7 +1553,10 @@ def write_unified_levels_txt(
         lines.append(", ".join(clean_tokens))
 
         # Generate translated NQ entry from QQQ (backup/perspective view)
-        if ticker == "QQQ" and "NQ" not in scored_lookup:
+        # RTD-native tickers (NQ, ES) should NOT get SPY/QQQ-translated fallbacks
+        # when missing — that produces fake levels indistinguishable from real RTD data.
+        if enable_futures_fallbacks and ticker == "QQQ" and "NQ" not in scored_lookup:
+            log.warning("NQ missing from scored levels — generating QQQ-translated fallback (NOT RTD-native)")
             nq_tokens = translate_unified_tokens_to_futures("QQQ", "NQ", tokens)
             if nq_tokens:
                 clean_nq = [t.replace("\r\n", " ").replace("\n", " ").replace(",", "") for t in nq_tokens if t]
@@ -1562,7 +1566,8 @@ def write_unified_levels_txt(
                     lines.append(", ".join(clean_nq))
                     
         # Generate translated ES entry from SPY (backup/perspective view)
-        if (ticker == "SPY" or (ticker == "SPX" and "SPY" not in scored_lookup)) and "ES" not in scored_lookup:
+        if enable_futures_fallbacks and (ticker == "SPY" or (ticker == "SPX" and "SPY" not in scored_lookup)) and "ES" not in scored_lookup:
+            log.warning("ES missing from scored levels — generating SPY-translated fallback (NOT RTD-native)")
             es_tokens = translate_unified_tokens_to_futures(ticker, "ES", tokens)
             if es_tokens:
                 clean_es = [t.replace("\r\n", " ").replace("\n", " ").replace(",", "") for t in es_tokens if t]
@@ -1672,6 +1677,7 @@ def write_unified_levels_json(
     enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
     show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
     macro_extension_band_pct: float = MACRO_EXTENSION_BAND_PCT,
+    enable_futures_fallbacks: bool = True,
 ) -> None:
     scored_lookup = {s.ticker: s for s in scored_levels}
     macro_lookup = {s.ticker: s for s in (macro_scored_levels or [])}
@@ -1699,14 +1705,16 @@ def write_unified_levels_json(
         lines.append(", ".join(tokens))
 
         # Generate translated NQ entry from QQQ — only if no direct RTD entry exists
-        if ticker == "QQQ" and "NQ" not in scored_lookup:
+        if enable_futures_fallbacks and ticker == "QQQ" and "NQ" not in scored_lookup:
+            log.warning("NQ missing from scored levels — generating QQQ-translated fallback (NOT RTD-native)")
             nq_tokens = translate_unified_tokens_to_futures("QQQ", "NQ", clean_tokens)
             if nq_tokens:
                 nq_tokens[0] = f"NQ:{nq_tokens[0]}"
                 lines.append(", ".join(nq_tokens))
 
         # Generate translated ES entry from SPY — only if no direct RTD entry exists
-        if (ticker == "SPY" or (ticker == "SPX" and "SPY" not in scored_lookup)) and "ES" not in scored_lookup:
+        if enable_futures_fallbacks and (ticker == "SPY" or (ticker == "SPX" and "SPY" not in scored_lookup)) and "ES" not in scored_lookup:
+            log.warning("ES missing from scored levels — generating SPY-translated fallback (NOT RTD-native)")
             es_tokens = translate_unified_tokens_to_futures(ticker, "ES", clean_tokens)
             if es_tokens:
                 es_tokens[0] = f"ES:{es_tokens[0]}"
