@@ -631,7 +631,7 @@ if barstate.islast
                 label.set_color(lb, array.get(dyn_lblBgColor, i))
 
 // ═══════════════════════════════════════════════════════════════════════
-// HUD TABLE OVERHAUL
+// HUD TABLE OVERHAUL (On-Chart Levels Interpretation & Simplified Terms)
 // ═══════════════════════════════════════════════════════════════════════
 
 var table dash = na
@@ -644,9 +644,70 @@ if barstate.islast and i_showDash
     
     labelTxt = color.new(#9098AA, 0)
     
-    // Row 0: Live State Banner (Spans all 4 columns)
-    string bannerText = "🔄 MARKET IS BALANCED | CHOP RISK HIGH | SCALP ONLY"
-    color bannerBg = color.new(#24324A, 30) // Slate
+    // ── On-Chart Interpretation Calculations ──
+    bool isRangeRegime = st_Regime == "PINNED" or st_Regime == "BATTLE_ZONE" or st_Regime == "NEUTRAL" or st_Regime == "" or na(st_Regime)
+    
+    // Simplify GEX regimes to plain-English terms
+    string simpleRegime = "Neutral / Quiet"
+    if st_Regime == "PINNED"
+        simpleRegime := "Range Bound"
+    else if st_Regime == "BATTLE_ZONE"
+        simpleRegime := "Broad Chop"
+    else if st_Regime == "COILED"
+        simpleRegime := "Breakout Watch"
+    else if st_Regime == "TRENDING"
+        simpleRegime := "Strong Trend"
+
+    // Proximity to Put/Call Walls
+    float emVal = not na(st_EU) and not na(st_EL) ? (st_EU - st_EL) / 2.0 : na
+    float threshold = not na(emVal) ? emVal * 0.15 : close * 0.0025
+    bool nearPutWall = not na(st_PW) and math.abs(close - st_PW) <= threshold
+    bool nearCallWall = not na(st_CW) and math.abs(close - st_CW) <= threshold
+
+    // Zero Gamma resolution
+    float displayZG = not na(st_ZG) ? st_ZG : st_ZG_DA
+
+    // Playbook Logic: Futures vs Options
+    string futuresPlay = "Neutral (No Trade Zone)"
+    string optionsPlay = "Theta Harvest (Neutral)"
+    
+    if isRangeRegime
+        if nearPutWall
+            futuresPlay := "Scalp Long (Fade PW " + f_num(st_PW) + ") | Inval: < " + f_num(st_PW)
+            optionsPlay := "Sell Put Spreads below " + f_num(st_PW)
+        else if nearCallWall
+            futuresPlay := "Scalp Short (Fade CW " + f_num(st_CW) + ") | Inval: > " + f_num(st_CW)
+            optionsPlay := "Sell Call Spreads above " + f_num(st_CW)
+        else
+            futuresPlay := "Neutral (Scalp Extremes)"
+            if not na(st_MAG)
+                optionsPlay := "Sell Condor centered at " + f_num(st_MAG)
+            else
+                optionsPlay := "Theta Harvest (Range Spreads)"
+    else
+        // Volatility regime (Negative GEX - Breakout/Trending)
+        bool isAboveZG = not na(displayZG) and close > displayZG
+        if isAboveZG
+            futuresPlay := "Trend Follow Long | Inval: < " + f_num(displayZG)
+            optionsPlay := "Buy Bull Call Spreads"
+        else
+            futuresPlay := "Trend Follow Short | Inval: > " + f_num(displayZG)
+            optionsPlay := "Buy Bear Put Spreads"
+
+    // Playbook Target Zone
+    string targetZone = "N/A"
+    if not na(st_MAG) and isRangeRegime
+        targetZone := "Magnet (" + f_num(st_MAG) + ")"
+    else if not na(st_CW) and not isRangeRegime and close < st_CW
+        targetZone := "Call Wall (" + f_num(st_CW) + ")"
+    else if not na(st_PW) and not isRangeRegime and close > st_PW
+        targetZone := "Put Wall (" + f_num(st_PW) + ")"
+    else if not na(st_OGT)
+        targetZone := "Gap Target (" + f_num(st_OGT) + ")"
+
+    // Row 0: Live Actionable State Banner
+    string bannerText = "🔄 RANGE PLAY ACTIVE | CHOP RISK HIGH | SCALP ONLY"
+    color bannerBg = color.new(#24324A, 30) // Slate/Neutral
     
     if not na(st_ShortTrig) and close < st_ShortTrig
         bannerText := "🚨 SELLING EXPANSION ACTIVE | DO NOT BUY THE DIP | TREND-FOLLOW SHORT ONLY"
@@ -654,31 +715,37 @@ if barstate.islast and i_showDash
     else if not na(st_LongTrig) and close > st_LongTrig
         bannerText := "🚀 BUYING EXPANSION ACTIVE | DO NOT SHORT THE RALLY | HOLD LONGS ONLY"
         bannerBg := color.new(#064E3B, 30)
+    else if not isRangeRegime
+        bannerText := "🚨 BREAKOUT WARNING | VOLATILITY GATEWAY ACTIVE | TRADE WITH TREND ONLY"
+        bannerBg := color.new(#FB923C, 30) // Orange Warning
         
     table.cell(dash, 0, 0, bannerText, text_color = color.white, text_size = tSz, bgcolor = bannerBg)
     table.merge_cells(dash, 0, 0, 3, 0)
     
-    // Row 1: Short Trigger | Long Trigger
-    table.cell(dash, 0, 1, "Short Trigger", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 1, f_num(st_ShortTrig), text_color = C_BEAR, text_size = tSz)
-    table.cell(dash, 2, 1, "Long Trigger", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 3, 1, f_num(st_LongTrig), text_color = C_BULL, text_size = tSz)
+    // Row 1: Market Type | Call Wall
+    table.cell(dash, 0, 1, "Market Type", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, 1, simpleRegime, text_color = color.white, text_size = tSz)
+    table.cell(dash, 2, 1, "Call Wall", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 3, 1, f_num(st_CW), text_color = C_BULL, text_size = tSz)
     
-    // Row 2: Short Target | Long Target
-    table.cell(dash, 0, 2, "Short Target", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 2, f_num(st_ShortTgt), text_color = C_BEAR, text_size = tSz)
-    table.cell(dash, 2, 2, "Long Target", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 3, 2, f_num(st_LongTgt), text_color = C_BULL, text_size = tSz)
+    // Row 2: Futures Play | Put Wall
+    color futColor = futuresPlay == "Neutral (No Trade Zone)" or futuresPlay == "Neutral (Scalp Extremes)" ? C_NEUTRAL :
+                     str.contains(futuresPlay, "Long") or str.contains(futuresPlay, "Bullish") ? C_BULL : C_BEAR
+    table.cell(dash, 0, 2, "Futures Play", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, 2, futuresPlay, text_color = futColor, text_size = tSz)
+    table.cell(dash, 2, 2, "Put Wall", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 3, 2, f_num(st_PW), text_color = C_BEAR, text_size = tSz)
     
-    // Row 3: Short Invalidation | Long Invalidation
-    table.cell(dash, 0, 3, "Short Invalidation", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 3, f_num(st_ShortInv), text_color = C_BEAR, text_size = tSz)
-    table.cell(dash, 2, 3, "Long Invalidation", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 3, 3, f_num(st_LongInv), text_color = C_BULL, text_size = tSz)
+    // Row 3: Options Play | Zero Gamma
+    color optColor = str.contains(optionsPlay, "Sell") or str.contains(optionsPlay, "Theta") ? C_TARGET : C_INVALIDATION
+    table.cell(dash, 0, 3, "Options Play", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, 3, optionsPlay, text_color = optColor, text_size = tSz)
+    table.cell(dash, 2, 3, "Zero Gamma", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 3, 3, f_num(displayZG), text_color = C_TARGET, text_size = tSz)
     
-    // Row 4: Opening Gap Target | Gamma Magnet
-    table.cell(dash, 0, 4, "Opening Gap Target", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 4, f_num(st_OGT), text_color = C_OGT, text_size = tSz)
+    // Row 4: Target Zone | Gamma Magnet
+    table.cell(dash, 0, 4, "Target Zone", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, 4, targetZone, text_color = color.white, text_size = tSz)
     table.cell(dash, 2, 4, "Gamma Magnet", text_color = labelTxt, text_size = tSz)
     table.cell(dash, 3, 4, f_num(st_MAG), text_color = C_MAGNET, text_size = tSz)
 
