@@ -693,7 +693,7 @@ model EconomicEvent {
 
 #### 💻 [hybrid_coordinator.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/tos_rtd/hybrid_coordinator.py) — RTD Market Cache
 * **File:** `data/options/.rtd_market_cache.json`
-* **Description:** Session-keyed JSON cache that stores the **expiries ladder and per-contract open-interest (OI) snapshot** discovered during the RTD pre-market scan. Because TOS RTD can only stream a limited COM topic budget, the pipeline performs a one-time OI completeness scan per NY trading session, then persists the results so subsequent restarts (or warm-respawns) can reuse the scan without re-querying Schwab or rebuilding all COM subscriptions.
+* **Description:** Session-keyed JSON cache that stores the **expiries ladder and per-contract open-interest (OI) snapshot** discovered during the RTD pre-market scan. Because TOS RTD can only stream a limited COM topic budget, the pipeline performs a one-time OI completeness scan per NY trading session, then persists the results so subsequent restarts (or warm-respawns) can reuse the scan without re-querying Schwab or rebuilding all COM subscriptions. **Implied volatility is intentionally NOT cached:** IV changes intraday, so it is streamed live from COM after the scan.
 * **Cache key:** `_session_key()` rolls at `NY_SESSION_ROLLOVER_TIME` (16:15 ET). Any run between today 16:15 ET and tomorrow 16:15 ET maps to tomorrow's session key, so overnight restarts stay on the same logical session.
 * **Payload structure:**
 
@@ -706,10 +706,7 @@ model EconomicEvent {
     "/ES": { "./ESW26C6000:XCME": 1427, "./ESW26P5900:XCME": 983, ... },
     "/NQ": { "./NQW26C21000:XCME": 651, ... }
   },
-  "schwab_iv_snapshot": {
-    "/ES": { "./ESW26C6000:XCME": 0.1875, ... },
-    "/NQ": { ... }
-  },
+  "iv_source": "rtd_live",
   "basis_at_scan": {
     "/ES": {"mode": "additive", "spread": 4.25, "ratio": 1.0},
     "/NQ": {"mode": "multiplicative", "spread": 0.0, "ratio": 41.1234}
@@ -722,12 +719,14 @@ model EconomicEvent {
 }
 ```
 
+*Note: The legacy `schwab_iv_snapshot` key has been removed. IV is now live; only OI is persisted.*
+
 * **Lifecycle:**
   1. `_resolve_expiries()` → memory cache → disk market cache → Schwab futures discovery + theoretical ladder.
-  2. If no valid session cache exists, `_run_oi_scan()` subscribes to `OPEN_INT` for all candidate symbols and waits for ≥80% completeness (10 s timeout).
+  2. If no valid session cache exists, `_run_oi_scan()` subscribes to `OPEN_INT` for all candidate symbols and waits for ≥80% completeness (10 s timeout). **No IV is captured during this scan.**
   3. `_filter_top_oi_contracts()` keeps contracts covering ≥90% of total OI plus a ±5-strike ATM band.
-  4. `_save_market_cache()` writes the unified payload to `data/options/.rtd_market_cache.json`.
-  5. `_start_with_filtered_data()` starts live RTD with a **reduced subscription set**: futures `LAST`, front-expiry `IMPL_VOL`, and ATM `LAST` only. Back-expiry OI/IV are served from the cache.
+  4. `_save_market_cache()` writes the OI/expiry/basis payload to `data/options/.rtd_market_cache.json`.
+  5. `_start_with_filtered_data()` starts live RTD with an **optimized subscription set**: futures `LAST`, front-expiry `IMPL_VOL`, top-OI `IMPL_VOL` for back expiries, and front-expiry ATM call+put `LAST`. Back-expiry OI is served from the cache; IV is live.
 
 * **Important constraints:**
   * The cache stores **raw per-contract OI/IV**, not aggregated snapshots. Per-strike OI is **not** persisted to the SQLite `GexSnapshot` table; the DB only stores aggregated GEX metrics.
@@ -792,7 +791,7 @@ The `tos_rtd/` package provides **real-time futures options Greeks** streaming d
 | **Rate limits** | Yes (Schwab API limits) | None (local COM) |
 | **Update latency** | T1/T2 interval (60s–600s) | ~50ms first data, ~1s steady state |
 | **Platform** | Cross-platform | **Windows only** (COM/pythoncom) |
-| **Greeks** | Computed via BSM in `gex_calculator.py` | **Native from TOS**: GAMMA, DELTA, OPEN_INT, VOLUME, LAST, MARK, IMPL_VOL |
+| **Greeks** | Computed via BSM in `gex_calculator.py` | **Computed via Black-76** in `rtd_gex_calculator.py` from live `IMPL_VOL` + `LAST`/`MARK` + cached `OPEN_INT` (native TOS `GAMMA` topic returns zeros for futures options) |
 | **Role** | Primary source for GEX/wall calculations | Supplementary: real-time price + Greeks validation |
 
 ### B. Auto-Detection
@@ -852,9 +851,9 @@ TOS_RTD_SYMBOLS: list[str] = ["/ES", "/NQ"]  # Futures to monitor via RTD
 The RTD package now works with an **explicit subscription model** rather than subscribing to the entire option chain for live tick-by-tick updates.
 
 * `TOSRTDAdapter` and `RTDClient` accept an explicit list of `(symbol, topic_string)` subscriptions to avoid COM topic budget overload.
-* `adapter.py` exposes `static_oi_map` and `static_iv_map` for contracts whose open interest or implied volatility is loaded from the persisted market cache instead of being streamed live.
-* `hybrid_coordinator.py` builds the reduced live subscription set after the OI/IV scan (`futures LAST`, ATM `LAST`, front-expiry `IMPL_VOL`) and serves back-expiry OI/IV from `data/options/.rtd_market_cache.json`.
-* The cache is keyed by NY session rollover (16:15 ET) and contains the full futures-options expiry ladder plus per-contract OI/IV snapshots. See §6.C for the full schema and lifecycle.
+* `adapter.py` exposes `static_oi_map` for contracts whose open interest is loaded from the persisted market cache. `static_iv_map` remains for compatibility but is left empty: **IV is always live from COM** because it changes intraday.
+* `hybrid_coordinator.py` builds the live subscription set after the OI-only scan (`futures LAST`, ATM `LAST`, front-expiry `IMPL_VOL`, and top-OI `IMPL_VOL` per back expiry). IV for contracts outside the live set is treated as zero; their OI still contributes to the GEX snapshot but with no gamma.
+* The cache is keyed by NY session rollover (16:15 ET) and contains the full futures-options expiry ladder plus per-contract OI. See §6.C for the full schema and lifecycle.
 
 ### D.2. Duplicate-Entry Guard in `run_options_levels.py`
 
@@ -866,16 +865,16 @@ The `QuoteType` enum defines all TOS RTD quote fields. The pipeline subscribes t
 
 | QuoteType | Description | Value Type | Our Current Source |
 |---|---|---|---|
-| `GAMMA` | Native gamma from TOS | float | Computed via BSM in `gex_calculator.py` |
-| `DELTA` | Native delta from TOS | float | Computed via BSM |
-| `THETA` | Native theta from TOS | float | Computed via BSM |
+| `GAMMA` | Native gamma from TOS | float | Computed via Black-76 in `rtd_gex_calculator.py` |
+| `DELTA` | Native delta from TOS | float | Computed via Black-76 |
+| `THETA` | Native theta from TOS | float | Computed via Black-76 |
 | `VEGA` | Native vega from TOS | float | Computed via BSM |
 | `RHO` | Native rho from TOS | float | Computed via BSM |
-| `OPEN_INT` | Open interest | int | Schwab chain JSON or persisted RTD market cache |
+| `OPEN_INT` | Open interest | int | **Persisted RTD market cache** (`data/options/.rtd_market_cache.json`) |
 | `VOLUME` | Volume | int | From Schwab chain JSON |
 | `LAST` | Last traded price | float | RTD live tick or Schwab chain JSON |
 | `MARK` | Mark price | float | From Schwab chain JSON |
-| `IMPL_VOL` | Implied volatility | float (4 decimal) | Schwab chain JSON or persisted RTD market cache |
+| `IMPL_VOL` | Implied volatility | float (4 decimal) | **Live TOS RTD COM** |
 | `BID` / `ASK` | Bid/Ask price | float | From Schwab chain JSON |
 | `BID_SIZE` / `ASK_SIZE` | Bid/Ask size | int | From Schwab chain JSON |
 | `STRIKE` | Strike price | float | From Schwab chain JSON |
@@ -919,9 +918,9 @@ The `HybridCoordinator` class in `hybrid_coordinator.py` coordinates Schwab API 
 | `get_drift_summary()` | Returns avg/max drift %, high-drift count (>5% threshold) |
 | `get_rtd_snapshot()` | Raw RTD data snapshot dict |
 | `get_status()` | Health status for Discord monitoring |
-| `_run_oi_scan()` | One-time per-session RTD OI/IV scan for all candidate symbols |
-| `_save_market_cache()` / `_load_market_cache()` | Persists/loads `data/options/.rtd_market_cache.json` |
-| `_start_with_filtered_data()` | Starts live RTD with the reduced subscription set post-scan |
+| `_run_oi_scan()` | One-time per-session RTD **OI-only** scan for all candidate symbols |
+| `_save_market_cache()` / `_load_market_cache()` | Persists/loads `data/options/.rtd_market_cache.json` (OI + expiries only) |
+| `_start_with_filtered_data()` | Starts live RTD with the optimized subscription set (futures `LAST`, front + back `IMPL_VOL`, ATM `LAST`) |
 
 **Integration in `run_options_levels.py`:**
 - `HybridCoordinator` started at pipeline start, stopped at end.

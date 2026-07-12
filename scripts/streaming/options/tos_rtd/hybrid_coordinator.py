@@ -127,11 +127,13 @@ class HybridCoordinator:
         # Cached expiry list from Schwab discovery (avoids re-querying every start)
         self._cached_expiries: list[date] | None = None
         self._expiry_cache_time: float = 0.0  # When the cache was populated
-        # Unified market cache: expiries, static OI, Schwab IV, basis per session
+        # Unified market cache: expiries, static OI, basis per session.
+        # Implied volatility is NOT cached — it streams live from TOS RTD
+        # because IV changes intraday. Only OI (which changes overnight) is
+        # captured once per session and reused to free COM topic budget.
         self._market_cache_path = Path("data/options/.rtd_market_cache.json")
         self._market_cache: dict[str, Any] | None = None
         self._session_open_interest: dict[str, dict[str, int]] = {}
-        self._session_iv_snapshot: dict[str, dict[str, float]] = {}
         self._basis_at_scan: dict[str, dict[str, Any]] = {}
         self._scan_quality: dict[str, Any] = {}
         _EXPIRY_CACHE_TTL_SECONDS = 3600  # 1 hour — expiries change slowly
@@ -150,7 +152,7 @@ class HybridCoordinator:
             self._cached_expiries = [date.fromisoformat(d) for d in data.get("expiries", [])]
             self._expiry_cache_time = float(data.get("cached_at", 0.0))
             self._session_open_interest = data.get("open_interest", {})
-            self._session_iv_snapshot = data.get("schwab_iv_snapshot", {})
+            # IV is live; legacy "schwab_iv_snapshot" key is intentionally ignored.
             self._basis_at_scan = data.get("basis_at_scan", {})
             self._scan_quality = data.get("scan_quality", {})
             log.info(
@@ -172,11 +174,15 @@ class HybridCoordinator:
         session_key: str,
         expiries: list[date],
         open_interest: dict[str, dict[str, int]],
-        iv_snapshot: dict[str, dict[str, float]],
         basis: dict[str, dict[str, Any]],
         scan_quality: dict[str, Any],
     ) -> None:
-        """Persist the unified market cache to disk."""
+        """Persist the session market cache to disk.
+
+        The cache stores only the expiry ladder and per-contract OI. IV is
+        streamed live, so no IV snapshot is persisted (legacy
+        ``schwab_iv_snapshot`` key removed).
+        """
         try:
             self._market_cache_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
@@ -184,7 +190,7 @@ class HybridCoordinator:
                 "cached_at": time.time(),
                 "expiries": [d.isoformat() for d in expiries],
                 "open_interest": open_interest,
-                "schwab_iv_snapshot": iv_snapshot,
+                "iv_source": "rtd_live",
                 "basis_at_scan": basis,
                 "scan_quality": scan_quality,
             }
@@ -201,12 +207,18 @@ class HybridCoordinator:
     def start(self, current_prices: dict[str, float] | None = None) -> None:
         """Start the RTD adapter if enabled and TOS desktop is running.
 
-        Uses a unified session-key market cache to avoid re-scanning OI every
-        restart. The live subscription set is reduced to:
+        Uses a session-key market cache to avoid re-scanning OI every restart.
+        The live subscription set is built from cached OI and covers more
+        expiries than before because the COM budget is no longer spent on
+        caching IV during the OI scan:
+
           - futures LAST for each base symbol
-          - IMPL_VOL for Top-N OI front-expiry contracts (+ ATM force-inclusion)
-          - LAST for the ±2 ATM front-expiry options
-        Back-expiry contracts are served from cached OI + Schwab IV snapshots.
+          - IMPL_VOL for Top-N OI contracts across front and back expiries
+            (front expiry gets all selected contracts; back expiries get the
+            top OI strikes per side)
+          - LAST for the front-expiry ATM call/put straddle (expected move)
+
+        Open interest is cached once per NY session; IV is always live.
         """
         if not self._enabled:
             log.info("TOS RTD disabled — running in Schwab-only mode")
@@ -264,14 +276,15 @@ class HybridCoordinator:
         log.info("No valid market cache for session %s — running fresh scan", session_key)
 
         # Schwab ETF OI hints reduce the RTD scan universe.
-        schwab_hints, schwab_iv_by_key = self._get_schwab_oi_hints(expiries, futures_prices)
+        schwab_hints = self._get_schwab_oi_hints(expiries, futures_prices)
 
         # Build candidate symbols filtered by Schwab ETF hints.
         candidate_symbols = self._build_candidate_symbols(
             self._symbols, expiries, futures_prices, schwab_hints
         )
 
-        # Completeness-gated OI scan.
+        # Completeness-gated scan: capture OPEN_INT from RTD only.
+        # IV is not cached — it will be subscribed live after the scan.
         raw_oi_map = self._run_oi_scan(candidate_symbols)
 
         # Per-symbol OI-weighted Top-N filtering with ATM force-inclusion.
@@ -311,29 +324,14 @@ class HybridCoordinator:
                 return
             log.warning("No prior cache exists — saving sparse scan as fallback.")
 
-        # Map Schwab ETF IVs to the selected RTD symbols by (expiry, strike, type).
-        selected_iv: dict[str, dict[str, float]] = {}
-        for sym, oi_map in selected_oi.items():
-            iv_map: dict[str, float] = {}
-            iv_by_key_sym = schwab_iv_by_key.get(sym, {})
-            for rtd_sym in oi_map:
-                parsed = parse_rtd_option_symbol(rtd_sym)
-                if not parsed or parsed.expiry is None:
-                    continue
-                key = (parsed.expiry, parsed.strike, parsed.option_type)
-                if key in iv_by_key_sym:
-                    iv_map[rtd_sym] = iv_by_key_sym[key]
-            selected_iv[sym] = iv_map
-
         # Capture basis at scan time.
         basis_at_scan = self._capture_basis(futures_prices)
 
-        # Persist the unified market cache.
+        # Persist the session market cache (OI only).
         self._save_market_cache(
             session_key=session_key,
             expiries=expiries,
             open_interest=selected_oi,
-            iv_snapshot=selected_iv,
             basis=basis_at_scan,
             scan_quality=self._scan_quality,
         )
@@ -343,7 +341,6 @@ class HybridCoordinator:
             futures_prices=futures_prices,
             expiries=expiries,
             open_interest=selected_oi,
-            iv_snapshot=selected_iv,
         )
 
     # ------------------------------------------------------------------
@@ -537,12 +534,11 @@ class HybridCoordinator:
         futures_prices: dict[str, float],
         expiries: list[date],
     ) -> None:
-        """Start streaming using cached OI/IV and reduced live subscriptions."""
+        """Start streaming using cached OI and live IV subscriptions."""
         self._start_with_filtered_data(
             futures_prices=futures_prices,
             expiries=expiries,
             open_interest=self._session_open_interest,
-            iv_snapshot=self._session_iv_snapshot,
         )
 
     def _start_with_filtered_data(
@@ -550,10 +546,25 @@ class HybridCoordinator:
         futures_prices: dict[str, float],
         expiries: list[date],
         open_interest: dict[str, dict[str, int]],
-        iv_snapshot: dict[str, dict[str, float]],
     ) -> None:
-        """Build the minimal live subscription set and start the adapter."""
+        """Build the live subscription set from cached OI and start the adapter.
+
+        IV is subscribed live for the contracts most likely to drive GEX:
+          * all selected front-expiry contracts (≤7 DTE)
+          * top ``back_iv_top_n`` calls + puts per back expiry
+          * the front-expiry ATM call + put for expected-move straddle cost
+          * the underlying futures LAST
+
+        Contracts that are not in the live IV set still contribute their OI
+        to the snapshot but receive no gamma (IV=0), which is acceptable for
+        low-OI tails. This keeps COM topic usage bounded while covering more
+        expiries than the previous front-only model.
+        """
         from .quote_types import QuoteType
+
+        # Tunable budget controls per symbol.
+        back_iv_top_n = 6   # calls + puts per back expiry
+        front_iv_max = 60   # cap front-expiry IV subscriptions
 
         all_option_symbols: list[str] = []
         live_subscriptions: list[tuple[Any, str]] = []
@@ -562,31 +573,84 @@ class HybridCoordinator:
             if sym not in futures_prices:
                 continue
             sym_oi = open_interest.get(sym, {})
-            sym_iv = iv_snapshot.get(sym, {})
             if not sym_oi:
                 continue
 
             all_option_symbols.extend(sym_oi.keys())
+            spot = futures_prices[sym]
+            spacing = self._strike_spacing_for(sym)
 
-            front_contracts: list[str] = []
-            atm_contracts: list[str] = []
-            for rtd_sym in sym_oi.keys():
+            # Group selected OI contracts by expiry bucket.
+            by_expiry: dict[date, list[tuple[str, int]]] = {}
+            for rtd_sym, oi in sym_oi.items():
                 parsed = parse_rtd_option_symbol(rtd_sym)
                 if not parsed or parsed.expiry is None:
                     continue
-                bucket = self._expiry_bucket(parsed.expiry)
-                if bucket == "front":
-                    front_contracts.append(rtd_sym)
-                    if abs(parsed.strike - futures_prices[sym]) <= 2 * self._strike_spacing_for(sym):
-                        atm_contracts.append(rtd_sym)
+                by_expiry.setdefault(parsed.expiry, []).append((rtd_sym, oi))
 
-            # Front expiry: live IMPL_VOL for all selected front contracts.
-            for rtd_sym in front_contracts:
-                live_subscriptions.append((QuoteType.IMPL_VOL, rtd_sym))
+            # Sort expiries and pick the front-most expiry for straddle/ATM.
+            sorted_expiries = sorted(by_expiry.keys())
+            front_expiry = sorted_expiries[0] if sorted_expiries else None
 
-            # ATM straddle LAST for expected-move calculation.
-            for rtd_sym in atm_contracts:
-                live_subscriptions.append((QuoteType.LAST, rtd_sym))
+            # Front expiry: subscribe IV for all selected front contracts,
+            # capped at ``front_iv_max`` by OI with ATM force-inclusion.
+            if front_expiry:
+                front_pairs = by_expiry[front_expiry]
+                front_total = len(front_pairs)
+                if front_total <= front_iv_max:
+                    iv_contracts = {rtd_sym for rtd_sym, _ in front_pairs}
+                else:
+                    # Take top OI, then force-include ATM band.
+                    sorted_front = sorted(front_pairs, key=lambda x: x[1], reverse=True)
+                    iv_contracts = {rtd_sym for rtd_sym, _ in sorted_front[:front_iv_max]}
+                    for rtd_sym, _ in front_pairs:
+                        parsed = parse_rtd_option_symbol(rtd_sym)
+                        if parsed and abs(parsed.strike - spot) <= 2 * spacing:
+                            iv_contracts.add(rtd_sym)
+
+                for rtd_sym in iv_contracts:
+                    live_subscriptions.append((QuoteType.IMPL_VOL, rtd_sym))
+
+                # Front ATM call + put for expected-move straddle cost.
+                atm_contracts: list[tuple[str, float]] = []  # (rtd_sym, distance)
+                for rtd_sym, _ in front_pairs:
+                    parsed = parse_rtd_option_symbol(rtd_sym)
+                    if not parsed:
+                        continue
+                    atm_contracts.append((rtd_sym, abs(parsed.strike - spot)))
+                # Pick closest call and closest put.
+                call_atm = min(
+                    [s for s, d in atm_contracts if parse_rtd_option_symbol(s).option_type == "C"],
+                    key=lambda s: abs(parse_rtd_option_symbol(s).strike - spot),
+                    default=None,
+                )
+                put_atm = min(
+                    [s for s, d in atm_contracts if parse_rtd_option_symbol(s).option_type == "P"],
+                    key=lambda s: abs(parse_rtd_option_symbol(s).strike - spot),
+                    default=None,
+                )
+                if call_atm:
+                    live_subscriptions.append((QuoteType.LAST, call_atm))
+                if put_atm:
+                    live_subscriptions.append((QuoteType.LAST, put_atm))
+
+            # Back expiries: subscribe IV to the top OI calls + puts per expiry.
+            for exp in sorted_expiries:
+                if exp == front_expiry:
+                    continue
+                pairs = by_expiry[exp]
+                calls = sorted(
+                    [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "C"],
+                    key=lambda x: x[1],
+                    reverse=True,
+                )[:back_iv_top_n]
+                puts = sorted(
+                    [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "P"],
+                    key=lambda x: x[1],
+                    reverse=True,
+                )[:back_iv_top_n]
+                for rtd_sym, _ in calls + puts:
+                    live_subscriptions.append((QuoteType.IMPL_VOL, rtd_sym))
 
             # Base futures LAST.
             exchange = self._exchange_for_symbol(sym)
@@ -598,12 +662,10 @@ class HybridCoordinator:
             self._adapter = None
             return
 
-        # Flatten static maps across symbols.
+        # Flatten cached OI across symbols; IV is live so static IV is empty.
         static_oi: dict[str, int] = {}
-        static_iv: dict[str, float] = {}
         for sym in self._symbols:
             static_oi.update(open_interest.get(sym, {}))
-            static_iv.update(iv_snapshot.get(sym, {}))
 
         try:
             self._adapter.start(
@@ -614,7 +676,7 @@ class HybridCoordinator:
                 option_symbols=all_option_symbols,
                 live_subscriptions=live_subscriptions,
                 static_oi=static_oi,
-                static_iv=static_iv,
+                static_iv={},
             )
             log.info(
                 "HybridCoordinator started with %d live subscriptions across %d option symbols",
@@ -643,12 +705,14 @@ class HybridCoordinator:
         expiries: list[date],
         futures_prices: dict[str, float],
         top_n_per_symbol: int = 40,
-    ) -> tuple[dict[str, list[float]], dict[str, dict[tuple[date, float, str], float]]]:
+    ) -> dict[str, list[float]]:
         """Fetch SPY/QQQ chains and translate top-OI strikes into futures space.
+
+        This is only a strike-space reduction helper. IV is captured directly
+        from RTD during the OI/IV scan, so no ETF IV translation is needed.
 
         Returns:
             hints: {futures_symbol: [candidate_strike, ...]}
-            iv_by_key: {futures_symbol: {(expiry, strike, option_type): iv}}
         """
         from ..config import BASIS_ANCHORS_JSON, USE_OPENING_BASIS
         from ..futures_translator import get_min_tick, round_to_tick
@@ -656,7 +720,6 @@ class HybridCoordinator:
 
         etf_proxy = {"/ES": "SPY", "/NQ": "QQQ"}
         hints: dict[str, list[float]] = {}
-        iv_by_key: dict[str, dict[tuple[date, float, str], float]] = {}
 
         anchors: dict[str, Any] = {}
         if USE_OPENING_BASIS and BASIS_ANCHORS_JSON.exists():
@@ -705,26 +768,12 @@ class HybridCoordinator:
                     candidate_strikes.add(translated)
             hints[sym] = sorted(candidate_strikes)
 
-            # Map ETF IV by (expiry, strike, option_type) for later matching to
-            # selected RTD symbols. This avoids building RTD symbols twice.
-            iv_map: dict[tuple[date, float, str], float] = {}
-            expiry_set = set(expiries)
-            for c in chain.contracts:
-                if not c.iv or c.iv <= 0:
-                    continue
-                if c.expiry not in expiry_set:
-                    continue
-                translated_strike = round_to_tick(c.strike * ratio, min_tick)
-                opt_type = "C" if c.contract_type == "CALL" else "P"
-                iv_map[(c.expiry, translated_strike, opt_type)] = float(c.iv)
-            iv_by_key[sym] = iv_map
-
             log.info(
-                "Schwab ETF hints for %s: %d candidate strikes from %s, %d IV mappings",
-                sym, len(candidate_strikes), proxy, len(iv_map),
+                "Schwab ETF hints for %s: %d candidate strikes from %s",
+                sym, len(candidate_strikes), proxy,
             )
 
-        return hints, iv_by_key
+        return hints
 
     def _build_candidate_symbols(
         self,
@@ -773,7 +822,13 @@ class HybridCoordinator:
         timeout: float = 10.0,
         completeness_pct: float = 0.80,
     ) -> dict[str, int]:
-        """Subscribe to OPEN_INT for all symbols, wait for completeness, return OI map."""
+        """Subscribe to OPEN_INT for all symbols and return the OI map.
+
+        This is the once-per-session scan that seeds the RTD market cache.
+        Open interest changes slowly, so it is captured once and reused to
+        free COM topic budget. Implied volatility is NOT captured here — it is
+        subscribed live during streaming because IV changes intraday.
+        """
         from .quote_types import QuoteType
 
         if not option_symbols:
@@ -806,17 +861,20 @@ class HybridCoordinator:
                     timeout, target_count, len(option_symbols),
                 )
         finally:
-            # Collect final OI values before stopping.
+            # Collect final values before stopping.
             snapshot = self._adapter.get_snapshot()
             self._adapter.stop()
 
         oi_map: dict[str, int] = {}
         for sym in option_symbols:
-            val = snapshot.get(f"{sym}:OPEN_INT")
-            if val is not None and int(val) > 0:
-                oi_map[sym] = int(val)
+            oi_val = snapshot.get(f"{sym}:OPEN_INT")
+            if oi_val is not None and int(oi_val) > 0:
+                oi_map[sym] = int(oi_val)
 
-        log.info("OI scan complete: %d/%d contracts with non-zero OI", len(oi_map), len(option_symbols))
+        log.info(
+            "OI scan complete: %d/%d contracts with non-zero OI",
+            len(oi_map), len(option_symbols),
+        )
         return oi_map
 
     # ------------------------------------------------------------------
