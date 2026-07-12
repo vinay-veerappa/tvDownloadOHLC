@@ -23,7 +23,7 @@ var string GRP_CONV = "Futures Conversion"
 i_applyConv = input.string("Auto", "Apply Futures Conversion", options = ["Auto", "Always", "Never"], group = GRP_CONV, tooltip = "Auto applies the ratio/basis only if the current chart is a Futures chart.")
 
 var string GRP_FILT = "Level Filters"
-i_proxFilter        = input.float(1.5, "Hide Tactical Levels > X% Away (0=Off)", step=0.5, group=GRP_FILT, tooltip="Applies to tactical scored levels (0D, LOC, DEX, CLIFF).")
+i_proxFilter        = input.float(0.0, "Hide Levels > X% Away (0=Off)", step=0.5, group=GRP_FILT, tooltip="Applies to all levels. Levels further than X% from close are hidden.")
 
 var string GRP_LABELS = "Label Collision & Display"
 i_showLabels        = input.bool(true, "Show Labels", group = GRP_LABELS)
@@ -539,7 +539,7 @@ if can_calculate
                 continue
                 
             isTactical = str.contains(u_lbl, "0D") or str.contains(u_lbl, "LOC") or str.contains(u_lbl, "DEX") or str.contains(u_lbl, "CLIFF")
-            passProx = i_proxFilter <= 0.0 or not isTactical or ((math.abs(s_lv - close) / close) * 100.0 <= i_proxFilter)
+            passProx = i_proxFilter <= 0.0 or ((math.abs(s_lv - close) / close) * 100.0 <= i_proxFilter)
             
             color ghostColor = color.new(color.gray, 75)
             ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, color = passProx ? ghostColor : na, width = 1, style = line.style_dotted)
@@ -595,8 +595,7 @@ if barstate.islast
         for i = 0 to array.size(allLines) - 1
             ln = array.get(allLines, i)
             line.set_x2(ln, bar_index)
-            isTac = array.get(dyn_isTactical, i)
-            if isTac and i_proxFilter > 0.0
+            if i_proxFilter > 0.0
                 lv = line.get_y1(ln)
                 passProx = ((math.abs(lv - close) / close) * 100.0 <= i_proxFilter)
                 line.set_color(ln, passProx ? array.get(dyn_lineColor, i) : na)
@@ -608,8 +607,7 @@ if barstate.islast
             lb = array.get(allLabels, i)
             c = i < array.size(labelCols) ? array.get(labelCols, i) : 0
             label.set_x(lb, bar_index + i_labelOffset + (c * i_columnStepBars))
-            isTac = array.get(dyn_lblTactical, i)
-            if isTac and i_proxFilter > 0.0
+            if i_proxFilter > 0.0
                 lv = label.get_y(lb)
                 passProx = ((math.abs(lv - close) / close) * 100.0 <= i_proxFilter)
                 label.set_textcolor(lb, passProx ? array.get(dyn_lblTextColor, i) : na)
