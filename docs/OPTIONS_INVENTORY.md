@@ -238,7 +238,7 @@ $$\Gamma = \frac{e^{-q t} N'(d_1)}{S \sigma \sqrt{t}}$$
 $$\text{GEX}_{\text{net}} = \left( \text{OI}_{\text{Calls}} \times \Gamma_{\text{Calls}} \times 100 \times S \right) - \left( \text{OI}_{\text{Puts}} \times \Gamma_{\text{Puts}} \times 100 \times S \right)$$
 
 #### 4. Delta-Adjusted GEX ($\text{DEX}_{\text{net}}$):
-To emphasize ATM exposures, GEX is weighted by absolute Delta ($\Delta$):
+All wall detection and GEX calculations use **delta-adjusted ranking** ($\text{OI} \times |\Gamma| \times |\Delta|$) as the primary methodology. This de-emphasises deep ITM/OTM contracts and focuses on ATM hedging activity where dealer gamma has the most practical impact on price action.
 $$\Delta_{\text{Call}} = e^{-q t} N(d_1), \quad \Delta_{\text{Put}} = e^{-q t} [N(d_1) - 1]$$
 $$\text{DEX}_{\text{net}} = \left( \text{OI}_{\text{Calls}} \times \Gamma_{\text{Calls}} \times |\Delta_{\text{Call}}| \times 100 \times S \right) - \left( \text{OI}_{\text{Puts}} \times \Gamma_{\text{Puts}} \times |\Delta_{\text{Put}}| \times 100 \times S \right)$$
 
@@ -264,10 +264,11 @@ $$\text{Centroid}_{\text{Put}} = \frac{\sum (K \times \text{Volume}_{\text{Put}}
 ### B. Core Modules & Files
 
 #### 💻 [gex_calculator.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/gex_calculator.py)
-* **Description:** Calculations for BSM parameters, analytical Charm, Speed, volume centroids, Delta-adjusted gamma, and volatility triggers.
+* **Description:** Calculations for BSM parameters, analytical Charm, Speed, volume centroids, delta-adjusted gamma, and volatility triggers. All wall detection uses delta-adjusted ranking ($\text{OI} \times |\Gamma| \times |\Delta|$) as the primary methodology.
 * **Key Functions:**
   * `calculate_tos_expected_move(spot, expiry, iv, is_futures)`: **The single source of truth for all EM calculations.** Empirically calibrated TOS time-scaling model (0.6368 slope) with weekend/after-hours intercept decay. Uses ATM Implied Volatility as the primary input. Called by `_expected_move()` and `_calculate_all_ems()` for every expiry in the chain.
   * `_expected_move(calls, puts, spot, dte, is_futures, ticker, ...)`: Computes blended ATM IV from call+put IV. If IV > 0, delegates to `calculate_tos_expected_move()`. Falls back to `k × straddle_mid` only when IV is missing/invalid. Stores straddle and `straddle_85` bands as diagnostics.
+  * `_find_walls(contracts, min_oi, spot, side, delta_adjusted=True)`: Ranks candidate contracts by $\text{OI} \times |\Gamma| \times |\Delta|$ to find primary and secondary wall strikes. Delta-adjusted ranking de-emphasises deep ITM/OTM contracts and focuses on ATM hedging activity. Called with `delta_adjusted=True` for all wall computations in `calculate_dealer_levels`.
   * `_analytical_charm(flag, S, K, t, sigma, r, q)`: Returns the exact Charm decay factor.
   * `_analytical_speed(S, K, t, sigma, r, q)`: Returns the Gamma sensitivity rate.
   * `_delta_adjusted_gex(chain_data)`: Returns delta-adjusted call and put gamma levels.
@@ -334,18 +335,20 @@ Walls are dealer-side strikes selected inside [`gex_calculator.py`](file:///c:/U
 
 * Each candidate contract must pass `min_oi_floor`.
 * Calls are restricted to strikes ≥ spot (resistance); puts to strikes ≤ spot (support).
-* Contracts are ranked by `open_interest × abs(gamma)`. The top strike becomes the **primary wall**, the next becomes the **secondary wall**.
+* Contracts are ranked by $\text{OI} \times |\Gamma| \times |\Delta|$ (delta-adjusted). The top strike becomes the **primary wall**, the next becomes the **secondary wall**. Delta-adjusted ranking de-emphasises deep ITM/OTM contracts and focuses on ATM hedging activity.
 * `zero_gamma` is found by locating the sign flip of net GEX across the strike ladder. A delta-adjusted variant, `zero_gamma_delta_adj`, is also computed and passed through.
 
-Recent additions to the `DealerLevels` dataclass carry both wall series and translation metadata:
+The `DealerLevels` dataclass carries both wall series and translation metadata:
 
 | Field | Meaning |
 |-------|---------|
-| `call_wall` / `put_wall` | Primary resistance/support strikes. |
-| `secondary_call_wall` / `secondary_put_wall` | Next-ranked OI×Γ strikes. |
-| `call_wall_0dte` / `put_wall_0dte` | 0-DTE tactical walls. |
+| `call_wall` / `put_wall` | Primary resistance/support strikes (delta-adjusted). |
+| `secondary_call_wall` / `secondary_put_wall` | Next-ranked $\text{OI} \times \|\Gamma\| \times \|\Delta\|$ strikes. |
+| `call_wall_0dte` / `put_wall_0dte` | 0-DTE tactical walls (delta-adjusted). |
 | `zero_gamma` | Net GEX sign-flip level. |
 | `zero_gamma_delta_adj` | Delta-adjusted sign-flip level. |
+| `total_gex` | Raw net GEX ($\text{OI} \times \Gamma \times 100 \times S$). |
+| `total_gex_delta_adj` | Delta-adjusted GEX ($\text{OI} \times \Gamma \times \|\Delta\| \times 100 \times S$). |
 | `wall_scope` / `wall_dte_min` / `wall_dte_max` | Metadata describing which DTE bucket built the walls. |
 | `futures_symbol` / `translation_mode` / `basis_spread` / `basis_ratio` | Translation matrix written back onto the original `DealerLevels` object. |
 
@@ -968,6 +971,9 @@ model TOSRTDSnapshot {
 | `python -m scripts.streaming.options.tos_rtd.live_test --symbol /ES --duration 15` | Test live RTD connection with TOS desktop |
 | `python -m scripts.streaming.options.tos_rtd.test_greeks` | Test option Greeks streaming (two-phase: price then Greeks) |
 | `python -m scripts.streaming.options.tos_rtd.greeks_drift_monitor --symbol /ES --duration 30` | Standalone Greeks drift monitor |
+| `python -m scripts.streaming.options.tos_rtd.test_gex_comparison --symbol /ES` | RTD GEX vs Schwab-translated GEX comparison |
+| `python -m scripts.streaming.options.compare_levels --symbol /ES` | Side-by-side delta-adjusted level comparison: SPY translated vs SPX vs /ES RTD |
+| `python -m scripts.streaming.options.weekly_expected_moves` | Read weekly EM from unified_levels.json + weekly_em_scope.json (TOS time-scaling model) |
 
 ### K. Dependencies
 
