@@ -393,12 +393,18 @@ class HybridCoordinator:
         return self._discover_expiries()
 
     def _discover_expiries(self) -> list[date]:
-        """Discover available futures option expiries via Schwab + theoretical ladder."""
+        """Discover available futures option expiries via Schwab + theoretical ladder.
+
+        Includes daily (Mon-Fri) expiries for the first 2 weeks so /ES and /NQ
+        get daily EM levels, plus weekly Friday and quarterly expiries for the
+        full term structure.
+        """
         from ..options_fetcher import fetch_futures_option_chain_data
 
+        # Use at least 15 to cover 2 weeks of daily expiries + weekly Fridays.
         max_expiries = max(
-            (sc.get("num_expiries", 4) for sc in TOS_RTD_SYMBOL_CONFIG.values()),
-            default=4,
+            15,
+            max(sc.get("num_expiries", 4) for sc in TOS_RTD_SYMBOL_CONFIG.values()),
         )
 
         schwab_expiries: dict[str, list[date]] = {}
@@ -424,15 +430,22 @@ class HybridCoordinator:
             all_expiries.update(exp_list)
 
         today = date.today()
-        nearest_fri = today
-        while nearest_fri.weekday() != 4:
-            nearest_fri += timedelta(days=1)
-        all_expiries.add(nearest_fri)
 
-        next_fri = nearest_fri
+        # Add daily expiries (Mon-Fri) for the first 2 weeks so we get
+        # daily EM levels for /ES and /NQ.  CME lists daily options that
+        # settle Mon-Thu plus the standard Friday weekly.
+        for i in range(0, 14):
+            d = today + timedelta(days=i)
+            if d.weekday() < 5:  # Mon-Fri only
+                all_expiries.add(d)
+
+        # Add weekly Friday expiries for the next 6 weeks
+        next_fri = today
+        while next_fri.weekday() != 4:
+            next_fri += timedelta(days=1)
         for _ in range(6):
-            next_fri = next_fri + timedelta(days=7)
             all_expiries.add(next_fri)
+            next_fri = next_fri + timedelta(days=7)
 
         def _third_friday(y: int, m: int) -> date:
             d = date(y, m, 15)
