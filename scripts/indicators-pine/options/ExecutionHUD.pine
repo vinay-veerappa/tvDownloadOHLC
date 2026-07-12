@@ -609,7 +609,7 @@ if barstate.islast
             c = i < array.size(labelCols) ? array.get(labelCols, i) : 0
             label.set_x(lb, bar_index + i_labelOffset + (c * i_columnStepBars))
             isTac = array.get(dyn_lblTactical, i)
-            if i_proxFilter > 0.0
+            if isTac and i_proxFilter > 0.0
                 lv = label.get_y(lb)
                 passProx = ((math.abs(lv - close) / close) * 100.0 <= i_proxFilter)
                 label.set_textcolor(lb, passProx ? array.get(dyn_lblTextColor, i) : na)
