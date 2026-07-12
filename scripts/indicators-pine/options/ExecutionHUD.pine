@@ -513,9 +513,11 @@ if can_calculate
                     st_GCD := s_lv
             else if s_flt == "E"
                 if str.contains(u_lbl, "EM HI")
-                    st_EU := s_lv
+                    if na(st_EU)
+                        st_EU := s_lv
                 if str.contains(u_lbl, "EM LO")
-                    st_EL := s_lv
+                    if na(st_EL)
+                        st_EL := s_lv
 
         // Drawing Ghost Lines
         for i = 0 to array.size(sPrices) - 1
