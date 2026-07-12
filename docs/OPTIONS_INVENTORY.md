@@ -164,19 +164,21 @@ Handles historical database updates, real-time option chain snapshotting, VIX in
     $$\text{/NQ} \rightarrow (\text{Index: NDX, ETF: QQQ})$$
     $$\text{/YM} \rightarrow (\text{Index: DJI, ETF: DIA})$$
     $$\text{/RTY} \rightarrow (\text{Index: RUT, ETF: IWM})$$
-* **Key Functions:**
-  * `calculate_em_values(spot, iv, dte)` / `calculate_tos_expected_move(...)`: Expected Move calculation using the empirically calibrated Thinkorswim time-scaling model with weekend/after-hours intercept decay:
-    $$\text{EM}_{\text{TOS}} = \text{Spot} \times \text{IV} \times \sqrt{\frac{0.6368 \times \text{DTE} + \text{Intercept}}{365}}$$
-    *(Intercept shifts dynamically based on time-of-week. Weekday: 0.24 equity / 0.69 futures. Weekend decay: -0.037 equity / 0.420 futures)*
-  * `get_adjusted_em(straddle_cost)`: Expected Move rule-of-thumb adjusted bounds:
+* **EM Calculation Model (IV-Driven):** All Expected Move calculations use the **TOS time-scaling model** (`calculate_tos_expected_move`) with ATM Implied Volatility as the primary input. The straddle cost is computed and stored for diagnostics and `straddle_85` reference bands only; it is **not** the primary EM source.
+  $$\text{EM}_{\text{TOS}} = \text{Spot} \times \text{IV} \times \sqrt{\frac{0.6368 \times \text{DTE} + \text{Intercept}}{365}}$$
+  *(Intercept shifts dynamically based on time-of-week. Weekday: 0.24 equity / 0.69 futures. Weekend decay: -0.037 equity / 0.420 futures)*
+  * **Fallback:** If ATM IV is missing or zero, EM falls back to `k × straddle_mid` where `k` is `EM_STRADDLE_MULTIPLE_DEFAULT` (1.10, with SPX and /ES overridden to 1.05).
+  * `get_adjusted_em(straddle_cost)`: Legacy rule-of-thumb reference band (diagnostic only, not used for primary EM):
     $$\text{EM}_{\text{adj}} = 0.85 \times \text{Straddle Cost}$$
-  * `normalize_proxy_move(etf_straddle, etf_spot, index_spot)`: Maps highly active ETF straddles back to Cash Index levels:
+  * `normalize_proxy_move(etf_straddle, etf_spot, index_spot)`: Maps highly active ETF straddles back to Cash Index levels (legacy normalization, diagnostic only):
     $$\text{Index EM}_{\text{normalized}} = \frac{\text{ETF Straddle Cost}}{\text{ETF Spot Price}} \times \text{Index Spot Price} \times 0.85$$
 
-#### 💻 [weekly_futures_em.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/weekly_futures_em.py)
-* **Description:** Retrieves near-term options chain for liquid futures contracts (e.g. `/ES`, `/NQ`) directly via Schwab APIs, extracts the exact ATM straddles, and calculates real-time volatility constraints.
+#### 💻 [weekly_expected_moves.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/weekly_expected_moves.py)
+* **Description:** Reads pre-calculated Expected Move levels from `unified_levels.json` (produced by the pipeline using `gex_calculator.py`'s TOS time-scaling model) and formats them for Pine Script consumption and console display. No longer computes EM independently — all EM values come from the single TOS-calibrated source of truth. Also reads `weekly_em_scope.json` for the Friday EOD weekly scope EM snapshot.
 * **Key Functions:**
-  * `calculate_exact_atm_em(chain_data)`: Finds the closest call and put strike pair, matches their implied volatilities, and scales them to exact remaining trading minutes.
+  * `read_em_from_unified_levels(ticker)`: Reads `EM HI` / `EM LO` / `EM85 HI` / `EM85 LO` tokens from `unified_levels.json` for the given ticker.
+  * `read_weekly_scope_em(ticker)`: Reads Friday EOD EM bounds from `weekly_em_scope.json`.
+  * Futures translation: Scales cash-index EM to futures space using the OGT price from META tokens in `unified_levels.json`.
 
 #### 💻 [fetch_vix_data.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/market_data/fetch_vix_data.py)
 * **Description:** Downloads VIX and VVIX daily and intraday close prices, providing volatility regime filters for the options pricing engine.
@@ -264,7 +266,8 @@ $$\text{Centroid}_{\text{Put}} = \frac{\sum (K \times \text{Volume}_{\text{Put}}
 #### 💻 [gex_calculator.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/gex_calculator.py)
 * **Description:** Calculations for BSM parameters, analytical Charm, Speed, volume centroids, Delta-adjusted gamma, and volatility triggers.
 * **Key Functions:**
-  * `calculate_tos_expected_move(spot, expiry, iv)`: Empirically calculates the TOS Expected Move using the calibrated time-scaling model (0.6368 slope) with weekend decay logic.
+  * `calculate_tos_expected_move(spot, expiry, iv, is_futures)`: **The single source of truth for all EM calculations.** Empirically calibrated TOS time-scaling model (0.6368 slope) with weekend/after-hours intercept decay. Uses ATM Implied Volatility as the primary input. Called by `_expected_move()` and `_calculate_all_ems()` for every expiry in the chain.
+  * `_expected_move(calls, puts, spot, dte, is_futures, ticker, ...)`: Computes blended ATM IV from call+put IV. If IV > 0, delegates to `calculate_tos_expected_move()`. Falls back to `k × straddle_mid` only when IV is missing/invalid. Stores straddle and `straddle_85` bands as diagnostics.
   * `_analytical_charm(flag, S, K, t, sigma, r, q)`: Returns the exact Charm decay factor.
   * `_analytical_speed(S, K, t, sigma, r, q)`: Returns the Gamma sensitivity rate.
   * `_delta_adjusted_gex(chain_data)`: Returns delta-adjusted call and put gamma levels.

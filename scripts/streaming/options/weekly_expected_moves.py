@@ -1,245 +1,264 @@
+"""
+weekly_expected_moves.py
+========================
+Reads pre-calculated Expected Move levels from ``unified_levels.json``
+(produced by the pipeline using ``gex_calculator.py``'s TOS time-scaling
+model) and formats them for Pine Script consumption and console display.
 
+All EM values come from the single TOS-calibrated source of truth
+(``calculate_tos_expected_move``). This script does NOT compute EM
+independently — it reads the ``EM HI`` / ``EM LO`` / ``EM85 HI`` /
+``EM85 LO`` tokens that the pipeline already wrote into
+``unified_levels.json``.
+
+For the weekly (Friday expiry) scope, it also reads
+``weekly_em_scope.json`` which captures the Friday EOD EM snapshot.
+
+Usage::
+
+    python -m scripts.streaming.options.weekly_expected_moves
+    python -m scripts.streaming.options.weekly_expected_moves --ticker SPY
+    python -m scripts.streaming.options.weekly_expected_moves --pinefile
+"""
 import logging
-import math
 import argparse
-from datetime import datetime, time, timedelta, date
+import json
+import re
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 from scripts.streaming.options.config import (
-    SECRETS_PATH, 
-    TOKEN_PATH,
     ACTIVE_TICKERS,
     INDEX_TO_FUTURES,
     EXPECTED_MOVE_TXT,
-    NY_SESSION_ROLLOVER_TIME
-)
-from scripts.streaming.options.options_fetcher import (
-    create_client, 
-    _schwab_symbol, 
-    _today_ny, 
-    fetch_futures_quote
+    UNIFIED_LEVELS_JSON,
+    NY_SESSION_ROLLOVER_TIME,
+    REPO_ROOT,
 )
 
-# Set up basic logging to console
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-def calculate_exact_atm_em(cash_spot: float, exp_date: date, strikes_dict: dict) -> tuple[float, float]:
-    """Finds the exact ATM contract for the given expiration date, extracts its IV, and calculates Expected Move."""
-    try:
-        available_strikes = [float(k) for k in strikes_dict.keys()]
-        atm_strike = min(available_strikes, key=lambda x: abs(x - cash_spot))
-        
-        atm_contract_data = strikes_dict[str(atm_strike)][0]
-        atm_vol_pct = float(atm_contract_data.get("volatility", 0.0))
-        
-        if atm_vol_pct <= 0:
-            return 0.0, 0.0
-            
-        iv_decimal = atm_vol_pct / 100.0 if atm_vol_pct > 1.0 else atm_vol_pct
-        
-    except (ValueError, KeyError, IndexError):
-        return 0.0, 0.0
+WEEKLY_SCOPE_JSON: Path = REPO_ROOT / "data" / "options" / "weekly_em_scope.json"
 
+
+def _today_ny() -> date:
+    """Logical 'today' in NY timezone (rolls at 16:15 ET)."""
     tz = ZoneInfo("America/New_York")
-    now = datetime.now(tz)
-    exp_dt = datetime.combine(exp_date, time(16, 0), tzinfo=tz)
-    
-    minutes_remaining = (exp_dt - now).total_seconds() / 60.0
-    
-    if minutes_remaining <= 0:
-        return 0.0, atm_vol_pct
-        
-    fractional_dte = minutes_remaining / (24.0 * 60.0)
-    years_to_expiry = fractional_dte / 365.0
-    
-    em_value = cash_spot * iv_decimal * math.sqrt(years_to_expiry)
-    return em_value, atm_vol_pct
+    now_dt = datetime.now(tz)
+    if now_dt.time() >= NY_SESSION_ROLLOVER_TIME:
+        return now_dt.date() + timedelta(days=1)
+    return now_dt.date()
+
+
+def _load_unified_levels() -> dict:
+    """Load unified_levels.json and return the raw dict."""
+    if not UNIFIED_LEVELS_JSON.exists():
+        log.warning(f"unified_levels.json not found at {UNIFIED_LEVELS_JSON}")
+        return {}
+    try:
+        return json.loads(UNIFIED_LEVELS_JSON.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.error(f"Failed to read unified_levels.json: {e}")
+        return {}
+
+
+def _load_weekly_scope() -> dict:
+    """Load weekly_em_scope.json (Friday EOD captures)."""
+    if not WEEKLY_SCOPE_JSON.exists():
+        return {}
+    try:
+        return json.loads(WEEKLY_SCOPE_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _extract_em_tokens(ticker_entry: dict) -> list[dict]:
+    """Extract EM HI / EM LO / EM85 HI / EM85 LO tokens from a unified_levels ticker entry.
+
+    Returns list of dicts: {strike, label, dte, raw}
+    """
+    tokens = ticker_entry.get("tokens", [])
+    em_tokens = []
+    for tok in tokens:
+        label = tok.get("label", "")
+        if label.startswith("EM ") or label.startswith("EM85 "):
+            dte_match = re.search(r"(\d+)d", label)
+            dte = int(dte_match.group(1)) if dte_match else 0
+            em_tokens.append({
+                "strike": tok.get("strike", 0.0),
+                "label": label,
+                "dte": dte,
+                "raw": tok.get("raw", ""),
+            })
+    return em_tokens
+
+
+def _extract_meta_price(ticker_entry: dict) -> float | None:
+    """Extract the OGT (opening gap target) or spot from META tokens."""
+    tokens = ticker_entry.get("tokens", [])
+    for tok in tokens:
+        label = tok.get("label", "")
+        if label.startswith("META_OGT_"):
+            try:
+                return float(tok.get("strike", 0.0))
+            except Exception:
+                pass
+    return None
+
+
+def read_em_from_unified_levels(ticker: str) -> list[dict]:
+    """Read EM tokens from unified_levels.json for the given ticker.
+
+    Returns a list of dicts with keys: strike, label, dte, raw.
+    """
+    data = _load_unified_levels()
+    tickers = data.get("tickers", [])
+
+    entry = None
+    for t in tickers:
+        if t.get("ticker") == ticker:
+            entry = t
+            break
+
+    if entry is None:
+        log.warning(f"No entry found for {ticker} in unified_levels.json")
+        return []
+
+    return _extract_em_tokens(entry)
+
+
+def read_weekly_scope_em(ticker: str) -> dict | None:
+    """Read Friday EOD weekly scope EM from weekly_em_scope.json.
+
+    Returns dict with keys: expiry, em_upper, em_lower, straddle_85_upper,
+    straddle_85_lower, captured_on, source.
+    """
+    scope = _load_weekly_scope()
+    return scope.get(ticker)
+
 
 def fetch_weekly_expected_moves():
-    client = create_client(SECRETS_PATH, TOKEN_PATH)
-    logical_today = _today_ny(rollover_time=NY_SESSION_ROLLOVER_TIME)
-    
+    """Main entry point — reads unified_levels.json + weekly_em_scope.json."""
+    logical_today = _today_ny()
     days_to_friday = (4 - logical_today.weekday()) % 7
     target_friday = logical_today + timedelta(days=days_to_friday)
-    
-    log.info(f"==================================================")
-    log.info(f"WEEKLY EXPECTED MOVES")
+
+    log.info("=" * 60)
+    log.info("WEEKLY EXPECTED MOVES (from unified_levels.json — TOS time-scaling model)")
     log.info(f"Logical Today:   {logical_today.strftime('%A, %b %d')}")
     log.info(f"Target Friday:   {target_friday.strftime('%A, %b %d')}")
-    log.info(f"==================================================\n")
+    log.info("=" * 60 + "\n")
 
-    # Command line ticker override and debug flag
-    parser = argparse.ArgumentParser(description="Weekly Expected Moves Calculator")
+    parser = argparse.ArgumentParser(description="Weekly Expected Moves (read from unified levels)")
     parser.add_argument("--ticker", type=str, help="Specify a single ticker to process")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output for strike comparison")
-    parser.add_argument("--pinefile", action="store_true", help="Write Pine Script EM summary for each ticker to a text file")
+    parser.add_argument("--pinefile", action="store_true", help="Write Pine Script EM summary to expected_moves.txt")
     args, unknown = parser.parse_known_args()
 
     tickers = [args.ticker] if args.ticker else ACTIVE_TICKERS
-    debug_mode = args.debug
-    pinefile_mode = args.pinefile
-
     pine_lines = []
+    unified = _load_unified_levels()
+    weekly_scope = _load_weekly_scope()
 
     for cash_sym in tickers:
-        # Safety check: Ignore futures tickers if accidentally added to PRIMARY_INDEX_TICKERS
+        # Skip raw futures tickers — EM is on the cash/index side
         if cash_sym.startswith("/"):
-            log.warning(f"Skipping '{cash_sym}' -> Options chains must be fetched using the cash/ETF ticker.")
             continue
-            
-        api_sym = _schwab_symbol(cash_sym)
-        
-        response = client.get_option_chain(
-            api_sym,
-            from_date=logical_today,
-            to_date=target_friday,
-            include_underlying_quote=True,
-        )
-        
-        if response.status_code != 200:
-            log.error(f"Failed to fetch {cash_sym}. HTTP {response.status_code}")
-            continue
-            
-        payload = response.json()
-        underlying = payload.get("underlying", {})
-        cash_spot = underlying.get("mark") or underlying.get("last") or payload.get("underlyingPrice", 0.0)
-        
-        if cash_spot == 0.0:
-            continue
-            
-        # Check if we need to translate this index to a futures contract
-        fut_sym = INDEX_TO_FUTURES.get(cash_sym)
-        do_futures = False
-        ratio = 1.0
-        use_scale = False
-        fut_price = 0.0
-        
-        if fut_sym:
-            fut = fetch_futures_quote(fut_sym)
-            if fut is not None:
-                fut_price = fut.price
-                ratio = fut_price / cash_spot if cash_spot > 0 else 1.0
-                use_scale = abs(ratio - 1.0) > 0.02
-                do_futures = True
-            
-        call_map = payload.get("callExpDateMap", {})
-        
-        cash_results, cash_pine = [], []
-        fut_results, fut_pine = [], []
-        
-        for exp_key, strikes_dict in call_map.items():
-            date_str = exp_key.split(":")[0]
-            exp_date = date.fromisoformat(date_str)
-            
-            if logical_today <= exp_date <= target_friday:
-                cash_em, atm_vol_pct = calculate_exact_atm_em(cash_spot, exp_date, strikes_dict)
-                
-                if cash_em <= 0:
-                    continue
-                
-                day_name = exp_date.strftime('%A')[:3]
-                
-                if debug_mode:
-                    # --- ATM, Prev, Next Strike Comparison (Debug Mode) ---
-                    available_strikes = sorted([float(k) for k in strikes_dict.keys()])
-                    if not available_strikes:
-                        continue
-                    atm_idx = min(range(len(available_strikes)), key=lambda i: abs(available_strikes[i] - cash_spot))
-                    indices = [atm_idx - 1, atm_idx, atm_idx + 1]
-                    indices = [i for i in indices if 0 <= i < len(available_strikes)]
-                    strike_infos = []
-                    for idx in indices:
-                        strike = available_strikes[idx]
-                        contract_data = strikes_dict[str(strike)][0]
-                        iv_pct = float(contract_data.get("volatility", 0.0))
-                        mark = float(contract_data.get("mark", 0.0))
-                        bid = float(contract_data.get("bid", 0.0))
-                        ask = float(contract_data.get("ask", 0.0))
-                        oi = int(contract_data.get("openInterest", 0))
-                        vol = int(contract_data.get("totalVolume", 0))
-                        tz = ZoneInfo("America/New_York")
-                        now = datetime.now(tz)
-                        exp_dt = datetime.combine(exp_date, time(16, 0), tzinfo=tz)
-                        minutes_remaining = (exp_dt - now).total_seconds() / 60.0
-                        fractional_dte = minutes_remaining / (24.0 * 60.0)
-                        years_to_expiry = fractional_dte / 365.0
-                        iv_decimal = iv_pct / 100.0 if iv_pct > 1.0 else iv_pct
-                        em_val = cash_spot * iv_decimal * math.sqrt(years_to_expiry) if minutes_remaining > 0 else 0.0
-                        strike_infos.append({
-                            "strike": strike,
-                            "iv_pct": iv_pct,
-                            "mark": mark,
-                            "bid": bid,
-                            "ask": ask,
-                            "oi": oi,
-                            "vol": vol,
-                            "em": em_val,
-                            "type": "ATM" if idx == atm_idx else ("Prev" if idx < atm_idx else "Next")
-                        })
-                    # Print comparison
-                    log.info(f"\n  {day_name} ({exp_date.strftime('%m/%d')}) Strike Comparison:")
-                    for info in strike_infos:
-                        log.info(f"    {info['type']} Strike {info['strike']:.2f}: IV {info['iv_pct']:.2f}% | Mark {info['mark']:.2f} | Bid {info['bid']:.2f} | Ask {info['ask']:.2f} | OI {info['oi']} | Vol {info['vol']} | EM ±{info['em']:.2f}")
-                    # Add EM results for each strike type
-                    for info in strike_infos:
-                        label = f"{info['type']}"
-                        if info['em'] > 0:
-                            cash_results.append((exp_date, f"{day_name}-{label}", info['iv_pct'], info['em']))
-                            cash_pine.append(f"{info['em']:.2f}:{day_name}-{label}")
-                            if do_futures:
-                                fut_em = info['em'] * ratio if use_scale else info['em']
-                                fut_results.append((exp_date, f"{day_name}-{label}", info['iv_pct'], fut_em))
-                                fut_pine.append(f"{fut_em:.2f}:{day_name}-{label}")
-                else:
-                    # Store only the original ATM EM result (no duplicates)
-                    cash_results.append((exp_date, day_name, atm_vol_pct, cash_em))
-                    cash_pine.append(f"{cash_em:.2f}:{day_name}")
-                    if do_futures:
-                        fut_em = cash_em * ratio if use_scale else cash_em
-                        fut_results.append((exp_date, day_name, atm_vol_pct, fut_em))
-                        fut_pine.append(f"{fut_em:.2f}:{day_name}")
 
-        # --- Print Base Ticker (ETF/Cash) ---
-        cash_results.sort(key=lambda x: x[0])
-        log.info(f"[{cash_sym}] Base Expected Moves  |  Spot: ${cash_spot:,.2f}")
-        for res in cash_results:
-            exp_date, day_name, vol, em = res
-            upper = cash_spot + em
-            lower = cash_spot - em
-            log.info(f"  ↳ {day_name} ({exp_date.strftime('%m/%d')}): ATM IV {vol:>5.2f}% | EM ±${em:<5.2f} | Range: {lower:,.2f} ↔ {upper:,.2f}")
-            
-        clean_cash_sym = cash_sym.replace("$", "")
-        pine_line = f"{clean_cash_sym}_EM=" + ", ".join(cash_pine)
-        log.info(f"  Pine Script Copy: {pine_line}")
-        pine_lines.append(pine_line)
-        
-        # --- Print Translated Futures Ticker (if applicable) ---
-        if do_futures:
-            fut_results.sort(key=lambda x: x[0])
-            trans_mode = "Multiplicative" if use_scale else "Additive"
-            log.info(f"\n[{fut_sym}] Translated Futures |  Spot: {fut_price:,.2f} ({trans_mode} scaling from {cash_sym})")
-            for res in fut_results:
-                exp_date, day_name, vol, em = res
-                upper = fut_price + em
-                lower = fut_price - em
-                log.info(f"  ↳ {day_name} ({exp_date.strftime('%m/%d')}): ATM IV {vol:>5.2f}% | EM ±{em:<5.2f} | Range: {lower:,.2f} ↔ {upper:,.2f}")
-                
-            clean_fut_sym = fut_sym.replace("/", "")
-            fut_pine_line = f"{clean_fut_sym}_EM=" + ", ".join(fut_pine)
-            log.info(f"  Pine Script Copy: {fut_pine_line}")
-            pine_lines.append(fut_pine_line)
-            
+        # --- Read from unified_levels.json ---
+        entry = None
+        for t in unified.get("tickers", []):
+            if t.get("ticker") == cash_sym:
+                entry = t
+                break
+
+        if entry is None:
+            # SPX/NDX are not always in unified_levels.json (only their ETF
+            # proxies are). But they may have a weekly scope entry — check that
+            # before skipping entirely.
+            scope = weekly_scope.get(cash_sym)
+            if scope:
+                log.info(f"[{cash_sym}] Not in unified_levels.json — using weekly_em_scope.json only")
+                entry = {"tokens": []}
+                em_tokens = []
+                spot = None
+            else:
+                log.warning(f"[{cash_sym}] No entry in unified_levels.json or weekly_em_scope.json — skipping")
+                continue
+        else:
+            em_tokens = _extract_em_tokens(entry)
+            spot = _extract_meta_price(entry)
+            scope = weekly_scope.get(cash_sym)
+
+        # --- Print intraday EM tokens (from unified_levels.json) ---
+        if em_tokens:
+            log.info(f"[{cash_sym}] Intraday EM tokens (from unified_levels.json):")
+            for em in em_tokens:
+                log.info(f"  \u21b3 {em['raw']}")
+        else:
+            log.info(f"[{cash_sym}] No intraday EM tokens in unified_levels.json")
+
+        # --- Print weekly scope EM (from weekly_em_scope.json) ---
+        if scope:
+            em_upper = scope.get("em_upper", 0.0)
+            em_lower = scope.get("em_lower", 0.0)
+            em_val = (em_upper - em_lower) / 2.0
+            straddle_85_upper = scope.get("straddle_85_upper", 0.0)
+            straddle_85_lower = scope.get("straddle_85_lower", 0.0)
+            expiry = scope.get("expiry", "N/A")
+            captured = scope.get("captured_on", "N/A")
+            center = (em_upper + em_lower) / 2.0
+
+            log.info(f"\n  Weekly Scope (Friday EOD capture, expiry {expiry}, captured {captured}):")
+            log.info(f"    EM \u00b1{em_val:.2f} | Range: {em_lower:.2f} \u2194 {em_upper:.2f} (center: {center:.2f})")
+            log.info(f"    EM85 Range: {straddle_85_lower:.2f} \u2194 {straddle_85_upper:.2f}")
+
+            # Futures translation
+            fut_sym = INDEX_TO_FUTURES.get(cash_sym)
+            fut_price = None
+            if fut_sym:
+                fut_clean = fut_sym.replace("/", "")
+                for t in unified.get("tickers", []):
+                    if t.get("ticker") == fut_clean:
+                        fut_price = _extract_meta_price(t)
+                        break
+
+            if fut_sym and fut_price and spot and spot > 0:
+                ratio = fut_price / spot
+                fut_em = em_val * ratio
+                fut_upper = fut_price + fut_em
+                fut_lower = fut_price - fut_em
+                trans_mode = "Multiplicative" if abs(ratio - 1.0) > 0.02 else "Additive"
+                log.info(f"\n  [{fut_sym}] Translated Futures | Spot: {fut_price:,.2f} ({trans_mode} from {cash_sym})")
+                log.info(f"    EM \u00b1{fut_em:.2f} | Range: {fut_lower:.2f} \u2194 {fut_upper:.2f}")
+
+                try:
+                    exp_date = date.fromisoformat(expiry)
+                    day_name = exp_date.strftime("%a")
+                except Exception:
+                    day_name = "Fri"
+                clean_fut = fut_sym.replace("/", "")
+                pine_lines.append(f"{clean_fut}_EM={fut_em:.2f}:{day_name}")
+
+            # Pine Script for cash/ETF
+            try:
+                exp_date = date.fromisoformat(expiry)
+                day_name = exp_date.strftime("%a")
+            except Exception:
+                day_name = "Fri"
+            clean_ticker = cash_sym.replace("$", "").replace("/", "")
+            pine_lines.append(f"{clean_ticker}_EM={em_val:.2f}:{day_name}")
+
         log.info("-" * 60 + "\n")
 
     # Write Pine Script EM summary to file if requested
-    if pinefile_mode and pine_lines:
-        import os
-        pine_path = EXPECTED_MOVE_TXT
-        with open(pine_path, "w", encoding="utf-8") as f:
+    if args.pinefile and pine_lines:
+        with open(EXPECTED_MOVE_TXT, "w", encoding="utf-8") as f:
             for line in pine_lines:
                 f.write(line + "\n")
-        log.info(f"\nPine Script EM summary written to: {pine_path}\n")
+        log.info(f"\nPine Script EM summary written to: {EXPECTED_MOVE_TXT}\n")
+
 
 if __name__ == "__main__":
     fetch_weekly_expected_moves()
