@@ -1100,30 +1100,25 @@ def _build_scored_tokens(
     emitted_strikes: list[float] = []
     tokens: list[str] = []
 
-    # Day-trader priority: explicit front EM and EM85 markers always lead output.
+    # Day-trader priority: explicit EM and EM85 markers for ALL expiries
+    # through Friday, so the unified levels always show the full weekly EM
+    # term structure (daily EM for Mon-Fri).
     ems = sorted(
         [em for em in getattr(scored, "expected_moves", []) if getattr(em, "dte", None) is not None],
         key=lambda em: em.dte,
     )
-    if ems:
-        front_em = ems[0]
-        front_dte = f" {front_em.dte}d" if getattr(front_em, "dte", None) is not None else ""
-
-        em_priority_tokens: list[tuple[float, str]] = [
-            (round(float(front_em.em_upper), 2), f"E|P|EM HI{front_dte}"),
-            (round(float(front_em.em_lower), 2), f"E|P|EM LO{front_dte}"),
+    for em in ems:
+        dte_tag = f" {em.dte}d" if getattr(em, "dte", None) is not None else ""
+        em_tokens: list[tuple[float, str]] = [
+            (round(float(em.em_upper), 2), f"E|P|EM HI{dte_tag}"),
+            (round(float(em.em_lower), 2), f"E|P|EM LO{dte_tag}"),
         ]
-
-        if hasattr(front_em, "straddle_85_upper") and front_em.straddle_85_upper > 0:
-            em_priority_tokens.extend(
-                [
-                    (round(float(front_em.straddle_85_upper), 2), f"E|P|EM85 HI{front_dte}"),
-                    (round(float(front_em.straddle_85_lower), 2), f"E|P|EM85 LO{front_dte}"),
-                ]
-            )
-
-        for strike, meta in em_priority_tokens:
-            # Always emit front EM/EM85 explicitly, even when clustered.
+        if hasattr(em, "straddle_85_upper") and em.straddle_85_upper > 0:
+            em_tokens.extend([
+                (round(float(em.straddle_85_upper), 2), f"E|P|EM85 HI{dte_tag}"),
+                (round(float(em.straddle_85_lower), 2), f"E|P|EM85 LO{dte_tag}"),
+            ])
+        for strike, meta in em_tokens:
             tokens.append(f"{strike:.2f}:{meta}")
             emitted_strikes.append(strike)
 
