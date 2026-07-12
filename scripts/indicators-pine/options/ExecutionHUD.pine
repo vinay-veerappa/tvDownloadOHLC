@@ -43,6 +43,7 @@ i_dashSize          = input.string("small", "Text Size", options = ["tiny", "sma
 i_dashBgOpacity     = input.int(90, "Bg Opacity", minval = 0, maxval = 100, group = GRP_DASH)
 
 var string GRP_DEBUG = "Debug"
+i_chartTheme     = input.string("Auto", "Chart Theme", options = ["Auto", "Dark", "Light"], group = GRP_DEBUG, tooltip = "Adjusts colors for dark or light chart backgrounds. Auto picks based on bgcolor().")
 i_debugLogs         = input.bool(false, "Enable Debug Logs", group = GRP_DEBUG)
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -51,6 +52,21 @@ i_debugLogs         = input.bool(false, "Enable Debug Logs", group = GRP_DEBUG)
 
 f_labelSize(string s) =>
     s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : size.large
+
+// Theme detection — returns true for dark chart
+f_isDarkChart() =>
+    if i_chartTheme == "Dark"
+        true
+    else if i_chartTheme == "Light"
+        false
+    else
+        // Auto: sample the chart background color
+        bg = color.from_gradient(math.round_to_mintick(close) == 0 ? 0.0 : 0.0, 0.0, 0.0, color.white, color.black)
+        _r = color.r(bg)
+        _g = color.g(bg)
+        _b = color.b(bg)
+        // Dark if average RGB < 128
+        (_r + _g + _b) / 3.0 < 128.0
 
 f_dbg(string msg) =>
     if i_debugLogs
@@ -436,7 +452,7 @@ f_drawExecutionBand(float val, string title, color bandColor, string tooltipText
                 dispTxt = title
                 if i_showPriceInLabel
                     dispTxt := dispTxt + " (" + str.tostring(val, "#.##") + ")"
-                lblBg = color.new(#131722, 100 - i_labelBgOpacity)
+                lblBg = f_isDarkChart() ? color.new(#131722, 100 - i_labelBgOpacity) : color.new(#FFFFFF, 100 - i_labelBgOpacity)
                 lb = label.new(bar_index + i_labelOffset, val, dispTxt, 
                     textcolor = color.new(bandColor, 0), 
                     color = lblBg, 
@@ -541,7 +557,7 @@ if can_calculate
             isTactical = str.contains(u_lbl, "0D") or str.contains(u_lbl, "LOC") or str.contains(u_lbl, "DEX") or str.contains(u_lbl, "CLIFF")
             passProx = i_proxFilter <= 0.0 or ((math.abs(s_lv - close) / close) * 100.0 <= i_proxFilter)
             
-            color ghostColor = color.new(color.gray, 75)
+            color ghostColor = f_isDarkChart() ? color.new(color.gray, 75) : color.new(color.gray, 40)
             ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, color = passProx ? ghostColor : na, width = 1, style = line.style_dotted)
             array.push(allLines, ln)
             array.push(dyn_isTactical, isTactical)
@@ -554,7 +570,7 @@ if can_calculate
                     dispTxt = s_lbl
                     if i_showPriceInLabel
                         dispTxt := dispTxt + " (" + str.tostring(s_lv, "#.##") + ")"
-                    lblBg = color.new(#131722, 100 - i_labelBgOpacity)
+                    lblBg = f_isDarkChart() ? color.new(#131722, 100 - i_labelBgOpacity) : color.new(#FFFFFF, 100 - i_labelBgOpacity)
                     lb = label.new(bar_index + i_labelOffset, s_lv, dispTxt, 
                         textcolor = passProx ? ghostColor : na, 
                         color = passProx ? lblBg : na, 
@@ -622,13 +638,13 @@ if barstate.islast
 
 var table dash = na
 if barstate.isfirst
-    dash := table.new(f_pos(i_dashPos), 4, 5, bgcolor = color.new(#131722, 100 - i_dashBgOpacity), border_width = 1, border_color = color.gray)
+    dash := table.new(f_pos(i_dashPos), 4, 5, bgcolor = f_isDarkChart() ? color.new(#131722, 100 - i_dashBgOpacity) : color.new(#F0F0F0, 100 - i_dashBgOpacity), border_width = 1, border_color = color.gray)
 
 if barstate.islast and i_showDash
     tSz = f_labelSize(i_dashSize)
     table.clear(dash, 0, 0, 3, 4)
     
-    labelTxt = color.new(#9098AA, 0)
+    labelTxt = f_isDarkChart() ? color.new(#9098AA, 0) : color.new(#5A5A5A, 0)
     
     // Row 0: Live State Banner (Spans all 4 columns)
     string bannerText = "🔄 MARKET IS BALANCED | CHOP RISK HIGH | SCALP ONLY"
