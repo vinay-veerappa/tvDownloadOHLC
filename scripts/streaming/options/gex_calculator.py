@@ -351,12 +351,6 @@ class DealerLevels:
     put_wall_oi: int = 0                # OI resting at put wall strike (all contracts)
     pin_strike_oi: int = 0              # Combined call+put OI at pin strike
 
-    # ── Delta-adjusted walls (OI × |gamma| × |delta|) ──────────────────────
-    call_wall_da: float | None = None       # Delta-adjusted call wall
-    put_wall_da: float | None = None        # Delta-adjusted put wall
-    secondary_call_wall_da: float | None = None
-    secondary_put_wall_da: float | None = None
-
     # ── Enhanced analytics (from ezoptionsschwab integration) ─────────────
     call_volume_centroid: float | None = None  # Volume-weighted avg call strike (VWAP-of-strikes)
     put_volume_centroid: float | None = None   # Volume-weighted avg put strike
@@ -1804,19 +1798,13 @@ def calculate_dealer_levels(
     if not wall_puts and chain.puts:
         log.info("Wall puts empty after DTE filter (%s) — using all %d puts", wall_dte_range, len(chain.puts))
         wall_puts = chain.puts
-    call_wall, secondary_call_wall = _find_walls(wall_calls, min_oi_floor, spot=spot, side="CALL")
-    put_wall, secondary_put_wall = _find_walls(wall_puts, min_oi_floor, spot=spot, side="PUT")
+    call_wall, secondary_call_wall = _find_walls(wall_calls, min_oi_floor, spot=spot, side="CALL", delta_adjusted=True)
+    put_wall, secondary_put_wall = _find_walls(wall_puts, min_oi_floor, spot=spot, side="PUT", delta_adjusted=True)
     local_call_node, local_put_node = _find_local_nodes(strikes, spot)
 
     front_calls, front_puts = _find_front_dte_contracts(chain.calls, chain.puts)
-    call_wall_0dte, _ = _find_walls(front_calls, min_oi_floor, spot=spot, side="CALL")
-    put_wall_0dte, _ = _find_walls(front_puts, min_oi_floor, spot=spot, side="PUT")
-
-    # ── Delta-adjusted walls (OI × |gamma| × |delta|) ────────────────────────
-    # These de-emphasise deep ITM/OTM contracts and focus on ATM hedging
-    # activity.  Used for the SPY/SPX/ES side-by-side comparison.
-    call_wall_da, secondary_call_wall_da = _find_walls(wall_calls, min_oi_floor, spot=spot, side="CALL", delta_adjusted=True)
-    put_wall_da, secondary_put_wall_da = _find_walls(wall_puts, min_oi_floor, spot=spot, side="PUT", delta_adjusted=True)
+    call_wall_0dte, _ = _find_walls(front_calls, min_oi_floor, spot=spot, side="CALL", delta_adjusted=True)
+    put_wall_0dte, _ = _find_walls(front_puts, min_oi_floor, spot=spot, side="PUT", delta_adjusted=True)
 
     gamma_flip_lower, gamma_flip_upper, _ = _find_gamma_flip_zone(strikes, spot, min_oi_floor)
     zero_gamma = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=False, is_futures=is_futures)
@@ -1982,10 +1970,6 @@ def calculate_dealer_levels(
         local_put_node=local_put_node,
         call_wall_0dte=call_wall_0dte,
         put_wall_0dte=put_wall_0dte,
-        call_wall_da=call_wall_da,
-        put_wall_da=put_wall_da,
-        secondary_call_wall_da=secondary_call_wall_da,
-        secondary_put_wall_da=secondary_put_wall_da,
         hedge_wall=hedge_wall,
         max_pain=max_pain,
         em_upper=round(spot + em_value, 2),
