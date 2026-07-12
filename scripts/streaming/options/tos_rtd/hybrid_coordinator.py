@@ -268,9 +268,24 @@ class HybridCoordinator:
 
         # ── 3. Load or build the session market cache ──
         if self._load_market_cache() and self._market_cache:
-            log.info("Using cached market data for session %s", session_key)
-            self._start_with_cached_market_data(futures_prices, expiries)
-            return
+            # Check whether all configured symbols have OI in the cache.
+            # If any are missing (e.g. previous scan failed to get NQ price),
+            # force a fresh scan to fill the gaps.
+            missing_syms = [
+                sym for sym in self._symbols
+                if not self._session_open_interest.get(sym)
+            ]
+            if missing_syms:
+                log.warning(
+                    "Cached market data for session %s is missing OI for %s — "
+                    "running fresh scan to fill gaps",
+                    session_key, missing_syms,
+                )
+                # Fall through to fresh scan below (don't return).
+            else:
+                log.info("Using cached market data for session %s", session_key)
+                self._start_with_cached_market_data(futures_prices, expiries)
+                return
 
         # ── 4. No valid cache — perform a fresh market scan ──
         log.info("No valid market cache for session %s — running fresh scan", session_key)
@@ -288,19 +303,27 @@ class HybridCoordinator:
         raw_oi_map = self._run_oi_scan(candidate_symbols)
 
         # Per-symbol OI-weighted Top-N filtering with ATM force-inclusion.
+        # Merge with existing cached OI for symbols that the fresh scan
+        # didn't capture (e.g. NQ price unavailable again).
         selected_oi: dict[str, dict[str, int]] = {}
+        cached_oi = self._session_open_interest if self._session_open_interest else {}
         for sym in self._symbols:
             sym_oi = {
                 s: oi for s, oi in raw_oi_map.items()
                 if self._rtd_symbol_belongs_to(s, sym)
             }
-            if not sym_oi:
-                continue
-            selected_oi[sym] = self._filter_top_oi_contracts(
-                sym_oi,
-                futures_price=futures_prices[sym],
-                symbol=sym,
-            )
+            if sym_oi:
+                selected_oi[sym] = self._filter_top_oi_contracts(
+                    sym_oi,
+                    futures_price=futures_prices[sym],
+                    symbol=sym,
+                )
+            elif sym in cached_oi and cached_oi[sym]:
+                log.info(
+                    "OI scan returned no data for %s — preserving %d cached OI symbols",
+                    sym, len(cached_oi[sym]),
+                )
+                selected_oi[sym] = cached_oi[sym]
 
         # Degenerate scan guard.
         total_candidates = len(candidate_symbols)
@@ -315,14 +338,16 @@ class HybridCoordinator:
         if non_zero_pct < 0.50:
             log.warning(
                 "OI scan degenerate: only %.0f%% non-zero (%d/%d). "
-                "Keeping existing cache if available.",
+                "Merging with existing cache where possible.",
                 non_zero_pct * 100, total_nonzero, total_candidates,
             )
-            existing = self._load_market_cache()
-            if existing is not None:
-                self._start_with_cached_market_data(futures_prices, expiries)
+            # selected_oi already merged with cached_oi above, so just
+            # check we have *some* data before proceeding.
+            if not selected_oi:
+                log.warning("No OI data from scan or cache — cannot proceed.")
+                self._enabled = False
+                self._adapter = None
                 return
-            log.warning("No prior cache exists — saving sparse scan as fallback.")
 
         # Capture basis at scan time.
         basis_at_scan = self._capture_basis(futures_prices)
