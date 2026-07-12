@@ -464,6 +464,83 @@ _PRODUCT_PREFIX_MAP = {
 }
 
 
+def _decode_product_code_expiry(product_code: str, base_symbol: str) -> Optional[date]:
+    """Decode a futures option product code to an expiry date.
+
+    Product codes follow CME conventions:
+      - Quarterly:  ES{month}{year}  e.g. ESH26 → March 2026
+      - End-of-month: EW{month}{year} e.g. EWN26 → July 2026 (monthly)
+      - Weekly (Fri): E{week}{month}{year} e.g. EW3N26 → week 3, July 2026
+      - Weekly (Mon-Thu): E{week}{weekday}{month}{year}
+
+    For /NQ the codes use QN prefix instead of EW/E.
+    """
+    code = product_code.upper()
+    # Month letter → month number (e.g. H → 03, N → 07)
+    letter_to_month = OptionSymbolBuilder.FUTURES_MONTHS
+
+    # Try quarterly/monthly patterns first:
+    # ESH26, NQH26, EWN26, QNN26 → month letter + 2-digit year
+    for pattern_name, regex in [
+        ("quarterly_es", r"^(?:ES|NQ)([FGHJKMNQUVXZ])(\d{2})$"),
+        ("monthly_ew", r"^(?:EW|QN)([FGHJKMNQUVXZ])(\d{2})$"),
+    ]:
+        m = re.match(regex, code)
+        if m:
+            month_letter, year_str = m.groups()
+            month_num = int(letter_to_month.get(month_letter, "0"))
+            year = 2000 + int(year_str)
+            if month_num > 0:
+                # Find the Friday of the appropriate week
+                # Quarterly: 3rd Friday; Monthly (EW/QN): last Friday
+                if "quarterly" in pattern_name:
+                    return _third_friday_of_month(year, month_num)
+                else:
+                    return _last_friday_of_month(year, month_num)
+
+    # Weekly patterns: EW3N26, QN3N26, EAW3N26, etc.
+    # Format: [EQ]N[W]<week_num><month><year> or E<week><weekday><month><year>
+    weekly_match = re.match(
+        r"^(?:E|QN)(?:W)?(\d)([ABCDW])?([FGHJKMNQUVXZ])(\d{2})$",
+        code,
+    )
+    if weekly_match:
+        week_num_str, weekday_code, month_letter, year_str = weekly_match.groups()
+        month_num = int(letter_to_month.get(month_letter, "0"))
+        year = 2000 + int(year_str)
+        if month_num > 0:
+            week_num = int(week_num_str)
+            return _nth_friday_of_month(year, month_num, week_num)
+
+    log.debug("Could not decode product code expiry: %s (base=%s)", product_code, base_symbol)
+    return None
+
+
+def _third_friday_of_month(year: int, month: int) -> date:
+    """Return the third Friday of the given year/month."""
+    first = date(year, month, 1)
+    first_friday = first + timedelta(days=((4 - first.weekday()) % 7))
+    return first_friday + timedelta(days=14)
+
+
+def _last_friday_of_month(year: int, month: int) -> date:
+    """Return the last Friday of the given year/month."""
+    if month == 12:
+        next_first = date(year + 1, 1, 1)
+    else:
+        next_first = date(year, month + 1, 1)
+    # Go back to the last Friday
+    days_back = (next_first.weekday() - 4) % 7
+    return next_first - timedelta(days=days_back + 1) if days_back == 0 else next_first - timedelta(days=days_back)
+
+
+def _nth_friday_of_month(year: int, month: int, week_num: int) -> date:
+    """Return the Nth Friday of the given year/month (week 1-5)."""
+    first = date(year, month, 1)
+    first_friday = first + timedelta(days=((4 - first.weekday()) % 7))
+    return first_friday + timedelta(days=7 * (week_num - 1))
+
+
 def parse_rtd_option_symbol(rtd_symbol: str) -> Optional[OptionContract]:
     """
     Parse a TOS RTD option symbol into structured data.
@@ -507,6 +584,9 @@ def parse_rtd_option_symbol(rtd_symbol: str) -> Optional[OptionContract]:
             base_symbol = _PRODUCT_PREFIX_MAP[prefix]
             break
 
+    # Decode expiry from product code
+    expiry = _decode_product_code_expiry(product_code, base_symbol)
+
     return OptionContract(
         rtd_symbol=rtd_symbol,
         product_code=product_code,
@@ -514,4 +594,5 @@ def parse_rtd_option_symbol(rtd_symbol: str) -> Optional[OptionContract]:
         strike=strike,
         exchange=exchange,
         base_symbol=base_symbol,
+        expiry=expiry,
     )
