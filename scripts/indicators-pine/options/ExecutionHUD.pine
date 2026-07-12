@@ -43,30 +43,27 @@ i_dashSize          = input.string("small", "Text Size", options = ["tiny", "sma
 i_dashBgOpacity     = input.int(90, "Bg Opacity", minval = 0, maxval = 100, group = GRP_DASH)
 
 var string GRP_DEBUG = "Debug"
-i_chartTheme     = input.string("Auto", "Chart Theme", options = ["Auto", "Dark", "Light"], group = GRP_DEBUG, tooltip = "Adjusts colors for dark or light chart backgrounds. Auto picks based on bgcolor().")
 i_debugLogs         = input.bool(false, "Enable Debug Logs", group = GRP_DEBUG)
 
 // ═══════════════════════════════════════════════════════════════════════
-// HELPERS
+// THEME-AGNOSTIC COLOR SYSTEM & HELPERS
 // ═══════════════════════════════════════════════════════════════════════
+
+// Core Palette
+color C_BULL          = #10B981
+color C_BEAR          = #EF4444
+color C_TARGET        = #06B6D4
+color C_INVALIDATION  = #F97316
+color C_OGT           = #A855F7
+color C_MAGNET        = #EC4899
+color C_NEUTRAL       = #94A3B8
+color C_GHOST         = #787B86
+
+// Fixed Dark Label Badge Background
+color C_LABEL_BG      = #1E222D
 
 f_labelSize(string s) =>
     s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : size.large
-
-// Theme detection — returns true for dark chart
-f_isDarkChart() =>
-    if i_chartTheme == "Dark"
-        true
-    else if i_chartTheme == "Light"
-        false
-    else
-        // Auto: sample the chart background color
-        bg = color.from_gradient(math.round_to_mintick(close) == 0 ? 0.0 : 0.0, 0.0, 0.0, color.white, color.black)
-        _r = color.r(bg)
-        _g = color.g(bg)
-        _b = color.b(bg)
-        // Dark if average RGB < 128
-        (_r + _g + _b) / 3.0 < 128.0
 
 f_dbg(string msg) =>
     if i_debugLogs
@@ -452,7 +449,7 @@ f_drawExecutionBand(float val, string title, color bandColor, string tooltipText
                 dispTxt = title
                 if i_showPriceInLabel
                     dispTxt := dispTxt + " (" + str.tostring(val, "#.##") + ")"
-                lblBg = f_isDarkChart() ? color.new(#131722, 100 - i_labelBgOpacity) : color.new(#FFFFFF, 100 - i_labelBgOpacity)
+                lblBg = color.new(C_LABEL_BG, 100 - i_labelBgOpacity)
                 lb = label.new(bar_index + i_labelOffset, val, dispTxt, 
                     textcolor = color.new(bandColor, 0), 
                     color = lblBg, 
@@ -557,8 +554,9 @@ if can_calculate
             isTactical = str.contains(u_lbl, "0D") or str.contains(u_lbl, "LOC") or str.contains(u_lbl, "DEX") or str.contains(u_lbl, "CLIFF")
             passProx = i_proxFilter <= 0.0 or ((math.abs(s_lv - close) / close) * 100.0 <= i_proxFilter)
             
-            color ghostColor = f_isDarkChart() ? color.new(color.gray, 75) : color.new(color.gray, 40)
-            ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, color = passProx ? ghostColor : na, width = 1, style = line.style_dotted)
+            color ghostColor = C_GHOST
+            color ghostTextColor = #CBD5E1
+            ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, color = passProx ? color.new(ghostColor, 60) : na, width = 1, style = line.style_dotted)
             array.push(allLines, ln)
             array.push(dyn_isTactical, isTactical)
             array.push(dyn_lineColor, ghostColor)
@@ -570,9 +568,9 @@ if can_calculate
                     dispTxt = s_lbl
                     if i_showPriceInLabel
                         dispTxt := dispTxt + " (" + str.tostring(s_lv, "#.##") + ")"
-                    lblBg = f_isDarkChart() ? color.new(#131722, 100 - i_labelBgOpacity) : color.new(#FFFFFF, 100 - i_labelBgOpacity)
+                    lblBg = color.new(C_LABEL_BG, 100 - i_labelBgOpacity)
                     lb = label.new(bar_index + i_labelOffset, s_lv, dispTxt, 
-                        textcolor = passProx ? ghostColor : na, 
+                        textcolor = passProx ? ghostTextColor : na, 
                         color = passProx ? lblBg : na, 
                         style = label.style_label_left, 
                         size = f_labelSize(i_labelSize),
@@ -580,29 +578,29 @@ if can_calculate
                     array.push(allLabels, lb)
                     array.push(labelCols, lc)
                     array.push(dyn_lblTactical, isTactical)
-                    array.push(dyn_lblTextColor, ghostColor)
+                    array.push(dyn_lblTextColor, ghostTextColor)
                     array.push(dyn_lblBgColor, lblBg)
 
         // Draw Shaded Execution Bands explicitly with custom tooltips
-        f_drawExecutionBand(st_ShortTrig, "► SHORT ENTRY TRIGGER (5-Min Acceptance)", color.red, 
+        f_drawExecutionBand(st_ShortTrig, "► SHORT ENTRY TRIGGER (5-Min Acceptance)", C_BEAR, 
             "Price breaking below this band indicates sellers are seizing control. Look for a short entry if a 5-minute candle closes beneath this zone.")
         
-        f_drawExecutionBand(st_LongTrig, "► LONG ENTRY TRIGGER (5-Min Acceptance)", color.green, 
+        f_drawExecutionBand(st_LongTrig, "► LONG ENTRY TRIGGER (5-Min Acceptance)", C_BULL, 
             "Price breaking above this band indicates buyers are seizing control. Look for a long entry if a 5-minute candle closes over this zone.")
         
-        f_drawExecutionBand(st_ShortTgt, "🎯 TARGET 1 (Scale / Take Profit)", color.teal, 
+        f_drawExecutionBand(st_ShortTgt, "🎯 TARGET 1 (Scale / Take Profit)", C_TARGET, 
             "A primary institutional liquidity target. Expect profit-taking and counter-trend orders here. Scale out of active contracts immediately.")
         
-        f_drawExecutionBand(st_LongTgt, "🎯 TARGET 1 (Scale / Take Profit)", color.teal, 
+        f_drawExecutionBand(st_LongTgt, "🎯 TARGET 1 (Scale / Take Profit)", C_TARGET, 
             "A primary institutional liquidity target. Expect profit-taking and counter-trend orders here. Scale out of active contracts immediately.")
         
-        f_drawExecutionBand(st_ShortInv, "❌ INVALIDATION (Structure Broken - Exit Trade)", color.orange, 
+        f_drawExecutionBand(st_ShortInv, "❌ INVALIDATION (Structure Broken - Exit Trade)", C_INVALIDATION, 
             "The structural boundary for active trades. If price trades past this marker, the day's trend thesis is mathematically proven wrong. Close losing positions immediately.")
         
-        f_drawExecutionBand(st_LongInv, "❌ INVALIDATION (Structure Broken - Exit Trade)", color.orange, 
+        f_drawExecutionBand(st_LongInv, "❌ INVALIDATION (Structure Broken - Exit Trade)", C_INVALIDATION, 
             "The structural boundary for active trades. If price trades past this marker, the day's trend thesis is mathematically proven wrong. Close losing positions immediately.")
         
-        f_drawExecutionBand(st_OGT, "🎯 OPENING GAP TARGET (Expect Reversal)", color.purple, 
+        f_drawExecutionBand(st_OGT, "🎯 OPENING GAP TARGET (Expect Reversal)", C_OGT, 
             "The institutional overnight delta imbalance settlement target. Price is mechanically pulled toward this band during the opening 30 minutes. High probability of reversal once touched.")
 
 // Realtime Line / Label Extension
@@ -638,13 +636,13 @@ if barstate.islast
 
 var table dash = na
 if barstate.isfirst
-    dash := table.new(f_pos(i_dashPos), 4, 5, bgcolor = f_isDarkChart() ? color.new(#131722, 100 - i_dashBgOpacity) : color.new(#F0F0F0, 100 - i_dashBgOpacity), border_width = 1, border_color = color.gray)
+    dash := table.new(f_pos(i_dashPos), 4, 5, bgcolor = color.new(#151924, 100 - i_dashBgOpacity), border_width = 1, border_color = #2A2E39)
 
 if barstate.islast and i_showDash
     tSz = f_labelSize(i_dashSize)
     table.clear(dash, 0, 0, 3, 4)
     
-    labelTxt = f_isDarkChart() ? color.new(#9098AA, 0) : color.new(#5A5A5A, 0)
+    labelTxt = color.new(#9098AA, 0)
     
     // Row 0: Live State Banner (Spans all 4 columns)
     string bannerText = "🔄 MARKET IS BALANCED | CHOP RISK HIGH | SCALP ONLY"
@@ -652,37 +650,37 @@ if barstate.islast and i_showDash
     
     if not na(st_ShortTrig) and close < st_ShortTrig
         bannerText := "🚨 SELLING EXPANSION ACTIVE | DO NOT BUY THE DIP | TREND-FOLLOW SHORT ONLY"
-        bannerBg := color.new(color.red, 30)
+        bannerBg := color.new(#7F1D1D, 30)
     else if not na(st_LongTrig) and close > st_LongTrig
         bannerText := "🚀 BUYING EXPANSION ACTIVE | DO NOT SHORT THE RALLY | HOLD LONGS ONLY"
-        bannerBg := color.new(color.green, 30)
+        bannerBg := color.new(#064E3B, 30)
         
     table.cell(dash, 0, 0, bannerText, text_color = color.white, text_size = tSz, bgcolor = bannerBg)
     table.merge_cells(dash, 0, 0, 3, 0)
     
     // Row 1: Short Trigger | Long Trigger
     table.cell(dash, 0, 1, "Short Trigger", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 1, f_num(st_ShortTrig), text_color = color.red, text_size = tSz)
+    table.cell(dash, 1, 1, f_num(st_ShortTrig), text_color = C_BEAR, text_size = tSz)
     table.cell(dash, 2, 1, "Long Trigger", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 3, 1, f_num(st_LongTrig), text_color = color.green, text_size = tSz)
+    table.cell(dash, 3, 1, f_num(st_LongTrig), text_color = C_BULL, text_size = tSz)
     
     // Row 2: Short Target | Long Target
     table.cell(dash, 0, 2, "Short Target", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 2, f_num(st_ShortTgt), text_color = color.red, text_size = tSz)
+    table.cell(dash, 1, 2, f_num(st_ShortTgt), text_color = C_BEAR, text_size = tSz)
     table.cell(dash, 2, 2, "Long Target", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 3, 2, f_num(st_LongTgt), text_color = color.green, text_size = tSz)
+    table.cell(dash, 3, 2, f_num(st_LongTgt), text_color = C_BULL, text_size = tSz)
     
     // Row 3: Short Invalidation | Long Invalidation
     table.cell(dash, 0, 3, "Short Invalidation", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 3, f_num(st_ShortInv), text_color = color.red, text_size = tSz)
+    table.cell(dash, 1, 3, f_num(st_ShortInv), text_color = C_BEAR, text_size = tSz)
     table.cell(dash, 2, 3, "Long Invalidation", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 3, 3, f_num(st_LongInv), text_color = color.green, text_size = tSz)
+    table.cell(dash, 3, 3, f_num(st_LongInv), text_color = C_BULL, text_size = tSz)
     
     // Row 4: Opening Gap Target | Gamma Magnet
     table.cell(dash, 0, 4, "Opening Gap Target", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 1, 4, f_num(st_OGT), text_color = color.purple, text_size = tSz)
+    table.cell(dash, 1, 4, f_num(st_OGT), text_color = C_OGT, text_size = tSz)
     table.cell(dash, 2, 4, "Gamma Magnet", text_color = labelTxt, text_size = tSz)
-    table.cell(dash, 3, 4, f_num(st_MAG), text_color = #7E57C2, text_size = tSz)
+    table.cell(dash, 3, 4, f_num(st_MAG), text_color = C_MAGNET, text_size = tSz)
 
 if barstate.islast and not i_showDash and not na(dash)
     table.clear(dash, 0, 0, 3, 4)
