@@ -150,6 +150,12 @@ class TranslatedLevels:
     call_25d_iv: float | None = None
     volatility_skew_premium: float | None = None
 
+    # ── Delta-adjusted walls (OI × |gamma| × |delta|) ──────────────────────
+    call_wall_da: float | None = None
+    put_wall_da: float | None = None
+    secondary_call_wall_da: float | None = None
+    secondary_put_wall_da: float | None = None
+
 
 def translate_to_futures(
     levels: DealerLevels, 
@@ -228,6 +234,10 @@ def translate_to_futures(
         local_put_node=_shift(levels.local_put_node),
         call_wall_0dte=_shift(levels.call_wall_0dte),
         put_wall_0dte=_shift(levels.put_wall_0dte),
+        call_wall_da=_shift(getattr(levels, 'call_wall_da', None)),
+        put_wall_da=_shift(getattr(levels, 'put_wall_da', None)),
+        secondary_call_wall_da=_shift(getattr(levels, 'secondary_call_wall_da', None)),
+        secondary_put_wall_da=_shift(getattr(levels, 'secondary_put_wall_da', None)),
         hedge_wall=_shift(levels.hedge_wall),
         max_pain=_shift(levels.max_pain),
         em_upper=_shift(levels.em_upper),  # type: ignore[arg-type]

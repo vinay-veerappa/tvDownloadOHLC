@@ -351,6 +351,12 @@ class DealerLevels:
     put_wall_oi: int = 0                # OI resting at put wall strike (all contracts)
     pin_strike_oi: int = 0              # Combined call+put OI at pin strike
 
+    # ── Delta-adjusted walls (OI × |gamma| × |delta|) ──────────────────────
+    call_wall_da: float | None = None       # Delta-adjusted call wall
+    put_wall_da: float | None = None        # Delta-adjusted put wall
+    secondary_call_wall_da: float | None = None
+    secondary_put_wall_da: float | None = None
+
     # ── Enhanced analytics (from ezoptionsschwab integration) ─────────────
     call_volume_centroid: float | None = None  # Volume-weighted avg call strike (VWAP-of-strikes)
     put_volume_centroid: float | None = None   # Volume-weighted avg put strike
@@ -604,6 +610,7 @@ def _find_walls(
     min_oi: int,
     spot: float = 0.0,
     side: str = "",
+    delta_adjusted: bool = False,
 ) -> tuple[float | None, float | None]:
     """
     Find the primary and secondary wall strikes for a set of contracts.
@@ -616,6 +623,9 @@ def _find_walls(
     side      : ``"CALL"`` to restrict to strikes ≥ spot (resistance),
                 ``"PUT"`` to restrict to strikes ≤ spot (support).
                 Empty string disables side filtering (backward compat).
+    delta_adjusted : When True, rank by ``OI × |gamma| × |delta|`` instead of
+                raw ``OI × |gamma|``.  This de-emphasises deep ITM/OTM
+                contracts and focuses on ATM hedging activity.
 
     Returns
     -------
@@ -645,7 +655,10 @@ def _find_walls(
                 side, min_oi, spot,
             )
 
-    ranked = sorted(candidates, key=lambda c: c.open_interest * abs(c.gamma), reverse=True)
+    if delta_adjusted:
+        ranked = sorted(candidates, key=lambda c: c.open_interest * abs(c.gamma) * abs(c.delta), reverse=True)
+    else:
+        ranked = sorted(candidates, key=lambda c: c.open_interest * abs(c.gamma), reverse=True)
     primary = ranked[0].strike
     secondary = ranked[1].strike if len(ranked) > 1 else None
     return primary, secondary
@@ -1799,6 +1812,12 @@ def calculate_dealer_levels(
     call_wall_0dte, _ = _find_walls(front_calls, min_oi_floor, spot=spot, side="CALL")
     put_wall_0dte, _ = _find_walls(front_puts, min_oi_floor, spot=spot, side="PUT")
 
+    # ── Delta-adjusted walls (OI × |gamma| × |delta|) ────────────────────────
+    # These de-emphasise deep ITM/OTM contracts and focus on ATM hedging
+    # activity.  Used for the SPY/SPX/ES side-by-side comparison.
+    call_wall_da, secondary_call_wall_da = _find_walls(wall_calls, min_oi_floor, spot=spot, side="CALL", delta_adjusted=True)
+    put_wall_da, secondary_put_wall_da = _find_walls(wall_puts, min_oi_floor, spot=spot, side="PUT", delta_adjusted=True)
+
     gamma_flip_lower, gamma_flip_upper, _ = _find_gamma_flip_zone(strikes, spot, min_oi_floor)
     zero_gamma = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=False, is_futures=is_futures)
     zero_gamma_delta_adj = _find_dynamic_zero_gamma(chain.calls, chain.puts, spot, delta_adjusted=True, is_futures=is_futures)
@@ -1963,6 +1982,10 @@ def calculate_dealer_levels(
         local_put_node=local_put_node,
         call_wall_0dte=call_wall_0dte,
         put_wall_0dte=put_wall_0dte,
+        call_wall_da=call_wall_da,
+        put_wall_da=put_wall_da,
+        secondary_call_wall_da=secondary_call_wall_da,
+        secondary_put_wall_da=secondary_put_wall_da,
         hedge_wall=hedge_wall,
         max_pain=max_pain,
         em_upper=round(spot + em_value, 2),

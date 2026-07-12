@@ -187,12 +187,39 @@ def run_comparison(symbol: str = "/ES"):
         print(f"\n  Fetching {symbol} from TOS RTD...")
         from scripts.streaming.options.tos_rtd.adapter import TOSRTDAdapter, RTDConfig
         from scripts.streaming.options.tos_rtd.rtd_gex_calculator import calculate_futures_gex
+        from scripts.streaming.options.config import TOS_RTD_SYMBOL_CONFIG
         import time
 
-        config = RTDConfig(strike_range=20, strike_spacing=1.0)
+        # Use per-symbol strike tiers and expiry count from config
+        sym_config = TOS_RTD_SYMBOL_CONFIG.get(symbol, {})
+        strike_tiers = sym_config.get("strike_tiers", [(100, 5.0), (300, 10.0), (600, 25.0)])
+        num_expiries = sym_config.get("num_expiries", 6)
+        min_oi_floor = sym_config.get("min_oi_floor", 50)
+        # Use the widest tier for the initial scan
+        max_range = int(strike_tiers[-1][0]) if strike_tiers else 600
+        max_spacing = float(strike_tiers[-1][1]) if strike_tiers else 25.0
+
+        print(f"  RTD config: {num_expiries} expiries, strike tiers={strike_tiers}, min_oi={min_oi_floor}")
+
+        config = RTDConfig(
+            strike_range=max_range,
+            strike_spacing=max_spacing,
+            symbol_configs={symbol: {"strike_range": max_range, "strike_spacing": max_spacing}},
+        )
         adapter = TOSRTDAdapter(config)
 
-        adapter.start(symbols=[symbol], expiry=expiry)
+        # Build list of upcoming Friday expiries
+        from datetime import datetime as dt_cls
+        today_date = date.today()
+        expiry_dates = []
+        for i in range(num_expiries):
+            d = today_date + timedelta(days=i * 7)
+            # Find the Friday of that week
+            days_to_fri = (4 - d.weekday()) % 7
+            expiry_dates.append(d + timedelta(days=days_to_fri))
+
+        print(f"  Expiry dates: {expiry_dates}")
+        adapter.start(symbols=[symbol], expiry=expiry_dates[0])
         time.sleep(3)
         es_spot = adapter.get_futures_price(symbol)
 
@@ -200,9 +227,14 @@ def run_comparison(symbol: str = "/ES"):
             print(f"  {symbol} RTD price: {es_spot:.2f}")
             adapter.stop()
             time.sleep(1)
-            adapter.start(symbols=[symbol], expiry=expiry, current_price={symbol: es_spot})
-            print(f"  Waiting 5s for option Greeks to stream...")
-            time.sleep(5)
+            # Start with all expiry dates and current price for strike selection
+            adapter.start(
+                symbols=[symbol], expiry=expiry_dates[0],
+                current_price={symbol: es_spot},
+                expiries=expiry_dates,
+            )
+            print(f"  Waiting 8s for option Greeks to stream across {num_expiries} expiries...")
+            time.sleep(8)
 
             es_result = calculate_futures_gex(adapter, symbol)
             if es_result:
@@ -215,57 +247,72 @@ def run_comparison(symbol: str = "/ES"):
         print(f"  ERROR fetching {symbol} from RTD: {e}")
         log.debug("RTD fetch error", exc_info=True)
 
-    # ─── Comparison Table ───
-    _print_header("COMPARISON TABLE")
+    # ─── Comparison Table (Delta-Adjusted) ───
+    _print_header("COMPARISON TABLE (Delta-Adjusted Levels)")
 
-    # Extract values
-    spy_cw = spy_translated.call_wall if spy_translated else None
-    spy_pw = spy_translated.put_wall if spy_translated else None
-    spy_zg = spy_translated.zero_gamma if spy_translated else None
-    spy_zgda = spy_translated.zero_gamma_delta_adj if spy_translated else None
-    spy_gex = spy_translated.total_gex if spy_translated else None
-    spy_gm = spy_translated.gamma_magnet if spy_translated else None
+    # Extract delta-adjusted values — call_wall_da, put_wall_da,
+    # zero_gamma_delta_adj, total_gex_delta_adj
+    spy_cw = getattr(spy_translated, 'call_wall_da', None) if spy_translated else None
+    spy_pw = getattr(spy_translated, 'put_wall_da', None) if spy_translated else None
+    spy_zg = getattr(spy_translated, 'zero_gamma_delta_adj', None) if spy_translated else None
+    spy_zgda = spy_zg  # Already delta-adjusted
+    spy_gex = getattr(spy_translated, 'total_gex_delta_adj', None) if spy_translated else None
+    spy_gm = getattr(spy_translated, 'gamma_magnet', None) if spy_translated else None
     spy_spot_f = spy_translated.futures_price if spy_translated else (spy_spot or 0)
 
-    spx_cw = spx_levels.call_wall if spx_levels else None
-    spx_pw = spx_levels.put_wall if spx_levels else None
-    spx_zg = spx_levels.zero_gamma if spx_levels else None
-    spx_zgda = spx_levels.zero_gamma_delta_adj if spx_levels else None
-    spx_gex = spx_levels.total_gex if spx_levels else None
-    spx_gm = spx_levels.gamma_magnet if spx_levels else None
+    spx_cw = getattr(spx_levels, 'call_wall_da', None) if spx_levels else None
+    spx_pw = getattr(spx_levels, 'put_wall_da', None) if spx_levels else None
+    spx_zg = getattr(spx_levels, 'zero_gamma_delta_adj', None) if spx_levels else None
+    spx_zgda = spx_zg  # Already delta-adjusted
+    spx_gex = getattr(spx_levels, 'total_gex_delta_adj', None) if spx_levels else None
+    spx_gm = getattr(spx_levels, 'gamma_magnet', None) if spx_levels else None
     spx_spot_f = spx_spot or 0
 
-    es_cw = es_levels.call_wall if es_levels else None
-    es_pw = es_levels.put_wall if es_levels else None
-    es_zg = es_levels.zero_gamma if es_levels else None
-    es_zgda = es_levels.zero_gamma_delta_adj if es_levels else None
-    es_gex = es_levels.total_gex if es_levels else None
-    es_gm = es_levels.gamma_magnet if es_levels else None
+    es_cw = getattr(es_levels, 'call_wall_da', None) if es_levels else None
+    es_pw = getattr(es_levels, 'put_wall_da', None) if es_levels else None
+    es_zg = getattr(es_levels, 'zero_gamma_delta_adj', None) if es_levels else None
+    es_zgda = es_zg  # Already delta-adjusted
+    es_gex = getattr(es_levels, 'total_gex_delta_adj', None) if es_levels else None
+    es_gm = getattr(es_levels, 'gamma_magnet', None) if es_levels else None
     es_spot_f = es_spot or 0
 
-    # Print individual summaries
+    # Print individual summaries (delta-adjusted)
     if spy_translated:
-        _print_levels(f"{etf_ticker} \u2192 {symbol}", spy_spot_f,
-                      spy_cw, spy_pw, spy_zg, spy_zgda, spy_gex, spy_gm,
-                      source="Schwab ETF chain + translate")
+        _print_levels(f"{etf_ticker} \u2192 {symbol} (DA)", spy_spot_f,
+                      getattr(spy_translated, 'call_wall_da', None),
+                      getattr(spy_translated, 'put_wall_da', None),
+                      getattr(spy_translated, 'zero_gamma_delta_adj', None),
+                      None,
+                      getattr(spy_translated, 'total_gex_delta_adj', 0.0),
+                      getattr(spy_translated, 'gamma_magnet', None),
+                      source="Schwab ETF chain + translate (delta-adjusted)")
     if spx_levels:
-        _print_levels(f"{idx_ticker}", spx_spot_f,
-                      spx_cw, spx_pw, spx_zg, spx_zgda, spx_gex, spx_gm,
-                      source="Schwab index chain")
+        _print_levels(f"{idx_ticker} (DA)", spx_spot_f,
+                      getattr(spx_levels, 'call_wall_da', None),
+                      getattr(spx_levels, 'put_wall_da', None),
+                      getattr(spx_levels, 'zero_gamma_delta_adj', None),
+                      None,
+                      getattr(spx_levels, 'total_gex_delta_adj', 0.0),
+                      getattr(spx_levels, 'gamma_magnet', None),
+                      source="Schwab index chain (delta-adjusted)")
     if es_levels:
-        _print_levels(f"{symbol} (RTD)", es_spot_f,
-                      es_cw, es_pw, es_zg, es_zgda, es_gex, es_gm,
-                      source="TOS RTD futures options (Black-76)")
+        _print_levels(f"{symbol} (RTD, DA)", es_spot_f,
+                      getattr(es_levels, 'call_wall_da', None),
+                      getattr(es_levels, 'put_wall_da', None),
+                      getattr(es_levels, 'zero_gamma_delta_adj', None),
+                      None,
+                      getattr(es_levels, 'total_gex_delta_adj', 0.0),
+                      getattr(es_levels, 'gamma_magnet', None),
+                      source="TOS RTD futures options (Black-76, delta-adjusted)")
 
     # Side-by-side table
     print(f"\n  {'Metric':<20s}  {'SPY trans':>12s}  {'SPX':>12s}  {'/ES RTD':>12s}")
     print(f"  {'-' * 20}  {'-' * 12}  {'-' * 12}  {'-' * 12}")
     _compare_row("Spot", spy_spot_f, spx_spot_f, es_spot_f)
-    _compare_row("Call Wall", spy_cw, spx_cw, es_cw)
-    _compare_row("Put Wall", spy_pw, spx_pw, es_pw)
-    _compare_row("Zero Gamma", spy_zg, spx_zg, es_zg)
-    _compare_row("Zero Gamma DA", spy_zgda, spx_zgda, es_zgda)
-    _compare_row("Total GEX", spy_gex, spx_gex, es_gex)
+    _compare_row("Call Wall (DA)", spy_cw, spx_cw, es_cw)
+    _compare_row("Put Wall (DA)", spy_pw, spx_pw, es_pw)
+    _compare_row("Zero Gamma (DA)", spy_zg, spx_zg, es_zg)
+    _compare_row("Total GEX (DA)", spy_gex, spx_gex, es_gex)
     _compare_row("Gamma Magnet", spy_gm, spx_gm, es_gm)
 
     # EM comparison (from unified_levels.json + weekly_em_scope.json)
