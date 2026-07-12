@@ -2180,13 +2180,14 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         ],
     )
 
-def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_volatility: float, is_futures: bool = False) -> float:
+def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_volatility: float, is_futures: bool = False, use_trading_hours: bool = False) -> float:
     """
     Calculates the Thinkorswim (TOS) Expected Move using the empirically
     calibrated linear time-scaling model, adjusting for weekend decay.
     
     expiry_date_str: 'YYYY-MM-DD' or 'YYYY-MM-DD:Days'
     expiry_volatility: The volatility number (percentage or decimal).
+    use_trading_hours: If True, bypasses weekend decay and uses weekday intercepts.
     """
     tz = ZoneInfo("America/New_York")
     now_ny = datetime.now(tz)
@@ -2208,23 +2209,44 @@ def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_
     day_of_week = now_ny.weekday()  # 0=Monday, 5=Saturday, 6=Sunday
     hour = now_ny.hour
     
-    is_weekend = False
-    if day_of_week == 4 and hour >= 16:  # Friday after-hours
-        is_weekend = True
-    elif day_of_week in [5, 6]:          # Saturday or Sunday
-        if day_of_week == 6 and hour >= 18:
-            is_weekend = False  # Futures are open
-        else:
-            is_weekend = True
-            
     # Apply fitted TOS time-scaling coefficients
-    # Weekday trading hours vs. Weekend/market-closed decay
     slope = 0.6368
-    if is_weekend:
-        intercept = 0.4203 if is_futures else -0.0373
+    base_intercept = 0.6900 if is_futures else 0.2400
+    
+    if use_trading_hours:
+        intercept = base_intercept
     else:
-        intercept = 0.6900 if is_futures else 0.2400
-        
+        # Check if we are in the weekend period
+        is_weekend = False
+        if is_futures:
+            # Futures close Friday 17:00 ET, reopen Sunday 18:00 ET
+            if (day_of_week == 4 and hour >= 17) or day_of_week == 5 or (day_of_week == 6 and hour < 18):
+                is_weekend = True
+        else:
+            # Equities close Friday 16:00 ET, reopen Monday 09:30 ET
+            if (day_of_week == 4 and hour >= 16) or day_of_week == 5 or day_of_week == 6 or (day_of_week == 0 and (hour < 9 or (hour == 9 and now_ny.minute < 30))):
+                is_weekend = True
+                
+        if is_weekend:
+            # Calculate elapsed hours since Friday close to apply continuous decay
+            from datetime import timedelta
+            days_to_subtract = (day_of_week - 4) % 7
+            friday_date = now_ny - timedelta(days=days_to_subtract)
+            friday_close_hour = 17 if is_futures else 16
+            # Use tzinfo from now_ny to preserve timezone
+            friday_close = datetime(friday_date.year, friday_date.month, friday_date.day, friday_close_hour, 0, 0, tzinfo=tz)
+            elapsed_hours = max(0.0, (now_ny - friday_close).total_seconds() / 3600.0)
+            
+            # Decay rates: decays to fully decayed weekend limits over 49 (futures) or 50 (equities) hours
+            if is_futures:
+                decay_rate = (0.6900 - 0.4203) / 49.0  # ~0.005504 per hour
+                intercept = max(0.4203, base_intercept - elapsed_hours * decay_rate)
+            else:
+                decay_rate = (0.2400 - (-0.0373)) / 50.0  # ~0.005546 per hour
+                intercept = max(-0.0373, base_intercept - elapsed_hours * decay_rate)
+        else:
+            intercept = base_intercept
+            
     t_eff = slope * dte + intercept
     t_eff_yr = t_eff / 365.0
     

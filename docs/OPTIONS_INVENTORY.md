@@ -183,6 +183,13 @@ Handles historical database updates, real-time option chain snapshotting, VIX in
 #### 💻 [fetch_vix_data.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/market_data/fetch_vix_data.py)
 * **Description:** Downloads VIX and VVIX daily and intraday close prices, providing volatility regime filters for the options pricing engine.
 
+#### 💻 [verify_em_vision.py](file:///C:/Users/vinay/.gemini/antigravity/brain/908c7a38-5c40-40ea-8fea-3684926352b8/scratch/verify_em_vision.py)
+* **Description:** Vision-based verification utility that reads option chain screenshots via a local Ollama vision model (e.g. `llama3.2-vision`), extracts DTE, IV%, and TOS expected moves, and calculates platform model outputs (weekday, weekend, and custom-fitted regressions) to verify accuracy.
+* **Usage:**
+  ```powershell
+  .\.venv\Scripts\python.exe C:\Users\vinay\.gemini\antigravity\brain\908c7a38-5c40-40ea-8fea-3684926352b8\scratch\verify_em_vision.py --image "path/to/screenshot.png"
+  ```
+
 ### B. High-Performance Parquet Database
 All historical OHLCV data is organized under `/data` using snappy-compressed Apache Parquet files, optimized for vectorized operations. For a detailed list of all 180+ datasets, their start/end dates, and bar counts, see the auto-generated [DATA_INVENTORY.md](file:///C:/Users/vinay/tvDownloadOHLC/DATA_INVENTORY.md).
 
@@ -266,7 +273,7 @@ $$\text{Centroid}_{\text{Put}} = \frac{\sum (K \times \text{Volume}_{\text{Put}}
 #### 💻 [gex_calculator.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/gex_calculator.py)
 * **Description:** Calculations for BSM parameters, analytical Charm, Speed, volume centroids, delta-adjusted gamma, and volatility triggers. All wall detection uses delta-adjusted ranking ($\text{OI} \times |\Gamma| \times |\Delta|$) as the primary methodology.
 * **Key Functions:**
-  * `calculate_tos_expected_move(spot, expiry, iv, is_futures)`: **The single source of truth for all EM calculations.** Empirically calibrated TOS time-scaling model (0.6368 slope) with weekend/after-hours intercept decay. Uses ATM Implied Volatility as the primary input. Called by `_expected_move()` and `_calculate_all_ems()` for every expiry in the chain.
+  * `calculate_tos_expected_move(spot, expiry, iv, is_futures, use_trading_hours)`: **The single source of truth for all EM calculations.** Empirically calibrated TOS time-scaling model (0.6368 slope) with weekend/after-hours continuous intercept decay. Bypasses decay if `use_trading_hours=True` to preserve session integrity for static runs.
   * `_expected_move(calls, puts, spot, dte, is_futures, ticker, ...)`: Computes blended ATM IV from call+put IV. If IV > 0, delegates to `calculate_tos_expected_move()`. Falls back to `k × straddle_mid` only when IV is missing/invalid. Stores straddle and `straddle_85` bands as diagnostics.
   * `_find_walls(contracts, min_oi, spot, side, delta_adjusted=True)`: Ranks candidate contracts by $\text{OI} \times |\Gamma| \times |\Delta|$ to find primary and secondary wall strikes. Delta-adjusted ranking de-emphasises deep ITM/OTM contracts and focuses on ATM hedging activity. Called with `delta_adjusted=True` for all wall computations in `calculate_dealer_levels`.
   * `_analytical_charm(flag, S, K, t, sigma, r, q)`: Returns the exact Charm decay factor.
