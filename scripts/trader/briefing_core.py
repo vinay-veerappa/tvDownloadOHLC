@@ -2798,6 +2798,25 @@ def build_premarket_context(
     sections.append(_format_news_block(headlines))
     sections.append(_format_caution_score_block(caution))
 
+    # ICT feature blocks (KZ pivots from overnight, IPDA, gaps as magnets)
+    try:
+        from scripts.trader.signals.intraday_blocks import (
+            _format_kz_pivots_block,
+            _format_ipda_block,
+            _format_silver_bullet_block,
+            _format_macro_block,
+            _format_gaps_block,
+        )
+        import pytz as _pytz
+        now_et = datetime.now(_pytz.timezone("America/New_York"))
+        sections.append(_format_kz_pivots_block(nq_ticker, nq_spot, "PREMARKET"))
+        sections.append(_format_ipda_block(nq_ticker, nq_spot))
+        sections.append(_format_silver_bullet_block(now_et))
+        sections.append(_format_macro_block(now_et))
+        sections.append(_format_gaps_block(nq_ticker, nq_spot))
+    except Exception as e:
+        log.warning("[premarket] ICT feature blocks failed: %s", e)
+
     return "\n\n".join(sections)
 
 
@@ -3049,6 +3068,27 @@ def build_ticker_cheat_sheet(
         sections.append(_format_ict_block(base_label, ict, ticker_spot))
     except Exception as e:
         log.warning("[cheat_sheet] ICT context failed for %s: %s", ticker, e)
+
+    # ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps)
+    try:
+        from scripts.trader.signals.intraday_blocks import (
+            _format_kz_pivots_block,
+            _format_ipda_block,
+            _format_silver_bullet_block,
+            _format_macro_block,
+            _format_imbalance_block,
+            _format_gaps_block,
+        )
+        import pytz as _pytz
+        now_et = datetime.now(_pytz.timezone("America/New_York"))
+        sections.append(_format_kz_pivots_block(ticker, ticker_spot, "OPEN"))
+        sections.append(_format_ipda_block(ticker, ticker_spot))
+        sections.append(_format_silver_bullet_block(now_et))
+        sections.append(_format_macro_block(now_et))
+        sections.append(_format_imbalance_block(ticker, ticker_spot, target_date, now_et))
+        sections.append(_format_gaps_block(ticker, ticker_spot))
+    except Exception as e:
+        log.warning("[cheat_sheet] ICT feature blocks failed for %s: %s", ticker, e)
 
     # Candle Science
     try:
@@ -3502,6 +3542,28 @@ def build_eod_context(
             pass
     except Exception as e:
         log.warning("[eod] Bias grade recording failed: %s", e)
+
+    # ── ICT Feature Blocks (forward-looking: unfilled gaps, imbalances, KZ pivots, IPDA) ──
+    try:
+        from scripts.trader.signals.intraday_blocks import (
+            _format_kz_pivots_block,
+            _format_ipda_block,
+            _format_imbalance_block,
+            _format_gaps_block,
+        )
+        import pytz
+        now_et = datetime.now(pytz.timezone("America/New_York"))
+        ticker_close = 0.0
+        if df_t is not None and not df_t.empty:
+            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
+            if not rth.empty:
+                ticker_close = float(rth["close"].iloc[-1])
+        sections.append(_format_kz_pivots_block(ticker, ticker_close, "CLOSE"))
+        sections.append(_format_ipda_block(ticker, ticker_close))
+        sections.append(_format_imbalance_block(ticker, ticker_close, target_date, now_et))
+        sections.append(_format_gaps_block(ticker, ticker_close))
+    except Exception as e:
+        log.warning("[eod] ICT feature blocks failed: %s", e)
 
     # ── ICT Dealing Range outcome ──
     try:
