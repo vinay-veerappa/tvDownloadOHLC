@@ -696,6 +696,95 @@ def _format_smt_block(ticker: str, session_date: date | None = None, now_et: Any
         return "== SMT DIVERGENCE (NQ vs ES) ==\nSMT data unavailable"
 
 
+def _format_delivery_triad_block(ticker: str, ticker_current: float, session_date: date | None = None, now_et: Any = None) -> str:
+    """Market Delivery Triad — determines if market is in I2E or E2I mode.
+
+    I2E (Internal to External): price just filled/mitigated an FVG -> next draw is external liquidity (BSL/SSL).
+    E2I (External to Internal): price just swept external liquidity -> next draw is internal imbalance (FVG).
+
+    Uses the imbalance parquet (FVGs) and liquidity parquet (BSL/SSL) to determine the most recent event type.
+    """
+    try:
+        from scripts.trader.signals.ict_data_loader import load_imbalances, load_liquidity
+
+        # Load today's data
+        imb = load_imbalances(ticker, "5m", auto_refresh=True, session_date=session_date)
+        liq = load_liquidity(ticker, "1h", auto_refresh=True, session_date=session_date)
+
+        if now_et is not None:
+            now_naive = now_et.replace(tzinfo=None) if hasattr(now_et, 'tzinfo') and now_et.tzinfo else now_et
+            if not imb.empty:
+                imb = imb[imb.index <= now_naive]
+            if not liq.empty:
+                liq = liq[liq.index <= now_naive]
+
+        lines = ["== ICT DELIVERY TRIAD (I2E / E2I) =="]
+
+        # Find the most recent FVG event
+        recent_fvg_time = None
+        recent_fvg_type = None
+        if not imb.empty:
+            fvgs = imb[imb["fvg_type"] != 0]
+            if not fvgs.empty:
+                last_fvg = fvgs.iloc[-1]
+                recent_fvg_time = last_fvg.name
+                recent_fvg_type = "bullish" if last_fvg["fvg_type"] == 1 else "bearish"
+
+        # Find the most recent liquidity sweep (a BSL/SSL where price pierced then reversed)
+        # For simplicity, we check if the latest liquidity pool is near current price (suggesting a sweep)
+        recent_liq_time = None
+        recent_liq_kind = None
+        recent_liq_level = None
+        if not liq.empty:
+            last_liq = liq.iloc[-1]
+            recent_liq_time = last_liq.name
+            recent_liq_kind = last_liq["liq_kind"]
+            recent_liq_level = last_liq["liq_level"]
+
+        # Determine mode: whichever happened more recently
+        if recent_fvg_time is None and recent_liq_time is None:
+            lines.append("No FVG or liquidity events detected yet — no delivery triad signal.")
+            return "\n".join(lines)
+
+        fvg_ts = recent_fvg_time.to_pydatetime() if hasattr(recent_fvg_time, 'to_pydatetime') else recent_fvg_time
+        liq_ts = recent_liq_time.to_pydatetime() if hasattr(recent_liq_time, 'to_pydatetime') else recent_liq_time
+
+        # Strip timezone for comparison
+        if hasattr(fvg_ts, 'replace'):
+            fvg_ts = fvg_ts.replace(tzinfo=None)
+        if hasattr(liq_ts, 'replace'):
+            liq_ts = liq_ts.replace(tzinfo=None)
+
+        if recent_fvg_time and (recent_liq_time is None or fvg_ts > liq_ts):
+            # FVG happened more recently -> I2E mode (price filled an FVG, now seeking liquidity)
+            lines.append(f"Mode: I2E (Internal -> External)")
+            lines.append(f"  Most recent: {recent_fvg_type} FVG @ {recent_fvg_time.strftime('%H:%M')}")
+            lines.append(f"  Price just rebalanced an imbalance -> next draw is external liquidity")
+            if recent_liq_level and ticker_current > 0:
+                if recent_liq_kind in ("BSL", "EQH") and recent_liq_level > ticker_current:
+                    lines.append(f"  Target: BSL at {recent_liq_level:,.2f} ({abs(recent_liq_level - ticker_current):,.2f} above)")
+                elif recent_liq_kind in ("SSL", "EQL") and recent_liq_level < ticker_current:
+                    lines.append(f"  Target: SSL at {recent_liq_level:,.2f} ({abs(ticker_current - recent_liq_level):,.2f} below)")
+        elif recent_liq_time:
+            # Liquidity happened more recently -> E2I mode (price swept liquidity, now seeking FVG)
+            lines.append(f"Mode: E2I (External -> Internal)")
+            lines.append(f"  Most recent: {recent_liq_kind} at {recent_liq_level:,.2f} @ {recent_liq_time.strftime('%H:%M')}")
+            lines.append(f"  Price just swept external liquidity -> next draw is an internal imbalance (FVG)")
+            if not imb.empty:
+                fvgs = imb[imb["fvg_type"] != 0]
+                if not fvgs.empty:
+                    last_fvg = fvgs.iloc[-1]
+                    fvg_mid = (last_fvg["fvg_top"] + last_fvg["fvg_bottom"]) / 2
+                    fvg_dir = "bullish" if last_fvg["fvg_type"] == 1 else "bearish"
+                    dist = abs(ticker_current - fvg_mid) if ticker_current > 0 else 0
+                    lines.append(f"  Target: {fvg_dir} FVG at {last_fvg['fvg_bottom']:,.2f}-{last_fvg['fvg_top']:,.2f} ({dist:,.2f} away)")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[delivery_triad] Failed: %s", e)
+        return "== ICT DELIVERY TRIAD ==\nDelivery triad data unavailable"
+
+
 def _format_ict_features_block(
     ticker: str,
     ticker_current: float,
@@ -718,6 +807,7 @@ def _format_ict_features_block(
     blocks.append(_format_ob_block(ticker, ticker_current, target_date, now_et))
     blocks.append(_format_imbalance_block(ticker, ticker_current, target_date, now_et))
     blocks.append(_format_liquidity_block(ticker, ticker_current, target_date, now_et))
+    blocks.append(_format_delivery_triad_block(ticker, ticker_current, target_date, now_et))
     blocks.append(_format_smt_block(ticker, target_date, now_et))
     blocks.append(_format_gaps_block(ticker, ticker_current))
     return [b for b in blocks if b]

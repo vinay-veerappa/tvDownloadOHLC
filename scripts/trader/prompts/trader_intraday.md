@@ -189,6 +189,13 @@ SMT DIVERGENCE GUIDE (NQ vs ES):
 - SMT is NOT a standalone signal. It requires confluence with key levels, killzones, or PD arrays.
 - SMT at weekly/daily highs/lows is the highest probability.
 
+ICT DELIVERY TRIAD GUIDE (I2E / E2I):
+- The market alternates between seeking liquidity and rebalancing imbalances.
+- I2E (Internal to External): price just filled/rebalanced an FVG -> next draw is external liquidity (BSL/SSL). The market will seek the nearest untaken liquidity pool.
+- E2I (External to Internal): price just swept external liquidity (BSL/SSL) -> next draw is an internal imbalance (FVG). The market will seek the nearest unfilled FVG.
+- If the cheat sheet says "Mode: I2E", expect price to move toward the nearest BSL/SSL target.
+- If the cheat sheet says "Mode: E2I", expect price to move toward the nearest FVG to rebalance.
+
 RANGE STACK GUIDE (multi-timeframe range detection):
 - The range stack shows active ranges from micro (5 min) to daily, letting you see the full picture.
 - Micro (5m/15m/30m): Short-term chop. Breakout from these = scalp entry signal. TIGHT micro range + compression = expansion imminent.
