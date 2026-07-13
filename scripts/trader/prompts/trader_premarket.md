@@ -32,6 +32,17 @@ OVERNIGHT TRAJECTORY GUIDE:
 - "Steady decline" = persistent offer, likely gap down open.
 - "Chop / rangebound" = no conviction, wait for RTH to resolve.
 
+ICT GAPS GUIDE (premarket):
+- If the cheat sheet shows an NDOG or NWOG, note the gap direction and whether it's filled.
+- Unfilled overnight gaps = the primary magnet for the RTH open. Price tends to return to fill.
+- Gap CE (50% midpoint) = the target if price fills the gap.
+- An unfilled bullish gap provides morning support; an unfilled bearish gap provides morning resistance.
+
+ICT KILLZONE PIVOTS GUIDE (premarket):
+- Asia and London killzone H/L from the overnight session are the sweep targets for the RTH open.
+- If price is trading below London low, that low is resistance for the open.
+- If price is trading above Asia high, that high is support for the open.
+
 CLASSIFICATION GUIDE (day-type abbreviations in the cheat sheet):
 - R1 = Range 1 / Time Spent: Price stays in or retests the 09:30 Opening Range. Neutral, rotational, churning day.
 - R2 = Range 2 / Reversal: Failed expansion. Price breaks out of OR, fails, and returns to the range after 11:00 ET. Trapped traders, mean reversion.

@@ -16,7 +16,10 @@ SESSION-SPECIFIC INSTRUCTIONS:
 ASIA session (18:00-02:00 ET):
 - Opens with the overnight globex trajectory and prior EOD context.
 - Notes the Asia range size (small = trend continuation, large = mean reversion).
-- Identifies key levels (GEX walls, ICT dealing range, BSL/SSL) for the overnight.
+- Identifies key levels: GEX walls, ICT dealing range, killzone pivots, IPDA ranges.
+- Notes any overnight imbalances (FVGs/VIs) that are near current price.
+- Checks for active Silver Bullet window or upcoming macro.
+- Flags any unfilled gaps as magnet levels for the overnight.
 - Flags tomorrow's calendar events.
 - Ends with "What to watch for London" — 1-2 sentences on London open scenarios.
 
@@ -24,26 +27,38 @@ LONDON session (02:00-08:30 ET):
 - Opens with the Asia box (complete) and London box (forming).
 - Notes the Pre-London sweep status (did PL sweep Asia? → continuation edge).
 - Reads the London Opening Range (02:00-03:00) breakout direction.
-- Notes the ALN pattern (partial) and ICT dealing range.
+- Notes the ALN pattern (partial), ICT dealing range, and killzone pivots.
+- Notes the London Silver Bullet window (03:00-04:00) and London macros.
+- Identifies imbalances (FVGs/VIs) forming during the London session.
+- Checks for unfilled gaps that price may be drawn to.
 - Ends with "What to watch for NY" — 1-2 sentences on the Pre-NY sweep setup.
 
 NY AM session (09:30-11:30 ET):
 - Opens with where price is right now — RTH open→current, session direction.
 - Notes the Herman Pre-NY sweep result (DOMINANT signal: 86.4% bullish / 77.9% bearish).
 - Checks IB status (forming or broken) and ALN resolution.
-- Notes ICT dealing range and whether the liquidity raid target was already swept.
+- Notes ICT dealing range, killzone pivots, and IPDA position.
+- Highlights the Silver Bullet window (10:00-11:00) if active — look for sweep + FVG entry.
+- Notes ICT macros (09:50-10:10, 10:50-11:10) as high-probability timing windows.
+- Identifies FVGs/VIs near price as entry targets or magnets.
+- Checks whether the liquidity raid target was already swept.
 - Ends with "AM setup" — 1-2 sentences on the morning bias.
 
 NY LUNCH session (11:30-13:30 ET):
 - Notes the session so far and IB status.
 - Identifies the lunch range (12:00-13:00) forming — this sets PM direction.
 - Notes that lunch fade reversals are low probability (~40%).
+- Checks for the lunch macro (13:10-13:40) as the next active window.
+- Notes any unfilled FVGs from the AM session as PM targets.
 - Ends with "PM setup" — 1-2 sentences on what the lunch range breakout would mean.
 
 NY PM session (13:30-16:00 ET):
 - Opens with the session direction and lunch range breakout result.
 - Notes the noon curve (opposite side of AM range taken?).
+- Highlights the PM Silver Bullet window (14:00-15:00) if active.
+- Notes the last hour macro (15:15-15:45) as the final high-probability window.
 - Checks ICT dealing range — was BSL/SSL swept?
+- Identifies any remaining unfilled FVGs as end-of-day magnets.
 - Notes the 15:00 ET trend-close hour tendency.
 - Ends with "Close watch" — 1-2 sentences on the most likely close path.
 
@@ -104,13 +119,49 @@ ICT LIQUIDITY MAP GUIDE:
 - If the cheat sheet says "ALREADY SWEPT", the raid has happened — the real move is what matters now.
 - "Level equality" = when session highs/lows are relatively equal, raid probability is higher.
 
-ICT KILLZONE CONTEXT (from cheat sheet):
-- Asia (20:00-00:00): Consolidation range, sets up London. Asia H/L become London sweep targets.
-- London KZ (02:00-05:00): High-probability reversal window. Silver Bullet 03:00-04:00.
-- NY AM KZ (09:30-11:00): Primary day trading session. Silver Bullet 10:00-11:00.
-- NY Lunch (12:00-13:00): Low volume, manipulation zone. Avoid new entries.
-- NY PM KZ (13:30-16:00): Second high-probability window. Silver Bullet 14:00-15:00.
-- ICT Macros: 09:50-10:10, 10:50-11:10, 13:10-13:40, 15:15-15:45, 02:33-03:00, 04:03-04:30.
+ICT KILLZONE PIVOTS GUIDE:
+- These are today's actual killzone H/L levels — Asia (20:00-00:00), London (02:00-05:00), NY AM (08:30-11:00).
+- When price is BELOW a killzone range, that zone's low becomes resistance (overhead supply).
+- When price is ABOVE a killzone range, that zone's high becomes support (underlying demand).
+- Killzone mids (50% of range) are equilibrium levels — price tends to gravitate toward them.
+- Asia H/L are London's sweep targets. London H/L are NY's sweep targets. NY AM H/L are PM's targets.
+- If price has broken below Asia low, Asia mid is the first resistance level to watch.
+
+IPDA 20/40/60 GUIDE (multi-day rolling ranges):
+- These are 20/40/60-day rolling dealing ranges — NOT the daily PDH/PDL dealing range.
+- IPDA-20 = short-term institutional range. IPDA-40 = intermediate. IPDA-60 = full cycle.
+- Premium (>50%) = price in upper half of multi-day range. Longs have poor R:R at these levels.
+- Discount (<50%) = price in lower half. Shorts have poor R:R at these levels.
+- When all 3 IPDA ranges agree on premium/discount, conviction is higher.
+- If IPDA-20 says discount but IPDA-60 says premium, the short-term is more relevant for intraday.
+
+SILVER BULLET GUIDE:
+- If "IN WINDOW": You are inside a high-probability entry window. Look for: (1) HTF bias direction, (2) liquidity sweep against the bias, (3) displacement candle, (4) FVG entry. One trade per window.
+- If "Next: X at HH:MM": The next window is coming. Prepare the bias and sweep levels to watch.
+- Silver Bullet windows: London 03:00-04:00, NY AM 10:00-11:00, NY PM 14:00-15:00.
+
+ICT MACROS GUIDE:
+- Macros are 20-30 minute windows when institutional algorithms are most active.
+- High probability for liquidity sweeps, FVG formations, and displacement moves.
+- If "IN MACRO": expect heightened algorithmic activity — watch for sudden displacement + FVG formation.
+- If "Next macro: X at HH:MM": prepare for the next active window.
+- Key macros: 09:50-10:10 (NY Morning), 10:50-11:10 (Mid-Morning), 13:10-13:40 (Lunch), 15:15-15:45 (Last Hour).
+
+ICT IMBALANCES GUIDE (FVG + Volume Imbalances):
+- Fair Value Gaps (FVG): 3-bar price imbalances where wicks don't overlap. These are "gaps" that price tends to return and fill. Bullish FVG = support below price. Bearish FVG = resistance above price.
+- Volume Imbalances (VI): Gaps between candle *bodies* (close-to-open). Smaller than FVGs but same principle — price tends to revisit them.
+- "(NEAR)" tag = the imbalance is within 0.25% of current price and likely to be tested soon.
+- Unfilled imbalances near price act as magnets — price tends to get drawn to them.
+- If multiple FVGs stack in the same price zone, that zone is a high-probability target.
+
+ICT GAPS GUIDE (NWOG/NDOG/RTH):
+- NDOG = New Day Opening Gap (overnight gap from prior close to 18:00 ET open).
+- NWOG = New Week Opening Gap (Sunday/Monday open gap from Friday close).
+- RTH_GAP = Regular Trading Hours gap (09:30 open vs prior day 16:15 close).
+- "[FILLED]" = price has returned to fill the gap. No longer a magnet.
+- "[UNFILLED]" = gap is still open. Unfilled gaps act as magnets — price tends to get drawn back to fill them.
+- Gap CE (Consequent Encroachment) = 50% midpoint of the gap. This is the primary target if price fills the gap.
+- Recent unfilled gaps are listed as "magnet levels" — these are price targets the market may gravitate toward.
 
 RANGE STACK GUIDE (multi-timeframe range detection):
 - The range stack shows active ranges from micro (5 min) to daily, letting you see the full picture.

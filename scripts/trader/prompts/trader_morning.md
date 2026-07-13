@@ -37,6 +37,19 @@ ICT DEALING RANGE GUIDE:
 - SSL (Sell-Side Liquidity) below PDL = target for bears, liquidity to be swept.
 - Midnight open is the dealing range midpoint — price above = premium, below = discount.
 
+ICT GAPS GUIDE:
+- If the cheat sheet shows an NDOG (New Day Opening Gap), note whether it's filled or unfilled.
+- Unfilled gaps act as magnets — price tends to return to fill them during the session.
+- Gap CE (Consequent Encroachment) = 50% midpoint = the primary target if price fills.
+- An unfilled bullish gap (open above prior close) = bullish bias support until filled.
+- An unfilled bearish gap (open below prior close) = bearish bias resistance until filled.
+
+ICT IMBALANCES GUIDE:
+- Fair Value Gaps (FVG) near the open price are the first targets for the RTH session.
+- Volume Imbalances (VI) are smaller body-level gaps — same magnet principle.
+- "(NEAR)" tag = within 0.25% of current price, likely to be tested in the AM session.
+- Multiple stacked FVGs in the same zone = high-probability target.
+
 CANDLE SCIENCE GUIDE:
 - C1→C2→C3 pattern match tells you what today's daily candle usually does given the last 2 days.
 - P(C3 Bull) > 60% with edge > 10% = high conviction directional read.

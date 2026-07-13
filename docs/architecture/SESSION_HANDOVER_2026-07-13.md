@@ -2,7 +2,7 @@
 
 > **Date:** 2026-07-13
 > **Commit:** `76a8200e` on `main` (pushed to GitHub)
-> **Status:** Session-adaptive intraday + multi-TF range detection + ICT integration complete and committed
+> **Status:** Session-adaptive intraday + multi-TF range detection + ICT Phase 1 complete (library v1.3.0 + derived data pipeline + narrative integration)
 
 ---
 
@@ -163,38 +163,56 @@ Requires Ollama running (`start_llm.bat`).
 
 ## Next Steps (Priority Order)
 
-### 1. ICT Expansion (user's stated next priority)
-Documented as TODOs in `_format_ict_block()` in `intraday_blocks.py`:
-- ICT Killzone pivots (AS.H/AS.L, LO.H/LO.L, NYAM.H/NYAM.L)
-- ICT Silver Bullet windows (10:00-11:00, 14:00-15:00, 03:00-04:00)
-- ICT Macros (09:50-10:10, 10:50-11:10, 13:10-13:40, 15:15-15:45, 02:33-03:00, 04:03-04:30)
-- ICT FVG (Fair Value Gap) detection from 1m/5m data
-- ICT Order Block detection
+### 1. ICT Phase 1 — COMPLETE ✅ (2026-07-13)
+
+All Phase 1 items completed in this session:
+
+**Library fixes (`ict_engine` v1.3.0):**
+- `detect_ipda_ranges()` — IPDA 20/40/60 rolling dealing ranges
+- `get_silver_bullet_data()` + `SILVER_BULLETS` dict — Silver Bullet window detection
+- `detect_fvg()` rewritten as canonical implementation (merged `detect_fvgs_v5`)
+- `detect_volume_imbalance()` enhanced with `resample_rule` + `vi_finalized_time`
+- `detect_gap_fills()` — tracks when NWOG/NDOG/RTH gaps get filled
+- `nqstats.ib.detect_fvgs_v5` now delegates to library
+
+**Derived data pipeline (`scripts/context/compute_ict_features.py`):**
+- `{sym}_imbalance_{tf}.parquet` — FVG + VI at 4 timeframes (5m/15m/1h/4h)
+- `{sym}_gaps.parquet` — NWOG + NDOG + RTH gaps with fill tracking
+- `{sym}_kz_pivots.parquet` — Killzone pivots (AS/LO/NYAM H/L/mid/range)
+- `{sym}_ipda.parquet` — IPDA 20/40/60 rolling ranges
+- `{sym}_htf_levels.parquet` — PDH/PDL/PWH/PWL/PMH/PML
+
+**Narrative integration:**
+- `scripts/trader/signals/ict_data_loader.py` — freshness-aware parquet loader with auto-refresh
+- `ict_context.py:compute_ict_from_htf` now delegates to `ict_data_loader`
+- 6 new ICT feature blocks in `intraday_blocks.py`: KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps
+- All 5 session builders updated with dynamic ICT feature blocks (replaced static text)
+
+### 2. ICT Phase 2 (remaining items)
+- ICT Order Block detection — `detect_orderblock()` exists in library, needs pipeline + narrative block
 - ICT Judas Swing detection (sweep of Midnight Open during London/Pre-Market)
-- ICT Market Structure Shift (MSS) / Break of Structure (BOS) on daily/weekly
+- ICT MSS/BOS — `detect_structure_breaks()` exists, needs pipeline + narrative block
 - ICT Draw on Liquidity (DOL): proximity to BSL/SSL pools
 - ICT Market Delivery Triad: I2E vs E2I
-- ICT IPDA 20/40/60 ranges (rolling daily high/low/equilibrium)
-- SMT Divergence (NQ vs ES)
+- SMT Divergence — `detect_smt()` exists, needs pipeline + narrative block
 - PineScript indicator for range detection
 
-Reference docs:
-- `docs/trading/ICT_CONCEPTS_KB.md` — full ICT reference (sessions, killzones, macros, Silver Bullets, PD arrays, bias models)
-- `docs/library/ict/ICT_DAILY_BIAS_MODELS.md` — 4 bias models (IOF, DOL, Delivery Triad, Premium/Discount)
-- `docs/library/ict/ICT_SPEC_V1.md` — ICT engine spec
-
-### 2. Asia/London IB Computation
+### 3. Asia/London IB Computation
 - Currently only NY RTH IB is computed (via NQStatsEngine)
 - User wants IB during Asia and London sessions — separate conversation needed
 - Requires defining IB windows for each session
 
-### 3. Range Detection Expansion
+### 4. Range Detection Expansion
 - Integrate DAILY_3, DAILY_5, WEEKLY, WEEKLY_2 into EOD and weekly narratives
 - PineScript indicator for range stack visualization
 
-### 4. Live Testing
+### 5. Live Testing
 - Run intraday narrative during each session (Asia, London, NY AM, Lunch, PM) with live data to validate all blocks produce meaningful output
 - Verify the LLM narratives read well for each session type
+
+### 6. Cleanup
+- Remove old FVG-only parquets (`{sym}_fvg_{tf}.parquet`) once all consumers migrated to imbalance files
+- Update prompt templates to reference new ICT blocks (Step 5 of Phase 1)
 
 ---
 

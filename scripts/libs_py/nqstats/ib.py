@@ -9,6 +9,19 @@ import pytz
 from datetime import time, datetime, timedelta
 from typing import Dict, Any, Tuple, Optional, List
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.libs_py.nqstats.sessions import (
     get_logical_trading_date,
     get_dst_flags,
@@ -39,77 +52,29 @@ SESSION_CONFIGS_V5 = {
 
 
 def detect_fvgs_vectorized(df: pd.DataFrame, timeframe: str = '5min') -> pd.DataFrame:
-    """Detects 3-bar Fair Value Gaps on a fixed timeframe (vectorized)."""
-    resampled = df[['high', 'low']].resample(timeframe, origin='start_day').agg({
-        'high': 'max',
-        'low': 'min'
-    })
+    """Detects 3-bar Fair Value Gaps on a fixed timeframe (vectorized).
     
-    high_1 = resampled['high'].shift(2)
-    low_1 = resampled['low'].shift(2)
-    high_3 = resampled['high']
-    low_3 = resampled['low']
-    
-    bull_mask = (high_1 < low_3) & high_1.notna() & low_3.notna()
-    bear_mask = (low_1 > high_3) & low_1.notna() & high_3.notna()
-    
-    fvg = pd.DataFrame(index=resampled.index)
-    fvg['fvg_type'] = 0
-    fvg.loc[bull_mask, 'fvg_type'] = 1
-    fvg.loc[bear_mask, 'fvg_type'] = -1
-    
-    fvg['fvg_top'] = np.nan
-    fvg['fvg_bottom'] = np.nan
-    fvg.loc[bull_mask, 'fvg_top'] = low_3
-    fvg.loc[bull_mask, 'fvg_bottom'] = high_1
-    fvg.loc[bear_mask, 'fvg_top'] = low_1
-    fvg.loc[bear_mask, 'fvg_bottom'] = high_3
-    
-    return fvg.reindex(df.index, method='ffill')
+    .. deprecated::
+        Wrapper around ``ict_engine.core.pa.detect_fvg`` (the canonical
+        library implementation). Kept for backward compatibility.
+    """
+    from scripts.libs_py.ict_engine import detect_fvg
+    return detect_fvg(df, resample_rule=timeframe)
+
 
 def detect_fvgs_v5(df: pd.DataFrame, timeframe: str = '5min') -> pd.DataFrame:
-    """
-    Detects 3-bar Fair Value Gaps on a fixed timeframe (vectorized) for v5.
-    Returns a DataFrame with columns: fvg_type, fvg_top, fvg_bottom, fvg_finalized_time.
-    """
-    resampled = df[['high', 'low']].resample(timeframe, origin='start_day').agg({
-        'high': 'max',
-        'low': 'min'
-    })
-    
-    high_1 = resampled['high'].shift(2)
-    low_1 = resampled['low'].shift(2)
-    high_3 = resampled['high']
-    low_3 = resampled['low']
-    
-    bull_mask = (high_1 < low_3) & (high_1.notna()) & (low_3.notna())
-    bear_mask = (low_1 > high_3) & (low_1.notna()) & (high_3.notna())
-    
-    fvg = pd.DataFrame(index=resampled.index)
-    fvg['fvg_type'] = 0
-    fvg.loc[bull_mask, 'fvg_type'] = 1
-    fvg.loc[bear_mask, 'fvg_type'] = -1
-    
-    fvg['fvg_top'] = np.nan
-    fvg['fvg_bottom'] = np.nan
-    fvg['fvg_low'] = np.nan
-    fvg['fvg_high'] = np.nan
+    """Detects 3-bar Fair Value Gaps on a fixed timeframe (vectorized) for v5.
 
-    # Capture the full 3-bar pattern extremes used for IFVG invalidation and hold checks.
-    three_bar_low = pd.concat([resampled['low'], resampled['low'].shift(1), resampled['low'].shift(2)], axis=1).min(axis=1)
-    three_bar_high = pd.concat([resampled['high'], resampled['high'].shift(1), resampled['high'].shift(2)], axis=1).max(axis=1)
+    Returns a DataFrame with columns: fvg_type, fvg_top, fvg_bottom,
+    fvg_finalized_time, fvg_low, fvg_high.
 
-    fvg.loc[bull_mask, 'fvg_top'] = low_3
-    fvg.loc[bull_mask, 'fvg_bottom'] = high_1
-    fvg.loc[bull_mask, 'fvg_low'] = three_bar_low
-    fvg.loc[bull_mask, 'fvg_high'] = three_bar_high
-    fvg.loc[bear_mask, 'fvg_top'] = low_1
-    fvg.loc[bear_mask, 'fvg_bottom'] = high_3
-    fvg.loc[bear_mask, 'fvg_low'] = three_bar_low
-    fvg.loc[bear_mask, 'fvg_high'] = three_bar_high
-    
-    fvg['fvg_finalized_time'] = fvg.index + pd.Timedelta(timeframe)
-    return fvg
+    .. note::
+        Now delegates to ``ict_engine.core.pa.detect_fvg`` (the canonical
+        library implementation). The schema is identical so all existing
+        callers work unchanged.
+    """
+    from scripts.libs_py.ict_engine import detect_fvg
+    return detect_fvg(df, resample_rule=timeframe)
 
 def calculate_streaks(series: pd.Series) -> pd.Series:
     """Calculates signed streak lengths (positive for 1s, negative for -1s, 0 resets)."""

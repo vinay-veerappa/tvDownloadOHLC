@@ -1,7 +1,17 @@
-# ICT Unified Engine (V1.2.1) — Architecture & API Reference
+# ICT Unified Engine (V1.3.0) — Architecture & API Reference
 
 ## 1. Overview
 The `ict_engine` is a high-performance, vectorized Python library designed to detect ICT (Inner Circle Trader) and SMC (Smart Money Concepts) patterns. It is built as a **"Clean Architecture"** middleware that bridges raw market data (Parquet/OHLC) with algorithmic strategies.
+
+**v1.3.0 changes:**
+- `detect_fvg()` rewritten as canonical FVG implementation (merged from `nqstats.ib.detect_fvgs_v5`)
+- `detect_volume_imbalance()` enhanced with `resample_rule` param + `vi_finalized_time` column
+- `detect_ipda_ranges()` added — IPDA 20/40/60 rolling dealing ranges
+- `get_silver_bullet_data()` added — Silver Bullet window detection
+- `SILVER_BULLETS` constant dict added
+- `detect_gap_fills()` added — tracks when NWOG/NDOG/RTH gaps get filled
+- `get_gap_consequent_encroachment()` fixed (removed erroneous `@validate_ohlc` decorator)
+- `nqstats.ib.detect_fvgs_v5` and `detect_fvgs_vectorized` are now thin wrappers delegating to `ict_engine.pa.detect_fvg`
 
 ## 2. Architecture & Data Flow
 The engine follows a strict **Pipe-and-Filter** pattern:
@@ -32,8 +42,9 @@ graph TD;
   - **Output**: Normalized lowercase OHLC DataFrame.
 
 ### 3.2 Price Action Core (`pa.py`)
-- **`detect_fvg(ohlc, join_consecutive=False)`**
-  - **Output**: `pd.DataFrame` columns: `fvg` (1/-1), `top`, `bottom`.
+- **`detect_fvg(ohlc, join_consecutive=False, require_candle_direction=False, resample_rule=None)`**
+  - **Output**: `pd.DataFrame` columns: `fvg_type` (1/-1/0), `fvg_top`, `fvg_bottom`, `fvg_low`, `fvg_high`, `fvg_finalized_time`.
+  - **Description**: Canonical 3-bar Fair Value Gap detection. Supports optional resampling, consecutive gap merging, and candle direction filtering. `nqstats.ib.detect_fvgs_v5` delegates to this.
 - **`detect_inversion_fvg(ohlc, fvg_df)`**
   - **Output**: `pd.DataFrame` columns: `ifvg` (1/-1), `top`, `bottom`.
 - **`detect_bpr(fvg_bull, fvg_bear)`**
@@ -49,8 +60,9 @@ graph TD;
     - `SSL`: Swing Low.
     - `EQH`: Equal Highs (cluster of 2+).
     - `EQL`: Equal Lows (cluster of 2+).
-- **`detect_volume_imbalance(ohlc)`**
-  - **Output**: `pd.DataFrame` columns: `vi` (1/-1), `top`, `bottom`.
+- **`detect_volume_imbalance(ohlc, resample_rule=None)`**
+  - **Output**: `pd.DataFrame` columns: `vi_type` (1/-1/0), `vi_top`, `vi_bottom`, `vi_finalized_time`.
+  - **Description**: Detects gaps between the *bodies* of consecutive candles (Close[i-1] vs Open[i]).
 - **`detect_liquidity_void(ohlc)`**
   - **Output**: `pd.DataFrame` columns: `void` (1/0), `top`, `bottom`.
 - **`detect_first_fvg_per_hour(ohlc, fvg_df)`**
@@ -63,6 +75,11 @@ graph TD;
   - **Output**: `pd.DataFrame` columns: `nwog`, `ndog`, `gap_top`, `gap_bottom`.
 - **`detect_rth_gaps(ohlc, ticker="ES1")`**
   - **Output**: `pd.DataFrame` columns: `rth_gap`, `gap_top`, `gap_bottom`.
+- **`detect_gap_fills(ohlc, gaps_df)`**
+  - **Output**: `pd.DataFrame` columns: `filled` (1/0), `fill_time`, `fill_price`.
+  - **Description**: Tracks when opening gaps get filled by subsequent price movement.
+- **`get_gap_consequent_encroachment(gaps_df)`**
+  - **Output**: `pd.Series` — 50% midpoint of detected gaps.
 
 ### 3.3 Structure Engine (`structure.py`)
 - **`detect_swings(ohlc, swing_length=5)`**
@@ -84,8 +101,14 @@ graph TD;
   - **Output**: `pd.DataFrame` columns: `active`, `session_high`, `session_low`.
 - **`get_macro_data(ohlc, macro_name)`**
   - **Output**: `pd.DataFrame` columns: `active`, `macro_high`, `macro_low`.
+- **`get_silver_bullet_data(ohlc, bullet_name)`**
+  - **Output**: `pd.DataFrame` columns: `active`, `sb_high`, `sb_low`.
+  - **Description**: Vectorized Silver Bullet window detection. Windows: `london_sb` (03:00-04:00), `ny_am_sb` (10:00-11:00), `ny_pm_sb` (14:00-15:00).
 - **`detect_htf_levels(ohlc)`**
-  - **Output**: `pd.DataFrame` columns: `pdh`, `pdl`, `pwh`, `pwl`, `pmh`, `pml`.
+  - **Output**: `pd.DataFrame` columns: `pdh`, `pdl`, `pdm`, `pwh`, `pwl`, `pwm`, `pmh`, `pml`, `pmm`.
+- **`detect_ipda_ranges(ohlc)`**
+  - **Output**: `pd.DataFrame` columns: `ipda20_high`, `ipda20_low`, `ipda20_eq`, `ipda20_pct`, `ipda40_*`, `ipda60_*`.
+  - **Description**: IPDA 20/40/60 rolling dealing ranges. Each shifts daily (excludes current bar). Position pct = (close - low) / (high - low) * 100.
 - **`detect_dealing_range(ohlc, swings)`**
   - **Output**: `pd.DataFrame` columns: `equilibrium`, `is_discount`, `is_premium`.
 

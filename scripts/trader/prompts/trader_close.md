@@ -24,6 +24,16 @@ ICT DEALING RANGE GUIDE (close review):
 - BSL (buy-side liquidity) above PDH = buy stops that were swept or held. If swept, bullish raid succeeded.
 - SSL (sell-side liquidity) below PDL = sell stops that were swept or held. If swept, bearish raid succeeded.
 
+ICT GAPS OUTCOME GUIDE (close review):
+- Check if today's gaps were filled or remain unfilled.
+- Unfilled gaps at close = magnet levels for tomorrow's session. Price tends to return to fill them.
+- A gap that was filled today = no longer a magnet. Note whether price filled and reversed or filled and continued.
+
+ICT IMBALANCES OUTCOME GUIDE (close review):
+- Unfilled FVGs from today's session = magnet levels for tomorrow.
+- Note which imbalances were tagged "(NEAR)" — these are the most likely to be tested first tomorrow.
+- If multiple FVGs stack near the close price, that zone is the primary target for tomorrow's open.
+
 CLASSIFICATION GUIDE (day-type abbreviations in the cheat sheet):
 - R1 = Range 1 / Time Spent: Price stays in or retests the 09:30 Opening Range. Neutral, rotational, churning day.
 - R2 = Range 2 / Reversal: Failed expansion. Price breaks out of OR, fails, and returns to the range after 11:00 ET. Trapped traders, mean reversion.

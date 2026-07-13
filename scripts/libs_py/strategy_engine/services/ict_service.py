@@ -381,12 +381,12 @@ class IctService:
         # Extract FVGs
         for idx in eval_indices:
             row_fvg = fvg_df.loc[idx]
-            fvg_val = row_fvg["fvg"]
+            fvg_val = row_fvg["fvg_type"]
             if pd.isna(fvg_val) or fvg_val == 0:
                 continue
 
-            top_val = float(row_fvg["top"])
-            bot_val = float(row_fvg["bottom"])
+            top_val = float(row_fvg["fvg_top"])
+            bot_val = float(row_fvg["fvg_bottom"])
             fvg_mid = (top_val + bot_val) / 2.0
             dist_pct = (fvg_mid - spot) / spot * 100.0
 

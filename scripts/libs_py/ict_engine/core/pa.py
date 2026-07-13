@@ -3,76 +3,165 @@ import numpy as np
 from .validation import validate_ohlc
 
 @validate_ohlc(input_type="ohlc")
-def detect_fvg(ohlc: pd.DataFrame, join_consecutive: bool = False) -> pd.DataFrame:
+def detect_fvg(
+    ohlc: pd.DataFrame,
+    join_consecutive: bool = False,
+    require_candle_direction: bool = False,
+    resample_rule: str | None = None,
+) -> pd.DataFrame:
+    """FVG — Fair Value Gap Detection (canonical implementation).
+
+    A 3-bar imbalance where the wicks of candle[i-2] and candle[i] do not
+    overlap.
+
+    Bullish FVG: ``high[i-2] < low[i]``  (gap above candle 1)
+    Bearish FVG: ``low[i-2] > high[i]``  (gap below candle 1)
+
+    Parameters
+    ----------
+    ohlc : pd.DataFrame
+        OHLC data. If ``resample_rule`` is supplied the data is resampled
+        first (e.g. ``"5min"``), otherwise FVGs are detected at the native
+        timeframe.
+    join_consecutive : bool
+        If True, merge adjacent FVGs of the same type into a single zone
+        (widest top, narrowest bottom for bullish; vice-versa for bearish).
+    require_candle_direction : bool
+        If True, require candle[i] to be bullish (close > open) for a
+        bullish FVG and bearish (close < open) for a bearish FVG. This
+        filters out gaps formed against the displacement direction.
+    resample_rule : str | None
+        Pandas resample rule (e.g. ``"5min"``, ``"15min"``). When set,
+        the OHLC data is resampled using ``origin="start_day"`` before
+        detection. The returned DataFrame is indexed at the resampled
+        timeframe (NOT reindexed back to the original 1m index).
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+        fvg_type            — 1 (bullish), -1 (bearish), 0 (none)
+        fvg_top             — upper bound of the gap
+        fvg_bottom          — lower bound of the gap
+        fvg_low             — 3-bar pattern low (for IFVG invalidation)
+        fvg_high            — 3-bar pattern high (for IFVG invalidation)
+        fvg_finalized_time  — timestamp when candle[i] closes (index + bar_duration)
     """
-    FVG - Fair Value Gap Detection
-    A gap is bullish if prev_high < next_low and curr_candle is bullish.
-    A gap is bearish if prev_low > next_high and curr_candle is bearish.
-    """
-    low = ohlc["low"].values
-    high = ohlc["high"].values
-    close = ohlc["close"].values
-    open_ = ohlc["open"].values
-    
-    # Vectorized check for Bullish/Bearish Gaps
-    bull_gap = (np.roll(high, 1) < np.roll(low, -1)) & (close > open_)
-    bear_gap = (np.roll(low, 1) > np.roll(high, -1)) & (close < open_)
-    
-    # Avoid first and last candles (where rolls are invalid for gaps)
-    bull_gap[0] = bull_gap[-1] = False
-    bear_gap[0] = bear_gap[-1] = False
-    
-    fvg_type = np.where(bull_gap, 1, np.where(bear_gap, -1, np.nan))
-    
-    # Top/Bottom Bounds
-    top = np.where(bull_gap, np.roll(low, -1), np.where(bear_gap, np.roll(low, 1), np.nan))
-    bottom = np.where(bull_gap, np.roll(high, 1), np.where(bear_gap, np.roll(high, -1), np.nan))
-    
-    # Vectorized Join Consecutive (Merge gaps in a row)
+    # ── Optional resample ──────────────────────────────────────────
+    if resample_rule is not None:
+        df = (
+            ohlc[["high", "low", "open", "close"]]
+            .resample(resample_rule, origin="start_day")
+            .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+            .dropna()
+        )
+        bar_duration = pd.Timedelta(resample_rule)
+    else:
+        df = ohlc
+        # Infer bar duration from index for finalized_time
+        if len(df.index) >= 2:
+            bar_duration = df.index[1] - df.index[0]
+        else:
+            bar_duration = pd.Timedelta(minutes=1)
+
+    high = df["high"].values
+    low = df["low"].values
+    close = df["close"].values
+    open_ = df["open"].values
+
+    # 3-bar FVG core: compare candle[i-2] with candle[i]
+    high_1 = pd.Series(high).shift(2)  # candle[i-2] high
+    low_1 = pd.Series(low).shift(2)    # candle[i-2] low
+    high_3 = pd.Series(high)           # candle[i] high
+    low_3 = pd.Series(low)             # candle[i] low
+
+    bull_mask = (high_1 < low_3) & high_1.notna() & low_3.notna()
+    bear_mask = (low_1 > high_3) & low_1.notna() & high_3.notna()
+
+    # Optional candle direction filter
+    if require_candle_direction:
+        bull_mask &= (pd.Series(close) > pd.Series(open_))
+        bear_mask &= (pd.Series(close) < pd.Series(open_))
+
+    # 3-bar pattern extremes (for IFVG invalidation / hold checks)
+    three_bar_low = pd.concat(
+        [pd.Series(low), pd.Series(low).shift(1), pd.Series(low).shift(2)], axis=1
+    ).min(axis=1)
+    three_bar_high = pd.concat(
+        [pd.Series(high), pd.Series(high).shift(1), pd.Series(high).shift(2)], axis=1
+    ).max(axis=1)
+
+    fvg_type = np.zeros(len(df), dtype=np.int64)
+    fvg_type[bull_mask.values] = 1
+    fvg_type[bear_mask.values] = -1
+
+    fvg_top = np.full(len(df), np.nan)
+    fvg_bottom = np.full(len(df), np.nan)
+    fvg_low = np.full(len(df), np.nan)
+    fvg_high = np.full(len(df), np.nan)
+
+    # Bullish: top = low[i], bottom = high[i-2]
+    fvg_top[bull_mask.values] = low_3[bull_mask.values]
+    fvg_bottom[bull_mask.values] = high_1[bull_mask.values]
+    fvg_low[bull_mask.values] = three_bar_low[bull_mask.values]
+    fvg_high[bull_mask.values] = three_bar_high[bull_mask.values]
+
+    # Bearish: top = low[i-2], bottom = high[i]
+    fvg_top[bear_mask.values] = low_1[bear_mask.values]
+    fvg_bottom[bear_mask.values] = high_3[bear_mask.values]
+    fvg_low[bear_mask.values] = three_bar_low[bear_mask.values]
+    fvg_high[bear_mask.values] = three_bar_high[bear_mask.values]
+
+    # Finalized time = when candle[i] closes
+    finalized = df.index + bar_duration
+
+    # ── Optional: join consecutive FVGs of same type ───────────────
     if join_consecutive:
-        # Identify groups of consecutive FVGs of the same type
-        # (fvg != fvg.shift) starts a new group
-        s_fvg = pd.Series(fvg_type)
+        s_fvg = pd.Series(fvg_type, index=df.index)
         groups = (s_fvg != s_fvg.shift(1)).cumsum()
-        
-        # We only care about non-nan groups
-        fvg_mask = ~np.isnan(fvg_type)
-        valid_groups = groups[fvg_mask]
-        
-        # Group and take extremes (top of bullish, bottom of bearish)
-        # Note: If consecutive FVGs are both bullish (1), we want to merge them.
-        group_df = pd.DataFrame({
-            "type": s_fvg[fvg_mask],
-            "top": top[fvg_mask],
-            "bottom": bottom[fvg_mask],
-            "group": valid_groups
-        })
-        
-        # Aggregate: Only the LAST bar in each group will hold the merged data
-        # (Alternatively, the first bar, but last is easier for vectorized updates)
-        agg = group_df.groupby("group").agg({
-            "type": "first",
-            "top": "max",
-            "bottom": "min"
-        })
-        
-        # Clear original and re-assign merged values to only the last bars of each group
-        fvg_type[:] = np.nan
-        top[:] = np.nan
-        bottom[:] = np.nan
-        
-        # Map back to the original index
-        # We find indices where groups changed (last occurrence)
-        last_indices = valid_groups.groupby(valid_groups).tail(1).index
-        fvg_type[last_indices] = agg["type"].values
-        top[last_indices] = agg["top"].values
-        bottom[last_indices] = agg["bottom"].values
+        fvg_mask = s_fvg != 0
+
+        if fvg_mask.any():
+            group_df = pd.DataFrame({
+                "type": s_fvg[fvg_mask],
+                "top": pd.Series(fvg_top, index=df.index)[fvg_mask],
+                "bottom": pd.Series(fvg_bottom, index=df.index)[fvg_mask],
+                "low": pd.Series(fvg_low, index=df.index)[fvg_mask],
+                "high": pd.Series(fvg_high, index=df.index)[fvg_mask],
+                "group": groups[fvg_mask],
+            })
+
+            agg = group_df.groupby("group").agg({
+                "type": "first",
+                # Bullish: keep highest top, lowest bottom; Bearish: keep lowest top, highest bottom
+                "top": "max",
+                "bottom": "min",
+                "low": "min",
+                "high": "max",
+            })
+
+            # Clear and re-assign only to the LAST bar of each group
+            fvg_type[:] = 0
+            fvg_top[:] = np.nan
+            fvg_bottom[:] = np.nan
+            fvg_low[:] = np.nan
+            fvg_high[:] = np.nan
+
+            last_indices = groups[fvg_mask].groupby(groups[fvg_mask]).tail(1).index
+            fvg_type[np.isin(df.index, last_indices)] = agg["type"].values
+            locs = df.index.get_indexer(last_indices)
+            fvg_top[locs] = agg["top"].values
+            fvg_bottom[locs] = agg["bottom"].values
+            fvg_low[locs] = agg["low"].values
+            fvg_high[locs] = agg["high"].values
 
     return pd.DataFrame({
-        "fvg": fvg_type,
-        "top": top,
-        "bottom": bottom
-    }, index=ohlc.index)
+        "fvg_type": fvg_type,
+        "fvg_top": fvg_top,
+        "fvg_bottom": fvg_bottom,
+        "fvg_low": fvg_low,
+        "fvg_high": fvg_high,
+        "fvg_finalized_time": finalized,
+    }, index=df.index)
 
 @validate_ohlc(input_type="ohlc")
 def detect_inversion_fvg(ohlc: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.DataFrame:
@@ -83,19 +172,19 @@ def detect_inversion_fvg(ohlc: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.DataFra
     """
     close = ohlc["close"].values
     ifvg_type = np.zeros(len(ohlc))
-    
+
     # 1. Identify "Failed" Gaps
-    # Bullish FVG (fvg=1) -> Closed below Top = Inverted to Bearish
-    failed_bull = (fvg_df["fvg"] == 1) & (close < fvg_df["bottom"])
-    failed_bear = (fvg_df["fvg"] == -1) & (close > fvg_df["top"])
-    
+    # Bullish FVG (fvg_type=1) -> Closed below Bottom = Inverted to Bearish
+    failed_bull = (fvg_df["fvg_type"] == 1) & (close < fvg_df["fvg_bottom"])
+    failed_bear = (fvg_df["fvg_type"] == -1) & (close > fvg_df["fvg_top"])
+
     ifvg_type[failed_bull] = -1
     ifvg_type[failed_bear] = 1
-    
+
     return pd.DataFrame({
         "ifvg": ifvg_type,
-        "top": fvg_df["top"],
-        "bottom": fvg_df["bottom"]
+        "top": fvg_df["fvg_top"],
+        "bottom": fvg_df["fvg_bottom"]
     }, index=ohlc.index)
 
 @validate_ohlc(input_type="ohlc")
@@ -276,15 +365,15 @@ def check_fvg_mitigation(ohlc: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.Series:
     Vectorized for high performance (eliminates loop).
     """
     mitigation_indices = np.full(len(ohlc), np.nan)
-    
-    # Extract only valid FVGs
-    fvg_mask = ~fvg_df["fvg"].isna()
+
+    # Extract only valid FVGs (fvg_type != 0)
+    fvg_mask = fvg_df["fvg_type"] != 0
     if not fvg_mask.any():
         return pd.Series(mitigation_indices, index=ohlc.index, name="mitigated_index")
-    
+
     fvg_indices = np.where(fvg_mask)[0]
-    fvg_types = fvg_df["fvg"].values[fvg_indices]
-    fvg_levels = np.where(fvg_types == 1, fvg_df["top"].values[fvg_indices], fvg_df["bottom"].values[fvg_indices])
+    fvg_types = fvg_df["fvg_type"].values[fvg_indices]
+    fvg_levels = np.where(fvg_types == 1, fvg_df["fvg_top"].values[fvg_indices], fvg_df["fvg_bottom"].values[fvg_indices])
     
     lows = ohlc["low"].values
     highs = ohlc["high"].values
@@ -320,37 +409,80 @@ def check_fvg_mitigation(ohlc: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.Series:
     return pd.Series(mitigation_indices, index=ohlc.index, name="mitigated_index")
 
 @validate_ohlc(input_type="ohlc")
-def detect_volume_imbalance(ohlc: pd.DataFrame) -> pd.DataFrame:
+def detect_volume_imbalance(
+    ohlc: pd.DataFrame,
+    resample_rule: str | None = None,
+) -> pd.DataFrame:
+    """VI — Volume Imbalance Detection.
+
+    Detects gaps between the *bodies* of consecutive candles
+    (Close[i-1] vs Open[i]).
+
+    Bullish VI: ``close[i-1] < open[i]``  (gap up between bodies)
+    Bearish VI: ``close[i-1] > open[i]``  (gap down between bodies)
+
+    Parameters
+    ----------
+    ohlc : pd.DataFrame
+        OHLC data. If ``resample_rule`` is supplied the data is resampled
+        first, otherwise VIs are detected at the native timeframe.
+    resample_rule : str | None
+        Pandas resample rule (e.g. ``"5min"``). When set, the OHLC data is
+        resampled using ``origin="start_day"`` before detection.
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+        vi_type             — 1 (bullish), -1 (bearish), 0 (none)
+        vi_top              — upper bound of the body gap
+        vi_bottom           — lower bound of the body gap
+        vi_finalized_time   — timestamp when candle[i] closes
     """
-    VI - Volume Imbalance Detection
-    Detects gaps between the bodies of consecutive candles (Close(i-1) and Open(i)).
-    """
-    close = ohlc["close"].values
-    open_ = ohlc["open"].values
-    
-    # Vectorized check for Bullish/Bearish Gaps between bodies
+    if resample_rule is not None:
+        df = (
+            ohlc[["high", "low", "open", "close"]]
+            .resample(resample_rule, origin="start_day")
+            .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+            .dropna()
+        )
+        bar_duration = pd.Timedelta(resample_rule)
+    else:
+        df = ohlc
+        if len(df.index) >= 2:
+            bar_duration = df.index[1] - df.index[0]
+        else:
+            bar_duration = pd.Timedelta(minutes=1)
+
+    close = df["close"].values
+    open_ = df["open"].values
+
     # Bullish VI: Close[i-1] < Open[i]
-    bull_vi = (open_ > np.roll(close, 1))
-    # Bearish VI: Close[i-1] > Open[i]
-    bear_vi = (open_ < np.roll(close, 1))
-    
-    # Avoid first candle
-    bull_vi[0] = False
-    bear_vi[0] = False
-    
+    bull_vi = np.zeros(len(df), dtype=bool)
+    bear_vi = np.zeros(len(df), dtype=bool)
+    bull_vi[1:] = close[:-1] < open_[1:]
+    bear_vi[1:] = close[:-1] > open_[1:]
+
     # Top/Bottom Bounds
     # Bullish VI: Top = Open[i], Bottom = Close[i-1]
     # Bearish VI: Top = Close[i-1], Bottom = Open[i]
-    top = np.where(bull_vi, open_, np.where(bear_vi, np.roll(close, 1), np.nan))
-    bottom = np.where(bull_vi, np.roll(close, 1), np.where(bear_vi, open_, np.nan))
-    
-    vi_type = np.where(bull_vi, 1, np.where(bear_vi, -1, np.nan))
-    
+    prev_close = np.roll(close, 1)
+    prev_close[0] = np.nan
+
+    vi_type = np.zeros(len(df), dtype=np.int64)
+    vi_type[bull_vi] = 1
+    vi_type[bear_vi] = -1
+
+    vi_top = np.where(bull_vi, open_, np.where(bear_vi, prev_close, np.nan))
+    vi_bottom = np.where(bull_vi, prev_close, np.where(bear_vi, open_, np.nan))
+
+    finalized = df.index + bar_duration
+
     return pd.DataFrame({
-        "vi": vi_type,
-        "top": top,
-        "bottom": bottom
-    }, index=ohlc.index)
+        "vi_type": vi_type,
+        "vi_top": vi_top,
+        "vi_bottom": vi_bottom,
+        "vi_finalized_time": finalized,
+    }, index=df.index)
 
 @validate_ohlc(input_type="ohlc")
 def detect_liquidity_void(ohlc: pd.DataFrame) -> pd.DataFrame:
@@ -380,8 +512,8 @@ def detect_first_fvg_per_hour(ohlc: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.Da
     Identifies the 'First Presented FVG' for every hour (H:00 window).
     No special offsets - strictly the first FVG after each hourly open.
     """
-    fvg_exists = ~fvg_df["fvg"].isna()
-    
+    fvg_exists = fvg_df["fvg_type"] != 0
+
     # Ensure US/Eastern for hour detection
     if ohlc.index.tz is not None:
         et_df = ohlc.tz_convert('US/Eastern')
@@ -391,11 +523,11 @@ def detect_first_fvg_per_hour(ohlc: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.Da
     # Group by Date + Hour to find the first occurrence within the hour
     fvg_rank = fvg_exists.groupby([et_df.index.date, et_df.index.hour]).cumsum()
     is_first = fvg_exists & (fvg_rank == 1)
-    
+
     return pd.DataFrame({
-        "first_fvg": np.where(is_first, fvg_df["fvg"], np.nan),
-        "top": np.where(is_first, fvg_df["top"], np.nan),
-        "bottom": np.where(is_first, fvg_df["bottom"], np.nan)
+        "first_fvg": np.where(is_first, fvg_df["fvg_type"], np.nan),
+        "top": np.where(is_first, fvg_df["fvg_top"], np.nan),
+        "bottom": np.where(is_first, fvg_df["fvg_bottom"], np.nan)
     }, index=ohlc.index)
 
 @validate_ohlc(input_type="ohlc")
@@ -404,24 +536,24 @@ def detect_first_fvg_after_time(ohlc: pd.DataFrame, fvg_df: pd.DataFrame, time_s
     Identifies the single 'First Presented FVG' after a specific time (e.g., 09:30).
     Useful for NY Open specific entry models.
     """
-    fvg_exists = ~fvg_df["fvg"].isna()
+    fvg_exists = fvg_df["fvg_type"] != 0
     # Ensure US/Eastern for time comparison
     if ohlc.index.tz is not None:
         et_df = ohlc.tz_convert('US/Eastern')
     else:
         et_df = ohlc.tz_localize('UTC').tz_convert('US/Eastern')
-        
+
     times = et_df.index.strftime("%H:%M")
-    
+
     is_eligible = (times >= time_str)
     eligible_fvgs = fvg_exists & is_eligible
-    
+
     # Group by Date and find the absolute first FVG of the day after that time
     fvg_rank = eligible_fvgs.groupby(et_df.index.date).cumsum()
     first_fvg_mask = eligible_fvgs & (fvg_rank == 1)
-    
+
     return pd.DataFrame({
-        "first_fvg": np.where(first_fvg_mask, fvg_df["fvg"], np.nan),
-        "top": np.where(first_fvg_mask, fvg_df["top"], np.nan),
-        "bottom": np.where(first_fvg_mask, fvg_df["bottom"], np.nan)
+        "first_fvg": np.where(first_fvg_mask, fvg_df["fvg_type"], np.nan),
+        "top": np.where(first_fvg_mask, fvg_df["fvg_top"], np.nan),
+        "bottom": np.where(first_fvg_mask, fvg_df["fvg_bottom"], np.nan)
     }, index=ohlc.index)

@@ -10,7 +10,7 @@ session without touching the others.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -274,6 +274,281 @@ _DAILY_TFS_NEEDED = {"DAILY_1", "DAILY_3", "DAILY_5"}
 
 
 # ══════════════════════════════════════════════════════════════════════
+# ICT FEATURE BLOCK BUILDERS (from derived parquets via ict_data_loader)
+# ══════════════════════════════════════════════════════════════════════
+
+def _format_kz_pivots_block(ticker: str, ticker_current: float, session: str) -> str:
+    """Today's ICT killzone pivots (AS.H/AS.L, LO.H/LO.L, NYAM.H/NYAM.L)."""
+    try:
+        from scripts.trader.signals.ict_data_loader import load_kz_pivots
+        kz = load_kz_pivots(ticker, auto_refresh=True)
+        if kz.empty:
+            return "== ICT KILLZONE PIVOTS ==\nNo pivot data available"
+
+        # Get today's row (or most recent)
+        import pytz
+        today = datetime.now(pytz.timezone("America/New_York")).date()
+        kz["trading_date"] = pd.to_datetime(kz["trading_date"]).dt.date
+        today_row = kz[kz["trading_date"] == today]
+        if today_row.empty:
+            today_row = kz.tail(1)
+        if today_row.empty:
+            return "== ICT KILLZONE PIVOTS ==\nNo pivot data for today"
+
+        row = today_row.iloc[0]
+        lines = ["== ICT KILLZONE PIVOTS =="]
+
+        has_any = False
+        for prefix, label in [("asia", "Asia (20:00-00:00)"), ("london", "London (02:00-05:00)"), ("nyam", "NY AM (08:30-11:00)")]:
+            high = row.get(f"{prefix}_high")
+            low = row.get(f"{prefix}_low")
+            if pd.notna(high) and pd.notna(low):
+                has_any = True
+                mid = row.get(f"{prefix}_mid", (high + low) / 2)
+                rng = row.get(f"{prefix}_range", high - low)
+                # Position relative to current price
+                if ticker_current > 0 and rng > 0:
+                    if ticker_current > high:
+                        pos_str = f" | Price ABOVE range (+{(ticker_current - high):,.2f})"
+                    elif ticker_current < low:
+                        pos_str = f" | Price BELOW range (-{(low - ticker_current):,.2f})"
+                    else:
+                        pos = (ticker_current - low) / rng * 100
+                        pos_str = f" | Price at {pos:.0f}% of range"
+                else:
+                    pos_str = ""
+                lines.append(f"{label}: H {high:,.2f} | L {low:,.2f} | Mid {mid:,.2f} | Range {rng:,.2f}{pos_str}")
+
+        if not has_any:
+            return "== ICT KILLZONE PIVOTS ==\nNo pivots computed yet (sessions not complete)"
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[kz_pivots] Failed: %s", e)
+        return "== ICT KILLZONE PIVOTS ==\nPivot data unavailable"
+
+
+def _format_ipda_block(ticker: str, ticker_current: float) -> str:
+    """IPDA 20/40/60 rolling dealing ranges and current position.
+
+    These are *multi-day* rolling ranges (20/40/60 daily candles),
+    distinct from the single-day PDH/PDL dealing range shown in the
+    ICT Dealing Range block.
+    """
+    try:
+        from scripts.trader.signals.ict_data_loader import load_ipda
+        ipda = load_ipda(ticker, auto_refresh=True)
+        if ipda.empty:
+            return "== IPDA 20/40/60 (multi-day) ==\nNo IPDA data available"
+
+        import pytz
+        today = datetime.now(pytz.timezone("America/New_York")).date()
+        ipda["trading_date"] = pd.to_datetime(ipda["trading_date"]).dt.date
+        today_row = ipda[ipda["trading_date"] == today]
+        if today_row.empty:
+            today_row = ipda.tail(1)
+        if today_row.empty:
+            return "== IPDA 20/40/60 (multi-day) ==\nNo IPDA data for today"
+
+        row = today_row.iloc[0]
+        lines = ["== IPDA 20/40/60 (multi-day rolling) =="]
+        lines.append("Note: These are 20/40/60-day rolling ranges, not the daily PDH/PDL dealing range.")
+
+        for n, label in [(20, "IPDA-20"), (40, "IPDA-40"), (60, "IPDA-60")]:
+            hi = row.get(f"ipda{n}_high")
+            lo = row.get(f"ipda{n}_low")
+            eq = row.get(f"ipda{n}_eq")
+            pct = row.get(f"ipda{n}_pct")
+            if pd.notna(hi) and pd.notna(lo):
+                pos = "PREMIUM" if pd.notna(pct) and pct > 50 else ("DISCOUNT" if pd.notna(pct) else "")
+                pct_str = f" ({pct:.1f}% — {pos})" if pd.notna(pct) else ""
+                lines.append(f"{label}: H {hi:,.2f} | L {lo:,.2f} | Eq {eq:,.2f}{pct_str}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[ipda] Failed: %s", e)
+        return "== IPDA 20/40/60 (multi-day) ==\nIPDA data unavailable"
+
+
+def _format_silver_bullet_block(now_et: Any) -> str:
+    """Silver Bullet window status (active or next upcoming)."""
+    try:
+        from scripts.trader.signals.ict_data_loader import load_active_silver_bullet
+        sb = load_active_silver_bullet(now_et)
+        lines = ["== ICT SILVER BULLET =="]
+        if sb["active"]:
+            lines.append(f"IN WINDOW: {sb['name']} ({sb['window']})")
+            lines.append("Rules: HTF bias -> liquidity sweep -> displacement -> FVG entry")
+            lines.append("One trade per window. Wait for sweep + FVG confirmation.")
+        elif sb["next_window"]:
+            lines.append(f"Next: {sb['next_window']} at {sb['next_time']}")
+            lines.append("No active Silver Bullet window.")
+        else:
+            lines.append("No Silver Bullet windows remaining today.")
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[silver_bullet] Failed: %s", e)
+        return "== ICT SILVER BULLET ==\nData unavailable"
+
+
+def _format_macro_block(now_et: Any) -> str:
+    """ICT Macro window status (active or next upcoming)."""
+    try:
+        from scripts.trader.signals.ict_data_loader import load_active_macro
+        macro = load_active_macro(now_et)
+        lines = ["== ICT MACROS =="]
+        if macro["active"]:
+            lines.append(f"IN MACRO: {macro['name']} ({macro['window']})")
+            lines.append("High probability for liquidity sweeps, FVG formations, displacement.")
+        elif macro["next_macro"]:
+            lines.append(f"Next macro: {macro['next_macro']} at {macro['next_time']}")
+            lines.append("No active macro window.")
+        else:
+            lines.append("No macro windows remaining today.")
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[macro] Failed: %s", e)
+        return "== ICT MACROS ==\nData unavailable"
+
+
+def _format_imbalance_block(ticker: str, ticker_current: float, session_date: date | None = None, now_et: Any = None) -> str:
+    """Today's unfilled FVGs and Volume Imbalances near current price.
+
+    Only shows imbalances up to the current time (no future bars).
+    Proximity threshold: 0.25% of current price (not 1%).
+    """
+    try:
+        from scripts.trader.signals.ict_data_loader import load_imbalances
+        # Load 5m imbalances for today
+        imb = load_imbalances(ticker, "5m", auto_refresh=True, session_date=session_date)
+        if imb.empty:
+            return "== ICT IMBALANCES (5m) ==\nNo imbalances detected today"
+
+        # Filter to bars up to now_et (no future bars)
+        if now_et is not None:
+            now_naive = now_et.replace(tzinfo=None) if hasattr(now_et, 'tzinfo') and now_et.tzinfo else now_et
+            imb = imb[imb.index <= now_naive]
+        if imb.empty:
+            return "== ICT IMBALANCES (5m) ==\nNo imbalances yet in current session"
+
+        lines = ["== ICT IMBALANCES (5m) =="]
+
+        # Proximity threshold: 0.25% of current price
+        proximity_pct = 0.25
+        threshold = ticker_current * proximity_pct / 100 if ticker_current > 0 else 100
+
+        fvgs = imb[imb["fvg_type"] != 0].copy()
+        vis = imb[imb["vi_type"] != 0].copy()
+
+        if not fvgs.empty:
+            # Most recent 5 FVGs
+            recent_fvgs = fvgs.tail(5)
+            lines.append("Fair Value Gaps:")
+            for _, row in recent_fvgs.iterrows():
+                ftype = "Bullish" if row["fvg_type"] == 1 else "Bearish"
+                top = row["fvg_top"]
+                bot = row["fvg_bottom"]
+                dist = abs(ticker_current - (top + bot) / 2) if ticker_current > 0 else 0
+                near = " (NEAR)" if dist < threshold else ""
+                lines.append(f"  {ftype} FVG {bot:,.2f}-{top:,.2f} @ {row.name.strftime('%H:%M')}{near}")
+
+        if not vis.empty:
+            recent_vis = vis.tail(5)
+            lines.append("Volume Imbalances:")
+            for _, row in recent_vis.iterrows():
+                vtype = "Bullish" if row["vi_type"] == 1 else "Bearish"
+                top = row["vi_top"]
+                bot = row["vi_bottom"]
+                dist = abs(ticker_current - (top + bot) / 2) if ticker_current > 0 else 0
+                near = " (NEAR)" if dist < threshold else ""
+                lines.append(f"  {vtype} VI {bot:,.2f}-{top:,.2f} @ {row.name.strftime('%H:%M')}{near}")
+
+        if fvgs.empty and vis.empty:
+            lines.append("No FVGs or VIs detected in current session")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[imbalance] Failed: %s", e)
+        return "== ICT IMBALANCES (5m) ==\nImbalance data unavailable"
+
+
+def _format_gaps_block(ticker: str, ticker_current: float) -> str:
+    """Active NWOG/NDOG/RTH gaps with fill status.
+
+    Shows today's gaps + recent unfilled gaps (last 30 days only).
+    Filters out NaN entries.
+    """
+    try:
+        from scripts.trader.signals.ict_data_loader import load_gaps
+        gaps = load_gaps(ticker, auto_refresh=True)
+        if gaps.empty:
+            return "== ICT GAPS ==\nNo gap data available"
+
+        import pytz
+        from datetime import timedelta
+        today = datetime.now(pytz.timezone("America/New_York")).date()
+
+        gaps["session_date"] = pd.to_datetime(gaps["session_date"]).dt.date
+        # Filter out NaN gap sizes
+        gaps = gaps.dropna(subset=["gap_high", "gap_low", "gap_size"])
+        # Filter to last 30 days for unfilled gaps
+        cutoff = today - timedelta(days=30)
+
+        today_gaps = gaps[gaps["session_date"] == today]
+        unfilled = gaps[(~gaps["filled"].astype(bool)) & (gaps["session_date"] >= cutoff)].tail(5)
+
+        lines = ["== ICT GAPS =="]
+
+        if not today_gaps.empty:
+            lines.append("Today's gaps:")
+            for _, row in today_gaps.iterrows():
+                filled_str = "FILLED" if row["filled"] else "UNFILLED"
+                lines.append(
+                    f"  {row['gap_type']}: {row['gap_low']:,.2f}-{row['gap_high']:,.2f} "
+                    f"(size {row['gap_size']:,.2f}, CE {row['gap_ce']:,.2f}) [{filled_str}]"
+                )
+
+        if not unfilled.empty:
+            lines.append("Recent unfilled gaps (magnet levels):")
+            for _, row in unfilled.iterrows():
+                lines.append(
+                    f"  {row['gap_type']} ({row['session_date']}): "
+                    f"{row['gap_low']:,.2f}-{row['gap_high']:,.2f} CE {row['gap_ce']:,.2f}"
+                )
+
+        if today_gaps.empty and unfilled.empty:
+            lines.append("No active gaps")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[gaps] Failed: %s", e)
+        return "== ICT GAPS ==\nGap data unavailable"
+
+
+def _format_ict_features_block(
+    ticker: str,
+    ticker_current: float,
+    session: str,
+    now_et: Any,
+    target_date: date,
+) -> list[str]:
+    """Build all ICT feature blocks for a session.
+
+    Returns a list of formatted block strings. This is the one-stop
+    function that all session builders call to get the full ICT feature
+    stack: KZ pivots + IPDA + Silver Bullet + Macros + Imbalances + Gaps.
+    """
+    blocks: list[str] = []
+    blocks.append(_format_kz_pivots_block(ticker, ticker_current, session))
+    blocks.append(_format_ipda_block(ticker, ticker_current))
+    blocks.append(_format_silver_bullet_block(now_et))
+    blocks.append(_format_macro_block(now_et))
+    blocks.append(_format_imbalance_block(ticker, ticker_current, target_date, now_et))
+    blocks.append(_format_gaps_block(ticker, ticker_current))
+    return [b for b in blocks if b]
+
+
+# ══════════════════════════════════════════════════════════════════════
 # SESSION-SPECIFIC BLOCK BUILDERS
 # Each returns a list of formatted strings (cheat-sheet blocks).
 # ══════════════════════════════════════════════════════════════════════
@@ -285,6 +560,7 @@ def build_asia_blocks(
     es_current: float,
     target_date: date,
     session_ranges: dict,
+    now_et: Any = None,
 ) -> list[str]:
     """ASIA session (18:00-02:00 ET): Overnight globex, prior EOD, levels for tomorrow."""
     base_label = ticker.replace("1", "").upper()
@@ -342,13 +618,8 @@ def build_asia_blocks(
     except Exception as e:
         log.warning("[asia:herman] Failed: %s", e)
 
-    # ICT killzone context (static guidance)
-    sections.append(
-        "== ICT KILLZONE CONTEXT ==\n"
-        "Asia session (20:00-00:00): Consolidation range that sets up London.\n"
-        "Asia H/L become pivot levels for London sweeps.\n"
-        "Watch: London open at 02:00, Asia range break direction."
-    )
+    # ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps)
+    sections.extend(_format_ict_features_block(ticker, ticker_current, "ASIA", now_et, target_date))
 
     # Multi-timeframe range stack
     sections.append(_format_range_stack_block(
@@ -366,6 +637,7 @@ def build_london_blocks(
     es_current: float,
     target_date: date,
     session_ranges: dict,
+    now_et: Any = None,
 ) -> list[str]:
     """LONDON session (02:00-08:30 ET): Asia complete, London forming, Herman OR/sweep logic."""
     base_label = ticker.replace("1", "").upper()
@@ -452,14 +724,8 @@ def build_london_blocks(
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
 
-    # ICT killzone context
-    sections.append(
-        "== ICT KILLZONE CONTEXT ==\n"
-        "London Killzone: 02:00-05:00 (high-probability reversal window).\n"
-        "London Silver Bullet: 03:00-04:00.\n"
-        "London Macros: 02:33-03:00, 04:03-04:30.\n"
-        "Sweep-return golden zone: 02:00-03:00 → 72.4% return to open."
-    )
+    # ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps)
+    sections.extend(_format_ict_features_block(ticker, ticker_current, "LONDON", now_et, target_date))
 
     # Calendar
     cal_block, events = _format_calendar_block(target_date)
@@ -510,6 +776,7 @@ def build_ny_am_blocks(
     es_current: float,
     target_date: date,
     session_ranges: dict,
+    now_et: Any = None,
 ) -> list[str]:
     """NY AM session (09:30-11:30 ET): RTH open, IB forming, Herman Pre-NY sweep."""
     base_label = ticker.replace("1", "").upper()
@@ -593,14 +860,8 @@ def build_ny_am_blocks(
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
 
-    # ICT killzone context
-    sections.append(
-        "== ICT KILLZONE CONTEXT ==\n"
-        "NY AM Killzone: 09:30-11:00 (primary day trading session).\n"
-        "NY AM Silver Bullet: 10:00-11:00.\n"
-        "NY Macros: 09:50-10:10, 10:50-11:10.\n"
-        "09:30 Opening Range: H/L of first 30 min (09:30-10:00)."
-    )
+    # ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps)
+    sections.extend(_format_ict_features_block(ticker, ticker_current, "NY_AM", now_et, target_date))
 
     # Calendar
     cal_block, events = _format_calendar_block(target_date)
@@ -654,6 +915,7 @@ def build_ny_lunch_blocks(
     es_current: float,
     target_date: date,
     session_ranges: dict,
+    now_et: Any = None,
 ) -> list[str]:
     """NY LUNCH session (11:30-13:30 ET): Low volume, manipulation, lunch range forming."""
     base_label = ticker.replace("1", "").upper()
@@ -709,13 +971,8 @@ def build_ny_lunch_blocks(
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
 
-    # ICT killzone context
-    sections.append(
-        "== ICT KILLZONE CONTEXT ==\n"
-        "NY Lunch: 12:00-13:00 — low volume, manipulation zone.\n"
-        "Avoid new entries during lunch. Wait for PM expansion at 13:30.\n"
-        "NY Lunch Macro: 13:10-13:40."
-    )
+    # ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps)
+    sections.extend(_format_ict_features_block(ticker, ticker_current, "NY_LUNCH", now_et, target_date))
 
     # Calendar
     cal_block, _ = _format_calendar_block(target_date)
@@ -737,6 +994,7 @@ def build_ny_pm_blocks(
     es_current: float,
     target_date: date,
     session_ranges: dict,
+    now_et: Any = None,
 ) -> list[str]:
     """NY PM session (13:30-16:00 ET): PM expansion, lunch breakout, noon curve, trend close."""
     base_label = ticker.replace("1", "").upper()
@@ -814,14 +1072,8 @@ def build_ny_pm_blocks(
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
 
-    # ICT killzone context
-    sections.append(
-        "== ICT KILLZONE CONTEXT ==\n"
-        "NY PM Killzone: 13:30-16:00 (second high-probability window).\n"
-        "NY PM Silver Bullet: 14:00-15:00.\n"
-        "NY Last Hour Macro: 15:15-15:45.\n"
-        "15:00 ET: Trend-close hour (58.4% ORB win rate). Late highs tend to hold."
-    )
+    # ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps)
+    sections.extend(_format_ict_features_block(ticker, ticker_current, "NY_PM", now_et, target_date))
 
     # Calendar
     cal_block, events = _format_calendar_block(target_date)
@@ -928,15 +1180,15 @@ def build_intraday_cheat_sheet(
 
     # Dispatch to session-specific builder
     if session == "ASIA":
-        sections.extend(build_asia_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges))
+        sections.extend(build_asia_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges, now_et))
     elif session == "LONDON":
-        sections.extend(build_london_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges))
+        sections.extend(build_london_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges, now_et))
     elif session == "NY_AM":
-        sections.extend(build_ny_am_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges))
+        sections.extend(build_ny_am_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges, now_et))
     elif session == "NY_LUNCH":
-        sections.extend(build_ny_lunch_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges))
+        sections.extend(build_ny_lunch_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges, now_et))
     elif session == "NY_PM":
-        sections.extend(build_ny_pm_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges))
+        sections.extend(build_ny_pm_blocks(df_t, ticker, ticker_current, es_current, target_date, session_ranges, now_et))
     else:
         sections.append(f"== UNKNOWN SESSION ==\nCould not determine session for {now_et}.")
 

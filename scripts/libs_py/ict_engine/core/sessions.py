@@ -23,6 +23,14 @@ MACROS = {
     "ny_last_hour_macro": ("15:15", "15:45")
 }
 
+# ICT Silver Bullet Windows (ET Standard)
+# One trade per window: HTF bias → liquidity sweep → displacement → FVG entry
+SILVER_BULLETS = {
+    "london_sb": ("03:00", "04:00"),
+    "ny_am_sb": ("10:00", "11:00"),
+    "ny_pm_sb": ("14:00", "15:00"),
+}
+
 # RTH Sessions (ET) - Gap detection ranges
 RTH_SESSIONS = {
     "NQ1": ("09:30", "16:15"),
@@ -111,4 +119,56 @@ def get_macro_data(ohlc: pd.DataFrame, macro_name: str, timezone: str = "US/East
         "active": macro_active,
         "macro_high": high,
         "macro_low": low
+    }, index=ohlc.index)
+
+
+@validate_ohlc(input_type="ohlc")
+def get_silver_bullet_data(ohlc: pd.DataFrame, bullet_name: str, timezone: str = "US/Eastern") -> pd.DataFrame:
+    """Vectorized Silver Bullet window detection.
+
+    Marks bars within a Silver Bullet window and computes the window's
+    running high/low so displacement and FVG formation can be assessed.
+
+    Parameters
+    ----------
+    ohlc : pd.DataFrame
+        OHLC data at any timeframe.
+    bullet_name : str
+        One of: ``london_sb``, ``ny_am_sb``, ``ny_pm_sb``.
+    timezone : str
+        Timezone for time comparison (default US/Eastern).
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+        active       — 1 if bar is within the Silver Bullet window, else 0
+        sb_high      — running high within the window (NaN outside)
+        sb_low       — running low within the window (NaN outside)
+    """
+    if bullet_name not in SILVER_BULLETS:
+        raise ValueError(f"Unknown Silver Bullet: {bullet_name}. Available: {list(SILVER_BULLETS.keys())}")
+
+    start, end = SILVER_BULLETS[bullet_name]
+    start_t = datetime.strptime(start, "%H:%M").time()
+    end_t = datetime.strptime(end, "%H:%M").time()
+
+    if ohlc.index.tz is not None:
+        et_df = ohlc.tz_convert(timezone)
+    else:
+        et_df = ohlc.tz_localize("UTC").tz_convert(timezone)
+
+    times = et_df.index.time
+
+    # Silver Bullet windows never wrap midnight
+    mask = (times >= start_t) & (times <= end_t)
+    active = np.where(mask, 1, 0)
+
+    # Running high/low within each day's window
+    high = et_df["high"].where(mask).groupby(et_df.index.date).transform("max")
+    low = et_df["low"].where(mask).groupby(et_df.index.date).transform("min")
+
+    return pd.DataFrame({
+        "active": active,
+        "sb_high": high,
+        "sb_low": low
     }, index=ohlc.index)

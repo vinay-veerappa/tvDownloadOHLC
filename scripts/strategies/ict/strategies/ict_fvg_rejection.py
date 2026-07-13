@@ -19,6 +19,19 @@ import numpy as np
 import pandas as pd
 from typing import Any, Dict, Optional
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.libs_py.ict_engine import detect_fvg, detect_swings
 
 _COLS = ["signal_time", "direction", "entry_price", "stop_price", "target1_price"]
@@ -77,12 +90,12 @@ class ICTFVGRejectionStrategy:
         low   = data["low"].values
 
         # ── 2. Forward-fill FVG zone boundaries (the gap persists until filled) ─
-        # fvg["fvg"]  :  1 = bullish, -1 = bearish, NaN = none
-        # fvg["top"]  :  upper bound of the gap
-        # fvg["bottom"]: lower bound of the gap
-        fvg_type = fvg["fvg"].values
-        fvg_top  = fvg["top"].values
-        fvg_bot  = fvg["bottom"].values
+        # fvg["fvg_type"]  :  1 = bullish, -1 = bearish, 0 = none
+        # fvg["fvg_top"]   :  upper bound of the gap
+        # fvg["fvg_bottom"]:  lower bound of the gap
+        fvg_type = fvg["fvg_type"].values
+        fvg_top  = fvg["fvg_top"].values
+        fvg_bot  = fvg["fvg_bottom"].values
 
         # Carry the most recent *unmitigated* FVG forward using ffill
         bull_top = pd.Series(np.where(fvg_type == 1, fvg_top, np.nan)).ffill().values
