@@ -27,6 +27,19 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.trader.briefing_core import (
     REPO_ROOT,
     build_ticker_cheat_sheet,
@@ -231,11 +244,11 @@ def run_narrative(
         log.info("Building cheat sheet for %s (mode: %s)...", ticker, mode)
         try:
             if mode == "intraday":
-                cheat_sheet = build_intraday_context(loader=loader, ticker=ticker)
+                cheat_sheet = build_intraday_context(loader=loader, ticker=ticker, target_date=target_date)
             elif mode == "close":
-                cheat_sheet = build_eod_context(loader=loader, ticker=ticker)
+                cheat_sheet = build_eod_context(loader=loader, ticker=ticker, target_date=target_date)
             elif mode == "premarket":
-                cheat_sheet = build_premarket_context(loader=loader, ticker=ticker)
+                cheat_sheet = build_premarket_context(loader=loader, nq_ticker=ticker, target_date=target_date)
             else:
                 cheat_sheet = build_ticker_cheat_sheet(
                     ticker=ticker,
@@ -245,6 +258,15 @@ def run_narrative(
                 )
             
             log.info("✓ Cheat sheet assembled for %s (%d chars)", ticker, len(cheat_sheet))
+            
+            # Skip LLM if the cheat sheet indicates markets closed or session complete
+            if cheat_sheet.startswith("== MARKETS CLOSED ==") or cheat_sheet.startswith("== SESSION COMPLETE =="):
+                log.info("  Skipping LLM — %s", cheat_sheet.split("\n")[0])
+                write_narrative_to_disk(cheat_sheet, mode, ticker)
+                if send_discord:
+                    send_discord_summary(cheat_sheet)
+                results.append(cheat_sheet)
+                continue
             
             from datetime import datetime
             if mode == "close" and datetime.now().weekday() in [4, 5, 6]:  # Friday, Saturday, Sunday
