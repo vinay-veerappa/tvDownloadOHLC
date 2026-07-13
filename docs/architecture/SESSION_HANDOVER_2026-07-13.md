@@ -188,14 +188,26 @@ All Phase 1 items completed in this session:
 - 6 new ICT feature blocks in `intraday_blocks.py`: KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps
 - All 5 session builders updated with dynamic ICT feature blocks (replaced static text)
 
-### 2. ICT Phase 2 (remaining items)
-- ICT Order Block detection — `detect_orderblock()` exists in library, needs pipeline + narrative block
+### 2. ICT Phase 2 (in progress — see [ICT_PHASE2_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ICT_PHASE2_PLAN.md))
+
+**2A: Pattern detection (new derived data + narrative blocks):**
+- ICT Order Block detection — `detect_orderblock()` exists in library, needs pipeline + narrative
 - ICT Judas Swing detection (sweep of Midnight Open during London/Pre-Market)
-- ICT MSS/BOS — `detect_structure_breaks()` exists, needs pipeline + narrative block
-- ICT Draw on Liquidity (DOL): proximity to BSL/SSL pools
+- ICT MSS/BOS — `detect_structure_breaks()` exists (needs MSS classification improvement)
+- ICT Draw on Liquidity (enhanced) — proximity to BSL/SSL pools with sweep tracking
 - ICT Market Delivery Triad: I2E vs E2I
-- SMT Divergence — `detect_smt()` exists, needs pipeline + narrative block
-- PineScript indicator for range detection
+- SMT Divergence — `detect_smt()` exists, needs paired-symbol pipeline + narrative
+
+**2B: Historical bias validation (new):**
+- Backtest each of the 7 ICT daily bias models against historical data
+- Per-model win rate, coverage, edge, profit factor
+- Weight models by historical edge; disable negative-edge models
+- Rolling per-model accuracy tracking in close narrative
+- CLI: `python -m scripts.context.validate_ict_bias --symbols NQ1,ES1 --lookback 500`
+
+**2C: PineScript visualization:**
+- Range stack indicator for TradingView
+- ICT features dashboard (KZ pivots, IPDA, Silver Bullet, FVG/VI zones, gaps)
 
 ### 3. Asia/London IB Computation
 - Currently only NY RTH IB is computed (via NQStatsEngine)
@@ -212,7 +224,10 @@ All Phase 1 items completed in this session:
 
 ### 6. Cleanup
 - Remove old FVG-only parquets (`{sym}_fvg_{tf}.parquet`) once all consumers migrated to imbalance files
-- Update prompt templates to reference new ICT blocks (Step 5 of Phase 1)
+- ✅ Prompt templates updated to reference new ICT blocks (Step 5 of Phase 1 — DONE)
+- ✅ ALN removed from close narrative (morning-only tool — DONE)
+- ✅ ICT Daily Bias (7 models) added to close narrative (DONE)
+- ✅ ICT feature blocks added to all 4 narrative modes (DONE)
 
 ---
 

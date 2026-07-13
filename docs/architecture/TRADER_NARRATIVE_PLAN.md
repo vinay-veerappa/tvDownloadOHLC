@@ -318,15 +318,18 @@ This is a phased goal. v1 produces the narrative only. v2 adds active trade awar
 - [x] Derived data pipeline: `scripts/context/compute_ict_features.py` — batch generator with CLI + incremental updates
 - [x] Narrative data loader: `scripts/trader/signals/ict_data_loader.py` — freshness-aware with auto-refresh
 
-**Remaining items (Phase 2+):**
+**Remaining items (Phase 2 — see [ICT_PHASE2_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ICT_PHASE2_PLAN.md) for full details):**
 
 - [ ] ICT Order Block detection — `detect_orderblock()` exists in library, needs derived data pipeline + narrative block
 - [ ] ICT Judas Swing detection (sweep of Midnight Open during London/Pre-Market)
-- [ ] ICT Market Structure Shift (MSS) / Break of Structure (BOS) — `detect_structure_breaks()` exists, needs pipeline + narrative block
-- [ ] ICT Draw on Liquidity (DOL): proximity to BSL/SSL pools (PWH, PWL, old D1 highs/lows)
+- [ ] ICT MSS/BOS — `detect_structure_breaks()` exists (needs MSS classification improvement), needs pipeline + narrative block
+- [ ] ICT Draw on Liquidity (enhanced) — proximity to BSL/SSL pools with sweep tracking
 - [ ] ICT Market Delivery Triad: I2E (fill FVG → seek external liquidity) vs E2I (sweep → revert to FVG)
-- [ ] SMT Divergence (NQ vs ES) — `detect_smt()` exists in library, needs pipeline + narrative block
-- [ ] PineScript indicator for multi-timeframe range detection
+- [ ] SMT Divergence — `detect_smt()` exists in library, needs paired-symbol pipeline + narrative block
+- [ ] Historical bias validation — backtest each of the 7 bias models against historical data
+- [ ] Bias model weighting — weight models by historical edge, disable negative-edge models
+- [ ] Rolling per-model accuracy tracking in close narrative
+- [ ] PineScript indicator for range stack + ICT features visualization
 
 ### Asia/London IB computation
 

@@ -4,7 +4,27 @@
 The `ict_engine` implements Daily Bias as a modular, testable component. Rather than a single "hardcoded" bias, the engine treats Bias as a **Hypothesis** that can be verified through historical data.
 
 The goal is to provide multiple "Bias Strategies" that can be plugged into backtests to determine which interpretation yields the highest win rate for a specific ticker (e.g., NQ vs. ES).
+## Implementation Status
 
+**7 models implemented** in `scripts/trader/signals/ict_data_loader.py:compute_ict_daily_bias()`:
+
+| # | Model | Status | What it measures |
+|---|-------|--------|-----------------|
+| A | Premium/Discount | ✅ Implemented | Price position in PDH/PDL dealing range |
+| B | Draw on Liquidity | ✅ Implemented | Proximity to BSL (untaken highs) vs SSL (untaken lows) |
+| C | IPDA Position | ✅ Implemented | 20/40/60-day rolling range position |
+| D | HTF Structure | ✅ Implemented | Price vs PWH/PWL |
+| E | Prior Day Candle | ✅ Implemented | Close vs PDH/PDL |
+| F | Midnight Open | ✅ Implemented | Price above/below midnight open |
+| G | London/Asia Sweep | ✅ Implemented | London swept Asia H/L = continuation |
+| H | Daily MSS/BOS | ⬜ Phase 2 | Break of structure on daily chart |
+| I | Delivery Triad | ⬜ Phase 2 | I2E vs E2I cycle detection |
+| J | SMT Divergence | ⬜ Phase 2 | NQ vs ES divergence at key levels |
+| K | Judas Swing | ⬜ Phase 2 | Midnight Open sweep during London |
+| L | DOL Enhanced | ⬜ Phase 2 | Magnet strength + sweep tracking |
+
+**Phase 2 plan:** See [ICT_PHASE2_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ICT_PHASE2_PLAN.md)
+**Historical validation:** `scripts/context/validate_ict_bias.py` (Phase 2B — planned)
 ---
 
 ## 2. Models of Bias
