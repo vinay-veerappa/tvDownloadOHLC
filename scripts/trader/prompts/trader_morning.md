@@ -62,5 +62,12 @@ CONFLUENCE MODEL:
 - 2+ conflict = LOW conviction, skip or wait for resolution.
 - GEX, ICT, VIX, Classification are CONTEXT — they adjust execution, never override direction.
 
+CLASSIFICATION GUIDE (day-type abbreviations in the cheat sheet):
+- R1 = Range 1 / Time Spent: Price stays in or retests the 09:30 Opening Range. Neutral, rotational, churning day.
+- R2 = Range 2 / Reversal: Failed expansion. Price breaks out of OR, fails, and returns to the range after 11:00 ET. Trapped traders, mean reversion.
+- DWP = Directional With Pullbacks: Strong trend that breaks OR and never returns, but has structural retracements (hourly lows/highs retrace toward OR). Entry opportunities on pullbacks.
+- DNP = Directional No Pullback: Power trend. Breaks OR with no structural retracements. Runaway conviction, aggressive.
+Hierarchy: R2 > R1 > DWP/DNP.
+
 == CHEAT SHEET ==
 {{INSERT_CHEAT_SHEET}}

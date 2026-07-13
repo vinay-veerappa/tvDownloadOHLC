@@ -1,8 +1,8 @@
 # Trader's Morning Narrative — Design Plan
 
-> **Status:** v1 IMPLEMENTED — open mode live, intraday/close pending  
-> **Date:** 2026-07-08  
-> **Goal:** A narrative system that reads like a trader thinking out loud. Runs at open, close, and intraday. Eventually enables active trade creation and management from the data.
+> **Status:** v2 IMPLEMENTED — open, intraday, close, and premarket modes live. Intraday is now session-adaptive (Asia, London, NY AM, NY Lunch, NY PM). Multi-timeframe range detection added. ICT dealing range + liquidity map integrated into all modes. Modular signal architecture in `scripts/trader/signals/`.  
+> **Date:** 2026-07-08 (last updated 2026-07-13)  
+> **Goal:** A narrative system that reads like a trader thinking out loud. Runs at any time during any session. Eventually enables active trade creation and management from the data.
 
 ---
 
@@ -64,32 +64,102 @@ The cheat sheet cuts input by **60–70%** because:
 
 ---
 
-## 3. Three Timing Modes
+## 3. Narrative Modes
 
-The narrative system runs at three points in the trading day, each with a different purpose and different data emphasis:
+The narrative system runs at multiple points, each with a different purpose:
 
 | Mode | Time (ET) | Purpose | Key Data | Output |
 |---|---|---|---|---|
-| **Open** | ~08:00–08:30 | Pre-market prep. Overnight → today bridge. Set the bias. | Globex OHLC, ALN, classification, calendar, GEX levels, prior EOD plan | "Trader's Morning Narrative" — the read for the day |
-| **Intraday** | ~12:00 (or on-demand) | Mid-day check. Are we on track? What changed? | Morning bias vs actual price action, level interactions, active trade status, RTD real-time price | "Mid-Day Update" — are we following the plan? |
-| **Close** | ~16:00–16:15 | EOD review. What happened? What did we learn? | Full session OHLC, level interactions (tested/broken), trade outcomes, drawdown status | "Trader's EOD Narrative" — the review + tomorrow setup |
+| **Premarket** | ~07:00 | Early prep before GEX open snapshot | Globex, prior EOD classification, GEX levels | "Premarket Read" |
+| **Open** | ~08:00-08:30 | Pre-market prep. Overnight → today bridge. Set the bias. | Globex OHLC, ALN, classification, calendar, GEX, ICT, Herman, Candle Science, Confluence | "Trader's Morning Narrative" |
+| **Intraday** | Anytime (on-demand) | Session-adaptive update. Detects current session and adapts. | Session-specific blocks (see below) | "Intraday Update" |
+| **Close** | ~16:00-16:15 | EOD review. What happened? What did we learn? | Full session OHLC, level outcomes, ICT dealing range outcome, trade outcomes | "Trader's EOD Narrative" |
+
+### Intraday session-adaptive modes
+
+The intraday mode detects the current session and assembles only relevant blocks:
+
+| Session | Time (ET) | Blocks included |
+|---|---|---|
+| **ASIA** | 18:00-02:00 | Prior EOD, globex overnight, GEX, ICT dealing range, Herman Asia range size, ICT killzone, range stack, calendar |
+| **LONDON** | 02:00-08:30 | Asia box (complete), PL sweep, London box (forming), London OR breakout, ALN (partial), GEX, ICT, ICT killzone, range stack, calendar, ICT liquidity map |
+| **NY AM** | 09:30-11:30 | RTH session, Herman Pre-NY sweep (DOMINANT), IB status, ALN resolution, GEX, ICT, ICT killzone, range stack, calendar, ICT liquidity map |
+| **NY LUNCH** | 11:30-13:30 | Session so far, IB status, lunch range (forming), GEX, ICT, ICT killzone, range stack, calendar |
+| **NY PM** | 13:30-16:00 | Session direction, noon curve, lunch range breakout, GEX, ICT, ICT killzone, range stack, calendar, ICT liquidity map |
+
+Weekend → "Markets closed. Run weekly narrative." After close (16:00-18:00) → "Session complete. Run EOD narrative."
 
 ### Intraday mode specifics
 
-The intraday narrative is the most novel addition. It answers: "The morning plan said X — is the market doing X?"
+The intraday narrative is **session-adaptive** — it detects the current trading session and assembles only the blocks relevant to that session. It can be run manually at any time.
 
-Key inputs:
-- Morning narrative (stored from the open run)
-- Current price via RTD (`HybridCoordinator.get_futures_price()`)
-- Active trades in DB (`Trade` where `status` in PENDING/FILLED)
-- Level interactions since open (computed from morning levels vs current price)
-- Calendar events that have passed since open
+#### Session detection
 
-The intraday narrative should flag:
-- **Plan on track**: Price is doing what the morning narrative predicted
-- **Plan failing**: Price is doing the opposite — consider managing the trade
-- **Regime shift**: GEX levels have moved (e.g., wall broken, flip crossed)
-- **News impact**: A scheduled event has passed — did it change the picture?
+| Session | Time (ET) | Key Focus |
+|---------|------------|-----------|
+| **ASIA** | 18:00 - 02:00 | Overnight globex, prior EOD levels, Herman Asia range size, what to watch for London |
+| **LONDON** | 02:00 - 08:30 | Asia box complete, London forming, Herman OR breakout, PL sweep continuation, sweep-return |
+| **NY AM** | 09:30 - 11:30 | RTH open, IB forming, Herman Pre-NY sweep (DOMINANT), ALN resolution |
+| **NY LUNCH** | 11:30 - 13:30 | Lunch range forming, low volume, manipulation zone |
+| **NY PM** | 13:30 - 16:00 | PM expansion, lunch range breakout, noon curve, trend close |
+
+Weekend → graceful exit ("markets closed, run weekly narrative"). After close → defer to EOD narrative.
+
+#### Modular architecture
+
+The intraday cheat sheet is built from modular signal modules in `scripts/trader/signals/`:
+
+| Module | File | What it provides |
+|--------|------|-----------------|
+| Session detection | `session_ranges.py` | `detect_session()`, `compute_all_session_ranges()`, `detect_sweep()` |
+| Intraday blocks | `intraday_blocks.py` | Per-session block builders: `build_asia_blocks()`, `build_london_blocks()`, `build_ny_am_blocks()`, `build_ny_lunch_blocks()`, `build_ny_pm_blocks()` |
+| Range detection | `range_detection.py` | Multi-timeframe range stack (MICRO_5 through WEEKLY_2), compression detection, adaptive tightest-range scan |
+| ICT context | `ict_context.py` | PDH/PDL/midnight open, premium/discount, BSL/SSL targets |
+| ICT liquidity map | `liquidity_map.py` | Raid target identification based on bias + news tier |
+| Candle science | `candle_science.py` | C1→C2→C3 daily candle pattern probabilities |
+| Confluence | `confluence.py` | 3-signal confluence model (overnight + RTH open + daily chart) |
+| Day type | `day_type.py` | CLEAN/CPI/NFP/FOMC/SPECIAL/HOLIDAY classification with killzones |
+| Expected move | `expected_move.py` | Options-based expected move context |
+| GEX regime | `gex_regime.py` | Gamma regime change detection |
+| Volatility | `volatility.py` | VIX/VVIX regime classification |
+| Weekly profile | `weekly_profile.py` | Weekly H/L, profile type, position |
+| Caution score | `caution_score.py` | Composite risk posture score |
+
+`build_intraday_context()` in `briefing_core.py` is a thin wrapper that delegates to `build_intraday_cheat_sheet()` in `intraday_blocks.py`, which detects the session and dispatches to the appropriate builder.
+
+#### Multi-timeframe range detection
+
+The range detection module (`range_detection.py`) computes active ranges at multiple timeframes simultaneously:
+
+| TF Level | Lookback | Source | Used For |
+|----------|----------|--------|----------|
+| MICRO_5 | 5 min | 1m parquet | Scalp / micro chop |
+| MICRO_15 | 15 min | 1m parquet | Short-term entry |
+| MICRO_30 | 30 min | 1m parquet | Chop detection |
+| SHORT_60 | 60 min | 1m parquet | Hourly range |
+| SHORT_120 | 120 min | 1m parquet | Session chunk |
+| SESSION | Session H/L | session_ranges | Current session range |
+| RTH | Full day | session_ranges | Day range |
+| DAILY_1 | 1 day | 1d parquet | EOD + weekly |
+| DAILY_3 | 3 days | 1d parquet | EOD + weekly |
+| DAILY_5 | 5 days | 1d parquet | EOD + weekly |
+| WEEKLY | 1 week | 1W parquet | Weekly |
+| WEEKLY_2 | 2 weeks | 1W parquet | Weekly |
+
+Each range reports H/L/mid/width/position%/touches/classification(TIGHT/NORMAL/WIDE)/breakout status.
+Compression detection compares 15m ATR vs 60m ATR. Adaptive auto-range finds the tightest window where price has spent the most time.
+
+#### Bias source per session
+
+The intraday bias is derived differently depending on the session:
+
+| Session | Bias Source |
+|---------|------------|
+| ASIA | Overnight globex direction (up/down/flat vs prior close) |
+| LONDON | Overnight direction + London OR breakout (once 03:00 hits) + PL sweep continuation |
+| NY AM | Herman Pre-NY sweep (DOMINANT: 86.4% bullish / 77.9% bearish) + IB break + ALN resolution |
+| NY LUNCH | AM session direction. Lunch fade reversals ~40% (low probability) |
+| NY PM | Lunch range breakout direction + noon curve + IB break + session direction |
 
 ### Active trade management
 
@@ -144,64 +214,129 @@ This is a phased goal. v1 produces the narrative only. v2 adds active trade awar
 │                                                                │
 └────────────────────┬─────────────────────────────────────────┘
                      │
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
-   ┌─────────┐ ┌──────────┐ ┌──────────┐
-   │  OPEN   │ │ INTRADAY  │ │  CLOSE   │
-   │ ~08:00  │ │ ~12:00    │ │ ~16:00   │
-   │  ET     │ │ or on-dem │ │  ET      │
-   └────┬────┘ └─────┬────┘ └─────┬────┘
-        │            │            │
-        ▼            ▼            ▼
-┌──────────────────────────────────────────────────────────────┐
-│              NEW: TRADER NARRATIVE LAYER                      │
-│                                                               │
-│  Phase 1: Python Pre-Digestion (zero tokens)                  │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │ build_overnight_context()    [open mode]               │ │
-│  │   NQ/ES/VIX Globex session OHLC + trajectory            │ │
-│  │   Intermarket divergence detection                       │ │
-│  ├─────────────────────────────────────────────────────────┤ │
-│  │ build_intraday_context()    [intraday mode]             │ │
-│  │   Morning narrative + current RTD price vs plan         │ │
-│  │   Active trade status (PENDING/FILLED trades in DB)    │ │
-│  │   Level interactions since open (tested/broken)         │ │
-│  ├─────────────────────────────────────────────────────────┤ │
-│  │ build_eod_context()         [close mode]               │ │
-│  │   Full session OHLC + level interactions                │ │
-│  │   Trade outcomes + drawdown status                      │ │
-│  │   Tomorrow's calendar preview                           │ │
-│  ├─────────────────────────────────────────────────────────┤ │
-│  │ build_trader_cheat_sheet(mode)                         │ │
-│  │   Mode-specific assembly of all data sources           │ │
-│  │   Pre-computes distances, conflicts, comparisons       │ │
-│  │   Output: ~800-1200 token text block                   │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                               │
-│  Phase 2: LLM Narrative (small token budget)                  │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │ trader_narrative.py --mode open|intraday|close          │ │
-│  │   Cheat sheet + mode-specific prompt → Ollama          │ │
-│  │   Output: markdown narrative (~400 words)              │ │
-│  │   No JSON extraction — output IS the narrative        │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                               │
-└────────────────────┬─────────────────────────────────────────┘
-                     │
-                     ▼
-┌──────────────────────────────────────────────────────────────┐
-│               EXISTING: TRADE PLAN LAYER                      │
-│                                                               │
-│  daily_narrative.py (unchanged for now)                       │
-│  └─ Reads DB → compact JSON → Ollama → trade plan JSON        │
-│                                                               │
-│  FUTURE (v2/v3):                                              │
-│  └─ Intraday narrative flags trade management actions         │
-│     e.g., "MNQ stop at 29,580 is 2 points away — manage now" │
-│     → Python updates Trade.status in DB via RTD price check  │
-│                                                               │
+        ┌────────────┼────────────┐            ┌──────────┐
+        ▼            ▼            ▼            ▼          │
+   ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐    │
+   │PREMARKET│ │  OPEN    │ │ INTRADAY  │ │  CLOSE   │    │
+   │ ~07:00  │ │ ~08:00   │ │ ANYTIME   │ │ ~16:00   │    │
+   │  ET     │ │  ET      │ │ on-demand │ │  ET      │    │
+   └────┬────┘ └────┬─────┘ └─────┬────┘ └─────┬────┘    │
+        │           │             │            │          │
+        ▼           ▼             ▼            ▼          │
+┌──────────────────────────────────────────────────────┐  │
+│              TRADER NARRATIVE LAYER                   │  │
+│                                                       │  │
+│  Phase 1: Python Pre-Digestion (zero tokens)          │  │
+│  ┌─────────────────────────────────────────────────┐  │  │
+│  │ build_premarket_context()  [premarket mode]     │  │  │
+│  │   Globex + prior EOD + GEX levels               │  │  │
+│  ├─────────────────────────────────────────────────┤  │  │
+│  │ build_ticker_cheat_sheet() [open mode]          │  │  │
+│  │   Overnight + intermarket + ALN + classification│  │  │
+│  │   + GEX + ICT + Candle Science + Confluence     │  │  │
+│  │   + Day Type + Weekly Profile + Liquidity Map   │  │  │
+│  │   + GEX Regime + EM + Prior EOD + Bias Grades   │  │  │
+│  ├─────────────────────────────────────────────────┤  │  │
+│  │ build_intraday_context()  [intraday mode]       │  │  │
+│  │   → delegates to build_intraday_cheat_sheet()   │  │  │
+│  │   → detects session (ASIA/LONDON/NY_AM/         │  │  │
+│  │     NY_LUNCH/NY_PM)                             │  │  │
+│  │   → dispatches to session-specific builder      │  │  │
+│  │   → includes range stack + compression +        │  │  │
+│  │     adaptive range from range_detection.py      │  │  │
+│  ├─────────────────────────────────────────────────┤  │  │
+│  │ build_eod_context()      [close mode]           │  │  │
+│  │   Session summary + level outcomes + ALN        │  │  │
+│  │   outcome + ICT dealing range outcome +         │  │  │
+│  │   next session calendar + bias grade            │  │  │
+│  └─────────────────────────────────────────────────┘  │  │
+│                                                       │  │
+│  Modular Signal Modules (scripts/trader/signals/):    │  │
+│  ├─ session_ranges.py  → session detection + ranges   │  │
+│  ├─ intraday_blocks.py → per-session block builders   │  │
+│  ├─ range_detection.py → multi-TF range + compression │  │
+│  ├─ ict_context.py     → PDH/PDL/midnight/prem-disc   │  │
+│  ├─ liquidity_map.py   → ICT raid target map          │  │
+│  ├─ candle_science.py  → C1→C2→C3 patterns            │  │
+│  ├─ confluence.py      → 3-signal confluence model    │  │
+│  ├─ day_type.py        → CLEAN/CPI/NFP/FOMC + KZ      │  │
+│  ├─ expected_move.py   → options EM context           │  │
+│  ├─ gex_regime.py      → gamma regime change          │  │
+│  ├─ volatility.py      → VIX/VVIX regime              │  │
+│  ├─ weekly_profile.py  → weekly H/L + profile type    │  │
+│  └─ caution_score.py   → composite risk posture       │  │
+│                                                       │  │
+│  Phase 2: LLM Narrative (small token budget)          │  │
+│  ┌─────────────────────────────────────────────────┐  │  │
+│  │ trader_narrative.py --mode premarket|open|       │  │  │
+│  │   intraday|close                                 │  │  │
+│  │   Cheat sheet + mode-specific prompt → Ollama   │  │  │
+│  │   Output: markdown narrative (~300-400 words)    │  │  │
+│  └─────────────────────────────────────────────────┘  │  │
+│                                                       │  │
+└───────────────────────┬───────────────────────────────┘  │
+                        │                                  │
+                        ▼                                  │
+┌──────────────────────────────────────────────────────────┘
+│
+│  Prompt Templates (scripts/trader/prompts/):
+│  ├─ trader_premarket.md  → premarket (Globex + GEX + EOD)
+│  ├─ trader_morning.md    → open (full cheat sheet + all guides)
+│  ├─ trader_intraday.md   → session-adaptive (all session guides)
+│  └─ trader_close.md      → close (EOD review + ICT outcome)
+│
+│  Run commands:
+│  python -m scripts.trader.trader_narrative --mode premarket --ticker ES1
+│  python -m scripts.trader.trader_narrative --mode open --ticker ES1
+│  python -m scripts.trader.trader_narrative --mode intraday --ticker ES1
+│  python -m scripts.trader.trader_narrative --mode close --ticker ES1
+│
+│  Output: data/options/daily/{date}_trader_narrative_{mode}_{ticker}.md
+│          data/options/daily/latest_trader_narrative_{mode}_{ticker}.md
+│
 └──────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 6. Future TODOs
+
+### ICT expansion (next priority)
+
+Documented in `_format_ict_block()` in `intraday_blocks.py`:
+
+- [ ] ICT Killzone pivots: AS.H/AS.L, LO.H/LO.L, NYAM.H/NYAM.L after each KZ ends
+- [ ] ICT Silver Bullet windows: 10:00-11:00 (NY AM), 14:00-15:00 (NY PM), 03:00-04:00 (London)
+- [ ] ICT Macros: 09:50-10:10, 10:50-11:10, 13:10-13:40, 15:15-15:45, 02:33-03:00, 04:03-04:30
+- [ ] ICT FVG (Fair Value Gap) detection from 1m/5m data
+- [ ] ICT Order Block detection
+- [ ] ICT Judas Swing detection (sweep of Midnight Open during London/Pre-Market)
+- [ ] ICT Market Structure Shift (MSS) / Break of Structure (BOS) on daily/weekly
+- [ ] ICT Draw on Liquidity (DOL): proximity to BSL/SSL pools (PWH, PWL, old D1 highs/lows)
+- [ ] ICT Market Delivery Triad: I2E (fill FVG → seek external liquidity) vs E2I (sweep → revert to FVG)
+- [ ] ICT IPDA 20/40/60 ranges (rolling daily high/low/equilibrium)
+- [ ] SMT Divergence (NQ vs ES, or ES vs RTY) at key levels
+- [ ] PineScript indicator for multi-timeframe range detection
+
+### Asia/London IB computation
+
+- [ ] Compute Initial Balance during Asia and London sessions (currently only NY RTH IB via NQStats)
+- [ ] Separate conversation — requires defining IB windows for each session
+
+### Data freshness
+
+- [ ] Herman stats parquet stale (last 2026-01-23, 171 days behind) — only used for static statistical references, not per-day data, so not blocking
+- [ ] Daily classification parquet stale (last 2026-01-23) — same, used for sequential probabilities only
+
+### Range detection expansion
+
+- [ ] Integrate DAILY_3, DAILY_5, WEEKLY, WEEKLY_2 into EOD and weekly narratives
+- [ ] PineScript indicator for range stack visualization
+
+### Trade management (v3)
+
+- [ ] Intraday narrative flags trade management actions (e.g., "stop 2 points away — manage now")
+- [ ] Python updates Trade.status in DB via RTD price check
 
 ### Key principle: Nothing is replaced
 

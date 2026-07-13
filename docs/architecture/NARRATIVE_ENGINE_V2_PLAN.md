@@ -1,10 +1,10 @@
 # Trader Narrative Engine v2 — Unified Architecture Plan
 
-> **Status:** PHASE B+C+D+E COMPLETE — config + 9 signal modules built + all wired into cheat sheet + prompt updated. PHASES 2/3 (intraday/close) COMPLETE — contexts, prompts and scheduler jobs implemented. PHASE F/G COMPLETE — bias-grade JSONL feedback loop, close-mode grading, and all three narrative modes tested end-to-end. RTD pipeline fixes applied (tiered strikes, multi-expiry, TOS EM fallback, translation metadata).  
-> **Date:** 2026-07-08 (audited & updated 2026-07-08)  
-> **Author:** Vinay Veerappa  
-> **Goal:** Integrate ALL existing work (NQStats, Herman, Options/GEX, ICT, Profiler, Classification, RTH Breaks, Candle Science) into a unified trader narrative.  
-> **Build plan:** `docs/architecture/NARRATIVE_ENGINE_V2_BUILD_PLAN.md`  
+> **Status:** ALL PHASES COMPLETE. Config + 9 signal modules built + all wired into cheat sheet + prompt updated. All three narrative modes (open, intraday, close) + premarket mode tested end-to-end. Intraday is now session-adaptive (Asia/London/NY AM/NY Lunch/NY PM) with modular block builders. Multi-timeframe range detection module added. ICT dealing range + liquidity map integrated into all modes. Bias-grade JSONL feedback loop operational. Classification abbreviations (R1/R2/DWP/DNP) correctly expanded from `DAILY_CLASSIFICATION.md`. Herman statistical references integrated into prompts (Pre-NY sweep, Asia range filter, London OR, sweep-return, lunch range).
+> **Date:** 2026-07-08 (last updated 2026-07-13)
+> **Author:** Vinay Veerappa
+> **Goal:** Integrate ALL existing work (NQStats, Herman, Options/GEX, ICT, Profiler, Classification, RTH Breaks, Candle Science, Multi-TF Range Detection) into a unified trader narrative.
+> **Build plan:** `docs/architecture/NARRATIVE_ENGINE_V2_BUILD_PLAN.md`
 > **Committed:** `83388e21` on main
 
 ---

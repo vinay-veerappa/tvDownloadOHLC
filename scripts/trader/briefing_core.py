@@ -32,6 +32,19 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
 from scripts.trader.signals.expected_move import get_em_context, format_em_block
@@ -48,6 +61,53 @@ from scripts.trader.data_freshness import check_all
 log = logging.getLogger(__name__)
 
 ET = ZoneInfo("America/New_York")
+
+def run_async_safely(coro):
+    """Run an async coroutine safely, regardless of whether there is an active event loop."""
+    import asyncio
+    import threading
+    
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+        
+    result = []
+    exception = []
+    
+    def target():
+        try:
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            result.append(new_loop.run_until_complete(coro))
+        except Exception as e:
+            exception.append(e)
+        finally:
+            new_loop.close()
+            
+    t = threading.Thread(target=target)
+    t.start()
+    t.join()
+    
+    if exception:
+        raise exception[0]
+    return result[0]
+
+def get_latest_rth_date(df_t) -> date:
+    """Find the latest date in the dataframe that has RTH data (09:30 to 16:00)."""
+    from datetime import timedelta, datetime
+    if df_t is not None and not df_t.empty:
+        rth_bars = df_t.between_time("09:30", "16:00")
+        if not rth_bars.empty:
+            return rth_bars.index[-1].date()
+        last_dt = df_t.index[-1].date()
+        while last_dt.weekday() in (5, 6): # Saturday, Sunday
+            last_dt -= timedelta(days=1)
+        return last_dt
+    now_dt = datetime.now(ET).date()
+    while now_dt.weekday() in (5, 6):
+        now_dt -= timedelta(days=1)
+    return now_dt
 
 # ── Paths ──────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -228,12 +288,15 @@ def get_dataloader(lookback_days: int = 45) -> DataLoader:
 
     Reuses the existing config from sessions.yaml and the existing
     DataLoader from scripts/libs_py/data/loader.py — no new I/O code.
+
+    NOTE: date_end is set 14 days ahead of today so that parquet files
+    whose last bar is a few days in the past (e.g. ES1 ending July 8 when
+    today is July 13) still fall within the slice window and are loaded
+    correctly. The actual last-bar close is what gets used as spot price.
     """
     config = load_config("scripts/trading_framework/config/sessions.yaml")
     now = datetime.now(ET)
-    # date_end is inclusive of today: use tomorrow so the full current day
-    # (including the Globex session extending into this morning) is captured.
-    config.date_end = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    config.date_end = (now + timedelta(days=14)).strftime("%Y-%m-%d")
     config.date_start = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     return DataLoader(config)
 
@@ -724,6 +787,8 @@ def _resolve_parquet_symbol(ticker: str) -> str:
         "GOOGL": "GOOGL",
         "AMZN": "AMZN",
         "AVGO": "AVGO",
+        "NQ": "NQ1",
+        "ES": "ES1",
     }
     return direct_map.get(ticker, ticker)
 
@@ -1927,7 +1992,11 @@ def _extract_gex_levels(unified_entry: dict, ticker: str) -> dict:
     return levels
 
 
-def build_overnight_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> dict:
+def build_overnight_context(
+    loader: DataLoader | None = None,
+    ticker: str = "NQ1",
+    target_date: date | None = None,
+) -> dict:
     """Pull 1m bars, filter to the Globex session (18:00 → 08:30 ET),
     compute OHLC + trajectory.
 
@@ -1960,19 +2029,20 @@ def build_overnight_context(loader: DataLoader | None = None, ticker: str = "NQ1
     else:
         df_1m.index = df_1m.index.tz_convert(ET)
 
-    now_et = datetime.now(ET)
-    target_date = now_et.date()
+    if target_date is None:
+        now_et = datetime.now(ET)
+        target_date = now_et.date()
+        if now_et.hour >= 18:
+            target_date = target_date + timedelta(days=1)
+            while target_date.weekday() in (5, 6):
+                target_date += timedelta(days=1)
+        elif now_et.weekday() in (5, 6):
+            while target_date.weekday() in (5, 6):
+                target_date -= timedelta(days=1)
 
-    # Globex starts prior evening. If before 08:30 ET, use yesterday's globex.
-    # Build the globex window: prior day 18:00 → target day 08:30.
-    if now_et.hour < _GLOBEX_END_HOUR or (now_et.hour == _GLOBEX_END_HOUR and now_et.minute < _GLOBEX_END_MIN):
-        # Pre-open: globex for today's session started yesterday 18:00
-        globex_start = datetime.combine(target_date - timedelta(days=1), datetime.min.time(), tzinfo=ET).replace(hour=_GLOBEX_START_HOUR)
-        globex_end = datetime.combine(target_date, datetime.min.time(), tzinfo=ET).replace(hour=_GLOBEX_END_HOUR, minute=_GLOBEX_END_MIN)
-    else:
-        # After open: globex for tomorrow starts today 18:00 (but we want last night's)
-        globex_start = datetime.combine(target_date - timedelta(days=1), datetime.min.time(), tzinfo=ET).replace(hour=_GLOBEX_START_HOUR)
-        globex_end = datetime.combine(target_date, datetime.min.time(), tzinfo=ET).replace(hour=_GLOBEX_END_HOUR, minute=_GLOBEX_END_MIN)
+    # Globex starts prior evening. Build the globex window: prior day 18:00 → target day 08:30.
+    globex_start = datetime.combine(target_date - timedelta(days=1), datetime.min.time(), tzinfo=ET).replace(hour=_GLOBEX_START_HOUR)
+    globex_end = datetime.combine(target_date, datetime.min.time(), tzinfo=ET).replace(hour=_GLOBEX_END_HOUR, minute=_GLOBEX_END_MIN)
 
     mask = (df_1m.index >= globex_start) & (df_1m.index < globex_end)
     globex = df_1m.loc[mask]
@@ -2266,71 +2336,79 @@ def get_vix_checkpoint(loader: DataLoader | None = None) -> dict:
     return {"close": None, "prior_close": None, "source": "unavailable"}
 
 
-def get_megacap_earnings(target_date: date) -> list[str]:
-    """Check SQLite database for mega-cap earnings today/tomorrow."""
-    db_path = REPO_ROOT / "web" / "prisma" / "dev.db"
-    megacaps = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "NFLX", "AMD"]
-    events = []
+def _format_scheduled_risk_block(econ_releases: list[dict]) -> str:
+    """Format scheduled economic releases highlighting conflicts."""
+    if not econ_releases:
+        return "== SCHEDULED RISK ==\nNo economic releases scheduled today."
     
-    if not db_path.exists():
-        log.warning("[earnings] SQLite DB not found at %s", db_path)
-        return events
+    lines = ["== SCHEDULED RISK =="]
+    # Sort conflicts first
+    sorted_releases = sorted(econ_releases, key=lambda x: x.get("macro_window_conflict", False), reverse=True)
+    for r in sorted_releases:
+        name = r["name"]
+        impact = r["impact"]
+        time_et = r["time_et"]
+        conflict = r.get("macro_window_conflict", False)
+        window_name = r.get("conflict_window", "")
         
-    try:
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        placeholders = ",".join(["?"] * len(megacaps))
-        query = f"SELECT ticker, earningsDate, beforeMarket FROM EarningsCalendar WHERE ticker IN ({placeholders})"
-        cursor.execute(query, megacaps)
-        rows = cursor.fetchall()
-        conn.close()
-        
-        target_iso = target_date.isoformat()
-        next_iso = (target_date + timedelta(days=1)).isoformat()
-        
-        for ticker, dt_val, bmo in rows:
-            dt_str = ""
-            if isinstance(dt_val, (int, float)):
-                dt_str = datetime.fromtimestamp(dt_val / 1000, tz=timezone.utc).date().isoformat()
-            elif isinstance(dt_val, str):
-                dt_str = dt_val[:10]
-                
-            if dt_str == target_iso:
-                timing = "BMO" if bmo else "AMC"
-                events.append(f"{ticker} ({timing})")
-            elif dt_str == next_iso and bmo:
-                events.append(f"{ticker} (Tomorrow BMO)")
-                
-    except Exception as e:
-        log.warning("[earnings] Failed to query SQLite: %s", e)
-        
-    return events
-
-
-def _format_calendar_for_cheat_sheet(events: list[dict], earnings: list[str] = None) -> str:
-    """Format economic events into the cheat-sheet calendar block."""
-    if not events and not earnings:
-        return "No market-moving events today. Clean session."
-
-    lines: list[str] = []
-    
-    if earnings:
-        lines.append(f"**MEGA-CAP EARNINGS:** {', '.join(earnings)}\n")
-    for e in events:
-        impact = (e.get("impact") or "").upper()
-        time_et = e.get("time_et", "?? ET")
-        name = e.get("name", "Unknown")
-        passed = e.get("passed", False)
-        marker = "[PASSED]" if passed else ""
-        if impact == "HIGH":
-            lines.append(f"{time_et} [HIGH] {name} {marker} — This is the landmine. Expect volatility spike. No entries 15 min before. Wait for post-news settlement.")
-        elif impact == "MEDIUM":
-            lines.append(f"{time_et} [MEDIUM] {name} {marker} — Could move price. Be aware.")
+        if conflict:
+            lines.append(f"⚠ {time_et} [{impact}] {name} — CONFLICT with {window_name} window! (Action: Size Down / Avoid Entry)")
         else:
-            lines.append(f"{time_et} [{impact}] {name} {marker}")
-    return "\n".join(lines) if lines else "No market-moving events today. Clean session."
+            lines.append(f"  {time_et} [{impact}] {name}")
+    return "\n".join(lines)
+
+def _format_earnings_block(earnings: list[dict]) -> str:
+    """Format earnings catalysts ordered by weight."""
+    if not earnings:
+        return "== EARNINGS CATALYSTS ==\nNo relevant earnings releases."
+    
+    lines = ["== EARNINGS CATALYSTS =="]
+    for e in earnings:
+        ticker = e["ticker"]
+        company = e["company"]
+        cap_val = e["market_cap"]
+        timing = e["session_timing"]
+        critical = e.get("index_critical", False)
+        weight = e.get("index_weight", 0.0)
+        
+        cap_str = f"${cap_val/1e9:.1f}B" if cap_val else "N/A"
+        lbl = f" (Weight: {weight:.2%})" if critical else ""
+        
+        if timing in ("AMC_YESTERDAY", "BMO_TODAY"):
+            last = e.get("last_price")
+            source = e.get("quote_source", "unknown")
+            move_pct = e.get("premkt_move_pct", 0.0) * 100
+            beyond = e.get("beyond_em", False)
+            
+            prov_str = " [Low Confidence]" if source == "yfinance_fallback" else ""
+            move_str = f"Move: {move_pct:+.2f}%{prov_str}" if last is not None else "Price: N/A"
+            em_str = " ⚠ BEYOND EM!" if beyond else ""
+            
+            lines.append(f"  {ticker} ({company}, Cap: {cap_str}){lbl} | Timing: {timing} | {move_str}{em_str}")
+        else:
+            lines.append(f"  {ticker} ({company}, Cap: {cap_str}){lbl} | Timing: {timing} (Afternoon Volatility Risk — Size Down)")
+    return "\n".join(lines)
+
+def _format_news_block(headlines: list[dict]) -> str:
+    """Format news headlines block."""
+    if not headlines:
+        return "== OVERNIGHT NEWS HEADLINES ==\nNo high-impact headlines found."
+    
+    lines = ["== OVERNIGHT NEWS HEADLINES =="]
+    for h in headlines:
+        score = h.get("score", 0.0)
+        lines.append(f"  - {h['title']} (Score: {score:.1f})")
+    return "\n".join(lines)
+
+def _format_caution_score_block(caution: dict) -> str:
+    """Format caution score block."""
+    lines = ["== CAUTION SCORE =="]
+    lines.append(f"Caution Score: {caution['score']}/100 | Risk Posture: {caution['posture']}")
+    if caution["reasons"]:
+        lines.append("Reasons:")
+        for r in caution["reasons"]:
+            lines.append(f"  - {r}")
+    return "\n".join(lines)
 
 
 def _format_gex_block(ticker_label: str, levels: dict, spot: float) -> str:
@@ -2356,15 +2434,15 @@ def _format_gex_block(ticker_label: str, levels: dict, spot: float) -> str:
 
     if cw:
         desc = "overhead resistance" if (spot and cw > spot) else "breached (below spot support)"
-        lines.append(f"Call Wall (Major Upside Ceiling): {cw:,.2f} ({_dist_from_spot(cw)} from spot) — {desc}")
+        lines.append(f"Upside Ceiling (Call Wall): {cw:,.2f} ({_dist_from_spot(cw)} from spot) — {desc}")
     if pw:
         desc = "below/at current price (support)" if (spot and pw <= spot) else "breached (overhead resistance)"
-        lines.append(f"Put Wall (Major Downside Floor): {pw:,.2f} ({_dist_from_spot(pw)} from spot) — {desc}")
+        lines.append(f"Downside Floor (Put Wall): {pw:,.2f} ({_dist_from_spot(pw)} from spot) — {desc}")
     if flip:
         pos = "above" if (spot and spot > flip) else "below"
-        lines.append(f"Gamma Flip (Volatility Pivot): {flip:,.2f} — we're {pos} it ({'positive' if (spot and spot > flip) else 'negative'} gamma, {'pinning' if (spot and spot > flip) else 'amplification'} regime)")
+        lines.append(f"Volatility Pivot (Gamma Flip): {flip:,.2f} — we're {pos} it ({'positive' if (spot and spot > flip) else 'negative'} gamma, {'pinning' if (spot and spot > flip) else 'amplification'} regime)")
     if magnet:
-        lines.append(f"Magnet (Max Pain): {magnet:,.2f} — pulling price toward it")
+        lines.append(f"Price Magnet (Gamma Magnet): {magnet:,.2f} — pulling price toward it")
     lines.append(f"Regime: {regime} | Bias: {bias}")
     return "\n".join(lines)
 
@@ -2420,14 +2498,24 @@ def _format_classification_block(ticker_label: str, class_data: dict) -> str:
     over_probs = class_data.get("overnight_probs", {}) or {}
     most_likely = class_data.get("most_likely", "N/A")
 
+    # Expand day-type abbreviations for the LLM (source: docs/DailyClassification/DAILY_CLASSIFICATION.md)
+    _DAY_TYPE_NAMES = {
+        "R1": "Range 1 — Time Spent (price stays in/retests Opening Range; neutral, rotational)",
+        "R2": "Range 2 — Reversal (failed expansion: breaks OR, fails, returns after 11:00)",
+        "DWP": "Directional With Pullbacks (trend breaks OR, never returns, but has structural retracements)",
+        "DNP": "Directional No Pullback (power trend, breaks OR, no structural retracements)",
+    }
+    def _expand_dt(abbr: str) -> str:
+        return f"{abbr} ({_DAY_TYPE_NAMES.get(abbr, '?')})" if abbr and abbr != "N/A" else abbr
+
     lines = [f"== CLASSIFICATION ({ticker_label}) =="]
-    lines.append(f"Yesterday: {prior_type}")
+    lines.append(f"Yesterday: {_expand_dt(prior_type)}")
     lines.append(f"Overnight Key: {overnight_key}")
     if seq_probs:
-        lines.append("Sequential: " + " | ".join(f"{k}: {v}%" for k, v in seq_probs.items()))
+        lines.append("Sequential: " + " | ".join(f"{_expand_dt(k)}: {v}%" for k, v in seq_probs.items()))
     if over_probs:
-        lines.append("Overnight: " + " | ".join(f"{k}: {v}%" for k, v in over_probs.items()))
-    lines.append(f"Most Likely Today: {most_likely}")
+        lines.append("Overnight: " + " | ".join(f"{_expand_dt(k)}: {v}%" for k, v in over_probs.items()))
+    lines.append(f"Most Likely Today: {_expand_dt(most_likely)}")
     return "\n".join(lines)
 
 
@@ -2593,6 +2681,7 @@ def build_premarket_context(
     loader: DataLoader | None = None,
     nq_ticker: str = "NQ1",
     es_ticker: str = "ES1",
+    target_date: date | None = None,
 ) -> str:
     """Build the premarket cheat sheet — runs before 09:30 ET open.
 
@@ -2602,11 +2691,19 @@ def build_premarket_context(
     if loader is None:
         loader = get_dataloader(lookback_days=5)
 
+    if target_date is None:
+        try:
+            from scripts.utils.fused_data_loader import load_fused_data
+            df_t = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
+            target_date = get_latest_rth_date(df_t)
+        except Exception:
+            target_date = datetime.now(ET).date()
+
     sections: list[str] = []
 
     # ── Overnight context (NQ + ES) ──
-    nq_ctx = build_overnight_context(loader, nq_ticker)
-    es_ctx = build_overnight_context(loader, es_ticker)
+    nq_ctx = build_overnight_context(loader, nq_ticker, target_date)
+    es_ctx = build_overnight_context(loader, es_ticker, target_date)
 
     overnight_lines = ["== OVERNIGHT (Globex 18:00 → 08:30 ET) =="]
     for label, ctx in [("NQ", nq_ctx), ("ES", es_ctx)]:
@@ -2641,23 +2738,65 @@ def build_premarket_context(
         import scripts.analysis.analyze_daily_classification_bias as class_module
         import sys as _sys
         _orig_argv = _sys.argv
-        yesterday = (datetime.now(ET) - timedelta(days=1)).date()
+        yesterday = target_date - timedelta(days=1)
         _sys.argv = ["analyze_daily_classification_bias.py", "--ticker", nq_ticker, "--date", yesterday.isoformat()]
-        class_data = class_module.main()
+        _, class_data = class_module.main()
         _sys.argv = _orig_argv
     except Exception as e:
         log.warning("[premarket] Classification analysis failed: %s", e)
         class_data = {}
     sections.append(_format_classification_block("NQ", class_data))
 
-    # ── Calendar ──
+    # ── Econ Releases & Earnings ──
+    async def run_async_signals():
+        _ensure_database_url()
+        from prisma import Prisma
+        db = Prisma()
+        await db.connect()
+        try:
+            from scripts.libs_py.strategy_engine.services.broker_service import BrokerService
+            broker = BrokerService()
+            
+            # Fetch econ events
+            from scripts.trader.signals.econ_calendar import get_econ_releases
+            econ_releases = await get_econ_releases(target_date, db)
+            
+            # Fetch earnings
+            from scripts.trader.signals.earnings import fetch_earnings_events
+            db_path = str(REPO_ROOT / "web" / "prisma" / "dev.db")
+            earnings_list = await fetch_earnings_events(target_date, db_path, broker)
+        finally:
+            await db.disconnect()
+        return econ_releases, earnings_list
+
     try:
-        today = datetime.now(ET).date()
-        events = asyncio.run(fetch_week_events(today, today))
+        econ_releases, earnings_data = run_async_safely(run_async_signals())
     except Exception as e:
-        log.warning("[premarket] Calendar fetch failed: %s", e)
-        events = []
-    sections.append("== TODAY'S CALENDAR ==\n" + _format_calendar_for_cheat_sheet(events))
+        log.warning("[premarket] Failed to fetch econ/earnings signals: %s", e)
+        econ_releases, earnings_data = [], []
+
+    # Fetch news
+    from scripts.trader.utils.news_scraper import get_macro_headlines
+    try:
+        headlines = get_macro_headlines()
+    except Exception as e:
+        log.warning("[premarket] Failed to fetch headlines: %s", e)
+        headlines = []
+
+    # Calculate caution score
+    from scripts.trader.signals.caution_score import calculate_caution_score
+    try:
+        caution_vix = get_vix_vvix_checkpoint()
+        caution = calculate_caution_score(caution_vix, nq_ctx, es_ctx, econ_releases, earnings_data)
+    except Exception as e:
+        log.warning("[premarket] Failed to calculate caution score: %s", e)
+        caution = {"score": 0, "posture": "UNKNOWN", "reasons": []}
+
+    # Format blocks
+    sections.append(_format_scheduled_risk_block(econ_releases))
+    sections.append(_format_earnings_block(earnings_data))
+    sections.append(_format_news_block(headlines))
+    sections.append(_format_caution_score_block(caution))
 
     return "\n\n".join(sections)
 
@@ -2718,14 +2857,56 @@ def build_ticker_cheat_sheet(
     intermarket = build_intermarket_read(nq_ctx, es_ctx, vix_ctx, macro_quotes)
     sections.append("== INTERMARKET OVERNIGHT MACRO (NQ vs ES) ==\n" + intermarket)
 
+    # ── Econ Releases & Earnings ──
+    async def run_async_signals():
+        _ensure_database_url()
+        from prisma import Prisma
+        db = Prisma()
+        await db.connect()
+        try:
+            from scripts.libs_py.strategy_engine.services.broker_service import BrokerService
+            broker = BrokerService()
+            
+            # Fetch econ events
+            from scripts.trader.signals.econ_calendar import get_econ_releases
+            econ_releases = await get_econ_releases(target_date, db)
+            
+            # Fetch earnings
+            from scripts.trader.signals.earnings import fetch_earnings_events
+            db_path = str(REPO_ROOT / "web" / "prisma" / "dev.db")
+            earnings_list = await fetch_earnings_events(target_date, db_path, broker)
+        finally:
+            await db.disconnect()
+        return econ_releases, earnings_list
+
     try:
-        events = asyncio.run(fetch_week_events(target_date, target_date))
+        econ_releases, earnings_data = run_async_safely(run_async_signals())
     except Exception as e:
-        log.warning("[cheat_sheet] Failed to fetch calendar: %s", e)
-        events = []
-        
-    earnings = get_megacap_earnings(target_date)
-    sections.append("== TODAY'S CALENDAR ==\n" + _format_calendar_for_cheat_sheet(events, earnings))
+        log.warning("[cheat_sheet] Failed to fetch econ/earnings signals: %s", e)
+        econ_releases, earnings_data = [], []
+
+    # Fetch news
+    from scripts.trader.utils.news_scraper import get_macro_headlines
+    try:
+        headlines = get_macro_headlines()
+    except Exception as e:
+        log.warning("[cheat_sheet] Failed to fetch headlines: %s", e)
+        headlines = []
+
+    # Calculate caution score
+    from scripts.trader.signals.caution_score import calculate_caution_score
+    try:
+        caution_vix = get_vix_vvix_checkpoint()
+        caution = calculate_caution_score(caution_vix, nq_ctx, es_ctx, econ_releases, earnings_data)
+    except Exception as e:
+        log.warning("[cheat_sheet] Failed to calculate caution score: %s", e)
+        caution = {"score": 0, "posture": "UNKNOWN", "reasons": []}
+
+    # Format blocks
+    sections.append(_format_scheduled_risk_block(econ_releases))
+    sections.append(_format_earnings_block(earnings_data))
+    sections.append(_format_news_block(headlines))
+    sections.append(_format_caution_score_block(caution))
 
     # ── TICKER SPECIFIC CONTEXT ──
     ticker_ctx = build_overnight_context(loader, ticker)
@@ -2898,7 +3079,7 @@ def build_ticker_cheat_sheet(
 
     # Day type
     try:
-        dt = classify_day_type(events, target_date)
+        dt = classify_day_type(econ_releases, target_date)
         sections.append(_format_day_type_block(dt))
     except Exception as e:
         log.warning("[cheat_sheet] Day type failed: %s", e)
@@ -2917,7 +3098,7 @@ def build_ticker_cheat_sheet(
             nq_status=aln_data,
             overnight=ticker_ctx or {},
             ict=ict,
-            news_tier="HIGH" if any(e.get("impact") == "HIGH" for e in events) else ("MEDIUM" if any(e.get("impact") == "MEDIUM" for e in events) else "NONE"),
+            news_tier="HIGH" if any(e.get("impact") == "HIGH" for e in econ_releases) else ("MEDIUM" if any(e.get("impact") == "MEDIUM" for e in econ_releases) else "NONE"),
         )
         sections.append(_format_liquidity_map_block(lm))
     except Exception as e:
@@ -2944,7 +3125,7 @@ def build_ticker_cheat_sheet(
     # Prior EOD plan
     try:
         from scripts.trader.daily_narrative import get_previous_eod_plan
-        prior_plan = asyncio.run(get_previous_eod_plan())
+        prior_plan = run_async_safely(get_previous_eod_plan())
     except Exception as e:
         log.warning("[cheat_sheet] Prior EOD plan fetch failed: %s", e)
         prior_plan = "No previous EOD plan available."
@@ -2960,7 +3141,7 @@ def build_ticker_cheat_sheet(
 
     # Bias Consensus Matrix
     try:
-        modifiers = get_weekly_modifiers(target_date, events)
+        modifiers = get_weekly_modifiers(target_date, econ_releases)
         mod_strings = []
         if modifiers["is_triple_witching_week"]:
             mod_strings.append("TRIPLE WITCHING WEEK")
@@ -2998,183 +3179,50 @@ def build_intraday_context(
     loader: DataLoader | None = None,
     ticker: str = "NQ1",
     es_ticker: str = "ES1",
+    target_date: date | None = None,
 ) -> str:
-    """Build the intraday cheat sheet for the 12:00 ET update.
+    """Build the session-adaptive intraday cheat sheet.
 
-    Focuses on: morning bias vs actual, IB status, noon curve, level interactions,
-    calendar update, and what changed from the morning narrative.
+    Detects the current trading session (Asia, London, NY AM, NY Lunch, NY PM)
+    and assembles only the blocks relevant to that session. Weekend and after-close
+    are handled gracefully.
+
+    This is a thin wrapper that delegates to the modular block builders in
+    scripts/trader/signals/intraday_blocks.py.
     """
-    if loader is None:
-        loader = get_dataloader(lookback_days=2)
+    import pytz
+    from scripts.trader.signals.intraday_blocks import build_intraday_cheat_sheet
 
-    sections: list[str] = []
+    if target_date is None:
+        try:
+            from scripts.utils.fused_data_loader import load_fused_data
+            df_t = load_fused_data(ticker, timeframe="1m", require_historical=False)
+            target_date = get_latest_rth_date(df_t)
+        except Exception:
+            target_date = datetime.now(ET).date()
 
-    # ── Morning bias (from latest open narrative) ──
-    morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
-    if morning_narrative_path.exists():
-        morning_text = morning_narrative_path.read_text(encoding="utf-8")
-        # Extract first 500 chars as summary
-        morning_summary = morning_text[:500] + "..." if len(morning_text) > 500 else morning_text
-        sections.append("== MORNING BIAS ==\n" + morning_summary)
-    else:
-        sections.append("== MORNING BIAS ==\nNo morning narrative available.")
-
-    # ── Current price (from 1m parquet) ──
-    ticker_current = 0.0
-    es_current = 0.0
+    # Load 1m data with ET-localized index
     try:
         from scripts.utils.fused_data_loader import load_fused_data
         df_t = load_fused_data(ticker, timeframe="1m", require_historical=False)
-        if df_t is not None and df_t.index.tz is None:
-            df_t.index = pd.DatetimeIndex(df_t.index).tz_localize("UTC").tz_convert(ET)
-        elif df_t is not None and df_t.index.tz != ET:
-            df_t.index = df_t.index.tz_convert(ET)
-            
         if df_t is not None and not df_t.empty:
-            ticker_current = float(df_t["close"].iloc[-1])
-            
-        df_es = load_fused_data("ES1", timeframe="1m", require_historical=False)
-        if df_es is not None and not df_es.empty:
-            es_current = float(df_es["close"].iloc[-1])
-        
-        today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
-        today_1600 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=16, minutes=0)
-        
-        lines = ["== TODAY'S SESSION =="]
-        base_label = ticker.replace("1", "").upper()
-        if df_t is None or df_t.empty:
-            lines.append(f"{base_label}: No data")
-        else:
-            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
-            if rth.empty:
-                lines.append(f"{base_label}: No RTH data")
-            else:
-                rth_open = float(rth["open"].iloc[0])
-                rth_close = float(rth["close"].iloc[-1])
-                rth_high = float(rth["high"].max())
-                rth_low = float(rth["low"].min())
-                chg = (rth_close / rth_open - 1) * 100
-                body = abs(rth_close - rth_open)
-                lines.append(f"{base_label}: Open {rth_open:,.2f} → Close {rth_close:,.2f} ({chg:+.2f}%) | H: {rth_high:,.2f} L: {rth_low:,.2f} | Body: {body:,.2f}")
-        sections.append("\n".join(lines))
+            if df_t.index.tz is None:
+                df_t.index = pd.DatetimeIndex(df_t.index).tz_localize("UTC").tz_convert(ET)
+            elif df_t.index.tz != ET:
+                df_t.index = df_t.index.tz_convert(ET)
     except Exception as e:
-        log.warning("[intraday] Price fetch failed: %s", e)
-        sections.append("== CURRENT PRICE ==\nPrice data unavailable")
+        log.warning("[intraday] Failed to load 1m data: %s", e)
+        df_t = None
 
-    # ── IB Status ──
-    try:
-        from scripts.libs_py.nqstats.engine import NQStatsEngine
-        if df_t is not None and not df_t.empty:
-            df_recent = df_t.tail(5000)
-            engine = NQStatsEngine(df_recent, ticker=ticker)
-            engine.process()
-            status = engine.get_latest_status()
-
-            ib_high = status.get("ib_high")
-            ib_low = status.get("ib_low")
-            ib_mid = (ib_high + ib_low) / 2 if ib_high and ib_low else None
-            ib_broken_high = ticker_current > ib_high if ib_high and ticker_current else None
-            ib_broken_low = ticker_current < ib_low if ib_low and ticker_current else None
-
-            lines = ["== IB STATUS =="]
-            if ib_high and ib_low:
-                lines.append(f"IB High: {ib_high:,.2f} | IB Low: {ib_low:,.2f} | Mid: {ib_mid:,.2f}" if ib_mid else "")
-                if ib_broken_high:
-                    lines.append("IB High BROKEN — bullish intraday")
-                elif ib_broken_low:
-                    lines.append("IB Low BROKEN — bearish intraday")
-                else:
-                    lines.append("IB intact — 82.5% break before noon, expect afternoon break")
-                if ib_mid and ticker_current > ib_mid:
-                    lines.append("Price in upper half → 82% chance high breaks first")
-                elif ib_mid:
-                    lines.append("Price in lower half → watch for low break")
-            sections.append("\n".join(lines))
-    except Exception as e:
-        log.warning("[intraday] IB status failed: %s", e)
-
-    # ── Noon Curve ──
-    try:
-        if df_t is not None and not df_t.empty:
-            today_rth = df_t[(df_t.index >= pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30))]
-            if not today_rth.empty:
-                am_high = float(today_rth["high"].max())
-                am_low = float(today_rth["low"].min())
-                am_high_time = today_rth["high"].idxmax()
-                am_low_time = today_rth["low"].idxmin()
-
-                lines = ["== NOON CURVE =="]
-                lines.append(f"AM High: {am_high:,.2f} at {am_high_time.strftime('%H:%M') if hasattr(am_high_time, 'strftime') else '?'}")
-                lines.append(f"AM Low: {am_low:,.2f} at {am_low_time.strftime('%H:%M') if hasattr(am_low_time, 'strftime') else '?'}")
-                lines.append("72.8% chance opposite side taken in PM")
-                sections.append("\n".join(lines))
-    except Exception as e:
-        log.warning("[intraday] Noon curve failed: %s", e)
-
-    # ── Level interactions ──
-    try:
-        # Use live JSON for intraday — the 09:30 open snapshot is stale by noon
-        unified = load_macro_levels(session="live")
-        # Prefer direct RTD NQ/ES keys; fall back to QQQ/SPY proxy for backward compat
-        nq_unified = unified.get("NQ") or unified.get("QQQ") or {}
-        es_unified = unified.get("ES") or unified.get("SPY") or {}
-        nq_gex = _extract_gex_levels(nq_unified, "NQ" if "NQ" in unified else "QQQ")
-        es_gex = _extract_gex_levels(es_unified, "ES" if "ES" in unified else "SPY")
-        lines = ["== LEVEL INTERACTIONS =="]
-        # NQ
-        if nq_gex:
-            cw = nq_gex.get("call_wall")
-            pw = nq_gex.get("put_wall")
-            flip = nq_gex.get("flip") or nq_gex.get("zero_gamma")
-            if cw and ticker_current > cw:
-                lines.append(f"NQ Call Wall ({cw:,.2f}) BROKEN — bullish")
-            elif cw:
-                lines.append(f"NQ Call Wall ({cw:,.2f}) overhead — untested")
-            if pw and ticker_current < pw:
-                lines.append(f"NQ Put Wall ({pw:,.2f}) BROKEN — bearish")
-            elif pw:
-                lines.append(f"NQ Put Wall ({pw:,.2f}) below — holding")
-            if flip:
-                lines.append(f"NQ Gamma Flip: {flip:,.2f} — {'above' if ticker_current > flip else 'below'} ({'negative' if ticker_current > flip else 'positive'} gamma)")
-        # ES
-        if es_gex:
-            cw = es_gex.get("call_wall")
-            pw = es_gex.get("put_wall")
-            flip = es_gex.get("flip") or es_gex.get("zero_gamma")
-            if cw and es_current > cw:
-                lines.append(f"ES Call Wall ({cw:,.2f}) BROKEN — bullish")
-            elif cw:
-                lines.append(f"ES Call Wall ({cw:,.2f}) overhead — untested")
-            if pw and es_current < pw:
-                lines.append(f"ES Put Wall ({pw:,.2f}) BROKEN — bearish")
-            elif pw:
-                lines.append(f"ES Put Wall ({pw:,.2f}) below — holding")
-            if flip:
-                lines.append(f"ES Gamma Flip: {flip:,.2f} — {'above' if es_current > flip else 'below'} ({'negative' if es_current > flip else 'positive'} gamma)")
-        sections.append("\n".join(lines))
-    except Exception as e:
-        log.warning("[intraday] Level interactions failed: %s", e)
-
-    # ── Calendar update ──
-    try:
-        events = asyncio.run(fetch_week_events(datetime.now(ET).date(), datetime.now(ET).date()))
-        upcoming = [e for e in events if not e.get("passed", False)]
-        passed = [e for e in events if e.get("passed", False)]
-        lines = ["== CALENDAR UPDATE =="]
-        if passed:
-            lines.append("Passed: " + ", ".join(f"{e.get('time_et','?')} {e.get('name','?')}" for e in passed))
-        if upcoming:
-            lines.append("Upcoming: " + ", ".join(f"{e.get('time_et','?')} {e.get('name','?')} [{e.get('impact','?')}]" for e in upcoming))
-        else:
-            lines.append("No more events today.")
-        sections.append("\n".join(lines))
-    except Exception as e:
-        log.warning("[intraday] Calendar failed: %s", e)
-
-    return "\n\n".join(sections)
+    now_et = datetime.now(pytz.timezone("America/New_York"))
+    return build_intraday_cheat_sheet(df_t, ticker, target_date, now_et=now_et)
 
 
-def build_eod_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> str:
+def build_eod_context(
+    loader: DataLoader | None = None,
+    ticker: str = "NQ1",
+    target_date: date | None = None,
+) -> str:
     """Build the EOD cheat sheet for the 16:05 ET close review.
 
     Focuses on: session summary, morning bias grade, level outcomes,
@@ -3183,10 +3231,21 @@ def build_eod_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> 
     if loader is None:
         loader = get_dataloader(lookback_days=2)
 
+    if target_date is None:
+        try:
+            from scripts.utils.fused_data_loader import load_fused_data
+            df_t = load_fused_data(ticker, timeframe="1m", require_historical=False)
+            target_date = get_latest_rth_date(df_t)
+        except Exception:
+            target_date = datetime.now(ET).date()
+
     sections: list[str] = []
 
-    # ── Morning bias (from latest open narrative) ──
-    morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
+    # ── Morning bias (from ticker-specific open narrative) ──
+    base_label = ticker.replace("1", "").upper()
+    morning_narrative_path = OPTIONS_DATA_DIR / "daily" / f"latest_trader_narrative_open_{ticker}.md"
+    if not morning_narrative_path.exists():
+        morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
     if morning_narrative_path.exists():
         morning_text = morning_narrative_path.read_text(encoding="utf-8")
         morning_summary = morning_text[:400] + "..." if len(morning_text) > 400 else morning_text
@@ -3203,8 +3262,8 @@ def build_eod_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> 
         elif df_t is not None and df_t.index.tz != ET:
             df_t.index = df_t.index.tz_convert(ET)
         
-        today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
-        today_1600 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=16, minutes=0)
+        today_930 = pd.Timestamp(target_date).tz_localize(ET) + pd.Timedelta(hours=9, minutes=30)
+        today_1600 = pd.Timestamp(target_date).tz_localize(ET) + pd.Timedelta(hours=16, minutes=0)
         
         lines = ["== TODAY'S SESSION =="]
         base_label = ticker.replace("1", "").upper()
@@ -3281,19 +3340,39 @@ def build_eod_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> 
     except Exception as e:
         log.warning("[eod] ALN outcome failed: %s", e)
 
-    # ── Tomorrow's calendar ──
+    # ── Next Session Econ Releases & Earnings ──
+    async def run_async_eod_signals(next_day: date):
+        from prisma import Prisma
+        _ensure_database_url()
+        db = Prisma()
+        await db.connect()
+        try:
+            from scripts.libs_py.strategy_engine.services.broker_service import BrokerService
+            broker = BrokerService()
+            
+            # Fetch econ events
+            from scripts.trader.signals.econ_calendar import get_econ_releases
+            econ_releases = await get_econ_releases(next_day, db)
+            
+            # Fetch earnings
+            from scripts.trader.signals.earnings import fetch_earnings_events
+            db_path = str(REPO_ROOT / "web" / "prisma" / "dev.db")
+            earnings_list = await fetch_earnings_events(next_day, db_path, broker)
+        finally:
+            await db.disconnect()
+        return econ_releases, earnings_list
+
     try:
-        tomorrow = datetime.now(ET).date() + timedelta(days=1)
-        events = asyncio.run(fetch_week_events(tomorrow, tomorrow))
-        lines = ["== TOMORROW'S CALENDAR =="]
-        if events:
-            for e in events:
-                lines.append(f"{e.get('time_et','?')} [{e.get('impact','?')}] {e.get('name','?')}")
-        else:
-            lines.append("No events scheduled.")
-        sections.append("\n".join(lines))
+        next_trading_day = target_date + timedelta(days=1)
+        while next_trading_day.weekday() in (5, 6):
+            next_trading_day += timedelta(days=1)
+            
+        econ_releases, earnings_data = run_async_safely(run_async_eod_signals(next_trading_day))
+        
+        sections.append(_format_scheduled_risk_block(econ_releases).replace("== SCHEDULED RISK ==", "== NEXT SESSION SCHEDULED RISK =="))
+        sections.append(_format_earnings_block(earnings_data).replace("== EARNINGS CATALYSTS ==", "== NEXT SESSION EARNINGS CATALYSTS =="))
     except Exception as e:
-        log.warning("[eod] Tomorrow calendar failed: %s", e)
+        log.warning("[eod] Next session signals failed: %s", e)
 
     # ── Tomorrow's setup ──
     try:
@@ -3323,7 +3402,9 @@ def build_eod_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> 
     try:
         # Morning bias: read the dominant directional lean from the open-mode
         # confluence block (written this morning to the open narrative file).
-        morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
+        morning_narrative_path = OPTIONS_DATA_DIR / "daily" / f"latest_trader_narrative_open_{ticker}.md"
+        if not morning_narrative_path.exists():
+            morning_narrative_path = OPTIONS_DATA_DIR / "daily" / "latest_trader_narrative_open.md"
         morning_confluence = "NEUTRAL"
         morning_confluence_level = "LOW"
         if morning_narrative_path.exists():
@@ -3422,10 +3503,29 @@ def build_eod_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> 
     except Exception as e:
         log.warning("[eod] Bias grade recording failed: %s", e)
 
+    # ── ICT Dealing Range outcome ──
+    try:
+        ticker_close = 0.0
+        if df_t is not None and not df_t.empty:
+            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
+            if not rth.empty:
+                ticker_close = float(rth["close"].iloc[-1])
+        ict = compute_ict_from_htf(ticker=ticker, current_price=ticker_close)
+        lines = [f"== ICT DEALING RANGE OUTCOME ({base_label}) =="]
+        if ict.get("pdh"):
+            lines.append(f"PDH: {ict['pdh']:,.2f} | PDL: {ict['pdl']:,.2f} | Midnight: {ict.get('midnight_open') or 'N/A'}")
+            lines.append(f"Close in {ict.get('premium_discount','unknown')} ({ict.get('dealing_range_pct','?')}% of range)")
+            if ict.get("bsl_target"):
+                lines.append(f"BSL (buy stops above PDH): {ict['bsl_target']:,.2f} — {'SWEPT' if ticker_close > ict['bsl_target'] else 'HELD'}")
+            if ict.get("ssl_target"):
+                lines.append(f"SSL (sell stops below PDL): {ict['ssl_target']:,.2f} — {'SWEPT' if ticker_close < ict['ssl_target'] else 'HELD'}")
+        else:
+            lines.append("ICT data unavailable")
+        sections.append("\n".join(lines))
+    except Exception as e:
+        log.warning("[eod] ICT dealing range failed: %s", e)
+
     return "\n\n".join(sections)
-
-
-def build_compact_weekly(briefing_data: dict) -> str:
     """Build a compact weekly briefing for the LLM.
 
     The weekly narrative covers multiple tickers (not just SPY/QQQ) because
@@ -3560,6 +3660,108 @@ def format_weekly_event_heading(event: dict) -> str:
     return f"- **{day}, {date_label} ({time_et.replace(' ET', '')} ET)** -- {name}"
 
 
+def determine_weekly_archetype(events: list[dict]) -> dict:
+    """Determine the ICT Weekly Profile Archetype based on the upcoming news calendar.
+
+    Priority waterfall (highest wins):
+      1. FOMC — always dominant
+      2. Multi-day High-Impact Cluster (3+ high-impact days) — pinball/whipsaw week
+      3. CPI week (early Tue catalyst leads rest-of-week trend)
+      4. NFP/Friday print — Seek & Destroy chop into the number
+      5. Wednesday single catalyst — FOMC-style compression then expansion
+      6. Classic Tuesday H/L of the Week
+    """
+    if not events:
+        return {
+            "archetype": "Classic Tuesday H/L of the Week",
+            "read": "No major catalysts. Expect Monday/Tuesday to set the high or low of the week.",
+            "execution": "Trade the standard daily profiles. Fade extremes early week."
+        }
+
+    has_fomc = False
+    has_nfp = False
+    has_cpi = False
+    has_ppi = False
+    has_claims = False
+    high_impact_days: set[str] = set()
+    wed_high_impact = False
+    fri_high_impact = False
+    early_high_impact = False
+
+    for event in events:
+        impact = str(event.get("impact", "")).upper()
+        name = str(event.get("name", "")).upper()
+        day = str(event.get("day_of_week", "")).upper()
+
+        if impact == "HIGH":
+            if "FOMC" in name: has_fomc = True
+            if "NFP" in name or ("NON" in name and "FARM" in name): has_nfp = True
+            if "CPI" in name or "CONSUMER PRICE" in name: has_cpi = True
+            if "PPI" in name or "PRODUCER PRICE" in name: has_ppi = True
+            if "JOBLESS" in name or "CLAIMS" in name or "UNEMPLOYMENT" in name: has_claims = True
+
+            high_impact_days.add(day)
+            if day == "WEDNESDAY": wed_high_impact = True
+            if day == "FRIDAY": fri_high_impact = True
+            if day in ["MONDAY", "TUESDAY"]: early_high_impact = True
+
+    # Count distinct days with high-impact events
+    num_high_impact_days = len(high_impact_days)
+
+    # 1. FOMC always takes priority
+    if has_fomc:
+        return {
+            "archetype": "Wednesday News-Driven Expansion",
+            "read": "FOMC week. Market will consolidate Mon-Tue, then expand violently on the announcement.",
+            "execution": "Reduce size Mon-Tue. Trade the post-FOMC directional distribution Wed-Fri."
+        }
+
+    # 2. Multi-day cluster (CPI + PPI + Claims or any 3+ high-impact days)
+    if num_high_impact_days >= 3 or (has_cpi and has_ppi and has_claims):
+        return {
+            "archetype": "High-Impact Cluster Week",
+            "read": "Multiple tier-1 catalysts across 3+ days (CPI/PPI/Claims). Expect repricing after each print. "
+                    "The week will be volatile throughout — not just mid-week.",
+            "execution": "Trade reactively, not predictively. Wait for post-print settlement before entering. "
+                         "Use tight stops. CPI Tuesday sets the initial bias; PPI Wednesday confirms or "
+                         "invalidates; Claims Thursday is the final inflection. Size down all week."
+        }
+
+    # 3. CPI-led early week (dominant single catalyst)
+    if has_cpi or early_high_impact:
+        return {
+            "archetype": "Early Week Catalyst Profile",
+            "read": "CPI or major early-week catalyst. Expect violent repricing Tue morning, "
+                    "followed by a sustained directional trend for the rest of the week.",
+            "execution": "Do NOT pre-position. Wait for the initial news volatility to settle (30-60 min), "
+                         "then join the new trend for Wed-Fri."
+        }
+
+    # 4. NFP or heavy Friday print
+    if has_nfp or fri_high_impact:
+        return {
+            "archetype": "Seek & Destroy (Broad Chop)",
+            "read": "Expect wide, sweeping liquidity runs on both sides Mon-Thu leading into Friday's print.",
+            "execution": "Do not trust breakouts Mon-Thu. Fade extremes and target internal liquidity. "
+                         "Trade the NFP release on Friday reactively."
+        }
+
+    # 5. Isolated Wednesday catalyst
+    if wed_high_impact:
+        return {
+            "archetype": "Wednesday News-Driven Expansion",
+            "read": "Single mid-week catalyst. Market will consolidate Mon-Tue, then expand on the print.",
+            "execution": "Reduce size Mon-Tue. Trade the post-news distribution Wed-Fri."
+        }
+
+    # 6. Default
+    return {
+        "archetype": "Classic Tuesday H/L of the Week",
+        "read": "Standard week. Expect Monday/Tuesday to set the high or low of the week.",
+        "execution": "Standard execution. Identify the weekly extreme by Tuesday NY close and trade away from it."
+    }
+
+
 def build_weekly_static_template(briefing_data: dict) -> str:
     """Build the deterministic weekly markdown skeleton in Python.
 
@@ -3577,7 +3779,9 @@ def build_weekly_static_template(briefing_data: dict) -> str:
         header_dates = f"{start_raw} - {end_raw}"
 
     events = briefing_data.get("economic_events", [])
+    earnings = briefing_data.get("earnings_events", [])
     tickers = briefing_data.get("tickers", [])
+    archetype_info = determine_weekly_archetype(events)
 
     lines = [
         f"## WEEKLY MACRO EXECUTION HORIZON -- {header_dates}",
@@ -3585,8 +3789,13 @@ def build_weekly_static_template(briefing_data: dict) -> str:
         "### 0. Prior Week Review",
         "{{PRIOR_WEEK_REVIEW_ANALYSIS}}",
         "",
-        "### 1. Executive Risk Core",
+        "### 1. Executive Risk Core & Weekly Profile",
         "{{EXECUTIVE_RISK_CORE}}",
+        "",
+        "**Expected ICT Weekly Archetype:**",
+        f"- **Profile:** {archetype_info['archetype']}",
+        f"- **Read:** {archetype_info['read']}",
+        f"- **Execution:** {archetype_info['execution']}",
         "",
         "### 2. High-Impact Economic Milestones",
     ]
@@ -3598,16 +3807,29 @@ def build_weekly_static_template(briefing_data: dict) -> str:
     else:
         lines.append("No market-moving economic events scheduled this week.")
 
+    lines.extend([
+        "",
+        "### 3. Mega-Cap Earnings Catalysts",
+    ])
+    if earnings:
+        for event in earnings:
+            day = event.get("day_of_week", "Unknown")
+            name = event.get("name", "Unknown")
+            timing = event.get("timing", "N/A")
+            lines.append(f"- **{day}, {timing}**: {name}")
+    else:
+        lines.append("No mega-cap earnings scheduled this week.")
+
     for ticker_block in tickers:
         ticker = ticker_block.get("ticker", "UNKNOWN")
         proxy_context = ticker_block.get("proxy_context", {})
         proxy_symbol = proxy_context.get("proxy_symbol")
 
-        header = f"### 3. {ticker} -- Structural Sandbox"
+        header = f"### 4. {ticker} -- Structural Sandbox"
         if ticker == "SPY":
-            header = "### 3. SPY (MES levels) -- Structural Sandbox"
+            header = "### 4. SPY (MES levels) -- Structural Sandbox"
         elif ticker == "QQQ":
-            header = "### 3. QQQ (MNQ levels) -- Structural Sandbox"
+            header = "### 4. QQQ (MNQ levels) -- Structural Sandbox"
 
         spot = format_translated_level_display(
             ticker_block.get("spot_price"),
@@ -3644,8 +3866,8 @@ def build_weekly_static_template(briefing_data: dict) -> str:
             "",
             header,
             f"**Spot**: {spot} ({weekly_change}) | **GEX Tape**: {ticker_block.get('gex_regime', {}).get('gex_sign', 'N/A')} / {total_gex_str}",
-            f"**Boundaries**: Call Wall {call_wall} | Put Wall {put_wall} | Zero Gamma {zero_gamma}",
-            f"**Risk Envelope**: EM Upper {em_upper} <-> EM Lower {em_lower} (+-{em_value}%)",
+            f"**Boundaries**: Upside Ceiling {call_wall} | Downside Floor {put_wall} | Volatility Pivot {zero_gamma}",
+            f"**Risk Envelope**: Expected High {em_upper} <-> Expected Low {em_lower} (+-{em_value}%)",
             "",
             f"**Mandated Track**: {ticker_block.get('mandated_execution_track', 'N/A')} -> {{{{TRACK_NOTE_{ticker}}}}}",
             "",
@@ -3657,7 +3879,7 @@ def build_weekly_static_template(briefing_data: dict) -> str:
 
     lines.extend([
         "",
-        "### 4. Account Protection & Invalidation Metrics",
+        "### 5. Account Protection & Invalidation Metrics",
     ])
 
     for ticker_block in tickers:
@@ -3684,10 +3906,13 @@ def build_weekly_static_template(briefing_data: dict) -> str:
 
     lines.extend([
         "",
-        "### 5. Key Risks This Week",
+        "### 6. Possible Weekly Trade Plan",
+        "{{WEEKLY_TRADE_PLAN}}",
+        "",
+        "### 7. Key Risks This Week",
         "{{KEY_RISKS}}",
         "",
-        "### 6. Watch List",
+        "### 8. Watch List",
         "{{WATCH_LIST}}",
     ])
 

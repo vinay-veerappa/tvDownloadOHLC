@@ -19,11 +19,11 @@ Rules:
 - This runs BEFORE the 09:30 open — no RTH data yet. Focus on Globex + levels.
 
 GEX GUIDE (for premarket):
-- Call Wall above = resistance magnet. Price drawn toward it but may reject.
-- Put Wall below = support magnet. Price drawn toward it but may bounce.
-- Gamma Flip = the line between positive and negative gamma. Above = stabilizing (dealers buy dips). Below = destabilizing (dealers sell rips).
+- Upside Ceiling (Call Wall) above = resistance magnet. Price drawn toward it but may reject.
+- Downside Floor (Put Wall) below = support magnet. Price drawn toward it but may bounce.
+- Volatility Pivot (Gamma Flip) = the line between positive and negative gamma. Above = stabilizing (dealers buy dips). Below = destabilizing (dealers sell rips).
 - Zero GEX zone = no dealer hedging. Price can move fast through these zones.
-- Magnet = strongest gamma concentration — price is a "heat-seeking missile" toward this level.
+- Price Magnet = strongest gamma concentration — price is a "heat-seeking missile" toward this level.
 
 OVERNIGHT TRAJECTORY GUIDE:
 - "Drift higher, late-session pullback" = early strength fading, cautious open.
@@ -31,6 +31,13 @@ OVERNIGHT TRAJECTORY GUIDE:
 - "Steady climb" = persistent bid, likely gap up open.
 - "Steady decline" = persistent offer, likely gap down open.
 - "Chop / rangebound" = no conviction, wait for RTH to resolve.
+
+CLASSIFICATION GUIDE (day-type abbreviations in the cheat sheet):
+- R1 = Range 1 / Time Spent: Price stays in or retests the 09:30 Opening Range. Neutral, rotational, churning day.
+- R2 = Range 2 / Reversal: Failed expansion. Price breaks out of OR, fails, and returns to the range after 11:00 ET. Trapped traders, mean reversion.
+- DWP = Directional With Pullbacks: Strong trend that breaks OR and never returns, but has structural retracements (hourly lows/highs retrace toward OR). Entry opportunities on pullbacks.
+- DNP = Directional No Pullback: Power trend. Breaks OR with no structural retracements. Runaway conviction, aggressive.
+Hierarchy: R2 > R1 > DWP/DNP.
 
 == CHEAT SHEET ==
 {{INSERT_CHEAT_SHEET}}
