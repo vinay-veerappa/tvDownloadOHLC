@@ -3355,31 +3355,6 @@ def build_eod_context(
     except Exception as e:
         log.warning("[eod] Level outcomes failed: %s", e)
 
-    # ── ALN outcome ──
-    try:
-        from scripts.libs_py.nqstats.engine import NQStatsEngine
-        if df_t is not None and not df_t.empty:
-            df_recent = df_t.tail(5000)
-            engine = NQStatsEngine(df_recent, ticker=ticker)
-            engine.process()
-            status = engine.get_latest_status()
-            aln = status.get("aln", "N/A")
-            broken = status.get("broken", "N/A")
-            lines = ["== ALN OUTCOME =="]
-            lines.append(f"Pattern: {aln} | Broken: {broken}")
-            lh = status.get("london_high")
-            ll = status.get("london_low")
-            if lh and ll and ticker_close > 0:
-                if ticker_close > lh:
-                    lines.append(f"NY broke London High ({lh:,.2f}) — bullish resolution")
-                elif ticker_close < ll:
-                    lines.append(f"NY broke London Low ({ll:,.2f}) — bearish resolution")
-                else:
-                    lines.append(f"NY stayed within London range ({ll:,.2f}-{lh:,.2f}) — range day")
-            sections.append("\n".join(lines))
-    except Exception as e:
-        log.warning("[eod] ALN outcome failed: %s", e)
-
     # ── Next Session Econ Releases & Earnings ──
     async def run_async_eod_signals(next_day: date):
         from prisma import Prisma
@@ -3551,6 +3526,7 @@ def build_eod_context(
             _format_imbalance_block,
             _format_gaps_block,
         )
+        from scripts.trader.signals.ict_data_loader import compute_ict_daily_bias
         import pytz
         now_et = datetime.now(pytz.timezone("America/New_York"))
         ticker_close = 0.0
@@ -3558,6 +3534,16 @@ def build_eod_context(
             rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
             if not rth.empty:
                 ticker_close = float(rth["close"].iloc[-1])
+
+        # ICT Daily Bias (multi-model synthesis)
+        bias_result = compute_ict_daily_bias(ticker, ticker_close)
+        bias_lines = ["== ICT DAILY BIAS (forward-looking) =="]
+        bias_lines.append(f"Bias: {bias_result['bias']} | Confidence: {bias_result['confidence']}%")
+        bias_lines.append(f"Summary: {bias_result['summary']}")
+        for m in bias_result["models"]:
+            bias_lines.append(f"  {m['model']}: {m['signal']} — {m['detail']}")
+        sections.append("\n".join(bias_lines))
+
         sections.append(_format_kz_pivots_block(ticker, ticker_close, "CLOSE"))
         sections.append(_format_ipda_block(ticker, ticker_close))
         sections.append(_format_imbalance_block(ticker, ticker_close, target_date, now_et))

@@ -18,6 +18,15 @@ Rules:
 - Use the numbers from the cheat sheet. Don't invent prices.
 - Don't give trade recommendations.
 
+ICT DAILY BIAS GUIDE (forward-looking):
+- The ICT Daily Bias combines 4 models into a single directional read for tomorrow.
+- Premium/Discount: price in discount (below 50% of PDH-PDL) favors longs. In premium, favors shorts.
+- Draw on Liquidity: price is drawn to the nearest untouched liquidity pool. If sell stops (SSL) are closer, price may be drawn down first. If buy stops (BSL) are closer, drawn up first.
+- IPDA Position: 20/40/60-day rolling ranges. Deep discount across all = bullish. Premium across all = bearish.
+- HTF Structure: price above prior week high = bullish structure. Below prior week low = bearish.
+- Confidence is 0-100% based on how many models agree. Above 60% = high conviction. Below 30% = low/no edge.
+- Include the ICT Daily Bias as the PRIMARY forward-looking signal in your "Tomorrow I'm watching" section.
+
 ICT DEALING RANGE GUIDE (close review):
 - Premium (price > 50% of PDH-PDL range): Longs had poor R:R. If price closed in premium, look for shorts tomorrow.
 - Discount (price < 50% of PDH-PDL range): Shorts had poor R:R. If price closed in discount, look for longs tomorrow.

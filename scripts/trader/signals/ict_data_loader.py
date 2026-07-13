@@ -465,3 +465,167 @@ def load_ict_context(ticker: str = "NQ1", current_price: float = 0) -> dict:
             result["weekly_range_pct"] = round((current_price - result["pwl"]) / weekly_range * 100, 1)
 
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  ICT Daily Bias Model
+# ═══════════════════════════════════════════════════════════════════════
+
+def compute_ict_daily_bias(ticker: str, current_price: float) -> dict[str, Any]:
+    """Compute a multi-model ICT daily bias.
+
+    Combines 4 bias models from ICT_DAILY_BIAS_MODELS.md:
+      A) Premium/Discount — price position in PDH/PDL dealing range
+      B) Draw on Liquidity — proximity to BSL (PDH/PWH) vs SSL (PDL/PWL)
+      C) IPDA position — multi-day rolling range position
+      D) HTF structure — price above/below prior week and prior month levels
+
+    Returns:
+        dict with:
+            bias: "BULLISH" | "BEARISH" | "NEUTRAL"
+            confidence: int (0-100)
+            models: list of {model, signal, detail}
+            summary: str — one-line human-readable summary
+    """
+    import numpy as np
+
+    models: list[dict[str, Any]] = []
+    bull_score = 0
+    bear_score = 0
+
+    ict = load_ict_context(ticker, current_price)
+
+    # ── Model A: Premium/Discount ──
+    pd_pct = ict.get("dealing_range_pct")
+    if pd_pct is not None and current_price > 0:
+        if pd_pct < 40:
+            signal = "BULLISH"
+            bull_score += 25
+            detail = f"Price in deep discount ({pd_pct:.0f}% of PDH-PDL) — longs favored"
+        elif pd_pct > 60:
+            signal = "BEARISH"
+            bear_score += 25
+            detail = f"Price in deep premium ({pd_pct:.0f}% of PDH-PDL) — shorts favored"
+        else:
+            signal = "NEUTRAL"
+            detail = f"Price at equilibrium ({pd_pct:.0f}% of PDH-PDL)"
+        models.append({"model": "Premium/Discount", "signal": signal, "detail": detail})
+
+    # ── Model B: Draw on Liquidity (proximity to BSL vs SSL) ──
+    pdh = ict.get("pdh")
+    pdl = ict.get("pdl")
+    pwh = ict.get("pwh")
+    pwl = ict.get("pwl")
+    if pdh and pdl and current_price > 0:
+        # Distance to BSL (nearest untaken high) and SSL (nearest untaken low)
+        bsl_candidates = [pdh]
+        ssl_candidates = [pdl]
+        if pwh and pwh > current_price:
+            bsl_candidates.append(pwh)
+        if pwl and pwl < current_price:
+            ssl_candidates.append(pwl)
+
+        nearest_bsl = min(bsl_candidates, key=lambda x: abs(x - current_price))
+        nearest_ssl = min(ssl_candidates, key=lambda x: abs(x - current_price))
+        dist_to_bsl = abs(nearest_bsl - current_price)
+        dist_to_ssl = abs(nearest_ssl - current_price)
+
+        # Closer to SSL = bullish (price will be drawn down to sweep sells first, then rally)
+        # Closer to BSL = bearish (price will be drawn up to sweep buys first, then sell off)
+        # Actually in ICT: price is DRAWN to the nearest liquidity. If closer to SSL, that's
+        # the draw (bearish first). If closer to BSL, that's the draw (bullish first).
+        # But the BIAS is the direction AFTER the draw is completed.
+        # Simplification: closer to SSL = bearish draw (raid sells first), then reversal up = bullish
+        # For daily bias, we look at which side has more untouched liquidity = that's the target
+        if dist_to_ssl < dist_to_bsl * 0.7:
+            signal = "BEARISH"
+            bear_score += 20
+            detail = f"SSL ({nearest_ssl:,.2f}) is {dist_to_ssl:,.2f} away — draw on liquidity is downward"
+        elif dist_to_bsl < dist_to_ssl * 0.7:
+            signal = "BULLISH"
+            bull_score += 20
+            detail = f"BSL ({nearest_bsl:,.2f}) is {dist_to_bsl:,.2f} away — draw on liquidity is upward"
+        else:
+            signal = "NEUTRAL"
+            detail = f"BSL {dist_to_bsl:,.2f} vs SSL {dist_to_ssl:,.2f} — balanced draw"
+        models.append({"model": "Draw on Liquidity", "signal": signal, "detail": detail})
+
+    # ── Model C: IPDA Position ──
+    ipda = load_ipda(ticker, auto_refresh=True)
+    if not ipda.empty:
+        import pytz
+        today = _now_et().date()
+        ipda["trading_date"] = pd.to_datetime(ipda["trading_date"]).dt.date
+        today_row = ipda[ipda["trading_date"] == today]
+        if today_row.empty:
+            today_row = ipda.tail(1)
+        if not today_row.empty:
+            row = today_row.iloc[0]
+            ipda20_pct = row.get("ipda20_pct")
+            ipda60_pct = row.get("ipda60_pct")
+            if pd.notna(ipda20_pct) and pd.notna(ipda60_pct):
+                # Both in discount = bullish, both in premium = bearish
+                if ipda20_pct < 40 and ipda60_pct < 50:
+                    signal = "BULLISH"
+                    bull_score += 25
+                    detail = f"IPDA-20 at {ipda20_pct:.0f}%, IPDA-60 at {ipda60_pct:.0f}% — deep discount across ranges"
+                elif ipda20_pct > 60 and ipda60_pct > 60:
+                    signal = "BEARISH"
+                    bear_score += 25
+                    detail = f"IPDA-20 at {ipda20_pct:.0f}%, IPDA-60 at {ipda60_pct:.0f}% — premium across ranges"
+                else:
+                    signal = "NEUTRAL"
+                    detail = f"IPDA-20 at {ipda20_pct:.0f}%, IPDA-60 at {ipda60_pct:.0f}% — mixed signals"
+                models.append({"model": "IPDA Position", "signal": signal, "detail": detail})
+
+    # ── Model D: HTF Structure (price vs weekly/monthly levels) ──
+    if pwh and pwl and current_price > 0:
+        if current_price > pwh:
+            signal = "BULLISH"
+            bull_score += 20
+            detail = f"Price above PWH ({pwh:,.2f}) — bullish HTF structure"
+        elif current_price < pwl:
+            signal = "BEARISH"
+            bear_score += 20
+            detail = f"Price below PWL ({pwl:,.2f}) — bearish HTF structure"
+        else:
+            # Inside weekly range — check position
+            weekly_pct = ict.get("weekly_range_pct")
+            if weekly_pct is not None:
+                if weekly_pct < 30:
+                    signal = "BEARISH"
+                    bear_score += 10
+                    detail = f"Price in lower weekly range ({weekly_pct:.0f}% of PWH-PWL)"
+                elif weekly_pct > 70:
+                    signal = "BULLISH"
+                    bull_score += 10
+                    detail = f"Price in upper weekly range ({weekly_pct:.0f}% of PWH-PWL)"
+                else:
+                    signal = "NEUTRAL"
+                    detail = f"Price mid weekly range ({weekly_pct:.0f}% of PWH-PWL)"
+            else:
+                signal = "NEUTRAL"
+                detail = f"Price inside weekly range ({pwl:,.2f}-{pwh:,.2f})"
+        models.append({"model": "HTF Structure", "signal": signal, "detail": detail})
+
+    # ── Compute final bias ──
+    total = bull_score + bear_score
+    if total == 0:
+        bias = "NEUTRAL"
+        confidence = 0
+        summary = "No clear ICT bias — models are balanced."
+    elif bull_score > bear_score:
+        bias = "BULLISH"
+        confidence = int((bull_score / 90) * 100)  # max possible = 90
+        summary = f"Bullish bias ({confidence}% confidence) — {bull_score} bull vs {bear_score} bear"
+    else:
+        bias = "BEARISH"
+        confidence = int((bear_score / 90) * 100)
+        summary = f"Bearish bias ({confidence}% confidence) — {bear_score} bear vs {bull_score} bull"
+
+    return {
+        "bias": bias,
+        "confidence": min(confidence, 100),
+        "models": models,
+        "summary": summary,
+    }
