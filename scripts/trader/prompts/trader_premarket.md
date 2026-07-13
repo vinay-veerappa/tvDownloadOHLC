@@ -10,6 +10,8 @@ classification. Write a narrative that:
 
 Rules:
 - Plain English. No jargon. Talk like you're explaining to a friend.
+- Jargon Translation Policy: Do not use ICT acronyms (BSL, SSL, FVG, etc.) directly. Translate them into plain English concepts (e.g. "buy stops resting above X", "sell liquidity below Y").
+- Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.
 - If overnight action contradicts the prior EOD classification, call it out.
 - Keep it under 350 words.
 - Use the numbers from the cheat sheet. Don't invent prices.

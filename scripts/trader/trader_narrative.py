@@ -29,7 +29,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from scripts.trader.briefing_core import (
     REPO_ROOT,
-    build_trader_cheat_sheet,
+    build_ticker_cheat_sheet,
     build_intraday_context,
     build_eod_context,
     build_premarket_context,
@@ -189,19 +189,19 @@ def send_discord_summary(summary: str, webhook_key: str = "macro-alerts") -> Non
             log.warning("  Discord delivery failed for chunk %d: %s", i + 1, e)
 
 
-def write_narrative_to_disk(summary: str, mode: str) -> Path:
+def write_narrative_to_disk(summary: str, mode: str, ticker: str) -> Path:
     """Write the narrative to disk: latest (overwrite) + dated archive."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     from datetime import datetime
     date_str = datetime.now().strftime("%Y-%m-%d")
 
-    latest_path = OUTPUT_DIR / f"latest_trader_narrative_{mode}.md"
+    latest_path = OUTPUT_DIR / f"latest_trader_narrative_{mode}_{ticker}.md"
     with open(latest_path, "w", encoding="utf-8") as f:
         f.write(summary)
     log.info("  Written to %s", latest_path)
 
-    dated_path = OUTPUT_DIR / f"{date_str}_trader_narrative_{mode}.md"
+    dated_path = OUTPUT_DIR / f"{date_str}_trader_narrative_{mode}_{ticker}.md"
     with open(dated_path, "w", encoding="utf-8") as f:
         f.write(summary)
     log.info("  Written to %s", dated_path)
@@ -212,97 +212,80 @@ def write_narrative_to_disk(summary: str, mode: str) -> Path:
 def run_narrative(
     mode: str,
     model: str,
+    tickers: list[str],
     target_date: date | None = None,
     send_discord: bool = True,
-) -> str:
-    """Main narrative generation flow (synchronous wrapper).
-
-    1. Build the cheat sheet (Python pre-digestion)
-    2. Load the mode-specific prompt template
-    3. Call Ollama with cheat sheet + prompt
-    4. Write output to disk + Discord
-    """
-    log.info("Building trader cheat sheet (mode: %s)...", mode)
+) -> list[str]:
+    """Main narrative generation flow (synchronous wrapper) for multiple tickers."""
+    
     loader = get_dataloader(lookback_days=5)
 
-    # Sync gate: for open mode, wait for the 09:30 snapshot to be written
     if mode == "open":
         _wait_for_open_snapshot()
 
-    if mode == "intraday":
-        cheat_sheet = build_intraday_context(loader=loader)
-    elif mode == "close":
-        cheat_sheet = build_eod_context(loader=loader)
-    elif mode == "premarket":
-        cheat_sheet = build_premarket_context(loader=loader)
-    else:
-        cheat_sheet = build_trader_cheat_sheet(
-            mode=mode,
-            loader=loader,
-            target_date=target_date,
-        )
-    log.info("✓ Cheat sheet assembled (%d chars)", len(cheat_sheet))
-
     prompt_template = load_prompt_template(mode)
-    prompt = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", cheat_sheet)
-    log.info("✓ Prompt assembled (%d chars)", len(prompt))
+    
+    results = []
 
-    # Call Ollama — the output IS the narrative (no JSON extraction)
-    narrative = call_ollama(prompt, model)
+    for ticker in tickers:
+        log.info("Building cheat sheet for %s (mode: %s)...", ticker, mode)
+        try:
+            if mode == "intraday":
+                cheat_sheet = build_intraday_context(loader=loader, ticker=ticker)
+            elif mode == "close":
+                cheat_sheet = build_eod_context(loader=loader, ticker=ticker)
+            elif mode == "premarket":
+                cheat_sheet = build_premarket_context(loader=loader, ticker=ticker)
+            else:
+                cheat_sheet = build_ticker_cheat_sheet(
+                    ticker=ticker,
+                    mode=mode,
+                    loader=loader,
+                    target_date=target_date,
+                )
+            
+            log.info("✓ Cheat sheet assembled for %s (%d chars)", ticker, len(cheat_sheet))
+            
+            from datetime import datetime
+            if mode == "close" and datetime.now().weekday() in [4, 5, 6]:  # Friday, Saturday, Sunday
+                cheat_sheet += "\n\n== WEEK AHEAD CONTEXT ==\nSince it's the weekend, incorporate a 'Week Ahead' outlook focusing on upcoming macro events and structural setups for the week. The focus should be on Monday/Tuesday structure and the broader weekly thesis."
+            
+            prompt = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", cheat_sheet)
+            
+            summary = call_ollama(prompt, model)
+            write_narrative_to_disk(summary, mode, ticker)
+            
+            if send_discord:
+                log.info("Sending narrative to Discord for %s...", ticker)
+                send_discord_summary(summary)
+            
+            results.append(summary)
+        except Exception as e:
+            log.error("Failed to generate narrative for %s: %s", ticker, e)
 
-    # Write to disk
-    write_narrative_to_disk(narrative, mode)
-
-    # Discord
-    if send_discord:
-        send_discord_summary(narrative, webhook_key="macro-alerts")
-
-    return narrative
+    return results
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Trader Narrative — the Clean Read")
-    parser.add_argument(
-        "--mode",
-        required=True,
-        choices=["premarket", "open", "intraday", "close"],
-        help="Narrative mode (v1: open only)",
-    )
-    parser.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
-        help=f"Ollama model (default: {DEFAULT_MODEL})",
-    )
-    parser.add_argument(
-        "--date",
-        type=str,
-        default=None,
-        help="Target date (YYYY-MM-DD), default today",
-    )
-    parser.add_argument(
-        "--no-discord",
-        action="store_true",
-        help="Skip Discord output",
-    )
+    parser = argparse.ArgumentParser(description="Trader Narrative Generator")
+    parser.add_argument("--mode", type=str, choices=["premarket", "open", "intraday", "close"], default="open")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Ollama model to use")
+    parser.add_argument("--no-discord", action="store_true", help="Disable Discord output")
+    parser.add_argument("--tickers", type=str, nargs="+", default=["NQ1", "ES1"], help="List of tickers to process")
     args = parser.parse_args()
 
-    target_date = None
-    if args.date:
-        target_date = date.fromisoformat(args.date)
-
-    narrative = run_narrative(
-        mode=args.mode,
-        model=args.model,
-        target_date=target_date,
-        send_discord=not args.no_discord,
-    )
-
-    print("\n" + "=" * 60)
-    print(narrative)
-    print("=" * 60)
-
-    return narrative
-
+    try:
+        run_narrative(
+            mode=args.mode,
+            model=args.model,
+            tickers=args.tickers,
+            send_discord=not args.no_discord,
+        )
+    except KeyboardInterrupt:
+        log.info("\\nCancelled by user")
+    except Exception as e:
+        log.error("Fatal error: %s", e)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

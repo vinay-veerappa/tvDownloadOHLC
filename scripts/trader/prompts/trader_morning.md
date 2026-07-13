@@ -9,6 +9,8 @@ cheat sheet with all the data already connected. Write a narrative that:
 
 Rules:
 - Plain English. No jargon. Talk like you're explaining to a friend.
+- Jargon Translation Policy: Do not use ICT acronyms (BSL, SSL, FVG, etc.) directly. Translate them into plain English concepts (e.g. "buy stops resting above X", "sell liquidity below Y").
+- Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.
 - If the data conflicts (e.g., ALN says bullish but price is below London Low),
   call it out. Don't pretend everything aligns.
 - Keep it under 400 words.

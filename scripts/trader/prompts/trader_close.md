@@ -9,7 +9,9 @@ review that:
 5. Ends with "Tomorrow I'm watching" — 1-2 levels or scenarios
 
 Rules:
-- Plain English. No jargon.
+- Plain English. No jargon. Talk like you're explaining to a friend.
+- Jargon Translation Policy: Do not use ICT acronyms (BSL, SSL, FVG, etc.) directly. Translate them into plain English concepts (e.g. "buy stops resting above X", "sell liquidity below Y").
+- Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.
 - Keep it under 300 words. This is a review, not a plan.
 - If the morning bias was wrong, say why. Be honest.
 - Use the numbers from the cheat sheet. Don't invent prices.

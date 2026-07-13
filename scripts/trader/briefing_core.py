@@ -1954,9 +1954,9 @@ def build_overnight_context(loader: DataLoader | None = None, ticker: str = "NQ1
     if df_1m is None or df_1m.empty:
         return {}
 
-    # Fused loader returns naive ET index. Localize to tz-aware ET.
     if df_1m.index.tz is None:
-        df_1m.index = df_1m.index.tz_localize(ET)
+        # Fused loader returns naive UTC index. Localize to UTC, then convert to ET.
+        df_1m.index = df_1m.index.tz_localize("UTC").tz_convert(ET)
     else:
         df_1m.index = df_1m.index.tz_convert(ET)
 
@@ -2026,13 +2026,18 @@ def build_overnight_context(loader: DataLoader | None = None, ticker: str = "NQ1
 
     # Prior day RTH high/low (09:30–16:00 ET of the previous trading day)
     # Used for RTH Breaks open-scenario classification (nqstats.com/rth_breaks.html)
-    rth_start = globex_start - timedelta(days=1)
-    rth_start = rth_start.replace(hour=9, minute=30)
-    rth_end = rth_start.replace(hour=16, minute=0)
-    prior_rth_mask = (df_1m.index >= rth_start) & (df_1m.index < rth_end)
-    prior_rth_df = df_1m.loc[prior_rth_mask]
-    prior_rth_high = float(prior_rth_df["high"].max()) if not prior_rth_df.empty else None
-    prior_rth_low = float(prior_rth_df["low"].min()) if not prior_rth_df.empty else None
+    prior_rth_high, prior_rth_low = None, None
+    for days_back in range(1, 6):
+        rth_start = globex_start - timedelta(days=days_back)
+        rth_start = rth_start.replace(hour=9, minute=30)
+        rth_end = rth_start.replace(hour=16, minute=0)
+        prior_rth_mask = (df_1m.index >= rth_start) & (df_1m.index < rth_end)
+        prior_rth_df = df_1m.loc[prior_rth_mask]
+        
+        if not prior_rth_df.empty:
+            prior_rth_high = float(prior_rth_df["high"].max())
+            prior_rth_low = float(prior_rth_df["low"].min())
+            break
 
     return {
         "ticker": ticker,
@@ -2050,10 +2055,84 @@ def build_overnight_context(loader: DataLoader | None = None, ticker: str = "NQ1
     }
 
 
+def get_intermarket_quotes() -> dict:
+    """Fetch live quotes for Brent Crude, 10Y Yield, DXY, VIX, and VVIX.
+    Prefers Schwab API, falls back to yfinance.
+    """
+    quotes = {
+        "brent": {"price": None, "change": None},
+        "tnx": {"price": None, "change": None},
+        "dxy": {"price": None, "change": None},
+        "vix": {"price": None, "change": None},
+        "vvix": {"price": None, "change": None},
+    }
+    
+    # Schwab fetch
+    client = None
+    try:
+        from schwab.auth import easy_client
+        import json
+        secrets_path = REPO_ROOT / "secrets.json"
+        token_path = REPO_ROOT / "token.json"
+        if secrets_path.exists() and token_path.exists():
+            with open(secrets_path, "r") as f:
+                secrets = json.load(f)
+            client = easy_client(
+                api_key=secrets["app_key"],
+                app_secret=secrets["app_secret"],
+                callback_url='https://127.0.0.1:8182',
+                token_path=str(token_path),
+                enforce_enums=False
+            )
+    except Exception as e:
+        log.debug("[intermarket] Schwab auth failed: %s", e)
+
+    # We only know Schwab tickers for VIX/VVIX that work well with get_quote currently
+    schwab_map = {"vix": "$VIX", "vvix": "$VVIX"}
+    if client:
+        for key, sym in schwab_map.items():
+            try:
+                resp = client.get_quote(sym)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if sym in data:
+                        q = data[sym].get("quote", {})
+                        if "lastPrice" in q:
+                            quotes[key]["price"] = q["lastPrice"]
+                            quotes[key]["change"] = q.get("netChange", 0.0)
+            except Exception:
+                pass
+                
+    # Fallback to yfinance for missing
+    yf_map = {
+        "brent": "BZ=F",
+        "tnx": "^TNX",
+        "dxy": "DX-Y.NYB",
+        "vix": "^VIX",
+        "vvix": "^VVIX"
+    }
+    try:
+        import yfinance as yf
+        for key, sym in yf_map.items():
+            if quotes[key]["price"] is None:
+                try:
+                    ticker = yf.Ticker(sym)
+                    fi = ticker.fast_info
+                    quotes[key]["price"] = round(fi.last_price, 2)
+                    quotes[key]["change"] = round(fi.last_price - (fi.previous_close or fi.last_price), 2)
+                except Exception:
+                    pass
+    except Exception as e:
+        log.debug("[intermarket] yfinance fallback failed: %s", e)
+        
+    return quotes
+
+
 def build_intermarket_read(
     nq_ctx: dict,
     es_ctx: dict,
     vix_ctx: dict | None = None,
+    quotes: dict | None = None,
 ) -> str:
     """Compare NQ/ES/VIX overnight moves. Detect divergence.
 
@@ -2074,6 +2153,16 @@ def build_intermarket_read(
             vix_chg = round((vix_close / vix_prev - 1) * 100, 2)
 
     parts: list[str] = []
+
+    if quotes:
+        parts.append("| Asset | Last Price | Change |")
+        parts.append("|---|---|---|")
+        for asset, data in quotes.items():
+            price = f"{data['price']:.2f}" if data['price'] is not None else "N/A"
+            change = f"{data['change']:+.2f}" if data['change'] is not None else "N/A"
+            parts.append(f"| {asset.upper()} | {price} | {change} |")
+        parts.append("")
+        parts.append("**Divergence Analysis:**")
 
     # Direction comparison
     nq_down = nq_chg < -0.1
@@ -2177,12 +2266,58 @@ def get_vix_checkpoint(loader: DataLoader | None = None) -> dict:
     return {"close": None, "prior_close": None, "source": "unavailable"}
 
 
-def _format_calendar_for_cheat_sheet(events: list[dict]) -> str:
+def get_megacap_earnings(target_date: date) -> list[str]:
+    """Check SQLite database for mega-cap earnings today/tomorrow."""
+    db_path = REPO_ROOT / "web" / "prisma" / "dev.db"
+    megacaps = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "NFLX", "AMD"]
+    events = []
+    
+    if not db_path.exists():
+        log.warning("[earnings] SQLite DB not found at %s", db_path)
+        return events
+        
+    try:
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        placeholders = ",".join(["?"] * len(megacaps))
+        query = f"SELECT ticker, earningsDate, beforeMarket FROM EarningsCalendar WHERE ticker IN ({placeholders})"
+        cursor.execute(query, megacaps)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        target_iso = target_date.isoformat()
+        next_iso = (target_date + timedelta(days=1)).isoformat()
+        
+        for ticker, dt_val, bmo in rows:
+            dt_str = ""
+            if isinstance(dt_val, (int, float)):
+                dt_str = datetime.fromtimestamp(dt_val / 1000, tz=timezone.utc).date().isoformat()
+            elif isinstance(dt_val, str):
+                dt_str = dt_val[:10]
+                
+            if dt_str == target_iso:
+                timing = "BMO" if bmo else "AMC"
+                events.append(f"{ticker} ({timing})")
+            elif dt_str == next_iso and bmo:
+                events.append(f"{ticker} (Tomorrow BMO)")
+                
+    except Exception as e:
+        log.warning("[earnings] Failed to query SQLite: %s", e)
+        
+    return events
+
+
+def _format_calendar_for_cheat_sheet(events: list[dict], earnings: list[str] = None) -> str:
     """Format economic events into the cheat-sheet calendar block."""
-    if not events:
+    if not events and not earnings:
         return "No market-moving events today. Clean session."
 
     lines: list[str] = []
+    
+    if earnings:
+        lines.append(f"**MEGA-CAP EARNINGS:** {', '.join(earnings)}\n")
     for e in events:
         impact = (e.get("impact") or "").upper()
         time_et = e.get("time_et", "?? ET")
@@ -2203,10 +2338,13 @@ def _format_gex_block(ticker_label: str, levels: dict, spot: float) -> str:
     if not levels:
         return f"== GEX STRUCTURE ({ticker_label}) ==\nNo GEX data available."
 
-    def _pct_from_spot(level: float | None) -> str:
+    def _dist_from_spot(level: float | None) -> str:
         if not level or not spot or spot == 0:
             return "N/A"
-        return f"{'+' if level > spot else ''}{round((level / spot - 1) * 100, 2)}%"
+        pts = level - spot
+        pct = (level / spot - 1) * 100
+        sign = "+" if pts > 0 else ""
+        return f"{sign}{pts:,.2f} pts / {sign}{pct:.2f}%"
 
     lines = [f"== GEX STRUCTURE ({ticker_label}) =="]
     cw = levels.get("call_wall")
@@ -2218,15 +2356,15 @@ def _format_gex_block(ticker_label: str, levels: dict, spot: float) -> str:
 
     if cw:
         desc = "overhead resistance" if (spot and cw > spot) else "breached (below spot support)"
-        lines.append(f"Call Wall: {cw:,.2f} ({_pct_from_spot(cw)} from spot) — {desc}")
+        lines.append(f"Call Wall (Major Upside Ceiling): {cw:,.2f} ({_dist_from_spot(cw)} from spot) — {desc}")
     if pw:
         desc = "below/at current price (support)" if (spot and pw <= spot) else "breached (overhead resistance)"
-        lines.append(f"Put Wall: {pw:,.2f} ({_pct_from_spot(pw)} from spot) — {desc}")
+        lines.append(f"Put Wall (Major Downside Floor): {pw:,.2f} ({_dist_from_spot(pw)} from spot) — {desc}")
     if flip:
-        pos = "above" if (spot and flip > spot) else "below"
-        lines.append(f"Gamma Flip: {flip:,.2f} — we're {pos} it ({'negative' if (spot and flip > spot) else 'positive'} gamma, {'amplification' if (spot and flip > spot) else 'pinning'} regime)")
+        pos = "above" if (spot and spot > flip) else "below"
+        lines.append(f"Gamma Flip (Volatility Pivot): {flip:,.2f} — we're {pos} it ({'positive' if (spot and spot > flip) else 'negative'} gamma, {'pinning' if (spot and spot > flip) else 'amplification'} regime)")
     if magnet:
-        lines.append(f"Magnet: {magnet:,.2f} — pulling price toward it")
+        lines.append(f"Magnet (Max Pain): {magnet:,.2f} — pulling price toward it")
     lines.append(f"Regime: {regime} | Bias: {bias}")
     return "\n".join(lines)
 
@@ -2524,21 +2662,31 @@ def build_premarket_context(
     return "\n\n".join(sections)
 
 
-def build_trader_cheat_sheet(
+def get_weekly_modifiers(target_date: date, events: list[dict]) -> dict:
+    """Compute week-level context like OpEx, Triple Witching, FOMC."""
+    days_to_friday = 4 - target_date.weekday()
+    friday = target_date + timedelta(days=days_to_friday)
+    
+    is_third_friday = 15 <= friday.day <= 21
+    is_opex = is_third_friday
+    is_triple_witching = is_third_friday and friday.month in [3, 6, 9, 12]
+    
+    is_fomc = any("FOMC" in (e.get("name") or "").upper() for e in events)
+    
+    return {
+        "is_opex_week": is_opex,
+        "is_triple_witching_week": is_triple_witching,
+        "is_fomc_week": is_fomc
+    }
+
+
+def build_ticker_cheat_sheet(
+    ticker: str,
     mode: str = "open",
     loader: DataLoader | None = None,
-    nq_ticker: str = "NQ1",
-    es_ticker: str = "ES1",
     target_date: date | None = None,
 ) -> str:
-    """Mode-specific assembly of all data sources into the cheat sheet text block.
-
-    v1: Open mode only. Returns a ~800-1200 token text block with all
-    connections pre-computed (overnight, intermarket, GEX, ALN, classification,
-    calendar, prior EOD plan).
-
-    ADR-017: all computations are vectorized or O(1) dict lookups.
-    """
+    """Mode-specific assembly of data sources for a SINGLE ticker into a cheat sheet."""
     if loader is None:
         loader = get_dataloader(lookback_days=5)
 
@@ -2547,106 +2695,88 @@ def build_trader_cheat_sheet(
 
     sections: list[str] = []
 
-    # ── Overnight context (NQ + ES) ──
-    nq_ctx = build_overnight_context(loader, nq_ticker)
-    es_ctx = build_overnight_context(loader, es_ticker)
+    # ── MACRO CONTEXT (Always NQ+ES to gauge broad market) ──
+    nq_ctx = build_overnight_context(loader, "NQ1")
+    es_ctx = build_overnight_context(loader, "ES1")
 
-    overnight_lines = ["== OVERNIGHT (Globex 18:00 → 08:30 ET) =="]
-    for label, ctx in [("NQ", nq_ctx), ("ES", es_ctx)]:
-        if not ctx:
-            overnight_lines.append(f"{label}: No data available")
-            continue
+    ticker_ctx = build_overnight_context(loader, ticker)
+    overnight_lines = ["== OVERNIGHT MACRO (Globex 18:00 → 08:30 ET) =="]
+    if not ticker_ctx:
+        overnight_lines.append(f"{ticker}: No data available")
+    else:
         overnight_lines.append(
-            f"{label}: Open {ctx['open']:,.2f} → Current {ctx['close']:,.2f} ({ctx['change_pct']}%)"
+            f"{ticker}: Open {ticker_ctx['open']:,.2f} → Current {ticker_ctx['close']:,.2f} ({ticker_ctx['change_pct']}%)"
         )
         overnight_lines.append(
-            f"    Session Low: {ctx['low']:,.2f} at {ctx['session_low_time']} | Session High: {ctx['high']:,.2f} at {ctx['session_high_time']}"
+            f"    Session Low: {ticker_ctx['low']:,.2f} at {ticker_ctx['session_low_time']} | Session High: {ticker_ctx['high']:,.2f} at {ticker_ctx['session_high_time']}"
         )
-        overnight_lines.append(f"    Trajectory: {ctx['trajectory']}")
+        overnight_lines.append(f"    Trajectory: {ticker_ctx['trajectory']}")
     sections.append("\n".join(overnight_lines))
 
-    # ── RTH Breaks (prior day RTH range vs current open) ──
-    # nqstats.com/rth_breaks.html — classifies the 09:30 open vs pRTH high/low
-    rth_lines = ["== RTH BREAKS (Prior Day RTH Range) =="]
-    for label, ctx in [("NQ", nq_ctx), ("ES", es_ctx)]:
-        prth_h = ctx.get("prior_rth_high")
-        prth_l = ctx.get("prior_rth_low")
-        current = ctx.get("close")
-        if prth_h is None or prth_l is None or not current:
-            rth_lines.append(f"{label}: No pRTH data available")
-            continue
-        if current > prth_h:
-            scenario = "GAP UP (open above pRTH High) — 70% close holds above"
-        elif current < prth_l:
-            scenario = "GAP DOWN (open below pRTH Low) — 60% close holds below"
-        else:
-            scenario = "INSIDE RANGE (open within pRTH) — 74% one side breached"
-        rth_lines.append(f"{label}: pRTH High {prth_h:,.2f} | pRTH Low {prth_l:,.2f}")
-        rth_lines.append(f"    Current {current:,.2f} → {scenario}")
-    sections.append("\n".join(rth_lines))
-
-    # ── VIX checkpoint ──
     vix_ctx = get_vix_checkpoint(loader)
+    macro_quotes = get_intermarket_quotes()
+    intermarket = build_intermarket_read(nq_ctx, es_ctx, vix_ctx, macro_quotes)
+    sections.append("== INTERMARKET OVERNIGHT MACRO (NQ vs ES) ==\n" + intermarket)
 
-    # ── Intermarket read ──
-    intermarket = build_intermarket_read(nq_ctx, es_ctx, vix_ctx)
-    sections.append("== INTERMARKET READ ==\n" + intermarket)
-
-    # ── Calendar ──
     try:
         events = asyncio.run(fetch_week_events(target_date, target_date))
     except Exception as e:
         log.warning("[cheat_sheet] Failed to fetch calendar: %s", e)
         events = []
-    sections.append("== TODAY'S CALENDAR ==\n" + _format_calendar_for_cheat_sheet(events))
+        
+    earnings = get_megacap_earnings(target_date)
+    sections.append("== TODAY'S CALENDAR ==\n" + _format_calendar_for_cheat_sheet(events, earnings))
 
-    # ── GEX structure (NQ + ES) ──
-    unified = load_macro_levels(session="open")
-    # NQ uses QQQ proxy, ES uses SPY proxy
-    nq_unified = unified.get("QQQ") or unified.get("NQ1") or {}
-    es_unified = unified.get("SPY") or unified.get("ES1") or {}
+    # ── TICKER SPECIFIC CONTEXT ──
+    ticker_ctx = build_overnight_context(loader, ticker)
+    ticker_spot = ticker_ctx.get("close", 0) if ticker_ctx else 0
+    base_label = ticker.replace("1", "").upper()
 
-    nq_spot = nq_ctx.get("close", 0) or 0
-    es_spot = es_ctx.get("close", 0) or 0
+    rth_lines = [f"== RTH BREAKS ({base_label}) =="]
+    if ticker_ctx:
+        prth_h = ticker_ctx.get("prior_rth_high")
+        prth_l = ticker_ctx.get("prior_rth_low")
+        if prth_h is not None and prth_l is not None and ticker_spot:
+            if ticker_spot > prth_h:
+                scenario = "GAP UP (open above pRTH High) — 70% close holds above"
+            elif ticker_spot < prth_l:
+                scenario = "GAP DOWN (open below pRTH Low) — 60% close holds below"
+            else:
+                scenario = "INSIDE RANGE (open within pRTH) — 74% one side breached"
+            rth_lines.append(f"pRTH High {prth_h:,.2f} | pRTH Low {prth_l:,.2f}")
+            rth_lines.append(f"Current {ticker_spot:,.2f} → {scenario}")
+        else:
+            rth_lines.append("No pRTH data available")
+    sections.append("\n".join(rth_lines))
 
-    nq_gex = _extract_gex_levels(nq_unified, "QQQ")
-    es_gex = _extract_gex_levels(es_unified, "SPY")
+    # GEX structure
+    session_arg = mode if mode in {"open", "close"} else "live"
+    unified = load_macro_levels(session=session_arg)
+    # If ticker is NQ1 -> NQ, ES1 -> ES, otherwise try directly
+    ticker_unified = unified.get(base_label) or unified.get(ticker) or {}
+    
+    ticker_gex = _extract_gex_levels(ticker_unified, base_label)
+    sections.append(_format_gex_block(base_label, ticker_gex, ticker_spot))
 
-    sections.append(_format_gex_block("NQ", nq_gex, nq_spot))
-    sections.append(_format_gex_block("ES", es_gex, es_spot))
-
-    # ── ALN / Session patterns (NQ) ──
-    # Use the NQStats library directly (scripts.libs_py.nqstats.engine) instead
-    # of the analyze_daily_nqstats.py CLI script, which has a stale column
-    # name mismatch (asia_quadrant vs asiabox_status). The engine's
-    # get_latest_status() returns the correct current-session fields.
-    #
-    # PERF (ADR-017): The engine is vectorized but processes every row.
-    # Loading the full 6.5M-row fused DataFrame takes ~117s. We only need
-    # today's session + enough prior days for P12 (prior close) context.
-    # Filtering to the last 10 days (~9K rows) gives identical results
-    # in ~0.25s — a 464x speedup.
+    # ALN
     aln_data: dict = {}
     try:
         from scripts.utils.fused_data_loader import load_fused_data
         from scripts.libs_py.nqstats.engine import NQStatsEngine
 
-        df_nq = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
-        if df_nq is not None and not df_nq.empty:
-            # Ensure ET-aware index before any datetime comparison.
-            if df_nq.index.tz is None:
-                df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert(ET)
-            elif df_nq.index.tz != ET:
-                df_nq.index = df_nq.index.tz_convert(ET)
+        df_t = load_fused_data(ticker, timeframe="1m", require_historical=False)
+        if df_t is not None and not df_t.empty:
+            if df_t.index.tz is None:
+                df_t.index = pd.DatetimeIndex(df_t.index).tz_localize("UTC").tz_convert(ET)
+            elif df_t.index.tz != ET:
+                df_t.index = df_t.index.tz_convert(ET)
 
-            # Limit to last 10 days for P12 context (ADR-017: avoid processing
-            # millions of rows when only today's session is needed).
             _cutoff = pd.Timestamp.now(ET) - timedelta(days=10)
-            df_nq_recent = df_nq[df_nq.index >= _cutoff]
-            if df_nq_recent.empty:
-                df_nq_recent = df_nq
+            df_t_recent = df_t[df_t.index >= _cutoff]
+            if df_t_recent.empty:
+                df_t_recent = df_t
 
-            engine = NQStatsEngine(df_nq_recent, ticker=nq_ticker)
+            engine = NQStatsEngine(df_t_recent, ticker=ticker)
             engine.process()
             latest = engine.get_latest_status()
 
@@ -2668,7 +2798,6 @@ def build_trader_cheat_sheet(
                 },
             }
 
-            # Derive bias/conviction/reasoning from the ALN pattern
             aln_pattern = aln_data["aln"]
             broken = aln_data["broken"]
             if aln_pattern == "LPEU" and ("Held/Held" in broken or "Broken/Held" in broken):
@@ -2692,30 +2821,32 @@ def build_trader_cheat_sheet(
                 aln_data["conviction"] = "LOW"
                 aln_data["reasoning"] = f"{aln_pattern} + {broken} — no high-conviction edge."
     except Exception as e:
-        log.warning("[cheat_sheet] ALN engine failed: %s", e)
-    sections.append(_format_aln_block("NQ", aln_data, nq_spot))
+        log.warning("[cheat_sheet] ALN engine failed for %s: %s", ticker, e)
+    
+    sections.append(_format_aln_block(base_label, aln_data, ticker_spot))
 
-    # ── Classification (NQ) ──
+    # Classification
     class_data: dict = {}
     try:
         import scripts.analysis.analyze_daily_classification_bias as class_module
         import sys as _sys
         orig_argv = _sys.argv[:]
-        _sys.argv = ["analyze_daily_classification_bias.py", "--ticker", nq_ticker, "--date", target_date.isoformat()]
+        _sys.argv = ["analyze_daily_classification_bias.py", "--ticker", ticker, "--date", target_date.isoformat()]
         try:
             _, class_data = class_module.main()
         finally:
             _sys.argv = orig_argv
     except Exception as e:
-        log.warning("[cheat_sheet] Classification analysis failed: %s", e)
-    sections.append(_format_classification_block("NQ", class_data))
+        log.warning("[cheat_sheet] Classification analysis failed for %s: %s", ticker, e)
+    sections.append(_format_classification_block(base_label, class_data))
 
-    # ── Key levels hierarchy ──
-    sections.append(_format_key_levels_hierarchy(nq_gex, es_gex, aln_data, nq_spot))
+    # Key levels hierarchy
+    # Note: _format_key_levels_hierarchy was originally built taking nq_gex, es_gex. 
+    # We will pass ticker_gex as the primary levels dict and an empty dict for the second, or adjust it if needed.
+    # The signature in briefing_core is `_format_key_levels_hierarchy(ticker_label, levels, aln_data, spot)`
+    sections.append(_format_key_levels_hierarchy(base_label, ticker_gex, aln_data, ticker_spot))
 
-    # ── Phase D: Signal module blocks ──
-
-    # Data freshness check
+    # Data freshness
     try:
         freshness = check_all()
         stale = [f for f in freshness if f.is_stale]
@@ -2733,37 +2864,35 @@ def build_trader_cheat_sheet(
 
     # ICT context
     try:
-        ict = compute_ict_from_htf(ticker=nq_ticker, current_price=nq_spot)
-        sections.append(_format_ict_block("NQ", ict, nq_spot))
+        ict = compute_ict_from_htf(ticker=ticker, current_price=ticker_spot)
+        sections.append(_format_ict_block(base_label, ict, ticker_spot))
     except Exception as e:
-        log.warning("[cheat_sheet] ICT context failed: %s", e)
+        log.warning("[cheat_sheet] ICT context failed for %s: %s", ticker, e)
 
     # Candle Science
     try:
-        cs = get_candle_science_read(ticker=nq_ticker)
-        sections.append(_format_candle_science_block("NQ", cs))
+        cs = get_candle_science_read(ticker=ticker)
+        sections.append(_format_candle_science_block(base_label, cs))
     except Exception as e:
-        log.warning("[cheat_sheet] Candle Science failed: %s", e)
+        log.warning("[cheat_sheet] Candle Science failed for %s: %s", ticker, e)
 
     # Confluence assessment
     try:
-        # Derive signal directions from existing data
         aln_bias = aln_data.get("bias", "NEUTRAL")
         s1 = "BULLISH" if "BULLISH" in aln_bias else ("BEARISH" if "BEARISH" in aln_bias else "NEUTRAL")
-        # RTH open scenario
+        
         rth_scenario = "INSIDE"
-        if nq_ctx:
-            prth_h = nq_ctx.get("prior_rth_high")
-            prth_l = nq_ctx.get("prior_rth_low")
-            cur = nq_ctx.get("close", 0)
-            if prth_h and prth_l and cur:
-                if cur > prth_h: rth_scenario = "GAP_UP"
-                elif cur < prth_l: rth_scenario = "GAP_DOWN"
+        if ticker_ctx:
+            prth_h = ticker_ctx.get("prior_rth_high")
+            prth_l = ticker_ctx.get("prior_rth_low")
+            if prth_h and prth_l and ticker_spot:
+                if ticker_spot > prth_h: rth_scenario = "GAP_UP"
+                elif ticker_spot < prth_l: rth_scenario = "GAP_DOWN"
         s2 = "BULLISH" if rth_scenario == "GAP_UP" else ("BEARISH" if rth_scenario == "GAP_DOWN" else "NEUTRAL")
-        # Candle Science direction
+        
         s3 = "BULLISH" if (cs and cs.get("p_bull", 50) > cs.get("p_bear", 50)) else ("BEARISH" if (cs and cs.get("p_bear", 50) > cs.get("p_bull", 50)) else "NEUTRAL")
         conf = assess_confluence(s1, s2, s3)
-        sections.append(_format_confluence_block("NQ", conf))
+        sections.append(_format_confluence_block(base_label, conf))
     except Exception as e:
         log.warning("[cheat_sheet] Confluence failed: %s", e)
 
@@ -2776,17 +2905,17 @@ def build_trader_cheat_sheet(
 
     # Weekly profile
     try:
-        wp = compute_weekly_profile(ticker=nq_ticker, current_price=nq_spot)
-        sections.append(_format_weekly_profile_block("NQ", wp))
+        wp = compute_weekly_profile(ticker=ticker, current_price=ticker_spot)
+        sections.append(_format_weekly_profile_block(base_label, wp))
     except Exception as e:
-        log.warning("[cheat_sheet] Weekly profile failed: %s", e)
+        log.warning("[cheat_sheet] Weekly profile failed for %s: %s", ticker, e)
 
     # ICT liquidity map
     try:
         lm = build_liquidity_map(
             bias=s1,
             nq_status=aln_data,
-            overnight=nq_ctx or {},
+            overnight=ticker_ctx or {},
             ict=ict,
             news_tier="HIGH" if any(e.get("impact") == "HIGH" for e in events) else ("MEDIUM" if any(e.get("impact") == "MEDIUM" for e in events) else "NONE"),
         )
@@ -2796,24 +2925,23 @@ def build_trader_cheat_sheet(
 
     # GEX regime change
     try:
-        nq_gex_full = nq_unified if isinstance(nq_unified, dict) else {}
-        gr = get_gex_regime_change(nq_gex_full)
+        ticker_gex_full = ticker_unified if isinstance(ticker_unified, dict) else {}
+        gr = get_gex_regime_change(ticker_gex_full)
         if gr.get("regime_change") and gr["regime_change"] != "stable":
             sections.append(_format_gex_regime_block(gr))
-        if nq_gex_full:
-            save_today_snapshot(nq_gex_full)
+        if ticker_gex_full:
+            save_today_snapshot(ticker_gex_full)
     except Exception as e:
         log.warning("[cheat_sheet] GEX regime change failed: %s", e)
 
-    # ── Expected Move ──
+    # Expected Move
     try:
-        em_data = get_em_context(spot=nq_spot, ticker=nq_ticker)
+        em_data = get_em_context(spot=ticker_spot, ticker=ticker)
         sections.append(format_em_block(em_data))
     except Exception as e:
-        log.warning("[cheat_sheet] EM signal failed: %s", e)
-        sections.append("== EXPECTED MOVE ==\nEM calculation failed")
+        log.warning("[cheat_sheet] EM signal failed for %s: %s", ticker, e)
 
-    # ── Prior EOD plan (overnight continuity) ──
+    # Prior EOD plan
     try:
         from scripts.trader.daily_narrative import get_previous_eod_plan
         prior_plan = asyncio.run(get_previous_eod_plan())
@@ -2822,7 +2950,7 @@ def build_trader_cheat_sheet(
         prior_plan = "No previous EOD plan available."
     sections.append("== PRIOR EOD PLAN (overnight continuity) ==\n" + prior_plan)
 
-    # ── Bias grade feedback (Phase F) ──
+    # Bias grade feedback
     try:
         grades = get_recent_bias_accuracy(n=5)
         if grades["total"] > 0:
@@ -2830,12 +2958,45 @@ def build_trader_cheat_sheet(
     except Exception as e:
         log.warning("[cheat_sheet] Bias grades failed: %s", e)
 
+    # Bias Consensus Matrix
+    try:
+        modifiers = get_weekly_modifiers(target_date, events)
+        mod_strings = []
+        if modifiers["is_triple_witching_week"]:
+            mod_strings.append("TRIPLE WITCHING WEEK")
+        elif modifiers["is_opex_week"]:
+            mod_strings.append("OPEX WEEK")
+        if modifiers["is_fomc_week"]:
+            mod_strings.append("FOMC WEEK")
+        mod_str = " | ".join(mod_strings) if mod_strings else "Standard Week"
+        
+        im_chg_nq = nq_ctx.get('change_pct', 0) if nq_ctx else 0
+        im_chg_es = es_ctx.get('change_pct', 0) if es_ctx else 0
+        im_sig = 'Risk-Off' if im_chg_nq < 0 and im_chg_es < 0 else ('Risk-On' if im_chg_nq > 0 and im_chg_es > 0 else 'Mixed')
+        
+        prth_h = ticker_ctx.get('prior_rth_high') if ticker_ctx else 0
+        prth_l = ticker_ctx.get('prior_rth_low') if ticker_ctx else float('inf')
+        rth_sig = 'Gap Up' if ticker_spot > (prth_h or 0) else ('Gap Down' if ticker_spot < (prth_l or float('inf')) else 'Inside Range')
+        
+        matrix = [
+            f"== BIAS CONSENSUS MATRIX ({mod_str}) ==",
+            f"| Component ({base_label}) | Signal | Context |",
+            "|---|---|---|",
+            f"| Macro Intermarket | {im_sig} | Divergence checks applied |",
+            f"| RTH Open | {rth_sig} | Open Scenario |",
+            f"| GEX | {ticker_gex.get('bias', 'N/A')} | {ticker_gex.get('regime', 'N/A')} regime |",
+            f"| ALN Pattern | {aln_data.get('bias', 'N/A')} | {aln_data.get('aln', 'N/A')} |",
+        ]
+        sections.append("\n".join(matrix))
+    except Exception as e:
+        log.warning("[cheat_sheet] Matrix failed: %s", e)
+
     return "\n\n".join(sections)
 
 
 def build_intraday_context(
     loader: DataLoader | None = None,
-    nq_ticker: str = "NQ1",
+    ticker: str = "NQ1",
     es_ticker: str = "ES1",
 ) -> str:
     """Build the intraday cheat sheet for the 12:00 ET update.
@@ -2859,40 +3020,42 @@ def build_intraday_context(
         sections.append("== MORNING BIAS ==\nNo morning narrative available.")
 
     # ── Current price (from 1m parquet) ──
+    ticker_current = 0.0
+    es_current = 0.0
     try:
         from scripts.utils.fused_data_loader import load_fused_data
-        df_nq = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
-        df_es = load_fused_data(es_ticker, timeframe="1m", require_historical=False)
-
-        nq_current = float(df_nq["close"].iloc[-1]) if df_nq is not None and not df_nq.empty else 0
-        es_current = float(df_es["close"].iloc[-1]) if df_es is not None and not df_es.empty else 0
-
-        # RTH open (09:30 bar)
-        if df_nq is not None and df_nq.index.tz is None:
-            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert(ET)
-        elif df_nq is not None and df_nq.index.tz != ET:
-            df_nq.index = df_nq.index.tz_convert(ET)
-        if df_es is not None and df_es.index.tz is None:
-            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert(ET)
-        elif df_es is not None and df_es.index.tz != ET:
-            df_es.index = df_es.index.tz_convert(ET)
-        nq_open = 0.0
-        es_open = 0.0
+        df_t = load_fused_data(ticker, timeframe="1m", require_historical=False)
+        if df_t is not None and df_t.index.tz is None:
+            df_t.index = pd.DatetimeIndex(df_t.index).tz_localize("UTC").tz_convert(ET)
+        elif df_t is not None and df_t.index.tz != ET:
+            df_t.index = df_t.index.tz_convert(ET)
+            
+        if df_t is not None and not df_t.empty:
+            ticker_current = float(df_t["close"].iloc[-1])
+            
+        df_es = load_fused_data("ES1", timeframe="1m", require_historical=False)
+        if df_es is not None and not df_es.empty:
+            es_current = float(df_es["close"].iloc[-1])
+        
         today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
-        if df_nq is not None:
-            today_open_nq = df_nq[df_nq.index >= today_930]
-            if not today_open_nq.empty:
-                nq_open = float(today_open_nq["open"].iloc[0])
-        if df_es is not None:
-            today_open_es = df_es[df_es.index >= today_930]
-            if not today_open_es.empty:
-                es_open = float(today_open_es["open"].iloc[0])
-
-        nq_chg = ((nq_current / nq_open - 1) * 100) if nq_open > 0 else 0
-        es_chg = ((es_current / es_open - 1) * 100) if es_open > 0 else 0
-
-        lines = ["== CURRENT PRICE =="]
-        lines.append(f"NQ: {nq_current:,.2f} ({nq_chg:+.2f}% from open) | ES: {es_current:,.2f} ({es_chg:+.2f}% from open)")
+        today_1600 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=16, minutes=0)
+        
+        lines = ["== TODAY'S SESSION =="]
+        base_label = ticker.replace("1", "").upper()
+        if df_t is None or df_t.empty:
+            lines.append(f"{base_label}: No data")
+        else:
+            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
+            if rth.empty:
+                lines.append(f"{base_label}: No RTH data")
+            else:
+                rth_open = float(rth["open"].iloc[0])
+                rth_close = float(rth["close"].iloc[-1])
+                rth_high = float(rth["high"].max())
+                rth_low = float(rth["low"].min())
+                chg = (rth_close / rth_open - 1) * 100
+                body = abs(rth_close - rth_open)
+                lines.append(f"{base_label}: Open {rth_open:,.2f} → Close {rth_close:,.2f} ({chg:+.2f}%) | H: {rth_high:,.2f} L: {rth_low:,.2f} | Body: {body:,.2f}")
         sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[intraday] Price fetch failed: %s", e)
@@ -2901,18 +3064,17 @@ def build_intraday_context(
     # ── IB Status ──
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
-        if df_nq is not None and not df_nq.empty:
-            _cutoff = pd.Timestamp.now(ET) - pd.Timedelta(days=2)
-            df_recent = df_nq[df_nq.index >= _cutoff]
-            engine = NQStatsEngine(df_recent, ticker=nq_ticker)
+        if df_t is not None and not df_t.empty:
+            df_recent = df_t.tail(5000)
+            engine = NQStatsEngine(df_recent, ticker=ticker)
             engine.process()
             status = engine.get_latest_status()
 
             ib_high = status.get("ib_high")
             ib_low = status.get("ib_low")
             ib_mid = (ib_high + ib_low) / 2 if ib_high and ib_low else None
-            ib_broken_high = nq_current > ib_high if ib_high and nq_current else None
-            ib_broken_low = nq_current < ib_low if ib_low and nq_current else None
+            ib_broken_high = ticker_current > ib_high if ib_high and ticker_current else None
+            ib_broken_low = ticker_current < ib_low if ib_low and ticker_current else None
 
             lines = ["== IB STATUS =="]
             if ib_high and ib_low:
@@ -2923,7 +3085,7 @@ def build_intraday_context(
                     lines.append("IB Low BROKEN — bearish intraday")
                 else:
                     lines.append("IB intact — 82.5% break before noon, expect afternoon break")
-                if ib_mid and nq_current > ib_mid:
+                if ib_mid and ticker_current > ib_mid:
                     lines.append("Price in upper half → 82% chance high breaks first")
                 elif ib_mid:
                     lines.append("Price in lower half → watch for low break")
@@ -2933,8 +3095,8 @@ def build_intraday_context(
 
     # ── Noon Curve ──
     try:
-        if df_nq is not None and not df_nq.empty:
-            today_rth = df_nq[(df_nq.index >= pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30))]
+        if df_t is not None and not df_t.empty:
+            today_rth = df_t[(df_t.index >= pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30))]
             if not today_rth.empty:
                 am_high = float(today_rth["high"].max())
                 am_low = float(today_rth["low"].min())
@@ -2964,16 +3126,16 @@ def build_intraday_context(
             cw = nq_gex.get("call_wall")
             pw = nq_gex.get("put_wall")
             flip = nq_gex.get("flip") or nq_gex.get("zero_gamma")
-            if cw and nq_current > cw:
+            if cw and ticker_current > cw:
                 lines.append(f"NQ Call Wall ({cw:,.2f}) BROKEN — bullish")
             elif cw:
                 lines.append(f"NQ Call Wall ({cw:,.2f}) overhead — untested")
-            if pw and nq_current < pw:
+            if pw and ticker_current < pw:
                 lines.append(f"NQ Put Wall ({pw:,.2f}) BROKEN — bearish")
             elif pw:
                 lines.append(f"NQ Put Wall ({pw:,.2f}) below — holding")
             if flip:
-                lines.append(f"NQ Gamma Flip: {flip:,.2f} — {'above' if nq_current > flip else 'below'} ({'negative' if nq_current > flip else 'positive'} gamma)")
+                lines.append(f"NQ Gamma Flip: {flip:,.2f} — {'above' if ticker_current > flip else 'below'} ({'negative' if ticker_current > flip else 'positive'} gamma)")
         # ES
         if es_gex:
             cw = es_gex.get("call_wall")
@@ -3012,11 +3174,7 @@ def build_intraday_context(
     return "\n\n".join(sections)
 
 
-def build_eod_context(
-    loader: DataLoader | None = None,
-    nq_ticker: str = "NQ1",
-    es_ticker: str = "ES1",
-) -> str:
+def build_eod_context(loader: DataLoader | None = None, ticker: str = "NQ1") -> str:
     """Build the EOD cheat sheet for the 16:05 ET close review.
 
     Focuses on: session summary, morning bias grade, level outcomes,
@@ -3039,37 +3197,31 @@ def build_eod_context(
     # ── Today's session (from 1m parquet) ──
     try:
         from scripts.utils.fused_data_loader import load_fused_data
-        df_nq = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
-        df_es = load_fused_data(es_ticker, timeframe="1m", require_historical=False)
-
-        if df_nq is not None and df_nq.index.tz is None:
-            df_nq.index = pd.DatetimeIndex(df_nq.index).tz_localize("UTC").tz_convert(ET)
-        elif df_nq is not None and df_nq.index.tz != ET:
-            df_nq.index = df_nq.index.tz_convert(ET)
-        if df_es is not None and df_es.index.tz is None:
-            df_es.index = pd.DatetimeIndex(df_es.index).tz_localize("UTC").tz_convert(ET)
-        elif df_es is not None and df_es.index.tz != ET:
-            df_es.index = df_es.index.tz_convert(ET)
-
+        df_t = load_fused_data(ticker, timeframe="1m", require_historical=False)
+        if df_t is not None and df_t.index.tz is None:
+            df_t.index = pd.DatetimeIndex(df_t.index).tz_localize("UTC").tz_convert(ET)
+        elif df_t is not None and df_t.index.tz != ET:
+            df_t.index = df_t.index.tz_convert(ET)
+        
         today_930 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=9, minutes=30)
         today_1600 = pd.Timestamp.now(ET).normalize() + pd.Timedelta(hours=16, minutes=0)
-
+        
         lines = ["== TODAY'S SESSION =="]
-        for label, df in [("NQ", df_nq), ("ES", df_es)]:
-            if df is None or df.empty:
-                lines.append(f"{label}: No data")
-                continue
-            rth = df[(df.index >= today_930) & (df.index <= today_1600)]
+        base_label = ticker.replace("1", "").upper()
+        if df_t is None or df_t.empty:
+            lines.append(f"{base_label}: No data")
+        else:
+            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
             if rth.empty:
-                lines.append(f"{label}: No RTH data")
-                continue
-            rth_open = float(rth["open"].iloc[0])
-            rth_close = float(rth["close"].iloc[-1])
-            rth_high = float(rth["high"].max())
-            rth_low = float(rth["low"].min())
-            chg = (rth_close / rth_open - 1) * 100
-            body = abs(rth_close - rth_open)
-            lines.append(f"{label}: Open {rth_open:,.2f} → Close {rth_close:,.2f} ({chg:+.2f}%) | H: {rth_high:,.2f} L: {rth_low:,.2f} | Body: {body:,.2f}")
+                lines.append(f"{base_label}: No RTH data")
+            else:
+                rth_open = float(rth["open"].iloc[0])
+                rth_close = float(rth["close"].iloc[-1])
+                rth_high = float(rth["high"].max())
+                rth_low = float(rth["low"].min())
+                chg = (rth_close / rth_open - 1) * 100
+                body = abs(rth_close - rth_open)
+                lines.append(f"{base_label}: Open {rth_open:,.2f} → Close {rth_close:,.2f} ({chg:+.2f}%) | H: {rth_high:,.2f} L: {rth_low:,.2f} | Body: {body:,.2f}")
         sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[eod] Session data failed: %s", e)
@@ -3078,25 +3230,28 @@ def build_eod_context(
     # ── Level outcomes ──
     try:
         unified = load_macro_levels(session="open")
-        nq_unified = unified.get("QQQ") or {}
-        nq_gex = _extract_gex_levels(nq_unified, "QQQ")
-        nq_close = 0.0
-        if df_nq is not None and not df_nq.empty:
-            rth = df_nq[(df_nq.index >= today_930) & (df_nq.index <= today_1600)]
+        base_label = ticker.replace("1", "").upper()
+        ticker_unified = unified.get(base_label) or unified.get(ticker) or {}
+        ticker_gex = _extract_gex_levels(ticker_unified, base_label)
+        ticker_close = 0.0
+        if df_t is not None and not df_t.empty:
+            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
             if not rth.empty:
-                nq_close = float(rth["close"].iloc[-1])
+                ticker_close = float(rth["close"].iloc[-1])
 
-        lines = ["== LEVEL OUTCOMES =="]
-        if nq_gex and nq_close > 0:
-            cw = nq_gex.get("call_wall")
-            pw = nq_gex.get("put_wall")
-            flip = nq_gex.get("flip") or nq_gex.get("zero_gamma")
+        lines = [f"== LEVEL OUTCOMES ({base_label}) =="]
+        if ticker_gex and ticker_close > 0:
+            cw = ticker_gex.get("call_wall")
+            pw = ticker_gex.get("put_wall")
+            flip = ticker_gex.get("flip") or ticker_gex.get("zero_gamma")
             if cw:
-                lines.append(f"Call Wall ({cw:,.2f}): {'BROKEN' if nq_close > cw else 'HELD'} (close {nq_close:,.2f})")
+                lines.append(f"Call Wall ({cw:,.2f}): {'BROKEN' if ticker_close > cw else 'HELD'} (close {ticker_close:,.2f})")
             if pw:
-                lines.append(f"Put Wall ({pw:,.2f}): {'BROKEN' if nq_close < pw else 'HELD'} (close {nq_close:,.2f})")
+                lines.append(f"Put Wall ({pw:,.2f}): {'BROKEN' if ticker_close < pw else 'HELD'} (close {ticker_close:,.2f})")
             if flip:
-                lines.append(f"Gamma Flip ({flip:,.2f}): {'above' if nq_close > flip else 'below'} at close")
+                lines.append(f"Gamma Flip ({flip:,.2f}): {'above' if ticker_close > flip else 'below'} at close")
+        else:
+            lines.append("No GEX data available for open session.")
         sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[eod] Level outcomes failed: %s", e)
@@ -3104,10 +3259,9 @@ def build_eod_context(
     # ── ALN outcome ──
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
-        if df_nq is not None and not df_nq.empty:
-            _cutoff = pd.Timestamp.now(ET) - pd.Timedelta(days=2)
-            df_recent = df_nq[df_nq.index >= _cutoff]
-            engine = NQStatsEngine(df_recent, ticker=nq_ticker)
+        if df_t is not None and not df_t.empty:
+            df_recent = df_t.tail(5000)
+            engine = NQStatsEngine(df_recent, ticker=ticker)
             engine.process()
             status = engine.get_latest_status()
             aln = status.get("aln", "N/A")
@@ -3116,10 +3270,10 @@ def build_eod_context(
             lines.append(f"Pattern: {aln} | Broken: {broken}")
             lh = status.get("london_high")
             ll = status.get("london_low")
-            if lh and ll and nq_close > 0:
-                if nq_close > lh:
+            if lh and ll and ticker_close > 0:
+                if ticker_close > lh:
                     lines.append(f"NY broke London High ({lh:,.2f}) — bullish resolution")
-                elif nq_close < ll:
+                elif ticker_close < ll:
                     lines.append(f"NY broke London Low ({ll:,.2f}) — bearish resolution")
                 else:
                     lines.append(f"NY stayed within London range ({ll:,.2f}-{lh:,.2f}) — range day")
@@ -3143,8 +3297,8 @@ def build_eod_context(
 
     # ── Tomorrow's setup ──
     try:
-        if df_nq is not None and not df_nq.empty:
-            rth = df_nq[(df_nq.index >= today_930) & (df_nq.index <= today_1600)]
+        if df_t is not None and not df_t.empty:
+            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
             if not rth.empty:
                 prth_high = float(rth["high"].max())
                 prth_low = float(rth["low"].min())
@@ -3155,7 +3309,7 @@ def build_eod_context(
                 
                 # Fetch Candle Science scenarios for tomorrow's open
                 try:
-                    cs = get_candle_science_read(ticker=nq_ticker, mode="close")
+                    cs = get_candle_science_read(ticker=ticker, mode="close")
                     lines.append("")  # blank line separator
                     lines.append(format_candle_science_block(cs))
                 except Exception as cs_err:
@@ -3187,8 +3341,8 @@ def build_eod_context(
 
         # Determine actual directional outcome from today's close vs RTH open.
         actual_outcome = "NEUTRAL"
-        if df_nq is not None and not df_nq.empty:
-            rth = df_nq[(df_nq.index >= today_930) & (df_nq.index <= today_1600)]
+        if df_t is not None and not df_t.empty:
+            rth = df_t[(df_t.index >= today_930) & (df_t.index <= today_1600)]
             if not rth.empty:
                 rth_open = float(rth["open"].iloc[0])
                 rth_close = float(rth["close"].iloc[-1])
@@ -3206,11 +3360,11 @@ def build_eod_context(
         aln_pattern = ""
         try:
             # Reuse open-mode logic with fresh data for today only.
-            nq_ctx_morning = build_overnight_context(loader, nq_ticker)
-            df_nq_recent = df_nq[df_nq.index >= (pd.Timestamp.now(ET) - timedelta(days=10))]
-            if df_nq_recent.empty:
-                df_nq_recent = df_nq
-            engine = NQStatsEngine(df_nq_recent, ticker=nq_ticker)
+            nq_ctx_morning = build_overnight_context(loader, ticker)
+            df_t_recent = df_t[df_t.index >= (pd.Timestamp.now(ET) - timedelta(days=10))]
+            if df_t_recent.empty:
+                df_t_recent = df_t
+            engine = NQStatsEngine(df_t_recent, ticker=ticker)
             engine.process()
             latest = engine.get_latest_status()
             aln_bias = "NEUTRAL"
@@ -3239,7 +3393,7 @@ def build_eod_context(
             s2 = "BULLISH" if rth_scenario == "GAP_UP" else ("BEARISH" if rth_scenario == "GAP_DOWN" else "NEUTRAL")
 
             try:
-                cs = get_candle_science_read(ticker=nq_ticker)
+                cs = get_candle_science_read(ticker=ticker)
                 s3 = "BULLISH" if (cs and cs.get("p_bull", 50) > cs.get("p_bear", 50)) else ("BEARISH" if (cs and cs.get("p_bear", 50) > cs.get("p_bull", 50)) else "NEUTRAL")
             except Exception:
                 pass
