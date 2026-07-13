@@ -265,12 +265,12 @@ If Schwab queries fail (expired token, network timeout, or API changes):
 
 To achieve this unified system architecture, we will execute in five phases:
 
-### Phase 1: Python Engine Corrections & Verification (Immediate Focus)
-*   Fix the **Prior Day RTH Range Bug** (implement day-walking loop for Friday/Monday sessions).
-*   Fix the **Gamma Flip Above/Below check** to prevent regime inversion.
-*   Implement direct **NQ and ES sourcing** from `unified_levels.json` (eliminating scaled QQQ/SPY basis errors).
-*   **Remove all Volume Profile references** (VAL, VAH, POC) from the pre-processed data stream.
-*   **[NEW]** Build and execute `scripts/trader/utils/verify_schwab_feed.py` to validate Schwab API connectivity and test the fallback to `yfinance`.
+### Phase 1: Python Engine Corrections & Verification (COMPLETED)
+*   **[x]** Fix the **Prior Day RTH Range Bug** (implemented day-walking loop and resolved UTC timezone shifting bug for accurate Friday/Monday session highs/lows).
+*   **[x]** Fix the **Gamma Flip Above/Below check** to prevent regime inversion.
+*   **[x]** Implement direct **NQ and ES sourcing** from `unified_levels.json` & `.txt` files (eliminating scaled QQQ/SPY basis errors, data leakage, and intermarket cross-pollination).
+*   **[x]** **Remove all Volume Profile references** (VAL, VAH, POC) from the pre-processed data stream.
+*   **[x]** Build and execute `scripts/trader/utils/verify_schwab_feed.py` to validate Schwab API connectivity and test the fallback to `yfinance`.
 
 ### Phase 2: Calendar, Macro, & Earnings Enrichment
 *   Implement live `yfinance`/Schwab fetching for intermarket indicators: Brent Crude (`BZ=F`), 10Y Yield (`^TNX`), U.S. Dollar Index (`DX=F`), and VIX/VVIX.
