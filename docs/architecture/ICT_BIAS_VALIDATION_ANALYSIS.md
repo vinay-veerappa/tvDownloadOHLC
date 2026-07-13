@@ -137,44 +137,106 @@ This is a **pattern-matching** approach (find historical days with the same C1/C
 
 ---
 
-## 5. What Needs to Happen Next
+## 5. Reframing the Approach — Per-Session Candle Bias
 
-### Add ALN, Herman, and Candle Science to the Bias Signals Parquet
+### The Problem with the Current Approach
 
-The bias_signals parquet should be extended with:
-- `model_h_aln` — ALN pattern (LPEU/LPED/AEL) → BULLISH/BEARISH/NEUTRAL
-- `model_i_herman` — Herman Pre-NY sweep result → BULLISH/BEARISH/NEUTRAL
-- `model_j_candle` — Candle Science P(C3 Bull) > 50% → BULLISH, P(C3 Bear) > 50% → BEARISH
+The current bias model computes one "daily bias" at 09:30 ET and measures whether the RTH close direction matches. This has fundamental issues:
 
-This would give us a side-by-side comparison of all bias models (ICT + ALN + Herman + Candle Science) at each eval time.
+1. **One bias for the whole day** — but the day is made up of multiple sessions (Asia, London, NY AM, Lunch, PM), each with its own dynamics. Asia might be bearish while NY AM is bullish. A single daily bias can't capture this.
 
-### Test Inverted ICT Models
+2. **Day type is an outcome, not an input** — R1/R2/DWP/DNP classification is known AFTER the day closes. Using it as a filter for bias is look-ahead bias. It tells you what happened, not what will happen.
 
-Since the ICT models are counter-predictive, test the inverted version:
-- If model says BULLISH, record BEARISH as the prediction
-- If inverted win rate > 55%, the models are contrarian indicators and should be used as fade signals
+3. **Thresholds are position-based, not price-based** — "40% of PDH-PDL range" doesn't translate to actual price movement. It should be "price moved X% below the session open" or "price is X% away from the equilibrium."
 
-### Test Different Eval Times
+### Session-as-Candle Model
 
-The current analysis is at 09:30 (RTH open). The models may work better at other times:
-- 18:00 (overnight open) — does the bias predict the overnight direction?
-- 02:00 (London open) — does the bias predict the London session?
-- 16:00 (close) — does the bias predict the next day?
+Each session is a candle with its own OHLC:
 
-### Test Per-Day-Type Breakdown
+| Session | Open (ET) | Close (ET) | "Candle" |
+|---------|-----------|------------|----------|
+| Asia | 18:00 | 02:00 | Open at 18:00, close at 02:00 |
+| London | 02:00 | 08:30 | Open at 02:00, close at 08:30 |
+| NY AM | 09:30 | 11:00 | Open at 09:30, close at 11:00 |
+| NY Lunch | 11:00 | 13:30 | Open at 11:00, close at 13:30 |
+| NY PM | 13:30 | 16:00 | Open at 13:30, close at 16:00 |
 
-The models may work on certain day types (R1/R2/DWP/DNP) but not others. We have daily classification data to group by.
+**Bullish session** = session close > session open (green candle)
+**Bearish session** = session close < session open (red candle)
 
-### Adaptive Thresholds
+The bias should predict whether the NEXT session's candle will be bullish or bearish — not whether the whole day's RTH close will be up or down.
 
-Instead of fixed 40/60 thresholds, test:
-- 30/70 (more extreme = more reliable?)
-- 20/80 (only signal in deep discount/premium)
-- Trend-aware: adjust thresholds based on whether market is trending or ranging
+### Why Per-Session Matters
 
-### ADR-021 Prop Firm Simulation
+- ICT killzones are session-specific. The Asia KZ pivot (AS.H/AS.L) is relevant for London's bias. The London KZ pivot is relevant for NY AM's bias.
+- Herman's sweep probabilities are session-specific (Pre-NY sweep → NY continuation).
+- The Delivery Triad (I2E/E2I) changes between sessions — price may sweep liquidity in London (E2I) then fill FVGs in NY AM (I2E).
+- A single daily bias loses all this session-level granularity.
 
-Once we have a working bias model (even if inverted), we should run it through the PropFirmSimulator to see if it can actually pass a prop firm evaluation. This is the ultimate test — not "is the bias directionally correct?" but "can this bias generate trades that pass a prop firm?"
+### Revised Outcome Definition
+
+Instead of one outcome (RTH close direction), we should measure per-session outcomes:
+
+| Eval Time | Predicts | Outcome Window |
+|-----------|----------|---------------|
+| 18:00 | Asia session candle | 18:00 → 02:00 |
+| 02:00 | London session candle | 02:00 → 08:30 |
+| 08:30 | NY AM session candle | 09:30 → 11:00 |
+| 09:30 | Full RTH candle | 09:30 → 16:00 |
+| 11:00 | NY Lunch candle | 11:00 → 13:30 |
+| 13:30 | NY PM candle | 13:30 → 16:00 |
+| 16:00 | Overnight session candle | 16:00 → 18:00 (next day) |
+
+Each outcome is: `session_close > session_open` → BULLISH, `session_close < session_open` → BEARISH.
+
+### Price-Percentage Thresholds
+
+Instead of "position within range at 40%/60%", thresholds should be expressed as actual price movement:
+
+- "Price is 0.3% below the dealing range midpoint" → discount signal
+- "Price moved 0.5% above the session open" → momentum signal
+- "Price is 0.2% above the prior session close" → continuation signal
+
+This makes the thresholds instrument-agnostic and regime-aware — 0.3% means the same thing for NQ at 10,000 or 30,000.
+
+### VIX/VVIX Treatment
+
+High-VIX events (CPI, FOMC, NFP weeks) are rare — a few weeks per year. These should be:
+- Flagged in the parquet (high_VIX flag) for filtering
+- Discounted as anomalies, not designed around
+- Not used as adaptive threshold inputs (too infrequent to matter for the bulk of trading days)
+
+---
+
+## 6. Revised Next Steps
+
+### Step 1: Reframe to Per-Session Candle Bias
+- Change the outcome from "RTH close direction" to "session close vs session open" for each eval time
+- Each eval time predicts its own next session, not the whole day
+- Add session OHLC columns (session_open, session_close, session_high, session_low) to the parquet
+
+### Step 2: Add Existing Models for Comparison
+- Add ALN signal (LPEU/LPED/AEL → BULLISH/BEARISH/NEUTRAL)
+- Add Herman Pre-NY sweep signal
+- Add Candle Science directional prediction (P(C3 Bull) > P(C3 Bear) → BULLISH)
+- Compare all models side-by-side at each eval time
+
+### Step 3: Test Inverted ICT Models
+- If models are counter-predictive, test the inverted signal
+- If inverted win rate > 55%, the models are contrarian fade signals
+
+### Step 4: Price-Percentage Thresholds
+- Replace position-based thresholds (40%/60% of range) with price-movement thresholds (0.3% below midpoint)
+- Test different price-percentage thresholds to find the optimal cutoff
+
+### Step 5: Flag and Filter VIX Anomalies
+- Add a `high_vix` flag to the parquet (VIX > 22 or CPI/FOMC/NFP day)
+- Filter these days from the analysis as anomalies
+- Report results with and without anomaly filtering
+
+### Step 6: ADR-021 Prop Firm Simulation
+- Once a working bias model is found, run it through PropFirmSimulator
+- The ultimate test: can this bias generate trades that pass a prop firm evaluation?
 
 ---
 
