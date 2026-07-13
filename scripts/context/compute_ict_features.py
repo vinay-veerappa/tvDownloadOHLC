@@ -639,15 +639,55 @@ def run_feature(feature: str, symbol: str, loader, full_regen: bool) -> int:
 
     elif feature == "ipda":
         df_1d = loader.load_daily(symbol)
+        # Check if daily data is stale (last bar > 3 days ago)
+        if not df_1d.empty:
+            last_daily = df_1d.index[-1]
+            if hasattr(last_daily, 'date'):
+                last_date = last_daily.date()
+            elif hasattr(last_daily, 'to_pydatetime'):
+                last_date = last_daily.to_pydatetime().date()
+            else:
+                last_date = pd.Timestamp(last_daily).date()
+            from datetime import datetime as _dt
+            import pytz as _pytz
+            today = _dt.now(_pytz.timezone("America/New_York")).date()
+            if (today - last_date).days > 3:
+                logger.info("  [ipda] Daily parquet stale (last=%s), using 1m data", last_date)
+                df_1d = loader.load_1m(symbol)
         if df_1d.empty:
-            logger.warning("No daily data for %s", symbol)
+            # Fallback: use 1m data (library resamples to daily internally)
+            df_1d = loader.load_1m(symbol)
+            if not df_1d.empty:
+                logger.info("  [ipda] Daily parquet empty, using 1m data (%s bars)", f"{len(df_1d):,}")
+        if df_1d.empty:
+            logger.warning("No data for %s", symbol)
             return 0
         return update_ipda(symbol, df_1d, full_regen)
 
     elif feature == "htf_levels":
         df_1d = loader.load_daily(symbol)
+        # Check if daily data is stale
+        if not df_1d.empty:
+            last_daily = df_1d.index[-1]
+            if hasattr(last_daily, 'date'):
+                last_date = last_daily.date()
+            elif hasattr(last_daily, 'to_pydatetime'):
+                last_date = last_daily.to_pydatetime().date()
+            else:
+                last_date = pd.Timestamp(last_daily).date()
+            from datetime import datetime as _dt
+            import pytz as _pytz
+            today = _dt.now(_pytz.timezone("America/New_York")).date()
+            if (today - last_date).days > 3:
+                logger.info("  [htf_levels] Daily parquet stale (last=%s), using 1m data", last_date)
+                df_1d = loader.load_1m(symbol)
         if df_1d.empty:
-            logger.warning("No daily data for %s", symbol)
+            # Fallback: use 1m data (library resamples to daily internally)
+            df_1d = loader.load_1m(symbol)
+            if not df_1d.empty:
+                logger.info("  [htf_levels] Daily parquet empty, using 1m data (%s bars)", f"{len(df_1d):,}")
+        if df_1d.empty:
+            logger.warning("No data for %s", symbol)
             return 0
         return update_htf_levels(symbol, df_1d, full_regen)
 
