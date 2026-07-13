@@ -608,7 +608,83 @@ def compute_ict_daily_bias(ticker: str, current_price: float) -> dict[str, Any]:
                 detail = f"Price inside weekly range ({pwl:,.2f}-{pwh:,.2f})"
         models.append({"model": "HTF Structure", "signal": signal, "detail": detail})
 
+    # ── Model E: Previous Day Candle Analysis ──
+    pdc = ict.get("pdc")
+    if pdh and pdl and pdc and current_price > 0:
+        if pdc > pdh:
+            signal = "BULLISH"
+            bull_score += 20
+            detail = f"Prior day closed above PDH ({pdh:,.2f}) — strength signal"
+        elif pdc < pdl:
+            signal = "BEARISH"
+            bear_score += 20
+            detail = f"Prior day closed below PDL ({pdl:,.2f}) — weakness signal"
+        else:
+            # Inside bar — refer to prior direction
+            if current_price > pdc:
+                signal = "BULLISH"
+                bull_score += 5
+                detail = f"Prior day inside bar, close above PDC ({pdc:,.2f}) — mild bullish"
+            elif current_price < pdc:
+                signal = "BEARISH"
+                bear_score += 5
+                detail = f"Prior day inside bar, close below PDC ({pdc:,.2f}) — mild bearish"
+            else:
+                signal = "NEUTRAL"
+                detail = f"Prior day inside bar, close at PDC ({pdc:,.2f})"
+        models.append({"model": "Prior Day Candle", "signal": signal, "detail": detail})
+
+    # ── Model F: Midnight Open Position ──
+    midnight_open = ict.get("midnight_open")
+    if midnight_open and current_price > 0:
+        mid = float(midnight_open)
+        if current_price < mid:
+            signal = "BULLISH"
+            bull_score += 15
+            detail = f"Price below midnight open ({mid:,.2f}) — discount of the day, longs favored"
+        elif current_price > mid:
+            signal = "BEARISH"
+            bear_score += 15
+            detail = f"Price above midnight open ({mid:,.2f}) — premium of the day, shorts favored"
+        else:
+            signal = "NEUTRAL"
+            detail = f"Price at midnight open ({mid:,.2f}) — equilibrium"
+        models.append({"model": "Midnight Open", "signal": signal, "detail": detail})
+
+    # ── Model G: London/Asia Sweep (session confirmation) ──
+    kz = load_kz_pivots(ticker, auto_refresh=True)
+    if not kz.empty and current_price > 0:
+        import pytz
+        today = _now_et().date()
+        kz["trading_date"] = pd.to_datetime(kz["trading_date"]).dt.date
+        today_row = kz[kz["trading_date"] == today]
+        if today_row.empty:
+            today_row = kz.tail(1)
+        if not today_row.empty:
+            row = today_row.iloc[0]
+            asia_h = row.get("asia_high")
+            asia_l = row.get("asia_low")
+            london_h = row.get("london_high")
+            london_l = row.get("london_low")
+            if pd.notna(asia_h) and pd.notna(asia_l) and pd.notna(london_h) and pd.notna(london_l):
+                # London swept Asia low → bullish continuation (draws sell stops, then rallies)
+                if london_l < asia_l and current_price > london_l:
+                    signal = "BULLISH"
+                    bull_score += 15
+                    detail = f"London swept Asia low ({asia_l:,.2f} → {london_l:,.2f}) then recovered — bullish continuation"
+                # London swept Asia high → bearish continuation
+                elif london_h > asia_h and current_price < london_h:
+                    signal = "BEARISH"
+                    bear_score += 15
+                    detail = f"London swept Asia high ({asia_h:,.2f} → {london_h:,.2f}) then rejected — bearish continuation"
+                else:
+                    signal = "NEUTRAL"
+                    detail = f"London inside Asia range — no sweep confirmation"
+                models.append({"model": "London/Asia Sweep", "signal": signal, "detail": detail})
+
     # ── Compute final bias ──
+    # Max possible score with 7 models: 25+20+25+20+20+15+15 = 140
+    max_score = 140
     total = bull_score + bear_score
     if total == 0:
         bias = "NEUTRAL"
@@ -616,11 +692,11 @@ def compute_ict_daily_bias(ticker: str, current_price: float) -> dict[str, Any]:
         summary = "No clear ICT bias — models are balanced."
     elif bull_score > bear_score:
         bias = "BULLISH"
-        confidence = int((bull_score / 90) * 100)  # max possible = 90
+        confidence = int((bull_score / max_score) * 100)
         summary = f"Bullish bias ({confidence}% confidence) — {bull_score} bull vs {bear_score} bear"
     else:
         bias = "BEARISH"
-        confidence = int((bear_score / 90) * 100)
+        confidence = int((bear_score / max_score) * 100)
         summary = f"Bearish bias ({confidence}% confidence) — {bear_score} bear vs {bull_score} bull"
 
     return {
