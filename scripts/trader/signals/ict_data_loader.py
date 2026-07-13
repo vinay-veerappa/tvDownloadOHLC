@@ -254,6 +254,74 @@ def load_imbalances(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  Phase 2A Loaders (Structure, OB, Liquidity, SMT)
+# ═══════════════════════════════════════════════════════════════════════
+
+def load_structure(symbol: str, timeframe: str = "5m", auto_refresh: bool = True,
+                    session_date: date | None = None) -> pd.DataFrame:
+    """Load swings + structure breaks + CISD from parquet."""
+    path = _ICT_DIR / f"{symbol}_structure_{timeframe}.parquet"
+    if auto_refresh and _is_stale_intraday(path):
+        _trigger_refresh(symbol, "structure")
+    try:
+        df = pd.read_parquet(path)
+        if session_date is not None and not df.empty and "logical_date" in df.columns:
+            df = df[df["logical_date"] == session_date]
+        return df
+    except Exception as e:
+        log.warning("[ict_loader] structure load failed: %s", e)
+        return pd.DataFrame()
+
+
+def load_orderblocks(symbol: str, timeframe: str = "5m", auto_refresh: bool = True,
+                      session_date: date | None = None) -> pd.DataFrame:
+    """Load order blocks from parquet."""
+    path = _ICT_DIR / f"{symbol}_ob_{timeframe}.parquet"
+    if auto_refresh and _is_stale_intraday(path):
+        _trigger_refresh(symbol, "orderblocks")
+    try:
+        df = pd.read_parquet(path)
+        if session_date is not None and not df.empty and "logical_date" in df.columns:
+            df = df[df["logical_date"] == session_date]
+        return df
+    except Exception as e:
+        log.warning("[ict_loader] orderblocks load failed: %s", e)
+        return pd.DataFrame()
+
+
+def load_liquidity(symbol: str, timeframe: str = "5m", auto_refresh: bool = True,
+                   session_date: date | None = None) -> pd.DataFrame:
+    """Load liquidity pools (BSL/SSL/EQH/EQL) from parquet."""
+    path = _ICT_DIR / f"{symbol}_liquidity_{timeframe}.parquet"
+    if auto_refresh and _is_stale_intraday(path):
+        _trigger_refresh(symbol, "liquidity")
+    try:
+        df = pd.read_parquet(path)
+        if session_date is not None and not df.empty and "logical_date" in df.columns:
+            df = df[df["logical_date"] == session_date]
+        return df
+    except Exception as e:
+        log.warning("[ict_loader] liquidity load failed: %s", e)
+        return pd.DataFrame()
+
+
+def load_smt(symbol: str = "NQ1", auto_refresh: bool = True,
+             session_date: date | None = None) -> pd.DataFrame:
+    """Load SMT divergence events (NQ1 vs ES1) from parquet."""
+    path = _ICT_DIR / f"{symbol}_smt.parquet"
+    if auto_refresh and _is_stale_intraday(path):
+        _trigger_refresh(symbol, "smt")
+    try:
+        df = pd.read_parquet(path)
+        if session_date is not None and not df.empty and "logical_date" in df.columns:
+            df = df[df["logical_date"] == session_date]
+        return df
+    except Exception as e:
+        log.warning("[ict_loader] smt load failed: %s", e)
+        return pd.DataFrame()
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  Time-Based Lookups (Silver Bullets + Macros)
 # ═══════════════════════════════════════════════════════════════════════
 

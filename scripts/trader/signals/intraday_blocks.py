@@ -525,6 +525,177 @@ def _format_gaps_block(ticker: str, ticker_current: float) -> str:
         return "== ICT GAPS ==\nGap data unavailable"
 
 
+def _format_structure_block(ticker: str, ticker_current: float, session_date: date | None = None, now_et: Any = None) -> str:
+    """Recent BOS/MSS/CISD events and current trend direction from swings."""
+    try:
+        from scripts.trader.signals.ict_data_loader import load_structure
+        # Use 1h for structural overview (less noise than 5m)
+        struct = load_structure(ticker, "1h", auto_refresh=True, session_date=session_date)
+        if struct.empty:
+            return "== ICT STRUCTURE (1h) ==\nNo structure data available"
+
+        # Filter to bars up to now_et
+        if now_et is not None:
+            now_naive = now_et.replace(tzinfo=None) if hasattr(now_et, 'tzinfo') and now_et.tzinfo else now_et
+            struct = struct[struct.index <= now_naive]
+        if struct.empty:
+            return "== ICT STRUCTURE (1h) ==\nNo structure events yet in current session"
+
+        lines = ["== ICT STRUCTURE (1h) =="]
+
+        # Recent break events
+        breaks = struct[(struct["break_high"] != 0) | (struct["break_low"] != 0)]
+        if not breaks.empty:
+            recent_breaks = breaks.tail(3)
+            lines.append("Recent structure breaks:")
+            for _, row in recent_breaks.iterrows():
+                level = row.get("swing_level", 0)
+                level_str = f"{level:,.2f}" if pd.notna(level) and level != 0 else "prior swing"
+                if row["break_high"]:
+                    lines.append(f"  BOS HIGH @ {row.name.strftime('%H:%M')} — broke {level_str} (bullish continuation)")
+                if row["break_low"]:
+                    lines.append(f"  BOS LOW @ {row.name.strftime('%H:%M')} — broke {level_str} (bearish continuation)")
+
+        # Recent CISD events
+        cisds = struct[struct["cisd_type"] != 0]
+        if not cisds.empty:
+            recent_cisds = cisds.tail(3)
+            lines.append("Recent CISD (state changes):")
+            for _, row in recent_cisds.iterrows():
+                direction = "bullish" if row["cisd_type"] == 1 else "bearish"
+                lines.append(f"  {direction.upper()} CISD @ {row.name.strftime('%H:%M')}")
+
+        # Latest swing
+        swings = struct[struct["swing_type"] != 0]
+        if not swings.empty:
+            last_swing = swings.iloc[-1]
+            swing_type = "High" if last_swing["swing_type"] == 1 else "Low"
+            lines.append(f"Latest swing: {swing_type} at {last_swing['swing_level']:,.2f} @ {last_swing.name.strftime('%H:%M')}")
+
+        if breaks.empty and cisds.empty and swings.empty:
+            lines.append("No structure events detected in current session")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[structure] Failed: %s", e)
+        return "== ICT STRUCTURE (1h) ==\nStructure data unavailable"
+
+
+def _format_ob_block(ticker: str, ticker_current: float, session_date: date | None = None, now_et: Any = None) -> str:
+    """Today's active Order Blocks near current price."""
+    try:
+        from scripts.trader.signals.ict_data_loader import load_orderblocks
+        obs = load_orderblocks(ticker, "5m", auto_refresh=True, session_date=session_date)
+        if obs.empty:
+            return "== ICT ORDER BLOCKS (5m) ==\nNo order blocks detected today"
+
+        if now_et is not None:
+            now_naive = now_et.replace(tzinfo=None) if hasattr(now_et, 'tzinfo') and now_et.tzinfo else now_et
+            obs = obs[obs.index <= now_naive]
+        if obs.empty:
+            return "== ICT ORDER BLOCKS (5m) ==\nNo order blocks yet in current session"
+
+        lines = ["== ICT ORDER BLOCKS (5m) =="]
+
+        # Proximity threshold: 0.5% of current price
+        threshold = ticker_current * 0.5 / 100 if ticker_current > 0 else 100
+
+        recent_obs = obs.tail(5)
+        for _, row in recent_obs.iterrows():
+            ob_type = "Bullish" if row["ob_type"] == 1 else "Bearish"
+            top = row["ob_top"]
+            bot = row["ob_bottom"]
+            mid = (top + bot) / 2
+            dist = abs(ticker_current - mid) if ticker_current > 0 else 0
+            near = " (NEAR)" if dist < threshold else ""
+            lines.append(f"  {ob_type} OB {bot:,.2f}-{top:,.2f} @ {row.name.strftime('%H:%M')}{near}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[ob] Failed: %s", e)
+        return "== ICT ORDER BLOCKS (5m) ==\nOrder block data unavailable"
+
+
+def _format_liquidity_block(ticker: str, ticker_current: float, session_date: date | None = None, now_et: Any = None) -> str:
+    """Today's liquidity pools (BSL/SSL/EQH/EQL) near current price."""
+    try:
+        from scripts.trader.signals.ict_data_loader import load_liquidity
+        liq = load_liquidity(ticker, "1h", auto_refresh=True, session_date=session_date)
+        if liq.empty:
+            return "== ICT LIQUIDITY (1h) ==\nNo liquidity data available"
+
+        if now_et is not None:
+            now_naive = now_et.replace(tzinfo=None) if hasattr(now_et, 'tzinfo') and now_et.tzinfo else now_et
+            liq = liq[liq.index <= now_naive]
+        if liq.empty:
+            return "== ICT LIQUIDITY (1h) ==\nNo liquidity pools yet in current session"
+
+        lines = ["== ICT LIQUIDITY POOLS (1h) =="]
+
+        # Show most recent BSL and SSL
+        bsls = liq[liq["liq_kind"] == "BSL"]
+        ssls = liq[liq["liq_kind"] == "SSL"]
+        eqhs = liq[liq["liq_kind"] == "EQH"]
+        eqls = liq[liq["liq_kind"] == "EQL"]
+
+        if not bsls.empty:
+            last_bsl = bsls.iloc[-1]
+            dist = abs(ticker_current - last_bsl["liq_level"]) if ticker_current > 0 else 0
+            lines.append(f"  BSL (buy stops): {last_bsl['liq_level']:,.2f} @ {last_bsl.name.strftime('%H:%M')} ({dist:,.2f} above)")
+        if not ssls.empty:
+            last_ssl = ssls.iloc[-1]
+            dist = abs(ticker_current - last_ssl["liq_level"]) if ticker_current > 0 else 0
+            lines.append(f"  SSL (sell stops): {last_ssl['liq_level']:,.2f} @ {last_ssl.name.strftime('%H:%M')} ({dist:,.2f} below)")
+        if not eqhs.empty:
+            last_eqh = eqhs.iloc[-1]
+            lines.append(f"  EQH (equal highs): {last_eqh['liq_level']:,.2f} @ {last_eqh.name.strftime('%H:%M')}")
+        if not eqls.empty:
+            last_eql = eqls.iloc[-1]
+            lines.append(f"  EQL (equal lows): {last_eql['liq_level']:,.2f} @ {last_eql.name.strftime('%H:%M')}")
+
+        if bsls.empty and ssls.empty and eqhs.empty and eqls.empty:
+            lines.append("No liquidity pools detected in current session")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[liquidity] Failed: %s", e)
+        return "== ICT LIQUIDITY (1h) ==\nLiquidity data unavailable"
+
+
+def _format_smt_block(ticker: str, session_date: date | None = None, now_et: Any = None) -> str:
+    """SMT Divergence status (NQ vs ES)."""
+    try:
+        from scripts.trader.signals.ict_data_loader import load_smt
+        # SMT is only for NQ1 (NQ vs ES)
+        if ticker != "NQ1":
+            return ""  # Skip SMT for non-NQ tickers
+        smt = load_smt("NQ1", auto_refresh=True, session_date=session_date)
+        if smt.empty:
+            return "== SMT DIVERGENCE (NQ vs ES) ==\nNo SMT data available"
+
+        if now_et is not None:
+            now_naive = now_et.replace(tzinfo=None) if hasattr(now_et, 'tzinfo') and now_et.tzinfo else now_et
+            smt = smt[smt.index <= now_naive]
+        if smt.empty:
+            return "== SMT DIVERGENCE (NQ vs ES) ==\nNo SMT events yet today"
+
+        lines = ["== SMT DIVERGENCE (NQ vs ES) =="]
+
+        # Show most recent SMT events
+        recent = smt.tail(3)
+        for _, row in recent.iterrows():
+            direction = "bullish" if row["smt_type"] == 1 else "bearish"
+            lines.append(f"  {direction.upper()} SMT @ {row.name.strftime('%H:%M')}")
+
+        if len(smt) == 0:
+            lines.append("No SMT divergence detected today")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[smt] Failed: %s", e)
+        return "== SMT DIVERGENCE (NQ vs ES) ==\nSMT data unavailable"
+
+
 def _format_ict_features_block(
     ticker: str,
     ticker_current: float,
@@ -543,7 +714,11 @@ def _format_ict_features_block(
     blocks.append(_format_ipda_block(ticker, ticker_current))
     blocks.append(_format_silver_bullet_block(now_et))
     blocks.append(_format_macro_block(now_et))
+    blocks.append(_format_structure_block(ticker, ticker_current, target_date, now_et))
+    blocks.append(_format_ob_block(ticker, ticker_current, target_date, now_et))
     blocks.append(_format_imbalance_block(ticker, ticker_current, target_date, now_et))
+    blocks.append(_format_liquidity_block(ticker, ticker_current, target_date, now_et))
+    blocks.append(_format_smt_block(ticker, target_date, now_et))
     blocks.append(_format_gaps_block(ticker, ticker_current))
     return [b for b in blocks if b]
 

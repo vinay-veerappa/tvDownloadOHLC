@@ -163,6 +163,32 @@ ICT GAPS GUIDE (NWOG/NDOG/RTH):
 - Gap CE (Consequent Encroachment) = 50% midpoint of the gap. This is the primary target if price fills the gap.
 - Recent unfilled gaps are listed as "magnet levels" — these are price targets the market may gravitate toward.
 
+ICT STRUCTURE GUIDE (BOS/MSS/CISD):
+- BOS HIGH = Break of Structure upward — bullish continuation (price broke the last swing high).
+- BOS LOW = Break of Structure downward — bearish continuation (price broke the last swing low).
+- CISD = Change in State of Delivery — earliest reversal signal, forms before MSS. Bullish CISD = close above the bearish delivery opening. Bearish CISD = close below the bullish delivery opening.
+- Multiple BOS in same direction = trending. No breaks + only swings = ranging.
+- If a BOS HIGH is followed by a BOS LOW, that's a potential MSS (reversal).
+
+ICT ORDER BLOCKS GUIDE:
+- Bullish OB = last down candle before price broke a swing high. Acts as support when price returns.
+- Bearish OB = last up candle before price broke a swing low. Acts as resistance when price returns.
+- "(NEAR)" tag = within 0.5% of current price, likely to be tested.
+- Price tends to return to OBs to refill orders — these are entry zones, not exit zones.
+
+ICT LIQUIDITY POOLS GUIDE:
+- BSL (buy-side liquidity) = buy stops resting above a swing high. Price is drawn to sweep these.
+- SSL (sell-side liquidity) = sell stops resting below a swing low. Price is drawn to sweep these.
+- EQH/EQL (equal highs/lows) = high-conviction liquidity pools (obvious levels that traders put stops at).
+- The nearest untouched BSL or SSL is the "draw on liquidity" — price tends to gravitate toward it.
+
+SMT DIVERGENCE GUIDE (NQ vs ES):
+- SMT = a "crack" in correlation between NQ and ES at a key level.
+- Bullish SMT = NQ made a lower low but ES made a higher low (ES refuses to follow NQ down).
+- Bearish SMT = NQ made a higher high but ES made a lower high (ES refuses to follow NQ up).
+- SMT is NOT a standalone signal. It requires confluence with key levels, killzones, or PD arrays.
+- SMT at weekly/daily highs/lows is the highest probability.
+
 RANGE STACK GUIDE (multi-timeframe range detection):
 - The range stack shows active ranges from micro (5 min) to daily, letting you see the full picture.
 - Micro (5m/15m/30m): Short-term chop. Breakout from these = scalp entry signal. TIGHT micro range + compression = expansion imminent.
