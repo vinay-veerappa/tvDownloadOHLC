@@ -785,6 +785,67 @@ def _format_delivery_triad_block(ticker: str, ticker_current: float, session_dat
         return "== ICT DELIVERY TRIAD ==\nDelivery triad data unavailable"
 
 
+def _format_ftfc_block(ticker: str, ticker_current: float, now_et: Any) -> str:
+    """Full Timeframe Continuity bias — 3 separate views + session-adaptive bias.
+
+    View 1: Candle FTFC — all timeframes have close > open (green candle)
+    View 2: MS FTFC — all timeframes have HH/HL (market structure bullish)
+    View 3: 200 SMA — price above/below 200-day SMA on daily
+
+    Plus session-adaptive combined bias that picks the best model for the
+    current session time.
+    """
+    try:
+        from scripts.trader.signals.ict_data_loader import compute_ftfc
+        ftfc = compute_ftfc(ticker, ticker_current, now_et)
+
+        lines = ["== FTFC BIAS (Full Timeframe Continuity) =="]
+
+        # View 1: Candle FTFC
+        candle = ftfc.get("candle_ftfc", {})
+        lines.append(f"Candle FTFC: {candle.get('bias', 'N/A')} [{candle.get('alignment', 'N/A')}]")
+        per_tf_candle = candle.get("per_tf", {})
+        tf_str = " | ".join(f"{tf}:{d[0]}" for tf, d in per_tf_candle.items() if d and d != "N/A")
+        lines.append(f"  {tf_str}")
+
+        # View 2: MS FTFC
+        ms = ftfc.get("ms_ftfc", {})
+        lines.append(f"MS FTFC: {ms.get('bias', 'N/A')} [{ms.get('alignment', 'N/A')}]")
+        per_tf_ms = ms.get("per_tf", {})
+        tf_str_ms = " | ".join(f"{tf}:{d[0]}" for tf, d in per_tf_ms.items() if d and d != "N/A")
+        lines.append(f"  {tf_str_ms}")
+
+        # View 3: 200 SMA
+        sma = ftfc.get("sma_200", {})
+        sma_dir = sma.get("direction", "N/A")
+        sma_val = sma.get("daily_value", "N/A")
+        lines.append(f"200 SMA (daily): {sma_dir} (price {'above' if sma_dir == 'BULLISH' else 'below' if sma_dir == 'BEARISH' else 'at'} {sma_val})")
+
+        # Combined
+        combined = ftfc.get("combined", {})
+        lines.append(f"Combined: {combined.get('bias', 'NONE')}")
+
+        # Session-adaptive bias
+        sess = ftfc.get("session_bias", {})
+        sess_bias = sess.get("bias", "N/A")
+        sess_model = sess.get("model", "N/A")
+        sess_conf = sess.get("confidence", 0)
+        lines.append(f"Session Bias: {sess_bias} via {sess_model} ({sess_conf}% confidence)")
+
+        lines.append(f"Summary: {ftfc.get('summary', 'N/A')}")
+
+        # Guidance
+        if sess_bias == "BULLISH" or sess_bias == "BEARISH":
+            lines.append(f"Direction: {sess_bias} — use ICT levels (FVG, OB, KZ pivots) for entries in this direction")
+        elif "NEUTRAL" in str(sess_bias):
+            lines.append("Direction: NEUTRAL — no FTFC aligned bias. Use ICT levels for entry timing only.")
+
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning("[ftfc] Failed: %s", e)
+        return "== FTFC BIAS ==\nFTFC data unavailable"
+
+
 def _format_ict_features_block(
     ticker: str,
     ticker_current: float,
@@ -796,9 +857,16 @@ def _format_ict_features_block(
 
     Returns a list of formatted block strings. This is the one-stop
     function that all session builders call to get the full ICT feature
-    stack: KZ pivots + IPDA + Silver Bullet + Macros + Imbalances + Gaps.
+    stack: FTFC bias + KZ pivots + IPDA + Silver Bullet + Macros +
+    Structure + OB + Imbalances + Liquidity + Delivery Triad + SMT + Gaps.
+
+    FTFC provides the DIRECTIONAL BIAS.
+    ICT concepts provide ENTRY TARGETS and LEVELS.
     """
     blocks: list[str] = []
+    # FTFC bias — the directional bias (replaces ICT Daily Bias)
+    blocks.append(_format_ftfc_block(ticker, ticker_current, now_et))
+    # ICT features — entry targets and levels (not directional bias)
     blocks.append(_format_kz_pivots_block(ticker, ticker_current, session))
     blocks.append(_format_ipda_block(ticker, ticker_current))
     blocks.append(_format_silver_bullet_block(now_et))

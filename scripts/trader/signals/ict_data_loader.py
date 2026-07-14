@@ -773,3 +773,231 @@ def compute_ict_daily_bias(ticker: str, current_price: float) -> dict[str, Any]:
         "models": models,
         "summary": summary,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  FTFC (Full Timeframe Continuity) — Multi-TF Bias
+# ═══════════════════════════════════════════════════════════════════════
+
+# Timeframes for FTFC computation
+FTFC_TIMEFRAMES = {
+    "5m": "5min",
+    "15m": "15min",
+    "1h": "1h",
+    "4h": "4h",
+}
+
+# Session-specific model recommendations (from historical validation)
+FTFC_SESSION_MODEL = {
+    "18:00": None,       # Asia — do not use FTFC
+    "02:00": "combined",  # London — combined (candle + MS agree)
+    "08:30": "candle",    # Pre-NY — candle FTFC
+    "09:30": "candle",    # RTH open — candle FTFC
+    "11:00": "combined",  # Lunch — combined FTFC
+    "13:30": "ms",        # PM — MS FTFC
+}
+
+
+def compute_ftfc(ticker: str, current_price: float, now_et: datetime | None = None) -> dict[str, Any]:
+    """Compute Full Timeframe Continuity bias.
+
+    Three separate views:
+      1. Candle FTFC: all timeframes have close > open (green candle)
+      2. MS FTFC: all timeframes have HH/HL (market structure bullish)
+      3. 200 SMA filter: price above/below 200-day SMA
+
+    Plus a session-adaptive combined bias that picks the best model
+    based on the current session time.
+
+    Returns dict with:
+        candle_ftfc: dict — per-TF candle directions + alignment
+        ms_ftfc: dict — per-TF market structure + alignment
+        sma_200: dict — 200 SMA value + direction
+        combined: dict — combined FTFC (candle + MS agree)
+        session_bias: dict — session-adaptive bias (best model for current time)
+        summary: str — one-line human-readable summary
+    """
+    import numpy as np
+    from scripts.edgeful.lib.data_loader import get_loader
+    from scripts.libs_py.nqstats.sessions import normalize_to_eastern
+
+    if now_et is None:
+        now_et = _now_et()
+
+    result: dict[str, Any] = {
+        "candle_ftfc": {},
+        "ms_ftfc": {},
+        "sma_200": {},
+        "combined": {},
+        "session_bias": {},
+        "summary": "FTFC data unavailable",
+    }
+
+    # Load 1m data
+    loader = get_loader()
+    df_1m = loader.load_1m(ticker)
+    if df_1m is None or df_1m.empty:
+        return result
+    df_et = normalize_to_eastern(df_1m)
+
+    # Compute per-TF candle direction and MS
+    tf_candle = {}
+    tf_ms = {}
+    for tf_label, tf_rule in FTFC_TIMEFRAMES.items():
+        df_tf = df_et[["open", "high", "low", "close"]].resample(
+            tf_rule, origin="start_day"
+        ).agg({"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+
+        if df_tf.empty:
+            continue
+
+        # Candle direction (current bar: close vs open)
+        last_bar = df_tf.iloc[-1]
+        candle_dir = "BULLISH" if last_bar["close"] > last_bar["open"] else (
+            "BEARISH" if last_bar["close"] < last_bar["open"] else "NEUTRAL"
+        )
+        tf_candle[tf_label] = candle_dir
+
+        # Market structure (current bar H/L vs prior bar H/L)
+        if len(df_tf) >= 2:
+            prior_bar = df_tf.iloc[-2]
+            ms_dir = "BULLISH" if (last_bar["high"] > prior_bar["high"] and last_bar["low"] > prior_bar["low"]) else (
+                "BEARISH" if (last_bar["high"] < prior_bar["high"] and last_bar["low"] < prior_bar["low"]) else "NEUTRAL"
+            )
+        else:
+            ms_dir = "NEUTRAL"
+        tf_ms[tf_label] = ms_dir
+
+    # Daily candle + MS
+    daily = df_et[["open", "high", "low", "close"]].resample("D").agg({
+        "open": "first", "high": "max", "low": "min", "close": "last"
+    }).dropna()
+    if not daily.empty:
+        last_d = daily.iloc[-1]
+        tf_candle["D"] = "BULLISH" if last_d["close"] > last_d["open"] else (
+            "BEARISH" if last_d["close"] < last_d["open"] else "NEUTRAL"
+        )
+        if len(daily) >= 2:
+            prior_d = daily.iloc[-2]
+            tf_ms["D"] = "BULLISH" if (last_d["high"] > prior_d["high"] and last_d["low"] > prior_d["low"]) else (
+                "BEARISH" if (last_d["high"] < prior_d["high"] and last_d["low"] < prior_d["low"]) else "NEUTRAL"
+            )
+        else:
+            tf_ms["D"] = "NEUTRAL"
+
+        # 200 SMA (daily)
+        daily["sma_200"] = daily["close"].rolling(200).mean()
+        sma_val = daily["sma_200"].iloc[-1] if "sma_200" in daily.columns and not daily["sma_200"].isna().all() else None
+    else:
+        sma_val = None
+
+    # Compute 200 SMA on intraday timeframes too
+    tf_sma = {}
+    for tf_label, tf_rule in FTFC_TIMEFRAMES.items():
+        df_tf = df_et[["close"]].resample(tf_rule, origin="start_day").agg({"close": "last"}).dropna()
+        if len(df_tf) >= 200:
+            sma_tf = df_tf["close"].rolling(200).mean().iloc[-1]
+            tf_sma[tf_label] = sma_tf
+
+    # Candle FTFC alignment
+    all_tfs = list(FTFC_TIMEFRAMES.keys()) + ["D"]
+    candle_bull = sum(1 for tf in all_tfs if tf_candle.get(tf) == "BULLISH")
+    candle_bear = sum(1 for tf in all_tfs if tf_candle.get(tf) == "BEARISH")
+    candle_total = len(all_tfs)
+    candle_ftfc_bias = "BULLISH" if candle_bull == candle_total else (
+        "BEARISH" if candle_bear == candle_total else (
+        "BULLISH" if candle_bull >= 4 else (
+        "BEARISH" if candle_bear >= 4 else "NEUTRAL")))
+
+    result["candle_ftfc"] = {
+        "per_tf": {tf: tf_candle.get(tf, "N/A") for tf in all_tfs},
+        "bull_count": candle_bull,
+        "bear_count": candle_bear,
+        "total": candle_total,
+        "bias": candle_ftfc_bias,
+        "alignment": f"{candle_bull}B/{candle_bear}R/{candle_total - candle_bull - candle_bear}N",
+    }
+
+    # MS FTFC alignment
+    ms_bull = sum(1 for tf in all_tfs if tf_ms.get(tf) == "BULLISH")
+    ms_bear = sum(1 for tf in all_tfs if tf_ms.get(tf) == "BEARISH")
+    ms_ftfc_bias = "BULLISH" if ms_bull == candle_total else (
+        "BEARISH" if ms_bear == candle_total else (
+        "BULLISH" if ms_bull >= 4 else (
+        "BEARISH" if ms_bear >= 4 else "NEUTRAL")))
+
+    result["ms_ftfc"] = {
+        "per_tf": {tf: tf_ms.get(tf, "N/A") for tf in all_tfs},
+        "bull_count": ms_bull,
+        "bear_count": ms_bear,
+        "total": candle_total,
+        "bias": ms_ftfc_bias,
+        "alignment": f"{ms_bull}B/{ms_bear}R/{candle_total - ms_bull - ms_bear}N",
+    }
+
+    # 200 SMA
+    sma_dir = None
+    if sma_val is not None and current_price > 0:
+        sma_dir = "BULLISH" if current_price > sma_val else "BEARISH"
+    result["sma_200"] = {
+        "daily_value": round(sma_val, 2) if sma_val else None,
+        "direction": sma_dir,
+        "per_tf": {tf: (round(v, 2) if v else None) for tf, v in tf_sma.items()},
+    }
+
+    # Combined FTFC (candle + MS agree)
+    combined_bias = "NONE"
+    if candle_ftfc_bias == ms_ftfc_bias and candle_ftfc_bias != "NEUTRAL":
+        combined_bias = candle_ftfc_bias
+    result["combined"] = {
+        "bias": combined_bias,
+        "candle_agrees": candle_ftfc_bias == ms_ftfc_bias,
+    }
+
+    # Session-adaptive bias
+    eval_hour = now_et.hour
+    eval_minute = now_et.minute
+    eval_time_str = f"{eval_hour:02d}:{eval_minute:02d}"
+
+    # Find the best session model
+    best_model = None
+    for session_time, model_type in FTFC_SESSION_MODEL.items():
+        s_h, s_m = int(session_time.split(":")[0]), int(session_time.split(":")[1])
+        if eval_hour > s_h or (eval_hour == s_h and eval_minute >= s_m):
+            best_model = model_type
+
+    session_bias = "NEUTRAL"
+    session_model_name = "none"
+    session_confidence = 0
+    if best_model == "candle":
+        session_bias = candle_ftfc_bias
+        session_model_name = "Candle FTFC"
+        session_confidence = 92 if sma_dir == session_bias else 75
+    elif best_model == "ms":
+        session_bias = ms_ftfc_bias
+        session_model_name = "MS FTFC"
+        session_confidence = 95 if sma_dir == session_bias else 80
+    elif best_model == "combined":
+        session_bias = combined_bias
+        session_model_name = "Combined FTFC"
+        session_confidence = 98 if sma_dir == session_bias and combined_bias != "NONE" else 85
+
+    # Apply 200 SMA filter
+    if sma_dir and session_bias != "NEUTRAL" and sma_dir != session_bias:
+        session_bias = "NEUTRAL (against SMA)"
+        session_confidence = 0
+
+    result["session_bias"] = {
+        "model": session_model_name,
+        "bias": session_bias,
+        "confidence": session_confidence,
+        "sma_filtered": sma_dir != session_bias if sma_dir else False,
+    }
+
+    # Summary
+    if session_bias == "NEUTRAL" or "NEUTRAL" in session_bias:
+        result["summary"] = f"FTFC: No aligned bias (candle {result['candle_ftfc']['alignment']}, MS {result['ms_ftfc']['alignment']})"
+    else:
+        result["summary"] = f"FTFC: {session_bias} via {session_model_name} ({session_confidence}% conf, SMA={sma_dir})"
+
+    return result

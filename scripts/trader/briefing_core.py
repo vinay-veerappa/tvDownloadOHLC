@@ -3526,7 +3526,7 @@ def build_eod_context(
             _format_imbalance_block,
             _format_gaps_block,
         )
-        from scripts.trader.signals.ict_data_loader import compute_ict_daily_bias
+        from scripts.trader.signals.ict_data_loader import compute_ict_daily_bias, compute_ftfc
         import pytz
         now_et = datetime.now(pytz.timezone("America/New_York"))
         ticker_close = 0.0
@@ -3535,14 +3535,19 @@ def build_eod_context(
             if not rth.empty:
                 ticker_close = float(rth["close"].iloc[-1])
 
-        # ICT Daily Bias (multi-model synthesis)
-        bias_result = compute_ict_daily_bias(ticker, ticker_close)
-        bias_lines = ["== ICT DAILY BIAS (forward-looking) =="]
-        bias_lines.append(f"Bias: {bias_result['bias']} | Confidence: {bias_result['confidence']}%")
-        bias_lines.append(f"Summary: {bias_result['summary']}")
-        for m in bias_result["models"]:
-            bias_lines.append(f"  {m['model']}: {m['signal']} — {m['detail']}")
-        sections.append("\n".join(bias_lines))
+        # FTFC Bias (Full Timeframe Continuity — the PRIMARY directional bias)
+        ftfc = compute_ftfc(ticker, ticker_close, now_et)
+        ftfc_lines = ["== FTFC BIAS (Full Timeframe Continuity) =="]
+        candle = ftfc.get("candle_ftfc", {})
+        ms = ftfc.get("ms_ftfc", {})
+        sma = ftfc.get("sma_200", {})
+        ftfc_lines.append(f"Candle FTFC: {candle.get('bias', 'N/A')} [{candle.get('alignment', 'N/A')}]")
+        ftfc_lines.append(f"MS FTFC: {ms.get('bias', 'N/A')} [{ms.get('alignment', 'N/A')}]")
+        ftfc_lines.append(f"200 SMA: {sma.get('direction', 'N/A')}")
+        sess = ftfc.get("session_bias", {})
+        ftfc_lines.append(f"Session Bias: {sess.get('bias', 'N/A')} via {sess.get('model', 'N/A')} ({sess.get('confidence', 0)}%)")
+        ftfc_lines.append(f"Summary: {ftfc.get('summary', 'N/A')}")
+        sections.append("\n".join(ftfc_lines))
 
         sections.append(_format_kz_pivots_block(ticker, ticker_close, "CLOSE"))
         sections.append(_format_ipda_block(ticker, ticker_close))

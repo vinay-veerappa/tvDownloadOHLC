@@ -18,14 +18,20 @@ Rules:
 - Use the numbers from the cheat sheet. Don't invent prices.
 - Don't give trade recommendations.
 
-ICT DAILY BIAS GUIDE (forward-looking):
-- The ICT Daily Bias combines 4 models into a single directional read for tomorrow.
-- Premium/Discount: price in discount (below 50% of PDH-PDL) favors longs. In premium, favors shorts.
-- Draw on Liquidity: price is drawn to the nearest untouched liquidity pool. If sell stops (SSL) are closer, price may be drawn down first. If buy stops (BSL) are closer, drawn up first.
-- IPDA Position: 20/40/60-day rolling ranges. Deep discount across all = bullish. Premium across all = bearish.
-- HTF Structure: price above prior week high = bullish structure. Below prior week low = bearish.
-- Confidence is 0-100% based on how many models agree. Above 60% = high conviction. Below 30% = low/no edge.
-- Include the ICT Daily Bias as the PRIMARY forward-looking signal in your "Tomorrow I'm watching" section.
+FTFC BIAS GUIDE (forward-looking — the PRIMARY directional bias):
+- FTFC (Full Timeframe Continuity) shows alignment across 5m/15m/1h/4h/Daily timeframes.
+- Candle FTFC: all timeframes have close > open = bullish alignment.
+- MS FTFC: all timeframes have HH/HL = bullish market structure alignment.
+- 200 SMA: price above 200-day average = bullish macro trend.
+- The Session Bias line picks the best model for the current time:
+  - Candle FTFC is best in the morning (92-94% historical accuracy).
+  - Combined FTFC is best at lunch (94-99% accuracy).
+  - MS FTFC is best in the PM (95-97% accuracy — candle direction degrades late).
+  - Asia session: FTFC does NOT work — do not use for directional bias.
+- If FTFC says BULLISH: look for longs tomorrow using ICT levels (FVG, OB, gaps) as entry targets.
+- If FTFC says BEARISH: look for shorts tomorrow using ICT levels as entry targets.
+- If FTFC says NEUTRAL: timeframes disagree — no aligned bias. Focus on levels to watch.
+- Include the FTFC Session Bias as the PRIMARY forward-looking signal in your "Tomorrow I'm watching" section.
 
 ICT DEALING RANGE GUIDE (close review):
 - Premium (price > 50% of PDH-PDL range): Longs had poor R:R. If price closed in premium, look for shorts tomorrow.

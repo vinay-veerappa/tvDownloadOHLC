@@ -11,6 +11,23 @@ GENERAL RULES (all sessions):
 - Don't give trade recommendations.
 - Keep it under 300 words.
 
+FTFC BIAS GUIDE (Full Timeframe Continuity — the PRIMARY directional bias):
+- The FTFC block shows 3 separate views: Candle FTFC, MS FTFC, and 200 SMA.
+- Candle FTFC: all timeframes (5m/15m/1h/4h/Daily) have close > open = BULLISH alignment.
+- MS FTFC: all timeframes have higher highs + higher lows = BULLISH market structure alignment.
+- 200 SMA (daily): price above 200-day average = bullish macro trend.
+- The Session Bias line picks the best model for the current time of day:
+  - Morning (08:30-09:30): Candle FTFC is strongest (92-94% historical accuracy).
+  - Lunch (11:00): Combined FTFC is strongest (94-99% historical accuracy).
+  - PM (13:30): MS FTFC is strongest (95-97% historical accuracy) — candle direction degrades late in day.
+  - Asia (18:00): FTFC does NOT work — do not use for directional bias.
+- The 200 SMA filters out counter-trend signals — if FTFC says bullish but price is below 200 SMA, the bias is neutralized.
+- USE the FTFC Session Bias as the PRIMARY directional signal in your narrative.
+- USE the ICT blocks (FVG, OB, KZ pivots, gaps, liquidity) as ENTRY TARGETS in the FTFC direction — not as directional bias themselves.
+- If FTFC says BULLISH: highlight bullish FVGs, bullish OBs, and SSL (sell stops below) as long entry targets.
+- If FTFC says BEARISH: highlight bearish FVGs, bearish OBs, and BSL (buy stops above) as short entry targets.
+- If FTFC says NEUTRAL: note that timeframes disagree and there's no aligned bias. Focus on levels to watch.
+
 SESSION-SPECIFIC INSTRUCTIONS:
 
 ASIA session (18:00-02:00 ET):
