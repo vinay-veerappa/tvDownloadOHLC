@@ -468,9 +468,30 @@ LUNCH (11:00):    Combined FTFC + 200 SMA = 98.7% day, 76 signals (highest convi
 NY PM (13:30):   MS FTFC + 200 SMA = 95.4% day, 109 signals
 
 Pattern:
-  Morning → Candle FTFC (captures forming candle momentum)
-  Lunch   → Combined FTFC (highest conviction when both agree)
-  PM      → MS FTFC (captures persistent structural trend)
+  Morning -> Candle FTFC (captures forming candle momentum)
+  Lunch   -> Combined FTFC (highest conviction when both agree)
+  PM      -> MS FTFC (captures persistent structural trend)
 
 ICT concepts (FVG, OB, KZ pivots, gaps) for entry timing, NOT directional bias.
 ```
+
+### 9.8 Why Asia Session FTFC is Negative — Root Cause Analysis
+
+At 18:00 ET (Asia session start), the FTFC model fails because:
+
+**1. Daily candle is incomplete.** The trading date rolls at 18:00 ET. At 18:00, "today's" daily candle has just 1 bar (the 18:00 open). The daily candle direction (open vs close) is based on a single 1-minute bar — essentially random.
+
+**2. Even using the prior day's candle doesn't help.** Tested with prior day's complete daily candle:
+- Prior day candle_D vs RTH close: 46.4% (-3.6% edge)
+- Prior day ms_D vs RTH close: 47.9% (-2.1% edge)
+
+The prior day's direction doesn't predict the next RTH because the overnight session introduces new information.
+
+**3. Intraday TFs are in regime transition.** At 18:00:
+- 4h bar covers 16:00-20:00 — spans RTH close AND Asia open, mixing two regimes
+- 1h bar covers 18:00-19:00 — just the first hour of Asia
+- 5m/15m bars show the transition noise, not established structure
+
+**4. The market regime shifts between overnight and RTH.** The Asia/London session has its own dynamics (sweeps, consolidations, reversals) that may differ from the prior RTH day. By the time NY AM starts (09:30), the London session has established a new structure that IS predictive — which is why the 08:30 and 09:30 eval times work so well.
+
+**Conclusion:** FTFC requires timeframes to show **meaningful, established** structure. At 18:00 ET, the structure is in transition. The model works from 02:00 onward (London established) through 13:30 (PM established), but not at 18:00 (regime transition).
