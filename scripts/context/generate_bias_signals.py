@@ -79,6 +79,21 @@ DEFAULT_SYMBOLS = ["NQ1", "ES1"]
 # Evaluation times (skip 05:00 — covered by 08:30)
 EVAL_TIMES = ["18:00", "02:00", "08:30", "09:30", "11:00", "13:30", "16:00"]
 
+# Session boundaries: each eval time predicts a specific "next session candle"
+# The session is defined as [session_start, session_end] in ET
+# Outcomes: session_open (price at session_start), session_close (price at session_end)
+#           session_dir = BULLISH if close > open, BEARISH if close < open, FLAT if equal
+#           session_body_pct = (close - open) / open * 100  (ADR-002 compliant)
+SESSION_WINDOWS = {
+    "18:00": ("18:00", "02:00"),  # Asia session candle
+    "02:00": ("02:00", "08:30"),  # London session candle
+    "08:30": ("09:30", "11:00"),  # NY AM session candle
+    "09:30": ("09:30", "16:00"),  # Full RTH candle (the "day")
+    "11:00": ("11:00", "13:30"),  # NY Lunch candle
+    "13:30": ("13:30", "16:00"),  # NY PM candle
+    "16:00": ("16:00", "18:00"),  # After-close / overnight transition
+}
+
 # Eval times when each model becomes valid (earliest eval_time it can produce a signal)
 # Models A-E are valid from 18:00 (prior day data available)
 # Model F (midnight open) valid from 02:00 (midnight has passed)
@@ -480,6 +495,39 @@ def generate_bias_signals(symbol: str, lookback_days: int = 5000, full_regen: bo
                 max_excursion_dir = None
                 excursion_magnitude = None
 
+            # Session candle outcome (per-session candle direction)
+            sess_start_str, sess_end_str = SESSION_WINDOWS.get(eval_time_str, (None, None))
+            session_open = None
+            session_close = None
+            session_high = None
+            session_low = None
+            session_dir = None
+            session_body_pct = None
+            if sess_start_str and sess_end_str:
+                sess_start_h, sess_start_m = int(sess_start_str.split(":")[0]), int(sess_start_str.split(":")[1])
+                sess_end_h, sess_end_m = int(sess_end_str.split(":")[0]), int(sess_end_str.split(":")[1])
+                # Session start: same day (or next day for overnight sessions)
+                if eval_hour >= 16:
+                    # 16:00 and 18:00 evals: session is on the next trading day
+                    sess_start_ts = td_ts + pd.Timedelta(days=1, hours=sess_start_h, minutes=sess_start_m)
+                    sess_end_ts = td_ts + pd.Timedelta(days=1, hours=sess_end_h, minutes=sess_end_m) if sess_end_h < sess_start_h else td_ts + pd.Timedelta(days=1, hours=sess_end_h, minutes=sess_end_m)
+                else:
+                    sess_start_ts = td_ts + pd.Timedelta(hours=sess_start_h, minutes=sess_start_m)
+                    if sess_end_h <= sess_start_h and sess_end_h < 12:
+                        # Session wraps past midnight (e.g., 18:00 -> 02:00)
+                        sess_end_ts = td_ts + pd.Timedelta(days=1, hours=sess_end_h, minutes=sess_end_m)
+                    else:
+                        sess_end_ts = td_ts + pd.Timedelta(hours=sess_end_h, minutes=sess_end_m)
+
+                sess_bars = df_1m[(df_1m.index >= sess_start_ts) & (df_1m.index < sess_end_ts)]
+                if not sess_bars.empty and eval_price > 0:
+                    session_open = float(sess_bars["open"].iloc[0])
+                    session_close = float(sess_bars["close"].iloc[-1])
+                    session_high = float(sess_bars["high"].max())
+                    session_low = float(sess_bars["low"].min())
+                    session_dir = "BULLISH" if session_close > session_open else ("BEARISH" if session_close < session_open else "FLAT")
+                    session_body_pct = round((session_close - session_open) / session_open * 100, 3)
+
             row = {
                 "trading_date": td,
                 "symbol": symbol,
@@ -501,6 +549,14 @@ def generate_bias_signals(symbol: str, lookback_days: int = 5000, full_regen: bo
             row["max_low"] = round(max_low, 2) if max_low else None
             row["max_excursion_dir"] = max_excursion_dir
             row["excursion_magnitude"] = round(excursion_magnitude, 2) if excursion_magnitude else None
+
+            # Session candle outcomes
+            row["session_open"] = round(session_open, 2) if session_open else None
+            row["session_close"] = round(session_close, 2) if session_close else None
+            row["session_high"] = round(session_high, 2) if session_high else None
+            row["session_low"] = round(session_low, 2) if session_low else None
+            row["session_dir"] = session_dir
+            row["session_body_pct"] = session_body_pct
 
             rows.append(row)
 
@@ -633,7 +689,7 @@ def main():
     parser.add_argument("--eval-time", type=str, default="09:30",
                         help="Eval time to analyze (default: 09:30)")
     parser.add_argument("--outcome", type=str, default="rth_close_dir",
-                        help="Outcome to measure (rth_close_dir or max_excursion_dir)")
+                        help="Outcome to measure: rth_close_dir, max_excursion_dir, or session_dir")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
