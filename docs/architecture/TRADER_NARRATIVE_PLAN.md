@@ -1,6 +1,6 @@
 # Trader's Morning Narrative — Design Plan
 
-> **Status:** v2 IMPLEMENTED + ICT Phase 1 COMPLETE — open, intraday, close, and premarket modes live. Intraday is session-adaptive (Asia, London, NY AM, NY Lunch, NY PM). Multi-timeframe range detection. ICT dealing range + liquidity map. ICT Phase 1 adds: killzone pivots, IPDA 20/40/60, Silver Bullet windows, ICT Macros, FVG+VI imbalances, NWOG/NDOG/RTH gaps with fill tracking. Unified `ict_engine` library (v1.3.0) is the canonical source for all ICT detection. Derived ICT parquets in `data/derived/ICT/`. Narrative data loader with freshness-aware auto-refresh.  
+> **Status:** v2 IMPLEMENTED + ICT Phase 1 + Phase 2A + Phase 2B COMPLETE — open, intraday, close, and premarket modes live. Intraday is session-adaptive (Asia, London, NY AM, NY Lunch, NY PM). Multi-timeframe range detection. ICT dealing range + liquidity map. ICT Phase 1: killzone pivots, IPDA 20/40/60, Silver Bullet windows, ICT Macros, FVG+VI imbalances, NWOG/NDOG/RTH gaps. Phase 2A: Order Blocks, Structure (BOS/MSS/CISD), Liquidity pools, SMT Divergence, Delivery Triad. Phase 2B: FTFC (Full Timeframe Continuity) bias model with 3 multi-TF views (Candle FTFC + MS FTFC + 200 SMA) replacing the ICT Daily Bias. Unified `ict_engine` library (v1.3.0). Derived ICT parquets in `data/derived/ICT/`. Narrative data loader with freshness-aware auto-refresh.  
 > **Date:** 2026-07-08 (last updated 2026-07-13)  
 > **Goal:** A narrative system that reads like a trader thinking out loud. Runs at any time during any session. Eventually enables active trade creation and management from the data.
 
@@ -81,11 +81,11 @@ The intraday mode detects the current session and assembles only relevant blocks
 
 | Session | Time (ET) | Blocks included |
 |---|---|---|
-| **ASIA** | 18:00-02:00 | Prior EOD, globex overnight, GEX, ICT dealing range, ICT KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps, Herman Asia range size, range stack, calendar |
-| **LONDON** | 02:00-08:30 | Asia box, PL sweep, London box, London OR, ALN, GEX, ICT, ICT KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps, range stack, calendar, ICT liquidity map |
-| **NY AM** | 09:30-11:30 | RTH session, Herman Pre-NY sweep, IB, ALN, GEX, ICT, ICT KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps, range stack, calendar, ICT liquidity map |
-| **NY LUNCH** | 11:30-13:30 | Session so far, IB, lunch range, GEX, ICT, ICT KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps, range stack, calendar |
-| **NY PM** | 13:30-16:00 | Session direction, noon curve, lunch breakout, GEX, ICT, ICT KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps, range stack, calendar, ICT liquidity map |
+| **ASIA** | 18:00-02:00 | FTFC bias, Prior EOD, globex overnight, GEX, ICT dealing range, KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps, Herman Asia range size, range stack, calendar |
+| **LONDON** | 02:00-08:30 | FTFC bias, Asia box, PL sweep, London box, London OR, ALN, GEX, ICT, KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps, range stack, calendar, ICT liquidity map |
+| **NY AM** | 09:30-11:30 | FTFC bias, RTH session, Herman Pre-NY sweep, IB, ALN, GEX, ICT, KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps, range stack, calendar, ICT liquidity map |
+| **NY LUNCH** | 11:30-13:30 | FTFC bias, Session so far, IB, lunch range, GEX, ICT, KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps, range stack, calendar |
+| **NY PM** | 13:30-16:00 | FTFC bias, Session direction, noon curve, lunch breakout, GEX, ICT, KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps, range stack, calendar, ICT liquidity map |
 
 Weekend → "Markets closed. Run weekly narrative." After close (16:00-18:00) → "Session complete. Run EOD narrative."
 
@@ -112,11 +112,12 @@ The intraday cheat sheet is built from modular signal modules in `scripts/trader
 | Module | File | What it provides |
 |--------|------|-----------------|
 | Session detection | `session_ranges.py` | `detect_session()`, `compute_all_session_ranges()`, `detect_sweep()` |
-| Intraday blocks | `intraday_blocks.py` | Per-session block builders + 6 ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps) |
+| Intraday blocks | `intraday_blocks.py` | Per-session block builders + FTFC bias block + 11 ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps) |
 | Range detection | `range_detection.py` | Multi-timeframe range stack (MICRO_5 through WEEKLY_2), compression detection, adaptive tightest-range scan |
-| ICT data loader | `ict_data_loader.py` | Freshness-aware parquet loader with auto-refresh trigger + fallback to live compute. Reads from `data/derived/ICT/` parquets |
+| ICT data loader | `ict_data_loader.py` | Freshness-aware parquet loader with auto-refresh + FTFC computation + ICT daily bias (7 models) |
 | ICT context | `ict_context.py` | Thin wrapper delegating to `ict_data_loader.load_ict_context()`. PDH/PDL/midnight open, premium/discount, BSL/SSL targets |
 | ICT liquidity map | `liquidity_map.py` | Raid target identification based on bias + news tier |
+| Bias validation | `generate_bias_signals.py` | Historical bias signal generator + analysis (per-day, per-eval-time, per-session outcomes) |
 | Candle science | `candle_science.py` | C1→C2→C3 daily candle pattern probabilities |
 | Confluence | `confluence.py` | 3-signal confluence model (overnight + RTH open + daily chart) |
 | Day type | `day_type.py` | CLEAN/CPI/NFP/FOMC/SPECIAL/HOLIDAY classification with killzones |
@@ -306,47 +307,47 @@ This is a phased goal. v1 produces the narrative only. v2 adds active trade awar
 
 **Completed items (library + derived data + narrative integration):**
 
-- [x] ICT Killzone pivots: AS.H/AS.L, LO.H/LO.L, NYAM.H/NYAM.L — `detect_session_data()` in `ict_engine` + `{sym}_kz_pivots.parquet` + `_format_kz_pivots_block()`
-- [x] ICT Silver Bullet windows: 10:00-11:00, 14:00-15:00, 03:00-04:00 — `SILVER_BULLETS` dict + `get_silver_bullet_data()` + `_format_silver_bullet_block()`
-- [x] ICT Macros: 09:50-10:10, 10:50-11:10, 13:10-13:40, 15:15-15:45, 02:33-03:00, 04:03-04:30 — `MACROS` dict (already existed) + `_format_macro_block()`
-- [x] ICT FVG (Fair Value Gap) detection — merged `detect_fvgs_v5` into canonical `detect_fvg()` in `ict_engine.core.pa` with `join_consecutive`, `require_candle_direction`, `resample_rule` params + `{sym}_imbalance_{tf}.parquet`
-- [x] ICT Volume Imbalance detection — `detect_volume_imbalance()` enhanced with `resample_rule` + stored alongside FVG in imbalance parquet
-- [x] ICT IPDA 20/40/60 ranges — `detect_ipda_ranges()` in `ict_engine.core.htf` + `{sym}_ipda.parquet` + `_format_ipda_block()`
-- [x] NWOG/NDOG/RTH gap detection with fill tracking — `detect_gap_fills()` in `ict_engine.core.gaps` + `{sym}_gaps.parquet` + `_format_gaps_block()`
-- [x] HTF levels (PDH/PDL/PWH/PWL/PMH/PML) — `detect_htf_levels()` (already existed) + `{sym}_htf_levels.parquet`
-- [x] Unified library: `ict_engine` v1.3.0 is canonical source; `nqstats.ib.detect_fvgs_v5` is a wrapper
-- [x] Derived data pipeline: `scripts/context/compute_ict_features.py` — batch generator with CLI + incremental updates
-- [x] Narrative data loader: `scripts/trader/signals/ict_data_loader.py` — freshness-aware with auto-refresh
+- [x] ICT Killzone pivots: AS.H/AS.L, LO.H/LO.L, NYAM.H/NYAM.L
+- [x] ICT Silver Bullet windows: 10:00-11:00, 14:00-15:00, 03:00-04:00
+- [x] ICT Macros: 09:50-10:10, 10:50-11:10, 13:10-13:40, 15:15-15:45, 02:33-03:00, 04:03-04:30
+- [x] ICT FVG + Volume Imbalance detection — merged `detect_fvgs_v5` into canonical `detect_fvg()`
+- [x] ICT IPDA 20/40/60 ranges
+- [x] NWOG/NDOG/RTH gap detection with fill tracking
+- [x] HTF levels (PDH/PDL/PWH/PWL/PMH/PML)
+- [x] Unified library: `ict_engine` v1.3.0 is canonical source
+- [x] Derived data pipeline: `scripts/context/compute_ict_features.py`
+- [x] Narrative data loader: `scripts/trader/signals/ict_data_loader.py`
 
-**Remaining items (Phase 2 — see [ICT_PHASE2_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ICT_PHASE2_PLAN.md) for full details):**
+### ICT Phase 2A COMPLETE (2026-07-13)
 
-- [ ] ICT Order Block detection — `detect_orderblock()` exists in library, needs derived data pipeline + narrative block
-- [ ] ICT Judas Swing detection (sweep of Midnight Open during London/Pre-Market)
-- [ ] ICT MSS/BOS — `detect_structure_breaks()` exists (needs MSS classification improvement), needs pipeline + narrative block
-- [ ] ICT Draw on Liquidity (enhanced) — proximity to BSL/SSL pools with sweep tracking
-- [ ] ICT Market Delivery Triad: I2E (fill FVG → seek external liquidity) vs E2I (sweep → revert to FVG)
-- [ ] SMT Divergence — `detect_smt()` exists in library, needs paired-symbol pipeline + narrative block
-- [ ] Historical bias validation — backtest each of the 7 bias models against historical data
-- [ ] Bias model weighting — weight models by historical edge, disable negative-edge models
+- [x] ICT Order Block detection — `detect_orderblock()` + `{sym}_ob_{tf}.parquet` + `_format_ob_block()`
+- [x] ICT Structure (BOS/MSS/CISD) — `detect_swings()` + `detect_structure_breaks()` + `detect_cisd()` + `{sym}_structure_{tf}.parquet` + `_format_structure_block()`
+- [x] ICT Liquidity pools (BSL/SSL/EQH/EQL) — `detect_liquidity()` + `{sym}_liquidity_{tf}.parquet` + `_format_liquidity_block()`
+- [x] SMT Divergence (NQ vs ES) — `detect_smt()` + `{sym}_smt.parquet` + `_format_smt_block()`
+- [x] ICT Delivery Triad (I2E/E2I) — `_format_delivery_triad_block()` combining FVG + liquidity data
+
+### ICT Phase 2B: Bias Validation + FTFC (2026-07-13)
+
+- [x] Historical bias signal generator — `scripts/context/generate_bias_signals.py`
+- [x] Per-session candle outcomes (session_dir, session_body_pct)
+- [x] ICT Daily Bias (7 models) — `compute_ict_daily_bias()` in `ict_data_loader.py`
+- [x] Historical validation: all 7 ICT models have negative edge (27-51% win rates)
+- [x] FTFC (Full Timeframe Continuity) bias model — `compute_ftfc()` in `ict_data_loader.py`
+- [x] 3 multi-TF views: Candle FTFC + MS FTFC + 200 SMA (5m/15m/1h/4h/Daily)
+- [x] Session-adaptive combined bias (morning=candle, lunch=combined, PM=MS, Asia=none)
+- [x] FTFC historical validation: 92-99% win rates (vs 27-51% for ICT models)
+- [x] FTFC replaces ICT Daily Bias as PRIMARY directional signal in narrative
+- [x] ICT concepts repositioned as ENTRY TARGETS, not directional bias
+
+### Remaining Items
+
+- [ ] Add FTFC to bias_signals parquet as formal models
+- [ ] Run FTFC through PropFirmSimulator (ADR-021)
+- [ ] Bias model weighting — weight models by historical edge
 - [ ] Rolling per-model accuracy tracking in close narrative
-- [ ] PineScript indicator for range stack + ICT features visualization
-
-### Asia/London IB computation
-
-- [ ] Compute Initial Balance during Asia and London sessions (currently only NY RTH IB via NQStats)
-- [ ] Separate conversation — requires defining IB windows for each session
-
-### Data freshness
-
-- [ ] Herman stats parquet stale (last 2026-01-23, 171 days behind) — only used for static statistical references, not per-day data, so not blocking
-- [ ] Daily classification parquet stale (last 2026-01-23) — same, used for sequential probabilities only
-
-### Range detection expansion
-
-- [ ] Integrate DAILY_3, DAILY_5, WEEKLY, WEEKLY_2 into EOD and weekly narratives
-- [ ] PineScript indicator for range stack visualization
-
-### Trade management (v3)
+- [ ] PineScript indicator for range stack + FTFC visualization
+- [ ] Asia/London IB computation
+- [ ] Herman/classification parquet refresh
 
 - [ ] Intraday narrative flags trade management actions (e.g., "stop 2 points away — manage now")
 - [ ] Python updates Trade.status in DB via RTD price check
