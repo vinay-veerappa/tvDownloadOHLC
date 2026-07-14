@@ -389,21 +389,88 @@ The PineScript FTFC uses candle direction (open vs close), not market structure 
 - **Candle FTFC**: all timeframes have green candles (close > open) = bullish
 - **Compare**: which approach works better — candle direction or market structure?
 
-### 9.5 The Winning Bias Model
+### 9.5 Full Results — All Sessions (NQ1, session_dir)
+
+#### Candle FTFC (candle direction: close > open across 5m/15m/1h/4h/Daily)
+
+| Session | 5/5 FTFC | 4/5 | FTFC+SMA |
+|---------|----------|-----|----------|
+| **ASIA (18:00)** | N/A (no session data) | N/A | N/A |
+| **LONDON (02:00)** | 60.3% (+10.3%) n=463 | 58.8% (+8.8%) n=987 | **60.7% (+10.7%) n=239** |
+| **PRE-NY (08:30)** | **92.7% (+42.7%) n=603** | 86.6% (+36.6%) n=1173 | **93.7% (+43.7%) n=332** |
+| **RTH OPEN (09:30)** | **90.9% (+40.9%) n=492** | 83.0% (+33.0%) n=1056 | 92.0% (+42.0%) n=289 |
+| **LUNCH (11:00)** | 77.5% (+27.5%) n=457 | 70.5% (+20.5%) n=1050 | 78.8% (+28.8%) n=260 |
+| **NY PM (13:30)** | 61.1% (+11.1%) n=542 | 49.3% (-0.7%) n=1208 | 64.0% (+14.0%) n=325 |
+
+#### MS FTFC (market structure: HH/HL across 5m/15m/1h/4h/Daily)
+
+| Session | 5/5 FTFC | 4/5 | FTFC+SMA |
+|---------|----------|-----|----------|
+| **ASIA (18:00)** | N/A | N/A | N/A |
+| **LONDON (02:00)** | **80.0% (+30.0%) n=155** | 75.6% (+25.6%) n=409 | **81.1% (+31.1%) n=95** |
+| **PRE-NY (08:30)** | 87.0% (+37.0%) n=92 | 85.5% (+35.5%) n=310 | 87.0% n=54 |
+| **RTH OPEN (09:30)** | 84.1% (+34.1%) n=145 | 78.7% (+28.7%) n=536 | 80.9% n=89 |
+| **LUNCH (11:00)** | 89.7% (+39.7%) n=174 | 84.8% (+34.8%) n=598 | **92.8% (+42.8%) n=111** |
+| **NY PM (13:30)** | **92.4% (+42.4%) n=171** | **84.9% (+34.9%) n=548** | **90.7% (+40.7%) n=108** |
+
+#### Combined FTFC (candle + MS both agree)
+
+| Session | 5/5 | 4/5 | 5/5+SMA | 4/5+SMA |
+|---------|-----|-----|---------|---------|
+| **ASIA (18:00)** | N/A | N/A | N/A | N/A |
+| **LONDON (02:00)** | **80.0% (+30.0%) n=110** | 75.6% (+25.6%) n=328 | 78.5% (+28.5%) n=65 | 75.4% n=179 |
+| **PRE-NY (08:30)** | **92.4% (+42.4%) n=79** | 87.8% (+37.8%) n=286 | **93.5% (+43.5%) n=46** | 88.1% (+38.1%) n=159 |
+| **RTH OPEN (09:30)** | 88.2% (+38.2%) n=85 | 85.6% (+35.6%) n=390 | 84.9% n=53 | 84.1% n=239 |
+| **LUNCH (11:00)** | 87.5% (+37.5%) n=112 | 85.0% (+35.0%) n=448 | **90.8% (+40.8%) n=76** | 87.6% (+37.6%) n=283 |
+| **NY PM (13:30)** | **89.4% (+39.4%) n=94** | 81.9% (+31.9%) n=370 | 85.9% n=64 | 86.0% (+36.0%) n=228 |
+
+#### Day Direction (close vs eval_price) — Best Models
+
+| Session | Best Model | Day Win% | Day n |
+|---------|-----------|----------|-------|
+| **ASIA (18:00)** | (all negative — Asia FTFC doesn't predict RTH close) | — | — |
+| **LONDON (02:00)** | Combined FTFC+SMA | **96.9% (+46.9%)** | 65 |
+| **LONDON (02:00)** | Candle FTFC+SMA | **96.2% (+46.2%)** | 240 |
+| **PRE-NY (08:30)** | Candle FTFC+SMA | 92.8% (+42.8%) | 333 |
+| **RTH OPEN (09:30)** | Candle FTFC+SMA | 91.4% (+41.4%) | 290 |
+| **LUNCH (11:00)** | Combined FTFC+SMA | **98.7% (+48.7%)** | 76 |
+| **NY PM (13:30)** | MS FTFC+SMA | **95.4% (+45.4%)** | 109 |
+
+### 9.6 Session-Specific Findings
+
+**ASIA (18:00):** FTFC does NOT work for predicting the RTH day direction. All models show negative edge (-7% to -18%). The overnight Asia session's timeframe alignment doesn't predict the next RTH session — the market regime shifts between overnight and RTH. **Do not use FTFC for Asia session bias.**
+
+**LONDON (02:00):** Both candle and MS FTFC work well for predicting the RTH day direction:
+- Candle FTFC+SMA: **96.2% day win rate** with 240 signals (14% coverage)
+- Combined FTFC+SMA: **96.9% day win rate** with 65 signals (4% coverage)
+- MS FTFC: **91.6% day win rate** with 155 signals
+- For session direction (London candle): MS FTFC = 80%, Candle FTFC = 60%
+
+**PRE-NY (08:30):** Candle FTFC is strongest here — 92.7% session, 93.7% with SMA filter. This is the morning sweet spot: the overnight candles have formed, the daily candle is establishing, and alignment across all TFs is highly predictive.
+
+**RTH OPEN (09:30):** Candle FTFC+SMA = 92.0% session / 91.4% day with 289 signals. Good coverage and strong edge.
+
+**LUNCH (11:00):** Combined FTFC+SMA = **98.7% day win rate** (76 signals). The highest conviction signal in the entire study. When candle direction, market structure, AND 200 SMA all agree at lunch, the day closes in that direction 98.7% of the time.
+
+**NY PM (13:30):** MS FTFC dominates — candle FTFC degrades (49-61%) while MS FTFC stays strong (92.4%). The MS FTFC+SMA = 95.4% day win rate with 109 signals. By PM, candle direction is unreliable (the daily candle may have reversed) but market structure captures the persistent trend.
+
+### 9.7 The Winning Bias Model — Session-Adaptive
 
 ```
-Primary bias: Full Timeframe Continuity
-  - BULLISH when 5m + 15m + 1h + 4h all show HH/HL (or all green candles)
-  - BEARISH when 5m + 15m + 1h + 4h all show LH/LL (or all red candles)
-  - NEUTRAL when timeframes disagree
+Session-specific bias model:
 
-Filter: 200 SMA (daily)
-  - Only take signals in the direction of the 200 SMA
-  - Removes counter-trend continuity signals
+ASIA (18:00):    DO NOT USE FTFC — negative edge. Use other signals.
+LONDON (02:00):  Candle FTFC + 200 SMA = 96.2% day, 240 signals
+                 Combined FTFC + SMA = 96.9% day, 65 signals (highest conviction)
+PRE-NY (08:30):  Candle FTFC + 200 SMA = 93.7% session, 332 signals (best coverage)
+RTH (09:30):     Candle FTFC + 200 SMA = 92.0% session / 91.4% day, 289 signals
+LUNCH (11:00):    Combined FTFC + 200 SMA = 98.7% day, 76 signals (highest conviction)
+NY PM (13:30):   MS FTFC + 200 SMA = 95.4% day, 109 signals
 
-Best eval time: 11:00 (lunch) — 92.4% win rate, 184 signals (with SMA filter)
-Also strong: 13:30 (PM) — 91.5% win rate, 235 signals
+Pattern:
+  Morning → Candle FTFC (captures forming candle momentum)
+  Lunch   → Combined FTFC (highest conviction when both agree)
+  PM      → MS FTFC (captures persistent structural trend)
 
-ICT concepts (FVG, OB, KZ pivots, gaps) should be used for entry timing
-and level selection, NOT for determining directional bias.
+ICT concepts (FVG, OB, KZ pivots, gaps) for entry timing, NOT directional bias.
 ```
