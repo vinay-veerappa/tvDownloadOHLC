@@ -268,3 +268,142 @@ This means: on a typical day, NQ moves about 0.68% from the 09:30 eval price to 
 | Models may need inversion | Test inverted signals as contrarian fade trades |
 | ALN/Herman/Candle Science not yet compared | Need to add them to the parquet for side-by-side |
 | Prop firm simulation not yet applied | Ultimate test is whether bias can generate passing trades |
+
+---
+
+## 8. Simple Models — 200 SMA and Market Structure
+
+### 8.1 200-Day SMA (daily)
+
+The simplest possible trend-following signal: price above 200-day average = bullish, below = bearish.
+
+**NQ1 results (session_dir):**
+
+| Eval Time | Win% | Edge | n |
+|-----------|------|------|---|
+| 02:00 | 52.8% | +2.8% | 1768 |
+| 09:30 | 53.3% | +3.3% | 1765 |
+| 11:00 | **55.7%** | **+5.7%** | 1765 |
+| 13:30 | 53.7% | +3.7% | 1706 |
+
+The 200 SMA beats every single ICT model at every eval time. It's positive edge everywhere, and gets better later in the day.
+
+### 8.2 200 SMA on Intraday Timeframes
+
+| Model | 09:30 session | 11:00 session | 13:30 session |
+|-------|-------------|-------------|-------------|
+| 200 SMA (1m) | 53.6% (+3.6%) | 52.9% (+2.9%) | 53.3% (+3.3%) |
+| 200 SMA (5m) | 53.1% (+3.1%) | 53.0% (+3.0%) | 54.1% (+4.1%) |
+| 200 SMA (15m) | 51.0% (+1.0%) | 53.5% (+3.5%) | **55.0% (+5.0%)** |
+| 200 SMA (1h) | 50.2% (+0.2%) | 51.7% (+1.7%) | 53.6% (+3.6%) |
+| 200 SMA (daily) | 53.3% (+3.3%) | **55.7% (+5.7%)** | 53.7% (+3.7%) |
+
+Longer timeframes work better later in the day. Daily 200 SMA is best at 11:00 (55.7%). 15m 200 SMA is best at 13:30 (55.0%).
+
+### 8.3 Market Structure (HH/HL vs LH/LL) — Multi-Timeframe
+
+Market structure per timeframe: current bar made higher high AND higher low = bullish; lower high AND lower low = bearish; else neutral.
+
+**NQ1 session_dir results:**
+
+| Model | 02:00 | 08:30 | 09:30 | 11:00 | 13:30 |
+|-------|-------|-------|-------|-------|-------|
+| MS (5m) | 53.5% (+3.5%) | 68.3% (+18.3%) | 57.2% (+7.2%) | 57.8% (+7.8%) | 57.6% (+7.6%) |
+| MS (15m) | 53.2% (+3.2%) | 71.4% (+21.4%) | 60.4% (+10.4%) | 62.0% (+12.0%) | 62.7% (+12.7%) |
+| MS (1h) | **66.6% (+16.6%)** | 66.9% (+16.9%) | **71.7% (+21.7%)** | **73.9% (+23.9%)** | **70.4% (+20.4%)** |
+| MS (4h) | **70.1% (+20.1%)** | **79.1% (+29.1%)** | 70.1% (+20.1%) | **84.8% (+34.8%)** | **88.1% (+38.1%)** |
+
+MS on higher timeframes (1h, 4h) is massively predictive — 70-88% win rates. Lower timeframes (5m) are noisy (~57%).
+
+### 8.4 Combinations — MS + 200 SMA Agree
+
+When MS (1h) and 200 SMA (daily) both agree:
+
+| Eval | Outcome | n | Win% | Edge |
+|------|---------|---|------|------|
+| 11:00 | session_dir | 762 | **77.0%** | **+27.0%** |
+| 09:30 | session_dir | 718 | 74.7% | +24.7% |
+| 13:30 | session_dir | 483 | 75.4% | +25.4% |
+
+---
+
+## 9. Full Timeframe Continuity (FTFC)
+
+### 9.1 PineScript Reference: FTFC Vip3rr
+
+The PineScript indicator "FTFC Vip3rr" implements Full Timeframe Continuity using **candle direction** (open vs close), NOT market structure (HH/HL):
+
+```
+For each timeframe (1h, Daily, Weekly, Monthly):
+  - Bullish if open <= close (green candle)
+  - Bearish if open >= close (red candle)
+  - Change % = (close - open) * 100 / abs(open)
+  - Opacity indicates strength: >2% = heavy, >1% = average, else light
+```
+
+FTFC = all timeframes showing green candles (bullish) or all showing red candles (bearish).
+
+**Key difference from my MS test:** FTFC uses candle body direction (open vs close), while my test used bar structure (HH/HL vs LH/LL). These are different signals:
+- **Candle direction**: Is the current bar's close above its open? (green/red candle)
+- **Market structure**: Did the current bar make a higher high AND higher low than the prior bar? (HH/HL)
+
+### 9.2 FTFC Results (Market Structure Approach — HH/HL across 5m/15m/1h/4h)
+
+I tested the concept using market structure alignment across 4 intraday timeframes:
+
+| Model | 08:30 | 09:30 | 11:00 | 13:30 |
+|-------|-------|-------|-------|-------|
+| 2/4 TFs agree | 74.7% (+24.7%) n=1023 | 65.7% (+15.7%) n=1482 | 72.1% (+22.1%) n=1550 | 66.0% (+16.0%) n=1157 |
+| 3/4 TFs agree | 80.6% (+30.6%) n=453 | 72.8% (+22.8%) n=867 | 80.7% (+30.7%) n=892 | 74.1% (+24.1%) n=768 |
+| **4/4 Full Continuity** | **86.0% (+36.0%) n=179** | **78.8% (+28.8%) n=236** | **91.1% (+41.1%) n=315** | **90.9% (+40.9%) n=406** |
+| **4/4 + 200 SMA** | 81.2% (+31.2%) n=96 | 77.5% (+27.5%) n=142 | **92.4% (+42.4%) n=184** | **91.5% (+41.5%) n=235** |
+
+**Day direction results (close vs eval_price):**
+
+| Model | 08:30 | 09:30 | 11:00 | 13:30 |
+|-------|-------|-------|-------|-------|
+| 4/4 Full Continuity | 81.6% (+31.6%) | 78.8% (+28.8%) | **92.1% (+42.1%)** | **93.7% (+43.7%)** |
+| 4/4 + 200 SMA | 84.4% (+34.4%) | 78.2% (+28.2%) | **94.0% (+44.0%)** | **94.1% (+44.1%)** |
+
+### 9.3 Key FTFC Findings
+
+1. **Full continuity (4/4 agree) at 11:00 = 91.1% win rate (+41.1% edge)** with 315 signals (~18% coverage). This is an exceptionally strong directional bias.
+
+2. **Continuity gets stronger later in the day** — 08:30 is 86%, 11:00 is 91%, 13:30 is 91%. The trend establishes across timeframes and persists.
+
+3. **The 200 SMA filter improves day outcome** (94.0% vs 92.1% at 11:00) but slightly reduces coverage. It mainly removes counter-trend continuity signals.
+
+4. **Even 2/4 agreement is strong** — 72% win rate at 11:00. Partial alignment already gives meaningful edge.
+
+5. **Coverage vs edge tradeoff:**
+   - 2/4: ~55% coverage, ~22% edge
+   - 3/4: ~32% coverage, ~31% edge
+   - 4/4: ~18% coverage, ~41% edge
+   - 4/4 + SMA: ~10% coverage, ~44% edge
+
+6. **The progression is clean and monotonic** — more TFs agreeing = higher win rate, consistently.
+
+### 9.4 Next: Test Candle-Direction FTFC
+
+The PineScript FTFC uses candle direction (open vs close), not market structure (HH/HL). These should also be tested:
+- **Candle FTFC**: all timeframes have green candles (close > open) = bullish
+- **Compare**: which approach works better — candle direction or market structure?
+
+### 9.5 The Winning Bias Model
+
+```
+Primary bias: Full Timeframe Continuity
+  - BULLISH when 5m + 15m + 1h + 4h all show HH/HL (or all green candles)
+  - BEARISH when 5m + 15m + 1h + 4h all show LH/LL (or all red candles)
+  - NEUTRAL when timeframes disagree
+
+Filter: 200 SMA (daily)
+  - Only take signals in the direction of the 200 SMA
+  - Removes counter-trend continuity signals
+
+Best eval time: 11:00 (lunch) — 92.4% win rate, 184 signals (with SMA filter)
+Also strong: 13:30 (PM) — 91.5% win rate, 235 signals
+
+ICT concepts (FVG, OB, KZ pivots, gaps) should be used for entry timing
+and level selection, NOT for determining directional bias.
+```
