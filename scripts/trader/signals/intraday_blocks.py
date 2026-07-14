@@ -815,11 +815,18 @@ def _format_ftfc_block(ticker: str, ticker_current: float, now_et: Any) -> str:
         tf_str_ms = " | ".join(f"{tf}:{d[0]}" for tf, d in per_tf_ms.items() if d and d != "N/A")
         lines.append(f"  {tf_str_ms}")
 
-        # View 3: 200 SMA
+        # View 3: 200 SMA (multi-TF)
         sma = ftfc.get("sma_200", {})
         sma_dir = sma.get("direction", "N/A")
         sma_val = sma.get("daily_value", "N/A")
         lines.append(f"200 SMA (daily): {sma_dir} (price {'above' if sma_dir == 'BULLISH' else 'below' if sma_dir == 'BEARISH' else 'at'} {sma_val})")
+        # Per-TF 200 SMA
+        per_tf_sma_dirs = sma.get("per_tf_dirs", {})
+        if per_tf_sma_dirs:
+            sma_tf_str = " | ".join(f"{tf}:{d[0]}" for tf, d in per_tf_sma_dirs.items() if d)
+            sma_bull = sum(1 for d in per_tf_sma_dirs.values() if d == "BULLISH")
+            sma_bear = sum(1 for d in per_tf_sma_dirs.values() if d == "BEARISH")
+            lines.append(f"  200 SMA intraday: {sma_tf_str} [{sma_bull}B/{sma_bear}R]")
 
         # Combined
         combined = ftfc.get("combined", {})

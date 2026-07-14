@@ -939,10 +939,18 @@ def compute_ftfc(ticker: str, current_price: float, now_et: datetime | None = No
     sma_dir = None
     if sma_val is not None and current_price > 0:
         sma_dir = "BULLISH" if current_price > sma_val else "BEARISH"
+
+    # Per-TF 200 SMA directions
+    tf_sma_dirs = {}
+    for tf_label, sma_val_tf in tf_sma.items():
+        if sma_val_tf and current_price > 0:
+            tf_sma_dirs[tf_label] = "BULLISH" if current_price > sma_val_tf else "BEARISH"
+
     result["sma_200"] = {
         "daily_value": round(sma_val, 2) if sma_val else None,
         "direction": sma_dir,
-        "per_tf": {tf: (round(v, 2) if v else None) for tf, v in tf_sma.items()},
+        "per_tf_values": {tf: (round(v, 2) if v else None) for tf, v in tf_sma.items()},
+        "per_tf_dirs": tf_sma_dirs,
     }
 
     # Combined FTFC (candle + MS agree)
