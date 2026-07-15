@@ -35,6 +35,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         private ControlCenter _controlCenter;
         private RiskConfig _config = new RiskConfig();
 
+        // Cached Resources (Fix 12)
+        private TimeZoneInfo _etZone;
+        private List<ParsedWindow> _parsedWindows = new List<ParsedWindow>();
+
+        // Async Logging (Fix 11)
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _logQueue = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
         // Per-account and aggregate state models
         private readonly Dictionary<string, AccountState> _accountStates = new Dictionary<string, AccountState>();
         private readonly List<string> _subscribedAccounts = new List<string>();
@@ -70,6 +77,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _stateFile = Path.Combine(_logDir, "state.json");
                 _configFile = Path.Combine(_logDir, "config.json");
                 _heartbeatFile = Path.Combine(_logDir, "heartbeat.txt");
+
+                // Cache timezone (Fix 12)
+                _etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
 
                 // Load or generate config
                 LoadConfig();
@@ -182,6 +192,29 @@ namespace NinjaTrader.NinjaScript.AddOns
                     string json = JsonConvert.SerializeObject(_config, Formatting.Indented);
                     File.WriteAllText(_configFile, json);
                 }
+
+                // Cache parsed windows (Fix 12)
+                _parsedWindows.Clear();
+                if (_config.WindowsET != null)
+                {
+                    foreach (var win in _config.WindowsET)
+                    {
+                        var pw = new ParsedWindow
+                        {
+                            Start = TimeSpan.Parse(win.Start),
+                            End = TimeSpan.Parse(win.End),
+                            Days = new HashSet<DayOfWeek>()
+                        };
+                        foreach (var d in win.Days)
+                        {
+                            if (Enum.TryParse(d, out DayOfWeek dow))
+                            {
+                                pw.Days.Add(dow);
+                            }
+                        }
+                        _parsedWindows.Add(pw);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -214,6 +247,23 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     state.IsLockedOut = true;
                                 }
                             }
+                            if (data.AccountsData != null)
+                            {
+                                foreach (var kvp in data.AccountsData)
+                                {
+                                    if (!_accountStates.TryGetValue(kvp.Key, out var state))
+                                    {
+                                        state = new AccountState(kvp.Key);
+                                        _accountStates[kvp.Key] = state;
+                                    }
+                                    state.LastSessionDate = kvp.Value.LastSessionDate;
+                                    state.TradesToday = kvp.Value.TradesToday;
+                                    state.ConsecutiveLosses = kvp.Value.ConsecutiveLosses;
+                                    state.PeakEquity = kvp.Value.PeakEquity;
+                                    state.LastRealizedPnL = kvp.Value.LastRealizedPnL;
+                                    state.SessionStartRealizedPnL = kvp.Value.SessionStartRealizedPnL;
+                                }
+                            }
                         }
                     }
                 }
@@ -231,10 +281,24 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try
                 {
                     var lockedOut = _accountStates.Values.Where(s => s.IsLockedOut).Select(s => s.AccountName).ToList();
+                    var accountsData = new Dictionary<string, AccountPersistedData>();
+                    foreach (var state in _accountStates.Values)
+                    {
+                        accountsData[state.AccountName] = new AccountPersistedData
+                        {
+                            LastSessionDate = state.LastSessionDate,
+                            TradesToday = state.TradesToday,
+                            ConsecutiveLosses = state.ConsecutiveLosses,
+                            PeakEquity = state.PeakEquity,
+                            LastRealizedPnL = state.LastRealizedPnL,
+                            SessionStartRealizedPnL = state.SessionStartRealizedPnL
+                        };
+                    }
                     var data = new PersistedStateData
                     {
                         IsArmed = _isArmed,
                         LockedOutAccounts = lockedOut,
+                        AccountsData = accountsData,
                         Timestamp = DateTime.UtcNow
                     };
                     string json = JsonConvert.SerializeObject(data, Formatting.Indented);
@@ -262,7 +326,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try
                 {
                     NTMenuItem existingMenuItem = cc.FindFirst("ControlCenterMenuItemNew") as NTMenuItem;
-                    if (existingMenuItem == null) return;
+                    if (existingMenuItem == null)
+                    {
+                        LogEvent("SYSTEM", "UI_ERROR", "ControlCenterMenuItemNew not found. Menu injection skipped.");
+                        return;
+                    }
 
                     _myMenuItem = new NTMenuItem
                     {
@@ -332,123 +400,133 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void OnPositionUpdate(object sender, PositionEventArgs e)
         {
-            lock (_stateLock)
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+
+            dispatcher.InvokeAsync(() =>
             {
-                try
+                lock (_stateLock)
                 {
-                    Account account = (Account)sender;
-                    string accountName = account.Name;
-                    string instrument = e.Position.Instrument.FullName;
-                    MarketPosition marketPosition = e.Position.MarketPosition;
-                    int quantity = e.Position.Quantity;
-                    double averagePrice = e.Position.AveragePrice;
-                    double unrealizedPnL = 0.0;
-                    try { unrealizedPnL = e.Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
-
-                    if (!_accountStates.TryGetValue(accountName, out var state))
+                    try
                     {
-                        state = new AccountState(accountName);
-                        _accountStates[accountName] = state;
-                    }
+                        Account account = (Account)sender;
+                        string accountName = account.Name;
+                        string instrument = e.Position.Instrument.FullName;
+                        MarketPosition marketPosition = e.Position.MarketPosition;
+                        int quantity = e.Position.Quantity;
+                        double averagePrice = e.Position.AveragePrice;
+                        double unrealizedPnL = 0.0;
+                        try { unrealizedPnL = e.Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
 
-                    state.UpdatePosition(e.Position.Instrument, marketPosition, quantity, averagePrice, unrealizedPnL);
-
-                    LogEvent(accountName, "POSITION_UPDATE", new JObject
-                    {
-                        { "instrument", instrument },
-                        { "marketPosition", marketPosition.ToString() },
-                        { "quantity", quantity },
-                        { "averagePrice", averagePrice },
-                        { "unrealizedPnL", unrealizedPnL }
-                    });
-
-                    // Trigger evaluation on position changes
-                    var dispatcher = Application.Current?.Dispatcher;
-                    dispatcher?.InvokeAsync(() =>
-                    {
-                        lock (_stateLock)
+                        if (!_accountStates.TryGetValue(accountName, out var state))
                         {
-                            EvaluateAndProcessRules(account, state);
+                            state = new AccountState(accountName);
+                            _accountStates[accountName] = state;
                         }
-                    });
+
+                        state.UpdatePosition(e.Position.Instrument, marketPosition, quantity, averagePrice, unrealizedPnL);
+
+                        LogEvent(accountName, "POSITION_UPDATE", new JObject
+                        {
+                            { "instrument", instrument },
+                            { "marketPosition", marketPosition.ToString() },
+                            { "quantity", quantity },
+                            { "averagePrice", averagePrice },
+                            { "unrealizedPnL", unrealizedPnL }
+                        });
+
+                        EvaluateAndProcessRules(account, state);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogEvent("SYSTEM", "ERROR", $"Error handling OnPositionUpdate: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    LogEvent("SYSTEM", "ERROR", $"Error handling OnPositionUpdate: {ex.Message}");
-                }
-            }
+            });
         }
 
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
-            lock (_stateLock)
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+
+            dispatcher.InvokeAsync(() =>
             {
-                try
+                lock (_stateLock)
                 {
-                    Account account = (Account)sender;
-                    string accountName = account.Name;
-                    string instrument = e.Execution.Instrument.FullName;
-                    string orderId = e.Execution.Order != null ? e.Execution.Order.Id.ToString() : "N/A";
-                    int quantity = e.Execution.Quantity;
-                    double price = e.Execution.Price;
-                    string action = e.Execution.Order?.OrderAction.ToString() ?? "N/A";
-
-                    if (!_accountStates.TryGetValue(accountName, out var state))
+                    try
                     {
-                        state = new AccountState(accountName);
-                        _accountStates[accountName] = state;
+                        Account account = (Account)sender;
+                        string accountName = account.Name;
+                        string instrument = e.Execution.Instrument.FullName;
+                        string orderId = e.Execution.Order != null ? e.Execution.Order.Id.ToString() : "N/A";
+                        int quantity = e.Execution.Quantity;
+                        double price = e.Execution.Price;
+                        string action = e.Execution.Order?.OrderAction.ToString() ?? "N/A";
+
+                        if (!_accountStates.TryGetValue(accountName, out var state))
+                        {
+                            state = new AccountState(accountName);
+                            _accountStates[accountName] = state;
+                        }
+
+                        state.RecordExecution(instrument, action, quantity, price);
+
+                        LogEvent(accountName, "EXECUTION_UPDATE", new JObject
+                        {
+                            { "instrument", instrument },
+                            { "orderId", orderId },
+                            { "action", action },
+                            { "quantity", quantity },
+                            { "price", price }
+                        });
                     }
-
-                    state.RecordExecution(instrument, action, quantity, price);
-
-                    LogEvent(accountName, "EXECUTION_UPDATE", new JObject
+                    catch (Exception ex)
                     {
-                        { "instrument", instrument },
-                        { "orderId", orderId },
-                        { "action", action },
-                        { "quantity", quantity },
-                        { "price", price }
-                    });
+                        LogEvent("SYSTEM", "ERROR", $"Error handling OnExecutionUpdate: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    LogEvent("SYSTEM", "ERROR", $"Error handling OnExecutionUpdate: {ex.Message}");
-                }
-            }
+            });
         }
 
         private void OnOrderUpdate(object sender, OrderEventArgs e)
         {
-            lock (_stateLock)
-            {
-                try
-                {
-                    Account account = (Account)sender;
-                    string accountName = account.Name;
-                    string instrument = e.Order.Instrument.FullName;
-                    string orderId = e.Order.Id.ToString();
-                    string orderState = e.Order.OrderState.ToString();
-                    string orderType = e.Order.OrderType.ToString();
-                    double limitPrice = e.Order.LimitPrice;
-                    double stopPrice = e.Order.StopPrice;
-                    int quantity = e.Order.Quantity;
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
 
-                    LogEvent(accountName, "ORDER_UPDATE", new JObject
-                    {
-                        { "instrument", instrument },
-                        { "orderId", orderId },
-                        { "orderState", orderState },
-                        { "orderType", orderType },
-                        { "quantity", quantity },
-                        { "limitPrice", limitPrice },
-                        { "stopPrice", stopPrice }
-                    });
-                }
-                catch (Exception ex)
+            dispatcher.InvokeAsync(() =>
+            {
+                lock (_stateLock)
                 {
-                    LogEvent("SYSTEM", "ERROR", $"Error handling OnOrderUpdate: {ex.Message}");
+                    try
+                    {
+                        Account account = (Account)sender;
+                        string accountName = account.Name;
+                        string instrument = e.Order.Instrument.FullName;
+                        string orderId = e.Order.Id.ToString();
+                        string orderState = e.Order.OrderState.ToString();
+                        string orderType = e.Order.OrderType.ToString();
+                        double limitPrice = e.Order.LimitPrice;
+                        double stopPrice = e.Order.StopPrice;
+                        int quantity = e.Order.Quantity;
+
+                        LogEvent(accountName, "ORDER_UPDATE", new JObject
+                        {
+                            { "instrument", instrument },
+                            { "orderId", orderId },
+                            { "orderState", orderState },
+                            { "orderType", orderType },
+                            { "quantity", quantity },
+                            { "limitPrice", limitPrice },
+                            { "stopPrice", stopPrice }
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        LogEvent("SYSTEM", "ERROR", $"Error handling OnOrderUpdate: {ex.Message}");
+                    }
                 }
-            }
+            });
         }
 
         private void OnSafetySweep(object state)
@@ -470,6 +548,53 @@ namespace NinjaTrader.NinjaScript.AddOns
                             try { File.WriteAllText(_heartbeatFile, DateTime.UtcNow.ToString("o")); } catch {}
                         }
 
+                        // Flush logs asynchronously (Fix 11)
+                        var logsToWrite = new List<string>();
+                        while (_logQueue.TryDequeue(out string logLine))
+                        {
+                            logsToWrite.Add(logLine);
+                        }
+                        if (logsToWrite.Count > 0)
+                        {
+                            try { File.AppendAllLines(_logFile, logsToWrite, Encoding.UTF8); } catch {}
+                        }
+
+                        DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
+                        DateTime currentSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
+
+                        // Aggregate cross-account size (Fix 7)
+                        int totalAggregateContracts = 0;
+                        foreach (var accName in _subscribedAccounts)
+                        {
+                            if (_accountStates.TryGetValue(accName, out var st))
+                            {
+                                foreach (var pos in st.Positions.Values)
+                                {
+                                    if (pos.MarketPosition != MarketPosition.Flat) totalAggregateContracts += pos.Quantity;
+                                }
+                            }
+                        }
+
+                        if (totalAggregateContracts > _config.Sizing.MaxContractsAggregate)
+                        {
+                            foreach (var accName in _subscribedAccounts)
+                            {
+                                if (_accountStates.TryGetValue(accName, out var st))
+                                {
+                                    bool hasPosition = st.Positions.Values.Any(p => p.MarketPosition != MarketPosition.Flat);
+                                    if (hasPosition)
+                                    {
+                                        ProcessAction(new GuardAction
+                                        {
+                                            AccountName = accName,
+                                            ActionType = GuardActionType.FlattenPosition,
+                                            RuleId = "AGGREGATE_SIZE_BREACH"
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
                         foreach (var accName in _subscribedAccounts)
                         {
                             var account = Account.All.FirstOrDefault(a => a.Name == accName);
@@ -477,8 +602,39 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                             if (!_accountStates.TryGetValue(accName, out var stateModel)) continue;
                             
-                            stateModel.RealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                            if (stateModel.LastSessionDate != currentSessionDate)
+                            {
+                                stateModel.LastSessionDate = currentSessionDate;
+                                stateModel.TradesToday = 0;
+                                stateModel.ConsecutiveLosses = 0;
+                                stateModel.PeakEquity = 0.0;
+                                stateModel.IsLockedOut = false;
+                                stateModel.InitialLockoutFlattened = false;
+                                stateModel.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                                stateModel.LastRealizedPnL = stateModel.SessionStartRealizedPnL;
+                                LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
+                                SavePersistedState();
+                            }
+                            
+                            double rawRealized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                            stateModel.RealizedPnL = rawRealized - stateModel.SessionStartRealizedPnL; // Fix 10: Per-session basis
                             stateModel.UnrealizedPnL = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
+                            
+                            // Check for newly realized PnL changes (Fix 8: Consec Losses)
+                            if (Math.Abs(rawRealized - stateModel.LastRealizedPnL) > 0.01)
+                            {
+                                if (rawRealized < stateModel.LastRealizedPnL)
+                                {
+                                    stateModel.ConsecutiveLosses++;
+                                    LogEvent(accName, "REALIZED_LOSS", $"Realized loss. Consec losses: {stateModel.ConsecutiveLosses}");
+                                }
+                                else
+                                {
+                                    stateModel.ConsecutiveLosses = 0;
+                                }
+                                stateModel.LastRealizedPnL = rawRealized;
+                                SavePersistedState();
+                            }
                             
                             foreach (var posPair in stateModel.Positions)
                             {
@@ -491,14 +647,49 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                             if (stateModel.IsLockedOut)
                             {
-                                var lockoutAction = new GuardAction
+                                if (!stateModel.InitialLockoutFlattened)
                                 {
-                                    AccountName = accName,
-                                    ActionType = GuardActionType.FlattenPosition,
-                                    RuleId = "LOCKOUT_ENFORCEMENT"
-                                };
-                                ProcessAction(lockoutAction);
+                                    var lockoutAction = new GuardAction
+                                    {
+                                        AccountName = accName,
+                                        ActionType = GuardActionType.FlattenPosition,
+                                        RuleId = "LOCKOUT_ENFORCEMENT"
+                                    };
+                                    ProcessAction(lockoutAction);
+                                    
+                                    var cancelAction = new GuardAction
+                                    {
+                                        AccountName = accName,
+                                        ActionType = GuardActionType.CancelAllOrders,
+                                        RuleId = "LOCKOUT_ENFORCEMENT"
+                                    };
+                                    ProcessAction(cancelAction);
+                                    
+                                    stateModel.InitialLockoutFlattened = true;
+                                }
+                                else
+                                {
+                                    // Only flatten if new non-flat position appears
+                                    foreach (var posPair in stateModel.Positions)
+                                    {
+                                        if (posPair.Value.MarketPosition != MarketPosition.Flat)
+                                        {
+                                            var lockoutAction = new GuardAction
+                                            {
+                                                AccountName = accName,
+                                                ActionType = GuardActionType.FlattenPosition,
+                                                RuleId = "LOCKOUT_ENFORCEMENT"
+                                            };
+                                            ProcessAction(lockoutAction);
+                                            break;
+                                        }
+                                    }
+                                }
                                 continue;
+                            }
+                            else
+                            {
+                                stateModel.InitialLockoutFlattened = false;
                             }
 
                             EvaluateAndProcessRules(account, stateModel);
@@ -518,9 +709,28 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void EvaluateAndProcessRules(Account account, AccountState stateModel)
         {
-            if (!_isArmed) return;
-
             var actions = new List<GuardAction>();
+
+            if (!_isArmed)
+            {
+                bool hasOpen = stateModel.Positions.Values.Any(p => p.MarketPosition != MarketPosition.Flat);
+                if (hasOpen)
+                {
+                    actions.Add(new GuardAction
+                    {
+                        AccountName = stateModel.AccountName,
+                        ActionType = GuardActionType.FlattenPosition,
+                        RuleId = "DISARMED_VIOLATION"
+                    });
+                    
+                    // Immediately process and return to avoid evaluating other rules
+                    foreach (var act in actions)
+                    {
+                        ProcessAction(act);
+                    }
+                }
+                return;
+            }
 
             // Rule 1: Max Size
             foreach (var posPair in stateModel.Positions)
@@ -540,6 +750,51 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
 
+            // Fix 8: Overtrading Rules
+            if (stateModel.TradesToday > _config.Overtrading.MaxTradesPerSession)
+            {
+                actions.Add(new GuardAction
+                {
+                    AccountName = stateModel.AccountName,
+                    ActionType = GuardActionType.FlattenPosition,
+                    RuleId = "MAX_TRADES_BREACH"
+                });
+                if (!stateModel.IsLockedOut)
+                {
+                    stateModel.IsLockedOut = true;
+                    SavePersistedState();
+                }
+            }
+
+            if (stateModel.ConsecutiveLosses >= _config.Overtrading.MaxConsecutiveLosses)
+            {
+                actions.Add(new GuardAction
+                {
+                    AccountName = stateModel.AccountName,
+                    ActionType = GuardActionType.FlattenPosition,
+                    RuleId = "CONSECUTIVE_LOSS_BREACH"
+                });
+                if (!stateModel.IsLockedOut)
+                {
+                    stateModel.IsLockedOut = true;
+                    SavePersistedState();
+                }
+            }
+
+            if (DateTime.UtcNow < stateModel.CooldownUntil)
+            {
+                bool hasOpen = stateModel.Positions.Values.Any(p => p.MarketPosition != MarketPosition.Flat);
+                if (hasOpen)
+                {
+                    actions.Add(new GuardAction
+                    {
+                        AccountName = stateModel.AccountName,
+                        ActionType = GuardActionType.FlattenPosition,
+                        RuleId = "COOLDOWN_BREACH"
+                    });
+                }
+            }
+
             // Rule 2: Daily Loss
             double currentPnL = stateModel.RealizedPnL + stateModel.UnrealizedPnL;
             if (currentPnL < -_config.PnLRules.DailyLossLimit)
@@ -550,8 +805,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                     ActionType = GuardActionType.FlattenPosition,
                     RuleId = "DAILY_LOSS_BREACH"
                 });
-                stateModel.IsLockedOut = true;
-                SavePersistedState();
+                if (!stateModel.IsLockedOut)
+                {
+                    stateModel.IsLockedOut = true;
+                    SavePersistedState();
+                }
             }
 
             // Rule 3: Trailing Drawdown
@@ -567,8 +825,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                     ActionType = GuardActionType.FlattenPosition,
                     RuleId = "TRAILING_DD_BREACH"
                 });
-                stateModel.IsLockedOut = true;
-                SavePersistedState();
+                if (!stateModel.IsLockedOut)
+                {
+                    stateModel.IsLockedOut = true;
+                    SavePersistedState();
+                }
             }
 
             // Rule 4: Edge Window Gate (if enabled)
@@ -579,7 +840,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     var pos = posPair.Value;
                     if (pos.MarketPosition != MarketPosition.Flat && pos.LastNonFlatTransition != DateTime.MinValue)
                     {
-                        DateTime timeEt = TimeZoneInfo.ConvertTimeFromUtc(pos.LastNonFlatTransition, TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"));
+                        DateTime timeEt = TimeZoneInfo.ConvertTimeFromUtc(pos.LastNonFlatTransition, _etZone);
                         if (!IsInsidePermittedWindows(timeEt))
                         {
                             actions.Add(new GuardAction
@@ -607,15 +868,34 @@ namespace NinjaTrader.NinjaScript.AddOns
                         int stopQty = GetWorkingStopQuantity(account, pos.Instrument, pos.MarketPosition);
                         if (stopQty < pos.Quantity)
                         {
-                            actions.Add(new GuardAction
+                            if (_config.StopGuard.OnMissing == "AutoStop")
                             {
-                                AccountName = stateModel.AccountName,
-                                ActionType = GuardActionType.PlaceStopOrder,
-                                Instrument = pos.Instrument,
-                                InstrumentObj = pos.InstrumentObj,
-                                Quantity = pos.Quantity - stopQty,
-                                RuleId = "MISSING_STOP_ATTACH"
-                            });
+                                actions.Add(new GuardAction
+                                {
+                                    AccountName = stateModel.AccountName,
+                                    ActionType = GuardActionType.PlaceStopOrder,
+                                    Instrument = pos.Instrument,
+                                    InstrumentObj = pos.InstrumentObj,
+                                    Quantity = pos.Quantity - stopQty,
+                                    RuleId = "MISSING_STOP_ATTACH"
+                                });
+                            }
+                            else if (_config.StopGuard.OnMissing == "Flatten")
+                            {
+                                actions.Add(new GuardAction
+                                {
+                                    AccountName = stateModel.AccountName,
+                                    ActionType = GuardActionType.FlattenPosition,
+                                    Instrument = pos.Instrument,
+                                    InstrumentObj = pos.InstrumentObj,
+                                    Quantity = pos.Quantity, // Flatten whole position if rule trips
+                                    RuleId = "MISSING_STOP_FLATTEN"
+                                });
+                            }
+                            else if (_config.StopGuard.OnMissing == "WarnOnly")
+                            {
+                                LogEvent(stateModel.AccountName, "MISSING_STOP_WARN", $"Missing stop for {pos.Instrument}, action set to WarnOnly.");
+                            }
                         }
                     }
                 }
@@ -630,19 +910,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private bool IsInsidePermittedWindows(DateTime timeEt)
         {
-            if (_config.WindowsET == null || _config.WindowsET.Count == 0) return true;
+            if (_parsedWindows.Count == 0) return true;
 
-            string dayOfWeek = timeEt.DayOfWeek.ToString();
-            string currentTimeStr = timeEt.ToString("HH:mm");
-            TimeSpan currentTime = TimeSpan.Parse(currentTimeStr);
+            DayOfWeek dayOfWeek = timeEt.DayOfWeek;
+            TimeSpan currentTime = timeEt.TimeOfDay;
 
-            foreach (var win in _config.WindowsET)
+            foreach (var win in _parsedWindows)
             {
                 if (win.Days.Contains(dayOfWeek))
                 {
-                    TimeSpan start = TimeSpan.Parse(win.Start);
-                    TimeSpan end = TimeSpan.Parse(win.End);
-                    if (currentTime >= start && currentTime <= end)
+                    if (currentTime >= win.Start && currentTime <= win.End)
                     {
                         return true;
                     }
@@ -659,7 +936,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (o.Instrument.FullName == instrumentFullName &&
                     (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted))
                 {
-                    if (o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit || o.OrderType == OrderType.Market)
+                    if (o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit)
                     {
                         bool isOpposite = (marketPosition == MarketPosition.Long && o.OrderAction == OrderAction.Sell) ||
                                           (marketPosition == MarketPosition.Short && o.OrderAction == OrderAction.Buy);
@@ -807,121 +1084,127 @@ namespace NinjaTrader.NinjaScript.AddOns
             var account = Account.All.FirstOrDefault(a => a.Name == action.AccountName);
             if (account == null) throw new Exception("Account not found");
 
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher == null) throw new Exception("No WPF Dispatcher found");
-
-            Action actionDelegate = () =>
+            if (action.ActionType == GuardActionType.FlattenPosition)
             {
-                if (action.ActionType == GuardActionType.FlattenPosition)
+                var instrumentsToFlatten = new List<Instrument>();
+                foreach (Position p in account.Positions)
                 {
-                    var instrumentsToFlatten = new List<Instrument>();
-                    foreach (Position p in account.Positions)
+                    if (p.MarketPosition != MarketPosition.Flat && p.Instrument != null)
                     {
-                        if (p.MarketPosition != MarketPosition.Flat && p.Instrument != null)
+                        instrumentsToFlatten.Add(p.Instrument);
+                    }
+                }
+                foreach (Order o in account.Orders)
+                {
+                    if ((o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted) && o.Instrument != null)
+                    {
+                        if (!instrumentsToFlatten.Contains(o.Instrument))
                         {
-                            instrumentsToFlatten.Add(p.Instrument);
+                            instrumentsToFlatten.Add(o.Instrument);
                         }
                     }
-                    foreach (Order o in account.Orders)
-                    {
-                        if ((o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted) && o.Instrument != null)
-                        {
-                            if (!instrumentsToFlatten.Contains(o.Instrument))
-                            {
-                                instrumentsToFlatten.Add(o.Instrument);
-                            }
-                        }
-                    }
-
-                    if (instrumentsToFlatten.Count > 0)
-                    {
-                        account.Flatten(instrumentsToFlatten.ToArray());
-                    }
                 }
-                else if (action.ActionType == GuardActionType.CancelAllOrders)
+
+                if (instrumentsToFlatten.Count > 0)
                 {
-                    var orders = new List<Order>();
-                    foreach (Order o in account.Orders)
-                    {
-                        if (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted)
-                        {
-                            orders.Add(o);
-                        }
-                    }
-                    if (orders.Count > 0)
-                    {
-                        account.Cancel(orders);
-                    }
+                    account.Flatten(instrumentsToFlatten.ToArray());
                 }
-                else if (action.ActionType == GuardActionType.CancelOrder)
-                {
-                    var order = account.Orders.FirstOrDefault(o => o.Id.ToString() == action.OrderId);
-                    if (order != null)
-                    {
-                        account.Cancel(new[] { order });
-                    }
-                }
-                else if (action.ActionType == GuardActionType.PlaceStopOrder)
-                {
-                    var instrument = action.InstrumentObj;
-                    var position = account.Positions.FirstOrDefault(p => p.Instrument.FullName == action.Instrument);
-                    if (position == null || position.MarketPosition == MarketPosition.Flat) return;
-
-                    string symbolName = instrument.MasterInstrument.Name;
-                    int offsetTicks = 30; // default
-                    if (_config.StopGuard.Offsets.TryGetValue(symbolName, out int ticks))
-                    {
-                        offsetTicks = ticks;
-                    }
-                    else if (_config.StopGuard.Offsets.TryGetValue("default", out int defTicks))
-                    {
-                        offsetTicks = defTicks;
-                    }
-
-                    double tickSize = instrument.MasterInstrument.TickSize;
-                    double stopPrice = 0.0;
-                    OrderAction orderAction = OrderAction.Buy;
-
-                    if (position.MarketPosition == MarketPosition.Long)
-                    {
-                        stopPrice = position.AveragePrice - (offsetTicks * tickSize);
-                        orderAction = OrderAction.Sell;
-                    }
-                    else if (position.MarketPosition == MarketPosition.Short)
-                    {
-                        stopPrice = position.AveragePrice + (offsetTicks * tickSize);
-                        orderAction = OrderAction.Buy;
-                    }
-
-                    stopPrice = instrument.MasterInstrument.RoundToTickSize(stopPrice);
-
-                    Order stopOrder = account.CreateOrder(
-                        instrument,
-                        orderAction,
-                        OrderType.StopMarket,
-                        TimeInForce.Day,
-                        action.Quantity,
-                        0,
-                        stopPrice,
-                        string.Empty,
-                        "RiskGuardAutoStop",
-                        null
-                    );
-
-                    if (stopOrder != null)
-                    {
-                        account.Submit(new[] { stopOrder });
-                    }
-                }
-            };
-
-            if (dispatcher.CheckAccess())
-            {
-                actionDelegate();
             }
-            else
+            else if (action.ActionType == GuardActionType.CancelAllOrders)
             {
-                dispatcher.Invoke(actionDelegate);
+                var orders = new List<Order>();
+                foreach (Order o in account.Orders)
+                {
+                    if (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted)
+                    {
+                        orders.Add(o);
+                    }
+                }
+                if (orders.Count > 0)
+                {
+                    account.Cancel(orders);
+                }
+            }
+            else if (action.ActionType == GuardActionType.CancelOrder)
+            {
+                var order = account.Orders.FirstOrDefault(o => o.Id.ToString() == action.OrderId);
+                if (order != null)
+                {
+                    account.Cancel(new[] { order });
+                }
+            }
+            else if (action.ActionType == GuardActionType.PlaceStopOrder)
+            {
+                var instrument = action.InstrumentObj;
+                var position = account.Positions.FirstOrDefault(p => p.Instrument.FullName == action.Instrument);
+                if (position == null || position.MarketPosition == MarketPosition.Flat) return;
+
+                string symbolName = instrument.MasterInstrument.Name;
+                int offsetTicks = 30; // default
+                if (_config.StopGuard.Offsets.TryGetValue(symbolName, out int ticks))
+                {
+                    offsetTicks = ticks;
+                }
+                else if (_config.StopGuard.Offsets.TryGetValue("default", out int defTicks))
+                {
+                    offsetTicks = defTicks;
+                }
+
+                double tickSize = instrument.MasterInstrument.TickSize;
+                double stopPrice = 0.0;
+                OrderAction orderAction = OrderAction.Buy;
+
+                // Fix 1: Validate stop price against current market price
+                double currentTicksPnl = 0;
+                try { currentTicksPnl = position.GetUnrealizedProfitLoss(PerformanceUnit.Ticks); } catch {}
+                double currentPrice = position.MarketPosition == MarketPosition.Long 
+                    ? position.AveragePrice + (currentTicksPnl * tickSize) 
+                    : position.AveragePrice - (currentTicksPnl * tickSize);
+
+                if (position.MarketPosition == MarketPosition.Long)
+                {
+                    stopPrice = position.AveragePrice - (offsetTicks * tickSize);
+                    orderAction = OrderAction.Sell;
+                    
+                    if (stopPrice >= currentPrice)
+                    {
+                        LogEvent(account.Name, "STOP_SIDE_FLATTEN", $"Long stop {stopPrice} >= current price {currentPrice}. Flattening.");
+                        account.Flatten(new[] { instrument });
+                        return;
+                    }
+                }
+                else if (position.MarketPosition == MarketPosition.Short)
+                {
+                    stopPrice = position.AveragePrice + (offsetTicks * tickSize);
+                    orderAction = OrderAction.Buy;
+
+                    if (stopPrice <= currentPrice)
+                    {
+                        LogEvent(account.Name, "STOP_SIDE_FLATTEN", $"Short stop {stopPrice} <= current price {currentPrice}. Flattening.");
+                        account.Flatten(new[] { instrument });
+                        return;
+                    }
+                }
+
+                stopPrice = instrument.MasterInstrument.RoundToTickSize(stopPrice);
+
+                Order stopOrder = account.CreateOrder(
+                    instrument,
+                    orderAction,
+                    OrderType.StopMarket,
+                    TimeInForce.Day,
+                    action.Quantity,
+                    0,
+                    stopPrice,
+                    string.Empty,
+                    "RiskGuardAutoStop",
+                    null
+                );
+
+                if (stopOrder != null)
+                {
+                    account.Submit(new[] { stopOrder });
+                }
             }
         }
 
@@ -980,7 +1263,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 JObject logEntry = new JObject
                 {
                     { "timestamp_utc", DateTime.UtcNow.ToString("o") },
-                    { "timestamp_et", TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time")).ToString("o") },
+                    { "timestamp_et", TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone).ToString("o") },
                     { "account", account },
                     { "eventType", eventType },
                     { "mode", _mode },
@@ -989,15 +1272,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 };
 
                 string logLine = logEntry.ToString(Formatting.None);
-                
-                lock (_stateLock)
-                {
-                    File.AppendAllText(_logFile, logLine + Environment.NewLine, Encoding.UTF8);
-                }
+                _logQueue.Enqueue(logLine);
             }
             catch
             {
-                NinjaTrader.Code.Output.Process($"Failed to write log: {eventType} for {account}", PrintTo.OutputTab1);
+                NinjaTrader.Code.Output.Process($"Failed to serialize log: {eventType} for {account}", PrintTo.OutputTab1);
             }
         }
     }
@@ -1029,13 +1308,22 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double UnrealizedPnL { get; set; } = 0.0;
         public double PeakEquity { get; set; } = 0.0;
         public bool IsLockedOut { get; set; } = false;
+        public bool InitialLockoutFlattened { get; set; } = false;
+        
+        // Session and Overtrading
+        public DateTime LastSessionDate { get; set; } = DateTime.MinValue;
+        public int TradesToday { get; set; } = 0;
+        public int ConsecutiveLosses { get; set; } = 0;
+        public DateTime CooldownUntil { get; set; } = DateTime.MinValue;
+        public double LastRealizedPnL { get; set; } = 0.0; // To track delta for consec losses
+        public double SessionStartRealizedPnL { get; set; } = 0.0; // Baseline for session PnL
 
         public AccountState(string name)
         {
             AccountName = name;
         }
 
-        public void UpdatePosition(Instrument instrument, MarketPosition position, int quantity, double avgPrice, double unrealizedPnL)
+        public void UpdatePosition(Instrument instrument, MarketPosition position, int quantity, double avgPrice, double unrealizedPnL, OvertradingConfig otConfig = null)
         {
             string instrumentName = instrument.FullName;
             if (!Positions.TryGetValue(instrumentName, out var pState))
@@ -1047,10 +1335,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (position != MarketPosition.Flat && pState.MarketPosition == MarketPosition.Flat)
             {
                 pState.LastNonFlatTransition = DateTime.UtcNow;
+                TradesToday++; // Increment trade count
             }
-            else if (position == MarketPosition.Flat)
+            else if (position == MarketPosition.Flat && pState.MarketPosition != MarketPosition.Flat)
             {
                 pState.LastNonFlatTransition = DateTime.MinValue;
+                if (otConfig != null && otConfig.CooldownMinutes > 0)
+                {
+                    CooldownUntil = DateTime.UtcNow.AddMinutes(otConfig.CooldownMinutes);
+                }
             }
 
             pState.MarketPosition = position;
@@ -1088,7 +1381,21 @@ namespace NinjaTrader.NinjaScript.AddOns
         public bool IsArmed { get; set; }
         public string Mode { get; set; }
         public List<string> LockedOutAccounts { get; set; } = new List<string>();
+        
+        // Dictionary for per-account persisted data
+        public Dictionary<string, AccountPersistedData> AccountsData { get; set; } = new Dictionary<string, AccountPersistedData>();
+        
         public DateTime Timestamp { get; set; }
+    }
+
+    public class AccountPersistedData
+    {
+        public DateTime LastSessionDate { get; set; }
+        public int TradesToday { get; set; }
+        public int ConsecutiveLosses { get; set; }
+        public double PeakEquity { get; set; }
+        public double LastRealizedPnL { get; set; }
+        public double SessionStartRealizedPnL { get; set; }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1120,10 +1427,12 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         public int MaxTradesPerSession { get; set; } = 8;
         public int CooldownMinutes { get; set; } = 5;
+        public int MaxConsecutiveLosses { get; set; } = 3;
     }
 
     public class StopGuardConfig
     {
+        public string OnMissing { get; set; } = "Flatten"; // "AutoStop", "Flatten", "WarnOnly"
         public int StopAttachSeconds { get; set; } = 3;
         public Dictionary<string, int> Offsets { get; set; } = new Dictionary<string, int>
         {
@@ -1147,6 +1456,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string Start { get; set; }
         public string End { get; set; }
         public List<string> Days { get; set; } = new List<string> { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday" };
+    }
+
+    public class ParsedWindow
+    {
+        public TimeSpan Start { get; set; }
+        public TimeSpan End { get; set; }
+        public HashSet<DayOfWeek> Days { get; set; }
     }
 
     // ──────────────────────────────────────────────────────────────
