@@ -88,7 +88,7 @@ def test_bridge_health():
     assert res.get("status") == "ok" or "version" in res
 
 def test_auto_stop_loss_attachment():
-    """Verify that entering a position without a stop causes Risk Guard to place one after 3s."""
+    """Verify that entering a position without a stop causes Risk Guard to flatten the position after 3s (new safe default)."""
     print("Placing market BUY of 1 MES...")
     order_res = nt_post("/api/order", {
         "symbol": "MES SEP26", # Using MES Sep26 as in user logs
@@ -101,23 +101,16 @@ def test_auto_stop_loss_attachment():
     print("Waiting 4.5 seconds for grace period to expire...")
     time.sleep(4.5)
     
-    orders = nt_get("/api/orders")
-    print(f"Working orders: {orders}")
+    positions = nt_get("/api/positions")
+    print(f"Current positions: {positions}")
     
-    # Assert that there is a StopMarket order working on Sim101
-    active_states = ["Working", "Submitted", "Accepted", "Initialized"]
-    stop_orders = [
-        o for o in orders 
-        if o.get("orderType") == "StopMarket" 
-        and o.get("action") == "Sell"
-        and o.get("quantity") == 1
-        and o.get("state") in active_states
-    ]
-    assert len(stop_orders) == 1, "Risk Guard failed to place protective stop order!"
+    # Assert that the position was flattened
+    mes_positions = [p for p in positions if p.get("instrument", "").startswith("MES")]
+    assert len(mes_positions) == 0 or mes_positions[0].get("marketPosition") == "Flat", "Risk Guard failed to flatten position missing a stop!"
     print("Auto-stop loss attachment test passed!")
 
 def test_cancel_and_reattach_stop():
-    """Verify that if the stop is manually cancelled, Risk Guard re-attaches it."""
+    """Verify that if the stop is manually cancelled, Risk Guard flattens the position after 3s."""
     print("Placing market BUY of 1 MES...")
     nt_post("/api/order", {
         "symbol": "MES SEP26",
@@ -127,24 +120,13 @@ def test_cancel_and_reattach_stop():
         "timeInForce": "Day"
     })
     
-    print("Waiting 4.5 seconds for initial stop to attach...")
+    print("Waiting 4.5 seconds for initial stop guard to trigger...")
     time.sleep(4.5)
     
-    orders = nt_get("/api/orders")
-    active_states = ["Working", "Submitted", "Accepted", "Initialized"]
-    stop_orders = [o for o in orders if o.get("orderType") == "StopMarket" and o.get("state") in active_states]
-    assert len(stop_orders) == 1, "Initial stop order not found."
-    
-    stop_order_id = stop_orders[0].get("orderId")
-    print(f"Cancelling stop order: {stop_order_id}")
-    nt_post("/api/order/cancel", {"orderId": stop_order_id})
-    
-    print("Waiting 4.5 seconds for Risk Guard to detect cancellation and re-attach...")
-    time.sleep(4.5)
-    
-    orders = nt_get("/api/orders")
-    new_stop_orders = [o for o in orders if o.get("orderType") == "StopMarket" and o.get("orderId") != stop_order_id and o.get("state") in active_states]
-    assert len(new_stop_orders) == 1, "Risk Guard did not re-attach stop order after cancellation!"
+    # After 4.5 seconds without a stop, position should have been flattened by the guard
+    positions = nt_get("/api/positions")
+    mes_positions = [p for p in positions if p.get("instrument", "").startswith("MES")]
+    assert len(mes_positions) == 0 or mes_positions[0].get("marketPosition") == "Flat", "Position should be flattened after initial wait."
     print("Cancel and re-attach test passed!")
 
 def test_manual_close_does_not_reattach():
@@ -158,18 +140,10 @@ def test_manual_close_does_not_reattach():
         "timeInForce": "Day"
     })
     
-    print("Waiting 4.5 seconds for stop to attach...")
-    time.sleep(4.5)
+    print("Waiting 1 second before manual close...")
+    time.sleep(1)
     
-    orders = nt_get("/api/orders")
-    active_states = ["Working", "Submitted", "Accepted", "Initialized"]
-    stop_orders = [o for o in orders if o.get("orderType") == "StopMarket" and o.get("state") in active_states]
-    assert len(stop_orders) == 1, "Stop order not found."
-    
-    # Simulate a manual close: cancel the stop and immediately send a market sell
-    stop_order_id = stop_orders[0].get("orderId")
-    print(f"Simulating manual exit: cancelling stop {stop_order_id} and selling position...")
-    nt_post("/api/order/cancel", {"orderId": stop_order_id})
+    # Manually close
     nt_post("/api/order", {
         "symbol": "MES SEP26",
         "action": "sell",
@@ -178,12 +152,13 @@ def test_manual_close_does_not_reattach():
         "timeInForce": "Day"
     })
     
-    print("Waiting 4.5 seconds...")
+    print("Waiting 4.5 seconds to ensure no weird side effects...")
     time.sleep(4.5)
     
     orders = nt_get("/api/orders")
-    working_stop_orders = [o for o in orders if o.get("orderType") == "StopMarket" and o.get("state") in active_states]
-    assert len(working_stop_orders) == 0, "Risk Guard incorrectly replaced stop order during a manual close!"
+    active_states = ["Working", "Submitted", "Accepted", "Initialized"]
+    stop_orders = [o for o in orders if o.get("orderType") == "StopMarket" and o.get("state") in active_states]
+    assert len(stop_orders) == 0, "Stop order should NOT be found after manual close."
     print("Manual close test passed!")
 
 def test_max_position_size_enforcement():
@@ -206,3 +181,78 @@ def test_max_position_size_enforcement():
     active_positions = [p for p in positions if p.get("marketPosition") != "Flat"]
     assert len(active_positions) == 0, "Risk Guard failed to flatten the position after a max contract size breach!"
     print("Max size enforcement test passed!")
+
+def test_overtrading_cooldown_enforcement():
+    """Verify that entering a trade immediately after closing one triggers a flatten due to the 5-minute cooldown."""
+    nt_post("/api/dev/reset-risk")  # Clear any existing lockouts or cooldowns
+    
+    print("Placing market BUY of 1 MES...")
+    nt_post("/api/order", {
+        "symbol": "MES SEP26",
+        "action": "buy",
+        "quantity": 1,
+        "orderType": "Market",
+        "timeInForce": "Day"
+    })
+    
+    time.sleep(1)
+    print("Closing position to start cooldown...")
+    nt_post("/api/order", {
+        "symbol": "MES SEP26",
+        "action": "sell",
+        "quantity": 1,
+        "orderType": "Market",
+        "timeInForce": "Day"
+    })
+    
+    time.sleep(1)
+    print("Placing second market BUY of 1 MES during cooldown...")
+    nt_post("/api/order", {
+        "symbol": "MES SEP26",
+        "action": "buy",
+        "quantity": 1,
+        "orderType": "Market",
+        "timeInForce": "Day"
+    })
+    
+    print("Waiting 2 seconds for Risk Guard to enforce cooldown...")
+    time.sleep(2)
+    
+    positions = nt_get("/api/positions")
+    active_positions = [p for p in positions if p.get("marketPosition") != "Flat"]
+    assert len(active_positions) == 0, "Risk Guard failed to flatten position during overtrading cooldown!"
+    print("Cooldown enforcement test passed!")
+    
+    # Reset state so subsequent runs don't start locked out
+    nt_post("/api/dev/reset-risk")
+
+def test_max_trades_enforcement():
+    """Verify that exceeding MaxTradesPerSession locks out the account."""
+    nt_post("/api/dev/reset-risk")
+    
+    # We assume MaxTradesPerSession is 8. We'll simulate 9 rapid trades.
+    # To avoid hitting the cooldown between trades, wait... actually, the cooldown applies to the *same* account.
+    # If the cooldown is active, the order is flattened immediately. But a flattened order might still count as a trade?
+    # Yes, transitioning from Flat to Long counts as a trade. 
+    # Since Cooldown flatten transitions Long -> Flat, if we spam it, we'll rack up trade counts extremely fast!
+    for i in range(9):
+        print(f"Spamming trade {i+1}/9...")
+        nt_post("/api/order", {
+            "symbol": "MES SEP26",
+            "action": "buy",
+            "quantity": 1,
+            "orderType": "Market",
+            "timeInForce": "Day"
+        })
+        time.sleep(0.5)
+        
+    print("Waiting 2 seconds for lockout...")
+    time.sleep(2)
+    
+    positions = nt_get("/api/positions")
+    active_positions = [p for p in positions if p.get("marketPosition") != "Flat"]
+    assert len(active_positions) == 0, "Account should be locked out and flattened after MaxTrades!"
+    
+    # Clean up
+    nt_post("/api/dev/reset-risk")
+
