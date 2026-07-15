@@ -1,0 +1,52 @@
+{
+  "Mode": "live",
+  "EnableWindowGate": false,
+  "Sizing": {
+    "MaxContractsPerAccount": 10,
+    "MaxContractsAggregate": 20
+  },
+  "Overtrading": {
+    "MaxTradesPerSession": 8,
+    "CooldownMinutes": 5
+  },
+  "StopGuard": {
+    "StopAttachSeconds": 3,
+    "Offsets": {
+      "NQ": 40,
+      "MNQ": 40,
+      "ES": 16,
+      "MES": 16,
+      "default": 30
+    }
+  },
+  "PnLRules": {
+    "DailyLossLimit": 1000.0,
+    "TrailingDrawdown": 1500.0
+  },
+  "WindowsET": [
+    {
+      "Name": "NY_AM_Macro",
+      "Start": "09:50",
+      "End": "11:10",
+      "Days": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday"
+      ]
+    },
+    {
+      "Name": "NY_PM_Macro",
+      "Start": "13:50",
+      "End": "15:10",
+      "Days": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday"
+      ]
+    }
+  ]
+}
