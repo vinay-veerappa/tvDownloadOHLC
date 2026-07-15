@@ -27,12 +27,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         private string _configFile;
         private string _heartbeatFile;
         private DateTime _lastHeartbeatTime = DateTime.MinValue;
+        private bool _stateDirty = false;
 
         public static RiskGuardAddOn Instance { get; private set; }
         private Timer _safetyTimer;
         private readonly object _stateLock = new object();
         private bool _isArmed = true;
-        private string _mode = "live"; // "shadow" or "live"
+        private string _mode = "shadow"; // fail-safe default; overridden by config in LoadConfig()
         private NTMenuItem _myMenuItem;
         private ControlCenter _controlCenter;
         private RiskConfig _config = new RiskConfig();
@@ -106,6 +107,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _safetyTimer = new Timer(OnSafetySweep, null, 1000, 1000);
 
                 LogEvent("SYSTEM", "INITIALIZE", $"RiskGuard Add-On initialized in {_mode} mode. Event monitoring started.");
+                NinjaTrader.Code.Output.Process($"[RiskGuard] RESOLVED MODE = {_mode} (armed={_isArmed})", PrintTo.OutputTab1);
             }
             catch (Exception ex)
             {
@@ -609,21 +611,40 @@ namespace NinjaTrader.NinjaScript.AddOns
                         DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
                         DateTime currentSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
 
-                        // Aggregate cross-account size (Fix 7)
+                        // Aggregate cross-account size (Fix 7 + item 4)
+                        // Normalize by ExpectedCopies so an intended N-way mirror isn't read as stacking.
                         int totalAggregateContracts = 0;
+                        int maxSingleAccountContracts = 0;
                         foreach (var accName in _subscribedAccounts)
                         {
                             if (_accountStates.TryGetValue(accName, out var st))
                             {
+                                int accContracts = 0;
                                 foreach (var pos in st.Positions.Values)
                                 {
-                                    if (pos.MarketPosition != MarketPosition.Flat) totalAggregateContracts += pos.Quantity;
+                                    if (pos.MarketPosition != MarketPosition.Flat) accContracts += pos.Quantity;
                                 }
+                                totalAggregateContracts += accContracts;
+                                if (accContracts > maxSingleAccountContracts) maxSingleAccountContracts = accContracts;
                             }
                         }
 
-                        if (totalAggregateContracts > _config.Sizing.MaxContractsAggregate)
+                        // If mirroring N copies, the "effective" exposure is roughly the per-account leg,
+                        // not the raw sum. Compare the normalized figure against the aggregate limit.
+                        int copies = _config.Sizing.ExpectedCopies > 0 ? _config.Sizing.ExpectedCopies : 1;
+                        int normalizedAggregate = copies > 1 ? maxSingleAccountContracts : totalAggregateContracts;
+
+                        if (normalizedAggregate > _config.Sizing.MaxContractsAggregate)
                         {
+                            LogEvent("SYSTEM", "AGGREGATE_SIZE_BREACH", new JObject
+                            {
+                                { "totalContracts", totalAggregateContracts },
+                                { "maxSingleAccount", maxSingleAccountContracts },
+                                { "expectedCopies", copies },
+                                { "normalizedAggregate", normalizedAggregate },
+                                { "limit", _config.Sizing.MaxContractsAggregate }
+                            });
+
                             foreach (var accName in _subscribedAccounts)
                             {
                                 if (_accountStates.TryGetValue(accName, out var st))
@@ -660,7 +681,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 stateModel.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
                                 stateModel.LastRealizedPnL = stateModel.SessionStartRealizedPnL;
                                 LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
-                                SavePersistedState();
+                                _stateDirty = true;
                             }
                             
                             double rawRealized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
@@ -726,6 +747,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 actionsToExecute.AddRange(ruleActions);
                             }
                         }
+
+                        // Batched state save (item 1): write once per sweep if anything changed
+                        if (_stateDirty)
+                        {
+                            SavePersistedState();
+                            _stateDirty = false;
+                        }
                     }
 
                     // Outside of _stateLock, execute actions
@@ -784,7 +812,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
-                    SavePersistedState();
+                    _stateDirty = true;
                 }
             }
 
@@ -799,7 +827,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
-                    SavePersistedState();
+                    _stateDirty = true;
                 }
             }
 
@@ -830,7 +858,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
-                    SavePersistedState();
+                    _stateDirty = true;
                 }
             }
 
@@ -850,7 +878,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
-                    SavePersistedState();
+                    _stateDirty = true;
                 }
             }
 
@@ -1364,24 +1392,22 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             bool stateChanged = false;
 
-            if (position != MarketPosition.Flat && pState.MarketPosition == MarketPosition.Flat)
+            bool wasNonFlat = pState.MarketPosition != MarketPosition.Flat;
+            bool isNonFlat = position != MarketPosition.Flat;
+            bool isFlip = wasNonFlat && isNonFlat && position != pState.MarketPosition;
+
+            // Treat a flip as a close of the old trade followed by a new entry.
+            if ((position == MarketPosition.Flat && wasNonFlat) || isFlip)
             {
-                pState.LastNonFlatTransition = DateTime.UtcNow;
-                TradesToday++; // Increment trade count
-                stateChanged = true;
-            }
-            else if (position == MarketPosition.Flat && pState.MarketPosition != MarketPosition.Flat)
-            {
-                pState.LastNonFlatTransition = DateTime.MinValue;
+                // --- CLOSE side: finalize the trade that just ended ---
                 if (config.Overtrading.CooldownMinutes > 0)
                 {
                     CooldownUntil = DateTime.UtcNow.AddMinutes(config.Overtrading.CooldownMinutes);
                 }
 
-                // Calculate completed trade realized PnL delta (Fix F)
                 double rawRealized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
                 double tradePnL = rawRealized - LastRealizedPnL;
-                
+
                 if (tradePnL < -0.01)
                 {
                     ConsecutiveLosses++;
@@ -1392,6 +1418,28 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 LastRealizedPnL = rawRealized;
                 stateChanged = true;
+
+                if (isFlip)
+                {
+                    // NinjaTrader collapsed a close + reverse into one update.
+                    // Log it so shadow data reveals how often flips occur.
+                    NinjaTrader.Code.Output.Process(
+                        $"[RiskGuard] FLIP detected on {AccountName}/{instrumentName}: " +
+                        $"{pState.MarketPosition} -> {position}. Counted as close+entry.",
+                        PrintTo.OutputTab1);
+                }
+            }
+
+            // --- OPEN side: a new entry begins (flat->nonflat, or the new leg of a flip) ---
+            if ((isNonFlat && !wasNonFlat) || isFlip)
+            {
+                pState.LastNonFlatTransition = DateTime.UtcNow;
+                TradesToday++; // Increment trade count
+                stateChanged = true;
+            }
+            else if (position == MarketPosition.Flat && wasNonFlat)
+            {
+                pState.LastNonFlatTransition = DateTime.MinValue;
             }
 
             pState.MarketPosition = position;
@@ -1471,6 +1519,7 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         public int MaxContractsPerAccount { get; set; } = 10;
         public int MaxContractsAggregate { get; set; } = 20;
+        public int ExpectedCopies { get; set; } = 1; // intended N-way mirror across accounts
     }
 
     public class OvertradingConfig

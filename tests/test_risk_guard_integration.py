@@ -163,6 +163,7 @@ def test_manual_close_does_not_reattach():
 
 def test_max_position_size_enforcement():
     """Verify that exceeding the maximum contract size (10) triggers an immediate flatten."""
+    nt_post("/api/dev/reset-risk")  # Start with clean slate
     print("Placing market BUY of 12 MES (exceeding max size 10)...")
     nt_post("/api/order", {
         "symbol": "MES SEP26",
