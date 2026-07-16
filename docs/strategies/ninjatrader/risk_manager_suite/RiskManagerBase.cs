@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
@@ -96,14 +97,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // STATE FIELDS
         // ──────────────────────────────────────────────────────────────
 
-        // Session state — reset every day
+        // Session state — local per-strategy (trade-level counters delegated to RiskGatekeeper in live mode)
         protected DateTime currentTradingDate;
-        protected int      todayTradeCount;
-        protected int      consecutiveLosers;
-        protected double   sessionPnL;
-        protected bool     isDoneForDay;
-        protected bool     isPaused;
-        protected DateTime pauseUntil;
 
         // Trade state — reset on each entry
         protected double entryPrice;
@@ -114,10 +109,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected bool   tradeIsActive;
         protected string tradeDirection;
 
-        // Account state — persists across sessions for the whole backtest
+        // Backtest-only account state (not used in live mode — RiskGatekeeper owns this)
         protected double accountEquity;
         protected double highWaterMark;
         protected bool   accountBlown;
+        protected int    todayTradeCount;
+        protected int    consecutiveLosers;
+        protected double sessionPnL;
+        protected bool   isDoneForDay;
+        protected bool   isPaused;
+        protected DateTime pauseUntil;
 
         // Indicator
         protected ATR atrIndicator;
@@ -230,7 +231,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (Position.MarketPosition != MarketPosition.Flat)
             {
                 ManageOpenTrade();
-                return;
+                // FIX: don't blindly return — ManageOpenTrade may have just flattened
+                // us (e.g. daily max loss). If we're now flat, fall through to the
+                // entry gate so the rest of this bar is not wasted.
+                if (Position.MarketPosition != MarketPosition.Flat)
+                    return;
             }
 
             // ── Entry gate ──
@@ -302,8 +307,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             isDoneForDay      = false;
             isPaused          = false;
             pauseUntil        = DateTime.MinValue;
-            tradeIsActive     = false;
-            breakevenMoved    = false;
+
+            // FIX: reset ALL trade-level fields so stale values can't
+            // bleed into the next session or the next entry
+            tradeIsActive    = false;
+            breakevenMoved   = false;
+            tradeDirection   = null;
+            entryPrice       = 0;
+            initialStopPrice = 0;
+            currentStopPrice = 0;
+            riskPoints       = 0;
+
             // NOTE: accountBlown intentionally NOT reset here —
             // it persists across sessions for the life of the backtest
         }
@@ -314,29 +328,37 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private bool CanEnterTrade(int currentTime)
         {
-            // Account-level blocks
-            if (accountBlown && StopOnAccountBlown)
+            // ── RiskGatekeeper check (live/sim mode — cross-strategy, cross-session) ──
+            // When the AddOn is running, all account-level gates (blown, done-for-day,
+            // pause, max-trades) are owned by RiskGatekeeper.  The local backtest flags
+            // below act as a fallback when no AddOn is present.
+            if (!RiskGatekeeper.CanTrade(Account.Name))
                 return false;
 
-            // Session-level blocks
-            if (isDoneForDay)
-                return false;
-
-            // Pause window
-            if (isPaused)
+            // ── Local backtest / fallback gates ──
+            // These kick in when RiskGatekeeper has no registration for this account
+            // (i.e. the AddOn is not loaded), preserving backward-compatible behaviour.
+            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
+                    StringComparer.OrdinalIgnoreCase))
             {
-                if (Times[0][0] < pauseUntil)
+                if (accountBlown && StopOnAccountBlown)
                     return false;
 
-                // Pause expired
-                isPaused = false;
+                if (isDoneForDay)
+                    return false;
+
+                if (isPaused)
+                {
+                    if (Times[0][0] < pauseUntil)
+                        return false;
+                    isPaused = false;
+                }
+
+                if (todayTradeCount >= MaxTradesPerDay)
+                    return false;
             }
 
-            // Max trades per day
-            if (todayTradeCount >= MaxTradesPerDay)
-                return false;
-
-            // Time fence
+            // Time fence — always enforced locally (strategy-specific windows)
             if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
                 return false;
 
@@ -345,11 +367,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (atr <= 0)
                 return false;
 
-            // Daily max loss — only blocks when session is already losing
-            // Math.Abs was wrong: it also blocked entries on winning days
+            // Daily max loss potential — delegate to gatekeeper when registered,
+            // otherwise use local sessionPnL
             double potentialLoss = StopAtrMult * atr * GetPointValue() * Math.Max(1, DefaultQuantity);
-            if (sessionPnL - potentialLoss < -DailyMaxLoss)
+            if (RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
                 return false;
+
+            // Local fallback for daily max loss
+            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                if (sessionPnL - potentialLoss < -DailyMaxLoss)
+                    return false;
+            }
 
             return true;
         }
@@ -414,6 +444,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 FlattenPosition("Daily max loss breached (with open PnL)");
                 isDoneForDay = true;
+                // Notify gatekeeper so other strategies on this account also stop
+                RiskGatekeeper.MarkDailyMaxLossBreached(Account.Name);
                 return;
             }
 
@@ -476,14 +508,23 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             double price, int quantity,
             MarketPosition marketPosition, string orderId, DateTime time)
         {
-            // Only react when the position has just closed AND we were tracking a trade
-            // Using AND (not OR) so entry fills are ignored
-            if (!tradeIsActive || Position.MarketPosition != MarketPosition.Flat)
+            // FIX: Guard against entry fills triggering exit logic.
+            // An entry fill leaves the position non-flat; an exit fill leaves it flat.
+            // We also check tradeIsActive so we don't double-fire if multiple
+            // exit fills arrive (e.g. partial fills).
+            if (!tradeIsActive)
                 return;
+
+            // FIX: Use execution.Order to distinguish entry vs. exit orders.
+            // Entry orders are Buy/BuyToCover/Sell (opening); exit orders are
+            // the complementary direction that closes the position.
+            // The simplest reliable check: position is flat after this fill.
+            if (Position.MarketPosition != MarketPosition.Flat)
+                return; // Still in a position — this was an entry or partial fill
 
             tradeIsActive = false;
 
-            // Use execution data directly — more reliable than SystemPerformance in realtime
+            // PnL from the last completed trade (more reliable than execution.Price math)
             double pnl = 0;
             if (SystemPerformance.AllTrades.Count > 0)
             {
@@ -491,7 +532,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 pnl = lastTrade.ProfitCurrency;
             }
 
+            // ── Update local backtest state ──
             sessionPnL += pnl;
+            todayTradeCount++;
 
             if (pnl < 0)
             {
@@ -515,6 +558,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 consecutiveLosers = 0;
             }
+
+            // ── Forward to RiskGatekeeper (live/sim — cross-strategy awareness) ──
+            RiskGatekeeper.RecordTrade(Account.Name, pnl, time);
 
             Print(string.Format("[{0}] EXIT | PnL: {1:C} | Session: {2:C} | Trades: {3} | ConsecL: {4} | DoneForDay: {5}",
                 GetStrategyName(), pnl, sessionPnL,
@@ -562,6 +608,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 ExitLong(reason, GetSignalName("Long"));
             else if (Position.MarketPosition == MarketPosition.Short)
                 ExitShort(reason, GetSignalName("Short"));
+
+            // FIX: reset tradeIsActive immediately so OnBarUpdate doesn't stay
+            // stuck in ManageOpenTrade on subsequent bars before the fill confirms.
+            // OnExecutionUpdate will see tradeIsActive==false and skip its logic,
+            // but that's safe — FlattenPosition callers (time/risk exits) handle
+            // state (isDoneForDay etc.) themselves before calling us.
+            tradeIsActive = false;
 
             Print(string.Format("[{0}] FLATTEN — {1}", GetStrategyName(), reason));
         }

@@ -4,6 +4,7 @@ using System.Text;
 using System.Threading;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 #if !TESTING
 using System.Windows;
 using System.Windows.Controls;
@@ -1025,6 +1026,57 @@ namespace NinjaTrader.NinjaScript.AddOns
         // RULE ENGINE FRAMEWORK
         // ──────────────────────────────────────────────────────────────
 
+        private AccountRiskProfile GetResolvedProfile(Account account)
+        {
+            if (account == null) return null;
+            
+            if (_config.Profiles != null)
+            {
+                foreach (var profile in _config.Profiles)
+                {
+                    if (!string.IsNullOrEmpty(profile.AccountNamePattern) && 
+                        Regex.IsMatch(account.Name, profile.AccountNamePattern, RegexOptions.IgnoreCase))
+                    {
+                        return CreateDynamicProfile(account, profile);
+                    }
+                }
+            }
+
+            var fallback = new AccountRiskProfile
+            {
+                ProfileName = "GlobalFallback",
+                DailyLossLimit = _config.PnLRules.DailyLossLimit,
+                TrailingDrawdown = _config.PnLRules.TrailingDrawdown,
+                MaxTradesPerSession = _config.Overtrading.MaxTradesPerSession,
+                DefaultMaxContracts = _config.Sizing.MaxContractsPerAccount
+            };
+            return CreateDynamicProfile(account, fallback);
+        }
+
+        private AccountRiskProfile CreateDynamicProfile(Account account, AccountRiskProfile baseProfile)
+        {
+            var p = new AccountRiskProfile
+            {
+                ProfileName = baseProfile.ProfileName,
+                AccountNamePattern = baseProfile.AccountNamePattern,
+                InstrumentProfiles = baseProfile.InstrumentProfiles ?? new Dictionary<string, InstrumentProfile>(),
+                MaxTradesPerSession = baseProfile.MaxTradesPerSession > 0 ? baseProfile.MaxTradesPerSession : _config.Overtrading.MaxTradesPerSession,
+                DefaultMaxContracts = baseProfile.DefaultMaxContracts > 0 ? baseProfile.DefaultMaxContracts : _config.Sizing.MaxContractsPerAccount
+            };
+
+            double cashValue = account.Get(AccountItem.CashValue, Currency.UsDollar);
+
+            p.DailyLossLimit = baseProfile.DailyLossLimit > 0.0 
+                ? baseProfile.DailyLossLimit 
+                : (cashValue > 0 ? cashValue * 0.025 : _config.PnLRules.DailyLossLimit);
+
+            p.TrailingDrawdown = baseProfile.TrailingDrawdown > 0.0
+                ? baseProfile.TrailingDrawdown
+                : (cashValue > 0 ? cashValue * 0.05 : _config.PnLRules.TrailingDrawdown);
+                
+            return p;
+        }
+
         internal List<GuardAction> EvaluateRules(Account account, AccountState stateModel)
         {
             if (!_isArmed || (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(stateModel.AccountName)))
@@ -1037,27 +1089,45 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 return actions;
             }
+            
+            var profile = GetResolvedProfile(account);
+            if (profile == null) return actions;
 
             // Rule 1: Max Size
             foreach (var posPair in stateModel.Positions)
             {
                 var pos = posPair.Value;
-                if (pos.MarketPosition != MarketPosition.Flat && pos.Quantity > _config.Sizing.MaxContractsPerAccount)
+                if (pos.MarketPosition != MarketPosition.Flat)
                 {
-                    actions.Add(new GuardAction
+                    int limit = profile.DefaultMaxContracts;
+                    string baseSymbol = pos.InstrumentObj?.MasterInstrument?.Name ?? pos.Instrument.Split(' ')[0];
+                    
+                    if (profile.InstrumentProfiles.TryGetValue(baseSymbol, out var instrProfile))
                     {
-                        AccountName = stateModel.AccountName,
-                        ActionType = GuardActionType.FlattenPosition,
-                        Instrument = pos.Instrument,
-                        InstrumentObj = pos.InstrumentObj,
-                        Quantity = pos.Quantity,
-                        RuleId = "MAX_SIZE_BREACH"
-                    });
+                        limit = instrProfile.MaxContracts;
+                    }
+                    else if (profile.InstrumentProfiles.TryGetValue(pos.Instrument, out var exactProfile))
+                    {
+                        limit = exactProfile.MaxContracts;
+                    }
+
+                    if (pos.Quantity > limit)
+                    {
+                        actions.Add(new GuardAction
+                        {
+                            AccountName = stateModel.AccountName,
+                            ActionType = GuardActionType.FlattenPosition,
+                            Instrument = pos.Instrument,
+                            InstrumentObj = pos.InstrumentObj,
+                            Quantity = pos.Quantity,
+                            RuleId = "MAX_SIZE_BREACH"
+                        });
+                    }
                 }
             }
 
             // Fix 8: Overtrading Rules
-            if (stateModel.TradesToday > _config.Overtrading.MaxTradesPerSession)
+            if (stateModel.TradesToday > profile.MaxTradesPerSession)
             {
                 actions.Add(new GuardAction
                 {
@@ -1068,6 +1138,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
+                    if (_config.Overtrading.LockoutMinutes > 0)
+                    {
+                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.Overtrading.LockoutMinutes);
+                    }
                     _stateDirty = true;
                 }
             }
@@ -1083,6 +1157,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
+                    if (_config.Overtrading.LockoutMinutes > 0)
+                    {
+                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.Overtrading.LockoutMinutes);
+                    }
                     _stateDirty = true;
                 }
             }
@@ -1103,7 +1181,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // Rule 2: Daily Loss
             double currentPnL = stateModel.RealizedPnL + stateModel.UnrealizedPnL;
-            if (currentPnL < -_config.PnLRules.DailyLossLimit)
+            if (currentPnL < -profile.DailyLossLimit)
             {
                 actions.Add(new GuardAction
                 {
@@ -1114,6 +1192,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
+                    if (_config.PnLRules.LockoutMinutes > 0)
+                    {
+                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.PnLRules.LockoutMinutes);
+                    }
                     _stateDirty = true;
                 }
             }
@@ -1123,7 +1205,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 stateModel.PeakEquity = currentPnL;
             }
-            if (currentPnL < stateModel.PeakEquity - _config.PnLRules.TrailingDrawdown)
+            if (currentPnL < stateModel.PeakEquity - profile.TrailingDrawdown)
             {
                 actions.Add(new GuardAction
                 {
@@ -1134,6 +1216,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!stateModel.IsLockedOut)
                 {
                     stateModel.IsLockedOut = true;
+                    if (_config.PnLRules.LockoutMinutes > 0)
+                    {
+                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.PnLRules.LockoutMinutes);
+                    }
                     _stateDirty = true;
                 }
             }
@@ -2094,8 +2180,27 @@ namespace NinjaTrader.NinjaScript.AddOns
     // CONFIGURATION MODELS
     // ──────────────────────────────────────────────────────────────
 
+    public class InstrumentProfile
+    {
+        public int MaxContracts { get; set; } = 5;
+    }
+
+    public class AccountRiskProfile
+    {
+        public string ProfileName { get; set; } = "Default";
+        public string AccountNamePattern { get; set; } = ".*";
+
+        public double DailyLossLimit { get; set; } = 0.0;
+        public double TrailingDrawdown { get; set; } = 0.0;
+        public int MaxTradesPerSession { get; set; } = 0;
+        public int DefaultMaxContracts { get; set; } = 0;
+
+        public Dictionary<string, InstrumentProfile> InstrumentProfiles { get; set; } = new Dictionary<string, InstrumentProfile>(StringComparer.OrdinalIgnoreCase);
+    }
+
     public class RiskConfig
     {
+        public List<AccountRiskProfile> Profiles { get; set; } = new List<AccountRiskProfile>();
         public List<string> ExcludedAccounts { get; set; } = new List<string>();
         public string Mode { get; set; } = "shadow";
         public bool EnableWindowGate { get; set; } = false;
@@ -2171,7 +2276,7 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         public double DailyLossLimit { get; set; } = 1000.0;
         public double TrailingDrawdown { get; set; } = 1500.0;
-        public int PnLLockoutMinutes { get; set; } = 60;
+        public int LockoutMinutes { get; set; } = 60;
     }
 
     public class WindowConfig
@@ -2459,7 +2564,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _lockoutMinutesText.Text = cfg.Overtrading.LockoutMinutes.ToString();
             _dailyLossLimitText.Text = cfg.PnLRules.DailyLossLimit.ToString();
             _trailingDrawdownText.Text = cfg.PnLRules.TrailingDrawdown.ToString();
-            _pnlLockoutMinutesText.Text = cfg.PnLRules.PnLLockoutMinutes.ToString();
+            _pnlLockoutMinutesText.Text = cfg.PnLRules.LockoutMinutes.ToString();
             _onMissingCombo.SelectedItem = cfg.StopGuard.OnMissing == "ignore" ? "ignore" : "flatten";
         }
 
@@ -2478,7 +2583,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 cfg.Overtrading.LockoutMinutes = int.Parse(_lockoutMinutesText.Text.Trim());
                 cfg.PnLRules.DailyLossLimit = double.Parse(_dailyLossLimitText.Text.Trim());
                 cfg.PnLRules.TrailingDrawdown = double.Parse(_trailingDrawdownText.Text.Trim());
-                cfg.PnLRules.PnLLockoutMinutes = int.Parse(_pnlLockoutMinutesText.Text.Trim());
+                cfg.PnLRules.LockoutMinutes = int.Parse(_pnlLockoutMinutesText.Text.Trim());
                 cfg.StopGuard.OnMissing = _onMissingCombo.SelectedItem.ToString();
 
                 _addOn.SaveAndReloadConfig(cfg);

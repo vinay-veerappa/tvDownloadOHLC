@@ -7,7 +7,8 @@
   },
   "Overtrading": {
     "MaxTradesPerSession": 8,
-    "CooldownMinutes": 5
+    "CooldownMinutes": 5,
+    "LockoutMinutes": 60
   },
   "StopGuard": {
     "StopAttachSeconds": 3,
@@ -21,7 +22,8 @@
   },
   "PnLRules": {
     "DailyLossLimit": 1000.0,
-    "TrailingDrawdown": 1500.0
+    "TrailingDrawdown": 1500.0,
+    "LockoutMinutes": 60
   },
   "WindowsET": [
     {
