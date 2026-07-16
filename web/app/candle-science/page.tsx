@@ -15,6 +15,7 @@ import {
     // ... other types
 } from '@/lib/candle-science/types';
 import { Loader2, Filter } from 'lucide-react';
+import { API_BASE_URL } from '@/lib/config';
 
 export default function CandleSciencePage() {
     const [ticker, setTicker] = useState('NQ1');
@@ -53,7 +54,7 @@ export default function CandleSciencePage() {
     const fetchStats = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:8000/api/candle-science/calculate', {
+            const res = await fetch(`${API_BASE_URL}/api/candle-science/calculate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
