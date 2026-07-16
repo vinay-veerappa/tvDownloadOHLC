@@ -759,6 +759,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                             {
                                 actionsToExecute.AddRange(ruleActions);
                             }
+
+                            // Firm-mirror evaluation (DIFF 1: wired in)
+                            if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
+                            {
+                                var firmActions = EvaluateFirmMirror(account, stateModel, nowEt);
+                                if (firmActions != null)
+                                {
+                                    actionsToExecute.AddRange(firmActions);
+                                }
+                            }
                         }
 
                         // Batched state save (item 1): write once per sweep if anything changed
@@ -1490,8 +1500,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 result.TrailingPeak = st.FirmTrailingPeak;
                 result.FloorLocked = st.FirmFloorLocked;
 
-                double currentFirmEquity = balance + unrealized;
-                if (currentFirmEquity <= guardFloor)
+                // DIFF 4: breach test uses the same basis as peak tracking (no mismatch)
+                if (firmEquity <= guardFloor)
                 {
                     result.TrailingDDBreached = true;
                 }
