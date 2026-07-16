@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 def _hub_request(method: str, params: dict) -> dict:
     """Send a REST request through the Hub's proxy."""
     try:
-        resp = requests.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=60)
+        resp = requests.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=15)
         resp.raise_for_status()
         result = resp.json()
         

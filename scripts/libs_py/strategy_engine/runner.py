@@ -588,6 +588,7 @@ class Runner:
             name="Tier-1 Index Scan & Manage (60s)",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=30,
         )
 
         # Deferred Staged Execution — 10s tick
@@ -599,6 +600,7 @@ class Runner:
             name="Staged Signal Deferred Execution (10s)",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=5,
         )
 
         # Tier 2 — 5 min stock tick
@@ -610,6 +612,7 @@ class Runner:
             name="Tier-2 Stock Scan & Manage (5min)",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=60,
         )
 
         # Tier 3 — Daily strategies at 10:00 ET Mon-Fri
@@ -622,6 +625,7 @@ class Runner:
             id="tick_daily",
             name="Tier-3 Daily Strategy Scan (10:00 ET)",
             max_instances=1,
+            misfire_grace_time=300,
         )
 
         # EOD analytics — 16:30 ET Mon-Fri (spec §6.2 says 16:30, was 16:05)
@@ -634,6 +638,7 @@ class Runner:
             id="eod_analytics",
             name="EOD Daily Analytics Rollup (16:30 ET)",
             max_instances=1,
+            misfire_grace_time=300,
         )
 
         # Daily system audit report — 16:35 ET Mon-Fri (after market close and EOD analytics)
@@ -646,6 +651,7 @@ class Runner:
             id="daily_system_audit",
             name="Daily System Audit Report (16:35 ET)",
             max_instances=1,
+            misfire_grace_time=300,
         )
 
         # Weekly analytics — Sunday 17:00 ET (M5: moved from Friday)
