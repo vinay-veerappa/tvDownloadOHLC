@@ -4,6 +4,7 @@ using System.Text;
 using System.Threading;
 using System.Collections.Generic;
 using System.Linq;
+#if !TESTING
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -16,11 +17,98 @@ using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.Core;
+#else
+using NinjaTrader.Cbi;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.Core;
+using NinjaTrader.Code;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+#endif
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
     public class RiskGuardAddOn : AddOnBase
     {
+        public object StateLock => _stateLock;
+        public RiskConfig Config => _config;
+
+        public void SaveAndReloadConfig(RiskConfig newConfig)
+        {
+            lock (_stateLock)
+            {
+                try
+                {
+                    string json = JsonConvert.SerializeObject(newConfig, Formatting.Indented);
+                    File.WriteAllText(_configFile, json);
+                    LoadConfig(); // Reloads from the file, updating _config and _parsedWindows
+                    LogEvent("SYSTEM", "CONFIG_SAVE", "Configuration successfully saved and reloaded from UI.");
+                }
+                catch (Exception ex)
+                {
+                    LogEvent("SYSTEM", "ERROR", $"Failed to save config: {ex.Message}");
+                }
+            }
+        }
+
+        public void ReloadConfig()
+        {
+            LoadConfig();
+        }
+
+        public class AccountStateSnapshot
+        {
+            public string AccountName { get; set; }
+            public bool IsLockedOut { get; set; }
+            public double RealizedPnL { get; set; }
+            public double UnrealizedPnL { get; set; }
+            public int TradesToday { get; set; }
+            public int ConsecutiveLosses { get; set; }
+            public string PositionString { get; set; }
+            public bool IsExcluded { get; set; }
+            public double AccountEquity { get; set; }
+        }
+
+        public List<AccountStateSnapshot> GetAccountSnapshots()
+        {
+            var list = new List<AccountStateSnapshot>();
+            lock (_stateLock)
+            {
+                foreach (var state in _accountStates.Values)
+                {
+                    var account = Account.All.FirstOrDefault(a => a.Name == state.AccountName);
+                    if (account == null)
+                    {
+                        continue; // Skip historical/blown accounts not currently loaded
+                    }
+                    double equity = account.Get(AccountItem.CashValue, Currency.UsDollar) + account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
+                    var snapshot = new AccountStateSnapshot
+                    {
+                        AccountName = state.AccountName,
+                        IsLockedOut = state.IsLockedOut,
+                        RealizedPnL = state.RealizedPnL,
+                        UnrealizedPnL = state.UnrealizedPnL,
+                        TradesToday = state.TradesToday,
+                        ConsecutiveLosses = state.ConsecutiveLosses,
+                        IsExcluded = _config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(state.AccountName),
+                        AccountEquity = equity
+                    };
+                    
+                    var posList = new List<string>();
+                    foreach (var pos in state.Positions.Values)
+                    {
+                        if (pos.MarketPosition != MarketPosition.Flat)
+                        {
+                            string posType = pos.MarketPosition == MarketPosition.Long ? "L" : "S";
+                            posList.Add(string.Format("{0} {1} {2}", posType, pos.Quantity, pos.Instrument.Split(' ')[0]));
+                        }
+                    }
+                    snapshot.PositionString = posList.Count > 0 ? string.Join(", ", posList) : "FLAT";
+                    list.Add(snapshot);
+                }
+            }
+            return list;
+        }
         private string _logDir;
         private string _logFile;
         private string _stateFile;
@@ -34,12 +122,17 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly object _stateLock = new object();
         private bool _isArmed = true;
         private string _mode = "shadow"; // fail-safe default; overridden by config in LoadConfig()
+#if !TESTING
         private NTMenuItem _myMenuItem;
         private ControlCenter _controlCenter;
+#endif
         private RiskConfig _config = new RiskConfig();
 
         // Cached Resources (Fix 12)
-        private TimeZoneInfo _etZone;
+        private TimeZoneInfo _etZone = TimeZoneInfo.FindSystemTimeZoneById(
+            Environment.OSVersion.Platform == PlatformID.Win32NT
+                ? "Eastern Standard Time"
+                : "America/New_York");
         private List<ParsedWindow> _parsedWindows = new List<ParsedWindow>();
 
         // Async Logging (Fix 11)
@@ -148,6 +241,28 @@ namespace NinjaTrader.NinjaScript.AddOns
         // ──────────────────────────────────────────────────────────────
         // DEV/TESTING API
         // ──────────────────────────────────────────────────────────────
+#if TESTING
+        internal void SetConfigForTest(RiskConfig cfg)
+        {
+            _config = cfg;
+        }
+
+        internal void SetAccountStateForTest(string accountName, AccountState state)
+        {
+            _accountStates[accountName] = state;
+        }
+
+        internal void SetSubscribedAccountForTest(string accountName)
+        {
+            _subscribedAccounts.Add(accountName);
+        }
+
+        internal void SetArmedForTest(bool armed) { _isArmed = armed; }
+        internal void SetModeForTest(string mode)  { _mode = mode; }
+        internal void SetParsedWindowsForTest(List<ParsedWindow> windows) { _parsedWindows = windows; }
+        internal bool GetIsArmed() => _isArmed;
+#endif
+
         public void ResetStateForDev()
         {
             lock (_stateLock)
@@ -358,6 +473,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         // ──────────────────────────────────────────────────────────────
+#if !TESTING
         // WINDOW INTERCEPTION (UI INJECTION)
         // ──────────────────────────────────────────────────────────────
 
@@ -425,6 +541,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 LogEvent("SYSTEM", "UI_ERROR", "Failed to open dashboard window: " + ex.Message);
             }
         }
+#endif
 
         // ──────────────────────────────────────────────────────────────
         // EVENT HANDLERS
@@ -444,155 +561,214 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        public bool IsAccountLocked(string accountName)
+        {
+            lock (_stateLock)
+            {
+                if (_accountStates.TryGetValue(accountName, out var state))
+                {
+                    return state.IsLockedOut;
+                }
+                return false;
+            }
+        }
+
         private void OnPositionUpdate(object sender, PositionEventArgs e)
         {
+#if TESTING
+            ExecutePositionUpdate(sender, e);
+#else
             var dispatcher = Application.Current?.Dispatcher;
             if (dispatcher == null) return;
 
             dispatcher.InvokeAsync(() =>
             {
-                List<GuardAction> actions = null;
-                try
-                {
-                    Account account = (Account)sender;
-                    string accountName = account.Name;
-                    string instrument = e.Position.Instrument.FullName;
-                    MarketPosition marketPosition = e.Position.MarketPosition;
-                    int quantity = e.Position.Quantity;
-                    double averagePrice = e.Position.AveragePrice;
-                    double unrealizedPnL = 0.0;
-                    try { unrealizedPnL = e.Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
-
-                    lock (_stateLock)
-                    {
-                        if (!_accountStates.TryGetValue(accountName, out var state))
-                        {
-                            state = new AccountState(accountName);
-                            state.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                            state.LastRealizedPnL = state.SessionStartRealizedPnL;
-                            _accountStates[accountName] = state;
-                        }
-
-                        bool changed = state.UpdatePosition(account, e.Position.Instrument, marketPosition, quantity, averagePrice, unrealizedPnL, _config);
-                        if (changed)
-                        {
-                            SavePersistedState();
-                        }
-
-                        LogEvent(accountName, "POSITION_UPDATE", new JObject
-                        {
-                            { "instrument", instrument },
-                            { "marketPosition", marketPosition.ToString() },
-                            { "quantity", quantity },
-                            { "averagePrice", averagePrice },
-                            { "unrealizedPnL", unrealizedPnL }
-                        });
-
-                        actions = EvaluateRules(account, state);
-                    }
-
-                    if (actions != null)
-                    {
-                        foreach (var action in actions)
-                        {
-                            ProcessAction(action);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogEvent("SYSTEM", "ERROR", $"Error handling OnPositionUpdate: {ex.Message}");
-                }
+                ExecutePositionUpdate(sender, e);
             });
+#endif
+        }
+
+        internal void ExecutePositionUpdate(object sender, PositionEventArgs e)
+        {
+            List<GuardAction> actions = null;
+            try
+            {
+                Account account = (Account)sender;
+                string accountName = account.Name;
+                string instrument = e.Position.Instrument.FullName;
+                MarketPosition marketPosition = e.Position.MarketPosition;
+                int quantity = e.Position.Quantity;
+                double averagePrice = e.Position.AveragePrice;
+                double unrealizedPnL = 0.0;
+                try { unrealizedPnL = e.Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
+
+                lock (_stateLock)
+                {
+                    if (!_accountStates.TryGetValue(accountName, out var state))
+                    {
+                        state = new AccountState(accountName);
+                        state.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                        state.LastRealizedPnL = state.SessionStartRealizedPnL;
+                        _accountStates[accountName] = state;
+                    }
+
+                    bool changed = state.UpdatePosition(account, e.Position.Instrument, marketPosition, quantity, averagePrice, unrealizedPnL, _config);
+                    if (changed)
+                    {
+                        SavePersistedState();
+                    }
+
+                    LogEvent(accountName, "POSITION_UPDATE", new JObject
+                    {
+                        { "instrument", instrument },
+                        { "marketPosition", marketPosition.ToString() },
+                        { "quantity", quantity },
+                        { "averagePrice", averagePrice },
+                        { "unrealizedPnL", unrealizedPnL }
+                    });
+
+                    actions = EvaluateRules(account, state);
+                }
+
+                if (actions != null)
+                {
+                    foreach (var action in actions)
+                    {
+                        ProcessAction(action);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEvent("SYSTEM", "ERROR", $"Error handling OnPositionUpdate: {ex.Message}");
+            }
         }
 
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
+#if TESTING
+            ExecuteExecutionUpdate(sender, e);
+#else
             var dispatcher = Application.Current?.Dispatcher;
             if (dispatcher == null) return;
 
             dispatcher.InvokeAsync(() =>
             {
-                lock (_stateLock)
-                {
-                    try
-                    {
-                        Account account = (Account)sender;
-                        string accountName = account.Name;
-                        string instrument = e.Execution.Instrument.FullName;
-                        string orderId = e.Execution.Order != null ? e.Execution.Order.Id.ToString() : "N/A";
-                        int quantity = e.Execution.Quantity;
-                        double price = e.Execution.Price;
-                        string action = e.Execution.Order?.OrderAction.ToString() ?? "N/A";
-
-                        if (!_accountStates.TryGetValue(accountName, out var state))
-                        {
-                            state = new AccountState(accountName);
-                            _accountStates[accountName] = state;
-                        }
-
-                        state.RecordExecution(instrument, action, quantity, price);
-
-                        LogEvent(accountName, "EXECUTION_UPDATE", new JObject
-                        {
-                            { "instrument", instrument },
-                            { "orderId", orderId },
-                            { "action", action },
-                            { "quantity", quantity },
-                            { "price", price }
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        LogEvent("SYSTEM", "ERROR", $"Error handling OnExecutionUpdate: {ex.Message}");
-                    }
-                }
+                ExecuteExecutionUpdate(sender, e);
             });
+#endif
+        }
+
+        internal void ExecuteExecutionUpdate(object sender, ExecutionEventArgs e)
+        {
+            lock (_stateLock)
+            {
+                try
+                {
+                    Account account = (Account)sender;
+                    string accountName = account.Name;
+                    string instrument = e.Execution.Instrument.FullName;
+                    string orderId = e.Execution.Order != null ? e.Execution.Order.Id.ToString() : "N/A";
+                    int quantity = e.Execution.Quantity;
+                    double price = e.Execution.Price;
+                    string action = e.Execution.Order?.OrderAction.ToString() ?? "N/A";
+
+                    if (!_accountStates.TryGetValue(accountName, out var state))
+                    {
+                        state = new AccountState(accountName);
+                        _accountStates[accountName] = state;
+                    }
+
+                    state.RecordExecution(instrument, action, quantity, price);
+
+                    LogEvent(accountName, "EXECUTION_UPDATE", new JObject
+                    {
+                        { "instrument", instrument },
+                        { "orderId", orderId },
+                        { "action", action },
+                        { "quantity", quantity },
+                        { "price", price }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    LogEvent("SYSTEM", "ERROR", $"Error handling OnExecutionUpdate: {ex.Message}");
+                }
+            }
         }
 
         private void OnOrderUpdate(object sender, OrderEventArgs e)
         {
+#if TESTING
+            ExecuteOrderUpdate(sender, e);
+#else
             var dispatcher = Application.Current?.Dispatcher;
             if (dispatcher == null) return;
 
             dispatcher.InvokeAsync(() =>
             {
-                lock (_stateLock)
-                {
-                    try
-                    {
-                        Account account = (Account)sender;
-                        string accountName = account.Name;
-                        string instrument = e.Order.Instrument.FullName;
-                        string orderId = e.Order.Id.ToString();
-                        string orderState = e.Order.OrderState.ToString();
-                        string orderType = e.Order.OrderType.ToString();
-                        double limitPrice = e.Order.LimitPrice;
-                        double stopPrice = e.Order.StopPrice;
-                        int quantity = e.Order.Quantity;
-
-                        LogEvent(accountName, "ORDER_UPDATE", new JObject
-                        {
-                            { "instrument", instrument },
-                            { "orderId", orderId },
-                            { "orderState", orderState },
-                            { "orderType", orderType },
-                            { "quantity", quantity },
-                            { "limitPrice", limitPrice },
-                            { "stopPrice", stopPrice }
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        LogEvent("SYSTEM", "ERROR", $"Error handling OnOrderUpdate: {ex.Message}");
-                    }
-                }
+                ExecuteOrderUpdate(sender, e);
             });
+#endif
         }
 
-        private void OnSafetySweep(object state)
+        internal void ExecuteOrderUpdate(object sender, OrderEventArgs e)
         {
-            // 1-second safety sweep for time-based rules
+            lock (_stateLock)
+            {
+                try
+                {
+                    Account account = (Account)sender;
+                    string accountName = account.Name;
+                    if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accountName))
+                    {
+                        // Skip entry cancellation for excluded accounts
+                    }
+                    else if (_accountStates.TryGetValue(accountName, out var stateModel))
+                    {
+                        if (stateModel.IsLockedOut || stateModel.ConsecutiveLosses >= _config.Overtrading.MaxConsecutiveLosses)
+                        {
+                            if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
+                            {
+                                if (e.Order.OrderType == OrderType.Limit || e.Order.OrderType == OrderType.StopMarket || e.Order.OrderType == OrderType.StopLimit || e.Order.OrderType == OrderType.Market)
+                                {
+                                    account.Cancel(new[] { e.Order });
+                                    LogEvent(accountName, "ENTRY_CANCEL", $"Cancelled order {e.Order.Id} because account is locked out.");
+                                }
+                            }
+                        }
+                    }
+                    string instrument = e.Order.Instrument.FullName;
+                    string orderId = e.Order.Id.ToString();
+                    string orderState = e.Order.OrderState.ToString();
+                    string orderType = e.Order.OrderType.ToString();
+                    double limitPrice = e.Order.LimitPrice;
+                    double stopPrice = e.Order.StopPrice;
+                    int quantity = e.Order.Quantity;
+
+                    LogEvent(accountName, "ORDER_UPDATE", new JObject
+                    {
+                        { "instrument", instrument },
+                        { "orderId", orderId },
+                        { "orderState", orderState },
+                        { "orderType", orderType },
+                        { "quantity", quantity },
+                        { "limitPrice", limitPrice },
+                        { "stopPrice", stopPrice }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    LogEvent("SYSTEM", "ERROR", $"Error handling OnOrderUpdate: {ex.Message}");
+                }
+            }
+        }
+
+        internal void OnSafetySweep(object state)
+        {
+#if TESTING
+            ExecuteSafetySweep();
+#else
             try
             {
                 var dispatcher = Application.Current?.Dispatcher;
@@ -600,195 +776,246 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 dispatcher.InvokeAsync(() =>
                 {
-                    var actionsToExecute = new List<GuardAction>();
-                    lock (_stateLock)
+                    ExecuteSafetySweep();
+                });
+            }
+            catch (Exception ex)
+            {
+                LogEvent("SYSTEM", "ERROR", $"Error in OnSafetySweep Dispatcher: {ex.Message}");
+            }
+#endif
+        }
+
+        internal void ExecuteSafetySweep()
+        {
+            try
+            {
+                var actionsToExecute = new List<GuardAction>();
+                lock (_stateLock)
+                {
+                    // Write heartbeat every 5 seconds from UI thread to verify responsiveness
+                    if (DateTime.UtcNow - _lastHeartbeatTime >= TimeSpan.FromSeconds(5))
                     {
-                        // Write heartbeat every 5 seconds from UI thread to verify responsiveness
-                        if (DateTime.UtcNow - _lastHeartbeatTime >= TimeSpan.FromSeconds(5))
-                        {
-                            _lastHeartbeatTime = DateTime.UtcNow;
-                            try { File.WriteAllText(_heartbeatFile, DateTime.UtcNow.ToString("o")); } catch {}
-                        }
+                        _lastHeartbeatTime = DateTime.UtcNow;
+                        try { File.WriteAllText(_heartbeatFile, DateTime.UtcNow.ToString("o")); } catch {}
+                    }
 
-                        // Flush logs asynchronously (Fix 11)
-                        var logsToWrite = new List<string>();
-                        while (_logQueue.TryDequeue(out string logLine))
-                        {
-                            logsToWrite.Add(logLine);
-                        }
-                        if (logsToWrite.Count > 0)
-                        {
-                            try { File.AppendAllLines(_logFile, logsToWrite, Encoding.UTF8); } catch {}
-                        }
+                    // Flush logs asynchronously (Fix 11)
+                    var logsToWrite = new List<string>();
+                    while (_logQueue.TryDequeue(out string logLine))
+                    {
+                        logsToWrite.Add(logLine);
+                    }
+                    if (logsToWrite.Count > 0)
+                    {
+                        try { File.AppendAllLines(_logFile, logsToWrite, Encoding.UTF8); } catch {}
+                    }
 
-                        DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
-                        DateTime currentSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
+                    DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
+                    DateTime currentSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
 
-                        // Aggregate cross-account size (Fix 7 + item 4)
-                        // Normalize by ExpectedCopies so an intended N-way mirror isn't read as stacking.
-                        int totalAggregateContracts = 0;
-                        int maxSingleAccountContracts = 0;
+                    // Aggregate cross-account size (Fix 7 + item 4)
+                    // Normalize by ExpectedCopies so an intended N-way mirror isn't read as stacking.
+                    // Excluded accounts are intentionally invisible to the aggregate rule.
+                    int totalAggregateContracts = 0;
+                    int maxSingleAccountContracts = 0;
+                    foreach (var accName in _subscribedAccounts)
+                    {
+                        // Skip excluded accounts — they must not inflate the aggregate count
+                        if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
+
+                        if (_accountStates.TryGetValue(accName, out var st))
+                        {
+                            int accContracts = 0;
+                            foreach (var pos in st.Positions.Values)
+                            {
+                                if (pos.MarketPosition != MarketPosition.Flat) accContracts += pos.Quantity;
+                            }
+                            totalAggregateContracts += accContracts;
+                            if (accContracts > maxSingleAccountContracts) maxSingleAccountContracts = accContracts;
+                        }
+                    }
+
+                    // If mirroring N copies, the "effective" exposure is roughly the per-account leg,
+                    // not the raw sum. Compare the normalized figure against the aggregate limit.
+                    int copies = _config.Sizing.ExpectedCopies > 0 ? _config.Sizing.ExpectedCopies : 1;
+                    int normalizedAggregate = copies > 1 ? maxSingleAccountContracts : totalAggregateContracts;
+
+                    if (normalizedAggregate > _config.Sizing.MaxContractsAggregate)
+                    {
+                        LogEvent("SYSTEM", "AGGREGATE_SIZE_BREACH", new JObject
+                        {
+                            { "totalContracts", totalAggregateContracts },
+                            { "maxSingleAccount", maxSingleAccountContracts },
+                            { "expectedCopies", copies },
+                            { "normalizedAggregate", normalizedAggregate },
+                            { "limit", _config.Sizing.MaxContractsAggregate }
+                        });
+
                         foreach (var accName in _subscribedAccounts)
                         {
+                            // Excluded accounts must never be flattened by the aggregate rule
+                            if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
+
                             if (_accountStates.TryGetValue(accName, out var st))
                             {
-                                int accContracts = 0;
-                                foreach (var pos in st.Positions.Values)
-                                {
-                                    if (pos.MarketPosition != MarketPosition.Flat) accContracts += pos.Quantity;
-                                }
-                                totalAggregateContracts += accContracts;
-                                if (accContracts > maxSingleAccountContracts) maxSingleAccountContracts = accContracts;
-                            }
-                        }
-
-                        // If mirroring N copies, the "effective" exposure is roughly the per-account leg,
-                        // not the raw sum. Compare the normalized figure against the aggregate limit.
-                        int copies = _config.Sizing.ExpectedCopies > 0 ? _config.Sizing.ExpectedCopies : 1;
-                        int normalizedAggregate = copies > 1 ? maxSingleAccountContracts : totalAggregateContracts;
-
-                        if (normalizedAggregate > _config.Sizing.MaxContractsAggregate)
-                        {
-                            LogEvent("SYSTEM", "AGGREGATE_SIZE_BREACH", new JObject
-                            {
-                                { "totalContracts", totalAggregateContracts },
-                                { "maxSingleAccount", maxSingleAccountContracts },
-                                { "expectedCopies", copies },
-                                { "normalizedAggregate", normalizedAggregate },
-                                { "limit", _config.Sizing.MaxContractsAggregate }
-                            });
-
-                            foreach (var accName in _subscribedAccounts)
-                            {
-                                if (_accountStates.TryGetValue(accName, out var st))
-                                {
-                                    bool hasPosition = st.Positions.Values.Any(p => p.MarketPosition != MarketPosition.Flat);
-                                    if (hasPosition)
-                                    {
-                                        actionsToExecute.Add(new GuardAction
-                                        {
-                                            AccountName = accName,
-                                            ActionType = GuardActionType.FlattenPosition,
-                                            RuleId = "AGGREGATE_SIZE_BREACH"
-                                        });
-                                    }
-                                }
-                            }
-                        }
-
-                        foreach (var accName in _subscribedAccounts)
-                        {
-                            var account = Account.All.FirstOrDefault(a => a.Name == accName);
-                            if (account == null) continue;
-
-                            if (!_accountStates.TryGetValue(accName, out var stateModel)) continue;
-                            
-                            if (stateModel.LastSessionDate != currentSessionDate)
-                            {
-                                stateModel.LastSessionDate = currentSessionDate;
-                                stateModel.TradesToday = 0;
-                                stateModel.ConsecutiveLosses = 0;
-                                stateModel.PeakEquity = 0.0;
-                                stateModel.IsLockedOut = false;
-                                stateModel.InitialLockoutFlattened = false;
-                                stateModel.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                                stateModel.LastRealizedPnL = stateModel.SessionStartRealizedPnL;
-                                LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
-                                _stateDirty = true;
-                            }
-                            
-                            double rawRealized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                            stateModel.RealizedPnL = rawRealized - stateModel.SessionStartRealizedPnL; // Fix 10: Per-session basis
-                            stateModel.UnrealizedPnL = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
-                            
-                            foreach (var posPair in stateModel.Positions)
-                            {
-                                var nPos = account.Positions.FirstOrDefault(p => p.Instrument.FullName == posPair.Key);
-                                if (nPos != null && nPos.MarketPosition != MarketPosition.Flat)
-                                {
-                                    try { posPair.Value.UnrealizedPnL = nPos.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch {}
-                                }
-                            }
-
-                            if (stateModel.IsLockedOut)
-                            {
-                                if (!stateModel.InitialLockoutFlattened)
+                                bool hasPosition = st.Positions.Values.Any(p => p.MarketPosition != MarketPosition.Flat);
+                                if (hasPosition)
                                 {
                                     actionsToExecute.Add(new GuardAction
                                     {
                                         AccountName = accName,
                                         ActionType = GuardActionType.FlattenPosition,
-                                        RuleId = "LOCKOUT_ENFORCEMENT"
+                                        RuleId = "AGGREGATE_SIZE_BREACH"
                                     });
-                                    
-                                    actionsToExecute.Add(new GuardAction
-                                    {
-                                        AccountName = accName,
-                                        ActionType = GuardActionType.CancelAllOrders,
-                                        RuleId = "LOCKOUT_ENFORCEMENT"
-                                    });
-                                    
-                                    stateModel.InitialLockoutFlattened = true;
                                 }
-                                else
+                            }
+                        }
+                    }
+
+
+                    foreach (var accName in _subscribedAccounts)
+                    {
+                        if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
+
+                        var account = Account.All.FirstOrDefault(a => a.Name == accName);
+                        if (account == null) continue;
+
+                        if (!_accountStates.TryGetValue(accName, out var stateModel)) continue;
+                        
+                        if (stateModel.LastSessionDate != currentSessionDate)
+                        {
+                            stateModel.LastSessionDate = currentSessionDate;
+                            stateModel.TradesToday = 0;
+                            stateModel.ConsecutiveLosses = 0;
+                            stateModel.PeakEquity = 0.0;
+                            stateModel.IsLockedOut = false;
+                            stateModel.InitialLockoutFlattened = false;
+                            stateModel.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                            stateModel.LastRealizedPnL = stateModel.SessionStartRealizedPnL;
+                            stateModel.RealizedPnL = 0.0;
+                            LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
+                            _stateDirty = true;
+                        }
+                        
+                        double rawRealized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                        double newRealizedPnL = rawRealized - stateModel.SessionStartRealizedPnL;
+                        
+                        // Real-time PnL change detection (Fix lag)
+                        if (Math.Abs(newRealizedPnL - stateModel.RealizedPnL) > 0.001)
+                        {
+                            double tradePnL = newRealizedPnL - stateModel.RealizedPnL;
+                            if (tradePnL < -0.01)
+                            {
+                                stateModel.ConsecutiveLosses++;
+                            }
+                            else if (tradePnL > 0.01)
+                            {
+                                stateModel.ConsecutiveLosses = 0;
+                            }
+                            
+                            stateModel.LastRealizedPnL = rawRealized;
+                            stateModel.RealizedPnL = newRealizedPnL;
+                            
+                            // Apply Cooldown if consecutive loss limit breached
+                            if (stateModel.ConsecutiveLosses >= _config.Overtrading.MaxConsecutiveLosses && _config.Overtrading.CooldownMinutes > 0)
+                            {
+                                stateModel.CooldownUntil = DateTime.UtcNow.AddMinutes(_config.Overtrading.CooldownMinutes);
+                            }
+                            
+                            _stateDirty = true;
+                        }
+                        
+                        stateModel.UnrealizedPnL = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
+                        
+                        foreach (var posPair in stateModel.Positions)
+                        {
+                            var nPos = account.Positions.FirstOrDefault(p => p.Instrument.FullName == posPair.Key);
+                            if (nPos != null && nPos.MarketPosition != MarketPosition.Flat)
+                            {
+                                try { posPair.Value.UnrealizedPnL = nPos.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch {}
+                            }
+                        }
+
+                        if (stateModel.IsLockedOut)
+                        {
+                            if (!stateModel.InitialLockoutFlattened)
+                            {
+                                // Cancel first so orders don't re-open position after flatten
+                                actionsToExecute.Add(new GuardAction
                                 {
-                                    // Only flatten if new non-flat position appears
-                                    foreach (var posPair in stateModel.Positions)
-                                    {
-                                        if (posPair.Value.MarketPosition != MarketPosition.Flat)
-                                        {
-                                            actionsToExecute.Add(new GuardAction
-                                            {
-                                                AccountName = accName,
-                                                ActionType = GuardActionType.FlattenPosition,
-                                                RuleId = "LOCKOUT_ENFORCEMENT"
-                                            });
-                                            break;
-                                        }
-                                    }
-                                }
-                                continue;
+                                    AccountName = accName,
+                                    ActionType = GuardActionType.CancelAllOrders,
+                                    RuleId = "LOCKOUT_ENFORCEMENT"
+                                });
+
+                                actionsToExecute.Add(new GuardAction
+                                {
+                                    AccountName = accName,
+                                    ActionType = GuardActionType.FlattenPosition,
+                                    RuleId = "LOCKOUT_ENFORCEMENT"
+                                });
+                                
+                                stateModel.InitialLockoutFlattened = true;
                             }
                             else
                             {
-                                stateModel.InitialLockoutFlattened = false;
-                            }
-
-                            var ruleActions = EvaluateRules(account, stateModel);
-                            if (ruleActions != null)
-                            {
-                                actionsToExecute.AddRange(ruleActions);
-                            }
-
-                            // Firm-mirror evaluation (DIFF 1: wired in)
-                            if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
-                            {
-                                var firmActions = EvaluateFirmMirror(account, stateModel, nowEt);
-                                if (firmActions != null)
+                                // Only flatten if new non-flat position appears
+                                foreach (var posPair in stateModel.Positions)
                                 {
-                                    actionsToExecute.AddRange(firmActions);
+                                    if (posPair.Value.MarketPosition != MarketPosition.Flat)
+                                    {
+                                        actionsToExecute.Add(new GuardAction
+                                        {
+                                            AccountName = accName,
+                                            ActionType = GuardActionType.FlattenPosition,
+                                            RuleId = "LOCKOUT_ENFORCEMENT"
+                                        });
+                                        break;
+                                    }
                                 }
                             }
+                            continue;
                         }
-
-                        // Batched state save (item 1): write once per sweep if anything changed
-                        if (_stateDirty)
+                        else
                         {
-                            SavePersistedState();
-                            _stateDirty = false;
+                            stateModel.InitialLockoutFlattened = false;
+                        }
+
+                        var ruleActions = EvaluateRules(account, stateModel);
+                        if (ruleActions != null)
+                        {
+                            actionsToExecute.AddRange(ruleActions);
+                        }
+
+                        // Firm-mirror evaluation (DIFF 1: wired in)
+                        if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
+                        {
+                            var firmActions = EvaluateFirmMirror(account, stateModel, nowEt);
+                            if (firmActions != null)
+                            {
+                                actionsToExecute.AddRange(firmActions);
+                            }
                         }
                     }
 
-                    // Outside of _stateLock, execute actions
-                    foreach (var action in actionsToExecute)
+                    // Batched state save (item 1): write once per sweep if anything changed
+                    if (_stateDirty)
                     {
-                        ProcessAction(action);
+                        SavePersistedState();
+                        _stateDirty = false;
                     }
-                });
+                }
+
+                // Outside of _stateLock, execute actions
+                foreach (var action in actionsToExecute)
+                {
+                    ProcessAction(action);
+                }
             }
             catch (Exception ex)
             {
-                LogEvent("SYSTEM", "ERROR", $"Error in OnSafetySweep: {ex.Message}");
+                LogEvent("SYSTEM", "ERROR", $"Error in ExecuteSafetySweep: {ex.Message}");
             }
         }
 
@@ -796,8 +1023,12 @@ namespace NinjaTrader.NinjaScript.AddOns
         // RULE ENGINE FRAMEWORK
         // ──────────────────────────────────────────────────────────────
 
-        private List<GuardAction> EvaluateRules(Account account, AccountState stateModel)
+        internal List<GuardAction> EvaluateRules(Account account, AccountState stateModel)
         {
+            if (!_isArmed || (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(stateModel.AccountName)))
+            {
+                return new List<GuardAction>();
+            }
             var actions = new List<GuardAction>();
 
             if (!_isArmed)
@@ -1005,7 +1236,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (o.Instrument.FullName == instrumentFullName &&
                     (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted))
                 {
-                    if (o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit)
+                    if (o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit || o.OrderType == OrderType.Market)
                     {
                         bool isOpposite = (marketPosition == MarketPosition.Long && o.OrderAction == OrderAction.Sell) ||
                                           (marketPosition == MarketPosition.Short && o.OrderAction == OrderAction.Buy);
@@ -1076,15 +1307,42 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 if (_accountStates.TryGetValue(accountName, out var state))
                 {
+                    var account = Account.All.FirstOrDefault(a => a.Name == accountName);
+                    double currentRealized = account != null ? account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar) : 0.0;
+
                     state.IsLockedOut = false;
-                    state.PeakEquity = 0.0; // Reset high water mark
-                    LogEvent(accountName, "UNLOCK", "Account manually unlocked from dashboard.");
+                    state.PeakEquity = 0.0;
+                    state.TradesToday = 0;
+                    state.ConsecutiveLosses = 0;
+                    state.CooldownUntil = DateTime.MinValue;
+                    state.SessionStartRealizedPnL = currentRealized;
+                    state.LastRealizedPnL = currentRealized;
+                    state.RealizedPnL = 0.0;
+                    state.UnrealizedPnL = 0.0;
+                    state.InitialLockoutFlattened = false;
+
+                    // Sync positions to avoid stale memory
+                    state.Positions.Clear();
+                    if (account != null)
+                    {
+                        foreach (Position p in account.Positions)
+                        {
+                            if (p.MarketPosition != MarketPosition.Flat)
+                            {
+                                double unrealized = 0.0;
+                                try { unrealized = p.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
+                                state.UpdatePosition(account, p.Instrument, p.MarketPosition, p.Quantity, p.AveragePrice, unrealized, _config);
+                            }
+                        }
+                    }
+
+                    LogEvent(accountName, "UNLOCK", "Account manually unlocked from dashboard. Metrics reset and synchronized.");
                     SavePersistedState();
                 }
             }
         }
 
-        private string ProcessAction(GuardAction action, bool forceLive = false)
+        internal string ProcessAction(GuardAction action, bool forceLive = false)
         {
             bool isLive = false;
             lock (_stateLock)
@@ -1357,7 +1615,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         // ── Firm-mirror logic and unit test diagnostics (FR-24/25/26) ──
-        private List<GuardAction> EvaluateFirmMirror(Account account, AccountState st, DateTime nowEt)
+        internal List<GuardAction> EvaluateFirmMirror(Account account, AccountState st, DateTime nowEt)
         {
             double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
             double realized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
@@ -1701,24 +1959,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Treat a flip as a close of the old trade followed by a new entry.
             if ((position == MarketPosition.Flat && wasNonFlat) || isFlip)
             {
-                // --- CLOSE side: finalize the trade that just ended ---
-                if (config.Overtrading.CooldownMinutes > 0)
-                {
-                    CooldownUntil = DateTime.UtcNow.AddMinutes(config.Overtrading.CooldownMinutes);
-                }
-
-                double rawRealized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                double tradePnL = rawRealized - LastRealizedPnL;
-
-                if (tradePnL < -0.01)
-                {
-                    ConsecutiveLosses++;
-                }
-                else if (tradePnL > 0.01)
-                {
-                    ConsecutiveLosses = 0;
-                }
-                LastRealizedPnL = rawRealized;
+                // We no longer calculate realized PnL delta here to prevent lag bugs.
+                // It is now tracked in OnSafetySweep based on actual account realized PnL changes.
                 stateChanged = true;
 
                 if (isFlip)
@@ -1828,6 +2070,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
     public class RiskConfig
     {
+        public List<string> ExcludedAccounts { get; set; } = new List<string>();
         public string Mode { get; set; } = "shadow";
         public bool EnableWindowGate { get; set; } = false;
         public SizingConfig Sizing { get; set; } = new SizingConfig();
@@ -1881,6 +2124,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public int MaxTradesPerSession { get; set; } = 8;
         public int CooldownMinutes { get; set; } = 5;
         public int MaxConsecutiveLosses { get; set; } = 3;
+        public int LockoutMinutes { get; set; } = 60;
     }
 
     public class StopGuardConfig
@@ -1901,6 +2145,7 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         public double DailyLossLimit { get; set; } = 1000.0;
         public double TrailingDrawdown { get; set; } = 1500.0;
+        public int PnLLockoutMinutes { get; set; } = 60;
     }
 
     public class WindowConfig
@@ -1922,224 +2167,546 @@ namespace NinjaTrader.NinjaScript.AddOns
     // WPF UI DASHBOARD
     // ──────────────────────────────────────────────────────────────
 
+#if !TESTING
     public class RiskGuardWindow : Window
     {
         private readonly RiskGuardAddOn _addOn;
-        private ComboBox _accountCombo;
-        private TextBlock _statusText;
         private DispatcherTimer _uiTimer;
+        private TextBlock _armedStatusText;
+        private Button _toggleArmedBtn;
+        private Button _panicAllBtn;
+        private WrapPanel _cardsPanel;
+        
+        private readonly Dictionary<string, CardControls> _cardControls = new Dictionary<string, CardControls>();
+
+        // Config UI fields
+        private ComboBox _modeCombo;
+        private CheckBox _windowGateCheck;
+        private TextBox _maxContractsAccountText;
+        private TextBox _maxContractsAggregateText;
+        private TextBox _maxTradesSessionText;
+        private TextBox _maxConsecutiveLossesText;
+        private TextBox _cooldownMinutesText;
+        private TextBox _lockoutMinutesText;
+        private TextBox _dailyLossLimitText;
+        private TextBox _trailingDrawdownText;
+        private TextBox _pnlLockoutMinutesText;
+        private ComboBox _onMissingCombo;
+
+        // Search and Filter fields
+        private TextBox _searchBox;
+        private CheckBox _hideInactiveCheck;
 
         public RiskGuardWindow(RiskGuardAddOn addOn)
         {
             _addOn = addOn;
             Title = "NinjaTrader Cross-Account Risk Guard Dashboard";
-            Width = 450;
-            Height = 420;
-            Background = Brushes.Gray;
+            Width = 1000;
+            Height = 700;
+            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
-            var grid = new Grid { Margin = new Thickness(15) };
+            var mainGrid = new Grid();
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            // TOP BAR (dark theme)
+            var topBar = new Border { Background = new SolidColorBrush(Color.FromRgb(45, 45, 48)), Padding = new Thickness(10) };
+            var topGrid = new Grid();
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            topBar.Child = topGrid;
+
+            var statusPanel = new StackPanel { Orientation = Orientation.Horizontal };
+            statusPanel.Children.Add(new TextBlock { Text = "🛡️ RISK GUARD: ", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
             
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(45) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(45) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(45) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            _armedStatusText = new TextBlock { FontSize = 14, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
+            statusPanel.Children.Add(_armedStatusText);
 
-            // Row 0: Account selection
-            var accountPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            accountPanel.Children.Add(new TextBlock { 
-                Text = "Target Account:", 
-                FontWeight = FontWeights.Bold,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = Brushes.Black
-            });
+            _toggleArmedBtn = new Button 
+            { 
+                Content = "TOGGLE ARMED", 
+                Margin = new Thickness(15, 0, 0, 0),
+                Padding = new Thickness(10, 3, 10, 3),
+                Background = new SolidColorBrush(Color.FromRgb(63, 63, 70)),
+                Foreground = Brushes.White,
+                BorderBrush = Brushes.Transparent
+            };
+            _toggleArmedBtn.Click += OnToggleArmedClick;
+            statusPanel.Children.Add(_toggleArmedBtn);
             
-            _accountCombo = new ComboBox { Width = 220, Height = 25, Margin = new Thickness(10, 0, 0, 0) };
-            foreach (Account acc in Account.All)
-            {
-                _accountCombo.Items.Add(acc.Name);
-            }
-            if (_accountCombo.Items.Count > 0)
-            {
-                _accountCombo.SelectedIndex = 0;
-            }
-            accountPanel.Children.Add(_accountCombo);
-            Grid.SetRow(accountPanel, 0);
-            grid.Children.Add(accountPanel);
-
-            // Row 1: Panic Flatten Button
-            var panicBtn = new Button
-            {
-                Content = "PANIC FLATTEN ACCOUNT (CANCEL ORDERS + FLAT POSITION)",
-                Background = Brushes.DarkRed,
+            var reloadBtn = new Button 
+            { 
+                Content = "RELOAD CONFIG", 
+                Margin = new Thickness(10, 0, 0, 0),
+                Padding = new Thickness(10, 3, 10, 3),
+                Background = new SolidColorBrush(Color.FromRgb(63, 63, 70)),
                 Foreground = Brushes.White,
-                FontWeight = FontWeights.Bold,
-                Height = 30,
-                Margin = new Thickness(0, 5, 0, 5)
+                BorderBrush = Brushes.Transparent
             };
-            panicBtn.Click += OnPanicClick;
-            Grid.SetRow(panicBtn, 1);
-            grid.Children.Add(panicBtn);
+            reloadBtn.Click += OnReloadConfigClick;
+            statusPanel.Children.Add(reloadBtn);
 
-            // Row 2: Panic All / Unlock Buttons
-            var btnPanel = new Grid();
-            btnPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            btnPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            btnPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            // Add Search Box
+            statusPanel.Children.Add(new TextBlock { Text = "Filter:", Foreground = Brushes.LightGray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(20, 0, 5, 0) });
+            _searchBox = new TextBox { Width = 90, Height = 22, VerticalAlignment = VerticalAlignment.Center, Background = new SolidColorBrush(Color.FromRgb(40, 40, 40)), Foreground = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(63, 63, 70)) };
+            statusPanel.Children.Add(_searchBox);
 
-            var panicAllBtn = new Button
+            // Add Hide Inactive Checkbox
+            _hideInactiveCheck = new CheckBox { Content = "Hide Inactive ($0 Bal)", IsChecked = true, Foreground = Brushes.LightGray, Margin = new Thickness(15, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            statusPanel.Children.Add(_hideInactiveCheck);
+
+            Grid.SetColumn(statusPanel, 0);
+            topGrid.Children.Add(statusPanel);
+
+            _panicAllBtn = new Button
             {
-                Content = "PANIC FLATTEN ALL",
-                Background = Brushes.Red,
+                Content = "🛑 PANIC FLATTEN ALL ACCOUNTS",
+                FontWeight = FontWeights.Bold,
+                Background = new SolidColorBrush(Color.FromRgb(180, 40, 40)),
                 Foreground = Brushes.White,
-                FontWeight = FontWeights.Bold,
-                Height = 30,
-                Margin = new Thickness(0, 5, 5, 5)
+                Padding = new Thickness(15, 5, 15, 5),
+                BorderBrush = Brushes.Transparent
             };
-            panicAllBtn.Click += OnPanicAllClick;
-            Grid.SetColumn(panicAllBtn, 0);
-            btnPanel.Children.Add(panicAllBtn);
+            _panicAllBtn.Click += OnPanicAllClick;
+            Grid.SetColumn(_panicAllBtn, 2);
+            topGrid.Children.Add(_panicAllBtn);
 
-            var toggleBtn = new Button
-            {
-                Content = "TOGGLE ARMED",
-                Background = Brushes.DarkOrange,
-                Foreground = Brushes.White,
-                FontWeight = FontWeights.Bold,
-                Height = 30,
-                Margin = new Thickness(5, 5, 5, 5)
+            Grid.SetRow(topBar, 0);
+            mainGrid.Children.Add(topBar);
+
+            // TABS CONTROL
+            var tabControl = new TabControl 
+            { 
+                Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(45, 45, 48)),
+                Margin = new Thickness(5)
             };
-            toggleBtn.Click += OnToggleArmedClick;
-            Grid.SetColumn(toggleBtn, 1);
-            btnPanel.Children.Add(toggleBtn);
 
-            var unlockBtn = new Button
-            {
-                Content = "UNLOCK ACCOUNT",
-                Background = Brushes.DarkGreen,
-                Foreground = Brushes.White,
-                FontWeight = FontWeights.Bold,
-                Height = 30,
-                Margin = new Thickness(5, 5, 0, 5)
+            // TAB 1: ACCOUNTS OVERVIEW
+            var accountsTab = new TabItem 
+            { 
+                Header = "Accounts Overview",
+                Background = new SolidColorBrush(Color.FromRgb(45, 45, 48)),
+                Foreground = Brushes.White
             };
-            unlockBtn.Click += OnUnlockClick;
-            Grid.SetColumn(unlockBtn, 2);
-            btnPanel.Children.Add(unlockBtn);
+            var scrollViewer = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            _cardsPanel = new WrapPanel { ItemWidth = 220, ItemHeight = 200 };
+            scrollViewer.Content = _cardsPanel;
+            accountsTab.Content = scrollViewer;
+            tabControl.Items.Add(accountsTab);
 
-            Grid.SetRow(btnPanel, 2);
-            grid.Children.Add(btnPanel);
-
-            // Row 3: Status info
-            var border = new Border
-            {
-                BorderBrush = Brushes.DarkGray,
-                BorderThickness = new Thickness(1),
-                Background = Brushes.White,
-                CornerRadius = new CornerRadius(3),
-                Margin = new Thickness(0, 10, 0, 0)
+            // TAB 2: CONFIGURATION EDITOR
+            var configTab = new TabItem 
+            { 
+                Header = "Risk & Settings Configuration",
+                Background = new SolidColorBrush(Color.FromRgb(45, 45, 48)),
+                Foreground = Brushes.White
             };
             
-            _statusText = new TextBlock
+            var editorScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            var border = new Border { Padding = new Thickness(20), Background = new SolidColorBrush(Color.FromRgb(35, 35, 35)) };
+            var panel = new StackPanel();
+            border.Child = panel;
+            editorScroll.Content = border;
+
+            panel.Children.Add(new TextBlock { Text = "Global Protection Settings", FontSize = 16, FontWeight = FontWeights.Bold, Foreground = Brushes.White, Margin = new Thickness(0, 0, 0, 15) });
+
+            // Helper to add editable text row
+            Func<string, string, TextBox, StackPanel> addEditRow = (label, tooltip, box) =>
             {
-                Text = "Loading status data...",
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(10),
-                Foreground = Brushes.DarkSlateGray,
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 12
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
+                row.Children.Add(new TextBlock { Text = label, Width = 220, Foreground = Brushes.LightGray, VerticalAlignment = VerticalAlignment.Center });
+                box.Width = 100;
+                box.Height = 22;
+                box.Background = new SolidColorBrush(Color.FromRgb(45, 45, 45));
+                box.Foreground = Brushes.White;
+                box.BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65));
+                row.Children.Add(box);
+                row.Children.Add(new TextBlock { Text = tooltip, Foreground = Brushes.Gray, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, FontSize = 11 });
+                return row;
             };
-            border.Child = new ScrollViewer { Content = _statusText, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            Grid.SetRow(border, 3);
-            grid.Children.Add(border);
 
-            Content = grid;
+            // Mode Combo
+            var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
+            modeRow.Children.Add(new TextBlock { Text = "Operational Mode:", Width = 220, Foreground = Brushes.LightGray, VerticalAlignment = VerticalAlignment.Center });
+            _modeCombo = new ComboBox { Width = 100, Height = 22, Background = new SolidColorBrush(Color.FromRgb(45, 45, 45)), Foreground = Brushes.White };
+            _modeCombo.Items.Add("shadow");
+            _modeCombo.Items.Add("live");
+            modeRow.Children.Add(_modeCombo);
+            panel.Children.Add(modeRow);
 
-            // Start UI Refresh timer
-            _uiTimer = new DispatcherTimer();
-            _uiTimer.Interval = TimeSpan.FromMilliseconds(500);
+            // WindowGate Checkbox
+            var gateRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
+            gateRow.Children.Add(new TextBlock { Text = "Restrict Outside Trading Hours:", Width = 220, Foreground = Brushes.LightGray, VerticalAlignment = VerticalAlignment.Center });
+            _windowGateCheck = new CheckBox { VerticalAlignment = VerticalAlignment.Center };
+            gateRow.Children.Add(_windowGateCheck);
+            panel.Children.Add(gateRow);
+
+            // Populate all fields
+            _maxContractsAccountText = new TextBox();
+            panel.Children.Add(addEditRow("Max Contracts Per Account:", "Max size in standard contracts per single account", _maxContractsAccountText));
+
+            _maxContractsAggregateText = new TextBox();
+            panel.Children.Add(addEditRow("Max Contracts Aggregate:", "Combined max size across all copy group accounts", _maxContractsAggregateText));
+
+            _maxTradesSessionText = new TextBox();
+            panel.Children.Add(addEditRow("Max Trades Per Session:", "Prevents overtrading after N executions", _maxTradesSessionText));
+
+            _maxConsecutiveLossesText = new TextBox();
+            panel.Children.Add(addEditRow("Max Consecutive Losses:", "Locks out account if N losses occur in a row", _maxConsecutiveLossesText));
+
+            _cooldownMinutesText = new TextBox();
+            panel.Children.Add(addEditRow("Cooldown Period (Mins):", "Cooldown duration after a consecutive loss lockout", _cooldownMinutesText));
+
+            _lockoutMinutesText = new TextBox();
+            panel.Children.Add(addEditRow("Lockout Duration (Mins):", "Duration for time-based rule lockouts (0 = lock rest of day)", _lockoutMinutesText));
+
+            _dailyLossLimitText = new TextBox();
+            panel.Children.Add(addEditRow("Daily Loss Limit ($):", "Hard daily drawdown limit per account", _dailyLossLimitText));
+
+            _trailingDrawdownText = new TextBox();
+            panel.Children.Add(addEditRow("Trailing Drawdown ($):", "Max allowable drawdown from peak session equity", _trailingDrawdownText));
+
+            _pnlLockoutMinutesText = new TextBox();
+            panel.Children.Add(addEditRow("PnL Lockout (Mins):", "Lockout duration after hitting Daily Loss / Trailing Drawdown", _pnlLockoutMinutesText));
+
+            // OnMissing Combo
+            var missingRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
+            missingRow.Children.Add(new TextBlock { Text = "On Missing Bracket Order:", Width = 220, Foreground = Brushes.LightGray, VerticalAlignment = VerticalAlignment.Center });
+            _onMissingCombo = new ComboBox { Width = 100, Height = 22, Background = new SolidColorBrush(Color.FromRgb(45, 45, 45)), Foreground = Brushes.White };
+            _onMissingCombo.Items.Add("flatten");
+            _onMissingCombo.Items.Add("ignore");
+            missingRow.Children.Add(_onMissingCombo);
+            panel.Children.Add(missingRow);
+
+            // SAVE CONFIG BUTTON
+            var saveBtn = new Button
+            {
+                Content = "💾 SAVE AND APPLY CONFIGURATION",
+                Width = 250,
+                Height = 35,
+                Margin = new Thickness(0, 20, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                FontWeight = FontWeights.Bold,
+                Background = new SolidColorBrush(Color.FromRgb(0, 122, 204)),
+                Foreground = Brushes.White,
+                BorderBrush = Brushes.Transparent
+            };
+            saveBtn.Click += OnSaveConfigClick;
+            panel.Children.Add(saveBtn);
+
+            configTab.Content = editorScroll;
+            tabControl.Items.Add(configTab);
+
+            Grid.SetRow(tabControl, 1);
+            mainGrid.Children.Add(tabControl);
+
+            Content = mainGrid;
+
+            // Load initial config values
+            LoadConfigIntoUI();
+
+            // Timer to refresh UI stats
+            _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _uiTimer.Tick += (s, e) => UpdateUI();
             _uiTimer.Start();
 
             Closed += (s, e) => _uiTimer.Stop();
+
+            UpdateUI();
+        }
+
+        private void LoadConfigIntoUI()
+        {
+            var cfg = _addOn.Config;
+            if (cfg == null) return;
+
+            _modeCombo.SelectedItem = cfg.Mode == "live" ? "live" : "shadow";
+            _windowGateCheck.IsChecked = cfg.EnableWindowGate;
+            _maxContractsAccountText.Text = cfg.Sizing.MaxContractsPerAccount.ToString();
+            _maxContractsAggregateText.Text = cfg.Sizing.MaxContractsAggregate.ToString();
+            _maxTradesSessionText.Text = cfg.Overtrading.MaxTradesPerSession.ToString();
+            _maxConsecutiveLossesText.Text = cfg.Overtrading.MaxConsecutiveLosses.ToString();
+            _cooldownMinutesText.Text = cfg.Overtrading.CooldownMinutes.ToString();
+            _lockoutMinutesText.Text = cfg.Overtrading.LockoutMinutes.ToString();
+            _dailyLossLimitText.Text = cfg.PnLRules.DailyLossLimit.ToString();
+            _trailingDrawdownText.Text = cfg.PnLRules.TrailingDrawdown.ToString();
+            _pnlLockoutMinutesText.Text = cfg.PnLRules.PnLLockoutMinutes.ToString();
+            _onMissingCombo.SelectedItem = cfg.StopGuard.OnMissing == "ignore" ? "ignore" : "flatten";
+        }
+
+        private void OnSaveConfigClick(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var cfg = _addOn.Config;
+                cfg.Mode = _modeCombo.SelectedItem.ToString();
+                cfg.EnableWindowGate = _windowGateCheck.IsChecked ?? false;
+                cfg.Sizing.MaxContractsPerAccount = int.Parse(_maxContractsAccountText.Text.Trim());
+                cfg.Sizing.MaxContractsAggregate = int.Parse(_maxContractsAggregateText.Text.Trim());
+                cfg.Overtrading.MaxTradesPerSession = int.Parse(_maxTradesSessionText.Text.Trim());
+                cfg.Overtrading.MaxConsecutiveLosses = int.Parse(_maxConsecutiveLossesText.Text.Trim());
+                cfg.Overtrading.CooldownMinutes = int.Parse(_cooldownMinutesText.Text.Trim());
+                cfg.Overtrading.LockoutMinutes = int.Parse(_lockoutMinutesText.Text.Trim());
+                cfg.PnLRules.DailyLossLimit = double.Parse(_dailyLossLimitText.Text.Trim());
+                cfg.PnLRules.TrailingDrawdown = double.Parse(_trailingDrawdownText.Text.Trim());
+                cfg.PnLRules.PnLLockoutMinutes = int.Parse(_pnlLockoutMinutesText.Text.Trim());
+                cfg.StopGuard.OnMissing = _onMissingCombo.SelectedItem.ToString();
+
+                _addOn.SaveAndReloadConfig(cfg);
+                MessageBox.Show("Configuration saved and hot-reloaded successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to parse settings: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void UpdateUI()
         {
-            var selectedAccName = _accountCombo.SelectedItem as string;
-            if (string.IsNullOrEmpty(selectedAccName)) return;
+            bool isArmed = _addOn.IsArmed;
+            string mode = _addOn.Config != null ? _addOn.Config.Mode : "shadow";
+            _armedStatusText.Text = isArmed ? string.Format("ARMED ({0})", mode.ToUpper()) : "DISABLED";
+            _armedStatusText.Foreground = isArmed ? Brushes.LimeGreen : Brushes.Red;
 
-            string status = _addOn.GetAccountStatusString(selectedAccName);
-            _statusText.Text = status;
-        }
+            var snapshots = _addOn.GetAccountSnapshots();
+            var existingAccNames = _cardControls.Keys.ToList();
 
-        private void OnPanicClick(object sender, RoutedEventArgs e)
-        {
-            var selectedAccName = _accountCombo.SelectedItem as string;
-            if (string.IsNullOrEmpty(selectedAccName))
+            string filterText = _searchBox != null ? _searchBox.Text.Trim() : "";
+            bool hideInactive = _hideInactiveCheck != null && (_hideInactiveCheck.IsChecked ?? true);
+
+            var filteredSnapshots = new List<RiskGuardAddOn.AccountStateSnapshot>();
+            foreach (var snapshot in snapshots)
             {
-                MessageBox.Show(this, "Please select a target account first.", "Risk Guard Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
+                // Filter by name
+                if (!string.IsNullOrEmpty(filterText) && snapshot.AccountName.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                // Filter by inactive ($0 balance, flat, no trades)
+                bool isZeroBal = snapshot.AccountEquity == 0 && snapshot.PositionString == "FLAT" && snapshot.TradesToday == 0;
+                if (hideInactive && isZeroBal && snapshot.AccountName != "Sim101") // Keep Sim101 visible by default
+                {
+                    continue;
+                }
+
+                filteredSnapshots.Add(snapshot);
             }
 
-            var confirmResult = MessageBox.Show(
-                this,
-                $"Are you sure you want to FLATTEN account {selectedAccName} and CANCEL all its working orders?",
-                "Confirm Panic Action",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-
-            if (confirmResult == MessageBoxResult.Yes)
+            // Remove cards that are no longer in filtered snapshots
+            var filteredNames = new HashSet<string>(filteredSnapshots.Select(s => s.AccountName));
+            foreach (var accName in existingAccNames)
             {
-                _addOn.TriggerManualFlatten(selectedAccName);
+                if (!filteredNames.Contains(accName))
+                {
+                    _cardsPanel.Children.Remove(_cardControls[accName].BorderEl);
+                    _cardControls.Remove(accName);
+                }
+            }
+
+            // Create cards for new filtered snapshots
+            foreach (var snapshot in filteredSnapshots)
+            {
+                if (!_cardControls.ContainsKey(snapshot.AccountName))
+                {
+                    var card = CreateAccountCard(snapshot.AccountName);
+                    _cardControls[snapshot.AccountName] = card;
+                    _cardsPanel.Children.Add(card.BorderEl);
+                }
+            }
+
+            // Update details of all visible cards
+            foreach (var snapshot in filteredSnapshots)
+            {
+                if (_cardControls.TryGetValue(snapshot.AccountName, out var card))
+                {
+                    card.TitleText.Text = snapshot.AccountName;
+                    card.PnlText.Text = string.Format("PnL Today: {0:C} (Realized: {1:C})", snapshot.RealizedPnL + snapshot.UnrealizedPnL, snapshot.RealizedPnL);
+                    card.TradesText.Text = string.Format("Trades today: {0} / {1}", snapshot.TradesToday, _addOn.Config.Overtrading.MaxTradesPerSession);
+                    card.LossesText.Text = string.Format("Consecutive Losses: {0} / {1}", snapshot.ConsecutiveLosses, _addOn.Config.Overtrading.MaxConsecutiveLosses);
+                    card.PositionText.Text = string.Format("Position: {0}", snapshot.PositionString);
+
+                    if (snapshot.IsLockedOut)
+                    {
+                        card.StatusText.Text = "Locked Out";
+                        card.StatusText.Foreground = Brushes.Red;
+                        card.BorderEl.BorderBrush = Brushes.Red;
+                    }
+                    else
+                    {
+                        card.StatusText.Text = "Active";
+                        card.StatusText.Foreground = Brushes.LimeGreen;
+                        card.BorderEl.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 122, 204));
+                    }
+
+                    // Excluded checkbox state
+                    card.ExcludeCheck.IsChecked = snapshot.IsExcluded;
+                }
             }
         }
 
-        private void OnPanicAllClick(object sender, RoutedEventArgs e)
+        private CardControls CreateAccountCard(string accountName)
         {
-            var confirmResult = MessageBox.Show(
-                this,
-                "Are you sure you want to FLATTEN ALL connected accounts and CANCEL all working orders?",
-                "Confirm Panic All Action",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
+            var card = new CardControls();
 
-            if (confirmResult == MessageBoxResult.Yes)
+            card.BorderEl = new Border
             {
-                _addOn.TriggerManualFlattenAll();
+                Background = new SolidColorBrush(Color.FromRgb(40, 40, 40)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(5),
+                Margin = new Thickness(5),
+                Padding = new Thickness(10)
+            };
+
+            var panel = new StackPanel();
+
+            // Header panel (Title + Status indicator)
+            var header = new Grid();
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            card.TitleText = new TextBlock { Text = accountName, FontWeight = FontWeights.Bold, Foreground = Brushes.White, FontSize = 12 };
+            Grid.SetColumn(card.TitleText, 0);
+            header.Children.Add(card.TitleText);
+
+            card.StatusText = new TextBlock { Text = "Active", Foreground = Brushes.LimeGreen, FontSize = 10, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(card.StatusText, 1);
+            header.Children.Add(card.StatusText);
+
+            panel.Children.Add(header);
+
+            // Stats fields
+            card.PnlText = new TextBlock { Foreground = Brushes.LightGray, Margin = new Thickness(0, 8, 0, 2) };
+            panel.Children.Add(card.PnlText);
+
+            card.TradesText = new TextBlock { Foreground = Brushes.LightGray, Margin = new Thickness(0, 2, 0, 2) };
+            panel.Children.Add(card.TradesText);
+
+            card.LossesText = new TextBlock { Foreground = Brushes.LightGray, Margin = new Thickness(0, 2, 0, 2) };
+            panel.Children.Add(card.LossesText);
+
+            card.PositionText = new TextBlock { Foreground = Brushes.LightGray, Margin = new Thickness(0, 2, 0, 8) };
+            panel.Children.Add(card.PositionText);
+
+            // Action row (Panic button, Unlock button)
+            var btnRow = new Grid { Margin = new Thickness(0, 5, 0, 5) };
+            btnRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            btnRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(5) }); // space spacer
+            btnRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var panicBtn = new Button 
+            { 
+                Content = "Panic", 
+                Background = new SolidColorBrush(Color.FromRgb(180, 40, 40)), 
+                Foreground = Brushes.White, 
+                FontWeight = FontWeights.Bold,
+                BorderBrush = Brushes.Transparent,
+                Padding = new Thickness(0, 3, 0, 3)
+            };
+            panicBtn.Click += (s, e) => OnCardPanicClick(accountName);
+            Grid.SetColumn(panicBtn, 0);
+            btnRow.Children.Add(panicBtn);
+
+            var unlockBtn = new Button 
+            { 
+                Content = "Unlock", 
+                Background = new SolidColorBrush(Color.FromRgb(40, 130, 40)), 
+                Foreground = Brushes.White, 
+                FontWeight = FontWeights.Bold,
+                BorderBrush = Brushes.Transparent,
+                Padding = new Thickness(0, 3, 0, 3)
+            };
+            unlockBtn.Click += (s, e) => OnCardUnlockClick(accountName);
+            Grid.SetColumn(unlockBtn, 2);
+            btnRow.Children.Add(unlockBtn);
+
+            panel.Children.Add(btnRow);
+
+            // Excluded Checkbox
+            card.ExcludeCheck = new CheckBox 
+            { 
+                Content = "Exclude from Risk Guard", 
+                Foreground = Brushes.LightGray, 
+                Margin = new Thickness(0, 5, 0, 0) 
+            };
+            card.ExcludeCheck.Checked += (s, e) => OnCardExcludeChecked(accountName, true);
+            card.ExcludeCheck.Unchecked += (s, e) => OnCardExcludeChecked(accountName, false);
+            panel.Children.Add(card.ExcludeCheck);
+
+            card.BorderEl.Child = panel;
+            return card;
+        }
+
+        private void OnCardPanicClick(string accountName)
+        {
+            var result = MessageBox.Show(string.Format("Are you sure you want to FLATTEN account {0} and cancel all working orders?", accountName), "Confirm Panic", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result == MessageBoxResult.Yes)
+            {
+                _addOn.TriggerManualFlatten(accountName);
             }
         }
 
-        private void OnUnlockClick(object sender, RoutedEventArgs e)
+        private void OnCardUnlockClick(string accountName)
         {
-            var selectedAccName = _accountCombo.SelectedItem as string;
-            if (string.IsNullOrEmpty(selectedAccName)) return;
+            _addOn.UnlockAccount(accountName);
+            MessageBox.Show(string.Format("Account {0} unlocked/reset successfully.", accountName), "Unlock Success", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
 
-            var confirmResult = MessageBox.Show(
-                this,
-                $"Are you sure you want to UNLOCK account {selectedAccName} and reset its drawdown peak?",
-                "Confirm Unlock Action",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-
-            if (confirmResult == MessageBoxResult.Yes)
+        private void OnCardExcludeChecked(string accountName, bool isExcluded)
+        {
+            lock (_addOn.StateLock)
             {
-                _addOn.UnlockAccount(selectedAccName);
+                var cfg = _addOn.Config;
+                if (isExcluded)
+                {
+                    if (!cfg.ExcludedAccounts.Contains(accountName))
+                    {
+                        cfg.ExcludedAccounts.Add(accountName);
+                    }
+                }
+                else
+                {
+                    cfg.ExcludedAccounts.Remove(accountName);
+                }
+                _addOn.SaveAndReloadConfig(cfg);
             }
         }
 
         private void OnToggleArmedClick(object sender, RoutedEventArgs e)
         {
-            var confirmResult = MessageBox.Show(
-                this,
-                $"Are you sure you want to toggle the ARMED state of the Risk Guard?",
-                "Confirm Toggle",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
+            _addOn.ToggleArmed();
+        }
 
-            if (confirmResult == MessageBoxResult.Yes)
+        private void OnReloadConfigClick(object sender, RoutedEventArgs e)
+        {
+            _addOn.ReloadConfig();
+            LoadConfigIntoUI();
+            MessageBox.Show("Configuration successfully reloaded.", "Config Reloaded", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void OnPanicAllClick(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show("Are you sure you want to FLATTEN ALL connected accounts and cancel all working orders?", "Confirm Global Panic", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result == MessageBoxResult.Yes)
             {
-                _addOn.ToggleArmed();
+                _addOn.TriggerManualFlattenAll();
             }
         }
     }
+
+    public class CardControls
+    {
+        public Border BorderEl { get; set; }
+        public TextBlock TitleText { get; set; }
+        public TextBlock StatusText { get; set; }
+        public TextBlock PnlText { get; set; }
+        public TextBlock TradesText { get; set; }
+        public TextBlock LossesText { get; set; }
+        public TextBlock PositionText { get; set; }
+        public CheckBox ExcludeCheck { get; set; }
+    }
+#endif
 }
