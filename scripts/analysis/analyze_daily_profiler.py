@@ -14,6 +14,19 @@ from datetime import datetime
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(ROOT_DIR)
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.utils.fused_data_loader import load_fused_data
 from scripts.libs_py.nqstats.engine import NQStatsEngine
 from scripts.libs_py.nqstats.profiler import get_daily_profiler_data, filter_profiler_stats, get_followthrough_matrix

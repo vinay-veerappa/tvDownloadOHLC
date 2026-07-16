@@ -9,6 +9,19 @@ import sys
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(project_root)
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.utils.discord_notify import get_webhook_url, send_message
 
 DATA_DIR = os.path.join(project_root, "data", "live")

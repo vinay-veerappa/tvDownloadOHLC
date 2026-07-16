@@ -961,6 +961,26 @@ def build_asia_blocks(
     # ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Imbalances, Gaps)
     sections.extend(_format_ict_features_block(ticker, ticker_current, "ASIA", now_et, target_date))
 
+    # Daily Profiler (session outcomes, predictions, levels)
+    try:
+        from scripts.trader.signals.profiler import build_dual_profiler_block
+        sections.append(build_dual_profiler_block(
+            ticker, "ES1", ticker_current, es_current, target_date, now_et,
+        ))
+    except Exception as e:
+        log.warning("[asia:profiler] Failed: %s", e)
+
+    # Quarters Theory (overnight combo + hourly candle structure)
+    try:
+        from scripts.trader.signals.quarters_theory import build_quarters_block
+        asia_status = session_ranges.get("ASIA", {}).get("status", "") if session_ranges else ""
+        london_status = session_ranges.get("LONDON", {}).get("status", "") if session_ranges else ""
+        sections.append(build_quarters_block(
+            ticker, df_t, now_et, asia_status, london_status,
+        ))
+    except Exception as e:
+        log.warning("[asia:quarters] Failed: %s", e)
+
     # Multi-timeframe range stack
     sections.append(_format_range_stack_block(
         df_t, ticker, ticker_current, session_ranges,
@@ -1073,6 +1093,7 @@ def build_london_blocks(
 
     # ICT liquidity map (bias from overnight direction)
     aln_data = {}
+    aln_status = {}
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
         if df_t is not None and not df_t.empty:
@@ -1084,6 +1105,10 @@ def build_london_blocks(
                 "london_low": latest.get("london_low"),
                 "asia_high": latest.get("asia_high"),
                 "asia_low": latest.get("asia_low"),
+            }
+            aln_status = {
+                "asia": latest.get("asiabox_status", ""),
+                "london": latest.get("londonbox_status", ""),
             }
     except Exception:
         pass
@@ -1099,6 +1124,26 @@ def build_london_blocks(
     sections.append(_format_liquidity_map_block(
         ticker, ticker_current, overnight_bias, aln_data, session_ranges, events=events,
     ))
+
+    # Daily Profiler (session outcomes, predictions, levels)
+    try:
+        from scripts.trader.signals.profiler import build_dual_profiler_block
+        sections.append(build_dual_profiler_block(
+            ticker, "ES1", ticker_current, es_current, target_date,
+        ))
+    except Exception as e:
+        log.warning("[london:profiler] Failed: %s", e)
+
+    # Quarters Theory (overnight combo + hourly candle structure)
+    try:
+        from scripts.trader.signals.quarters_theory import build_quarters_block
+        asia_status = session_ranges.get("ASIA", {}).get("status", "") if session_ranges else ""
+        london_status = session_ranges.get("LONDON", {}).get("status", "") if session_ranges else ""
+        sections.append(build_quarters_block(
+            ticker, df_t, now_et, asia_status, london_status,
+        ))
+    except Exception as e:
+        log.warning("[london:quarters] Failed: %s", e)
 
     # Multi-timeframe range stack
     sections.append(_format_range_stack_block(
@@ -1209,6 +1254,7 @@ def build_ny_am_blocks(
 
     # ICT liquidity map
     aln_data = {}
+    aln_status = {}
     intraday_bias = "NEUTRAL"
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
@@ -1221,6 +1267,10 @@ def build_ny_am_blocks(
                 "london_low": latest.get("london_low"),
                 "asia_high": latest.get("asia_high"),
                 "asia_low": latest.get("asia_low"),
+            }
+            aln_status = {
+                "asia": latest.get("asiabox_status", ""),
+                "london": latest.get("londonbox_status", ""),
             }
             # Bias from Pre-NY sweep + IB break
             if pre_ny and london:
@@ -1238,6 +1288,26 @@ def build_ny_am_blocks(
         am_low=rth.get("low") if rth else None,
         events=events,
     ))
+
+    # Daily Profiler (session outcomes, predictions, levels)
+    try:
+        from scripts.trader.signals.profiler import build_dual_profiler_block
+        sections.append(build_dual_profiler_block(
+            ticker, "ES1", ticker_current, es_current, target_date,
+        ))
+    except Exception as e:
+        log.warning("[ny_am:profiler] Failed: %s", e)
+
+    # Quarters Theory (overnight combo + hourly candle structure)
+    try:
+        from scripts.trader.signals.quarters_theory import build_quarters_block
+        sections.append(build_quarters_block(
+            ticker, df_t, now_et,
+            asia_status=aln_status.get("asia", ""),
+            london_status=aln_status.get("london", ""),
+        ))
+    except Exception as e:
+        log.warning("[ny_am:quarters] Failed: %s", e)
 
     # Multi-timeframe range stack
     sections.append(_format_range_stack_block(
@@ -1273,6 +1343,7 @@ def build_ny_lunch_blocks(
         lines.append(f"Session direction: {session_dir}")
         sections.append("\n".join(lines))
 
+    aln_status = {}
     # IB status
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
@@ -1280,6 +1351,10 @@ def build_ny_lunch_blocks(
             engine = NQStatsEngine(df_t.tail(5000), ticker=ticker)
             engine.process()
             status = engine.get_latest_status()
+            aln_status = {
+                "asia": status.get("asiabox_status", ""),
+                "london": status.get("londonbox_status", ""),
+            }
             ib_high = status.get("ib_high")
             ib_low = status.get("ib_low")
             lines = ["== IB STATUS =="]
@@ -1318,6 +1393,26 @@ def build_ny_lunch_blocks(
     cal_block, _ = _format_calendar_block(target_date)
     sections.append(cal_block)
 
+    # Daily Profiler (session outcomes, predictions, levels)
+    try:
+        from scripts.trader.signals.profiler import build_dual_profiler_block
+        sections.append(build_dual_profiler_block(
+            ticker, "ES1", ticker_current, es_current, target_date,
+        ))
+    except Exception as e:
+        log.warning("[ny_lunch:profiler] Failed: %s", e)
+
+    # Quarters Theory (overnight combo + hourly candle structure)
+    try:
+        from scripts.trader.signals.quarters_theory import build_quarters_block
+        sections.append(build_quarters_block(
+            ticker, df_t, now_et,
+            asia_status=aln_status.get("asia", ""),
+            london_status=aln_status.get("london", ""),
+        ))
+    except Exception as e:
+        log.warning("[ny_lunch:quarters] Failed: %s", e)
+
     # Multi-timeframe range stack
     sections.append(_format_range_stack_block(
         df_t, ticker, ticker_current, session_ranges,
@@ -1352,6 +1447,7 @@ def build_ny_pm_blocks(
         lines.append(f"Session direction: {session_dir}")
         sections.append("\n".join(lines))
 
+    aln_status = {}
     # IB status
     try:
         from scripts.libs_py.nqstats.engine import NQStatsEngine
@@ -1359,6 +1455,10 @@ def build_ny_pm_blocks(
             engine = NQStatsEngine(df_t.tail(5000), ticker=ticker)
             engine.process()
             status = engine.get_latest_status()
+            aln_status = {
+                "asia": status.get("asiabox_status", ""),
+                "london": status.get("londonbox_status", ""),
+            }
             ib_high = status.get("ib_high")
             ib_low = status.get("ib_low")
             lines = ["== IB STATUS =="]
@@ -1450,6 +1550,26 @@ def build_ny_pm_blocks(
         am_low=rth.get("low") if rth else None,
         events=events,
     ))
+
+    # Daily Profiler (session outcomes, predictions, levels)
+    try:
+        from scripts.trader.signals.profiler import build_dual_profiler_block
+        sections.append(build_dual_profiler_block(
+            ticker, "ES1", ticker_current, es_current, target_date,
+        ))
+    except Exception as e:
+        log.warning("[ny_pm:profiler] Failed: %s", e)
+
+    # Quarters Theory (overnight combo + hourly candle structure)
+    try:
+        from scripts.trader.signals.quarters_theory import build_quarters_block
+        sections.append(build_quarters_block(
+            ticker, df_t, now_et,
+            asia_status=aln_status.get("asia", ""),
+            london_status=aln_status.get("london", ""),
+        ))
+    except Exception as e:
+        log.warning("[ny_pm:quarters] Failed: %s", e)
 
     # Multi-timeframe range stack
     sections.append(_format_range_stack_block(

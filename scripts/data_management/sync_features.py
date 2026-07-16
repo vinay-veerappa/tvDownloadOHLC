@@ -8,6 +8,19 @@ from datetime import datetime
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.utils.fused_data_loader import DERIVED_DIR, REGIME_DIR, TICKER_MAP
 from scripts.libs_py.data.loader import FrameworkLoader
 from scripts.trading_framework.library.adapters.nqstats_adapter import NQStatsAdapter

@@ -326,9 +326,11 @@ f_draw_lev_bar(price, start_bi, col, style, width, txt, visible) =>
 
 
 // ————— LIVE SESSION LOGIC —————
-t_asia = "1800-1929", t_lon = "0230-0329", t_ny1 = "0730-0829", t_ny2 = "1130-1229"
-s_asia = "1930-0229", s_lon = "0330-0729", s_ny1 = "0830-1129", s_ny2 = "1230-1659"
-bw_asia = "0230-1700:1234567", bw_lon  = "0730-1700:1234567", bw_ny1  = "1130-1700:1234567", bw_ny2  = "1600-1700:1234567"
+// NOTE: PineScript time() treats session end as EXCLUSIVE [start, end).
+// So end_time must be last_minute + 1 to include the last bar.
+t_asia = "1800-1930", t_lon = "0230-0330", t_ny1 = "0730-0830", t_ny2 = "1130-1230"
+s_asia = "1930-0230", s_lon = "0330-0730", s_ny1 = "0830-1130", s_ny2 = "1230-1700"
+bw_asia = "0230-1701:1234567", bw_lon  = "0730-1701:1234567", bw_ny1  = "1130-1701:1234567", bw_ny2  = "1600-1701:1234567"
 
 var float asia_h = na, var float asia_l = na, var float lon_h = na, var float lon_l = na, var float ny1_h = na, var float ny1_l = na, var float ny2_h = na, var float ny2_l = na
 var int st_asia = 0, var int st_lon = 0, var int st_ny1 = 0, var int st_ny2 = 0
@@ -345,10 +347,11 @@ f_update_sess(_sess) =>
     [in_s, in_s and not in_s[1]]
 
 // Session PLAY window detection (when session outcomes are being determined)
-bool in_play_asia = not na(time(timeframe.period, "1930-0229:1234567", "America/New_York"))
-bool in_play_lon  = not na(time(timeframe.period, "0330-0729:1234567", "America/New_York"))
-bool in_play_ny1  = not na(time(timeframe.period, "0830-1129:1234567", "America/New_York"))
-bool in_play_ny2  = not na(time(timeframe.period, "1230-1629:1234567", "America/New_York"))
+// NOTE: session end is exclusive in time(), so end_time = last_minute + 1
+bool in_play_asia = not na(time(timeframe.period, "1930-0230:1234567", "America/New_York"))
+bool in_play_lon  = not na(time(timeframe.period, "0330-0730:1234567", "America/New_York"))
+bool in_play_ny1  = not na(time(timeframe.period, "0830-1130:1234567", "America/New_York"))
+bool in_play_ny2  = not na(time(timeframe.period, "1230-1630:1234567", "America/New_York"))
 
 // Are we inside ANY play window? (this gates all hit detection)
 bool in_any_play = in_play_asia or in_play_lon or in_play_ny1 or in_play_ny2
@@ -661,7 +664,7 @@ if start_play_ny2
 
 
 
-bool in_p12 = not na(time(timeframe.period, "1800-0559:1234567", "America/New_York"))
+bool in_p12 = not na(time(timeframe.period, "1800-0600:1234567", "America/New_York"))
 if in_p12
     p12_h := math.max(nz(p12_h, high), high)
     p12_l := math.min(nz(p12_l, low), low)
@@ -670,7 +673,7 @@ bool is_0600 = (hour(time, "America/New_York") == 6) and (minute(time, "America/
 if is_0600 or (hour(time, "America/New_York") == 6 and hour(time[1], "America/New_York") != 6)
     ny_p12_h := high, ny_p12_l := low
 
-bool in_ny_p12 = not na(time(timeframe.period, "0600-1659:1234567", "America/New_York"))
+bool in_ny_p12 = not na(time(timeframe.period, "0600-1700:1234567", "America/New_York"))
 if in_ny_p12
     ny_p12_h := math.max(nz(ny_p12_h, high), high)
     ny_p12_l := math.min(nz(ny_p12_l, low), low)
@@ -691,10 +694,10 @@ if barstate.islast
 
     // ── Compute tgt_idx FIRST (needed by f_hr_parts_v3 calls below) ──
     sz = get_size(s_res)
-    bool fin_asia = not na(time(timeframe.period, "0230-1700:1234567", "America/New_York"))
-    bool fin_lon  = not na(time(timeframe.period, "0730-1700:1234567", "America/New_York"))
-    bool fin_ny1  = not na(time(timeframe.period, "1130-1700:1234567", "America/New_York"))
-    bool fin_ny2  = not na(time(timeframe.period, "1615-1700:1234567", "America/New_York"))
+    bool fin_asia = not na(time(timeframe.period, "0230-1701:1234567", "America/New_York"))
+    bool fin_lon  = not na(time(timeframe.period, "0730-1701:1234567", "America/New_York"))
+    bool fin_ny1  = not na(time(timeframe.period, "1130-1701:1234567", "America/New_York"))
+    bool fin_ny2  = not na(time(timeframe.period, "1615-1701:1234567", "America/New_York"))
     int tgt_idx = 0, string title = "Asia Outcomes"
     if fin_asia
         tgt_idx := 1, title := "London Outcomes"
@@ -1124,10 +1127,10 @@ var int[] t_pdm_a = LibTouches.get_pdm_asia(), var int[] t_pdm_l = LibTouches.ge
 d_open = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
 if barstate.islast
     sz = get_size(s_res)
-    bool fin_asia = not na(time(timeframe.period, "0230-1700:1234567", "America/New_York"))
-    bool fin_lon  = not na(time(timeframe.period, "0730-1700:1234567", "America/New_York"))
-    bool fin_ny1  = not na(time(timeframe.period, "1130-1700:1234567", "America/New_York"))
-    bool fin_ny2  = not na(time(timeframe.period, "1615-1700:1234567", "America/New_York"))
+    bool fin_asia = not na(time(timeframe.period, "0230-1701:1234567", "America/New_York"))
+    bool fin_lon  = not na(time(timeframe.period, "0730-1701:1234567", "America/New_York"))
+    bool fin_ny1  = not na(time(timeframe.period, "1130-1701:1234567", "America/New_York"))
+    bool fin_ny2  = not na(time(timeframe.period, "1615-1701:1234567", "America/New_York"))
     int tgt_idx = 0, string title = "Asia Outcomes"
     if fin_asia
         tgt_idx := 1, title := "London Outcomes"

@@ -26,6 +26,12 @@ from zoneinfo import ZoneInfo
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+
+# Side-effect import: ensures the repo root is on sys.path so
+# `from scripts.trader import ...` works without a per-file hack.
+# See scripts/trader/_path_setup.py for the full rationale.
+from scripts.trader import _path_setup  # noqa: F401
+
 from scripts.trader.briefing_core import (
     ET,
     REPO_ROOT,
@@ -40,14 +46,14 @@ from scripts.trader.briefing_core import (
     save_daily_eod_to_db,
     load_weekly_briefing_from_db,
     translate_level_to_futures,
+    resolve_narrative_ticker,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
 DEFAULT_TICKERS = [
-    "SPX", "SPY", "QQQ", "IWM", "DIA",
-    "AAPL", "MSFT", "NVDA", "TSLA", "META", "GOOGL", "AMZN", "AVGO",
+    "NQ1", "ES1"
 ]
 
 
@@ -100,7 +106,7 @@ def build_daily_snapshot(
         log.warning("  [SKIP] No price data for %s", ticker)
         return None
 
-    # Keep SPY/QQQ daily price action in futures scale to match translated
+    # Keep proxy daily price action in futures scale to match translated
     # structural levels used by narratives and risk logic.
     if ticker in {"SPY", "QQQ"}:
         for key in ("open", "high", "low", "close"):
@@ -219,7 +225,9 @@ async def run_daily_update(tickers: list[str], session: str = "eod") -> str:
     briefing_id = weekly_data["meta"]["id"]
     log.info("  Weekly briefing: %s (%d tickers)", briefing_id, len(weekly_data["tickers"]))
 
-    # Build a lookup of weekly anchor data per ticker
+    # Build a lookup of weekly anchor data per ticker.
+    # Weekly briefing snapshots store the user-facing ticker (NQ1, ES1), so
+    # resolve back to the same label used by downstream callers.
     weekly_lookup = {}
     for t in weekly_data["tickers"]:
         weekly_lookup[t["ticker"]] = {
@@ -256,8 +264,10 @@ async def run_daily_update(tickers: list[str], session: str = "eod") -> str:
     # 5. Build per-ticker snapshots
     snapshots = []
     for ticker in tickers:
-        log.info("\nProcessing %s...", ticker)
-        unified_entry = all_unified.get(ticker)
+        # Map user-facing tickers to options-pipeline keys (NQ1 -> NQ, ES1 -> ES)
+        pipeline_ticker = resolve_narrative_ticker(ticker)
+        log.info("\nProcessing %s (pipeline key: %s)...", ticker, pipeline_ticker)
+        unified_entry = all_unified.get(pipeline_ticker)
         weekly_anchor = weekly_lookup.get(ticker, {})
 
         if not weekly_anchor:

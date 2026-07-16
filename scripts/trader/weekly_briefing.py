@@ -27,6 +27,12 @@ from zoneinfo import ZoneInfo
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+
+# Side-effect import: ensures the repo root is on sys.path so
+# `from scripts.trader import ...` works without a per-file hack.
+# See scripts/trader/_path_setup.py for the full rationale.
+from scripts.trader import _path_setup  # noqa: F401
+
 from scripts.trader.briefing_core import (
     ET,
     REPO_ROOT,
@@ -44,6 +50,7 @@ from scripts.trader.briefing_core import (
     save_weekly_briefing_to_db,
     parse_meta_fields,
     translate_level_to_futures,
+    resolve_narrative_ticker,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -51,8 +58,7 @@ log = logging.getLogger(__name__)
 
 # Default tickers (full universe from config.py ACTIVE_TICKERS)
 DEFAULT_TICKERS = [
-    "SPX", "SPY", "QQQ", "IWM", "DIA",
-    "AAPL", "MSFT", "NVDA", "TSLA", "META", "GOOGL", "AMZN", "AVGO",
+    "NQ", "ES"
 ]
 
 
@@ -174,6 +180,8 @@ def build_ticker_block(
     mandated_track = resolve_track(gex_sign, regime_label)
 
     # ── Price context via DataLoader (DRY) ────────────────────────
+    # The loader expects parquet symbols; pass the user-facing ticker so the
+    # shared resolver can map NQ1/ES1 to the correct parquet prefix.
     price_ctx = load_weekly_price_context(loader, ticker)
 
     # Determine spot price — use prior week close if available, else fallback
@@ -338,6 +346,63 @@ def build_scenarios(
         "neutral": neutral,
     }
 
+def fetch_week_earnings(start_date: date, end_date: date) -> list[dict]:
+    """Fetch mega-cap earnings for the upcoming week from the database."""
+    import sqlite3
+    from scripts.trader.briefing_core import REPO_ROOT
+    db_path = REPO_ROOT / "web" / "prisma" / "dev.db"
+    
+    if not db_path.exists():
+        return []
+        
+    hot_list = {
+        "AAPL", "MSFT", "NVDA", "TSLA", "META", "GOOGL", "AMZN", "AVGO",
+        "AMD", "MU", "SMCI", "ARM", "WDC", "PLTR", "COIN", "MSTR", 
+        "INTC", "QCOM", "TSM", "ASML", "NFLX", "CRM", "CRWD", "PANW",
+        "SNOW", "PLD", "SPCX"
+    }
+    results = []
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT ticker, earningsDate, beforeMarket, marketCap FROM EarningsCalendar")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        for ticker, dt_val, before_market, market_cap in rows:
+            ticker = ticker.upper().strip()
+            
+            is_hot = ticker in hot_list
+            is_mega = market_cap and market_cap >= 150_000_000_000
+            
+            if not (is_hot or is_mega):
+                continue
+                
+            if isinstance(dt_val, (int, float)):
+                dt = datetime.fromtimestamp(dt_val / 1000, tz=ET).date()
+            elif isinstance(dt_val, str):
+                dt = datetime.fromisoformat(dt_val[:10]).date()
+            else:
+                continue
+                
+            if start_date <= dt <= end_date:
+                timing = "BMO" if before_market else "AMC"
+                day_name = dt.strftime("%A")
+                results.append({
+                    "ticker": ticker,
+                    "date": dt.isoformat(),
+                    "day_of_week": day_name,
+                    "timing": timing,
+                    "name": f"{ticker} Earnings"
+                })
+                
+        # Sort chronologically
+        results.sort(key=lambda x: (x["date"], 0 if x["timing"] == "BMO" else 1))
+    except Exception as e:
+        log.error("Failed to fetch weekly earnings: %s", e)
+        
+    return results
 
 def build_briefing(tickers: list[str]) -> dict:
     """Aggregate all pipeline outputs into a single briefing JSON."""
@@ -379,6 +444,10 @@ def build_briefing(tickers: list[str]) -> dict:
     log.info("\nFetching economic events for %s → %s...", prior_friday, next_friday)
     events = fetch_week_events(prior_friday, next_friday)
     log.info("  Found %d events", len(events))
+    
+    log.info("\nFetching earnings events for %s → %s...", prior_friday, next_friday)
+    earnings = fetch_week_earnings(prior_friday, next_friday)
+    log.info("  Found %d mega-cap earnings", len(earnings))
 
     # ── Assemble briefing ────────────────────────────────────────
     week_label = get_week_label(now.date())
@@ -391,6 +460,7 @@ def build_briefing(tickers: list[str]) -> dict:
             "tickers_covered": len(ticker_blocks),
         },
         "economic_events": events,
+        "earnings_events": earnings,
         "tickers": ticker_blocks,
     }
 
@@ -426,8 +496,10 @@ def main():
 
     ticker_blocks = []
     for ticker in args.tickers:
-        log.info("Processing %s...", ticker)
-        macro_entry = all_macro.get(ticker)
+        # Map user-facing tickers to options-pipeline keys (NQ1 -> NQ, ES1 -> ES)
+        pipeline_ticker = resolve_narrative_ticker(ticker)
+        log.info("Processing %s (pipeline key: %s)...", ticker, pipeline_ticker)
+        macro_entry = all_macro.get(pipeline_ticker)
         block = build_ticker_block(ticker, macro_entry, loader)
         if block:
             ticker_blocks.append(block)

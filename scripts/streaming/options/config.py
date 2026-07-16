@@ -628,3 +628,26 @@ OPTION_CHAIN_WIDE_WINDOW: int = 10
 # this list clean to avoid confusion.
 SCHEDULE_TIMES: list[str] = ["08:30", "09:30", "10:00", "11:00", "12:00", "13:00", "15:00", "16:00", "16:15"]
 SCHEDULER_MISFIRE_GRACE_TIME: int = 300
+
+# Trader narrative schedule times (HH:MM, Eastern). These run inside the same
+# scheduler process as the options pipeline so outputs stay synchronised.
+NARRATIVE_SCHEDULE: dict[str, str] = {
+    "premarket": "08:45",
+    "open": "09:35",
+    "intraday": "12:00",
+    "close": "16:25",
+}
+WEEKLY_NARRATIVE_TIME: str = "16:20"
+
+# Tickers processed by the trader narrative / daily briefing chain.
+# These are user-facing futures symbols (e.g. front-month continuous contract).
+# Use NARRATIVE_TICKER_MAP to translate them to the keys used in the options
+# pipeline outputs (e.g. unified_levels.json).
+NARRATIVE_TICKERS: list[str] = ["NQ1", "ES1"]
+
+# Mapping from user-facing narrative tickers to the keys used in the options
+# pipeline (unified_levels.json / macro_levels.json). "None" means 1:1.
+NARRATIVE_TICKER_MAP: dict[str, str | None] = {
+    "NQ1": "NQ",
+    "ES1": "ES",
+}

@@ -10,16 +10,25 @@ send_discord_update(translated_levels, run_label, webhook_url) -> None
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
+from scripts.libs_py.discord import (
+    compact_embed as _shared_compact_embed,
+    embed_batches as _shared_embed_batches,
+    embed_char_count as _shared_embed_char_count,
+    embed_to_content as _shared_embed_to_content,
+    load_webhook_url as _shared_load_webhook_url,
+    send_payload as _shared_send_payload,
+    truncate_text as _shared_truncate_text,
+    DISCORD_MAX_CONTENT,
+    DISCORD_MAX_EMBEDS,
+    DISCORD_SAFE_EMBED_BATCH_CHARS,
+)
 
 from .config import (
-    DISCORD_WEBHOOKS_PATH,
     DISCORD_TARGET_KEY,
     DISCORD_MACRO_KEY,
     DISCORD_COLOR_POSITIVE,
@@ -41,38 +50,68 @@ from .futures_translator import TranslatedLevels
 from .gex_calculator import DealerLevels
 from .file_writer import build_scored_levels_line
 from .level_scorer import (
-    ScoredLevels, 
-    TaggedLevel, 
-    MechanicalWall, 
-    StructuralAnchor, 
+    ScoredLevels,
+    TaggedLevel,
+    MechanicalWall,
+    StructuralAnchor,
     InflectionPoint
 )
 
 log = logging.getLogger(__name__)
 
-# Max embeds Discord accepts per webhook call.
-_DISCORD_MAX_EMBEDS = 10
-_DISCORD_MAX_CONTENT = 2000
-_DISCORD_SAFE_EMBED_BATCH_CHARS = 5600
+# Discord webhook limits. The shared `scripts.libs_py.discord`
+# sub-package owns the canonical constants; we re-export them
+# under their historic module-local names so the public surface
+# of `scripts.streaming.options.discord_notifier` is unchanged.
+_DISCORD_MAX_EMBEDS = DISCORD_MAX_EMBEDS
+_DISCORD_MAX_CONTENT = DISCORD_MAX_CONTENT
+_DISCORD_SAFE_EMBED_BATCH_CHARS = DISCORD_SAFE_EMBED_BATCH_CHARS
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal helpers (shims over `scripts.libs_py.discord`)
 # ---------------------------------------------------------------------------
+# The functions below are intentionally thin shims that delegate to
+# the shared sub-package. They exist for two reasons:
+#
+#   1. The legacy call sites in this module (and downstream tests
+#      in tests/streaming/test_options_output_contract.py) reference
+#      these names directly. Keeping the names lets us migrate
+#      without breaking monkeypatched tests.
+#
+#   2. The legacy ``_load_webhook_url`` raises on missing key/file;
+#      the shared ``load_webhook_url`` returns ``None`` (best-effort,
+#      matching the narrative chain's contract). The shim preserves
+#      the raise-on-missing behaviour for this pipeline.
 
 def _load_webhook_url(target_key: str = DISCORD_TARGET_KEY) -> str:
-    """Read the webhook URL for the specified key from discord_webhooks.json."""
-    try:
-        data: dict[str, str] = json.loads(DISCORD_WEBHOOKS_PATH.read_text())
-    except FileNotFoundError:
-        raise FileNotFoundError(
-            f"discord_webhooks.json not found at {DISCORD_WEBHOOKS_PATH}"
-        )
-    url = data.get(target_key)
-    if not url:
+    """Read the webhook URL for the specified key from discord_webhooks.json.
+
+    Thin shim over ``scripts.libs_py.discord.load_webhook_url`` that
+    preserves the historical raise-on-missing semantics: a missing
+    key or file raises the same exception type the previous in-line
+    code raised, so callers that relied on that behaviour (and the
+    tests that mock it) continue to work.
+    """
+    from pathlib import Path as _Path
+
+    url = _shared_load_webhook_url(
+        target_key,
+        webhooks_path=_Path(__file__).resolve().parents[3] / "discord_webhooks.json",
+    )
+    if url is None:
+        # We can't tell "file missing" from "key missing" without
+        # re-reading, but the previous code only raised either
+        # FileNotFoundError or KeyError. The shim re-raises the
+        # more informative of the two based on a quick check.
+        webhooks_path = _Path(__file__).resolve().parents[3] / "discord_webhooks.json"
+        if not webhooks_path.exists():
+            raise FileNotFoundError(
+                f"discord_webhooks.json not found at {webhooks_path}"
+            )
         raise KeyError(
-            f"Webhook key '{target_key}' not found in {DISCORD_WEBHOOKS_PATH}. "
-            f"Available keys: {list(data.keys())}"
+            f"Webhook key '{target_key}' not found in {webhooks_path}. "
+            f"Available keys: {list(__import__('json').loads(webhooks_path.read_text()).keys())}"
         )
     return url
 
@@ -136,130 +175,28 @@ def _copy_attachment_payload(lines: list[str], run_label: str) -> tuple[dict[str
 
 
 def _truncate_text(value: str, max_len: int) -> str:
-    if len(value) <= max_len:
-        return value
-    if max_len <= 3:
-        return value[:max_len]
-    return value[: max_len - 3] + "..."
+    """Shim over :func:`scripts.libs_py.discord.truncate_text`."""
+    return _shared_truncate_text(value, max_len)
 
 
 def _embed_char_count(embed: dict[str, Any]) -> int:
-    total = 0
-    total += len(str(embed.get("title", "")))
-    total += len(str(embed.get("description", "")))
-
-    footer = embed.get("footer") or {}
-    if isinstance(footer, dict):
-        total += len(str(footer.get("text", "")))
-
-    author = embed.get("author") or {}
-    if isinstance(author, dict):
-        total += len(str(author.get("name", "")))
-
-    for field in embed.get("fields", []) or []:
-        if not isinstance(field, dict):
-            continue
-        total += len(str(field.get("name", "")))
-        total += len(str(field.get("value", "")))
-    return total
+    """Shim over :func:`scripts.libs_py.discord.embed_char_count`."""
+    return _shared_embed_char_count(embed)
 
 
 def _compact_embed(embed: dict[str, Any], max_chars: int = _DISCORD_SAFE_EMBED_BATCH_CHARS) -> dict[str, Any]:
-    """Trim an embed down to Discord-safe limits while preserving key context."""
-    compact: dict[str, Any] = dict(embed)
-
-    title = str(compact.get("title", ""))
-    if title:
-        compact["title"] = _truncate_text(title, 256)
-
-    description = str(compact.get("description", ""))
-    if description:
-        compact["description"] = _truncate_text(description, 4096)
-
-    footer = compact.get("footer")
-    if isinstance(footer, dict) and "text" in footer:
-        footer = dict(footer)
-        footer["text"] = _truncate_text(str(footer.get("text", "")), 2048)
-        compact["footer"] = footer
-
-    fields = compact.get("fields", []) or []
-    normalized_fields: list[dict[str, Any]] = []
-    for field in fields[:25]:
-        if not isinstance(field, dict):
-            continue
-        normalized_fields.append(
-            {
-                "name": _truncate_text(str(field.get("name", "\u200b")), 256),
-                "value": _truncate_text(str(field.get("value", "\u200b")), 1024),
-                "inline": bool(field.get("inline", False)),
-            }
-        )
-    compact["fields"] = normalized_fields
-
-    while _embed_char_count(compact) > max_chars and compact.get("fields"):
-        fields = compact.get("fields", [])
-        if not fields:
-            break
-        if len(fields) > 1:
-            fields.pop()
-        else:
-            fields[0]["value"] = _truncate_text(str(fields[0].get("value", "")), 512)
-            if _embed_char_count(compact) > max_chars:
-                fields[0]["value"] = _truncate_text(str(fields[0].get("value", "")), 256)
-                break
-        compact["fields"] = fields
-
-    return compact
+    """Shim over :func:`scripts.libs_py.discord.compact_embed`."""
+    return _shared_compact_embed(embed, max_chars=max_chars)
 
 
 def _embed_to_content(embed: dict[str, Any]) -> str:
-    """Convert a rejected embed into a plain-text fallback payload."""
-    parts: list[str] = []
-    title = str(embed.get("title", "")).strip()
-    if title:
-        parts.append(f"**{title}**")
-
-    for field in embed.get("fields", []) or []:
-        if not isinstance(field, dict):
-            continue
-        name = str(field.get("name", "")).strip()
-        value = str(field.get("value", "")).strip()
-        if not name and not value:
-            continue
-        if name == "\u200b":
-            parts.append(value)
-        else:
-            parts.append(f"**{name}:** {value}")
-
-    content = "\n".join(parts)
-    return _truncate_text(content, _DISCORD_MAX_CONTENT)
+    """Shim over :func:`scripts.libs_py.discord.embed_to_content`."""
+    return _shared_embed_to_content(embed, max_len=_DISCORD_MAX_CONTENT)
 
 
 def _embed_batches(embeds: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Split embeds by both max count and total character budget."""
-    batches: list[list[dict[str, Any]]] = []
-    current: list[dict[str, Any]] = []
-    current_chars = 0
-
-    for raw_embed in embeds:
-        embed = _compact_embed(raw_embed)
-        embed_chars = _embed_char_count(embed)
-
-        should_flush = bool(current) and (
-            len(current) >= _DISCORD_MAX_EMBEDS
-            or current_chars + embed_chars > _DISCORD_SAFE_EMBED_BATCH_CHARS
-        )
-        if should_flush:
-            batches.append(current)
-            current = []
-            current_chars = 0
-
-        current.append(embed)
-        current_chars += embed_chars
-
-    if current:
-        batches.append(current)
-    return batches
+    """Shim over :func:`scripts.libs_py.discord.embed_batches`."""
+    return _shared_embed_batches(embeds)
 
 
 def _build_scored_fields(scored: ScoredLevels) -> list[dict[str, Any]]:
@@ -442,64 +379,20 @@ def _post_payload(
     files: dict[str, Any] | None = None,
     allow_embed_fallback: bool = True,
 ) -> bool:
-    """POST a Discord webhook payload (JSON or multipart) with error handling."""
-    try:
-        if files:
-            # When sending files, the payload must be passed as 'payload_json' in data
-            resp = requests.post(
-                url, 
-                data={"payload_json": json.dumps(payload)}, 
-                files=files, 
-                timeout=20
-            )
-        else:
-            resp = requests.post(url, json=payload, timeout=10)
+    """POST a Discord webhook payload (JSON or multipart) with error handling.
 
-        if resp.status_code in (200, 204):
-            log.info(
-                "Discord update sent (%d embed(s), %s).",
-                len(payload.get("embeds", [])),
-                "with file" if files else "no file"
-            )
-            return True
-        if (
-            allow_embed_fallback
-            and resp.status_code == 400
-            and payload.get("embeds")
-            and not files
-        ):
-            embeds = payload.get("embeds", []) or []
-            log.warning(
-                "Discord rejected embed payload (HTTP 400). Falling back to text summaries for %d embed(s).",
-                len(embeds),
-            )
-            all_sent = True
-            for embed in embeds:
-                content = _embed_to_content(embed)
-                if not content:
-                    all_sent = False
-                    continue
-                sent = _post_payload(
-                    url,
-                    {"content": content},
-                    files=None,
-                    allow_embed_fallback=False,
-                )
-                all_sent = all_sent and sent
-            return all_sent
-        else:
-            log.warning(
-                "Discord webhook returned HTTP %s: %s",
-                resp.status_code,
-                resp.text[:300],
-            )
-            return False
-    except requests.exceptions.Timeout:
-        log.error("Discord webhook timed out.")
-        return False
-    except requests.exceptions.RequestException as exc:
-        log.error("Discord webhook request failed: %s", exc)
-        return False
+    Thin shim over :func:`scripts.libs_py.discord.webhooks.send_payload`
+    that preserves the historical keyword-only positional contract
+    (URL, payload, files, allow_embed_fallback). Existing tests
+    monkeypatch this name on the module, so the signature must
+    stay stable.
+    """
+    return _shared_send_payload(
+        url,
+        payload,
+        files=files,
+        allow_embed_fallback=allow_embed_fallback,
+    )
 
 
 # ---------------------------------------------------------------------------

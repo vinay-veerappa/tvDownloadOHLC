@@ -255,6 +255,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        /// <summary>Called by the MCP bridge to hot-reload state.json into the live instance.</summary>
+        public void ReloadPersistedState() => LoadPersistedState();
+
         private void LoadPersistedState()
         {
             lock (_stateLock)
@@ -295,6 +298,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     state.PeakEquity = kvp.Value.PeakEquity;
                                     state.LastRealizedPnL = kvp.Value.LastRealizedPnL;
                                     state.SessionStartRealizedPnL = kvp.Value.SessionStartRealizedPnL;
+                                    state.FirmTrailingPeak = kvp.Value.FirmTrailingPeak;
+                                    state.FirmFloorLocked = kvp.Value.FirmFloorLocked;
+                                    state.FirmDailyDate = kvp.Value.FirmDailyDate;
+                                    state.FirmDailyStartRealized = kvp.Value.FirmDailyStartRealized;
+                                    state.FirmStartingBalance = kvp.Value.FirmStartingBalance;
                                 }
                             }
                         }
@@ -324,7 +332,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                             ConsecutiveLosses = state.ConsecutiveLosses,
                             PeakEquity = state.PeakEquity,
                             LastRealizedPnL = state.LastRealizedPnL,
-                            SessionStartRealizedPnL = state.SessionStartRealizedPnL
+                            SessionStartRealizedPnL = state.SessionStartRealizedPnL,
+                            FirmTrailingPeak = state.FirmTrailingPeak,
+                            FirmFloorLocked = state.FirmFloorLocked,
+                            FirmDailyDate = state.FirmDailyDate,
+                            FirmDailyStartRealized = state.FirmDailyStartRealized,
+                            FirmStartingBalance = state.FirmStartingBalance
                         };
                     }
                     var data = new PersistedStateData
@@ -1332,6 +1345,278 @@ namespace NinjaTrader.NinjaScript.AddOns
                 NinjaTrader.Code.Output.Process($"Failed to serialize log: {eventType} for {account}", PrintTo.OutputTab1);
             }
         }
+
+        // ── Firm-mirror logic and unit test diagnostics (FR-24/25/26) ──
+        private List<GuardAction> EvaluateFirmMirror(Account account, AccountState st, DateTime nowEt)
+        {
+            double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
+            double realized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+            double unrealized = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
+
+            var res = ComputeFirmMirror(balance, realized, unrealized, _config.FirmMirror, st, DateTime.UtcNow);
+            
+            if (res.StateChanged)
+            {
+                _stateDirty = true;
+                foreach (var log in res.TraceLogs)
+                {
+                    LogEvent(st.AccountName, "FIRM_STATE_UPDATE", log);
+                }
+            }
+
+            var actions = new List<GuardAction>();
+            if (res.TrailingDDBreached)
+            {
+                LogEvent(st.AccountName, "FIRM_TRAILING_DD_BREACH", new JObject
+                {
+                    { "currentFirmEquity", balance + unrealized },
+                    { "guardFloor", res.GuardFloor },
+                    { "effectiveFloor", res.EffectiveFloor },
+                    { "trailingPeak", res.TrailingPeak },
+                    { "floorLocked", res.FloorLocked },
+                    { "amount", _config.FirmMirror.TrailingDD.Amount },
+                    { "buffer", _config.FirmMirror.TrailingDD.Buffer }
+                });
+
+                actions.Add(new GuardAction
+                {
+                    AccountName = st.AccountName,
+                    ActionType = GuardActionType.FlattenPosition,
+                    RuleId = "FIRM_TRAILING_DD_BREACH"
+                });
+                if (!st.IsLockedOut) { st.IsLockedOut = true; _stateDirty = true; }
+            }
+
+            if (res.DailyLossBreached)
+            {
+                double dayRealized = realized - st.FirmDailyStartRealized;
+                double dayPnL = _config.FirmMirror.DailyLoss.Basis == "include_unrealized_peak"
+                    ? dayRealized + unrealized
+                    : dayRealized;
+
+                LogEvent(st.AccountName, "FIRM_DAILY_LOSS_BREACH", new JObject
+                {
+                    { "dayPnL", dayPnL },
+                    { "guardLimit", res.GuardDailyLimit },
+                    { "basis", _config.FirmMirror.DailyLoss.Basis },
+                    { "amount", _config.FirmMirror.DailyLoss.Amount },
+                    { "buffer", _config.FirmMirror.DailyLoss.Buffer }
+                });
+
+                actions.Add(new GuardAction
+                {
+                    AccountName = st.AccountName,
+                    ActionType = GuardActionType.FlattenPosition,
+                    RuleId = "FIRM_DAILY_LOSS_BREACH"
+                });
+                if (!st.IsLockedOut) { st.IsLockedOut = true; _stateDirty = true; }
+            }
+
+            return actions;
+        }
+
+        public static FirmMirrorResult ComputeFirmMirror(
+            double balance, 
+            double realized, 
+            double unrealized, 
+            FirmMirrorConfig fm, 
+            AccountState st, 
+            DateTime nowUtc)
+        {
+            var result = new FirmMirrorResult();
+            bool stateChanged = false;
+
+            if (st.FirmStartingBalance == 0.0)
+            {
+                st.FirmStartingBalance = balance - realized - unrealized;
+                result.TraceLogs.Add($"Initial starting balance captured heuristically: {st.FirmStartingBalance}");
+                stateChanged = true;
+            }
+
+            var boundary = new TimeSpan(fm.DailyResetHourUtc, fm.DailyResetMinuteUtc, 0);
+            DateTime firmDailyDate = nowUtc.TimeOfDay >= boundary ? nowUtc.Date.AddDays(1) : nowUtc.Date;
+            if (st.FirmDailyDate != firmDailyDate)
+            {
+                st.FirmDailyDate = firmDailyDate;
+                st.FirmDailyStartRealized = realized;
+                result.TraceLogs.Add($"Firm daily boundary rollover for {firmDailyDate:yyyy-MM-dd} (UTC {fm.DailyResetHourUtc:00}:{fm.DailyResetMinuteUtc:00})");
+                stateChanged = true;
+            }
+
+            if (fm.TrailingDD.Enabled)
+            {
+                double firmEquity = fm.TrailingDD.IncludesUnrealized
+                    ? balance + unrealized
+                    : balance;
+
+                if (fm.TrailingDD.Type == "eod")
+                {
+                    firmEquity = balance;
+                }
+
+                if (!st.FirmFloorLocked)
+                {
+                    if (firmEquity > st.FirmTrailingPeak)
+                    {
+                        st.FirmTrailingPeak = firmEquity;
+                        result.TraceLogs.Add($"Firm trailing peak advanced to: {st.FirmTrailingPeak}");
+                        stateChanged = true;
+                    }
+
+                    if (fm.TrailingDD.LockAtProfit > 0.0 && st.FirmStartingBalance > 0.0)
+                    {
+                        if (st.FirmTrailingPeak >= st.FirmStartingBalance + fm.TrailingDD.LockAtProfit)
+                        {
+                            st.FirmFloorLocked = true;
+                            result.TraceLogs.Add($"Trailing floor locked at starting balance. Peak={st.FirmTrailingPeak}, start={st.FirmStartingBalance}");
+                            stateChanged = true;
+                        }
+                    }
+                }
+
+                double effectiveFloor = st.FirmFloorLocked
+                    ? st.FirmStartingBalance
+                    : st.FirmTrailingPeak - fm.TrailingDD.Amount;
+
+                double guardFloor = effectiveFloor + fm.TrailingDD.Buffer;
+
+                if (fm.TrailingDD.Type == "static" && st.FirmStartingBalance > 0.0)
+                {
+                    guardFloor = (st.FirmStartingBalance - fm.TrailingDD.Amount) + fm.TrailingDD.Buffer;
+                }
+
+                result.EffectiveFloor = effectiveFloor;
+                result.GuardFloor = guardFloor;
+                result.TrailingPeak = st.FirmTrailingPeak;
+                result.FloorLocked = st.FirmFloorLocked;
+
+                double currentFirmEquity = balance + unrealized;
+                if (currentFirmEquity <= guardFloor)
+                {
+                    result.TrailingDDBreached = true;
+                }
+            }
+
+            if (fm.DailyLoss.Enabled)
+            {
+                double dayRealized = realized - st.FirmDailyStartRealized;
+                double dayPnL = fm.DailyLoss.Basis == "include_unrealized_peak"
+                    ? dayRealized + unrealized
+                    : dayRealized;
+
+                double guardLimit = -(fm.DailyLoss.Amount - fm.DailyLoss.Buffer);
+                result.GuardDailyLimit = guardLimit;
+
+                if (dayPnL <= guardLimit)
+                {
+                    result.DailyLossBreached = true;
+                }
+            }
+
+            result.StateChanged = stateChanged;
+            return result;
+        }
+
+        public FirmDiagnosticsResult RunFirmDiagnostics()
+        {
+            var res = new FirmDiagnosticsResult();
+            res.Logs.Add("Starting Firm Mirror Unit Diagnostics...");
+
+            try
+            {
+                var st = new AccountState("SimMock");
+                st.FirmStartingBalance = 100000.0;
+                st.FirmTrailingPeak = 100000.0;
+                st.FirmFloorLocked = false;
+                st.FirmDailyDate = new DateTime(2026, 7, 15);
+                st.FirmDailyStartRealized = 0.0;
+
+                var fm = new FirmMirrorConfig
+                {
+                    Enabled = true,
+                    DailyResetHourUtc = 22,
+                    DailyResetMinuteUtc = 0,
+                    TrailingDD = new FirmTrailingDDConfig
+                    {
+                        Enabled = true,
+                        Type = "intraday",
+                        IncludesUnrealized = true,
+                        Amount = 2500.0,
+                        Buffer = 300.0,
+                        LockAtProfit = 3000.0
+                    },
+                    DailyLoss = new FirmDailyLossConfig
+                    {
+                        Enabled = true,
+                        Basis = "realized",
+                        Amount = 1500.0,
+                        Buffer = 200.0
+                    }
+                };
+
+                // Test 1: Trailing DD buffer breach
+                res.Logs.Add("[Test 1: Trailing DD] Advancing equity to 102,000...");
+                var r1 = ComputeFirmMirror(102000.0, 2000.0, 0.0, fm, st, new DateTime(2026, 7, 15, 12, 0, 0, DateTimeKind.Utc));
+                res.Logs.AddRange(r1.TraceLogs);
+                if (st.FirmTrailingPeak != 102000.0) throw new Exception("Peak did not trail up to 102,000.");
+                if (r1.GuardFloor != 99800.0) throw new Exception(string.Format("Expected guard floor to be 99,800, got {0}", r1.GuardFloor));
+
+                res.Logs.Add("Dropping equity to 99,900...");
+                var r2 = ComputeFirmMirror(99900.0, -100.0, 0.0, fm, st, new DateTime(2026, 7, 15, 13, 0, 0, DateTimeKind.Utc));
+                if (r2.TrailingDDBreached) throw new Exception("Trailing DD breached prematurely at 99,900.");
+
+                res.Logs.Add("Dropping equity to 99,750...");
+                var r3 = ComputeFirmMirror(99750.0, -250.0, 0.0, fm, st, new DateTime(2026, 7, 15, 14, 0, 0, DateTimeKind.Utc));
+                if (!r3.TrailingDDBreached) throw new Exception("Guard floor failed to trip at 99,750 (buffer-adjusted floor = 99,800).");
+                res.Logs.Add("Test 1 Passed: Trailing DD buffer breach triggered correctly.");
+
+                // Test 2: Floor Lock
+                st.FirmStartingBalance = 100000.0;
+                st.FirmTrailingPeak = 100000.0;
+                st.FirmFloorLocked = false;
+
+                res.Logs.Add("[Test 2: Floor Lock] Advancing equity to 103,500...");
+                var r4 = ComputeFirmMirror(103500.0, 3500.0, 0.0, fm, st, new DateTime(2026, 7, 15, 15, 0, 0, DateTimeKind.Utc));
+                res.Logs.AddRange(r4.TraceLogs);
+                if (!st.FirmFloorLocked) throw new Exception("Floor did not lock after peak crossed LockAtProfit.");
+
+                res.Logs.Add("Dropping equity to 100,250...");
+                var r5 = ComputeFirmMirror(100250.0, 250.0, 0.0, fm, st, new DateTime(2026, 7, 15, 16, 0, 0, DateTimeKind.Utc));
+                if (!r5.TrailingDDBreached) throw new Exception("Floor lock trailing DD failed to trip at 100,250.");
+                res.Logs.Add("Test 2 Passed: Floor lock and breach verified.");
+
+                // Test 3: Daily loss UTC boundary rollover & limit breach
+                st.FirmDailyDate = DateTime.MinValue;
+                st.FirmDailyStartRealized = 0.0;
+                res.Logs.Add("[Test 3: Daily Loss] Initializing daily loss trace at 20:00 UTC...");
+                var r6 = ComputeFirmMirror(100000.0, 0.0, 0.0, fm, st, new DateTime(2026, 7, 15, 20, 0, 0, DateTimeKind.Utc));
+                res.Logs.AddRange(r6.TraceLogs);
+
+                res.Logs.Add("Rollover daily reset boundary (23:00 UTC)...");
+                var r7 = ComputeFirmMirror(102000.0, 2000.0, 0.0, fm, st, new DateTime(2026, 7, 15, 23, 0, 0, DateTimeKind.Utc));
+                res.Logs.AddRange(r7.TraceLogs);
+                if (st.FirmDailyStartRealized != 2000.0) throw new Exception("Failed to reset daily realized baseline.");
+
+                res.Logs.Add("Post-rollover loss of 1,200...");
+                var r8 = ComputeFirmMirror(100800.0, 800.0, 0.0, fm, st, new DateTime(2026, 7, 16, 0, 0, 0, DateTimeKind.Utc));
+                if (r8.DailyLossBreached) throw new Exception("Daily loss breached prematurely at -1,200 loss.");
+
+                res.Logs.Add("Post-rollover loss of 1,350...");
+                var r9 = ComputeFirmMirror(100650.0, 650.0, 0.0, fm, st, new DateTime(2026, 7, 16, 1, 0, 0, DateTimeKind.Utc));
+                if (!r9.DailyLossBreached) throw new Exception("Daily loss failed to breach at -1,350 (limit=-1,300).");
+                res.Logs.Add("Test 3 Passed: Daily reset and daily loss limit verified.");
+
+                res.Success = true;
+                res.Logs.Add("All diagnostics passed!");
+            }
+            catch (Exception ex)
+            {
+                res.Success = false;
+                res.Logs.Add("ERROR: " + ex.Message);
+            }
+
+            return res;
+        }
     }
 
     public enum GuardActionType
@@ -1370,6 +1655,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         public DateTime CooldownUntil { get; set; } = DateTime.MinValue;
         public double LastRealizedPnL { get; set; } = 0.0; // To track delta for consec losses
         public double SessionStartRealizedPnL { get; set; } = 0.0; // Baseline for session PnL
+
+        // ── Firm-mirror tracking (independent of discretionary PeakEquity) ──
+        public double FirmTrailingPeak { get; set; } = double.MinValue;
+        public bool FirmFloorLocked { get; set; } = false;
+        public DateTime FirmDailyDate { get; set; } = DateTime.MinValue;
+        public double FirmDailyStartRealized { get; set; } = 0.0;
+        public double FirmStartingBalance { get; set; } = 0.0;
 
         public AccountState(string name)
         {
@@ -1457,6 +1749,25 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
     }
 
+    public class FirmMirrorResult
+    {
+        public bool TrailingDDBreached { get; set; }
+        public bool DailyLossBreached { get; set; }
+        public double TrailingPeak { get; set; }
+        public bool FloorLocked { get; set; }
+        public double EffectiveFloor { get; set; }
+        public double GuardFloor { get; set; }
+        public double GuardDailyLimit { get; set; }
+        public bool StateChanged { get; set; }
+        public List<string> TraceLogs { get; set; } = new List<string>();
+    }
+
+    public class FirmDiagnosticsResult
+    {
+        public bool Success { get; set; }
+        public List<string> Logs { get; set; } = new List<string>();
+    }
+
     public class PositionState
     {
         public string Instrument { get; }
@@ -1494,6 +1805,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double PeakEquity { get; set; }
         public double LastRealizedPnL { get; set; }
         public double SessionStartRealizedPnL { get; set; }
+        public double FirmTrailingPeak { get; set; }
+        public bool FirmFloorLocked { get; set; }
+        public DateTime FirmDailyDate { get; set; }
+        public double FirmDailyStartRealized { get; set; }
+        public double FirmStartingBalance { get; set; }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1508,11 +1824,39 @@ namespace NinjaTrader.NinjaScript.AddOns
         public OvertradingConfig Overtrading { get; set; } = new OvertradingConfig();
         public StopGuardConfig StopGuard { get; set; } = new StopGuardConfig();
         public PnLRulesConfig PnLRules { get; set; } = new PnLRulesConfig();
+        public FirmMirrorConfig FirmMirror { get; set; } = new FirmMirrorConfig();
         public List<WindowConfig> WindowsET { get; set; } = new List<WindowConfig>
         {
             new WindowConfig { Name = "NY_AM_Macro", Start = "09:50", End = "11:10" },
             new WindowConfig { Name = "NY_PM_Macro", Start = "13:50", End = "15:10" }
         };
+    }
+
+    public class FirmMirrorConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public FirmTrailingDDConfig TrailingDD { get; set; } = new FirmTrailingDDConfig();
+        public FirmDailyLossConfig DailyLoss { get; set; } = new FirmDailyLossConfig();
+        public int DailyResetHourUtc { get; set; } = 22;
+        public int DailyResetMinuteUtc { get; set; } = 0;
+    }
+
+    public class FirmTrailingDDConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Type { get; set; } = "intraday";
+        public bool IncludesUnrealized { get; set; } = true;
+        public double Amount { get; set; } = 2500.0;
+        public double Buffer { get; set; } = 300.0;
+        public double LockAtProfit { get; set; } = 0.0;
+    }
+
+    public class FirmDailyLossConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Basis { get; set; } = "realized";
+        public double Amount { get; set; } = 1500.0;
+        public double Buffer { get; set; } = 200.0;
     }
 
     public class SizingConfig

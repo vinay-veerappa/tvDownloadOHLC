@@ -39,6 +39,21 @@ This central catalog documents all strategies, hunters, and statistical models i
 
 ---
 
+## 🧩 4. ICT Suite (Layer 4)
+
+| Strategy | Standard | Location | Status |
+| :--- | :--- | :--- | :--- |
+| **ICT Displacement (MSS/BOS)** | **ADR-017** | `scripts/strategies/ict/strategies/ict_displacement.py` | **Vectorized ✅** |
+| **ICT Liquidity Sweep (CISD)** | **ADR-017** | `scripts/strategies/ict/strategies/ict_liquidity_sweep.py` | **Vectorized ✅** |
+| **ICT FVG Rejection** | **ADR-017** | `scripts/strategies/ict/strategies/ict_fvg_rejection.py` | **Vectorized ✅** |
+| **ICT NY Session KZ** | **ADR-017** | `scripts/strategies/ict/strategies/ict_ny_session.py` | **Vectorized ✅** |
+| **ICT Asia Volatility** | **ADR-017** | `scripts/strategies/ict/strategies/ict_asia_volatility.py` | **Vectorized ✅** |
+| **FVG+CISD Rejection** | **ADR-017** | `scripts/strategies/ict/strategies/ict_fvg_cisd_rejection.py` | **🚧 In Progress** |
+
+> **FVG+CISD Rejection Spec**: `docs/strategies/fvg_cisd_rejection/FVG_CISD_REJECTION_STRATEGY.md`
+> Multi-arm sweep testing HTF FVG draw → rejection-leg LTF FVG → CISD + MSS confirmation → entry.
+> 1,152 config arms, all metrics in price %, comparison report output.
+
 ## 📊 3. Descriptive Statistics (Research Tools)
 
 > **Note**: These are statistical verifiers for pattern discovery — not trading strategies.

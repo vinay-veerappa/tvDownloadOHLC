@@ -1,0 +1,1602 @@
+"""Daily Profiler signal — replicates the PineScript auto-filter logic.
+
+All data comes from the **precomputed profiler JSON files** (the same files the
+web UI uses). No 1m parquet is needed.
+
+The module replicates the exact filtering logic from the PineScript indicator
+(`ProfilerIndicator.pine`):
+
+1. **Auto-detect target session** — which session are we predicting next?
+   Based on which sessions have completed their play windows.
+
+2. **Build filter signature** from resolved sessions — using the Context
+   Dependency Chain from PROFILER_ARCHITECTURE.md:
+     Asia  → prev NY1 + prev NY2
+     London → curr Asia + prev NY2
+     NY1   → curr Asia + curr London
+     NY2   → curr Asia + curr London + curr NY1
+
+3. **Filter all historical days** using the `f_match` logic:
+   - Status: exact match (historical status == live status)
+   - Broken: ASYMMETRIC — if live is NOT broken, match any. If live IS broken,
+     historical MUST also be broken. (A held session is a stronger signal;
+     a broken one can't filter out held historical days.)
+
+4. **Tally outcomes** for the target session from matching days →
+   probabilities, price stats (HOD/LOD %), level touch rates.
+
+5. **Hierarchical fallback** (S3 architecture): if full context has < 30
+   samples, fall back to fewer context dimensions.
+
+Session definitions (ET, from PROFILER_REQUIREMENTS.md):
+  Classification windows (where the box H/L is set):
+    Asia    18:00-19:29
+    London  02:30-03:29
+    NY1     07:30-08:29
+    NY2     11:30-12:29
+  Full session windows (where status is determined):
+    Asia    19:30-02:29
+    London  03:30-07:29
+    NY1     08:30-11:29
+    NY2     12:30-15:59
+  Broken windows:
+    Asia    02:30-17:00
+    London  07:30-17:00
+    NY1     11:30-17:00
+    NY2     16:00-17:00
+
+Status codes (numeric, from PineScript):
+  0 = Neutral (not started)
+  1 = Long True (PENDING — can still flip to 2)
+  2 = Long False (FINAL)
+  3 = Short True (PENDING — can still flip to 4)
+  4 = Short False (FINAL)
+
+Data files (all in ``data/``):
+  - ``{ticker}_profiler.json``        — session records (full history)
+  - ``{ticker}_level_touches.json``   — per-day level touch data
+  - ``{ticker}_asia_predictions.json`` — precomputed: prev_ny1|prev_ny2 → Asia
+  - ``{ticker}_london_predictions.json``— precomputed: prev_ny2|curr_asia → London
+"""
+from __future__ import annotations
+
+import json
+import logging
+from collections import defaultdict
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+_REPO = Path(__file__).parent.parent.parent.parent
+_DATA = _REPO / "data"
+
+# Session order through the trading day
+SESSION_ORDER = ["Asia", "London", "NY1", "NY2"]
+
+# Status string ↔ numeric code mapping (from PineScript f_calc_status)
+_STATUS_TO_CODE = {
+    "None": 0, "Long True": 1, "Long False": 2,
+    "Short True": 3, "Short False": 4,
+}
+_CODE_TO_STATUS = {v: k for k, v in _STATUS_TO_CODE.items()}
+
+# Short status codes for compact display
+_STATUS_SHORT = {
+    "Long True": "LT", "Short True": "ST",
+    "Long False": "LF", "Short False": "SF",
+    "None": "—",
+}
+
+# Level display names
+_LEVEL_NAMES = {
+    "pdh": "PDH", "pdl": "PDL", "pdm": "PDM",
+    "p12h": "P12H", "p12l": "P12L", "p12m": "P12M",
+    "ny_p12h": "NY P12H", "ny_p12l": "NY P12L", "ny_p12m": "NY P12M",
+    "daily_open": "Globex Open", "midnight_open": "Midnight", "open_0730": "07:30 Open",
+    "asia_mid": "Asia Mid", "london_mid": "Lon Mid",
+    "ny1_mid": "NY1 Mid", "ny2_mid": "NY2 Mid",
+    "prev_asia_mid": "Prev Asia Mid", "prev_london_mid": "Prev Lon Mid",
+    "prev_ny1_mid": "Prev NY1 Mid", "prev_ny2_mid": "Prev NY2 Mid",
+}
+
+_PRIMARY_LEVELS = [
+    "pdh", "pdl", "p12h", "p12m", "p12l",
+    "ny_p12h", "ny_p12m", "ny_p12l",
+    "daily_open", "midnight_open", "open_0730",
+]
+
+# Minimum sample size for hierarchical fallback (S3 architecture)
+_MIN_SAMPLES = 30
+
+# Session play windows in minutes from midnight ET
+# (for filtering level touch_times by session)
+# Asia:    19:30-02:29 (wraps midnight)
+# London:  03:30-07:29
+# NY1:     08:30-11:29
+# NY2:     12:30-16:59
+_SESSION_PLAY_WINDOWS = {
+    "Asia": (19 * 60 + 30, 2 * 60 + 29),     # wraps midnight
+    "London": (3 * 60 + 30, 7 * 60 + 29),
+    "NY1": (8 * 60 + 30, 11 * 60 + 29),
+    "NY2": (12 * 60 + 30, 16 * 60 + 59),
+}
+
+# Context dependency chain (from PROFILER_ARCHITECTURE.md §6)
+# Each target session depends on these context sessions:
+#   - "prev:" prefix means use previous trading day's session
+#   - no prefix means use current day's session
+CONTEXT_CHAIN = {
+    "Asia":   [("prev:NY1", "NY1"), ("prev:NY2", "NY2")],
+    "London": [("curr:Asia", "Asia"), ("prev:NY2", "NY2")],
+    "NY1":    [("curr:Asia", "Asia"), ("curr:London", "London")],
+    "NY2":    [("curr:Asia", "Asia"), ("curr:London", "London"), ("curr:NY1", "NY1")],
+}
+
+
+# ─── Data loading ─────────────────────────────────────────────────────
+
+
+def _load_json(path: Path) -> Any:
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        log.warning("[profiler] Failed to load %s: %s", path.name, e)
+    return None
+
+
+def _load_profiler_sessions(ticker: str) -> list[dict]:
+    data = _load_json(_DATA / f"{ticker}_profiler.json")
+    if not isinstance(data, list):
+        return []
+    return data
+
+
+def _load_level_touches(ticker: str) -> dict:
+    data = _load_json(_DATA / f"{ticker}_level_touches.json")
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _load_daily_hod_lod(ticker: str) -> dict:
+    """Load per-day full-day HOD/LOD data (times + prices + daily open).
+
+    Record format: {hod_time, lod_time, hod_price, lod_price, daily_open, ...}
+    These are the TRUE daily HOD/LOD — not the classification window values.
+    """
+    data = _load_json(_DATA / f"{ticker}_daily_hod_lod.json")
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+# ─── Pivoting (date → session → record) ──────────────────────────────
+
+
+def _build_pivots(sessions: list[dict]) -> tuple[dict, list[str]]:
+    """Build date → session → record pivot. Returns (pivot, sorted_dates)."""
+    pivot: dict[str, dict[str, dict]] = defaultdict(dict)
+    for s in sessions:
+        d = s.get("date")
+        sess = s.get("session")
+        if d and sess:
+            pivot[d][sess] = s
+    dates = sorted(pivot.keys())
+    return dict(pivot), dates
+
+
+def _get_prev_date(dates: list[str], target_date: str) -> str | None:
+    """Get the trading date immediately before target_date."""
+    prev = None
+    for d in dates:
+        if d < target_date:
+            prev = d
+        else:
+            break
+    return prev
+
+
+def _get_latest_date(dates: list[str]) -> str | None:
+    return dates[-1] if dates else None
+
+
+# ─── f_match logic (from PineScript) ──────────────────────────────────
+
+
+def _status_to_code(status: str) -> int:
+    """Convert status string to numeric code."""
+    return _STATUS_TO_CODE.get(status, 0)
+
+
+def _f_match_status(hist_code: int, live_code: int, loose: bool) -> bool:
+    """Replicate PineScript f_match status logic.
+
+    loose=True: pending states match their final versions
+      - live=1 (LT pending) matches hist=1 (LT) or hist=2 (LF)
+      - live=3 (ST pending) matches hist=3 (ST) or hist=4 (SF)
+    loose=False: exact match only
+    """
+    if live_code == 0:
+        return True  # No filter set
+    if loose:
+        if live_code == 1:
+            return hist_code in (1, 2)
+        elif live_code == 3:
+            return hist_code in (3, 4)
+        else:
+            return hist_code == live_code
+    else:
+        return hist_code == live_code
+
+
+def _f_match_broken(hist_broken: bool, live_broken: bool) -> bool:
+    """Replicate PineScript f_match broken logic.
+
+    ASYMMETRIC:
+    - If live is NOT broken → match any historical (both broken and held)
+    - If live IS broken → historical MUST also be broken
+
+    This is because a held session is a stronger structural signal.
+    A broken session doesn't filter out held historical days.
+    """
+    if not live_broken:
+        return True  # No filter
+    return hist_broken  # Must match
+
+
+def _f_match(hist_status: str, hist_broken: bool, live_status: str, live_broken: bool, loose: bool) -> bool:
+    """Full f_match: status AND broken check."""
+    hc = _status_to_code(hist_status)
+    lc = _status_to_code(live_status)
+    return _f_match_status(hc, lc, loose) and _f_match_broken(hist_broken, live_broken)
+
+
+# ─── Auto target detection (from PineScript tgt_idx logic) ────────────
+
+
+def _detect_target_session(
+    now_et: datetime | None = None,
+    resolved_sessions: dict[str, dict] | None = None,
+) -> tuple[int, str]:
+    """Auto-detect which session to predict next.
+
+    Replicates PineScript tgt_idx logic:
+      fin_asia (after 02:30) → tgt=1 (predicting London)
+      fin_lon  (after 07:30) → tgt=2 (predicting NY1)
+      fin_ny1  (after 11:30) → tgt=3 (predicting NY2)
+      fin_ny2  (after 16:15) → tgt=4 (all done, next day Asia)
+
+    If we don't have a live clock (offline mode), use resolved sessions:
+      If NY2 has status → predicting next day Asia
+      If NY1 has status → predicting NY2
+      If London has status → predicting NY1
+      If Asia has status → predicting London
+      Else → predicting Asia
+
+    Returns:
+        (tgt_idx, target_session_name)
+        tgt_idx: 0=Asia, 1=London, 2=NY1, 3=NY2
+    """
+    if now_et is not None:
+        t = now_et.time()
+        from datetime import time as dt_time
+        if t >= dt_time(16, 15):
+            return 0, "Asia"  # All done, next day
+        if t >= dt_time(11, 30):
+            return 3, "NY2"
+        if t >= dt_time(7, 30):
+            return 2, "NY1"
+        if t >= dt_time(2, 30):
+            return 1, "London"
+        return 0, "Asia"
+
+    # Offline mode: use resolved sessions from profiler JSON
+    if resolved_sessions is None:
+        resolved_sessions = {}
+
+    # Walk through session order — first unresolved session is the target
+    for idx, sess in enumerate(SESSION_ORDER):
+        rec = resolved_sessions.get(sess)
+        if not rec or not rec.get("status"):
+            return idx, sess
+
+    # All resolved → predicting next day Asia
+    return 0, "Asia"
+
+
+# ─── Core filtering engine ────────────────────────────────────────────
+
+
+def _get_context_values(
+    target_session: str,
+    pivot: dict[str, dict[str, dict]],
+    curr_date: str,
+    prev_date: str | None,
+) -> list[tuple[str, str, bool]]:
+    """Get context session values for a target session (from JSON pivot)."""
+    chain = CONTEXT_CHAIN.get(target_session, [])
+    context = []
+    for ctx_spec, sess_name in chain:
+        if ctx_spec.startswith("prev:"):
+            if prev_date is None:
+                continue
+            rec = pivot.get(prev_date, {}).get(sess_name, {})
+        else:
+            rec = pivot.get(curr_date, {}).get(sess_name, {})
+        status = rec.get("status", "")
+        broken = rec.get("broken", False)
+        if status:
+            context.append((sess_name, status, broken))
+    return context
+
+
+def _get_context_values_live(
+    target_session: str,
+    live_sessions: dict[str, dict],
+    prev_sessions: dict[str, dict],
+) -> list[tuple[str, str, bool]]:
+    """Get context session values from live computed sessions.
+
+    Uses live session data (from 1m parquet) for current-day context
+    and prev_sessions (from JSON or live) for prev-day context.
+
+    Args:
+        live_sessions: {session_name: {status, broken, ...}} for current day.
+        prev_sessions: {session_name: {status, broken, ...}} for previous day.
+    """
+    chain = CONTEXT_CHAIN.get(target_session, [])
+    context = []
+    for ctx_spec, sess_name in chain:
+        if ctx_spec.startswith("prev:"):
+            rec = prev_sessions.get(sess_name, {})
+        else:
+            rec = live_sessions.get(sess_name, {})
+        status = rec.get("status", "")
+        broken = rec.get("broken", False)
+        if status:
+            context.append((sess_name, status, broken))
+    return context
+
+
+def _filter_historical_days(
+    pivot: dict[str, dict[str, dict]],
+    dates: list[str],
+    target_session: str,
+    context_values: list[tuple[str, str, bool]],
+    target_loose: bool = False,
+    fallback_level: int = 0,
+) -> list[str]:
+    """Filter historical days matching the context signature.
+
+    Replicates the PineScript filter loop:
+      1. For each historical day, check if context sessions match
+      2. Uses f_match logic (status exact + broken asymmetric)
+      3. Returns list of matching dates
+
+    Args:
+        target_session: The session we're predicting.
+        context_values: [(sess_name, status, broken)] from current day.
+        target_loose: If True, use loose matching for target session.
+        fallback_level: 0=full context, 1=reduced context, 2=no context.
+            (Hierarchical fallback from S3 architecture.)
+    """
+    # Determine which context sessions to use based on fallback level
+    if fallback_level > 0:
+        # Drop context sessions from the front (most distant context first)
+        effective_context = context_values[fallback_level:]
+    else:
+        effective_context = context_values
+
+    # Build context session map: session_name → (status, broken)
+    ctx_map: dict[str, tuple[str, bool]] = {}
+    for sess_name, status, broken in effective_context:
+        ctx_map[sess_name] = (status, broken)
+
+    # Determine which context sessions come from prev day vs curr day
+    chain = CONTEXT_CHAIN.get(target_session, [])
+    prev_sessions = set()
+    curr_sessions = set()
+    for ctx_spec, sess_name in chain:
+        if ctx_spec.startswith("prev:"):
+            prev_sessions.add(sess_name)
+        else:
+            curr_sessions.add(sess_name)
+
+    matched_dates: list[str] = []
+
+    for i, curr_date in enumerate(dates):
+        # Skip the current day itself (can't use it as historical)
+        # and skip first day (no prev date)
+        if i == 0:
+            continue
+
+        prev_date = dates[i - 1] if i > 0 else None
+
+        # Check each context session
+        ok = True
+        for sess_name, (live_status, live_broken) in ctx_map.items():
+            # Determine if this context comes from prev day or curr day
+            if sess_name in prev_sessions:
+                hist_rec = pivot.get(prev_date, {}).get(sess_name, {})
+            else:
+                hist_rec = pivot.get(curr_date, {}).get(sess_name, {})
+
+            hist_status = hist_rec.get("status", "")
+            hist_broken = hist_rec.get("broken", False)
+
+            # Use strict matching for context sessions (not loose)
+            if not _f_match(hist_status, hist_broken, live_status, live_broken, loose=False):
+                ok = False
+                break
+
+        if ok:
+            matched_dates.append(curr_date)
+
+    return matched_dates
+
+
+def _mode_bucket(values: list[float]) -> float:
+    """Compute mode bucket (0.1% width) for a list of percentage values."""
+    if not values:
+        return 0.0
+    bucket_counts: dict[float, int] = defaultdict(int)
+    for v in values:
+        bucket = round(v, 1)
+        bucket_counts[bucket] += 1
+    return max(bucket_counts, key=bucket_counts.get) if bucket_counts else 0.0
+
+
+def _time_mode_bucket(times: list[str]) -> str:
+    """Compute mode 15-minute time bucket from a list of HH:MM strings."""
+    if not times:
+        return ""
+    bucket_counts: dict[str, int] = defaultdict(int)
+    for t in times:
+        try:
+            h, m = map(int, t.split(":"))
+            m_bucket = (m // 15) * 15
+            bucket = f"{h:02d}:{m_bucket:02d}"
+            bucket_counts[bucket] += 1
+        except Exception:
+            continue
+    if not bucket_counts:
+        return ""
+    mode = max(bucket_counts, key=bucket_counts.get)
+    # Format as range: "HH:MM-HH:15"
+    h, m = map(int, mode.split(":"))
+    end_m = m + 15
+    end_h = h
+    if end_m >= 60:
+        end_m -= 60
+        end_h += 1
+    return f"{mode}-{end_h:02d}:{end_m:02d}"
+
+
+def _compute_prediction_from_matches(
+    pivot: dict[str, dict[str, dict]],
+    matched_dates: list[str],
+    target_session: str,
+    live_status: str = "",
+    target_loose: bool = False,
+    daily_hod_lod: dict | None = None,
+) -> dict | None:
+    """Compute prediction stats from matched historical dates.
+
+    Uses daily_hod_lod.json for full-day HOD/LOD times and price distribution
+    (same as the web UI's OutcomeDetailView which uses dailyHodLod for
+    HOD/LOD charts and RangeDistribution).
+
+    Level touch rates use level_touches.json per-day touches (not filtered
+    by session play window) — same as the web UI's DailyLevels component.
+
+    Returns:
+        {probabilities, price_stats, broken_rates, samples, possible_outcomes, hod_lod_times}
+    """
+    if not matched_dates:
+        return None
+
+    # Determine which outcomes are possible given the live status
+    possible_outcomes = None
+    if target_loose and live_status:
+        live_code = _STATUS_TO_CODE.get(live_status, 0)
+        if live_code == 1:
+            possible_outcomes = ["Long True", "Long False"]
+        elif live_code == 3:
+            possible_outcomes = ["Short True", "Short False"]
+        elif live_code == 0:
+            possible_outcomes = ["Long True", "Short True", "Long False", "Short False", "None"]
+        elif live_code == 2:
+            possible_outcomes = ["Long False"]
+        elif live_code == 4:
+            possible_outcomes = ["Short False"]
+
+    if possible_outcomes is None:
+        possible_outcomes = ["Long True", "Short True", "Long False", "Short False", "None"]
+
+    status_counts: dict[str, int] = defaultdict(int)
+    price_data: dict[str, list[dict]] = defaultdict(list)
+    broken_counts: dict[str, int] = defaultdict(int)
+    hod_times_by_outcome: dict[str, list[str]] = defaultdict(list)
+    lod_times_by_outcome: dict[str, list[str]] = defaultdict(list)
+    # Track matched dates per outcome for level hit rate computation
+    dates_by_outcome: dict[str, list[str]] = defaultdict(list)
+
+    for d in matched_dates:
+        rec = pivot.get(d, {}).get(target_session, {})
+        status = rec.get("status", "")
+        if not status or status not in possible_outcomes:
+            continue
+
+        status_counts[status] += 1
+        if rec.get("broken"):
+            broken_counts[status] += 1
+
+        # HOD/LOD times and prices: use daily_hod_lod (full-day) — same as web UI
+        if daily_hod_lod:
+            day_hl = daily_hod_lod.get(d, {})
+            ht = day_hl.get("hod_time")
+            lt = day_hl.get("lod_time")
+            daily_open = day_hl.get("daily_open")
+            hod_price = day_hl.get("hod_price")
+            lod_price = day_hl.get("lod_price")
+            if daily_open and daily_open > 0:
+                h_pct = round((hod_price / daily_open - 1) * 100, 2) if hod_price is not None else None
+                l_pct = round((lod_price / daily_open - 1) * 100, 2) if lod_price is not None else None
+            else:
+                h_pct = rec.get("high_pct")
+                l_pct = rec.get("low_pct")
+        else:
+            ht = rec.get("high_time")
+            lt = rec.get("low_time")
+            h_pct = rec.get("high_pct")
+            l_pct = rec.get("low_pct")
+
+        if h_pct is not None and l_pct is not None:
+            price_data[status].append({"h": h_pct, "l": l_pct})
+
+        if ht:
+            hod_times_by_outcome[status].append(ht)
+        if lt:
+            lod_times_by_outcome[status].append(lt)
+
+        dates_by_outcome[status].append(d)
+
+    actual_total = sum(status_counts.values())
+    if actual_total == 0:
+        return None
+
+    # Probabilities (only for possible outcomes)
+    probs = {}
+    for status in possible_outcomes:
+        c = status_counts.get(status, 0)
+        if c > 0:
+            probs[status] = round(c / actual_total, 3)
+
+    # Price stats per outcome with mode-to-median span
+    price_stats: dict[str, dict] = {}
+    for status, vals in price_data.items():
+        if not vals or status not in possible_outcomes:
+            continue
+        h_vals = [v["h"] for v in vals]
+        l_vals = [v["l"] for v in vals]
+        h_mode = _mode_bucket(h_vals)
+        h_med = round(sorted(h_vals)[len(h_vals) // 2], 2)
+        l_mode = _mode_bucket(l_vals)
+        l_med = round(sorted(l_vals)[len(l_vals) // 2], 2)
+        price_stats[status] = {
+            "h_avg": round(sum(h_vals) / len(h_vals), 2),
+            "l_avg": round(sum(l_vals) / len(l_vals), 2),
+            "h_mode": h_mode,
+            "l_mode": l_mode,
+            "h_med": h_med,
+            "l_med": l_med,
+            # Mode-to-median span (highest to lowest magnitude)
+            "h_span": f"{max(h_mode, h_med):.1f} to {min(h_mode, h_med):.1f}%",
+            "l_span": f"{max(l_mode, l_med):.1f} to {min(l_mode, l_med):.1f}%",
+            "sample_count": len(vals),
+        }
+
+    # HOD/LOD time mode (15-min bucket) per outcome
+    hod_lod_times: dict[str, dict] = {}
+    for status in possible_outcomes:
+        hod_times = hod_times_by_outcome.get(status, [])
+        lod_times = lod_times_by_outcome.get(status, [])
+        if hod_times or lod_times:
+            hod_lod_times[status] = {
+                "hod_mode": _time_mode_bucket(hod_times),
+                "lod_mode": _time_mode_bucket(lod_times),
+            }
+
+    # Broken rate per outcome
+    broken_rates = {}
+    for status in possible_outcomes:
+        c = status_counts.get(status, 0)
+        b = broken_counts.get(status, 0)
+        if c > 0:
+            broken_rates[status] = round(b / c, 3)
+
+    return {
+        "probabilities": probs,
+        "price_stats": price_stats,
+        "broken_rates": broken_rates,
+        "samples": actual_total,
+        "possible_outcomes": possible_outcomes,
+        "hod_lod_times": hod_lod_times,
+        "dates_by_outcome": dict(dates_by_outcome),
+    }
+
+
+def _compute_prediction_with_fallback(
+    pivot: dict[str, dict[str, dict]],
+    dates: list[str],
+    target_session: str,
+    context_values: list[tuple[str, str, bool]],
+    target_loose: bool = False,
+    live_status: str = "",
+    daily_hod_lod: dict | None = None,
+) -> dict | None:
+    """Compute prediction using full context filter (status + broken)."""
+    matched = _filter_historical_days(
+        pivot, dates, target_session, context_values,
+        target_loose=target_loose, fallback_level=0,
+    )
+    pred = _compute_prediction_from_matches(
+        pivot, matched, target_session,
+        live_status=live_status, target_loose=target_loose,
+        daily_hod_lod=daily_hod_lod,
+    )
+    if pred:
+        pred["fallback_level"] = 0
+        pred["matched_dates"] = matched[:10]
+    return pred
+
+
+# ─── Level hit rates (conditional on filtered days) ──────────────────
+
+
+def _compute_conditional_level_hits(
+    level_touches: dict,
+    matched_dates: list[str],
+    session_play_window: tuple[int, int] | None = None,
+) -> dict[str, dict]:
+    """Compute level hit rates for the matched (filtered) historical days.
+
+    This gives conditional level touch probabilities — e.g., "on days where
+    Asia was LT and London was ST, PDH was touched 45% of the time."
+
+    Args:
+        level_touches: Per-day level touch data.
+        matched_dates: Dates to compute hit rates for.
+        session_play_window: Optional (start_min, end_min) in minutes from midnight ET.
+            If provided, only counts touches that occurred within this window.
+            For sessions that wrap midnight (Asia), the window is (19*60+30, 2*60+29)
+            and touches after 18:00 OR before 02:30 are counted.
+            If None, counts any touch during the day.
+    """
+    if not matched_dates or not level_touches:
+        return {}
+
+    n = len(matched_dates)
+    if n == 0:
+        return {}
+
+    level_hits: dict[str, int] = defaultdict(int)
+    level_times: dict[str, list[str]] = defaultdict(list)
+
+    for d in matched_dates:
+        day_data = level_touches.get(d, {})
+        if not isinstance(day_data, dict):
+            continue
+        for level_key, lv_data in day_data.items():
+            if not isinstance(lv_data, dict):
+                continue
+            times = lv_data.get("touch_times", [])
+
+            if session_play_window is not None:
+                # Filter touch times by session play window
+                start_min, end_min = session_play_window
+                in_window_times = []
+                for t in times:
+                    try:
+                        h, m = map(int, t.split(":"))
+                        mins = h * 60 + m
+                        if start_min <= end_min:
+                            # Normal window (doesn't wrap midnight)
+                            if start_min <= mins <= end_min:
+                                in_window_times.append(t)
+                        else:
+                            # Wraps midnight (e.g., Asia 19:30-02:29)
+                            if mins >= start_min or mins <= end_min:
+                                in_window_times.append(t)
+                    except Exception:
+                        continue
+                if in_window_times:
+                    level_hits[level_key] += 1
+                    level_times[level_key].extend(in_window_times)
+            else:
+                # No window filter — count any touch during the day
+                if lv_data.get("touched"):
+                    level_hits[level_key] += 1
+                    if times:
+                        level_times[level_key].extend(times)
+
+    result: dict[str, dict] = {}
+    for level_key, hits in level_hits.items():
+        times = level_times.get(level_key, [])
+        mode_time = ""
+        if times:
+            bucket_counts: dict[str, int] = defaultdict(int)
+            for t in times:
+                try:
+                    h, m = map(int, t.split(":"))
+                    bucket = f"{h:02d}:{(m // 15) * 15:02d}"
+                    bucket_counts[bucket] += 1
+                except Exception:
+                    continue
+            if bucket_counts:
+                mode_time = max(bucket_counts, key=bucket_counts.get)
+
+        result[level_key] = {
+            "hit_rate": round(hits / n * 100, 1),
+            "samples": n,
+            "hits": hits,
+            "mode_time": mode_time,
+        }
+
+    return result
+
+
+def _compute_unconditional_level_hits(
+    level_touches: dict,
+    lookback: int = 500,
+) -> dict[str, dict]:
+    """Compute unconditional level hit rates (last N days)."""
+    if not level_touches:
+        return {}
+
+    dates = sorted(level_touches.keys())
+    recent = dates[-lookback:] if len(dates) > lookback else dates
+    return _compute_conditional_level_hits(level_touches, recent)
+
+
+def _compute_per_outcome_level_hits(
+    level_touches: dict,
+    dates_by_outcome: dict[str, list[str]],
+    session_play_window: tuple[int, int] | None = None,
+) -> dict[str, dict[str, dict]]:
+    """Compute level hit rates per outcome, filtered by session play window.
+
+    For each outcome (LT, LF, ST, SF), computes the level touch rates
+    for the historical days that had that outcome, filtered to only count
+    touches during the target session's play window.
+
+    Args:
+        session_play_window: (start_min, end_min) in minutes from midnight ET.
+            If None, counts any touch during the day.
+
+    Returns:
+        {outcome: {level_key: {hit_rate, samples, hits, mode_time}}}
+    """
+    if not level_touches or not dates_by_outcome:
+        return {}
+
+    result: dict[str, dict[str, dict]] = {}
+    for outcome, dates in dates_by_outcome.items():
+        if dates:
+            result[outcome] = _compute_conditional_level_hits(
+                level_touches, dates, session_play_window,
+            )
+
+    return result
+
+
+# ─── Base rates (unconditional) ───────────────────────────────────────
+
+
+def _compute_base_rates(
+    sessions: list[dict],
+    session_name: str,
+    lookback: int = 500,
+) -> dict:
+    """Compute unconditional base-rate probabilities for a session."""
+    target = [s for s in sessions if s["session"] == session_name]
+    if not target:
+        return {}
+    recent = target[-lookback:] if len(target) > lookback else target
+    n = len(recent)
+    if n == 0:
+        return {}
+    counts: dict[str, int] = defaultdict(int)
+    broken_counts: dict[str, int] = defaultdict(int)
+    for s in recent:
+        st = s.get("status", "None")
+        counts[st] += 1
+        if s.get("broken"):
+            broken_counts[st] += 1
+    rates = {st: round(c / n, 3) for st, c in counts.items()}
+    rates["_samples"] = n
+    rates["_broken_rates"] = {st: round(broken_counts.get(st, 0) / max(counts.get(st, 1), 1), 3) for st in counts}
+    return rates
+
+
+# ─── HOD/LOD timing assessment ───────────────────────────────────────
+# Based on 20-year statistical data for index HOD/LOD timing.
+# The 09:30-10:15 RTH window is the highest-probability reversal zone.
+
+_HOD_LOD_WINDOWS = [
+    ("09:30-09:45", "highest", "2-3x/week", "Four Step Reversal confirmation"),
+    ("09:45-10:00", "2nd highest", "1-2x/week", "9:45 reversal"),
+    ("10:00-10:15", "moderate", "1-2x/2 weeks", "drop-off after 10:00"),
+    ("10:15-10:30", "lowest", "1-2x/month", "rare"),
+    ("16:10-16:25", "HOD mode (indexes)", "frequent", "end-of-day close"),
+]
+
+_HOD_LOD_OTHER = [
+    ("02:30-03:30", "London open", "common LOD/HOD for overnight sessions"),
+    ("07:30-08:30", "NY1 pre-market", "common for Asia/London reversal"),
+    ("11:30-12:30", "NY2 open", "afternoon reversal zone"),
+    ("15:00-16:00", "late session", "trend continuation / close push"),
+]
+
+
+def _classify_hod_lod_timing(time_str: str) -> dict:
+    """Classify where a HOD/LOD time falls in the probability windows.
+
+    Args:
+        time_str: HH:MM format (e.g. "09:37", "16:15")
+
+    Returns:
+        {window, probability, frequency, note} or empty dict if no match.
+    """
+    if not time_str:
+        return {}
+
+    try:
+        h, m = map(int, time_str.split(":"))
+        minutes = h * 60 + m
+    except Exception:
+        return {}
+
+    # Check RTH high-probability windows (09:30-10:30)
+    for window, prob, freq, note in _HOD_LOD_WINDOWS:
+        start, end = window.split("-")
+        sh, sm = map(int, start.split(":"))
+        eh, em = map(int, end.split(":"))
+        if sh * 60 + sm <= minutes <= eh * 60 + em:
+            return {"window": window, "probability": prob, "frequency": freq, "note": note}
+
+    # Check other notable windows
+    for window, label, note in _HOD_LOD_OTHER:
+        start, end = window.split("-")
+        sh, sm = map(int, start.split(":"))
+        eh, em = map(int, end.split(":"))
+        if sh * 60 + sm <= minutes <= eh * 60 + em:
+            return {"window": window, "probability": label, "frequency": "", "note": note}
+
+    return {"window": "other", "probability": "low", "frequency": "", "note": "outside dominant windows"}
+
+
+def _assess_hod_lod_timing(sessions_latest: dict, sessions_prev: dict) -> dict:
+    """Assess HOD/LOD timing for all resolved sessions.
+
+    For each session, classifies where the HOD and LOD times fall in the
+    statistical probability windows.
+
+    Args:
+        sessions_latest: {session_name: record} for latest day.
+        sessions_prev: {session_name: record} for previous day.
+
+    Returns:
+        {session_name: {hod: {...}, lod: {...}}}
+    """
+    result = {}
+
+    # Combine latest + prev (prev day sessions are context)
+    all_sessions = {}
+    all_sessions.update(sessions_prev or {})
+    all_sessions.update(sessions_latest or {})  # latest overrides
+
+    for sess_name in SESSION_ORDER:
+        rec = all_sessions.get(sess_name, {})
+        ht = rec.get("high_time")
+        lt = rec.get("low_time")
+
+        sess_result = {}
+        if ht:
+            sess_result["hod"] = _classify_hod_lod_timing(ht)
+            sess_result["hod"]["time"] = ht
+        if lt:
+            sess_result["lod"] = _classify_hod_lod_timing(lt)
+            sess_result["lod"]["time"] = lt
+
+        if sess_result:
+            result[sess_name] = sess_result
+
+    return result
+
+
+# ─── P12 scenario classification ─────────────────────────────────────
+# Based on price action around P12 levels during 06:00-08:30 ET.
+# Five scenarios from the Profiler Boot Camp methodology.
+
+_P12_SCENARIOS = {
+    1: {
+        "name": "P12 Mid Rejection",
+        "description": "Price tests P12 Mid and rejects, or looks below/above a P12 level and finds footing",
+        "implication": "Directional move likely (trend continuation). MAE likely already completed (shallow MAE).",
+    },
+    2: {
+        "name": "Look Outside and Return",
+        "description": "Price moves outside P12 High or Low but returns all the way back toward P12 Mid",
+        "implication": "True NY1 direction likely (continuing implied trend from previous session).",
+    },
+    3: {
+        "name": "Mid-Range Consolidation",
+        "description": "Price ranges between P12 Mid and P12 High/Low, leading to eventual breakout",
+        "implication": "Watch for 09:30-10:15 reversal confirmation. Range set up for the break.",
+    },
+    4: {
+        "name": "Look and Stay Outside",
+        "description": "Price moves outside P12 area and fails to return to P12 Mid",
+        "implication": "P12 acting as strong support/resistance. Market committed to direction.",
+    },
+    5: {
+        "name": "Swipe Both Sides / Mid Engagement",
+        "description": "Price heavily ranges, touches P12 Mid repeatedly, or swipes both P12 High and Low",
+        "implication": "Small/tight overnight range → expect Range One day. Also valid for large DRO.",
+    },
+}
+
+
+def _classify_p12_scenario(
+    levels: dict,
+    current_price: float,
+    p12_high: float | None = None,
+    p12_mid: float | None = None,
+    p12_low: float | None = None,
+) -> dict:
+    """Classify which P12 scenario is playing out.
+
+    Uses level touch data from the level_touches JSON (which records
+    touch status and times for the 06:00-08:30 window).
+
+    Args:
+        levels: Level touch data for the latest day.
+        current_price: Current/live price.
+        p12_high/mid/low: Optional explicit P12 values (otherwise from levels).
+
+    Returns:
+        {scenario_num, name, description, implication, details}
+    """
+    # Get P12 levels from level_touches data
+    p12h_data = levels.get("p12h", {})
+    p12m_data = levels.get("p12m", {})
+    p12l_data = levels.get("p12l", {})
+
+    p12_h = p12_high if p12_high is not None else p12h_data.get("level")
+    p12_m = p12_mid if p12_mid is not None else p12m_data.get("level")
+    p12_l = p12_low if p12_low is not None else p12l_data.get("level")
+
+    if p12_h is None or p12_m is None or p12_l is None:
+        return {}
+
+    # Touch status
+    touched_h = p12h_data.get("touched", False)
+    touched_m = p12m_data.get("touched", False)
+    touched_l = p12l_data.get("touched", False)
+
+    # Touch times (to check if during 06:00-08:30 window)
+    times_h = p12h_data.get("touch_times", [])
+    times_m = p12m_data.get("touch_times", [])
+    times_l = p12l_data.get("touch_times", [])
+
+    def _in_0600_0830(times: list[str]) -> bool:
+        """Check if any touch time is in the 06:00-08:30 window."""
+        for t in times:
+            try:
+                h, m = map(int, t.split(":"))
+                mins = h * 60 + m
+                if 6 * 60 <= mins <= 8 * 60 + 30:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    early_h = _in_0600_0830(times_h)
+    early_m = _in_0600_0830(times_m)
+    early_l = _in_0600_0830(times_l)
+
+    # Price position relative to P12
+    above_high = current_price > p12_h if current_price else False
+    below_low = current_price < p12_l if current_price else False
+    at_mid = abs(current_price - p12_m) / max(p12_h - p12_l, 1) < 0.1 if current_price else False
+
+    # Classify scenario
+    # Scenario 5: Swipe both sides or heavy mid engagement
+    if (touched_h and touched_l) or (early_m and len(times_m) >= 3):
+        sc = 5
+    # Scenario 4: Look and stay outside (touched H or L, NOT mid, price still outside)
+    elif (touched_h or touched_l) and not touched_m:
+        if (touched_h and above_high) or (touched_l and below_low):
+            sc = 4
+        elif touched_h or touched_l:
+            # Touched outside but price came back → Scenario 2
+            sc = 2
+        else:
+            sc = 3
+    # Scenario 2: Look outside and return (touched H or L, then mid touched)
+    elif (touched_h or touched_l) and touched_m:
+        sc = 2
+    # Scenario 1: P12 Mid rejection (mid touched but not H/L extremes)
+    elif touched_m and not touched_h and not touched_l:
+        sc = 1
+    # Scenario 3: Mid-range consolidation (price between mid and one extreme)
+    elif not touched_h and not touched_l and not touched_m:
+        # No touches yet — price is ranging between mid and an extreme
+        if current_price and p12_l < current_price < p12_h:
+            sc = 3
+        else:
+            sc = 3  # Default to consolidation if no clear signal
+    else:
+        sc = 3
+
+    info = _P12_SCENARIOS.get(sc, {})
+    return {
+        "scenario_num": sc,
+        "name": info.get("name", "Unknown"),
+        "description": info.get("description", ""),
+        "implication": info.get("implication", ""),
+        "p12_h": p12_h,
+        "p12_m": p12_m,
+        "p12_l": p12_l,
+        "touched_h": touched_h,
+        "touched_m": touched_m,
+        "touched_l": touched_l,
+        "early_h": early_h,
+        "early_m": early_m,
+        "early_l": early_l,
+        "price_position": "above P12H" if above_high else "below P12L" if below_low else "at mid" if at_mid else "inside P12 range",
+    }
+
+
+# ─── Main computation ────────────────────────────────────────────────
+
+
+def compute_profiler(
+    ticker: str = "NQ1",
+    current_price: float = 0,
+    target_date: date | None = None,
+    now_et: datetime | None = None,
+    live_sessions: dict[str, dict] | None = None,
+) -> dict:
+    """Compute profiler data for the narrative cheat sheet.
+
+    All statistics come from the precomputed profiler JSON history.
+    Latest records from the same JSON provide today's session outcomes.
+
+    Args:
+        ticker: Ticker symbol (e.g. NQ1, ES1).
+        current_price: Current/live price for level proximity.
+        target_date: Trading date. Defaults to today.
+        now_et: Current ET datetime for auto target detection.
+            If None, uses resolved sessions to determine target.
+        live_sessions: Optional dict of {session_name: {status, broken, ...}}
+            computed from live 1m data. When provided, these override the
+            JSON sessions for context and target prediction. This allows
+            pending sessions (LT/ST not yet confirmed) to trigger loose
+            matching — only showing possible outcomes.
+
+    Returns:
+        dict with all profiler data for formatting.
+    """
+    if target_date is None:
+        target_date = date.today()
+    target_str = target_date.isoformat()
+
+    result: dict[str, Any] = {
+        "ticker": ticker,
+        "target_date": target_str,
+        "sessions_latest": {},
+        "sessions_prev": {},
+        "latest_date": None,
+        "prev_date": None,
+        "target_session": None,
+        "target_idx": -1,
+        "predictions": {},
+        "base_rates": {},
+        "levels_latest": {},
+        "level_hit_rates_conditional": {},
+        "level_hit_rates_unconditional": {},
+        "hod_lod_timing": {},
+        "p12_scenario": {},
+    }
+
+    sessions = _load_profiler_sessions(ticker)
+    if not sessions:
+        log.warning("[profiler] No profiler data for %s", ticker)
+        return result
+
+    pivot, dates = _build_pivots(sessions)
+
+    # Find effective date (target_date or latest available)
+    latest_date = _get_latest_date(dates)
+    result["latest_date"] = latest_date
+    effective_date = target_str if target_str in pivot else latest_date
+    if effective_date is None:
+        return result
+
+    result["sessions_latest"] = pivot.get(effective_date, {})
+    prev_date = _get_prev_date(dates, effective_date)
+    if prev_date:
+        result["sessions_prev"] = pivot.get(prev_date, {})
+        result["prev_date"] = prev_date
+
+    # ── Auto-detect target session ──
+    tgt_idx, tgt_session = _detect_target_session(now_et, result["sessions_latest"])
+    result["target_session"] = tgt_session
+    result["target_idx"] = tgt_idx
+
+    # ── Compute predictions for ALL sessions in the chain ──
+    # Use live sessions if provided, otherwise JSON sessions
+    effective_sessions = live_sessions if live_sessions else result["sessions_latest"]
+
+    # Load daily HOD/LOD for full-day time/price data (same as web UI)
+    daily_hl = _load_daily_hod_lod(ticker)
+
+    # ── Compute predictions for ALL sessions in the chain ──
+    # Use live sessions if provided, otherwise JSON sessions
+    effective_sessions = live_sessions if live_sessions else result["sessions_latest"]
+
+    for sess_name in SESSION_ORDER:
+        # Build context from live or JSON sessions
+        context = _get_context_values_live(
+            sess_name, effective_sessions, result["sessions_prev"],
+        )
+
+        if not context:
+            continue
+
+        # Determine if target session is pending (loose matching)
+        live_status = effective_sessions.get(sess_name, {}).get("status", "")
+        live_code = _STATUS_TO_CODE.get(live_status, 0)
+        target_loose = live_code in (1, 3)  # LT or ST pending
+
+        pred = _compute_prediction_with_fallback(
+            pivot, dates, sess_name, context,
+            target_loose=target_loose,
+            live_status=live_status,
+            daily_hod_lod=daily_hl,
+        )
+        if pred:
+            # Build context description string
+            ctx_parts = []
+            for ctx_spec, sess in CONTEXT_CHAIN.get(sess_name, []):
+                for s_name, status, broken in context:
+                    if s_name == sess:
+                        short = _STATUS_SHORT.get(status, status)
+                        bk = "Broken" if broken else "Held"
+                        prefix = "prev" if ctx_spec.startswith("prev:") else "curr"
+                        ctx_parts.append(f"{prefix} {sess}={short}/{bk}")
+            pred["context"] = " | ".join(ctx_parts)
+            result["predictions"][sess_name] = pred
+
+    # ── Base rates (unconditional, last 500 days) ──
+    for sess in SESSION_ORDER:
+        rates = _compute_base_rates(sessions, sess, lookback=500)
+        if rates:
+            result["base_rates"][sess] = rates
+
+    # ── Level touches ──
+    level_touches = _load_level_touches(ticker)
+    if level_touches:
+        lt_dates = sorted(level_touches.keys())
+        lt_date = effective_date if effective_date in level_touches else (lt_dates[-1] if lt_dates else None)
+        if lt_date:
+            result["levels_latest"] = level_touches.get(lt_date, {})
+            result["level_touches_date"] = lt_date
+
+        # Unconditional hit rates (last 500 days)
+        result["level_hit_rates_unconditional"] = _compute_unconditional_level_hits(level_touches, 500)
+
+        # Per-outcome level hit rates — per-day touches (same as web UI's DailyLevels)
+        for sess_name, pred in result["predictions"].items():
+            dbo = pred.get("dates_by_outcome")
+            if dbo and level_touches:
+                pred["level_hit_rates_per_outcome"] = _compute_per_outcome_level_hits(
+                    level_touches, dbo,
+                )
+
+        # Conditional hit rates for target session (per-day, same as web UI)
+        tgt_pred = result["predictions"].get(tgt_session)
+        if tgt_pred and tgt_pred.get("matched_dates"):
+            result["level_hit_rates_conditional"] = _compute_conditional_level_hits(
+                level_touches, tgt_pred["matched_dates"],
+            )
+
+    # ── HOD/LOD timing assessment ──
+    result["hod_lod_timing"] = _assess_hod_lod_timing(
+        result["sessions_latest"], result["sessions_prev"],
+    )
+
+    # ── P12 scenario classification ──
+    if result.get("levels_latest"):
+        result["p12_scenario"] = _classify_p12_scenario(
+            result["levels_latest"], current_price,
+        )
+
+    return result
+
+
+# ─── Formatting ──────────────────────────────────────────────────────
+
+
+def _format_session_line(sess_name: str, rec: dict) -> str:
+    """Format one resolved session compactly."""
+    status = rec.get("status", "?")
+    short = _STATUS_SHORT.get(status, status)
+    broken = rec.get("broken")
+    broken_str = "Broken" if broken is True else "Held" if broken is False else "—"
+
+    rh = rec.get("range_high")
+    rl = rec.get("range_low")
+    mid = rec.get("mid")
+    ht = rec.get("high_time", "?")
+    lt = rec.get("low_time", "?")
+    hp = rec.get("high_pct")
+    lp = rec.get("low_pct")
+
+    parts = [f"{sess_name}: {short} | {broken_str}"]
+
+    range_parts = []
+    if rh is not None:
+        range_parts.append(f"H {rh:,.2f}")
+    if rl is not None:
+        range_parts.append(f"L {rl:,.2f}")
+    if mid is not None:
+        range_parts.append(f"mid {mid:,.2f}")
+    if range_parts:
+        parts.append(" | ".join(range_parts))
+
+    parts.append(f"HOD {ht} LOD {lt}")
+
+    exc_parts = []
+    if hp is not None:
+        exc_parts.append(f"H {hp:+.2f}%")
+    if lp is not None:
+        exc_parts.append(f"L {lp:+.2f}%")
+    if exc_parts:
+        parts.append(" | ".join(exc_parts))
+
+    bt = rec.get("broken_time")
+    if bt and broken is True:
+        parts.append(f"broke@{bt}")
+
+    return " | ".join(parts)
+
+
+def _format_prediction_block(sess_name: str, pred: dict, is_target: bool = False) -> str:
+    """Format a prediction block matching the indicator's table format.
+
+    Shows per outcome: probability, HOD/LOD time mode (15-min bucket),
+    HOD/LOD dist (mode-to-median span), and broken rate.
+    """
+    context = pred.get("context", "")
+    probs = pred.get("probabilities", {})
+    samples = pred.get("samples", 0)
+    price_stats = pred.get("price_stats", {})
+    hod_lod = pred.get("hod_lod_times", {})
+    possible = pred.get("possible_outcomes", ["Long True", "Short True", "Long False", "Short False", "None"])
+
+    marker = "▶ " if is_target else "  "
+    lines = [f"{marker}PREDICT {sess_name} ({context}) (n={samples})"]
+
+    # Header row matching indicator table
+    lines.append(f"    {'Outcome':8s} | {'Prob':>5s} | {'LOD Time':>14s} | {'HOD Time':>14s} | {'LOD Dist':>14s} | {'HOD Dist':>14s} | {'Bk':>4s}")
+
+    for status in possible:
+        p = probs.get(status)
+        if p is None:
+            continue
+        short = _STATUS_SHORT.get(status, status)
+
+        # Time modes
+        times = hod_lod.get(status, {})
+        lod_t = times.get("lod_mode", "—")
+        hod_t = times.get("hod_mode", "—")
+
+        # Dist spans
+        ps = price_stats.get(status, {})
+        l_span = ps.get("l_span", "—")
+        h_span = ps.get("h_span", "—")
+
+        # Broken rate
+        br = pred.get("broken_rates", {}).get(status, 0)
+        br_str = f"{br*100:.0f}%" if br > 0 else "—"
+
+        lines.append(f"    {short:8s} | {p*100:4.0f}% | {lod_t:>14s} | {hod_t:>14s} | {l_span:>14s} | {h_span:>14s} | {br_str:>4s}")
+
+    # Per-outcome level hit rates
+    level_hits_per = pred.get("level_hit_rates_per_outcome", {})
+    if level_hits_per:
+        level_keys = ["pdh", "pdl", "pdm", "p12h", "p12m", "p12l", "ny_p12h", "ny_p12m", "ny_p12l",
+                       "asia_mid", "london_mid", "ny1_mid", "ny2_mid", "midnight_open", "open_0730"]
+        level_names = {k: _LEVEL_NAMES.get(k, k) for k in level_keys}
+        # Header
+        hdr = f"    {'Level':14s}"
+        for status in possible:
+            if probs.get(status) is not None:
+                hdr += f" | {_STATUS_SHORT.get(status, status):>5s}"
+        lines.append(hdr)
+        # Each level row
+        for key in level_keys:
+            name = level_names.get(key, key)
+            row = f"    {name:14s}"
+            has_data = False
+            for status in possible:
+                if probs.get(status) is None:
+                    continue
+                hr = level_hits_per.get(status, {}).get(key, {})
+                hit_rate = hr.get("hit_rate")
+                if hit_rate is not None:
+                    row += f" | {hit_rate:4.0f}%"
+                    has_data = True
+                else:
+                    row += f" |    —"
+            if has_data:
+                lines.append(row)
+
+    return "\n".join(lines)
+
+
+def _format_base_rate_block(sess_name: str, rates: dict) -> str:
+    """Format base rates for a session."""
+    parts = []
+    for status in ["Long True", "Short True", "Long False", "Short False", "None"]:
+        p = rates.get(status)
+        if p is not None:
+            br = rates.get("_broken_rates", {}).get(status)
+            br_str = f" (bk {br*100:.0f}%)" if br is not None and br > 0 else ""
+            parts.append(f"{_STATUS_SHORT[status]} {p*100:.0f}%{br_str}")
+    n = rates.get("_samples", 0)
+    return f"  BASE RATE {sess_name} (last {n}d): {' | '.join(parts)}"
+
+
+def _level_proximity(level_val: float, current_price: float) -> str:
+    if not level_val or not current_price:
+        return ""
+    pct = (current_price / level_val - 1) * 100
+    if abs(pct) < 0.02:
+        return "AT"
+    return f"{'+' if pct > 0 else ''}{pct:.2f}%"
+
+
+def _format_levels_block(
+    levels: dict,
+    hit_rates_cond: dict,
+    hit_rates_uncond: dict,
+    current_price: float,
+) -> str:
+    """Format reference levels with proximity, touch, conditional + unconditional hit rate."""
+    if not levels:
+        return ""
+
+    lines = ["  Reference Levels (level [price vs level] touched? cond/uncond hit-rate):"]
+
+    all_keys = _PRIMARY_LEVELS + [
+        "asia_mid", "london_mid", "ny1_mid", "ny2_mid",
+        "prev_asia_mid", "prev_london_mid", "prev_ny1_mid", "prev_ny2_mid",
+    ]
+
+    for key in all_keys:
+        lv = levels.get(key)
+        if not lv or not lv.get("level"):
+            continue
+
+        name = _LEVEL_NAMES.get(key, key)
+        level_val = lv["level"]
+        prox = _level_proximity(level_val, current_price)
+        touched = lv.get("touched", False)
+        touch_str = "✓" if touched else "·"
+
+        # Conditional hit rate (from filtered days)
+        hr_c = hit_rates_cond.get(key, {})
+        hr_c_str = f"{hr_c['hit_rate']:.0f}%" if hr_c.get("hit_rate") is not None else "—"
+
+        # Unconditional hit rate (last 500d)
+        hr_u = hit_rates_uncond.get(key, {})
+        hr_u_str = f"{hr_u['hit_rate']:.0f}%" if hr_u.get("hit_rate") is not None else "—"
+
+        # Mode time for conditional
+        mode_t = hr_c.get("mode_time", "")
+        mode_str = f" @ {mode_t}" if mode_t else ""
+
+        lines.append(f"    {name:14s} {level_val:>12,.2f} [{prox:>8s}] {touch_str} {hr_c_str:>4s}/{hr_u_str:>4s}{mode_str}")
+
+    return "\n".join(lines)
+
+
+def _format_hod_lod_timing_block(hod_lod: dict) -> str:
+    """Format the HOD/LOD timing assessment block.
+
+    Shows where each session's HOD/LOD times fall in the statistical
+    probability windows.
+    """
+    lines = ["  HOD/LOD Timing (vs statistical probability windows):"]
+
+    for sess_name in SESSION_ORDER:
+        sess_data = hod_lod.get(sess_name, {})
+        if not sess_data:
+            continue
+
+        hod = sess_data.get("hod", {})
+        lod = sess_data.get("lod", {})
+        if not hod and not lod:
+            continue
+
+        parts = [f"  {sess_name}:"]
+        if hod and hod.get("time"):
+            win = hod.get("window", "?")
+            prob = hod.get("probability", "?")
+            parts.append(f"HOD {hod['time']} ({win}, {prob})")
+        if lod and lod.get("time"):
+            win = lod.get("window", "?")
+            prob = lod.get("probability", "?")
+            parts.append(f"LOD {lod['time']} ({win}, {prob})")
+        lines.append(" | ".join(parts))
+
+    # Add note about 09:30-10:15 zone if any session falls in it
+    has_0930 = False
+    for sess_data in hod_lod.values():
+        for key in ("hod", "lod"):
+            d = sess_data.get(key, {})
+            if "09:30" in d.get("window", "") or "09:45" in d.get("window", "") or "10:00" in d.get("window", ""):
+                has_0930 = True
+                break
+    if has_0930:
+        lines.append("  ⚡ 09:30-10:15 zone active — highest probability reversal window")
+
+    return "\n".join(lines)
+
+
+def _format_p12_scenario_block(sc: dict) -> str:
+    """Format the P12 scenario classification block."""
+    num = sc.get("scenario_num", "?")
+    name = sc.get("name", "Unknown")
+    implication = sc.get("implication", "")
+    p12_h = sc.get("p12_h")
+    p12_m = sc.get("p12_m")
+    p12_l = sc.get("p12_l")
+    pos = sc.get("price_position", "?")
+
+    # Touch details
+    touches = []
+    if sc.get("touched_h"):
+        touches.append("P12H ✓")
+    if sc.get("touched_m"):
+        touches.append("P12M ✓")
+    if sc.get("touched_l"):
+        touches.append("P12L ✓")
+    touch_str = " | ".join(touches) if touches else "no P12 touches yet"
+
+    lines = [f"  P12 Scenario #{num}: {name}"]
+    if p12_h and p12_m and p12_l:
+        lines.append(f"    P12 H {p12_h:,.2f} | M {p12_m:,.2f} | L {p12_l:,.2f}")
+    lines.append(f"    Price: {pos} | Touches: {touch_str}")
+    if implication:
+        lines.append(f"    → {implication}")
+
+    return "\n".join(lines)
+
+
+def format_profiler_block(data: dict, current_price: float = 0) -> str:
+    """Format the profiler data into a compact cheat-sheet block."""
+    if not data or not data.get("sessions_latest") and not data.get("sessions_prev"):
+        return "== PROFILER ==\nNo profiler data available."
+
+    ticker = data.get("ticker", "?")
+    latest_date = data.get("latest_date", "?")
+    tgt_session = data.get("target_session", "?")
+    base_label = ticker.replace("1", "").upper()
+
+    lines = [f"== PROFILER ({base_label}) =="]
+    lines.append(f"Data as of: {latest_date} | Auto-target: {tgt_session}")
+
+    # ── Previous day outcomes ──
+    prev = data.get("sessions_prev", {})
+    prev_date = data.get("prev_date", "?")
+    if prev:
+        lines.append(f"\nPrevious Day ({prev_date}):")
+        for sess_name in SESSION_ORDER:
+            rec = prev.get(sess_name)
+            if rec and rec.get("status"):
+                lines.append("  " + _format_session_line(sess_name, rec))
+
+    # ── Latest resolved sessions ──
+    latest = data.get("sessions_latest", {})
+    resolved = [(s, latest[s]) for s in SESSION_ORDER if s in latest and latest[s].get("status")]
+    if resolved:
+        lines.append(f"\nLatest Day ({latest_date}):")
+        for sess_name, rec in resolved:
+            lines.append("  " + _format_session_line(sess_name, rec))
+
+    # ── Predictions ──
+    predictions = data.get("predictions", {})
+    base_rates = data.get("base_rates", {})
+    if predictions or base_rates:
+        lines.append("\nPredictions (historical conditional filter):")
+        for sess_name in SESSION_ORDER:
+            pred = predictions.get(sess_name)
+            if pred:
+                is_target = sess_name == tgt_session
+                lines.append(_format_prediction_block(sess_name, pred, is_target))
+            else:
+                rates = base_rates.get(sess_name)
+                if rates:
+                    lines.append(_format_base_rate_block(sess_name, rates))
+
+    # ── Reference levels ──
+    levels = data.get("levels_latest", {})
+    hr_cond = data.get("level_hit_rates_conditional", {})
+    hr_uncond = data.get("level_hit_rates_unconditional", {})
+    if levels:
+        levels_str = _format_levels_block(levels, hr_cond, hr_uncond, current_price)
+        if levels_str:
+            lines.append("")
+            lines.append(levels_str)
+
+    # ── HOD/LOD timing assessment ──
+    hod_lod = data.get("hod_lod_timing", {})
+    if hod_lod:
+        lines.append("")
+        lines.append(_format_hod_lod_timing_block(hod_lod))
+
+    # ── P12 scenario classification ──
+    p12_sc = data.get("p12_scenario", {})
+    if p12_sc:
+        lines.append("")
+        lines.append(_format_p12_scenario_block(p12_sc))
+
+    return "\n".join(lines)
+
+
+# ─── Convenience ─────────────────────────────────────────────────────
+
+
+def build_profiler_block(
+    ticker: str = "NQ1",
+    current_price: float = 0,
+    target_date: date | None = None,
+    now_et: datetime | None = None,
+    live_sessions: dict[str, dict] | None = None,
+) -> str:
+    """Compute profiler data and return the formatted cheat-sheet block."""
+    data = compute_profiler(ticker, current_price, target_date, now_et, live_sessions)
+    return format_profiler_block(data, current_price)
+
+
+def build_dual_profiler_block(
+    ticker: str = "NQ1",
+    es_ticker: str = "ES1",
+    ticker_price: float = 0,
+    es_price: float = 0,
+    target_date: date | None = None,
+    now_et: datetime | None = None,
+    live_sessions: dict[str, dict] | None = None,
+    es_live_sessions: dict[str, dict] | None = None,
+) -> str:
+    """Build profiler blocks for both the primary ticker and ES1."""
+    blocks = []
+    primary = build_profiler_block(ticker, ticker_price, target_date, now_et, live_sessions)
+    if primary and "No profiler data" not in primary:
+        blocks.append(primary)
+
+    if es_ticker != ticker:
+        es_block = build_profiler_block(es_ticker, es_price, target_date, now_et, es_live_sessions)
+        if es_block and "No profiler data" not in es_block:
+            blocks.append(es_block)
+
+    return "\n\n".join(blocks) if blocks else "== PROFILER ==\nNo profiler data available."

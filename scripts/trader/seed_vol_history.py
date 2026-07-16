@@ -16,6 +16,12 @@ if sys.platform == 'win32' and not hasattr(sys.stderr, '_wrapped_utf8'):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', write_through=True)
     sys.stderr._wrapped_utf8 = True
 
+
+# Side-effect import: ensures the repo root is on sys.path so
+# `from scripts.trader import ...` works without a per-file hack.
+# See scripts/trader/_path_setup.py for the full rationale.
+from scripts.trader import _path_setup  # noqa: F401
+
 from scripts.trader.macro_storage import process_volatility_storage
 from scripts.trader.update_friction_matrix import update_centralized_friction_matrix
 

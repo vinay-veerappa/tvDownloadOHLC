@@ -292,7 +292,34 @@ confluence:
     read: "2+ conflict — skip or wait for resolution"
 
 # ── ML Bias (dropped from v2 per senior trader review) ───────────
+# ── LLM defaults (audit §2.6) ─────────────────────────────────────────
+# Single source of truth for the default Ollama model used by both
+# narrative chains. The audit found that `trader_narrative.py` and
+# `daily_narrative.py` had drifted to different defaults
+# (`deepseek-v4-pro:cloud` vs `gemma4:latest`), producing
+# inconsistent voice and JSON adherence. Both modules now read
+# this section via `config_loader.get_llm_config()`.
+#
+# The previous defaults are preserved as fallbacks so a single
+# missing key never takes the system down at runtime.
+llm:
+  # Default model for the daily narrative chain (EOD, open).
+  default_model: "glm-5.2:cloud"
+  # Default model for the trader-narrative chain (premarket, intraday, close).
+  # Audited 2026-07-14: matches the daily chain by design, so a
+  # trader reading the morning "clean read" and the daily EOD sees
+  # the same prose voice. Operators can still override per-run via
+  # `--model gemma4:31b-cloud` etc.
+  default_trader_model: "gemma4:latest"
+  # Cloud fallback (used when the default is unavailable).
+  fallback_model: "gemma4:31b-cloud"
+  # Local-only fallback (used when the cloud fallback is also down).
+  # Smaller / faster than the default; intended for offline operation.
+  local_fallback_model: "gemma4:latest"
+
+# ── ML Bias (dropped from v2 per senior trader review) ────
 ml_bias:
+
   enabled: false
   accuracy: 60
   role: confirmation

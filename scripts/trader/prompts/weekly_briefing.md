@@ -11,7 +11,8 @@ Your job is to fill only the analysis slots.
 - Weekly EM High/Low is a hard risk boundary.
 - Bullish scenario text must point to higher targets than the trigger.
 - Bearish scenario text must point to lower targets than the trigger.
-- Fade-track scenarios must move back toward Gamma Magnet.
+- Fade-track scenarios must move back toward Gamma Magnet (Price Magnet).
+- Do not use options jargon like Call Wall, Put Wall, Gamma Flip, or EM. Use Upside Ceiling, Downside Floor, Volatility Pivot, Price Magnet, and Expected High/Low instead.
 - For SPY/QQQ scenarios, use both scales when relevant: translated futures value first, raw proxy value in brackets, e.g. `Acceptance above 29,994.82 (QQQ 715.00) -> target 30,324.56 (QQQ 722.86)`.
 
 # STATIC TEMPLATE
@@ -35,13 +36,17 @@ Return exactly:
     "1": "one sentence for second event"
   },
   "ticker_analysis": {
-    "SPY": {
+    "ES": {
       "track_note": "one sentence",
       "bullish": "Acceptance above ... -> target ...",
       "bearish": "Acceptance below ... -> target ...",
       "range": "Tethered ..."
     }
   },
+  "weekly_trade_plan": [
+    "trade plan step 1 considering archetype and earnings",
+    "trade plan step 2"
+  ],
   "key_risks": [
     "risk bullet 1",
     "risk bullet 2",

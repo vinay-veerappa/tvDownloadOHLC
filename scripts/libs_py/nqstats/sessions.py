@@ -50,10 +50,13 @@ DEFAULT_SESSION_CONFIG = {
 }
 
 PROFILER_BOX_CONFIG = {
-    'AsiaBox': {'start': time(18, 0), 'end': time(19, 30)},
-    'LondonBox': {'start': time(2, 30), 'end': time(3, 30)},
-    'NY1Box': {'start': time(7, 30), 'end': time(8, 30)},
-    'NY2Box': {'start': time(11, 30), 'end': time(12, 30)},
+    # NOTE: end time is EXCLUSIVE in the mask (times < end_t), so end = last_minute + 1
+    # This matches the PineScript time() behavior.
+    # Fixed 2026-07-13: was {18,0}-{19,30} which excluded 19:29. Now {19,31} to include 19:29.
+    'AsiaBox': {'start': time(18, 0), 'end': time(19, 31)},
+    'LondonBox': {'start': time(2, 30), 'end': time(3, 31)},
+    'NY1Box': {'start': time(7, 30), 'end': time(8, 31)},
+    'NY2Box': {'start': time(11, 30), 'end': time(12, 31)},
 }
 
 

@@ -162,12 +162,16 @@ async def run_sync(days: int, min_market_cap: float, dry_run: bool = False):
                             "earningsDate": dt,
                             "beforeMarket": ev["beforeMarket"],
                             "confirmed": True,
-                            "source": "yfinance"
+                            "source": "yfinance",
+                            "company": ev["company"],
+                            "marketCap": ev["marketCap"]
                         },
                         "update": {
                             "beforeMarket": ev["beforeMarket"],
                             "confirmed": True,
-                            "fetchedAt": datetime.now(timezone.utc)
+                            "fetchedAt": datetime.now(timezone.utc),
+                            "company": ev["company"],
+                            "marketCap": ev["marketCap"]
                         }
                     }
                 )
@@ -199,8 +203,8 @@ async def run_sync(days: int, min_market_cap: float, dry_run: bool = False):
                 dt_str += "+00:00"
 
             cursor.execute(
-                "INSERT INTO EarningsCalendar (id, ticker, earningsDate, beforeMarket, confirmed, source, fetchedAt) VALUES (?, ?, ?, ?, 1, 'yfinance', ?)",
-                (uuid.uuid4().hex, ev["ticker"], dt_str, 1 if ev["beforeMarket"] else 0, now_str)
+                "INSERT INTO EarningsCalendar (id, ticker, earningsDate, beforeMarket, confirmed, source, fetchedAt, company, marketCap) VALUES (?, ?, ?, ?, 1, 'yfinance', ?, ?, ?)",
+                (uuid.uuid4().hex, ev["ticker"], dt_str, 1 if ev["beforeMarket"] else 0, now_str, ev["company"], ev["marketCap"])
             )
             saved_count += 1
         conn.commit()

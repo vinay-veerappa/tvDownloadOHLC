@@ -6,18 +6,16 @@ The runtime pre-renders the final markdown layout in Python.
 You only fill analysis slots and trade-plan fields as JSON.
 
 # ACCOUNTS (separate, no cross-hedging)
-- MES: $50k, $2k trailing DD, SPY proxy, $5/pt, risk $150/trade, daily stop $450
-- MNQ: $50k, $2k trailing DD, QQQ proxy, $2/pt, risk $100/trade, daily stop $300
-- Max 3 trades/day per account. Min R:R = 1:2. Same-direction combined risk <= $200.
+{{INSERT_RISK_PARAMS}}
 - Contracts = floor(risk_cap / (stop_pts x multiplier)). If 0, skip.
 
 # RULES
 - ET timezone.
-- Regime from payload dictates execution:
-  - PINNED: fade walls, tighter stops.
-  - TRENDING: follow break/retest, no fading.
-  - COILED: no pre-emptive entries before confirmation.
-  - BATTLE ZONE: wall-to-wall behavior, reduced size.
+- The `bias` field in the payload is the **mandated execution track**
+  (e.g. "TRACK A: BREAKOUT/MOMENTUM ..."). It is computed in Python
+  from the GEX regime and is ABSOLUTE — do not override it. Your trade
+  plan must be consistent with the mandated track, not with a separate
+  regime-behavior interpretation.
 - ALN PATTERN RULES (use for directional bias and sizing):
   - LPEU (Partial Engulf Up): Bullish bias. 80.8% chance NY breaks London High. If low breaks first, bullish edge drops to coin flip (51.2%). Target London High.
   - LPED (Partial Engulf Down): Bearish bias. 75.0% chance NY breaks London Low. If high breaks first, bearish edge drops to coin flip (46.2%). Target London Low.
@@ -54,30 +52,32 @@ Return ONLY this block:
 {
   "overnight_delta": "2-3 sentences comparing prior EOD plan vs current levels and regime",
   "dynamic": "2-3 sentences on wall structure, gamma behavior, and cleaner instrument",
-  "mes": {
-    "regime": "TRENDING",
-    "logic": "1-2 sentences",
-    "entry": "futures price OR NO TRADE -- reason",
-    "stop": "futures price",
-    "stop_dist": "X.X",
-    "contracts": "N",
-    "target": "futures price",
-    "rr": "X.X"
-  },
-  "mnq": {
-    "regime": "TRENDING",
-    "logic": "1-2 sentences",
-    "entry": "futures price OR NO TRADE -- reason",
-    "stop": "futures price",
-    "stop_dist": "X.X",
-    "contracts": "N",
-    "target": "futures price",
-    "rr": "X.X"
+  "tickers": {
+    "NQ": {
+      "regime": "TRENDING",
+      "logic": "1-2 sentences",
+      "entry": "futures price OR NO TRADE -- reason",
+      "stop": "futures price",
+      "stop_dist": "X.X",
+      "contracts": "N",
+      "target": "futures price",
+      "rr": "X.X"
+    },
+    "ES": {
+      "regime": "TRENDING",
+      "logic": "1-2 sentences",
+      "entry": "futures price OR NO TRADE -- reason",
+      "stop": "futures price",
+      "stop_dist": "X.X",
+      "contracts": "N",
+      "target": "futures price",
+      "rr": "X.X"
+    }
   },
   "risk_summary": {
-    "line_1": "MES: $... (...) | MNQ: $... (...)",
+    "line_1": "ES: $... (...) | NQ: $... (...)",
     "line_2": "Combined same-dir: $... (<= $200 if same direction)",
-    "line_3": "Daily stop remaining: MES $450 | MNQ $300"
+    "line_3": "Daily stop remaining: ES $450 | NQ $300"
   },
   "plan_json": {
     "logic": "brief combined logic",

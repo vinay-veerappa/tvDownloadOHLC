@@ -28,17 +28,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 
-import sys
-from pathlib import Path
-
-# Add project root to sys.path dynamically
-_current_dir = Path(__file__).resolve().parent
-while _current_dir.name and _current_dir.name != "scripts":
-    _current_dir = _current_dir.parent
-if _current_dir.name == "scripts":
-    _root_dir = str(_current_dir.parent)
-    if _root_dir not in sys.path:
-        sys.path.insert(0, _root_dir)
+# Side-effect import: ensures the repo root is on sys.path so
+# `from scripts.trader import ...` works without a per-file hack.
+# See scripts/trader/_path_setup.py for the full rationale.
+from scripts.trader import _path_setup  # noqa: F401
 
 from scripts.trader.briefing_core import (
     REPO_ROOT,
@@ -48,6 +41,8 @@ from scripts.trader.briefing_core import (
     build_premarket_context,
     get_dataloader,
 )
+from scripts.libs_py.risk.narrative import insert_risk_params
+from scripts.libs_py.discord import send_summary as _send_discord_summary
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
@@ -64,18 +59,42 @@ PROMPT_PATHS = {
 }
 
 OUTPUT_DIR = REPO_ROOT / "data" / "options" / "daily"
-DISCORD_WEBHOOKS_PATH = REPO_ROOT / "discord_webhooks.json"
 UNIFIED_LEVELS_OPEN_TXT = REPO_ROOT / "data" / "options" / "current" / "unified_levels_open.txt"
+UNIFIED_LEVELS_CLOSE_TXT = REPO_ROOT / "data" / "options" / "current" / "unified_levels_close.txt"
 
-# Ollama config (mirrors daily_narrative.py)
+# Ollama config — defaults sourced from the unified LLM section
+# in `narrative_stats.yaml` (audit §2.6). The audit found that the
+# two narrative chains had drifted to different defaults
+# (`deepseek-v4-pro:cloud` vs `gemma4:latest`), producing
+# inconsistent voice and JSON adherence. We now read from a
+# single source of truth via `config_loader.get_llm_config()`.
+from scripts.trader.config_loader import get_llm_config  # noqa: E402
+
+_llm_cfg = get_llm_config()
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "deepseek-v4-pro:cloud"
-FALLBACK_MODEL = "deepseek-v4-flash:cloud"
-LOCAL_FALLBACK_MODEL = "gemma4:latest"
+# `default_trader_model` is the trader-narrative-specific key;
+# `default_model` is the daily-narrative-specific key. Both point
+# at the same model on purpose — a trader reading the morning
+# "clean read" and the daily EOD sees the same prose voice. The
+# --model CLI flag still allows per-run override.
+DEFAULT_MODEL = (
+    _llm_cfg.get("default_trader_model")
+    or _llm_cfg.get("default_model")
+    or "gemma4:latest"
+)
+FALLBACK_MODEL = _llm_cfg.get("fallback_model") or "gemma4:31b-cloud"
+LOCAL_FALLBACK_MODEL = _llm_cfg.get("local_fallback_model") or "gemma4:latest"
 
 # Sync gate: max seconds to wait for the 09:30 open snapshot
 OPEN_SNAPSHOT_TIMEOUT_SECONDS = 120
 OPEN_SNAPSHOT_POLL_INTERVAL = 5
+
+# Sync gate: max seconds to wait for the 16:15 close snapshot.
+# The 10-minute cron gap (16:15 pipeline → 16:25 narrative) usually
+# gives us 10 minutes of headroom; 180s (3 min) is generous and still
+# short enough to keep the narrative on schedule.
+CLOSE_SNAPSHOT_TIMEOUT_SECONDS = 180
+CLOSE_SNAPSHOT_POLL_INTERVAL = 5
 
 
 def _wait_for_open_snapshot(timeout: int = OPEN_SNAPSHOT_TIMEOUT_SECONDS) -> bool:
@@ -102,6 +121,43 @@ def _wait_for_open_snapshot(timeout: int = OPEN_SNAPSHOT_TIMEOUT_SECONDS) -> boo
         _time.sleep(OPEN_SNAPSHOT_POLL_INTERVAL)
 
     log.warning("Timed out waiting for open snapshot after %ds — proceeding with available data", timeout)
+    return False
+
+
+def _wait_for_close_snapshot(timeout: int = CLOSE_SNAPSHOT_TIMEOUT_SECONDS) -> bool:
+    """Block until the 16:15 unified_levels_close.txt snapshot is fresh.
+
+    Mirrors `_wait_for_open_snapshot` for the EOD path. The 10-minute
+    cron gap between the 16:15 pipeline run and the 16:25 EOD
+    narrative usually means the file is already there, but if the
+    16:15 run slips (e.g. broker latency), this gate prevents the
+    narrative from grading the day against the 16:00 snapshot.
+
+    Returns True if the file exists and was modified after 16:15 ET
+    today. Returns False if timeout expires; caller proceeds with
+    whatever is on disk and logs a warning.
+    """
+    import time as _time
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo(ET_TZ)
+    deadline = _time.monotonic() + timeout
+    today_1615 = _dt.now(et).replace(hour=16, minute=15, second=0, microsecond=0)
+
+    while _time.monotonic() < deadline:
+        if UNIFIED_LEVELS_CLOSE_TXT.exists():
+            mtime = _dt.fromtimestamp(UNIFIED_LEVELS_CLOSE_TXT.stat().st_mtime, tz=et)
+            if mtime >= today_1615:
+                log.info("✓ Close snapshot ready (mtime: %s)", mtime.strftime("%H:%M:%S ET"))
+                return True
+        log.info("Waiting for 16:15 close snapshot... (%s)", UNIFIED_LEVELS_CLOSE_TXT)
+        _time.sleep(CLOSE_SNAPSHOT_POLL_INTERVAL)
+
+    log.warning(
+        "Timed out waiting for close snapshot after %ds — proceeding with available data",
+        timeout,
+    )
     return False
 
 
@@ -163,43 +219,14 @@ def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
 def send_discord_summary(summary: str, webhook_key: str = "macro-alerts") -> None:
     """Send the narrative to Discord via the configured webhook.
 
-    Splits into chunks if needed (Discord 2000 char limit).
+    Thin shim — actual delivery + chunking lives in
+    `scripts.libs_py.discord.send_summary` (audit §3.5).
     """
-    import requests
-
-    webhook_url = None
-    if DISCORD_WEBHOOKS_PATH.exists():
-        import json
-        with open(DISCORD_WEBHOOKS_PATH, "r", encoding="utf-8") as f:
-            webhooks = json.load(f)
-        webhook_url = webhooks.get(webhook_key)
-
-    if not webhook_url:
-        log.warning("No Discord webhook found for key '%s' — skipping Discord.", webhook_key)
-        return
-
-    chunks = []
-    if len(summary) > 1900:
-        sections = summary.split("\n## ")
-        current_chunk = ""
-        for section in sections:
-            if len(current_chunk) + len(section) + 4 > 1900:
-                if current_chunk:
-                    chunks.append(current_chunk)
-                current_chunk = "## " + section if not section.startswith("#") else section
-            else:
-                current_chunk = current_chunk + "\n## " + section if current_chunk else section
-        if current_chunk:
-            chunks.append(current_chunk)
-    else:
-        chunks = [summary]
-
-    for i, chunk in enumerate(chunks):
-        try:
-            requests.post(webhook_url, json={"content": chunk}, timeout=15)
-            log.info("  Discord chunk %d/%d sent to %s", i + 1, len(chunks), webhook_key)
-        except Exception as e:
-            log.warning("  Discord delivery failed for chunk %d: %s", i + 1, e)
+    _send_discord_summary(
+        summary,
+        webhook_key=webhook_key,
+        repo_root=REPO_ROOT,
+    )
 
 
 def write_narrative_to_disk(summary: str, mode: str, ticker: str) -> Path:
@@ -235,6 +262,12 @@ def run_narrative(
 
     if mode == "open":
         _wait_for_open_snapshot()
+    elif mode == "close":
+        # Symmetric gate for the EOD path — see _wait_for_close_snapshot
+        # for why this is needed. The 10-minute cron gap (16:15 → 16:25)
+        # is the only coordination; this gate makes it robust to
+        # pipeline slippage.
+        _wait_for_close_snapshot()
 
     prompt_template = load_prompt_template(mode)
     
@@ -273,6 +306,14 @@ def run_narrative(
                 cheat_sheet += "\n\n== WEEK AHEAD CONTEXT ==\nSince it's the weekend, incorporate a 'Week Ahead' outlook focusing on upcoming macro events and structural setups for the week. The focus should be on Monday/Tuesday structure and the broader weekly thesis."
             
             prompt = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", cheat_sheet)
+            # Inject the per-instrument risk-params block (audit issue
+            # §1.7). If the prompt doesn't have the
+            # `{{INSERT_RISK_PARAMS}}` placeholder, `insert_risk_params`
+            # is a no-op. The instruments are derived from the
+            # NARRATIVE tickers via the NQ1→MNQ, ES1→MES map.
+            _micro_map = {"NQ1": "MNQ", "ES1": "MES"}
+            micro_instruments = [_micro_map.get(t, t) for t in tickers]
+            prompt = insert_risk_params(prompt, instruments=micro_instruments)
             
             summary = call_ollama(prompt, model)
             write_narrative_to_disk(summary, mode, ticker)

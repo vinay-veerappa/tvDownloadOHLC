@@ -33,17 +33,10 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 
-import sys
-from pathlib import Path
-
-# Add project root to sys.path dynamically
-_current_dir = Path(__file__).resolve().parent
-while _current_dir.name and _current_dir.name != "scripts":
-    _current_dir = _current_dir.parent
-if _current_dir.name == "scripts":
-    _root_dir = str(_current_dir.parent)
-    if _root_dir not in sys.path:
-        sys.path.insert(0, _root_dir)
+# Side-effect import: ensures the repo root is on sys.path so
+# `from scripts.trader import ...` works without a per-file hack.
+# See scripts/trader/_path_setup.py for the full rationale.
+from scripts.trader import _path_setup  # noqa: F401
 
 from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
@@ -118,6 +111,28 @@ UNIFIED_LEVELS_OPEN_TXT = OPTIONS_DATA_DIR / "current" / "unified_levels_open.tx
 UNIFIED_LEVELS_CLOSE_TXT = OPTIONS_DATA_DIR / "current" / "unified_levels_close.txt"
 DB_PATH = REPO_ROOT / "web" / "prisma" / "dev.db"
 BIAS_GRADES_PATH = OPTIONS_DATA_DIR / "daily" / "bias_grades.jsonl"
+
+
+# ── Narrative ticker mapping ───────────────────────────────────────
+# The options pipeline stores RTD-native futures under short keys (NQ, ES).
+# The narrative layer uses user-facing continuous-contract symbols (NQ1, ES1).
+# This helper keeps the mapping in one place.
+NARRATIVE_TICKER_MAP: dict[str, str | None] = {
+    "NQ1": "NQ",
+    "ES1": "ES",
+}
+
+
+def resolve_narrative_ticker(ticker: str) -> str:
+    """Map a user-facing narrative ticker to the options-pipeline key.
+
+    Examples:
+      - "NQ1" -> "NQ"
+      - "ES1" -> "ES"
+      - "SPY" -> "SPY" (1:1 passthrough)
+    """
+    resolved = NARRATIVE_TICKER_MAP.get(ticker)
+    return resolved if resolved is not None else ticker
 
 # ── Bias Grade Feedback Loop (Phase F) ─────────────────────────────
 
@@ -284,20 +299,23 @@ def compute_invalidation(
 # ── DataLoader Setup (DRY — reuses existing framework) ─────────────
 
 def get_dataloader(lookback_days: int = 45) -> DataLoader:
-    """Initialize DataLoader with overridden date range for weekly context.
+    """Initialize DataLoader with a safe date range for narrative context.
 
     Reuses the existing config from sessions.yaml and the existing
     DataLoader from scripts/libs_py/data/loader.py — no new I/O code.
 
-    NOTE: date_end is set 14 days ahead of today so that parquet files
-    whose last bar is a few days in the past (e.g. ES1 ending July 8 when
-    today is July 13) still fall within the slice window and are loaded
-    correctly. The actual last-bar close is what gets used as spot price.
+    The configured date_end is kept because it covers historical parquet
+    data that may only run through the end of 2025.  date_start is
+    computed from lookback_days, but we clamp it to the configured start
+    so stale data still loads (otherwise a future today date can request
+    bars starting after the parquet ends and produce an empty slice).
     """
     config = load_config("scripts/trading_framework/config/sessions.yaml")
     now = datetime.now(ET)
-    config.date_end = (now + timedelta(days=14)).strftime("%Y-%m-%d")
-    config.date_start = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    requested_start = (now - timedelta(days=lookback_days)).date()
+    config_start = pd.Timestamp(config.date_start).date() if config.date_start else date(2000, 1, 1)
+    effective_start = min(requested_start, config_start)
+    config.date_start = effective_start.strftime("%Y-%m-%d")
     return DataLoader(config)
 
 
@@ -368,12 +386,71 @@ def map_label(token_label: str, strike: float, ticker: str, notional: str) -> st
         res += f" {notional}"
     return res
 
-def build_levels_markdown_table(ticker: str) -> str:
-    """Build a precise markdown table of option levels mapped to Futures prices."""
-    unified_txt_path = UNIFIED_LEVELS_OPEN_TXT if UNIFIED_LEVELS_OPEN_TXT.exists() else Path(OPTIONS_DATA_DIR / "current" / "unified_levels.txt")
-    if not unified_txt_path.exists():
-        return "No data"
-        
+def build_levels_markdown_table(ticker: str, session: str = "open") -> str:
+    """Build a precise markdown table of option levels mapped to Futures prices.
+
+    Args:
+        ticker: pipeline ticker key (e.g. "NQ", "ES", "SPX").
+        session: which snapshot to read.
+            - "open"      → `current/unified_levels_open.txt`  (09:30 RTH open).
+                            Use this for the morning / premarket narratives.
+            - "close"     → `current/unified_levels_close.txt` (16:15 RTH close).
+                            Use this for the EOD narrative so the review
+                            grades the day against the *current* walls/EMs,
+                            not the 6h 55min-stale morning snapshot.
+            - "intraday"  → `unified_levels.txt` (the live mirror, always
+                            overwritten by the most recent pipeline run).
+                            Use this for intraday / 12:00 narratives.
+            - any other value also maps to "intraday" / live.
+
+    .. note::
+        The default `session="open"` preserves the historical behaviour
+        of this function. **New callers should pass an explicit session
+        value** — hardcoding "open" is exactly the bug fixed in audit
+        issue §1.3 (EOD narrative was grading against the morning's
+        09:30 walls at 16:25).
+
+        For more structured access (with per-token metadata, parsed
+        tokens, etc.) use `load_unified_levels(session=...)` instead.
+
+    .. note::
+        If the requested session's snapshot file is missing, the function
+        falls back to the live mirror (`unified_levels.txt`) and logs a
+        warning. This is intentional — it keeps the narrative flowing
+        even if a particular scheduled pipeline run is delayed.
+    """
+    # Resolve the source file by session.
+    if session in ("close", "eod"):
+        # EOD and close both want the 16:15 RTH-close snapshot
+        # (the daily-narrative EOD mode is just an alias for the
+        # RTH-close grading snapshot).
+        primary = UNIFIED_LEVELS_CLOSE_TXT
+    elif session == "open":
+        primary = UNIFIED_LEVELS_OPEN_TXT
+    else:
+        # "intraday" and any other value → live mirror (most recent run).
+        primary = OPTIONS_DATA_DIR / "unified_levels.txt"
+
+    # Resolve with a safe fallback to the live mirror.
+    if primary.exists():
+        unified_txt_path = primary
+    else:
+        fallback = OPTIONS_DATA_DIR / "unified_levels.txt"
+        if fallback != primary and fallback.exists():
+            log.warning(
+                "build_levels_markdown_table: session=%s file missing (%s); "
+                "falling back to live mirror (%s).",
+                session, primary, fallback,
+            )
+            unified_txt_path = fallback
+        else:
+            log.warning(
+                "build_levels_markdown_table: no snapshot file found for "
+                "session=%s (primary=%s, fallback=%s).",
+                session, primary, fallback,
+            )
+            return "No data"
+
     unified_txt = unified_txt_path.read_text(encoding="utf-8")
     line = next((l for l in unified_txt.splitlines() if l.startswith(f"{ticker}:")), None)
     if not line: return "No data"
@@ -559,15 +636,27 @@ def parse_meta_fields(unified_entry: dict) -> dict:
                     matched = True
                     break
             if not matched:
-                # Fallback: split on last underscore
-                idx = meta_part.rfind("_")
-                if idx > 0:
-                    key = meta_part[:idx]
-                    val_str = meta_part[idx + 1:]
+                # Fallback: the field name is not in the allow-list,
+                # but the unified_levels loader is forward-compatible —
+                # new META fields can appear before the Python list is
+                # updated. We still want to capture them, but only if
+                # the key is well-formed: uppercase letters / digits
+                # only, must START with a letter, no special chars.
+                # This is a strict-format spec (audit §2.10) — the old
+                # `rfind("_")` split silently mis-parsed values that
+                # contain underscores (e.g. `NOTE: "12-31 expiry"`
+                # became key=`NOTE: "12-31`, value=`expiry"`).
+                m = re.match(r"^([A-Z][A-Z0-9]*)_(.+)$", meta_part)
+                if m:
+                    key, val_str = m.group(1), m.group(2)
                     try:
                         meta[key] = float(val_str)
                     except ValueError:
                         meta[key] = val_str
+                # else: silently skip — a malformed field is better
+                # than a mis-aligned one. The LLM downstream does not
+                # depend on every META field being present; it checks
+                # `meta.get("FOO")` and tolerates missing keys.
 
     return meta
 
@@ -767,12 +856,12 @@ def get_friday_em(weekly_ems: dict) -> tuple[float, float]:
 # ── Price Context (vectorized, via DataLoader) ────────────────────
 
 def _resolve_parquet_symbol(ticker: str) -> str:
-    """Map cash/ETF tickers to parquet file prefixes.
+    """Map narrative tickers to parquet file prefixes.
 
-    SPX → SPX, SPY → SPY, QQQ → QQQ, etc.
-    For index tickers without direct parquet, fall back to the futures prefix.
+    Cash/ETF tickers map 1:1.  Continuous-contract futures (NQ1, ES1) map
+    to their short parquet prefix.  Options-pipeline keys (NQ, ES) also
+    map to the same parquet prefixes.
     """
-    # Direct mapping — most tickers have parquet files with their own name
     direct_map = {
         "SPX": "SPX",
         "SPY": "SPY",
@@ -789,6 +878,8 @@ def _resolve_parquet_symbol(ticker: str) -> str:
         "AVGO": "AVGO",
         "NQ": "NQ1",
         "ES": "ES1",
+        "NQ1": "NQ1",
+        "ES1": "ES1",
     }
     return direct_map.get(ticker, ticker)
 
@@ -872,24 +963,30 @@ def load_weekly_price_context(loader: DataLoader, ticker: str) -> dict:
     }
 
 
-def load_daily_price_context(loader: DataLoader, ticker: str) -> dict:
-    """Load today's OHLCV via DataLoader for the daily EOD update.
+def _rth_filter_1m_to_daily(df_1m: pd.DataFrame) -> pd.DataFrame:
+    """Filter 1m bars to RTH (09:30-16:00 ET) and resample to daily.
 
-    Returns today's open/high/low/close/change_pct/range_pct/body.
+    The audit (§2.7) flagged that resampling the full 1m feed to a
+    daily bar takes the LAST 1m bar of the file — which may be a
+    20:00 Globex print, not the 16:00 settlement. Filtering to RTH
+    first means the resampled bar's `close` is always the
+    settlement print.
+
+    Assumes the index is a US/Eastern DatetimeIndex (the loader
+    produces this via the time-column-to-datetime-index pipeline).
+    If the index is anything else, the filter is a no-op and the
+    caller falls back to the daily parquet.
     """
-    parquet_sym = _resolve_parquet_symbol(ticker)
-
-    try:
-        df_1m = loader.load_price(parquet_sym)
-    except Exception as e:
-        log.warning("Could not load price data for %s (%s): %s", ticker, parquet_sym, e)
-        return {}
-
-    if df_1m.empty:
-        return {}
-
-    # Vectorized daily resampling
-    daily = df_1m.resample("B").agg({
+    import pandas as pd
+    if not isinstance(df_1m.index, pd.DatetimeIndex):
+        return pd.DataFrame()
+    # `between_time` is inclusive on both ends by default. 16:00
+    # is the settlement print (the 16:00-16:01 bar's OPEN is the
+    # settlement; including it is correct).
+    rth = df_1m.between_time("09:30", "16:00")
+    if rth.empty:
+        return rth
+    return rth.resample("B").agg({
         "open": "first",
         "high": "max",
         "low": "min",
@@ -897,22 +994,132 @@ def load_daily_price_context(loader: DataLoader, ticker: str) -> dict:
         "volume": "sum",
     }).dropna()
 
-    if daily.empty:
-        return {}
 
-    today = daily.iloc[-1]
-    prev_close = daily["close"].iloc[-2] if len(daily) >= 2 else today.open
-    change_pct = round((today.close / prev_close - 1) * 100, 2)
-    range_pct = round((today.high - today.low) / today.open * 100, 2) if today.open > 0 else 0.0
+def _is_daily_fresh(daily_df: pd.DataFrame, max_age_days: int = 1) -> bool:
+    """Return True if the last bar in `daily_df` is no more than
+    `max_age_days` calendar days behind today (in US/Eastern).
+
+    A daily parquet whose last bar is yesterday is fresh; a parquet
+    whose last bar is 5 days old is stale. Used by
+    `load_daily_price_context` to decide whether to trust the
+    daily bar or fall back to RTH-filtered 1m.
+    """
+    if daily_df is None or daily_df.empty or "time" not in daily_df.columns:
+        return False
+    try:
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        now_et = datetime.now(tz=et)
+        last_ts = daily_df["time"].iloc[-1]
+        if last_ts > 1e12:  # ms -> s
+            last_ts = last_ts / 1000.0
+        last_dt_et = datetime.fromtimestamp(float(last_ts), tz=et)
+        # Allow a 1-day buffer for the "today" case (RTH may not
+        # have closed yet when the EOD narrative runs in the late
+        # afternoon, OR the daily rollup job hasn't run yet today).
+        return (now_et.date() - last_dt_et.date()).days <= max_age_days
+    except Exception:
+        return False
+
+
+def load_daily_price_context(loader: DataLoader, ticker: str) -> dict:
+    """Load today's OHLCV via DataLoader for the daily EOD update.
+
+    Returns today's open/high/low/close/change_pct/range_pct/body.
+
+    Audit §2.7 fix: previously, this function resampled the FULL
+    1m parquet to a daily bar via `df_1m.resample("B").agg(...)`.
+    The `last` aggregator on `close` takes the last 1m bar of
+    whatever's in the file — which may be a 20:00 Globex print,
+    not the 16:00 settlement. The EOD narrative then reported an
+    incorrect close level (and high/low, since Globex can extend
+    the daily range well past RTH).
+
+    The fix uses the daily-timeframe parquet directly via
+    `loader.load_parquet(ticker, "1D")`. The daily file is the
+    settlement bar by construction — it aggregates one bar per
+    business day with `close = 16:00 ET settlement print` — and
+    is updated by the data-freshness pipeline's daily rollup.
+
+    Two safety nets:
+      1. Freshness check: if the daily parquet's last bar is more
+         than 1 calendar day behind today, we fall back to the
+         RTH-filtered 1m resample (which always returns the 16:00
+         settlement regardless of when the daily rollup last ran).
+      2. Empty / missing daily file: same fallback.
+    """
+    parquet_sym = _resolve_parquet_symbol(ticker)
+
+    # ── Primary: read the daily-timeframe parquet ─────────────
+    daily_df = None
+    try:
+        daily_df = loader.load_parquet(parquet_sym, "1D")
+    except Exception as e:
+        log.debug("[daily_price_context] loader.load_parquet(1D) failed for %s: %s",
+                  ticker, e)
+        daily_df = None
+
+    use_daily = (
+        daily_df is not None
+        and not daily_df.empty
+        and _is_daily_fresh(daily_df, max_age_days=1)
+    )
+
+    if use_daily:
+        # The daily file is up to date — use it directly.
+        today = daily_df.iloc[-1]
+        prev_close = (
+            daily_df["close"].iloc[-2]
+            if len(daily_df) >= 2
+            else float(today["open"])
+        )
+    else:
+        # Fallback: RTH-filtered 1m resample.
+        try:
+            df_1m = loader.load_price(parquet_sym)
+        except Exception as e:
+            log.warning(
+                "Could not load price data for %s (%s): %s",
+                ticker, parquet_sym, e,
+            )
+            return {}
+
+        if df_1m.empty:
+            return {}
+
+        daily = _rth_filter_1m_to_daily(df_1m)
+        if daily.empty:
+            log.warning(
+                "RTH-filtered daily resample is empty for %s "
+                "— index may not be a US/Eastern DatetimeIndex",
+                ticker,
+            )
+            return {}
+
+        today = daily.iloc[-1]
+        prev_close = (
+            daily["close"].iloc[-2]
+            if len(daily) >= 2
+            else float(today["open"])
+        )
+
+    change_pct = round((float(today["close"]) / float(prev_close) - 1) * 100, 2)
+    open_v = float(today["open"])
+    range_pct = (
+        round((float(today["high"]) - float(today["low"])) / open_v * 100, 2)
+        if open_v > 0
+        else 0.0
+    )
 
     return {
-        "open": round(float(today.open), 2),
-        "high": round(float(today.high), 2),
-        "low": round(float(today.low), 2),
-        "close": round(float(today.close), 2),
+        "open": round(float(today["open"]), 2),
+        "high": round(float(today["high"]), 2),
+        "low": round(float(today["low"]), 2),
+        "close": round(float(today["close"]), 2),
         "change_pct": change_pct,
         "range_pct": range_pct,
-        "body": "bullish" if today.close > today.open else "bearish",
+        "body": "bullish" if float(today["close"]) > open_v else "bearish",
     }
 
 
@@ -975,17 +1182,30 @@ def compute_level_interactions(
     low = today.get("low", 0)
     close = today.get("close", 0)
 
+    # All "tested" / "broken" flags require the level to be strictly
+    # positive (a zero level means "no level found" — a 0 GEX wall, for
+    # example, is not a real wall and must not register as tested or
+    # broken). We standardise on the form `level > 0 and high >= level`
+    # rather than the chained `high >= level > 0` because:
+    #   1. The chained form is easy to mis-translate (see audit §2.9:
+    #      the original `put_wall_tested` had `put_wall > 0` twice).
+    #   2. The explicit form reads top-to-bottom: gate on validity
+    #      first, then on the touch condition.
     return {
-        "call_wall_tested": high >= call_wall > 0,
-        "call_wall_broken": close > call_wall > 0,
-        "put_wall_tested": low <= put_wall > 0 and put_wall > 0,
-        "put_wall_broken": close < put_wall > 0,
-        "em_upper_tested": high >= em_upper > 0,
-        "em_upper_broken": close > em_upper > 0,
-        "em_lower_tested": low <= em_lower > 0 and em_lower > 0,
-        "em_lower_broken": close < em_lower > 0,
-        "zero_gamma_crossed": (low < zero_gamma < high) if zero_gamma > 0 else False,
-        "magnet_tested": (low < gamma_magnet < high) if gamma_magnet > 0 else False,
+        "call_wall_tested": call_wall > 0 and high >= call_wall,
+        "call_wall_broken": call_wall > 0 and close > call_wall,
+        "put_wall_tested": put_wall > 0 and low <= put_wall,
+        "put_wall_broken": put_wall > 0 and close < put_wall,
+        "em_upper_tested": em_upper > 0 and high >= em_upper,
+        "em_upper_broken": em_upper > 0 and close > em_upper,
+        "em_lower_tested": em_lower > 0 and low <= em_lower,
+        "em_lower_broken": em_lower > 0 and close < em_lower,
+        "zero_gamma_crossed": (
+            zero_gamma > 0 and low < zero_gamma < high
+        ),
+        "magnet_tested": (
+            gamma_magnet > 0 and low < gamma_magnet < high
+        ),
     }
 
 
@@ -1815,11 +2035,11 @@ async def load_daily_eod_from_db(eod_date: date | None = None, session_type: str
 
 # ── Compact Pre-Processed Summary for LLM ──────────────────────────
 
-def build_compact_briefing(briefing_data: dict) -> str:
+def build_compact_briefing(briefing_data: dict, tickers: list[str] | None = None) -> str:
     """Build a compact pre-processed summary that gives the LLM only what it
     needs for trade plan generation. This replaces the raw TOON JSON to save
     ~1000+ tokens by:
-    - Filtering to SPY and QQQ only (drops SPX and other tickers)
+    - Filtering to configured tickers
     - Extracting only regime, spot, key levels, and bias
     - Pre-computing level interactions into plain English
     - Stripping weekly progress, track assessment, and vol context
@@ -1827,7 +2047,10 @@ def build_compact_briefing(briefing_data: dict) -> str:
     """
     import json as _json
 
-    tickers = {t["ticker"]: t for t in briefing_data.get("tickers", [])}
+    if tickers is None:
+        tickers = ["NQ1", "ES1"]
+
+    all_data = {t["ticker"]: t for t in briefing_data.get("tickers", [])}
     events = briefing_data.get("economic_events", [])
 
     def _compact_ticker(t: dict) -> dict:
@@ -1868,16 +2091,17 @@ def build_compact_briefing(briefing_data: dict) -> str:
             "level_flags": ", ".join(flags) if flags else "none",
         }
 
-    compact = {
+    compact: dict[str, Any] = {
         "date": briefing_data.get("meta", {}).get("date", ""),
         "events": events,
-        "SPY": _compact_ticker(tickers.get("SPY")),
-        "QQQ": _compact_ticker(tickers.get("QQQ")),
     }
+    for ticker in tickers:
+        compact[ticker] = _compact_ticker(all_data.get(ticker))
+
     return _json.dumps(compact, indent=2, ensure_ascii=False)
 
 
-def build_compact_eod(briefing_data: dict) -> str:
+def build_compact_eod(briefing_data: dict, tickers: list[str] | None = None) -> str:
     """Build a compact EOD briefing for the LLM.
 
     The EOD narrative needs to grade the morning's trades against today's
@@ -1889,7 +2113,10 @@ def build_compact_eod(briefing_data: dict) -> str:
     """
     import json as _json
 
-    tickers = {t["ticker"]: t for t in briefing_data.get("tickers", [])}
+    if tickers is None:
+        tickers = ["NQ1", "ES1"]
+
+    all_data = {t["ticker"]: t for t in briefing_data.get("tickers", [])}
     events = briefing_data.get("economic_events", [])
 
     def _compact_eod_ticker(t: dict) -> dict:
@@ -1926,12 +2153,13 @@ def build_compact_eod(briefing_data: dict) -> str:
             "level_flags": ", ".join(flags) if flags else "none",
         }
 
-    compact = {
+    compact: dict[str, Any] = {
         "date": briefing_data.get("meta", {}).get("date", ""),
         "events": events,
-        "SPY": _compact_eod_ticker(tickers.get("SPY")),
-        "QQQ": _compact_eod_ticker(tickers.get("QQQ")),
     }
+    for ticker in tickers:
+        compact[ticker] = _compact_eod_ticker(all_data.get(ticker))
+
     return _json.dumps(compact, indent=2, ensure_ascii=False)
 
 
@@ -2125,9 +2353,39 @@ def build_overnight_context(
     }
 
 
+def _is_schwab_hub_reachable() -> bool:
+    """Quick TCP-probe of the local Schwab hub proxy on port 8080.
+
+    Returns True if something is listening on 127.0.0.1:8080 (the
+    hub proxy that bridges this repo to the Schwab API). Used by
+    `get_intermarket_quotes` to skip the Schwab auth + quote path
+    when the hub is down — without this probe, every premarket /
+    open run logs a `ConnectionRefusedError` traceback when the
+    hub is offline (audit §2.5).
+    """
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", 8080), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
 def get_intermarket_quotes() -> dict:
     """Fetch live quotes for Brent Crude, 10Y Yield, DXY, VIX, and VVIX.
     Prefers Schwab API, falls back to yfinance.
+
+    Failure handling (audit §2.5):
+      - The Schwab auth + quote path is skipped entirely if the
+        local hub proxy on port 8080 is unreachable. This avoids
+        `ConnectionRefusedError` tracebacks cluttering the console
+        when the hub is down.
+      - If the hub is reachable but the auth or a single quote
+        call fails, we log a single debug line and continue with
+        the yfinance fallback. We deliberately do NOT include a
+        traceback (no `exc_info=True`) — the LLM downstream is
+        tolerant of missing prices, so the noise-to-signal ratio
+        of a full traceback is wrong.
     """
     quotes = {
         "brent": {"price": None, "change": None},
@@ -2136,43 +2394,50 @@ def get_intermarket_quotes() -> dict:
         "vix": {"price": None, "change": None},
         "vvix": {"price": None, "change": None},
     }
-    
-    # Schwab fetch
-    client = None
-    try:
-        from schwab.auth import easy_client
-        import json
-        secrets_path = REPO_ROOT / "secrets.json"
-        token_path = REPO_ROOT / "token.json"
-        if secrets_path.exists() and token_path.exists():
-            with open(secrets_path, "r") as f:
-                secrets = json.load(f)
-            client = easy_client(
-                api_key=secrets["app_key"],
-                app_secret=secrets["app_secret"],
-                callback_url='https://127.0.0.1:8182',
-                token_path=str(token_path),
-                enforce_enums=False
-            )
-    except Exception as e:
-        log.debug("[intermarket] Schwab auth failed: %s", e)
 
-    # We only know Schwab tickers for VIX/VVIX that work well with get_quote currently
-    schwab_map = {"vix": "$VIX", "vvix": "$VVIX"}
-    if client:
-        for key, sym in schwab_map.items():
-            try:
-                resp = client.get_quote(sym)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if sym in data:
-                        q = data[sym].get("quote", {})
-                        if "lastPrice" in q:
-                            quotes[key]["price"] = q["lastPrice"]
-                            quotes[key]["change"] = q.get("netChange", 0.0)
-            except Exception:
-                pass
-                
+    # Probe the hub once; bail to the yfinance fallback if it's
+    # offline. Avoids `ConnectionRefusedError` tracebacks when the
+    # operator simply hasn't started the hub today.
+    if not _is_schwab_hub_reachable():
+        log.debug("[intermarket] Schwab hub (127.0.0.1:8080) not reachable — using yfinance fallback")
+    else:
+        # Schwab fetch
+        client = None
+        try:
+            from schwab.auth import easy_client
+            import json
+            secrets_path = REPO_ROOT / "secrets.json"
+            token_path = REPO_ROOT / "token.json"
+            if secrets_path.exists() and token_path.exists():
+                with open(secrets_path, "r") as f:
+                    secrets = json.load(f)
+                client = easy_client(
+                    api_key=secrets["app_key"],
+                    app_secret=secrets["app_secret"],
+                    callback_url='https://127.0.0.1:8182',
+                    token_path=str(token_path),
+                    enforce_enums=False
+                )
+        except Exception as e:
+            log.debug("[intermarket] Schwab auth failed: %s", e)
+            client = None
+
+        # We only know Schwab tickers for VIX/VVIX that work well with get_quote currently
+        schwab_map = {"vix": "$VIX", "vvix": "$VVIX"}
+        if client:
+            for key, sym in schwab_map.items():
+                try:
+                    resp = client.get_quote(sym)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if sym in data:
+                            q = data[sym].get("quote", {})
+                            if "lastPrice" in q:
+                                quotes[key]["price"] = q["lastPrice"]
+                                quotes[key]["change"] = q.get("netChange", 0.0)
+                except Exception as e:
+                    log.debug("[intermarket] Schwab quote %s failed: %s", sym, e)
+
     # Fallback to yfinance for missing
     yf_map = {
         "brent": "BZ=F",
@@ -2190,11 +2455,11 @@ def get_intermarket_quotes() -> dict:
                     fi = ticker.fast_info
                     quotes[key]["price"] = round(fi.last_price, 2)
                     quotes[key]["change"] = round(fi.last_price - (fi.previous_close or fi.last_price), 2)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("[intermarket] yfinance %s failed: %s", sym, e)
     except Exception as e:
-        log.debug("[intermarket] yfinance fallback failed: %s", e)
-        
+        log.debug("[intermarket] yfinance module unavailable: %s", e)
+
     return quotes
 
 
@@ -2550,7 +2815,7 @@ def _format_key_levels_hierarchy(
     overhead.sort(key=lambda x: x[0])
     support.sort(key=lambda x: x[0], reverse=True)
 
-    lines = [f"== KEY LEVELS TO WATCH ({ticker_label}) =="]
+    lines = [f"== GEX & ICT STRUCTURAL LEVELS ({ticker_label}) =="]
     if overhead:
         lines.append("Overhead: " + " → ".join(f"{px:,.2f} ({lbl})" for px, lbl in overhead))
     if support:
@@ -2854,10 +3119,10 @@ def build_ticker_cheat_sheet(
     sections: list[str] = []
 
     # ── MACRO CONTEXT (Always NQ+ES to gauge broad market) ──
-    nq_ctx = build_overnight_context(loader, "NQ1")
-    es_ctx = build_overnight_context(loader, "ES1")
+    nq_ctx = build_overnight_context(loader, "NQ1", target_date)
+    es_ctx = build_overnight_context(loader, "ES1", target_date)
 
-    ticker_ctx = build_overnight_context(loader, ticker)
+    ticker_ctx = build_overnight_context(loader, ticker, target_date)
     overnight_lines = ["== OVERNIGHT MACRO (Globex 18:00 → 08:30 ET) =="]
     if not ticker_ctx:
         overnight_lines.append(f"{ticker}: No data available")
@@ -2928,7 +3193,7 @@ def build_ticker_cheat_sheet(
     sections.append(_format_caution_score_block(caution))
 
     # ── TICKER SPECIFIC CONTEXT ──
-    ticker_ctx = build_overnight_context(loader, ticker)
+    ticker_ctx = build_overnight_context(loader, ticker, target_date)
     ticker_spot = ticker_ctx.get("close", 0) if ticker_ctx else 0
     base_label = ticker.replace("1", "").upper()
 
@@ -2949,14 +3214,14 @@ def build_ticker_cheat_sheet(
             rth_lines.append("No pRTH data available")
     sections.append("\n".join(rth_lines))
 
-    # GEX structure
+    # GEX structure (Removed separate block, merged into Structural Levels)
     session_arg = mode if mode in {"open", "close"} else "live"
     unified = load_macro_levels(session=session_arg)
     # If ticker is NQ1 -> NQ, ES1 -> ES, otherwise try directly
     ticker_unified = unified.get(base_label) or unified.get(ticker) or {}
     
     ticker_gex = _extract_gex_levels(ticker_unified, base_label)
-    sections.append(_format_gex_block(base_label, ticker_gex, ticker_spot))
+    # sections.append(_format_gex_block(base_label, ticker_gex, ticker_spot))
 
     # ALN
     aln_data: dict = {}
@@ -3025,6 +3290,34 @@ def build_ticker_cheat_sheet(
     
     sections.append(_format_aln_block(base_label, aln_data, ticker_spot))
 
+    # Daily Profiler (session outcomes, conditional predictions, reference levels)
+    try:
+        from scripts.trader.signals.profiler import build_dual_profiler_block
+        es_spot = float(es_ctx.get("close", 0)) if es_ctx else 0.0
+        sections.append(build_dual_profiler_block(ticker, "ES1", ticker_spot, es_spot, target_date))
+    except Exception as e:
+        log.warning("[cheat_sheet] Profiler block failed for %s: %s", ticker, e)
+
+    # Quarters Theory (overnight combo + hourly candle structure)
+    try:
+        from scripts.trader.signals.quarters_theory import build_quarters_block
+        import pytz as _pytz
+        _now_et = datetime.now(_pytz.timezone("America/New_York"))
+        from scripts.utils.fused_data_loader import load_fused_data
+        _df_q = load_fused_data(ticker, timeframe="1m", require_historical=False)
+        if _df_q is not None and not _df_q.empty:
+            if _df_q.index.tz is None:
+                _df_q.index = pd.DatetimeIndex(_df_q.index).tz_localize("UTC").tz_convert(ET)
+            elif _df_q.index.tz != ET:
+                _df_q.index = _df_q.index.tz_convert(ET)
+            sections.append(build_quarters_block(
+                ticker, _df_q, _now_et,
+                asia_status=str(aln_data.get("asia_status", "")),
+                london_status=str(aln_data.get("london_status", "")),
+            ))
+    except Exception as e:
+        log.warning("[cheat_sheet] Quarters block failed for %s: %s", ticker, e)
+
     # Classification
     class_data: dict = {}
     try:
@@ -3081,12 +3374,24 @@ def build_ticker_cheat_sheet(
         )
         import pytz as _pytz
         now_et = datetime.now(_pytz.timezone("America/New_York"))
-        sections.append(_format_kz_pivots_block(ticker, ticker_spot, "OPEN"))
-        sections.append(_format_ipda_block(ticker, ticker_spot))
-        sections.append(_format_silver_bullet_block(now_et))
-        sections.append(_format_macro_block(now_et))
-        sections.append(_format_imbalance_block(ticker, ticker_spot, target_date, now_et))
-        sections.append(_format_gaps_block(ticker, ticker_spot))
+        
+        kz_block = _format_kz_pivots_block(ticker, ticker_spot, "OPEN")
+        if "No pivot data" not in kz_block: sections.append(kz_block)
+        
+        ipda_block = _format_ipda_block(ticker, ticker_spot)
+        if "No IPDA data" not in ipda_block: sections.append(ipda_block)
+        
+        sb_block = _format_silver_bullet_block(now_et)
+        if "No Silver Bullet windows remaining today" not in sb_block and "Data unavailable" not in sb_block: sections.append(sb_block)
+        
+        macro_block = _format_macro_block(now_et)
+        if "No macro windows remaining today" not in macro_block and "Data unavailable" not in macro_block: sections.append(macro_block)
+        
+        imb_block = _format_imbalance_block(ticker, ticker_spot, target_date, now_et)
+        if "No imbalances detected" not in imb_block and "No imbalances yet" not in imb_block: sections.append(imb_block)
+        
+        gaps_block = _format_gaps_block(ticker, ticker_spot)
+        if "No active gaps" not in gaps_block: sections.append(gaps_block)
     except Exception as e:
         log.warning("[cheat_sheet] ICT feature blocks failed for %s: %s", ticker, e)
 
@@ -3208,7 +3513,7 @@ def build_ticker_cheat_sheet(
             f"| GEX | {ticker_gex.get('bias', 'N/A')} | {ticker_gex.get('regime', 'N/A')} regime |",
             f"| ALN Pattern | {aln_data.get('bias', 'N/A')} | {aln_data.get('aln', 'N/A')} |",
         ]
-        sections.append("\n".join(matrix))
+        sections.insert(0, "\n".join(matrix))
     except Exception as e:
         log.warning("[cheat_sheet] Matrix failed: %s", e)
 
@@ -3456,7 +3761,7 @@ def build_eod_context(
         aln_pattern = ""
         try:
             # Reuse open-mode logic with fresh data for today only.
-            nq_ctx_morning = build_overnight_context(loader, ticker)
+            nq_ctx_morning = build_overnight_context(loader, ticker, target_date)
             df_t_recent = df_t[df_t.index >= (pd.Timestamp.now(ET) - timedelta(days=10))]
             if df_t_recent.empty:
                 df_t_recent = df_t

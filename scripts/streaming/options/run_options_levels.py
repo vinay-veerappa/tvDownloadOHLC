@@ -1698,6 +1698,18 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
     import os
     import subprocess
 
+    from scripts.streaming.options.config import (
+        NARRATIVE_SCHEDULE,
+        NARRATIVE_TICKERS,
+        WEEKLY_NARRATIVE_TIME,
+    )
+
+    ticker_args = ["--tickers", *NARRATIVE_TICKERS]
+
+    def _parse_time(time_str: str) -> tuple[int, int]:
+        hour, minute = map(int, time_str.split(":"))
+        return hour, minute
+
     def _run_subprocess(args: list[str], label: str) -> None:
         if not _is_trading_day():
             log.info("Non-trading day — skipping %s.", label)
@@ -1706,7 +1718,7 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
         try:
             # We use subprocess so the LLM generation (which can take a minute)
             # does not block the apscheduler thread pool or crash the main pipeline
-            from scripts.streaming.options.macro_pipeline import REPO_ROOT
+            from scripts.streaming.options.config import REPO_ROOT
             env = os.environ.copy()
             env["PYTHONPATH"] = str(REPO_ROOT)
             subprocess.run(args, env=env, cwd=str(REPO_ROOT), check=True)
@@ -1722,65 +1734,70 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
         for args, label in jobs:
             _run_subprocess(args, label)
 
-    # 0. Premarket Narrative (08:45 ET, Mon-Fri) — runs after 08:30 pipeline, before 09:30 open
+    # 0. Premarket Narrative
+    premarket_hour, premarket_minute = _parse_time(NARRATIVE_SCHEDULE["premarket"])
     scheduler.add_job(
         lambda: _run_narrative_chain([
-            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "premarket", "--no-discord"], "Trader Narrative Premarket"),
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "premarket", "--no-discord", *ticker_args], "Trader Narrative Premarket"),
         ]),
-        trigger=CronTrigger(day_of_week='mon-fri', hour=8, minute=45, timezone=tz),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=premarket_hour, minute=premarket_minute, timezone=tz),
         id="narrative_premarket",
         replace_existing=True,
     )
-    log.info("Scheduled Narrative: 08:45 ET (Premarket)")
+    log.info("Scheduled Narrative: %s ET (Premarket)", NARRATIVE_SCHEDULE["premarket"])
 
-    # 1. Daily Open Narrative (09:35 ET, Mon-Fri)
+    # 1. Daily Open Narrative
+    open_hour, open_minute = _parse_time(NARRATIVE_SCHEDULE["open"])
     scheduler.add_job(
         lambda: _run_narrative_chain([
-            (["python", "-m", "scripts.trader.daily_eod_update", "--session", "open"], "Open Update"),
-            (["python", "-m", "scripts.trader.daily_narrative", "--session", "open"], "Open Narrative"),
-            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord"], "Trader Narrative Open"),
+            (["python", "-m", "scripts.trader.daily_eod_update", "--session", "open", *ticker_args], "Open Update"),
+            (["python", "-m", "scripts.trader.daily_narrative", "--session", "open", *ticker_args], "Open Narrative"),
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "open", "--no-discord", *ticker_args], "Trader Narrative Open"),
         ]),
-        trigger=CronTrigger(day_of_week='mon-fri', hour=9, minute=35, timezone=tz),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=open_hour, minute=open_minute, timezone=tz),
         id="narrative_open",
         replace_existing=True,
     )
-    log.info("Scheduled Narrative: 09:35 ET (Open)")
+    log.info("Scheduled Narrative: %s ET (Open)", NARRATIVE_SCHEDULE["open"])
 
-    # 2. Intraday Narrative (12:00 ET, Mon-Fri)
+    # 2. Intraday Narrative
+    intraday_hour, intraday_minute = _parse_time(NARRATIVE_SCHEDULE["intraday"])
     scheduler.add_job(
         lambda: _run_narrative_chain([
-            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "intraday", "--no-discord"], "Trader Narrative Intraday"),
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "intraday", "--no-discord", *ticker_args], "Trader Narrative Intraday"),
         ]),
-        trigger=CronTrigger(day_of_week='mon-fri', hour=12, minute=0, timezone=tz),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=intraday_hour, minute=intraday_minute, timezone=tz),
         id="narrative_intraday",
         replace_existing=True,
     )
-    log.info("Scheduled Narrative: 12:00 ET (Intraday)")
+    log.info("Scheduled Narrative: %s ET (Intraday)", NARRATIVE_SCHEDULE["intraday"])
 
-    # 3. Daily EOD Narrative (16:15 ET, Mon-Fri)
+    # 3. Daily EOD Narrative
+    close_hour, close_minute = _parse_time(NARRATIVE_SCHEDULE["close"])
     scheduler.add_job(
         lambda: _run_narrative_chain([
-            (["python", "-m", "scripts.trader.daily_eod_update", "--session", "eod"], "EOD Update"),
-            (["python", "-m", "scripts.trader.daily_narrative", "--session", "eod"], "EOD Narrative"),
-            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "close", "--no-discord"], "Trader Narrative Close"),
+            (["python", "-m", "scripts.trader.daily_eod_update", "--session", "eod", *ticker_args], "EOD Update"),
+            (["python", "-m", "scripts.trader.daily_narrative", "--session", "eod", *ticker_args], "EOD Narrative"),
+            (["python", "-m", "scripts.trader.trader_narrative", "--mode", "close", "--no-discord", *ticker_args], "Trader Narrative Close"),
         ]),
-        trigger=CronTrigger(day_of_week='mon-fri', hour=16, minute=15, timezone=tz),
+        trigger=CronTrigger(day_of_week='mon-fri', hour=close_hour, minute=close_minute, timezone=tz),
         id="narrative_eod",
         replace_existing=True,
     )
-    log.info("Scheduled Narrative: 16:15 ET (EOD)")
+    log.info("Scheduled Narrative: %s ET (EOD)", NARRATIVE_SCHEDULE["close"])
 
-    # 4. Weekly Briefing (16:20 ET, Friday)
+    # 4. Weekly Briefing
+    weekly_hour, weekly_minute = _parse_time(WEEKLY_NARRATIVE_TIME)
     scheduler.add_job(
         lambda: _run_narrative_chain([
-            (["python", "-m", "scripts.trader.weekly_briefing"], "Weekly Update"),
+            (["python", "-m", "scripts.trader.weekly_briefing", *ticker_args], "Weekly Update"),
             (["python", "-m", "scripts.trader.weekly_narrative"], "Weekly Narrative"),
         ]),
-        trigger=CronTrigger(day_of_week='fri', hour=16, minute=20, timezone=tz),
+        trigger=CronTrigger(day_of_week='fri', hour=weekly_hour, minute=weekly_minute, timezone=tz),
         id="narrative_weekly",
         replace_existing=True,
     )
-    log.info("Scheduled Narrative: 16:20 ET (Weekly, Friday)")
+    log.info("Scheduled Narrative: %s ET (Weekly, Friday)", WEEKLY_NARRATIVE_TIME)
 
     log.info("APScheduler started (timezone=%s). Press Ctrl-C to stop.", SCHEDULE_TIMEZONE)
     try:

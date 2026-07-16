@@ -25,6 +25,12 @@ from datetime import date, timedelta
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+
+# Side-effect import: ensures the repo root is on sys.path so
+# `from scripts.trader import ...` works without a per-file hack.
+# See scripts/trader/_path_setup.py for the full rationale.
+from scripts.trader import _path_setup  # noqa: F401
+
 from scripts.trader.briefing_core import (
     REPO_ROOT,
     build_weekly_static_template,
@@ -34,6 +40,8 @@ from scripts.trader.briefing_core import (
     save_narrative_to_db,
 )
 
+from scripts.libs_py.discord import send_summary as _send_discord_summary
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
@@ -41,7 +49,6 @@ PROMPT_PATH = REPO_ROOT / "scripts" / "trader" / "prompts" / "weekly_briefing.md
 # Store weekly output alongside the daily levels in data/options/weekly/
 # so everything is in one place (data/options/current for daily, weekly for weekly)
 WEEKLY_OUTPUT_DIR = REPO_ROOT / "data" / "options" / "weekly"
-DISCORD_WEBHOOKS_PATH = REPO_ROOT / "discord_webhooks.json"
 
 # Ollama config
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
@@ -95,6 +102,13 @@ def render_weekly_summary(static_template: str, analysis: dict, tickers: list[di
         summary = summary.replace(f"{{{{BULLISH_SCENARIO_{ticker}}}}}", entry.get("bullish", "N/A"))
         summary = summary.replace(f"{{{{BEARISH_SCENARIO_{ticker}}}}}", entry.get("bearish", "N/A"))
         summary = summary.replace(f"{{{{RANGE_SCENARIO_{ticker}}}}}", entry.get("range", "N/A"))
+
+    weekly_trade_plan = analysis.get("weekly_trade_plan", []) or []
+    if isinstance(weekly_trade_plan, list):
+        trade_plan_md = "\n".join(f"- {item}" for item in weekly_trade_plan) if weekly_trade_plan else "- N/A"
+    else:
+        trade_plan_md = str(weekly_trade_plan)
+    summary = summary.replace("{{WEEKLY_TRADE_PLAN}}", trade_plan_md)
 
     key_risks = analysis.get("key_risks", []) or []
     if isinstance(key_risks, list):
@@ -157,47 +171,14 @@ def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
 def send_discord_summary(summary: str, webhook_key: str = "macro-alerts") -> None:
     """Send the summary to Discord via the configured webhook.
 
-    Uses discord_webhooks.json at the repo root. The webhook key
-    determines which channel (default: "macro-alerts").
+    Thin shim — actual delivery + chunking lives in
+    `scripts.libs_py.discord.send_summary` (audit §3.5).
     """
-    import requests
-
-    # Load webhook URL from config
-    webhook_url = None
-    if DISCORD_WEBHOOKS_PATH.exists():
-        with open(DISCORD_WEBHOOKS_PATH, "r", encoding="utf-8") as f:
-            import json as _json
-            webhooks = _json.load(f)
-        webhook_url = webhooks.get(webhook_key)
-
-    if not webhook_url:
-        log.warning("No Discord webhook found for key '%s' — skipping Discord.", webhook_key)
-        return
-
-    # Split into chunks if needed (Discord 2000 char limit)
-    chunks = []
-    if len(summary) > 1900:
-        # Split on section headers
-        sections = summary.split("\n## ")
-        current_chunk = ""
-        for section in sections:
-            if len(current_chunk) + len(section) + 4 > 1900:
-                if current_chunk:
-                    chunks.append(current_chunk)
-                current_chunk = "## " + section if not section.startswith("#") else section
-            else:
-                current_chunk = current_chunk + "\n## " + section if current_chunk else section
-        if current_chunk:
-            chunks.append(current_chunk)
-    else:
-        chunks = [summary]
-
-    for i, chunk in enumerate(chunks):
-        try:
-            requests.post(webhook_url, json={"content": chunk}, timeout=15)
-            log.info("  Discord chunk %d/%d sent to %s", i + 1, len(chunks), webhook_key)
-        except Exception as e:
-            log.warning("  Discord delivery failed for chunk %d: %s", i + 1, e)
+    _send_discord_summary(
+        summary,
+        webhook_key=webhook_key,
+        repo_root=REPO_ROOT,
+    )
 
 
 def write_summary_to_disk(summary: str, briefing_id: str) -> Path:

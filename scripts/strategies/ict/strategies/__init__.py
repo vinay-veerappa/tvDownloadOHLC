@@ -19,6 +19,7 @@ Available strategies (registry keys):
 from .ict_displacement    import ICTDisplacementStrategy
 from .ict_liquidity_sweep import ICTLiquiditySweepStrategy
 from .ict_fvg_rejection   import ICTFVGRejectionStrategy
+from .ict_fvg_cisd_rejection import ICTFVGCISDRejectionStrategy
 from .ict_ny_session      import ICTNYSessionStrategy
 from .ict_asia_volatility import ICTAsiaVolatilityStrategy
 
@@ -26,6 +27,7 @@ __all__ = [
     "ICTDisplacementStrategy",
     "ICTLiquiditySweepStrategy",
     "ICTFVGRejectionStrategy",
+    "ICTFVGCISDRejectionStrategy",
     "ICTNYSessionStrategy",
     "ICTAsiaVolatilityStrategy",
 ]

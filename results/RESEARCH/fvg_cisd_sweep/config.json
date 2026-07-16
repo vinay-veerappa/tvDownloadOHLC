@@ -1,0 +1,40 @@
+{
+  "grid": {
+    "htf_tf": [
+      "15m",
+      "1h"
+    ],
+    "ltf_tf": [
+      "5m"
+    ],
+    "require_rejection_fvg": [
+      true,
+      false
+    ],
+    "cisd_impl": [
+      "sweep_open"
+    ],
+    "entry_method": [
+      "2nd_fvg",
+      "cisd_close"
+    ],
+    "sl_method": [
+      "swing_extreme"
+    ],
+    "tp_rr": [
+      2
+    ],
+    "fvg_freshness": [
+      "fresh"
+    ]
+  },
+  "fixed": {
+    "require_mss": true,
+    "swing_length": 5,
+    "tick_size": 0.25,
+    "stop_ticks": 2,
+    "use_precomputed": true
+  },
+  "ticker": "ES1",
+  "total_arms": 8
+}

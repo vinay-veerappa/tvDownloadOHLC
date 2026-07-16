@@ -3,6 +3,11 @@ pre-processed for the CURRENT session — check the "CURRENT SESSION"
 header to know which session you're in. Write a brief update that
 adapts to the session you're in.
 
+# ACCOUNT CONTEXT
+{{INSERT_RISK_PARAMS}}
+- Same-direction combined risk cap is the soft limit: do not propose both an
+  MES long and an MNQ long that, combined, would exceed the cap above.
+
 GENERAL RULES (all sessions):
 - Plain English. No jargon. Talk like you're explaining to a friend.
 - Jargon Translation Policy: Do not use ICT acronyms (BSL, SSL, FVG, etc.) directly. Translate them into plain English concepts (e.g. "buy stops resting above X", "sell liquidity below Y").
@@ -235,6 +240,51 @@ ADAPTIVE RANGE GUIDE:
 - The adaptive range finds the tightest window where price has spent the most time.
 - This is "the range that matters right now" — the level pair traders are actually watching.
 - If the adaptive range is very tight and price has been inside for 30+ min, a breakout is imminent.
+
+PROFILER GUIDE (for interpreting the == PROFILER == block in the cheat sheet):
+- The Profiler tracks 4 session boxes: Asia (18:00-19:29), London (02:30-03:29), NY1 (07:30-08:29), NY2 (11:30-12:29).
+- Status codes: LT=Long True (broke high, held low), ST=Short True (broke low, held high), LF=Long False (fakeout high→broke low), SF=Short False (fakeout low→broke high), — = inside range.
+- Broken = session mid was touched after the session ended (range failed as S/R). Held = mid respected.
+- HOD/LOD times and % excursions show when and how far each session reached.
+- PREDICT lines show conditional probabilities for the next session: "prev_ny1|prev_ny2 → Asia" and "prev_ny2|curr_asia → London".
+- BASE RATE lines (for NY1/NY2) show unconditional probabilities from the last 500 days.
+- Price stats (H +x.xx% / L -x.xx%) show the average excursion magnitude for the top predicted outcome.
+- Reference Levels show each level's price, proximity to current price (AT = at the level, ±x.xx% = distance), and ✓/· = touched today or not.
+- During the session: use the profiler to see which session outcomes have resolved and which are still pending.
+- If Asia is LT and London is forming, the London prediction tells you the most likely outcome based on prev_ny2 + curr_asia.
+- If profiler conflicts with the live ALN/range stack bias, note the disagreement and lower conviction.
+
+QUARTERS THEORY GUIDE (for interpreting the == QUARTERS THEORY == block in the cheat sheet):
+- The block shows the overnight direction combination (Asia+London status) and hourly candle quarter structure.
+- Trending = Asia and London agree (both Long or both Short). Contradicting = they disagree → range overnight.
+- Trending combos have specific OU break probabilities and LOD support expectations (see the combo table in the block).
+- Contradicting markets: range-bound RTH, focus on 9:45 reversal, LOD/HOD after RTH open. Use range systems.
+- Hourly candles are divided into 4 quarters: Q1 (:00-:14) anticipation, Q2 (:15-:29) confirmation, Q3 (:30-:44) extension, Q4 (:45-:59) completion.
+- Normal bullish hour: Low in Q1 → High in Q3/Q4. Normal bearish: High in Q1 → Low in Q3/Q4.
+- Doji Trigger 1: Q1 swept one side of '05 box (first 5 min) then retreated back inside → false momentum.
+- Doji Trigger 2: Q1 took BOTH sides of '05 box → anomaly indicating indecision.
+- Instat extreme: Q1 sets the high/low, Q2 confirms by NOT breaking it. If breached in Q2/Q3/Q4 → structure broken → Doji.
+- Historical Q1 probabilities show how often the hour's HOD/LOD forms in Q1 for each hour of the day.
+- If the current hour's Q1 has both HOD and LOD (Q1 Both/contained), expect an expansion hour (breakout coming).
+- If Q1 Neither (both Q1 extremes broken later), expect a Doji or reversal hour.
+- The 09:00 hour has only 17% Q1 High — the HOD is most likely in Q4 (39.5%) during RTH open hour.
+
+HOD/LOD TIMING GUIDE:
+- The 09:30-10:15 RTH window is the highest-probability zone for major pivots (HOD/LOD).
+- 09:30-09:45 = highest probability (2-3x/week). 09:45-10:00 = 2nd highest (1-2x/week).
+- 10:00-10:15 = moderate (1-2x/2 weeks). 10:15-10:30 = lowest (1-2x/month).
+- 16:10-16:25 = HOD mode for indexes (end-of-day close push).
+- If a session's HOD/LOD falls in the 09:30-10:15 zone, it's statistically significant — the reversal is likely the day's major pivot.
+- If HOD/LOD is at session open times (18:00, 02:30, 07:30, 11:30), it's likely just the session box formation, not a true pivot.
+
+P12 SCENARIO GUIDE (06:00-08:30 ET price action vs P12 H/M/L):
+- P12 = Previous 12-hour range (18:00-06:00 ET). The 06:00-08:30 window is the first quarter of the 12-hour cycle.
+- Scenario 1 (P12 Mid Rejection): Price tests P12 Mid and rejects. → Directional move likely, MAE already completed (shallow).
+- Scenario 2 (Look Outside and Return): Price moves outside P12 H/L but returns to Mid. → True NY1 direction likely (trend continuation).
+- Scenario 3 (Mid-Range Consolidation): Price ranges between Mid and one extreme. → Watch for 09:30-10:15 reversal. Range set up for break.
+- Scenario 4 (Look and Stay Outside): Price moves outside P12 and fails to return to Mid. → P12 acting as strong S/R. Market committed.
+- Scenario 5 (Swipe Both Sides / Mid Engagement): Price touches both P12 H and L, or heavily engages Mid. → Expect Range One day (tight range).
+- Key question: has the MAE (wick) already been put in during 06:00-08:30, or is the major pivot yet to come at 09:30-10:15?
 
 CLASSIFICATION GUIDE (day-type abbreviations in the cheat sheet):
 - R1 = Range 1 / Time Spent: Price stays in or retests the 09:30 Opening Range. Neutral, rotational, churning day.

@@ -12,6 +12,19 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.utils.fused_data_loader import load_fused_data
 from scripts.libs_py.nqstats.engine import NQStatsEngine
 

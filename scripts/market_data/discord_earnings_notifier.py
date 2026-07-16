@@ -19,7 +19,10 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import requests
+from scripts.libs_py.discord import (
+    load_webhook_url as _shared_load_webhook_url,
+    send_payload as _shared_send_payload,
+)
 
 try:
     import yfinance as yf
@@ -140,12 +143,18 @@ def calculate_expected_move_levels(spot: float, priced_move_pct: float) -> tuple
 # --- Helpers & Notifiers ---
 
 def _load_webhook_url(target_key: str) -> str | None:
-    try:
-        data = json.loads(DISCORD_WEBHOOKS_PATH.read_text())
-        return data.get(target_key)
-    except Exception as e:
-        log.error(f"Failed to load webhooks from {DISCORD_WEBHOOKS_PATH}: {e}")
-        return None
+    """Look up the Discord webhook URL for ``target_key``.
+
+    Thin shim over :func:`scripts.libs_py.discord.load_webhook_url`
+    that preserves the historical return-None-on-missing contract
+    (the in-line `requests.post` call sites use ``if not webhook_url
+    and not dry_run`` to bail, so we must return ``None`` on
+    missing).
+    """
+    return _shared_load_webhook_url(
+        target_key,
+        webhooks_path=DISCORD_WEBHOOKS_PATH,
+    )
 
 
 def _get_db_connection() -> sqlite3.Connection:
@@ -698,14 +707,11 @@ def run_recap(channel_key: str, custom_date: str | None = None, dry_run: bool = 
         print(json.dumps(payload, indent=2))
         return
 
-    try:
-        resp = requests.post(webhook_url, json=payload, timeout=10)
-        if resp.status_code in (200, 204):
-            log.info("Successfully posted post-earnings recap to Discord.")
-        else:
-            log.error(f"Discord webhook failed: {resp.status_code}: {resp.text}")
-    except Exception as e:
-        log.error(f"Failed to deliver Discord webhook: {e}")
+    ok = _shared_send_payload(webhook_url, payload)
+    if ok:
+        log.info("Successfully posted post-earnings recap to Discord.")
+    else:
+        log.error("Failed to deliver post-earnings recap to Discord.")
 
 
 def run_notify(mode: str, channel_key: str, custom_date: str | None = None, dry_run: bool = False):
@@ -795,14 +801,11 @@ def run_notify(mode: str, channel_key: str, custom_date: str | None = None, dry_
         print(json.dumps(payload, indent=2))
         return
 
-    try:
-        resp = requests.post(webhook_url, json=payload, timeout=10)
-        if resp.status_code in (200, 204):
-            log.info("Successfully posted earnings briefing to Discord.")
-        else:
-            log.error(f"Discord webhook failed with HTTP {resp.status_code}: {resp.text}")
-    except Exception as e:
-        log.error(f"Failed to post to Discord webhook: {e}")
+    ok = _shared_send_payload(webhook_url, payload)
+    if ok:
+        log.info("Successfully posted earnings briefing to Discord.")
+    else:
+        log.error("Failed to deliver earnings briefing to Discord.")
 
 
 if __name__ == "__main__":

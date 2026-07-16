@@ -1,5 +1,6 @@
 # filepath: tests/test_risk_guard_integration.py
 import json
+import os
 import time
 import urllib.request
 import urllib.error
@@ -255,5 +256,95 @@ def test_max_trades_enforcement():
     assert len(active_positions) == 0, "Account should be locked out and flattened after MaxTrades!"
     
     # Clean up
+    nt_post("/api/dev/reset-risk")
+
+def test_firm_mirror_diagnostics():
+    """Verify all Firm Mirror math scenarios via C# unit diagnostics."""
+    print("\nRunning C# Firm Mirror Unit Diagnostics via McpBridge...")
+    res = nt_post("/api/dev/run-firm-tests")
+    assert res.get("success") is True, f"Firm Mirror Unit Diagnostics failed: {res}"
+    
+    print("\n--- Diagnostic Arranged Inputs & Trace Logs ---")
+    for log in res.get("logs", []):
+        print(f"  {log}")
+    print("----------------------------------------------")
+    print("Firm Mirror diagnostics verification passed!")
+
+
+def test_firm_mirror_persistence_restart():
+    """Verify that FirmTrailingPeak and FirmFloorLocked survive a reload boundary.
+    
+    The correct sequence:
+    1. Trigger compile/hot-swap (old AddOn's Terminated saves empty state; new Configure runs)
+    2. Wait for new AddOn instance to be fully up
+    3. Write our custom state.json (so the live instance can load it)
+    4. Call /api/dev/reload-state to hot-load state.json into the running instance
+    5. Inspect in-memory state to confirm the values were loaded
+    
+    This proves the deserialization path (fields, types, JSON keys) is correct
+    without being foiled by Terminated() overwriting the file.
+    """
+    print("\nCompiling fresh instance for persistence boundary test...")
+    try:
+        nt_post("/api/compile", {"debug": True})
+    except Exception as e:
+        print(f"Compile triggered (connection drop expected: {e})")
+    
+    print("Waiting 4 seconds for NT8 to hot-swap and finish Configure()...")
+    time.sleep(4)
+    
+    # Verify the new instance is up
+    health = nt_get("/api/health")
+    assert health.get("status") == "ok", f"Bridge not up after compile: {health}"
+    print("New instance confirmed up.")
+
+    state_file = r"C:\Users\vinay\Documents\NinjaTrader 8\RiskGuard\state.json"
+    
+    initial_state = {
+        "IsArmed": True,
+        "Mode": "shadow",
+        "LockedOutAccounts": [],
+        "AccountsData": {
+            "Sim101": {
+                "LastSessionDate": "2026-07-15T00:00:00",
+                "TradesToday": 0,
+                "ConsecutiveLosses": 0,
+                "PeakEquity": 0.0,
+                "LastRealizedPnL": 0.0,
+                "SessionStartRealizedPnL": 0.0,
+                "FirmTrailingPeak": 123456.78,
+                "FirmFloorLocked": True,
+                "FirmDailyDate": "2026-07-15T00:00:00",
+                "FirmDailyStartRealized": 0.0,
+                "FirmStartingBalance": 100000.0
+            }
+        },
+        "Timestamp": "2026-07-16T00:00:00Z"
+    }
+    
+    print("Writing state.json with test values (FirmTrailingPeak=123456.78, FirmFloorLocked=True)...")
+    os.makedirs(os.path.dirname(state_file), exist_ok=True)
+    with open(state_file, "w") as f:
+        json.dump(initial_state, f, indent=4)
+    
+    print("Calling /api/dev/reload-state to hot-load state.json into the live AddOn instance...")
+    reload_res = nt_post("/api/dev/reload-state")
+    assert reload_res.get("success") is True, f"reload-state failed: {reload_res}"
+    
+    print("Querying in-memory states to verify state was deserialized correctly...")
+    state_res = nt_get("/api/dev/inspect-state")
+    assert state_res.get("success") is True, f"Failed to inspect risk guard state: {state_res}"
+    
+    states = state_res.get("states", {})
+    assert "Sim101" in states, "Sim101 account state not loaded!"
+    sim_state = states["Sim101"]
+    
+    print(f"Loaded state: FirmTrailingPeak={sim_state.get('FirmTrailingPeak')}, FirmFloorLocked={sim_state.get('FirmFloorLocked')}")
+    assert abs(sim_state.get("FirmTrailingPeak", 0) - 123456.78) < 0.01, \
+        f"FirmTrailingPeak deserialization FAILED! Got: {sim_state.get('FirmTrailingPeak')}"
+    assert sim_state.get("FirmFloorLocked") is True, \
+        f"FirmFloorLocked deserialization FAILED! Got: {sim_state.get('FirmFloorLocked')}"
+    
+    print("Persistence deserialization test passed!")
     nt_post("/api/dev/reset-risk")
 

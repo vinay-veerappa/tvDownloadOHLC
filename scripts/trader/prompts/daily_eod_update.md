@@ -6,18 +6,16 @@ Runtime renders the full markdown template in Python.
 You only provide analysis fields as JSON.
 
 # ACCOUNTS (separate, no cross-hedging)
-- MES: $50k, $2k trailing DD, SPY proxy, $5/pt, risk $150/trade, daily stop $450
-- MNQ: $50k, $2k trailing DD, QQQ proxy, $2/pt, risk $100/trade, daily stop $300
-- Max 3 trades/day. Min R:R = 1:2. Same-direction combined risk <= $200.
+{{INSERT_RISK_PARAMS}}
 - Contracts = floor(risk_cap / (stop_pts x multiplier)). If 0, skip.
 
 # RULES
 - ET timezone.
-- Regime behavior:
-	- PINNED: fade/pin behavior.
-	- TRENDING: continuation/break-retest behavior.
-	- COILED: wait for confirmation.
-	- BATTLE ZONE: mean reversion inside structure.
+- The `bias` field in the payload is the **mandated execution track**
+  (e.g. "TRACK A: BREAKOUT/MOMENTUM ..."). It is computed in Python
+  from the GEX regime and is ABSOLUTE — do not override it. Your
+  tomorrow's setup and tonight's review must be consistent with the
+  mandated track, not with a separate regime-behavior interpretation.
 - ALN PATTERN RULES (use for directional bias and sizing):
   - LPEU (Partial Engulf Up): Bullish bias. 80.8% chance NY breaks London High. If low breaks first, bullish edge drops to coin flip (51.2%).
   - LPED (Partial Engulf Down): Bearish bias. 75.0% chance NY breaks London Low. If high breaks first, bearish edge drops to coin flip (46.2%).
@@ -30,11 +28,25 @@ You only provide analysis fields as JSON.
   - Gap Down (open below pRTH Low): 60% chance close holds below — bearish continuation. Don't fade unless price reclaims pRTH Low.
   - Inside Range (open within pRTH): 74% chance at least one side is breached. Use ALN bias to pick direction.
   - If ALN and RTH scenario conflict, wait for reclaim before committing.
-- Evaluate the morning plan honestly against session action.
+- First, review the TRADE OUTCOMES block. For each trade:
+  - If FILLED → CLOSED: note whether the exit was STOPPED, TARGET, or other.
+    Compare the actual MAE / MFE to the planned stop / target. Was the stop
+    hit on the first touch, or did the trade work partially before reversing?
+  - If FILLED → STILL OPEN: note MFE / MAE. Is the position working?
+  - If NEVER FILLED: the price did not reach the entry limit. Do NOT mark
+    the plan as "skipped" or "avoided" — the trade simply didn't trigger.
+    Note whether price came within the stop/target range (we'd need intraday
+    context for that — answer with "did not trigger" if unsure).
+- Then grade the morning's MORNING TRADE PLAN below in light of the
+  outcomes. Bias assessment (LONG/SHORT) is independent of execution —
+  a correct bias with a never-filled trade is still a correct bias call.
 - If setup is invalid for tomorrow, use "NO TRADE -- [reason]" and set plan_json.noTrade=true.
 
 # PAYLOAD
 {{INSERT_DAILY_EOD_JSON}}
+
+# TRADE OUTCOMES (today's actual execution)
+{{INSERT_TRADE_OUTCOMES}}
 
 # MORNING TRADE PLAN (today)
 {{INSERT_TRADE_PLAN}}
@@ -54,38 +66,40 @@ Return ONLY this block:
 <analysis_json>
 {
 	"session_log": {
-		"mes": "Win/Loss/No Entry -- brief execution outcome",
-		"mnq": "Win/Loss/No Entry -- brief execution outcome",
-		"daily_pnl": "MES $... | MNQ $..."
+		"NQ": "Win/Loss/No Entry -- brief execution outcome",
+		"ES": "Win/Loss/No Entry -- brief execution outcome",
+		"daily_pnl": "ES $... | NQ $..."
 	},
 	"drawdown_analysis": "2-3 sentences assessing DD health and risk runway",
-	"level_accuracy_review": "2-3 sentences on which walls/EM held or broke",
+	"level_accuracy_review": "2-3 sentences on which boundaries/expected moves held or broke",
 	"trade_quality": "1-3 sentences on MAE/MFE, execution quality, or justified no-trade",
 	"note_of_day": "1-2 sentences with one key lesson",
 	"overnight_considerations": "1-2 sentences on overnight watch items",
-	"tomorrow_mes": {
-		"regime": "TRENDING",
-		"logic": "1-2 sentences",
-		"entry": "futures price OR NO TRADE -- reason",
-		"stop": "futures price",
-		"stop_dist": "X.X",
-		"contracts": "N",
-		"target": "futures price",
-		"rr": "X.X"
-	},
-	"tomorrow_mnq": {
-		"regime": "TRENDING",
-		"logic": "1-2 sentences",
-		"entry": "futures price OR NO TRADE -- reason",
-		"stop": "futures price",
-		"stop_dist": "X.X",
-		"contracts": "N",
-		"target": "futures price",
-		"rr": "X.X"
+	"tomorrow": {
+		"NQ": {
+			"regime": "TRENDING",
+			"logic": "1-2 sentences",
+			"entry": "futures price OR NO TRADE -- reason",
+			"stop": "futures price",
+			"stop_dist": "X.X",
+			"contracts": "N",
+			"target": "futures price",
+			"rr": "X.X"
+		},
+		"ES": {
+			"regime": "TRENDING",
+			"logic": "1-2 sentences",
+			"entry": "futures price OR NO TRADE -- reason",
+			"stop": "futures price",
+			"stop_dist": "X.X",
+			"contracts": "N",
+			"target": "futures price",
+			"rr": "X.X"
+		}
 	},
 	"tomorrow_risk_budget": {
-		"line_1": "MES: $... (...) | MNQ: $... (...)",
-		"line_2": "Daily stop remaining: MES $450 | MNQ $300"
+		"line_1": "ES: $... (...) | NQ: $... (...)",
+		"line_2": "Daily stop remaining: ES $450 | NQ $300"
 	},
 	"plan_json": {
 		"logic": "tomorrow combined logic",

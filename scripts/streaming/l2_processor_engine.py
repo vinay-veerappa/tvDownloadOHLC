@@ -12,6 +12,19 @@ from collections import defaultdict, deque
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("L2Engine")
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.streaming.options.config import HUB_WS_ENDPOINT as HUB_WS, HUB_RESOLVE_ENDPOINT
 
 class L2BookmapEngine:

@@ -4,6 +4,19 @@ from typing import Any, Callable, Dict
 
 import pandas as pd
 
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
 from scripts.strategies.ema_pullback.core.ema_pullback import EMAPullbackStrategy
 from scripts.strategies.failed_auction.core.failed_auction import FailedAuctionStrategy
 from scripts.strategies.initial_balance.core.initial_balance_pullback import IBPullbackStrategy
@@ -17,6 +30,7 @@ from scripts.strategies.ict.strategies import (
     ICTDisplacementStrategy,
     ICTLiquiditySweepStrategy,
     ICTFVGRejectionStrategy,
+    ICTFVGCISDRejectionStrategy,
     ICTNYSessionStrategy,
     ICTAsiaVolatilityStrategy,
 )
@@ -49,6 +63,7 @@ STRATEGY_FACTORY_REGISTRY: Dict[str, Callable[[str], Any]] = {
     "ict_displacement":    lambda ticker: HunterStrategyAdapter(ICTDisplacementStrategy(ticker=ticker),    "ICT Displacement (MSS)"),
     "ict_liquidity_sweep": lambda ticker: HunterStrategyAdapter(ICTLiquiditySweepStrategy(ticker=ticker), "ICT Liquidity Sweep"),
     "ict_fvg_rejection":   lambda ticker: HunterStrategyAdapter(ICTFVGRejectionStrategy(ticker=ticker),   "ICT FVG Rejection"),
+    "ict_fvg_cisd_rejection": lambda ticker: HunterStrategyAdapter(ICTFVGCISDRejectionStrategy(ticker=ticker), "ICT FVG+CISD Rejection"),
     "ict_ny_session":      lambda ticker: HunterStrategyAdapter(ICTNYSessionStrategy(ticker=ticker),      "ICT NY Session KZ"),
     "ict_asia_volatility": lambda ticker: HunterStrategyAdapter(ICTAsiaVolatilityStrategy(ticker=ticker), "ICT Asia Volatility"),
 }

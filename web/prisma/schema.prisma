@@ -730,6 +730,8 @@ model EarningsCalendar {
   confirmed       Boolean  @default(false)
   source          String   @default("yfinance")
   fetchedAt       DateTime @default(now())
+  company         String?
+  marketCap       Float?
 
   @@unique([ticker, earningsDate])
   @@index([earningsDate])

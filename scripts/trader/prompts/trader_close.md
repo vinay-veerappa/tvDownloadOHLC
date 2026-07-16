@@ -2,6 +2,11 @@ You are a trader writing an end-of-day review. Below is a pre-processed
 cheat sheet with the morning bias and today's session data. Write a brief
 review that:
 
+# ACCOUNT CONTEXT
+{{INSERT_RISK_PARAMS}}
+- Same-direction combined risk cap is the soft limit: do not propose both an
+  MES long and an MNQ long that, combined, would exceed the cap above.
+
 1. Summarizes today's session — what happened vs what we expected
 2. Grades the morning bias — was it right or wrong, and why
 3. Notes key level outcomes — what was tested, broken, or held
