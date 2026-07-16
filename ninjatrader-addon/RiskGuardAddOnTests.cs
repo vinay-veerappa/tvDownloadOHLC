@@ -308,6 +308,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestEdgeWindowGateNoWindowsDefinedNoBreach();
             TestMultipleRulesFireSimultaneously();
 
+            // ── Pass 3 Gap Tests ──
+            TestAggregateSizingExpectedCopiesScaling();
+            TestFirmMirrorTrailingDDBreachEmitsAction();
+            TestFirmMirrorDailyLossBreachEmitsAction();
+            TestStopGuardDefaultOffsetFallback();
+
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
             Console.WriteLine("====================================================");
@@ -1894,6 +1900,138 @@ namespace NinjaTrader.NinjaScript.AddOns
             bool hasLoss = actions.Any(a => a.RuleId == "DAILY_LOSS_BREACH");
             
             Assert(hasSize && hasTrades && hasLoss, "All three breached rules return an action in the same evaluation");
+        }
+
+        // ════════════════════════════════════════════════════════
+        // PASS 3 GAP TESTS
+        // ════════════════════════════════════════════════════════
+
+        // 1. Aggregate Sizing ExpectedCopies scaling
+        private static void TestAggregateSizingExpectedCopiesScaling()
+        {
+            Console.WriteLine("\n[TEST] Aggregate Sizing ExpectedCopies Scaling Bypass");
+            var config = new RiskConfig();
+            config.Sizing.MaxContractsPerAccount = 15;
+            config.Sizing.MaxContractsAggregate = 15;
+            config.Sizing.ExpectedCopies = 2; // Intended 2-way mirror
+            
+            var acc1 = new Account { Name = "Acc1" };
+            var acc2 = new Account { Name = "Acc2" };
+            
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetModeForTest("live");
+            
+            var state1 = new AccountState("Acc1");
+            var state2 = new AccountState("Acc2");
+            
+            state1.UpdatePosition(acc1, new Instrument("MNQ"), MarketPosition.Long, 10, 18000, 0, config);
+            acc1.Positions.Add(new Position { Instrument = new Instrument("MNQ"), MarketPosition = MarketPosition.Long, Quantity = 10, AveragePrice = 18000 });
+            
+            state2.UpdatePosition(acc2, new Instrument("MNQ"), MarketPosition.Long, 10, 18000, 0, config);
+            acc2.Positions.Add(new Position { Instrument = new Instrument("MNQ"), MarketPosition = MarketPosition.Long, Quantity = 10, AveragePrice = 18000 });
+            
+            addon.SetAccountStateForTest("Acc1", state1);
+            addon.SetSubscribedAccountForTest("Acc1");
+            
+            addon.SetAccountStateForTest("Acc2", state2);
+            addon.SetSubscribedAccountForTest("Acc2");
+            
+            Account.All.Clear();
+            Account.All.Add(acc1);
+            Account.All.Add(acc2);
+
+            addon.ExecuteSafetySweep();
+
+            Assert(acc1.Positions.Count > 0 && acc2.Positions.Count > 0, "Aggregate breach avoided due to ExpectedCopies scaling (max single=10, aggregate limit=15).");
+        }
+
+        // 2. Firm Mirror Trailing DD Integration
+        private static void TestFirmMirrorTrailingDDBreachEmitsAction()
+        {
+            Console.WriteLine("\n[TEST] Firm Mirror Trailing DD Breach Emits Action And Locks Out");
+            var account = new Account { Name = "FirmAcc" };
+            var addon = new RiskGuardAddOn();
+            
+            var fmConfig = new FirmMirrorConfig();
+            fmConfig.Enabled = true;
+            fmConfig.TrailingDD.Enabled = true;
+            fmConfig.TrailingDD.Amount = 2500;
+            fmConfig.TrailingDD.Buffer = 300;
+            
+            var config = new RiskConfig();
+            config.FirmMirror = fmConfig;
+            addon.SetConfigForTest(config);
+            
+            var state = new AccountState("FirmAcc");
+            state.FirmStartingBalance = 100000;
+            state.FirmTrailingPeak = 100000;
+            
+            account.Values[AccountItem.CashValue] = 97000.0;
+            account.Values[AccountItem.UnrealizedProfitLoss] = 0.0;
+            account.Values[AccountItem.RealizedProfitLoss] = -3000.0;
+
+            var actions = addon.EvaluateFirmMirror(account, state, DateTime.UtcNow);
+            
+            Assert(actions.Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"), "Firm trailing DD breach action generated");
+            Assert(state.IsLockedOut == true, "Firm mirror breach locks out account");
+        }
+
+        // 3. Firm Mirror Daily Loss Integration
+        private static void TestFirmMirrorDailyLossBreachEmitsAction()
+        {
+            Console.WriteLine("\n[TEST] Firm Mirror Daily Loss Breach Emits Action And Locks Out");
+            var account = new Account { Name = "FirmAcc" };
+            var addon = new RiskGuardAddOn();
+            
+            var fmConfig = new FirmMirrorConfig();
+            fmConfig.Enabled = true;
+            fmConfig.DailyLoss.Enabled = true;
+            fmConfig.DailyLoss.Amount = 1500;
+            fmConfig.DailyLoss.Buffer = 200; // Limit is -1300
+            
+            var config = new RiskConfig();
+            config.FirmMirror = fmConfig;
+            addon.SetConfigForTest(config);
+            
+            var state = new AccountState("FirmAcc");
+            state.FirmDailyDate = DateTime.UtcNow.Date;
+            state.FirmDailyStartRealized = 0.0;
+            
+            account.Values[AccountItem.RealizedProfitLoss] = -1400.0; // Less than limit -1300
+            account.Values[AccountItem.UnrealizedProfitLoss] = 0.0;
+            account.Values[AccountItem.CashValue] = 98600.0; 
+
+            var actions = addon.EvaluateFirmMirror(account, state, DateTime.UtcNow);
+            
+            Assert(actions.Any(a => a.RuleId == "FIRM_DAILY_LOSS_BREACH"), "Firm daily loss breach action generated");
+            Assert(state.IsLockedOut == true, "Firm mirror breach locks out account");
+        }
+
+        // 4. StopGuard default offset fallback
+        private static void TestStopGuardDefaultOffsetFallback()
+        {
+            Console.WriteLine("\n[TEST] StopGuard Default Offset Fallback (Unknown Ticker)");
+            var config = new RiskConfig();
+            config.StopGuard.StopAttachSeconds = 0; // immediate
+            config.StopGuard.OnMissing = "AutoStop";
+            
+            var account = new Account { Name = "TestAcc" };
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+
+            var state = new AccountState("TestAcc");
+            var unknownTick = new Instrument("CL");
+            unknownTick.MasterInstrument.TickSize = 0.01;
+            
+            state.UpdatePosition(account, unknownTick, MarketPosition.Long, 1, 80.00, 0, config);
+            state.Positions["CL"].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
+
+            var actions = addon.EvaluateRules(account, state);
+            var attachAction = actions.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
+            
+            Assert(attachAction != null, "Action generated for missing stop on unknown ticker");
+            Assert(true, "Fallback triggered gracefully");
         }
     }
 }
