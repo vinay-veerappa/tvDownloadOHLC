@@ -67,6 +67,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             public string PositionString { get; set; }
             public bool IsExcluded { get; set; }
             public double AccountEquity { get; set; }
+            public DateTime LockoutUntil { get; set; }
         }
 
         public List<AccountStateSnapshot> GetAccountSnapshots()
@@ -91,7 +92,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                         TradesToday = state.TradesToday,
                         ConsecutiveLosses = state.ConsecutiveLosses,
                         IsExcluded = _config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(state.AccountName),
-                        AccountEquity = equity
+                        AccountEquity = equity,
+                        LockoutUntil = state.LockoutUntil
                     };
                     
                     var posList = new List<string>();
@@ -937,7 +939,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             }
                         }
 
-                        if (stateModel.IsLockedOut)
+                        if (stateModel.IsLockedOut || DateTime.UtcNow < stateModel.LockoutUntil)
                         {
                             if (!stateModel.InitialLockoutFlattened)
                             {
@@ -1311,6 +1313,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     double currentRealized = account != null ? account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar) : 0.0;
 
                     state.IsLockedOut = false;
+                    state.LockoutUntil = DateTime.MinValue;
                     state.PeakEquity = 0.0;
                     state.TradesToday = 0;
                     state.ConsecutiveLosses = 0;
@@ -1338,6 +1341,28 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     LogEvent(accountName, "UNLOCK", "Account manually unlocked from dashboard. Metrics reset and synchronized.");
                     SavePersistedState();
+                }
+            }
+        }
+
+        public void LockAccount(string accountName, int minutes)
+        {
+            lock (_stateLock)
+            {
+                if (_accountStates.TryGetValue(accountName, out var state))
+                {
+                    if (minutes == -1)
+                    {
+                        state.IsLockedOut = true;
+                        state.LockoutUntil = DateTime.MinValue;
+                    }
+                    else if (minutes > 0)
+                    {
+                        state.LockoutUntil = DateTime.UtcNow.AddMinutes(minutes);
+                        state.InitialLockoutFlattened = false; // force flatten sweep
+                    }
+                    _stateDirty = true;
+                    LogEvent(accountName, "MANUAL_LOCKOUT", "Account locked from dashboard for " + (minutes == -1 ? "EOD" : minutes + " minutes"));
                 }
             }
         }
@@ -1914,6 +1939,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double UnrealizedPnL { get; set; } = 0.0;
         public double PeakEquity { get; set; } = 0.0;
         public bool IsLockedOut { get; set; } = false;
+        public DateTime LockoutUntil { get; set; } = DateTime.MinValue;
         public bool InitialLockoutFlattened { get; set; } = false;
         
         // Session and Overtrading
@@ -2531,7 +2557,14 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     if (snapshot.IsLockedOut)
                     {
-                        card.StatusText.Text = "Locked Out";
+                        card.StatusText.Text = "Locked (EOD)";
+                        card.StatusText.Foreground = Brushes.Red;
+                        card.BorderEl.BorderBrush = Brushes.Red;
+                    }
+                    else if (DateTime.UtcNow < snapshot.LockoutUntil)
+                    {
+                        var remaining = snapshot.LockoutUntil - DateTime.UtcNow;
+                        card.StatusText.Text = string.Format("Locked ({0}m)", (int)remaining.TotalMinutes);
                         card.StatusText.Foreground = Brushes.Red;
                         card.BorderEl.BorderBrush = Brushes.Red;
                     }
@@ -2625,6 +2658,35 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             panel.Children.Add(btnRow);
 
+            var lockRow = new Grid { Margin = new Thickness(0, 5, 0, 5) };
+            lockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+            lockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(5) });
+            lockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var lockComboBox = new ComboBox { Margin = new Thickness(0) };
+            lockComboBox.Items.Add("15m");
+            lockComboBox.Items.Add("30m");
+            lockComboBox.Items.Add("1h");
+            lockComboBox.Items.Add("EOD");
+            lockComboBox.SelectedIndex = 0;
+            Grid.SetColumn(lockComboBox, 0);
+            lockRow.Children.Add(lockComboBox);
+
+            var lockBtn = new Button 
+            { 
+                Content = "Lock", 
+                Background = new SolidColorBrush(Color.FromRgb(130, 40, 130)), 
+                Foreground = Brushes.White, 
+                FontWeight = FontWeights.Bold,
+                BorderBrush = Brushes.Transparent,
+                Padding = new Thickness(0, 3, 0, 3)
+            };
+            lockBtn.Click += (s, e) => OnCardLockClick(accountName, lockComboBox.SelectedItem.ToString());
+            Grid.SetColumn(lockBtn, 2);
+            lockRow.Children.Add(lockBtn);
+
+            panel.Children.Add(lockRow);
+
             // Excluded Checkbox
             card.ExcludeCheck = new CheckBox 
             { 
@@ -2653,6 +2715,26 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             _addOn.UnlockAccount(accountName);
             MessageBox.Show(string.Format("Account {0} unlocked/reset successfully.", accountName), "Unlock Success", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void OnCardLockClick(string accountName, string lockType)
+        {
+            int minutes = 0;
+            switch(lockType)
+            {
+                case "15m": minutes = 15; break;
+                case "30m": minutes = 30; break;
+                case "1h": minutes = 60; break;
+                case "EOD": minutes = -1; break;
+                default: minutes = -1; break;
+            }
+
+            var result = MessageBox.Show(string.Format("Are you sure you want to LOCK account {0} for {1}? This will flatten open positions.", accountName, lockType), "Confirm Lock", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result == MessageBoxResult.Yes)
+            {
+                _addOn.LockAccount(accountName, minutes);
+                MessageBox.Show(string.Format("Account {0} locked.", accountName), "Lock Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
 
         private void OnCardExcludeChecked(string accountName, bool isExcluded)

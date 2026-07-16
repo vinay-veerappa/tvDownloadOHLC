@@ -314,6 +314,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestFirmMirrorDailyLossBreachEmitsAction();
             TestStopGuardDefaultOffsetFallback();
 
+            // ── Manual Lockout Tests ──
+            TestManualTimedLockout();
+            TestManualEodLockout();
+            TestManualUnlockClearsTimedLockout();
+
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
             Console.WriteLine("====================================================");
@@ -2032,6 +2037,73 @@ namespace NinjaTrader.NinjaScript.AddOns
             
             Assert(attachAction != null, "Action generated for missing stop on unknown ticker");
             Assert(true, "Fallback triggered gracefully");
+        }
+
+        // ════════════════════════════════════════════════════════
+        // MANUAL LOCKOUT TESTS
+        // ════════════════════════════════════════════════════════
+
+        // 1. Manual Timed Lockout
+        private static void TestManualTimedLockout()
+        {
+            Console.WriteLine("\n[TEST] Manual Timed Lockout Flattens And Prevents Entry");
+            var addon = new RiskGuardAddOn();
+            var config = new RiskConfig();
+            addon.SetConfigForTest(config);
+            addon.SetModeForTest("live");
+            
+            var account = new Account { Name = "Acc1" };
+            var state = new AccountState("Acc1");
+            
+            addon.SetAccountStateForTest("Acc1", state);
+            addon.SetSubscribedAccountForTest("Acc1");
+            Account.All.Clear();
+            Account.All.Add(account);
+            
+            // Give them a position
+            state.UpdatePosition(account, new Instrument("MNQ"), MarketPosition.Long, 1, 18000, 0, config);
+            account.Positions.Add(new Position { Instrument = new Instrument("MNQ"), MarketPosition = MarketPosition.Long, Quantity = 1, AveragePrice = 18000 });
+            
+            // Lock for 15 minutes
+            addon.LockAccount("Acc1", 15);
+            
+            Assert(state.LockoutUntil > DateTime.UtcNow, "LockoutUntil is in the future");
+            Assert(state.IsLockedOut == false, "IsLockedOut is false for timed lockout");
+            
+            // Run sweep - should flatten
+            addon.ExecuteSafetySweep();
+            
+            Assert(account.Positions.Count == 0, "Position flattened by manual timed lockout");
+            Assert(state.InitialLockoutFlattened == true, "InitialLockoutFlattened set after sweep");
+        }
+
+        // 2. Manual EOD Lockout
+        private static void TestManualEodLockout()
+        {
+            Console.WriteLine("\n[TEST] Manual EOD Lockout Uses IsLockedOut Flag");
+            var addon = new RiskGuardAddOn();
+            var state = new AccountState("Acc1");
+            addon.SetAccountStateForTest("Acc1", state);
+            
+            addon.LockAccount("Acc1", -1);
+            
+            Assert(state.IsLockedOut == true, "EOD lock sets IsLockedOut to true");
+            Assert(state.LockoutUntil == DateTime.MinValue, "EOD lock clears LockoutUntil");
+        }
+
+        // 3. Manual Unlock Clears Timed Lockout
+        private static void TestManualUnlockClearsTimedLockout()
+        {
+            Console.WriteLine("\n[TEST] Manual Unlock Clears Timed Lockout");
+            var addon = new RiskGuardAddOn();
+            var state = new AccountState("Acc1");
+            addon.SetAccountStateForTest("Acc1", state);
+            
+            addon.LockAccount("Acc1", 60);
+            Assert(state.LockoutUntil > DateTime.UtcNow, "Account is timed locked");
+            
+            addon.UnlockAccount("Acc1");
+            Assert(state.LockoutUntil == DateTime.MinValue, "Unlock clears timed lockout");
         }
     }
 }
