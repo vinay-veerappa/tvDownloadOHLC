@@ -55,6 +55,7 @@ namespace NinjaTrader.Cbi
         public OrderState OrderState { get; set; }
         public OrderType OrderType { get; set; }
         public int Quantity { get; set; }
+        public int Filled { get; set; }
         public Instrument Instrument { get; set; }
         public OrderAction OrderAction { get; set; }
         public double LimitPrice { get; set; }
@@ -274,6 +275,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestStopGuardAutoStop();
             TestStopGuardFlatten();
             TestStopGuardNoActionWhenStopPresent();
+            TestStopGuardTransientStateValidation();
+            TestStopGuardPartiallyFilledValidation();
             TestEdgeWindowGateBreach();
             TestConsecutiveWinsResetLossCounter();
             TestAggregateSizeBreach();
@@ -1055,6 +1058,80 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH" || a.RuleId == "MISSING_STOP_FLATTEN"),
                 "No StopGuard action when working stop fully covers position quantity.");
+        }
+
+        private static void TestStopGuardTransientStateValidation()
+        {
+            Console.WriteLine("\n[TEST] StopGuard: Transient Order States Count Towards Protection");
+            var config = new RiskConfig();
+            config.StopGuard.OnMissing = "AutoStop";
+            config.StopGuard.StopAttachSeconds = 2;
+
+            var account = new Account { Name = "TestAcc" };
+            var mnq = new Instrument("MNQ");
+
+            // Add a pending submit stop order (transient state)
+            account.Orders.Add(new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderState = OrderState.Initialized, 
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 2,
+                Instrument = mnq
+            });
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+
+            var state = new AccountState("TestAcc");
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
+            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
+
+            var actions = addon.EvaluateRules(account, state);
+
+            Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
+                "No StopGuard action when order is in Initialized transient state.");
+        }
+
+        private static void TestStopGuardPartiallyFilledValidation()
+        {
+            Console.WriteLine("\n[TEST] StopGuard: Partially Filled Orders Calculate Remaining Correctly");
+            var config = new RiskConfig();
+            config.StopGuard.OnMissing = "AutoStop";
+            config.StopGuard.StopAttachSeconds = 2;
+
+            var account = new Account { Name = "TestAcc" };
+            var mnq = new Instrument("MNQ");
+
+            // Stop order for 3 contracts, but 2 are filled, so only 1 remaining working
+            account.Orders.Add(new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderState = OrderState.PartFilled,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 3,
+                Filled = 2, // Only 1 contract remains working
+                Instrument = mnq
+            });
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+
+            var state = new AccountState("TestAcc");
+            // Position is 2. We only have 1 working stop. We should get an AutoStop for 1 contract.
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
+            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
+
+            var actions = addon.EvaluateRules(account, state);
+
+            var autoStopAction = actions.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
+            Assert(autoStopAction != null, "AutoStop generated because partial fill leaves position under-protected.");
+            if (autoStopAction != null)
+            {
+                Assert(autoStopAction.Quantity == 1, $"AutoStop quantity should be 1 (2 pos - 1 remaining stop), but was {autoStopAction.Quantity}.");
+            }
         }
 
         private static void TestEdgeWindowGateBreach()

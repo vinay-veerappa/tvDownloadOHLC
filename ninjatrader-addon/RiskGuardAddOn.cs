@@ -1322,7 +1322,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             foreach (Order o in account.Orders)
             {
                 if (o.Instrument.FullName == instrumentFullName &&
-                    (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted))
+                    o.OrderState != OrderState.Filled && 
+                    o.OrderState != OrderState.Cancelled && 
+                    o.OrderState != OrderState.Rejected && 
+                    o.OrderState != OrderState.Unknown)
                 {
                     if (o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit || o.OrderType == OrderType.Market)
                     {
@@ -1330,7 +1333,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                           (marketPosition == MarketPosition.Short && o.OrderAction == OrderAction.Buy);
                         if (isOpposite)
                         {
-                            stopQty += o.Quantity;
+                            stopQty += (o.Quantity - o.Filled);
                         }
                     }
                 }
@@ -1632,6 +1635,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 stopPrice = instrument.MasterInstrument.RoundToTickSize(stopPrice);
+
+                // Diagnostic logging
+                var orderDump = new StringBuilder();
+                orderDump.AppendLine($"RiskGuard triggering auto-stop for {action.Quantity} {symbolName}. Current Orders:");
+                foreach (Order o in account.Orders)
+                {
+                    if (o.Instrument?.FullName == action.Instrument)
+                    {
+                        orderDump.AppendLine($" - {o.OrderAction} {o.Quantity} {o.OrderType} | State: {o.OrderState} | Name: {o.Name}");
+                    }
+                }
+                LogEvent(account.Name, "AUTO_STOP_DIAGNOSTIC", orderDump.ToString().TrimEnd());
 
                 Order stopOrder = account.CreateOrder(
                     instrument,
