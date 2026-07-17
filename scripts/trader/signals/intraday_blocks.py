@@ -1068,8 +1068,10 @@ def build_london_blocks(
             engine = NQStatsEngine(df_t.tail(5000), ticker=ticker)
             engine.process()
             latest = engine.get_latest_status()
+            from scripts.libs_py.nqstats.classifiers import aln_full_string
+            _aln_code = latest.get('aln', 'N/A')
             lines = [f"== ALN PATTERN ({base_label}) — PARTIAL =="]
-            lines.append(f"Pattern: {latest.get('aln', 'N/A')} | Broken: {latest.get('broken', 'N/A')}")
+            lines.append(f"Pattern: {_aln_code} → {aln_full_string(_aln_code)} | Broken: {latest.get('broken', 'N/A')}")
             lh = latest.get("london_high")
             ll = latest.get("london_low")
             if lh and ll:
@@ -1225,8 +1227,10 @@ def build_ny_am_blocks(
             engine = NQStatsEngine(df_t.tail(5000), ticker=ticker)
             engine.process()
             latest = engine.get_latest_status()
+            from scripts.libs_py.nqstats.classifiers import aln_full_string
+            _aln_code = latest.get('aln', 'N/A')
             lines = [f"== ALN PATTERN ({base_label}) =="]
-            lines.append(f"Pattern: {latest.get('aln', 'N/A')} | Broken: {latest.get('broken', 'N/A')}")
+            lines.append(f"Pattern: {_aln_code} → {aln_full_string(_aln_code)} | Broken: {latest.get('broken', 'N/A')}")
             lh = latest.get("london_high")
             ll = latest.get("london_low")
             if lh and ll:

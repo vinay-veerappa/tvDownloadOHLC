@@ -2723,6 +2723,16 @@ def _format_aln_block(ticker_label: str, aln_data: dict, spot: float) -> str:
     reasoning = aln_data.get("reasoning", "")
     broken = aln_data.get("broken", "N/A")
     levels = aln_data.get("levels", {}) or {}
+    primary_target = aln_data.get("primary_target", "NONE")
+    primary_target_pct = aln_data.get("primary_target_pct", 0.0)
+    break_high_pct = aln_data.get("break_high_pct", 0.0)
+    break_low_pct = aln_data.get("break_low_pct", 0.0)
+    edge_spent = aln_data.get("edge_spent", False)
+    edge_spent_note = aln_data.get("edge_spent_note", "")
+
+    # Expand the 4-letter ALN code into its full name + definition for the LLM
+    from scripts.libs_py.nqstats.classifiers import aln_full_string
+    aln_display = aln_full_string(aln) if aln != "N/A" else aln
     lh = levels.get("lh")
     ll = levels.get("ll")
     mid = levels.get("mid")
@@ -2731,23 +2741,25 @@ def _format_aln_block(ticker_label: str, aln_data: dict, spot: float) -> str:
     p12 = aln_data.get("p12")
 
     lines = [f"== ALN / SESSION PATTERNS ({ticker_label}) =="]
-    lines.append(f"Pattern: {aln}")
+    lines.append(f"Pattern: {aln} → {aln_display}")
     lines.append(f"Broken: {broken}")
     if lh and ll:
         lines.append(f"London High: {lh:,.2f} | London Low: {ll:,.2f} | Mid: {mid:,.2f}" if mid else f"London High: {lh:,.2f} | London Low: {ll:,.2f}")
     if p12:
         lines.append(f"Prior Close (P12): {p12:,.2f}")
+    # Pre-computed break probabilities (LLM should trust these, not re-derive)
+    if break_high_pct or break_low_pct:
+        lines.append(f"NY Break Probabilities: London High {break_high_pct:.1f}% | London Low {break_low_pct:.1f}%")
+    if primary_target != "NONE" and primary_target_pct:
+        _target_label = "London High" if primary_target == "LONDON_HIGH" else "London Low"
+        lines.append(f"Primary Target: {_target_label} ({primary_target_pct:.1f}% probability)")
     if ib_bias and ib_bias != "N/A":
         lines.append(f"IB Bias: {ib_bias} ({float(ib_conviction)*100:.0f}% conviction)")
     lines.append(f"Bias: {bias} ({conviction})")
     if reasoning:
         lines.append(f"Reasoning: {reasoning}")
-
-    # Conflict detection: price vs London Low
-    if spot and ll and spot < ll:
-        lines.append(f"CONFLICT: Price ({spot:,.2f}) is already below London Low ({ll:,.2f}) — the bullish setup is under pressure")
-    elif spot and lh and spot > lh:
-        lines.append(f"CONFLICT: Price ({spot:,.2f}) is already above London High ({lh:,.2f}) — the bearish setup is under pressure")
+    if edge_spent and edge_spent_note:
+        lines.append(f"EDGE SPENT: {edge_spent_note}")
 
     return "\n".join(lines)
 
@@ -3265,26 +3277,22 @@ def build_ticker_cheat_sheet(
 
             aln_pattern = aln_data["aln"]
             broken = aln_data["broken"]
-            if aln_pattern == "LPEU" and ("Held/Held" in broken or "Broken/Held" in broken):
-                aln_data["bias"] = "STRONG BULLISH"
-                aln_data["conviction"] = "HIGH"
-                aln_data["reasoning"] = "LPEU (78% Continuation) + clean structure."
-            elif aln_pattern == "LPEU" and "Broken/Held" in broken:
-                aln_data["bias"] = "STRONG BEARISH (REVERSAL)"
-                aln_data["conviction"] = "HIGH"
-                aln_data["reasoning"] = "LPEU (63% Reversal) + Broken Asia + London Reversal."
-            elif aln_pattern == "LPED":
-                aln_data["bias"] = "STRONG BEARISH"
-                aln_data["conviction"] = "HIGH"
-                aln_data["reasoning"] = "LPED (82% Continuation) — bearish continuation."
-            elif "Broken/Broken" in broken:
-                aln_data["bias"] = "NEUTRAL / CHOP"
-                aln_data["conviction"] = "LOW"
-                aln_data["reasoning"] = "Market structure broken on both sides. High noise risk."
-            else:
-                aln_data["bias"] = "NEUTRAL / WAIT"
-                aln_data["conviction"] = "LOW"
-                aln_data["reasoning"] = f"{aln_pattern} + {broken} — no high-conviction edge."
+            from scripts.libs_py.nqstats.classifiers import compute_aln_bias
+            _bias = compute_aln_bias(
+                aln_pattern, broken,
+                spot=ticker_spot,
+                london_high=aln_data["levels"]["lh"],
+                london_low=aln_data["levels"]["ll"],
+            )
+            aln_data["bias"] = _bias["bias"]
+            aln_data["conviction"] = _bias["conviction"]
+            aln_data["reasoning"] = _bias["reasoning"]
+            aln_data["primary_target"] = _bias["primary_target"]
+            aln_data["primary_target_pct"] = _bias["primary_target_pct"]
+            aln_data["break_high_pct"] = _bias["break_high_pct"]
+            aln_data["break_low_pct"] = _bias["break_low_pct"]
+            aln_data["edge_spent"] = _bias["edge_spent"]
+            aln_data["edge_spent_note"] = _bias["edge_spent_note"]
     except Exception as e:
         log.warning("[cheat_sheet] ALN engine failed for %s: %s", ticker, e)
     

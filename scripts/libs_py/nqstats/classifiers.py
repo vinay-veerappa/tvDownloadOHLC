@@ -6,6 +6,171 @@ Based on NQStats Unified Bias Algorithm.
 import pandas as pd
 import numpy as np
 
+# ── ALN Pattern metadata (full name + definition + bias + probabilities) ─
+# Source: docs/library/nqstats/NQ_SESSIONS_SPEC.md (10-year, n=2,542)
+# Used to pass the full human-readable string + pre-computed bias to the LLM
+# so the LLM doesn't have to interpret abbreviations or re-derive probabilities.
+ALN_PATTERN_META = {
+    "LEA": {
+        "full_name": "London Engulfs Asia",
+        "definition": "London High > Asia High AND London Low < Asia Low. London trades wider than Asia on both sides.",
+        "bias": "Neutral (coin flip, no directional edge)",
+        "frequency": "22.0%",
+        "break_high_pct": 71.5,
+        "break_low_pct": 70.4,
+        "primary_target": "NONE",
+        "primary_target_pct": 0.0,
+        "edge_spent_rule": "No edge to spend — 50/50 first break.",
+    },
+    "AEL": {
+        "full_name": "Asia Engulfs London",
+        "definition": "London High <= Asia High AND London Low >= Asia Low. London stays inside the Asia range (coiled).",
+        "bias": "Coiled (neutral, rare ~7%)",
+        "frequency": "6.9%",
+        "break_high_pct": 81.1,
+        "break_low_pct": 74.9,
+        "primary_target": "NONE",
+        "primary_target_pct": 0.0,
+        "edge_spent_rule": "No edge — NY always breaks a level but direction is ambiguous. Low-first break is a bullish tell (59.8% high follows).",
+    },
+    "LPEU": {
+        "full_name": "London Partial Engulf Up",
+        "definition": "London High > Asia High AND London Low >= Asia Low. London breaks up but holds the Asian low.",
+        "bias": "Bullish (80.8% NY breaks London High)",
+        "frequency": "41.0%",
+        "break_high_pct": 80.8,
+        "break_low_pct": 65.5,
+        "primary_target": "LONDON_HIGH",
+        "primary_target_pct": 80.8,
+        "edge_spent_rule": "If price is already above London High, the bullish edge is spent.",
+    },
+    "LPED": {
+        "full_name": "London Partial Engulf Down",
+        "definition": "London Low < Asia Low AND London High <= Asia High. London breaks down but holds the Asian high.",
+        "bias": "Bearish (75.0% NY breaks London Low)",
+        "frequency": "30.2%",
+        "break_high_pct": 68.6,
+        "break_low_pct": 75.0,
+        "primary_target": "LONDON_LOW",
+        "primary_target_pct": 75.0,
+        "edge_spent_rule": "If price is already below London Low, the bearish edge is spent.",
+    },
+}
+
+
+def aln_full_string(code: str) -> str:
+    """Return the full human-readable ALN pattern string for the LLM.
+
+    Format: 'London Partial Engulf Down — London Low < Asia Low AND London
+    High <= Asia High. London breaks down but holds the Asian high. | Bias:
+    Bearish (75.0% NY breaks London Low)'
+
+    Falls back to the raw code if unknown.
+    """
+    meta = ALN_PATTERN_META.get(code)
+    if not meta:
+        return code
+    return (
+        f"{meta['full_name']} — {meta['definition']} "
+        f"| Bias: {meta['bias']}"
+    )
+
+
+def aln_full_name(code: str) -> str:
+    """Return just the full name (e.g. 'London Partial Engulf Down')."""
+    meta = ALN_PATTERN_META.get(code)
+    return meta["full_name"] if meta else code
+
+
+def compute_aln_bias(
+    code: str,
+    broken_status: str,
+    spot: float | None = None,
+    london_high: float | None = None,
+    london_low: float | None = None,
+) -> dict:
+    """Compute the full ALN bias verdict for the LLM.
+
+    This is the SINGLE SOURCE OF TRUTH for ALN bias. The prompt should not
+    re-derive any of this — it should trust these fields.
+
+    Returns:
+        dict with keys:
+            bias: str — "STRONG BULLISH" / "STRONG BEARISH" / "NEUTRAL / CHOP" / "NEUTRAL / WAIT"
+            conviction: str — "HIGH" / "LOW"
+            reasoning: str — human-readable one-liner
+            primary_target: str — "LONDON_HIGH" / "LONDON_LOW" / "NONE"
+            primary_target_pct: float — probability NY breaks the primary target
+            break_high_pct: float — probability NY breaks London High
+            break_low_pct: float — probability NY breaks London Low
+            edge_spent: bool — True if price has already moved beyond the primary target
+            edge_spent_note: str — empty or explanation
+    """
+    meta = ALN_PATTERN_META.get(code)
+    if not meta:
+        return {
+            "bias": "NEUTRAL / WAIT",
+            "conviction": "LOW",
+            "reasoning": f"{code} + {broken_status} — unknown pattern.",
+            "primary_target": "NONE",
+            "primary_target_pct": 0.0,
+            "break_high_pct": 0.0,
+            "break_low_pct": 0.0,
+            "edge_spent": False,
+            "edge_spent_note": "",
+        }
+
+    bh = meta["break_high_pct"]
+    bl = meta["break_low_pct"]
+    pt = meta["primary_target"]
+    pt_pct = meta["primary_target_pct"]
+
+    # Determine bias + conviction from pattern + broken status
+    if "Broken/Broken" in broken_status:
+        bias = "NEUTRAL / CHOP"
+        conviction = "LOW"
+        reasoning = f"{meta['full_name']} + both sessions broken — high volatility, no directional edge. Reduce size."
+    elif code == "LPEU" and ("Held/Held" in broken_status or "Broken/Held" in broken_status):
+        bias = "STRONG BULLISH"
+        conviction = "HIGH"
+        reasoning = f"{meta['full_name']} + clean structure. {bh}% NY breaks London High."
+    elif code == "LPED" and ("Held/Held" in broken_status or "Broken/Held" in broken_status):
+        bias = "STRONG BEARISH"
+        conviction = "HIGH"
+        reasoning = f"{meta['full_name']} + clean structure. {bl}% NY breaks London Low."
+    elif code in ("LEA", "AEL"):
+        bias = "NEUTRAL / WAIT"
+        conviction = "LOW"
+        reasoning = f"{meta['full_name']} — no directional edge. Wait for NY to resolve."
+    else:
+        bias = "NEUTRAL / WAIT"
+        conviction = "LOW"
+        reasoning = f"{meta['full_name']} + {broken_status} — no high-conviction edge."
+
+    # Edge spent check: has price already moved beyond the primary target?
+    edge_spent = False
+    edge_spent_note = ""
+    if pt == "LONDON_HIGH" and spot is not None and london_high is not None:
+        if spot >= london_high:
+            edge_spent = True
+            edge_spent_note = f"Price ({spot:,.2f}) already at/above London High ({london_high:,.2f}) — bullish edge spent."
+    elif pt == "LONDON_LOW" and spot is not None and london_low is not None:
+        if spot <= london_low:
+            edge_spent = True
+            edge_spent_note = f"Price ({spot:,.2f}) already at/below London Low ({london_low:,.2f}) — bearish edge spent."
+
+    return {
+        "bias": bias,
+        "conviction": conviction,
+        "reasoning": reasoning,
+        "primary_target": pt,
+        "primary_target_pct": pt_pct,
+        "break_high_pct": bh,
+        "break_low_pct": bl,
+        "edge_spent": edge_spent,
+        "edge_spent_note": edge_spent_note,
+    }
+
 def classify_aln_vectorized(sessions_df: pd.DataFrame) -> pd.Series:
     """
     Classify the ALN Pattern (Asia-London-NY relationship).

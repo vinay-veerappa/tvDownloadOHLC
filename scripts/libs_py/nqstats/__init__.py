@@ -19,7 +19,11 @@ from .classifiers import (
     classify_aln_vectorized, 
     get_broken_status_vectorized, 
     get_quadrant_status,
-    classify_noon_curve_vectorized
+    classify_noon_curve_vectorized,
+    ALN_PATTERN_META,
+    aln_full_string,
+    aln_full_name,
+    compute_aln_bias,
 )
 from .timing import (
     identify_hourly_mode,
@@ -43,6 +47,10 @@ __all__ = [
     'get_broken_status_vectorized',
     'get_quadrant_status',
     'classify_noon_curve_vectorized',
+    'ALN_PATTERN_META',
+    'aln_full_string',
+    'aln_full_name',
+    'compute_aln_bias',
     'identify_hourly_mode',
     'check_9am_reversion',
     'NQStatsEngine'

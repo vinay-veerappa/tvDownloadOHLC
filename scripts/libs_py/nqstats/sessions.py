@@ -40,9 +40,11 @@ from typing import Tuple, Optional, Union
 
 # NQStats Official Killzone Windows (US/Eastern)
 # Unified Bias Algorithm Official Windows (US/Eastern)
+# Corrected 2026-07-17: Asia 20:00 (not 18:00), London 02:00 (not 03:00)
+# per NQ_SESSIONS_SPEC.md verified methodology (nqstats.com/aln_sessions.html)
 DEFAULT_SESSION_CONFIG = {
-    'Asia': {'start': time(18, 0), 'end': time(2, 0)},
-    'London': {'start': time(3, 0), 'end': time(8, 0)},
+    'Asia': {'start': time(20, 0), 'end': time(2, 0)},
+    'London': {'start': time(2, 0), 'end': time(8, 0)},
     'Pre-NY': {'start': time(8, 0), 'end': time(9, 30)},
     'IB': {'start': time(9, 30), 'end': time(10, 30)},
     'RTH': {'start': time(9, 30), 'end': time(16, 0)},

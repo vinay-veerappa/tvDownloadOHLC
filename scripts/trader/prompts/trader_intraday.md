@@ -49,7 +49,7 @@ LONDON session (02:00-08:30 ET):
 - Opens with the Asia box (complete) and London box (forming).
 - Notes the Pre-London sweep status (did PL sweep Asia? → continuation edge).
 - Reads the London Opening Range (02:00-03:00) breakout direction.
-- Notes the ALN pattern (partial), ICT dealing range, and killzone pivots.
+- Notes the ALN pattern (partial — see cheat sheet for full name + definition), ICT dealing range, and killzone pivots.
 - Notes the London Silver Bullet window (03:00-04:00) and London macros.
 - Identifies imbalances (FVGs/VIs) forming during the London session.
 - Checks for unfilled gaps that price may be drawn to.

@@ -129,8 +129,8 @@ def main():
         if args.newsletter:
             # ALN Expansion Lookup
             ALN_EXPANSIONS = {
-                "LPEU": "London Partially Engulfs Up",
-                "LPED": "London Partially Engulfs Down",
+                "LPEU": "London Partial Engulf Up",
+                "LPED": "London Partial Engulf Down",
                 "LEA": "London Engulfs Asia",
                 "AEL": "Asia Engulfs London"
             }
@@ -226,7 +226,7 @@ def main():
             news_section.extend([
                 "\n### 🎯 FINAL UNIFIED ANALYSIS & GAME PLAN",
                 f"**Final Bias**: `{aln_data['bias']}` | **Conviction**: `{aln_data['conviction']}`",
-                f"**Confluence**: {confluence} (NQStats: `{aln_data['aln']}` | Class: `{class_data['most_likely']}`)",
+                f"**Confluence**: {confluence} (NQStats: `{aln_data['aln']}` ({ALN_EXPANSIONS.get(aln_data['aln'], '')}) | Class: `{class_data['most_likely']}`)",
                 f"**Logic**: {aln_data['reasoning']}. Classification confirms `{class_data['most_likely']}` logic applies.",
                 "**Action Plan**:",
                 f"- [ ] **Bias**: {aln_data['action']}",

@@ -16,13 +16,12 @@ You only provide analysis fields as JSON.
   from the GEX regime and is ABSOLUTE — do not override it. Your
   tomorrow's setup and tonight's review must be consistent with the
   mandated track, not with a separate regime-behavior interpretation.
-- ALN PATTERN RULES (use for directional bias and sizing):
-  - LPEU (Partial Engulf Up): Bullish bias. 80.8% chance NY breaks London High. If low breaks first, bullish edge drops to coin flip (51.2%).
-  - LPED (Partial Engulf Down): Bearish bias. 75.0% chance NY breaks London Low. If high breaks first, bearish edge drops to coin flip (46.2%).
-  - LEA (London Engulfs Asia): No directional edge — 50/50 first break. Wait for NY to resolve.
-  - AEL (Asia Engulfs London): Coiled. NY always breaks a level. Low-first break is bullish tell (59.8% high follows).
-  - Broken status: Both Held = low vol, tight stops viable, long bias. Both Broken = chop, no edge, reduce size. Asia Broken + London Held = good setup, long bias.
-  - If price is already beyond the biased level, the edge is spent — adjust accordingly.
+- ALN BIAS (pre-computed by Python — trust it, do not re-derive):
+  - The cheat sheet gives you: pattern full name, bias, conviction, reasoning, broken status, NY break probabilities (London High % and London Low %), primary target + probability, and edge-spent flag.
+  - Use the bias and primary target as-is. Do not second-guess them using your own interpretation of the pattern.
+  - If bias says NEUTRAL/CHOP or NEUTRAL/WAIT, do not invent a directional trade.
+  - If EDGE SPENT is flagged, the edge is already consumed — note this in the review.
+  - Broken status context: Both Held = low volatility. Both Broken = chop (reduce size). Asia Broken + London Held = good setup.
 - RTH BREAK RULES (where does 09:30 open sit vs prior day RTH high/low):
   - Gap Up (open above pRTH High): 70% chance close holds above — bullish continuation. Don't fade unless price reclaims pRTH High.
   - Gap Down (open below pRTH Low): 60% chance close holds below — bearish continuation. Don't fade unless price reclaims pRTH Low.
