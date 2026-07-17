@@ -1,4 +1,4 @@
-"""Session-adaptive intraday blocks.
+﻿"""Session-adaptive intraday blocks.
 
 Each function builds the cheat-sheet blocks relevant to one session.
 build_intraday_context() in briefing_core.py calls the appropriate one
@@ -40,54 +40,101 @@ def _format_session_header(session: str, now_et: Any, ticker: str) -> str:
     return f"== CURRENT SESSION ==\n{session} | {time_str} | {base_label}"
 
 
-def _format_gex_block(ticker_current: float, es_current: float, ticker: str) -> str:
-    """GEX level interactions — relevant in all sessions."""
+def _format_gex_block(ticker_current: float, es_current: float, ticker: str, session: str = "", target_date: date | None = None) -> str:
+    """GEX level interactions â€” pre-computed verdict, session-aware.
+
+    During Asia/London: compares live GEX to the prior close snapshot
+    (the overnight reference is yesterday's close structure).
+    During NY sessions: compares live GEX to the morning open snapshot
+    (the intraday reference is today's open structure).
+    """
     from scripts.trader.briefing_core import _extract_gex_levels, load_macro_levels
+    from scripts.trader.signals.gex_regime import compute_gex_verdict
     try:
-        unified = load_macro_levels(session="live")
-        nq_unified = unified.get("NQ") or unified.get("QQQ") or {}
-        es_unified = unified.get("ES") or unified.get("SPY") or {}
-        nq_gex = _extract_gex_levels(nq_unified, "NQ" if "NQ" in unified else "QQQ")
-        es_gex = _extract_gex_levels(es_unified, "ES" if "ES" in unified else "SPY")
-        lines = ["== LEVEL INTERACTIONS =="]
-        if nq_gex:
-            cw = nq_gex.get("call_wall")
-            pw = nq_gex.get("put_wall")
-            flip = nq_gex.get("flip") or nq_gex.get("zero_gamma")
-            if cw and ticker_current > cw:
-                lines.append(f"NQ Call Wall ({cw:,.2f}) BROKEN — bullish")
-            elif cw:
-                lines.append(f"NQ Call Wall ({cw:,.2f}) overhead — untested")
-            if pw and ticker_current < pw:
-                lines.append(f"NQ Put Wall ({pw:,.2f}) BROKEN — bearish")
-            elif pw:
-                lines.append(f"NQ Put Wall ({pw:,.2f}) below — holding")
-            if flip:
-                lines.append(f"NQ Gamma Flip: {flip:,.2f} — {'above' if ticker_current > flip else 'below'} ({'negative' if ticker_current > flip else 'positive'} gamma)")
-        if es_gex:
-            cw = es_gex.get("call_wall")
-            pw = es_gex.get("put_wall")
-            flip = es_gex.get("flip") or es_gex.get("zero_gamma")
-            if cw and es_current > cw:
-                lines.append(f"ES Call Wall ({cw:,.2f}) BROKEN — bullish")
-            elif cw:
-                lines.append(f"ES Call Wall ({cw:,.2f}) overhead — untested")
-            if pw and es_current < pw:
-                lines.append(f"ES Put Wall ({pw:,.2f}) BROKEN — bearish")
-            elif pw:
-                lines.append(f"ES Put Wall ({pw:,.2f}) below — holding")
-            if flip:
-                lines.append(f"ES Gamma Flip: {flip:,.2f} — {'above' if es_current > flip else 'below'} ({'negative' if es_current > flip else 'positive'} gamma)")
+        live_unified = load_macro_levels(session="live")
+
+        # Determine which ticker to use for GEX
+        is_es = "ES" in ticker.upper()
+        gex_key = "ES" if is_es else "NQ"
+        alt_key = "SPY" if is_es else "QQQ"
+
+        is_overnight = session in ("ASIA", "LONDON", "")
+        ref_label = "prior close" if is_overnight else "morning open"
+        ref_gex = None
+
+        # Try dated GEX snapshot from gex_snapshots/{date}.json
+        if target_date:
+            from pathlib import Path
+            import json as _json
+            _snap_dir = Path(__file__).parent.parent.parent.parent / "data" / "options" / "daily" / "gex_snapshots"
+            if is_overnight:
+                if _snap_dir.exists():
+                    _snaps = sorted([f for f in _snap_dir.glob("*.json") if f.stem < target_date.isoformat()])
+                    if _snaps:
+                        try:
+                            _snap_data = _json.load(open(_snaps[-1], "r", encoding="utf-8"))
+                            ref_gex = _extract_gex_levels(_snap_data, gex_key)
+                            ref_label = f"prior close ({_snaps[-1].stem})"
+                        except Exception:
+                            pass
+            else:
+                _snap_path = _snap_dir / f"{target_date.isoformat()}.json"
+                if _snap_path.exists():
+                    try:
+                        _snap_data = _json.load(open(_snap_path, "r", encoding="utf-8"))
+                        ref_gex = _extract_gex_levels(_snap_data, gex_key)
+                        ref_label = f"morning open ({target_date.isoformat()})"
+                    except Exception:
+                        pass
+
+        # Fallback to static files if no dated snapshot
+        if ref_gex is None:
+            ref_session = "close" if is_overnight else "open"
+            try:
+                ref_unified = load_macro_levels(session=ref_session)
+            except Exception:
+                ref_unified = {}
+            ref_gex_raw = ref_unified.get(gex_key) or ref_unified.get(alt_key) or {}
+            if not ref_gex_raw:
+                try:
+                    fallback_session = "open" if is_overnight else "close"
+                    ref_unified = load_macro_levels(session=fallback_session)
+                except Exception:
+                    ref_unified = {}
+            ref_gex_raw = ref_unified.get(gex_key) or ref_unified.get(alt_key) or {}
+            ref_gex = _extract_gex_levels(ref_gex_raw, gex_key)
+
+        live_gex_raw = live_unified.get(gex_key) or live_unified.get(alt_key) or {}
+        live_gex = _extract_gex_levels(live_gex_raw, gex_key)
+
+        spot = es_current if is_es else ticker_current
+        verdict = compute_gex_verdict(live_gex, ref_gex, spot)
+
+        lines = [f"== GEX POSITIONING ({gex_key}) =="]
+        cw = verdict.get("call_wall")
+        pw = verdict.get("put_wall")
+        flip = verdict.get("flip")
+        if cw:
+            lines.append(f"Call Wall: {cw:,.2f} ({cw - spot:.0f}pts {'above' if cw > spot else 'below'})")
+        if pw:
+            lines.append(f"Put Wall: {pw:,.2f} ({spot - pw:.0f}pts {'above' if spot > pw else 'below'})")
+        if flip:
+            lines.append(f"Gamma Flip: {flip:,.2f} ({'above' if spot > flip else 'below'})")
+        lines.append(f"Regime: {verdict['regime']}")
+        lines.append(f"Bias: {verdict['bias']}")
+        if verdict.get("wall_shift_note"):
+            lines.append(f"Wall shift vs {ref_label}: {verdict['wall_shift_note']}")
+        lines.append(f"Read: {verdict['read']}")
         return "\n".join(lines)
     except Exception as e:
         log.warning("[intraday:gex] Failed: %s", e)
-        return "== LEVEL INTERACTIONS ==\nGEX data unavailable"
+        return "== GEX POSITIONING ==\nGEX data unavailable"
 
 
 def _format_ict_block(ticker: str, ticker_current: float) -> str:
-    """ICT dealing range — relevant in all sessions.
+    """ICT dealing range â€” relevant in all sessions.
 
-    TODO (ICT expansion — tackle next):
+    TODO (ICT expansion â€” tackle next):
       - ICT Killzone pivots: AS.H/AS.L, LO.H/LO.L, NYAM.H/NYAM.L after each KZ ends.
       - ICT Silver Bullet windows: 10:00-11:00 (NY AM), 14:00-15:00 (NY PM), 03:00-04:00 (London).
       - ICT Macros: 09:50-10:10, 10:50-11:10, 13:10-13:40, 15:15-15:45, 02:33-03:00, 04:03-04:30.
@@ -96,7 +143,7 @@ def _format_ict_block(ticker: str, ticker_current: float) -> str:
       - ICT Judas Swing detection (sweep of Midnight Open during London/Pre-Market).
       - ICT Market Structure Shift (MSS) / Break of Structure (BOS) on daily/weekly.
       - ICT Draw on Liquidity (DOL): proximity to BSL/SSL pools (PWH, PWL, old D1 highs/lows).
-      - ICT Market Delivery Triad: I2E (fill FVG → seek external liquidity) vs E2I (sweep → revert to FVG).
+      - ICT Market Delivery Triad: I2E (fill FVG â†’ seek external liquidity) vs E2I (sweep â†’ revert to FVG).
       - ICT IPDA 20/40/60 ranges (rolling daily high/low/equilibrium).
       - SMT Divergence (NQ vs ES, or ES vs RTY) at key levels.
     """
@@ -150,9 +197,9 @@ def _format_liquidity_map_block(
         raid_swept_note = ""
         if raid_target_level and am_high is not None and am_low is not None:
             if intraday_bias == "BEARISH" and am_high >= raid_target_level:
-                raid_swept_note = f" (ALREADY SWEPT — today's AM high {am_high:,.2f} exceeded target)"
+                raid_swept_note = f" (ALREADY SWEPT â€” today's AM high {am_high:,.2f} exceeded target)"
             elif intraday_bias == "BULLISH" and am_low <= raid_target_level:
-                raid_swept_note = f" (ALREADY SWEPT — today's AM low {am_low:,.2f} pierced target)"
+                raid_swept_note = f" (ALREADY SWEPT â€” today's AM low {am_low:,.2f} pierced target)"
         formatted_lm = _fmt(lm)
         if raid_swept_note:
             formatted_lm = formatted_lm.replace(
@@ -166,7 +213,7 @@ def _format_liquidity_map_block(
 
 
 def _format_calendar_block(target_date: date) -> tuple[str, list]:
-    """Calendar update — returns (formatted_block, raw_events)."""
+    """Calendar update â€” returns (formatted_block, raw_events)."""
     from scripts.trader.briefing_core import fetch_week_events, run_async_safely
     try:
         events = run_async_safely(fetch_week_events(target_date, target_date))
@@ -186,7 +233,7 @@ def _format_calendar_block(target_date: date) -> tuple[str, list]:
 
 
 def _format_prior_eod_block(ticker: str) -> str:
-    """Prior EOD narrative — relevant for Asia session."""
+    """Prior EOD narrative â€” relevant for Asia session."""
     from scripts.trader.briefing_core import OPTIONS_DATA_DIR
     try:
         eod_path = OPTIONS_DATA_DIR / "daily" / f"latest_trader_narrative_close_{ticker}.md"
@@ -273,9 +320,9 @@ def _format_range_stack_block(
 _DAILY_TFS_NEEDED = {"DAILY_1", "DAILY_3", "DAILY_5"}
 
 
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # ICT FEATURE BLOCK BUILDERS (from derived parquets via ict_data_loader)
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _format_kz_pivots_block(ticker: str, ticker_current: float, session: str) -> str:
     """Today's ICT killzone pivots (AS.H/AS.L, LO.H/LO.L, NYAM.H/NYAM.L)."""
@@ -361,7 +408,7 @@ def _format_ipda_block(ticker: str, ticker_current: float) -> str:
             pct = row.get(f"ipda{n}_pct")
             if pd.notna(hi) and pd.notna(lo):
                 pos = "PREMIUM" if pd.notna(pct) and pct > 50 else ("DISCOUNT" if pd.notna(pct) else "")
-                pct_str = f" ({pct:.1f}% — {pos})" if pd.notna(pct) else ""
+                pct_str = f" ({pct:.1f}% â€” {pos})" if pd.notna(pct) else ""
                 lines.append(f"{label}: H {hi:,.2f} | L {lo:,.2f} | Eq {eq:,.2f}{pct_str}")
 
         return "\n".join(lines)
@@ -443,14 +490,17 @@ def _format_imbalance_block(ticker: str, ticker_current: float, session_date: da
         if not fvgs.empty:
             # Most recent 5 FVGs
             recent_fvgs = fvgs.tail(5)
-            lines.append("Fair Value Gaps:")
+            lines.append("Fair Value Gaps [5m]:")
             for _, row in recent_fvgs.iterrows():
                 ftype = "Bullish" if row["fvg_type"] == 1 else "Bearish"
+                # Bullish FVG = support below (price returns DOWN to fill)
+                # Bearish FVG = resistance above (price returns UP to fill)
+                direction = "support below" if ftype == "Bullish" else "resistance above"
                 top = row["fvg_top"]
                 bot = row["fvg_bottom"]
                 dist = abs(ticker_current - (top + bot) / 2) if ticker_current > 0 else 0
                 near = " (NEAR)" if dist < threshold else ""
-                lines.append(f"  {ftype} FVG {bot:,.2f}-{top:,.2f} @ {row.name.strftime('%H:%M')}{near}")
+                lines.append(f"  {ftype} FVG {bot:,.2f}-{top:,.2f} @ {row.name.strftime('%H:%M')} ({direction}){near}")
 
         if not vis.empty:
             recent_vis = vis.tail(5)
@@ -552,9 +602,9 @@ def _format_structure_block(ticker: str, ticker_current: float, session_date: da
                 level = row.get("swing_level", 0)
                 level_str = f"{level:,.2f}" if pd.notna(level) and level != 0 else "prior swing"
                 if row["break_high"]:
-                    lines.append(f"  BOS HIGH @ {row.name.strftime('%H:%M')} — broke {level_str} (bullish continuation)")
+                    lines.append(f"  BOS HIGH @ {row.name.strftime('%H:%M')} â€” broke {level_str} (bullish continuation)")
                 if row["break_low"]:
-                    lines.append(f"  BOS LOW @ {row.name.strftime('%H:%M')} — broke {level_str} (bearish continuation)")
+                    lines.append(f"  BOS LOW @ {row.name.strftime('%H:%M')} â€” broke {level_str} (bearish continuation)")
 
         # Recent CISD events
         cisds = struct[struct["cisd_type"] != 0]
@@ -697,7 +747,7 @@ def _format_smt_block(ticker: str, session_date: date | None = None, now_et: Any
 
 
 def _format_delivery_triad_block(ticker: str, ticker_current: float, session_date: date | None = None, now_et: Any = None) -> str:
-    """Market Delivery Triad — determines if market is in I2E or E2I mode.
+    """Market Delivery Triad â€” determines if market is in I2E or E2I mode.
 
     I2E (Internal to External): price just filled/mitigated an FVG -> next draw is external liquidity (BSL/SSL).
     E2I (External to Internal): price just swept external liquidity -> next draw is internal imbalance (FVG).
@@ -743,7 +793,7 @@ def _format_delivery_triad_block(ticker: str, ticker_current: float, session_dat
 
         # Determine mode: whichever happened more recently
         if recent_fvg_time is None and recent_liq_time is None:
-            lines.append("No FVG or liquidity events detected yet — no delivery triad signal.")
+            lines.append("No FVG or liquidity events detected yet â€” no delivery triad signal.")
             return "\n".join(lines)
 
         fvg_ts = recent_fvg_time.to_pydatetime() if hasattr(recent_fvg_time, 'to_pydatetime') else recent_fvg_time
@@ -786,11 +836,11 @@ def _format_delivery_triad_block(ticker: str, ticker_current: float, session_dat
 
 
 def _format_ftfc_block(ticker: str, ticker_current: float, now_et: Any) -> str:
-    """Full Timeframe Continuity bias — 3 separate views + session-adaptive bias.
+    """Full Timeframe Continuity bias â€” 3 separate views + session-adaptive bias.
 
-    View 1: Candle FTFC — all timeframes have close > open (green candle)
-    View 2: MS FTFC — all timeframes have HH/HL (market structure bullish)
-    View 3: 200 SMA — price above/below 200-day SMA on daily
+    View 1: Candle FTFC â€” all timeframes have close > open (green candle)
+    View 2: MS FTFC â€” all timeframes have HH/HL (market structure bullish)
+    View 3: 200 SMA â€” price above/below 200-day SMA on daily
 
     Plus session-adaptive combined bias that picks the best model for the
     current session time.
@@ -820,8 +870,26 @@ def _format_ftfc_block(ticker: str, ticker_current: float, now_et: Any) -> str:
         sma_dir = sma.get("direction", "N/A")
         sma_val = sma.get("daily_value", "N/A")
         lines.append(f"200 SMA (daily): {sma_dir} (price {'above' if sma_dir == 'BULLISH' else 'below' if sma_dir == 'BEARISH' else 'at'} {sma_val})")
-        # Per-TF 200 SMA
+
+        # Daily vs 1h SMA comparison â€” tells the LLM where we stand
+        per_tf_sma_vals = sma.get("per_tf_values", {})
         per_tf_sma_dirs = sma.get("per_tf_dirs", {})
+        sma_1h_val = per_tf_sma_vals.get("1h")
+        sma_1h_dir = per_tf_sma_dirs.get("1h", "N/A")
+        if sma_val and sma_1h_val:
+            if sma_dir == "BULLISH" and sma_1h_dir == "BULLISH":
+                sma_stance = "Price ABOVE both Daily and 1h SMA â€” bullish macro + intraday alignment"
+            elif sma_dir == "BEARISH" and sma_1h_dir == "BEARISH":
+                sma_stance = "Price BELOW both Daily and 1h SMA â€” bearish macro + intraday alignment"
+            elif sma_dir == "BULLISH" and sma_1h_dir == "BEARISH":
+                sma_stance = "Price ABOVE Daily SMA but BELOW 1h SMA â€” macro bullish, intraday pulling back"
+            elif sma_dir == "BEARISH" and sma_1h_dir == "BULLISH":
+                sma_stance = "Price BELOW Daily SMA but ABOVE 1h SMA â€” macro bearish, intraday bouncing"
+            else:
+                sma_stance = "SMA alignment mixed"
+            lines.append(f"SMA Stance: {sma_stance}")
+            lines.append(f"  Daily SMA: {sma_val:,.2f} ({sma_dir}) | 1h SMA: {sma_1h_val:,.2f} ({sma_1h_dir})")
+        # Per-TF 200 SMA
         if per_tf_sma_dirs:
             sma_tf_str = " | ".join(f"{tf}:{d[0]}" for tf, d in per_tf_sma_dirs.items() if d)
             sma_bull = sum(1 for d in per_tf_sma_dirs.values() if d == "BULLISH")
@@ -843,14 +911,34 @@ def _format_ftfc_block(ticker: str, ticker_current: float, now_et: Any) -> str:
 
         # Guidance
         if sess_bias == "BULLISH" or sess_bias == "BEARISH":
-            lines.append(f"Direction: {sess_bias} — use ICT levels (FVG, OB, KZ pivots) for entries in this direction")
+            lines.append(f"Direction: {sess_bias} â€” use ICT levels (FVG, OB, KZ pivots) for entries in this direction")
         elif "NEUTRAL" in str(sess_bias):
-            lines.append("Direction: NEUTRAL — no FTFC aligned bias. Use ICT levels for entry timing only.")
+            lines.append("Direction: NEUTRAL â€” no FTFC aligned bias. Use ICT levels for entry timing only.")
 
         return "\n".join(lines)
     except Exception as e:
         log.warning("[ftfc] Failed: %s", e)
         return "== FTFC BIAS ==\nFTFC data unavailable"
+
+
+def _format_delivery_triad_1liner(ticker: str, ticker_current: float, session_date: date | None = None, now_et: Any = None) -> str:
+    """Compact 1-liner delivery triad for the intraday bias block."""
+    try:
+        _triad = _format_delivery_triad_block(ticker, ticker_current, session_date, now_et)
+        for line in _triad.split("\n"):
+            if line.startswith("Mode:"):
+                # Also extract the target line if present
+                target_line = ""
+                for l in _triad.split("\n"):
+                    if l.strip().startswith("Target:"):
+                        target_line = l.strip()
+                        break
+                if target_line:
+                    return f"Delivery: {line} | {target_line}"
+                return f"Delivery: {line}"
+        return ""
+    except Exception:
+        return ""
 
 
 def _format_ict_features_block(
@@ -873,6 +961,16 @@ def _format_ict_features_block(
     blocks: list[str] = []
     # FTFC bias — the directional bias (replaces ICT Daily Bias)
     blocks.append(_format_ftfc_block(ticker, ticker_current, now_et))
+    # Delivery triad 1-liner — prominently placed after FTFC so the LLM sees it
+    try:
+        _triad = _format_delivery_triad_block(ticker, ticker_current, target_date, now_et)
+        # Extract just the Mode line for a compact 1-liner
+        for line in _triad.split("\n"):
+            if line.startswith("Mode:"):
+                blocks.append(f"== DELIVERY TRIAD ==\n{line}")
+                break
+    except Exception:
+        pass
     # ICT features — entry targets and levels (not directional bias)
     blocks.append(_format_kz_pivots_block(ticker, ticker_current, session))
     blocks.append(_format_ipda_block(ticker, ticker_current))
@@ -882,16 +980,15 @@ def _format_ict_features_block(
     blocks.append(_format_ob_block(ticker, ticker_current, target_date, now_et))
     blocks.append(_format_imbalance_block(ticker, ticker_current, target_date, now_et))
     blocks.append(_format_liquidity_block(ticker, ticker_current, target_date, now_et))
-    blocks.append(_format_delivery_triad_block(ticker, ticker_current, target_date, now_et))
     blocks.append(_format_smt_block(ticker, target_date, now_et))
     blocks.append(_format_gaps_block(ticker, ticker_current))
     return [b for b in blocks if b]
 
 
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # SESSION-SPECIFIC BLOCK BUILDERS
 # Each returns a list of formatted strings (cheat-sheet blocks).
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def build_asia_blocks(
     df_t: pd.DataFrame,
@@ -921,7 +1018,7 @@ def build_asia_blocks(
                 g_current = float(globex["close"].iloc[-1])
                 chg = (g_current / g_open - 1) * 100
                 lines = [f"== GLOBEX OVERNIGHT ({base_label}) =="]
-                lines.append(f"Open {g_open:,.2f} → Current {g_current:,.2f} ({chg:+.2f}%)")
+                lines.append(f"Open {g_open:,.2f} â†’ Current {g_current:,.2f} ({chg:+.2f}%)")
                 lines.append(f"High {g_high:,.2f} | Low {g_low:,.2f}")
                 if g_current > g_open:
                     lines.append("Trajectory: drift higher")
@@ -934,7 +1031,7 @@ def build_asia_blocks(
         log.warning("[asia:globex] Failed: %s", e)
 
     # GEX levels
-    sections.append(_format_gex_block(ticker_current, es_current, ticker))
+    sections.append(_format_gex_block(ticker_current, es_current, ticker, session="ASIA", target_date=target_date))
 
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
@@ -948,9 +1045,9 @@ def build_asia_blocks(
         if session_ranges.get("ASIA") and session_ranges["ASIA"].get("range") and ticker_current:
             asia_range_pct = (session_ranges["ASIA"]["range"] / ticker_current) * 100
             if asia_range_pct < 0.48:
-                regime = "SMALL — trend continuation regime"
+                regime = "SMALL â€” trend continuation regime"
             else:
-                regime = "LARGE — mean reversion regime"
+                regime = "LARGE â€” mean reversion regime"
             lines = ["== HERMAN ASIA RANGE =="]
             lines.append(f"Range: {session_ranges['ASIA']['range']:,.2f} ({asia_range_pct:.2f}%)")
             lines.append(f"Regime: {regime}")
@@ -963,8 +1060,8 @@ def build_asia_blocks(
 
     # Daily Profiler (session outcomes, predictions, levels)
     try:
-        from scripts.trader.signals.profiler import build_dual_profiler_block
-        sections.append(build_dual_profiler_block(
+        from scripts.trader.signals.profiler import build_dual_profiler_summary
+        sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date, now_et,
         ))
     except Exception as e:
@@ -1006,29 +1103,27 @@ def build_london_blocks(
     # Asia box (complete)
     asia = session_ranges.get("ASIA", {})
     if asia:
-        lines = [f"== ASIA BOX ({base_label}) — COMPLETE =="]
+        lines = [f"== ASIA BOX ({base_label}) â€” COMPLETE =="]
         lines.append(f"High {asia.get('high', 0):,.2f} | Low {asia.get('low', 0):,.2f} | Range {asia.get('range', 0):,.2f}")
         sections.append("\n".join(lines))
 
     # Pre-London box (00:00-02:00)
     pl = session_ranges.get("PL", {})
     if pl:
+        from scripts.libs_py.nqstats.classifiers import compute_herman_pl_sweep
         lines = ["== PRE-LONDON (00:00-02:00) =="]
         lines.append(f"High {pl.get('high', 0):,.2f} | Low {pl.get('low', 0):,.2f}")
-        # PL sweep of Asia
-        sweep = detect_sweep(pl, asia.get("high"), asia.get("low"))
-        if sweep["swept_high"]:
-            lines.append("PL swept Asia HIGH → 77.2% London sweeps high again (continuation)")
-        if sweep["swept_low"]:
-            lines.append("PL swept Asia LOW → 69.6% London sweeps low again (continuation)")
-        if not sweep["swept_high"] and not sweep["swept_low"]:
-            lines.append("PL inside Asia — watch London OR (02:00-03:00) for direction")
+        _pl_sweep = compute_herman_pl_sweep(pl, asia.get("high"), asia.get("low"))
+        lines.append(f"Sweep: {_pl_sweep['label']}")
+        if _pl_sweep["bias"] != "NEUTRAL":
+            lines.append(f"Bias: {_pl_sweep['bias']} ({_pl_sweep['probability']:.1f}%)")
+        lines.append(f"Read: {_pl_sweep['read']}")
         sections.append("\n".join(lines))
 
     # London box (forming)
     london = session_ranges.get("LONDON", {})
     if london:
-        lines = ["== LONDON BOX (02:00-05:00) — FORMING =="]
+        lines = ["== LONDON BOX (02:00-05:00) â€” FORMING =="]
         lines.append(f"High {london.get('high', 0):,.2f} | Low {london.get('low', 0):,.2f}")
         # London sweep of Asia
         sweep = detect_sweep(london, asia.get("high"), asia.get("low"))
@@ -1047,16 +1142,19 @@ def build_london_blocks(
             if not or_df.empty:
                 or_high = float(or_df["high"].max())
                 or_low = float(or_df["low"].min())
+                from scripts.libs_py.nqstats.classifiers import compute_herman_london_or, compute_herman_sweep_return
                 lines = ["== LONDON OPENING RANGE (02:00-03:00) =="]
                 lines.append(f"OR High {or_high:,.2f} | OR Low {or_low:,.2f}")
-                if ticker_current > or_high:
-                    lines.append("OR broken HIGH → 76.5% bullish continuation")
-                elif ticker_current < or_low:
-                    lines.append("OR broken LOW → 73.8% bearish continuation")
-                else:
-                    lines.append("OR not yet broken — waiting for direction")
-                # Sweep-return: 02:00-03:00 sweep → 72.4% return to open
-                lines.append("Sweep-return: 02:00-03:00 sweep → 72.4% return to open (fade)")
+                _or = compute_herman_london_or(ticker_current, or_high, or_low)
+                lines.append(f"Breakout: {_or['label']}")
+                if _or["bias"] != "NEUTRAL":
+                    lines.append(f"Bias: {_or['bias']} ({_or['probability']:.1f}%)")
+                lines.append(f"Read: {_or['read']}")
+                # Sweep-return check
+                _sr = compute_herman_sweep_return(or_df.to_dict('records')[0] if not or_df.empty else None,
+                                                  or_high, or_low, "LONDON_OPEN")
+                if _sr["sweep_detected"]:
+                    lines.append(f"Sweep-return: {_sr['label']} â†’ {_sr['read']}")
                 sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[london:or] Failed: %s", e)
@@ -1070,8 +1168,8 @@ def build_london_blocks(
             latest = engine.get_latest_status()
             from scripts.libs_py.nqstats.classifiers import aln_full_string
             _aln_code = latest.get('aln', 'N/A')
-            lines = [f"== ALN PATTERN ({base_label}) — PARTIAL =="]
-            lines.append(f"Pattern: {_aln_code} → {aln_full_string(_aln_code)} | Broken: {latest.get('broken', 'N/A')}")
+            lines = [f"== ALN PATTERN ({base_label}) â€” PARTIAL =="]
+            lines.append(f"Pattern: {_aln_code} â†’ {aln_full_string(_aln_code)} | Broken: {latest.get('broken', 'N/A')}")
             lh = latest.get("london_high")
             ll = latest.get("london_low")
             if lh and ll:
@@ -1081,7 +1179,7 @@ def build_london_blocks(
         log.warning("[london:aln] Failed: %s", e)
 
     # GEX levels
-    sections.append(_format_gex_block(ticker_current, es_current, ticker))
+    sections.append(_format_gex_block(ticker_current, es_current, ticker, session="LONDON", target_date=target_date))
 
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
@@ -1129,8 +1227,8 @@ def build_london_blocks(
 
     # Daily Profiler (session outcomes, predictions, levels)
     try:
-        from scripts.trader.signals.profiler import build_dual_profiler_block
-        sections.append(build_dual_profiler_block(
+        from scripts.trader.signals.profiler import build_dual_profiler_summary
+        sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
         ))
     except Exception as e:
@@ -1179,23 +1277,28 @@ def build_ny_am_blocks(
         chg = (ticker_current / rth_open - 1) * 100 if rth_open else 0
         session_dir = "BULLISH" if ticker_current > rth_open else ("BEARISH" if ticker_current < rth_open else "FLAT")
         lines = [f"== INTRADAY BIAS ({base_label}) =="]
-        lines.append(f"RTH Open {rth_open:,.2f} → Current {ticker_current:,.2f} ({chg:+.2f}%)")
+        lines.append(f"RTH Open {rth_open:,.2f} â†’ Current {ticker_current:,.2f} ({chg:+.2f}%)")
         lines.append(f"High {rth_high:,.2f} | Low {rth_low:,.2f}")
         lines.append(f"Session direction: {session_dir}")
+        _triad_1l = _format_delivery_triad_1liner(ticker, ticker_current, target_date, now_et)
+        if _triad_1l:
+            lines.append(_triad_1l)
         sections.append("\n".join(lines))
 
-    # Herman Pre-NY sweep (05:00-08:30) — DOMINANT signal
+    # Herman Pre-NY sweep (05:00-08:30) â€” DOMINANT signal
     pre_ny = session_ranges.get("PRE_NY", {})
     london = session_ranges.get("LONDON", {})
     if pre_ny and london:
-        lines = ["== HERMAN PRE-NY SWEEP (05:00-08:30) — DOMINANT =="]
-        sweep = detect_sweep(pre_ny, london.get("high"), london.get("low"))
-        if sweep["swept_high"]:
-            lines.append("Pre-NY broke London HIGH → 86.4% bullish (do not fade)")
-        elif sweep["swept_low"]:
-            lines.append("Pre-NY broke London LOW → 77.9% bearish (do not fade)")
+        from scripts.libs_py.nqstats.classifiers import compute_herman_pre_ny_sweep
+        _sweep = compute_herman_pre_ny_sweep(pre_ny, london.get("high"), london.get("low"))
+        lines = ["== HERMAN PRE-NY SWEEP (05:00-08:30) â€” DOMINANT =="]
+        lines.append(f"Result: {_sweep['label']}")
+        lines.append(f"Bias: {_sweep['bias']} ({_sweep['probability']:.1f}%)")
+        if _sweep["dominant"]:
+            lines.append("DOMINANT â€” overrides ALN. Do not fade.")
         else:
-            lines.append("Pre-NY inside London → 50/50 coin flip. Wait for 09:30 OR break.")
+            lines.append("Not dominant â€” wait for 09:30 OR break.")
+        lines.append(f"Read: {_sweep['read']}")
         sections.append("\n".join(lines))
 
     # IB status
@@ -1216,9 +1319,26 @@ def build_ny_am_blocks(
                 lines.append("IB Broken: LOW (bearish tell)")
             else:
                 lines.append("IB: not yet broken")
+            # Pre-computed midpoint bias (82.3% chance high breaks first if in upper half)
+            if ib_mid and ticker_current:
+                if ticker_current > ib_mid:
+                    lines.append(f"Midpoint bias: Price in UPPER half of IB â†’ 82.3% chance high breaks first")
+                elif ticker_current < ib_mid:
+                    lines.append(f"Midpoint bias: Price in LOWER half of IB â†’ 82.3% chance low breaks first")
+            # IB break probability context
+            lines.append("IB break probability: 96.1% break before close | 82.5% break before noon")
             sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[ny_am:ib] Failed: %s", e)
+
+    # Hourly personality flag (session-aware)
+    if now_et and now_et.hour == 10:
+        sections.append(
+            "== HOURLY PERSONALITY: 10:00 REVERSION HOUR ==\n"
+            "If HOD is set during the 10:00 hour, 85% chance the close is red (mean reversion dominates).\n"
+            "61.6% of opening range breakouts (ORB) fail in this hour.\n"
+            "Read: Early AM highs are vulnerable to selling in the 10:00 hour."
+        )
 
     # ALN pattern (resolved)
     try:
@@ -1230,21 +1350,21 @@ def build_ny_am_blocks(
             from scripts.libs_py.nqstats.classifiers import aln_full_string
             _aln_code = latest.get('aln', 'N/A')
             lines = [f"== ALN PATTERN ({base_label}) =="]
-            lines.append(f"Pattern: {_aln_code} → {aln_full_string(_aln_code)} | Broken: {latest.get('broken', 'N/A')}")
+            lines.append(f"Pattern: {_aln_code} â†’ {aln_full_string(_aln_code)} | Broken: {latest.get('broken', 'N/A')}")
             lh = latest.get("london_high")
             ll = latest.get("london_low")
             if lh and ll:
                 lines.append(f"London High {lh:,.2f} | London Low {ll:,.2f}")
                 if ticker_current > lh:
-                    lines.append("London High BROKEN — bullish resolution")
+                    lines.append("London High BROKEN â€” bullish resolution")
                 elif ticker_current < ll:
-                    lines.append("London Low BROKEN — bearish resolution")
+                    lines.append("London Low BROKEN â€” bearish resolution")
             sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[ny_am:aln] Failed: %s", e)
 
     # GEX levels
-    sections.append(_format_gex_block(ticker_current, es_current, ticker))
+    sections.append(_format_gex_block(ticker_current, es_current, ticker, session="NY_AM", target_date=target_date))
 
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
@@ -1278,11 +1398,10 @@ def build_ny_am_blocks(
             }
             # Bias from Pre-NY sweep + IB break
             if pre_ny and london:
-                sweep = detect_sweep(pre_ny, london.get("high"), london.get("low"))
-                if sweep["swept_high"]:
-                    intraday_bias = "BULLISH"
-                elif sweep["swept_low"]:
-                    intraday_bias = "BEARISH"
+                from scripts.libs_py.nqstats.classifiers import compute_herman_pre_ny_sweep
+                _hsweep = compute_herman_pre_ny_sweep(pre_ny, london.get("high"), london.get("low"))
+                if _hsweep["dominant"]:
+                    intraday_bias = _hsweep["bias"]
     except Exception:
         pass
 
@@ -1295,8 +1414,8 @@ def build_ny_am_blocks(
 
     # Daily Profiler (session outcomes, predictions, levels)
     try:
-        from scripts.trader.signals.profiler import build_dual_profiler_block
-        sections.append(build_dual_profiler_block(
+        from scripts.trader.signals.profiler import build_dual_profiler_summary
+        sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
         ))
     except Exception as e:
@@ -1342,9 +1461,12 @@ def build_ny_lunch_blocks(
         chg = (ticker_current / rth_open - 1) * 100 if rth_open else 0
         session_dir = "BULLISH" if ticker_current > rth_open else ("BEARISH" if ticker_current < rth_open else "FLAT")
         lines = [f"== INTRADAY BIAS ({base_label}) =="]
-        lines.append(f"RTH Open {rth_open:,.2f} → Current {ticker_current:,.2f} ({chg:+.2f}%)")
+        lines.append(f"RTH Open {rth_open:,.2f} â†’ Current {ticker_current:,.2f} ({chg:+.2f}%)")
         lines.append(f"AM High {rth.get('high', 0):,.2f} | AM Low {rth.get('low', 0):,.2f}")
         lines.append(f"Session direction: {session_dir}")
+        _triad_1l = _format_delivery_triad_1liner(ticker, ticker_current, target_date, now_et)
+        if _triad_1l:
+            lines.append(_triad_1l)
         sections.append("\n".join(lines))
 
     aln_status = {}
@@ -1373,19 +1495,23 @@ def build_ny_lunch_blocks(
     except Exception as e:
         log.warning("[lunch:ib] Failed: %s", e)
 
-    # Lunch range (12:00-13:00) — forming
+    # Lunch range (12:00-13:00) â€” forming
     ny_lunch = session_ranges.get("NY_LUNCH", {})
     if ny_lunch:
-        lines = ["== LUNCH RANGE (12:00-13:00) — FORMING =="]
+        from scripts.libs_py.nqstats.classifiers import compute_herman_lunch
+        _lunch = compute_herman_lunch(ticker_current, ny_lunch.get("high"), ny_lunch.get("low"))
+        lines = ["== LUNCH RANGE (12:00-13:00) â€” FORMING =="]
         lines.append(f"High {ny_lunch.get('high', 0):,.2f} | Low {ny_lunch.get('low', 0):,.2f}")
-        lines.append("Herman: Lunch range breakout → PM direction (53.5% high-first)")
-        lines.append("Herman: Lunch fade reversals ~40% (low probability — don't fade)")
+        lines.append(f"Breakout: {_lunch['label']}")
+        if _lunch["bias"] != "NEUTRAL":
+            lines.append(f"Bias: {_lunch['bias']} ({_lunch['probability']:.1f}%)")
+        lines.append(f"Read: {_lunch['read']}")
         sections.append("\n".join(lines))
     else:
         sections.append("== LUNCH RANGE (12:00-13:00) ==\nLunch range not yet formed.")
 
     # GEX levels
-    sections.append(_format_gex_block(ticker_current, es_current, ticker))
+    sections.append(_format_gex_block(ticker_current, es_current, ticker, session="NY_LUNCH", target_date=target_date))
 
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
@@ -1399,8 +1525,8 @@ def build_ny_lunch_blocks(
 
     # Daily Profiler (session outcomes, predictions, levels)
     try:
-        from scripts.trader.signals.profiler import build_dual_profiler_block
-        sections.append(build_dual_profiler_block(
+        from scripts.trader.signals.profiler import build_dual_profiler_summary
+        sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
         ))
     except Exception as e:
@@ -1446,9 +1572,12 @@ def build_ny_pm_blocks(
         chg = (ticker_current / rth_open - 1) * 100 if rth_open else 0
         session_dir = "BULLISH" if ticker_current > rth_open else ("BEARISH" if ticker_current < rth_open else "FLAT")
         lines = [f"== INTRADAY BIAS ({base_label}) =="]
-        lines.append(f"RTH Open {rth_open:,.2f} → Current {ticker_current:,.2f} ({chg:+.2f}%)")
+        lines.append(f"RTH Open {rth_open:,.2f} â†’ Current {ticker_current:,.2f} ({chg:+.2f}%)")
         lines.append(f"AM High {rth.get('high', 0):,.2f} | AM Low {rth.get('low', 0):,.2f}")
         lines.append(f"Session direction: {session_dir}")
+        _triad_1l = _format_delivery_triad_1liner(ticker, ticker_current, target_date, now_et)
+        if _triad_1l:
+            lines.append(_triad_1l)
         sections.append("\n".join(lines))
 
     aln_status = {}
@@ -1484,34 +1613,49 @@ def build_ny_pm_blocks(
             engine = NQStatsEngine(df_t.tail(5000), ticker=ticker)
             engine.process()
             latest = engine.get_latest_status()
+            noon_curve = latest.get("noon_curve", "Unknown")
             lines = ["== NOON CURVE =="]
             ny_am = session_ranges.get("NY_AM", {})
             if ny_am:
                 lines.append(f"AM High {ny_am.get('high', 0):,.2f} at {ny_am.get('high_time', '?')}")
                 lines.append(f"AM Low {ny_am.get('low', 0):,.2f} at {ny_am.get('low_time', '?')}")
-            lines.append("72.8% chance opposite side taken in PM")
-            lines.append("Hourly personality: 15:00 ET trend-close hour — late PM highs more likely to hold (41.5% break rate)")
+            lines.append(f"Status: {noon_curve}")
+            lines.append("72.8% chance opposite side of AM range gets taken in PM")
+            # Pre-computed timing expectation
+            am_high_time = ny_am.get("high_time", "?") if ny_am else "?"
+            am_low_time = ny_am.get("low_time", "?") if ny_am else "?"
+            if am_high_time and am_high_time != "?" and "08" in str(am_high_time) or "09" in str(am_high_time) or "10" in str(am_high_time) or "11" in str(am_high_time):
+                lines.append("AM high set in 08:30-11:00 â†’ expect new low 14:00-15:30")
+            elif am_low_time and am_low_time != "?" and "08" in str(am_low_time) or "09" in str(am_low_time) or "10" in str(am_low_time) or "11" in str(am_low_time):
+                lines.append("AM low set in 08:30-11:00 â†’ expect new high 14:00-15:30")
             sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[pm:noon] Failed: %s", e)
 
+    # Hourly personality flag (session-aware)
+    if now_et and now_et.hour == 15:
+        sections.append(
+            "== HOURLY PERSONALITY: 15:00 TREND-CLOSE HOUR ==\n"
+            "If HOD is set during the 15:00 hour, the close tends to follow the trend (58.4% ORB win rate).\n"
+            "Q4 (last hour) highs are more likely to hold â€” only 41.5% get broken.\n"
+            "Read: Late PM highs are sticky â€” trend-close bias favors continuation into the close."
+        )
+
     # Lunch range breakout
     ny_lunch = session_ranges.get("NY_LUNCH", {})
     if ny_lunch:
+        from scripts.libs_py.nqstats.classifiers import compute_herman_lunch
+        _lunch = compute_herman_lunch(ticker_current, ny_lunch.get("high"), ny_lunch.get("low"))
         lines = ["== LUNCH RANGE BREAKOUT =="]
-        lh = ny_lunch.get("high", 0)
-        ll = ny_lunch.get("low", 0)
-        lines.append(f"Lunch High {lh:,.2f} | Lunch Low {ll:,.2f}")
-        if ticker_current > lh:
-            lines.append("Lunch HIGH broken → PM direction bullish (53.5% high-first, median 12-14 pts)")
-        elif ticker_current < ll:
-            lines.append("Lunch LOW broken → PM direction bearish")
-        else:
-            lines.append("Lunch range not yet broken — PM expansion pending")
+        lines.append(f"Lunch High {ny_lunch.get('high', 0):,.2f} | Lunch Low {ny_lunch.get('low', 0):,.2f}")
+        lines.append(f"Breakout: {_lunch['label']}")
+        if _lunch["bias"] != "NEUTRAL":
+            lines.append(f"Bias: {_lunch['bias']} ({_lunch['probability']:.1f}%)")
+        lines.append(f"Read: {_lunch['read']}")
         sections.append("\n".join(lines))
 
     # GEX levels
-    sections.append(_format_gex_block(ticker_current, es_current, ticker))
+    sections.append(_format_gex_block(ticker_current, es_current, ticker, session="NY_PM", target_date=target_date))
 
     # ICT dealing range
     sections.append(_format_ict_block(ticker, ticker_current))
@@ -1557,8 +1701,8 @@ def build_ny_pm_blocks(
 
     # Daily Profiler (session outcomes, predictions, levels)
     try:
-        from scripts.trader.signals.profiler import build_dual_profiler_block
-        sections.append(build_dual_profiler_block(
+        from scripts.trader.signals.profiler import build_dual_profiler_summary
+        sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
         ))
     except Exception as e:
@@ -1584,9 +1728,9 @@ def build_ny_pm_blocks(
     return sections
 
 
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # MAIN ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def build_intraday_cheat_sheet(
     df_t: pd.DataFrame,
@@ -1618,7 +1762,7 @@ def build_intraday_cheat_sheet(
     if session == "WEEKEND":
         return "== MARKETS CLOSED ==\nMarkets are closed (weekend). Run the weekly narrative for a full week review."
 
-    # After close — defer to EOD narrative
+    # After close â€” defer to EOD narrative
     if session == "AFTER_CLOSE":
         return "== SESSION COMPLETE ==\nRTH session has ended. Run the EOD narrative for the full close review."
 
@@ -1629,7 +1773,8 @@ def build_intraday_cheat_sheet(
     ticker_current = float(df_t["close"].iloc[-1]) if df_t is not None and not df_t.empty else 0.0
 
     # Get ES current (for GEX cross-reference)
-    es_current = 0.0
+    # When ticker IS ES1, es_current = ticker_current (no separate load needed)
+    es_current = ticker_current if ticker == "ES1" else 0.0
     if ticker != "ES1":
         try:
             from scripts.utils.fused_data_loader import load_fused_data

@@ -17,6 +17,110 @@ _FLIP_THRESHOLD = 5.0  # points to consider flip "crossed"
 _WALL_THRESHOLD = 25.0  # points to consider wall "moved"
 
 
+def compute_gex_verdict(
+    live_gex: dict | None,
+    open_gex: dict | None,
+    spot: float | None,
+) -> dict:
+    """Compute a pre-computed GEX verdict for the intraday cheat sheet.
+
+    Compares current live GEX levels to the morning open snapshot and
+    produces a regime, bias, wall shift info, and read string — so the
+    LLM doesn't have to interpret raw GEX levels.
+
+    Args:
+        live_gex: Current live GEX dict (call_wall, put_wall, flip, gamma_magnet).
+        open_gex: Morning open snapshot GEX dict (same keys).
+        spot: Current price.
+
+    Returns:
+        dict with: regime, bias, call_wall, put_wall, flip, magnet,
+        wall_shift_note, read
+    """
+    if not live_gex or not spot:
+        return {"regime": "N/A", "bias": "NEUTRAL", "read": "No GEX data available."}
+
+    cw = live_gex.get("call_wall")
+    pw = live_gex.get("put_wall")
+    flip = live_gex.get("flip") or live_gex.get("zero_gamma")
+    magnet = live_gex.get("gamma_magnet")
+
+    # Regime
+    if flip and spot > flip:
+        regime = "NEGATIVE GAMMA (destabilizing — dealers sell rips)"
+    elif flip and spot < flip:
+        regime = "POSITIVE GAMMA (stabilizing — dealers buy dips)"
+    else:
+        regime = "NEUTRAL GAMMA"
+
+    # Bias from wall structure
+    bias_parts = []
+    if cw and spot > cw:
+        bias_parts.append("call wall broken (bullish)")
+    elif cw:
+        bias_parts.append(f"call wall overhead ({cw - spot:.0f}pts above)")
+    if pw and spot < pw:
+        bias_parts.append("put wall broken (bearish)")
+    elif pw:
+        bias_parts.append(f"put wall below ({spot - pw:.0f}pts below)")
+
+    if bias_parts:
+        has_bull = any("bullish" in b for b in bias_parts)
+        has_bear = any("bearish" in b for b in bias_parts)
+        if has_bull and not has_bear:
+            bias = "BULLISH"
+        elif has_bear and not has_bull:
+            bias = "BEARISH"
+        else:
+            bias = "NEUTRAL"
+    else:
+        bias = "NEUTRAL"
+
+    # Wall shift vs morning open
+    wall_shift_note = ""
+    if open_gex:
+        o_cw = open_gex.get("call_wall")
+        o_pw = open_gex.get("put_wall")
+        shifts = []
+        if o_cw and cw and abs(cw - o_cw) > _WALL_THRESHOLD:
+            direction = "up" if cw > o_cw else "down"
+            shifts.append(f"call wall {direction} {abs(cw - o_cw):.0f}pts")
+        if o_pw and pw and abs(pw - o_pw) > _WALL_THRESHOLD:
+            direction = "up" if pw > o_pw else "down"
+            shifts.append(f"put wall {direction} {abs(pw - o_pw):.0f}pts")
+        if shifts:
+            wall_shift_note = "Walls shifted: " + ", ".join(shifts)
+        else:
+            wall_shift_note = "Walls stable"
+
+    # Read
+    read_parts = []
+    if pw and spot < pw:
+        read_parts.append(f"Put wall ({pw:,.2f}) broken — support failed, bearish")
+    if cw and spot > cw:
+        read_parts.append(f"Call wall ({cw:,.2f}) broken — resistance taken out, bullish")
+    if cw and pw and pw < spot < cw:
+        read_parts.append(f"Price between put wall ({pw:,.2f}) and call wall ({cw:,.2f}) — range-bound expected")
+    if "POSITIVE" in regime:
+        read_parts.append("positive gamma dampens moves (mean reversion favored)")
+    elif "NEGATIVE" in regime:
+        read_parts.append("negative gamma amplifies moves (trend favored)")
+    if magnet:
+        read_parts.append(f"price magnet at {magnet:,.2f}")
+    read = ". ".join(read_parts) + "." if read_parts else "No GEX interpretation available."
+
+    return {
+        "regime": regime,
+        "bias": bias,
+        "call_wall": cw,
+        "put_wall": pw,
+        "flip": flip,
+        "magnet": magnet,
+        "wall_shift_note": wall_shift_note,
+        "read": read,
+    }
+
+
 def get_gex_regime_change(today_gex: dict) -> dict:
     """Compare today's GEX to yesterday's snapshot.
 

@@ -22,11 +22,10 @@ You only provide analysis fields as JSON.
   - If bias says NEUTRAL/CHOP or NEUTRAL/WAIT, do not invent a directional trade.
   - If EDGE SPENT is flagged, the edge is already consumed — note this in the review.
   - Broken status context: Both Held = low volatility. Both Broken = chop (reduce size). Asia Broken + London Held = good setup.
-- RTH BREAK RULES (where does 09:30 open sit vs prior day RTH high/low):
-  - Gap Up (open above pRTH High): 70% chance close holds above — bullish continuation. Don't fade unless price reclaims pRTH High.
-  - Gap Down (open below pRTH Low): 60% chance close holds below — bearish continuation. Don't fade unless price reclaims pRTH Low.
-  - Inside Range (open within pRTH): 74% chance at least one side is breached. Use ALN bias to pick direction.
-  - If ALN and RTH scenario conflict, wait for reclaim before committing.
+- RTH BREAK SCENARIO (pre-computed by Python — trust it):
+  - The cheat sheet RTH BREAK SCENARIO block gives you: scenario, bias, hold probability, opposite reach risk, and a read.
+  - Use the bias as-is. Do not re-derive gap probabilities.
+  - If ALN bias and RTH scenario conflict, wait for reclaim before committing.
 - First, review the TRADE OUTCOMES block. For each trade:
   - If FILLED → CLOSED: note whether the exit was STOPPED, TARGET, or other.
     Compare the actual MAE / MFE to the planned stop / target. Was the stop

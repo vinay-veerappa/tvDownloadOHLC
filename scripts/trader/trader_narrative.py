@@ -21,7 +21,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -233,7 +233,6 @@ def write_narrative_to_disk(summary: str, mode: str, ticker: str) -> Path:
     """Write the narrative to disk: latest (overwrite) + dated archive."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    from datetime import datetime
     date_str = datetime.now().strftime("%Y-%m-%d")
 
     latest_path = OUTPUT_DIR / f"latest_trader_narrative_{mode}_{ticker}.md"
@@ -249,25 +248,83 @@ def write_narrative_to_disk(summary: str, mode: str, ticker: str) -> Path:
     return latest_path
 
 
+def write_cheatsheet_to_disk(cheat_sheet: str, mode: str, ticker: str) -> Path:
+    """Write the cheat sheet to disk alongside the narrative for debugging/testing."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    latest_path = OUTPUT_DIR / f"latest_cheatsheet_{mode}_{ticker}.txt"
+    with open(latest_path, "w", encoding="utf-8") as f:
+        f.write(cheat_sheet)
+
+    dated_path = OUTPUT_DIR / f"{date_str}_cheatsheet_{mode}_{ticker}.txt"
+    with open(dated_path, "w", encoding="utf-8") as f:
+        f.write(cheat_sheet)
+    log.info("  Cheat sheet saved to %s", dated_path)
+
+    return latest_path
+
+
 def run_narrative(
     mode: str,
     model: str,
     tickers: list[str],
     target_date: date | None = None,
     send_discord: bool = True,
+    test_mode: bool = False,
+    sim_time: str | None = None,
 ) -> list[str]:
-    """Main narrative generation flow (synchronous wrapper) for multiple tickers."""
-    
+    """Main narrative generation flow (synchronous wrapper) for multiple tickers.
+
+    When test_mode=True: saves the cheat sheet to disk but skips the LLM call
+    and Discord send. This lets us iterate on the cheat sheet format without
+    spending LLM tokens or spamming Discord.
+
+    When sim_time is set (e.g. "2026-07-16 12:00"): simulates running at that
+    ET date+time. Filters 1m data to <= sim_time, sets target_date to the
+    correct trading day, and skips snapshot wait gates.
+    """
+    import pytz
+    ET = pytz.timezone("America/New_York")
+
+    # Parse simulation time if provided
+    sim_dt = None
+    if sim_time:
+        try:
+            # Parse "YYYY-MM-DD HH:MM" as ET time
+            sim_dt = ET.localize(datetime.strptime(sim_time, "%Y-%m-%d %H:%M"))
+            log.info("[SIM] Simulating run at %s ET", sim_dt.strftime("%Y-%m-%d %H:%M"))
+        except ValueError:
+            log.error("Invalid --time format. Use 'YYYY-MM-DD HH:MM' e.g. '2026-07-16 12:00'")
+            return []
+
+    # Determine trading day from sim_time or use target_date or today
+    if sim_dt:
+        # Trading day logic: if sim time is in the overnight session
+        # (18:00-02:00 ET), the trading day is the NEXT calendar day.
+        # Otherwise the trading day is the same calendar day.
+        sim_hour = sim_dt.hour
+        if sim_hour >= 18:
+            # Asia session starts at 18:00 → trading day is next day
+            target_date = sim_dt.date() + timedelta(days=1)
+            # Skip weekends
+            while target_date.weekday() in (5, 6):
+                target_date += timedelta(days=1)
+        else:
+            target_date = sim_dt.date()
+        log.info("[SIM] Trading day resolved to %s (weekday=%s)", target_date, target_date.weekday())
+    elif target_date is None:
+        target_date = datetime.now(ET).date()
+
     loader = get_dataloader(lookback_days=5)
 
-    if mode == "open":
-        _wait_for_open_snapshot()
-    elif mode == "close":
-        # Symmetric gate for the EOD path — see _wait_for_close_snapshot
-        # for why this is needed. The 10-minute cron gap (16:15 → 16:25)
-        # is the only coordination; this gate makes it robust to
-        # pipeline slippage.
-        _wait_for_close_snapshot()
+    # Skip wait gates in test/sim mode
+    if not test_mode and not sim_dt:
+        if mode == "open":
+            _wait_for_open_snapshot()
+        elif mode == "close":
+            _wait_for_close_snapshot()
 
     prompt_template = load_prompt_template(mode)
     
@@ -277,7 +334,7 @@ def run_narrative(
         log.info("Building cheat sheet for %s (mode: %s)...", ticker, mode)
         try:
             if mode == "intraday":
-                cheat_sheet = build_intraday_context(loader=loader, ticker=ticker, target_date=target_date)
+                cheat_sheet = build_intraday_context(loader=loader, ticker=ticker, target_date=target_date, now_et=sim_dt)
             elif mode == "close":
                 cheat_sheet = build_eod_context(loader=loader, ticker=ticker, target_date=target_date)
             elif mode == "premarket":
@@ -288,10 +345,20 @@ def run_narrative(
                     mode=mode,
                     loader=loader,
                     target_date=target_date,
+                    now_et=sim_dt,
                 )
             
             log.info("✓ Cheat sheet assembled for %s (%d chars)", ticker, len(cheat_sheet))
-            
+
+            # Always save the cheat sheet for debugging/testing
+            write_cheatsheet_to_disk(cheat_sheet, mode, ticker)
+
+            # In test mode: skip LLM + Discord, just save the cheat sheet
+            if test_mode:
+                log.info("  [TEST MODE] Skipping LLM call — cheat sheet saved only.")
+                results.append(cheat_sheet)
+                continue
+
             # Skip LLM if the cheat sheet indicates markets closed or session complete
             if cheat_sheet.startswith("== MARKETS CLOSED ==") or cheat_sheet.startswith("== SESSION COMPLETE =="):
                 log.info("  Skipping LLM — %s", cheat_sheet.split("\n")[0])
@@ -301,7 +368,6 @@ def run_narrative(
                 results.append(cheat_sheet)
                 continue
             
-            from datetime import datetime
             if mode == "close" and datetime.now().weekday() in [4, 5, 6]:  # Friday, Saturday, Sunday
                 cheat_sheet += "\n\n== WEEK AHEAD CONTEXT ==\nSince it's the weekend, incorporate a 'Week Ahead' outlook focusing on upcoming macro events and structural setups for the week. The focus should be on Monday/Tuesday structure and the broader weekly thesis."
             
@@ -334,6 +400,8 @@ def main():
     parser.add_argument("--mode", type=str, choices=["premarket", "open", "intraday", "close"], default="open")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Ollama model to use")
     parser.add_argument("--no-discord", action="store_true", help="Disable Discord output")
+    parser.add_argument("--test", action="store_true", help="Test mode: save cheat sheet only, skip LLM + Discord")
+    parser.add_argument("--time", type=str, default=None, help="Simulate run at this ET time (format: 'YYYY-MM-DD HH:MM' e.g. '2026-07-16 12:00')")
     parser.add_argument("--tickers", type=str, nargs="+", default=["NQ1", "ES1"], help="List of tickers to process")
     args = parser.parse_args()
 
@@ -342,7 +410,9 @@ def main():
             mode=args.mode,
             model=args.model,
             tickers=args.tickers,
-            send_discord=not args.no_discord,
+            send_discord=not args.no_discord and not args.test,
+            test_mode=args.test,
+            sim_time=args.time,
         )
     except KeyboardInterrupt:
         log.info("\\nCancelled by user")

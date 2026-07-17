@@ -781,7 +781,6 @@ def compute_ict_daily_bias(ticker: str, current_price: float) -> dict[str, Any]:
 
 # Timeframes for FTFC computation
 FTFC_TIMEFRAMES = {
-    "5m": "5min",
     "15m": "15min",
     "1h": "1h",
     "4h": "4h",

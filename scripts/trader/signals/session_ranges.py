@@ -31,10 +31,12 @@ _SESSIONS: list[tuple[int, int, int, int, str]] = [
     # Gap: 08:30-09:30 = pre-open, treated as LONDON tail
     (8, 30, 9, 29, "LONDON"),       # pre-NY open, still London context
     (9, 30, 11, 29, "NY_AM"),       # 09:30 - 11:30
-    (11, 30, 13, 29, "NY_LUNCH"),   # 11:30 - 13:30
-    (13, 30, 15, 59, "NY_PM"),      # 13:30 - 16:00
+    (11, 30, 13, 30, "NY_LUNCH"),   # 11:30 - 13:30
+    (13, 31, 15, 59, "NY_PM"),      # 13:31 - 16:00
     # 16:00-18:00 = after close (not handled by intraday — defer to EOD)
 ]
+# Note: session end times are inclusive (<=), so 13:29 means the last
+# minute of NY_LUNCH is 13:29. NY_PM starts at 13:30.
 
 # Session display order for reference
 SESSION_ORDER = ["ASIA", "LONDON", "NY_AM", "NY_LUNCH", "NY_PM"]

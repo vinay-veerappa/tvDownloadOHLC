@@ -2904,6 +2904,24 @@ def _format_confluence_block(ticker_label: str, conf: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_rth_break_block(ticker_label: str, rth_data: dict) -> str:
+    """Format RTH break scenario into cheat-sheet block (pre-computed for LLM)."""
+    if not rth_data:
+        return f"== RTH BREAK SCENARIO ({ticker_label}) ==\nNo RTH data"
+    lines = [f"== RTH BREAK SCENARIO ({ticker_label}) =="]
+    lines.append(f"Scenario: {rth_data.get('label', 'N/A')}")
+    bias = rth_data.get("bias", "NEUTRAL")
+    hold_pct = rth_data.get("hold_pct", 0.0)
+    if hold_pct:
+        lines.append(f"Bias: {bias} ({hold_pct:.1f}% chance close holds)")
+    else:
+        lines.append(f"Bias: {bias}")
+    if rth_data.get("no_reach_opposite_pct"):
+        lines.append(f"Opposite reach risk: {100 - rth_data['no_reach_opposite_pct']:.1f}% chance of reaching opposite pRTH")
+    lines.append(f"Read: {rth_data.get('read', 'N/A')}")
+    return "\n".join(lines)
+
+
 def _format_day_type_block(dt: dict) -> str:
     """Format day type + killzones into cheat-sheet block."""
     if not dt:
@@ -3007,8 +3025,12 @@ def build_premarket_context(
     nq_gex = _extract_gex_levels(nq_unified, "NQ" if "NQ" in unified else "QQQ")
     es_gex = _extract_gex_levels(es_unified, "ES" if "ES" in unified else "SPY")
 
-    sections.append(_format_gex_block("NQ", nq_gex, nq_spot))
-    sections.append(_format_gex_block("ES", es_gex, es_spot))
+    # GEX positioning verdict (session-aware — premarket uses prior close reference)
+    try:
+        from scripts.trader.signals.intraday_blocks import _format_gex_block as _fmt_gex
+        sections.append(_fmt_gex(nq_spot, es_spot, nq_ticker, session="PREMARKET", target_date=target_date))
+    except Exception as e:
+        log.warning("[premarket] GEX positioning failed: %s", e)
 
     # ── Prior EOD classification ──
     try:
@@ -3094,6 +3116,52 @@ def build_premarket_context(
     except Exception as e:
         log.warning("[premarket] ICT feature blocks failed: %s", e)
 
+    # FTFC bias + SMA stance
+    try:
+        from scripts.trader.signals.intraday_blocks import _format_ftfc_block
+        import pytz as _pytz2
+        _now = datetime.now(_pytz2.timezone("America/New_York"))
+        sections.append(_format_ftfc_block(nq_ticker, nq_spot, _now))
+    except Exception as e:
+        log.warning("[premarket] FTFC failed: %s", e)
+
+    # Herman Pre-NY sweep — DOMINANT signal
+    try:
+        from scripts.libs_py.nqstats.classifiers import compute_herman_pre_ny_sweep
+        from scripts.trader.signals.session_ranges import compute_all_session_ranges
+        from scripts.utils.fused_data_loader import load_fused_data
+        _df = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
+        if _df is not None and not _df.empty:
+            if _df.index.tz is None:
+                _df.index = pd.DatetimeIndex(_df.index).tz_localize("UTC").tz_convert(ET)
+            elif _df.index.tz != ET:
+                _df.index = _df.index.tz_convert(ET)
+            _sr = compute_all_session_ranges(_df, target_date, ET)
+            _pre_ny = _sr.get("PRE_NY", {})
+            _london = _sr.get("LONDON", {})
+            if _pre_ny and _london:
+                _sweep = compute_herman_pre_ny_sweep(_pre_ny, _london.get("high"), _london.get("low"))
+                _lines = ["== HERMAN PRE-NY SWEEP (05:00-08:30) — DOMINANT =="]
+                _lines.append(f"Result: {_sweep['label']}")
+                _lines.append(f"Bias: {_sweep['bias']} ({_sweep['probability']:.1f}%)")
+                if _sweep["dominant"]:
+                    _lines.append("DOMINANT — overrides ALN. Do not fade.")
+                else:
+                    _lines.append("Not dominant — wait for 09:30 OR break.")
+                _lines.append(f"Read: {_sweep['read']}")
+                sections.append("\n".join(_lines))
+    except Exception as e:
+        log.warning("[premarket] Herman Pre-NY sweep failed: %s", e)
+
+    # Delivery triad 1-liner
+    try:
+        from scripts.trader.signals.intraday_blocks import _format_delivery_triad_1liner
+        _triad = _format_delivery_triad_1liner(nq_ticker, nq_spot, target_date)
+        if _triad:
+            sections.append(f"== DELIVERY TRIAD ==\n{_triad}")
+    except Exception as e:
+        log.warning("[premarket] Delivery triad failed: %s", e)
+
     return "\n\n".join(sections)
 
 
@@ -3120,8 +3188,13 @@ def build_ticker_cheat_sheet(
     mode: str = "open",
     loader: DataLoader | None = None,
     target_date: date | None = None,
+    now_et: datetime | None = None,
 ) -> str:
-    """Mode-specific assembly of data sources for a SINGLE ticker into a cheat sheet."""
+    """Mode-specific assembly of data sources for a SINGLE ticker into a cheat sheet.
+
+    When now_et is provided (simulation mode), the spot price is resolved to the
+    09:30 RTH open bar if available (instead of the overnight globex close).
+    """
     if loader is None:
         loader = get_dataloader(lookback_days=5)
 
@@ -3208,6 +3281,34 @@ def build_ticker_cheat_sheet(
     ticker_ctx = build_overnight_context(loader, ticker, target_date)
     ticker_spot = ticker_ctx.get("close", 0) if ticker_ctx else 0
     base_label = ticker.replace("1", "").upper()
+
+    # For open mode: try to use the 09:30 RTH open as the spot price
+    # instead of the overnight globex close. This is the actual price
+    # at the RTH open, which is what the trade plan should reference.
+    if mode == "open":
+        try:
+            from scripts.utils.fused_data_loader import load_fused_data
+            _df = load_fused_data(ticker, timeframe="1m", require_historical=False)
+            if _df is not None and not _df.empty:
+                if _df.index.tz is None:
+                    _df.index = pd.DatetimeIndex(_df.index).tz_localize("UTC").tz_convert(ET)
+                elif _df.index.tz != ET:
+                    _df.index = _df.index.tz_convert(ET)
+                # Filter to simulation time if provided
+                if now_et is not None:
+                    _df = _df[_df.index <= now_et]
+                # Find the 09:30 bar for target_date
+                _rth_open_ts = pd.Timestamp(target_date, tz=ET).replace(hour=9, minute=30)
+                _rth_open_bars = _df[_df.index >= _rth_open_ts]
+                if not _rth_open_bars.empty:
+                    ticker_spot = float(_rth_open_bars["open"].iloc[0])
+                    log.info("[cheat_sheet] Using 09:30 RTH open as spot: %.2f", ticker_spot)
+                elif now_et is not None:
+                    # Pre-open: use the latest available price
+                    ticker_spot = float(_df["close"].iloc[-1])
+                    log.info("[cheat_sheet] Pre-open, using latest price as spot: %.2f", ticker_spot)
+        except Exception as e:
+            log.warning("[cheat_sheet] Could not resolve RTH open spot: %s", e)
 
     rth_lines = [f"== RTH BREAKS ({base_label}) =="]
     if ticker_ctx:
@@ -3297,6 +3398,35 @@ def build_ticker_cheat_sheet(
         log.warning("[cheat_sheet] ALN engine failed for %s: %s", ticker, e)
     
     sections.append(_format_aln_block(base_label, aln_data, ticker_spot))
+
+    # Herman Pre-NY sweep — DOMINANT signal at open
+    try:
+        from scripts.libs_py.nqstats.classifiers import compute_herman_pre_ny_sweep
+        _es_spot_h = ticker_spot if ticker == "ES1" else 0
+        from scripts.trader.signals.session_ranges import compute_all_session_ranges
+        from scripts.utils.fused_data_loader import load_fused_data
+        _df_h = load_fused_data(ticker, timeframe="1m", require_historical=False)
+        if _df_h is not None and not _df_h.empty:
+            if _df_h.index.tz is None:
+                _df_h.index = pd.DatetimeIndex(_df_h.index).tz_localize("UTC").tz_convert(ET)
+            elif _df_h.index.tz != ET:
+                _df_h.index = _df_h.index.tz_convert(ET)
+            _sr = compute_all_session_ranges(_df_h, target_date, ET)
+            _pre_ny = _sr.get("PRE_NY", {})
+            _london = _sr.get("LONDON", {})
+            if _pre_ny and _london:
+                _sweep = compute_herman_pre_ny_sweep(_pre_ny, _london.get("high"), _london.get("low"))
+                _lines = ["== HERMAN PRE-NY SWEEP (05:00-08:30) — DOMINANT =="]
+                _lines.append(f"Result: {_sweep['label']}")
+                _lines.append(f"Bias: {_sweep['bias']} ({_sweep['probability']:.1f}%)")
+                if _sweep["dominant"]:
+                    _lines.append("DOMINANT — overrides ALN. Do not fade.")
+                else:
+                    _lines.append("Not dominant — wait for 09:30 OR break.")
+                _lines.append(f"Read: {_sweep['read']}")
+                sections.append("\n".join(_lines))
+    except Exception as e:
+        log.warning("[cheat_sheet] Herman Pre-NY sweep failed for %s: %s", ticker, e)
 
     # Daily Profiler (session outcomes, conditional predictions, reference levels)
     try:
@@ -3403,6 +3533,13 @@ def build_ticker_cheat_sheet(
     except Exception as e:
         log.warning("[cheat_sheet] ICT feature blocks failed for %s: %s", ticker, e)
 
+    # FTFC bias + SMA stance
+    try:
+        from scripts.trader.signals.intraday_blocks import _format_ftfc_block
+        sections.append(_format_ftfc_block(ticker, ticker_spot, now_et))
+    except Exception as e:
+        log.warning("[cheat_sheet] FTFC failed for %s: %s", ticker, e)
+
     # Candle Science
     try:
         cs = get_candle_science_read(ticker=ticker)
@@ -3414,16 +3551,18 @@ def build_ticker_cheat_sheet(
     try:
         aln_bias = aln_data.get("bias", "NEUTRAL")
         s1 = "BULLISH" if "BULLISH" in aln_bias else ("BEARISH" if "BEARISH" in aln_bias else "NEUTRAL")
-        
-        rth_scenario = "INSIDE"
-        if ticker_ctx:
-            prth_h = ticker_ctx.get("prior_rth_high")
-            prth_l = ticker_ctx.get("prior_rth_low")
-            if prth_h and prth_l and ticker_spot:
-                if ticker_spot > prth_h: rth_scenario = "GAP_UP"
-                elif ticker_spot < prth_l: rth_scenario = "GAP_DOWN"
-        s2 = "BULLISH" if rth_scenario == "GAP_UP" else ("BEARISH" if rth_scenario == "GAP_DOWN" else "NEUTRAL")
-        
+
+        # RTH break scenario — use compute_rth_bias for pre-computed verdict
+        from scripts.libs_py.nqstats.classifiers import compute_rth_bias
+        _prth_h = ticker_ctx.get("prior_rth_high") if ticker_ctx else None
+        _prth_l = ticker_ctx.get("prior_rth_low") if ticker_ctx else None
+        rth_data = compute_rth_bias(ticker_spot, _prth_h, _prth_l)
+        rth_scenario = rth_data["scenario"]
+        s2 = rth_data["bias"]
+
+        # Emit dedicated RTH break block so LLM doesn't need to re-derive
+        sections.append(_format_rth_break_block(base_label, rth_data))
+
         s3 = "BULLISH" if (cs and cs.get("p_bull", 50) > cs.get("p_bear", 50)) else ("BEARISH" if (cs and cs.get("p_bear", 50) > cs.get("p_bull", 50)) else "NEUTRAL")
         conf = assess_confluence(s1, s2, s3)
         sections.append(_format_confluence_block(base_label, conf))
@@ -3467,6 +3606,14 @@ def build_ticker_cheat_sheet(
             save_today_snapshot(ticker_gex_full)
     except Exception as e:
         log.warning("[cheat_sheet] GEX regime change failed: %s", e)
+
+    # GEX positioning verdict (session-aware, pre-computed for LLM)
+    try:
+        from scripts.trader.signals.intraday_blocks import _format_gex_block
+        _es_spot = ticker_spot if ticker == "ES1" else 0
+        sections.append(_format_gex_block(ticker_spot, _es_spot, ticker, session="OPEN", target_date=target_date))
+    except Exception as e:
+        log.warning("[cheat_sheet] GEX positioning failed for %s: %s", ticker, e)
 
     # Expected Move
     try:
@@ -3521,6 +3668,14 @@ def build_ticker_cheat_sheet(
             f"| GEX | {ticker_gex.get('bias', 'N/A')} | {ticker_gex.get('regime', 'N/A')} regime |",
             f"| ALN Pattern | {aln_data.get('bias', 'N/A')} | {aln_data.get('aln', 'N/A')} |",
         ]
+        # Add delivery triad 1-liner to the matrix
+        try:
+            from scripts.trader.signals.intraday_blocks import _format_delivery_triad_1liner
+            _triad = _format_delivery_triad_1liner(ticker, ticker_spot, target_date)
+            if _triad:
+                matrix.append(f"| Delivery Triad | {_triad} | I2E/E2I mode |")
+        except Exception:
+            pass
         sections.insert(0, "\n".join(matrix))
     except Exception as e:
         log.warning("[cheat_sheet] Matrix failed: %s", e)
@@ -3533,6 +3688,7 @@ def build_intraday_context(
     ticker: str = "NQ1",
     es_ticker: str = "ES1",
     target_date: date | None = None,
+    now_et: datetime | None = None,
 ) -> str:
     """Build the session-adaptive intraday cheat sheet.
 
@@ -3540,8 +3696,8 @@ def build_intraday_context(
     and assembles only the blocks relevant to that session. Weekend and after-close
     are handled gracefully.
 
-    This is a thin wrapper that delegates to the modular block builders in
-    scripts/trader/signals/intraday_blocks.py.
+    When now_et is provided (simulation mode), data is filtered to index <= now_et
+    so the cheat sheet sees exactly what it would have seen at that moment.
     """
     import pytz
     from scripts.trader.signals.intraday_blocks import build_intraday_cheat_sheet
@@ -3567,7 +3723,13 @@ def build_intraday_context(
         log.warning("[intraday] Failed to load 1m data: %s", e)
         df_t = None
 
-    now_et = datetime.now(pytz.timezone("America/New_York"))
+    # Filter data to simulation time if provided
+    if now_et is not None and df_t is not None and not df_t.empty:
+        df_t = df_t[df_t.index <= now_et]
+        log.info("[intraday] Filtered to %d bars (up to %s)", len(df_t), now_et.strftime("%H:%M ET"))
+
+    if now_et is None:
+        now_et = datetime.now(pytz.timezone("America/New_York"))
     return build_intraday_cheat_sheet(df_t, ticker, target_date, now_et=now_et)
 
 
@@ -3638,6 +3800,16 @@ def build_eod_context(
     except Exception as e:
         log.warning("[eod] Session data failed: %s", e)
         sections.append("== TODAY'S SESSION ==\nSession data unavailable")
+
+    # Delivery triad at EOD — shows the final delivery mode for the day
+    try:
+        from scripts.trader.signals.intraday_blocks import _format_delivery_triad_1liner
+        _eod_close = float(df_t["close"].iloc[-1]) if df_t is not None and not df_t.empty else 0.0
+        _triad = _format_delivery_triad_1liner(ticker, _eod_close, target_date)
+        if _triad:
+            sections.append(f"== EOD DELIVERY ==\n{_triad}")
+    except Exception:
+        pass
 
     # ── Level outcomes ──
     try:
@@ -3848,30 +4020,20 @@ def build_eod_context(
             engine = NQStatsEngine(df_t_recent, ticker=ticker)
             engine.process()
             latest = engine.get_latest_status()
-            aln_bias = "NEUTRAL"
             aln_pattern = latest.get("aln", "N/A")
             broken = latest.get("broken", "N/A")
-            if aln_pattern == "LPEU" and "Held/Held" in broken:
-                aln_bias = "BULLISH"
-            elif aln_pattern == "LPEU" and "Broken/Held" in broken:
-                aln_bias = "STRONG BEARISH (REVERSAL)"
-            elif aln_pattern == "LPED":
-                aln_bias = "BEARISH"
-            elif "Broken/Broken" in broken:
-                aln_bias = "NEUTRAL"
+            from scripts.libs_py.nqstats.classifiers import compute_aln_bias, compute_rth_bias
+            _aln_b = compute_aln_bias(aln_pattern, broken)
+            aln_bias = _aln_b["bias"]
             s1 = "BULLISH" if "BULLISH" in aln_bias else ("BEARISH" if "BEARISH" in aln_bias else "NEUTRAL")
 
-            rth_scenario = "INSIDE"
-            if nq_ctx_morning:
-                prth_h = nq_ctx_morning.get("prior_rth_high")
-                prth_l = nq_ctx_morning.get("prior_rth_low")
-                cur = nq_ctx_morning.get("close", 0)
-                if prth_h and prth_l and cur:
-                    if cur > prth_h:
-                        rth_scenario = "GAP_UP"
-                    elif cur < prth_l:
-                        rth_scenario = "GAP_DOWN"
-            s2 = "BULLISH" if rth_scenario == "GAP_UP" else ("BEARISH" if rth_scenario == "GAP_DOWN" else "NEUTRAL")
+            _rth_b = compute_rth_bias(
+                nq_ctx_morning.get("close", 0) if nq_ctx_morning else None,
+                nq_ctx_morning.get("prior_rth_high") if nq_ctx_morning else None,
+                nq_ctx_morning.get("prior_rth_low") if nq_ctx_morning else None,
+            )
+            rth_scenario = _rth_b["scenario"]
+            s2 = _rth_b["bias"]
 
             try:
                 cs = get_candle_science_read(ticker=ticker)

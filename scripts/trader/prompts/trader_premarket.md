@@ -43,12 +43,8 @@ ICT KILLZONE PIVOTS GUIDE (premarket):
 - If price is trading below London low, that low is resistance for the open.
 - If price is trading above Asia high, that high is support for the open.
 
-CLASSIFICATION GUIDE (day-type abbreviations in the cheat sheet):
-- R1 = Range 1 / Time Spent: Price stays in or retests the 09:30 Opening Range. Neutral, rotational, churning day.
-- R2 = Range 2 / Reversal: Failed expansion. Price breaks out of OR, fails, and returns to the range after 11:00 ET. Trapped traders, mean reversion.
-- DWP = Directional With Pullbacks: Strong trend that breaks OR and never returns, but has structural retracements (hourly lows/highs retrace toward OR). Entry opportunities on pullbacks.
-- DNP = Directional No Pullback: Power trend. Breaks OR with no structural retracements. Runaway conviction, aggressive.
-Hierarchy: R2 > R1 > DWP/DNP.
+CLASSIFICATION (pre-computed in cheat sheet — trust it):
+- The cheat sheet CLASSIFICATION block already includes the full day-type name and description. Use it as-is.
 
 == CHEAT SHEET ==
 {{INSERT_CHEAT_SHEET}}

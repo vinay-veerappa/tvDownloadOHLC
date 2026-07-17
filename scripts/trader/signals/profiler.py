@@ -1492,6 +1492,88 @@ def _format_p12_scenario_block(sc: dict) -> str:
     return "\n".join(lines)
 
 
+def format_profiler_summary(data: dict, intraday_direction: str = "") -> str:
+    """Format a condensed 4-line profiler summary for the LLM.
+    
+    Replaces the 50+ line profiler block with just the actionable signal:
+    session chain, next prediction, top levels, and bias/conflict flag.
+    """
+    if not data or not data.get("sessions_latest") and not data.get("sessions_prev"):
+        return "== PROFILER SUMMARY ==\nNo profiler data available."
+
+    ticker = data.get("ticker", "?")
+    base_label = ticker.replace("1", "").upper()
+    tgt_session = data.get("target_session", "?")
+
+    # 1. Session chain: what's resolved, what's pending
+    latest = data.get("sessions_latest", {})
+    chain_parts = []
+    for sess_name in SESSION_ORDER:
+        rec = latest.get(sess_name)
+        if rec and rec.get("status"):
+            status = rec["status"]
+            broken = "broken" if rec.get("broken") else "held"
+            chain_parts.append(f"{sess_name} {status} ({broken})")
+        else:
+            chain_parts.append(f"{sess_name} pending")
+    chain = " → ".join(chain_parts)
+
+    # 2. Next prediction: top outcome for the target session
+    predictions = data.get("predictions", {})
+    pred = predictions.get(tgt_session)
+    next_pred = ""
+    profiler_bias = "NEUTRAL"
+    if pred:
+        outcomes = pred.get("outcomes", [])
+        if outcomes:
+            top = outcomes[0]
+            outcome_code = top.get("outcome", "?")
+            prob = top.get("probability", 0)
+            lod_time = top.get("lod_time", "?")
+            hod_time = top.get("hod_time", "?")
+            brk = top.get("break_rate", 0)
+            next_pred = f"{tgt_session} most likely {outcome_code} ({prob}%) | LOD {lod_time} | HOD {hod_time} | Break rate {brk}%"
+            # Determine bias from top outcome
+            if outcome_code in ("LT", "LF"):
+                profiler_bias = "BULLISH"
+            elif outcome_code in ("ST", "SF"):
+                profiler_bias = "BEARISH"
+
+    # 3. Top 3 level touch probabilities
+    hr_cond = data.get("level_hit_rates_conditional", {})
+    levels = data.get("levels_latest", {})
+    level_touches = []
+    if hr_cond:
+        # Flatten all level touch rates for the top outcome
+        for level_name, rates in hr_cond.items():
+            if isinstance(rates, dict):
+                top_outcome = pred["outcomes"][0]["outcome"] if pred and pred.get("outcomes") else None
+                if top_outcome and top_outcome in rates:
+                    rate = rates[top_outcome]
+                    if isinstance(rate, (int, float)) and rate > 0:
+                        level_touches.append((level_name, rate))
+        level_touches.sort(key=lambda x: x[1], reverse=True)
+    top_levels = " | ".join(f"{name} {rate}%" for name, rate in level_touches[:3]) if level_touches else "N/A"
+
+    # 4. Conflict flag
+    conflict = ""
+    if intraday_direction and profiler_bias != "NEUTRAL":
+        dir_upper = intraday_direction.upper()
+        if "BULL" in dir_upper and profiler_bias == "BEARISH":
+            conflict = " — conflicts with bullish intraday direction"
+        elif "BEAR" in dir_upper and profiler_bias == "BULLISH":
+            conflict = " — conflicts with bearish intraday direction"
+
+    lines = [f"== PROFILER SUMMARY ({base_label}) =="]
+    lines.append(f"Session chain: {chain}")
+    if next_pred:
+        lines.append(f"Next prediction: {next_pred}")
+    lines.append(f"Key levels: {top_levels}")
+    lines.append(f"Profiler bias: {profiler_bias}{conflict}")
+
+    return "\n".join(lines)
+
+
 def format_profiler_block(data: dict, current_price: float = 0) -> str:
     """Format the profiler data into a compact cheat-sheet block."""
     if not data or not data.get("sessions_latest") and not data.get("sessions_prev"):
@@ -1600,3 +1682,30 @@ def build_dual_profiler_block(
             blocks.append(es_block)
 
     return "\n\n".join(blocks) if blocks else "== PROFILER ==\nNo profiler data available."
+
+
+def build_dual_profiler_summary(
+    ticker: str = "NQ1",
+    es_ticker: str = "ES1",
+    ticker_price: float = 0,
+    es_price: float = 0,
+    target_date: date | None = None,
+    now_et: datetime | None = None,
+    live_sessions: dict[str, dict] | None = None,
+    es_live_sessions: dict[str, dict] | None = None,
+    intraday_direction: str = "",
+) -> str:
+    """Build condensed profiler summaries for both tickers (replaces full block)."""
+    blocks = []
+    primary_data = compute_profiler(ticker, ticker_price, target_date, now_et, live_sessions)
+    primary = format_profiler_summary(primary_data, intraday_direction)
+    if "No profiler data" not in primary:
+        blocks.append(primary)
+
+    if es_ticker != ticker:
+        es_data = compute_profiler(es_ticker, es_price, target_date, now_et, es_live_sessions)
+        es_block = format_profiler_summary(es_data, intraday_direction)
+        if "No profiler data" not in es_block:
+            blocks.append(es_block)
+
+    return "\n\n".join(blocks) if blocks else "== PROFILER SUMMARY ==\nNo profiler data available."
