@@ -8,7 +8,7 @@
 
 import { OHLCData } from "@/actions/data-actions"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_INDICATOR_API_URL || "http://localhost:8000"
+const API_BASE_URL = process.env.NEXT_PUBLIC_INDICATOR_API_URL || "/api-proxy"
 
 export interface IndicatorResult {
     time: number[]
