@@ -61,12 +61,30 @@ These block the project; verify empirically before writing rule logic.
 - **Logger** — structured intervention + session log (ingestible by existing trading-intelligence tooling).
 
 ### 5.2 Evaluation flow
-1. Account event arrives -> StateModel updates.
-2. RuleEngine evaluates all enabled rules against the new state.
+1. Account event arrives -> StateModel updates; the relevant per-position FSM (§5.4) transitions.
+2. RuleEngine evaluates all enabled rules against the new state (event-driven rules only).
 3. Proposed Actions -> ActionArbiter (invariant check + dedupe + shadow gate).
 4. Executor performs surviving Actions (or Logger records them in shadow mode).
 5. Logger records event, decisions, and outcomes.
-6. A 1 s safety-sweep timer re-evaluates time-based rules (cooldown, stop-attach deadline, window boundaries) independent of event arrival.
+6. A 1 s safety-sweep timer re-evaluates *only* cross-account/time-based rules (aggregate sizing, firm-mirror, session reset, heartbeat, watchdog). The missing-stop guard and per-account sizing/window/lockout rules are event-driven and are **not** re-evaluated on the sweep.
+
+### 5.4 Per-position guard state machine
+Each `(account, instrument)` pair owns one `PositionGuardFsm` that tracks the protective-stop lifecycle:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unprotected: OnPositionUpdate (flat→nonflat) [arm grace timer]
+    Unprotected --> ProtectedPending: OnOrderUpdate (stop leg Submitted/Initialized/Accepted, opposite side, OCO-linked or standalone)
+    ProtectedPending --> Protected: OnOrderUpdate (stop leg Working)
+    ProtectedPending --> Unprotected: OnOrderUpdate (stop leg Cancelled/Rejected)
+    Unprotected --> Protected: OnOrderUpdate (standalone stop Working) OR OnGraceExpired (AutoStop placed)
+    Unprotected --> Flat: OnPositionUpdate (nonflat→flat) [cancel grace timer]
+    Protected --> Flat: OnPositionUpdate (nonflat→flat) [cancel orphan auto-stop if ours]
+    Protected --> Unprotected: OnOrderUpdate (stop filled/cancelled while position still open)
+    Flat --> [*]
+```
+
+This eliminates the duplicate-SL race: the FSM remembers it saw the stop leg's `Submitted` event, so a later sweep or re-entrant position update finds the FSM already in `ProtectedPending`/`Protected` and never places a second auto-stop.
 
 ### 5.3 "Trade" and "position" definitions
 - A **new entry** = transition of an account+instrument net position from flat to non-flat, or an increase in absolute size.
@@ -81,7 +99,7 @@ These block the project; verify empirically before writing rule logic.
 - **FR-1:** Enumerate all connected accounts on startup; subscribe to position/execution/order events per account.
 - **FR-2:** Maintain the StateModel in 5.1, per account and aggregate.
 - **FR-3:** Re-enumerate/re-subscribe on reconnect and account add/remove; log connection state changes.
-- **FR-4:** Event-driven evaluation plus a 1 s safety sweep for time-based rules.
+- **FR-4:** Event-driven evaluation for state-derived rules; a 1 s safety-sweep timer covers only cross-account/time-based rules (aggregate sizing, firm-mirror, session reset, heartbeat, watchdog). The missing-protective-stop guard (FR-16/17/18) is owned by a per-position finite-state machine (see §5.4) and is **not** evaluated on the sweep.
 
 ### 6.2 Oversizing (tiered)
 - **FR-5:** Max contracts per account and aggregate, optionally per instrument.
@@ -101,9 +119,9 @@ These block the project; verify empirically before writing rule logic.
 - **FR-15:** Windows evaluated in ET regardless of machine timezone; explicit DST handling.
 
 ### 6.5 Missing-protective-stop guard
-- **FR-16:** On each new entry, start a stop-attach timer (configurable, e.g. 45 s).
-- **FR-17:** If no covering protective stop exists at timer expiry => flatten; log "unprotected position."
-- **FR-18:** Protective stop = working Stop/Stop-Limit, opposite side, covering >= (open size - tolerance), same account+instrument. Handle bracket-order representations from external platforms (part of VG-3).
+- **FR-16:** On each new entry (`OnPositionUpdate` flat to nonflat), create a per-`(account,instrument)` finite-state machine record in `Unprotected` and set `GraceDeadline = now + StopGuard.StopAttachSeconds`. The sweep polls `EvaluateGraceExpiry()` once per cycle; the FSM transitions purely on order/position events plus this grace-deadline check. The guard is **not** evaluated by the StopGuard snapshot logic in `EvaluateRules`.
+- **FR-17:** At grace expiry, if the FSM is still `Unprotected` and the position is non-flat, flatten (or place an auto-stop per `OnMissing`) and log "unprotected position." If a protective stop arrived before expiry, the FSM is already `Protected` and grace expiry is a no-op (timer cancelled).
+- **FR-18:** Protective stop = working Stop/Stop-Limit, opposite side, covering >= (open size - tolerance), same account+instrument, recognised by the FSM via the order's `Oco` id (bracket/OCO legs) or as a standalone working stop. The FSM transitions to `ProtectedPending` on `Submitted`/`Initialized`/`Accepted` and to `Protected` on `Working`, so a slow-arriving bracket leg never triggers a duplicate auto-stop. See §5.4 for the full state diagram.
 
 ### 6.6 Loss / drawdown / profit
 - **FR-19:** Daily loss limit (per account and/or aggregate) => flatten all + lockout.

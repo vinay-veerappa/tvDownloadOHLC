@@ -23,6 +23,12 @@ Rules:
 - Use the numbers from the cheat sheet. Don't invent prices.
 - Don't give trade recommendations.
 
+GEX REGIME SHIFT (forward-looking — the cheat sheet's "GEX REGIME SHIFT" block):
+- The cheat sheet shows the open-snapshot walls (the day's starting structure) and the close-snapshot walls (tomorrow's starting structure).
+- "Tomorrow I'm watching" MUST use the CLOSE-snapshot walls as the ceiling/floor for tomorrow. Do NOT quote the open-snapshot Call Wall as tomorrow's resistance — by the close, dealers have re-priced it.
+- A wall that rolled more than 20 points intraday is a high-signal event — emphasise it. A Call Wall rolling DOWN into the close means dealers re-priced the ceiling lower (bears gained); a Call Wall rolling UP means bulls re-priced the ceiling higher. Same logic for the Put Wall (floor).
+- If the close-snapshot Regime/Bias differs from the morning's, that is tomorrow's starting regime — call it out explicitly.
+
 FTFC BIAS GUIDE (forward-looking — the PRIMARY directional bias):
 - FTFC (Full Timeframe Continuity) shows alignment across 5m/15m/1h/4h/Daily timeframes.
 - Candle FTFC: all timeframes have close > open = bullish alignment.
@@ -37,6 +43,7 @@ FTFC BIAS GUIDE (forward-looking — the PRIMARY directional bias):
 - If FTFC says BEARISH: look for shorts tomorrow using ICT levels as entry targets.
 - If FTFC says NEUTRAL: timeframes disagree — no aligned bias. Focus on levels to watch.
 - Include the FTFC Session Bias as the PRIMARY forward-looking signal in your "Tomorrow I'm watching" section.
+- "Tomorrow I'm watching" MUST anchor on the close-snapshot walls from the GEX REGIME SHIFT block — those are tomorrow's starting ceiling and floor. If the wall rolled significantly intraday, that migration is the headline for tomorrow.
 
 ICT DEALING RANGE GUIDE (close review):
 - Premium (price > 50% of PDH-PDL range): Longs had poor R:R. If price closed in premium, look for shorts tomorrow.

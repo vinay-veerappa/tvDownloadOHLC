@@ -1,4 +1,4 @@
-#if TESTING
+﻿#if TESTING
 using System;
 using System.IO;
 using System.Text;
@@ -13,7 +13,7 @@ namespace NinjaTrader.Cbi
     public enum AccountItem { CashValue, RealizedProfitLoss, UnrealizedProfitLoss }
     public enum OrderState { Submitted, Accepted, Working, Cancelled, Filled, PartFilled, Rejected, Unknown, Initialized }
     public enum OrderType { Limit, StopMarket, StopLimit, Market }
-    public enum OrderAction { Buy, Sell }
+    public enum OrderAction { Buy, Sell, BuyToCover, SellShort }
     public enum TimeInForce { Day, Gtc }
     public enum PerformanceUnit { Currency, Percent, Pips, Points, Ticks }
 
@@ -52,6 +52,7 @@ namespace NinjaTrader.Cbi
         public string Id { get; set; }
         public string OrderId { get; set; }
         public string Name { get; set; }
+        public string Oco { get; set; }
         public OrderState OrderState { get; set; }
         public OrderType OrderType { get; set; }
         public int Quantity { get; set; }
@@ -244,10 +245,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         public static void Main(string[] args)
         {
             Console.WriteLine("====================================================");
-            Console.WriteLine("🛡️ RUNNING RISK GUARD ADDON EDGE CASE UNIT TESTS");
+            Console.WriteLine("- RUNNING RISK GUARD ADDON EDGE CASE UNIT TESTS");
             Console.WriteLine("====================================================");
 
-            // ── Original 9 tests ──
+            // - Original 9 tests -
             TestMaxPositionSizeEnforcement();
             TestDailyLossLimitLockout();
             TestTrailingDrawdownLockout();
@@ -258,7 +259,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestRealizedPnLLagHandling();
             TestMcpBridgeLockoutBlock();
 
-            // ── Critical gap tests ──
+            // - Critical gap tests -
             TestIsArmedFalseBypassesAllRules();
             TestTradeTodayCountingOnRoundTrip();
             TestFlipDetectionCountsAsEntry();
@@ -266,7 +267,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestOrderCancelledWhenLockedOnOrderUpdate();
             TestOrderCancelledWhenConsecLossesAtMaxNotLocked();
 
-            // ── Important gap tests ──
+            // - Important gap tests -
             TestDailyLossIncludesUnrealizedPnL();
             TestSessionResetInSweep();
             TestLockoutEnforcementFirstSweep();
@@ -281,7 +282,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestConsecutiveWinsResetLossCounter();
             TestAggregateSizeBreach();
 
-            // ── Lower-priority / boundary tests ──
+            // - Lower-priority / boundary tests -
             TestShadowModeSkipsAction();
             TestLiveModeExecutesAction();
             TestMaxSizeAtExactlyLimit();
@@ -289,7 +290,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestIsAccountLockedForUnknownAccount();
             TestMultipleInstrumentsNoPerInstrumentBreach();
 
-            // ── Exclusion deep-dive tests (test-first) ──
+            // - Exclusion deep-dive tests (test-first) -
             TestExcludedAccountMaxContractsBypassed();
             TestExcludedAccountAllRulesBypassed();
             TestExcludedAccountOrderNotCancelledWhenLocked();
@@ -299,7 +300,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestNonExcludedAccountStillCaughtBesideExcludedOne();
             TestExclusionRemovedReEnablesRules();
 
-            // ── Pass 2 Gap Tests (test-first) ──
+            // - Pass 2 Gap Tests (test-first) -
             TestSweepLockoutSkipsExcludedAccount();
             TestSweepPnLSyncSkipsConsecutiveLossForExcludedAccount();
             TestValidateInvariantReturnsFalseForUnknownAccount();
@@ -311,16 +312,46 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestEdgeWindowGateNoWindowsDefinedNoBreach();
             TestMultipleRulesFireSimultaneously();
 
-            // ── Pass 3 Gap Tests ──
+            // - Pass 3 Gap Tests -
             TestAggregateSizingExpectedCopiesScaling();
             TestFirmMirrorTrailingDDBreachEmitsAction();
             TestFirmMirrorDailyLossBreachEmitsAction();
             TestStopGuardDefaultOffsetFallback();
 
-            // ── Manual Lockout Tests ──
+            // - Manual Lockout Tests -
             TestManualTimedLockout();
             TestManualEodLockout();
             TestManualUnlockClearsTimedLockout();
+
+            // - FSM StopGuard Tests (-6) -
+            TestFsm_UnprotectedToProtectedViaOcoStopLeg();
+            TestFsm_NoDuplicateAutoStopWhenStopLegPending();
+            TestFsm_GraceExpiryPlacesAutoStopOnce();
+            TestFsm_StopArrivesBeforePositionIsBuffered();
+            TestFsm_FlatTearsDownAndCancelsOrphanAutoStop();
+            TestFsm_StandaloneStopReachesProtected();
+            TestFsm_RejectedStopLegReturnsToUnprotected();
+            TestFsm_PositionFlattenedBeforeGraceNoAutoStop();
+            TestFsm_DuplicateOrderUpdatesAreIdempotent();
+            TestFsm_DuplicatePositionUpdatesAreIdempotent();
+            TestFsm_EvaluateRulesNoLongerEmitsStopGuard();
+            TestFsm_ExcludedAccountSkipsFsm();
+
+            // -- FSM edge-case tests --
+            TestFsm_ProtectedToUnprotectedOnStopFilled();
+            TestFsm_ProtectedPendingToUnprotectedOnCancelled();
+            TestFsm_GraceExpiryFlatten();
+            TestFsm_GraceNotExpiredNoAction();
+            TestFsm_ShortPositionProtected();
+            TestFsm_FlipRecreatesFsm();
+            TestFsm_MultipleInstrumentsIndependent();
+            TestFsm_DisarmedSkipsFsm();
+            TestFsm_LimitOrderDoesNotTransition();
+            TestFsm_PendingStopWorkingConsumed();
+
+            // -- FSM OrderAction bug tests (BuyToCover/SellShort) --
+            TestFsm_ShortPositionBuyToCoverStopRecognized();
+            TestFsm_LongPositionSellShortStopRecognized();
 
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
@@ -610,9 +641,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(addon.IsAccountLocked("TestAcc"), "Account is correctly identified as locked.");
         }
 
-        // ════════════════════════════════════════════════════════
+        // -
         // CRITICAL GAP TESTS
-        // ════════════════════════════════════════════════════════
+        // -
 
         private static void TestIsArmedFalseBypassesAllRules()
         {
@@ -668,7 +699,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestFlipDetectionCountsAsEntry()
         {
-            Console.WriteLine("\n[TEST] Long→Short Flip Counts As Entry");
+            Console.WriteLine("\n[TEST] Long-Short Flip Counts As Entry");
             var config = new RiskConfig();
             var account = new Account { Name = "TestAcc" };
             var addon = new RiskGuardAddOn();
@@ -681,9 +712,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
             Assert(state.TradesToday == 1, "TradesToday == 1 after Long entry.");
 
-            // Flip directly to Short (Long→Short in one NT update)
+            // Flip directly to Short (Long-Short in one NT update)
             state.UpdatePosition(account, mnq, MarketPosition.Short, 2, 18100, 0, config);
-            Assert(state.TradesToday == 2, "TradesToday == 2 after Long→Short flip (flip counts as new entry).");
+            Assert(state.TradesToday == 2, "TradesToday == 2 after Long-Short flip (flip counts as new entry).");
 
             // Verify we're correctly Short
             Assert(state.Positions[mnq.FullName].MarketPosition == MarketPosition.Short, "Position correctly shows Short after flip.");
@@ -751,7 +782,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             var order = new Order
             {
                 Id = Guid.NewGuid().ToString(),
-                OrderState = OrderState.Filled,  // Already filled — should NOT be cancelled
+                OrderState = OrderState.Filled,  // Already filled - should NOT be cancelled
                 OrderType = OrderType.Limit,
                 Instrument = new Instrument("MNQ")
             };
@@ -792,9 +823,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "Submitted Market order cancelled when consecutive losses at max (even without formal lockout).");
         }
 
-        // ════════════════════════════════════════════════════════
+        // -
         // IMPORTANT GAP TESTS
-        // ════════════════════════════════════════════════════════
+        // -
 
         private static void TestDailyLossIncludesUnrealizedPnL()
         {
@@ -808,7 +839,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             var state = new AccountState("TestAcc");
             state.RealizedPnL   = -500.0;  // Within limit alone
-            state.UnrealizedPnL = -600.0;  // Combined = -1100 → breach
+            state.UnrealizedPnL = -600.0;  // Combined = -1100 - breach
 
             var actions = addon.EvaluateRules(account, state);
 
@@ -912,7 +943,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestLockoutEnforcementSubsequentSweepNoPosition()
         {
-            Console.WriteLine("\n[TEST] Subsequent Sweep With Locked + No Positions → No Action");
+            Console.WriteLine("\n[TEST] Subsequent Sweep With Locked + No Positions - No Action");
             var config = new RiskConfig();
 
             var account = new Account { Name = "TestAcc" };  // No positions
@@ -938,12 +969,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // Still locked, nothing to flatten, should remain stable
             Assert(state.IsLockedOut, "Account remains locked after subsequent sweep.");
-            Assert(account.Positions.Count == 0, "No positions to flatten — account stays flat.");
+            Assert(account.Positions.Count == 0, "No positions to flatten - account stays flat.");
         }
 
         private static void TestLockoutEnforcementSubsequentSweepWithNewPosition()
         {
-            Console.WriteLine("\n[TEST] Subsequent Sweep With Locked + New Position → Re-Flattened");
+            Console.WriteLine("\n[TEST] Subsequent Sweep With Locked + New Position - Re-Flattened");
             var config = new RiskConfig();
 
             var account = new Account { Name = "TestAcc" };
@@ -982,7 +1013,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestStopGuardAutoStop()
         {
-            Console.WriteLine("\n[TEST] StopGuard AutoStop: Position With No Stop → MISSING_STOP_ATTACH");
+            Console.WriteLine("\n[TEST] StopGuard AutoStop: Position With No Stop - MISSING_STOP_ATTACH");
             var config = new RiskConfig();
             config.StopGuard.OnMissing        = "AutoStop";
             config.StopGuard.StopAttachSeconds = 2;
@@ -1006,7 +1037,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestStopGuardFlatten()
         {
-            Console.WriteLine("\n[TEST] StopGuard Flatten: Position With No Stop → MISSING_STOP_FLATTEN");
+            Console.WriteLine("\n[TEST] StopGuard Flatten: Position With No Stop - MISSING_STOP_FLATTEN");
             var config = new RiskConfig();
             config.StopGuard.OnMissing        = "Flatten";
             config.StopGuard.StopAttachSeconds = 2;
@@ -1136,7 +1167,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestEdgeWindowGateBreach()
         {
-            Console.WriteLine("\n[TEST] EdgeWindowGate: Position Entered Outside Window → Breach");
+            Console.WriteLine("\n[TEST] EdgeWindowGate: Position Entered Outside Window - Breach");
             var config = new RiskConfig();
             config.EnableWindowGate = true;
 
@@ -1144,7 +1175,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             var addon   = new RiskGuardAddOn();
             addon.SetConfigForTest(config);
 
-            // Define window 09:50–11:10 ET Monday–Friday
+            // Define window 09:50-11:10 ET Monday-Friday
             var parsedWindow = new ParsedWindow
             {
                 Start = new TimeSpan(9, 50, 0),
@@ -1194,7 +1225,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             var nowEt  = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, etZone);
             state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
 
-            addon.ExecuteSafetySweep(); // Sweep picks up +200 realized PnL → win
+            addon.ExecuteSafetySweep(); // Sweep picks up +200 realized PnL - win
 
             Assert(state.ConsecutiveLosses == 0,
                 "Consecutive loss counter reset to 0 after a profitable trade detected in sweep.");
@@ -1255,13 +1286,13 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // Temporarily lower aggregate and verify sweep logic triggers for aggregate
             config.Sizing.MaxContractsAggregate = 10; // Now 24 > 10 aggregate
-            addon.ExecuteSafetySweep(); // Shadow mode — won't flatten but exercises the code path
+            addon.ExecuteSafetySweep(); // Shadow mode - won't flatten but exercises the code path
             Assert(true, "Aggregate size breach sweep runs without exception.");
         }
 
-        // ════════════════════════════════════════════════════════
+        // -
         // LOWER-PRIORITY / BOUNDARY TESTS
-        // ════════════════════════════════════════════════════════
+        // -
 
         private static void TestShadowModeSkipsAction()
         {
@@ -1326,7 +1357,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestMaxSizeAtExactlyLimit()
         {
-            Console.WriteLine("\n[TEST] Max Size At Exactly The Limit — No Breach");
+            Console.WriteLine("\n[TEST] Max Size At Exactly The Limit - No Breach");
             var config = new RiskConfig();
             config.Sizing.MaxContractsPerAccount = 5;
 
@@ -1335,7 +1366,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.SetConfigForTest(config);
 
             var state = new AccountState("TestAcc");
-            // Exactly at the limit — code uses >, not >=
+            // Exactly at the limit - code uses >, not >=
             state.UpdatePosition(account, new Instrument("MNQ"), MarketPosition.Long, 5, 18000, 0, config);
 
             var actions = addon.EvaluateRules(account, state);
@@ -1346,7 +1377,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestDailyLossAtExactlyLimit()
         {
-            Console.WriteLine("\n[TEST] Daily Loss At Exactly The Limit — No Breach");
+            Console.WriteLine("\n[TEST] Daily Loss At Exactly The Limit - No Breach");
             var config = new RiskConfig();
             config.PnLRules.DailyLossLimit = 1000.0;
 
@@ -1355,7 +1386,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.SetConfigForTest(config);
 
             var state = new AccountState("TestAcc");
-            // Exactly at -1000 — code uses < -Limit, so -1000 < -1000 is false
+            // Exactly at -1000 - code uses < -Limit, so -1000 < -1000 is false
             state.RealizedPnL = -1000.0;
 
             var actions = addon.EvaluateRules(account, state);
@@ -1376,7 +1407,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static void TestMultipleInstrumentsNoPerInstrumentBreach()
         {
-            Console.WriteLine("\n[TEST] Multiple Instruments — No Per-Instrument Breach When Each Is Under Limit");
+            Console.WriteLine("\n[TEST] Multiple Instruments - No Per-Instrument Breach When Each Is Under Limit");
             var config = new RiskConfig();
             config.Sizing.MaxContractsPerAccount = 5;
 
@@ -1385,7 +1416,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.SetConfigForTest(config);
 
             var state = new AccountState("TestAcc");
-            // MNQ = 3 contracts, ES = 3 contracts — each individually under limit of 5
+            // MNQ = 3 contracts, ES = 3 contracts - each individually under limit of 5
             state.UpdatePosition(account, new Instrument("MNQ"), MarketPosition.Long, 3, 18000, 0, config);
             state.UpdatePosition(account, new Instrument("ES"),  MarketPosition.Short, 3, 5000,  0, config);
 
@@ -1395,13 +1426,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "No MAX_SIZE_BREACH when each instrument is individually within the per-account limit.");
         }
 
-        // ════════════════════════════════════════════════════════
-        // EXCLUSION DEEP-DIVE TESTS  (test-first — these define the correct behaviour)
-        // ════════════════════════════════════════════════════════
+        // -
+        // EXCLUSION DEEP-DIVE TESTS  (test-first - these define the correct behaviour)
+        // -
 
-        // ────────────────────────────────────────────────────────
+        // -
         // An excluded account must bypass ALL rules - EvaluateRules path
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestExcludedAccountMaxContractsBypassed()
         {
             Console.WriteLine("\n[TEST] Excluded Account: MaxContracts Rule Is Bypassed");
@@ -1414,7 +1445,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.SetConfigForTest(config);
 
             var state = new AccountState("ExcludedAcc");
-            // 10 contracts — far exceeds limit of 3 — but account is excluded
+            // 10 contracts - far exceeds limit of 3 - but account is excluded
             state.UpdatePosition(account, new Instrument("MNQ"), MarketPosition.Long, 10, 18000, 0, config);
 
             var actions = addon.EvaluateRules(account, state);
@@ -1425,9 +1456,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "Excluded account is NOT locked out despite exceeding max contracts.");
         }
 
-        // ────────────────────────────────────────────────────────
+        // -
         // Excluded account: ALL rules bypassed simultaneously
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestExcludedAccountAllRulesBypassed()
         {
             Console.WriteLine("\n[TEST] Excluded Account: All Rules Bypassed Simultaneously");
@@ -1461,9 +1492,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "Excluded account is NEVER locked out.");
         }
 
-        // ────────────────────────────────────────────────────────
+        // -
         // Excluded account: OnOrderUpdate must NOT cancel its orders
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestExcludedAccountOrderNotCancelledWhenLocked()
         {
             Console.WriteLine("\n[TEST] Excluded Account: Working Order NOT Cancelled Even With IsLockedOut=true");
@@ -1494,9 +1525,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "Working order on excluded account is NOT cancelled, even when IsLockedOut=true.");
         }
 
-        // ────────────────────────────────────────────────────────
+        // -
         // BUG: Excluded account contracts must NOT count toward aggregate total
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestExcludedAccountNotCountedInAggregate()
         {
             Console.WriteLine("\n[TEST] Excluded Account Contracts NOT Counted In Aggregate Total");
@@ -1507,8 +1538,8 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // ExcludedAcc: 20 contracts (excluded, should be invisible to aggregate)
             // NormalAcc:    5 contracts (under the limit of 10)
-            // Without the fix: 20+5=25 > 10 → triggers aggregate breach on NormalAcc
-            // With the fix:      0+5= 5 <= 10 → no breach
+            // Without the fix: 20+5=25 > 10 - triggers aggregate breach on NormalAcc
+            // With the fix:      0+5= 5 <= 10 - no breach
 
             var exclAcc   = new Account { Name = "ExcludedAcc" };
             var normalAcc = new Account { Name = "NormalAcc" };
@@ -1550,9 +1581,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "ExcludedAcc is NOT flattened by aggregate check.");
         }
 
-        // ────────────────────────────────────────────────────────
+        // -
         // BUG: Excluded account must NOT be flattened by aggregate breach action
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestExcludedAccountNotFlattenedByAggregateBreach()
         {
             Console.WriteLine("\n[TEST] Excluded Account NOT Flattened Even When Aggregate Limit Breached By Non-Excluded Accounts");
@@ -1615,9 +1646,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "At least one non-excluded account IS flattened by aggregate breach.");
         }
 
-        // ────────────────────────────────────────────────────────
+        // -
         // Excluded account: sweep must never lock it out
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestExcludedAccountSweepDoesNotLockout()
         {
             Console.WriteLine("\n[TEST] Excluded Account: Full Sweep Never Locks It Out");
@@ -1654,9 +1685,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "Sweep does NOT lock out excluded account even with all rules violated.");
         }
 
-        // ────────────────────────────────────────────────────────
+        // -
         // A non-excluded account beside an excluded one is still enforced
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestNonExcludedAccountStillCaughtBesideExcludedOne()
         {
             Console.WriteLine("\n[TEST] Non-Excluded Account Is Still Caught When Beside Excluded Account");
@@ -1673,8 +1704,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             var exclState   = new AccountState("ExcludedAcc");
             var normalState = new AccountState("NormalAcc");
 
-            exclState.RealizedPnL   = -9999.0; // Excluded — should not fire
-            normalState.RealizedPnL = -600.0;  // Not excluded — SHOULD fire DAILY_LOSS_BREACH
+            exclState.RealizedPnL   = -9999.0; // Excluded - should not fire
+            normalState.RealizedPnL = -600.0;  // Not excluded - SHOULD fire DAILY_LOSS_BREACH
 
             var exclActions   = addon.EvaluateRules(exclAccount,   exclState);
             var normalActions = addon.EvaluateRules(normalAccount, normalState);
@@ -1685,9 +1716,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "Non-excluded account beside it still gets DAILY_LOSS_BREACH.");
         }
 
-        // ────────────────────────────────────────────────────────
+        // -
         // Removing an account from exclusion list re-enables all rules
-        // ────────────────────────────────────────────────────────
+        // -
         private static void TestExclusionRemovedReEnablesRules()
         {
             Console.WriteLine("\n[TEST] Removing Exclusion Re-Enables All Rules");
@@ -1716,9 +1747,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "DAILY_LOSS_BREACH fires immediately after account is removed from exclusion list.");
         }
 
-        // ════════════════════════════════════════════════════════
+        // -
         // PASS 2 GAP TESTS
-        // ════════════════════════════════════════════════════════
+        // -
 
         // 1.a) Excluded account with IsLockedOut=true (stale) should NOT be flattened by sweep lockout enforcement
         private static void TestSweepLockoutSkipsExcludedAccount()
@@ -1984,9 +2015,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(hasSize && hasTrades && hasLoss, "All three breached rules return an action in the same evaluation");
         }
 
-        // ════════════════════════════════════════════════════════
+        // -
         // PASS 3 GAP TESTS
-        // ════════════════════════════════════════════════════════
+        // -
 
         // 1. Aggregate Sizing ExpectedCopies scaling
         private static void TestAggregateSizingExpectedCopiesScaling()
@@ -2116,9 +2147,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(true, "Fallback triggered gracefully");
         }
 
-        // ════════════════════════════════════════════════════════
+        // -
         // MANUAL LOCKOUT TESTS
-        // ════════════════════════════════════════════════════════
+        // -
 
         // 1. Manual Timed Lockout
         private static void TestManualTimedLockout()
@@ -2181,6 +2212,685 @@ namespace NinjaTrader.NinjaScript.AddOns
             
             addon.UnlockAccount("Acc1");
             Assert(state.LockoutUntil == DateTime.MinValue, "Unlock clears timed lockout");
+        }
+
+        // -
+        // FSM STOPGUARD TESTS (-6 of RiskGuardAddOn.md)
+        // These assert on the per-position FSM state across event sequences
+        // rather than on a single EvaluateRules snapshot, which was the gap
+        // that hid the duplicate-SL race.
+        // -
+
+        private static RiskConfig FsmTestConfig(int graceSeconds = 60, string onMissing = "AutoStop")
+        {
+            var c = new RiskConfig();
+            c.StopGuard.StopAttachSeconds = graceSeconds;
+            c.StopGuard.OnMissing = onMissing;
+            return c;
+        }
+
+        private static Account FsmTestAccount(string name = "TestAcc")
+        {
+            Account.All.Clear();
+            var a = new Account { Name = name };
+            Account.All.Add(a);
+            return a;
+        }
+
+        // 1. flat -> nonflat (Unprotected) -> OCO stop leg Submitted (ProtectedPending) -> Working (Protected)
+        private static void TestFsm_UnprotectedToProtectedViaOcoStopLeg()
+        {
+            Console.WriteLine("\n[TEST] FSM: Unprotected -> ProtectedPending -> Protected via OCO stop leg");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected, "FSM created in Unprotected");
+
+            var stopLeg = new Order
+            {
+                OrderState = OrderState.Submitted,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 2,
+                Instrument = mnq,
+                Oco = "BRACKET-1"
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+
+            fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.ProtectedPending, "Stop leg Submitted -> ProtectedPending");
+            Assert(ReferenceEquals(fsm.RecognizedStopOrder, stopLeg), "Recognised stop is the OCO leg (by reference)");
+
+            stopLeg.OrderState = OrderState.Working;
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+            fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.Protected, "Stop leg Working -> Protected");
+        }
+
+        // 2. After ProtectedPending, a second grace-expiry / duplicate event must NOT place another stop.
+        private static void TestFsm_NoDuplicateAutoStopWhenStopLegPending()
+        {
+            Console.WriteLine("\n[TEST] FSM: No duplicate auto-stop when stop leg is pending");
+            var config = FsmTestConfig(graceSeconds: 0); // grace already expired
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            // Stop leg arrives Submitted (FSM -> ProtectedPending)
+            var stopLeg = new Order
+            {
+                OrderState = OrderState.Submitted,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 2,
+                Instrument = mnq,
+                Oco = "BRACKET-1"
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+
+            // Position object present for EvaluateGraceExpiry
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2 });
+
+            // Grace is 0s, so deadline is already past. But FSM is ProtectedPending, so no action.
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(actions.Count == 0, "No auto-stop emitted while FSM is ProtectedPending (grace expiry suppressed)");
+        }
+
+        // 3. Grace expiry from Unprotected emits exactly one MISSING_STOP_ATTACH, then FSM is ProtectedPending.
+        private static void TestFsm_GraceExpiryPlacesAutoStopOnce()
+        {
+            Console.WriteLine("\n[TEST] FSM: Grace expiry places auto-stop exactly once");
+            var config = FsmTestConfig(graceSeconds: 0, onMissing: "AutoStop");
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1 });
+
+            var first = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(first.Any(a => a.RuleId == "MISSING_STOP_ATTACH"), "First grace expiry emits MISSING_STOP_ATTACH");
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.ProtectedPending, "FSM moved to ProtectedPending after emitting");
+
+            // Second call must not emit again (FSM no longer Unprotected).
+            var second = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(second.Count == 0, "Second grace-expiry call emits nothing (FSM already ProtectedPending)");
+        }
+
+        // 4. Stop OrderUpdate arrives BEFORE PositionUpdate -> buffered, consumed on position open.
+        private static void TestFsm_StopArrivesBeforePositionIsBuffered()
+        {
+            Console.WriteLine("\n[TEST] FSM: Stop arriving before position is buffered and consumed");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            var stopLeg = new Order
+            {
+                OrderState = OrderState.Submitted,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 2,
+                Instrument = mnq,
+                Oco = "BRACKET-2"
+            };
+            // No FSM yet -> should be buffered.
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+            Assert(addon.TestAllFsms().Count == 0, "No FSM created by stop event alone");
+
+            // Position opens -> FSM created and consumes the buffered stop.
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.ProtectedPending,
+                "Buffered stop consumed on position open -> ProtectedPending");
+            Assert(ReferenceEquals(fsm.RecognizedStopOrder, stopLeg), "Buffered stop recognised by reference");
+        }
+
+        // 5. nonflat -> flat tears down FSM and cancels an orphan RiskGuard auto-stop.
+        private static void TestFsm_FlatTearsDownAndCancelsOrphanAutoStop()
+        {
+            Console.WriteLine("\n[TEST] FSM: Flat tears down FSM and cancels orphan auto-stop");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+
+            // Simulate an auto-stop we placed, still working.
+            var autoStop = new Order
+            {
+                Name = "RiskGuardAutoStop",
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            account.Orders.Add(autoStop);
+            addon.TestFsmOnOrder(account, mnq.FullName, autoStop);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.Protected, "Auto-stop Working -> Protected");
+            Assert(ReferenceEquals(fsm.AutoStopOrder, autoStop), "AutoStopOrder recorded");
+
+            // Position flattens -> FSM torn down, orphan auto-stop cancelled.
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Flat, 0);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName) == null, "FSM removed on flat");
+            Assert(autoStop.OrderState == OrderState.Cancelled, "Orphan auto-stop cancelled on flat");
+        }
+
+        // 6. Standalone (non-OCO) working stop -> Protected.
+        private static void TestFsm_StandaloneStopReachesProtected()
+        {
+            Console.WriteLine("\n[TEST] FSM: Standalone working stop reaches Protected");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Short, 1);
+
+            var stop = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Buy, // opposite of short
+                Quantity = 1,
+                Instrument = mnq
+                // Oco intentionally empty (external/manual bracket)
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.Protected, "Standalone working stop -> Protected (no Oco needed)");
+        }
+
+        // 7. Recognised stop leg Rejected -> back to Unprotected.
+        private static void TestFsm_RejectedStopLegReturnsToUnprotected()
+        {
+            Console.WriteLine("\n[TEST] FSM: Rejected stop leg returns FSM to Unprotected");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+
+            var stopLeg = new Order
+            {
+                OrderState = OrderState.Submitted,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).State == GuardFsmState.ProtectedPending,
+                "Submitted -> ProtectedPending");
+
+            stopLeg.OrderState = OrderState.Rejected;
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+            // Position still open (qty 1) -> Unprotected
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected, "Rejected stop -> Unprotected (position still open)");
+            Assert(fsm.RecognizedStopOrder == null, "Recognised stop cleared on rejection");
+        }
+
+        // 8. Position flattens before grace expires -> no auto-stop emitted.
+        private static void TestFsm_PositionFlattenedBeforeGraceNoAutoStop()
+        {
+            Console.WriteLine("\n[TEST] FSM: Position flat before grace -> no auto-stop");
+            var config = FsmTestConfig(graceSeconds: 60); // grace far in future
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Flat, 0);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName) == null, "FSM torn down on flat");
+
+            // Even if grace were somehow invoked, no FSM exists -> no action.
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(actions.Count == 0, "No auto-stop after position flattened before grace");
+        }
+
+        // 9. Duplicate OrderUpdate for the same stop leg is idempotent.
+        private static void TestFsm_DuplicateOrderUpdatesAreIdempotent()
+        {
+            Console.WriteLine("\n[TEST] FSM: Duplicate OrderUpdate events are idempotent");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+
+            var stopLeg = new Order
+            {
+                OrderState = OrderState.Submitted,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg); // duplicate
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg); // duplicate
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.ProtectedPending, "Repeated Submitted events stay ProtectedPending");
+            Assert(addon.TestAllFsms().Count == 1, "Still exactly one FSM");
+        }
+
+        // 10. Duplicate PositionUpdate (re-entrant) is idempotent.
+        private static void TestFsm_DuplicatePositionUpdatesAreIdempotent()
+        {
+            Console.WriteLine("\n[TEST] FSM: Duplicate PositionUpdate events are idempotent");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2); // duplicate
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2); // duplicate
+
+            Assert(addon.TestAllFsms().Count == 1, "Exactly one FSM after duplicate position updates");
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.Unprotected, "Still Unprotected (no stop arrived)");
+            Assert(fsm.PositionQuantity == 2, "Quantity preserved");
+        }
+
+        // 11. EvaluateRules no longer emits StopGuard actions (FSM owns it).
+        private static void TestFsm_EvaluateRulesNoLongerEmitsStopGuard()
+        {
+            Console.WriteLine("\n[TEST] FSM: EvaluateRules no longer emits StopGuard actions");
+            var config = FsmTestConfig(graceSeconds: 0, onMissing: "AutoStop");
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            var state = new AccountState("TestAcc");
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 1, 18000, 0, config);
+            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
+            addon.SetAccountStateForTest("TestAcc", state);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1 });
+
+            var actions = addon.EvaluateRules(account, state);
+            Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH" || a.RuleId == "MISSING_STOP_FLATTEN"),
+                "EvaluateRules emits no MISSING_STOP_* (FSM owns StopGuard now)");
+        }
+
+        // 12. Excluded account: FSM is not created.
+        private static void TestFsm_ExcludedAccountSkipsFsm()
+        {
+            Console.WriteLine("\n[TEST] FSM: Excluded account does not create FSM");
+            var config = FsmTestConfig();
+            config.ExcludedAccounts = new List<string> { "ExcludedAcc" };
+            var account = FsmTestAccount("ExcludedAcc");
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            Assert(addon.TestAllFsms().Count == 0, "No FSM created for excluded account");
+        }
+
+        // 13. Protected -> Unprotected when recognised stop FILLS (not just rejected).
+        private static void TestFsm_ProtectedToUnprotectedOnStopFilled()
+        {
+            Console.WriteLine("\n[TEST] FSM: Protected -> Unprotected when stop fills (position still open)");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            var stop = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).State == GuardFsmState.Protected,
+                "Working stop -> Protected");
+
+            // Stop fills (e.g., OCO target leg hit the stop, but position still shows open briefly).
+            stop.OrderState = OrderState.Filled;
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+            // PositionQuantity is still 1 (set at creation), so -> Unprotected.
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
+                "Filled stop -> Unprotected (position still open)");
+        }
+
+        // 14. ProtectedPending -> Unprotected on Cancelled (distinct from Rejected).
+        private static void TestFsm_ProtectedPendingToUnprotectedOnCancelled()
+        {
+            Console.WriteLine("\n[TEST] FSM: ProtectedPending -> Unprotected on Cancelled");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            var stop = new Order
+            {
+                OrderState = OrderState.Submitted,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).State == GuardFsmState.ProtectedPending,
+                "Submitted -> ProtectedPending");
+
+            stop.OrderState = OrderState.Cancelled;
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
+                "Cancelled stop -> Unprotected (position still open)");
+        }
+
+        // 15. Grace expiry with OnMissing=Flatten emits MISSING_STOP_FLATTEN.
+        private static void TestFsm_GraceExpiryFlatten()
+        {
+            Console.WriteLine("\n[TEST] FSM: Grace expiry with OnMissing=Flatten");
+            var config = FsmTestConfig(graceSeconds: 0, onMissing: "Flatten");
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1 });
+
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(actions.Any(a => a.RuleId == "MISSING_STOP_FLATTEN"),
+                "Grace expiry with OnMissing=Flatten emits MISSING_STOP_FLATTEN");
+        }
+
+        // 16. Grace not expired yet (deadline in future) -> no action.
+        private static void TestFsm_GraceNotExpiredNoAction()
+        {
+            Console.WriteLine("\n[TEST] FSM: Grace not expired -> no action");
+            var config = FsmTestConfig(graceSeconds: 600);
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1 });
+
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(actions.Count == 0, "No action when grace deadline is in the future");
+        }
+
+        // 17. Short position FSM reaches Protected via opposite-side buy stop.
+        private static void TestFsm_ShortPositionProtected()
+        {
+            Console.WriteLine("\n[TEST] FSM: Short position reaches Protected");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var es = new Instrument("ES");
+
+            addon.TestFsmOnPosition(account, es.FullName, MarketPosition.Short, 3);
+            var fsm = addon.TestGetFsm(account.Name, es.FullName);
+            Assert(fsm != null && fsm.PositionSide == MarketPosition.Short, "FSM created with Short side");
+
+            var stop = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.BuyToCover, // NT8 ATM uses BuyToCover for short-covering stops
+                Quantity = 3,
+                Instrument = es
+            };
+            addon.TestFsmOnOrder(account, es.FullName, stop);
+            Assert(addon.TestGetFsm(account.Name, es.FullName).State == GuardFsmState.Protected,
+                "Short position + buy stop -> Protected");
+        }
+
+        // 18. Position flip (Long->Short) recreates FSM with the new side.
+        private static void TestFsm_FlipRecreatesFsm()
+        {
+            Console.WriteLine("\n[TEST] FSM: Position flip recreates FSM with new side");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+            var fsm1 = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm1.PositionSide == MarketPosition.Long, "Initial FSM is Long");
+
+            // Flip to short.
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Short, 1);
+            var fsm2 = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm2 != null, "FSM exists after flip");
+            Assert(fsm2.PositionSide == MarketPosition.Short, "FSM side updated to Short after flip");
+            Assert(fsm2.PositionQuantity == 1, "FSM quantity updated to 1 after flip");
+            Assert(fsm2.State == GuardFsmState.Unprotected, "FSM is Unprotected after flip (new entry, new grace)");
+        }
+
+        // 19. Multiple instruments get separate independent FSMs.
+        private static void TestFsm_MultipleInstrumentsIndependent()
+        {
+            Console.WriteLine("\n[TEST] FSM: Multiple instruments have independent FSMs");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+            var es = new Instrument("ES");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            addon.TestFsmOnPosition(account, es.FullName, MarketPosition.Long, 2);
+
+            Assert(addon.TestAllFsms().Count == 2, "Two FSMs created for two instruments");
+
+            // Protect MNQ only.
+            var stop = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).State == GuardFsmState.Protected,
+                "MNQ is Protected");
+            Assert(addon.TestGetFsm(account.Name, es.FullName).State == GuardFsmState.Unprotected,
+                "ES is still Unprotected (independent)");
+        }
+
+        // 20. Disarmed guard does not create FSMs.
+        private static void TestFsm_DisarmedSkipsFsm()
+        {
+            Console.WriteLine("\n[TEST] FSM: Disarmed guard does not create FSMs");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetArmedForTest(false);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            Assert(addon.TestAllFsms().Count == 0, "No FSM created when guard is disarmed");
+        }
+
+        // 21. Non-stop order types (Limit target leg) do not transition the FSM.
+        private static void TestFsm_LimitOrderDoesNotTransition()
+        {
+            Console.WriteLine("\n[TEST] FSM: Limit order (target leg) does not transition FSM");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+
+            // A limit order (target leg of bracket) opposite side but not a stop type.
+            var target = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.Limit,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, target);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).State == GuardFsmState.Unprotected,
+                "Limit order does not protect position (only stop types do)");
+        }
+
+        // 22. Pending stop is consumed even when it arrives in Working state (buffered then consumed).
+        private static void TestFsm_PendingStopWorkingConsumed()
+        {
+            Console.WriteLine("\n[TEST] FSM: Buffered Working stop consumed -> Protected directly");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            // Stop arrives Working before position event.
+            var stop = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+            Assert(addon.TestAllFsms().Count == 0, "No FSM yet (buffered)");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Protected,
+                "Buffered Working stop consumed -> Protected directly");
+        }
+
+        // 23. Short position with BuyToCover stop leg (the exact bug: NT8 ATM uses BuyToCover, not Buy).
+        private static void TestFsm_ShortPositionBuyToCoverStopRecognized()
+        {
+            Console.WriteLine("\n[TEST] FSM: Short position BuyToCover stop leg recognized (the original bug)");
+            var config = FsmTestConfig(graceSeconds: 2);
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            // Position goes short.
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Short, 6);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected, "FSM created Unprotected for short");
+
+            // OCO stop leg arrives as BuyToCover (NT8 ATM for shorts).
+            var stopLeg = new Order
+            {
+                OrderState = OrderState.Submitted,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.BuyToCover,
+                Quantity = 6,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopLeg);
+
+            fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.ProtectedPending,
+                "BuyToCover stop leg Submitted -> ProtectedPending (not ignored!)");
+
+            // Grace expiry should NOT fire (FSM is ProtectedPending).
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Short, Quantity = 6 });
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(actions.Count == 0,
+                "No auto-stop emitted -- BuyToCover stop recognized, no duplicate SL");
+        }
+
+        // 24. Long position with SellShort stop leg (symmetric: NT8 may use SellShort for long exits).
+        private static void TestFsm_LongPositionSellShortStopRecognized()
+        {
+            Console.WriteLine("\n[TEST] FSM: Long position SellShort stop leg recognized");
+            var config = FsmTestConfig(graceSeconds: 2);
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var es = new Instrument("ES");
+
+            addon.TestFsmOnPosition(account, es.FullName, MarketPosition.Long, 2);
+            Assert(addon.TestGetFsm(account.Name, es.FullName).State == GuardFsmState.Unprotected,
+                "FSM created Unprotected for long");
+
+            var stopLeg = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.SellShort,
+                Quantity = 2,
+                Instrument = es
+            };
+            addon.TestFsmOnOrder(account, es.FullName, stopLeg);
+            Assert(addon.TestGetFsm(account.Name, es.FullName).State == GuardFsmState.Protected,
+                "SellShort stop Working -> Protected (not ignored!)");
         }
     }
 }

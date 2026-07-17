@@ -2,30 +2,39 @@
   "grid": {
     "htf_tf": [
       "15m",
-      "1h"
+      "1h",
+      "1d"
     ],
     "ltf_tf": [
-      "5m"
+      "5m",
+      "1m"
     ],
     "require_rejection_fvg": [
       true,
       false
     ],
     "cisd_impl": [
-      "sweep_open"
+      "sweep_open",
+      "delivery_series"
     ],
     "entry_method": [
       "2nd_fvg",
+      "1st_fvg",
+      "fvg_50pct",
       "cisd_close"
     ],
     "sl_method": [
-      "swing_extreme"
+      "swing_extreme",
+      "htf_fvg_boundary"
     ],
     "tp_rr": [
-      2
+      1,
+      2,
+      3
     ],
     "fvg_freshness": [
-      "fresh"
+      "fresh",
+      "multi"
     ]
   },
   "fixed": {
@@ -36,5 +45,5 @@
     "use_precomputed": true
   },
   "ticker": "ES1",
-  "total_arms": 8
+  "total_arms": 1152
 }

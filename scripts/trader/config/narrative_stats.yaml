@@ -310,7 +310,7 @@ llm:
   # trader reading the morning "clean read" and the daily EOD sees
   # the same prose voice. Operators can still override per-run via
   # `--model gemma4:31b-cloud` etc.
-  default_trader_model: "gemma4:latest"
+  default_trader_model: "deepseek-v4-flash:cloud"
   # Cloud fallback (used when the default is unavailable).
   fallback_model: "gemma4:31b-cloud"
   # Local-only fallback (used when the cloud fallback is also down).

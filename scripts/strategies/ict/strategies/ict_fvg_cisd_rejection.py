@@ -151,9 +151,9 @@ class ICTFVGCISDRejectionStrategy:
                 cisd_df = detect_cisd(ltf_ohlc, swings)
             struct_df = detect_structure_breaks(ltf_ohlc, swings)
 
-        # ── 4. Map HTF FVGs to exec timeframe via merge_asof ──────────
-        htf_active = self._build_active_fvgs(htf_fvg_df, exec_idx)
-        ltf_active = self._build_active_fvgs(ltf_fvg_df, exec_idx)
+        # ── 4. Map HTF FVGs to exec timeframe via searchsorted ──────────
+        htf_active = self._build_active_fvgs(htf_fvg_df, exec_idx, fvg_freshness, exec_ohlc)
+        ltf_active = self._build_active_fvgs(ltf_fvg_df, exec_idx, fvg_freshness, exec_ohlc)
 
         htf_bull_top = htf_active["bull_top"].values
         htf_bull_bot = htf_active["bull_bot"].values
@@ -553,11 +553,18 @@ class ICTFVGCISDRejectionStrategy:
 
     @staticmethod
     def _build_active_fvgs(
-        fvg_df: pd.DataFrame, exec_index: pd.DatetimeIndex
+        fvg_df: pd.DataFrame,
+        exec_index: pd.DatetimeIndex,
+        freshness: str = "multi",
+        exec_ohlc: pd.DataFrame = None,
     ) -> pd.DataFrame:
         """Map FVG events to exec timeframe via np.searchsorted (fully vectorized).
 
-        Avoids merge_asof DataFrame construction overhead.
+        For 'fresh' mode: an FVG is invalidated once price fully fills it
+        (low <= fvg_bottom for bull, high >= fvg_top for bear). Only unmitigated
+        FVGs are active.
+        For 'multi' mode: FVG stays active until displaced (close beyond midpoint).
+
         Returns DataFrame with bull_top, bull_bot, bull_create_ns,
         bear_top, bear_bot, bear_create_ns (all aligned to exec_index).
         """
@@ -567,12 +574,19 @@ class ICTFVGCISDRejectionStrategy:
         bull = fvg_df[fvg_df["fvg_type"] == 1].copy()
         bear = fvg_df[fvg_df["fvg_type"] == -1].copy()
 
+        # For 'fresh' mode, we need OHLC to check mitigation
+        # For 'multi' mode, all FVGs stay active (current behavior)
+        if freshness == "fresh" and exec_ohlc is not None:
+            return ICTFVGCISDRejectionStrategy._build_active_fvgs_fresh(
+                fvg_df, exec_index, exec_ohlc
+            )
+
+        # Default ('multi' or no OHLC): all FVGs stay active
         if not bull.empty:
             bull = bull.sort_index()
             bull_create_ns = bull.index.asi8
             bull_tops = bull["fvg_top"].values.astype(float)
             bull_bots = bull["fvg_bottom"].values.astype(float)
-            # For each exec bar, find most recent FVG created at or before it
             pos = np.searchsorted(bull_create_ns, exec_ns, side="right") - 1
             valid = pos >= 0
             bull_top = np.where(valid, bull_tops[np.clip(pos, 0, len(bull_tops) - 1)], np.nan)
@@ -605,4 +619,121 @@ class ICTFVGCISDRejectionStrategy:
             "bear_top": bear_top,
             "bear_bot": bear_bot,
             "bear_create_ns": bear_create,
+        }, index=exec_index)
+
+    @staticmethod
+    def _build_active_fvgs_fresh(
+        fvg_df: pd.DataFrame,
+        exec_index: pd.DatetimeIndex,
+        exec_ohlc: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Build active FVGs with 'fresh' mode: invalidate once price fully fills.
+
+        A bullish FVG is mitigated when low <= fvg_bottom (price fills the gap).
+        A bearish FVG is mitigated when high >= fvg_top.
+
+        Vectorized: uses cummin/cummax of lows/highs to find mitigation times
+        in O(n) instead of O(n_fvg × n) per FVG loop.
+        """
+        n = len(exec_index)
+        exec_ns = exec_index.asi8
+        exec_low = exec_ohlc["low"].values
+        exec_high = exec_ohlc["high"].values
+
+        # Cumulative running min/max for fast mitigation lookup
+        # For bull FVG created at time T with bottom B:
+        #   mitigated at first bar where running_min(low)[T:] <= B
+        #   = first bar where cummin_low <= B (starting from T)
+        # We precompute cummin and cummax arrays
+        cummin_low = np.minimum.accumulate(exec_low)
+        cummax_high = np.maximum.accumulate(exec_high)
+
+        result = {}
+        for fvg_type, fvg_label, level_col, cum_arr, cmp_op in [
+            (1, "bull", "fvg_bottom", cummin_low, "le"),   # bull: low <= bottom
+            (-1, "bear", "fvg_top", cummax_high, "ge"),     # bear: high >= top
+        ]:
+            fvg_subset = fvg_df[fvg_df["fvg_type"] == fvg_type].sort_index().copy()
+            top_col = "fvg_top" if fvg_type == 1 else "fvg_top"
+            bot_col = "fvg_bottom" if fvg_type == 1 else "fvg_bottom"
+
+            n_fvg = len(fvg_subset)
+            top_arr = np.full(n, np.nan)
+            bot_arr = np.full(n, np.nan)
+            create_arr = np.full(n, np.nan)
+
+            if n_fvg == 0:
+                result[f"{fvg_label}_top"] = top_arr
+                result[f"{fvg_label}_bot"] = bot_arr
+                result[f"{fvg_label}_create_ns"] = create_arr
+                continue
+
+            fvg_create_ns = fvg_subset.index.asi8
+            fvg_tops = fvg_subset["fvg_top"].values.astype(float)
+            fvg_bots = fvg_subset["fvg_bottom"].values.astype(float)
+            fvg_levels = fvg_subset[level_col].values.astype(float)  # the mitigation level
+
+            # Compute mitigation bar for each FVG using searchsorted on cummin/cummax
+            # For bull: mitigation = first bar after creation where cummin_low <= fvg_bottom
+            # For bear: mitigation = first bar after creation where cummax_high >= fvg_top
+            #
+            # Trick: cummin_low is monotonically non-increasing.
+            # For bull FVG with bottom B, we need first bar where cummin_low <= B.
+            # Since cummin is non-increasing, once it drops below B it stays below.
+            # So we can use searchsorted on a reversed/sorted version.
+            # But cummin is non-increasing, not sorted for searchsorted.
+            # Instead, use: neg_cummin = -cummin_low (non-decreasing), then searchsorted(-B)
+            # For bear: cummax_high is non-decreasing, searchsorted(fvg_top, side='left')
+
+            fvg_create_pos = np.searchsorted(exec_ns, fvg_create_ns, side="right")
+            fvg_mitigation_pos = np.full(n_fvg, n, dtype=int)
+
+            if cmp_op == "le":
+                # Bull: find first bar after creation where low <= bottom
+                # cummin_low is non-increasing. -cummin_low is non-decreasing.
+                # first bar where cummin_low <= B  =>  first bar where -cummin_low >= -B
+                # => searchsorted(-cummin_low, -B, side='left') on the non-decreasing array
+                neg_cummin = -cummin_low
+                for fi in range(n_fvg):
+                    start = fvg_create_pos[fi]
+                    if start >= n:
+                        continue
+                    # Search for first position >= start where neg_cummin >= -fvg_levels[fi]
+                    # Since neg_cummin is non-decreasing, searchsorted works
+                    pos = np.searchsorted(neg_cummin[start:], -fvg_levels[fi], side="left")
+                    if pos < n - start:
+                        fvg_mitigation_pos[fi] = start + pos
+            else:
+                # Bear: find first bar after creation where high >= top
+                # cummax_high is non-decreasing. searchsorted(fvg_top, side='left')
+                for fi in range(n_fvg):
+                    start = fvg_create_pos[fi]
+                    if start >= n:
+                        continue
+                    pos = np.searchsorted(cummax_high[start:], fvg_levels[fi], side="left")
+                    if pos < n - start:
+                        fvg_mitigation_pos[fi] = start + pos
+
+            # Now build the active FVG array: for each exec bar, the active FVG is
+            # the most recent one created before that bar AND not yet mitigated.
+            # Vectorized: iterate FVGs in order, fill [create_pos, mitigation_pos) range
+            for fi in range(n_fvg):
+                start_pos = fvg_create_pos[fi]
+                end_pos = min(fvg_mitigation_pos[fi], n)
+                if start_pos < n and start_pos < end_pos:
+                    top_arr[start_pos:end_pos] = fvg_tops[fi]
+                    bot_arr[start_pos:end_pos] = fvg_bots[fi]
+                    create_arr[start_pos:end_pos] = float(fvg_create_ns[fi])
+
+            result[f"{fvg_label}_top"] = top_arr
+            result[f"{fvg_label}_bot"] = bot_arr
+            result[f"{fvg_label}_create_ns"] = create_arr
+
+        return pd.DataFrame({
+            "bull_top": result["bull_top"],
+            "bull_bot": result["bull_bot"],
+            "bull_create_ns": result["bull_create_ns"],
+            "bear_top": result["bear_top"],
+            "bear_bot": result["bear_bot"],
+            "bear_create_ns": result["bear_create_ns"],
         }, index=exec_index)

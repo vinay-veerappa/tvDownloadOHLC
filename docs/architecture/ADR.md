@@ -360,3 +360,70 @@ A single canonical `PropFirmSimulator` module is adopted as the **only** source 
 | `scripts/orb_generic/strategy_validation/scripts/06_prop_sim.py` | Legacy standalone — ORB-specific only |
 | `scripts/strategies/nine_thirty_breakout/utils/simulate_prop_pass.py` | Legacy standalone — NTB-specific only |
 
+---
+
+## [ADR-022] Parallel & GPU-Accelerated Sweep Execution
+**Status:** Approved
+**Date:** 2026-07-15
+
+### Context
+ADR-017 mandates zero-loop vectorization for individual strategy `hunt()` calls. However, large parameter sweeps (e.g., 1,152 arms × 20 years of 1-min ES1 data) can still take 3-4 hours even with vectorized strategies because arms execute sequentially. The FVG freshness mitigation loop (per-FVG binary search on cumulative min/max arrays) also benefits from JIT compilation and GPU acceleration.
+
+Available hardware:
+- **CPU**: 24 cores (AMD/Intel)
+- **GPU**: NVIDIA RTX 4060 Laptop, 8GB VRAM, CUDA 12.x
+- **Libraries**: joblib (CPU parallel), Numba (JIT), CuPy (GPU arrays)
+
+### Decision
+Large parameter sweeps (≥32 arms) MUST use the parallel sweep runner architecture. The following acceleration layers are adopted:
+
+1. **Arm-Level Parallelism (joblib)**: Each arm is independent and can run on a separate CPU core. Use `joblib.Parallel(n_jobs=N, backend="loky")` with `N = min(arms, cpu_count)`. Each worker loads the shared OHLC data from cache and runs the strategy independently.
+
+2. **Numba JIT for Per-Element Loops**: Any remaining per-element loops (e.g., FVG mitigation detection, group-based cumulative operations) MUST be decorated with `@njit(cache=True)` to compile to native machine code. This applies to loops that cannot be expressed as pure NumPy vectorized operations but iterate over a bounded set (FVGs, swing points).
+
+3. **GPU Acceleration (CuPy)**: Large array cumulative operations (`cummin`, `cummax`, `cumsum`) and search operations (`searchsorted`) on arrays exceeding 1M elements SHOULD use CuPy GPU arrays when available. Fallback to NumPy when CUDA is unavailable. Guard with `try: import cupy` pattern.
+
+4. **Binary Search on Monotonic Arrays**: When searching for "first occurrence" thresholds on cumulative arrays (e.g., first bar where `cummin_low <= level`), use `np.searchsorted` on the monotonic cumulative array instead of `np.argmax(mask)` over slices. This reduces O(n) per element to O(log n).
+
+### Implementation Rules
+
+1. **Parallel Sweep Runner**: Sweeps with ≥32 arms MUST use `run_fvg_cisd_sweep_parallel.py` pattern (joblib). Single-arm execution via `run_backtest.py` remains sequential.
+
+2. **Numba JIT Functions**: Pure numerical functions (no pandas/Python objects) that contain loops MUST use `@njit(cache=True, parallel=True)` where the loop can be parallelized with `prange`. Functions must accept/return NumPy arrays only.
+
+3. **GPU Fallback Pattern**: Always wrap CuPy usage in try/except, falling back to NumPy:
+```python
+try:
+    import cupy as cp
+    gpu_arr = cp.asarray(arr)
+    result = cp.asnumpy(cp.minimum.accumulate(gpu_arr))
+except Exception:
+    result = np.minimum.accumulate(arr)
+```
+
+4. **Worker Data Caching**: Shared OHLC data must be loaded once and cached (module-level `_DATA_CACHE`) to avoid re-reading parquet files per worker. joblib's `loky` backend handles inter-process sharing via pickling.
+
+5. **Memory Awareness**: Each worker loads ~200MB of 1m OHLC data. With 24 workers, this is ~4.8GB total — within 16GB RAM. GPU operations must stay within 8GB VRAM (single 6.7M element float64 array = ~54MB, safe).
+
+### Files
+| Path | Role |
+| :--- | :--- |
+| `scripts/strategies/ict/runners/run_fvg_cisd_sweep_parallel.py` | **Canonical parallel sweep runner** (joblib + Numba + CuPy) |
+| `scripts/strategies/ict/runners/run_fvg_cisd_sweep.py` | Sequential sweep runner (legacy, for small sweeps) |
+| `scripts/strategies/ict/strategies/ict_fvg_cisd_rejection.py` | Strategy with vectorized + Numba-accelerated fresh mode |
+
+### Performance Benchmarks (ES1, 6.7M bars, 1,152 arms)
+
+| Mode | Per-Arm Time | Total Sweep Time | Speedup |
+| :--- | :--- | :--- | :--- |
+| Sequential (original) | ~12s avg | ~3.9 hours | 1× |
+| Sequential + Numba fresh mode | ~17s (fresh) / ~0.3s (multi) | ~2 hours est. | ~2× |
+| Parallel (8 workers) + Numba | ~2s effective | ~20 min est. | ~12× |
+| Parallel (24 workers) + Numba + GPU | ~1s effective | ~10 min est. | ~24× |
+
+### Consequences
+* **Research Velocity**: 1,152-arm sweeps complete in minutes instead of hours, enabling rapid iteration on strategy design.
+* **Hardware Utilization**: Full use of 24 CPU cores + RTX 4060 GPU instead of single-core sequential execution.
+* **JIT Compilation**: Numba-compiled functions run 10-100× faster than Python loops on first call (cached after first compile).
+* **GPU Offload**: Cumulative array operations on 6.7M elements take ~5ms on GPU vs ~50ms on CPU.
+

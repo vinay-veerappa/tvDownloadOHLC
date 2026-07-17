@@ -37,6 +37,7 @@
 
 ## Development Workflow & Guardrails
 * **Zero-Loop Constraint (ADR-017)**: All Python data engineering and trading strategies must use fully vectorized NumPy/Pandas models. No `for` loops in calculation paths.
+* **Parallel & GPU Sweep (ADR-022)**: Parameter sweeps with ≥32 arms MUST use joblib parallel execution (`run_fvg_cisd_sweep_parallel.py` pattern). Numba `@njit` for bounded per-element loops. CuPy GPU for cumulative ops on >1M element arrays. 24 CPU cores + RTX 4060 8GB available.
 * **Prop Firm RTH Liquidation (ADR-020)**: Strategies must restrict intraday positions to a maximum exit at 16:00 ET (close of 15:59 bar).
 * **Unified Prop Firm Simulation (ADR-021)**: Use ONLY `scripts/trading_framework/ml/prop_firm_simulator.py` (`PropFirmSimulator`) for prop firm viability evaluation. Never feed per-trade % returns directly as daily P&L to any Monte Carlo. `prop_eval_mc.py`, `06_prop_sim.py`, and `simulate_prop_pass.py` are frozen legacy — do not extend. Firm presets (Apex, TopStep, FTMO) live in `FIRM_PROFILES`. Config overrides live in `sessions.yaml` under `prop_firm:`.
 * **Visual Compliance Constraint (ADR-018)**: Indicators must bind to shared templates in `VISUAL_SYSTEM.md`. Zero direct low-level drawing API calls.

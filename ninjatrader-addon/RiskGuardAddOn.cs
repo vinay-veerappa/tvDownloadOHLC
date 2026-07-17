@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -55,6 +55,52 @@ namespace NinjaTrader.NinjaScript.AddOns
         public void ReloadConfig()
         {
             LoadConfig();
+        }
+
+        // - FSM observation API (for MCP bridge; read-only, -7 of RiskGuardAddOn.md) -
+        public class FsmSnapshot
+        {
+            public string AccountName { get; set; }
+            public string Instrument { get; set; }
+            public string State { get; set; }
+            public string PositionSide { get; set; }
+            public int PositionQuantity { get; set; }
+            public DateTime EntryTime { get; set; }
+            public DateTime GraceDeadline { get; set; }
+            public bool HasAutoStopOrder { get; set; }
+            public string RecognizedStopName { get; set; }
+        }
+
+        public List<FsmSnapshot> GetFsmSnapshots()
+        {
+            var list = new List<FsmSnapshot>();
+            lock (_stateLock)
+            {
+                foreach (var fsm in _guardFsms.Values)
+                {
+                    list.Add(new FsmSnapshot
+                    {
+                        AccountName = fsm.AccountName,
+                        Instrument = fsm.Instrument,
+                        State = fsm.State.ToString(),
+                        PositionSide = fsm.PositionSide.ToString(),
+                        PositionQuantity = fsm.PositionQuantity,
+                        EntryTime = fsm.EntryTime,
+                        GraceDeadline = fsm.GraceDeadline,
+                        HasAutoStopOrder = fsm.AutoStopOrder != null,
+                        RecognizedStopName = fsm.RecognizedStopOrder?.Name
+                    });
+                }
+            }
+            return list;
+        }
+
+        public bool ResetFsm(string accountName, string instrument)
+        {
+            lock (_stateLock)
+            {
+                return _guardFsms.Remove(FsmKey(accountName, instrument));
+            }
         }
 
         public class AccountStateSnapshot
@@ -125,6 +171,17 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly object _stateLock = new object();
         private bool _isArmed = true;
         private string _mode = "shadow"; // fail-safe default; overridden by config in LoadConfig()
+
+        // Per-position guard state machines (see -6 of RiskGuardAddOn.md).
+        // Keyed by "accountName|instrumentFullName". All access under _stateLock.
+        private readonly Dictionary<string, PositionGuardFsm> _guardFsms = new Dictionary<string, PositionGuardFsm>();
+
+        // Pending-stop buffer: stops whose OrderUpdate arrived before PositionUpdate
+        // (possible per NT8 event ordering). Keyed by "accountName|instrumentFullName".
+        // Each entry is the protective-side order awaiting FSM creation. Consumed
+        // when the FSM is created on the position-open event; protects against the
+        // race where the stop leg is observed before the position leg.
+        private readonly Dictionary<string, Order> _pendingStops = new Dictionary<string, Order>();
 #if !TESTING
         private NTMenuItem _myMenuItem;
         private ControlCenter _controlCenter;
@@ -199,8 +256,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Subscribe to connection events to catch new account connections dynamically
                 Connection.ConnectionStatusUpdate += OnConnectionStatusUpdate;
 
-                // Start 1-second safety sweep timer
-                _safetyTimer = new Timer(OnSafetySweep, null, 1000, 1000);
+                // Start 5-second safety sweep timer.
+                // Phase 2: all per-account rules are event-driven (PositionUpdate/OrderUpdate).
+                // The sweep only handles: heartbeat, log flush, session reset, aggregate
+                // sizing, grace-expiry polling, firm-mirror, state persist, FSM watchdog.
+                // None of these need 1-second resolution; 5s is sufficient.
+                _safetyTimer = new Timer(OnSafetySweep, null, 5000, 5000);
 
                 LogEvent("SYSTEM", "INITIALIZE", $"RiskGuard Add-On initialized in {_mode} mode. Event monitoring started.");
                 NinjaTrader.Code.Output.Process($"[RiskGuard] RESOLVED MODE = {_mode} (armed={_isArmed})", PrintTo.OutputTab1);
@@ -241,9 +302,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        // ──────────────────────────────────────────────────────────────
+        // -
         // DEV/TESTING API
-        // ──────────────────────────────────────────────────────────────
+        // -
 #if TESTING
         internal void SetConfigForTest(RiskConfig cfg)
         {
@@ -264,6 +325,31 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal void SetModeForTest(string mode)  { _mode = mode; }
         internal void SetParsedWindowsForTest(List<ParsedWindow> windows) { _parsedWindows = windows; }
         internal bool GetIsArmed() => _isArmed;
+
+        // - FSM test accessors (-6) -
+        internal void TestFsmOnPosition(Account account, string instrument, MarketPosition pos, int qty)
+        {
+            lock (_stateLock) { UpdateFsmOnPosition(account, instrument, pos, qty); }
+        }
+        internal void TestFsmOnOrder(Account account, string instrument, Order order)
+        {
+            lock (_stateLock) { UpdateFsmOnOrder(account, instrument, order); }
+        }
+        internal PositionGuardFsm TestGetFsm(string accountName, string instrument)
+        {
+            lock (_stateLock)
+            {
+                return _guardFsms.TryGetValue(FsmKey(accountName, instrument), out var fsm) ? fsm : null;
+            }
+        }
+        internal List<PositionGuardFsm> TestAllFsms()
+        {
+            lock (_stateLock) { return _guardFsms.Values.ToList(); }
+        }
+        internal void TestClearFsms()
+        {
+            lock (_stateLock) { _guardFsms.Clear(); _pendingStops.Clear(); }
+        }
 #endif
 
         public void ResetStateForDev()
@@ -271,6 +357,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             lock (_stateLock)
             {
                 _accountStates.Clear();
+                _guardFsms.Clear();
+                _pendingStops.Clear();
                 // We'll also clear the persisted file so it doesn't reload old state
                 if (File.Exists(_stateFile))
                 {
@@ -288,6 +376,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             account.PositionUpdate += OnPositionUpdate;
             account.OrderUpdate += OnOrderUpdate;
             account.ExecutionUpdate += OnExecutionUpdate;
+            account.AccountItemUpdate += OnAccountItemUpdate;
 
             _subscribedAccounts.Add(account.Name);
 
@@ -318,14 +407,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             account.PositionUpdate -= OnPositionUpdate;
             account.OrderUpdate -= OnOrderUpdate;
             account.ExecutionUpdate -= OnExecutionUpdate;
+            account.AccountItemUpdate -= OnAccountItemUpdate;
 
             _subscribedAccounts.Remove(account.Name);
             LogEvent("SYSTEM", "UNSUBSCRIBE", $"Unsubscribed from account events for: {account.Name}");
         }
 
-        // ──────────────────────────────────────────────────────────────
+        // -
         // CONFIG & STATE PERSISTENCE
-        // ──────────────────────────────────────────────────────────────
+        // -
 
         private void LoadConfig()
         {
@@ -475,10 +565,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        // ──────────────────────────────────────────────────────────────
+        // -
 #if !TESTING
         // WINDOW INTERCEPTION (UI INJECTION)
-        // ──────────────────────────────────────────────────────────────
+        // -
 
         protected override void OnWindowCreated(Window window)
         {
@@ -546,9 +636,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 #endif
 
-        // ──────────────────────────────────────────────────────────────
+        // -
         // EVENT HANDLERS
-        // ──────────────────────────────────────────────────────────────
+        // -
 
         private void OnConnectionStatusUpdate(object sender, ConnectionStatusEventArgs e)
         {
@@ -630,7 +720,34 @@ namespace NinjaTrader.NinjaScript.AddOns
                         { "unrealizedPnL", unrealizedPnL }
                     });
 
+                    // - Per-position guard FSM (-6) -
+                    // On flat->nonflat: create/reset FSM, arm grace timer, consume any pending stop.
+                    // On nonflat->flat: transition to Flat, cancel grace, cancel orphan auto-stop.
+                    UpdateFsmOnPosition(account, instrument, marketPosition, quantity);
+
+                    // -- Event-driven rule evaluation (Phase 2: no longer on the sweep) --
+                    // EvaluateRules fires here on every position change. The sweep no
+                    // longer calls EvaluateRules; all per-account rules are event-driven.
                     actions = EvaluateRules(account, state);
+
+                    // -- Aggregate sizing (event-driven via PositionUpdate) --
+                    // Scan all accounts' positions instantly on any position change.
+                    var aggregateActions = EvaluateAggregateSizing();
+                    if (aggregateActions != null && aggregateActions.Count > 0)
+                    {
+                        if (actions == null) actions = new List<GuardAction>();
+                        actions.AddRange(aggregateActions);
+                    }
+
+                    // -- Lockout phase enforcement (event-driven via PositionUpdate) --
+                    // When a position goes flat, check if the lockout can advance to Confirmed.
+                    // When a position appears while locked, emit the phased flatten/cancel actions.
+                    var lockoutActions = EvaluateLockoutPhase(account, state);
+                    if (lockoutActions != null && lockoutActions.Count > 0)
+                    {
+                        if (actions == null) actions = new List<GuardAction>();
+                        actions.AddRange(lockoutActions);
+                    }
                 }
 
                 if (actions != null)
@@ -700,6 +817,155 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        // -- AccountItemUpdate: fires when RealizedPnL, UnrealizedPnL, CashValue, NetLiquidation change --
+        // This replaces the sweep's PnL polling with instant event-driven PnL rules.
+        private void OnAccountItemUpdate(object sender, AccountItemEventArgs e)
+        {
+#if TESTING
+            ExecuteAccountItemUpdate(sender, e);
+#else
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+            dispatcher.InvokeAsync(() => ExecuteAccountItemUpdate(sender, e));
+#endif
+        }
+
+        internal void ExecuteAccountItemUpdate(object sender, AccountItemEventArgs e)
+        {
+            List<GuardAction> actions = null;
+            try
+            {
+                Account account = (Account)sender;
+                string accountName = account.Name;
+
+                if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accountName)) return;
+
+                lock (_stateLock)
+                {
+                    if (!_accountStates.TryGetValue(accountName, out var state))
+                        return;
+
+                    // Only react to PnL-related items
+                    if (e.AccountItem == AccountItem.RealizedProfitLoss)
+                    {
+                        double rawRealized = e.Value;
+                        double newRealizedPnL = rawRealized - state.SessionStartRealizedPnL;
+
+                        if (Math.Abs(newRealizedPnL - state.RealizedPnL) > 0.001)
+                        {
+                            double tradePnL = newRealizedPnL - state.RealizedPnL;
+                            if (tradePnL < -0.01)
+                                state.ConsecutiveLosses++;
+                            else if (tradePnL > 0.01)
+                                state.ConsecutiveLosses = 0;
+
+                            state.LastRealizedPnL = rawRealized;
+                            state.RealizedPnL = newRealizedPnL;
+
+                            // Apply cooldown if consecutive loss limit breached
+                            if (state.ConsecutiveLosses >= _config.Overtrading.MaxConsecutiveLosses && _config.Overtrading.CooldownMinutes > 0)
+                            {
+                                state.CooldownUntil = DateTime.UtcNow.AddMinutes(_config.Overtrading.CooldownMinutes);
+                            }
+                            _stateDirty = true;
+                        }
+
+                        // Evaluate PnL-based rules instantly
+                        actions = EvaluatePnLRules(account, state);
+                    }
+                    else if (e.AccountItem == AccountItem.UnrealizedProfitLoss ||
+                             e.AccountItem == AccountItem.NetLiquidation ||
+                             e.AccountItem == AccountItem.CashValue)
+                    {
+                        // Update unrealized PnL and evaluate trailing DD / firm mirror
+                        state.UnrealizedPnL = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
+
+                        // Update peak equity for trailing DD
+                        double currentPnL = state.RealizedPnL + state.UnrealizedPnL;
+                        if (currentPnL > state.PeakEquity)
+                            state.PeakEquity = currentPnL;
+
+                        actions = EvaluatePnLRules(account, state);
+
+                        // Firm mirror on PnL change
+                        if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
+                        {
+                            DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
+                            var firmActions = EvaluateFirmMirror(account, state, nowEt);
+                            if (firmActions != null && firmActions.Count > 0)
+                            {
+                                if (actions == null) actions = new List<GuardAction>();
+                                actions.AddRange(firmActions);
+                            }
+                        }
+                    }
+                }
+
+                if (actions != null)
+                {
+                    foreach (var action in actions)
+                        ProcessAction(action);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEvent("SYSTEM", "ERROR", "Error handling OnAccountItemUpdate: " + ex.Message);
+            }
+        }
+
+        // Evaluate PnL-based rules (DailyLoss, TrailingDrawdown) - called from AccountItemUpdate.
+        internal List<GuardAction> EvaluatePnLRules(Account account, AccountState stateModel)
+        {
+            var actions = new List<GuardAction>();
+            if (!_isArmed) return actions;
+            if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(stateModel.AccountName)) return actions;
+
+            var profile = GetResolvedProfile(account);
+            if (profile == null) return actions;
+
+            double currentPnL = stateModel.RealizedPnL + stateModel.UnrealizedPnL;
+
+            // Daily Loss
+            if (currentPnL < -profile.DailyLossLimit)
+            {
+                actions.Add(new GuardAction
+                {
+                    AccountName = stateModel.AccountName,
+                    ActionType = GuardActionType.FlattenPosition,
+                    RuleId = "DAILY_LOSS_BREACH"
+                });
+                if (!stateModel.IsLockedOut)
+                {
+                    stateModel.IsLockedOut = true;
+                    if (_config.PnLRules.LockoutMinutes > 0)
+                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.PnLRules.LockoutMinutes);
+                    _stateDirty = true;
+                }
+            }
+
+            // Trailing Drawdown
+            if (currentPnL > stateModel.PeakEquity)
+                stateModel.PeakEquity = currentPnL;
+            if (currentPnL < stateModel.PeakEquity - profile.TrailingDrawdown)
+            {
+                actions.Add(new GuardAction
+                {
+                    AccountName = stateModel.AccountName,
+                    ActionType = GuardActionType.FlattenPosition,
+                    RuleId = "TRAILING_DD_BREACH"
+                });
+                if (!stateModel.IsLockedOut)
+                {
+                    stateModel.IsLockedOut = true;
+                    if (_config.PnLRules.LockoutMinutes > 0)
+                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.PnLRules.LockoutMinutes);
+                    _stateDirty = true;
+                }
+            }
+
+            return actions;
+        }
+
         private void OnOrderUpdate(object sender, OrderEventArgs e)
         {
 #if TESTING
@@ -749,12 +1015,37 @@ namespace NinjaTrader.NinjaScript.AddOns
                     double stopPrice = e.Order.StopPrice;
                     int quantity = e.Order.Quantity;
 
+                    // - Per-position guard FSM (-6) -
+                    // Classify this order against the active FSM for (account, instrument).
+                    // If no FSM exists yet but this is a protective-side stop, buffer it
+                    // in _pendingStops so it is consumed when the position-open event arrives.
+                    UpdateFsmOnOrder(account, instrument, e.Order);
+
+                    // -- Lockout phase: advance on order state changes --
+                    // When an order goes Cancelled/Filled, check if the lockout can
+                    // advance to the next phase (PendingFlatten or Confirmed).
+                    if (_accountStates.TryGetValue(accountName, out var lockState) &&
+                        (lockState.IsLockedOut || DateTime.UtcNow < lockState.LockoutUntil))
+                    {
+                        var lockActions = EvaluateLockoutPhase(account, lockState);
+                        if (lockActions != null && lockActions.Count > 0)
+                        {
+                            foreach (var a in lockActions)
+                            {
+                                // Execute outside lock - collect and process after
+                                ProcessAction(a);
+                            }
+                        }
+                    }
+
                     LogEvent(accountName, "ORDER_UPDATE", new JObject
                     {
                         { "instrument", instrument },
                         { "orderId", orderId },
                         { "orderState", orderState },
                         { "orderType", orderType },
+                        { "orderAction", e.Order.OrderAction.ToString() },
+                        { "orderName", e.Order.Name ?? "" },
                         { "quantity", quantity },
                         { "limitPrice", limitPrice },
                         { "stopPrice", stopPrice }
@@ -793,228 +1084,68 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             try
             {
-                var actionsToExecute = new List<GuardAction>();
                 lock (_stateLock)
                 {
-                    // Write heartbeat every 5 seconds from UI thread to verify responsiveness
+                    // 1. Heartbeat (liveness)
                     if (DateTime.UtcNow - _lastHeartbeatTime >= TimeSpan.FromSeconds(5))
                     {
                         _lastHeartbeatTime = DateTime.UtcNow;
                         try { File.WriteAllText(_heartbeatFile, DateTime.UtcNow.ToString("o")); } catch {}
                     }
 
-                    // Flush logs asynchronously (Fix 11)
+                    // 2. Log flush (async queue drain)
                     var logsToWrite = new List<string>();
                     while (_logQueue.TryDequeue(out string logLine))
-                    {
                         logsToWrite.Add(logLine);
-                    }
                     if (logsToWrite.Count > 0)
                     {
                         try { File.AppendAllLines(_logFile, logsToWrite, Encoding.UTF8); } catch {}
                     }
 
+                    // 3. Session reset (check date change - the one remaining time-based rule)
                     DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
                     DateTime currentSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
 
-                    // Aggregate cross-account size (Fix 7 + item 4)
-                    // Normalize by ExpectedCopies so an intended N-way mirror isn't read as stacking.
-                    // Excluded accounts are intentionally invisible to the aggregate rule.
-                    int totalAggregateContracts = 0;
-                    int maxSingleAccountContracts = 0;
-                    foreach (var accName in _subscribedAccounts)
-                    {
-                        // Skip excluded accounts — they must not inflate the aggregate count
-                        if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
-
-                        if (_accountStates.TryGetValue(accName, out var st))
-                        {
-                            int accContracts = 0;
-                            foreach (var pos in st.Positions.Values)
-                            {
-                                if (pos.MarketPosition != MarketPosition.Flat) accContracts += pos.Quantity;
-                            }
-                            totalAggregateContracts += accContracts;
-                            if (accContracts > maxSingleAccountContracts) maxSingleAccountContracts = accContracts;
-                        }
-                    }
-
-                    // If mirroring N copies, the "effective" exposure is roughly the per-account leg,
-                    // not the raw sum. Compare the normalized figure against the aggregate limit.
-                    int copies = _config.Sizing.ExpectedCopies > 0 ? _config.Sizing.ExpectedCopies : 1;
-                    int normalizedAggregate = copies > 1 ? maxSingleAccountContracts : totalAggregateContracts;
-
-                    if (normalizedAggregate > _config.Sizing.MaxContractsAggregate)
-                    {
-                        LogEvent("SYSTEM", "AGGREGATE_SIZE_BREACH", new JObject
-                        {
-                            { "totalContracts", totalAggregateContracts },
-                            { "maxSingleAccount", maxSingleAccountContracts },
-                            { "expectedCopies", copies },
-                            { "normalizedAggregate", normalizedAggregate },
-                            { "limit", _config.Sizing.MaxContractsAggregate }
-                        });
-
-                        foreach (var accName in _subscribedAccounts)
-                        {
-                            // Excluded accounts must never be flattened by the aggregate rule
-                            if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
-
-                            if (_accountStates.TryGetValue(accName, out var st))
-                            {
-                                bool hasPosition = st.Positions.Values.Any(p => p.MarketPosition != MarketPosition.Flat);
-                                if (hasPosition)
-                                {
-                                    actionsToExecute.Add(new GuardAction
-                                    {
-                                        AccountName = accName,
-                                        ActionType = GuardActionType.FlattenPosition,
-                                        RuleId = "AGGREGATE_SIZE_BREACH"
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-
                     foreach (var accName in _subscribedAccounts)
                     {
                         if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
+                        if (!_accountStates.TryGetValue(accName, out var stateModel)) continue;
+                        if (stateModel.LastSessionDate == currentSessionDate) continue;
 
                         var account = Account.All.FirstOrDefault(a => a.Name == accName);
                         if (account == null) continue;
 
-                        if (!_accountStates.TryGetValue(accName, out var stateModel)) continue;
-                        
-                        if (stateModel.LastSessionDate != currentSessionDate)
-                        {
-                            stateModel.LastSessionDate = currentSessionDate;
-                            stateModel.TradesToday = 0;
-                            stateModel.ConsecutiveLosses = 0;
-                            stateModel.PeakEquity = 0.0;
-                            stateModel.IsLockedOut = false;
-                            stateModel.InitialLockoutFlattened = false;
-                            stateModel.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                            stateModel.LastRealizedPnL = stateModel.SessionStartRealizedPnL;
-                            stateModel.RealizedPnL = 0.0;
-                            LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
-                            _stateDirty = true;
-                        }
-                        
-                        double rawRealized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                        double newRealizedPnL = rawRealized - stateModel.SessionStartRealizedPnL;
-                        
-                        // Real-time PnL change detection (Fix lag)
-                        if (Math.Abs(newRealizedPnL - stateModel.RealizedPnL) > 0.001)
-                        {
-                            double tradePnL = newRealizedPnL - stateModel.RealizedPnL;
-                            if (tradePnL < -0.01)
-                            {
-                                stateModel.ConsecutiveLosses++;
-                            }
-                            else if (tradePnL > 0.01)
-                            {
-                                stateModel.ConsecutiveLosses = 0;
-                            }
-                            
-                            stateModel.LastRealizedPnL = rawRealized;
-                            stateModel.RealizedPnL = newRealizedPnL;
-                            
-                            // Apply Cooldown if consecutive loss limit breached
-                            if (stateModel.ConsecutiveLosses >= _config.Overtrading.MaxConsecutiveLosses && _config.Overtrading.CooldownMinutes > 0)
-                            {
-                                stateModel.CooldownUntil = DateTime.UtcNow.AddMinutes(_config.Overtrading.CooldownMinutes);
-                            }
-                            
-                            _stateDirty = true;
-                        }
-                        
-                        stateModel.UnrealizedPnL = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
-                        
-                        foreach (var posPair in stateModel.Positions)
-                        {
-                            var nPos = account.Positions.FirstOrDefault(p => p.Instrument.FullName == posPair.Key);
-                            if (nPos != null && nPos.MarketPosition != MarketPosition.Flat)
-                            {
-                                try { posPair.Value.UnrealizedPnL = nPos.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch {}
-                            }
-                        }
-
-                        if (stateModel.IsLockedOut || DateTime.UtcNow < stateModel.LockoutUntil)
-                        {
-                            if (!stateModel.InitialLockoutFlattened)
-                            {
-                                // Cancel first so orders don't re-open position after flatten
-                                actionsToExecute.Add(new GuardAction
-                                {
-                                    AccountName = accName,
-                                    ActionType = GuardActionType.CancelAllOrders,
-                                    RuleId = "LOCKOUT_ENFORCEMENT"
-                                });
-
-                                actionsToExecute.Add(new GuardAction
-                                {
-                                    AccountName = accName,
-                                    ActionType = GuardActionType.FlattenPosition,
-                                    RuleId = "LOCKOUT_ENFORCEMENT"
-                                });
-                                
-                                stateModel.InitialLockoutFlattened = true;
-                            }
-                            else
-                            {
-                                // Only flatten if new non-flat position appears
-                                foreach (var posPair in stateModel.Positions)
-                                {
-                                    if (posPair.Value.MarketPosition != MarketPosition.Flat)
-                                    {
-                                        actionsToExecute.Add(new GuardAction
-                                        {
-                                            AccountName = accName,
-                                            ActionType = GuardActionType.FlattenPosition,
-                                            RuleId = "LOCKOUT_ENFORCEMENT"
-                                        });
-                                        break;
-                                    }
-                                }
-                            }
-                            continue;
-                        }
-                        else
-                        {
-                            stateModel.InitialLockoutFlattened = false;
-                        }
-
-                        var ruleActions = EvaluateRules(account, stateModel);
-                        if (ruleActions != null)
-                        {
-                            actionsToExecute.AddRange(ruleActions);
-                        }
-
-                        // Firm-mirror evaluation (DIFF 1: wired in)
-                        if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
-                        {
-                            var firmActions = EvaluateFirmMirror(account, stateModel, nowEt);
-                            if (firmActions != null)
-                            {
-                                actionsToExecute.AddRange(firmActions);
-                            }
-                        }
+                        stateModel.LastSessionDate = currentSessionDate;
+                        stateModel.TradesToday = 0;
+                        stateModel.ConsecutiveLosses = 0;
+                        stateModel.PeakEquity = 0.0;
+                        stateModel.IsLockedOut = false;
+                        stateModel.InitialLockoutFlattened = false;
+                        stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.None;
+                        stateModel.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                        stateModel.LastRealizedPnL = stateModel.SessionStartRealizedPnL;
+                        stateModel.RealizedPnL = 0.0;
+                        LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
+                        _stateDirty = true;
                     }
 
-                    // Batched state save (item 1): write once per sweep if anything changed
+                    // 4. State persist (batch flush)
                     if (_stateDirty)
                     {
                         SavePersistedState();
                         _stateDirty = false;
                     }
+
+                    // 5. FSM watchdog (log-only diagnostic for stuck FSMs)
+                    FsmWatchdog();
                 }
 
-                // Outside of _stateLock, execute actions
-                foreach (var action in actionsToExecute)
-                {
-                    ProcessAction(action);
-                }
+                // All rule evaluation is now event-driven:
+                // - PositionUpdate -> EvaluateRules + EvaluateLockoutPhase + UpdateFsmOnPosition
+                // - OrderUpdate -> UpdateFsmOnOrder + EvaluateLockoutPhase
+                // - ExecutionUpdate -> RecordExecution
+                // - AccountItemUpdate -> EvaluatePnLRules + EvaluateFirmMirror
+                // - Per-FSM one-shot Timer -> OnGraceExpired
             }
             catch (Exception ex)
             {
@@ -1022,9 +1153,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        // ──────────────────────────────────────────────────────────────
+        // -
         // RULE ENGINE FRAMEWORK
-        // ──────────────────────────────────────────────────────────────
+        // -
 
         private AccountRiskProfile GetResolvedProfile(Account account)
         {
@@ -1077,6 +1208,439 @@ namespace NinjaTrader.NinjaScript.AddOns
             return p;
         }
 
+        // -
+        // PER-POSITION GUARD FSM HELPERS (-6 of RiskGuardAddOn.md)
+        // All methods assume _stateLock is held by the caller.
+        // -
+        private static string FsmKey(string accountName, string instrument) =>
+            accountName + "|" + instrument;
+
+        private static bool IsProtectiveSide(Order o, MarketPosition positionSide)
+        {
+            if (positionSide == MarketPosition.Long)
+                return o.OrderAction == OrderAction.Sell || o.OrderAction == OrderAction.SellShort;
+            if (positionSide == MarketPosition.Short)
+                return o.OrderAction == OrderAction.Buy || o.OrderAction == OrderAction.BuyToCover;
+            return false;
+        }
+
+        private static bool IsStopType(Order o) =>
+            o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit;
+
+        private static bool IsPendingOrWorking(OrderState s) =>
+            s == OrderState.Submitted || s == OrderState.Accepted ||
+            s == OrderState.Initialized  || s == OrderState.Working ||
+            s == OrderState.PartFilled;
+
+        private static bool IsTerminal(OrderState s) =>
+            s == OrderState.Cancelled || s == OrderState.Rejected || s == OrderState.Filled;
+
+        // Called from ExecutePositionUpdate. Handles flat<->nonflat transitions.
+        private void UpdateFsmOnPosition(Account account, string instrument, MarketPosition newPos, int qty)
+        {
+            if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(account.Name)) return;
+            if (!_isArmed) return;
+
+            string key = FsmKey(account.Name, instrument);
+            bool isNonFlat = newPos != MarketPosition.Flat && qty > 0;
+
+            if (isNonFlat)
+            {
+                // flat->nonflat or flip: (re)create FSM, arm grace, consume pending stop
+                var fsm = new PositionGuardFsm(account.Name, instrument)
+                {
+                    PositionSide = newPos,
+                    PositionQuantity = qty,
+                    EntryTime = DateTime.UtcNow,
+                    State = GuardFsmState.Unprotected
+                };
+                fsm.GraceDeadline = fsm.EntryTime.AddSeconds(_config.StopGuard.StopAttachSeconds);
+
+                // Consume a buffered stop that arrived before the position event
+                if (_pendingStops.TryGetValue(key, out var pending) && pending != null)
+                {
+                    if (IsProtectiveSide(pending, newPos) && IsStopType(pending) && !IsTerminal(pending.OrderState))
+                    {
+                        fsm.RecognizedStopOrder = pending;
+                        fsm.State = pending.OrderState == OrderState.Working
+                            ? GuardFsmState.Protected
+                            : GuardFsmState.ProtectedPending;
+                    }
+                    _pendingStops.Remove(key);
+                }
+
+                // Arm a one-shot grace timer that fires at the exact grace deadline.
+                // This replaces the sweep polling of GraceDeadline with an instant trigger.
+                if (fsm.State == GuardFsmState.Unprotected && _config.StopGuard.StopAttachSeconds > 0)
+                {
+                    int graceMs = _config.StopGuard.StopAttachSeconds * 1000;
+                    fsm.GraceTimer = new Timer(_ =>
+                    {
+#if TESTING
+                        OnGraceExpired(account, instrument);
+#else
+                        var dispatcher = Application.Current?.Dispatcher;
+                        if (dispatcher != null)
+                            dispatcher.InvokeAsync(() => OnGraceExpired(account, instrument));
+                        else
+                            OnGraceExpired(account, instrument);
+#endif
+                    }, null, graceMs, Timeout.Infinite);
+                }
+
+                _guardFsms[key] = fsm;
+                LogEvent(account.Name, "FSM_TRANSITION",
+                    $"Created FSM {key} -> {fsm.State} (grace deadline {fsm.GraceDeadline:HH:mm:ss})");
+            }
+            else
+            {
+                // nonflat->flat: tear down, cancel grace timer, cancel orphan auto-stop
+                if (_guardFsms.TryGetValue(key, out var fsm))
+                {
+                    fsm.GraceTimer?.Dispose();
+                    if (fsm.AutoStopOrder != null && !IsTerminal(fsm.AutoStopOrder.OrderState))
+                    {
+                        try { account.Cancel(new[] { fsm.AutoStopOrder }); }
+                        catch (Exception cex) { LogEvent(account.Name, "FSM_AUTOSTOP_CANCEL_FAIL", cex.Message); }
+                    }
+                    _guardFsms.Remove(key);
+                    LogEvent(account.Name, "FSM_TRANSITION", $"Tore down FSM {key} -> Flat");
+                }
+                _pendingStops.Remove(key);
+            }
+        }
+
+        // One-shot grace expiry callback - called by the per-FSM Timer or the sweep.
+        internal void OnGraceExpired(Account account, string instrument)
+        {
+            var actions = EvaluateGraceExpiry(account, instrument);
+            if (actions != null)
+            {
+                foreach (var action in actions)
+                    ProcessAction(action);
+            }
+        }
+
+        // Called from ExecuteOrderUpdate. Classifies the order against the active FSM.
+        private void UpdateFsmOnOrder(Account account, string instrument, Order order)
+        {
+            if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(account.Name)) return;
+            if (!_isArmed) return;
+            if (order?.Instrument == null) return;
+
+            string key = FsmKey(account.Name, instrument);
+
+            // If no FSM yet, buffer protective-side stops pending the position event.
+            if (!_guardFsms.ContainsKey(key))
+            {
+                if (IsStopType(order) && !IsTerminal(order.OrderState))
+                {
+                    // We don't know the position side yet; buffer and classify on consumption.
+                    _pendingStops[key] = order;
+                }
+                return;
+            }
+
+            var fsm = _guardFsms[key];
+            var prev = fsm.State;
+
+            // Recognise a protective stop for the current position side.
+            if (IsProtectiveSide(order, fsm.PositionSide) && IsStopType(order))
+            {
+                if (IsTerminal(order.OrderState))
+                {
+                    // The recognised stop filled/cancelled while position still open
+                    if (fsm.PositionQuantity > 0)
+                    {
+                        fsm.State = GuardFsmState.Unprotected;
+                        fsm.RecognizedStopOrder = null;
+                        fsm.AutoStopOrder = null;
+                        LogEvent(account.Name, "FSM_TRANSITION",
+                            $"{key}: stop {order.Name} terminal ({order.OrderState}) -> Unprotected");
+                    }
+                }
+                else if (order.OrderState == OrderState.Working)
+                {
+                    fsm.RecognizedStopOrder = order;
+                    fsm.State = GuardFsmState.Protected;
+                    if (order.Name == "RiskGuardAutoStop") fsm.AutoStopOrder = order;
+                    LogEvent(account.Name, "FSM_TRANSITION",
+                        $"{key}: stop {order.Name} Working -> Protected");
+                }
+                else // Submitted/Accepted/Initialized/PartFilled
+                {
+                    fsm.RecognizedStopOrder = order;
+                    fsm.State = GuardFsmState.ProtectedPending;
+                    LogEvent(account.Name, "FSM_TRANSITION",
+                        $"{key}: stop {order.Name} {order.OrderState} -> ProtectedPending");
+                }
+            }
+
+            if (prev != fsm.State)
+            {
+                fsm.LastTransitionTime = DateTime.UtcNow;
+                // Cancel the grace timer when the FSM leaves Unprotected
+                if (fsm.State != GuardFsmState.Unprotected)
+                {
+                    fsm.GraceTimer?.Dispose();
+                    fsm.GraceTimer = null;
+                }
+            }
+        }
+
+        // One-shot grace expiry. Called from a per-FSM Timer (or, defensively, from
+        // the watchdog in the sweep if the timer was lost). Emits the StopGuard
+        // action exactly once because the FSM transitions out of Unprotected.
+        internal List<GuardAction> EvaluateGraceExpiry(Account account, string instrument)
+        {
+            var actions = new List<GuardAction>();
+            lock (_stateLock)
+            {
+                if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(account.Name)) return actions;
+                if (!_isArmed) return actions;
+
+                string key = FsmKey(account.Name, instrument);
+                if (!_guardFsms.TryGetValue(key, out var fsm)) return actions;
+                if (fsm.State != GuardFsmState.Unprotected) return actions;
+                if (DateTime.UtcNow < fsm.GraceDeadline) return actions;
+
+                // Position still open and still unprotected past the deadline.
+                var pos = account.Positions.FirstOrDefault(p => p.Instrument.FullName == instrument);
+                if (pos == null || pos.MarketPosition == MarketPosition.Flat) return actions;
+
+                if (_config.StopGuard.OnMissing == "AutoStop")
+                {
+                    actions.Add(new GuardAction
+                    {
+                        AccountName = account.Name,
+                        ActionType = GuardActionType.PlaceStopOrder,
+                        Instrument = instrument,
+                        InstrumentObj = pos.Instrument,
+                        Quantity = pos.Quantity,
+                        RuleId = "MISSING_STOP_ATTACH"
+                    });
+                    // Mark as pending-protection so a duplicate event/sweep does not re-emit.
+                    fsm.State = GuardFsmState.ProtectedPending;
+                }
+                else if (_config.StopGuard.OnMissing == "Flatten")
+                {
+                    actions.Add(new GuardAction
+                    {
+                        AccountName = account.Name,
+                        ActionType = GuardActionType.FlattenPosition,
+                        Instrument = instrument,
+                        InstrumentObj = pos.Instrument,
+                        Quantity = pos.Quantity,
+                        RuleId = "MISSING_STOP_FLATTEN"
+                    });
+                }
+            }
+            return actions;
+        }
+
+        // Watchdog: log any FSM stuck in Unprotected past grace+buffer. Log only.
+        private void FsmWatchdog()
+        {
+            foreach (var kv in _guardFsms)
+            {
+                var fsm = kv.Value;
+                if (fsm.State == GuardFsmState.Unprotected &&
+                    DateTime.UtcNow > fsm.GraceDeadline.AddSeconds(2))
+                {
+                    LogEvent(fsm.AccountName, "FSM_WATCHDOG",
+                        $"{fsm.Instrument}: Unprotected past grace deadline by " +
+                        $"{(DateTime.UtcNow - fsm.GraceDeadline).TotalSeconds:F1}s");
+                }
+            }
+        }
+
+        // -- Lockout phase enforcement (event-driven) --
+        // Called from ExecutePositionUpdate and ExecuteOrderUpdate. Returns
+        // actions for the phased lockout: PendingCancel -> PendingFlatten -> Confirmed.
+        // Only Confirmed stops emitting actions. This replaces the sweep-based
+        // lockout loop with event-driven state transitions.
+        internal List<GuardAction> EvaluateLockoutPhase(Account account, AccountState stateModel)
+        {
+            var actions = new List<GuardAction>();
+
+            if (!stateModel.IsLockedOut && DateTime.UtcNow >= stateModel.LockoutUntil)
+            {
+                // Not locked out -> reset phase if it was left dirty
+                if (stateModel.CurrentLockoutPhase != AccountState.LockoutPhase.None)
+                {
+                    stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.None;
+                    stateModel.InitialLockoutFlattened = false;
+                }
+                return actions;
+            }
+
+            // Check actual account state (not stale memory)
+            bool hasWorkingOrders = false;
+            bool hasOpenPosition = false;
+            foreach (Order o in account.Orders)
+            {
+                if (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted ||
+                    o.OrderState == OrderState.Accepted || o.OrderState == OrderState.Initialized)
+                {
+                    hasWorkingOrders = true;
+                    break;
+                }
+            }
+            foreach (Position p in account.Positions)
+            {
+                if (p.MarketPosition != MarketPosition.Flat)
+                {
+                    hasOpenPosition = true;
+                    break;
+                }
+            }
+
+            // Confirmed: all clean
+            if (!hasWorkingOrders && !hasOpenPosition)
+            {
+                if (stateModel.CurrentLockoutPhase != AccountState.LockoutPhase.Confirmed)
+                {
+                    stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.Confirmed;
+                    LogEvent(stateModel.AccountName, "LOCKOUT_CONFIRMED",
+                        "Lockout confirmed: all orders cancelled, position flat.");
+                }
+                return actions;
+            }
+
+            // Phase: PendingCancel -> cancel all working orders
+            if (stateModel.CurrentLockoutPhase == AccountState.LockoutPhase.None ||
+                stateModel.CurrentLockoutPhase == AccountState.LockoutPhase.PendingCancel)
+            {
+                if (hasWorkingOrders)
+                {
+                    if (stateModel.CurrentLockoutPhase == AccountState.LockoutPhase.None)
+                    {
+                        stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.PendingCancel;
+                        LogEvent(stateModel.AccountName, "LOCKOUT_PHASE",
+                            "Phase: PendingCancel - cancelling all working orders");
+                    }
+                    if (DateTime.UtcNow > stateModel.LastLockoutFlattenAttempt.AddSeconds(3))
+                    {
+                        actions.Add(new GuardAction
+                        {
+                            AccountName = stateModel.AccountName,
+                            ActionType = GuardActionType.CancelAllOrders,
+                            RuleId = "LOCKOUT_CANCEL"
+                        });
+                        stateModel.LastLockoutFlattenAttempt = DateTime.UtcNow;
+                    }
+                }
+                else
+                {
+                    stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.PendingFlatten;
+                    LogEvent(stateModel.AccountName, "LOCKOUT_PHASE",
+                        "Phase: PendingFlatten - orders cancelled, now flattening position");
+                }
+            }
+
+            // Phase: PendingFlatten -> flatten the position
+            if (stateModel.CurrentLockoutPhase == AccountState.LockoutPhase.PendingFlatten)
+            {
+                if (hasOpenPosition)
+                {
+                    if (DateTime.UtcNow > stateModel.LastLockoutFlattenAttempt.AddSeconds(5))
+                    {
+                        actions.Add(new GuardAction
+                        {
+                            AccountName = stateModel.AccountName,
+                            ActionType = GuardActionType.FlattenPosition,
+                            RuleId = "LOCKOUT_FLATTEN"
+                        });
+                        stateModel.LastLockoutFlattenAttempt = DateTime.UtcNow;
+                        LogEvent(stateModel.AccountName, "LOCKOUT_FLATTEN_RETRY",
+                            $"Flatten attempt for {stateModel.AccountName} (position still open)");
+                    }
+                }
+                else
+                {
+                    if (!hasWorkingOrders)
+                    {
+                        stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.Confirmed;
+                        LogEvent(stateModel.AccountName, "LOCKOUT_CONFIRMED",
+                            "Lockout confirmed: all orders cancelled, position flat.");
+                    }
+                }
+            }
+
+            // Stuck warning
+            if (stateModel.CurrentLockoutPhase == AccountState.LockoutPhase.PendingFlatten &&
+                DateTime.UtcNow > stateModel.LastLockoutFlattenAttempt.AddSeconds(30) &&
+                hasOpenPosition)
+            {
+                LogEvent(stateModel.AccountName, "LOCKOUT_STUCK",
+                    $"WARNING: Position still open after 30s of flatten attempts. " +
+                    $"Manual intervention required. Account: {stateModel.AccountName}");
+            }
+
+            return actions;
+        }
+
+        // -- Aggregate sizing (event-driven via PositionUpdate) --
+        // Scans all accounts' positions instantly on any position change.
+        internal List<GuardAction> EvaluateAggregateSizing()
+        {
+            var actions = new List<GuardAction>();
+            if (!_isArmed) return actions;
+
+            int totalAggregateContracts = 0;
+            int maxSingleAccountContracts = 0;
+            foreach (var accName in _subscribedAccounts)
+            {
+                if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
+                if (!_accountStates.TryGetValue(accName, out var st)) continue;
+                int accContracts = 0;
+                foreach (var pos in st.Positions.Values)
+                {
+                    if (pos.MarketPosition != MarketPosition.Flat) accContracts += pos.Quantity;
+                }
+                totalAggregateContracts += accContracts;
+                if (accContracts > maxSingleAccountContracts) maxSingleAccountContracts = accContracts;
+            }
+
+            int copies = _config.Sizing.ExpectedCopies > 0 ? _config.Sizing.ExpectedCopies : 1;
+            int normalizedAggregate = copies > 1 ? maxSingleAccountContracts : totalAggregateContracts;
+
+            if (normalizedAggregate > _config.Sizing.MaxContractsAggregate)
+            {
+                LogEvent("SYSTEM", "AGGREGATE_SIZE_BREACH", new JObject
+                {
+                    { "totalContracts", totalAggregateContracts },
+                    { "maxSingleAccount", maxSingleAccountContracts },
+                    { "expectedCopies", copies },
+                    { "normalizedAggregate", normalizedAggregate },
+                    { "limit", _config.Sizing.MaxContractsAggregate }
+                });
+
+                foreach (var accName in _subscribedAccounts)
+                {
+                    if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
+                    if (!_accountStates.TryGetValue(accName, out var st)) continue;
+                    bool hasPosition = st.Positions.Values.Any(p => p.MarketPosition != MarketPosition.Flat);
+                    if (hasPosition)
+                    {
+                        // Throttle aggregate flatten using LastLockoutFlattenAttempt
+                        if (DateTime.UtcNow > st.LastLockoutFlattenAttempt.AddSeconds(5))
+                        {
+                            actions.Add(new GuardAction
+                            {
+                                AccountName = accName,
+                                ActionType = GuardActionType.FlattenPosition,
+                                RuleId = "AGGREGATE_SIZE_BREACH"
+                            });
+                            st.LastLockoutFlattenAttempt = DateTime.UtcNow;
+                        }
+                    }
+                }
+            }
+
+            return actions;
+        }
+
         internal List<GuardAction> EvaluateRules(Account account, AccountState stateModel)
         {
             if (!_isArmed || (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(stateModel.AccountName)))
@@ -1113,15 +1677,22 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     if (pos.Quantity > limit)
                     {
-                        actions.Add(new GuardAction
+                        // Throttle MAX_SIZE_BREACH flatten to every 5s to avoid the
+                        // infinite-flatten loop (same pattern as lockout enforcement).
+                        // The first breach fires immediately; retries wait 5s.
+                        if (DateTime.UtcNow > stateModel.LastLockoutFlattenAttempt.AddSeconds(5))
                         {
-                            AccountName = stateModel.AccountName,
-                            ActionType = GuardActionType.FlattenPosition,
-                            Instrument = pos.Instrument,
-                            InstrumentObj = pos.InstrumentObj,
-                            Quantity = pos.Quantity,
-                            RuleId = "MAX_SIZE_BREACH"
-                        });
+                            actions.Add(new GuardAction
+                            {
+                                AccountName = stateModel.AccountName,
+                                ActionType = GuardActionType.FlattenPosition,
+                                Instrument = pos.Instrument,
+                                InstrumentObj = pos.InstrumentObj,
+                                Quantity = pos.Quantity,
+                                RuleId = "MAX_SIZE_BREACH"
+                            });
+                            stateModel.LastLockoutFlattenAttempt = DateTime.UtcNow;
+                        }
                     }
                 }
             }
@@ -1248,50 +1819,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
 
-            // Rule 5: Stop-Loss Guard (Auto-Attach)
-            foreach (var posPair in stateModel.Positions)
-            {
-                var pos = posPair.Value;
-                if (pos.MarketPosition != MarketPosition.Flat && pos.LastNonFlatTransition != DateTime.MinValue)
-                {
-                    double elapsed = (DateTime.UtcNow - pos.LastNonFlatTransition).TotalSeconds;
-                    if (elapsed > _config.StopGuard.StopAttachSeconds)
-                    {
-                        int stopQty = GetWorkingStopQuantity(account, pos.Instrument, pos.MarketPosition);
-                        if (stopQty < pos.Quantity)
-                        {
-                            if (_config.StopGuard.OnMissing == "AutoStop")
-                            {
-                                actions.Add(new GuardAction
-                                {
-                                    AccountName = stateModel.AccountName,
-                                    ActionType = GuardActionType.PlaceStopOrder,
-                                    Instrument = pos.Instrument,
-                                    InstrumentObj = pos.InstrumentObj,
-                                    Quantity = pos.Quantity - stopQty,
-                                    RuleId = "MISSING_STOP_ATTACH"
-                                });
-                            }
-                            else if (_config.StopGuard.OnMissing == "Flatten")
-                            {
-                                actions.Add(new GuardAction
-                                {
-                                    AccountName = stateModel.AccountName,
-                                    ActionType = GuardActionType.FlattenPosition,
-                                    Instrument = pos.Instrument,
-                                    InstrumentObj = pos.InstrumentObj,
-                                    Quantity = pos.Quantity, // Flatten whole position if rule trips
-                                    RuleId = "MISSING_STOP_FLATTEN"
-                                });
-                            }
-                            else if (_config.StopGuard.OnMissing == "WarnOnly")
-                            {
-                                LogEvent(stateModel.AccountName, "MISSING_STOP_WARN", $"Missing stop for {pos.Instrument}, action set to WarnOnly.");
-                            }
-                        }
-                    }
-                }
-            }
+            // Rule 5: Stop-Loss Guard has been migrated to the per-position FSM
+            // (see -6 of RiskGuardAddOn.md). The FSM owns the grace timer and
+            // emits MISSING_STOP_* via EvaluateGraceExpiry(); EvaluateRules no
+            // longer snapshots account.Orders for this rule, which was the
+            // source of the duplicate-SL race on OCO brackets.
 
             return actions;
         }
@@ -1329,8 +1861,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit || o.OrderType == OrderType.Market)
                     {
-                        bool isOpposite = (marketPosition == MarketPosition.Long && o.OrderAction == OrderAction.Sell) ||
-                                          (marketPosition == MarketPosition.Short && o.OrderAction == OrderAction.Buy);
+                        bool isOpposite = (marketPosition == MarketPosition.Long && (o.OrderAction == OrderAction.Sell || o.OrderAction == OrderAction.SellShort)) ||
+                                          (marketPosition == MarketPosition.Short && (o.OrderAction == OrderAction.Buy || o.OrderAction == OrderAction.BuyToCover));
                         if (isOpposite)
                         {
                             stopQty += (o.Quantity - o.Filled);
@@ -1341,9 +1873,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             return stopQty;
         }
 
-        // ──────────────────────────────────────────────────────────────
+        // -
         // ACTION ARBITER & EXECUTOR
-        // ──────────────────────────────────────────────────────────────
+        // -
 
         public string GetMode()
         {
@@ -1412,6 +1944,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     state.RealizedPnL = 0.0;
                     state.UnrealizedPnL = 0.0;
                     state.InitialLockoutFlattened = false;
+                    state.CurrentLockoutPhase = AccountState.LockoutPhase.None;
 
                     // Sync positions to avoid stale memory
                     state.Positions.Clear();
@@ -1548,7 +2081,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (instrumentsToFlatten.Count > 0)
                 {
-                    account.Flatten(instrumentsToFlatten.ToArray());
+                    try
+                    {
+                        account.Flatten(instrumentsToFlatten.ToArray());
+                    }
+                    catch (Exception fex)
+                    {
+                        LogEvent(action.AccountName, "FLATTEN_ERROR",
+                            $"Flatten failed for {string.Join(",", instrumentsToFlatten.Select(i => i.FullName))}: {fex.Message}");
+                        throw;
+                    }
                 }
             }
             else if (action.ActionType == GuardActionType.CancelAllOrders)
@@ -1664,13 +2206,26 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (stopOrder != null)
                 {
                     account.Submit(new[] { stopOrder });
+
+                    // Record the auto-stop on the FSM so it can cancel the orphan
+                    // if the position flattens before the stop is hit (-6.4).
+                    string key = FsmKey(account.Name, action.Instrument);
+                    lock (_stateLock)
+                    {
+                        if (_guardFsms.TryGetValue(key, out var fsm))
+                        {
+                            fsm.AutoStopOrder = stopOrder;
+                            fsm.RecognizedStopOrder = stopOrder;
+                            fsm.State = GuardFsmState.ProtectedPending;
+                        }
+                    }
                 }
             }
         }
 
-        // ──────────────────────────────────────────────────────────────
+        // -
         // HELPER METHODS FOR UI & LOGGING
-        // ──────────────────────────────────────────────────────────────
+        // -
 
         public string GetAccountStatusString(string accountName)
         {
@@ -1740,7 +2295,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        // ── Firm-mirror logic and unit test diagnostics (FR-24/25/26) ──
+        // - Firm-mirror logic and unit test diagnostics (FR-24/25/26) -
         internal List<GuardAction> EvaluateFirmMirror(Account account, AccountState st, DateTime nowEt)
         {
             double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
@@ -2042,6 +2597,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         public bool IsLockedOut { get; set; } = false;
         public DateTime LockoutUntil { get; set; } = DateTime.MinValue;
         public bool InitialLockoutFlattened { get; set; } = false;
+        public DateTime LastLockoutFlattenAttempt { get; set; } = DateTime.MinValue;
+
+        // Lockout phase: PendingCancel -> PendingFlatten -> Confirmed.
+        // Only Confirmed stops emitting actions. This prevents the infinite
+        // flatten loop where account.Flatten() fails silently but the sweep
+        // keeps re-firing every second.
+        public enum LockoutPhase { None, PendingCancel, PendingFlatten, Confirmed }
+        public LockoutPhase CurrentLockoutPhase { get; set; } = LockoutPhase.None;
         
         // Session and Overtrading
         public DateTime LastSessionDate { get; set; } = DateTime.MinValue;
@@ -2051,7 +2614,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double LastRealizedPnL { get; set; } = 0.0; // To track delta for consec losses
         public double SessionStartRealizedPnL { get; set; } = 0.0; // Baseline for session PnL
 
-        // ── Firm-mirror tracking (independent of discretionary PeakEquity) ──
+        // - Firm-mirror tracking (independent of discretionary PeakEquity) -
         public double FirmTrailingPeak { get; set; } = double.MinValue;
         public bool FirmFloorLocked { get; set; } = false;
         public DateTime FirmDailyDate { get; set; } = DateTime.MinValue;
@@ -2164,6 +2727,49 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
     }
 
+    // -
+    // PER-POSITION GUARD STATE MACHINE (-6 of RiskGuardAddOn.md)
+    // -
+    // Tracks the protective-stop lifecycle for one (account, instrument) pair.
+    // Eliminates the duplicate-SL race on OCO brackets by remembering that the
+    // stop leg's Submitted event was already observed, so a later sweep or
+    // re-entrant position update finds the FSM in ProtectedPending/Protected.
+    public enum GuardFsmState
+    {
+        Unprotected,      // position open, no covering stop observed yet
+        ProtectedPending, // stop leg Submitted/Initialized/Accepted, not yet Working
+        Protected,        // working stop covering the position
+        Flat              // position closed; FSM entry awaiting cleanup
+    }
+
+    public class PositionGuardFsm
+    {
+        public string AccountName { get; }
+        public string Instrument { get; }
+        public GuardFsmState State { get; set; } = GuardFsmState.Unprotected;
+        public MarketPosition PositionSide { get; set; } = MarketPosition.Flat;
+        public int PositionQuantity { get; set; }
+        // NOTE: NT8 Order.OrderId is NOT unique and can change over the order's
+        // lifetime (historical->live transition). Track recognised stops by the
+        // Order object reference, not by id string. See RiskGuardAddOn.md -6.6.
+        public Order RecognizedStopOrder { get; set; }
+        public Order AutoStopOrder { get; set; }
+        public string EntryOcoId { get; set; }   // best-effort join key; may be empty for external brackets
+        public DateTime EntryTime { get; set; } = DateTime.MinValue;
+        public DateTime GraceDeadline { get; set; } = DateTime.MinValue;
+        public DateTime LastTransitionTime { get; set; } = DateTime.UtcNow;
+        // One-shot grace timer: fires exactly at EntryTime + StopGuard.StopAttachSeconds.
+        // Cancelled when the FSM reaches Protected or Flat. This replaces the sweep
+        // polling of GraceDeadline with an instant event-driven trigger.
+        public Timer GraceTimer { get; set; }
+
+        public PositionGuardFsm(string accountName, string instrument)
+        {
+            AccountName = accountName;
+            Instrument = instrument;
+        }
+    }
+
     public class PersistedStateData
     {
         public bool IsArmed { get; set; }
@@ -2191,9 +2797,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double FirmStartingBalance { get; set; }
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // -
     // CONFIGURATION MODELS
-    // ──────────────────────────────────────────────────────────────
+    // -
 
     public class InstrumentProfile
     {
@@ -2309,9 +2915,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         public HashSet<DayOfWeek> Days { get; set; }
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // -
     // WPF UI DASHBOARD
-    // ──────────────────────────────────────────────────────────────
+    // -
 
 #if !TESTING
     public class RiskGuardWindow : Window
@@ -2338,10 +2944,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBox _trailingDrawdownText;
         private TextBox _pnlLockoutMinutesText;
         private ComboBox _onMissingCombo;
+        private TextBox _stopAttachSecondsText;
+        private TextBox _expectedCopiesText;
+        private TextBox _excludedAccountsText;
+        private CheckBox _firmMirrorEnabledCheck;
+        private TextBox _firmTrailingDDAmountText;
+        private TextBox _firmDailyLossAmountText;
 
         // Search and Filter fields
         private TextBox _searchBox;
         private CheckBox _hideInactiveCheck;
+
+        // Track which accounts have already shown a lockout-stuck popup
+        // so we don't spam the user every 500ms UI tick.
+        private readonly HashSet<string> _lockoutStuckPopupShown = new HashSet<string>();
 
         public RiskGuardWindow(RiskGuardAddOn addOn)
         {
@@ -2365,7 +2981,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             topBar.Child = topGrid;
 
             var statusPanel = new StackPanel { Orientation = Orientation.Horizontal };
-            statusPanel.Children.Add(new TextBlock { Text = "🛡️ RISK GUARD: ", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
+            statusPanel.Children.Add(new TextBlock { Text = "- RISK GUARD: ", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
             
             _armedStatusText = new TextBlock { FontSize = 14, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
             statusPanel.Children.Add(_armedStatusText);
@@ -2408,7 +3024,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             _panicAllBtn = new Button
             {
-                Content = "🛑 PANIC FLATTEN ALL ACCOUNTS",
+                Content = "- PANIC FLATTEN ALL ACCOUNTS",
                 FontWeight = FontWeights.Bold,
                 Background = new SolidColorBrush(Color.FromRgb(180, 40, 40)),
                 Foreground = Brushes.White,
@@ -2522,15 +3138,46 @@ namespace NinjaTrader.NinjaScript.AddOns
             var missingRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             missingRow.Children.Add(new TextBlock { Text = "On Missing Bracket Order:", Width = 220, Foreground = Brushes.LightGray, VerticalAlignment = VerticalAlignment.Center });
             _onMissingCombo = new ComboBox { Width = 100, Height = 22, Background = new SolidColorBrush(Color.FromRgb(45, 45, 45)), Foreground = Brushes.White };
-            _onMissingCombo.Items.Add("flatten");
-            _onMissingCombo.Items.Add("ignore");
+            _onMissingCombo.Items.Add("AutoStop");
+            _onMissingCombo.Items.Add("Flatten");
+            _onMissingCombo.Items.Add("WarnOnly");
             missingRow.Children.Add(_onMissingCombo);
             panel.Children.Add(missingRow);
+
+            // StopGuard grace period
+            _stopAttachSecondsText = new TextBox();
+            panel.Children.Add(addEditRow("Stop Attach Grace (Sec):", "Grace period before auto-stop/flatten on missing bracket", _stopAttachSecondsText));
+
+            // Expected copies (N-way mirror)
+            _expectedCopiesText = new TextBox();
+            panel.Children.Add(addEditRow("Expected Copies (Mirror N):", "Intended N-way mirror count (1 = no mirroring)", _expectedCopiesText));
+
+            // Excluded accounts (global text editor)
+            _excludedAccountsText = new TextBox();
+            _excludedAccountsText.Width = 300;
+            _excludedAccountsText.Height = 22;
+            panel.Children.Add(addEditRow("Excluded Accounts (comma-sep):", "Accounts excluded from all rules (also toggle per-card)", _excludedAccountsText));
+
+            // Firm Mirror section header
+            panel.Children.Add(new TextBlock { Text = "Firm Mirror (Prop-Firm Rule Replication)", FontSize = 14, FontWeight = FontWeights.Bold, Foreground = Brushes.LightGray, Margin = new Thickness(0, 15, 0, 5) });
+
+            // FirmMirror Enabled checkbox
+            var firmRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
+            firmRow.Children.Add(new TextBlock { Text = "Firm Mirror Enabled:", Width = 220, Foreground = Brushes.LightGray, VerticalAlignment = VerticalAlignment.Center });
+            _firmMirrorEnabledCheck = new CheckBox { VerticalAlignment = VerticalAlignment.Center };
+            firmRow.Children.Add(_firmMirrorEnabledCheck);
+            panel.Children.Add(firmRow);
+
+            _firmTrailingDDAmountText = new TextBox();
+            panel.Children.Add(addEditRow("Firm Trailing DD ($):", "Prop-firm trailing drawdown limit (with buffer)", _firmTrailingDDAmountText));
+
+            _firmDailyLossAmountText = new TextBox();
+            panel.Children.Add(addEditRow("Firm Daily Loss ($):", "Prop-firm daily loss limit (with buffer)", _firmDailyLossAmountText));
 
             // SAVE CONFIG BUTTON
             var saveBtn = new Button
             {
-                Content = "💾 SAVE AND APPLY CONFIGURATION",
+                Content = "- SAVE AND APPLY CONFIGURATION",
                 Width = 250,
                 Height = 35,
                 Margin = new Thickness(0, 20, 0, 0),
@@ -2580,7 +3227,22 @@ namespace NinjaTrader.NinjaScript.AddOns
             _dailyLossLimitText.Text = cfg.PnLRules.DailyLossLimit.ToString();
             _trailingDrawdownText.Text = cfg.PnLRules.TrailingDrawdown.ToString();
             _pnlLockoutMinutesText.Text = cfg.PnLRules.LockoutMinutes.ToString();
-            _onMissingCombo.SelectedItem = cfg.StopGuard.OnMissing == "ignore" ? "ignore" : "flatten";
+
+            // StopGuard
+            var onMissing = string.IsNullOrEmpty(cfg.StopGuard.OnMissing) ? "Flatten" : cfg.StopGuard.OnMissing;
+            // Normalise to one of the dropdown items
+            var matched = false;
+            foreach (var item in _onMissingCombo.Items) { if (string.Equals(item.ToString(), onMissing, StringComparison.OrdinalIgnoreCase)) { _onMissingCombo.SelectedItem = item; matched = true; break; } }
+            if (!matched) _onMissingCombo.SelectedIndex = 1; // default Flatten
+
+            _stopAttachSecondsText.Text = cfg.StopGuard.StopAttachSeconds.ToString();
+            _expectedCopiesText.Text = cfg.Sizing.ExpectedCopies.ToString();
+            _excludedAccountsText.Text = cfg.ExcludedAccounts != null ? string.Join(", ", cfg.ExcludedAccounts) : "";
+
+            // FirmMirror
+            _firmMirrorEnabledCheck.IsChecked = cfg.FirmMirror != null && cfg.FirmMirror.Enabled;
+            _firmTrailingDDAmountText.Text = cfg.FirmMirror != null && cfg.FirmMirror.TrailingDD != null ? cfg.FirmMirror.TrailingDD.Amount.ToString() : "0";
+            _firmDailyLossAmountText.Text = cfg.FirmMirror != null && cfg.FirmMirror.DailyLoss != null ? cfg.FirmMirror.DailyLoss.Amount.ToString() : "0";
         }
 
         private void OnSaveConfigClick(object sender, RoutedEventArgs e)
@@ -2600,6 +3262,28 @@ namespace NinjaTrader.NinjaScript.AddOns
                 cfg.PnLRules.TrailingDrawdown = double.Parse(_trailingDrawdownText.Text.Trim());
                 cfg.PnLRules.LockoutMinutes = int.Parse(_pnlLockoutMinutesText.Text.Trim());
                 cfg.StopGuard.OnMissing = _onMissingCombo.SelectedItem.ToString();
+                cfg.StopGuard.StopAttachSeconds = int.Parse(_stopAttachSecondsText.Text.Trim());
+                cfg.Sizing.ExpectedCopies = int.Parse(_expectedCopiesText.Text.Trim());
+
+                // Excluded accounts from the text box (comma-separated)
+                var exclText = _excludedAccountsText.Text.Trim();
+                if (string.IsNullOrEmpty(exclText))
+                    cfg.ExcludedAccounts = new List<string>();
+                else
+                    cfg.ExcludedAccounts = exclText.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                                                   .Select(s => s.Trim())
+                                                   .Where(s => !string.IsNullOrEmpty(s))
+                                                   .ToList();
+
+                // FirmMirror
+                if (cfg.FirmMirror != null)
+                {
+                    cfg.FirmMirror.Enabled = _firmMirrorEnabledCheck.IsChecked ?? false;
+                    if (cfg.FirmMirror.TrailingDD != null)
+                        cfg.FirmMirror.TrailingDD.Amount = double.Parse(_firmTrailingDDAmountText.Text.Trim());
+                    if (cfg.FirmMirror.DailyLoss != null)
+                        cfg.FirmMirror.DailyLoss.Amount = double.Parse(_firmDailyLossAmountText.Text.Trim());
+                }
 
                 _addOn.SaveAndReloadConfig(cfg);
                 MessageBox.Show("Configuration saved and hot-reloaded successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2690,9 +3374,43 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                     else
                     {
-                        card.StatusText.Text = "Active";
-                        card.StatusText.Foreground = Brushes.LimeGreen;
-                        card.BorderEl.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 122, 204));
+                        // Check if lockout phase is stuck (position open but flatten failing)
+                        // We can't access CurrentLockoutPhase from the snapshot, so we check
+                        // if the account is locked out AND has an open position AND is not excluded.
+                        if ((snapshot.IsLockedOut || DateTime.UtcNow < snapshot.LockoutUntil) &&
+                            snapshot.PositionString != "FLAT")
+                        {
+                            card.StatusText.Text = "LOCKED - STUCK!";
+                            card.StatusText.Foreground = Brushes.Red;
+                            card.BorderEl.BorderBrush = Brushes.Red;
+
+                            // Show a one-time popup for the stuck lockout
+                            if (!_lockoutStuckPopupShown.Contains(snapshot.AccountName))
+                            {
+                                _lockoutStuckPopupShown.Add(snapshot.AccountName);
+                                Dispatcher.BeginInvoke(new Action(() =>
+                                {
+                                    MessageBox.Show(
+                                        string.Format(
+                                            "Account {0} is LOCKED OUT but the position ({1}) could not be closed automatically.\n\n" +
+                                            "RiskGuard has been trying to flatten for over 30 seconds.\n" +
+                                            "MANUAL INTERVENTION REQUIRED:\n" +
+                                            "  1. Close the position from the NT8 Chart Trader or DOM\n" +
+                                            "  2. Cancel any remaining working orders\n" +
+                                            "  3. Click 'Unlock' on the RiskGuard dashboard for this account\n\n" +
+                                            "This popup will not repeat for this account until unlocked.",
+                                            snapshot.AccountName, snapshot.PositionString),
+                                        "RiskGuard: Lockout Stuck - Manual Action Required",
+                                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                                }));
+                            }
+                        }
+                        else
+                        {
+                            card.StatusText.Text = "Active";
+                            card.StatusText.Foreground = Brushes.LimeGreen;
+                            card.BorderEl.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 122, 204));
+                        }
                     }
 
                     // Excluded checkbox state
@@ -2834,6 +3552,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void OnCardUnlockClick(string accountName)
         {
             _addOn.UnlockAccount(accountName);
+            _lockoutStuckPopupShown.Remove(accountName); // allow popup to show again if re-locked
             MessageBox.Show(string.Format("Account {0} unlocked/reset successfully.", accountName), "Unlock Success", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 

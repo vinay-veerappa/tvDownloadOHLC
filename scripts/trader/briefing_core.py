@@ -3660,6 +3660,78 @@ def build_eod_context(
     except Exception as e:
         log.warning("[eod] Level outcomes failed: %s", e)
 
+    # ── GEX Regime Shift (open -> close) ──
+    # The open-snapshot walls are the day's starting structure (graded above).
+    # The close-snapshot walls are TOMORROW's starting structure. Surfacing
+    # the delta tells the LLM (and the trader) how dealer positioning migrated
+    # intraday — the most forward-looking signal the options pipeline makes.
+    try:
+        open_unified = load_macro_levels(session="open")
+        close_unified = load_macro_levels(session="close")
+        ticker_open_gex = _extract_gex_levels(
+            open_unified.get(base_label) or open_unified.get(ticker) or {},
+            base_label,
+        )
+        ticker_close_gex = _extract_gex_levels(
+            close_unified.get(base_label) or close_unified.get(ticker) or {},
+            base_label,
+        )
+        shift_lines = [f"== GEX REGIME SHIFT ({base_label}, open -> close) =="]
+        if ticker_open_gex or ticker_close_gex:
+            o_cw = ticker_open_gex.get("call_wall")
+            c_cw = ticker_close_gex.get("call_wall")
+            o_pw = ticker_open_gex.get("put_wall")
+            c_pw = ticker_close_gex.get("put_wall")
+            o_flip = ticker_open_gex.get("flip") or ticker_open_gex.get("zero_gamma")
+            c_flip = ticker_close_gex.get("flip") or ticker_close_gex.get("zero_gamma")
+            o_mag = ticker_open_gex.get("gamma_magnet")
+            c_mag = ticker_close_gex.get("gamma_magnet")
+            o_regime = ticker_open_gex.get("regime", "?")
+            c_regime = ticker_close_gex.get("regime", "?")
+            o_bias = ticker_open_gex.get("bias", "?")
+            c_bias = ticker_close_gex.get("bias", "?")
+
+            def _delta(old, new):
+                if old and new:
+                    d = new - old
+                    return f"{d:+.2f}"
+                return "n/a"
+
+            shift_lines.append(
+                f"Call Wall: {o_cw:,.2f} -> {c_cw:,.2f} ({_delta(o_cw, c_cw)}) [tomorrow's ceiling]"
+            )
+            shift_lines.append(
+                f"Put Wall:  {o_pw:,.2f} -> {c_pw:,.2f} ({_delta(o_pw, c_pw)}) [tomorrow's floor]"
+            )
+            if o_flip or c_flip:
+                shift_lines.append(
+                    f"Gamma Flip: {o_flip:,.2f} -> {c_flip:,.2f} ({_delta(o_flip, c_flip)})"
+                )
+            if o_mag or c_mag:
+                shift_lines.append(
+                    f"Price Magnet: {o_mag:,.2f} -> {c_mag:,.2f} ({_delta(o_mag, c_mag)})"
+                )
+            shift_lines.append(
+                f"Regime/Bias: {o_regime}/{o_bias} -> {c_regime}/{c_bias}"
+            )
+            # Flag a collapsing wall — a large intraday wall roll is a
+            # high-signal event the LLM should emphasise in "Tomorrow".
+            if o_cw and c_cw and abs(c_cw - o_cw) > 20:
+                shift_lines.append(
+                    f"⚠ Call Wall rolled {abs(c_cw - o_cw):.2f}pts intraday — dealer ceiling shifted; "
+                    f"{'rolled DOWN into close (bears re-priced ceiling lower)' if c_cw < o_cw else 'rolled UP into close (bulls re-priced ceiling higher)'}."
+                )
+            if o_pw and c_pw and abs(c_pw - o_pw) > 20:
+                shift_lines.append(
+                    f"⚠ Put Wall rolled {abs(c_pw - o_pw):.2f}pts intraday — dealer floor shifted; "
+                    f"{'rolled DOWN into close (bears re-priced floor lower)' if c_pw < o_pw else 'rolled UP into close (bulls re-priced floor higher)'}."
+                )
+        else:
+            shift_lines.append("No close-snapshot GEX data — regime shift unavailable.")
+        sections.append("\n".join(shift_lines))
+    except Exception as e:
+        log.warning("[eod] GEX regime shift failed: %s", e)
+
     # ── Next Session Econ Releases & Earnings ──
     async def run_async_eod_signals(next_day: date):
         from prisma import Prisma
