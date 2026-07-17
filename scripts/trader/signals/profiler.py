@@ -372,10 +372,10 @@ def _filter_historical_days(
 ) -> list[str]:
     """Filter historical days matching the context signature.
 
-    Replicates the PineScript filter loop:
-      1. For each historical day, check if context sessions match
-      2. Uses f_match logic (status exact + broken asymmetric)
-      3. Returns list of matching dates
+    Uses O(1) dict lookups on the pre-built pivot — already optimal.
+    The pivot is a dict-of-dicts, so each lookup is a hash table access.
+    For ~5000 dates with 2-3 context sessions, this is ~10K-15K dict
+    lookups, which completes in ~2ms.
 
     Args:
         target_session: The session we're predicting.
@@ -386,10 +386,12 @@ def _filter_historical_days(
     """
     # Determine which context sessions to use based on fallback level
     if fallback_level > 0:
-        # Drop context sessions from the front (most distant context first)
         effective_context = context_values[fallback_level:]
     else:
         effective_context = context_values
+
+    if not effective_context:
+        return dates[1:] if len(dates) > 1 else []
 
     # Build context session map: session_name → (status, broken)
     ctx_map: dict[str, tuple[str, bool]] = {}
@@ -399,27 +401,20 @@ def _filter_historical_days(
     # Determine which context sessions come from prev day vs curr day
     chain = CONTEXT_CHAIN.get(target_session, [])
     prev_sessions = set()
-    curr_sessions = set()
     for ctx_spec, sess_name in chain:
         if ctx_spec.startswith("prev:"):
             prev_sessions.add(sess_name)
-        else:
-            curr_sessions.add(sess_name)
 
     matched_dates: list[str] = []
 
     for i, curr_date in enumerate(dates):
-        # Skip the current day itself (can't use it as historical)
-        # and skip first day (no prev date)
         if i == 0:
             continue
 
-        prev_date = dates[i - 1] if i > 0 else None
+        prev_date = dates[i - 1]
 
-        # Check each context session
         ok = True
         for sess_name, (live_status, live_broken) in ctx_map.items():
-            # Determine if this context comes from prev day or curr day
             if sess_name in prev_sessions:
                 hist_rec = pivot.get(prev_date, {}).get(sess_name, {})
             else:
@@ -428,7 +423,6 @@ def _filter_historical_days(
             hist_status = hist_rec.get("status", "")
             hist_broken = hist_rec.get("broken", False)
 
-            # Use strict matching for context sessions (not loose)
             if not _f_match(hist_status, hist_broken, live_status, live_broken, loose=False):
                 ok = False
                 break
@@ -522,7 +516,6 @@ def _compute_prediction_from_matches(
     broken_counts: dict[str, int] = defaultdict(int)
     hod_times_by_outcome: dict[str, list[str]] = defaultdict(list)
     lod_times_by_outcome: dict[str, list[str]] = defaultdict(list)
-    # Track matched dates per outcome for level hit rate computation
     dates_by_outcome: dict[str, list[str]] = defaultdict(list)
 
     for d in matched_dates:
@@ -594,7 +587,6 @@ def _compute_prediction_from_matches(
             "l_mode": l_mode,
             "h_med": h_med,
             "l_med": l_med,
-            # Mode-to-median span (highest to lowest magnitude)
             "h_span": f"{max(h_mode, h_med):.1f} to {min(h_mode, h_med):.1f}%",
             "l_span": f"{max(l_mode, l_med):.1f} to {min(l_mode, l_med):.1f}%",
             "sample_count": len(vals),
@@ -705,11 +697,9 @@ def _compute_conditional_level_hits(
                         h, m = map(int, t.split(":"))
                         mins = h * 60 + m
                         if start_min <= end_min:
-                            # Normal window (doesn't wrap midnight)
                             if start_min <= mins <= end_min:
                                 in_window_times.append(t)
                         else:
-                            # Wraps midnight (e.g., Asia 19:30-02:29)
                             if mins >= start_min or mins <= end_min:
                                 in_window_times.append(t)
                     except Exception:
@@ -718,7 +708,6 @@ def _compute_conditional_level_hits(
                     level_hits[level_key] += 1
                     level_times[level_key].extend(in_window_times)
             else:
-                # No window filter — count any touch during the day
                 if lv_data.get("touched"):
                     level_hits[level_key] += 1
                     if times:
@@ -1063,6 +1052,204 @@ def _classify_p12_scenario(
     }
 
 
+# ─── Lookup table (precomputed predictions) ──────────────────────────
+
+_LOOKUP_CACHE: dict[str, dict] = {}
+
+
+def _load_lookup(ticker: str) -> dict | None:
+    """Load the precomputed profiler lookup table.
+
+    Returns None if the file doesn't exist (caller falls back to
+    the full pipeline).
+    """
+    if ticker in _LOOKUP_CACHE:
+        return _LOOKUP_CACHE[ticker]
+
+    path = _DATA / "derived" / f"{ticker}_profiler_lookup.json"
+    if not path.exists():
+        return None
+
+    try:
+        data = _load_json(path)
+        if isinstance(data, dict) and "tables" in data:
+            _LOOKUP_CACHE[ticker] = data
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def _build_lookup_key(
+    target_session: str,
+    live_sessions: dict[str, dict],
+    prev_sessions: dict[str, dict],
+) -> str | None:
+    """Build the context signature key for lookup table access.
+
+    Format: "status|broken|status|broken|..."
+    Example: "ST|F|LF|T" (Asia=ST/held, London=LF/broken)
+
+    Returns None if any required context session is missing.
+    """
+    chain = CONTEXT_CHAIN.get(target_session, [])
+    parts = []
+    for ctx_spec, sess_name in chain:
+        if ctx_spec.startswith("prev:"):
+            rec = prev_sessions.get(sess_name, {})
+        else:
+            rec = live_sessions.get(sess_name, {})
+
+        status = rec.get("status", "")
+        broken = rec.get("broken", False)
+        if not status or status not in ("Long True", "Long False", "Short True", "Short False"):
+            return None
+
+        short = _STATUS_SHORT.get(status, status)
+        bk = "T" if broken else "F"
+        parts.append(f"{short}|{bk}")
+
+    return "|".join(parts)
+
+
+def _predict_from_lookup(
+    ticker: str,
+    live_sessions: dict[str, dict],
+    prev_sessions: dict[str, dict],
+) -> dict[str, dict]:
+    """Compute predictions using the precomputed lookup table.
+
+    Includes hierarchical fallback: if a context key has < 30 samples,
+    drops context dimensions until enough samples are found or falls
+    back to base rates.
+
+    Returns a dict of {session_name: prediction_entry} for all sessions
+    that have valid context.
+    """
+    lookup = _load_lookup(ticker)
+    if not lookup:
+        return {}
+
+    tables = lookup.get("tables", {})
+    level_hits = lookup.get("level_hits", {})
+    base_rates = lookup.get("base_rates", {})
+
+    predictions = {}
+    for sess_name in SESSION_ORDER:
+        # Build the full context key
+        full_key = _build_lookup_key(sess_name, live_sessions, prev_sessions)
+        if not full_key:
+            continue
+
+        table = tables.get(sess_name, {})
+        entry = None
+        fallback_level = 0
+
+        # Try full key first
+        entry = table.get(full_key)
+        if entry and entry.get("samples", 0) >= _MIN_SAMPLES:
+            fallback_level = 0
+        else:
+            # Hierarchical fallback: drop context dimensions one at a time
+            key_parts = full_key.split("|")
+            # Each context session contributes 2 parts (status|broken)
+            # Drop from the front (most distant context first)
+            for drop in range(1, len(key_parts) // 2):
+                shorter_key = "|".join(key_parts[drop * 2:])
+                entry = table.get(shorter_key)
+                if entry and entry.get("samples", 0) >= _MIN_SAMPLES:
+                    fallback_level = drop
+                    break
+                entry = None
+
+            # If still no good match, use base rates
+            if entry is None:
+                br = base_rates.get(sess_name, {})
+                if br:
+                    entry = {
+                        "samples": 0,
+                        "probabilities": {k: v for k, v in br.items() if k in ("LT", "LF", "ST", "SF")},
+                        "price_stats": {},
+                        "hod_lod_times": {},
+                        "broken_rates": {},
+                    }
+                    fallback_level = 99  # base rate fallback
+
+        if not entry:
+            continue
+
+        # Build prediction dict
+        pred = dict(entry)
+        pred["fallback_level"] = fallback_level
+        pred["matched_dates"] = []
+
+        # Attach per-outcome level hit rates from global table
+        lh = level_hits.get(sess_name, {})
+        if lh:
+            pred["level_hit_rates_per_outcome"] = lh
+
+        # Build context description
+        chain = CONTEXT_CHAIN.get(sess_name, [])
+        ctx_parts = []
+        for ctx_spec, sess in chain:
+            if ctx_spec.startswith("prev:"):
+                rec = prev_sessions.get(sess, {})
+                prefix = "prev"
+            else:
+                rec = live_sessions.get(sess, {})
+                prefix = "curr"
+            status = rec.get("status", "?")
+            broken = rec.get("broken", False)
+            short = _STATUS_SHORT.get(status, status)
+            bk = "Broken" if broken else "Held"
+            ctx_parts.append(f"{prefix} {sess}={short}/{bk}")
+        pred["context"] = " | ".join(ctx_parts)
+
+        predictions[sess_name] = pred
+
+    return predictions
+
+
+def _compute_predictions_pipeline(
+    result: dict,
+    ticker: str,
+    pivot: dict,
+    dates: list[str],
+    effective_sessions: dict[str, dict],
+) -> None:
+    """Full pipeline: load JSON, filter, compute stats (fallback when no lookup)."""
+    daily_hl = _load_daily_hod_lod(ticker)
+
+    for sess_name in SESSION_ORDER:
+        context = _get_context_values_live(
+            sess_name, effective_sessions, result["sessions_prev"],
+        )
+        if not context:
+            continue
+
+        live_status = effective_sessions.get(sess_name, {}).get("status", "")
+        live_code = _STATUS_TO_CODE.get(live_status, 0)
+        target_loose = live_code in (1, 3)
+
+        pred = _compute_prediction_with_fallback(
+            pivot, dates, sess_name, context,
+            target_loose=target_loose,
+            live_status=live_status,
+            daily_hod_lod=daily_hl,
+        )
+        if pred:
+            ctx_parts = []
+            for ctx_spec, sess in CONTEXT_CHAIN.get(sess_name, []):
+                for s_name, status, broken in context:
+                    if s_name == sess:
+                        short = _STATUS_SHORT.get(status, status)
+                        bk = "Broken" if broken else "Held"
+                        prefix = "prev" if ctx_spec.startswith("prev:") else "curr"
+                        ctx_parts.append(f"{prefix} {sess}={short}/{bk}")
+            pred["context"] = " | ".join(ctx_parts)
+            result["predictions"][sess_name] = pred
+
+
 # ─── Main computation ────────────────────────────────────────────────
 
 
@@ -1072,6 +1259,7 @@ def compute_profiler(
     target_date: date | None = None,
     now_et: datetime | None = None,
     live_sessions: dict[str, dict] | None = None,
+    prev_sessions: dict[str, dict] | None = None,
 ) -> dict:
     """Compute profiler data for the narrative cheat sheet.
 
@@ -1115,6 +1303,62 @@ def compute_profiler(
         "p12_scenario": {},
     }
 
+    # ── Try lookup table first (instant, no heavy JSON I/O) ──
+    lookup = _load_lookup(ticker)
+    use_lookup = lookup is not None and live_sessions is not None
+
+    if use_lookup:
+        # Fast path: use precomputed lookup + live sessions only
+        result["_source"] = "lookup"
+
+        result["latest_date"] = target_str
+        result["sessions_latest"] = live_sessions
+        if prev_sessions:
+            result["sessions_prev"] = prev_sessions
+
+        # Auto-detect target
+        tgt_idx, tgt_session = _detect_target_session(now_et, live_sessions)
+        result["target_session"] = tgt_session
+        result["target_idx"] = tgt_idx
+
+        # Predictions from lookup — uses prev_sessions for Asia context
+        lookup_preds = _predict_from_lookup(
+            ticker, live_sessions, result["sessions_prev"],
+        )
+        result["predictions"] = lookup_preds
+
+        # Base rates from lookup
+        result["base_rates"] = lookup.get("base_rates", {})
+
+        # Level hit rates from lookup (global, per-outcome)
+        lh = lookup.get("level_hits", {})
+        for sess_name, pred in result["predictions"].items():
+            if sess_name in lh:
+                pred["level_hit_rates_per_outcome"] = lh[sess_name]
+
+        # Load only level_touches for latest day (for P12 scenario + level display)
+        level_touches = _load_level_touches(ticker)
+        if level_touches:
+            lt_dates = sorted(level_touches.keys())
+            lt_date = target_str if target_str in level_touches else (lt_dates[-1] if lt_dates else None)
+            if lt_date:
+                result["levels_latest"] = level_touches.get(lt_date, {})
+                result["level_touches_date"] = lt_date
+
+        # HOD/LOD timing (needs session records from JSON)
+        # Skip for lookup path — not critical for trading decisions
+
+        # P12 scenario (needs level_touches latest day only)
+        if result.get("levels_latest"):
+            result["p12_scenario"] = _classify_p12_scenario(
+                result["levels_latest"], current_price,
+            )
+
+        return result
+
+    # ── Full pipeline path (fallback) ──
+    result["_source"] = "pipeline"
+
     sessions = _load_profiler_sessions(ticker)
     if not sessions:
         log.warning("[profiler] No profiler data for %s", ticker)
@@ -1140,49 +1384,11 @@ def compute_profiler(
     result["target_session"] = tgt_session
     result["target_idx"] = tgt_idx
 
-    # ── Compute predictions for ALL sessions in the chain ──
-    # Use live sessions if provided, otherwise JSON sessions
+    # ── Compute predictions ──
     effective_sessions = live_sessions if live_sessions else result["sessions_latest"]
-
-    # Load daily HOD/LOD for full-day time/price data (same as web UI)
-    daily_hl = _load_daily_hod_lod(ticker)
-
-    # ── Compute predictions for ALL sessions in the chain ──
-    # Use live sessions if provided, otherwise JSON sessions
-    effective_sessions = live_sessions if live_sessions else result["sessions_latest"]
-
-    for sess_name in SESSION_ORDER:
-        # Build context from live or JSON sessions
-        context = _get_context_values_live(
-            sess_name, effective_sessions, result["sessions_prev"],
-        )
-
-        if not context:
-            continue
-
-        # Determine if target session is pending (loose matching)
-        live_status = effective_sessions.get(sess_name, {}).get("status", "")
-        live_code = _STATUS_TO_CODE.get(live_status, 0)
-        target_loose = live_code in (1, 3)  # LT or ST pending
-
-        pred = _compute_prediction_with_fallback(
-            pivot, dates, sess_name, context,
-            target_loose=target_loose,
-            live_status=live_status,
-            daily_hod_lod=daily_hl,
-        )
-        if pred:
-            # Build context description string
-            ctx_parts = []
-            for ctx_spec, sess in CONTEXT_CHAIN.get(sess_name, []):
-                for s_name, status, broken in context:
-                    if s_name == sess:
-                        short = _STATUS_SHORT.get(status, status)
-                        bk = "Broken" if broken else "Held"
-                        prefix = "prev" if ctx_spec.startswith("prev:") else "curr"
-                        ctx_parts.append(f"{prefix} {sess}={short}/{bk}")
-            pred["context"] = " | ".join(ctx_parts)
-            result["predictions"][sess_name] = pred
+    _compute_predictions_pipeline(
+        result, ticker, pivot, dates, effective_sessions,
+    )
 
     # ── Base rates (unconditional, last 500 days) ──
     for sess in SESSION_ORDER:
@@ -1202,7 +1408,7 @@ def compute_profiler(
         # Unconditional hit rates (last 500 days)
         result["level_hit_rates_unconditional"] = _compute_unconditional_level_hits(level_touches, 500)
 
-        # Per-outcome level hit rates — per-day touches (same as web UI's DailyLevels)
+        # Per-outcome level hit rates
         for sess_name, pred in result["predictions"].items():
             dbo = pred.get("dates_by_outcome")
             if dbo and level_touches:
@@ -1210,7 +1416,7 @@ def compute_profiler(
                     level_touches, dbo,
                 )
 
-        # Conditional hit rates for target session (per-day, same as web UI)
+        # Conditional hit rates for target session
         tgt_pred = result["predictions"].get(tgt_session)
         if tgt_pred and tgt_pred.get("matched_dates"):
             result["level_hit_rates_conditional"] = _compute_conditional_level_hits(

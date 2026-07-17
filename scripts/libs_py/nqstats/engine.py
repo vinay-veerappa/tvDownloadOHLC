@@ -10,12 +10,20 @@ from .sessions import extract_all_sessions
 from .classifiers import (
     classify_aln_vectorized, 
     get_broken_status_vectorized, 
-    get_quadrant_status,
     classify_noon_curve_vectorized
 )
 from .ib import calculate_ib_bias
 from .timing import identify_hourly_mode
 from .levels import calculate_daily_levels, calculate_session_opens, calculate_p12_levels, get_session_mids
+
+# Profiler box status computation — delegated to the profiler library.
+# This was previously inlined as get_quadrant_status() in classifiers.py
+# and _calculate_session_broken() in this file.
+from scripts.libs_py.profiler.session_box_status import (
+    compute_box_status,
+    compute_box_broken,
+    compute_prev_day_shifts,
+)
 
 class NQStatsEngine:
     """Core Engine for calculating NQStats based on Unified Bias Algorithm."""
@@ -87,12 +95,12 @@ class NQStatsEngine:
         self.stats['l_vs_a'] = broken_info['london_vs_asia']
         self.stats['p_vs_l'] = broken_info['preny_vs_london']
         
-        # New: Detailed Quadrant Profiler (LT/ST/LF/SF) - SPECIFICALLY FOR THE BOXES
-        quadrants = get_quadrant_status(self.df, self.sessions)
-        self.stats['asiabox_status'] = quadrants['asiabox_status']
-        self.stats['londonbox_status'] = quadrants['londonbox_status']
-        self.stats['ny1box_status'] = quadrants['ny1box_status']
-        self.stats['ny2box_status'] = quadrants['ny2box_status']
+        # Profiler box status (LT/LF/ST/SF) — delegated to profiler library
+        box_status = compute_box_status(self.df, self.sessions)
+        self.stats['asiabox_status'] = box_status['asiabox_status']
+        self.stats['londonbox_status'] = box_status['londonbox_status']
+        self.stats['ny1box_status'] = box_status['ny1box_status']
+        self.stats['ny2box_status'] = box_status['ny2box_status']
 
         
         self.stats['noon_curve'] = classify_noon_curve_vectorized(self.df)
@@ -113,10 +121,10 @@ class NQStatsEngine:
         ], axis=1)
 
         # 5b. Calculate PER-SESSION BROKEN (Reversion to Mid)
-        # Asia Broken: if price touches asia_mid between 02:30 and 16:00
-        # London Broken: if price touches london_mid between 07:30 and 16:00
-        # NY1 Broken: if price touches ny1_mid between 11:30 and 16:00
-        self._calculate_session_broken()
+        # Delegated to profiler.session_box_status
+        broken_df = compute_box_broken(self.df, self.stats)
+        for col in broken_df.columns:
+            self.stats[col] = broken_df[col]
 
         # 6. New Statistical Modules
         ib_info = calculate_ib_bias(self.sessions)
@@ -142,78 +150,15 @@ class NQStatsEngine:
                 self.stats[col] = self.sessions[col]
 
         # 7. Transition Matrix Context (Shifted statuses)
-        # We need to shift across trading days, not across 1m bars.
-        # We do this by resampling the daily status from the sessions dataframe
-        # then mapping back to the 1m timeline.
-        def _get_daily_shift(col: str) -> pd.Series:
-            # Map each 1m bar to its trading date
-            trading_dates = self.sessions.index.date
-            # Create a per-date series of final statuses
-            daily = self.stats[col].groupby(trading_dates).last().shift(1).fillna("None")
-            # Map back to the stats index
-            return daily.reindex(trading_dates).values
-
-        self.stats['prev_ny1_status'] = _get_daily_shift('ny1box_status')
-        self.stats['prev_ny2_status'] = _get_daily_shift('ny2box_status')
-        self.stats['prev_asia_status'] = _get_daily_shift('asiabox_status')
-        
-        # Broken status context for prior days
-        def _get_daily_shift_bool(col: str) -> pd.Series:
-            trading_dates = self.sessions.index.date
-            daily = self.stats[col].groupby(trading_dates).last().shift(1).fillna(False)
-            return daily.reindex(trading_dates).values
-
-        self.stats['prev_ny1_broken'] = _get_daily_shift_bool('ny1box_broken')
-        self.stats['prev_ny2_broken'] = _get_daily_shift_bool('ny2box_broken')
-        self.stats['prev_asia_broken'] = _get_daily_shift_bool('asiabox_broken')
+        # Delegated to profiler.session_box_status
+        prev_df = compute_prev_day_shifts(self.stats)
+        for col in prev_df.columns:
+            self.stats[col] = prev_df[col]
         
         return self.stats
 
-    def _calculate_session_broken(self):
-        """Vectorized calculation of session breakout reversion (broken) status."""
-        # Config matches ProfilerService.apply_filters
-        configs = [
-            ('asiabox',   '02:30', '16:00'), # Broken if touched during London/NY
-            ('londonbox', '07:30', '16:00'), # Broken if touched during NY
-            ('ny1box',    '11:30', '16:00'), # Broken if touched during NY2 (Next Session)
-            ('ny2box',    '18:00', '11:30')  # Broken if touched during Next Asia (Cycle Loop)
-        ]
-        
-        for prefix, start_time, end_time in configs:
-            mid_col = f'{prefix}_mid'
-            if prefix == 'ny2box' and f'prev_{mid_col}' in self.stats.columns:
-                # NY2 is broken in the NEXT cycle (18:00+), so we evaluate the 
-                # NEXT day's prices (Today) against the PREVIOUS day's mid.
-                mid_col = f'prev_{mid_col}'
-
-            if mid_col not in self.stats.columns:
-                self.stats[f'{prefix}_broken'] = False
-                continue
-            
-            mid_vals = self.stats[mid_col]
-            
-            # Mask for the "Post-Session" window
-            et_df = self.df # Already ET from process()
-            post_mask = et_df.between_time(start_time, end_time)
-            
-            # Check for touch: low <= mid <= high
-            # mid_vals.reindex(post_mask.index) correctly aligns the mid (which is daily)
-            # to every minute in the post-session mask.
-            is_broken_mask = (post_mask['low'] <= mid_vals.reindex(post_mask.index)) & \
-                             (post_mask['high'] >= mid_vals.reindex(post_mask.index))
-            
-            # Group by date and see if it was ever broken on that date
-            broken_days = is_broken_mask.groupby(is_broken_mask.index.date).any()
-            
-            # Map back to full stats index
-            # IMPORTANT: For NY2, 'broken_days' on Date T (using prev_mid) 
-            # means Date T-1 was broken. However, our context shift in process() 
-            # handles the mapping for future days. For the raw 'ny2box_broken' 
-            # column, we keep it aligned with the date the price touch occurred.
-            self.stats[f'{prefix}_broken'] = broken_days.reindex(self.stats.index.date).values
-
-        self._processed = True
-        return self.stats
+    # _calculate_session_broken removed — now delegated to
+    # scripts.libs_py.profiler.session_box_status.compute_box_broken()
 
     def get_latest_status(self):
         """Fetch the most recent complete status."""

@@ -1,4 +1,25 @@
 """
+NQStats Profiler Module — DEPRECATED.
+
+⚠️  This module is deprecated as of 2026-07-17.
+    Use the profiler library instead:
+
+        from scripts.libs_py.profiler import ProfilerData, ProfilerFilter, ProfilerStats, ProfilerReport
+        from scripts.libs_py.profiler.engine import SessionBoxEngine
+        from scripts.libs_py.profiler.live_prediction import compute_live_prediction
+
+    The box status computation has been extracted to:
+        scripts/libs_py/profiler/session_box_status.py
+
+    This file is kept for backward compatibility with:
+      - scripts/analysis/analyze_daily_profiler.py
+      - scripts/profiler_manual_test.py
+
+    These callers should be migrated to the new profiler library.
+    No new code should import from this module.
+
+Original docstring follows:
+-------------------------------------------------------------------------------
 NQStats Profiler Module - Statistical Aggregation for Daily Profiling.
 Implements the core logic for filtering and generating conditional probabilities.
 Matches Institutional Web UI standards for Ranges and Level Reach.

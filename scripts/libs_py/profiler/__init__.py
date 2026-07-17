@@ -9,6 +9,15 @@ Usage:
     matches = ProfilerFilter.filter(data, session="Asia", context=context)
     result = ProfilerStats.compute(matches, data)
     ProfilerReport.render(result, ticker="NQ1", session="Asia")
+
+Live prediction (for automated trading):
+    from scripts.libs_py.profiler import compute_live_prediction
+    pred = compute_live_prediction("NQ1")
+
+Lightweight session box engine (replaces NQStatsEngine for profiler-only use):
+    from scripts.libs_py.profiler import SessionBoxEngine
+    engine = SessionBoxEngine.from_live("NQ1")
+    live_sessions = engine.get_live_sessions()
 """
 
 from .loader import ProfilerData
@@ -16,3 +25,5 @@ from .filters import ProfilerFilter
 from .stats import ProfilerStats, compute as compute_stats
 from .report import ProfilerReport
 from .context import get_live_context, get_current_trading_date, get_current_session
+from .engine import SessionBoxEngine
+from .live_prediction import compute_live_prediction, compute_live_prediction_json

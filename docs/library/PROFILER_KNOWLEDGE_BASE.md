@@ -1,8 +1,12 @@
 # Daily Profiler — Knowledge Base
 
 > **Status:** Documented from PineScript source + architecture docs + Boot Camp material
-> **Date:** 2026-07-13
-> **Related:** Profiler module (`scripts/trader/signals/profiler.py`), PineScript (`scripts/indicators-pine/profiler/`)
+> **Date:** 2026-07-17
+> **Related:**
+>   - Profiler signal module (`scripts/trader/signals/profiler.py`)
+>   - Profiler library (`scripts/libs_py/profiler/`)
+>   - PineScript indicator (`scripts/indicators-pine/profiler/`)
+>   - Precomputed lookup tables (`data/derived/{ticker}_profiler_lookup.json`)
 
 ---
 
@@ -252,13 +256,68 @@ Secondary windows: London open (02:30-03:30), NY1 pre-market (07:30-08:30), NY2 
 
 ## 10. Data Architecture
 
-### Source Files (all in `data/`)
-| File | Content | Used For |
-|---|---|---|
-| `{ticker}_profiler.json` | Full session records (20+ years, ~5000 days) | Status, broken, range, times, excursions, historical filtering |
-| `{ticker}_level_touches.json` | Per-day level touch data | Level prices, touch status, touch times, hit rate computation |
-| `{ticker}_asia_predictions.json` | Precomputed: prev_ny1\|prev_ny2 → Asia | Fast lookup (NQ1 only) |
-| `{ticker}_london_predictions.json` | Precomputed: prev_ny2\|curr_asia → London | Fast lookup (NQ1 only) |
+### Source Files
+
+| File | Location | Content | Used For |
+|---|---|---|---|
+| `{ticker}_profiler.json` | `data/` | Full session records (20+ years, ~5000 days) | Status, broken, range, times, excursions, historical filtering |
+| `{ticker}_level_touches.json` | `data/` | Per-day level touch data | Level prices, touch status, touch times, hit rate computation |
+| `{ticker}_daily_hod_lod.json` | `data/` | Per-day HOD/LOD times + prices | Full-day price distribution, HOD/LOD timing |
+| `{ticker}_profiler_lookup.json` | `data/derived/` | **Precomputed prediction lookup table** | Instant O(1) predictions — replaces runtime filtering |
+
+### Precomputed Lookup Table (`data/derived/{ticker}_profiler_lookup.json`)
+
+A compact (~1 MB) JSON file containing precomputed predictions for ALL possible context combinations. Eliminates the need for runtime JSON loading, pivot building, filtering, and stat computation.
+
+**Structure:**
+```json
+{
+  "tables": {
+    "Asia": {
+      "ST|F|SF|F": {
+        "samples": 148,
+        "probabilities": {"LT": 0.351, "LF": 0.243, "ST": 0.209, "SF": 0.196},
+        "price_stats": {"LT": {"h_span": "0.3 to 0.1%", ...}, ...},
+        "hod_lod_times": {"LT": {"hod_mode": "16:00-16:15", ...}, ...},
+        "broken_rates": {"LT": 0.12, ...}
+      },
+      ...
+    },
+    "London": {...},
+    "NY1": {...},
+    "NY2": {...}
+  },
+  "level_hits": {
+    "Asia": {"LT": {"pdh": {"hit_rate": 45.2, "mode_time": "19:45"}, ...}, ...},
+    ...
+  },
+  "base_rates": {
+    "Asia": {"LT": 0.35, "LF": 0.22, "ST": 0.21, "SF": 0.22},
+    ...
+  }
+}
+```
+
+**Context key format:** `status|broken|status|broken|...`
+- Status: `LT`, `LF`, `ST`, `SF`
+- Broken: `T` (True/broken), `F` (False/held)
+- Example: `ST|F|SF|F` = Asia=ST/held, London=SF/held
+
+**Combinatorics:**
+| Session | Context | Max combos | Observed | Min samples |
+|---|---|---|---|---|
+| Asia | prev NY1 + prev NY2 | 4×4=16 | 16 | 137 |
+| London | curr Asia + prev NY2 | 4×4=16 | 16 | 157 |
+| NY1 | curr Asia + curr London | 4×4=16 | 16 | 152 |
+| NY2 | curr Asia + curr London + curr NY1 | 4×4×4=64 | 64 | 18 |
+
+**Hierarchical fallback:** If a full context key has < 30 samples, the lookup drops context dimensions from the front (most distant context first) until enough samples are found. Falls back to base rates if no key has ≥ 30 samples.
+
+**Regeneration:** Run once when data is updated (typically annually):
+```bash
+python -m scripts.libs_py.profiler.generate_profiler_lookup --ticker NQ1
+python -m scripts.libs_py.profiler.generate_profiler_lookup --ticker ES1
+```
 
 ### Profiler JSON Record Structure
 ```json
@@ -299,7 +358,58 @@ Secondary windows: London open (02:30-03:30), NY1 pre-market (07:30-08:30), NY2 
 
 ---
 
-## 11. PineScript Design (for reference)
+## 11. Python Library (`scripts/libs_py/profiler/`)
+
+The profiler library provides a clean, modular Python implementation of the PineScript logic.
+
+### Module Map
+
+| Module | Purpose |
+|---|---|
+| `session_box_status.py` | **Single source of truth** for LT/LF/ST/SF box status computation, broken status, and prev-day shifts. Extracted from `nqstats/classifiers.py` (formerly `get_quadrant_status`). |
+| `engine.py` | `SessionBoxEngine` — lightweight engine that computes ONLY profiler box statuses from live 1m data. Replaces the heavy `NQStatsEngine` for profiler-only use cases. Reads only 3 days of data (~4,300 rows). |
+| `loader.py` | `ProfilerData` — loads and indexes the precomputed profiler JSON for O(1) date/session lookups. |
+| `filters.py` | `ProfilerFilter` — filters session records by cross-session context (same logic as PineScript). |
+| `stats.py` | `ProfilerStats` — computes outcome distributions, timing, range stats, and level hit rates. |
+| `report.py` | `ProfilerReport` — renders profiler statistics as institutional markdown tables. |
+| `context.py` | `get_live_context()` — builds filter context from live storage parquet via `SessionBoxEngine`. |
+| `live_prediction.py` | `compute_live_prediction()` — end-to-end pipeline: live data → box status → lookup prediction → structured output. |
+| `generate_profiler_lookup.py` | Generator script for the precomputed lookup table. |
+
+### Usage: Automated Trading
+
+```python
+from scripts.libs_py.profiler import compute_live_prediction
+
+pred = compute_live_prediction("NQ1")
+# Returns: {ticker, timestamp, target_session, context, predictions, bias, confidence}
+```
+
+### Usage: Narrative Integration
+
+```python
+from scripts.libs_py.profiler import SessionBoxEngine
+from scripts.trader.signals.profiler import compute_profiler
+
+engine = SessionBoxEngine.from_live("NQ1")
+live_sessions = engine.get_live_sessions()
+prev_context = engine.get_prev_context()
+
+result = compute_profiler("NQ1", live_sessions=live_sessions, prev_sessions=prev_context)
+# Automatically uses lookup table if available, falls back to full pipeline
+```
+
+### Performance
+
+| Path | Time | What happens |
+|---|---|---|
+| Lookup (with `live_sessions`) | ~500ms | Parquet read (3 days) + O(1) dict lookup + level_touches.json load |
+| Full pipeline (fallback) | ~800ms | Parquet read + 3 JSON loads (66 MB) + filter loop + stat computation |
+| Prediction computation only | <1ms | O(1) dict access on precomputed lookup table |
+
+---
+
+## 12. PineScript Design (for reference)
 
 ### Architecture
 - `ProfilerIndicator.pine` — main indicator with session boxes, stats table, reference levels, embedded price models
