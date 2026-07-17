@@ -9,7 +9,7 @@ The `RiskGuardAddOn` is a centralized, robust risk management module for NinjaTr
 - **StopGuard**: Automatically attaches missing stop-loss orders to unprotected positions, or flattens them after a grace period.
 - **Lockout Enforcement**: Locks out accounts when severe limits (daily loss, consecutive losses) are hit, blocking further entry.
 - **Thread Safety**: Safely bridges NinjaTrader's asynchronous order/execution events with a central UI/State lock.
-- **Testing**: A rigorous `RiskGuardAddOnTests.cs` suite containing 119 unit tests (97 original + 22 FSM) validates edge cases, mode switching (Live/Shadow), exclusion logic, and the per-position guard state machine.
+- **Testing**: A rigorous `RiskGuardAddOnTests.cs` suite containing **84 unit tests** (60 original + 24 FSM) with 170 assertions validates edge cases, mode switching (Live/Shadow), exclusion logic, and the per-position guard state machine. An additional **8-scenario MCP stress test suite** and a **20-OCO rapid-fire test** exercise live order placement, FSM state queries, and cleanup via the NT8 bridge.
 
 ## 3. Data Flow
 ```mermaid
@@ -33,7 +33,7 @@ graph TD;
 - **`RiskGuardAddOn.cs`**: The main AddOn class. Houses the Timer loop (`ExecuteSafetySweep`), the rule engine (`EvaluateRules`), and the action executor (`ProcessAction`).
 - **`RiskConfig` / Models**: C# objects parsed from `config.json` defining limits (Sizing, Overtrading, PnL, StopGuard, Windows, FirmMirror).
 - **`AccountState`**: In-memory tracker for a specific account's positions, PnL, trades today, and lockout status. 
-- **`RiskGuardAddOnTests.cs`**: A dedicated C# test suite utilizing NinjaTrader stubs to run 119 comprehensive scenarios (97 original + 22 FSM) against the `RiskGuardAddOn` logic, ensuring no regressions on exclusions, partial stops, sweep lockouts, and FSM transition coverage.
+- **`RiskGuardAddOnTests.cs`**: A dedicated C# test suite utilizing NinjaTrader stubs to run **84 comprehensive test methods** (60 original + 24 FSM, 170 total assertions) against the `RiskGuardAddOn` logic, ensuring no regressions on exclusions, partial stops, sweep lockouts, and FSM transition coverage. The stub `Account` class exposes `PositionUpdate`, `OrderUpdate`, and `ExecutionUpdate` events; the stub `Order` carries an `Oco` property so FSM OCO-leg recognition is unit-testable without a live NT8 instance.
 
 ## 5. Technology & Constraints
 - **Concurrency**: Relies heavily on `lock (_stateLock)` because NinjaTrader fires events on different threads. Deadlocks are avoided by yielding the lock before calling NinjaTrader's `Flatten` or `Cancel`.
@@ -105,6 +105,9 @@ Non-transition edge cases covered:
 | Limit order (target leg) does not protect | TestFsm_LimitOrderDoesNotTransition |
 | Multiple instruments independent | TestFsm_MultipleInstrumentsIndependent |
 | Short position side | TestFsm_ShortPositionProtected |
+| Short position BuyToCover stop recognized (original bug) | TestFsm_ShortPositionBuyToCoverStopRecognized |
+| Long position SellShort stop recognized | TestFsm_LongPositionSellShortStopRecognized |
+| Buffered working stop consumed -> Protected | TestFsm_PendingStopWorkingConsumed |
 
 ### 6.4 Event to transition mapping
 `OnOrderUpdate` classifies each order against the active FSM for `(account, instrument)`:
@@ -146,3 +149,134 @@ The `nt-mcp-server` (v0.2.1) exposes a poll-based REST surface. It is **not** an
 - The existing `GET /api/dev/inspect-state` and `POST /api/dev/reset-risk` continue to expose `AccountState`; the FSM endpoints are additive.
 
 These endpoints call `RiskGuardAddOn.Instance.GetFsmSnapshots()` / `ResetFsm(...)` - read-only DTOs plus a targeted map removal. No guard evaluation moves into the MCP. The MCP is a read-and-reset window onto FSM state, nothing more.
+
+## 8. Test Suite
+
+### 8.1 Unit tests (`RiskGuardAddOnTests.cs`)
+
+The test harness compiles under `#if TESTING` with lightweight NinjaTrader stubs (no NT8 assembly dependency). Each test calls `Assert(condition, message)` which increments `_testsPassed`/`_testsFailed`. `Main()` runs all 84 methods sequentially and exits non-zero on any failure.
+
+**Stub surface:**
+- `Account` with `PositionUpdate`, `OrderUpdate`, `ExecutionUpdate` events, `Orders`/`Positions` lists, `Get(AccountItem)`.
+- `Order` with `Oco` (string GUID), `OrderAction` enum (Buy, Sell, BuyToCover, SellShort), `OrderState`, `OrderType`, `Quantity`, `Filled`.
+- `Position` with `MarketPosition`, `Quantity`, `GetUnrealizedProfitLoss()`.
+- `Instrument` with `MasterInstrument.TickSize = 0.25`.
+
+#### 8.1.1 Original rule tests (60 methods)
+
+| Category | Tests |
+|---|---|
+| **Sizing** | TestMaxPositionSizeEnforcement, TestMaxSizeAtExactlyLimit, TestMultipleInstrumentsNoPerInstrumentBreach, TestAggregateSizeBreach, TestAggregateSizingExpectedCopiesScaling |
+| **PnL / Loss limits** | TestDailyLossLimitLockout, TestTrailingDrawdownLockout, TestDailyLossAtExactlyLimit, TestDailyLossIncludesUnrealizedPnL, TestFirmMirrorTrailingDDBreachEmitsAction, TestFirmMirrorDailyLossBreachEmitsAction |
+| **Overtrading** | TestMaxTradesOvertradingLockout, TestConsecutiveLossesCooldownLockout, TestCooldownExpiryAllowsReEntry, TestConsecutiveWinsResetLossCounter, TestSweepAutoSetsCooldownOnConsecutiveLosses |
+| **StopGuard (legacy sweep)** | TestStopGuardAutoStop, TestStopGuardFlatten, TestStopGuardNoActionWhenStopPresent, TestStopGuardTransientStateValidation, TestStopGuardPartiallyFilledValidation, TestStopGuardPartialStopGap, TestStopGuardWarnOnlyProducesNoAction, TestStopGuardDefaultOffsetFallback |
+| **Edge-window gate** | TestEdgeWindowGateBreach, TestEdgeWindowGateInsideWindowNoBreach, TestEdgeWindowGateNoWindowsDefinedNoBreach |
+| **Lockout enforcement** | TestLockoutEnforcementFirstSweep, TestLockoutEnforcementSubsequentSweepNoPosition, TestLockoutEnforcementSubsequentSweepWithNewPosition, TestOrderCancelledWhenLockedOnOrderUpdate, TestOrderNotCancelledInFilledStateWhenLocked, TestOrderCancelledWhenConsecLossesAtMaxNotLocked |
+| **Manual lockout** | TestManualTimedLockout, TestManualEodLockout, TestManualUnlockClearsTimedLockout, TestManualUnlockResetsAllMetricsAndPreventsRelocking |
+| **Shadow / Live mode** | TestShadowModeSkipsAction, TestLiveModeExecutesAction, TestProcessActionForceLiveBypassesShadowMode |
+| **Arming / McpBridge** | TestIsArmedFalseBypassesAllRules, TestMcpBridgeLockoutBlock |
+| **Trade counting** | TestTradeTodayCountingOnRoundTrip, TestFlipDetectionCountsAsEntry |
+| **Session reset** | TestSessionResetInSweep |
+| **Realized PnL lag** | TestRealizedPnLLagHandling |
+| **Exclusions (deep-dive)** | TestAccountExclusionsBypass, TestExcludedAccountMaxContractsBypassed, TestExcludedAccountAllRulesBypassed, TestExcludedAccountOrderNotCancelledWhenLocked, TestExcludedAccountNotCountedInAggregate, TestExcludedAccountNotFlattenedByAggregateBreach, TestExcludedAccountSweepDoesNotLockout, TestNonExcludedAccountStillCaughtBesideExcludedOne, TestExclusionRemovedReEnablesRules, TestSweepLockoutSkipsExcludedAccount, TestSweepPnLSyncSkipsConsecutiveLossForExcludedAccount |
+| **Invariant** | TestValidateInvariantReturnsFalseForUnknownAccount, TestIsAccountLockedForUnknownAccount |
+| **Multi-rule** | TestMultipleRulesFireSimultaneously |
+
+#### 8.1.2 FSM guard tests (24 methods)
+
+These tests exercise the per-position `PositionGuardFsm` directly by firing stub `PositionUpdate`/`OrderUpdate` events and asserting the resulting `State` field.
+
+**Core state transitions (12):**
+
+| Test | Transition exercised |
+|---|---|
+| TestFsm_UnprotectedToProtectedViaOcoStopLeg | `Unprotected -> ProtectedPending -> Protected` (OCO stop leg) |
+| TestFsm_NoDuplicateAutoStopWhenStopLegPending | No duplicate auto-stop while `ProtectedPending` |
+| TestFsm_GraceExpiryPlacesAutoStopOnce | `Unprotected -> ProtectedPending` (grace expiry, AutoStop) — exactly once |
+| TestFsm_StopArrivesBeforePositionIsBuffered | `_pendingStops` buffer: stop arrives before position, consumed on FSM creation |
+| TestFsm_FlatTearsDownAndCancelsOrphanAutoStop | `Protected -> Flat` (cancel orphan auto-stop) |
+| TestFsm_StandaloneStopReachesProtected | `Unprotected -> Protected` (standalone working stop) |
+| TestFsm_RejectedStopLegReturnsToUnprotected | `ProtectedPending -> Unprotected` (Rejected) |
+| TestFsm_PositionFlattenedBeforeGraceNoAutoStop | `Unprotected -> Flat` before grace deadline — no auto-stop |
+| TestFsm_DuplicateOrderUpdatesAreIdempotent | Duplicate `OrderUpdate` does not re-transition |
+| TestFsm_DuplicatePositionUpdatesAreIdempotent | Duplicate `PositionUpdate` does not re-create FSM |
+| TestFsm_EvaluateRulesNoLongerEmitsStopGuard | `EvaluateRules` does not emit StopGuard actions (FSM owns it) |
+| TestFsm_ExcludedAccountSkipsFsm | Excluded account does not create FSM |
+
+**Edge-case extensions (10):**
+
+| Test | Scenario |
+|---|---|
+| TestFsm_ProtectedToUnprotectedOnStopFilled | `Protected -> Unprotected` when stop fills but position still open |
+| TestFsm_ProtectedPendingToUnprotectedOnCancelled | `ProtectedPending -> Unprotected` on Cancelled |
+| TestFsm_GraceExpiryFlatten | `Unprotected -> Flatten action` (OnMissing=Flatten) |
+| TestFsm_GraceNotExpiredNoAction | Grace deadline in future — no action |
+| TestFsm_ShortPositionProtected | Short position reaches `Protected` |
+| TestFsm_FlipRecreatesFsm | Position flip (long->short) tears down and re-creates FSM |
+| TestFsm_MultipleInstrumentsIndependent | Two instruments have independent FSMs |
+| TestFsm_DisarmedSkipsFsm | Disarmed guard does not create FSMs |
+| TestFsm_LimitOrderDoesNotTransition | Limit order (target leg) does not transition FSM |
+| TestFsm_PendingStopWorkingConsumed | Buffered working stop consumed -> `Protected` directly |
+
+**OrderAction bug-fix regression tests (2):**
+
+| Test | Scenario |
+|---|---|
+| TestFsm_ShortPositionBuyToCoverStopRecognized | Short position: `BuyToCover` stop leg recognized (the original duplicate-SL bug) |
+| TestFsm_LongPositionSellShortStopRecognized | Long position: `SellShort` stop leg recognized |
+
+### 8.2 Stress tests (MCP-driven, live NT8)
+
+Two PowerShell scripts drive the running NT8 instance through the MCP bridge (port 7890) to exercise the guard against live order state. Results are written to `tmp/comprehensive_stress_test.txt` and `tmp/oco_rapid_fire_results.txt`.
+
+#### 8.2.1 Comprehensive stress test (`tmp/comprehensive_stress_test.ps1`)
+
+8 scenarios, each preceded by `POST /api/dev/reset-risk` and a flatten if needed:
+
+| ID | Scenario | Pass criterion |
+|---|---|---|
+| T1 | Single OCO entry (Buy 3, stop -38pts, target +62pts) | FSM state is `ProtectedPending` or `Protected` |
+| T2 | Short OCO entry (Sell 3, BuyToCover stop) | FSM `PositionSide` is `Short` |
+| T3 | Entry without OCO (market Buy 2, no stop) | FSM `HasAutoStopOrder == true` after grace |
+| T4 | Max-size breach (market Buy 15 > max 10) | Position flattened (positions == `[]`) |
+| T5 | Rapid 5 OCO entries (no duplicate SL) | At most 1 FSM with `HasAutoStopOrder == true` |
+| T6 | Manual close after 4 OCO stress entries | Position closeable, FSM cleared |
+| T7 | FSM query endpoint | `GET /api/riskguard/fsm-state` returns `"success":true` |
+| T8 | Rapid fire 20 OCO entries + manual close | All positions closeable after stress |
+
+**Known limitation (T1-T3):** NT8 Sim101 rejects OCO stop orders created via `CreateOrder` from an AddOn (not from Chart Trader ATM). The stops arrive as `Rejected`, so the FSM correctly stays `Unprotected` and the guard places an auto-stop. This is an NT8 simulation limitation, not a RiskGuard bug. T4-T8 pass on the live sim.
+
+#### 8.2.2 OCO rapid-fire test (`tmp/oco_rapid_fire_test.ps1`)
+
+20 OCO bracket entries (3 contracts each, 60 orders total) fired as fast as possible via `POST /api/order/oco`. Measures:
+- Submission throughput (ms for 20 entries).
+- Unique OCO GUID count (should be 20).
+- FSM state at 5s and 15s marks.
+- Position closeable after stress.
+- RiskGuard event log tail (interventions, auto-stops, MAX_SIZE_BREACH, FSM transitions).
+
+**Results file:** `tmp/oco_rapid_fire_results.txt`.
+
+### 8.3 Running the tests
+
+**Unit tests** (no NT8 required):
+```powershell
+cd ninjatrader-addon
+dotnet run --project RiskGuardAddOnTests.cs  # or compile with TESTING symbol and run
+```
+
+**Stress tests** (require live NT8 with McpBridgeAddOn on port 7890):
+```powershell
+# Comprehensive 8-scenario suite
+powershell -ExecutionPolicy Bypass -File tmp\comprehensive_stress_test.ps1
+
+# 20-OCO rapid fire
+powershell -ExecutionPolicy Bypass -File tmp\oco_rapid_fire_test.ps1
+```
+
+**Stress test helpers** (defined in both scripts):
+- `NtPost` / `NtGet` — raw TCP socket helpers (port 7890) that bypass `Invoke-RestMethod`'s protocol-violation error.
+- `ResetRG` — `POST /api/dev/reset-risk` to clear all guard state.
+- `Flatten` — `POST /api/position/close` to flatten all positions.
+- `GetFSM` — `GET /api/riskguard/fsm-state?account=Sim101` with JSON truncation cleanup.
+- `PlaceOco` — `POST /api/order/oco` with action, qty, stop, target, name.

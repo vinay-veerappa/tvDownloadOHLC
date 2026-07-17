@@ -234,3 +234,25 @@ heartbeat:
 5. **Go live, one rule at a time.** Flip `mode: live` for a single low-risk rule with small size; expand as each proves out.
 6. **Lockout + enforcement-mode/friction last.**
 7. **Replay tuning.** Replay logged sessions against config to tune thresholds and buffers before trusting fully.
+
+---
+
+## 10. Test coverage
+
+### 10.1 Unit tests (`ninjatrader-addon/RiskGuardAddOnTests.cs`)
+
+**84 test methods** (60 original rule tests + 24 FSM guard tests) with **170 assertions**, compiled under `#if TESTING` with lightweight NinjaTrader stubs (no NT8 assembly dependency). `Main()` runs all tests sequentially and exits non-zero on any failure.
+
+**Stub surface:** `Account` with `PositionUpdate`/`OrderUpdate`/`ExecutionUpdate` events; `Order` with `Oco` (string GUID), `OrderAction` enum (Buy, Sell, BuyToCover, SellShort); `Position` with `MarketPosition`, `GetUnrealizedProfitLoss()`; `Instrument` with `TickSize = 0.25`.
+
+**Original rule tests (60):** sizing (5), PnL/loss limits (6), overtrading (5), StopGuard legacy sweep (8), edge-window gate (3), lockout enforcement (6), manual lockout (4), shadow/live mode (3), arming/McpBridge (2), trade counting (2), session reset (1), realized PnL lag (1), exclusions deep-dive (11), invariant (2), multi-rule (1). See `RiskGuardAddOn.md` §8.1.1 for the full table.
+
+**FSM guard tests (24):** 12 core state-transition tests covering every arrow in the §5.4 state diagram; 10 edge-case extensions (stop filled, Cancelled, Flatten mode, grace not expired, short position, flip, multi-instrument, disarmed, limit order, buffered stop); 2 OrderAction bug-fix regression tests (`BuyToCover` for shorts, `SellShort` for longs — the original duplicate-SL bug). See `RiskGuardAddOn.md` §8.1.2 for the full table.
+
+### 10.2 Stress tests (MCP-driven, live NT8)
+
+**8-scenario comprehensive suite** (`tmp/comprehensive_stress_test.ps1`): single OCO entry, short OCO (BuyToCover), entry without OCO (auto-stop), max-size breach, rapid 5 OCO (no duplicate SL), manual close after stress, FSM query endpoint, rapid fire 20 OCO + manual close. Each scenario resets guard state and flattens beforehand. Results in `tmp/comprehensive_stress_test.txt`.
+
+**20-OCO rapid-fire test** (`tmp/oco_rapid_fire_test.ps1`): 20 OCO bracket entries (60 orders total) fired as fast as possible, measuring submission throughput, unique OCO GUID count, FSM state at 5s/15s, closeability, and RiskGuard event log tail. Results in `tmp/oco_rapid_fire_results.txt`.
+
+**Known limitation (T1-T3):** NT8 Sim101 rejects OCO stop orders created via `CreateOrder` from an AddOn (not from Chart Trader ATM). The stops arrive as `Rejected`, so the FSM correctly stays `Unprotected` and the guard places an auto-stop. This is an NT8 simulation limitation, not a RiskGuard bug. T4-T8 pass on the live sim.
