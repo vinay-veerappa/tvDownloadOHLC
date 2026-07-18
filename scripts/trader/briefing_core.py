@@ -3491,14 +3491,18 @@ def build_ticker_cheat_sheet(
     # The signature in briefing_core is `_format_key_levels_hierarchy(ticker_label, levels, aln_data, spot)`
     sections.append(_format_key_levels_hierarchy(base_label, ticker_gex, aln_data, ticker_spot))
 
-    # Data freshness
-    try:
-        freshness = check_all()
-        stale = [f for f in freshness if f.is_stale]
-        if stale:
-            sections.append("== DATA FRESHNESS ==\n" + "\n".join(f"⚠ {s.source}: {s.days_stale}d stale (last {s.last_date})" for s in stale))
-    except Exception as e:
-        log.warning("[cheat_sheet] Freshness check failed: %s", e)
+    # Data freshness — omitted from cheat sheet.
+    # Herman stats and classification parquets are historical studies (not
+    # per-day data). Their probabilities are frozen in narrative_stats.yaml
+    # and live session detection reads 1m parquet directly. Showing a
+    # "stale" warning misleads the LLM into questioning valid historical data.
+    # try:
+    #     freshness = check_all()
+    #     stale = [f for f in freshness if f.is_stale]
+    #     if stale:
+    #         sections.append("== DATA FRESHNESS ==\n" + "\n".join(f"⚠ {s.source}: {s.days_stale}d stale (last {s.last_date})" for s in stale))
+    # except Exception as e:
+    #     log.warning("[cheat_sheet] Freshness check failed: %s", e)
 
     # VIX/VVIX volatility regime
     try:
