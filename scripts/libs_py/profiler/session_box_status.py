@@ -55,19 +55,36 @@ BOX_SESSION_MAP = {
 }
 
 # Evaluation windows: when status is determined (after classification window closes)
+# Evaluation windows: when status is determined (after classification window closes)
+# End times are EXCLUSIVE (half-open [start, end)) — per PineScript time() semantics.
+# Full session windows from PROFILER_KNOWLEDGE_BASE.md:
+#   Asia    19:30-02:29  → end 02:30
+#   London  03:30-07:29  → end 07:30
+#   NY1     08:30-11:29  → end 11:30
+#   NY2     12:30-15:59  → end 16:00
 EVAL_CONFIG: Dict[str, Dict[str, str]] = {
     "asiabox":   {"start": "19:30", "end": "02:30"},
     "londonbox": {"start": "03:30", "end": "07:30"},
-    "ny1box":    {"start": "08:30", "end": "11:00"},
+    "ny1box":    {"start": "08:30", "end": "11:30"},
     "ny2box":    {"start": "12:30", "end": "16:00"},
 }
 
-# Broken windows: when mid reversion is checked
+# Broken windows: when mid reversion is checked.
+# Per PROFILER_KNOWLEDGE_BASE.md §3, broken windows for Asia/London/NY1
+# extend to 17:00 ET (end of trading day). NY2 is the exception: it can
+# only be broken when the NEXT Asia session starts (18:00), because the
+# broken check begins strictly after the next session begins — and NY2
+# is the last session of the day.
+#   Asia:    02:30 → 17:00 (starts when London begins)
+#   London:  07:30 → 17:00 (starts when NY1 begins)
+#   NY1:     11:30 → 17:00 (starts when NY2 begins)
+#   NY2:     18:00 → 11:30 (next day — starts when next Asia begins,
+#                           checked through next NY1 start)
 BROKEN_CONFIG: list[tuple[str, str, str]] = [
-    ("asiabox",   "02:30", "16:00"),   # Broken if touched during London/NY
-    ("londonbox", "07:30", "16:00"),   # Broken if touched during NY
-    ("ny1box",    "11:30", "16:00"),   # Broken if touched during NY2
-    ("ny2box",    "18:00", "11:30"),   # Broken if touched during Next Asia
+    ("asiabox",   "02:30", "17:00"),   # Broken if touched during London/NY
+    ("londonbox", "07:30", "17:00"),   # Broken if touched during NY
+    ("ny1box",    "11:30", "17:00"),   # Broken if touched during NY2 + EOD
+    ("ny2box",    "18:00", "11:30"),   # Broken if touched during Next Asia/London
 ]
 
 # Short code → full status string mapping
@@ -185,6 +202,7 @@ def compute_box_status(
 def compute_box_broken(
     df_1m: pd.DataFrame,
     box_status_df: pd.DataFrame,
+    boxes_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Compute per-session "broken" (mid reversion) status.
 
@@ -194,7 +212,9 @@ def compute_box_broken(
     Args:
         df_1m: 1-minute OHLC DataFrame (already ET-localized).
         box_status_df: DataFrame from compute_box_status() or NQStatsEngine.stats.
-                       Must have {box}_mid columns.
+        boxes_df: DataFrame with {box}_mid columns (from extract_all_sessions).
+                  If None, falls back to looking for mid columns in box_status_df
+                  (for backward compat with NQStatsEngine which merges them).
 
     Returns:
         DataFrame with {box}_broken boolean columns, indexed identically to df_1m.
@@ -202,18 +222,25 @@ def compute_box_broken(
     et_df = df_1m.tz_convert("US/Eastern") if df_1m.index.tz else df_1m
     results = pd.DataFrame(index=df_1m.index)
 
+    # The mid columns live in the boxes DataFrame (from extract_all_sessions),
+    # not in the status DataFrame. NQStatsEngine merges them into .stats, but
+    # SessionBoxEngine keeps them separate. Accept either source.
+    mid_source = boxes_df if boxes_df is not None else box_status_df
+
     for prefix, start_time, end_time in BROKEN_CONFIG:
         mid_col = f"{prefix}_mid"
 
-        # NY2 broken uses previous day's mid (checked in next cycle)
-        if prefix == "ny2box" and f"prev_{mid_col}" in box_status_df.columns:
+        # NY2 broken window wraps overnight (18:00 → 11:30 next day), so it
+        # checks the PREVIOUS day's NY2 mid during the current day's
+        # Asia/London sessions.
+        if prefix == "ny2box" and f"prev_{mid_col}" in mid_source.columns:
             mid_col = f"prev_{mid_col}"
 
-        if mid_col not in box_status_df.columns:
+        if mid_col not in mid_source.columns:
             results[f"{prefix}_broken"] = False
             continue
 
-        mid_vals = box_status_df[mid_col]
+        mid_vals = mid_source[mid_col]
 
         # Post-session window mask
         post_mask = et_df.between_time(start_time, end_time)

@@ -29,7 +29,7 @@ The Profiler tracks 4 time-based "Session Boxes" and classifies how price intera
 | **Asia** | 18:00-19:29 | 19:30-02:29 | 02:30-17:00 |
 | **London** | 02:30-03:29 | 03:30-07:29 | 07:30-17:00 |
 | **NY1** | 07:30-08:29 | 08:30-11:29 | 11:30-17:00 |
-| **NY2** | 11:30-12:29 | 12:30-15:59 | 16:00-17:00 |
+| **NY2** | 11:30-12:29 | 12:30-15:59 | 18:00-11:30 (next day) |
 
 - **Mid** = `(Session High + Session Low) / 2`
 
@@ -89,7 +89,8 @@ The "Broken" status checks if price **retraces to the session midpoint** during 
 - Asia: 02:30 → 17:00 (starts when London session begins)
 - London: 07:30 → 17:00 (starts when NY1 begins)
 - NY1: 11:30 → 17:00 (starts when NY2 begins)
-- NY2: 16:00 → 17:00 (brief window at end of day)
+- NY2: 18:00 → 11:30 (next day — starts when next Asia begins; the only
+  session whose broken window wraps overnight, since it's the last session)
 
 ### `f_check_broken` Logic (from PineScript)
 ```

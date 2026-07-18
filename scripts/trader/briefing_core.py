@@ -3429,10 +3429,19 @@ def build_ticker_cheat_sheet(
         log.warning("[cheat_sheet] Herman Pre-NY sweep failed for %s: %s", ticker, e)
 
     # Daily Profiler (session outcomes, conditional predictions, reference levels)
+    # Live sessions come from SessionBoxEngine (reads live 1m parquet); the
+    # lookup table provides historical conditional statistics. Without
+    # live_sessions the profiler returns no data.
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_block
+        from scripts.trader.signals.intraday_blocks import _get_live_profiler_sessions, _get_es_live_profiler_sessions
         es_spot = float(es_ctx.get("close", 0)) if es_ctx else 0.0
-        sections.append(build_dual_profiler_block(ticker, "ES1", ticker_spot, es_spot, target_date))
+        _live, _prev = _get_live_profiler_sessions(ticker)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
+        sections.append(build_dual_profiler_block(
+            ticker, "ES1", ticker_spot, es_spot, target_date, now_et,
+            live_sessions=_live, es_live_sessions=_es_live,
+        ))
     except Exception as e:
         log.warning("[cheat_sheet] Profiler block failed for %s: %s", ticker, e)
 

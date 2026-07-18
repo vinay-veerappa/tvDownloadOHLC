@@ -185,7 +185,8 @@ class SessionBoxEngine:
         self.status = compute_box_status(df, self.boxes)
 
         # 3. Compute broken status (mid reversion)
-        self.broken = compute_box_broken(df, self.status)
+        # Pass boxes_df because the mid columns live there, not in status.
+        self.broken = compute_box_broken(df, self.status, self.boxes)
 
         # 4. Compute prev-day shifts
         self.prev = compute_prev_day_shifts(self.status)

@@ -75,5 +75,5 @@ python scripts/trader/run_daily_prep.py --tickers NQ1
 
 ### Maintenance Tasks
 - **Update Classifications**: `python scripts/derived/precompute_daily_classification.py` (Manual).
-- **Refresh Profiler (Session Data)**: `python scripts/derived/precompute_profiler.py --days 5` (Incremental).
+- **Refresh Profiler Lookup Table**: `python -m scripts.libs_py.profiler.generate_profiler_lookup --ticker NQ1` (regenerates `data/derived/{ticker}_profiler_lookup.json` from the raw profiler JSON + daily HOD/LOD + level touches). The raw `{ticker}_profiler.json` itself is refreshed by `python scripts/derived/precompute_profiler.py --days 5` (Incremental).
 - **Bridge Gaps**: Run `stream_chart.py` to ensure local storage matches Schwab historical data.

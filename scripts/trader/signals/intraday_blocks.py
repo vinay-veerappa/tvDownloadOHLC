@@ -33,6 +33,41 @@ except ImportError:
     ET = None
 
 
+def _get_live_profiler_sessions(ticker: str) -> tuple[dict | None, dict | None]:
+    """Get live session box statuses + prev-day context for the profiler.
+
+    Uses ``SessionBoxEngine.from_live`` which reads the live 1m parquet and
+    classifies the current session box statuses (status + broken). This is
+    the canonical way to get today's profiler filter signature — the
+    precomputed lookup table provides the historical conditional statistics.
+
+    Returns (live_sessions, prev_sessions) or (None, None) on failure.
+    """
+    try:
+        from scripts.libs_py.profiler import SessionBoxEngine
+        engine = SessionBoxEngine.from_live(ticker)
+        live = engine.get_live_sessions()
+        prev_ctx = engine.get_prev_context()
+        prev_sessions: dict[str, dict] = {}
+        for key, val in (prev_ctx or {}).items():
+            if key.startswith("prev_") and key.endswith("_status"):
+                sess = key[5:-7]  # "prev_ny1_status" -> "ny1"
+                sess_name = {"ny1": "NY1", "ny2": "NY2", "asia": "Asia", "london": "London"}.get(sess, sess.upper())
+                prev_sessions[sess_name] = {
+                    "status": val,
+                    "broken": (prev_ctx or {}).get(f"prev_{sess}_broken", False),
+                }
+        return live, (prev_sessions if prev_sessions else None)
+    except Exception as e:
+        log.warning("[profiler:live] SessionBoxEngine failed for %s: %s", ticker, e)
+        return None, None
+
+
+def _get_es_live_profiler_sessions() -> tuple[dict | None, dict | None]:
+    """Get live profiler sessions for ES1 (for the dual-ticker profiler block)."""
+    return _get_live_profiler_sessions("ES1")
+
+
 def _format_session_header(session: str, now_et: Any, ticker: str) -> str:
     """Build the == CURRENT SESSION == header block."""
     base_label = ticker.replace("1", "").upper()
@@ -1061,8 +1096,11 @@ def build_asia_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
+        _live, _prev = _get_live_profiler_sessions(ticker)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date, now_et,
+            live_sessions=_live, es_live_sessions=_es_live,
         ))
     except Exception as e:
         log.warning("[asia:profiler] Failed: %s", e)
@@ -1228,8 +1266,11 @@ def build_london_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
+        _live, _prev = _get_live_profiler_sessions(ticker)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
+            live_sessions=_live, es_live_sessions=_es_live,
         ))
     except Exception as e:
         log.warning("[london:profiler] Failed: %s", e)
@@ -1415,8 +1456,11 @@ def build_ny_am_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
+        _live, _prev = _get_live_profiler_sessions(ticker)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
+            live_sessions=_live, es_live_sessions=_es_live,
         ))
     except Exception as e:
         log.warning("[ny_am:profiler] Failed: %s", e)
@@ -1526,8 +1570,11 @@ def build_ny_lunch_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
+        _live, _prev = _get_live_profiler_sessions(ticker)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
+            live_sessions=_live, es_live_sessions=_es_live,
         ))
     except Exception as e:
         log.warning("[ny_lunch:profiler] Failed: %s", e)
@@ -1702,8 +1749,11 @@ def build_ny_pm_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
+        _live, _prev = _get_live_profiler_sessions(ticker)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
+            live_sessions=_live, es_live_sessions=_es_live,
         ))
     except Exception as e:
         log.warning("[ny_pm:profiler] Failed: %s", e)
