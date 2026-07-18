@@ -227,14 +227,15 @@ class ProfilerValidator(FeatureValidator):
             lk_olh = lk_per_outcome_lh.get(outcome, {})
             if not lk_olh:
                 continue
-            for level_key, wv in lk_olh.items():
-                lv = local_olh.get(level_key, 0)
-                # HIT_KEYS use hit_ prefix; lookup table uses level names directly
-                # local_olh is keyed by HIT_KEYS (hit_pdh), lookup uses level names (pdh)
-                # Map: lookup level name -> HIT_KEY
-                level_to_hit = {v: k for k, v in HIT_TO_LEVEL.items()}
+            level_to_hit = {v: k for k, v in HIT_TO_LEVEL.items()}
+            for level_key, lk_val in lk_olh.items():
                 hit_key = level_to_hit.get(level_key, level_key)
                 lv = local_olh.get(hit_key, 0)
+                # Lookup table now stores {hit_rate, mode_time, median_time} dicts
+                if isinstance(lk_val, dict):
+                    wv = lk_val.get("hit_rate", 0)
+                else:
+                    wv = lk_val  # Legacy flat float format
                 fc = comparator.compare(
                     f"per_outcome_level_hit.{outcome}.{level_key}", lv, wv, tolerance=0.1
                 )

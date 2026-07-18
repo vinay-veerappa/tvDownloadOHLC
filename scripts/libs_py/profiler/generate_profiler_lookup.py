@@ -188,11 +188,14 @@ def _compute_session_level_hits_from_columnar(
     columnar: dict,
     dates: list[str],
     target_session: str,
-) -> dict[str, float]:
-    """Compute per-session level hit rates from columnar data.
+) -> dict[str, dict]:
+    """Compute per-session level hit rates and timing from columnar data.
 
     Replicates the WebUI's DailyLevels component logic:
     hits.{targetSession}[dateIdx] != -1 for each matched date.
+    Also computes mode and median hit times (15-min buckets).
+
+    Returns dict of {level_key: {hit_rate, mode_time, median_time}}.
     """
     if not dates or not columnar:
         return {}
@@ -201,6 +204,43 @@ def _compute_session_level_hits_from_columnar(
     webui_levels = columnar.get("levels", {})
     date_idx_map = {d: i for i, d in enumerate(webui_dates)}
 
+    def _mins_to_str(mins):
+        """Convert minutes-from-midnight to HH:MM string."""
+        if mins is None or mins < 0:
+            return None
+        h, m = divmod(int(mins), 60)
+        return f"{h:02d}:{m:02d}"
+
+    def _bucket_time(t_str):
+        """Round HH:MM to 15-min bucket."""
+        if not t_str:
+            return None
+        try:
+            h, m = map(int, t_str.split(":"))
+            return f"{h:02d}:{(m // 15) * 15:02d}"
+        except Exception:
+            return None
+
+    def _time_mode(times):
+        """Find mode 15-min bucket from HH:MM times. Sorted tie-breaking."""
+        buckets: dict[str, int] = defaultdict(int)
+        for t in times:
+            b = _bucket_time(t)
+            if b:
+                buckets[b] += 1
+        if not buckets:
+            return None
+        max_count = max(buckets.values())
+        candidates = sorted([k for k, v in buckets.items() if v == max_count])
+        return candidates[0]
+
+    def _time_median(times):
+        """Find median 15-min bucket from HH:MM times."""
+        buckets = sorted([_bucket_time(t) for t in times if _bucket_time(t)])
+        if not buckets:
+            return None
+        return buckets[len(buckets) // 2]
+
     result = {}
     for level_key, level_data in webui_levels.items():
         session_hits = level_data.get("hits", {}).get(target_session, [])
@@ -208,6 +248,7 @@ def _compute_session_level_hits_from_columnar(
             continue
         touched = 0
         counted = 0
+        hit_times = []
         for d in dates:
             idx = date_idx_map.get(d)
             if idx is None or idx >= len(session_hits):
@@ -215,8 +256,15 @@ def _compute_session_level_hits_from_columnar(
             counted += 1
             if session_hits[idx] != -1:
                 touched += 1
+                t_str = _mins_to_str(session_hits[idx])
+                if t_str:
+                    hit_times.append(t_str)
         if counted > 0:
-            result[level_key] = round(touched / counted * 100, 1)
+            result[level_key] = {
+                "hit_rate": round(touched / counted * 100, 1),
+                "mode_time": _time_mode(hit_times),
+                "median_time": _time_median(hit_times),
+            }
     return result
 
 
