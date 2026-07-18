@@ -732,6 +732,11 @@ class ProfilerService:
             else:
                 mask &= target_status.str.contains(intra_state, regex=False)
 
+        # Exclude dates where the target session is entirely missing (no session record).
+        # This ensures the count matches the distribution total.
+        if target_session in status_pivot.columns:
+            mask &= status_pivot[target_session].notna()
+
         return status_pivot.index[mask].tolist()
 
     @staticmethod

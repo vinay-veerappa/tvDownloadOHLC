@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -74,13 +75,28 @@ def _load_json(path: Path) -> Any:
         return json.load(f)
 
 
-def _mode_bucket(values: list[float]) -> float:
+def _mode_bucket(values: list[float], bucket_size: float = 0.1) -> float:
     if not values:
         return 0.0
     buckets: dict[float, int] = defaultdict(int)
     for v in values:
-        buckets[round(v, 1)] += 1
-    return max(buckets, key=buckets.get) if buckets else 0.0
+        bin_start = math.floor(v / bucket_size) * bucket_size
+        buckets[round(bin_start, 1)] += 1
+    if not buckets:
+        return 0.0
+    max_count = max(buckets.values())
+    candidates = sorted([k for k, v in buckets.items() if v == max_count])
+    return candidates[0]
+
+
+def _median_bin(values: list[float], bucket_size: float = 0.1) -> float:
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    mid_idx = len(sorted_vals) // 2
+    median_val = sorted_vals[mid_idx]
+    bin_start = math.floor(median_val / bucket_size) * bucket_size
+    return round(bin_start, 1)
 
 
 def _time_mode_bucket(times: list[str]) -> str:
@@ -96,7 +112,9 @@ def _time_mode_bucket(times: list[str]) -> str:
             continue
     if not buckets:
         return ""
-    mode = max(buckets, key=buckets.get)
+    max_count = max(buckets.values())
+    candidates = sorted([k for k, v in buckets.items() if v == max_count])
+    mode = candidates[0]
     h, m = map(int, mode.split(":"))
     end_m = m + 15
     end_h = h
@@ -120,7 +138,7 @@ def _compute_level_hits_for_dates(
     level_touches: dict,
     dates: list[str],
 ) -> dict[str, dict]:
-    """Compute level hit rates for a set of dates."""
+    """Compute level hit rates for a set of dates (raw daily-level, any session)."""
     if not dates or not level_touches:
         return {}
 
@@ -166,13 +184,54 @@ def _compute_level_hits_for_dates(
     return result
 
 
+def _compute_session_level_hits_from_columnar(
+    columnar: dict,
+    dates: list[str],
+    target_session: str,
+) -> dict[str, float]:
+    """Compute per-session level hit rates from columnar data.
+
+    Replicates the WebUI's DailyLevels component logic:
+    hits.{targetSession}[dateIdx] != -1 for each matched date.
+    """
+    if not dates or not columnar:
+        return {}
+
+    webui_dates = columnar.get("dates", [])
+    webui_levels = columnar.get("levels", {})
+    date_idx_map = {d: i for i, d in enumerate(webui_dates)}
+
+    result = {}
+    for level_key, level_data in webui_levels.items():
+        session_hits = level_data.get("hits", {}).get(target_session, [])
+        if not session_hits:
+            continue
+        touched = 0
+        counted = 0
+        for d in dates:
+            idx = date_idx_map.get(d)
+            if idx is None or idx >= len(session_hits):
+                continue
+            counted += 1
+            if session_hits[idx] != -1:
+                touched += 1
+        if counted > 0:
+            result[level_key] = round(touched / counted * 100, 1)
+    return result
+
+
 def _compute_entry(
     outcome_dates: dict[str, list[str]],
     target_session: str,
     pivot: dict[str, dict[str, dict]],
     daily_hl: dict,
+    columnar_level_touches: dict | None = None,
 ) -> dict[str, Any]:
-    """Compute a single lookup table entry from outcome→dates mapping."""
+    """Compute a single lookup table entry from outcome→dates mapping.
+
+    If columnar_level_touches is provided, computes per-outcome, per-session
+    level hit rates matching the WebUI's DailyLevels component logic.
+    """
     total = sum(len(d) for d in outcome_dates.values())
     if total == 0:
         return {"samples": 0, "probabilities": {}, "price_stats": {}, "hod_lod_times": {}, "broken_rates": {}}
@@ -188,16 +247,25 @@ def _compute_entry(
             probs[status] = round(count / total, 3)
     entry["probabilities"] = probs
 
-    # Price stats + HOD/LOD + broken per outcome
+    # Price stats + HOD/LOD + broken + per-outcome level hits per outcome
     price_stats = {}
     hod_lod_times = {}
     broken_rates = {}
+    per_outcome_level_hits = {}
 
     for status in ALL_SHORT:
         full = _SHORT_TO_FULL.get(status, status)
         dates_list = outcome_dates.get(full, [])
         if not dates_list:
             continue
+
+        # Compute per-outcome level hits from columnar data (matches WebUI DailyLevels)
+        if columnar_level_touches:
+            olh = _compute_session_level_hits_from_columnar(
+                columnar_level_touches, dates_list, target_session
+            )
+            if olh:
+                per_outcome_level_hits[status] = olh
 
         h_vals = []
         l_vals = []
@@ -209,11 +277,13 @@ def _compute_entry(
             rec = pivot.get(d, {}).get(target_session, {})
             day_hl = daily_hl.get(d, {})
             daily_open = day_hl.get("daily_open")
-            hod_price = day_hl.get("hod_price")
-            lod_price = day_hl.get("lod_price")
+            # Use daily_high/daily_low (matching WebUI RangeDistribution component)
+            daily_high = day_hl.get("daily_high")
+            daily_low = day_hl.get("daily_low")
             if daily_open and daily_open > 0:
-                h_pct = round((hod_price / daily_open - 1) * 100, 2) if hod_price is not None else None
-                l_pct = round((lod_price / daily_open - 1) * 100, 2) if lod_price is not None else None
+                # Do NOT round — WebUI uses unrounded values for binning
+                h_pct = ((daily_high / daily_open - 1) * 100) if daily_high is not None else None
+                l_pct = ((daily_low / daily_open - 1) * 100) if daily_low is not None else None
             else:
                 h_pct = rec.get("high_pct")
                 l_pct = rec.get("low_pct")
@@ -234,9 +304,9 @@ def _compute_entry(
 
         if h_vals and l_vals:
             h_mode = _mode_bucket(h_vals)
-            h_med = round(sorted(h_vals)[len(h_vals) // 2], 2)
+            h_med = _median_bin(h_vals)
             l_mode = _mode_bucket(l_vals)
-            l_med = round(sorted(l_vals)[len(l_vals) // 2], 2)
+            l_med = _median_bin(l_vals)
             price_stats[status] = {
                 "h_avg": round(sum(h_vals) / len(h_vals), 2),
                 "l_avg": round(sum(l_vals) / len(l_vals), 2),
@@ -244,8 +314,8 @@ def _compute_entry(
                 "l_mode": l_mode,
                 "h_med": h_med,
                 "l_med": l_med,
-                "h_span": f"{max(h_mode, h_med):.1f} to {min(h_mode, h_med):.1f}%",
-                "l_span": f"{max(l_mode, l_med):.1f} to {min(l_mode, l_med):.1f}%",
+                "h_span": f"{h_mode:.1f} to {h_mode + 0.1:.1f}%",
+                "l_span": f"{l_mode:.1f} to {l_mode + 0.1:.1f}%",
                 "sample_count": len(h_vals),
             }
 
@@ -261,6 +331,8 @@ def _compute_entry(
     entry["price_stats"] = price_stats
     entry["hod_lod_times"] = hod_lod_times
     entry["broken_rates"] = broken_rates
+    if per_outcome_level_hits:
+        entry["per_outcome_level_hits"] = per_outcome_level_hits
     return entry
 
 
@@ -276,8 +348,9 @@ def generate(ticker: str = "NQ1") -> dict[str, dict]:
     """
     # Load data
     profiler_path = _DATA / f"{ticker}_profiler.json"
-    hl_path = _DATA / f"{ticker}_daily_hod_lod.json"
+    hl_path = _DATA / f"{ticker}_daily_hod_lod_unadjusted.json"
     touches_path = _DATA / f"{ticker}_level_touches.json"
+    columnar_path = _DATA / f"{ticker}_level_touches_columnar.json"
 
     if not profiler_path.exists():
         print(f"ERROR: {profiler_path} not found")
@@ -286,6 +359,7 @@ def generate(ticker: str = "NQ1") -> dict[str, dict]:
     sessions = _load_json(profiler_path)
     daily_hl = _load_json(hl_path) if hl_path.exists() else {}
     level_touches = _load_json(touches_path) if touches_path.exists() else {}
+    columnar_level_touches = _load_json(columnar_path) if columnar_path.exists() else {}
 
     # Build pivot
     pivot: dict[str, dict[str, dict]] = defaultdict(dict)
@@ -316,11 +390,13 @@ def generate(ticker: str = "NQ1") -> dict[str, dict]:
         global_outcomes: dict[str, list[str]] = defaultdict(list)
 
         for i, curr_date in enumerate(dates):
-            if i == 0:
+            # Only skip first date if the context chain requires prev-day sessions
+            needs_prev = any(src == "prev" for src, _ in context_specs)
+            if i == 0 and needs_prev:
                 continue
-            prev_date = dates[i - 1]
+            prev_date = dates[i - 1] if i > 0 else ""
             curr = pivot.get(curr_date, {})
-            prev = pivot.get(prev_date, {})
+            prev = pivot.get(prev_date, {}) if prev_date else {}
 
             # Build context
             context = []
@@ -341,40 +417,52 @@ def generate(ticker: str = "NQ1") -> dict[str, dict]:
             if not valid:
                 continue
 
-            # Get target outcome
+            # Get target outcome — include "None" status in count (matches WebUI)
             target_rec = curr.get(target_session, {})
             target_status = target_rec.get("status", "")
-            if target_status not in ALL_STATUSES:
+            if not target_status:
                 continue
 
             key = _build_key(context)
-            key_outcomes[key][target_status].append(curr_date)
-            global_outcomes[target_status].append(curr_date)
+            # Only track valid outcome statuses for per-outcome stats
+            if target_status in ALL_STATUSES:
+                key_outcomes[key][target_status].append(curr_date)
+                global_outcomes[target_status].append(curr_date)
+            else:
+                # "None" or other statuses: still count in total (matches WebUI distribution)
+                key_outcomes[key][target_status].append(curr_date)
+                global_outcomes[target_status].append(curr_date)
 
-        # ── Compute per-key stats (NO level hits) ──
+        # ── Compute per-key stats ──
         table: dict[str, dict] = {}
+        # Also accumulate by status-only key (no broken) for aggregation
+        status_only_outcomes: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+
         for key, outcome_dates in key_outcomes.items():
             total = sum(len(d) for d in outcome_dates.values())
             if total == 0:
                 continue
-
-            entry = _compute_entry(outcome_dates, target_session, pivot, daily_hl)
+            entry = _compute_entry(outcome_dates, target_session, pivot, daily_hl,
+                                    columnar_level_touches=columnar_level_touches)
             table[key] = entry
 
-            # ── Also insert fallback keys (drop context dimensions from front) ──
-            key_parts = key.split("|")
-            for drop in range(1, len(key_parts) // 2):
-                shorter_key = "|".join(key_parts[drop * 2:])
-                if shorter_key not in table:
-                    merged: dict[str, list[str]] = defaultdict(list)
-                    for other_key, other_outcomes in key_outcomes.items():
-                        other_parts = other_key.split("|")
-                        if "|".join(other_parts[drop * 2:]) == shorter_key:
-                            for status, dates_list in other_outcomes.items():
-                                merged[status].extend(dates_list)
-                    total_m = sum(len(d) for d in merged.values())
-                    if total_m > 0:
-                        table[shorter_key] = _compute_entry(merged, target_session, pivot, daily_hl)
+            # Also accumulate to status-only key (drop broken bits)
+            parts = key.split("|")
+            status_parts = []
+            for j in range(0, len(parts), 2):
+                status_parts.append(parts[j])
+            status_key = "|".join(status_parts)
+            for status, dlist in outcome_dates.items():
+                status_only_outcomes[status_key][status].extend(dlist)
+
+        # Add status-only keys (aggregated across broken/held)
+        for status_key, outcome_dates in status_only_outcomes.items():
+            total = sum(len(d) for d in outcome_dates.values())
+            if total == 0:
+                continue
+            entry = _compute_entry(outcome_dates, target_session, pivot, daily_hl,
+                                    columnar_level_touches=columnar_level_touches)
+            table[status_key] = entry
 
         tables[target_session] = table
 

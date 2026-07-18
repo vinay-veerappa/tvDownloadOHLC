@@ -7,6 +7,9 @@
 >   - Profiler library (`scripts/libs_py/profiler/`)
 >   - PineScript indicator (`scripts/indicators-pine/profiler/`)
 >   - Precomputed lookup tables (`data/derived/{ticker}_profiler_lookup.json`)
+>   - Validation framework (`scripts/testing/`) — see [PROFILER_DATA_DESIGN.md §8](../architecture/PROFILER_DATA_DESIGN.md#8-validation-framework-v130)
+>   - Data design doc ([PROFILER_DATA_DESIGN.md](../architecture/PROFILER_DATA_DESIGN.md))
+>   - Prediction engine doc ([PROFILER_PREDICTION_ENGINE.md](../architecture/PROFILER_PREDICTION_ENGINE.md))
 
 ---
 

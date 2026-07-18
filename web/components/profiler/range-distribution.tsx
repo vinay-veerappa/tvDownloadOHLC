@@ -43,7 +43,12 @@ function medianBin(arr: number[], bucketSize: number = 0.1): number {
 
 function modeBin(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<string, number>): number | null {
     if (referenceDist) {
-        const sorted = Object.entries(referenceDist).sort((a, b) => b[1] - a[1]);
+        // Sort by count desc, then by bin value asc for deterministic tie-breaking
+        const sorted = Object.entries(referenceDist).sort((a, b) => {
+            const countDiff = b[1] - a[1];
+            if (countDiff !== 0) return countDiff;
+            return parseFloat(a[0]) - parseFloat(b[0]);
+        });
         return sorted.length > 0 ? parseFloat(sorted[0][0]) : null;
     }
 
@@ -53,7 +58,12 @@ function modeBin(arr: number[], bucketSize: number = 0.1, referenceDist?: Record
         const bucket = (Math.floor(v / bucketSize) * bucketSize).toFixed(1);
         counts[bucket] = (counts[bucket] || 0) + 1;
     });
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    // Sort by count desc, then by bin value asc for deterministic tie-breaking
+    const sorted = Object.entries(counts).sort((a, b) => {
+        const countDiff = b[1] - a[1];
+        if (countDiff !== 0) return countDiff;
+        return parseFloat(a[0]) - parseFloat(b[0]);
+    });
     return sorted.length > 0 ? parseFloat(sorted[0][0]) : null;
 }
 
