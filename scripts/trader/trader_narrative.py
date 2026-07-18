@@ -100,21 +100,37 @@ CLOSE_SNAPSHOT_POLL_INTERVAL = 5
 def _wait_for_open_snapshot(timeout: int = OPEN_SNAPSHOT_TIMEOUT_SECONDS) -> bool:
     """Block until the 09:30 unified_levels_open.txt snapshot is fresh.
 
-    Returns True if the file exists and was modified after 09:30 ET today.
+    Returns True if the file exists and was modified after 09:30 ET on the
+    most recent trading day. If the current ET time is before 09:30 (e.g.
+    the narrative is run overnight or pre-market), the gate looks for
+    yesterday's 09:30 snapshot instead of today's.
+
     Returns False if timeout expires.
     """
     import time as _time
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo
 
     et = ZoneInfo(ET_TZ)
     deadline = _time.monotonic() + timeout
-    today_930 = _dt.now(et).replace(hour=9, minute=30, second=0, microsecond=0)
+    now_et = _dt.now(et)
+    target_930 = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    # If we haven't reached 09:30 ET yet today, the relevant snapshot is
+    # from the previous trading day (e.g. running at 04:00 ET looks for
+    # yesterday's 09:30 snapshot).
+    if now_et < target_930:
+        # Walk back to the most recent weekday
+        prev = now_et.date() - _td(days=1)
+        while prev.weekday() >= 5:  # Skip Sat/Sun
+            prev -= _td(days=1)
+        target_930 = _dt.combine(prev, _dt.min.time(), tzinfo=et).replace(
+            hour=9, minute=30, second=0, microsecond=0
+        )
 
     while _time.monotonic() < deadline:
         if UNIFIED_LEVELS_OPEN_TXT.exists():
             mtime = _dt.fromtimestamp(UNIFIED_LEVELS_OPEN_TXT.stat().st_mtime, tz=et)
-            if mtime >= today_930:
+            if mtime >= target_930:
                 log.info("✓ Open snapshot ready (mtime: %s)", mtime.strftime("%H:%M:%S ET"))
                 return True
         log.info("Waiting for 09:30 open snapshot... (%s)", UNIFIED_LEVELS_OPEN_TXT)
@@ -133,22 +149,37 @@ def _wait_for_close_snapshot(timeout: int = CLOSE_SNAPSHOT_TIMEOUT_SECONDS) -> b
     16:15 run slips (e.g. broker latency), this gate prevents the
     narrative from grading the day against the 16:00 snapshot.
 
-    Returns True if the file exists and was modified after 16:15 ET
-    today. Returns False if timeout expires; caller proceeds with
-    whatever is on disk and logs a warning.
+    If the current ET time is before 16:15 (e.g. the narrative is run
+    overnight), the gate looks for the most recent weekday's 16:15
+    snapshot instead of today's.
+
+    Returns True if the file exists and was modified after 16:15 ET on
+    the most recent trading day. Returns False if timeout expires;
+    caller proceeds with whatever is on disk and logs a warning.
     """
     import time as _time
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo
 
     et = ZoneInfo(ET_TZ)
     deadline = _time.monotonic() + timeout
-    today_1615 = _dt.now(et).replace(hour=16, minute=15, second=0, microsecond=0)
+    now_et = _dt.now(et)
+    target_1615 = now_et.replace(hour=16, minute=15, second=0, microsecond=0)
+    # If we haven't reached 16:15 ET yet today, the relevant snapshot is
+    # from the previous trading day (e.g. running the EOD narrative at
+    # 00:30 ET looks for yesterday's 16:15 snapshot).
+    if now_et < target_1615:
+        prev = now_et.date() - _td(days=1)
+        while prev.weekday() >= 5:  # Skip Sat/Sun
+            prev -= _td(days=1)
+        target_1615 = _dt.combine(prev, _dt.min.time(), tzinfo=et).replace(
+            hour=16, minute=15, second=0, microsecond=0
+        )
 
     while _time.monotonic() < deadline:
         if UNIFIED_LEVELS_CLOSE_TXT.exists():
             mtime = _dt.fromtimestamp(UNIFIED_LEVELS_CLOSE_TXT.stat().st_mtime, tz=et)
-            if mtime >= today_1615:
+            if mtime >= target_1615:
                 log.info("✓ Close snapshot ready (mtime: %s)", mtime.strftime("%H:%M:%S ET"))
                 return True
         log.info("Waiting for 16:15 close snapshot... (%s)", UNIFIED_LEVELS_CLOSE_TXT)
