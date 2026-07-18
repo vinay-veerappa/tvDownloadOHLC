@@ -346,7 +346,17 @@ def run_narrative(
             target_date = sim_dt.date()
         log.info("[SIM] Trading day resolved to %s (weekday=%s)", target_date, target_date.weekday())
     elif target_date is None:
-        target_date = datetime.now(ET).date()
+        # Use the latest RTH trading day, not the current calendar date.
+        # This handles running the narrative after midnight ET (e.g. the
+        # EOD narrative at 00:30 ET on July 18 should analyze July 17's
+        # session, not July 18's which hasn't started yet).
+        try:
+            from scripts.utils.fused_data_loader import load_fused_data
+            from scripts.trader.briefing_core import get_latest_rth_date
+            _df = load_fused_data(tickers[0] if tickers else "NQ1", timeframe="1m", require_historical=False)
+            target_date = get_latest_rth_date(_df)
+        except Exception:
+            target_date = datetime.now(ET).date()
 
     loader = get_dataloader(lookback_days=5)
 
