@@ -3886,19 +3886,23 @@ def build_eod_context(
                     return f"{d:+.2f}"
                 return "n/a"
 
+            def _fmt(val):
+                """Format a price value, handling None gracefully."""
+                return f"{val:,.2f}" if val is not None else "n/a"
+
             shift_lines.append(
-                f"Call Wall: {o_cw:,.2f} -> {c_cw:,.2f} ({_delta(o_cw, c_cw)}) [tomorrow's ceiling]"
+                f"Call Wall: {_fmt(o_cw)} -> {_fmt(c_cw)} ({_delta(o_cw, c_cw)}) [tomorrow's ceiling]"
             )
             shift_lines.append(
-                f"Put Wall:  {o_pw:,.2f} -> {c_pw:,.2f} ({_delta(o_pw, c_pw)}) [tomorrow's floor]"
+                f"Put Wall:  {_fmt(o_pw)} -> {_fmt(c_pw)} ({_delta(o_pw, c_pw)}) [tomorrow's floor]"
             )
-            if o_flip or c_flip:
+            if o_flip is not None or c_flip is not None:
                 shift_lines.append(
-                    f"Gamma Flip: {o_flip:,.2f} -> {c_flip:,.2f} ({_delta(o_flip, c_flip)})"
+                    f"Gamma Flip: {_fmt(o_flip)} -> {_fmt(c_flip)} ({_delta(o_flip, c_flip)})"
                 )
-            if o_mag or c_mag:
+            if o_mag is not None or c_mag is not None:
                 shift_lines.append(
-                    f"Price Magnet: {o_mag:,.2f} -> {c_mag:,.2f} ({_delta(o_mag, c_mag)})"
+                    f"Price Magnet: {_fmt(o_mag)} -> {_fmt(c_mag)} ({_delta(o_mag, c_mag)})"
                 )
             shift_lines.append(
                 f"Regime/Bias: {o_regime}/{o_bias} -> {c_regime}/{c_bias}"
