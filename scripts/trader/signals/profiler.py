@@ -1157,9 +1157,9 @@ def _predict_from_lookup(
         entry = None
         fallback_level = 0
 
-        # Try full key first
+        # Try full key first — accept any non-zero sample count
         entry = table.get(full_key)
-        if entry and entry.get("samples", 0) >= _MIN_SAMPLES:
+        if entry and entry.get("samples", 0) > 0:
             fallback_level = 0
         else:
             # Hierarchical fallback: drop context dimensions one at a time
@@ -1169,7 +1169,7 @@ def _predict_from_lookup(
             for drop in range(1, len(key_parts) // 2):
                 shorter_key = "|".join(key_parts[drop * 2:])
                 entry = table.get(shorter_key)
-                if entry and entry.get("samples", 0) >= _MIN_SAMPLES:
+                if entry and entry.get("samples", 0) > 0:
                     fallback_level = drop
                     break
                 entry = None
@@ -1404,7 +1404,9 @@ def _format_prediction_block(sess_name: str, pred: dict, is_target: bool = False
     samples = pred.get("samples", 0)
     price_stats = pred.get("price_stats", {})
     hod_lod = pred.get("hod_lod_times", {})
-    possible = pred.get("possible_outcomes", ["Long True", "Short True", "Long False", "Short False", "None"])
+    # The lookup table stores probabilities with short codes (LT/LF/ST/SF).
+    # Try both short codes and full names for backward compatibility.
+    possible_short = ["LT", "LF", "ST", "SF"]
 
     marker = "▶ " if is_target else "  "
     lines = [f"{marker}PREDICT {sess_name} ({context}) (n={samples})"]
@@ -1412,24 +1414,23 @@ def _format_prediction_block(sess_name: str, pred: dict, is_target: bool = False
     # Header row matching indicator table
     lines.append(f"    {'Outcome':8s} | {'Prob':>5s} | {'LOD Time':>14s} | {'HOD Time':>14s} | {'LOD Dist':>14s} | {'HOD Dist':>14s} | {'Bk':>4s}")
 
-    for status in possible:
-        p = probs.get(status)
+    for short in possible_short:
+        p = probs.get(short)
         if p is None:
             continue
-        short = _STATUS_SHORT.get(status, status)
 
         # Time modes
-        times = hod_lod.get(status, {})
+        times = hod_lod.get(short, {})
         lod_t = times.get("lod_mode", "—")
         hod_t = times.get("hod_mode", "—")
 
         # Dist spans
-        ps = price_stats.get(status, {})
+        ps = price_stats.get(short, {})
         l_span = ps.get("l_span", "—")
         h_span = ps.get("h_span", "—")
 
         # Broken rate
-        br = pred.get("broken_rates", {}).get(status, 0)
+        br = pred.get("broken_rates", {}).get(short, 0)
         br_str = f"{br*100:.0f}%" if br > 0 else "—"
 
         lines.append(f"    {short:8s} | {p*100:4.0f}% | {lod_t:>14s} | {hod_t:>14s} | {l_span:>14s} | {h_span:>14s} | {br_str:>4s}")
@@ -1442,19 +1443,19 @@ def _format_prediction_block(sess_name: str, pred: dict, is_target: bool = False
         level_names = {k: _LEVEL_NAMES.get(k, k) for k in level_keys}
         # Header
         hdr = f"    {'Level':14s}"
-        for status in possible:
-            if probs.get(status) is not None:
-                hdr += f" | {_STATUS_SHORT.get(status, status):>5s}"
+        for short in possible_short:
+            if probs.get(short) is not None:
+                hdr += f" | {short:>5s}"
         lines.append(hdr)
         # Each level row
         for key in level_keys:
             name = level_names.get(key, key)
             row = f"    {name:14s}"
             has_data = False
-            for status in possible:
-                if probs.get(status) is None:
+            for short in possible_short:
+                if probs.get(short) is None:
                     continue
-                hr = level_hits_per.get(status, {}).get(key, {})
+                hr = level_hits_per.get(short, {}).get(key, {})
                 hit_rate = hr.get("hit_rate")
                 if hit_rate is not None:
                     row += f" | {hit_rate:4.0f}%"
