@@ -1,7 +1,7 @@
 # Trader's Morning Narrative — Design Plan
 
-> **Status:** v2 IMPLEMENTED + ICT Phase 1 + Phase 2A + Phase 2B COMPLETE — open, intraday, close, and premarket modes live. Intraday is session-adaptive (Asia, London, NY AM, NY Lunch, NY PM). Multi-timeframe range detection. ICT dealing range + liquidity map. ICT Phase 1: killzone pivots, IPDA 20/40/60, Silver Bullet windows, ICT Macros, FVG+VI imbalances, NWOG/NDOG/RTH gaps. Phase 2A: Order Blocks, Structure (BOS/MSS/CISD), Liquidity pools, SMT Divergence, Delivery Triad. Phase 2B: FTFC (Full Timeframe Continuity) bias model with 3 multi-TF views (Candle FTFC + MS FTFC + 200 SMA) replacing the ICT Daily Bias. Unified `ict_engine` library (v1.3.0). Derived ICT parquets in `data/derived/ICT/`. Narrative data loader with freshness-aware auto-refresh.  
-> **Date:** 2026-07-08 (last updated 2026-07-13)  
+> **Status:** v2 IMPLEMENTED + ICT Phase 1 + Phase 2A + Phase 2B + Profiler v1.3.0 COMPLETE — open, intraday, close, and premarket modes live. Intraday is session-adaptive (Asia, London, NY AM, NY Lunch, NY PM). Multi-timeframe range detection. ICT dealing range + liquidity map. ICT Phase 1: killzone pivots, IPDA 20/40/60, Silver Bullet windows, ICT Macros, FVG+VI imbalances, NWOG/NDOG/RTH gaps. Phase 2A: Order Blocks, Structure (BOS/MSS/CISD), Liquidity pools, SMT Divergence, Delivery Triad. Phase 2B: FTFC (Full Timeframe Continuity) bias model with 3 multi-TF views (Candle FTFC + MS FTFC + 200 SMA) replacing the ICT Daily Bias. Unified `ict_engine` library (v1.3.0). Derived ICT parquets in `data/derived/ICT/`. Profiler v1.3.0: live session box statuses from `SessionBoxEngine.from_live()` + precomputed lookup table for historical conditional predictions. Time-aware session classification via `cutoff_time` parameter. Broken windows extend to 17:00 ET (NY2 wraps overnight). Wait gates use previous trading day when run before target time. Data freshness warnings removed (Herman/classification are historical studies, not per-day data).  
+> **Date:** 2026-07-08 (last updated 2026-07-17)  
 > **Goal:** A narrative system that reads like a trader thinking out loud. Runs at any time during any session. Eventually enables active trade creation and management from the data.
 
 ---
@@ -70,10 +70,17 @@ The narrative system runs at multiple points, each with a different purpose:
 
 | Mode | Time (ET) | Purpose | Key Data | Output |
 |---|---|---|---|---|
-| **Premarket** | ~07:00 | Early prep before GEX open snapshot | Globex, prior EOD classification, GEX levels | "Premarket Read" |
-| **Open** | ~08:00-08:30 | Pre-market prep. Overnight → today bridge. Set the bias. | Globex OHLC, ALN, classification, calendar, GEX, ICT, Herman, Candle Science, Confluence | "Trader's Morning Narrative" |
-| **Intraday** | Anytime (on-demand) | Session-adaptive update. Detects current session and adapts. | Session-specific blocks (see below) | "Intraday Update" |
-| **Close** | ~16:00-16:15 | EOD review. What happened? What did we learn? | Full session OHLC, level outcomes, ICT dealing range outcome, trade outcomes | "Trader's EOD Narrative" |
+| **Premarket** | 08:45 | Early prep before GEX open snapshot | Globex, prior EOD classification, GEX levels | "Premarket Read" |
+| **Open** | 09:35 | Pre-market prep. Overnight → today bridge. Set the bias. | Globex OHLC, ALN, classification, calendar, GEX, ICT, Herman, Candle Science, Confluence, Profiler (live sessions with cutoff at current time) | "Trader's Morning Narrative" |
+| **Intraday** | 12:00 (or on-demand) | Session-adaptive update. Detects current session and adapts. | Session-specific blocks (see below) + Profiler (live sessions with cutoff at current time) | "Intraday Update" |
+| **Close** | 16:25 | EOD review. What happened? What did we learn? | Full session OHLC, level outcomes, GEX regime shift (open→close), ICT dealing range outcome, RTH break scenarios for tomorrow, trade outcomes | "Trader's EOD Narrative" |
+
+### Wait gates and target_date resolution
+
+- **Open snapshot gate**: Waits for `unified_levels_open.txt` modified after 09:30 ET on the most recent trading day. If run before 09:30 ET, looks for the previous trading day's snapshot.
+- **Close snapshot gate**: Waits for `unified_levels_close.txt` modified after 16:15 ET on the most recent trading day. If run before 16:15 ET, looks for the previous trading day's snapshot.
+- **target_date resolution**: Uses `get_latest_rth_date()` (latest date with RTH bars in 1m parquet) instead of `datetime.now(ET).date()`. This handles running the narrative after midnight ET — the EOD narrative at 00:30 ET on July 18 correctly analyzes July 17's session.
+- **Data freshness warnings**: Removed from the cheat sheet. Herman stats and classification parquets are historical studies (not per-day data); their probabilities are frozen in `narrative_stats.yaml` and live session detection reads 1m parquet directly.
 
 ### Intraday session-adaptive modes
 
@@ -112,7 +119,7 @@ The intraday cheat sheet is built from modular signal modules in `scripts/trader
 | Module | File | What it provides |
 |--------|------|-----------------|
 | Session detection | `session_ranges.py` | `detect_session()`, `compute_all_session_ranges()`, `detect_sweep()` |
-| Intraday blocks | `intraday_blocks.py` | Per-session block builders + FTFC bias block + 11 ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps) |
+| Intraday blocks | `intraday_blocks.py` | Per-session block builders + FTFC bias block + 11 ICT feature blocks (KZ pivots, IPDA, Silver Bullet, Macros, Structure, OB, Imbalances, Liquidity, Delivery Triad, SMT, Gaps) + `_get_live_profiler_sessions()` helper |
 | Range detection | `range_detection.py` | Multi-timeframe range stack (MICRO_5 through WEEKLY_2), compression detection, adaptive tightest-range scan |
 | ICT data loader | `ict_data_loader.py` | Freshness-aware parquet loader with auto-refresh + FTFC computation + ICT daily bias (7 models) |
 | ICT context | `ict_context.py` | Thin wrapper delegating to `ict_data_loader.load_ict_context()`. PDH/PDL/midnight open, premium/discount, BSL/SSL targets |
@@ -126,8 +133,32 @@ The intraday cheat sheet is built from modular signal modules in `scripts/trader
 | Volatility | `volatility.py` | VIX/VVIX regime classification |
 | Weekly profile | `weekly_profile.py` | Weekly H/L, profile type, position |
 | Caution score | `caution_score.py` | Composite risk posture score |
+| **Profiler** | `signals/profiler.py` + `libs_py/profiler/` | Live session box statuses (LT/LF/ST/SF + broken) from `SessionBoxEngine.from_live()` + historical conditional predictions from precomputed lookup table (`data/derived/{ticker}_profiler_lookup.json`) |
 
 `build_intraday_context()` in `briefing_core.py` is a thin wrapper that delegates to `build_intraday_cheat_sheet()` in `intraday_blocks.py`, which detects the session and dispatches to the appropriate builder.
+
+#### Daily Profiler (v1.3.0)
+
+The profiler replicates the PineScript auto-filter logic for the 4 session boxes (Asia, London, NY1, NY2):
+
+**Data flow (canonical, v1.3.0+):**
+1. **Live sessions** from `SessionBoxEngine.from_live(ticker, cutoff_time=now_et)` — reads the live 1m parquet and classifies current session box statuses (status + broken). The `cutoff_time` parameter truncates data to bars <= cutoff so only sessions that have actually played out by the current time are classified (e.g. at 09:35 ET, NY2 shows as "None").
+2. **Historical predictions** from the precomputed lookup table (`data/derived/{ticker}_profiler_lookup.json`) — keyed by context signature (status|broken|...), contains per-outcome probabilities, price stats, HOD/LOD timing, broken rates, and per-outcome level hit rates. Generated by `scripts/libs_py/profiler/generate_profiler_lookup.py`.
+3. `compute_profiler()` joins the two: live sessions provide the filter signature, the lookup table provides the historical conditional statistics.
+
+**Broken windows** (per `PROFILER_KNOWLEDGE_BASE.md` §3):
+- Asia: 02:30 → 17:00 ET
+- London: 07:30 → 17:00 ET
+- NY1: 11:30 → 17:00 ET
+- NY2: 18:00 → 11:30 (next day — wraps overnight, can only break when next Asia starts)
+
+**Key files:**
+- `scripts/trader/signals/profiler.py` — `compute_profiler()`, `build_dual_profiler_block()`, `build_dual_profiler_summary()`, formatting
+- `scripts/libs_py/profiler/` — `SessionBoxEngine`, `compute_live_prediction()`, `generate_profiler_lookup.py`, `session_box_status.py`
+- `scripts/trader/signals/intraday_blocks.py` — `_get_live_profiler_sessions()` helper wraps `SessionBoxEngine.from_live()` + `get_prev_context()`
+- All 5 intraday session builders + open cheat sheet pass `live_sessions` + `es_live_sessions` with `cutoff_time=now_et`
+
+**No minimum sample restriction** — any non-zero sample count is accepted. The lookup table stores probabilities with short codes (LT/LF/ST/SF); the formatter uses short codes for lookup.
 
 #### Multi-timeframe range detection
 
@@ -620,10 +651,10 @@ This also saves tokens — no JSON structure overhead in the output.
 
 | File | Purpose | Status |
 |---|---|---|
-| `scripts/trader/trader_narrative.py` | Main script. `--mode open\|intraday\|close`. Calls cheat sheet builder, calls Ollama, saves output. | ✅ Created |
+| `scripts/trader/trader_narrative.py` | Main script. `--mode premarket\|open\|intraday\|close`. `--test` skips LLM. `--time "YYYY-MM-DD HH:MM"` simulates a run at that ET time. Calls cheat sheet builder, calls Ollama, saves output. Wait gates use previous trading day when run before target time. target_date uses `get_latest_rth_date()`. | ✅ Created |
 | `scripts/trader/prompts/trader_morning.md` | Open mode narrative prompt. | ✅ Created |
-| `scripts/trader/prompts/trader_intraday.md` | Intraday mode narrative prompt. | ⏳ v2 |
-| `scripts/trader/prompts/trader_close.md` | Close mode narrative prompt. | ⏳ v1.5 |
+| `scripts/trader/prompts/trader_intraday.md` | Intraday mode narrative prompt. | ✅ Created |
+| `scripts/trader/prompts/trader_close.md` | Close mode narrative prompt. | ✅ Created |
 
 ### New functions in `briefing_core.py`
 
