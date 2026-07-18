@@ -3432,12 +3432,17 @@ def build_ticker_cheat_sheet(
     # Live sessions come from SessionBoxEngine (reads live 1m parquet); the
     # lookup table provides historical conditional statistics. Without
     # live_sessions the profiler returns no data.
+    # Pass now_et as cutoff so only sessions that have actually played out
+    # by the current time are classified (e.g. at 09:30 ET, NY2 hasn't
+    # started yet so it shows as "None").
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_block
         from scripts.trader.signals.intraday_blocks import _get_live_profiler_sessions, _get_es_live_profiler_sessions
         es_spot = float(es_ctx.get("close", 0)) if es_ctx else 0.0
-        _live, _prev = _get_live_profiler_sessions(ticker)
-        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
+        # Use now_et (sim time) if provided, else current ET time as cutoff
+        _cutoff = now_et if now_et is not None else datetime.now(ET)
+        _live, _prev = _get_live_profiler_sessions(ticker, cutoff_time=_cutoff)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions(cutoff_time=_cutoff)
         sections.append(build_dual_profiler_block(
             ticker, "ES1", ticker_spot, es_spot, target_date, now_et,
             live_sessions=_live, es_live_sessions=_es_live,

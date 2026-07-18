@@ -33,7 +33,10 @@ except ImportError:
     ET = None
 
 
-def _get_live_profiler_sessions(ticker: str) -> tuple[dict | None, dict | None]:
+def _get_live_profiler_sessions(
+    ticker: str,
+    cutoff_time: Any = None,
+) -> tuple[dict | None, dict | None]:
     """Get live session box statuses + prev-day context for the profiler.
 
     Uses ``SessionBoxEngine.from_live`` which reads the live 1m parquet and
@@ -41,11 +44,18 @@ def _get_live_profiler_sessions(ticker: str) -> tuple[dict | None, dict | None]:
     the canonical way to get today's profiler filter signature — the
     precomputed lookup table provides the historical conditional statistics.
 
+    Args:
+        ticker: Ticker symbol (e.g. "NQ1", "ES1").
+        cutoff_time: Optional ET datetime. If provided, data is truncated
+            to bars <= cutoff_time so only sessions that have actually
+            played out by that time are classified (e.g. at 09:30 ET,
+            NY2 hasn't started yet so it shows as "None").
+
     Returns (live_sessions, prev_sessions) or (None, None) on failure.
     """
     try:
         from scripts.libs_py.profiler import SessionBoxEngine
-        engine = SessionBoxEngine.from_live(ticker)
+        engine = SessionBoxEngine.from_live(ticker, cutoff_time=cutoff_time)
         live = engine.get_live_sessions()
         prev_ctx = engine.get_prev_context()
         prev_sessions: dict[str, dict] = {}
@@ -63,9 +73,9 @@ def _get_live_profiler_sessions(ticker: str) -> tuple[dict | None, dict | None]:
         return None, None
 
 
-def _get_es_live_profiler_sessions() -> tuple[dict | None, dict | None]:
+def _get_es_live_profiler_sessions(cutoff_time: Any = None) -> tuple[dict | None, dict | None]:
     """Get live profiler sessions for ES1 (for the dual-ticker profiler block)."""
-    return _get_live_profiler_sessions("ES1")
+    return _get_live_profiler_sessions("ES1", cutoff_time=cutoff_time)
 
 
 def _format_session_header(session: str, now_et: Any, ticker: str) -> str:
@@ -1096,8 +1106,8 @@ def build_asia_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
-        _live, _prev = _get_live_profiler_sessions(ticker)
-        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
+        _live, _prev = _get_live_profiler_sessions(ticker, cutoff_time=now_et)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions(cutoff_time=now_et)
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date, now_et,
             live_sessions=_live, es_live_sessions=_es_live,
@@ -1266,8 +1276,8 @@ def build_london_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
-        _live, _prev = _get_live_profiler_sessions(ticker)
-        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
+        _live, _prev = _get_live_profiler_sessions(ticker, cutoff_time=now_et)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions(cutoff_time=now_et)
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
             live_sessions=_live, es_live_sessions=_es_live,
@@ -1456,8 +1466,8 @@ def build_ny_am_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
-        _live, _prev = _get_live_profiler_sessions(ticker)
-        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
+        _live, _prev = _get_live_profiler_sessions(ticker, cutoff_time=now_et)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions(cutoff_time=now_et)
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
             live_sessions=_live, es_live_sessions=_es_live,
@@ -1570,8 +1580,8 @@ def build_ny_lunch_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
-        _live, _prev = _get_live_profiler_sessions(ticker)
-        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
+        _live, _prev = _get_live_profiler_sessions(ticker, cutoff_time=now_et)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions(cutoff_time=now_et)
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
             live_sessions=_live, es_live_sessions=_es_live,
@@ -1749,8 +1759,8 @@ def build_ny_pm_blocks(
     # Daily Profiler (session outcomes, predictions, levels)
     try:
         from scripts.trader.signals.profiler import build_dual_profiler_summary
-        _live, _prev = _get_live_profiler_sessions(ticker)
-        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions()
+        _live, _prev = _get_live_profiler_sessions(ticker, cutoff_time=now_et)
+        _es_live, _es_prev = (_live, _prev) if ticker == "ES1" else _get_es_live_profiler_sessions(cutoff_time=now_et)
         sections.append(build_dual_profiler_summary(
             ticker, "ES1", ticker_current, es_current, target_date,
             live_sessions=_live, es_live_sessions=_es_live,

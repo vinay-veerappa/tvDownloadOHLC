@@ -91,7 +91,7 @@ class SessionBoxEngine:
     # ── Factory methods ──────────────────────────────────────────────────
 
     @classmethod
-    def from_live(cls, ticker: str = "NQ1") -> "SessionBoxEngine":
+    def from_live(cls, ticker: str = "NQ1", cutoff_time: Optional[datetime] = None) -> "SessionBoxEngine":
         """Create engine from live storage parquet.
 
         Reads only the last 3 days of data — enough for today's session
@@ -101,6 +101,10 @@ class SessionBoxEngine:
 
         Args:
             ticker: Ticker symbol.
+            cutoff_time: Optional ET datetime. If provided, data is
+                truncated to bars <= cutoff_time. This prevents future
+                sessions from being classified (e.g. at 09:30 ET, NY2
+                hasn't started yet so it should show as "None").
 
         Returns:
             SessionBoxEngine instance with data loaded and processed.
@@ -121,6 +125,21 @@ class SessionBoxEngine:
         df = _to_datetime_index(df)
         if df is None or df.empty:
             raise ValueError(f"Empty live data for {ticker}")
+
+        # Normalize to US/Eastern for cutoff comparison
+        if df.index.tz is None:
+            df.index = pd.DatetimeIndex(df.index).tz_localize("UTC").tz_convert("US/Eastern")
+        elif str(df.index.tz) != "US/Eastern":
+            df.index = df.index.tz_convert("US/Eastern")
+
+        # Truncate to cutoff time if provided (prevents future sessions
+        # from being classified — e.g. at 09:30 ET, NY2 hasn't started)
+        if cutoff_time is not None:
+            if cutoff_time.tzinfo is None:
+                cutoff_time = cutoff_time.replace(tzinfo=ET)
+            df = df[df.index <= cutoff_time]
+            if df.empty:
+                raise ValueError(f"No data before cutoff {cutoff_time} for {ticker}")
 
         # Filter to last 3 days only (today + yesterday + 1 buffer day)
         # This is enough for: today's 4 session boxes + prev-day context
