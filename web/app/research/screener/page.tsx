@@ -1,553 +1,488 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, BarChart2, RefreshCcw, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-
+  ArrowLeft,
+  RefreshCcw,
+  Download,
+  Filter,
+  Search,
+  CheckCircle2,
+  AlertTriangle,
+  Zap,
+  TrendingUp,
+  ShieldAlert,
+  BarChart3,
+  Layers,
+  ChevronRight,
+  ExternalLink,
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { initDuckDB, loadParquet, resetDuckDB, runQuery } from '@/lib/duckdb';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-type EngineStatus = 'loading' | 'ready' | 'error';
-
-type SymbolCard = {
-  symbol: string;
-  trading_date: string;
-  day_of_week: number;
-  vix_regime: string;
-  gap_direction: string;
-  gap_size_bucket: string;
-  open_vs_pd_range: string;
-  streak_direction: string;
-  streak_length: number;
-  occ_first_direction: string;
-  is_event_day: boolean;
-  event_type: string | null;
-  atr_14d: number;
-  atr_usage_pct: number;
-  gap_fill_probability: number | null;
-  or_breakout_probability: number | null;
-  ib_single_break_probability: number | null;
-  occ_continuation_probability: number | null;
-  mop_retrace_probability: number | null;
-  pdh_pdl_break_probability: number | null;
-  streak_reversal_probability: number | null;
-  total_vote: number;
-  continuation_confluence_count: number;
-  reversal_confluence_count: number;
-  dominant_bias: string;
-  confidence: string;
+type MarketRegime = {
+  status: string;
+  spy_close: number;
+  is_macro_high_risk: boolean;
+  evaluated_at: string;
 };
 
-type TrendRow = {
-  trading_date: string;
-  gap_fill_probability: number | null;
-  or_breakout_probability: number | null;
-  occ_continuation_probability: number | null;
-  mop_retrace_probability: number | null;
-  streak_reversal_probability: number | null;
-  dominant_bias: string;
+type Candidate = {
+  ticker: string;
+  company: string;
+  sector: string;
+  industry: string;
+  close: number;
+  matched_strategies_count: number;
+  matched_strategies_list: string;
+  strategy_matches: Record<string, boolean>;
 };
 
-type MaxDateRow = {
-  max_date: string | null;
+type ScreenerApiResponse = {
+  success: boolean;
+  market_regime: MarketRegime;
+  strategies: string[];
+  candidates: Candidate[];
+  updated_at: string;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants
+// Constants & Color Mappings
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SYMBOLS = ['NQ1', 'ES1', 'YM1', 'RTY1', 'CL1', 'GC1'];
-const DOW_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const PARQUET_FILE = 'daily_confluence_records.parquet';
-const TABLE_NAME = 'daily_confluence_records';
-
-const BIAS_COLORS: Record<string, string> = {
-  BULLISH: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30',
-  BEARISH: 'bg-rose-500/15 text-rose-300 border border-rose-500/30',
-  NEUTRAL: 'bg-zinc-500/15 text-zinc-300 border border-zinc-500/30',
+const STRATEGY_LABELS: Record<string, { label: string; desc: string; color: string }> = {
+  all: { label: 'All Strategies (Common Subset)', desc: 'Highlight candidates matching multiple institutional setups', color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+  kell_ema_bounce: { label: 'Oliver Kell EMA Bounce', desc: 'Bounces off 10/20 EMA in strong uptrend', color: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' },
+  minervini_trend: { label: 'Minervini Trend Template', desc: '8-point trend template for market leaders', color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+  oneil_breakout: { label: 'O\'Neil CAN SLIM Breakout', desc: 'Base breakout near 52W high on volume', color: 'bg-blue-500/15 text-blue-300 border-blue-500/30' },
+  parabolic_short: { label: 'Parabolic Short (Qullamaggie)', desc: 'Extended runners far from 10/20 EMA', color: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
+  qullamaggie_hft: { label: 'High Tight Flag (HFT)', desc: '100%+ run-up with ATR & volume contraction', color: 'bg-violet-500/15 text-violet-300 border-violet-500/30' },
+  rs_vs_spy: { label: 'Relative Strength vs SPY', desc: 'Outperforming SPY benchmark in top industry', color: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' },
+  stockbee_ep: { label: 'Stockbee Episodic Pivot (EP)', desc: '8%+ gap up on massive volume catalyst', color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+  stockbee_momentum: { label: 'Stockbee Momentum Burst', desc: '4%+ gainers in top sector industries', color: 'bg-orange-500/15 text-orange-300 border-orange-500/30' },
+  weinstein_stage2: { label: 'Stan Weinstein Stage 2', desc: '30-week SMA uptrend breakout on heavy volume', color: 'bg-teal-500/15 text-teal-300 border-teal-500/30' },
+  wheel_income: { label: 'Wheel Strategy / Cash Put', desc: 'High IV, no earnings in 7d, cash-secured put setup', color: 'bg-lime-500/15 text-lime-300 border-lime-500/30' },
+  zanger_volume_surge: { label: 'Dan Zanger Volume Surge', desc: 'High-beta explosive volume surge', color: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30' },
 };
 
-const CONFIDENCE_COLORS: Record<string, string> = {
-  HIGH:   'bg-violet-500/15 text-violet-300 border border-violet-500/30',
-  MEDIUM: 'bg-amber-500/15 text-amber-300 border border-amber-500/30',
-  LOW:    'bg-slate-500/15 text-slate-300 border border-slate-500/30',
-};
+export default function StockScreenerPage() {
+  const [data, setData] = useState<ScreenerApiResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [scanning, setScanning] = useState<boolean>(false);
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [limit, setLimit] = useState<number>(100);
+  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
 
-const VIX_COLORS: Record<string, string> = {
-  LOW:     'text-emerald-300',
-  NORMAL:  'text-sky-300',
-  HIGH:    'text-amber-300',
-  EXTREME: 'text-rose-300',
-};
-
-const TREND_COLORS = {
-  gap_fill_probability:         '#6366f1',
-  or_breakout_probability:      '#10b981',
-  occ_continuation_probability: '#f59e0b',
-  mop_retrace_probability:      '#ef4444',
-  streak_reversal_probability:  '#8b5cf6',
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function pct(v: number | null | undefined, digits = 1): string {
-  if (v == null || Number.isNaN(v)) return '—';
-  return `${(v * 100).toFixed(digits)}%`;
-}
-
-function quote(s: string) {
-  return `'${s.replace(/'/g, "''")}'`;
-}
-
-function ProbBar({
-  label,
-  value,
-  context,
-}: {
-  label: string;
-  value: number | null | undefined;
-  context?: string;
-}) {
-  const pctVal = value == null || Number.isNaN(value) ? null : value * 100;
-  const barColor =
-    pctVal == null
-      ? 'bg-gray-200'
-      : pctVal >= 60
-      ? 'bg-emerald-400'
-      : pctVal >= 52
-      ? 'bg-amber-400'
-      : 'bg-red-300';
-
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="w-32 text-zinc-300 shrink-0 text-xs font-medium">{label}</span>
-      <div className="flex-1 h-2.5 bg-zinc-800 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full ${barColor} transition-all`}
-          style={{ width: pctVal != null ? `${Math.min(pctVal, 100)}%` : '0%' }}
-        />
-      </div>
-      <span className="w-12 text-right text-xs font-mono text-zinc-100">{pct(value)}</span>
-      {context && <span className="text-xs text-zinc-400 italic">{context}</span>}
-    </div>
-  );
-}
-
-function BiasIcon({ bias }: { bias: string }) {
-  if (bias === 'BULLISH') return <TrendingUp className="w-4 h-4 text-emerald-300" />;
-  if (bias === 'BEARISH') return <TrendingDown className="w-4 h-4 text-rose-300" />;
-  return <Minus className="w-4 h-4 text-zinc-400" />;
-}
-
-function SymbolCardView({ card }: { card: SymbolCard }) {
-  const dowName = DOW_NAMES[card.day_of_week] ?? '';
-  const vixClass = VIX_COLORS[card.vix_regime] ?? 'text-gray-600';
-  const biasClass = BIAS_COLORS[card.dominant_bias] ?? BIAS_COLORS.NEUTRAL;
-  const confClass = CONFIDENCE_COLORS[card.confidence] ?? CONFIDENCE_COLORS.LOW;
-
-  const gapContext =
-    card.gap_direction === 'NONE'
-      ? 'no gap'
-      : `${card.gap_direction.toLowerCase()} • ${(card.gap_size_bucket ?? '').toLowerCase()}`;
-
-  const occContext = card.occ_first_direction
-    ? card.occ_first_direction.toLowerCase() + ' candle'
-    : undefined;
-
-  const streakContext = card.streak_direction
-    ? `${card.streak_length}d ${card.streak_direction.toLowerCase()} streak`
-    : undefined;
-
-  return (
-    <Card className="p-4 flex flex-col gap-3 border-zinc-900 bg-black/30 backdrop-blur-sm">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <span className="text-lg font-bold text-zinc-100">{card.symbol}</span>
-        <div className="flex items-center gap-1.5">
-          <BiasIcon bias={card.dominant_bias} />
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${biasClass}`}>
-            {card.dominant_bias}
-          </span>
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${confClass}`}>
-            {card.confidence}
-          </span>
-        </div>
-      </div>
-
-      {/* Context */}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-400">
-        <span>{dowName}</span>
-        <span className={`font-medium ${vixClass}`}>{card.vix_regime}</span>
-        {card.is_event_day && (
-          <span className="text-amber-300 font-semibold">
-            EVENT{card.event_type ? ` (${card.event_type})` : ''}
-          </span>
-        )}
-        <span>ATR use: {card.atr_usage_pct != null ? `${card.atr_usage_pct.toFixed(0)}%` : '—'}</span>
-        <span>{(card.open_vs_pd_range ?? '').replace(/_/g, ' ')}</span>
-      </div>
-
-      {/* Probability bars */}
-      <div className="flex flex-col gap-1.5">
-        <ProbBar label="Gap Fill" value={card.gap_fill_probability} context={gapContext} />
-        <ProbBar label="OR-15 Breakout" value={card.or_breakout_probability} />
-        <ProbBar label="OCC Continuation" value={card.occ_continuation_probability} context={occContext} />
-        <ProbBar label="MOP Retrace" value={card.mop_retrace_probability} />
-        <ProbBar label="Streak Reversal" value={card.streak_reversal_probability} context={streakContext} />
-        <ProbBar label="PD Level Break" value={card.pdh_pdl_break_probability} />
-      </div>
-
-      {/* Vote summary */}
-      <div className="flex gap-3 text-xs pt-1 border-t border-zinc-800">
-        <span className="text-emerald-300 font-semibold">
-          ↑ {card.continuation_confluence_count} continuation
-        </span>
-        <span className="text-rose-300 font-semibold">
-          ↓ {card.reversal_confluence_count} reversal
-        </span>
-        <span className="text-zinc-300 ml-auto font-medium">net {card.total_vote > 0 ? '+' : ''}{card.total_vote}</span>
-      </div>
-    </Card>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Page
-// ─────────────────────────────────────────────────────────────────────────────
-
-export default function ScreenerPage() {
-  const [status, setStatus] = useState<EngineStatus>('loading');
-  const [statusMsg, setStatusMsg] = useState('Initialising DuckDB…');
-  const [cards, setCards] = useState<SymbolCard[]>([]);
-  const [maxDate, setMaxDate] = useState('');
-  const [selectedDate, setSelectedDate] = useState('');
-  const [biasFilter, setBiasFilter] = useState('ALL');
-
-  // Trend section
-  const [trendSymbol, setTrendSymbol] = useState('NQ1');
-  const [trendLookback, setTrendLookback] = useState('252');
-  const [trendData, setTrendData] = useState<TrendRow[]>([]);
-
-  // ── Engine init ────────────────────────────────────────────────────────────
-  const initEngine = useCallback(async () => {
-    setStatus('loading');
-    setStatusMsg('Initialising DuckDB…');
+  const fetchScreenerData = async (runScan = false) => {
     try {
-      await initDuckDB();
-      setStatusMsg('Loading confluence parquet…');
-      const version = Date.now();
-      await loadParquet(PARQUET_FILE, `/api/data/${PARQUET_FILE}?v=${version}`);
-      const rows = await runQuery<MaxDateRow>(
-        `SELECT MAX(trading_date)::VARCHAR AS max_date FROM ${TABLE_NAME}`
-      );
-      const md = rows[0]?.max_date ?? '';
-      setMaxDate(md);
-      setSelectedDate(md);
-      setStatus('ready');
-    } catch (e) {
-      setStatus('error');
-      setStatusMsg(String(e));
+      if (runScan) setScanning(true);
+      else setLoading(true);
+
+      const url = `/api/screener?limit=${limit}${runScan ? '&run=true' : ''}`;
+      const res = await fetch(url);
+      const json = await res.json();
+
+      if (json.success) {
+        setData(json);
+        if (json.candidates && json.candidates.length > 0 && !selectedTicker) {
+          setSelectedTicker(json.candidates[0].ticker);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load screener data:', err);
+    } finally {
+      setLoading(false);
+      setScanning(false);
     }
+  };
+
+  useEffect(() => {
+    fetchScreenerData(false);
   }, []);
 
-  useEffect(() => {
-    initEngine();
-  }, [initEngine]);
+  const candidates = data?.candidates || [];
+  const regime = data?.market_regime || { status: 'BULL_EXPLOSIVE', spy_close: 742.09, is_macro_high_risk: false };
 
-  // ── Card query ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (status !== 'ready' || !selectedDate) return;
-    const biasWhere = biasFilter !== 'ALL' ? `AND dominant_bias = ${quote(biasFilter)}` : '';
+  // Filter candidates based on selected strategy and search query
+  const filteredCandidates = useMemo(() => {
+    return candidates.filter((c) => {
+      // Search filter
+      const matchesSearch =
+        searchQuery === '' ||
+        c.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.industry.toLowerCase().includes(searchQuery.toLowerCase());
 
-    runQuery<SymbolCard>(`
-      SELECT
-        symbol, trading_date::VARCHAR AS trading_date,
-        day_of_week, vix_regime,
-        gap_direction, gap_size_bucket, open_vs_pd_range,
-        streak_direction, streak_length,
-        occ_first_direction,
-        is_event_day, event_type,
-        atr_14d, atr_usage_pct,
-        gap_fill_probability::DOUBLE AS gap_fill_probability,
-        or_breakout_probability::DOUBLE AS or_breakout_probability,
-        ib_single_break_probability::DOUBLE AS ib_single_break_probability,
-        occ_continuation_probability::DOUBLE AS occ_continuation_probability,
-        mop_retrace_probability::DOUBLE AS mop_retrace_probability,
-        pdh_pdl_break_probability::DOUBLE AS pdh_pdl_break_probability,
-        streak_reversal_probability::DOUBLE AS streak_reversal_probability,
-        total_vote, continuation_confluence_count, reversal_confluence_count,
-        dominant_bias, confidence
-      FROM ${TABLE_NAME}
-      WHERE trading_date = ${quote(selectedDate)} ${biasWhere}
-      ORDER BY ABS(total_vote) DESC, symbol
-    `).then(setCards).catch(console.error);
-  }, [status, selectedDate, biasFilter]);
+      if (!matchesSearch) return false;
 
-  // ── Trend query ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (status !== 'ready') return;
-    const lookback = parseInt(trendLookback, 10);
-    const lookbackWhere = !Number.isNaN(lookback)
-      ? `AND trading_date >= (SELECT MAX(trading_date) - INTERVAL '${lookback}' DAY FROM ${TABLE_NAME})`
-      : '';
+      // Strategy filter
+      if (selectedStrategy === 'all') return true;
+      return c.strategy_matches[selectedStrategy] === true;
+    });
+  }, [candidates, selectedStrategy, searchQuery]);
 
-    runQuery<TrendRow>(`
-      SELECT
-        trading_date::VARCHAR AS trading_date,
-        gap_fill_probability::DOUBLE AS gap_fill_probability,
-        or_breakout_probability::DOUBLE AS or_breakout_probability,
-        occ_continuation_probability::DOUBLE AS occ_continuation_probability,
-        mop_retrace_probability::DOUBLE AS mop_retrace_probability,
-        streak_reversal_probability::DOUBLE AS streak_reversal_probability,
-        dominant_bias
-      FROM ${TABLE_NAME}
-      WHERE symbol = ${quote(trendSymbol)} ${lookbackWhere}
-      ORDER BY trading_date
-    `).then(setTrendData).catch(console.error);
-  }, [status, trendSymbol, trendLookback]);
+  const activeCandidate = useMemo(() => {
+    if (!selectedTicker) return filteredCandidates[0] || null;
+    return candidates.find((c) => c.ticker === selectedTicker) || filteredCandidates[0] || null;
+  }, [candidates, filteredCandidates, selectedTicker]);
 
-  const handleReset = useCallback(async () => {
-    await resetDuckDB();
-    initEngine();
-  }, [initEngine]);
-
-  const filteredCards = useMemo(() => cards, [cards]);
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-
-  if (status !== 'ready') {
-    return (
-      <div className="p-12 flex flex-col items-center gap-3 text-gray-500">
-        {status === 'loading' ? (
-          <>
-            <RefreshCcw className="w-6 h-6 animate-spin" />
-            <span className="text-sm">{statusMsg}</span>
-          </>
-        ) : (
-          <>
-            <span className="text-sm text-red-500">Error: {statusMsg}</span>
-            <Button variant="outline" size="sm" onClick={handleReset}>Retry</Button>
-          </>
-        )}
-      </div>
-    );
-  }
+  const handleExport = (type: 'tradingview' | 'thinkorswim' | 'matrix') => {
+    window.open(`/api/screener/export?type=${type}`, '_blank');
+  };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(139,92,246,0.14),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.12),_transparent_28%),#050816] p-6 max-w-7xl mx-auto space-y-8 text-zinc-100">
-      {/* Page header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-            <Link href="/research" className="hover:text-violet-300 flex items-center gap-1">
-              <ArrowLeft className="w-4 h-4" /> Research
-            </Link>
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-6 space-y-6 font-sans">
+      {/* ─────────────────────────────────────────────────────────────────────────────
+          1. Header & Navigation
+         ───────────────────────────────────────────────────────────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800/80 pb-4">
+        <div className="flex items-center space-x-3">
+          <Link href="/research">
+            <Button variant="outline" size="icon" className="h-9 w-9 bg-zinc-900 border-zinc-800 hover:bg-zinc-800 text-zinc-300">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-xl md:text-2xl font-bold tracking-tight text-zinc-100">
+                Stock Screener Engine
+              </h1>
+              <span className="px-2 py-0.5 text-xs font-mono bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 rounded-md">
+                trade_screener v1.1.0
+              </span>
+            </div>
+            <p className="text-xs md:text-sm text-zinc-400">
+              Systematic multi-framework momentum & income setup matrix across 11 institutional strategies
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2">
-            <BarChart2 className="w-6 h-6 text-violet-300" />
-            What&apos;s in Play
-          </h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Daily edge-signal confluence — probability-weighted setup screener
-          </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleReset} className="flex items-center gap-1 border-zinc-700 bg-zinc-950/70 text-zinc-100 hover:bg-zinc-900">
-          <RefreshCcw className="w-4 h-4" /> Reload
-        </Button>
-      </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap gap-4 items-end bg-black/30 rounded-lg p-4 border border-zinc-900 backdrop-blur-sm">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-zinc-400">Date</label>
-          <input
-            type="date"
-            className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
-            value={selectedDate}
-            max={maxDate}
-            onChange={(e) => setSelectedDate(e.target.value || maxDate)}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-zinc-400">Bias filter</label>
-          <select
-            className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
-            value={biasFilter}
-            onChange={(e) => setBiasFilter(e.target.value)}
-          >
-            {['ALL', 'BULLISH', 'BEARISH', 'NEUTRAL'].map((b) => (
-              <option key={b} value={b}>{b}</option>
-            ))}
-          </select>
-        </div>
-        <div className="ml-auto text-xs text-zinc-400 self-end">
-          {selectedDate && (
-            <span>
-              Showing {filteredCards.length} symbol{filteredCards.length !== 1 ? 's' : ''} ·{' '}
-              {selectedDate}
-            </span>
+        {/* Market Regime Badge */}
+        <div className="flex items-center space-x-3 bg-zinc-900/90 border border-zinc-800 px-4 py-2 rounded-xl">
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Global Regime</span>
+            <div className="flex items-center space-x-1.5 mt-0.5">
+              <span className={`h-2.5 w-2.5 rounded-full animate-pulse ${
+                regime.status === 'BEAR_PROTECTIVE' ? 'bg-rose-500' : regime.status === 'BULL_CHOPIER' ? 'bg-amber-500' : 'bg-emerald-500'
+              }`} />
+              <span className={`text-xs font-bold font-mono ${
+                regime.status === 'BEAR_PROTECTIVE' ? 'text-rose-400' : regime.status === 'BULL_CHOPIER' ? 'text-amber-400' : 'text-emerald-400'
+              }`}>
+                {regime.status}
+              </span>
+            </div>
+          </div>
+          <div className="h-8 w-px bg-zinc-800" />
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">SPY Benchmark</span>
+            <span className="text-xs font-mono font-bold text-zinc-200">${regime.spy_close.toFixed(2)}</span>
+          </div>
+          {regime.is_macro_high_risk && (
+            <>
+              <div className="h-8 w-px bg-zinc-800" />
+              <div className="flex items-center space-x-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-2 py-1 rounded-md">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                <span>Macro Event Today</span>
+              </div>
+            </>
           )}
         </div>
       </div>
 
-      {/* Symbol cards */}
-      {filteredCards.length === 0 ? (
-        <Card className="p-8 text-center text-zinc-400 border-zinc-900 bg-black/30">
-          No data for {selectedDate}. Try a different date.
-        </Card>
+      {/* ─────────────────────────────────────────────────────────────────────────────
+          2. Control Bar & Watchlist Export Toolbar
+         ───────────────────────────────────────────────────────────────────────────── */}
+      <Card className="bg-zinc-900/80 border-zinc-800/80 p-4 space-y-4">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+          {/* Strategy Selector Dropdown */}
+          <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <div className="flex items-center space-x-2 bg-zinc-950 border border-zinc-800 px-3 py-1.5 rounded-lg flex-1">
+              <Filter className="h-4 w-4 text-cyan-400" />
+              <select
+                value={selectedStrategy}
+                onChange={(e) => setSelectedStrategy(e.target.value)}
+                className="bg-transparent text-sm text-zinc-200 focus:outline-none w-full cursor-pointer font-medium"
+              >
+                {Object.entries(STRATEGY_LABELS).map(([key, info]) => (
+                  <option key={key} value={key} className="bg-zinc-900 text-zinc-200">
+                    {info.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Search Input */}
+            <div className="flex items-center space-x-2 bg-zinc-950 border border-zinc-800 px-3 py-1.5 rounded-lg w-full sm:w-64">
+              <Search className="h-4 w-4 text-zinc-400" />
+              <input
+                type="text"
+                placeholder="Search ticker, company..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none w-full"
+              />
+            </div>
+          </div>
+
+          {/* Action Buttons & Export Controls */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={() => fetchScreenerData(true)}
+              disabled={scanning}
+              className="bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs h-9 px-4 rounded-lg shadow-lg shadow-cyan-950/50"
+            >
+              <RefreshCcw className={`h-3.5 w-3.5 mr-2 ${scanning ? 'animate-spin' : ''}`} />
+              {scanning ? 'Scanning Market...' : 'Run Realtime Scan'}
+            </Button>
+
+            <div className="h-6 w-px bg-zinc-800 mx-1 hidden sm:block" />
+
+            <Button
+              onClick={() => handleExport('tradingview')}
+              variant="outline"
+              size="sm"
+              className="bg-zinc-950 border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs h-9"
+            >
+              <Download className="h-3.5 w-3.5 mr-1.5 text-emerald-400" />
+              TradingView CSV
+            </Button>
+
+            <Button
+              onClick={() => handleExport('thinkorswim')}
+              variant="outline"
+              size="sm"
+              className="bg-zinc-950 border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs h-9"
+            >
+              <Download className="h-3.5 w-3.5 mr-1.5 text-blue-400" />
+              Thinkorswim CSV
+            </Button>
+
+            <Button
+              onClick={() => handleExport('matrix')}
+              variant="outline"
+              size="sm"
+              className="bg-zinc-950 border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs h-9"
+            >
+              <Layers className="h-3.5 w-3.5 mr-1.5 text-purple-400" />
+              Matrix CSV
+            </Button>
+          </div>
+        </div>
+
+        {/* Strategy Description Banner */}
+        {selectedStrategy && STRATEGY_LABELS[selectedStrategy] && (
+          <div className="text-xs text-zinc-400 bg-zinc-950/60 border border-zinc-800/60 p-2.5 rounded-lg flex items-center justify-between">
+            <span className="flex items-center space-x-2">
+              <Zap className="h-3.5 w-3.5 text-amber-400" />
+              <span>{STRATEGY_LABELS[selectedStrategy].desc}</span>
+            </span>
+            <span className="text-[11px] font-mono text-zinc-500">
+              Showing {filteredCandidates.length} of {candidates.length} candidate stocks
+            </span>
+          </div>
+        )}
+      </Card>
+
+      {/* ─────────────────────────────────────────────────────────────────────────────
+          3. Main Dashboard Split View Grid
+         ───────────────────────────────────────────────────────────────────────────── */}
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 space-y-4">
+          <RefreshCcw className="h-8 w-8 text-cyan-400 animate-spin" />
+          <p className="text-sm text-zinc-400 font-mono">Loading Screener Feature Matrix & Strategy Engine...</p>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredCards.map((card) => (
-            <SymbolCardView key={card.symbol} card={card} />
-          ))}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left Panel: Common Subset Strategy Comparison Matrix (7/12 = ~60%) */}
+          <div className="lg:col-span-7 space-y-4">
+            <Card className="bg-zinc-900/80 border-zinc-800/80 p-0 overflow-hidden">
+              <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900">
+                <div className="flex items-center space-x-2">
+                  <BarChart3 className="h-4 w-4 text-emerald-400" />
+                  <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                    Candidate Strategy Matrix
+                  </h2>
+                </div>
+                <span className="text-xs text-zinc-400 font-mono">
+                  Sorted by Common Subset Match Count
+                </span>
+              </div>
+
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-zinc-950 text-zinc-400 border-b border-zinc-800 sticky top-0 uppercase tracking-wider">
+                    <tr>
+                      <th className="p-3">Ticker</th>
+                      <th className="p-3">Company</th>
+                      <th className="p-3">Sector</th>
+                      <th className="p-3 text-right">Close</th>
+                      <th className="p-3 text-center">Matches</th>
+                      <th className="p-3">Matched Strategies</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/50">
+                    {filteredCandidates.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-zinc-500">
+                          No stocks matched the selected filters or strategy rules.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCandidates.map((c) => {
+                        const isSelected = activeCandidate?.ticker === c.ticker;
+                        const isCommonSubset = c.matched_strategies_count >= 2;
+
+                        return (
+                          <tr
+                            key={c.ticker}
+                            onClick={() => setSelectedTicker(c.ticker)}
+                            className={`cursor-pointer transition-colors ${
+                              isSelected
+                                ? 'bg-cyan-950/40 text-cyan-200 border-l-4 border-l-cyan-400'
+                                : isCommonSubset
+                                ? 'bg-emerald-950/20 hover:bg-emerald-900/30 text-zinc-200'
+                                : 'hover:bg-zinc-800/40 text-zinc-300'
+                            }`}
+                          >
+                            <td className="p-3 font-bold text-sm text-zinc-100 flex items-center space-x-1.5">
+                              <span>{c.ticker}</span>
+                              {isCommonSubset && (
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400" />
+                              )}
+                            </td>
+                            <td className="p-3 text-zinc-400 max-w-[140px] truncate">{c.company}</td>
+                            <td className="p-3 text-zinc-400 text-[11px] max-w-[120px] truncate">{c.sector}</td>
+                            <td className="p-3 text-right font-bold text-zinc-100">${c.close.toFixed(2)}</td>
+                            <td className="p-3 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                  isCommonSubset
+                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                    : 'bg-zinc-800 text-zinc-400'
+                                }`}
+                              >
+                                {c.matched_strategies_count}
+                              </span>
+                            </td>
+                            <td className="p-3">
+                              <div className="flex flex-wrap gap-1">
+                                {c.matched_strategies_list.split(',').map((sName) => {
+                                  const trimmed = sName.trim();
+                                  if (!trimmed || trimmed === 'None') return null;
+                                  return (
+                                    <span
+                                      key={trimmed}
+                                      className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-800 text-zinc-300 border border-zinc-700"
+                                    >
+                                      {trimmed}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+
+          {/* Right Panel: Selected Candidate Inspector (5/12 = ~40%) */}
+          <div className="lg:col-span-5 space-y-4">
+            {activeCandidate ? (
+              <Card className="bg-zinc-900/80 border-zinc-800/80 p-5 space-y-5">
+                <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h2 className="text-2xl font-bold font-mono text-zinc-100">{activeCandidate.ticker}</h2>
+                      <span className="text-xs text-zinc-400 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
+                        {activeCandidate.sector}
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-400 mt-1">{activeCandidate.company}</p>
+                    <p className="text-[11px] text-zinc-500">{activeCandidate.industry}</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold font-mono text-emerald-400">
+                      ${activeCandidate.close.toFixed(2)}
+                    </div>
+                    <span className="text-[11px] text-zinc-400 font-mono">Daily Split Close</span>
+                  </div>
+                </div>
+
+                {/* Strategy Confirmation Breakdown */}
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                    Institutional Strategy Alignments
+                  </h3>
+                  <div className="grid grid-cols-1 gap-2">
+                    {Object.entries(activeCandidate.strategy_matches).map(([sKey, isMatch]) => {
+                      const sMeta = STRATEGY_LABELS[sKey] || { label: sKey, color: '' };
+                      return (
+                        <div
+                          key={sKey}
+                          className={`p-2.5 rounded-lg border flex items-center justify-between text-xs font-mono transition-colors ${
+                            isMatch
+                              ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                              : 'bg-zinc-950/40 border-zinc-800/60 text-zinc-500'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2">
+                            {isMatch ? (
+                              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                            ) : (
+                              <div className="h-4 w-4 rounded-full border border-zinc-700" />
+                            )}
+                            <span>{sMeta.label}</span>
+                          </div>
+                          <span className={`text-[10px] uppercase font-bold ${isMatch ? 'text-emerald-400' : 'text-zinc-600'}`}>
+                            {isMatch ? 'MATCH' : 'PASSED'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* External Links */}
+                <div className="pt-2 border-t border-zinc-800 flex items-center justify-between text-xs">
+                  <a
+                    href={`https://www.tradingview.com/chart/?symbol=${activeCandidate.ticker}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cyan-400 hover:text-cyan-300 flex items-center space-x-1"
+                  >
+                    <span>View on TradingView</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                  <a
+                    href={`https://finviz.com/quote.ashx?t=${activeCandidate.ticker}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-zinc-400 hover:text-zinc-300 flex items-center space-x-1"
+                  >
+                    <span>View on Finviz</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              </Card>
+            ) : (
+              <Card className="bg-zinc-900/80 border-zinc-800/80 p-8 text-center text-zinc-500">
+                Select a candidate ticker from the matrix to inspect strategy alignments and technical parameters.
+              </Card>
+            )}
+          </div>
         </div>
       )}
-
-      {/* Legend */}
-      <Card className="p-4 border-zinc-900 bg-black/30 backdrop-blur-sm">
-        <h3 className="text-sm font-semibold text-zinc-100 mb-3">Signal Interpretation Guide</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-zinc-300">
-          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
-            <span className="font-medium text-zinc-100">Gap Fill</span>
-            <p className="mt-1">Historical P(gap fills | DOW, VIX regime). &gt;55% = edge. Gap-up fill → bearish; gap-down fill → bullish.</p>
-          </div>
-          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
-            <span className="font-medium text-zinc-100">OR-15 Breakout</span>
-            <p className="mt-1">Historical OR-15 BO_1X win rate | DOW + VIX. Green bar = historically productive breakout environment.</p>
-          </div>
-          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
-            <span className="font-medium text-zinc-100">OCC Continuation</span>
-            <p className="mt-1">Opening candle (15-min) continuation rate. High + bullish candle → continuation long edge.</p>
-          </div>
-          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
-            <span className="font-medium text-zinc-100">MOP Retrace</span>
-            <p className="mt-1">P(price returns to Midnight Open) by end of session. Mean-reversion signal.</p>
-          </div>
-          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
-            <span className="font-medium text-zinc-100">Streak Reversal</span>
-            <p className="mt-1">P(streak ends today | streak direction + length). High = fade the trend.</p>
-          </div>
-          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
-            <span className="font-medium text-zinc-100">PD Level Break</span>
-            <p className="mt-1">P(PDH or PDL broken today | DOW, VIX). Context for expansion vs compression days.</p>
-          </div>
-        </div>
-        <div className="mt-3 pt-3 border-t border-zinc-800 flex flex-wrap gap-4 text-xs text-zinc-300">
-          <span>
-            <span className="inline-block w-3 h-2 rounded bg-emerald-400 mr-1" />≥60% (edge)
-          </span>
-          <span>
-            <span className="inline-block w-3 h-2 rounded bg-amber-400 mr-1" />52–60% (lean)
-          </span>
-          <span>
-            <span className="inline-block w-3 h-2 rounded bg-red-300 mr-1" />&lt;52% (no edge)
-          </span>
-          <span className="ml-auto">Confidence: MEDIUM = |net vote| of 2 · HIGH = |net vote| of 3+ (6-signal model)</span>
-        </div>
-      </Card>
-
-      {/* Probability trend */}
-      <Card className="p-4 border-zinc-900 bg-black/30 backdrop-blur-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-          <h2 className="text-base font-semibold text-zinc-100">Probability Trend</h2>
-          <div className="flex gap-3 items-end flex-wrap">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-zinc-400">Symbol</label>
-              <select
-                className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
-                value={trendSymbol}
-                onChange={(e) => setTrendSymbol(e.target.value)}
-              >
-                {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-zinc-400">Lookback (days)</label>
-              <select
-                className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
-                value={trendLookback}
-                onChange={(e) => setTrendLookback(e.target.value)}
-              >
-                <option value="126">6 months</option>
-                <option value="252">1 year</option>
-                <option value="504">2 years</option>
-                <option value="0">All time</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {trendData.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-zinc-400 text-sm">
-            No trend data
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={trendData} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis
-                dataKey="trading_date"
-                tick={{ fontSize: 11, fill: '#a1a1aa' }}
-                tickFormatter={(v: string) => v.slice(0, 7)}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                domain={[0.3, 0.9]}
-                tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
-                tick={{ fontSize: 11, fill: '#a1a1aa' }}
-                width={40}
-              />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', color: '#f4f4f5' }}
-                labelStyle={{ color: '#d4d4d8' }}
-                formatter={(v: number, name: string) => [
-                  `${(v * 100).toFixed(1)}%`,
-                  name.replace(/_/g, ' ').replace('probability', '').trim(),
-                ]}
-                labelFormatter={(l: string) => `Date: ${l}`}
-              />
-              <Legend
-                wrapperStyle={{ color: '#d4d4d8' }}
-                formatter={(v: string) =>
-                  v.replace(/_/g, ' ').replace('probability', '').trim()
-                }
-              />
-              {Object.entries(TREND_COLORS).map(([key, color]) => (
-                <Line
-                  key={key}
-                  type="monotone"
-                  dataKey={key}
-                  stroke={color}
-                  dot={false}
-                  strokeWidth={1.5}
-                  connectNulls
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-        <p className="text-xs text-zinc-400 mt-2">
-          Rolling expanding conditional probabilities (causal — no look-ahead). Each line reflects
-          P(signal event | day-of-week, VIX regime) using all history prior to that date.
-        </p>
-      </Card>
     </div>
   );
 }
