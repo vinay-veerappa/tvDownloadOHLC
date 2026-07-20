@@ -58,9 +58,30 @@ To trigger an alert from anywhere in the codebase:
 ```python
 from scripts.utils.email_notify import send_email
 
-# Will automatically pull from your secrets.enc configuration!
+# 1. Basic Fire-and-Forget SMS Alert (Non-blocking)
 send_email(
     subject="🚨 SPX Level Break",
     body="SPX has crossed the Zero Gamma level."
 )
+
+# 2. Sending to Multiple Recipients with Attachments
+send_email(
+    subject="📊 Daily Macro Report",
+    body="Attached is the daily macro overview.",
+    to_email=["1234567890@vtext.com", "backup.email@gmail.com"],
+    file_paths=["C:/path/to/macro_chart.png", "C:/path/to/walkthrough.md"]
+)
+
+# 3. Sending an HTML Email (blocking wait)
+send_email(
+    subject="🟢 Gamma Regime Change",
+    body="<h1>Regime Shift</h1><p>The market has shifted to <b style='color:green'>Positive Gamma</b>.</p>",
+    is_html=True,
+    blocking=True
+)
 ```
+
+## Advanced Features
+* **Async by Default:** `send_email` runs in a background thread so it never blocks your streaming options pipeline or backtesting engine.
+* **Auto-Retries:** The utility automatically catches transient SMTP disconnects and retries 3 times with backoff.
+* **MIME Auto-detection:** Attachments automatically guess the correct MIME type based on the file extension (e.g., image/png, text/markdown).
