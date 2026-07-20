@@ -90,9 +90,10 @@ OPEN_SNAPSHOT_TIMEOUT_SECONDS = 120
 OPEN_SNAPSHOT_POLL_INTERVAL = 5
 
 # Sync gate: max seconds to wait for the 16:15 close snapshot.
-# The 10-minute cron gap (16:15 pipeline → 16:25 narrative) usually
-# gives us 10 minutes of headroom; 180s (3 min) is generous and still
-# short enough to keep the narrative on schedule.
+# The EOD narrative now fires at 17:10 ET (moved from 16:25 in 2026-07-20),
+# so the 16:15 close snapshot is guaranteed to be on disk long before the
+# narrative runs. 180s is a generous safety net for the rare case where the
+# 16:15 pipeline slips (e.g. broker latency).
 CLOSE_SNAPSHOT_TIMEOUT_SECONDS = 180
 CLOSE_SNAPSHOT_POLL_INTERVAL = 5
 
@@ -143,11 +144,10 @@ def _wait_for_open_snapshot(timeout: int = OPEN_SNAPSHOT_TIMEOUT_SECONDS) -> boo
 def _wait_for_close_snapshot(timeout: int = CLOSE_SNAPSHOT_TIMEOUT_SECONDS) -> bool:
     """Block until the 16:15 unified_levels_close.txt snapshot is fresh.
 
-    Mirrors `_wait_for_open_snapshot` for the EOD path. The 10-minute
-    cron gap between the 16:15 pipeline run and the 16:25 EOD
-    narrative usually means the file is already there, but if the
-    16:15 run slips (e.g. broker latency), this gate prevents the
-    narrative from grading the day against the 16:00 snapshot.
+    Mirrors `_wait_for_open_snapshot` for the EOD path. The EOD narrative
+    now runs at 17:10 ET (moved from 16:25 in 2026-07-20), so the 16:15
+    close snapshot has ~55 minutes of headroom — this gate is a safety net
+    for the rare case where the 16:15 pipeline slips.
 
     If the current ET time is before 16:15 (e.g. the narrative is run
     overnight), the gate looks for the most recent weekday's 16:15

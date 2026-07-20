@@ -1721,11 +1721,17 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
         log.info("Running %s...", label)
         try:
             # We use subprocess so the LLM generation (which can take a minute)
-            # does not block the apscheduler thread pool or crash the main pipeline
+            # does not block the apscheduler thread pool or crash the main pipeline.
+            # NOTE: always use sys.executable (the interpreter that launched this
+            # pipeline, i.e. the project venv) instead of the bare "python" on PATH.
+            # The system python (e.g. C:\Python314) does NOT have prisma installed,
+            # which broke daily_eod_update / daily_narrative at briefing_core.get_db()
+            # with ModuleNotFoundError: No module named 'prisma' (2026-07-20 EOD run).
             from scripts.streaming.options.config import REPO_ROOT
             env = os.environ.copy()
             env["PYTHONPATH"] = str(REPO_ROOT)
-            subprocess.run(args, env=env, cwd=str(REPO_ROOT), check=True)
+            resolved_args = [sys.executable, *args[1:]] if args and args[0] == "python" else args
+            subprocess.run(resolved_args, env=env, cwd=str(REPO_ROOT), check=True)
             log.info("✓ %s completed", label)
         except Exception as e:
             log.error("Failed to run %s: %s", label, e)

@@ -1288,6 +1288,35 @@ async def main():
     for sym in symbols:
         await update_historical_files(sym)
 
+    # 2.5 Schedule periodic Daily/Weekly refresh
+    # update_historical_files() runs once at startup (step 2 above), but the
+    # spoke is a long-running process — without a periodic re-run, the
+    # _1d.parquet / _1W.parquet files go stale until the next restart.
+    # This background task re-runs the update at 17:00 ET Mon-Fri, after
+    # futures settlement (16:15 ET) + grace, so the settled daily bar is
+    # available before the 17:10 ET EOD narrative chain fires.
+    async def _periodic_historical_updater():
+        while True:
+            now_et = datetime.now(ET_TZ)
+            # Sleep until next 17:00 ET on a weekday
+            next_run = now_et.replace(hour=17, minute=0, second=0, microsecond=0)
+            if now_et >= next_run:
+                next_run += timedelta(days=1)
+            while next_run.weekday() >= 5:  # Skip Sat/Sun
+                next_run += timedelta(days=1)
+            sleep_seconds = (next_run - now_et).total_seconds()
+            print(f"📅 [Historical] Next daily/weekly refresh: {next_run.strftime('%a %Y-%m-%d %H:%M ET')} (in {sleep_seconds/3600:.1f}h)")
+            await asyncio.sleep(sleep_seconds)
+            print(f"📅 [Historical] Running scheduled daily/weekly refresh @ {datetime.now(ET_TZ).strftime('%H:%M ET')}...")
+            for sym in symbols:
+                try:
+                    await update_historical_files(sym)
+                except Exception as e:
+                    print(f"   ⚠️ Historical update failed for {sym}: {e}")
+
+    historical_task = asyncio.create_task(_periodic_historical_updater())
+    print("📅 [Historical] Background daily/weekly refresh task started (17:00 ET Mon-Fri).")
+
     # 3. Main Loop
     while True:
         try:

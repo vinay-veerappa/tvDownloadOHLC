@@ -20,7 +20,10 @@ GAP_SCRIPT = os.path.join(SCRIPTS_DIR, "trader", "generate_ict_nwog_ndog.py")
 def run_command(cmd):
     print(f"\n[EXEC] {' '.join(cmd)}")
     try:
-        subprocess.run(cmd, check=True)
+        # Use sys.executable (the venv that launched this script) instead of the
+        # bare "python" on PATH, which may be a system interpreter missing deps.
+        resolved = [sys.executable, *cmd[1:]] if cmd and cmd[0] == "python" else cmd
+        subprocess.run(resolved, check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error executing {cmd[0]}: {e}")
 

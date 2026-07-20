@@ -631,13 +631,21 @@ SCHEDULER_MISFIRE_GRACE_TIME: int = 300
 
 # Trader narrative schedule times (HH:MM, Eastern). These run inside the same
 # scheduler process as the options pipeline so outputs stay synchronised.
+#
+# NOTE (2026-07-20): "close" moved from 16:25 → 17:10 ET and WEEKLY_NARRATIVE_TIME
+# from 16:20 → 17:00 ET.  The chart streaming spoke now refreshes _1d.parquet /
+# _1W.parquet at 17:00 ET Mon-Fri (after the 16:15 futures settlement + grace).
+# Running the EOD/weekly narratives after that refresh guarantees the settled
+# daily bar is present, so candle_science.py and other close-mode consumers see
+# today's completed bar instead of yesterday's.  See stream_chart.py
+# `_periodic_historical_updater` and ADR-023 (pending).
 NARRATIVE_SCHEDULE: dict[str, str] = {
     "premarket": "08:45",
     "open": "09:35",
     "intraday": "12:00",
-    "close": "16:25",
+    "close": "17:10",
 }
-WEEKLY_NARRATIVE_TIME: str = "16:20"
+WEEKLY_NARRATIVE_TIME: str = "17:00"
 
 # Tickers processed by the trader narrative / daily briefing chain.
 # These are user-facing futures symbols (e.g. front-month continuous contract).
