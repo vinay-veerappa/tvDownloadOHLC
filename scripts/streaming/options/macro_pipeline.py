@@ -279,7 +279,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
         
     # Resolve all tickers via hub to get dual mapping metadata
     try:
-        resp = requests.post(HUB_RESOLVE_ENDPOINT, json={"symbols": tickers}, timeout=15)
+        resp = requests.post(HUB_RESOLVE_ENDPOINT, json={"symbols": tickers}, timeout=60)
         if resp.status_code == 200:
             resolution_data = resp.json().get("data", {})
         else:
