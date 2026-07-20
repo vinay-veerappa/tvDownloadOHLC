@@ -983,6 +983,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         internal void ExecuteOrderUpdate(object sender, OrderEventArgs e)
         {
+            List<GuardAction> lockoutActions = null;
             lock (_stateLock)
             {
                 try
@@ -1024,18 +1025,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // -- Lockout phase: advance on order state changes --
                     // When an order goes Cancelled/Filled, check if the lockout can
                     // advance to the next phase (PendingFlatten or Confirmed).
+                    // Collect actions here; process OUTSIDE the lock to avoid
+                    // re-entrancy corruption when ProcessAction triggers events.
                     if (_accountStates.TryGetValue(accountName, out var lockState) &&
                         (lockState.IsLockedOut || DateTime.UtcNow < lockState.LockoutUntil))
                     {
-                        var lockActions = EvaluateLockoutPhase(account, lockState);
-                        if (lockActions != null && lockActions.Count > 0)
-                        {
-                            foreach (var a in lockActions)
-                            {
-                                // Execute outside lock - collect and process after
-                                ProcessAction(a);
-                            }
-                        }
+                        lockoutActions = EvaluateLockoutPhase(account, lockState);
                     }
 
                     LogEvent(accountName, "ORDER_UPDATE", new JObject
@@ -1054,6 +1049,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                 catch (Exception ex)
                 {
                     LogEvent("SYSTEM", "ERROR", $"Error handling OnOrderUpdate: {ex.Message}");
+                }
+            }
+
+            // Process lockout actions OUTSIDE the lock to prevent re-entrancy.
+            if (lockoutActions != null && lockoutActions.Count > 0)
+            {
+                foreach (var a in lockoutActions)
+                {
+                    ProcessAction(a);
                 }
             }
         }
@@ -1246,6 +1250,18 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (isNonFlat)
             {
+                // Check if an FSM already exists for this (account, instrument).
+                if (_guardFsms.TryGetValue(key, out var existingFsm) && existingFsm.PositionSide == newPos)
+                {
+                    // Same-side qty-only update (partial fill, scale-out/in):
+                    // update qty in place, preserving Protected/ProtectedPending state
+                    // and the recognized stop order. Do NOT recreate the FSM.
+                    existingFsm.PositionQuantity = qty;
+                    LogEvent(account.Name, "FSM_UPDATE",
+                        $"{key}: qty updated to {qty} (state stays {existingFsm.State})");
+                    return;
+                }
+
                 // flat->nonflat or flip: (re)create FSM, arm grace, consume pending stop
                 var fsm = new PositionGuardFsm(account.Name, instrument)
                 {
@@ -1433,6 +1449,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                         Quantity = pos.Quantity,
                         RuleId = "MISSING_STOP_FLATTEN"
                     });
+                    // Transition to a non-Unprotected state so a duplicate call
+                    // does not re-emit. We use a new transitional state
+                    // FlattenPending to distinguish from ProtectedPending.
+                    fsm.State = GuardFsmState.FlattenPending;
                 }
             }
             return actions;
@@ -1649,11 +1669,6 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             var actions = new List<GuardAction>();
 
-            if (!_isArmed)
-            {
-                return actions;
-            }
-            
             var profile = GetResolvedProfile(account);
             if (profile == null) return actions;
 
@@ -1750,49 +1765,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
 
-            // Rule 2: Daily Loss
+            // PnL rules (Daily Loss, Trailing Drawdown) have been migrated to
+            // EvaluatePnLRules (called from AccountItemUpdate). They are no longer
+            // evaluated here to avoid duplicate-fire when both PositionUpdate and
+            // AccountItemUpdate fire for the same logical state change.
+            // PeakEquity is still tracked here as a fallback in case AccountItemUpdate
+            // hasn't fired yet (e.g. position just opened and PnL hasn't changed).
             double currentPnL = stateModel.RealizedPnL + stateModel.UnrealizedPnL;
-            if (currentPnL < -profile.DailyLossLimit)
-            {
-                actions.Add(new GuardAction
-                {
-                    AccountName = stateModel.AccountName,
-                    ActionType = GuardActionType.FlattenPosition,
-                    RuleId = "DAILY_LOSS_BREACH"
-                });
-                if (!stateModel.IsLockedOut)
-                {
-                    stateModel.IsLockedOut = true;
-                    if (_config.PnLRules.LockoutMinutes > 0)
-                    {
-                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.PnLRules.LockoutMinutes);
-                    }
-                    _stateDirty = true;
-                }
-            }
-
-            // Rule 3: Trailing Drawdown
             if (currentPnL > stateModel.PeakEquity)
             {
                 stateModel.PeakEquity = currentPnL;
-            }
-            if (currentPnL < stateModel.PeakEquity - profile.TrailingDrawdown)
-            {
-                actions.Add(new GuardAction
-                {
-                    AccountName = stateModel.AccountName,
-                    ActionType = GuardActionType.FlattenPosition,
-                    RuleId = "TRAILING_DD_BREACH"
-                });
-                if (!stateModel.IsLockedOut)
-                {
-                    stateModel.IsLockedOut = true;
-                    if (_config.PnLRules.LockoutMinutes > 0)
-                    {
-                        stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.PnLRules.LockoutMinutes);
-                    }
-                    _stateDirty = true;
-                }
             }
 
             // Rule 4: Edge Window Gate (if enabled)
@@ -1846,31 +1828,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
             return false;
-        }
-
-        private int GetWorkingStopQuantity(Account account, string instrumentFullName, MarketPosition marketPosition)
-        {
-            int stopQty = 0;
-            foreach (Order o in account.Orders)
-            {
-                if (o.Instrument.FullName == instrumentFullName &&
-                    o.OrderState != OrderState.Filled && 
-                    o.OrderState != OrderState.Cancelled && 
-                    o.OrderState != OrderState.Rejected && 
-                    o.OrderState != OrderState.Unknown)
-                {
-                    if (o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit || o.OrderType == OrderType.Market)
-                    {
-                        bool isOpposite = (marketPosition == MarketPosition.Long && (o.OrderAction == OrderAction.Sell || o.OrderAction == OrderAction.SellShort)) ||
-                                          (marketPosition == MarketPosition.Short && (o.OrderAction == OrderAction.Buy || o.OrderAction == OrderAction.BuyToCover));
-                        if (isOpposite)
-                        {
-                            stopQty += (o.Quantity - o.Filled);
-                        }
-                    }
-                }
-            }
-            return stopQty;
         }
 
         // -
@@ -2736,10 +2693,11 @@ namespace NinjaTrader.NinjaScript.AddOns
     // re-entrant position update finds the FSM in ProtectedPending/Protected.
     public enum GuardFsmState
     {
-        Unprotected,      // position open, no covering stop observed yet
-        ProtectedPending, // stop leg Submitted/Initialized/Accepted, not yet Working
-        Protected,        // working stop covering the position
-        Flat              // position closed; FSM entry awaiting cleanup
+        Unprotected,       // position open, no covering stop observed yet
+        ProtectedPending,  // stop leg Submitted/Initialized/Accepted, not yet Working
+        Protected,         // working stop covering the position
+        FlattenPending,    // grace expired with OnMissing=Flatten, action emitted once
+        Flat               // position closed; FSM entry awaiting cleanup
     }
 
     public class PositionGuardFsm

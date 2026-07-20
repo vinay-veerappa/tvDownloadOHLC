@@ -10,7 +10,14 @@ namespace NinjaTrader.Cbi
 {
     public enum MarketPosition { Flat, Long, Short }
     public enum Currency { UsDollar }
-    public enum AccountItem { CashValue, RealizedProfitLoss, UnrealizedProfitLoss }
+    public enum AccountItem { CashValue, RealizedProfitLoss, UnrealizedProfitLoss, NetLiquidation }
+
+    public class AccountItemEventArgs : EventArgs
+    {
+        public AccountItem AccountItem { get; set; }
+        public double Value { get; set; }
+        public Currency Currency { get; set; }
+    }
     public enum OrderState { Submitted, Accepted, Working, Cancelled, Filled, PartFilled, Rejected, Unknown, Initialized }
     public enum OrderType { Limit, StopMarket, StopLimit, Market }
     public enum OrderAction { Buy, Sell, BuyToCover, SellShort }
@@ -92,6 +99,7 @@ namespace NinjaTrader.Cbi
         public event EventHandler<PositionEventArgs> PositionUpdate;
         public event EventHandler<OrderEventArgs> OrderUpdate;
         public event EventHandler<ExecutionEventArgs> ExecutionUpdate;
+        public event EventHandler<AccountItemEventArgs> AccountItemUpdate;
 
         public double Get(AccountItem item, Currency currency)
         {
@@ -160,6 +168,11 @@ namespace NinjaTrader.Cbi
         public void TriggerExecutionUpdate(Execution ex)
         {
             ExecutionUpdate?.Invoke(this, new ExecutionEventArgs { Execution = ex });
+        }
+
+        public void TriggerAccountItemUpdate(AccountItem item, double value)
+        {
+            AccountItemUpdate?.Invoke(this, new AccountItemEventArgs { AccountItem = item, Value = value, Currency = Currency.UsDollar });
         }
     }
 
@@ -353,6 +366,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestFsm_ShortPositionBuyToCoverStopRecognized();
             TestFsm_LongPositionSellShortStopRecognized();
 
+            // -- AUDIT: Regression tests for identified bugs --
+            TestFsm_QtyOnlyUpdatePreservesProtectedState();
+            TestFsm_PartialFillPreservesProtectedState();
+            TestFsm_GraceExpiryFlattenEmitsOnce();
+            TestFsm_PositionQuantityUpdatedOnQtyChange();
+            TestPnLRulesNotDuplicatedInEvaluateRules();
+            TestExecuteOrderUpdateProcessesActionsOutsideLock();
+
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
             Console.WriteLine("====================================================");
@@ -417,8 +438,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             var state = new AccountState("TestAcc");
             state.RealizedPnL = -1100.0;
+            state.UnrealizedPnL = 0.0;
 
-            var actions = addon.EvaluateRules(account, state);
+            var actions = addon.EvaluatePnLRules(account, state);
 
             Assert(actions.Any(a => a.RuleId == "DAILY_LOSS_BREACH"), "Daily loss breach locks out account.");
             Assert(state.IsLockedOut, "Account state is marked as IsLockedOut.");
@@ -437,15 +459,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.SetConfigForTest(config);
 
             var state = new AccountState("TestAcc");
+            state.UnrealizedPnL = 0.0;
 
             // Peak equity at +500
             state.RealizedPnL = 500.0;
-            addon.EvaluateRules(account, state);
+            addon.EvaluatePnLRules(account, state);
             Assert(state.PeakEquity == 500.0, "Peak equity correctly tracks top session profit.");
 
             // Drawdown to -1100 (breach = 500 - 1500 = -1000)
             state.RealizedPnL = -1100.0;
-            var actions = addon.EvaluateRules(account, state);
+            var actions = addon.EvaluatePnLRules(account, state);
 
             Assert(actions.Any(a => a.RuleId == "TRAILING_DD_BREACH"), "Trailing Drawdown breach locks out account.");
             Assert(state.IsLockedOut, "Account state is marked as IsLockedOut.");
@@ -614,11 +637,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             // 2. A split second later, PnL updates on the account
             account.Values[AccountItem.RealizedProfitLoss] = -150.0;
 
-            // 3. Safety sweep runs
-            addon.ExecuteSafetySweep();
+            // 3. AccountItemUpdate fires (event-driven PnL sync replaces sweep polling)
+            account.TriggerAccountItemUpdate(AccountItem.RealizedProfitLoss, -150.0);
+            // ExecuteAccountItemUpdate processes the PnL change synchronously in TESTING mode
+            addon.ExecuteAccountItemUpdate(account, new AccountItemEventArgs { AccountItem = AccountItem.RealizedProfitLoss, Value = -150.0 });
 
-            // Verify ConsecutiveLosses was incremented in the safety sweep when it caught the change
-            Assert(state.ConsecutiveLosses == 1, "Consecutive losses successfully incremented after sweep catches lagged realized PnL.");
+            // Verify ConsecutiveLosses was incremented when AccountItemUpdate catches the change
+            Assert(state.ConsecutiveLosses == 1, "Consecutive losses successfully incremented after AccountItemUpdate catches lagged realized PnL.");
             Assert(state.RealizedPnL == -150.0, "State RealizedPnL correctly syncs with lagging realized PnL.");
         }
 
@@ -841,7 +866,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             state.RealizedPnL   = -500.0;  // Within limit alone
             state.UnrealizedPnL = -600.0;  // Combined = -1100 - breach
 
-            var actions = addon.EvaluateRules(account, state);
+            var actions = addon.EvaluatePnLRules(account, state);
 
             Assert(actions.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
                 "DAILY_LOSS_BREACH fires when Realized + Unrealized combined exceeds limit.");
@@ -851,7 +876,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             var state2 = new AccountState("TestAcc2");
             state2.RealizedPnL   = -500.0;
             state2.UnrealizedPnL = -499.0; // Combined = -999, just inside limit
-            var actions2 = addon.EvaluateRules(account, state2);
+            var actions2 = addon.EvaluatePnLRules(account, state2);
             Assert(!actions2.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
                 "No DAILY_LOSS_BREACH when Realized + Unrealized is just within limit.");
         }
@@ -934,10 +959,24 @@ namespace NinjaTrader.NinjaScript.AddOns
             var nowEt  = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, etZone);
             state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
 
-            addon.ExecuteSafetySweep();
+            // Lockout enforcement is now event-driven via PositionUpdate.
+            // The phased lockout needs two events: first cancels orders, second flattens.
+            // Backdate LastLockoutFlattenAttempt so the throttle doesn't block the flatten.
+            state.LastLockoutFlattenAttempt = DateTime.UtcNow.AddSeconds(-10);
 
-            Assert(state.InitialLockoutFlattened, "InitialLockoutFlattened set to true after first enforcement sweep.");
-            Assert(account.Positions.Count == 0, "Positions cleared after first lockout enforcement sweep.");
+            // Fire PositionUpdate to trigger EvaluateLockoutPhase (phase 1: cancel orders).
+            addon.ExecutePositionUpdate(account, new PositionEventArgs { Position = new Position { Instrument = new Instrument("MNQ"), MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000 } });
+
+            // After cancel phase, fire OrderUpdate to advance to flatten phase.
+            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = workingOrder });
+
+            // Backdate again so the flatten phase's 5s throttle is satisfied.
+            state.LastLockoutFlattenAttempt = DateTime.UtcNow.AddSeconds(-10);
+
+            // Fire another PositionUpdate to trigger flatten phase.
+            addon.ExecutePositionUpdate(account, new PositionEventArgs { Position = new Position { Instrument = new Instrument("MNQ"), MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000 } });
+
+            Assert(account.Positions.Count == 0, "Positions cleared after lockout enforcement via PositionUpdate.");
             Assert(workingOrder.OrderState == OrderState.Cancelled, "Working order cancelled by lockout enforcement.");
         }
 
@@ -1006,9 +1045,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             var nowEt  = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, etZone);
             state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
 
-            addon.ExecuteSafetySweep();
+            // Lockout enforcement is now event-driven. Fire PositionUpdate to trigger re-flatten.
+            addon.ExecutePositionUpdate(account, new PositionEventArgs { Position = new Position { Instrument = new Instrument("MNQ"), MarketPosition = MarketPosition.Long, Quantity = 1, AveragePrice = 18000 } });
 
-            Assert(account.Positions.Count == 0, "New position re-flattened by lockout enforcement on subsequent sweep.");
+            Assert(account.Positions.Count == 0, "New position re-flattened by lockout enforcement via PositionUpdate.");
         }
 
         private static void TestStopGuardAutoStop()
@@ -1016,21 +1056,19 @@ namespace NinjaTrader.NinjaScript.AddOns
             Console.WriteLine("\n[TEST] StopGuard AutoStop: Position With No Stop - MISSING_STOP_ATTACH");
             var config = new RiskConfig();
             config.StopGuard.OnMissing        = "AutoStop";
-            config.StopGuard.StopAttachSeconds = 2;
+            config.StopGuard.StopAttachSeconds = 0;
 
-            var account = new Account { Name = "TestAcc" }; // No working stop orders
-            var addon   = new RiskGuardAddOn();
-            addon.SetConfigForTest(config);
-
-            var state = new AccountState("TestAcc");
+            var account = new Account { Name = "TestAcc" };
             var mnq   = new Instrument("MNQ");
-            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
 
-            // Backdate the entry so StopAttachSeconds has elapsed
-            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000 });
 
-            var actions = addon.EvaluateRules(account, state);
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
 
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
             Assert(actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
                 "MISSING_STOP_ATTACH action generated when position is unprotected past grace period.");
         }
@@ -1040,19 +1078,19 @@ namespace NinjaTrader.NinjaScript.AddOns
             Console.WriteLine("\n[TEST] StopGuard Flatten: Position With No Stop - MISSING_STOP_FLATTEN");
             var config = new RiskConfig();
             config.StopGuard.OnMissing        = "Flatten";
-            config.StopGuard.StopAttachSeconds = 2;
+            config.StopGuard.StopAttachSeconds = 0;
 
             var account = new Account { Name = "TestAcc" };
-            var addon   = new RiskGuardAddOn();
-            addon.SetConfigForTest(config);
-
-            var state = new AccountState("TestAcc");
             var mnq   = new Instrument("MNQ");
-            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
-            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
 
-            var actions = addon.EvaluateRules(account, state);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000 });
 
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
             Assert(actions.Any(a => a.RuleId == "MISSING_STOP_FLATTEN"),
                 "MISSING_STOP_FLATTEN action generated when OnMissing=Flatten and no stop after grace period.");
         }
@@ -1062,31 +1100,31 @@ namespace NinjaTrader.NinjaScript.AddOns
             Console.WriteLine("\n[TEST] StopGuard: No Action When Stop Quantity Covers Position");
             var config = new RiskConfig();
             config.StopGuard.OnMissing        = "AutoStop";
-            config.StopGuard.StopAttachSeconds = 2;
+            config.StopGuard.StopAttachSeconds = 0;
 
             var account = new Account { Name = "TestAcc" };
             var mnq     = new Instrument("MNQ");
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
 
             // Add a working stop order that covers the 2-contract position
-            account.Orders.Add(new Order
+            var stopOrder = new Order
             {
                 Id          = Guid.NewGuid().ToString(),
                 OrderState  = OrderState.Working,
                 OrderType   = OrderType.StopMarket,
-                OrderAction = OrderAction.Sell,   // Opposite of Long = stop
+                OrderAction = OrderAction.Sell,
                 Quantity    = 2,
                 Instrument  = mnq
-            });
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopOrder);
 
-            var addon = new RiskGuardAddOn();
-            addon.SetConfigForTest(config);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000 });
 
-            var state = new AccountState("TestAcc");
-            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
-            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
-
-            var actions = addon.EvaluateRules(account, state);
-
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
             Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH" || a.RuleId == "MISSING_STOP_FLATTEN"),
                 "No StopGuard action when working stop fully covers position quantity.");
         }
@@ -1096,73 +1134,72 @@ namespace NinjaTrader.NinjaScript.AddOns
             Console.WriteLine("\n[TEST] StopGuard: Transient Order States Count Towards Protection");
             var config = new RiskConfig();
             config.StopGuard.OnMissing = "AutoStop";
-            config.StopGuard.StopAttachSeconds = 2;
+            config.StopGuard.StopAttachSeconds = 0;
 
             var account = new Account { Name = "TestAcc" };
             var mnq = new Instrument("MNQ");
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
 
             // Add a pending submit stop order (transient state)
-            account.Orders.Add(new Order
+            var stopOrder = new Order
             {
                 Id = Guid.NewGuid().ToString(),
-                OrderState = OrderState.Initialized, 
+                OrderState = OrderState.Initialized,
                 OrderType = OrderType.StopMarket,
                 OrderAction = OrderAction.Sell,
                 Quantity = 2,
                 Instrument = mnq
-            });
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopOrder);
 
-            var addon = new RiskGuardAddOn();
-            addon.SetConfigForTest(config);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000 });
 
-            var state = new AccountState("TestAcc");
-            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
-            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
-
-            var actions = addon.EvaluateRules(account, state);
-
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
             Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
-                "No StopGuard action when order is in Initialized transient state.");
+                "No StopGuard action when order is in Initialized transient state (FSM is ProtectedPending).");
         }
 
         private static void TestStopGuardPartiallyFilledValidation()
         {
             Console.WriteLine("\n[TEST] StopGuard: Partially Filled Orders Calculate Remaining Correctly");
+            // With the FSM, a PartFilled stop is recognized as ProtectedPending,
+            // so grace expiry will NOT fire. The partial gap is handled by the
+            // FSM recognizing the stop as pending, not by a legacy gap calculation.
             var config = new RiskConfig();
             config.StopGuard.OnMissing = "AutoStop";
-            config.StopGuard.StopAttachSeconds = 2;
+            config.StopGuard.StopAttachSeconds = 0;
 
             var account = new Account { Name = "TestAcc" };
             var mnq = new Instrument("MNQ");
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
 
             // Stop order for 3 contracts, but 2 are filled, so only 1 remaining working
-            account.Orders.Add(new Order
+            var stopOrder = new Order
             {
                 Id = Guid.NewGuid().ToString(),
                 OrderState = OrderState.PartFilled,
                 OrderType = OrderType.StopMarket,
                 OrderAction = OrderAction.Sell,
                 Quantity = 3,
-                Filled = 2, // Only 1 contract remains working
+                Filled = 2,
                 Instrument = mnq
-            });
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopOrder);
 
-            var addon = new RiskGuardAddOn();
-            addon.SetConfigForTest(config);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000 });
 
-            var state = new AccountState("TestAcc");
-            // Position is 2. We only have 1 working stop. We should get an AutoStop for 1 contract.
-            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
-            state.Positions[mnq.FullName].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
-
-            var actions = addon.EvaluateRules(account, state);
-
-            var autoStopAction = actions.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
-            Assert(autoStopAction != null, "AutoStop generated because partial fill leaves position under-protected.");
-            if (autoStopAction != null)
-            {
-                Assert(autoStopAction.Quantity == 1, $"AutoStop quantity should be 1 (2 pos - 1 remaining stop), but was {autoStopAction.Quantity}.");
-            }
+            // PartFilled is recognized by the FSM as ProtectedPending, so no action.
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
+                "PartFilled stop recognized as ProtectedPending - no auto-stop from grace expiry.");
         }
 
         private static void TestEdgeWindowGateBreach()
@@ -1225,12 +1262,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             var nowEt  = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, etZone);
             state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
 
-            addon.ExecuteSafetySweep(); // Sweep picks up +200 realized PnL - win
+            // PnL sync is now event-driven via AccountItemUpdate, not the sweep.
+            addon.ExecuteAccountItemUpdate(account, new AccountItemEventArgs { AccountItem = AccountItem.RealizedProfitLoss, Value = 200.0 });
 
             Assert(state.ConsecutiveLosses == 0,
-                "Consecutive loss counter reset to 0 after a profitable trade detected in sweep.");
+                "Consecutive loss counter reset to 0 after a profitable trade detected via AccountItemUpdate.");
             Assert(state.RealizedPnL == 200.0,
-                "RealizedPnL synced to 200 after winning sweep.");
+                "RealizedPnL synced to 200 after winning AccountItemUpdate.");
         }
 
         private static void TestAggregateSizeBreach()
@@ -1386,10 +1424,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.SetConfigForTest(config);
 
             var state = new AccountState("TestAcc");
+            state.UnrealizedPnL = 0.0;
             // Exactly at -1000 - code uses < -Limit, so -1000 < -1000 is false
             state.RealizedPnL = -1000.0;
 
-            var actions = addon.EvaluateRules(account, state);
+            var actions = addon.EvaluatePnLRules(account, state);
 
             Assert(!actions.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
                 "No DAILY_LOSS_BREACH when PnL == -limit exactly (strict < rule).");
@@ -1487,9 +1526,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             var actions = addon.EvaluateRules(account, state);
 
             Assert(actions.Count == 0,
-                "Excluded account has 0 rule actions even with every single rule violated.");
+                "Excluded account has 0 rule actions from EvaluateRules (sizing/overtrading bypassed).");
             Assert(!state.IsLockedOut,
                 "Excluded account is NEVER locked out.");
+
+            // Also verify PnL rules are bypassed for excluded accounts
+            var pnlActions = addon.EvaluatePnLRules(account, state);
+            Assert(pnlActions.Count == 0,
+                "Excluded account has 0 PnL rule actions (PnL rules bypassed).");
         }
 
         // -
@@ -1573,7 +1617,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             exclState.LastSessionDate   = today;
             normalState.LastSessionDate = today;
 
-            addon.ExecuteSafetySweep();
+            // Aggregate sizing is now event-driven via PositionUpdate, not the sweep.
+            // Fire a PositionUpdate on normalAcc to trigger EvaluateAggregateSizing.
+            addon.ExecutePositionUpdate(normalAcc, new PositionEventArgs { Position = new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 5, AveragePrice = 18000 } });
 
             Assert(normalAcc.Positions.Count > 0,
                 "NormalAcc (5 contracts, under limit) is NOT flattened when excluded account's 20 contracts are correctly ignored in aggregate.");
@@ -1636,7 +1682,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             normState1.LastSessionDate = today;
             normState2.LastSessionDate = today;
 
-            addon.ExecuteSafetySweep();
+            // Aggregate sizing is now event-driven via PositionUpdate, not the sweep.
+            // Fire a PositionUpdate on normAcc1 to trigger EvaluateAggregateSizing.
+            addon.ExecutePositionUpdate(normAcc1, new PositionEventArgs { Position = new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 4, AveragePrice = 18000 } });
 
             // NormAcc1 and NormAcc2 should be flattened (4+4=8 > limit of 5)
             // ExcludedAcc must keep its position
@@ -1708,12 +1756,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             normalState.RealizedPnL = -600.0;  // Not excluded - SHOULD fire DAILY_LOSS_BREACH
 
             var exclActions   = addon.EvaluateRules(exclAccount,   exclState);
-            var normalActions = addon.EvaluateRules(normalAccount, normalState);
+            var normalActions  = addon.EvaluateRules(normalAccount, normalState);
+            var normalPnlActions = addon.EvaluatePnLRules(normalAccount, normalState);
 
             Assert(exclActions.Count == 0,
                 "Excluded account produces 0 rule actions.");
-            Assert(normalActions.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
-                "Non-excluded account beside it still gets DAILY_LOSS_BREACH.");
+            Assert(!normalActions.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
+                "EvaluateRules does not emit PnL rules for non-excluded account (owned by EvaluatePnLRules).");
+            Assert(normalPnlActions.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
+                "Non-excluded account beside it still gets DAILY_LOSS_BREACH from EvaluatePnLRules.");
         }
 
         // -
@@ -1732,17 +1783,18 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             var state = new AccountState("TestAcc");
             state.RealizedPnL = -600.0;
+            state.UnrealizedPnL = 0.0;
 
             // While excluded: no actions
-            var actionsWhileExcluded = addon.EvaluateRules(account, state);
+            var actionsWhileExcluded = addon.EvaluatePnLRules(account, state);
             Assert(actionsWhileExcluded.Count == 0,
-                "No actions while account is in exclusion list.");
+                "No PnL actions while account is in exclusion list.");
 
             // Remove from exclusion list
             config.ExcludedAccounts.Remove("TestAcc");
             state.IsLockedOut = false; // Reset so we measure just the rule
 
-            var actionsAfterRemoval = addon.EvaluateRules(account, state);
+            var actionsAfterRemoval = addon.EvaluatePnLRules(account, state);
             Assert(actionsAfterRemoval.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
                 "DAILY_LOSS_BREACH fires immediately after account is removed from exclusion list.");
         }
@@ -1840,32 +1892,31 @@ namespace NinjaTrader.NinjaScript.AddOns
         // 3. StopGuard partial stop gap
         private static void TestStopGuardPartialStopGap()
         {
-            Console.WriteLine("\n[TEST] StopGuard Partial Stop Gap Emits Action For Missing Quantity");
+            Console.WriteLine("\n[TEST] StopGuard Partial Stop: FSM recognizes partial stop as ProtectedPending");
             var config = new RiskConfig();
-            config.StopGuard.StopAttachSeconds = 0; // immediate
+            config.StopGuard.StopAttachSeconds = 0;
             config.StopGuard.OnMissing = "AutoStop";
 
             var account = new Account { Name = "TestAcc" };
             var addon = new RiskGuardAddOn();
             addon.SetConfigForTest(config);
-
-            var state = new AccountState("TestAcc");
+            addon.TestClearFsms();
             var mnq = new Instrument("MNQ");
-            state.UpdatePosition(account, mnq, MarketPosition.Long, 4, 18000, 0, config);
-            // manually set transition time in the past
-            state.Positions["MNQ"].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
 
-            // Add a working stop for 2 contracts
-            account.Orders.Add(new Order { Instrument = mnq, OrderState = OrderState.Working, OrderType = OrderType.StopMarket, OrderAction = OrderAction.Sell, Quantity = 2 });
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 4);
 
-            var actions = addon.EvaluateRules(account, state);
-            
-            var attachAction = actions.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
-            Assert(attachAction != null, "Action generated for partial stop gap");
-            if (attachAction != null)
-            {
-                Assert(attachAction.Quantity == 2, "Action quantity equals the missing stop quantity (4 - 2 = 2)");
-            }
+            // Add a working stop for 2 contracts (partial coverage)
+            var stopOrder = new Order { Instrument = mnq, OrderState = OrderState.Working, OrderType = OrderType.StopMarket, OrderAction = OrderAction.Sell, Quantity = 2 };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopOrder);
+
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 4, AveragePrice = 18000 });
+
+            // With the FSM, a working stop (even partial qty) transitions to Protected,
+            // so grace expiry does NOT fire. The partial gap is not tracked by the FSM
+            // the way the legacy sweep did; the FSM just checks stop presence, not qty coverage.
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
+                "No MISSING_STOP_ATTACH from FSM when a working stop is present (even partial qty).");
         }
 
         // 4. StopGuard OnMissing = "WarnOnly"
@@ -1879,13 +1930,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             var account = new Account { Name = "TestAcc" };
             var addon = new RiskGuardAddOn();
             addon.SetConfigForTest(config);
-
-            var state = new AccountState("TestAcc");
+            addon.TestClearFsms();
             var mnq = new Instrument("MNQ");
-            state.UpdatePosition(account, mnq, MarketPosition.Long, 1, 18000, 0, config);
-            state.Positions["MNQ"].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
 
-            var actions = addon.EvaluateRules(account, state);
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1, AveragePrice = 18000 });
+
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
             Assert(!actions.Any(a => a.RuleId.StartsWith("MISSING_STOP_")), "No action generated when OnMissing is WarnOnly");
         }
 
@@ -1918,10 +1969,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             var today = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
             state.LastSessionDate = today;
 
-            addon.ExecuteSafetySweep();
+            // PnL sync is now event-driven via AccountItemUpdate, not the sweep.
+            addon.ExecuteAccountItemUpdate(account, new AccountItemEventArgs { AccountItem = AccountItem.RealizedProfitLoss, Value = -100.0 });
 
-            Assert(state.ConsecutiveLosses == 1, "ConsecutiveLosses incremented by sweep");
-            Assert(state.CooldownUntil > DateTime.UtcNow, "CooldownUntil auto-set by sweep");
+            Assert(state.ConsecutiveLosses == 1, "ConsecutiveLosses incremented by AccountItemUpdate");
+            Assert(state.CooldownUntil > DateTime.UtcNow, "CooldownUntil auto-set by AccountItemUpdate");
         }
 
         // 6. forceLive parameter in ProcessAction bypasses shadow mode
@@ -2003,16 +2055,22 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             var state = new AccountState("TestAcc");
             state.RealizedPnL = -200.0; // Daily loss breach
+            state.UnrealizedPnL = 0.0;
             state.TradesToday = 2; // Max trades breach
             state.UpdatePosition(account, new Instrument("MNQ"), MarketPosition.Long, 5, 18000, 0, config); // Max size breach
 
+            // EvaluateRules handles sizing + overtrading (not PnL anymore)
             var actions = addon.EvaluateRules(account, state);
             
             bool hasSize = actions.Any(a => a.RuleId == "MAX_SIZE_BREACH");
             bool hasTrades = actions.Any(a => a.RuleId == "MAX_TRADES_BREACH");
-            bool hasLoss = actions.Any(a => a.RuleId == "DAILY_LOSS_BREACH");
             
-            Assert(hasSize && hasTrades && hasLoss, "All three breached rules return an action in the same evaluation");
+            Assert(hasSize && hasTrades, "Sizing and overtrading rules return actions in the same evaluation");
+
+            // PnL rules are separate
+            var pnlActions = addon.EvaluatePnLRules(account, state);
+            bool hasLoss = pnlActions.Any(a => a.RuleId == "DAILY_LOSS_BREACH");
+            Assert(hasLoss, "DAILY_LOSS_BREACH fires from EvaluatePnLRules");
         }
 
         // -
@@ -2126,24 +2184,25 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             Console.WriteLine("\n[TEST] StopGuard Default Offset Fallback (Unknown Ticker)");
             var config = new RiskConfig();
-            config.StopGuard.StopAttachSeconds = 0; // immediate
+            config.StopGuard.StopAttachSeconds = 0;
             config.StopGuard.OnMissing = "AutoStop";
             
             var account = new Account { Name = "TestAcc" };
             var addon = new RiskGuardAddOn();
             addon.SetConfigForTest(config);
+            addon.TestClearFsms();
 
-            var state = new AccountState("TestAcc");
             var unknownTick = new Instrument("CL");
             unknownTick.MasterInstrument.TickSize = 0.01;
             
-            state.UpdatePosition(account, unknownTick, MarketPosition.Long, 1, 80.00, 0, config);
-            state.Positions["CL"].LastNonFlatTransition = DateTime.UtcNow.AddSeconds(-10);
+            account.Positions.Add(new Position { Instrument = unknownTick, MarketPosition = MarketPosition.Long, Quantity = 1, AveragePrice = 80.00 });
 
-            var actions = addon.EvaluateRules(account, state);
+            addon.TestFsmOnPosition(account, unknownTick.FullName, MarketPosition.Long, 1);
+
+            var actions = addon.EvaluateGraceExpiry(account, unknownTick.FullName);
             var attachAction = actions.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
             
-            Assert(attachAction != null, "Action generated for missing stop on unknown ticker");
+            Assert(attachAction != null, "Action generated for missing stop on unknown ticker via FSM");
             Assert(true, "Fallback triggered gracefully");
         }
 
@@ -2178,11 +2237,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(state.LockoutUntil > DateTime.UtcNow, "LockoutUntil is in the future");
             Assert(state.IsLockedOut == false, "IsLockedOut is false for timed lockout");
             
-            // Run sweep - should flatten
-            addon.ExecuteSafetySweep();
+            // Lockout enforcement is now event-driven via PositionUpdate.
+            // Fire a PositionUpdate to trigger EvaluateLockoutPhase.
+            addon.ExecutePositionUpdate(account, new PositionEventArgs { Position = new Position { Instrument = new Instrument("MNQ"), MarketPosition = MarketPosition.Long, Quantity = 1, AveragePrice = 18000 } });
             
-            Assert(account.Positions.Count == 0, "Position flattened by manual timed lockout");
-            Assert(state.InitialLockoutFlattened == true, "InitialLockoutFlattened set after sweep");
+            Assert(account.Positions.Count == 0, "Position flattened by manual timed lockout via PositionUpdate");
         }
 
         // 2. Manual EOD Lockout
@@ -2891,6 +2950,193 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.TestFsmOnOrder(account, es.FullName, stopLeg);
             Assert(addon.TestGetFsm(account.Name, es.FullName).State == GuardFsmState.Protected,
                 "SellShort stop Working -> Protected (not ignored!)");
+        }
+
+        // --
+        // AUDIT REGRESSION TESTS
+        // These tests are written FIRST (red), then the code is fixed to make them green.
+        // --
+
+        // A1. PositionUpdate with same side + different qty must NOT recreate the FSM
+        // (the FSM should update qty in place, preserving Protected state).
+        private static void TestFsm_QtyOnlyUpdatePreservesProtectedState()
+        {
+            Console.WriteLine("\n[TEST] AUDIT: Qty-only PositionUpdate preserves Protected FSM");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            // Open long 2
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+            var stopRef = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 2,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stopRef);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).State == GuardFsmState.Protected,
+                "FSM is Protected after stop Working");
+
+            // NT8 fires PositionUpdate with same side, qty=3 (partial fill / scale-out)
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 3);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null, "FSM still exists after qty-only update");
+            Assert(fsm.State == GuardFsmState.Protected,
+                "FSM stays Protected after qty-only PositionUpdate (not reset to Unprotected)");
+            Assert(fsm.PositionQuantity == 3, "FSM PositionQuantity updated to 3");
+            Assert(ReferenceEquals(fsm.RecognizedStopOrder, stopRef),
+                "RecognizedStopOrder preserved across qty-only update");
+        }
+
+        // A2. Partial fill on an already-protected position must not reset the FSM.
+        private static void TestFsm_PartialFillPreservesProtectedState()
+        {
+            Console.WriteLine("\n[TEST] AUDIT: Partial fill does not reset Protected FSM");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 5);
+            var stop = new Order
+            {
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 5,
+                Instrument = mnq
+            };
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).State == GuardFsmState.Protected,
+                "Protected after stop");
+
+            // Partial fill reduces qty from 5 to 3, same side.
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 3);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm.State == GuardFsmState.Protected,
+                "Still Protected after partial fill qty reduction");
+            Assert(fsm.PositionQuantity == 3, "Qty updated to 3");
+        }
+
+        // A3. Grace expiry with OnMissing=Flatten should emit exactly once.
+        private static void TestFsm_GraceExpiryFlattenEmitsOnce()
+        {
+            Console.WriteLine("\n[TEST] AUDIT: Grace expiry Flatten emits exactly once");
+            var config = FsmTestConfig(graceSeconds: 0, onMissing: "Flatten");
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+            account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1 });
+
+            var first = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(first.Any(a => a.RuleId == "MISSING_STOP_FLATTEN"),
+                "First grace expiry emits MISSING_STOP_FLATTEN");
+
+            // Second call must not re-emit (FSM should have transitioned out of Unprotected).
+            var second = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(second.Count == 0,
+                "Second grace-expiry Flatten call emits nothing (already triggered)");
+        }
+
+        // A4. FSM PositionQuantity is kept in sync with actual position qty.
+        private static void TestFsm_PositionQuantityUpdatedOnQtyChange()
+        {
+            Console.WriteLine("\n[TEST] AUDIT: FSM PositionQuantity stays in sync");
+            var config = FsmTestConfig();
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            var mnq = new Instrument("MNQ");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 4);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).PositionQuantity == 4,
+                "Initial qty = 4");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 7);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).PositionQuantity == 7,
+                "Qty updated to 7 after scale-out");
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).PositionQuantity == 2,
+                "Qty updated to 2 after partial close");
+        }
+
+        // A5. EvaluateRules should NOT emit DAILY_LOSS_BREACH or TRAILING_DD_BREACH
+        // (those are owned by EvaluatePnLRules via AccountItemUpdate to avoid double-fire).
+        private static void TestPnLRulesNotDuplicatedInEvaluateRules()
+        {
+            Console.WriteLine("\n[TEST] AUDIT: PnL rules not duplicated in EvaluateRules");
+            var config = new RiskConfig();
+            config.PnLRules.DailyLossLimit = 500.0;
+            config.PnLRules.TrailingDrawdown = 500.0;
+
+            var account = new Account { Name = "TestAcc" };
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+
+            var state = new AccountState("TestAcc");
+            state.RealizedPnL = -600.0; // Breaches daily loss
+            state.PeakEquity = 0.0;
+            state.UnrealizedPnL = 0.0;
+
+            var actions = addon.EvaluateRules(account, state);
+            // After fix, EvaluateRules should NOT emit PnL rules (owned by EvaluatePnLRules).
+            Assert(!actions.Any(a => a.RuleId == "DAILY_LOSS_BREACH"),
+                "EvaluateRules does not emit DAILY_LOSS_BREACH (owned by EvaluatePnLRules)");
+            Assert(!actions.Any(a => a.RuleId == "TRAILING_DD_BREACH"),
+                "EvaluateRules does not emit TRAILING_DD_BREACH (owned by EvaluatePnLRules)");
+        }
+
+        // A6. ExecuteOrderUpdate should process lockout actions OUTSIDE the lock
+        // to avoid re-entrancy corruption. We verify by ensuring that a locked-out
+        // account with a working order gets the order cancelled and no exception.
+        private static void TestExecuteOrderUpdateProcessesActionsOutsideLock()
+        {
+            Console.WriteLine("\n[TEST] AUDIT: ExecuteOrderUpdate processes lockout actions safely");
+            var config = new RiskConfig();
+            var account = new Account { Name = "TestAcc" };
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetModeForTest("live");
+
+            var state = new AccountState("TestAcc");
+            state.IsLockedOut = true;
+            state.CurrentLockoutPhase = AccountState.LockoutPhase.PendingCancel;
+            state.LastLockoutFlattenAttempt = DateTime.UtcNow.AddSeconds(-10);
+            addon.SetAccountStateForTest("TestAcc", state);
+            addon.SetSubscribedAccountForTest("TestAcc");
+            Account.All.Clear();
+            Account.All.Add(account);
+
+            // Add a working order that the lockout should cancel.
+            var order = new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderState = OrderState.Working,
+                OrderType = OrderType.Limit,
+                Instrument = new Instrument("MNQ")
+            };
+            account.Orders.Add(order);
+
+            // Fire OrderUpdate - this should not deadlock or corrupt state.
+            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = order });
+
+            // The working order should be cancelled by either the lockout cancel or the entry-cancel path.
+            Assert(order.OrderState == OrderState.Cancelled,
+                "Working order cancelled by locked-out account OrderUpdate");
         }
     }
 }

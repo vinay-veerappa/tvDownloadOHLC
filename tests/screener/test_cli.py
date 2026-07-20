@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
+from unittest.mock import patch, MagicMock
 
 from scripts.screener.tracker.setup_logger import log_setups_to_duckdb
 from scripts.screener.cli import run_screener
@@ -23,7 +24,41 @@ def test_duckdb_setup_logging(tmp_path):
     count = log_setups_to_duckdb(mock_matches, db_path=db_file)
     assert count == 1
 
-def test_cli_runner_execution():
-    """Verify CLI runner executes full screener pipeline."""
+@patch('scripts.screener.cli.yf.download')
+@patch('scripts.screener.cli.fetch_finviz_candidates')
+@patch('scripts.screener.cli.get_market_regime')
+def test_cli_runner_execution(mock_get_regime, mock_fetch_candidates, mock_yf_download):
+    """Verify CLI runner executes full screener pipeline with tightened assertions."""
+    from scripts.screener.core.regime import MarketRegimeState
+    
+    # Mock regime to BULL_EXPLOSIVE to allow longs
+    mock_get_regime.return_value = MarketRegimeState(
+        status="BULL_EXPLOSIVE", spy_close=500.0, spy_above_21ema=True, spy_above_50sma=True,
+        is_macro_high_risk=False, evaluated_at="2026-07-20T12:00:00"
+    )
+    
+    # Mock universe
+    mock_fetch_candidates.return_value = [{"ticker": "MOCK"}]
+    
+    # Mock yfinance data to ensure it passes qullamaggie_hft filters
+    dates = pd.date_range(end=pd.Timestamp.now(), periods=250, freq='D')
+    prices = np.linspace(10, 100, 250)
+    mock_df = pd.DataFrame({
+        "Open": prices * 0.98,
+        "High": prices * 1.05,
+        "Low": prices * 0.95,
+        "Close": prices,
+        "Volume": np.full(250, 5000000)
+    }, index=dates)
+    
+    mock_yf_download.return_value = mock_df
+    
     results = run_screener(strategy_id="qullamaggie_hft", limit=5)
+    
+    # Verify yfinance was called with correct period and parameters
+    mock_yf_download.assert_called_once_with(["MOCK"], period="6mo", interval="1d", group_by="ticker", progress=False, threads=True)
+    
     assert isinstance(results, pd.DataFrame)
+    # Assert that the data actually matched instead of silently passing an empty dataframe
+    assert len(results) == 1
+    assert results.iloc[0]["ticker"] == "MOCK"

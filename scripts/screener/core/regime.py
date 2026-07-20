@@ -43,7 +43,7 @@ def _check_macro_event_today() -> bool:
         cursor = conn.cursor()
         today_str = date.today().strftime("%Y-%m-%d")
         cursor.execute(
-            "SELECT count(*) FROM EconomicEvent WHERE date LIKE ? AND (importance = 'HIGH' OR name LIKE '%FOMC%' OR name LIKE '%CPI%' OR name LIKE '%NFP%')",
+            "SELECT count(*) FROM EconomicEvent WHERE datetime LIKE ? AND (impact = 'HIGH' OR name LIKE '%FOMC%' OR name LIKE '%CPI%' OR name LIKE '%NFP%')",
             (f"{today_str}%",)
         )
         count = cursor.fetchone()[0]
@@ -66,7 +66,7 @@ def get_market_regime(spy_df: pd.DataFrame = None) -> MarketRegimeState:
     
     if spy_df is None and yf is not None:
         try:
-            spy_df = yf.Ticker("SPY").history(period="6m")
+            spy_df = yf.Ticker("SPY").history(period="6mo")
         except Exception as e:
             log.warning(f"Failed to fetch SPY for regime evaluation: {e}")
             spy_df = None
