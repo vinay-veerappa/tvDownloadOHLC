@@ -16,7 +16,12 @@ rules:
     expression: "sma50 > sma150 and sma150 > sma200"
   - name: "sma200_trending_up"
     expression: "sma200_slope_1m > 0"
+  - name: "above_52w_low"
+    expression: "dist_52w_low_pct >= 30.0"
+  - name: "near_52w_high"
+    expression: "dist_52w_high_pct <= 25.0"
   - name: "vcp_tightness"
     expression: "vcp_tightness_ratio <= 0.65"
   - name: "industry_rs"
     expression: "industry_rs_rank >= 80"
+
