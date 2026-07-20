@@ -162,6 +162,26 @@ model TradePlan {
   updatedAt     DateTime @updatedAt
   linkedTrade   Trade?   @relation(fields: [linkedTradeId], references: [id])
 }
+
+#### 📅 `EarningsCalendar`
+Tracks upcoming US stock earnings announcements synced via dual-provider (Nasdaq API + yfinance) engine.
+```prisma
+model EarningsCalendar {
+  id           String   @id @default(cuid())
+  ticker       String
+  earningsDate DateTime
+  beforeMarket Boolean  // BMO = true, AMC = false
+  confirmed    Boolean  @default(false)
+  source       String   @default("yfinance") // "nasdaq_api" | "yfinance"
+  fetchedAt    DateTime @default(now())
+  company      String?
+  marketCap    Float?
+
+  @@unique([ticker, earningsDate])
+  @@index([earningsDate])
+}
+```
+
 ```
 
 #### 🏷️ `Tag` & `TagGroup`

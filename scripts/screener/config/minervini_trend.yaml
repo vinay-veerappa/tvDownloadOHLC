@@ -1,0 +1,17 @@
+strategy_id: "minervini_trend"
+version: "1.0.0"
+author: "Mark Minervini"
+description: "8-point Trend Template market leader strategy"
+
+global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER"]
+
+filters:
+  price_min: 10.0
+  dist_52w_high_max_pct: 25.0
+  dist_52w_low_min_pct: 30.0
+
+rules:
+  - name: "ma_order"
+    expression: "Close > sma50 and sma50 > sma150 and sma150 > sma200"
+  - name: "sma200_slope"
+    expression: "sma200_slope_1m > 0"
