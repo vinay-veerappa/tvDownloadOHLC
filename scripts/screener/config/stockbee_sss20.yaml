@@ -1,0 +1,15 @@
+strategy_id: "stockbee_sss20"
+version: "1.0.0"
+author: "Pradeep Bonde (Stockbee)"
+description: "Stockbee SSS 20% Study (maxv5) - Stocks making a 20%+ move in 5 trading days"
+
+global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER", "BEAR_PROTECTIVE"]
+
+filters:
+  price_min: 1.0
+  avg_volume_min: 100000
+
+rules:
+  # Stockbee 20%+ move in 5 sessions formula (maxv5)
+  - name: "max_move_5d_20pct"
+    expression: "max_move_5d_pct >= 20.0"

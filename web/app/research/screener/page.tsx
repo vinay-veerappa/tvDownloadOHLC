@@ -65,6 +65,7 @@ const STRATEGY_LABELS: Record<string, { label: string; desc: string; color: stri
   rs_vs_spy: { label: 'Relative Strength vs SPY', desc: 'Outperforming SPY benchmark in top industry', color: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' },
   stockbee_ep: { label: 'Stockbee Episodic Pivot (EP)', desc: '8%+ gap up on massive volume catalyst', color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
   stockbee_momentum: { label: 'Stockbee Momentum Burst', desc: '4%+ gainers in top sector industries', color: 'bg-orange-500/15 text-orange-300 border-orange-500/30' },
+  stockbee_sss20: { label: 'Stockbee SSS 20% Study (maxv5)', desc: 'Stocks making a 20%+ move in 5 trading sessions', color: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30' },
   weinstein_stage2: { label: 'Stan Weinstein Stage 2', desc: '30-week SMA uptrend breakout on heavy volume', color: 'bg-teal-500/15 text-teal-300 border-teal-500/30' },
   wheel_income: { label: 'Wheel Strategy / Cash Put', desc: 'High IV, no earnings in 7d, cash-secured put setup', color: 'bg-lime-500/15 text-lime-300 border-lime-500/30' },
   zanger_volume_surge: { label: 'Dan Zanger Volume Surge', desc: 'High-beta explosive volume surge', color: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30' },

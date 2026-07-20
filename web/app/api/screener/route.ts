@@ -18,6 +18,7 @@ const STRATEGIES = [
   'rs_vs_spy',
   'stockbee_ep',
   'stockbee_momentum',
+  'stockbee_sss20',
   'weinstein_stage2',
   'wheel_income',
   'zanger_volume_surge',

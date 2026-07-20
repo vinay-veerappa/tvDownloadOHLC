@@ -94,9 +94,17 @@ def build_feature_matrix(
             tr_close = tr_df[col_name]
 
     res["runup_60d"] = tr_close / tr_close.shift(60).replace(0, np.nan)
+    res["runup_5d_pct"] = (tr_close / tr_close.shift(5).replace(0, np.nan) - 1.0) * 100.0
+    
+    # Stockbee maxv5 formula (max 5-day price move range percentage)
+    low_5d_min = low.rolling(window=5, min_periods=3).min().replace(0, np.nan)
+    high_5d_max = high.rolling(window=5, min_periods=3).max()
+    res["max_move_5d_pct"] = ((high_5d_max - low_5d_min) / low_5d_min) * 100.0
+
     res["gap_up"] = res["open"] / res["close_split_adjusted"].shift(1).replace(0, np.nan)
     res["momentum_burst"] = close / close.shift(1).replace(0, np.nan)
     res["sma150_slope_1m"] = (res["sma150"] - res["sma150"].shift(21)) / res["sma150"].shift(21)
+
     
     # 9. Dynamic Feature Binding from Upstream Drivers
     res["iv_rank_52w"] = 55.0  # Placeholder until Dolt DB integration is live
