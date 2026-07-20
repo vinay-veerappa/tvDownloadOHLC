@@ -1,3 +1,4 @@
+import os
 import pytest
 import pandas as pd
 import numpy as np
@@ -75,3 +76,35 @@ def test_cli_runner_execution(mock_get_regime, mock_fetch_candidates, mock_yf_do
     # Assert that the data actually matched instead of silently passing an empty dataframe
     assert len(results) >= 1
     assert results.iloc[0]["ticker"] == "MOCK"
+
+
+def test_cli_report_generation(tmp_path):
+    """Verify generate_screener_reports creates matrix CSV and export watchlists."""
+    from scripts.screener.generate_reports import generate_screener_reports
+    
+    with patch('scripts.screener.generate_reports.fetch_finviz_candidates') as mock_fetch, \
+         patch('scripts.screener.generate_reports.calculate_industry_rs') as mock_rs, \
+         patch('scripts.screener.generate_reports.yf.download') as mock_yf:
+        
+        mock_fetch.return_value = [{"ticker": "MOCK_RPT", "company": "Mock Co", "sector": "Tech", "industry": "Software"}]
+        mock_rs.return_value = {"Software": 90.0}
+        
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq='D')
+        mock_df = pd.DataFrame({
+            "Open": np.full(100, 100.0),
+            "High": np.full(100, 105.0),
+            "Low": np.full(100, 95.0),
+            "Close": np.full(100, 102.0),
+            "Volume": np.full(100, 1000000)
+        }, index=dates)
+        mock_yf.return_value = mock_df
+        
+        paths = generate_screener_reports(limit=5)
+        assert "comparison_matrix" in paths
+        assert "tradingview_watchlist" in paths
+        assert "thinkorswim_watchlist" in paths
+        assert os.path.exists(paths["comparison_matrix"])
+        assert os.path.exists(paths["tradingview_watchlist"])
+        assert os.path.exists(paths["thinkorswim_watchlist"])
+
+

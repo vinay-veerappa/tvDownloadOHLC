@@ -9,7 +9,14 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
-def build_feature_matrix(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
+def build_feature_matrix(
+    df: pd.DataFrame,
+    ticker: str = "",
+    tr_df: Optional[pd.DataFrame] = None,
+    industry_rs_rank: float = 50.0,
+    has_upcoming_earnings: bool = False,
+    float_info: Optional[dict] = None
+) -> pd.DataFrame:
     """
     Given a split-adjusted daily OHLCV DataFrame, returns a DataFrame enriched
     with vectorized technical features.
@@ -79,16 +86,30 @@ def build_feature_matrix(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
     range_diff = high - low
     res["closing_range_strength"] = np.where(range_diff > 0, (close - low) / range_diff, 0.5)
     
-    # 8. Shift-dependent calculations (must be done here, not in YAML evaluator)
-    res["runup_60d"] = close / close.shift(60).replace(0, np.nan)
+    # 8. Shift-dependent & Total Return calculations
+    tr_close = close
+    if tr_df is not None and not tr_df.empty:
+        col_name = "Adj Close" if "Adj Close" in tr_df.columns else ("close" if "close" in tr_df.columns else "Close")
+        if col_name in tr_df.columns:
+            tr_close = tr_df[col_name]
+
+    res["runup_60d"] = tr_close / tr_close.shift(60).replace(0, np.nan)
     res["gap_up"] = res["open"] / res["close_split_adjusted"].shift(1).replace(0, np.nan)
     res["momentum_burst"] = close / close.shift(1).replace(0, np.nan)
     res["sma150_slope_1m"] = (res["sma150"] - res["sma150"].shift(21)) / res["sma150"].shift(21)
     
-    # 9. Mocks/Placeholders for missing integrations (Dolt DB IV, Earnings, Industry RS)
+    # 9. Dynamic Feature Binding from Upstream Drivers
     res["iv_rank_52w"] = 55.0  # Placeholder until Dolt DB integration is live
-    res["has_upcoming_earnings_7d"] = False # Placeholder until Nasdaq sync is hooked up here
-    res["industry_rs_rank"] = 90.0 # Placeholder (requires Finviz join in upstream pipeline)
+    res["has_upcoming_earnings_7d"] = has_upcoming_earnings
+    res["industry_rs_rank"] = float(industry_rs_rank)
+
+    if float_info:
+        res["float_discrepancy_pct"] = float_info.get("discrepancy_pct", 0.0)
+        res["float_flagged"] = float_info.get("flagged", False)
+    else:
+        res["float_discrepancy_pct"] = 0.0
+        res["float_flagged"] = False
 
     res["ticker"] = ticker
     return res
+

@@ -73,6 +73,7 @@ def evaluate_strategy_file(file_path: str, feature_matrix: pd.DataFrame) -> pd.D
     # Apply YAML rules vectorially
     for rule in rules:
         expr = rule.get("expression")
+        rule_name = rule.get("name", "rule")
         if not expr:
             continue
         try:
@@ -80,8 +81,12 @@ def evaluate_strategy_file(file_path: str, feature_matrix: pd.DataFrame) -> pd.D
             if filtered.empty:
                 break
         except Exception as e:
-            # Fallback to manual evaluation if pandas query encounters column casing issues
-            pass
+            import logging
+            logging.getLogger("screener_yaml").error(
+                f"Rule evaluation failed for '{rule_name}' ('{expr}'): {e}. Excluding unvalidated candidates."
+            )
+            filtered = filtered.iloc[0:0]
+            break
 
     if not filtered.empty:
         filtered = filtered.copy()
@@ -90,3 +95,4 @@ def evaluate_strategy_file(file_path: str, feature_matrix: pd.DataFrame) -> pd.D
         filtered["config_hash"] = strategy.get("config_hash", "00000000")
 
     return filtered
+

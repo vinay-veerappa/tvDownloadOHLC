@@ -322,6 +322,61 @@ async def run_sync(days: int, min_market_cap: float, dry_run: bool = False):
         log.error(f"Failed to write to SQLite: {e}")
 
 
+def has_upcoming_earnings(ticker: str, window_days: int = 7) -> bool:
+    """
+    Checks dev.db EarningsCalendar for upcoming earnings for a given ticker within window_days.
+    """
+    if not DB_PATH.exists():
+        return False
+    try:
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+        now_dt = datetime.now(timezone.utc)
+        future_dt = now_dt + timedelta(days=window_days)
+        
+        now_str = now_dt.strftime("%Y-%m-%d")
+        future_str = future_dt.strftime("%Y-%m-%d") + "T23:59:59"
+        
+        cursor.execute(
+            "SELECT count(*) FROM EarningsCalendar WHERE ticker = ? AND earningsDate >= ? AND earningsDate <= ?",
+            (ticker.upper(), f"{now_str}%", f"{future_str}%")
+        )
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception as e:
+        log.warning(f"Failed to check upcoming earnings for {ticker}: {e}")
+        return False
+
+
+def is_episodic_pivot_catalyst(ticker: str, window_days: int = 3) -> bool:
+    """
+    Checks if ticker had an earnings event within the past window_days.
+    """
+    if not DB_PATH.exists():
+        return False
+    try:
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+        now_dt = datetime.now(timezone.utc)
+        past_dt = now_dt - timedelta(days=window_days)
+        
+        past_str = past_dt.strftime("%Y-%m-%d")
+        now_str = now_dt.strftime("%Y-%m-%d") + "T23:59:59"
+        
+        cursor.execute(
+            "SELECT count(*) FROM EarningsCalendar WHERE ticker = ? AND earningsDate >= ? AND earningsDate <= ?",
+            (ticker.upper(), f"{past_str}%", f"{now_str}%")
+        )
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception as e:
+        log.warning(f"Failed to check earnings catalyst for {ticker}: {e}")
+        return False
+
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sync earnings calendar to database.")
     parser.add_argument("--days", type=int, default=7, help="Number of days forward to sync.")

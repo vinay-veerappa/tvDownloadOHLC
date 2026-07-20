@@ -22,11 +22,18 @@ All complex calculations, time-series shifts, and indicator alignments MUST be p
 - `closing_range_strength`: Safe metric from 0.0 to 1.0 showing where the close was relative to the high/low. Returns 0.5 on dojis/halts.
 - `ma_aligned_fast_momentum`: True if close > ema10 > ema20 > sma50.
 - `vcp_tightness_ratio`: atr5 / atr20. Lower means tighter range contraction.
-- `runup_60d`: 60-day relative performance.
+- `runup_60d`: 60-day relative total return performance.
 - `gap_up`: Current open / Previous close.
 - `momentum_burst`: Current close / Previous close.
 - `sma150_slope_1m`: 1-month slope of the 150 SMA.
-- `industry_rs_rank`: 0-100 Relative Strength percentile for the stock's industry sector.
+- `industry_rs_rank`: 0-100 Relative Strength percentile for the stock's industry sector calculated via `industry_rs.py`.
+- `has_upcoming_earnings_7d`: Boolean flag indicating if ticker has an earnings event scheduled in the next 7 days via `sync_earnings_calendar.py` and `dev.db`.
+- `float_discrepancy_pct`: Percentage mismatch between reported Finviz float and secondary sources via `float_validator.py`.
+- `float_flagged`: True if float discrepancy > 15%.
+
+## Rule Evaluator Strictness (`yaml_evaluator.py`)
+
+Rule expressions in strategy YAML files are evaluated vectorially. If a rule expression fails to evaluate (e.g. invalid syntax or missing feature column), the evaluator logs an explicit error and excludes candidate stocks rather than silently passing invalid candidates.
 
 ## YAML Configuration Strategy
 
@@ -63,3 +70,22 @@ rules:
 9. `wheel_income.yaml`: High IV, no upcoming earnings, cash-secured put setup on strong blue chips.
 10. `zanger_volume_surge.yaml`: 3-day extreme volume surges.
 11. `rs_vs_spy.yaml`: Relative Strength vs SPY/QQQ proxy scanner.
+
+## Multi-Strategy Reporting & Watchlist Exports (`generate_reports.py`)
+
+Run all strategies simultaneously to generate a multi-strategy comparison matrix and watchlists for external platforms:
+
+```bash
+# Run a single strategy scan
+python -m scripts.screener.cli --strategy minervini_trend --limit 50
+
+# Run multi-strategy scan and generate matrix & watchlists
+python -m scripts.screener.cli --report --limit 100
+# or: python -m scripts.screener.cli --strategy all --limit 100
+```
+
+*Generated Artifacts (`reports/screener/`):*
+- `strategy_comparison_matrix.csv`: 1/0 strategy matrix sorted by `matched_strategies_count` descending (common subset at the top).
+- `tradingview_watchlist.csv`: Symbol list formatted for TradingView Watchlist Import.
+- `thinkorswim_watchlist.csv`: Symbol list formatted for Thinkorswim (TOS) Watchlist Import.
+
