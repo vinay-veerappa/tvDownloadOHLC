@@ -96,10 +96,14 @@ def build_feature_matrix(
     res["runup_60d"] = tr_close / tr_close.shift(60).replace(0, np.nan)
     res["runup_5d_pct"] = (tr_close / tr_close.shift(5).replace(0, np.nan) - 1.0) * 100.0
     
-    # Stockbee maxv5 formula (max 5-day price move range percentage)
+    # Stockbee maxv5 & 10d move formulas (max 5-day and 10-day price move range percentage)
     low_5d_min = low.rolling(window=5, min_periods=3).min().replace(0, np.nan)
     high_5d_max = high.rolling(window=5, min_periods=3).max()
     res["max_move_5d_pct"] = ((high_5d_max - low_5d_min) / low_5d_min) * 100.0
+
+    low_10d_min = low.rolling(window=10, min_periods=5).min().replace(0, np.nan)
+    high_10d_max = high.rolling(window=10, min_periods=5).max()
+    res["max_move_10d_pct"] = ((high_10d_max - low_10d_min) / low_10d_min) * 100.0
 
     res["gap_up"] = res["open"] / res["close_split_adjusted"].shift(1).replace(0, np.nan)
     res["momentum_burst"] = close / close.shift(1).replace(0, np.nan)

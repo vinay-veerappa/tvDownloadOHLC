@@ -10,6 +10,7 @@ filters:
   avg_volume_min: 100000
 
 rules:
-  # Stockbee 20%+ move in 5 sessions formula (maxv5)
-  - name: "max_move_5d_20pct"
-    expression: "max_move_5d_pct >= 20.0"
+  # Stockbee SSS 20% Study (maxv5 / 10d move)
+  - name: "stockbee_swing_momentum_move"
+    expression: "max_move_5d_pct >= 12.0 or max_move_10d_pct >= 20.0"
+
