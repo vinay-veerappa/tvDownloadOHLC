@@ -25,6 +25,8 @@ def build_feature_matrix(
         return pd.DataFrame()
 
     res = df.copy()
+    if isinstance(res.columns, pd.MultiIndex):
+        res.columns = res.columns.get_level_values(0)
     
     # Standardize casing to lowercase to prevent KeyError in YAML evaluators
     # and provide explicit split_adjusted column

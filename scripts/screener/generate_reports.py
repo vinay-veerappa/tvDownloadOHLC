@@ -64,7 +64,8 @@ def generate_screener_reports(limit: int = 100) -> Dict[str, str]:
     all_matrices = []
     if yf is not None and len(tickers) > 0:
         try:
-            data = yf.download(tickers, period="6mo", interval="1d", group_by="ticker", progress=False, threads=True)
+            data = yf.download(tickers, period="2y", interval="1d", group_by="ticker", progress=False, threads=True)
+
             ticker_dfs = {}
             if len(tickers) == 1:
                 t = tickers[0]

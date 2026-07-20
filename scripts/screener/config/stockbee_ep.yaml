@@ -11,13 +11,14 @@ filters:
 
 rules:
   - name: "top_industry"
-    expression: "industry_rs_rank >= 85"
+    expression: "industry_rs_rank >= 80"
     
   - name: "gap_up"
-    expression: "gap_up > 1.08"
+    expression: "gap_up >= 1.04"
     
   - name: "closing_strength"
-    expression: "closing_range_strength > 0.5"
+    expression: "closing_range_strength >= 0.5"
     
   - name: "volume_surge"
-    expression: "rvol_20 > 3.0"
+    expression: "rvol_20 >= 2.0"
+

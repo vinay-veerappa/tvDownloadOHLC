@@ -14,10 +14,11 @@ rules:
     expression: "dist_52w_high_pct <= 15.0"
     
   - name: "base_contraction"
-    expression: "vcp_tightness_ratio < 0.65"
+    expression: "vcp_tightness_ratio <= 0.75"
     
   - name: "volume_surge"
-    expression: "rvol_20 >= 1.5"
+    expression: "rvol_20 >= 1.3"
     
   - name: "uptrend"
     expression: "close > sma50 and sma50 > sma200"
+

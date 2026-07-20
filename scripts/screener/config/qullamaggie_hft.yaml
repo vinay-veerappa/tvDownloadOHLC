@@ -14,10 +14,11 @@ rules:
     expression: "ma_aligned_fast_momentum == True"
     
   - name: "historic_runup"
-    expression: "runup_60d > 2.0"
+    expression: "runup_60d >= 1.5"
     
   - name: "vcp_tightening"
-    expression: "vcp_tightness_ratio < 0.6"
+    expression: "vcp_tightness_ratio <= 0.70"
     
   - name: "volume_dryup"
-    expression: "rvol_20 < 0.7"
+    expression: "rvol_20 <= 1.0"
+

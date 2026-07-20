@@ -11,7 +11,8 @@ filters:
 
 rules:
   - name: "top_industry"
-    expression: "industry_rs_rank >= 90"
+    expression: "industry_rs_rank >= 80"
     
   - name: "uptrend"
     expression: "close > sma50 and sma50 > sma200"
+

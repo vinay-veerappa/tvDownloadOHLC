@@ -21,7 +21,8 @@ rules:
   - name: "near_52w_high"
     expression: "dist_52w_high_pct <= 25.0"
   - name: "vcp_tightness"
-    expression: "vcp_tightness_ratio <= 0.65"
+    expression: "vcp_tightness_ratio <= 0.75"
   - name: "industry_rs"
     expression: "industry_rs_rank >= 80"
+
 
