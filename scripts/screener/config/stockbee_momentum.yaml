@@ -1,14 +1,20 @@
 strategy_id: "stockbee_momentum"
-version: "1.0.0"
+version: "1.1.0"
 author: "Pradeep Bonde (Stockbee)"
-description: "Momentum burst and 4% gainers strategy"
+description: "Momentum Bursts (4% gainers in top industries)"
 
 global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER"]
 
 filters:
   price_min: 5.0
-  adr_pct_min: 4.0
+  avg_volume_min: 300000
 
 rules:
-  - name: "rvol_surge"
-    expression: "rvol_20 >= 1.5"
+  - name: "top_industry"
+    expression: "industry_rs_rank >= 85"
+    
+  - name: "momentum_burst"
+    expression: "momentum_burst > 1.04"
+    
+  - name: "closing_strength"
+    expression: "closing_range_strength > 0.6"

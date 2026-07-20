@@ -1,0 +1,19 @@
+strategy_id: "zanger_volume_surge"
+version: "1.0.0"
+author: "Dan Zanger"
+description: "High-beta explosive breakouts from chart patterns with extreme volume"
+
+global_regime_required: ["BULL_EXPLOSIVE"]
+
+filters:
+  price_min: 10.0
+  avg_volume_min: 500000
+
+rules:
+  # High Beta / Volatile stocks
+  - name: "high_adr"
+    expression: "adr_20_pct >= 5.0"
+    
+  # Massive Institutional Volume Surge
+  - name: "extreme_volume_surge"
+    expression: "rvol_20 >= 2.5"

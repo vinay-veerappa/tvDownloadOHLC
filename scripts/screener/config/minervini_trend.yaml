@@ -1,17 +1,22 @@
 strategy_id: "minervini_trend"
-version: "1.0.0"
+version: "1.1.0"
 author: "Mark Minervini"
-description: "8-point Trend Template market leader strategy"
+description: "8-point Trend Template for market leader screening"
 
 global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER"]
 
 filters:
   price_min: 10.0
-  dist_52w_high_max_pct: 25.0
-  dist_52w_low_min_pct: 30.0
+  avg_volume_min: 500000
 
 rules:
+  - name: "price_above_50_150_200_sma"
+    expression: "close > sma50 and close > sma150 and close > sma200"
   - name: "ma_order"
-    expression: "Close > sma50 and sma50 > sma150 and sma150 > sma200"
-  - name: "sma200_slope"
+    expression: "sma50 > sma150 and sma150 > sma200"
+  - name: "sma200_trending_up"
     expression: "sma200_slope_1m > 0"
+  - name: "vcp_tightness"
+    expression: "vcp_tightness_ratio <= 0.65"
+  - name: "industry_rs"
+    expression: "industry_rs_rank >= 80"

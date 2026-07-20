@@ -22,6 +22,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `streaming/` | ~12 | ✅ Schwab API |
 | `utils/` | ~10 | ✅ Shared libraries |
 | `mcp/` | 5 | 🤖 AI Infrastructure |
+| `screener/` | 15 | ✅ YAML Screener Engine |
 
 **Total: ~230 scripts** (including .ts, .js, .ps1)
 
@@ -39,6 +40,15 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `convert/convert_all_csv.py` | Bulk TradingView CSV conversion |
 | `convert/convert_backtestmarket.py` | BacktestMarket format conversion |
 | `convert/convert_to_chunked_json.py` | Generate web-optimized JSON chunks |
+
+### Screener Engine (`screener/`)
+| Script | Purpose |
+|:---|:---|
+| `cli.py` | **Entry point** - Runs the trade screener via CLI (`python -m scripts.screener.cli`) |
+| `core/features.py` | Generates the vectorized indicator matrix for YAML evaluation |
+| `core/regime.py` | Market Regime gatekeeper and MACRO_HIGH_RISK overlay |
+| `core/yaml_evaluator.py` | Dynamic strategy configuration parser and evaluator |
+| `core/funnel.py` | Retrieves Finviz candidate universe |
 
 ### Derived Data (`derived/`)
 | Script | Purpose |

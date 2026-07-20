@@ -1,0 +1,23 @@
+strategy_id: "weinstein_stage2"
+version: "1.0.0"
+author: "Stan Weinstein"
+description: "Stage 2 Uptrend Breakout - Transition from Stage 1 basing to Stage 2 advancing"
+
+global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER"]
+
+filters:
+  price_min: 5.0
+  avg_volume_min: 500000
+
+rules:
+  # Price must cross and hold above the 30-week (150-day) SMA
+  - name: "price_above_150sma"
+    expression: "close > sma150"
+    
+  # The 30-week SMA must be turning up (positive slope)
+  - name: "sma150_uptrend"
+    expression: "sma150_slope_1m > 0"
+    
+  # Breakout confirmation volume
+  - name: "breakout_volume"
+    expression: "rvol_20 >= 1.5"

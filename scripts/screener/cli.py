@@ -41,6 +41,11 @@ def run_screener(strategy_id: str = "qullamaggie_hft", limit: int = 50, log_duck
     regime = get_market_regime()
     log.info(f"Market Regime: {regime.status} (SPY: ${regime.spy_close}, Macro High-Risk: {regime.is_macro_high_risk})")
     
+    if regime.is_macro_high_risk:
+        log.warning("MACRO HIGH RISK OVERLAY ACTIVE (FOMC/CPI/NFP today): Recommend halving position sizes and tightening stops.")
+        if strategy_id in ["qullamaggie_hft", "stockbee_ep", "zanger_volume_surge"]:
+            log.warning(f"Strategy {strategy_id} is highly sensitive to macro volatility. Consider skipping today.")
+            
     if regime.status == "BEAR_PROTECTIVE" and "short" not in strategy_id:
         log.warning("Market Regime is BEAR_PROTECTIVE. Long breakouts stand down.")
 
@@ -91,7 +96,8 @@ def run_screener(strategy_id: str = "qullamaggie_hft", limit: int = 50, log_duck
     matches["market_regime"] = regime.status
     log.info(f"MATCHED {len(matches)} CANDIDATES:")
     for _, row in matches.iterrows():
-        log.info(f" -> {row['ticker']}: Close=${row['Close']:.2f} | ADR%={row['adr_20_pct']:.2f}% | Dist10EMA={row['dist_10ema_pct']:.2f}% | RVOL={row['rvol_20']:.2f}x")
+        close_price = row.get("close", row.get("Close", 0.0))
+        log.info(f" -> {row['ticker']}: Close=${close_price:.2f} | ADR%={row['adr_20_pct']:.2f}% | Dist10EMA={row['dist_10ema_pct']:.2f}% | RVOL={row['rvol_20']:.2f}x")
 
     # 5. Stage 4 DuckDB Setup Logger
     if log_duckdb:

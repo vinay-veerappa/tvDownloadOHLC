@@ -1,0 +1,23 @@
+strategy_id: "oneil_breakout"
+version: "1.1.0"
+author: "William O'Neil"
+description: "CAN SLIM Base Breakout with price pivoting from 52W high on strong volume"
+
+global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER"]
+
+filters:
+  price_min: 15.0
+  avg_volume_min: 400000
+
+rules:
+  - name: "near_52w_high"
+    expression: "dist_52w_high_pct <= 15.0"
+    
+  - name: "base_contraction"
+    expression: "vcp_tightness_ratio < 0.65"
+    
+  - name: "volume_surge"
+    expression: "rvol_20 >= 1.5"
+    
+  - name: "uptrend"
+    expression: "close > sma50 and sma50 > sma200"

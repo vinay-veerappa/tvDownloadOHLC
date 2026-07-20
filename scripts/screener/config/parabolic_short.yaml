@@ -1,0 +1,23 @@
+strategy_id: "parabolic_short"
+version: "1.0.0"
+author: "Kristjan Qullamaggie"
+description: "Parabolic Short - Shorting extended parabolic runners that are far from the 10/20 EMA"
+
+global_regime_required: ["BEAR_PROTECTIVE", "BULL_CHOPIER", "BULL_EXPLOSIVE"]
+
+filters:
+  price_min: 10.0
+  avg_volume_min: 1000000
+
+rules:
+  - name: "historic_runup"
+    expression: "runup_60d > 1.5"
+    
+  - name: "over_extended"
+    expression: "dist_10ema_pct > 15.0 or dist_20ema_pct > 25.0"
+    
+  - name: "exhaustion_volume"
+    expression: "rvol_20 > 3.0"
+    
+  - name: "reversal_candle"
+    expression: "closing_range_strength < 0.3"

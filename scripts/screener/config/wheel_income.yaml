@@ -1,0 +1,26 @@
+strategy_id: "wheel_income"
+version: "1.1.0"
+author: "Options Income Framework"
+description: "Wheel strategy / Cash-Secured Puts on strong blue chips in an uptrend"
+
+global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER"]
+
+filters:
+  price_min: 20.0
+  avg_volume_min: 2000000
+
+rules:
+  - name: "price_above_ma50_ma200"
+    expression: "close > sma50 and close > sma200"
+    
+  - name: "sma200_trending_up"
+    expression: "sma200_slope_1m > 0"
+    
+  - name: "not_over_extended"
+    expression: "(close / sma200) < 1.30"
+    
+  - name: "high_iv_rank"
+    expression: "iv_rank_52w > 50"
+    
+  - name: "no_upcoming_earnings"
+    expression: "has_upcoming_earnings_7d == False"

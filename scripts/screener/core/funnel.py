@@ -18,6 +18,7 @@ except ImportError:
     Overview = None
 
 DEFAULT_FILTERS = {
+    'Industry': 'Stocks only (ex-Funds)',
     'Average Volume': 'Over 500K',
     'Option/Short': 'Optionable',
     'Price': 'Over $5',
@@ -58,11 +59,27 @@ def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, lim
             log.info("Finviz returned no candidates for the given filters.")
             return DEFAULT_FALLBACK_UNIVERSE[:limit]
             
+        # Sort by Market Cap descending to get the most liquid/real companies first instead of alphabetical junk
+        if "Market Cap" in df.columns:
+            df = df.sort_values(by="Market Cap", ascending=False)
+        elif "Volume" in df.columns:
+            df = df.sort_values(by="Volume", ascending=False)
+            
+        # Check if finvizfinance has the "duplicated first letter" bug (e.g. MMSFT instead of MSFT)
+        bug_active = False
+        if not df.empty and "Ticker" in df.columns:
+            doubled_count = sum(1 for t in df["Ticker"].astype(str) if len(t) > 1 and t[0] == t[1])
+            if len(df) > 0 and doubled_count / len(df) > 0.5:
+                bug_active = True
+
         results = []
         for idx, row in df.iterrows():
             ticker = str(row.get("Ticker", "")).upper().strip()
             if not ticker or "." in ticker:
                 continue
+                
+            if bug_active and len(ticker) > 1:
+                ticker = ticker[1:]
                 
             results.append({
                 "ticker": ticker,

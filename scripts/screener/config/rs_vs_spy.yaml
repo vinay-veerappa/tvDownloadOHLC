@@ -1,0 +1,17 @@
+strategy_id: "rs_vs_spy"
+version: "1.0.0"
+author: "Generic"
+description: "Relative Strength vs SPY/QQQ scanner (placeholder proxy via top industry & uptrend)"
+
+global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER", "BEAR_PROTECTIVE"]
+
+filters:
+  price_min: 10.0
+  avg_volume_min: 1000000
+
+rules:
+  - name: "top_industry"
+    expression: "industry_rs_rank >= 90"
+    
+  - name: "uptrend"
+    expression: "close > sma50 and sma50 > sma200"

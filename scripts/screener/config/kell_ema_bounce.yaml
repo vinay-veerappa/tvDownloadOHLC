@@ -1,0 +1,20 @@
+strategy_id: "kell_ema_bounce"
+version: "1.1.0"
+author: "Oliver Kell"
+description: "Base Count & EMA Reversals - Catch momentum leaders bouncing off 10 or 20 EMA"
+
+global_regime_required: ["BULL_EXPLOSIVE", "BULL_CHOPIER"]
+
+filters:
+  price_min: 10.0
+  avg_volume_min: 500000
+
+rules:
+  - name: "momentum_alignment"
+    expression: "ma_aligned_fast_momentum == True"
+    
+  - name: "ema_pullback"
+    expression: "dist_10ema_pct > -3.0 and dist_10ema_pct < 3.0"
+    
+  - name: "closing_strength"
+    expression: "closing_range_strength > 0.5"

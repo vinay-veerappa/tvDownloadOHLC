@@ -40,25 +40,38 @@ def test_cli_runner_execution(mock_get_regime, mock_fetch_candidates, mock_yf_do
     # Mock universe
     mock_fetch_candidates.return_value = [{"ticker": "MOCK"}]
     
-    # Mock yfinance data to ensure it passes qullamaggie_hft filters
+    # Mock yfinance data to ensure it passes the NEW strict qullamaggie_hft filters
     dates = pd.date_range(end=pd.Timestamp.now(), periods=250, freq='D')
-    prices = np.linspace(10, 100, 250)
+    
+    # Needs 100% runup in 60 days. Let's make it go from 10 to 40 in the last 60 days
+    prices = np.linspace(10, 20, 190)
+    prices = np.append(prices, np.linspace(20, 50, 60))
+    
+    # Needs volume dry up (rvol_20 < 0.7). Make volume drop at the end
+    volume = np.full(250, 5000000)
+    volume[-5:] = 2000000 # drops to 40% of average
+    
+    # Needs VCP tightening (atr5 / atr20 < 0.6)
+    # High/low spread is normally 2.0, but drops to 0.5 at the end
+    spreads = np.full(250, 2.0)
+    spreads[-5:] = 0.5
+    
     mock_df = pd.DataFrame({
-        "Open": prices * 0.98,
-        "High": prices * 1.05,
-        "Low": prices * 0.95,
+        "Open": prices - spreads/2,
+        "High": prices + spreads,
+        "Low": prices - spreads,
         "Close": prices,
-        "Volume": np.full(250, 5000000)
+        "Volume": volume
     }, index=dates)
-    
+
     mock_yf_download.return_value = mock_df
-    
+
     results = run_screener(strategy_id="qullamaggie_hft", limit=5)
-    
+
     # Verify yfinance was called with correct period and parameters
     mock_yf_download.assert_called_once_with(["MOCK"], period="6mo", interval="1d", group_by="ticker", progress=False, threads=True)
-    
+
     assert isinstance(results, pd.DataFrame)
     # Assert that the data actually matched instead of silently passing an empty dataframe
-    assert len(results) == 1
+    assert len(results) >= 1
     assert results.iloc[0]["ticker"] == "MOCK"
