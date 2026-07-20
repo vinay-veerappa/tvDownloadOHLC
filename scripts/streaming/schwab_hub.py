@@ -32,7 +32,10 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.streaming.providers.schwab_py_provider import SchwabPyProvider
-from scripts.streaming.providers.schwab_dev_provider import SchwabDevProvider
+try:
+    from scripts.streaming.providers.schwab_dev_provider import SchwabDevProvider
+except ImportError:
+    SchwabDevProvider = None
 
 # Configure logging
 logging.basicConfig(
@@ -63,9 +66,10 @@ class SchwabUnifiedHub:
         # Local Bus: Queue for internal sub-tasks
         self.broadcast_queue = asyncio.Queue()
         
-        # REST Request Queue
-        self.rest_queue = asyncio.Queue()
+        # REST Request Queue (Priority Queue to prevent bulk options starvation)
+        self.rest_queue = asyncio.PriorityQueue()
         self.rate_limit_delay = 0.5  # 500ms between REST calls
+        self._request_seq = 0
         
         if self.app:
             @self.app.websocket("/ws")
@@ -100,7 +104,18 @@ class SchwabUnifiedHub:
             @self.app.post("/request")
             async def proxy_request(request: dict):
                 response_queue = asyncio.Queue()
-                await self.rest_queue.put((request, response_queue))
+                method = request.get("method", "")
+                priority = request.get("priority")
+                if priority is None:
+                    if method == "get_price_history":
+                        priority = 1  # Highest priority for historical gap filling
+                    elif method in ("get_quotes", "get_market_hours"):
+                        priority = 2
+                    else:
+                        priority = 3  # Bulk option chains
+                
+                self._request_seq += 1
+                await self.rest_queue.put((priority, self._request_seq, request, response_queue))
                 return await response_queue.get()
 
             @self.app.post("/resolve")
@@ -113,10 +128,11 @@ class SchwabUnifiedHub:
                 return {"status": "success", "data": mapping}
         
     async def initialize(self):
-        """Initialize chosen provider based on secrets.json."""
+        """Initialize provider."""
         if not os.path.exists(self.secrets_path):
-            raise FileNotFoundError(f"Secrets file not found: {self.secrets_path}")
-            
+            logger.error(f"Secrets file not found: {self.secrets_path}")
+            return False
+
         with open(self.secrets_path, 'r') as f:
             secrets = json.load(f)
             
@@ -184,9 +200,9 @@ class SchwabUnifiedHub:
 
     async def _rest_worker(self):
         """Processes REST requests via the provider concurrently with rate-limited launch intervals."""
-        logger.info("🚀 REST Worker started (Concurrent Execution, Rate-Limited Launches).")
+        logger.info("🚀 REST Worker started (Priority Queue & Rate-Limited Launches).")
         while True:
-            request_data, response_queue = await self.rest_queue.get()
+            priority, seq, request_data, response_queue = await self.rest_queue.get()
             method_name = request_data.get("method")
             params = request_data.get("params", {})
             

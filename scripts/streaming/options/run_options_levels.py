@@ -1679,7 +1679,7 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
                 # Reset anchors only at 09:30 open
                 do_reset = (t_str == "09:30")
                 suffix = _build_snapshot_suffix(datetime.now(tz), t_str)
-                run_pipeline(lbl, enable_discord=enable_discord, versioned=is_pulse, reset_anchors=do_reset, snapshot_suffix=suffix)
+                run_pipeline(run_label=lbl, enable_discord=enable_discord, versioned=is_pulse, reset_anchors=do_reset, snapshot_suffix=suffix)
             else:
                 log.info("Non-trading day — skipping %s run.", lbl)
 

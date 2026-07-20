@@ -626,7 +626,7 @@ OPTION_CHAIN_WIDE_WINDOW: int = 10
 # HH:MM times (24-hour clock, Eastern) at which the pipeline runs on trading days.
 # NOTE: duplicates are silently ignored by run_options_levels.py, but keep
 # this list clean to avoid confusion.
-SCHEDULE_TIMES: list[str] = ["08:30", "09:30", "10:00", "11:00", "12:00", "13:00", "15:00", "16:00", "16:15"]
+SCHEDULE_TIMES: list[str] = ["08:00","08:30", "09:30","09:50", "10:00","10:30", "11:00","11:30", "12:00","12:30", "13:00","13:30", "15:00", "15:30","16:00", "16:15"]
 SCHEDULER_MISFIRE_GRACE_TIME: int = 300
 
 # Trader narrative schedule times (HH:MM, Eastern). These run inside the same

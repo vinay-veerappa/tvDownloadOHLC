@@ -224,14 +224,24 @@ class HybridCoordinator:
             log.info("TOS RTD disabled — running in Schwab-only mode")
             return
 
-        # Double-check TOS is actually running before attempting COM connection
+        # Double-check TOS is running; if not, attempt auto-launch & login
         if not _is_tos_running():
-            log.warning(
-                "TOS RTD enabled but ThinkorSwim desktop is not running — "
-                "falling back to Schwab-only mode"
-            )
-            self._enabled = False
-            return
+            log.warning("TOS RTD enabled but ThinkorSwim desktop is not running — attempting auto-launch & login...")
+            try:
+                from .tos_auto_login import launch_and_login_tos
+                from scripts.streaming.windows_notifier import notify_tos_launching, notify_tos_connected
+                notify_tos_launching()
+                launched = launch_and_login_tos()
+                if launched:
+                    notify_tos_connected()
+                else:
+                    log.warning("Auto-launching Thinkorswim failed — falling back to Schwab-only mode")
+                    self._enabled = False
+                    return
+            except Exception as exc:
+                log.error("Failed to auto-launch Thinkorswim: %s", exc)
+                self._enabled = False
+                return
 
         if not self._expiry:
             today = date.today()
