@@ -44,7 +44,10 @@ log = logging.getLogger(__name__)
 def _hub_request(method: str, params: dict) -> dict:
     """Send a REST request through the Hub's proxy."""
     try:
-        resp = requests.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=60)
+        if method == "resolve":
+            resp = requests.post(f"{HUB_URL}/resolve", json=params, timeout=30)
+        else:
+            resp = requests.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=60)
         resp.raise_for_status()
         result = resp.json()
         
@@ -340,6 +343,41 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
         if last is None:
             log.error(f"Total failure to quote {symbol} (Hub and yfinance both failed).")
         return FuturesQuote(symbol=symbol, price=last, open_price=open_p)
+
+
+def fetch_batched_futures_quotes(symbols: list[str]) -> dict[str, FuturesQuote]:
+    """
+    Fetch latest futures quotes for multiple symbols in a single batched Hub REST call.
+    Reduces N resolve + N quote calls down to 1 resolve + 1 quote call.
+    """
+    clean_syms = [s for s in set(symbols) if s]
+    if not clean_syms:
+        return {}
+
+    try:
+        res = _hub_request("resolve", {"symbols": clean_syms})
+        active_map: dict[str, str] = {}
+        for sym in clean_syms:
+            mapping = res.get(sym) or res.get("data", {}).get(sym, {})
+            active_map[sym] = mapping.get("active", sym)
+
+        active_symbols = list(set(active_map.values()))
+        qres = _hub_request("get_quotes", {"symbols": active_symbols})
+        
+        results: dict[str, FuturesQuote] = {}
+        for orig_sym, active_sym in active_map.items():
+            data = qres.get(active_sym, {})
+            q = data.get("quote", {})
+            last = _safe_float(q.get("mark") or q.get("lastPrice"))
+            open_p = _safe_float(q.get("sessionOpen") or q.get("openPrice"))
+            if last is not None:
+                results[orig_sym] = FuturesQuote(symbol=orig_sym, price=last, open_price=open_p)
+            else:
+                results[orig_sym] = fetch_futures_quote(orig_sym)
+        return results
+    except Exception as e:
+        log.error("Failed batched futures quotes fetch: %s — falling back to single fetch.", e)
+        return {s: fetch_futures_quote(s) for s in clean_syms}
 
 
 # ---------------------------------------------------------------------------

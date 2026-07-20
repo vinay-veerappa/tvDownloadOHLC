@@ -116,7 +116,7 @@ if not _IS_RTD_CHILD:
         calculate_price_metrics,
     )
     from .level_scorer import score_levels, ScoredLevels
-    from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data, get_eod_close_price, FuturesQuote
+    from .options_fetcher import create_client, fetch_futures_quote, fetch_batched_futures_quotes, fetch_option_chain_data, get_eod_close_price, FuturesQuote
     from .state_tracker import (
         build_current_state,
         detect_changes,
@@ -458,6 +458,10 @@ def run_pipeline(
         for t, chain_data in results:
             if chain_data:
                 chains_by_ticker[t] = chain_data
+
+    # Pre-fetch all futures quotes in a single batched REST call (8 HTTP requests -> 1 batched call)
+    all_futures_syms = [INDEX_TO_FUTURES.get(t) for t in target_tickers if INDEX_TO_FUTURES.get(t)]
+    futures_quotes = fetch_batched_futures_quotes(all_futures_syms) if all_futures_syms else {}
 
     for ticker in target_tickers:
         futures_sym = INDEX_TO_FUTURES.get(ticker)
