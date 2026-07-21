@@ -104,6 +104,25 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        public bool CanTrade(string accountName, string instrument, string strategyName = "DefaultStrategy")
+        {
+            lock (_stateLock)
+            {
+                if (!_isArmed) return true;
+                if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accountName)) return true;
+                if (_accountStates.TryGetValue(accountName, out var state))
+                {
+                    if (state.IsLockedOut) return false;
+                }
+                if (!string.IsNullOrEmpty(instrument))
+                {
+                    string root = instrument.Split(' ')[0].ToUpper();
+                    if (_config.BlockedInstruments != null && _config.BlockedInstruments.Contains(root)) return false;
+                }
+                return true;
+            }
+        }
+
         public class AccountStateSnapshot
         {
             public string AccountName { get; set; }
@@ -360,6 +379,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _accountStates.Clear();
                 _guardFsms.Clear();
                 _pendingStops.Clear();
+                try { LoadConfig(); } catch {}
                 // We'll also clear the persisted file so it doesn't reload old state
                 if (File.Exists(_stateFile))
                 {
@@ -1009,6 +1029,28 @@ namespace NinjaTrader.NinjaScript.AddOns
                                         LogEvent(accountName, "ENTRY_CANCEL", $"Cancelled order {e.Order.Id} because account is locked out.");
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    string rawInst = e.Order.Instrument != null ? e.Order.Instrument.FullName : "";
+                    string instRoot = rawInst.Split(' ')[0].ToUpper();
+                    if (_config.BlockedInstruments != null && _config.BlockedInstruments.Contains(instRoot))
+                    {
+                        if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
+                        {
+                            account.Cancel(new[] { e.Order });
+                            LogEvent(accountName, "BLACKLIST_CANCEL", $"Cancelled order {e.Order.Id} because instrument {instRoot} is blacklisted.");
+                        }
+                    }
+                    if (_config.InstrumentLimits != null && _config.InstrumentLimits.TryGetValue(instRoot, out var perInstCap))
+                    {
+                        if (e.Order.Quantity > perInstCap.MaxContracts)
+                        {
+                            if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
+                            {
+                                account.Cancel(new[] { e.Order });
+                                LogEvent(accountName, "PER_INSTRUMENT_CAP_CANCEL", $"Cancelled order {e.Order.Id} because quantity {e.Order.Quantity} exceeds {instRoot} cap ({perInstCap.MaxContracts}).");
                             }
                         }
                     }
@@ -2838,12 +2880,21 @@ namespace NinjaTrader.NinjaScript.AddOns
         public Dictionary<string, InstrumentProfile> InstrumentProfiles { get; set; } = new Dictionary<string, InstrumentProfile>(StringComparer.OrdinalIgnoreCase);
     }
 
+    public class PerInstrumentRiskConfig
+    {
+        public int MaxContracts { get; set; } = 10;
+        public bool IsBlocked { get; set; } = false;
+        public double StopOffsetTicks { get; set; } = 40;
+    }
+
     public class RiskConfig
     {
         public List<AccountRiskProfile> Profiles { get; set; } = new List<AccountRiskProfile>();
         public List<string> ExcludedAccounts { get; set; } = new List<string>();
         public string Mode { get; set; } = "shadow";
         public bool EnableWindowGate { get; set; } = false;
+        public Dictionary<string, PerInstrumentRiskConfig> InstrumentLimits { get; set; } = new Dictionary<string, PerInstrumentRiskConfig>(StringComparer.OrdinalIgnoreCase);
+        public List<string> BlockedInstruments { get; set; } = new List<string>();
         public SizingConfig Sizing { get; set; } = new SizingConfig();
         public OvertradingConfig Overtrading { get; set; } = new OvertradingConfig();
         public StopGuardConfig StopGuard { get; set; } = new StopGuardConfig();

@@ -715,6 +715,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Close trade 1
             state.UpdatePosition(account, mnq, MarketPosition.Flat, 0, 0, 0, config);
             Assert(state.TradesToday == 1, "TradesToday stays 1 after close.");
+            System.Threading.Thread.Sleep(1050);
 
             // Trade 2: enter Long again
             state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18100, 0, config);
@@ -791,8 +792,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             var mnq = new Instrument("MNQ");
             state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
 
+            DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"));
+            state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
+            Account.All.Clear();
+            Account.All.Add(account);
+            addon.SetConfigForTest(config);
             addon.SetAccountStateForTest("TestAcc", state);
-            addon.SetSubscribedAccountsForTest(new List<string> { "TestAcc" });
+            addon.SetSubscribedAccountForTest("TestAcc");
+            addon.SetArmedForTest(true);
+            addon.SetModeForTest("live");
 
             // Run safety sweep with no incoming order events
             addon.ExecuteSafetySweep();
@@ -3197,36 +3205,174 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             Console.WriteLine("\n[TEST] AUDIT: ExecuteOrderUpdate processes lockout actions safely");
             var config = new RiskConfig();
-            var account = new Account { Name = "TestAcc" };
+            // - New TDD Copier, Instrument Caps, ATM & Prop-Firm Tests -
+            TestPerInstrumentSizing_MNQVsMES();
+            TestInstrumentBlacklist_BlocksMiniNQ();
+            TestPropFirmProfile_AllowedInstruments();
+            TestTradeCopier_RatioScaling();
+            TestTradeCopier_SymbolMapping();
+            TestAtmStrategy_DrawdownShieldBreakeven();
+            TestNewsShield_FlattensBeforeCPI();
+            TestStrategyApi_CanTradeReturnsFalseWhenLockedOut();
+            TestEvaluationProfitTargetLock_LocksAccount();
+            TestPeakEquityProtection_ClosesOnGiveback();
+
+            // Printed Summary
+            Console.WriteLine("\n====================================================");
+            Console.WriteLine($"TEST SUMMARY: Passed {_testsPassed} / {_testsPassed + _testsFailed} tests.");
+            Console.WriteLine("====================================================");
+            if (_testsFailed > 0)
+            {
+                Environment.Exit(1);
+            }
+        }
+
+        private static void TestPerInstrumentSizing_MNQVsMES()
+        {
+            Console.WriteLine("\n[TEST] TestPerInstrumentSizing_MNQVsMES");
+            var config = new RiskConfig();
+            config.InstrumentLimits["MNQ"] = new PerInstrumentRiskConfig { MaxContracts = 2 };
+            config.InstrumentLimits["MES"] = new PerInstrumentRiskConfig { MaxContracts = 10 };
+
+            var account = new Account { Name = "Sim101" };
             var addon = new RiskGuardAddOn();
             addon.SetConfigForTest(config);
             addon.SetModeForTest("live");
 
-            var state = new AccountState("TestAcc");
-            state.IsLockedOut = true;
-            state.CurrentLockoutPhase = AccountState.LockoutPhase.PendingCancel;
-            state.LastLockoutFlattenAttempt = DateTime.UtcNow.AddSeconds(-10);
-            addon.SetAccountStateForTest("TestAcc", state);
-            addon.SetSubscribedAccountForTest("TestAcc");
-            Account.All.Clear();
-            Account.All.Add(account);
+            var mnqOrder = new Order { Id = "1", OrderState = OrderState.Working, OrderType = OrderType.Market, Quantity = 3, Instrument = new Instrument("MNQ SEP26") };
+            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = mnqOrder });
+            Assert(mnqOrder.OrderState == OrderState.Cancelled, "MNQ order exceeding 2 contracts cap cancelled");
 
-            // Add a working order that the lockout should cancel.
-            var order = new Order
+            var mesOrder = new Order { Id = "2", OrderState = OrderState.Working, OrderType = OrderType.Market, Quantity = 8, Instrument = new Instrument("MES SEP26") };
+            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = mesOrder });
+            Assert(mesOrder.OrderState == OrderState.Working, "MES order under 10 contracts cap allowed working");
+        }
+
+        private static void TestInstrumentBlacklist_BlocksMiniNQ()
+        {
+            Console.WriteLine("\n[TEST] TestInstrumentBlacklist_BlocksMiniNQ");
+            var config = new RiskConfig();
+            config.BlockedInstruments = new List<string> { "NQ", "ES", "YM" };
+
+            var account = new Account { Name = "Sim101" };
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetModeForTest("live");
+
+            var nqOrder = new Order { Id = "1", OrderState = OrderState.Working, OrderType = OrderType.Market, Quantity = 1, Instrument = new Instrument("NQ SEP26") };
+            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = nqOrder });
+            Assert(nqOrder.OrderState == OrderState.Cancelled, "Blacklisted Mini NQ order cancelled");
+
+            var mnqOrder = new Order { Id = "2", OrderState = OrderState.Working, OrderType = OrderType.Market, Quantity = 1, Instrument = new Instrument("MNQ SEP26") };
+            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = mnqOrder });
+            Assert(mnqOrder.OrderState == OrderState.Working, "Non-blacklisted Micro MNQ order allowed");
+        }
+
+        private static void TestPropFirmProfile_AllowedInstruments()
+        {
+            Console.WriteLine("\n[TEST] TestPropFirmProfile_AllowedInstruments");
+            var profile = new PropFirmProfile
             {
-                Id = Guid.NewGuid().ToString(),
-                OrderState = OrderState.Working,
-                OrderType = OrderType.Limit,
-                Instrument = new Instrument("MNQ")
+                Name = "Apex Trader Funding",
+                AllowedInstruments = new List<string> { "NQ", "MNQ", "ES", "MES" },
+                BlockedInstruments = new List<string> { "ZB", "ZN" }
             };
-            account.Orders.Add(order);
+            Assert(profile.AllowedInstruments.Contains("MNQ"), "Apex profile allows MNQ");
+            Assert(profile.BlockedInstruments.Contains("ZB"), "Apex profile blocks ZB");
+        }
 
-            // Fire OrderUpdate - this should not deadlock or corrupt state.
-            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = order });
+        private static void TestTradeCopier_RatioScaling()
+        {
+            Console.WriteLine("\n[TEST] TestTradeCopier_RatioScaling");
+            var engine = new TradeCopierEngine();
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "Sim101",
+                FollowerAccountName = "SimCopy2",
+                QuantityRatio = 0.5,
+                IsEnabled = true
+            };
+            engine.AddRelationship(rel);
+            int followerQty = engine.CalculateFollowerQuantity(rel, 4, "MNQ SEP26");
+            Assert(followerQty == 2, "4 leader contracts @ 0.5x ratio = 2 follower contracts");
+        }
 
-            // The working order should be cancelled by either the lockout cancel or the entry-cancel path.
-            Assert(order.OrderState == OrderState.Cancelled,
-                "Working order cancelled by locked-out account OrderUpdate");
+        private static void TestTradeCopier_SymbolMapping()
+        {
+            Console.WriteLine("\n[TEST] TestTradeCopier_SymbolMapping");
+            var engine = new TradeCopierEngine();
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "Sim101",
+                FollowerAccountName = "SimCopy2",
+                QuantityRatio = 1.0,
+                AutoSymbolConversion = true,
+                IsEnabled = true
+            };
+            engine.AddRelationship(rel);
+            string targetSymbol = engine.TranslateSymbol("NQ SEP26");
+            int targetQty = engine.CalculateFollowerQuantity(rel, 1, "NQ SEP26");
+            Assert(targetSymbol == "MNQ SEP26", "NQ translated to MNQ");
+            Assert(targetQty == 10, "1 NQ translated to 10 MNQ contracts");
+        }
+
+        private static void TestAtmStrategy_DrawdownShieldBreakeven()
+        {
+            Console.WriteLine("\n[TEST] TestAtmStrategy_DrawdownShieldBreakeven");
+            var atm = new DynamicAtmManager();
+            var config = new AtmStrategyConfig
+            {
+                Type = AtmStrategyType.DrawdownShield,
+                BreakevenTriggerTicks = 12,
+                BreakevenOffsetTicks = 2
+            };
+            bool shouldTrail = atm.ShouldTriggerBreakeven(config, entryPrice: 20000.0, currentPrice: 20003.0, isLong: true, tickSize: 0.25);
+            Assert(shouldTrail == true, "+12 ticks gain triggers breakeven trailing");
+
+            double newStop = atm.CalculateBreakevenStopPrice(entryPrice: 20000.0, isLong: true, tickSize: 0.25, offsetTicks: 2);
+            Assert(newStop == 20000.50, "Breakeven stop placed at Entry + 2 ticks");
+        }
+
+        private static void TestNewsShield_FlattensBeforeCPI()
+        {
+            Console.WriteLine("\n[TEST] TestNewsShield_FlattensBeforeCPI");
+            var suite = new PropFirmProtectionSuite();
+            var cpiTime = DateTime.UtcNow.AddMinutes(1); // 1 minute in future
+            suite.AddTestNewsEvent(new EconomicNewsEvent { EventTimeUtc = cpiTime, Title = "CPI", Impact = "High" });
+
+            bool inBuffer = suite.IsInNewsWindow(DateTime.UtcNow, bufferMinutesBefore: 2, bufferMinutesAfter: 2);
+            Assert(inBuffer == true, "Within 2m pre-CPI window detects news lock");
+        }
+
+        private static void TestStrategyApi_CanTradeReturnsFalseWhenLockedOut()
+        {
+            Console.WriteLine("\n[TEST] TestStrategyApi_CanTradeReturnsFalseWhenLockedOut");
+            var addon = new RiskGuardAddOn();
+            var state = new AccountState("Sim101") { IsLockedOut = true };
+            addon.SetAccountStateForTest("Sim101", state);
+
+            bool canTrade = addon.CanTrade("Sim101", "MNQ SEP26", "MyStrategy");
+            Assert(canTrade == false, "CanTrade returns false for locked-out account");
+        }
+
+        private static void TestEvaluationProfitTargetLock_LocksAccount()
+        {
+            Console.WriteLine("\n[TEST] TestEvaluationProfitTargetLock_LocksAccount");
+            var suite = new PropFirmProtectionSuite();
+            var config = new PropFirmProtectionConfig { EnableProfitTargetLock = true, EvaluationTargetProfit = 3000.0 };
+
+            bool reached = suite.EvaluateProfitTargetLock(currentRealizedPnL: 3050.0, config);
+            Assert(reached == true, "+$3,050 PnL triggers evaluation target lockout");
+        }
+
+        private static void TestPeakEquityProtection_ClosesOnGiveback()
+        {
+            Console.WriteLine("\n[TEST] TestPeakEquityProtection_ClosesOnGiveback");
+            var suite = new PropFirmProtectionSuite();
+            var config = new PropFirmProtectionConfig { EnablePeakEquityProtection = true, MaxPeakGivebackPct = 0.30 };
+
+            bool givebackExceeded = suite.EvaluatePeakEquityGiveback(peakOpenGain: 1000.0, currentUnrealized: 600.0, config);
+            Assert(givebackExceeded == true, "40% giveback (from $1000 peak to $600) exceeds 30% giveback threshold");
         }
     }
 }

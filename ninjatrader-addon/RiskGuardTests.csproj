@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <DefineConstants>TESTING</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="McpBridgeAddOn.cs" />
+  </ItemGroup>
+</Project>

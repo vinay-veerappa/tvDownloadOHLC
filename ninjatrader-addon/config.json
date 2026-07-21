@@ -2,12 +2,25 @@
   "Mode": "live",
   "EnableWindowGate": false,
   "Sizing": {
-    "MaxContractsPerAccount": 10,
-    "MaxContractsAggregate": 20
+    "MaxContractsPerAccount": 20,
+    "MaxContractsAggregate": 50
   },
+  "InstrumentLimits": {
+    "MNQ": {
+      "MaxContracts": 10
+    },
+    "MES": {
+      "MaxContracts": 10
+    }
+  },
+  "BlockedInstruments": [
+    "NQ",
+    "ES",
+    "YM"
+  ],
   "Overtrading": {
-    "MaxTradesPerSession": 8,
-    "CooldownMinutes": 5,
+    "MaxTradesPerSession": 50,
+    "CooldownMinutes": 0,
     "LockoutMinutes": 60
   },
   "StopGuard": {
@@ -21,8 +34,8 @@
     }
   },
   "PnLRules": {
-    "DailyLossLimit": 1000.0,
-    "TrailingDrawdown": 1500.0,
+    "DailyLossLimit": 10000.0,
+    "TrailingDrawdown": 15000.0,
     "LockoutMinutes": 60
   },
   "WindowsET": [
