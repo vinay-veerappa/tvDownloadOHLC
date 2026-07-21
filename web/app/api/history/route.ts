@@ -90,10 +90,41 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ success: false, error: apiData.error }, { status: 400 });
         }
 
+        // If it's a stock symbol (and not a futures contract starting with / or in roots), 
+        // enrich it with yfinance metadata!
+        let enrichedData: any = {};
+        const isFuture = safeTicker.startsWith('/') || roots.includes(safeTicker);
+        if (!isFuture) {
+            try {
+                const pyPath = path.join(process.cwd(), '..', '.venv', 'Scripts', 'python.exe');
+                const scriptPath = path.join(process.cwd(), '..', 'scripts', 'screener', 'fetch_ticker_profile.py');
+                const cmd = `"${pyPath}" "${scriptPath}" "${safeTicker}" "${yfInterval}" "${period}"`;
+                
+                const { stdout } = await execAsync(cmd, { timeout: 20000 });
+                const resJson = JSON.parse(stdout);
+                
+                if (resJson.success) {
+                    enrichedData = {
+                        info: resJson.info,
+                        news: resJson.news,
+                        upgrades: resJson.upgrades,
+                        financials: resJson.financials
+                    };
+                    // Optionally override candles if the local ones are empty/stale
+                    if ((!apiData.candles || apiData.candles.length === 0) && resJson.candles) {
+                        apiData.candles = resJson.candles;
+                    }
+                }
+            } catch (yfError: any) {
+                console.error('Failed to enrich metadata for tracked stock:', yfError.message);
+            }
+        }
+
         return NextResponse.json({
             success: true,
             data: {
                 ...apiData,
+                ...enrichedData,
                 last_update: new Date().toISOString(),
                 live_price: apiData.candles && apiData.candles.length > 0 ? apiData.candles[apiData.candles.length - 1].close : null,
                 totalCandles: apiData.candles?.length || 0
