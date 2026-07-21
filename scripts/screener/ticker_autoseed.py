@@ -26,7 +26,30 @@ THEME_MAPPINGS = {
     "Healthcare & Biotech": ["LLY", "NVO", "PFE", "JNJ", "UNH", "ABBV", "MRNA", "REGN"]
 }
 
-SP500_SAMPLE = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK.B", "LLY", "AVGO", "TSLA", "JPM", "WMT", "V", "UNH", "MA", "XOM", "PG", "HD", "JNJ", "COST", "ABBV", "BAC", "CRM", "CVX", "MRK", "NFLX", "AMD", "KO", "PEP", "TMO", "LIN", "DIS", "ADBE", "ACN", "WFC", "MCD", "CSCO", "ABT", "GE", "INTU", "QCOM", "TXN", "AMAT", "PM", "CAT", "VZ", "AMGN", "IBM", "NOW", "LOW"]
+SP500_SAMPLE = [
+    # Technology
+    "AAPL", "MSFT", "NVDA", "AVGO", "AMD", "ADBE", "CSCO", "CRM", "INTU", "QCOM", "TXN", "AMAT", "NOW", "LRCX", "ADI", "MU", "KLAC", "PANW", "SNPS", "CDNS", "ORCL", "IBM", "ACN", "FI", "FIS",
+    # Financials
+    "JPM", "V", "MA", "BAC", "WFC", "MS", "GS", "C", "BLK", "SPGI", "AXP", "CB", "PGR", "SCHW", "MMC", "AON", "CINF", "MET", "PRU", "TRV",
+    # Healthcare
+    "LLY", "UNH", "JNJ", "ABBV", "MRK", "TMO", "ABT", "PFE", "DHR", "ISRG", "AMGN", "ELV", "SYK", "VRTX", "BMY", "MDT", "GILD", "CI", "REGN", "ZTS",
+    # Consumer Cyclical
+    "AMZN", "TSLA", "HD", "MCD", "LOW", "BKNG", "NKE", "SBUX", "TJX", "ORLY", "AZO", "LULU", "MAR", "HLT", "CMG", "GM", "F", "APTV", "DHI", "LEN",
+    # Communication Services
+    "GOOGL", "GOOG", "META", "NFLX", "TMUS", "DIS", "CMCSA", "VZ", "T", "EA", "TTWO", "OMC", "IPG", "CHTR",
+    # Industrials
+    "GE", "CAT", "UNP", "HON", "BA", "RTX", "DE", "LMT", "ADP", "ETN", "ITW", "WM", "GD", "NOC", "CSX", "NSC", "EMR", "PH", "FDX", "UPS",
+    # Consumer Defensive
+    "WMT", "PG", "COST", "KO", "PEP", "PM", "MO", "MDLZ", "CL", "TGT", "KMB", "GIS", "STZ", "ADM", "SYY", "DG", "DLTR", "K", "HSY", "KR",
+    # Energy
+    "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HES", "HAL", "KMI", "WMB", "DVN", "FANG", "BKR",
+    # Utilities
+    "NEE", "SO", "DUK", "CEG", "SRE", "AEP", "D", "EXC", "XEL", "ED", "PEG", "WEC", "AWK", "EIX", "ES",
+    # Real Estate
+    "PLD", "AMT", "EQIX", "CCI", "PSA", "O", "SPG", "WELL", "DLR", "VICI", "AVB", "EQR", "WY", "SBAC", "INVH",
+    # Basic Materials
+    "LIN", "APD", "ECL", "SHW", "NEM", "FCX", "CTVA", "DOW", "DD", "NUE", "ALB", "PPG", "VMC", "MLM", "IFF"
+]
 NASDAQ100_SAMPLE = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "COST", "ASML", "AMD", "NFLX", "AZN", "PEP", "ADBE", "CSCO", "TMUS", "QCOM", "INTU", "TXN", "AMAT", "CMCSA", "HON", "AMGN", "NOW", "ISRG", "LRCX", "BKNG", "PANW", "VRTX", "ADP", "MU", "REGN", "MDLZ", "SNPS", "CDNS", "KLAC", "PDD", "MELI", "PYPL", "CRWD", "INTC", "CSX", "LULU", "ORLY", "CTAS", "MAR", "WDAY", "MNST", "ROST"]
 ETF_SAMPLE = ["SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLV", "XLE", "XLI", "XLY", "XLP", "XLU", "XLB", "SMH", "IGV", "ARKK", "SOXX", "XBI", "GDX", "TLT"]
 

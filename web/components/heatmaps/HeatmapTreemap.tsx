@@ -5,7 +5,7 @@ import ReactECharts from 'echarts-for-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
-import { RefreshCcw, Layers } from 'lucide-react';
+import { RefreshCcw, Layers, Search, ChevronDown } from 'lucide-react';
 
 interface HeatmapTreemapProps {
   initialType?: 'sp500' | 'nasdaq100' | 'themes' | 'etfs';
@@ -16,6 +16,7 @@ export default function HeatmapTreemap({ initialType = 'sp500' }: HeatmapTreemap
   const [mapType, setMapType] = useState<'sp500' | 'nasdaq100' | 'themes' | 'etfs'>(initialType);
   const [treeData, setTreeData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
     async function loadHeatmap() {
@@ -33,10 +34,32 @@ export default function HeatmapTreemap({ initialType = 'sp500' }: HeatmapTreemap
     loadHeatmap();
   }, [mapType]);
 
+  // Extract flat list of all tickers in current map for dropdown/search
+  const tickerList = useMemo(() => {
+    if (!treeData || !treeData.children) return [];
+    const list: any[] = [];
+    const extract = (node: any) => {
+      if (node.children) {
+        node.children.forEach(extract);
+      } else if (node.name && node.price !== undefined) {
+        list.push(node);
+      }
+    };
+    treeData.children.forEach(extract);
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }, [treeData]);
+
+  const filteredTickers = useMemo(() => {
+    if (!searchQuery.trim()) return tickerList;
+    const q = searchQuery.toLowerCase().trim();
+    return tickerList.filter(
+      (t) => t.name.toLowerCase().includes(q) || (t.company && t.company.toLowerCase().includes(q))
+    );
+  }, [tickerList, searchQuery]);
+
   const option = useMemo(() => {
     if (!treeData || !treeData.children) return {};
 
-    // Helper for visual color mapping based on changePct (-3% to +3%)
     const getColorForPct = (pct: number) => {
       if (pct >= 3.0) return '#10b981'; // bright emerald
       if (pct >= 1.5) return '#059669';
@@ -87,7 +110,7 @@ export default function HeatmapTreemap({ initialType = 'sp500' }: HeatmapTreemap
                 <span class="text-zinc-300">Change:</span>
                 <span class="font-bold ${isPos ? 'text-emerald-400' : 'text-rose-400'}">${isPos ? '+' : ''}${data.changePct.toFixed(2)}%</span>
               </div>
-              <div class="text-[10px] text-cyan-400 pt-1 border-t border-zinc-700">Click to view full analysis profile →</div>
+              <div class="text-[10px] text-cyan-400 pt-1 border-t border-zinc-700">Click to view profile →</div>
             </div>
           `;
         },
@@ -136,22 +159,40 @@ export default function HeatmapTreemap({ initialType = 'sp500' }: HeatmapTreemap
           levels: [
             {
               itemStyle: {
-                borderColor: '#18181b',
-                borderWidth: 3,
-                gapWidth: 3
+                borderColor: '#09090b',
+                borderWidth: 4,
+                gapWidth: 4
               },
               upperLabel: {
                 show: true,
-                height: 24,
-                color: '#a1a1aa',
+                height: 26,
+                color: '#ffffff',
+                backgroundColor: '#18181b',
                 fontFamily: 'monospace',
-                fontSize: 11,
-                fontWeight: 'bold'
+                fontSize: 12,
+                fontWeight: 'bold',
+                padding: [4, 8]
               }
             },
             {
               itemStyle: {
-                borderColor: '#27272a',
+                borderColor: '#18181b',
+                borderWidth: 2,
+                gapWidth: 2
+              },
+              upperLabel: {
+                show: true,
+                height: 18,
+                color: '#a1a1aa',
+                fontFamily: 'monospace',
+                fontSize: 10,
+                fontWeight: '600',
+                padding: [2, 4]
+              }
+            },
+            {
+              itemStyle: {
+                borderColor: '#09090b',
                 borderWidth: 1,
                 gapWidth: 1
               }
@@ -172,32 +213,59 @@ export default function HeatmapTreemap({ initialType = 'sp500' }: HeatmapTreemap
   return (
     <Card className="bg-zinc-950 border-zinc-800 p-4 space-y-4 rounded-xl shadow-2xl">
       {/* Controls Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
-        <div className="flex items-center space-x-2">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+        <div className="flex items-center space-x-3">
           <Layers className="h-5 w-5 text-cyan-400" />
           <h2 className="text-lg font-bold font-mono text-white tracking-tight">Market Heatmaps</h2>
         </div>
 
-        <div className="flex items-center space-x-2 overflow-x-auto">
-          {[
-            { id: 'sp500', label: 'S&P 500' },
-            { id: 'nasdaq100', label: 'Nasdaq 100' },
-            { id: 'themes', label: 'Themes Map' },
-            { id: 'etfs', label: 'Sector ETFs' }
-          ].map((btn) => (
-            <Button
-              key={btn.id}
-              onClick={() => setMapType(btn.id as any)}
-              variant={mapType === btn.id ? 'default' : 'outline'}
-              className={`h-8 text-xs font-mono font-bold ${
-                mapType === btn.id
-                  ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
-                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
-              }`}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Ticker Search & Select Dropdown */}
+          <div className="relative flex items-center">
+            <Search className="absolute left-2.5 h-3.5 w-3.5 text-zinc-500" />
+            <select
+              onChange={(e) => {
+                if (e.target.value) {
+                  router.push(`/research/screener/${e.target.value}`);
+                }
+              }}
+              defaultValue=""
+              className="pl-8 pr-6 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-cyan-500 appearance-none cursor-pointer"
             >
-              {btn.label}
-            </Button>
-          ))}
+              <option value="" disabled>
+                Select ticker in {mapType.toUpperCase()} ({tickerList.length} stocks)...
+              </option>
+              {filteredTickers.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {t.name} - {t.company || t.name} (${t.price ? t.price.toFixed(2) : ''} | {t.changePct >= 0 ? '+' : ''}{t.changePct ? t.changePct.toFixed(2) : 0}%)
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-2 h-3.5 w-3.5 text-zinc-500 pointer-events-none" />
+          </div>
+
+          {/* Map Selector Buttons */}
+          <div className="flex items-center space-x-1.5 overflow-x-auto">
+            {[
+              { id: 'sp500', label: 'S&P 500' },
+              { id: 'nasdaq100', label: 'Nasdaq 100' },
+              { id: 'themes', label: 'Themes Map' },
+              { id: 'etfs', label: 'Sector ETFs' }
+            ].map((btn) => (
+              <Button
+                key={btn.id}
+                onClick={() => setMapType(btn.id as any)}
+                variant={mapType === btn.id ? 'default' : 'outline'}
+                className={`h-8 text-xs font-mono font-bold ${
+                  mapType === btn.id
+                    ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                }`}
+              >
+                {btn.label}
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
 
