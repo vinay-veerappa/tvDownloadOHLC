@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -31,6 +31,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 {
     public class RiskGuardAddOn : AddOnBase
     {
+        public const string Version = "1.1.0";
         public object StateLock => _stateLock;
         public RiskConfig Config => _config;
 
@@ -263,8 +264,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // None of these need 1-second resolution; 5s is sufficient.
                 _safetyTimer = new Timer(OnSafetySweep, null, 5000, 5000);
 
-                LogEvent("SYSTEM", "INITIALIZE", $"RiskGuard Add-On initialized in {_mode} mode. Event monitoring started.");
-                NinjaTrader.Code.Output.Process($"[RiskGuard] RESOLVED MODE = {_mode} (armed={_isArmed})", PrintTo.OutputTab1);
+                LogEvent("SYSTEM", "INITIALIZE", $"RiskGuard Add-On v{Version} initialized in {_mode} mode. Event monitoring started.");
+                NinjaTrader.Code.Output.Process($"[RiskGuard v{Version}] RESOLVED MODE = {_mode} (armed={_isArmed})", PrintTo.OutputTab1);
             }
             catch (Exception ex)
             {
@@ -1000,10 +1001,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                         {
                             if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
                             {
-                                if (e.Order.OrderType == OrderType.Limit || e.Order.OrderType == OrderType.StopMarket || e.Order.OrderType == OrderType.StopLimit || e.Order.OrderType == OrderType.Market)
+                                if (!IsPositionReducingOrder(e.Order, stateModel))
                                 {
-                                    account.Cancel(new[] { e.Order });
-                                    LogEvent(accountName, "ENTRY_CANCEL", $"Cancelled order {e.Order.Id} because account is locked out.");
+                                    if (e.Order.OrderType == OrderType.Limit || e.Order.OrderType == OrderType.StopMarket || e.Order.OrderType == OrderType.StopLimit || e.Order.OrderType == OrderType.Market)
+                                    {
+                                        account.Cancel(new[] { e.Order });
+                                        LogEvent(accountName, "ENTRY_CANCEL", $"Cancelled order {e.Order.Id} because account is locked out.");
+                                    }
                                 }
                             }
                         }
@@ -1060,6 +1064,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                     ProcessAction(a);
                 }
             }
+        }
+
+        internal bool IsPositionReducingOrder(Order order, AccountState stateModel)
+        {
+            return RiskGuardOrderUtils.IsPositionReducingOrder(order, stateModel);
         }
 
         internal void OnSafetySweep(object state)
@@ -1140,7 +1149,27 @@ namespace NinjaTrader.NinjaScript.AddOns
                         _stateDirty = false;
                     }
 
-                    // 5. FSM watchdog (log-only diagnostic for stuck FSMs)
+                    // 5. Lockout Watchdog (ensures locked accounts with open positions are flattened even if events stop)
+                    foreach (var accName in _subscribedAccounts)
+                    {
+                        if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
+                        if (!_accountStates.TryGetValue(accName, out var stateModel)) continue;
+                        if (!stateModel.IsLockedOut) continue;
+
+                        var account = Account.All.FirstOrDefault(a => a.Name == accName);
+                        if (account == null) continue;
+
+                        var lockoutActions = EvaluateLockoutPhase(account, stateModel);
+                        if (lockoutActions != null && lockoutActions.Count > 0)
+                        {
+                            foreach (var action in lockoutActions)
+                            {
+                                ProcessAction(action);
+                            }
+                        }
+                    }
+
+                    // 6. FSM watchdog (log-only diagnostic for stuck FSMs)
                     FsmWatchdog();
                 }
 
@@ -1553,6 +1582,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 else
                 {
                     stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.PendingFlatten;
+                    stateModel.LastLockoutFlattenAttempt = DateTime.MinValue; // Allow immediate flatten action emit
                     LogEvent(stateModel.AccountName, "LOCKOUT_PHASE",
                         "Phase: PendingFlatten - orders cancelled, now flattening position");
                 }
@@ -2606,8 +2636,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Treat a flip as a close of the old trade followed by a new entry.
             if ((position == MarketPosition.Flat && wasNonFlat) || isFlip)
             {
-                // We no longer calculate realized PnL delta here to prevent lag bugs.
-                // It is now tracked in OnSafetySweep based on actual account realized PnL changes.
+                pState.LastFlatTransition = DateTime.UtcNow;
                 stateChanged = true;
 
                 if (isFlip)
@@ -2625,7 +2654,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             if ((isNonFlat && !wasNonFlat) || isFlip)
             {
                 pState.LastNonFlatTransition = DateTime.UtcNow;
-                TradesToday++; // Increment trade count
+
+                // Debounce multi-contract / split-order trade count increment:
+                // Only increment TradesToday if this is a genuine new trade lifecycle
+                // (either a flip, or position was flat for > 1000ms, or initial entry).
+                bool isGenuineNewTrade = isFlip || pState.LastFlatTransition == DateTime.MinValue ||
+                                         (DateTime.UtcNow - pState.LastFlatTransition).TotalMilliseconds > 1000;
+
+                if (isGenuineNewTrade)
+                {
+                    TradesToday++; // Increment trade count
+                }
                 stateChanged = true;
             }
             else if (position == MarketPosition.Flat && wasNonFlat)
@@ -2676,11 +2715,33 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double AveragePrice { get; set; }
         public double UnrealizedPnL { get; set; }
         public DateTime LastNonFlatTransition { get; set; } = DateTime.MinValue;
+        public DateTime LastFlatTransition { get; set; } = DateTime.MinValue;
 
         public PositionState(Instrument instrument)
         {
             InstrumentObj = instrument;
             Instrument = instrument.FullName;
+        }
+    }
+
+    internal static class RiskGuardOrderUtils
+    {
+        public static bool IsPositionReducingOrder(Order order, AccountState stateModel)
+        {
+            if (order == null || order.Instrument == null || stateModel == null) return false;
+            string instrName = order.Instrument.FullName;
+            if (!stateModel.Positions.TryGetValue(instrName, out var pState)) return false;
+
+            if (pState.MarketPosition == MarketPosition.Long)
+            {
+                return order.OrderAction == OrderAction.Sell || order.OrderAction == OrderAction.SellShort;
+            }
+            else if (pState.MarketPosition == MarketPosition.Short)
+            {
+                return order.OrderAction == OrderAction.Buy || order.OrderAction == OrderAction.BuyToCover;
+            }
+
+            return false;
         }
     }
 
@@ -2920,7 +2981,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public RiskGuardWindow(RiskGuardAddOn addOn)
         {
             _addOn = addOn;
-            Title = "NinjaTrader Cross-Account Risk Guard Dashboard";
+            Title = $"NinjaTrader Cross-Account Risk Guard Dashboard v{RiskGuardAddOn.Version}";
             Width = 1000;
             Height = 700;
             Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));

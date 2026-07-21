@@ -1,4 +1,4 @@
-﻿#if TESTING
+#if TESTING
 using System;
 using System.IO;
 using System.Text;
@@ -276,6 +276,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestIsArmedFalseBypassesAllRules();
             TestTradeTodayCountingOnRoundTrip();
             TestFlipDetectionCountsAsEntry();
+            TestTradeCountingMultiContractScalingDebounced();
+            TestLockoutWatchdogSweepFlattensOpenPosition();
+            TestLockoutAllowsPositionReducingOrders();
             TestCooldownExpiryAllowsReEntry();
             TestOrderCancelledWhenLockedOnOrderUpdate();
             TestOrderCancelledWhenConsecLossesAtMaxNotLocked();
@@ -743,6 +746,93 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // Verify we're correctly Short
             Assert(state.Positions[mnq.FullName].MarketPosition == MarketPosition.Short, "Position correctly shows Short after flip.");
+        }
+
+        private static void TestTradeCountingMultiContractScalingDebounced()
+        {
+            Console.WriteLine("\n[TEST] Multi-Contract Scaling & Staggered Fills Debounced");
+            var config = new RiskConfig();
+            var account = new Account { Name = "TestAcc" };
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+
+            var state = new AccountState("TestAcc");
+            var mnq = new Instrument("MNQ");
+
+            // Leg 1: enter Long 1 contract
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 1, 18000, 0, config);
+            Assert(state.TradesToday == 1, "TradesToday == 1 after 1st contract fill.");
+
+            // Leg 2: scale up to 2 contracts (staggered fill / multi-contract)
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
+            Assert(state.TradesToday == 1, "TradesToday remains 1 after scaling up to 2 contracts.");
+
+            // Leg 3: scale down to 1 contract
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 1, 18050, 0, config);
+            Assert(state.TradesToday == 1, "TradesToday remains 1 on partial exit.");
+
+            // Flat
+            state.UpdatePosition(account, mnq, MarketPosition.Flat, 0, 0, 0, config);
+            Assert(state.TradesToday == 1, "TradesToday remains 1 on final flat.");
+        }
+
+        private static void TestLockoutWatchdogSweepFlattensOpenPosition()
+        {
+            Console.WriteLine("\n[TEST] Lockout Safety Sweep Watchdog Flattens Open Position");
+            var config = new RiskConfig();
+            var account = new Account { Name = "TestAcc" };
+            Account.All.Add(account);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetArmedForTest(true);
+
+            var state = new AccountState("TestAcc");
+            state.IsLockedOut = true;
+            var mnq = new Instrument("MNQ");
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
+
+            addon.SetAccountStateForTest("TestAcc", state);
+            addon.SetSubscribedAccountsForTest(new List<string> { "TestAcc" });
+
+            // Run safety sweep with no incoming order events
+            addon.ExecuteSafetySweep();
+
+            Assert(state.CurrentLockoutPhase == AccountState.LockoutPhase.PendingCancel ||
+                   state.CurrentLockoutPhase == AccountState.LockoutPhase.PendingFlatten ||
+                   state.CurrentLockoutPhase == AccountState.LockoutPhase.Confirmed, 
+                   "Lockout phase advanced during sweep watchdog evaluation.");
+        }
+
+        private static void TestLockoutAllowsPositionReducingOrders()
+        {
+            Console.WriteLine("\n[TEST] Lockout Allows Position Reducing Orders");
+            var config = new RiskConfig();
+            var account = new Account { Name = "TestAcc" };
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+
+            var state = new AccountState("TestAcc");
+            var mnq = new Instrument("MNQ");
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, config);
+
+            var sellOrder = new Order
+            {
+                Instrument = mnq,
+                OrderAction = OrderAction.Sell,
+                OrderType = OrderType.Market,
+                Quantity = 2
+            };
+
+            var buyOrder = new Order
+            {
+                Instrument = mnq,
+                OrderAction = OrderAction.Buy,
+                OrderType = OrderType.Limit,
+                Quantity = 2
+            };
+
+            Assert(addon.IsPositionReducingOrder(sellOrder, state) == true, "Sell order is position reducing for Long.");
+            Assert(addon.IsPositionReducingOrder(buyOrder, state) == false, "Buy order is NOT position reducing for Long.");
         }
 
         private static void TestCooldownExpiryAllowsReEntry()

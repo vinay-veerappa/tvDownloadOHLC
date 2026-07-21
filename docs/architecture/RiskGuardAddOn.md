@@ -1,4 +1,4 @@
-﻿# RiskGuardAddOn Architecture
+# RiskGuardAddOn Architecture
 
 ## 1. Overview
 The `RiskGuardAddOn` is a centralized, robust risk management module for NinjaTrader that actively monitors positions, orders, and PnL across multiple accounts. It enforces strict trading rules (max size, daily loss, consecutive losses, trading windows, stop-loss attachments) and automatically takes defensive actions (flattening positions, cancelling orders) when thresholds are breached.
@@ -7,9 +7,12 @@ The `RiskGuardAddOn` is a centralized, robust risk management module for NinjaTr
 - **Rule Evaluation**: Continuously assesses account states against per-account and aggregate risk configurations.
 - **Action Execution**: Cancels orders and flattens positions when breaches occur.
 - **StopGuard**: Automatically attaches missing stop-loss orders to unprotected positions, or flattens them after a grace period.
-- **Lockout Enforcement**: Locks out accounts when severe limits (daily loss, consecutive losses) are hit, blocking further entry.
+- **Lockout Enforcement & Sweep Watchdog**: Locks out accounts when severe limits (daily loss, consecutive losses) are hit, actively polling locked accounts on a 1-second sweep to ensure positions are fully flattened to 0.
+- **Position-Reducing Order Permissibility**: Always permits orders that reduce open position exposure (manual flatten/close), even when an account is locked out.
+- **Trade Lifecycle Debouncing**: Tracks trade counts on genuine `Flat -> Non-Flat` transitions so multi-contract entries and split orders do not trigger false overtrading lockouts.
+- **Versioning System**: Exposes central `v1.1.0` version info across WPF UI title bars, output logs, and REST inspection endpoints.
 - **Thread Safety**: Safely bridges NinjaTrader's asynchronous order/execution events with a central UI/State lock.
-- **Testing**: A rigorous `RiskGuardAddOnTests.cs` suite containing **84 unit tests** (60 original + 24 FSM) with 170 assertions validates edge cases, mode switching (Live/Shadow), exclusion logic, and the per-position guard state machine. An additional **8-scenario MCP stress test suite** and a **20-OCO rapid-fire test** exercise live order placement, FSM state queries, and cleanup via the NT8 bridge.
+- **Testing**: A rigorous `RiskGuardAddOnTests.cs` suite containing **87 unit tests** with 175+ assertions validates edge cases, mode switching (Live/Shadow), exclusion logic, debouncing, and FSM guard transitions. An additional **12-scenario MCP stress test suite** exercises live order placement, rapid 20-OCO bursts (60 orders/sec), lockout sweep watchdogs, position-reducing order permissions, and version queries against a live Sim account via the NT8 bridge.
 
 ## 3. Data Flow
 ```mermaid
@@ -139,6 +142,25 @@ NinjaTrader's `Order.Oco` (string) identifies the OCO group. `McpBridgeAddOn` al
 - All FSM reads/mutations happen under `_stateLock`, the same lock already guarding `AccountState`.
 - `EvaluateGraceExpiry` acquires `_stateLock` and transitions the FSM to `ProtectedPending` before returning, so a concurrent sweep or event sees the new state.
 - `ProcessAction` (Executor) releases the lock before calling `account.Flatten`/`Cancel`, unchanged; the FSM's `AutoStopOrder` is set under lock *before* submission (in `ExecuteAction`) so a concurrent event sees the pending state.
+
+### 6.8 Lockout Safety Sweep Watchdog & Immediate Phase Transition
+- **Background Polling**: `OnSafetySweep` actively polls all subscribed non-excluded accounts. If `stateModel.IsLockedOut == true`, the sweep executes `EvaluateLockoutPhase(account, stateModel)` every second.
+- **Eliminating Event Silence Deadlocks**: If working orders are cancelled during lockout, order events stop firing. The 1-second sweep watchdog takes over and repeatedly emits `FlattenPosition` until `account.Positions` shows quantity = 0.
+- **Immediate Action Emission**: Upon transitioning to `PendingFlatten`, `stateModel.LastLockoutFlattenAttempt` is reset to `DateTime.MinValue` so `FlattenPosition` emits on the immediate cycle without a 5-second delay.
+
+### 6.9 Multi-Contract Trade Lifecycle Debouncing
+- **Flat -> Non-Flat Tracking**: `TradesToday` increments strictly on genuine position lifecycle entries (transition from `Flat` to `Long`/`Short`, or position flips).
+- **Staggered & Split Order Debouncing**: `PositionState.LastFlatTransition` tracks when a position reached 0. Scale-ins ($1 \rightarrow 2$ contracts) or staggered multi-bracket fills arriving while non-flat or within 1000ms of a flat event leave `TradesToday` untouched.
+
+### 6.10 Position-Reducing Order Permissibility
+- **Order Classification**: `RiskGuardOrderUtils.IsPositionReducingOrder(order, stateModel)` inspects incoming order actions against current position direction.
+- **Closing Order Allowance**: `Sell` or `SellShort` orders for Long positions and `Buy` or `BuyToCover` orders for Short positions are classified as position-reducing. `OnOrderUpdate` bypasses cancellation for position-reducing orders, guaranteeing manual or automated closing orders execute even while locked out.
+
+### 6.11 Versioning Architecture
+- **Version Constant**: `public const string Version = "1.1.0";` defined in `RiskGuardAddOn.cs`.
+- **WPF UI**: Window title bar renders `NinjaTrader Cross-Account Risk Guard Dashboard v1.1.0`.
+- **REST Endpoints**: `GET /api/riskguard/version` returns `{ "success": true, "version": "1.1.0", "name": "RiskGuardAddOn" }`. `GET /api/dev/inspect-state` includes `"version": "1.1.0"`.
+- **Changelog**: Release history maintained in `ninjatrader-addon/VERSION.md`.
 
 ## 7. NinjaTrader MCP Integration (in-role)
 
