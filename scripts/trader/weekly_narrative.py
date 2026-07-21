@@ -34,7 +34,8 @@ from scripts.trader import _path_setup  # noqa: F401
 from scripts.trader.briefing_core import (
     REPO_ROOT,
     build_weekly_static_template,
-    build_compact_weekly,
+    build_weekly_cheat_sheet,
+    build_compact_briefing,
     get_prior_week_performance,
     load_weekly_briefing_from_db,
     save_narrative_to_db,
@@ -52,8 +53,8 @@ WEEKLY_OUTPUT_DIR = REPO_ROOT / "data" / "options" / "weekly"
 
 # Ollama config
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-##DEFAULT_MODEL = "glm-5.2:cloud"
-DEFAULT_MODEL = "gemma4:latest"
+DEFAULT_MODEL = "glm-5.2:cloud"
+#DEFAULT_MODEL = "gemma4:latest"
 FALLBACK_MODEL = "gemma4:31b-cloud"
 
 
@@ -125,6 +126,25 @@ def render_weekly_summary(static_template: str, analysis: dict, tickers: list[di
     summary = summary.replace("{{WATCH_LIST}}", watch_list_md)
 
     summary = re.sub(r"\{\{[^}]+\}\}", "N/A", summary)
+
+    # Sanity filter against LLM event hallucinations (e.g. CPI/NFP/FOMC when not on calendar)
+    event_names_upper = [e.get("name", "").upper() for e in events]
+    has_cpi = any("CPI" in n or "CONSUMER PRICE" in n for n in event_names_upper)
+    has_nfp = any("NFP" in n or "NON-FARM" in n for n in event_names_upper)
+    has_fomc = any("FOMC" in n for n in event_names_upper)
+
+    if not has_cpi:
+        summary = re.sub(r"\(especially CPI/[^)]+\)", "", summary, flags=re.IGNORECASE)
+        summary = re.sub(r"\(e\.g\.,?\s*CPI[^)]*\)", "", summary, flags=re.IGNORECASE)
+        summary = re.sub(r"\bCPI\s*/\s*", "", summary)
+        summary = re.sub(r"\bCPI\b", "economic data", summary)
+
+    if not has_nfp:
+        summary = re.sub(r"\bNFP\b", "employment data", summary)
+
+    if not has_fomc:
+        summary = re.sub(r"\bFOMC\b", "central bank policy", summary)
+
     return summary
 
 
@@ -208,6 +228,25 @@ def write_summary_to_disk(summary: str, briefing_id: str) -> Path:
     return latest_path
 
 
+def write_cheatsheet_to_disk(cheat_sheet: str, briefing_id: str) -> Path:
+    """Write the weekly cheat sheet to disk for easy viewing."""
+    WEEKLY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    latest_path = WEEKLY_OUTPUT_DIR / "latest_cheat_sheet.txt"
+    with open(latest_path, "w", encoding="utf-8") as f:
+        f.write(cheat_sheet)
+    log.info("  Written to %s", latest_path)
+
+    dated_path = WEEKLY_OUTPUT_DIR / f"{date_str}_cheat_sheet.txt"
+    with open(dated_path, "w", encoding="utf-8") as f:
+        f.write(cheat_sheet)
+    log.info("  Written to %s", dated_path)
+
+    return latest_path
+
+
 async def run_narrative(model: str, week_start: date | None = None) -> str:
     """Main narrative generation flow.
 
@@ -234,8 +273,13 @@ async def run_narrative(model: str, week_start: date | None = None) -> str:
     briefing_id = briefing_data["meta"]["id"]
     log.info("✓ Loaded briefing %s (%d tickers)", briefing_id, len(briefing_data["tickers"]))
 
+    # Build weekly cheat sheet
+    cheat_sheet = build_weekly_cheat_sheet(briefing_data)
+    log.info("✓ Weekly cheat sheet assembled (%d chars)", len(cheat_sheet))
+    write_cheatsheet_to_disk(cheat_sheet, briefing_id)
+
     # 2. Build compact weekly briefing (saves ~800+ tokens vs raw TOON)
-    toon = build_compact_weekly(briefing_data)
+    toon = build_compact_briefing(briefing_data)
     log.info("✓ Compact briefing assembled (%d chars)", len(toon))
 
     static_template = build_weekly_static_template(briefing_data)

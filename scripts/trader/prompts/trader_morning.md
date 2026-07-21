@@ -14,6 +14,8 @@ Write a highly focused, ~400-word narrative that:
 
 # RULES (STRICTLY ENFORCED)
 - **No Hallucination**: Do NOT invent prices, bias, or data. If it is not explicitly in the cheat sheet, do not mention it.
+- **Strict GEX Regime Adherence**: Strictly respect the GEX regime specified in the cheat sheet (e.g. POSITIVE, NEGATIVE, or NEUTRAL). Do NOT invert dealer hedging mechanics or claim negative gamma when the cheat sheet states NEUTRAL or POSITIVE.
+- **Spatial & Mathematical Precision**: Put Walls are downside support/floors (below or near price floor); Call Walls are overhead resistance/ceilings. Double-check whether a level is ABOVE or BELOW current price, and compute distances accurately.
 - **Trust the Python Output**: All quantitative signals (ALN patterns, Profiler edges, Candle Science, VIX) have already been evaluated by the backend. Simply report their conclusions as presented in the cheat sheet.
 - **Bias Consensus**: If the Bias Consensus Matrix shows conflicting signals, explicitly state that the read is mixed/low-conviction. Do not force a single directional narrative if the data disagrees.
 - **Jargon Policy**: Translate ICT acronyms (BSL, SSL, FVG) into plain English concepts (e.g. "buy stops resting above X", "sell liquidity below Y").

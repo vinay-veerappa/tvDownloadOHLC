@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime, timedelta, date
@@ -275,8 +276,11 @@ def compute_invalidation(
     - Bullish invalidation = min(put_wall, friday_em_lower)  [below both = model broken]
     - Bearish invalidation = max(call_wall, friday_em_upper) [above both = model broken]
     """
-    bullish_inv = min(put_wall, friday_em_lower)
-    bearish_inv = max(call_wall, friday_em_upper)
+    valid_bullish = [v for v in (put_wall, friday_em_lower) if v is not None and pd.notna(v) and float(v) > 0]
+    valid_bearish = [v for v in (call_wall, friday_em_upper) if v is not None and pd.notna(v) and float(v) > 0]
+
+    bullish_inv = min(valid_bullish) if valid_bullish else (spot * 0.95 if spot > 0 else 0.0)
+    bearish_inv = max(valid_bearish) if valid_bearish else (spot * 1.05 if spot > 0 else 0.0)
 
     dist_bullish = round(abs(spot - bullish_inv) / spot * 100, 2) if spot > 0 else 0.0
     dist_bearish = round(abs(bearish_inv - spot) / spot * 100, 2) if spot > 0 else 0.0
@@ -1215,17 +1219,13 @@ def compute_level_interactions(
 # keywords — these are the events that historically move equity futures.
 # All HIGH-impact events are kept unconditionally. LOW is always filtered out.
 MEDIUM_ALLOWLIST_KEYWORDS = [
-    "FOMC", "FED", "INTEREST RATE", "POWELL", "BOSTIC", "WILLIAMS",
-    "BOWMAN", "WALLER", "BARR", "COOK", "JEFFERSON", "KASHKARI",
-    "DALY", "LOGAN", "SCHMID", "COLLINS",
+    "FOMC", "FED CHAIR", "POWELL", "INTEREST RATE",
     "CPI", "PCE", "PPI", "INFLATION",
     "NON-FARM PAYROLL", "NFP", "ADP EMPLOYMENT",
-    "GDP", "GDPNOW",
-    "ISM", "PMI",
+    "GDP", "ISM", "PMI",
     "RETAIL SALES", "DURABLE GOODS",
-    "JOBLESS CLAIMS", "UNEMPLOYMENT",
-    "CONSUMER SENTIMENT", "CONSUMER CONFIDENCE",
-    "TREASURY AUCTION", "NOTE AUCTION", "BOND AUCTION",
+    "INITIAL JOBLESS CLAIMS", "UNEMPLOYMENT RATE",
+    "MICHIGAN CONSUMER SENTIMENT", "CB CONSUMER CONFIDENCE",
 ]
 
 # Always include these events as macro drivers even if the upstream
@@ -1592,9 +1592,17 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
     db = await get_db()
     try:
         if week_start:
-            week_start_dt = dt_cls.combine(week_start, dt_cls.min.time())
-            briefing = await db.weeklybriefing.find_unique(
-                where={"weekStartDate": week_start_dt},
+            from datetime import timedelta
+            start_min = dt_cls.combine(week_start - timedelta(days=1), dt_cls.min.time())
+            start_max = dt_cls.combine(week_start + timedelta(days=1), dt_cls.max.time())
+            briefing = await db.weeklybriefing.find_first(
+                where={
+                    "weekStartDate": {
+                        "gte": start_min,
+                        "lte": start_max,
+                    }
+                },
+                order={"weekStartDate": "desc"},
                 include={"tickerSnapshots": True},
             )
         else:
@@ -1704,7 +1712,9 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
                 "institutional_volatility_context": fetch_vol_context(snap.ticker, briefing.weekStartDate.date())
             })
 
+        from scripts.trader.weekly_briefing import fetch_week_earnings
         events = await fetch_week_events(briefing.weekStartDate.date(), briefing.weekEndDate.date())
+        earnings = fetch_week_earnings(briefing.weekStartDate.date(), briefing.weekEndDate.date())
 
         return {
             "meta": {
@@ -1715,6 +1725,7 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
                 "tickers_covered": briefing.tickersCovered,
             },
             "economic_events": events,
+            "earnings_events": earnings,
             "tickers": tickers,
         }
     finally:
@@ -2489,7 +2500,8 @@ def build_intermarket_read(
 
     parts: list[str] = []
 
-    if quotes:
+    has_valid_quotes = quotes and any(data.get("price") is not None for data in quotes.values())
+    if has_valid_quotes:
         parts.append("| Asset | Last Price | Change |")
         parts.append("|---|---|---|")
         for asset, data in quotes.items():
@@ -2732,10 +2744,14 @@ def _format_aln_block(ticker_label: str, aln_data: dict, spot: float) -> str:
 
     # Expand the 4-letter ALN code into its full name + definition for the LLM
     from scripts.libs_py.nqstats.classifiers import aln_full_string
+    import math
     aln_display = aln_full_string(aln) if aln != "N/A" else aln
-    lh = levels.get("lh")
-    ll = levels.get("ll")
-    mid = levels.get("mid")
+    lh_raw = levels.get("lh")
+    ll_raw = levels.get("ll")
+    mid_raw = levels.get("mid")
+    lh = float(lh_raw) if lh_raw is not None and pd.notna(lh_raw) and not math.isnan(float(lh_raw)) else None
+    ll = float(ll_raw) if ll_raw is not None and pd.notna(ll_raw) and not math.isnan(float(ll_raw)) else None
+    mid = float(mid_raw) if mid_raw is not None and pd.notna(mid_raw) and not math.isnan(float(mid_raw)) else None
     ib_bias = aln_data.get("ib_bias", "N/A")
     ib_conviction = aln_data.get("ib_conviction", 0)
     p12 = aln_data.get("p12")
@@ -2743,10 +2759,10 @@ def _format_aln_block(ticker_label: str, aln_data: dict, spot: float) -> str:
     lines = [f"== ALN / SESSION PATTERNS ({ticker_label}) =="]
     lines.append(f"Pattern: {aln} → {aln_display}")
     lines.append(f"Broken: {broken}")
-    if lh and ll:
-        lines.append(f"London High: {lh:,.2f} | London Low: {ll:,.2f} | Mid: {mid:,.2f}" if mid else f"London High: {lh:,.2f} | London Low: {ll:,.2f}")
-    if p12:
-        lines.append(f"Prior Close (P12): {p12:,.2f}")
+    if lh is not None and ll is not None:
+        lines.append(f"London High: {lh:,.2f} | London Low: {ll:,.2f} | Mid: {mid:,.2f}" if mid is not None else f"London High: {lh:,.2f} | London Low: {ll:,.2f}")
+    if p12 and pd.notna(p12) and not math.isnan(float(p12)):
+        lines.append(f"Prior Close (P12): {float(p12):,.2f}")
     # Pre-computed break probabilities (LLM should trust these, not re-derive)
     if break_high_pct or break_low_pct:
         lines.append(f"NY Break Probabilities: London High {break_high_pct:.1f}% | London Low {break_low_pct:.1f}%")
@@ -2803,16 +2819,24 @@ def _format_key_levels_hierarchy(
     spot: float,
 ) -> str:
     """Merge all level sources and sort into overhead/support ladder."""
+    import math
     overhead: list[tuple[float, str]] = []
     support: list[tuple[float, str]] = []
 
     def _add(level: float | None, label: str, spot: float):
-        if not level or level <= 0 or not spot:
+        if level is None or pd.isna(level) or spot is None or pd.isna(spot):
             return
-        if level > spot:
-            overhead.append((level, label))
+        try:
+            flvl = float(level)
+            fspot = float(spot)
+        except (ValueError, TypeError):
+            return
+        if math.isnan(flvl) or math.isnan(fspot) or flvl <= 0 or fspot <= 0:
+            return
+        if flvl > fspot:
+            overhead.append((flvl, label))
         else:
-            support.append((level, label))
+            support.append((flvl, label))
 
     if levels:
         _add(levels.get("call_wall"), f"{ticker_label} Call Wall", spot)
@@ -3213,7 +3237,7 @@ def build_ticker_cheat_sheet(
         overnight_lines.append(f"{ticker}: No data available")
     else:
         overnight_lines.append(
-            f"{ticker}: Open {ticker_ctx['open']:,.2f} → Current {ticker_ctx['close']:,.2f} ({ticker_ctx['change_pct']}%)"
+            f"{ticker}: Open {ticker_ctx['open']:,.2f} → Globex Close {ticker_ctx['close']:,.2f} ({ticker_ctx['change_pct']}%)"
         )
         overnight_lines.append(
             f"    Session Low: {ticker_ctx['low']:,.2f} at {ticker_ctx['session_low_time']} | Session High: {ticker_ctx['high']:,.2f} at {ticker_ctx['session_high_time']}"
@@ -3360,6 +3384,9 @@ def build_ticker_cheat_sheet(
 
             lh = latest.get("london_high")
             ll = latest.get("london_low")
+            lh_val = float(lh) if lh is not None and pd.notna(lh) and not math.isnan(float(lh)) else None
+            ll_val = float(ll) if ll is not None and pd.notna(ll) and not math.isnan(float(ll)) else None
+            mid_val = (lh_val + ll_val) / 2 if lh_val is not None and ll_val is not None else None
             aln_data = {
                 "aln": latest.get("aln", "N/A"),
                 "broken": latest.get("broken", "N/A"),
@@ -3370,9 +3397,9 @@ def build_ticker_cheat_sheet(
                 "noon_curve": latest.get("noon_curve", "N/A"),
                 "p12": latest.get("p12"),
                 "levels": {
-                    "lh": float(lh) if lh is not None else None,
-                    "ll": float(ll) if ll is not None else None,
-                    "mid": (float(lh) + float(ll)) / 2 if lh is not None and ll is not None else None,
+                    "lh": lh_val,
+                    "ll": ll_val,
+                    "mid": mid_val,
                 },
             }
 
@@ -3673,9 +3700,17 @@ def build_ticker_cheat_sheet(
         im_chg_es = es_ctx.get('change_pct', 0) if es_ctx else 0
         im_sig = 'Risk-Off' if im_chg_nq < 0 and im_chg_es < 0 else ('Risk-On' if im_chg_nq > 0 and im_chg_es > 0 else 'Mixed')
         
-        prth_h = ticker_ctx.get('prior_rth_high') if ticker_ctx else 0
-        prth_l = ticker_ctx.get('prior_rth_low') if ticker_ctx else float('inf')
-        rth_sig = 'Gap Up' if ticker_spot > (prth_h or 0) else ('Gap Down' if ticker_spot < (prth_l or float('inf')) else 'Inside Range')
+        prth_h = ticker_ctx.get('prior_rth_high') if ticker_ctx else None
+        prth_l = ticker_ctx.get('prior_rth_low') if ticker_ctx else None
+        if prth_h is not None and prth_l is not None and prth_h > 0 and prth_l > 0 and ticker_spot:
+            if ticker_spot > prth_h:
+                rth_sig = 'Gap Up'
+            elif ticker_spot < prth_l:
+                rth_sig = 'Gap Down'
+            else:
+                rth_sig = 'Inside Range'
+        else:
+            rth_sig = 'Inside Range'
         
         matrix = [
             f"== BIAS CONSENSUS MATRIX ({mod_str}) ==",
@@ -4340,13 +4375,14 @@ def determine_weekly_archetype(events: list[dict]) -> dict:
 
     # 2. Multi-day cluster (CPI + PPI + Claims or any 3+ high-impact days)
     if num_high_impact_days >= 3 or (has_cpi and has_ppi and has_claims):
+        evt_labels = [e.get("name", "") for e in events if str(e.get("impact", "")).upper() == "HIGH"]
+        evt_str = ", ".join(list(dict.fromkeys(evt_labels))[:3]) if evt_labels else "economic releases"
         return {
             "archetype": "High-Impact Cluster Week",
-            "read": "Multiple tier-1 catalysts across 3+ days (CPI/PPI/Claims). Expect repricing after each print. "
+            "read": f"Multiple tier-1 catalysts across {num_high_impact_days}+ days ({evt_str}). Expect repricing after each print. "
                     "The week will be volatile throughout — not just mid-week.",
             "execution": "Trade reactively, not predictively. Wait for post-print settlement before entering. "
-                         "Use tight stops. CPI Tuesday sets the initial bias; PPI Wednesday confirms or "
-                         "invalidates; Claims Thursday is the final inflection. Size down all week."
+                         "Use tight stops. Respect post-catalyst direction and size down during major data releases."
         }
 
     # 3. CPI-led early week (dominant single catalyst)
@@ -4381,6 +4417,50 @@ def determine_weekly_archetype(events: list[dict]) -> dict:
         "archetype": "Classic Tuesday H/L of the Week",
         "read": "Standard week. Expect Monday/Tuesday to set the high or low of the week.",
         "execution": "Standard execution. Identify the weekly extreme by Tuesday NY close and trade away from it."
+    }
+
+
+def build_intermarket_macro_summary(quotes: dict | None = None, nq_spot: float | None = None, es_spot: float | None = None) -> dict:
+    """Format Intermarket Macro metrics into structured values for briefings & cheat sheets.
+
+    - 10-Yr Treasury Yield (TNX)
+    - US Dollar Index (DXY)
+    - Brent Crude (Energy)
+    - Volatility (VIX & VVIX)
+    - NQ/ES Relative Strength Ratio
+    """
+    if quotes is None:
+        quotes = get_intermarket_quotes()
+
+    tnx = quotes.get("tnx", {})
+    dxy = quotes.get("dxy", {})
+    brent = quotes.get("brent", {})
+    vix = quotes.get("vix", {})
+    vvix = quotes.get("vvix", {})
+
+    ratio = round(nq_spot / es_spot, 4) if (nq_spot and es_spot and es_spot > 0) else None
+
+    v_val = vix.get("price")
+    if v_val:
+        if v_val < 15:
+            vol_regime = "Low Vol / Complacent (<15)"
+        elif v_val < 20:
+            vol_regime = "Normal Vol (15-20)"
+        elif v_val < 28:
+            vol_regime = "Elevated Vol (20-28)"
+        else:
+            vol_regime = "High Vol / Regime Stress (>28)"
+    else:
+        vol_regime = "N/A"
+
+    return {
+        "us10y": f"{tnx.get('price'):.2f}% ({tnx.get('change'):+.2f}%)" if tnx.get("price") is not None else "N/A",
+        "dxy": f"{dxy.get('price'):.2f} ({dxy.get('change'):+.2f}%)" if dxy.get("price") is not None else "N/A",
+        "brent": f"${brent.get('price'):.2f} ({brent.get('change'):+.2f}%)" if brent.get("price") is not None else "N/A",
+        "vix": f"{vix.get('price'):.2f} ({vix.get('change'):+.2f})" if vix.get("price") is not None else "N/A",
+        "vvix": f"{vvix.get('price'):.2f} ({vvix.get('change'):+.2f})" if vvix.get("price") is not None else "N/A",
+        "vol_regime": vol_regime,
+        "nq_es_ratio": f"{ratio:.4f}" if ratio else "N/A",
     }
 
 
@@ -4442,16 +4522,18 @@ def build_weekly_static_template(briefing_data: dict) -> str:
     else:
         lines.append("No mega-cap earnings scheduled this week.")
 
+    section_idx = 4
     for ticker_block in tickers:
         ticker = ticker_block.get("ticker", "UNKNOWN")
         proxy_context = ticker_block.get("proxy_context", {})
         proxy_symbol = proxy_context.get("proxy_symbol")
 
-        header = f"### 4. {ticker} -- Structural Sandbox"
+        header = f"### {section_idx}. {ticker} -- Structural Sandbox"
         if ticker == "SPY":
-            header = "### 4. SPY (MES levels) -- Structural Sandbox"
+            header = f"### {section_idx}. SPY (MES levels) -- Structural Sandbox"
         elif ticker == "QQQ":
-            header = "### 4. QQQ (MNQ levels) -- Structural Sandbox"
+            header = f"### {section_idx}. QQQ (MNQ levels) -- Structural Sandbox"
+        section_idx += 1
 
         spot = format_translated_level_display(
             ticker_block.get("spot_price"),
@@ -4501,8 +4583,9 @@ def build_weekly_static_template(briefing_data: dict) -> str:
 
     lines.extend([
         "",
-        "### 5. Account Protection & Invalidation Metrics",
+        f"### {section_idx}. Account Protection & Invalidation Metrics",
     ])
+    section_idx += 1
 
     for ticker_block in tickers:
         ticker = ticker_block.get("ticker", "UNKNOWN")
@@ -4528,14 +4611,156 @@ def build_weekly_static_template(briefing_data: dict) -> str:
 
     lines.extend([
         "",
-        "### 6. Possible Weekly Trade Plan",
+        f"### {section_idx}. Possible Weekly Trade Plan",
         "{{WEEKLY_TRADE_PLAN}}",
         "",
-        "### 7. Key Risks This Week",
+        f"### {section_idx+1}. Key Risks This Week",
         "{{KEY_RISKS}}",
         "",
-        "### 8. Watch List",
+        f"### {section_idx+2}. Watch List",
         "{{WATCH_LIST}}",
+    ])
+
+    return "\n".join(lines)
+
+
+def build_weekly_cheat_sheet(briefing_data: dict) -> str:
+    """Build a compact 80-column ASCII Weekly Trader Cheat Sheet.
+
+    Harmonized with the Daily Cheat Sheet design standards.
+    Contains cross-market tape, options boundaries, expected moves,
+    account invalidation levels, high-impact catalysts, and earnings.
+    """
+    meta = briefing_data.get("meta", {})
+    start_raw = meta.get("week_start_date", "")[:10]
+    end_raw = meta.get("week_end_date", "")[:10]
+    header_dates = f"{start_raw} -> {end_raw}" if start_raw and end_raw else "CURRENT WEEK"
+    generated_at = meta.get("generated_at", "")[:16].replace("T", " ")
+
+    events = briefing_data.get("economic_events", [])
+    earnings = briefing_data.get("earnings_events", [])
+    tickers = briefing_data.get("tickers", [])
+    archetype_info = determine_weekly_archetype(events)
+
+    nq_spot = None
+    es_spot = None
+    for tb in tickers:
+        if tb.get("ticker") in ("NQ", "QQQ"): nq_spot = tb.get("spot_price")
+        if tb.get("ticker") in ("ES", "SPY"): es_spot = tb.get("spot_price")
+    macro_summary = build_intermarket_macro_summary(nq_spot=nq_spot, es_spot=es_spot)
+
+    border = "═" * 80
+    divider = "─" * 80
+
+    lines = [
+        border,
+        f"  WEEKLY TRADER CHEAT SHEET — HORIZON: {header_dates}",
+        f"  Generated: {generated_at} ET",
+        border,
+        "",
+        "[1] INTERMARKET MACRO MATRIX",
+        divider,
+        f"• US 10-Yr Yield (TNX):  {macro_summary['us10y']:<16} | Dollar Index (DXY): {macro_summary['dxy']}",
+        f"• Brent Crude (Energy): {macro_summary['brent']:<16} | Volatility (VIX):   {macro_summary['vix']} ({macro_summary['vol_regime']})",
+        f"• Tech/Broad Ratio:     {macro_summary['nq_es_ratio']:<16} | Vol-of-Vol (VVIX):  {macro_summary['vvix']}",
+        "",
+        "[2] OPTIONS TAPE & GEX POSITIONING",
+        divider,
+    ]
+
+    for ticker_block in tickers:
+        ticker = ticker_block.get("ticker", "UNKNOWN")
+        change_pct = _fmt_pct(ticker_block.get("prior_week", {}).get("change_pct"))
+        gex = ticker_block.get("gex_regime", {})
+        spot = ticker_block.get("spot_price", 0)
+        track = ticker_block.get("mandated_execution_track", "N/A")
+        total_gex = gex.get("total_gex", 0) or 0.0
+        lines.append(
+            f"• {ticker:<4} Spot: {spot:>9,.2f} ({change_pct}) | GEX Tape: {gex.get('gex_sign', 'N/A'):<8} / {total_gex:>13,.2f}"
+        )
+        lines.append(f"  Mandated Track: {track}")
+
+    lines.extend([
+        f"• ICT Profile: {archetype_info['archetype']}",
+        f"  Strategy: {archetype_info['execution']}",
+        "",
+        "[3] STRUCTURAL PLAYING FIELD & OPTIONS BOUNDARIES",
+        divider,
+    ])
+
+    for ticker_block in tickers:
+        ticker = ticker_block.get("ticker", "UNKNOWN")
+        proxy_context = ticker_block.get("proxy_context", {})
+        proxy_symbol = proxy_context.get("proxy_symbol")
+        key_levels = ticker_block.get("key_levels", {})
+
+        cw = format_translated_level_display(key_levels.get("call_wall"), proxy_symbol, proxy_context.get("call_wall_proxy"))
+        pw = format_translated_level_display(key_levels.get("put_wall"), proxy_symbol, proxy_context.get("put_wall_proxy"))
+        zg = format_translated_level_display(key_levels.get("zero_gamma"), proxy_symbol, proxy_context.get("zero_gamma_proxy"))
+
+        em = ticker_block.get("expected_moves", {}).get("friday", {})
+        em_upper = format_translated_level_display(em.get("upper"))
+        em_lower = format_translated_level_display(em.get("lower"))
+
+        lines.extend([
+            f"• {ticker} Structural Boundaries:",
+            f"  - Upside Ceiling (Call Wall): {cw}",
+            f"  - Downside Floor (Put Wall):  {pw}",
+            f"  - Volatility Pivot (Zero GEX): {zg}",
+            f"  - Risk Envelope: Expected High {em_upper} <-> Expected Low {em_lower}",
+        ])
+
+    lines.extend([
+        "",
+        "[4] HIGH-IMPACT CATALYSTS & EARNINGS RADAR",
+        divider,
+        "• Economic Releases:",
+    ])
+
+    if events:
+        for evt in events:
+            day = evt.get("day_of_week", "")[:3]
+            dt_str = evt.get("date", "")[5:]
+            t_et = evt.get("time_et", "")
+            name = evt.get("name", "")
+            impact = evt.get("impact", "")
+            lines.append(f"  - {day} {dt_str} {t_et:<8} [{impact:<4}]: {name}")
+    else:
+        lines.append("  - No major economic events scheduled.")
+
+    lines.append("• Mega-Cap Earnings Radar:")
+    if earnings:
+        for earn in earnings:
+            day = earn.get("day_of_week", "")[:3]
+            t_timing = earn.get("timing", "")
+            name = earn.get("name", "")
+            lines.append(f"  - {day} ({t_timing}): {name}")
+    else:
+        lines.append("  - No mega-cap earnings scheduled.")
+
+    lines.extend([
+        "",
+        "[5] EXECUTION RULES & ACCOUNT PROTECTION MANDATE",
+        divider,
+    ])
+
+    for ticker_block in tickers:
+        ticker = ticker_block.get("ticker", "UNKNOWN")
+        proxy_context = ticker_block.get("proxy_context", {})
+        proxy_symbol = proxy_context.get("proxy_symbol")
+        account_inv = ticker_block.get("account_invalidation", {})
+        b_inv = format_translated_level_display(account_inv.get("bullish_invalidation"), proxy_symbol, proxy_context.get("bullish_invalidation_proxy"))
+        s_inv = format_translated_level_display(account_inv.get("bearish_invalidation"), proxy_symbol, proxy_context.get("bearish_invalidation_proxy"))
+        b_dist = _fmt_pct(account_inv.get("distance_to_bullish_inv_pct"))
+        s_dist = _fmt_pct(account_inv.get("distance_to_bearish_inv_pct"))
+
+        lines.append(f"• {ticker} Account Invalidation:")
+        lines.append(f"  - Downside Floor Fracture: {b_inv} (Dist: {b_dist})")
+        lines.append(f"  - Upside Ceiling Fracture: {s_inv} (Dist: {s_dist})")
+
+    lines.extend([
+        border,
+        "",
     ])
 
     return "\n".join(lines)

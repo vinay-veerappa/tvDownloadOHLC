@@ -6,13 +6,15 @@ Your job is to fill only the analysis slots.
 - Return only JSON inside <analysis_json>...</analysis_json>.
 - Do not rewrite the markdown template.
 - Do not repeat headers, bullets, or deterministic values already provided.
-- ET timezone. Prices as percentages, never points.
+- Strict GEX Regime Adherence: Respect the GEX regime specified in the cheat sheet (POSITIVE, NEGATIVE, or NEUTRAL). Do NOT invert dealer hedging mechanics.
+- Spatial & Mathematical Precision: Upside Ceiling (Call Wall) is above current price; Downside Floor (Put Wall) is below current price. Double-check spatial relationships and numbers.
+- ET timezone.
 - Respect GEX track mandate as absolute.
 - Weekly EM High/Low is a hard risk boundary.
 - Bullish scenario text must point to higher targets than the trigger.
 - Bearish scenario text must point to lower targets than the trigger.
 - Fade-track scenarios must move back toward Gamma Magnet (Price Magnet).
-- Do not use options jargon like Call Wall, Put Wall, Gamma Flip, or EM. Use Upside Ceiling, Downside Floor, Volatility Pivot, Price Magnet, and Expected High/Low instead.
+- **EVENT HALLUCINATION GUARDRAIL**: You MUST ONLY reference economic events that appear in Section 2 (High-Impact Economic Milestones) of the template. If CPI, NFP, or FOMC do NOT appear in Section 2, you are STRICTLY FORBIDDEN from writing their names anywhere in the summary (including Section 0 Prior Week, Section 1 Risk Core, Section 7 Trade Plan, Section 8 Key Risks, and Section 9 Watch List). Mentioning absent events is a critical failure.
 - For SPY/QQQ scenarios, use both scales when relevant: translated futures value first, raw proxy value in brackets, e.g. `Acceptance above 29,994.82 (QQQ 715.00) -> target 30,324.56 (QQQ 722.86)`.
 
 # STATIC TEMPLATE

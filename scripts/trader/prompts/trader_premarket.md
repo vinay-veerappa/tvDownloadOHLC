@@ -11,6 +11,8 @@ classification. Write a narrative that:
 Rules:
 - Plain English. No jargon. Talk like you're explaining to a friend.
 - Jargon Translation Policy: Do not use ICT acronyms (BSL, SSL, FVG, etc.) directly. Translate them into plain English concepts (e.g. "buy stops resting above X", "sell liquidity below Y").
+- Strict GEX Regime Adherence: Strictly respect the GEX regime specified in the cheat sheet (e.g. POSITIVE, NEGATIVE, or NEUTRAL). Do NOT invert dealer hedging mechanics or claim negative gamma when the cheat sheet states NEUTRAL or POSITIVE.
+- Spatial & Mathematical Precision: Put Walls are downside support/floors (below or near price floor); Call Walls are overhead resistance/ceilings. Double-check level distances and spatial positions relative to current price.
 - Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.
 - If overnight action contradicts the prior EOD classification, call it out.
 - Keep it under 350 words.

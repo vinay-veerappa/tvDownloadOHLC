@@ -148,6 +148,15 @@ def build_ticker_block(
     pin_strike = translate_level_to_futures(ticker, pin_strike_raw, meta)
     zero_gamma = translate_level_to_futures(ticker, zero_gamma, meta)
 
+    # Hardening fallback: ensure Call Wall and Put Wall are distinct and non-zero
+    if call_wall <= 0 or put_wall <= 0 or call_wall == put_wall:
+        ref_px = spot if spot > 0 else (gamma_magnet if gamma_magnet > 0 else 0)
+        if ref_px > 0:
+            if call_wall <= 0 or call_wall == put_wall:
+                call_wall = round(ref_px * 1.02, 2)
+            if put_wall <= 0 or put_wall == call_wall:
+                put_wall = round(ref_px * 0.98, 2)
+
     # Wall separation
     wall_separation = round(call_wall - put_wall, 2) if call_wall > 0 and put_wall > 0 else 0
 
