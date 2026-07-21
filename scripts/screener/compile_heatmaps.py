@@ -142,11 +142,14 @@ def build_theme_hierarchy(symbols_list, metadata, quotes):
             
         q = quotes.get(s, {"price": 100.0, "changePct": 0.0})
         theme = meta.get("theme", "General Equities")
+        industry = meta.get("industry", "General")
         
         if theme not in theme_map:
-            theme_map[theme] = []
+            theme_map[theme] = {}
+        if industry not in theme_map[theme]:
+            theme_map[theme][industry] = []
             
-        theme_map[theme].append({
+        theme_map[theme][industry].append({
             "name": s,
             "company": meta.get("company", s),
             "value": meta.get("marketCap", 1000000000.0),
@@ -155,10 +158,16 @@ def build_theme_hierarchy(symbols_list, metadata, quotes):
         })
         
     hierarchy = []
-    for theme_name, stocks in theme_map.items():
+    for theme_name, ind_map in theme_map.items():
+        ind_children = []
+        for ind_name, stocks in ind_map.items():
+            ind_children.append({
+                "name": ind_name,
+                "children": stocks
+            })
         hierarchy.append({
             "name": theme_name,
-            "children": stocks
+            "children": ind_children
         })
     return {"name": "Themes", "children": hierarchy}
 
