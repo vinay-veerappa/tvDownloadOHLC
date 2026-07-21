@@ -500,8 +500,31 @@ export default function TickerProfilePage() {
           </div>
         </div>
 
-        {/* Real-time Ticker stats */}
-        <div className="flex items-center space-x-6 bg-zinc-900/90 border border-zinc-800 px-5 py-3 rounded-xl">
+        <div className="flex flex-wrap items-center gap-4 self-start lg:self-auto">
+          {/* External Links */}
+          <div className="flex items-center space-x-2">
+            <a
+              href={`https://www.tradingview.com/chart/?symbol=${ticker}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center space-x-1.5 px-3 py-2.5 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded-xl text-cyan-400 hover:text-cyan-300 text-xs font-mono font-bold transition-all shadow-sm"
+            >
+              <span>TradingView</span>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+            <a
+              href={`https://finviz.com/quote.ashx?t=${ticker}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center space-x-1.5 px-3 py-2.5 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-200 text-xs font-mono transition-all shadow-sm"
+            >
+              <span>Finviz</span>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </div>
+
+          {/* Real-time Ticker stats */}
+          <div className="flex items-center space-x-6 bg-zinc-900/90 border border-zinc-800 px-5 py-3 rounded-xl">
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold font-mono">Price</span>
             <span className="text-2xl font-bold font-mono text-zinc-100">${latestClose.toFixed(2)}</span>
@@ -522,6 +545,7 @@ export default function TickerProfilePage() {
           </div>
         </div>
       </div>
+    </div>
 
       {/* ─────────────────────────────────────────────────────────────────────────────
           2. Full Width Interactive Chart
@@ -784,26 +808,6 @@ export default function TickerProfilePage() {
                 )}
               </div>
 
-              <div className="pt-4 border-t border-zinc-800/60 flex flex-col gap-2">
-                <a
-                  href={`https://www.tradingview.com/chart/?symbol=${ticker}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full flex items-center justify-center space-x-2 p-2 bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 rounded-lg text-cyan-400 hover:text-cyan-300 text-xs font-mono font-bold"
-                >
-                  <span>View TradingView Chart</span>
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-                <a
-                  href={`https://finviz.com/quote.ashx?t=${ticker}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full flex items-center justify-center space-x-2 p-2 bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-zinc-300 text-xs font-mono"
-                >
-                  <span>View original Finviz Page</span>
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              </div>
             </Card>
           </div>
         </div>
