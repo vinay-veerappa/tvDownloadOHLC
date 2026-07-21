@@ -1017,6 +1017,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                     else if (_accountStates.TryGetValue(accountName, out var stateModel))
                     {
+                        // Order Rate Governor: detect rogue strategy order loops (>5 orders/sec)
+                        if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted)
+                        {
+                            stateModel.OrderTimestamps.Add(DateTime.UtcNow);
+                            stateModel.OrderTimestamps.RemoveAll(t => t < DateTime.UtcNow.AddSeconds(-1));
+                            if (stateModel.OrderTimestamps.Count > 5)
+                            {
+                                stateModel.IsLockedOut = true;
+                                if (e.Order.OrderState != OrderState.Filled && e.Order.OrderState != OrderState.Cancelled)
+                                {
+                                    account.Cancel(new[] { e.Order });
+                                }
+                                LogEvent(accountName, "ORDER_FLOOD_LOCKOUT", $"ORDER FLOOD DETECTED: Rogue order rate ({stateModel.OrderTimestamps.Count} orders/sec) triggered instant lockout.");
+                            }
+                        }
+
                         if (stateModel.IsLockedOut || stateModel.ConsecutiveLosses >= _config.Overtrading.MaxConsecutiveLosses)
                         {
                             if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
@@ -1191,7 +1207,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         _stateDirty = false;
                     }
 
-                    // 5. Lockout Watchdog (ensures locked accounts with open positions are flattened even if events stop)
+                    // 5. Lockout Watchdog (ensures locked accounts with open positions are continuously flattened until quantity is 0)
                     foreach (var accName in _subscribedAccounts)
                     {
                         if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
@@ -1200,6 +1216,31 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                         var account = Account.All.FirstOrDefault(a => a.Name == accName);
                         if (account == null) continue;
+
+                        // Cancel working orders continuously for locked account
+                        var toCancel = account.Orders.Where(o => o.OrderState != OrderState.Filled && o.OrderState != OrderState.Cancelled).ToList();
+                        if (toCancel.Count > 0)
+                        {
+                            try { account.Cancel(toCancel); } catch {}
+                        }
+
+                        // Flatten open positions continuously until flat
+                        foreach (Position pos in account.Positions)
+                        {
+                            if (pos.Instrument != null && pos.MarketPosition != MarketPosition.Flat)
+                            {
+                                try
+                                {
+                                    account.Flatten(new[] { pos.Instrument });
+                                }
+                                catch
+                                {
+                                    var closeAction = pos.MarketPosition == MarketPosition.Long ? OrderAction.Sell : OrderAction.BuyToCover;
+                                    var closeOrder = account.CreateOrder(pos.Instrument, closeAction, OrderType.Market, TimeInForce.Day, pos.Quantity, 0, 0, string.Empty, "RiskGuardWatchdogFlatten", null);
+                                    try { account.Submit(new[] { closeOrder }); } catch {}
+                                }
+                            }
+                        }
 
                         var lockoutActions = EvaluateLockoutPhase(account, stateModel);
                         if (lockoutActions != null && lockoutActions.Count > 0)
@@ -1764,22 +1805,17 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     if (pos.Quantity > limit)
                     {
-                        // Throttle MAX_SIZE_BREACH flatten to every 5s to avoid the
-                        // infinite-flatten loop (same pattern as lockout enforcement).
-                        // The first breach fires immediately; retries wait 5s.
-                        if (DateTime.UtcNow > stateModel.LastLockoutFlattenAttempt.AddSeconds(5))
+                        stateModel.IsLockedOut = true;
+                        actions.Add(new GuardAction
                         {
-                            actions.Add(new GuardAction
-                            {
-                                AccountName = stateModel.AccountName,
-                                ActionType = GuardActionType.FlattenPosition,
-                                Instrument = pos.Instrument,
-                                InstrumentObj = pos.InstrumentObj,
-                                Quantity = pos.Quantity,
-                                RuleId = "MAX_SIZE_BREACH"
-                            });
-                            stateModel.LastLockoutFlattenAttempt = DateTime.UtcNow;
-                        }
+                            AccountName = stateModel.AccountName,
+                            ActionType = GuardActionType.FlattenPosition,
+                            Instrument = pos.Instrument,
+                            InstrumentObj = pos.InstrumentObj,
+                            Quantity = pos.Quantity,
+                            RuleId = "MAX_SIZE_BREACH"
+                        });
+                        stateModel.LastLockoutFlattenAttempt = DateTime.UtcNow;
                     }
                 }
             }
@@ -2627,6 +2663,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public DateTime LockoutUntil { get; set; } = DateTime.MinValue;
         public bool InitialLockoutFlattened { get; set; } = false;
         public DateTime LastLockoutFlattenAttempt { get; set; } = DateTime.MinValue;
+        public List<DateTime> OrderTimestamps { get; set; } = new List<DateTime>();
 
         // Lockout phase: PendingCancel -> PendingFlatten -> Confirmed.
         // Only Confirmed stops emitting actions. This prevents the infinite
