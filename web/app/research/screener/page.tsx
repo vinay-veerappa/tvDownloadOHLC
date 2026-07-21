@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   RefreshCcw,
@@ -72,13 +73,13 @@ const STRATEGY_LABELS: Record<string, { label: string; desc: string; color: stri
 };
 
 export default function StockScreenerPage() {
+  const router = useRouter();
   const [data, setData] = useState<ScreenerApiResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [scanning, setScanning] = useState<boolean>(false);
   const [selectedStrategy, setSelectedStrategy] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [limit, setLimit] = useState<number>(100);
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
 
   const fetchScreenerData = async (runScan = false) => {
     try {
@@ -91,9 +92,6 @@ export default function StockScreenerPage() {
 
       if (json.success) {
         setData(json);
-        if (json.candidates && json.candidates.length > 0 && !selectedTicker) {
-          setSelectedTicker(json.candidates[0].ticker);
-        }
       }
     } catch (err) {
       console.error('Failed to load screener data:', err);
@@ -127,11 +125,6 @@ export default function StockScreenerPage() {
       return c.strategy_matches[selectedStrategy] === true;
     });
   }, [candidates, selectedStrategy, searchQuery]);
-
-  const activeCandidate = useMemo(() => {
-    if (!selectedTicker) return filteredCandidates[0] || null;
-    return candidates.find((c) => c.ticker === selectedTicker) || filteredCandidates[0] || null;
-  }, [candidates, filteredCandidates, selectedTicker]);
 
   const handleExport = (type: 'tradingview' | 'thinkorswim' | 'matrix') => {
     window.open(`/api/screener/export?type=${type}`, '_blank');
@@ -299,9 +292,9 @@ export default function StockScreenerPage() {
           <p className="text-sm text-zinc-400 font-mono">Loading Screener Feature Matrix & Strategy Engine...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Panel: Common Subset Strategy Comparison Matrix (7/12 = ~60%) */}
-          <div className="lg:col-span-7 space-y-4">
+        <div className="grid grid-cols-1 gap-6">
+          {/* Candidate Strategy Comparison Matrix (Full Width) */}
+          <div className="space-y-4">
             <Card className="bg-zinc-900/80 border-zinc-800/80 p-0 overflow-hidden">
               <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900">
                 <div className="flex items-center space-x-2">
@@ -311,17 +304,18 @@ export default function StockScreenerPage() {
                   </h2>
                 </div>
                 <span className="text-xs text-zinc-400 font-mono">
-                  Sorted by Common Subset Match Count
+                  Sorted by Common Subset Match Count (Click a ticker to view full-width Finviz Profile)
                 </span>
               </div>
 
-              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <div className="overflow-x-auto max-h-[650px] overflow-y-auto">
                 <table className="w-full text-left text-xs font-mono">
                   <thead className="bg-zinc-950 text-zinc-400 border-b border-zinc-800 sticky top-0 uppercase tracking-wider">
                     <tr>
                       <th className="p-3">Ticker</th>
                       <th className="p-3">Company</th>
                       <th className="p-3">Sector</th>
+                      <th className="p-3">Industry</th>
                       <th className="p-3 text-right">Close</th>
                       <th className="p-3 text-center">Matches</th>
                       <th className="p-3">Matched Strategies</th>
@@ -330,24 +324,21 @@ export default function StockScreenerPage() {
                   <tbody className="divide-y divide-zinc-800/50">
                     {filteredCandidates.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-8 text-center text-zinc-500">
+                        <td colSpan={7} className="p-8 text-center text-zinc-500">
                           No stocks matched the selected filters or strategy rules.
                         </td>
                       </tr>
                     ) : (
                       filteredCandidates.map((c) => {
-                        const isSelected = activeCandidate?.ticker === c.ticker;
                         const isCommonSubset = c.matched_strategies_count >= 2;
 
                         return (
                           <tr
                             key={c.ticker}
-                            onClick={() => setSelectedTicker(c.ticker)}
+                            onClick={() => router.push(`/research/screener/${c.ticker}`)}
                             className={`cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-cyan-950/40 text-cyan-200 border-l-4 border-l-cyan-400'
-                                : isCommonSubset
-                                ? 'bg-emerald-950/20 hover:bg-emerald-900/30 text-zinc-200'
+                              isCommonSubset
+                                ? 'bg-emerald-950/10 hover:bg-emerald-900/20 text-zinc-200'
                                 : 'hover:bg-zinc-800/40 text-zinc-300'
                             }`}
                           >
@@ -357,8 +348,9 @@ export default function StockScreenerPage() {
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400" />
                               )}
                             </td>
-                            <td className="p-3 text-zinc-400 max-w-[140px] truncate">{c.company}</td>
-                            <td className="p-3 text-zinc-400 text-[11px] max-w-[120px] truncate">{c.sector}</td>
+                            <td className="p-3 text-zinc-400 max-w-[180px] truncate">{c.company}</td>
+                            <td className="p-3 text-zinc-400 text-[11px] max-w-[140px] truncate">{c.sector}</td>
+                            <td className="p-3 text-zinc-400 text-[11px] max-w-[180px] truncate">{c.industry}</td>
                             <td className="p-3 text-right font-bold text-zinc-100">${c.close.toFixed(2)}</td>
                             <td className="p-3 text-center">
                               <span
@@ -395,92 +387,6 @@ export default function StockScreenerPage() {
                 </table>
               </div>
             </Card>
-          </div>
-
-          {/* Right Panel: Selected Candidate Inspector (5/12 = ~40%) */}
-          <div className="lg:col-span-5 space-y-4">
-            {activeCandidate ? (
-              <Card className="bg-zinc-900/80 border-zinc-800/80 p-5 space-y-5">
-                <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <h2 className="text-2xl font-bold font-mono text-zinc-100">{activeCandidate.ticker}</h2>
-                      <span className="text-xs text-zinc-400 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
-                        {activeCandidate.sector}
-                      </span>
-                    </div>
-                    <p className="text-xs text-zinc-400 mt-1">{activeCandidate.company}</p>
-                    <p className="text-[11px] text-zinc-500">{activeCandidate.industry}</p>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-bold font-mono text-emerald-400">
-                      ${activeCandidate.close.toFixed(2)}
-                    </div>
-                    <span className="text-[11px] text-zinc-400 font-mono">Daily Split Close</span>
-                  </div>
-                </div>
-
-                {/* Strategy Confirmation Breakdown */}
-                <div className="space-y-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-                    Institutional Strategy Alignments
-                  </h3>
-                  <div className="grid grid-cols-1 gap-2">
-                    {Object.entries(activeCandidate.strategy_matches).map(([sKey, isMatch]) => {
-                      const sMeta = STRATEGY_LABELS[sKey] || { label: sKey, color: '' };
-                      return (
-                        <div
-                          key={sKey}
-                          className={`p-2.5 rounded-lg border flex items-center justify-between text-xs font-mono transition-colors ${
-                            isMatch
-                              ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
-                              : 'bg-zinc-950/40 border-zinc-800/60 text-zinc-500'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            {isMatch ? (
-                              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                            ) : (
-                              <div className="h-4 w-4 rounded-full border border-zinc-700" />
-                            )}
-                            <span>{sMeta.label}</span>
-                          </div>
-                          <span className={`text-[10px] uppercase font-bold ${isMatch ? 'text-emerald-400' : 'text-zinc-600'}`}>
-                            {isMatch ? 'MATCH' : 'PASSED'}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* External Links */}
-                <div className="pt-2 border-t border-zinc-800 flex items-center justify-between text-xs">
-                  <a
-                    href={`https://www.tradingview.com/chart/?symbol=${activeCandidate.ticker}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-cyan-400 hover:text-cyan-300 flex items-center space-x-1"
-                  >
-                    <span>View on TradingView</span>
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                  <a
-                    href={`https://finviz.com/quote.ashx?t=${activeCandidate.ticker}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-zinc-400 hover:text-zinc-300 flex items-center space-x-1"
-                  >
-                    <span>View on Finviz</span>
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                </div>
-              </Card>
-            ) : (
-              <Card className="bg-zinc-900/80 border-zinc-800/80 p-8 text-center text-zinc-500">
-                Select a candidate ticker from the matrix to inspect strategy alignments and technical parameters.
-              </Card>
-            )}
           </div>
         </div>
       )}
