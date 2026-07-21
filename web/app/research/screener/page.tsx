@@ -195,6 +195,7 @@ export default function StockScreenerPage() {
           )}
         </div>
       </div>
+    </div>
 
       {/* ─────────────────────────────────────────────────────────────────────────────
           2. Control Bar & Watchlist Export Toolbar
