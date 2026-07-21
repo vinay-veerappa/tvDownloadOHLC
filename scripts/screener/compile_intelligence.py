@@ -25,34 +25,55 @@ def compile_earnings_calendar():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Query EarningsCalendar table
     cursor.execute("""
         SELECT ticker, earningsDate, beforeMarket, confirmed, company 
-        FROM EarningsCalendar 
-        ORDER BY earningsDate ASC 
-        LIMIT 50
+        FROM EarningsCalendar
     """)
     rows = cursor.fetchall()
     conn.close()
     
-    calendar = []
+    today_date = datetime.date.today()
+    parsed_entries = []
+
     for r in rows:
         ticker, date_val, bmo, confirmed, company = r
-        date_str = str(date_val)
+        if not date_val:
+            continue
+            
+        dt_obj = None
         if isinstance(date_val, (int, float)):
             try:
-                date_str = datetime.datetime.fromtimestamp(date_val / 1000.0).strftime("%Y-%m-%d")
+                dt_obj = datetime.datetime.fromtimestamp(date_val / 1000.0, datetime.timezone.utc).date()
             except Exception:
-                date_str = str(date_val)
-        elif "T" in str(date_val):
-            date_str = str(date_val).split("T")[0]
-            
+                continue
+        elif isinstance(date_val, str):
+            try:
+                date_part = date_val.split("T")[0]
+                dt_obj = datetime.datetime.strptime(date_part, "%Y-%m-%d").date()
+            except Exception:
+                continue
+
+        if dt_obj and dt_obj >= today_date:
+            parsed_entries.append({
+                "ticker": ticker,
+                "company": company or f"{ticker} Inc",
+                "date": dt_obj.strftime("%Y-%m-%d"),
+                "dateObj": dt_obj,
+                "session": "BMO" if bmo else "AMC",
+                "confirmed": bool(confirmed)
+            })
+
+    # Sort upcoming earnings by date ASC (nearest upcoming earnings first)
+    parsed_entries.sort(key=lambda x: x["dateObj"])
+    
+    calendar = []
+    for item in parsed_entries[:30]:
         calendar.append({
-            "ticker": ticker,
-            "company": company or f"{ticker} Inc",
-            "date": date_str,
-            "session": "BMO" if bmo else "AMC",
-            "confirmed": bool(confirmed)
+            "ticker": item["ticker"],
+            "company": item["company"],
+            "date": item["date"],
+            "session": item["session"],
+            "confirmed": item["confirmed"]
         })
         
     return calendar
