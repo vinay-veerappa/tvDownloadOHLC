@@ -1,6 +1,7 @@
-# RiskGuard AddOn — Version History & Changelog
+# RiskGuard & McpBridge AddOn — Version History & Changelog
 
-## Current Release: `v1.1.0` (2026-07-21)
+## Current Release: `v1.5.0` (2026-07-21)
+
 
 ### Major Changes & Feature Additions
 1. **Local Trade Copier Engine (`TradeCopierEngine.cs`)**:

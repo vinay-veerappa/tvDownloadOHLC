@@ -56,6 +56,18 @@ The **NinjaTrader MCP Bridge** provides a standardized [Model Context Protocol (
   2. Issues market orders to immediately flatten all open positions.
   3. Activates a temporary account lockout in RiskGuard to block any new order placement for $N$ minutes.
 
+### E. Environment Variables Reference
+
+| Environment Variable | Components | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `NT8_MCP_TOKEN` | AddOn & Relay | `""` (disabled) | Bearer authorization token used to authenticate all incoming HTTP requests to port 7890. |
+| `NT8_MCP_PREFIX` | `McpBridgeAddOn.cs` | `http://localhost:7890/` | HTTP listener prefix bound by NinjaTrader. Set to `http://+:7890/` for Tailscale/private VPN listener access. |
+| `NT8_MCP_DEV` | `McpBridgeAddOn.cs` | `0` (off) | Set to `1` to enable dynamic C# reflection RPC (`/api/dev/reflect`) for inspecting internal NT8 object handles without restarting NT8. |
+| `NT8_HOST` | `nt-mcp-server.js` | `127.0.0.1` | Host address of the NinjaTrader 8 McpBridge AddOn HTTP server. |
+| `NT8_PORT` | `nt-mcp-server.js` | `7890` | Port number of the NinjaTrader 8 McpBridge AddOn HTTP server. |
+
+---
+
 ### D. Auditability & Intervention Logging
 * Every mutating endpoint logs the complete JSON request payload, user/agent context, timestamp, and resulting `action_id` to an immutable audit file (`interventions.jsonl`).
 
@@ -124,12 +136,14 @@ The **NinjaTrader Unified Hub** ([scripts/streaming/ninjatrader_hub.py](file:///
 | :--- | :--- | :--- |
 | `nt_subscribe` | `GET /api/events/stream` | Subscribe to NinjaTrader Hub (`ninjatrader_hub.py`) or McpBridge SSE stream. |
 | `nt_capture_chart` | `GET /api/chart/capture` | Capture active WPF chart window as a base64 PNG screenshot. |
-| `nt_chart_snapshot` | `POST /api/chart/snapshot` | High-res PNG chart screenshot with overlay markers, price lines, and indicators. |
+| `nt_chart_snapshot` | `POST /api/chart/snapshot` | High-res PNG chart screenshot with overlay markers, price lines, indicators, and time range. |
+| `nt_trade_chart` | `POST /api/chart/trade` | Visual Feedback Loop: Auto-capture execution fill chart with trade marker overlays, returning image ID & base64. |
 | `nt_open_chart` | `POST /api/chart/open` | Programmatically open a chart window/tab for a symbol and period. |
 | `nt_get_logs` | `GET /api/logs` | Tail Output tab logs, Strategy Analyzer output, or `interventions.jsonl`. |
 | `nt_fill_events` | `GET /api/events/fills` | Query execution fill history with pagination (`limit`, `offset`). |
 | `nt_inspect_strategy` | `GET /api/strategy/inspect` | Reflect over compiled strategy assemblies to extract input parameters and types. |
 | `nt_indicator_values`| `GET /api/indicator/values`| Retrieve calculated historical or live indicator values (SMA, EMA, VWAP, ATR). |
+
 
 ### Phase 6 — Quantitative Research & Risk Controls
 | Tool Name | Endpoint | Description |
