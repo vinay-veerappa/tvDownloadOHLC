@@ -41,6 +41,8 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.0.6",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.555.0",
     "modern-screenshot": "^4.6.7",

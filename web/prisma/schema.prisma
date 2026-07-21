@@ -753,4 +753,24 @@ model StagedSignal {
   @@index([status, executeAfter])
 }
 
+model TickerMetadata {
+  id            String   @id @default(cuid())
+  symbol        String   @unique
+  company       String?
+  sector        String?
+  industry      String?
+  marketCap     Float?
+  isSp500       Boolean  @default(false)
+  isNasdaq100   Boolean  @default(false)
+  isRussell2000 Boolean  @default(false)
+  isEtf         Boolean  @default(false)
+  theme         String?  // e.g. "Artificial Intelligence", "Cybersecurity", "Cloud Computing", etc.
+  fetchedAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([sector])
+  @@index([theme])
+}
+
 

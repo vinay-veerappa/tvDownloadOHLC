@@ -157,8 +157,15 @@ export default function StockScreenerPage() {
           </div>
         </div>
 
-        {/* Market Regime Badge */}
-        <div className="flex items-center space-x-3 bg-zinc-900/90 border border-zinc-800 px-4 py-2 rounded-xl">
+        <div className="flex items-center space-x-3">
+          <Link href="/research/heatmaps">
+            <Button variant="outline" className="h-9 bg-zinc-900 border-zinc-800 text-cyan-400 hover:text-cyan-300 hover:bg-zinc-800 text-xs font-mono font-bold shadow-sm">
+              <Layers className="mr-1.5 h-3.5 w-3.5" /> Market Heatmaps
+            </Button>
+          </Link>
+
+          {/* Market Regime Badge */}
+          <div className="flex items-center space-x-3 bg-zinc-900/90 border border-zinc-800 px-4 py-2 rounded-xl">
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Global Regime</span>
             <div className="flex items-center space-x-1.5 mt-0.5">
