@@ -4,10 +4,10 @@ import path from 'path';
 
 export async function GET(
   request: Request,
-  { params }: { params: { type: string } }
+  { params }: { params: Promise<{ type: string }> }
 ) {
   try {
-    const { type } = params;
+    const { type } = await params;
     const validTypes = ['sp500', 'nasdaq100', 'themes', 'etfs'];
     
     if (!validTypes.includes(type)) {
