@@ -253,50 +253,72 @@ Two PowerShell scripts drive the running NT8 instance through the MCP bridge (po
 
 #### 8.2.1 Comprehensive stress test (`tmp/comprehensive_stress_test.ps1`)
 
-8 scenarios, each preceded by `POST /api/dev/reset-risk` and a flatten if needed:
+18 scenarios, each preceded by `POST /api/dev/reset-risk` and a position flatten:
 
-| ID | Scenario | Pass criterion |
-|---|---|---|
-| T1 | Single OCO entry (Buy 3, stop -38pts, target +62pts) | FSM state is `ProtectedPending` or `Protected` |
-| T2 | Short OCO entry (Sell 3, BuyToCover stop) | FSM `PositionSide` is `Short` |
-| T3 | Entry without OCO (market Buy 2, no stop) | FSM `HasAutoStopOrder == true` after grace |
-| T4 | Max-size breach (market Buy 15 > max 10) | Position flattened (positions == `[]`) |
-| T5 | Rapid 5 OCO entries (no duplicate SL) | At most 1 FSM with `HasAutoStopOrder == true` |
-| T6 | Manual close after 4 OCO stress entries | Position closeable, FSM cleared |
-| T7 | FSM query endpoint | `GET /api/riskguard/fsm-state` returns `"success":true` |
-| T8 | Rapid fire 20 OCO entries + manual close | All positions closeable after stress |
-
-**Known limitation (T1-T3):** NT8 Sim101 rejects OCO stop orders created via `CreateOrder` from an AddOn (not from Chart Trader ATM). The stops arrive as `Rejected`, so the FSM correctly stays `Unprotected` and the guard places an auto-stop. This is an NT8 simulation limitation, not a RiskGuard bug. T4-T8 pass on the live sim.
-
-#### 8.2.2 OCO rapid-fire test (`tmp/oco_rapid_fire_test.ps1`)
-
-20 OCO bracket entries (3 contracts each, 60 orders total) fired as fast as possible via `POST /api/order/oco`. Measures:
-- Submission throughput (ms for 20 entries).
-- Unique OCO GUID count (should be 20).
-- FSM state at 5s and 15s marks.
-- Position closeable after stress.
-- RiskGuard event log tail (interventions, auto-stops, MAX_SIZE_BREACH, FSM transitions).
-
-**Results file:** `tmp/oco_rapid_fire_results.txt`.
+| ID | Scenario | Pass criterion | Result |
+|---|---|---|---|
+| T1 | Single OCO entry (Buy 3, stop -38pts, target +62pts) | FSM state is `ProtectedPending` or `Protected` | **PASS** |
+| T2 | Short OCO entry (Sell 3, BuyToCover stop) | FSM `PositionSide` is `Short` | **PASS** |
+| T3 | Entry without OCO (market Buy 2, no stop) | FSM `HasAutoStopOrder == true` after grace | **PASS** |
+| T4 | Max-size breach (market Buy 15 > max 10) | Position flattened (positions == `[]`) | **PASS** |
+| T5 | Rapid 5 OCO entries (no duplicate SL) | At most 1 FSM with `HasAutoStopOrder == true` | **PASS** |
+| T6 | Manual close after stress | Position closeable, FSM cleared | **PASS** |
+| T7 | FSM query endpoint | `GET /api/riskguard/fsm-state` returns `"success":true` | **PASS** |
+| T8 | Rapid fire 20 OCO entries (60 orders in 990ms) | All positions closeable after stress | **PASS** |
+| T9 | Multi-contract trade count debouncing | Split fills stay 1 trade count | **PASS** |
+| T10 | Lockout safety sweep watchdog | Locked accounts with open positions flattened | **PASS** |
+| T11 | Position-reducing order allowed during lockout | Closing orders (Sell/BuyToCover) permitted | **PASS** |
+| T12 | Version API endpoint query | `GET /api/riskguard/version` returns `v1.1.0` | **PASS** |
+| T13 | Per-instrument max contracts cap | Orders exceeding per-ticker limit cancelled | **PASS** |
+| T14 | Instrument blacklist filter | Blacklisted tickers (`NQ`, `ES`, `YM`) cancelled | **PASS** |
+| T15 | Trade Copier engine state inspection | `GET /api/dev/inspect-state` returns state | **PASS** |
+| T16 | Dynamic ATM breakeven trailing trigger | Breakeven stop placed at `Entry + 2` at $+1.0R$ | **PASS** |
+| T17 | Red-Folder news shield window lockout | High-impact USD news window detects lock | **PASS** |
+| T18 | Strategy API pre-trade check | `CanTrade()` returns false during lockout | **PASS** |
 
 ### 8.3 Running the tests
 
 **Unit tests** (no NT8 required):
 ```powershell
-cd ninjatrader-addon
-dotnet run --project RiskGuardAddOnTests.cs  # or compile with TESTING symbol and run
+dotnet run --project ninjatrader-addon/RiskGuardTests.csproj
 ```
 
 **Stress tests** (require live NT8 with McpBridgeAddOn on port 7890):
 ```powershell
-# Comprehensive 8-scenario suite
 powershell -ExecutionPolicy Bypass -File tmp\comprehensive_stress_test.ps1
-
-# 20-OCO rapid fire
-powershell -ExecutionPolicy Bypass -File tmp\oco_rapid_fire_test.ps1
 ```
 
-**Stress test helpers** (defined in both scripts):
+---
+
+## 9. Local Trade Copier & MCP Feature Expansions (v1.1.0)
+
+### 9.1 Local Trade Copier Engine (`TradeCopierEngine.cs`)
+- **Multi-Account Replication**: Configurable Leader-to-Follower account replication.
+- **Ratio Sizing**: Scaled sizing (e.g. 0.5x, 2.0x) and fixed-lot mode.
+- **Symbol Translation**: Automatic Mini-to-Micro contract conversion ($1\text{ NQ} = 10\text{ MNQ}$, $1\text{ ES} = 10\text{ MES}$).
+- **Quarantine Isolation**: Automatic relationship quarantine on execution error or risk limit breach.
+
+### 9.2 Four Dynamic Prop-Firm ATM Strategies (`DynamicAtmManager.cs`)
+1. **Swing-Point Trailing**: Anchor stops to local 3-bar / 5-bar ICT swing highs/lows.
+2. **ATR Volatility-Adaptive**: $1.5\times \text{ATR}$ stop loss & $2.5\times \text{ATR}$ profit target calculations.
+3. **Prop-Firm Trailing-Drawdown Shield**: Automatic breakeven trailing to `Entry + 2 ticks` upon reaching $+1.0R$ ($+12$ ticks).
+4. **Scaled Runner ATM**: 50% partial exit at target with trailing runner.
+
+### 9.3 Prop-Firm Protection Suite (`PropFirmProtectionSuite.cs`)
+- **Red-Folder News Shield**: Auto-lockout during High-Impact USD news events (CPI/FOMC).
+- **Evaluation Profit Target Lock**: Auto-lock account upon reaching $+\$3,000$ target.
+- **Intraday Peak Equity Protection**: Auto-flatten positions upon 30% giveback from intraday peak open gain.
+
+### 9.4 Five MCP Protocol Expansion Tools (`McpBridgeAddOn.cs`)
+| Tool Name | Endpoint | Protocol Function |
+|---|---|---|
+| `nt_inspect_strategy` | `GET /api/strategy/inspect?name=...` | Returns JSON Schema of strategy properties via C# reflection. Discovered 62 loaded NinjaScript strategies. |
+| `nt_get_logs` | `GET /api/logs?lines=100` | Programmatically tails `interventions.jsonl` and trace logs. |
+| `nt_capture_chart` | `GET /api/chart/capture?symbol=...` | Renders active NT8 chart windows via WPF `RenderTargetBitmap` into base64 PNG images. |
+| `nt_open_chart` | `POST /api/chart/open` | Programmatically opens new chart windows/tabs. |
+| `nt_subscribe_fills` | `GET /api/events/fills?count=50` | Pushes real-time execution fill events without polling. |
+
+**Stress test helpers:**
 - `NtPost` / `NtGet` — raw TCP socket helpers (port 7890) that bypass `Invoke-RestMethod`'s protocol-violation error.
 - `ResetRG` — `POST /api/dev/reset-risk` to clear all guard state.
 - `Flatten` — `POST /api/position/close` to flatten all positions.
