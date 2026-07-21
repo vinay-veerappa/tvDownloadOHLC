@@ -72,6 +72,8 @@ export async function GET(request: NextRequest) {
                             news: resJson.news,
                             upgrades: resJson.upgrades,
                             financials: resJson.financials,
+                            insider_tx: resJson.insider_tx,
+                            insider_purchases: resJson.insider_purchases,
                             last_update: new Date().toISOString(),
                             live_price: candles.length > 0 ? candles[candles.length - 1].close : null,
                             totalCandles: candles.length
@@ -108,7 +110,9 @@ export async function GET(request: NextRequest) {
                         info: resJson.info,
                         news: resJson.news,
                         upgrades: resJson.upgrades,
-                        financials: resJson.financials
+                        financials: resJson.financials,
+                        insider_tx: resJson.insider_tx,
+                        insider_purchases: resJson.insider_purchases
                     };
                     // Optionally override candles if the local ones are empty/stale
                     if ((!apiData.candles || apiData.candles.length === 0) && resJson.candles) {

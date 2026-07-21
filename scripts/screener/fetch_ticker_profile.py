@@ -1,8 +1,8 @@
 """
 fetch_ticker_profile.py
 =======================
-Downloads price history, yfinance info, news, upgrades/downgrades, and financial trends
-for a ticker and prints it as a single JSON payload.
+Downloads price history, yfinance info, news, upgrades/downgrades, financial trends,
+and insider trading data for a ticker and prints it as a single JSON payload.
 Usage: python fetch_ticker_profile.py TICKER INTERVAL PERIOD
 """
 import sys
@@ -59,7 +59,8 @@ def main():
                 'marketCap', 'sharesOutstanding', 'trailingPE', 'forwardPE', 
                 'trailingEps', 'forwardEps', 'revenue', 'shortPercentOfFloat', 
                 'beta', 'targetMeanPrice', 'recommendationKey', 'fiftyTwoWeekHigh', 
-                'fiftyTwoWeekLow', 'averageVolume', 'dividendYield', 'dividendRate'
+                'fiftyTwoWeekLow', 'averageVolume', 'dividendYield', 'dividendRate',
+                'floatShares', 'sharesShort', 'shortRatio'
             ]
             info = {k: clean_data(raw_info.get(k)) for k in keys if raw_info and k in raw_info}
         except Exception:
@@ -123,6 +124,38 @@ def main():
         except Exception:
             pass
 
+        # 6. Insider Trading Transactions & Purchases
+        insider_tx = []
+        try:
+            tx_df = ticker.insider_transactions
+            if tx_df is not None and not tx_df.empty:
+                tx_df = tx_df.head(20).reset_index()
+                for _, row in tx_df.iterrows():
+                    insider_tx.append({
+                        "insider": clean_data(row.get('Insider')),
+                        "position": clean_data(row.get('Position')),
+                        "date": str(row.get('Start Date')) if row.get('Start Date') else None,
+                        "transaction": clean_data(row.get('Transaction')),
+                        "shares": clean_data(row.get('Shares')),
+                        "value": clean_data(row.get('Value')),
+                        "ownership": clean_data(row.get('Ownership'))
+                    })
+        except Exception:
+            pass
+
+        insider_purchases = []
+        try:
+            purch_df = ticker.insider_purchases
+            if purch_df is not None and not purch_df.empty:
+                for _, row in purch_df.iterrows():
+                    insider_purchases.append({
+                        "metric": clean_data(row.iloc[0]),
+                        "shares": clean_data(row.get('Shares')),
+                        "trans": clean_data(row.get('Trans'))
+                    })
+        except Exception:
+            pass
+
         # Package payload
         payload = {
             "success": True,
@@ -131,7 +164,9 @@ def main():
             "info": info,
             "news": news,
             "upgrades": upgrades,
-            "financials": financials
+            "financials": financials,
+            "insider_tx": insider_tx,
+            "insider_purchases": insider_purchases
         }
         print(json.dumps(payload))
 

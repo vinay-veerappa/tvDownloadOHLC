@@ -346,6 +346,11 @@ export default function TickerProfilePage() {
   const [tickerNews, setTickerNews] = useState<any[]>([]);
   const [tickerUpgrades, setTickerUpgrades] = useState<any[]>([]);
   const [tickerFinancials, setTickerFinancials] = useState<any>(null);
+  const [insiderTx, setInsiderTx] = useState<any[]>([]);
+  const [insiderPurchases, setInsiderPurchases] = useState<any[]>([]);
+
+  // Navigation tab state
+  const [activeTab, setActiveTab] = useState<'overview' | 'financials' | 'insider' | 'news'>('overview');
 
   // 1. Fetch screener matrix to find ticker details (once per ticker)
   useEffect(() => {
@@ -409,6 +414,8 @@ export default function TickerProfilePage() {
           if (historyJson.data.news) setTickerNews(historyJson.data.news);
           if (historyJson.data.upgrades) setTickerUpgrades(historyJson.data.upgrades);
           if (historyJson.data.financials) setTickerFinancials(historyJson.data.financials);
+          if (historyJson.data.insider_tx) setInsiderTx(historyJson.data.insider_tx);
+          if (historyJson.data.insider_purchases) setInsiderPurchases(historyJson.data.insider_purchases);
         } else {
           setError(historyJson.error || 'Failed to fetch price history.');
         }
@@ -570,154 +577,241 @@ export default function TickerProfilePage() {
         )}
       </Card>
 
-      {/* ─────────────────────────────────────────────────────────────────────────────
-          3. Technical Metrics Grid & Strategy Confluence (Finviz Layout)
-         ───────────────────────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Side: Finviz Stats Table Grid (8 Columns out of 12) */}
-        <div className="lg:col-span-8 space-y-4">
-          <Card className="bg-zinc-900/60 border-zinc-800/80 p-0 overflow-hidden">
-            <div className="p-3 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-900/40">
-              <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider font-mono">Finviz Metrics Grid</span>
-              <span className="text-[10px] text-zinc-500 font-mono">Calculated from Daily OHLCV dataset</span>
-            </div>
+      {/* Tab Switcher */}
+      <div className="flex border-b border-zinc-800 gap-6 mb-6">
+        {[
+          { id: 'overview', label: 'Overview' },
+          { id: 'financials', label: 'Financials & Short Interest' },
+          { id: 'insider', label: 'Insider Trading' },
+          { id: 'news', label: 'Ratings & News' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={`pb-3 text-sm font-bold font-mono border-b-2 transition-all ${
+              activeTab === tab.id
+                ? 'border-cyan-500 text-cyan-400'
+                : 'border-transparent text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono border-collapse">
-                <tbody>
-                  {/* Row 1 */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60 w-[12%]">Market Cap</td>
-                    <td className="p-2.5 font-bold text-zinc-200 border-r border-zinc-800/60 w-[18%]">
-                      {tickerInfo?.marketCap ? `$${(tickerInfo.marketCap / 1000000000).toFixed(2)}B` : (stats ? `$${((stats.avgVol50 * latestClose * 252) / 1000000000).toFixed(2)}B` : 'N/A')}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60 w-[12%]">Shs Out</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60 w-[18%]">
-                      {tickerInfo?.sharesOutstanding ? `${(tickerInfo.sharesOutstanding / 1000000).toFixed(1)}M` : (stats ? `${((stats.avgVol50 * 252) / 1000000).toFixed(1)}M` : 'N/A')}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60 w-[12%]">Perf Week</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 w-[18%] ${stats && stats.perfW >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stats ? `${stats.perfW >= 0 ? '+' : ''}${stats.perfW.toFixed(2)}%` : 'N/A'}
-                    </td>
-                  </tr>
+      {/* Conditionally Render Tab Panes */}
+      {activeTab === 'overview' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left Side: Finviz Stats Grid */}
+          <div className="lg:col-span-8 space-y-4">
+            <Card className="bg-zinc-900/60 border-zinc-800/80 p-0 overflow-hidden">
+              <div className="p-3 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-900/40">
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider font-mono">Finviz Metrics Grid</span>
+                <span className="text-[10px] text-zinc-500 font-mono">Calculated from Daily OHLCV dataset</span>
+              </div>
 
-                  {/* Row 2 */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">ATR (14)</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {stats ? `$${stats.atr14.toFixed(2)}` : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">RSI (14)</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.rsi14 >= 70 ? 'text-orange-400' : stats && stats.rsi14 <= 30 ? 'text-emerald-400' : 'text-zinc-300'}`}>
-                      {stats ? stats.rsi14.toFixed(2) : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Perf Month</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.perfM >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stats ? `${stats.perfM >= 0 ? '+' : ''}${stats.perfM.toFixed(2)}%` : 'N/A'}
-                    </td>
-                  </tr>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono border-collapse">
+                  <tbody>
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60 w-[12%]">Market Cap</td>
+                      <td className="p-2.5 font-bold text-zinc-200 border-r border-zinc-800/60 w-[18%]">
+                        {tickerInfo?.marketCap ? `$${(tickerInfo.marketCap / 1000000000).toFixed(2)}B` : (stats ? `$${((stats.avgVol50 * latestClose * 252) / 1000000000).toFixed(2)}B` : 'N/A')}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60 w-[12%]">Shs Out</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60 w-[18%]">
+                        {tickerInfo?.sharesOutstanding ? `${(tickerInfo.sharesOutstanding / 1000000).toFixed(1)}M` : (stats ? `${((stats.avgVol50 * 252) / 1000000).toFixed(1)}M` : 'N/A')}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60 w-[12%]">Perf Week</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 w-[18%] ${stats && stats.perfW >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stats ? `${stats.perfW >= 0 ? '+' : ''}${stats.perfW.toFixed(2)}%` : 'N/A'}
+                      </td>
+                    </tr>
 
-                  {/* Row 3 */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">RVOL</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.rvol >= 2.0 ? 'text-emerald-400 font-black' : 'text-zinc-300'}`}>
-                      {stats ? stats.rvol.toFixed(2) : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">ADR (20)</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {stats ? `${stats.adr20.toFixed(2)}%` : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Perf Quarter</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.perfQ >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stats ? `${stats.perfQ >= 0 ? '+' : ''}${stats.perfQ.toFixed(2)}%` : 'N/A'}
-                    </td>
-                  </tr>
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">ATR (14)</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {stats ? `$${stats.atr14.toFixed(2)}` : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">RSI (14)</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.rsi14 >= 70 ? 'text-orange-400' : stats && stats.rsi14 <= 30 ? 'text-emerald-400' : 'text-zinc-300'}`}>
+                        {stats ? stats.rsi14.toFixed(2) : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Perf Month</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.perfM >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stats ? `${stats.perfM >= 0 ? '+' : ''}${stats.perfM.toFixed(2)}%` : 'N/A'}
+                      </td>
+                    </tr>
 
-                  {/* Row 4 */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Avg Vol</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {tickerInfo?.averageVolume ? `${(tickerInfo.averageVolume / 1000000).toFixed(2)}M` : (stats ? `${(stats.avgVol50 / 1000000).toFixed(2)}M` : 'N/A')}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W High</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {tickerInfo?.fiftyTwoWeekHigh ? `$${tickerInfo.fiftyTwoWeekHigh.toFixed(2)}` : (stats ? `$${stats.high52w.toFixed(2)}` : 'N/A')}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Perf Year</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.perfY >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stats ? `${stats.perfY >= 0 ? '+' : ''}${stats.perfY.toFixed(2)}%` : 'N/A'}
-                    </td>
-                  </tr>
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">RVOL</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.rvol >= 2.0 ? 'text-emerald-400 font-black' : 'text-zinc-300'}`}>
+                        {stats ? stats.rvol.toFixed(2) : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">ADR (20)</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {stats ? `${stats.adr20.toFixed(2)}%` : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Perf Quarter</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.perfQ >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stats ? `${stats.perfQ >= 0 ? '+' : ''}${stats.perfQ.toFixed(2)}%` : 'N/A'}
+                      </td>
+                    </tr>
 
-                  {/* Row 5 */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W Range</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60 text-[10px]">
-                      {tickerInfo?.fiftyTwoWeekLow && tickerInfo?.fiftyTwoWeekHigh ? `$${tickerInfo.fiftyTwoWeekLow.toFixed(2)} - $${tickerInfo.fiftyTwoWeekHigh.toFixed(2)}` : (stats ? `$${stats.low52w.toFixed(2)} - $${stats.high52w.toFixed(2)}` : 'N/A')}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W Low Dist</td>
-                    <td className="p-2.5 text-emerald-400 font-bold border-r border-zinc-800/60">
-                      {stats ? `+${stats.dist52wLow.toFixed(2)}%` : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W High Dist</td>
-                    <td className="p-2.5 text-rose-400 font-bold border-r border-zinc-800/60">
-                      {stats ? `-${stats.dist52wHigh.toFixed(2)}%` : 'N/A'}
-                    </td>
-                  </tr>
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Avg Vol</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {tickerInfo?.averageVolume ? `${(tickerInfo.averageVolume / 1000000).toFixed(2)}M` : (stats ? `${(stats.avgVol50 / 1000000).toFixed(2)}M` : 'N/A')}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W High</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {tickerInfo?.fiftyTwoWeekHigh ? `$${tickerInfo.fiftyTwoWeekHigh.toFixed(2)}` : (stats ? `$${stats.high52w.toFixed(2)}` : 'N/A')}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Perf Year</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.perfY >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stats ? `${stats.perfY >= 0 ? '+' : ''}${stats.perfY.toFixed(2)}%` : 'N/A'}
+                      </td>
+                    </tr>
 
-                  {/* Row 6 */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">SMA20 Dist</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.distSMA20 >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stats ? `${stats.distSMA20 >= 0 ? '+' : ''}${stats.distSMA20.toFixed(2)}%` : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">SMA50 Dist</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.distSMA50 >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stats ? `${stats.distSMA50 >= 0 ? '+' : ''}${stats.distSMA50.toFixed(2)}%` : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">SMA200 Dist</td>
-                    <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.distSMA200 >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stats ? `${stats.distSMA200 >= 0 ? '+' : ''}${stats.distSMA200.toFixed(2)}%` : 'N/A'}
-                    </td>
-                  </tr>
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W Range</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60 text-[10px]">
+                        {tickerInfo?.fiftyTwoWeekLow && tickerInfo?.fiftyTwoWeekHigh ? `$${tickerInfo.fiftyTwoWeekLow.toFixed(2)} - $${tickerInfo.fiftyTwoWeekHigh.toFixed(2)}` : (stats ? `$${stats.low52w.toFixed(2)} - $${stats.high52w.toFixed(2)}` : 'N/A')}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W Low Dist</td>
+                      <td className="p-2.5 text-emerald-400 font-bold border-r border-zinc-800/60">
+                        {stats ? `+${stats.dist52wLow.toFixed(2)}%` : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">52W High Dist</td>
+                      <td className="p-2.5 text-rose-400 font-bold border-r border-zinc-800/60">
+                        {stats ? `-${stats.dist52wHigh.toFixed(2)}%` : 'N/A'}
+                      </td>
+                    </tr>
 
-                  {/* Row 7 (Additional yfinance Info) */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">P/E Ratio</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {tickerInfo?.trailingPE ? tickerInfo.trailingPE.toFixed(2) : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Forward P/E</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {tickerInfo?.forwardPE ? tickerInfo.forwardPE.toFixed(2) : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">EPS (TTM)</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {tickerInfo?.trailingEps ? `$${tickerInfo.trailingEps.toFixed(2)}` : 'N/A'}
-                    </td>
-                  </tr>
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">SMA20 Dist</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.distSMA20 >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stats ? `${stats.distSMA20 >= 0 ? '+' : ''}${stats.distSMA20.toFixed(2)}%` : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">SMA50 Dist</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.distSMA50 >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stats ? `${stats.distSMA50 >= 0 ? '+' : ''}${stats.distSMA50.toFixed(2)}%` : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">SMA200 Dist</td>
+                      <td className={`p-2.5 font-bold border-r border-zinc-800/60 ${stats && stats.distSMA200 >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stats ? `${stats.distSMA200 >= 0 ? '+' : ''}${stats.distSMA200.toFixed(2)}%` : 'N/A'}
+                      </td>
+                    </tr>
 
-                  {/* Row 8 */}
-                  <tr className="border-b border-zinc-800/60">
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Beta</td>
-                    <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
-                      {tickerInfo?.beta ? tickerInfo.beta.toFixed(2) : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Dividend %</td>
-                    <td className="p-2.5 text-emerald-400 font-bold border-r border-zinc-800/60">
-                      {tickerInfo?.dividendYield ? `${(tickerInfo.dividendYield * 100).toFixed(2)}%` : 'N/A'}
-                    </td>
-                    <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Target Price</td>
-                    <td className="p-2.5 text-cyan-400 font-bold border-r border-zinc-800/60">
-                      {tickerInfo?.targetMeanPrice ? `$${tickerInfo.targetMeanPrice.toFixed(2)}` : 'N/A'}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">P/E Ratio</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {tickerInfo?.trailingPE ? tickerInfo.trailingPE.toFixed(2) : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Forward P/E</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {tickerInfo?.forwardPE ? tickerInfo.forwardPE.toFixed(2) : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">EPS (TTM)</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {tickerInfo?.trailingEps ? `$${tickerInfo.trailingEps.toFixed(2)}` : 'N/A'}
+                      </td>
+                    </tr>
 
-          {/* Company Financial Bar Charts */}
+                    <tr className="border-b border-zinc-800/60">
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Beta</td>
+                      <td className="p-2.5 text-zinc-300 border-r border-zinc-800/60">
+                        {tickerInfo?.beta ? tickerInfo.beta.toFixed(2) : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Dividend %</td>
+                      <td className="p-2.5 text-emerald-400 font-bold border-r border-zinc-800/60">
+                        {tickerInfo?.dividendYield ? `${(tickerInfo.dividendYield * 100).toFixed(2)}%` : 'N/A'}
+                      </td>
+                      <td className="p-2.5 bg-zinc-950 text-zinc-400 font-bold border-r border-zinc-800/60">Target Price</td>
+                      <td className="p-2.5 text-cyan-400 font-bold border-r border-zinc-800/60">
+                        {tickerInfo?.targetMeanPrice ? `$${tickerInfo.targetMeanPrice.toFixed(2)}` : 'N/A'}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+
+          {/* Right Side: Strategy Matrix */}
+          <div className="lg:col-span-4 space-y-4">
+            <Card className="bg-zinc-900/60 border-zinc-800/80 p-5 space-y-4">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono">
+                  Strategy Confluence Matrix
+                </h3>
+                <p className="text-[11px] text-zinc-500 mt-1 font-mono">
+                  Institutional setups triggered for {ticker}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {candidate && candidate.strategy_matches ? (
+                  Object.entries(STRATEGY_LABELS).map(([sKey, info]) => {
+                    const isMatch = candidate.strategy_matches[sKey] === true;
+                    return (
+                      <div
+                        key={sKey}
+                        className={`p-2.5 rounded-lg border flex items-center justify-between text-xs font-mono transition-colors ${
+                          isMatch
+                            ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                            : 'bg-zinc-950/40 border-zinc-800/60 text-zinc-500'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2">
+                          {isMatch ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          ) : (
+                            <div className="h-4 w-4 rounded-full border border-zinc-800" />
+                          )}
+                          <span title={info.desc}>{info.label}</span>
+                        </div>
+                        <span className={`text-[10px] uppercase font-bold ${isMatch ? 'text-emerald-400 font-black' : 'text-zinc-700'}`}>
+                          {isMatch ? 'MATCH' : 'PASSED'}
+                        </span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-xs text-zinc-500 font-mono py-4 text-center">
+                    No strategy matches computed.
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-zinc-800/60 flex flex-col gap-2">
+                <a
+                  href={`https://www.tradingview.com/chart/?symbol=${ticker}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full flex items-center justify-center space-x-2 p-2 bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 rounded-lg text-cyan-400 hover:text-cyan-300 text-xs font-mono font-bold"
+                >
+                  <span>View TradingView Chart</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+                <a
+                  href={`https://finviz.com/quote.ashx?t=${ticker}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full flex items-center justify-center space-x-2 p-2 bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-zinc-300 text-xs font-mono"
+                >
+                  <span>View original Finviz Page</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'financials' && (
+        <div className="space-y-6">
+          {/* Financial Bar Charts */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="bg-zinc-900/60 border-zinc-800 p-4 space-y-2">
               <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider font-mono">EPS Trends (GAAP)</span>
@@ -801,156 +895,210 @@ export default function TickerProfilePage() {
               </div>
             </Card>
           </div>
-        </div>
 
-        {/* Right Side: Institutional Strategy Match Checklist (4 Columns out of 12) */}
-        <div className="lg:col-span-4 space-y-4">
+          {/* Short Interest Card Table */}
           <Card className="bg-zinc-900/60 border-zinc-800/80 p-5 space-y-4">
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono">
-                Strategy Confluence Matrix
-              </h3>
-              <p className="text-[11px] text-zinc-500 mt-1 font-mono">
-                Institutional setups triggered for {ticker}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              {candidate && candidate.strategy_matches ? (
-                Object.entries(STRATEGY_LABELS).map(([sKey, info]) => {
-                  const isMatch = candidate.strategy_matches[sKey] === true;
-                  return (
-                    <div
-                      key={sKey}
-                      className={`p-2.5 rounded-lg border flex items-center justify-between text-xs font-mono transition-colors ${
-                        isMatch
-                          ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
-                          : 'bg-zinc-950/40 border-zinc-800/60 text-zinc-500'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        {isMatch ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                        ) : (
-                          <div className="h-4 w-4 rounded-full border border-zinc-800" />
-                        )}
-                        <span title={info.desc}>{info.label}</span>
-                      </div>
-                      <span className={`text-[10px] uppercase font-bold ${isMatch ? 'text-emerald-400 font-black' : 'text-zinc-700'}`}>
-                        {isMatch ? 'MATCH' : 'PASSED'}
-                      </span>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="text-xs text-zinc-500 font-mono py-4 text-center">
-                  No strategy matches computed.
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono">
+              Short Interest & Float Metrics
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-xs font-mono">
+              <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-850">
+                <div className="text-zinc-500 mb-1">Float Shares</div>
+                <div className="text-sm font-bold text-zinc-200">
+                  {tickerInfo?.floatShares ? `${(tickerInfo.floatShares / 1000000).toFixed(1)}M` : 'N/A'}
                 </div>
-              )}
-            </div>
-
-            {/* External Charts links */}
-            <div className="pt-4 border-t border-zinc-800/60 flex flex-col gap-2">
-              <a
-                href={`https://www.tradingview.com/chart/?symbol=${ticker}`}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full flex items-center justify-center space-x-2 p-2 bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 rounded-lg text-cyan-400 hover:text-cyan-300 text-xs font-mono font-bold"
-              >
-                <span>View TradingView Chart</span>
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-              <a
-                href={`https://finviz.com/quote.ashx?t=${ticker}`}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full flex items-center justify-center space-x-2 p-2 bg-zinc-950 border border-zinc-800 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-zinc-300 text-xs font-mono"
-              >
-                <span>View original Finviz Page</span>
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              </div>
+              <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-850">
+                <div className="text-zinc-500 mb-1">Shares Short</div>
+                <div className="text-sm font-bold text-zinc-200">
+                  {tickerInfo?.sharesShort ? `${(tickerInfo.sharesShort / 1000000).toFixed(1)}M` : 'N/A'}
+                </div>
+              </div>
+              <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-850">
+                <div className="text-zinc-500 mb-1">Short % of Float</div>
+                <div className="text-sm font-bold text-rose-400">
+                  {tickerInfo?.shortPercentOfFloat ? `${(tickerInfo.shortPercentOfFloat * 100).toFixed(2)}%` : 'N/A'}
+                </div>
+              </div>
+              <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-850">
+                <div className="text-zinc-500 mb-1">Short Ratio (Days to Cover)</div>
+                <div className="text-sm font-bold text-zinc-200">
+                  {tickerInfo?.shortRatio ? tickerInfo.shortRatio.toFixed(2) : 'N/A'}
+                </div>
+              </div>
             </div>
           </Card>
         </div>
-      </div>
+      )}
 
-      {/* ─────────────────────────────────────────────────────────────────────────────
-          4. Scaffold: Analyst Ratings Changes & News Table
-         ───────────────────────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-4">
-        {/* News Feed */}
-        <Card className="bg-zinc-900/40 border-zinc-800 p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider font-mono">Latest Ticker News</span>
-            <span className="text-[10px] text-zinc-500 font-mono">Real-time Yahoo Finance feed</span>
-          </div>
-          <div className="space-y-3">
-            {tickerNews && tickerNews.length > 0 ? (
-              tickerNews.map((n: any, idx: number) => (
-                <div key={idx} className="text-xs font-mono border-b border-zinc-800/40 pb-2 flex justify-between gap-4">
-                  <a href={n.link} target="_blank" rel="noreferrer" className="text-zinc-300 hover:text-cyan-400 cursor-pointer truncate max-w-[80%]">
-                    {n.title}
-                  </a>
-                  <span className="text-zinc-500 whitespace-nowrap">
-                    {n.pubDate ? new Date(n.pubDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Recent'}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <div className="text-xs text-zinc-500 py-4 text-center">No recent news found for {ticker}</div>
-            )}
-          </div>
-        </Card>
-
-        {/* Analyst Rating Table */}
-        <Card className="bg-zinc-900/40 border-zinc-800 p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider font-mono">Analyst Rating Changes</span>
-            <span className="text-[10px] text-zinc-500 font-mono">
-              Consensus: {tickerInfo?.recommendationKey ? tickerInfo.recommendationKey.toUpperCase() : 'N/A'}
-            </span>
-          </div>
-          <table className="w-full text-left text-[11px] font-mono">
-            <thead>
-              <tr className="text-zinc-500 border-b border-zinc-800">
-                <th className="pb-1.5 font-bold">Date</th>
-                <th className="pb-1.5 font-bold">Brokerage</th>
-                <th className="pb-1.5 font-bold">Action</th>
-                <th className="pb-1.5 font-bold">Rating Change</th>
-                <th className="pb-1.5 font-bold text-right">Target</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tickerUpgrades && tickerUpgrades.length > 0 ? (
-                tickerUpgrades.map((u: any, idx: number) => {
-                  const action = u.action?.toLowerCase() || '';
-                  const rating = u.rating?.toLowerCase() || '';
-                  const isUpgrade = action.includes('up') || rating.includes('hold -> buy') || rating.includes('perform -> outperform');
-                  const isDowngrade = action.includes('down') || rating.includes('buy -> hold') || rating.includes('outperform -> perform');
-                  
-                  return (
+      {activeTab === 'insider' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Insider Purchases Summary Table */}
+          <Card className="lg:col-span-4 bg-zinc-900/60 border-zinc-800/80 p-4 space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono">
+              Insider Purchases Summary (Last 6 Months)
+            </h3>
+            <table className="w-full text-xs font-mono border-collapse">
+              <thead>
+                <tr className="border-b border-zinc-800 text-zinc-500">
+                  <th className="pb-2 text-left font-bold">Metric</th>
+                  <th className="pb-2 text-right font-bold">Shares</th>
+                  <th className="pb-2 text-right font-bold">Trans</th>
+                </tr>
+              </thead>
+              <tbody>
+                {insiderPurchases && insiderPurchases.length > 0 ? (
+                  insiderPurchases.map((p: any, idx: number) => (
                     <tr key={idx} className="border-b border-zinc-800/30">
-                      <td className="py-2 text-zinc-400">{u.date}</td>
-                      <td className="py-2 text-zinc-200">{u.firm}</td>
-                      <td className={`py-2 font-bold ${isUpgrade ? 'text-emerald-400' : isDowngrade ? 'text-rose-400' : 'text-zinc-400'}`}>
-                        {u.action ? u.action.charAt(0).toUpperCase() + u.action.slice(1) : 'Main'}
+                      <td className="py-2.5 text-zinc-300">{p.metric}</td>
+                      <td className="py-2.5 text-right font-bold text-zinc-200">
+                        {p.shares !== null ? p.shares.toLocaleString() : 'N/A'}
                       </td>
-                      <td className="py-2 text-zinc-300">{u.rating || 'Reiterated'}</td>
-                      <td className="py-2 text-right font-bold text-zinc-100">
-                        {u.target ? `$${u.target.toFixed(2)}` : 'N/A'}
+                      <td className="py-2.5 text-right text-zinc-400">
+                        {p.trans !== null ? p.trans : 'N/A'}
                       </td>
                     </tr>
-                  );
-                })
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3} className="py-4 text-center text-zinc-500">No insider summary data available</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Card>
+
+          {/* Insider Transactions Log */}
+          <Card className="lg:col-span-8 bg-zinc-900/60 border-zinc-800/80 p-4 space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono">
+              Detailed Insider Transactions Log
+            </h3>
+            <div className="overflow-x-auto max-h-[450px]">
+              <table className="w-full text-[11px] font-mono text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-zinc-500 sticky top-0 bg-zinc-900">
+                    <th className="pb-2 font-bold">Insider</th>
+                    <th className="pb-2 font-bold">Relationship / Position</th>
+                    <th className="pb-2 font-bold">Date</th>
+                    <th className="pb-2 font-bold">Transaction</th>
+                    <th className="pb-2 font-bold text-right">Shares</th>
+                    <th className="pb-2 font-bold text-right">Value ($)</th>
+                    <th className="pb-2 font-bold text-right">Ownership</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {insiderTx && insiderTx.length > 0 ? (
+                    insiderTx.map((t: any, idx: number) => {
+                      const isBuy = t.transaction?.toLowerCase().includes('buy') || t.transaction?.toLowerCase().includes('purchase');
+                      const isSale = t.transaction?.toLowerCase().includes('sell') || t.transaction?.toLowerCase().includes('sale');
+                      return (
+                        <tr key={idx} className="border-b border-zinc-800/30 hover:bg-zinc-800/20">
+                          <td className="py-2 text-zinc-200 font-bold max-w-[150px] truncate" title={t.insider}>{t.insider}</td>
+                          <td className="py-2 text-zinc-400 max-w-[150px] truncate" title={t.position}>{t.position}</td>
+                          <td className="py-2 text-zinc-450">{t.date}</td>
+                          <td className={`py-2 font-bold ${isBuy ? 'text-emerald-400' : isSale ? 'text-rose-400' : 'text-zinc-400'}`}>
+                            {t.transaction || 'N/A'}
+                          </td>
+                          <td className="py-2 text-right text-zinc-300">
+                            {t.shares ? t.shares.toLocaleString() : 'N/A'}
+                          </td>
+                          <td className="py-2 text-right text-zinc-200">
+                            {t.value ? `$${t.value.toLocaleString()}` : 'N/A'}
+                          </td>
+                          <td className="py-2 text-right text-zinc-450">
+                            {t.ownership || 'N/A'}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-zinc-500">No recent transactions recorded</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === 'news' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* News Feed */}
+          <Card className="bg-zinc-900/40 border-zinc-800 p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider font-mono">Latest Ticker News</span>
+              <span className="text-[10px] text-zinc-500 font-mono">Real-time Yahoo Finance feed</span>
+            </div>
+            <div className="space-y-3">
+              {tickerNews && tickerNews.length > 0 ? (
+                tickerNews.map((n: any, idx: number) => (
+                  <div key={idx} className="text-xs font-mono border-b border-zinc-800/40 pb-2 flex justify-between gap-4">
+                    <a href={n.link} target="_blank" rel="noreferrer" className="text-zinc-300 hover:text-cyan-400 cursor-pointer truncate max-w-[80%]">
+                      {n.title}
+                    </a>
+                    <span className="text-zinc-500 whitespace-nowrap">
+                      {n.pubDate ? new Date(n.pubDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Recent'}
+                    </span>
+                  </div>
+                ))
               ) : (
-                <tr>
-                  <td colSpan={5} className="py-6 text-center text-zinc-500">No recent rating changes found</td>
-                </tr>
+                <div className="text-xs text-zinc-500 py-4 text-center">No recent news found for {ticker}</div>
               )}
-            </tbody>
-          </table>
-        </Card>
-      </div>
+            </div>
+          </Card>
+
+          {/* Analyst Rating Table */}
+          <Card className="bg-zinc-900/40 border-zinc-800 p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider font-mono">Analyst Rating Changes</span>
+              <span className="text-[10px] text-zinc-500 font-mono">
+                Consensus: {tickerInfo?.recommendationKey ? tickerInfo.recommendationKey.toUpperCase() : 'N/A'}
+              </span>
+            </div>
+            <table className="w-full text-left text-[11px] font-mono">
+              <thead>
+                <tr className="text-zinc-500 border-b border-zinc-800">
+                  <th className="pb-1.5 font-bold">Date</th>
+                  <th className="pb-1.5 font-bold">Brokerage</th>
+                  <th className="pb-1.5 font-bold">Action</th>
+                  <th className="pb-1.5 font-bold">Rating Change</th>
+                  <th className="pb-1.5 font-bold text-right">Target</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tickerUpgrades && tickerUpgrades.length > 0 ? (
+                  tickerUpgrades.map((u: any, idx: number) => {
+                    const action = u.action?.toLowerCase() || '';
+                    const rating = u.rating?.toLowerCase() || '';
+                    const isUpgrade = action.includes('up') || rating.includes('hold -> buy') || rating.includes('perform -> outperform');
+                    const isDowngrade = action.includes('down') || rating.includes('buy -> hold') || rating.includes('outperform -> perform');
+                    
+                    return (
+                      <tr key={idx} className="border-b border-zinc-800/30">
+                        <td className="py-2 text-zinc-400">{u.date}</td>
+                        <td className="py-2 text-zinc-200">{u.firm}</td>
+                        <td className={`py-2 font-bold ${isUpgrade ? 'text-emerald-400' : isDowngrade ? 'text-rose-400' : 'text-zinc-400'}`}>
+                          {u.action ? u.action.charAt(0).toUpperCase() + u.action.slice(1) : 'Main'}
+                        </td>
+                        <td className="py-2 text-zinc-300">{u.rating || 'Reiterated'}</td>
+                        <td className="py-2 text-right font-bold text-zinc-100">
+                          {u.target ? `$${u.target.toFixed(2)}` : 'N/A'}
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-zinc-500">No recent rating changes found</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
