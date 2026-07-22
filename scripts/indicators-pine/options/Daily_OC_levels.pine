@@ -312,6 +312,11 @@ type OptionsData
 
 // { funcs
 roundToNearest(float value, float nearest) => math.round(value / nearest) * nearest
+// Converts a float strike (e.g. 205.5 or 206) into 8-digit OCC padded string (00205500 or 00206000)
+formatOCCStrike(float strikeVal) =>
+    int val = math.round(strikeVal * 1000)
+    str.format("{0,number,00000000}", val)
+
 
 f_custom_round(n) =>
     nearest_10 = math.round(n / 10) * 10
@@ -320,6 +325,8 @@ f_custom_round(n) =>
     dist_to_25 = math.abs(n - nearest_25)
     result = nearest_25 % 100 == 0 ? nearest_10 : dist_to_25 < dist_to_10 ? nearest_25 : nearest_10
     result
+
+
 
 getContractCost(_sym, _isClose) => 
     // Fetch both open and close simultaneously using a tuple on the current timeframe.
@@ -374,41 +381,239 @@ getContractSym(_underlyingSym, _strike, _side, OptionsData current_symbol_option
     float strike = str.contains(syminfo.ticker, "NDX") ? f_custom_round(_strike) : roundToNearest(_strike, current_symbol_options.strike)
     
     // 7. Build Final Ticker String
-    opt_sym + date_str + _side + str.tostring(strike, '#') + ".0"
+    string strike_str = (strike == math.floor(strike)) ? str.tostring(strike, "#") : str.tostring(strike, "#.#")
+    opt_sym + date_str + _side + strike_str
+
 
 getAtmContracts(_underlyingSym, _strike, OptionsData current_symbol_options, bool isClose) =>
     [getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_CALL, current_symbol_options, isClose),
      getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_PUT, current_symbol_options, isClose)]// } funcs
 
+// Calculates exact 3rd Friday timestamp for a given year/month safely using timestamp()
+getThirdFridayTime(int yearVal, int monthVal) =>
+    // 1. Get timestamp for the 1st day of the target month at 09:30 AM
+    int firstDayTime = timestamp("America/New_York", yearVal, monthVal, 1, 9, 30, 0)
+    
+    // 2. Determine day of week for the 1st
+    int dow = dayofweek(firstDayTime)
+    
+    // 3. Find days until the 1st Friday
+    int daysToFirstFri = dayofweek.friday - dow
+    if daysToFirstFri < 0
+        daysToFirstFri := daysToFirstFri + 7
+        
+    // 4. 3rd Friday is 14 days after the 1st Friday
+    int thirdFriTime = firstDayTime + ((daysToFirstFri + 14) * 86400000)
+    thirdFriTime
 
+// Returns MAX 2 candidate date strings: [Upcoming Friday, Monthly 3rd Friday]
+// Returns candidate expiration dates, taking into account whether we are at OPEN or CLOSE
+getCandidateExpirationDates(string symbolRoot, int barTime, bool isClose) =>
+    array<string> dates = array.new<string>()
+    int ms_per_day = 86400000
+
+    // If it's a CLOSE trigger (e.g. 15:55), shift target time forward by 1 day (or 3 days on Friday)
+    int targetTime = barTime
+    if isClose
+        int dow = dayofweek(barTime)
+        int daysShift = (dow == dayofweek.friday) ? 3 : (dow == dayofweek.saturday) ? 2 : 1
+        targetTime := barTime + (daysShift * ms_per_day)
+
+    bool is_0dte = str.contains(symbolRoot, "SPX") or str.contains(symbolRoot, "NDX") or str.contains(symbolRoot, "QQQ") or str.contains(symbolRoot, "SPY") or str.contains(symbolRoot, "IWM")
+
+    if is_0dte
+        // Primary Candidate: Target time (Today if Open, Tomorrow if Close)
+        array.push(dates, str.format("{0,date,yyMMdd}", targetTime))
+        
+        // Secondary Backup: Next day (in case today's 0DTE is halted/settled)
+        int dow = dayofweek(targetTime)
+        int daysShift = (dow == dayofweek.friday) ? 3 : 1
+        array.push(dates, str.format("{0,date,yyMMdd}", targetTime + (daysShift * ms_per_day)))
+    else
+        // Standard Stocks: Target upcoming Friday relative to targetTime
+        int dow = dayofweek(targetTime)
+        int daysToFriday = dayofweek.friday - dow
+        if daysToFriday < 0
+            daysToFriday := daysToFriday + 7
+            
+        int targetFriTime = targetTime + (daysToFriday * ms_per_day)
+        string weeklyDate = str.format("{0,date,yyMMdd}", targetFriTime)
+        array.push(dates, weeklyDate)
+
+        // Monthly Expiration Backup
+        int currentYr  = year(targetTime)
+        int currentMth = month(targetTime)
+        int thirdFriTime = getThirdFridayTime(currentYr, currentMth)
+
+        if targetTime >= thirdFriTime
+            currentMth := currentMth + 1
+            if currentMth > 12
+                currentMth := 1
+                currentYr  := currentYr + 1
+            thirdFriTime := getThirdFridayTime(currentYr, currentMth)
+
+        string monthlyDate = str.format("{0,date,yyMMdd}", thirdFriTime)
+        if weeklyDate != monthlyDate
+            array.push(dates, monthlyDate)
+
+    dates
+
+// Function to dynamically estimate option strike spacing based on asset price
+getDynamicStrikeSpacing(float price, string ticker) =>
+    float spacing = 1.0
+    
+    // 1. Index & Major ETF Overrides
+    if str.contains(ticker, "SPX") or str.contains(ticker, "NDX")
+        spacing := 5.0
+    else if str.contains(ticker, "SPY") or str.contains(ticker, "QQQ") or str.contains(ticker, "IWM") or str.contains(ticker, "DIA")
+        spacing := 1.0
+    else
+        // 2. Generic Stock Price Tier Rules
+        if price < 25.0
+            spacing := 0.5
+        else if price >= 25.0 and price < 100.0
+            spacing := 1.0
+        else if price >= 100.0 and price < 200.0
+            spacing := 2.5
+        else if price >= 200.0 and price < 500.0
+            spacing := 2.5  // Or 5.0 depending on liquid mega-caps
+        else
+            spacing := 5.0
+
+    spacing
+
+// Helper to request a contract cost and safely catch `na`
+//getValidContractCost(string optSym, bool isClose) =>
+//    [o, c] = request.security(optSym, timeframe.period, [open, close], ignore_invalid_symbol=true, lookahead=barmerge.lookahead_off)
+//    float cost = isClose ? c : o
+//    cost
+// Formats strikes to match OPRA string rules (e.g. 200 -> "200.0", 205.5 -> "205.5")
+formatOPRAStrike(float strikeVal) =>
+    string result = ""
+    if strikeVal == math.floor(strikeVal)
+        // Whole integer strikes get explicit .0 suffix
+        result := str.tostring(strikeVal, "#") + ".0"
+    else
+        // Fractional strikes keep their exact decimal (e.g. 202.5 or 137.25)
+        result := str.tostring(strikeVal, "#.##")
+    result
+
+// Cleans up float strikes into valid TradingView symbol strings
+formatTVStrike(float strikeVal) =>
+    // If it's a whole integer (140.0), strip the .0 -> "140"
+    // If it has fractions (137.5), keep decimal -> "137.5"
+    string result = (strikeVal == math.floor(strikeVal)) ? 
+         str.tostring(strikeVal, "#") : 
+         str.tostring(strikeVal, "#.#")
+    result
+// 1. Safe helper for OPRA option cost requests
+getValidContractCost(string optSym, bool isClose) =>
+    string targetSym = optSym
+    // Prepend OPRA: prefix if missing and ticker isn't index like SPX/NDX
+    if not str.contains(optSym, ":") and not str.contains(optSym, "SPX") and not str.contains(optSym, "NDX")
+        targetSym := "OPRA:" + optSym
+
+    [o, c] = request.security(targetSym, timeframe.period, [open, close], ignore_invalid_symbol=true, lookahead=barmerge.lookahead_off)
+    isClose ? c : o
+
+// 2. Main fallback engine configured for OPRA:TICKER YYMMDD C/P STRIKE.0
+getAtmWithFallback(string underlyingSym, float anchorPrice, OptionsData opts, bool isClose) =>
+    array<float> testSpacings = array.new<float>()
+    
+    if str.contains(underlyingSym, "SPX") or str.contains(underlyingSym, "NDX")
+        array.push(testSpacings, 5.0)
+        array.push(testSpacings, 25.0)
+    else if str.contains(underlyingSym, "SPY") or str.contains(underlyingSym, "QQQ") or str.contains(underlyingSym, "IWM") or str.contains(underlyingSym, "DIA")
+        array.push(testSpacings, 1.0)
+        array.push(testSpacings, 0.5)
+    else
+        if anchorPrice > 300.0
+            array.push(testSpacings, 5.0)
+            array.push(testSpacings, 2.5)
+        else if anchorPrice >= 100.0 and anchorPrice <= 300.0
+            array.push(testSpacings, 1.0)
+            array.push(testSpacings, 2.5)
+            array.push(testSpacings, 5.0)
+        else
+            array.push(testSpacings, 1.0)
+            array.push(testSpacings, 0.5)
+
+    // Preserve 1-letter single-stock tickers (e.g. "Q", "F", "C", "V")
+    string cleanRoot = (str.length(opts.optionsSymbol) > 0) ? opts.optionsSymbol : syminfo.ticker
+
+    // Fetch Candidate Dates: ["260724", "260821"]
+    array<string> expDates = getCandidateExpirationDates(cleanRoot, time,  isClose)
+
+    float validCallCost  = na
+    float validPutCost   = na
+    float selectedStrike = na
+    float chosenSpacing  = na
+    string finalCallSym  = ""
+    string finalPutSym   = ""
+
+    for d = 0 to array.size(expDates) - 1
+        if na(validCallCost)
+            string dateStr = array.get(expDates, d)
+
+            for i = 0 to array.size(testSpacings) - 1
+                if na(validCallCost)
+                    float spacing = array.get(testSpacings, i)
+                    float candidateCenter = math.round(anchorPrice / spacing) * spacing
+                    
+                    string strikeStr = formatOPRAStrike(candidateCenter)
+                    string callSym   = cleanRoot + dateStr + C_CONTRACT_SIDE_CALL + strikeStr
+                    string putSym    = cleanRoot + dateStr + C_CONTRACT_SIDE_PUT  + strikeStr
+                    
+                    float cCost = getValidContractCost(callSym, isClose)
+                    float pCost = getValidContractCost(putSym, isClose)
+
+                    if iDebug
+                        log.info("PROBING TICKER=" + callSym + " | DATE=" + dateStr + " | CALL_COST=" + str.tostring(cCost))
+
+                    if not na(cCost) and not na(pCost)
+                        validCallCost  := cCost
+                        validPutCost   := pCost
+                        selectedStrike := candidateCenter
+                        chosenSpacing  := spacing
+                        finalCallSym   := callSym
+                        finalPutSym    := putSym
+
+    opts.strike := chosenSpacing
+    [selectedStrike, validCallCost, validPutCost, finalCallSym, finalPutSym]
 
 calcEM(bool isClose, OptionsData opts, string underlyingSym, bool useETFConv) =>
     float etfAnchor = getContractCost(underlyingSym, isClose)
+    
+    // Dynamically calculate strike spacing based on current anchor price!
+    float dynamicStrikeSpacing = getDynamicStrikeSpacing(etfAnchor, underlyingSym)
+    
     float r = 1.0
     if useETFConv
         float fut = getContractCost(syminfo.ticker, true)
         r := fut / etfAnchor
-    float center = math.round(etfAnchor / opts.strike) * opts.strike
-    [atmCall, atmPut] = getAtmContracts(opts.optionsSymbol, center, opts, isClose)
-    float callCost = getContractCost(atmCall, isClose)
-    float putCost  = getContractCost(atmPut, isClose)
+        
+    // Round to nearest dynamic strike interval
+    [center, callCost, putCost, atmCall, atmPut] = getAtmWithFallback(underlyingSym, etfAnchor, opts, isClose)    
+    
     float futAnchor = etfAnchor
     if syminfo.type == "futures"
         futAnchor := math.round_to_mintick(getContractCost(syminfo.ticker, isClose))
+        
     float em = na
     if not na(callCost) and not na(putCost)
         em := useETFConv ? math.round_to_mintick((callCost + putCost) * r) : math.round_to_mintick(callCost + putCost)
+        
     if iDebug
         log.info("EM [" + (isClose ? "CLOSE" : "OPEN") + "] " +
              "anchor=" + str.tostring(futAnchor) +
              " ratio=" + str.tostring(r) +
+             " strike spacing=" + str.tostring(dynamicStrikeSpacing) +
              " strike=" + str.tostring(center) +
              " call=" + atmCall + "@" + str.tostring(callCost) +
              " put="  + atmPut  + "@" + str.tostring(putCost) +
              " etfEM=" + str.tostring(callCost + putCost) +
              " finalEM=" + str.tostring(em))
     [futAnchor, em]
-
 
 // { logic
 bool is_recent = time >= (timenow - (86400000 * 4)) // Keeping 4 days to allow for long weekends
@@ -444,6 +649,7 @@ if is_recent and eq_close and time != last_close_time
         log.info(">>> CLOSE trigger @ " + str.format_time(time))
     label.new(bar_index, high, "Close", color=color.green, textcolor=color.white, style=label.style_label_down)
 
+
 var useETFConv = false
 var underlyingSym = syminfo.ticker
 var OptionsData current_symbol_options = OptionsData.new("", syminfo.ticker, 1, false)
@@ -452,58 +658,56 @@ if barstate.isfirst
     current_symbol_options.symbol := syminfo.ticker
     current_symbol_options.optionsSymbol := syminfo.ticker
     
-    if (close > 200 and syminfo.type == "stock")  
-        current_symbol_options.strike := 5
+    // Default strike spacing
+    current_symbol_options.strike := 1.0
 
-    current_symbol_options.optionsSymbol := syminfo.ticker
-    
-    if str.contains(syminfo.ticker,"NQ")       
+    if str.contains(syminfo.ticker, "NQ")       
         underlyingSym := "QQQ"
         current_symbol_options.optionsSymbol := "QQQ"
-        current_symbol_options.strike := 1
+        current_symbol_options.strike := 1.0
         useETFConv := true
         
-    if str.contains(syminfo.ticker,"ES") 
-        underlyingSym := useSPX?  'CBOE:SPX':"SPY"
-        current_symbol_options.optionsSymbol := useSPX?  'SPXW':"SPY"
-        current_symbol_options.strike := useSPX?  5:1
-        useETFConv := useSPX?  false :true
+    else if str.contains(syminfo.ticker, "ES") 
+        underlyingSym := useSPX ? 'CBOE:SPX' : "SPY"
+        current_symbol_options.optionsSymbol := useSPX ? 'SPXW' : "SPY"
+        current_symbol_options.strike := useSPX ? 5.0 : 1.0
+        useETFConv := not useSPX
         
-    if str.contains(syminfo.ticker,"NDX")   
-        current_symbol_options.strike := 25
-
-    if str.contains(syminfo.ticker,"TSLA") or str.contains(syminfo.ticker,"VIX") 
-        current_symbol_options.strike := 2.5
-        
-    if str.contains(syminfo.ticker,"AAPL") or str.contains(syminfo.ticker,"NFLX") or str.contains(syminfo.ticker,"AMZN") or str.contains(syminfo.ticker,"COIN") or str.contains(syminfo.ticker,"BA") or str.contains(syminfo.ticker,"QCOM") or str.contains(syminfo.ticker,"GOOG")
-        current_symbol_options.strike := 5
-        
-    if str.contains(syminfo.ticker,"NIO") or str.contains(syminfo.ticker,"BILI") 
-        current_symbol_options.strike := 0.5
-        
-    if str.contains(syminfo.ticker,"NDX")       
+    else if str.contains(syminfo.ticker, "NDX")
         underlyingSym := "NDX"
         current_symbol_options.optionsSymbol := "NDXP"
+        current_symbol_options.strike := 25.0
 
-    if str.contains(syminfo.ticker,"SPX")
+    else if str.contains(syminfo.ticker, "SPX")
         underlyingSym := "SPX"
         current_symbol_options.optionsSymbol := "SPXW"
-        current_symbol_options.strike := 5
-        //useETFConv := true
+        current_symbol_options.strike := 5.0
         
-    if str.contains(syminfo.ticker, 'YM')  
-        current_symbol_options.optionsSymbol := 'DIA'
-        current_symbol_options.strike := 1
-        current_symbol_options.symbol := 'DIA'
-        useETFConv := true
+    else if str.contains(syminfo.ticker, "YM")  
         underlyingSym := 'DIA'
-        
-    if str.contains(syminfo.ticker, 'RTY') or str.contains(syminfo.ticker, 'M2K')  
-        current_symbol_options.optionsSymbol := 'IWM'
-        current_symbol_options.strike := 1
-        current_symbol_options.symbol := 'IWM'
+        current_symbol_options.optionsSymbol := 'DIA'
+        current_symbol_options.symbol := 'DIA'
+        current_symbol_options.strike := 1.0
         useETFConv := true
+        
+    else if str.contains(syminfo.ticker, "RTY") or str.contains(syminfo.ticker, "M2K")  
         underlyingSym := 'IWM'
+        current_symbol_options.optionsSymbol := 'IWM'
+        current_symbol_options.symbol := 'IWM'
+        current_symbol_options.strike := 1.0
+        useETFConv := true
+
+    else if  str.contains(syminfo.ticker, "VIX") 
+        current_symbol_options.strike := 2.5
+        
+    //else if str.contains(syminfo.ticker, "AAPL") or str.contains(syminfo.ticker, "NFLX") or str.contains(syminfo.ticker, "AMZN") or str.contains(syminfo.ticker, "COIN") or str.contains(syminfo.ticker, "BA") or str.contains(syminfo.ticker, "QCOM") or str.contains(syminfo.ticker, "GOOG")
+    //    current_symbol_options.strike := 5.0
+        
+    else if str.contains(syminfo.ticker, "NIO") or str.contains(syminfo.ticker, "BILI") 
+        current_symbol_options.strike := 0.5
+
+    else if (close > 200 and syminfo.type == "stock")  
+        current_symbol_options.strike := 2.5
 
 if calcOpen
     calcOpen := false
