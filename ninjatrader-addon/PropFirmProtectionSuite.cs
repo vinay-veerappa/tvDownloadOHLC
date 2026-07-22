@@ -1,4 +1,3 @@
-#if TESTING
 using System;
 using System.Collections.Generic;
 
@@ -73,4 +72,4 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
     }
 }
-#endif
+

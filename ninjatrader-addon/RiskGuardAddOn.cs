@@ -665,15 +665,34 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             LogEvent("SYSTEM", "CONNECTION_CHANGE", $"Connection status: {e.Status}, Connection: {e.Connection?.Options?.Name}");
             
-            // Re-check and subscribe to any new accounts that became available
+            // Re-check, subscribe, and audit open positions for any account returning online
             lock (_stateLock)
             {
                 foreach (Account account in Account.All)
                 {
                     SubscribeToAccount(account);
+                    if (e.Status == ConnectionStatus.Connected)
+                    {
+                        foreach (Position pos in account.Positions)
+                        {
+                            if (pos.MarketPosition != MarketPosition.Flat && pos.Instrument != null)
+                            {
+                                AuditPosition(account, pos);
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        private void AuditPosition(Account account, Position pos)
+        {
+            if (account == null || pos == null || pos.Instrument == null) return;
+            ExecutePositionUpdateDetails(account, pos);
+        }
+
+
+
 
         public bool IsAccountLocked(string accountName)
         {
@@ -704,17 +723,24 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         internal void ExecutePositionUpdate(object sender, PositionEventArgs e)
         {
+            if (sender is Account acc && e?.Position != null)
+            {
+                ExecutePositionUpdateDetails(acc, e.Position);
+            }
+        }
+
+        internal void ExecutePositionUpdateDetails(Account account, Position pos)
+        {
             List<GuardAction> actions = null;
             try
             {
-                Account account = (Account)sender;
                 string accountName = account.Name;
-                string instrument = e.Position.Instrument.FullName;
-                MarketPosition marketPosition = e.Position.MarketPosition;
-                int quantity = e.Position.Quantity;
-                double averagePrice = e.Position.AveragePrice;
+                string instrument = pos.Instrument.FullName;
+                MarketPosition marketPosition = pos.MarketPosition;
+                int quantity = pos.Quantity;
+                double averagePrice = pos.AveragePrice;
                 double unrealizedPnL = 0.0;
-                try { unrealizedPnL = e.Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
+                try { unrealizedPnL = pos.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
 
                 lock (_stateLock)
                 {
@@ -726,7 +752,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                         _accountStates[accountName] = state;
                     }
 
-                    bool changed = state.UpdatePosition(account, e.Position.Instrument, marketPosition, quantity, averagePrice, unrealizedPnL, _config);
+                    bool changed = state.UpdatePosition(account, pos.Instrument, marketPosition, quantity, averagePrice, unrealizedPnL, _config);
+
                     if (changed)
                     {
                         SavePersistedState();
