@@ -7,8 +7,6 @@ indicator("Daily Expected Move", "DailyEM O/C", overlay=true, max_bars_back = 50
 // { consts
 var C_CONTRACT_SIDE_CALL = "C"
 var C_CONTRACT_SIDE_PUT = "P"
-var C_GROUP_NAME_COLORS = 'Colors'
-var C_GROUP_NAME_EXTRAS = 'Extras'
 // } consts
 
 // { inputs
@@ -97,9 +95,7 @@ type DailyEM
     string      txt
 
 mirror = true
-settings_general                            = 'General Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 settings_fibs                               = 'StdDev Fib Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-settings_override                           = 'Overrides ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 var FibLevels fiblevels                     = FibLevels.new()
 
 fiblevels.fib1                              := input.bool(true, '', group = settings_fibs, inline = '1')
@@ -302,32 +298,11 @@ method update(array<DailyEM> this, int _time) =>
 
 /// END Fadi Fibs Code
 
-var tf = timeframe.period
-
 type OptionsData
-    string symbol
     string optionsSymbol
     float  strike
-    bool   weekly
 
 // { funcs
-roundToNearest(float value, float nearest) => math.round(value / nearest) * nearest
-// Converts a float strike (e.g. 205.5 or 206) into 8-digit OCC padded string (00205500 or 00206000)
-formatOCCStrike(float strikeVal) =>
-    int val = math.round(strikeVal * 1000)
-    str.format("{0,number,00000000}", val)
-
-
-f_custom_round(n) =>
-    nearest_10 = math.round(n / 10) * 10
-    nearest_25 = math.round(n / 25) * 25
-    dist_to_10 = math.abs(n - nearest_10)
-    dist_to_25 = math.abs(n - nearest_25)
-    result = nearest_25 % 100 == 0 ? nearest_10 : dist_to_25 < dist_to_10 ? nearest_25 : nearest_10
-    result
-
-
-
 getContractCost(_sym, _isClose) => 
     // Fetch both open and close simultaneously using a tuple on the current timeframe.
     // This perfectly dodges the mutable variable hoisting bug and "1D" forming bar issues.
@@ -335,59 +310,6 @@ getContractCost(_sym, _isClose) =>
     
     // Return the correct value based on the flag
     _isClose ? c : o
-
-getContractSym(_underlyingSym, _strike, _side, OptionsData current_symbol_options, bool isClose) =>
-    int ms_per_day = 86400000
-    int days_to_next_session = 1
-
-    if dayofweek(time) == dayofweek.friday
-        days_to_next_session := iMonHoliday ? 4 : 3
-
-    else if dayofweek(time) == dayofweek.thursday and iFriHoliday
-        days_to_next_session := iMonHoliday ? 5 : 4
-
-    int target_trade_time = isClose ? time + (days_to_next_session * ms_per_day) : time
-
-
-    // 2. Identify 0DTE vs Weekly based on ticker
-    string opt_sym = current_symbol_options.optionsSymbol
-    bool is_0dte = str.contains(opt_sym, "SPX") or str.contains(opt_sym, "NDX") or str.contains(opt_sym, "QQQ") or str.contains(opt_sym, "SPY") or str.contains(opt_sym, "IWM") or str.contains(opt_sym, "DIA")
-    
-    int expiration_time = target_trade_time
-    
-    // 3. Roll Weekly options forward to the upcoming Friday
-    if not is_0dte
-        int current_dow = dayofweek(target_trade_time)
-        int days_to_friday = dayofweek.friday - current_dow
-        
-        if days_to_friday < 0 
-            days_to_friday := days_to_friday + 7 
-            
-        // Shift expiration to Thursday if Friday is a holiday
-        if iFriHoliday and days_to_friday == 0
-            days_to_friday := -1
-            
-        expiration_time := target_trade_time + (days_to_friday * ms_per_day)
-
-    // 4. Extract parts
-    int exp_year  = year(expiration_time) % 100 
-    int exp_month = month(expiration_time)      
-    int exp_day   = dayofmonth(expiration_time) 
-    
-    // 5. Format YYMMDD string with built-in leading zeros
-    string date_str = str.format("{0,number,00}{1,number,00}{2,number,00}", exp_year, exp_month, exp_day)
-    
-    // 6. Format Strike
-    float strike = str.contains(syminfo.ticker, "NDX") ? f_custom_round(_strike) : roundToNearest(_strike, current_symbol_options.strike)
-    
-    // 7. Build Final Ticker String
-    string strike_str = (strike == math.floor(strike)) ? str.tostring(strike, "#") : str.tostring(strike, "#.#")
-    opt_sym + date_str + _side + strike_str
-
-
-getAtmContracts(_underlyingSym, _strike, OptionsData current_symbol_options, bool isClose) =>
-    [getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_CALL, current_symbol_options, isClose),
-     getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_PUT, current_symbol_options, isClose)]// } funcs
 
 // Calculates exact 3rd Friday timestamp for a given year/month safely using timestamp()
 getThirdFridayTime(int yearVal, int monthVal) =>
@@ -458,35 +380,7 @@ getCandidateExpirationDates(string symbolRoot, int barTime, bool isClose) =>
 
     dates
 
-// Function to dynamically estimate option strike spacing based on asset price
-getDynamicStrikeSpacing(float price, string ticker) =>
-    float spacing = 1.0
-    
-    // 1. Index & Major ETF Overrides
-    if str.contains(ticker, "SPX") or str.contains(ticker, "NDX")
-        spacing := 5.0
-    else if str.contains(ticker, "SPY") or str.contains(ticker, "QQQ") or str.contains(ticker, "IWM") or str.contains(ticker, "DIA")
-        spacing := 1.0
-    else
-        // 2. Generic Stock Price Tier Rules
-        if price < 25.0
-            spacing := 0.5
-        else if price >= 25.0 and price < 100.0
-            spacing := 1.0
-        else if price >= 100.0 and price < 200.0
-            spacing := 2.5
-        else if price >= 200.0 and price < 500.0
-            spacing := 2.5  // Or 5.0 depending on liquid mega-caps
-        else
-            spacing := 5.0
-
-    spacing
-
 // Helper to request a contract cost and safely catch `na`
-//getValidContractCost(string optSym, bool isClose) =>
-//    [o, c] = request.security(optSym, timeframe.period, [open, close], ignore_invalid_symbol=true, lookahead=barmerge.lookahead_off)
-//    float cost = isClose ? c : o
-//    cost
 // Formats strikes to match OPRA string rules (e.g. 200 -> "200.0", 205.5 -> "205.5")
 formatOPRAStrike(float strikeVal) =>
     string result = ""
@@ -498,14 +392,6 @@ formatOPRAStrike(float strikeVal) =>
         result := str.tostring(strikeVal, "#.##")
     result
 
-// Cleans up float strikes into valid TradingView symbol strings
-formatTVStrike(float strikeVal) =>
-    // If it's a whole integer (140.0), strip the .0 -> "140"
-    // If it has fractions (137.5), keep decimal -> "137.5"
-    string result = (strikeVal == math.floor(strikeVal)) ? 
-         str.tostring(strikeVal, "#") : 
-         str.tostring(strikeVal, "#.#")
-    result
 // 1. Safe helper for OPRA option cost requests
 getValidContractCost(string optSym, bool isClose) =>
     string targetSym = optSym
@@ -584,9 +470,6 @@ getAtmWithFallback(string underlyingSym, float anchorPrice, OptionsData opts, bo
 calcEM(bool isClose, OptionsData opts, string underlyingSym, bool useETFConv) =>
     float etfAnchor = getContractCost(underlyingSym, isClose)
     
-    // Dynamically calculate strike spacing based on current anchor price!
-    float dynamicStrikeSpacing = getDynamicStrikeSpacing(etfAnchor, underlyingSym)
-    
     float r = 1.0
     if useETFConv
         float fut = getContractCost(syminfo.ticker, true)
@@ -607,7 +490,6 @@ calcEM(bool isClose, OptionsData opts, string underlyingSym, bool useETFConv) =>
         log.info("EM [" + (isClose ? "CLOSE" : "OPEN") + "] " +
              "anchor=" + str.tostring(futAnchor) +
              " ratio=" + str.tostring(r) +
-             " strike spacing=" + str.tostring(dynamicStrikeSpacing) +
              " strike=" + str.tostring(center) +
              " call=" + atmCall + "@" + str.tostring(callCost) +
              " put="  + atmPut  + "@" + str.tostring(putCost) +
@@ -652,10 +534,9 @@ if is_recent and eq_close and time != last_close_time
 
 var useETFConv = false
 var underlyingSym = syminfo.ticker
-var OptionsData current_symbol_options = OptionsData.new("", syminfo.ticker, 1, false)
+var OptionsData current_symbol_options = OptionsData.new(syminfo.ticker, 1)
 
 if barstate.isfirst
-    current_symbol_options.symbol := syminfo.ticker
     current_symbol_options.optionsSymbol := syminfo.ticker
     
     // Default strike spacing
@@ -686,14 +567,12 @@ if barstate.isfirst
     else if str.contains(syminfo.ticker, "YM")  
         underlyingSym := 'DIA'
         current_symbol_options.optionsSymbol := 'DIA'
-        current_symbol_options.symbol := 'DIA'
         current_symbol_options.strike := 1.0
         useETFConv := true
         
     else if str.contains(syminfo.ticker, "RTY") or str.contains(syminfo.ticker, "M2K")  
         underlyingSym := 'IWM'
         current_symbol_options.optionsSymbol := 'IWM'
-        current_symbol_options.symbol := 'IWM'
         current_symbol_options.strike := 1.0
         useETFConv := true
 
