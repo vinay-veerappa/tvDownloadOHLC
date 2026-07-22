@@ -21,6 +21,6 @@ echo Press Ctrl-C to stop. Do NOT close during trading hours.
 echo.
 
 :: Discord is disabled by default in config.py; keep it explicit here.
-.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --schedule --no-discord
+.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --schedule --narratives-only --no-discord
 
 pause

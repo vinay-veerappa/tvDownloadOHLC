@@ -8,7 +8,7 @@ cd /d %~dp0..
 REM echo Launching Python Live Data Engine (2-Tier Priority Loop)...
 REM start cmd /k "title Live Options Data Engine && python -m scripts.streaming.options.run_options_levels --loop --discord"
 
-echo Starting Next.js Frontend...
+echo Starting Next.js Frontend (Production Mode)...
 cd web
-npm run dev
+npm run prod
 pause

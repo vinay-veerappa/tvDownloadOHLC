@@ -207,7 +207,7 @@ def _parse_yf_contract(row: Any, expiry: date, dte: int, contract_type: str) -> 
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str = None) -> OptionChainData | None:
+def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str = None, req_priority: int = 1) -> OptionChainData | None:
     """
     Implements Task 1: Cache & Cascade.
     1. Check Local Cache (using root ticker)
@@ -230,7 +230,7 @@ def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str
 
     # 2. Primary Fetch (Schwab)
     fetch_sym = resolved_sym or ticker
-    log.info("Starting primary fetch for %s (resolved: %s) (Schwab)...", ticker, fetch_sym)
+    log.info("Starting primary fetch for %s (resolved: %s) (Schwab, Priority %d)...", ticker, fetch_sym, req_priority)
     try:
         # Check if this is a futures symbol for Direct [D] mode
         if ticker.startswith('/'):
@@ -238,7 +238,7 @@ def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str
             chain = fetch_futures_option_chain_data(ticker, MACRO_DTE_TARGETS)
         else:
             client = create_client()
-            chain = fetch_option_chain_data(client, fetch_sym, PIPELINE_DTE_TARGETS)
+            chain = fetch_option_chain_data(client, fetch_sym, PIPELINE_DTE_TARGETS, priority=req_priority)
         
         # Save to cache
         cache_file.write_text(json.dumps(_serialize_chain(chain), cls=DateEncoder, indent=2))
@@ -272,14 +272,19 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
     Main entry point for the Weekly Macro HTF Module.
     Runs everything from data fetch to UI push.
     """
-    log.info("Starting Weekly Macro HTF Pipeline for %s", tickers)
+    from .config import PRIORITY_TICKERS
+    tier1_set = set(PRIORITY_TICKERS) | {"SPX", "SPY", "NDX", "QQQ"}
+    # Sort tickers so Tier 1 Priority tickers execute first
+    ordered_tickers = sorted(tickers, key=lambda t: 0 if t in tier1_set else 1)
+
+    log.info("Starting Weekly Macro HTF Pipeline for %s (Priority ordered)", ordered_tickers)
     path: Path = MACRO_LEVELS_TXT
     if path.exists(): 
         path.unlink()
         
     # Resolve all tickers via hub to get dual mapping metadata
     try:
-        resp = requests.post(HUB_RESOLVE_ENDPOINT, json={"symbols": tickers}, timeout=60)
+        resp = requests.post(HUB_RESOLVE_ENDPOINT, json={"symbols": ordered_tickers}, timeout=60)
         if resp.status_code == 200:
             resolution_data = resp.json().get("data", {})
         else:
@@ -289,7 +294,8 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
         log.warning(f"Could not connect to Hub for resolution: {e}")
         resolution_data = {}
     
-    for ticker in tickers:
+    for ticker in ordered_tickers:
+        req_prio = 1 if ticker in tier1_set else 5
         try:
             res_info = resolution_data.get(ticker, {
                 "direct": ticker, 
@@ -304,8 +310,8 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versione
             # Handle cases where res_info might be the nested dict instead of the resolved string
             resolved_sym = resolved_info if isinstance(resolved_info, str) else resolved_info.get("active", ticker)
             
-            log.info("Processing primary variant for %s (resolved: %s)...", ticker, resolved_sym)
-            chain = fetch_macro_data(ticker, force_refresh=force_refresh, resolved_sym=resolved_sym)
+            log.info("Processing primary variant for %s (resolved: %s, Priority %d)...", ticker, resolved_sym, req_prio)
+            chain = fetch_macro_data(ticker, force_refresh=force_refresh, resolved_sym=resolved_sym, req_priority=req_prio)
             
             if chain:
                 # Institutional Macro Calculations

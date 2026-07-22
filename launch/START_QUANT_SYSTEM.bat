@@ -39,7 +39,7 @@ start "SPOKE_CHART" cmd /k "python -m scripts.streaming.stream_chart"
 
 :: 5. Start Web Dashboard
 echo 🚀 Starting Web Dashboard...
-start "WEB_DASHBOARD" cmd /k "cd web && npm run dev"
+start "WEB_DASHBOARD" cmd /k "cd web && npm run prod"
 
 :: 6. [NEW] Start Spoke: Dealer Options Pipeline (GEX) — continuous 2-tier loop
 echo 🚀 Starting Dealer Options Pipeline (loop mode)...
@@ -56,5 +56,9 @@ start "QUANT_SCHEDULER" cmd /k "launch\start_quant_scheduler.bat"
 :: 8. [NEW] Start Options Strategy Engine Runner
 echo 🚀 Starting Options Strategy Engine...
 start "STRATEGY_ENGINE" cmd /k "python scripts/libs_py/strategy_engine/runner.py"
+
+:: 9. [NEW] Start KB Bridge (LanceDB RAG API on port 8900)
+echo 🚀 Starting KB Bridge (LanceDB RAG API)...
+start "KB_BRIDGE" cmd /k "launch\start_kb_bridge.bat"
 
 pause

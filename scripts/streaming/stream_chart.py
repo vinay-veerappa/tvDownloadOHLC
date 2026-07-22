@@ -190,11 +190,10 @@ def validate_bootstrap_data(symbol, bootstrap_candles):
     
     try:
         print(f"📊 [{symbol}] Validating bootstrap against historical data...")
+        # Filter to last 7 days (sufficient for chart bootstrap validation)
+        cutoff = datetime.now().timestamp() - (7 * 24 * 60 * 60)
         hist = pd.read_parquet(hist_path)
-        
-        # Filter to last 45 days (matches Schwab API max fetch)
-        cutoff = datetime.now().timestamp() - (45 * 24 * 60 * 60)
-        hist = hist[hist['time'] >= cutoff]
+        hist = hist[hist['time'] >= cutoff].tail(10000)
         
         # Create set of historical timestamps (in milliseconds)
         hist['time_ms'] = (hist['time'] * 1000).astype('int64')

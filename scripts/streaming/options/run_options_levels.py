@@ -116,7 +116,7 @@ if not _IS_RTD_CHILD:
         calculate_price_metrics,
     )
     from .level_scorer import score_levels, ScoredLevels
-    from .options_fetcher import create_client, fetch_futures_quote, fetch_batched_futures_quotes, fetch_option_chain_data, get_eod_close_price, FuturesQuote
+    from .options_fetcher import create_client, fetch_futures_quote, fetch_batched_futures_quotes, fetch_option_chain_data, merge_option_chains, get_eod_close_price, FuturesQuote
     from .state_tracker import (
         build_current_state,
         detect_changes,
@@ -439,25 +439,61 @@ def run_pipeline(
     # Pre-fetch all options chains concurrently to minimize network latency
     etf_tickers = [t for t in target_tickers if t not in RTD_NATIVE_TICKERS]
     rtd_only_tickers = [t for t in target_tickers if t in RTD_NATIVE_TICKERS]
+    
+    # Priority classification: Tier 1 Priority vs Tier 2 Secondary
+    from .config import PRIORITY_TICKERS
+    tier1_set = set(PRIORITY_TICKERS) | {"SPX", "SPY", "NDX", "QQQ"}
+    tier1_tickers = [t for t in etf_tickers if t in tier1_set]
+    tier2_tickers = [t for t in etf_tickers if t not in tier1_set]
+    
     log.info(
-        "Pre-fetching options chains for %d tickers concurrently... (%d RTD-native: %s)",
-        len(etf_tickers), len(rtd_only_tickers), rtd_only_tickers or "none",
+        "Pre-fetching options chains (Tier 1 Priority: %s, Tier 2 Secondary: %s, RTD-native: %s)...",
+        tier1_tickers, tier2_tickers, rtd_only_tickers or "none",
     )
     chains_by_ticker = {}
     from concurrent.futures import ThreadPoolExecutor
 
-    def fetch_one(t):
+    # Helper function to fetch intraday DTE 0-14 and stitch with cached daily macro DTE 15-365
+    def fetch_and_stitch(t: str, req_priority: int):
         try:
-            return t, fetch_option_chain_data(client, t, dte_targets)
+            # 1. Fetch live intraday chain (DTE 0-14) in 1 single API call
+            intraday_chain = fetch_option_chain_data(client, t, DTE_TARGETS, priority=req_priority)
+            
+            # 2. Try loading cached daily macro chain (DTE 15-365)
+            macro_chain = None
+            try:
+                today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+                cache_file = DATA_DIR / f"macro_cache_{t.upper().replace('/', '')}_{today_str}.json"
+                if cache_file.exists():
+                    from .macro_pipeline import _deserialize_chain
+                    macro_chain = _deserialize_chain(json.loads(cache_file.read_text()))
+            except Exception as cache_err:
+                log.debug("Macro cache load for %s skipped: %s", t, cache_err)
+
+            # 3. Stitch intraday + macro chains together
+            if macro_chain:
+                log.debug("Stitching live intraday DTE 0-14 with cached macro DTE 15-365 for %s...", t)
+                return t, merge_option_chains(intraday_chain, macro_chain)
+            return t, intraday_chain
         except Exception as e:
-            log.error("Failed to fetch option chain for %s: %s", t, e)
+            log.error("Failed to fetch/stitch option chain for %s: %s", t, e)
             return t, None
 
-    with ThreadPoolExecutor(max_workers=min(len(etf_tickers), 10) or 1) as executor:
-        results = executor.map(fetch_one, etf_tickers)
-        for t, chain_data in results:
-            if chain_data:
-                chains_by_ticker[t] = chain_data
+    # Step A: Fetch Tier 1 Priority Tickers FIRST (high priority = 2 during RTH)
+    if tier1_tickers:
+        with ThreadPoolExecutor(max_workers=min(len(tier1_tickers), 2) or 1) as executor:
+            results = executor.map(lambda t: fetch_and_stitch(t, req_priority=2), tier1_tickers)
+            for t, chain_data in results:
+                if chain_data:
+                    chains_by_ticker[t] = chain_data
+
+    # Step B: Fetch Tier 2 Secondary Tickers SECOND (lower priority = 4)
+    if tier2_tickers:
+        with ThreadPoolExecutor(max_workers=min(len(tier2_tickers), 3) or 1) as executor:
+            results = executor.map(lambda t: fetch_and_stitch(t, req_priority=4), tier2_tickers)
+            for t, chain_data in results:
+                if chain_data:
+                    chains_by_ticker[t] = chain_data
 
     # Pre-fetch all futures quotes in a single batched REST call (8 HTTP requests -> 1 batched call)
     all_futures_syms = [INDEX_TO_FUTURES.get(t) for t in target_tickers if INDEX_TO_FUTURES.get(t)]
@@ -1615,6 +1651,8 @@ def run_loop(enable_discord: bool = False) -> None:
                     log.error("Pipeline cycle failed: %s", exc)
                 finally:
                     _cfg.ACTIVE_TICKERS = original
+                    import gc
+                    gc.collect()
 
             # Sleep for a short beat to check for manual triggers frequently
             time.sleep(LOOP_BEAT_SECONDS)
@@ -1638,7 +1676,7 @@ def _is_trading_day(tz_name: "str | None" = None) -> bool:
     return datetime.now(ZoneInfo(tz_name)).weekday() < 5
 
 
-def run_scheduled(enable_discord: "bool | None" = None) -> None:
+def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = False) -> None:
     """
     Block and run the pipeline at the configured schedule times (APScheduler).
     The process runs on weekdays only; weekends are silently skipped.
@@ -1662,39 +1700,42 @@ def run_scheduled(enable_discord: "bool | None" = None) -> None:
     tz = ZoneInfo(SCHEDULE_TIMEZONE)
     scheduler = BlockingScheduler(timezone=tz)  # type: ignore[call-arg]
 
-    # Deduplicate schedule times to prevent double-firing (e.g. duplicate
-    # "11:00" entries in config).
-    seen_times: set[str] = set()
-    for time_str in SCHEDULE_TIMES:
-        if time_str in seen_times:
-            log.warning(
-                "Duplicate schedule time '%s' in SCHEDULE_TIMES — skipping.",
-                time_str,
+    if not narratives_only:
+        # Deduplicate schedule times to prevent double-firing (e.g. duplicate
+        # "11:00" entries in config).
+        seen_times: set[str] = set()
+        for time_str in SCHEDULE_TIMES:
+            if time_str in seen_times:
+                log.warning(
+                    "Duplicate schedule time '%s' in SCHEDULE_TIMES — skipping.",
+                    time_str,
+                )
+                continue
+            seen_times.add(time_str)
+
+            hour, minute = map(int, time_str.split(":"))
+            label = f"{time_str} ET"
+
+            def _job(lbl: str = label, t_str: str = time_str) -> None:
+                if _is_trading_day():
+                    is_pulse = t_str in ("09:30", "16:00")
+                    # Reset anchors only at 09:30 open
+                    do_reset = (t_str == "09:30")
+                    suffix = _build_snapshot_suffix(datetime.now(tz), t_str)
+                    run_pipeline(run_label=lbl, enable_discord=enable_discord, versioned=is_pulse, reset_anchors=do_reset, snapshot_suffix=suffix)
+                else:
+                    log.info("Non-trading day — skipping %s run.", lbl)
+
+            scheduler.add_job(
+                _job,
+                trigger=CronTrigger(hour=hour, minute=minute, timezone=tz),
+                id=f"dealer_levels_{time_str.replace(':', '')}",
+                replace_existing=True,
+                misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,   # allow for delayed execution before skipping
             )
-            continue
-        seen_times.add(time_str)
-
-        hour, minute = map(int, time_str.split(":"))
-        label = f"{time_str} ET"
-
-        def _job(lbl: str = label, t_str: str = time_str) -> None:
-            if _is_trading_day():
-                is_pulse = t_str in ("09:30", "16:00")
-                # Reset anchors only at 09:30 open
-                do_reset = (t_str == "09:30")
-                suffix = _build_snapshot_suffix(datetime.now(tz), t_str)
-                run_pipeline(run_label=lbl, enable_discord=enable_discord, versioned=is_pulse, reset_anchors=do_reset, snapshot_suffix=suffix)
-            else:
-                log.info("Non-trading day — skipping %s run.", lbl)
-
-        scheduler.add_job(
-            _job,
-            trigger=CronTrigger(hour=hour, minute=minute, timezone=tz),
-            id=f"dealer_levels_{time_str.replace(':', '')}",
-            replace_existing=True,
-            misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,   # allow for delayed execution before skipping
-        )
-        log.info("Scheduled: %s ET", time_str)
+            log.info("Scheduled Options Run: %s ET", time_str)
+    else:
+        log.info("Running in --narratives-only mode: Options pipeline cron jobs skipped (handled by --loop).")
 
     # -----------------------------------------------------------------
     # NARRATIVE JOBS (Trader Briefing System)
@@ -1889,6 +1930,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Force refresh data (ignore cache) in macro mode.",
     )
     parser.add_argument(
+        "--narratives-only",
+        action="store_true",
+        help="Run only the scheduled Trader Narrative & Briefing tasks without scheduling options pipeline runs.",
+    )
+    parser.add_argument(
         "--versioned",
         action="store_true",
         help="Write timestamped versioned file snapshots.",
@@ -1924,7 +1970,7 @@ def main() -> None:
         macro_tickers = tickers if tickers else ACTIVE_TICKERS
         run_macro_pipeline(macro_tickers, force_refresh=args.force, versioned=args.versioned)
     elif args.schedule:
-        run_scheduled(enable_discord=enable_discord)
+        run_scheduled(enable_discord=enable_discord, narratives_only=args.narratives_only)
     elif args.loop:
         run_loop(enable_discord=enable_discord)
     else:

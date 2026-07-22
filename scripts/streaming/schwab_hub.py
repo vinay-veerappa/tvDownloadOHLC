@@ -68,7 +68,7 @@ class SchwabUnifiedHub:
         
         # REST Request Queue (Priority Queue to prevent bulk options starvation)
         self.rest_queue = asyncio.PriorityQueue()
-        self.rate_limit_delay = 0.5  # 500ms between REST calls
+        self.rate_limit_delay = 1.0  # 1000ms between REST calls to respect Schwab API rate limits
         self._request_seq = 0
         
         if self.app:
@@ -190,13 +190,24 @@ class SchwabUnifiedHub:
                 logger.debug(f">>>> Raw Trade Event: {event}")
 
     async def _process_request(self, method_name, params, response_queue):
-        try:
-            logger.info(f"Worker calling {self.provider.__class__.__name__}.execute_rest for {method_name}")
-            result = await self.provider.execute_rest(method_name, params)
-            await response_queue.put(result)
-        except Exception as e:
-            logger.error(f"Error in REST worker ({method_name}): {e}")
-            await response_queue.put({"status": "error", "message": str(e)})
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Worker calling {self.provider.__class__.__name__}.execute_rest for {method_name} (Attempt {attempt+1})")
+                result = await self.provider.execute_rest(method_name, params)
+                if isinstance(result, dict) and result.get("status") == "rate_limited":
+                    backoff = 2.0 * (attempt + 1)
+                    logger.warning(f"⚠️ Rate limited on {method_name}. Backing off {backoff:.1f}s (Attempt {attempt+1}/{max_retries})...")
+                    await asyncio.sleep(backoff)
+                    continue
+                await response_queue.put(result)
+                return
+            except Exception as e:
+                logger.error(f"Error in REST worker ({method_name}): {e}")
+                if attempt == max_retries - 1:
+                    await response_queue.put({"status": "error", "message": str(e)})
+                    return
+                await asyncio.sleep(1.5)
 
     async def _rest_worker(self):
         """Processes REST requests via the provider concurrently with rate-limited launch intervals."""

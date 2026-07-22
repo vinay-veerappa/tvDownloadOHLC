@@ -156,6 +156,9 @@ class SchwabDevProvider(SchwabHubProvider):
             if hasattr(resp, "status_code"):
                 if resp.status_code == 200:
                     return {"status": "success", "data": resp.json()}
+                elif resp.status_code == 429:
+                    logger.warning(f"⚠️ Schwab API Rate Limit (429) hit for {target_method}")
+                    return {"status": "rate_limited", "code": 429, "message": "HTTP 429 (Too Many Requests)"}
                 else:
                     error_msg = resp.text if (resp.text and resp.text.strip()) else f"HTTP {resp.status_code} ({getattr(resp, 'reason', 'Unknown Error')})"
                     return {"status": "error", "code": resp.status_code, "message": error_msg}

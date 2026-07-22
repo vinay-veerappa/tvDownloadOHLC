@@ -41,27 +41,44 @@ from scripts.streaming.options.config import (
 
 log = logging.getLogger(__name__)
 
-def _hub_request(method: str, params: dict) -> dict:
-    """Send a REST request through the Hub's proxy."""
-    try:
-        if method == "resolve":
-            resp = requests.post(f"{HUB_URL}/resolve", json=params, timeout=30)
-        else:
-            resp = requests.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=60)
-        resp.raise_for_status()
-        result = resp.json()
-        
-        # If it's a wrapped response from our special handlers (like 'resolve')
-        if isinstance(result, dict) and "status" in result:
-            if result.get("status") != "success":
-                raise RuntimeError(f"Hub proxy error: {result.get('message')}")
-            return result.get("data") or {}
-        
-        # Otherwise, assume it's direct data from the Schwab API
-        return result or {}
-    except Exception as e:
-        log.error(f"Failed to reach Hub proxy: {e}")
-        raise RuntimeError(f"Hub proxy unreachable: {e}")
+def _hub_request(method: str, params: dict, priority: int = 3) -> dict:
+    """Send a REST request through the Hub's proxy with priority and exponential backoff retry."""
+    import time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if method == "resolve":
+                resp = requests.post(f"{HUB_URL}/resolve", json=params, timeout=30)
+            else:
+                body = {"method": method, "params": params, "priority": priority}
+                resp = requests.post(f"{HUB_URL}/request", json=body, timeout=60)
+            resp.raise_for_status()
+            result = resp.json()
+            
+            # If wrapped response from provider (resolve or REST proxy)
+            if isinstance(result, dict) and "status" in result:
+                status = result.get("status")
+                if status == "rate_limited":
+                    backoff = 2.0 * (attempt + 1)
+                    log.warning(f"Hub returned rate_limited for {method}. Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})...")
+                    time.sleep(backoff)
+                    continue
+                if status != "success":
+                    raise RuntimeError(f"Hub proxy error: {result.get('message')}")
+                return result.get("data") or {}
+            
+            return result or {}
+        except Exception as e:
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                backoff = 2.0 * (attempt + 1)
+                log.warning(f"HTTP 429 encountered for {method}. Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})...")
+                time.sleep(backoff)
+                continue
+            if attempt == max_retries - 1:
+                log.error(f"Failed to reach Hub proxy: {e}")
+                raise RuntimeError(f"Hub proxy unreachable: {e}")
+            time.sleep(1.0)
+    raise RuntimeError(f"Hub proxy request failed after {max_retries} retries for {method}")
 
 
 @dataclass
@@ -161,7 +178,51 @@ def create_client(secrets_path: Path = SECRETS_PATH, token_path: Path = TOKEN_PA
     return None
 
 
-def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) -> OptionChainData:
+def get_dynamic_strike_band(spot: float, iv: float = 0.20) -> float:
+    """
+    Calculate dynamic volatility-adaptive strike band.
+    Returns max(0.12, 3 * 14-Day Expected Move %).
+    """
+    import math
+    em_14d_pct = max(iv, 0.10) * math.sqrt(14.0 / 365.0)
+    return max(0.12, 3.0 * em_14d_pct)
+
+
+def merge_option_chains(intraday_chain: OptionChainData, macro_chain: OptionChainData) -> OptionChainData:
+    """
+    Stitch Live Intraday Chain (DTE 0-14) with Cached Daily Macro Chain (DTE 15-365).
+    
+    1. Overlays live DTE 0-14 contracts (fresh volume, live prices, 0DTE GEX).
+    2. Keeps cached DTE 15-365 macro contracts (institutional collars, overnight OI).
+    3. Re-spots the combined chain with the latest live spot price.
+    """
+    if not intraday_chain:
+        return macro_chain
+    if not macro_chain:
+        return intraday_chain
+
+    live_spot = intraday_chain.spot or macro_chain.spot
+    live_open = intraday_chain.spot_open or macro_chain.spot_open
+
+    # Keep intraday contracts (DTE <= 14) and macro contracts (DTE > 14)
+    intraday_contracts = [c for c in intraday_chain.contracts if c.dte <= 14]
+    macro_contracts = [c for c in macro_chain.contracts if c.dte > 14]
+
+    combined_contracts = intraday_contracts + macro_contracts
+
+    return OptionChainData(
+        ticker=intraday_chain.ticker,
+        spot=live_spot,
+        spot_open=live_open,
+        timestamp=intraday_chain.timestamp,
+        contracts=combined_contracts,
+        underlying_symbol=intraday_chain.underlying_symbol or macro_chain.underlying_symbol,
+        spot_price=live_spot,
+        is_futures=intraday_chain.is_futures,
+    )
+
+
+def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int], priority: int = 3) -> OptionChainData:
     """
     Fetch raw options data from Schwab, filter by DTE, and return flattened contracts.
     """
@@ -211,14 +272,14 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
         if current_dte > max_dte:
             break
 
-    # Fetch chunks concurrently
+    # Fetch chunks concurrently with controlled concurrency (max 3 workers)
     from concurrent.futures import ThreadPoolExecutor
     
     def fetch_chunk(chunk_info):
         from_dte, to_dte, params = chunk_info
         log.debug(f"Fetching chain chunk for {symbol}: DTE {from_dte}-{to_dte}...")
         try:
-            payload = _hub_request("get_option_chain", params)
+            payload = _hub_request("get_option_chain", params, priority=priority)
             return payload
         except RuntimeError as e:
             if "TooBigBody" in str(e) and params["strikeCount"] > 20:
@@ -226,7 +287,7 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
                 params_copy = params.copy()
                 params_copy["strikeCount"] = 25
                 try:
-                    payload = _hub_request("get_option_chain", params_copy)
+                    payload = _hub_request("get_option_chain", params_copy, priority=priority)
                     return payload
                 except Exception as retry_err:
                     log.error(f"Retry chunk failed for {symbol}: {retry_err}")
@@ -238,7 +299,7 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
             log.error(f"Chunk fetch failed for {symbol}: {e}")
             return None
 
-    with ThreadPoolExecutor(max_workers=min(len(chunks), 10)) as executor:
+    with ThreadPoolExecutor(max_workers=min(len(chunks), 3)) as executor:
         payloads = list(executor.map(fetch_chunk, chunks))
 
     for payload in payloads:
