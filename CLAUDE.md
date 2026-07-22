@@ -29,6 +29,8 @@
 * **Daily Classification**: [DAILY_CLASSIFICATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/DailyClassification/DAILY_CLASSIFICATION.md) (R1/R2/DWP/DNP definitions, OR logic, hierarchy)
 * **Herman Master Manual**: [HERMAN_MASTER_MANUAL.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/Herman/HERMAN_MASTER_MANUAL.md) (Asia-London liquidity, sweep probabilities, NY fractal)
 * **ICT Concepts KB**: [ICT_CONCEPTS_KB.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/trading/ICT_CONCEPTS_KB.md) (Killzones, Silver Bullets, macros, PD arrays, bias models)
+* **ICT Knowledge Base (RAG bridge)**: [KB_BRIDGE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/KB_BRIDGE.md) (how this repo consumes the producer `video2pdf` KB via HTTP API on port 8900; concept triggers; current KB state)
+* **Knowledge Ingest Handover (canonical, DO NOT edit here)**: [HANDOVER.md](file:///c:/Users/vinay/video2pdf/knowledge_ingest/HANDOVER.md) (producer repo `video2pdf/knowledge_ingest`; read for KB state, schema, LanceDB locations, OPEX validation section 21, cross-repo data flow section 22)
 * **ICT Engine Spec**: [ICT_SPEC_V1.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/ict/ICT_SPEC_V1.md) (v1.3.0 — unified ICT detection library API reference)
 * **ICT Phase 2 Plan**: [ICT_PHASE2_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ICT_PHASE2_PLAN.md) (Phase 2 scope: OB, MSS/BOS, Judas, SMT, Delivery Triad, bias validation, PineScript)
 * **ICT Daily Bias Models**: [ICT_DAILY_BIAS_MODELS.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/ict/ICT_DAILY_BIAS_MODELS.md) (7 models implemented, 5 planned for Phase 2)
