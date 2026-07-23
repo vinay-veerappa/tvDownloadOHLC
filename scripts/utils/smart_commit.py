@@ -4,7 +4,7 @@ smart_commit.py
 Token-efficient automated git staging and conventional commit utility.
 Usage:
   python -m scripts.utils.smart_commit -m "add pluggable provider" -s screener
-  python -m scripts.utils.smart_commit -m "fix calculation edge case" --type fix
+  python -m scripts.utils.smart_commit -f scripts/utils/smart_commit.py -m "add smart commit helper"
   python -m scripts.utils.smart_commit  (auto-detects changes, scope, type, and message)
 """
 import os
@@ -44,19 +44,25 @@ def run_git_cmd(args: List[str]) -> Tuple[int, str]:
         return 1, str(e)
 
 
-def get_changed_files() -> List[Tuple[str, str]]:
+def get_changed_files(target_files: Optional[List[str]] = None) -> List[Tuple[str, str]]:
     """Returns list of tuples: (status_code, file_path)."""
     code, out = run_git_cmd(["status", "--porcelain"])
     if code != 0 or not out:
         return []
     
     changed = []
+    target_set = set(target_files) if target_files else None
+
     for line in out.splitlines():
         if len(line) < 3:
             continue
         status = line[:2].strip()
         fpath = line[2:].strip().strip('"')
         
+        # Filter target files if specified
+        if target_set and not any(t in fpath for t in target_set):
+            continue
+
         # Check ignores
         if any(ign in fpath for ign in IGNORE_PATTERNS):
             continue
@@ -112,10 +118,10 @@ def smart_commit(
     scope: Optional[str] = None,
     commit_type: Optional[str] = None,
     dry_run: bool = False,
-    all_files: bool = False
+    files: Optional[List[str]] = None
 ) -> bool:
     """Executes token-efficient smart staging and committing."""
-    changed = get_changed_files()
+    changed = get_changed_files(files)
     if not changed:
         print("[smart_commit] No eligible changes found to commit.")
         return True
@@ -167,7 +173,7 @@ def smart_commit(
     # 3. Print clean 1-line summary
     rev_code, rev_out = run_git_cmd(["rev-parse", "--short", "HEAD"])
     sha = rev_out if rev_code == 0 else "UNKNOWN"
-    print(f"\n✅ SUCCESS: Committed [{sha}]: \"{full_commit_msg}\" ({len(file_paths)} files)")
+    print(f"\nSUCCESS: Committed [{sha}]: \"{full_commit_msg}\" ({len(file_paths)} files)")
     return True
 
 
@@ -176,6 +182,7 @@ if __name__ == "__main__":
     parser.add_argument("-m", "--message", type=str, default=None, help="Commit message description.")
     parser.add_argument("-s", "--scope", type=str, default=None, help="Conventional commit scope (e.g., screener, ui, options).")
     parser.add_argument("-t", "--type", type=str, default=None, help="Commit type (feat, fix, refactor, docs, test).")
+    parser.add_argument("-f", "--files", nargs="*", default=None, help="Optional specific files to commit.")
     parser.add_argument("--dry-run", action="store_true", help="Preview staging and commit message without committing.")
     
     args = parser.parse_args()
@@ -183,6 +190,7 @@ if __name__ == "__main__":
         message=args.message,
         scope=args.scope,
         commit_type=args.type,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        files=args.files
     )
     sys.exit(0 if success else 1)
