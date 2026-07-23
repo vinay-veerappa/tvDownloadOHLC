@@ -1,6 +1,6 @@
 # KB Bridge — Connecting to the ICT Knowledge Base
 
-**Status:** Bridge module built and tested; not yet wired into `briefing_core.py`.
+**Status:** Knowledge Bridge fully built (Phases 2-4), tested, and committed. Narrative integration test script (`scripts/knowledge_bridge/test_narrative.py`) verified working — KB context retrieval adds grounded ICT setup knowledge to the cheat sheet. Not yet wired into `briefing_core.py` production path (next step).
 **Owner:** This doc lives in the consumer repo (`tvDownloadOHLC`). The canonical
 producer handover is `C:\Users\vinay\video2pdf\knowledge_ingest\HANDOVER.md` —
 read it for full pipeline state, schema, and history. Do not edit it from here.
@@ -115,18 +115,57 @@ contract is the source of truth, not the file location.
   `_v4_lancedb` are superseded by `data/knowledge/unified_knowledge.lancedb`.
   `KB_DATA_DIR` (default `data/knowledge/`) selects the active tree.
 
-## 7. Integration TODO (this repo)
+## 7. Knowledge Bridge package (`scripts/knowledge_bridge/`)
 
-1. Wire `get_kb_context_for_narrative()` into
-   `scripts/trader/briefing_core.build_trader_cheat_sheet()` — append the
-   returned context block to the cheat sheet before it goes to the narrative LLM.
+The consumer repo now has a full knowledge bridge package implementing
+Phases 3-4 of the KB DESIGN.md roadmap:
+
+| Module | Purpose | Status |
+|--------|---------|--------|
+| `detection_catalog.py` | 34 ICT concept → vectorized function mappings | ✅ Phase 3 |
+| `strategy_candidates.py` | KB setup units → executable `StrategyCandidate` objects | ✅ Phase 3 |
+| `candidate_export.py` | JSON export/import + bidirectional linking | ✅ Phase 3 |
+| `backtest_loop.py` | Candidate → `PropFirmSimulator` → `BacktestResult` | ✅ Phase 4 |
+| `test_narrative.py` | Narrative integration test (cheat sheet + KB context) | ✅ Tested |
+| `test_suite.py` | 8-test unit suite (all passing) | ✅ 8/8 pass |
+
+**Test results (2026-07-23):**
+```
+python -m scripts.knowledge_bridge.test_suite
+=== KNOWLEDGE BRIDGE TEST SUITE ===
+[PASS] test_detection_catalog
+[PASS] test_strategy_candidate_generation (6 steps)
+[PASS] test_candidate_export_import
+[PASS] test_bidirectional_linking
+[PASS] test_backtest_result_round_trip
+[PASS] test_apply_backtest_results
+[PASS] test_summary_stats
+[PASS] test_kb_api_search (2171 chars)
+=== RESULTS: 8 passed, 0 failed, 0 skipped ===
+```
+
+**Narrative integration test (2026-07-23):**
+- Cheat sheet: 15,148 chars (premarket, ES1)
+- KB context: 2,185 chars (9 units retrieved, concepts: FVG, Silver Bullet, OTE, killzone, premium, discount, PDH, PDL, IPDA, target)
+- Augmented cheat sheet: 17,335 chars
+- Output saved to `logs/kb_test/`
+
+## 8. Integration TODO (this repo)
+
+1. **Wire KB context into `briefing_core.py`**: In `build_premarket_context()`
+   (and other `build_*_context` functions), call
+   `scripts.knowledge_bridge.test_narrative.fetch_kb_context(cheat_sheet)`
+   and append the returned context block before it goes to the narrative LLM.
+   This is the production wiring of the tested integration.
 2. (Optional) Add `verify_narrative_claim()` to `trader_narrative.py` as a
    post-generation fact-check pass.
 3. Build an eval set (20-30 Q&A pairs covering OPEX, CSD, killzones, 7 Rules)
    to measure retrieval quality before/after the bridge is wired in. Keep it
    at `tests/eval/kb_eval.jsonl`.
+4. **Phase 5**: Confluence engine (`confluence_engine.py` — runtime
+   cross-domain confluence, script mode + LLM mode, integration with narrative).
 
-## 8. What NOT to do
+## 9. What NOT to do
 
 - Do NOT edit the producer's `HANDOVER.md` from this repo — edit it there.
 - Do NOT import `knowledge_ingest` as a package via `pip install -e` — use the

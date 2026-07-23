@@ -21,11 +21,13 @@ from .detection_catalog import (
     resolve_detection,
     list_concepts,
     concepts_by_category,
+    search_concepts,
 )
 from .strategy_candidates import (
     StrategyCandidate,
     CandidateStatus,
     CandidateGenerator,
+    DetectionStep,
     generate_candidates,
 )
 from .candidate_export import (
