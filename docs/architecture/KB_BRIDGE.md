@@ -12,10 +12,15 @@ read it for full pipeline state, schema, and history. Do not edit it from here.
 | Role | Repo | Path |
 |---|---|---|
 | **Producer** (ingests transcripts/PDFs/charts → typed KnowledgeUnits → LanceDB; serves the KB API) | `video2pdf` | `C:\Users\vinay\video2pdf\knowledge_ingest\` |
-| **Raw data** (transcripts, PDFs, chart renders, LanceDB stores) | — | `C:\ICT_Videos\` |
+| **Raw inputs** (transcripts, PDFs, chart renders — can live anywhere) | — | `C:\ICT_Videos\` (external) |
+| **Produced KB data** (the LanceDB, units JSONL, mineru text) | `tvDownloadOHLC` (this repo) | `data/knowledge/` |
 | **Consumer** (narrative engine; queries the KB API) | `tvDownloadOHLC` (this repo) | `scripts/trader/` |
 
-**Data is NOT copied into this repo.** We call the producer's HTTP API.
+**Architecture (revised 2026-07-23):** the consumer repo OWNS all produced KB
+data. The producer (`knowledge_ingest`) is just the ingest tool — it should not
+store anything beyond its own code. Raw inputs stay external (transcripts can
+be anywhere). Everything the producer *produces* lives under
+`tvDownloadOHLC/data/knowledge/` so the running services all read from one place.
 
 ## 2. Runtime contract
 
@@ -23,7 +28,8 @@ The only coupling between this repo and the producer is the KB API on
 `http://127.0.0.1:8900`. Start the producer first, then run the consumer.
 
 ```powershell
-# 1) Producer (one terminal)
+# 1) Producer (one terminal) — KB_DATA_DIR points the producer at our data tree
+$env:KB_DATA_DIR = "C:\Users\vinay\tvDownloadOHLC\data\knowledge"
 cd C:\Users\vinay\video2pdf; .\.venv\Scripts\Activate.ps1
 $env:PYTHONPATH = "."
 python -m knowledge_ingest.serve --port 8900
@@ -32,6 +38,11 @@ python -m knowledge_ingest.serve --port 8900
 cd C:\Users\vinay\tvDownloadOHLC; .\.venv\Scripts\Activate.ps1
 python -m scripts.trader.trader_narrative --mode premarket --ticker ES1
 ```
+
+The launch script `launch/start_kb_bridge.bat` sets `KB_DATA_DIR` for you. The
+producer's `knowledge_ingest/paths.py` resolves all DB/units paths from that env
+var (defaulting to `data/knowledge/`), so the running server serves from our
+tree without editing producer code.
 
 ## 3. KB API endpoints
 
@@ -85,17 +96,24 @@ If a copy is ever needed inside this repo, place it at
 `scripts/trader/kb_bridge.py` and keep it in sync with the producer. The HTTP
 contract is the source of truth, not the file location.
 
-## 6. Current KB state (as of 2026-07-21)
+## 6. Current KB state (as of 2026-07-23)
 
-- **Chart units:** 818 at `C:\ICT_Videos\Testing\_v4_lancedb` (table `knowledge`)
-  — 415 framework, 403 setup. Sources: LumiTrader book (435), Vinay_Models (119),
-  ICTNotes (78), Flux (67), etc.
-- **Text units:** 11,206 from TCM 2023 transcripts at
-  `C:\ICT_Videos\TCM\2023\ingest_output\units\*.jsonl` (ICT-aware prompts).
-  Includes 132 OPEX-tagged units. Not yet built into a persistent LanceDB —
-  re-run `build_lancedb` when a stable vector store is needed.
+- **Unified LanceDB (canonical):** 4,168 units at
+  `data/knowledge/unified_knowledge.lancedb` (table `knowledge`) —
+  818 chart + 3,327 transcript + 23 PDF.
+  Distribution: framework(1662), setup(904), contextual(703), tip(510),
+  psychology(370), anecdote(19).
+  Sources: LumiTrader book (435), Vinay_Models (119), ICTNotes (78),
+  Flux_NY_Guide (67), MMXM (33), TCM 2023 transcripts, etc.
+- **Units JSONL (produced, for re-merge):** `data/knowledge/units/tcm_2023/`
+  (transcript ingest output — segments/, classified/, units/, notes/).
+  TCM 2024 ingest output lands at `data/knowledge/units/tcm_2024/` when run.
 - **Pending ingest:** TCM 2024 (75 transcripts) and 2025 (18 transcripts) —
-  run with `--ict-aware --no-skip` (see producer HANDOVER §19e).
+  run with `--profile ict --no-skip` (see producer HANDOVER). Output units
+  default to `data/knowledge/units/`; merge rebuilds the unified DB in place.
+- The old `C:\ICT_Videos\Testing\unified_knowledge.lancedb` and
+  `_v4_lancedb` are superseded by `data/knowledge/unified_knowledge.lancedb`.
+  `KB_DATA_DIR` (default `data/knowledge/`) selects the active tree.
 
 ## 7. Integration TODO (this repo)
 
@@ -110,12 +128,16 @@ contract is the source of truth, not the file location.
 
 ## 8. What NOT to do
 
-- Do NOT copy LanceDB files, transcript PDFs, or chart renders into this repo.
 - Do NOT edit the producer's `HANDOVER.md` from this repo — edit it there.
 - Do NOT import `knowledge_ingest` as a package via `pip install -e` — use the
   `sys.path` insert or the HTTP API.
 - If the KB API schema changes in the producer, update `kb_bridge.py` here
   (or the producer copy, depending on where the canonical lives).
+- (REVISED 2026-07-23) LanceDB files, units JSONL, and mineru text outputs NOW
+  live in this repo under `data/knowledge/` — the consumer owns produced data.
+  The earlier "do not copy LanceDB into this repo" rule is REVERSED. Raw inputs
+  (transcripts/PDFs/chart renders) still stay external; only *produced* artifacts
+  move here. The producer learns the location via `KB_DATA_DIR` (see §2).
 
 ## 9. Related docs
 
