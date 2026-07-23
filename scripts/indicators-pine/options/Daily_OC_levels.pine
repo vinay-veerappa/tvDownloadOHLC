@@ -19,6 +19,14 @@ var iDisplayClose   = input.bool(false,"Display Close")
 var useSPX          = input.bool(false, "Use SPX iso SPY for ES")
 var iDebug          = input.bool(false, "Debug Logging")
 
+// { inputs
+var string SOURCE_FUTURES = "Futures Options (CME Direct)"
+var string SOURCE_INDEX   = "Index Options (SPX / NDX)"
+var string SOURCE_ETF     = "ETF Options (SPY / QQQ)"
+
+var string iOptionSource  = input.string(SOURCE_FUTURES, "Options Data Source", options=[SOURCE_FUTURES, SOURCE_INDEX, SOURCE_ETF], group="General Settings")
+// } inputs
+
 //// Use Fib Levels (From Fadi)
 type FibLevels
     bool        show
@@ -144,7 +152,7 @@ fiblevels.fib9_color                        := input.color(color.black, '', grou
 fiblevels.fib9_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '9')
 fiblevels.fib9_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '9')
 
-fiblevels.use_background                    := input.bool(false, "Background transparency    ", group = settings_fibs, inline = 'fill')
+fiblevels.use_background                    := input.bool(false, "Background transparency    ", group = settings_fibs, inline = 'fill')
 fiblevels.fill_percent                      := input.int(99, '', options = [99, 97, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50], group = settings_fibs, inline = 'fill')
 fiblevels.padding                           := input.int(25, 'Fib levels padding', group = settings_fibs)
 fiblevels.label_size                        := input.string(size.small, 'Label size', [size.tiny, size.small, size.normal, size.large, size.huge], group = settings_fibs)
@@ -302,14 +310,18 @@ type OptionsData
     string optionsSymbol
     float  strike
 
-// { funcs
-getContractCost(_sym, _isClose) => 
-    // Fetch both open and close simultaneously using a tuple on the current timeframe.
-    // This perfectly dodges the mutable variable hoisting bug and "1D" forming bar issues.
-    [o, c] = request.security(_sym,  timeframe.period, [open, close], ignore_invalid_symbol=true,lookahead =  barmerge.lookahead_off)
-    
-    // Return the correct value based on the flag
-    _isClose ? c : o
+// Helper to request a contract cost and safely catch `na`
+// Formats strikes to match OPRA string rules (e.g. 200 -> "200.0", 205.5 -> "205.5", 1.1425 -> "1.1425")
+formatOPRAStrike(float strikeVal) =>
+    string result = ""
+    if strikeVal == math.floor(strikeVal)
+        // Whole integer strikes get explicit .0 suffix
+        result := str.tostring(strikeVal, "#") + ".0"
+    else
+        // Fractional strikes keep their exact decimal (up to 4 places for FX, 2 for commodities)
+        result := str.tostring(strikeVal, "#.####")
+    result
+
 
 // Calculates exact 3rd Friday timestamp for a given year/month safely using timestamp()
 getThirdFridayTime(int yearVal, int monthVal) =>
@@ -327,6 +339,501 @@ getThirdFridayTime(int yearVal, int monthVal) =>
     // 4. 3rd Friday is 14 days after the 1st Friday
     int thirdFriTime = firstDayTime + ((daysToFirstFri + 14) * 86400000)
     thirdFriTime
+
+// ============================================================================
+// PRODUCT CONFIG TABLE
+// ----------------------------------------------------------------------------
+// Symbol formats confirmed from live TradingView option-chain examples:
+//   ES / NQ / RTY (CME_MINI):
+//     Daily 0DTE (Mon-Thu):  {dailyPrefix}{weekNum}{DayLetter}{yyMMdd}{C/P}{strike}
+//       DayLetter = A/B/C/D for Mon/Tue/Wed/Thu  (e.g. E3A260721C5500)
+//     Friday weekly:        {fridayRoot}{weekNum}{yyMMdd}{C/P}{strike}  (e.g. EW3260717C5500)
+//     Quarterly (3rd Fri of Mar/Jun/Sep/Dec): {quarterlyRoot}{monthCode}{yearDigit}{C/P}{strike}
+//   YM / MYM (CBOT_MINI):
+//     No daily weeklies — roll non-Friday to next Friday.
+//     Friday weekly:        YM{weekNum}{yyMMdd}{C/P}{strike}  (e.g. YM4260724C52400)
+//     End-of-Month:        EYM{yyMMdd}{C/P}{strike}           (e.g. EYM260731C52400)
+//     Quarterly:           YM{monthCode}{yearDigit}{C/P}{strike}
+//   GC / MGC (COMEX):
+//     Daily 0DTE (Mon-Thu):  G{weekNum}{DayLetter}{yyMMdd}{C/P}{strike}
+//       DayLetter = M/T/W/R for Mon/Tue/Wed/Thu  (e.g. G4W260722C4125)
+//     Friday weekly:        OG{weekNum}{yyMMdd}{C/P}{strike}   (e.g. OG4260724C4130)
+//     Quarterly:            GC{monthCode}{yearDigit}{C/P}{strike}
+//   CL / MCL (OPRA-style on TradingView):
+//     No daily weeklies confirmed — roll non-Friday to next Friday.
+//     Friday weekly:        CL{yyMMdd}{C/P}{strike}  (decimal strike, no week number)
+//     Quarterly:           CL{monthCode}{yearDigit}{C/P}{strike}
+//   NG / MNG (NYMEX):
+//     Daily 0DTE (Mon-Thu):  KN{weekNum}{yyMMdd}{C/P}{strike}  (NO day letter, decimal strike)
+//     Friday weekly:        KN{weekNum}{yyMMdd}{C/P}{strike}
+//     Quarterly:           NG{monthCode}{yearDigit}{C/P}{strike}
+//   ZB (CBOT full-size):
+//     Daily 0DTE (Mon-Thu):  HB{weekNum}{yyMMdd}{C/P}{strike}  (NO day letter, integer strike)
+//     Friday weekly:        HB{weekNum}{yyMMdd}{C/P}{strike}
+//     Quarterly:           ZB{monthCode}{yearDigit}{C/P}{strike}
+// ============================================================================
+getProductConfig(string chartTicker) =>
+    string clean = str.replace_all(str.replace_all(chartTicker, "1!", ""), "2!", "")
+    if str.contains(clean, ":")
+        clean := array.last(str.split(clean, ":"))
+
+    bool   found          = true
+    string exch           = ""
+    string quarterlyRoot  = ""   // root for standard quarterly (3rd Fri of Mar/Jun/Sep/Dec)
+    string fridayRoot     = ""   // root for ordinary Friday weeklies, + week number
+    string eomRoot        = ""   // root for End-of-Month (last Friday), NO week number
+    string dailyPrefix    = ""   // root for Mon-Thu daily 0DTE, + week number + day letter
+    string dailyDayLetters = ""  // 4 chars: Mon/Tue/Wed/Thu day letters (e.g. "ABCD" or "MTWR")
+    bool   dailyWeeklies  = false
+    bool   fridayHasWeekNum = true  // whether Friday weekly symbol includes the week number (false for CL which is OPRA-style)
+    bool   decimalStrike   = false  // true for products with sub-1.0 strike spacing (CL, NG)
+    bool   weekNumBeforePrefix = false  // true for ZC where week goes before daily prefix (4HC not HC4)
+    string dailyRoots       = ""   // 8 chars: 2-char root per day (Mon-Thu) for per-day 0DTE roots (e.g. CL: "MLNLWLXL")
+    bool   dailyFormatReversed = false  // true for SI: {dayLetter}{weekNum}{productLetter}{date} instead of {prefix}{weekNum}{dayLetter}{date}
+
+    if str.contains(clean, "MES")
+        exch := "CME_MINI"
+        quarterlyRoot := "ES"
+        fridayRoot := "EW"
+        dailyPrefix := "E"
+        dailyDayLetters := "ABCD"
+        dailyWeeklies := true
+    else if str.contains(clean, "ES")
+        exch := "CME_MINI"
+        quarterlyRoot := "ES"
+        fridayRoot := "EW"
+        dailyPrefix := "E"
+        dailyDayLetters := "ABCD"
+        dailyWeeklies := true
+    else if str.contains(clean, "MNQ")
+        exch := "CME_MINI"
+        quarterlyRoot := "NQ"
+        fridayRoot := "QN"
+        dailyPrefix := "Q"
+        dailyDayLetters := "ABCD"
+        dailyWeeklies := true
+    else if str.contains(clean, "NQ")
+        exch := "CME_MINI"
+        quarterlyRoot := "NQ"
+        fridayRoot := "QN"
+        dailyPrefix := "Q"
+        dailyDayLetters := "ABCD"
+        dailyWeeklies := true
+    else if str.contains(clean, "MYM")
+        exch := "CBOT_MINI"
+        quarterlyRoot := "YM"
+        fridayRoot := "YM"
+        eomRoot := "EYM"
+        dailyWeeklies := false
+    else if str.contains(clean, "YM")
+        // YM options on TradingView: the futures use CBOT_MINI, but the options
+        // may use CBOT (like ZB). Try CBOT_MINI first — if it fails, the user can
+        // switch to CBOT by changing this prefix.
+        exch := "CBOT_MINI"
+        quarterlyRoot := "YM"
+        fridayRoot := "YM"
+        eomRoot := "EYM"
+        dailyWeeklies := false
+    else if str.contains(clean, "M2K")
+        exch := "CME_MINI"
+        quarterlyRoot := "RTY"
+        fridayRoot := "RW"
+        dailyPrefix := "R"
+        dailyDayLetters := "ABCD"
+        dailyWeeklies := true
+    else if str.contains(clean, "RTY")
+        exch := "CME_MINI"
+        quarterlyRoot := "RTY"
+        fridayRoot := "RW"
+        dailyPrefix := "R"
+        dailyDayLetters := "ABCD"
+        dailyWeeklies := true
+    else if str.contains(clean, "MGC")
+        exch := "COMEX"
+        quarterlyRoot := "GC"
+        fridayRoot := "OG"
+        dailyPrefix := "G"
+        dailyDayLetters := "MTWR"
+        dailyWeeklies := true
+    else if str.contains(clean, "GC")
+        exch := "COMEX"
+        quarterlyRoot := "GC"
+        fridayRoot := "OG"
+        dailyPrefix := "G"
+        dailyDayLetters := "MTWR"
+        dailyWeeklies := true
+    else if str.contains(clean, "MCL")
+        // CL 0DTE: per-day roots ML=Mon, NL=Tue, WL=Wed, XL=Thu; LO=Fri weekly.
+        exch := "NYMEX"
+        quarterlyRoot := "CL"
+        fridayRoot := "LO"
+        dailyRoots := "MLNLWLXL"  // Mon=ML, Tue=NL, Wed=WL, Thu=XL
+        dailyWeeklies := true
+        decimalStrike := true
+    else if str.contains(clean, "CL")
+        exch := "NYMEX"
+        quarterlyRoot := "CL"
+        fridayRoot := "LO"
+        dailyRoots := "MLNLWLXL"
+        dailyWeeklies := true
+        decimalStrike := true
+    else if str.contains(clean, "MNG")
+        exch := "NYMEX"
+        quarterlyRoot := "NG"
+        fridayRoot := "KN"
+        dailyPrefix := "KN"
+        dailyDayLetters := ""   // NG 0DTE has NO day letter (e.g. KN4260723C2.9)
+        dailyWeeklies := true
+        decimalStrike := true
+    else if str.contains(clean, "NG")
+        exch := "NYMEX"
+        quarterlyRoot := "NG"
+        fridayRoot := "KN"
+        dailyPrefix := "KN"
+        dailyDayLetters := ""   // NG 0DTE has NO day letter (e.g. KN4260723C2.9)
+        dailyWeeklies := true
+        decimalStrike := true
+    // --- ZB (30-year Treasury Bond) --- CBOT full-size, 0DTE no day letter
+    else if str.contains(clean, "ZB")
+        exch := "CBOT"
+        quarterlyRoot := "ZB"
+        fridayRoot := "HB"
+        dailyPrefix := "HB"
+        dailyDayLetters := ""   // ZB 0DTE has NO day letter (e.g. HB4260723C110)
+        dailyWeeklies := true
+    // --- ZN (10-year Treasury) --- CBOT full-size, 0DTE no day letter, decimal strike
+    else if str.contains(clean, "ZN")
+        exch := "CBOT"
+        quarterlyRoot := "ZN"
+        fridayRoot := "HY"
+        dailyPrefix := "HY"
+        dailyDayLetters := ""   // ZN 0DTE has NO day letter (e.g. HY4260723C108.25)
+        dailyWeeklies := true
+        decimalStrike := true
+    // --- ZC (Corn) --- CBOT, 0DTE. Week number comes BEFORE daily code (4HC, not HC4)
+    // Chain labels: Mon=4CA, Tue=4BC, Wed=4CW, Thu=4HC, Fri=OZC/ZC5
+    else if str.contains(clean, "ZC")
+        exch := "CBOT"
+        quarterlyRoot := "ZC"
+        fridayRoot := "OZC"
+        dailyPrefix := "HC"  // Thu code (varies by day — simplified)
+        dailyDayLetters := ""
+        dailyWeeklies := true
+        weekNumBeforePrefix := true  // ZC puts week BEFORE prefix (4HC not HC4)
+    // --- SI (Silver) --- COMEX, 0DTE. Format: {dayLetter}{weekNum}{productLetter}{date}
+    // Day letters: M=Mon, S=Tue, W=Wed, R=Thu. Product letters: S,S,S,T (changes for Tue!).
+    // Friday weekly: SO{weekNum}{date}{C/P}{strike}
+    else if str.contains(clean, "SI")
+        exch := "COMEX"
+        quarterlyRoot := "SI"
+        fridayRoot := "SO"
+        dailyDayLetters := "MSWR"   // first letter per day (Mon-Thu)
+        dailyRoots := "STSS"       // product letter per day (4 chars): S,T,S,S
+        dailyFormatReversed := true // format: {dayLetter}{weekNum}{productLetter}{date}
+        dailyWeeklies := true
+        decimalStrike := true
+    // --- HG (Copper) --- COMEX, 0DTE with day letters MTWR (same as GC)
+    else if str.contains(clean, "HG")
+        exch := "COMEX"
+        quarterlyRoot := "HG"
+        fridayRoot := "HG"
+        dailyPrefix := "H"
+        dailyDayLetters := "MTWR"  // Same as GC (e.g. H4R260723C6.49)
+        dailyWeeklies := true
+        decimalStrike := true
+    // --- CME Currency Futures (0DTE) --- per-day roots from CME vendor codes
+    // All currencies: dailyRoots=8chars (2 per day Mon-Thu), Friday={weekNum}{root}
+    else if str.contains(clean, "6E") or str.contains(clean, "M6E")
+        exch := "CME"
+        quarterlyRoot := "6E"
+        fridayRoot := "EU"
+        fridayHasWeekNum := false  // Friday: 4EU (week before root)
+        dailyRoots := "MOTUWESU"  // Mon=MO, Tue=TU, Wed=WE, Thu=SU
+        dailyWeeklies := true
+        decimalStrike := true
+        weekNumBeforePrefix := true  // Friday uses week-before-root
+    else if str.contains(clean, "6B") or str.contains(clean, "M6B")
+        exch := "CME"
+        quarterlyRoot := "6B"
+        fridayRoot := "BP"
+        fridayHasWeekNum := false
+        dailyRoots := "MBTGWGSD"  // Mon=MB, Tue=TG, Wed=WG, Thu=SB
+        dailyWeeklies := true
+        decimalStrike := true
+        weekNumBeforePrefix := true
+    else if str.contains(clean, "6J") or str.contains(clean, "M6J")
+        exch := "CME"
+        quarterlyRoot := "6J"
+        fridayRoot := "JY"
+        fridayHasWeekNum := false
+        dailyRoots := "MJTJWJSJ"  // Mon=MJ, Tue=TJ, Wed=WJ, Thu=SJ
+        dailyWeeklies := true
+        decimalStrike := true
+        weekNumBeforePrefix := true
+    else if str.contains(clean, "6S") or str.contains(clean, "M6S")
+        // Swiss Franc: NO daily 0DTE — only Friday weekly (1SF-5SF)
+        exch := "CME"
+        quarterlyRoot := "6S"
+        fridayRoot := "SF"
+        fridayHasWeekNum := false  // Friday: 1SF (week before root)
+        dailyWeeklies := false  // roll to Friday
+        decimalStrike := true
+        weekNumBeforePrefix := true
+    else if str.contains(clean, "6A") or str.contains(clean, "M6A")
+        exch := "CME"
+        quarterlyRoot := "6A"
+        fridayRoot := "AD"
+        fridayHasWeekNum := false
+        dailyRoots := "MATAWASA"  // Mon=MA, Tue=TA, Wed=WA, Thu=SA
+        dailyWeeklies := true
+        decimalStrike := true
+        weekNumBeforePrefix := true
+    else if str.contains(clean, "6C") or str.contains(clean, "M6C")
+        exch := "CME"
+        quarterlyRoot := "6C"
+        fridayRoot := "CD"
+        fridayHasWeekNum := false
+        dailyRoots := "MDTLWDSD"  // Mon=MD, Tue=TL, Wed=WD, Thu=SD
+        dailyWeeklies := true
+        decimalStrike := true
+        weekNumBeforePrefix := true
+    // --- RB (RBOB Gasoline) --- NYMEX, no week number, no day letter, decimal strike
+    else if str.contains(clean, "RB")
+        exch := "NYMEX"
+        quarterlyRoot := "RB"
+        fridayRoot := "OB"
+        dailyPrefix := "OB"
+        dailyDayLetters := ""
+        dailyWeeklies := true
+        fridayHasWeekNum := false
+        decimalStrike := true
+    else
+        found := false
+
+    [found, exch, quarterlyRoot, fridayRoot, eomRoot, dailyPrefix, dailyDayLetters, dailyWeeklies, fridayHasWeekNum, decimalStrike, weekNumBeforePrefix, dailyRoots, dailyFormatReversed]
+
+// Universal Futures Option Ticker Generator for TradingView.
+// Correctly branches into three distinct expiry types instead of always
+// appending a plain weekly code:
+//   1) Monthly/quarterly Friday (3rd Friday of Mar/Jun/Sep/Dec) -> quarterly
+//      root + standard futures month code + year digit (no week number,
+//      since it shares the underlying future's own expiration).
+//   2) End-of-Month Friday (last Friday of the month) -> EOM root + date
+//      (no week number). Only products that list EOM options have eomRoot set.
+//   3) Ordinary Friday (any other Friday, including the 3rd Friday of a
+//      non-quarter month, which CME lists as a numbered weekly) -> weekly
+//      root + week-of-month number + date.
+//   4) Mon/Tue/Wed/Thu daily 0DTE (only for products confirmed to offer them)
+//      -> daily prefix + week-of-month number + day letter (product-specific) + date.
+//   5) Products without daily weeklies (e.g. YM, CL) on a non-Friday:
+//      roll targetTime forward to the next Friday and use that Friday's weekly.
+getUniversalOptionSymbol(string chartTicker, int targetTime, string side, float strikeVal) =>
+    [found, exch, quarterlyRoot, fridayRoot, eomRoot, dailyPrefix, dailyDayLetters, dailyWeeklies, fridayHasWeekNum, decimalStrike, weekNumBeforePrefix, dailyRoots, dailyFormatReversed] = getProductConfig(chartTicker)
+
+    string clean = str.replace_all(str.replace_all(chartTicker, "1!", ""), "2!", "")
+    if str.contains(clean, ":")
+        clean := array.last(str.split(clean, ":"))
+
+    int dow        = dayofweek(targetTime)
+
+    // If the product has NO daily weeklies and today is not Friday, roll forward
+    // to the next Friday so we use that Friday's weekly/EOM/quarterly option.
+    // (e.g. YM on a Monday -> use the upcoming Friday's YM weekly)
+    int rolledTime = targetTime
+    if found and not dailyWeeklies and dow != dayofweek.friday and dow != dayofweek.saturday and dow != dayofweek.sunday
+        int daysToFri = dayofweek.friday - dow
+        if daysToFri < 0
+            daysToFri := daysToFri + 7
+        rolledTime := targetTime + (daysToFri * 86400000)
+        dow := dayofweek(rolledTime)
+
+    int weekNum    = math.ceil(dayofmonth(rolledTime) / 7.0)   // Nth occurrence of that weekday in the month
+    string dateStr = str.format("{0,date,yyMMdd}", rolledTime)
+
+    // Products with sub-1.0 strike spacing (CL 0.5, NG 0.1) use decimal strikes (91.0, 2.9).
+    // CME/CBOT/COMEX integer-spacing products use plain integer strikes (52400, 4125).
+    string strikeStr = decimalStrike ? formatOPRAStrike(strikeVal) : str.tostring(math.round(strikeVal))
+
+    int mo = month(rolledTime)
+    int yr = year(rolledTime)
+    bool isQuarterMonth = (mo == 3 or mo == 6 or mo == 9 or mo == 12)
+
+    int thirdFriTime = getThirdFridayTime(yr, mo)
+    bool isMonthlyExpiryDate = (dateStr == str.format("{0,date,yyMMdd}", thirdFriTime))
+
+    // Detect End-of-Month (last Friday of the month): the Friday after this one
+    // falls in a different month.
+    bool isLastFridayOfMonth = (dow == dayofweek.friday) and (month(rolledTime + 7 * 86400000) != mo)
+
+    string monthCodes = "FGHJKMNQUVXZ"
+    string mCode = str.substring(monthCodes, mo - 1, mo)
+    string yStr  = str.tostring(yr)
+    string yCode = str.substring(yStr, str.length(yStr) - 1, str.length(yStr))
+
+    string symbol = na
+
+    if not found
+        // Unrecognized product: generic OPRA-style guess, same as the stock/ETF path
+        symbol := "OPRA:" + clean + dateStr + side + formatOPRAStrike(strikeVal)
+
+    else if dow == dayofweek.friday and isMonthlyExpiryDate and isQuarterMonth
+        // Standard quarterly contract expiring same day as the underlying future
+        symbol := exch + ":" + quarterlyRoot + mCode + yCode + side + strikeStr
+
+    else if dow == dayofweek.friday and isLastFridayOfMonth and str.length(eomRoot) > 0
+        // End-of-Month option (e.g. CBOT_MINI:EYM260731C52400) — NO week number
+        symbol := exch + ":" + eomRoot + dateStr + side + strikeStr
+
+    else if dow == dayofweek.friday
+        // Ordinary weekly Friday (or the 3rd Friday of a non-quarter month).
+        // CL (OPRA-style) has no week number. 6E puts week before root (4EU not EU4).
+        symbol := not fridayHasWeekNum ? (weekNumBeforePrefix ? exch + ":" + str.tostring(weekNum) + fridayRoot + dateStr + side + strikeStr : exch + ":" + fridayRoot + dateStr + side + strikeStr) : exch + ":" + fridayRoot + str.tostring(weekNum) + dateStr + side + strikeStr
+
+    else if dailyWeeklies and (dow == dayofweek.monday or dow == dayofweek.tuesday or dow == dayofweek.wednesday or dow == dayofweek.thursday)
+        // Daily 0DTE. Three formats supported:
+        // 1) Per-day roots (dailyRoots non-empty, e.g. CL: ML/NL/WL/XL) — root changes by day
+        // 2) Day letters (dailyDayLetters non-empty, e.g. GC: G4W) — single prefix + day letter
+        // 3) No day letter (dailyDayLetters empty, e.g. NG: KN4) — single prefix only
+        // ZC puts weekNum before prefix (4HC), all others put prefix before weekNum (HC4).
+        if str.length(dailyRoots) >= 8
+            // Per-day root: extract 2-char root for this day of week (CL: ML/NL/WL/XL)
+            int offset = (dow == dayofweek.monday ? 0 : dow == dayofweek.tuesday ? 2 : dow == dayofweek.wednesday ? 4 : 6)
+            string dayRoot = str.substring(dailyRoots, offset, offset + 2)
+            symbol := exch + ":" + dayRoot + str.tostring(weekNum) + dateStr + side + strikeStr
+        else if dailyFormatReversed and str.length(dailyRoots) >= 4 and str.length(dailyDayLetters) >= 4
+            // Reversed format (SI): {dayLetter}{weekNum}{productLetter}{date}
+            int dayIdx = (dow == dayofweek.monday ? 0 : dow == dayofweek.tuesday ? 1 : dow == dayofweek.wednesday ? 2 : 3)
+            string dayLetter = str.substring(dailyDayLetters, dayIdx, dayIdx + 1)
+            string productLetter = str.substring(dailyRoots, dayIdx, dayIdx + 1)
+            symbol := exch + ":" + dayLetter + str.tostring(weekNum) + productLetter + dateStr + side + strikeStr
+        else if str.length(dailyDayLetters) > 0
+            string dayLetter = dow == dayofweek.monday ? str.substring(dailyDayLetters, 0, 1) : dow == dayofweek.tuesday ? str.substring(dailyDayLetters, 1, 2) : dow == dayofweek.wednesday ? str.substring(dailyDayLetters, 2, 3) : str.substring(dailyDayLetters, 3, 4)
+            symbol := exch + ":" + dailyPrefix + str.tostring(weekNum) + dayLetter + dateStr + side + strikeStr
+        else if weekNumBeforePrefix
+            // ZC-style: weekNum before daily code (e.g. 4HC260723)
+            symbol := exch + ":" + str.tostring(weekNum) + dailyPrefix + dateStr + side + strikeStr
+        else
+            symbol := exch + ":" + dailyPrefix + str.tostring(weekNum) + dateStr + side + strikeStr
+
+    else
+        // Product doesn't offer weeklies on this weekday — no direct symbol to try.
+        symbol := na
+
+    symbol
+
+
+// Resolves a SINGLE best-guess spacing (used only for the direct futures attempt)
+getUniversalSpacing(float price, string ticker) =>
+    float spacing = 1.0
+    string t = str.replace_all(str.replace_all(ticker, "1!", ""), "2!", "")
+
+    if str.contains(t, "YM") or str.contains(t, "MYM")
+        spacing := 50.0 // Dow Jones: 50 points
+    else if str.contains(t, "NQ") or str.contains(t, "MNQ")
+        spacing := 10.0 // Nasdaq: 10 points
+    else if str.contains(t, "ES") or str.contains(t, "MES") or str.contains(t, "GC") or str.contains(t, "MGC") or str.contains(t, "ZC") or str.contains(t, "ZS")
+        spacing := 5.0  // S&P, Gold, Corn, Soybeans: 5 points
+    else if str.contains(t, "RTY") or str.contains(t, "M2K")
+        spacing := 5.0  // Russell 2000
+    else if str.contains(t, "CL")
+        spacing := 0.5  // Crude Oil: $0.50
+    else if str.contains(t, "NG") or str.contains(t, "MNG")
+        spacing := 0.1  // Natural Gas: $0.10
+    else if str.contains(t, "ZN")
+        spacing := 0.5  // 10-year Treasury
+    else if str.contains(t, "ZB")
+        spacing := 1.0  // 30-year Treasury Bond
+    else if str.contains(t, "ZC")
+        spacing := 4.0  // Corn: 4 cents
+    // CME Currency Futures — sub-1.0 decimal spacing
+    else if str.contains(t, "6E") or str.contains(t, "M6E")
+        spacing := 0.005 // Euro FX
+    else if str.contains(t, "6B") or str.contains(t, "M6B")
+        spacing := 0.0001 // British Pound
+    else if str.contains(t, "6J") or str.contains(t, "M6J")
+        spacing := 0.0001 // Japanese Yen
+    else if str.contains(t, "6S") or str.contains(t, "M6S")
+        spacing := 0.0001 // Swiss Franc
+    else if str.contains(t, "6A") or str.contains(t, "M6A")
+        spacing := 0.0001 // Australian Dollar
+    else if str.contains(t, "6C") or str.contains(t, "M6C")
+        spacing := 0.0001 // Canadian Dollar
+    else if str.contains(t, "SI")
+        spacing := 0.5  // Silver: $0.50 (VERIFY — may be 0.1 based on strike 60.1)
+    else if str.contains(t, "HG")
+        spacing := 0.01 // Copper: $0.01 (strike 6.49)
+    else if str.contains(t, "RB")
+        spacing := 0.01 // RBOB Gasoline: $0.01 (strike 3.44)
+    else
+        spacing := price > 300.0 ? 5.0 : price >= 100.0 ? 1.0 : 0.5
+
+    spacing
+
+// Returns the ETF proxy root for a given futures ticker, or "" if no proxy.
+// Used when direct futures options return na (e.g. YM on CBOT_MINI).
+getETFProxyRoot(string ticker) =>
+    string t = str.replace_all(str.replace_all(ticker, "1!", ""), "2!", "")
+    if str.contains(t, ":")
+        t := array.last(str.split(t, ":"))
+    string root = ""
+    if str.contains(t, "NQ")  or str.contains(t, "MNQ")
+        root := "QQQ"
+    else if str.contains(t, "ES")  or str.contains(t, "MES")
+        root := "SPY"
+    else if str.contains(t, "YM")  or str.contains(t, "MYM")
+        root := "DIA"
+    else if str.contains(t, "RTY") or str.contains(t, "M2K")
+        root := "IWM"
+    else if str.contains(t, "GC")  or str.contains(t, "MGC")
+        root := "GLD"
+    else if str.contains(t, "CL")  or str.contains(t, "MCL")
+        root := "USO"
+    root
+
+
+// Builds an ARRAY of candidate spacings to brute-force test (restores the old
+// auto-detect-spacing behavior for ETFs / index / individual stocks)
+getCandidateSpacings(float anchorPrice, string root) =>
+    array<float> spacings = array.new<float>()
+    if str.contains(root, "SPX") or str.contains(root, "NDX")
+        spacings.push(5.0)
+        spacings.push(25.0)
+    else if str.contains(root, "SPY") or str.contains(root, "QQQ") or str.contains(root, "IWM") or str.contains(root, "DIA") or str.contains(root, "GLD") or str.contains(root, "USO")
+        spacings.push(1.0)
+        spacings.push(0.5)
+    else
+        if anchorPrice > 300.0
+            spacings.push(5.0)
+            spacings.push(2.5)
+            spacings.push(10.0)
+        else if anchorPrice >= 100.0
+            spacings.push(1.0)
+            spacings.push(2.5)
+            spacings.push(5.0)
+        else if anchorPrice >= 20.0
+            spacings.push(1.0)
+            spacings.push(0.5)
+            spacings.push(2.5)
+        else
+            spacings.push(0.5)
+            spacings.push(1.0)
+            spacings.push(0.1)
+    spacings
+
+
+// Universal Option Symbol Generator for TradingView (Fixed for RTY, YM, CL, GC)
+// Official CME / NYMEX / COMEX / OPRA Symbol Generator
+// Master Universal Futures Option Symbol Builder for TradingView
+
+
+// { funcs
+getContractCost(_sym, _isClose) => 
+    // Fetch both open and close simultaneously using a tuple on the current timeframe.
+    // This perfectly dodges the mutable variable hoisting bug and "1D" forming bar issues.
+    [o, c] = request.security(_sym,  timeframe.period, [open, close], ignore_invalid_symbol=true,lookahead =  barmerge.lookahead_off)
+    
+    // Return the correct value based on the flag
+    _isClose ? c : o
 
 // Returns MAX 2 candidate date strings: [Upcoming Friday, Monthly 3rd Friday]
 // Returns candidate expiration dates, taking into account whether we are at OPEN or CLOSE
@@ -380,17 +887,6 @@ getCandidateExpirationDates(string symbolRoot, int barTime, bool isClose) =>
 
     dates
 
-// Helper to request a contract cost and safely catch `na`
-// Formats strikes to match OPRA string rules (e.g. 200 -> "200.0", 205.5 -> "205.5")
-formatOPRAStrike(float strikeVal) =>
-    string result = ""
-    if strikeVal == math.floor(strikeVal)
-        // Whole integer strikes get explicit .0 suffix
-        result := str.tostring(strikeVal, "#") + ".0"
-    else
-        // Fractional strikes keep their exact decimal (e.g. 202.5 or 137.25)
-        result := str.tostring(strikeVal, "#.##")
-    result
 
 // 1. Safe helper for OPRA option cost requests
 getValidContractCost(string optSym, bool isClose) =>
@@ -403,69 +899,142 @@ getValidContractCost(string optSym, bool isClose) =>
     isClose ? c : o
 
 // 2. Main fallback engine configured for OPRA:TICKER YYMMDD C/P STRIKE.0
+//
+// IMPORTANT — request.security() budget:
+// TradingView caps a script to 40 unique request.*() contexts (64 on Pro/
+// Expert/Ultimate), where "unique" is based on the actual symbol string
+// requested. To stay within budget, we only try ONE strike spacing per
+// calculation (2 requests: call + put). The 3-spacing search was removed
+// because it consumed 6 requests per trigger × 2 triggers/day × 4 days
+// = 48 unique contexts, exceeding the 40-context limit.
 getAtmWithFallback(string underlyingSym, float anchorPrice, OptionsData opts, bool isClose) =>
-    array<float> testSpacings = array.new<float>()
-    
-    if str.contains(underlyingSym, "SPX") or str.contains(underlyingSym, "NDX")
-        array.push(testSpacings, 5.0)
-        array.push(testSpacings, 25.0)
-    else if str.contains(underlyingSym, "SPY") or str.contains(underlyingSym, "QQQ") or str.contains(underlyingSym, "IWM") or str.contains(underlyingSym, "DIA")
-        array.push(testSpacings, 1.0)
-        array.push(testSpacings, 0.5)
-    else
-        if anchorPrice > 300.0
-            array.push(testSpacings, 5.0)
-            array.push(testSpacings, 2.5)
-        else if anchorPrice >= 100.0 and anchorPrice <= 300.0
-            array.push(testSpacings, 1.0)
-            array.push(testSpacings, 2.5)
-            array.push(testSpacings, 5.0)
-        else
-            array.push(testSpacings, 1.0)
-            array.push(testSpacings, 0.5)
-
-    // Preserve 1-letter single-stock tickers (e.g. "Q", "F", "C", "V")
-    string cleanRoot = (str.length(opts.optionsSymbol) > 0) ? opts.optionsSymbol : syminfo.ticker
-
-    // Fetch Candidate Dates: ["260724", "260821"]
-    array<string> expDates = getCandidateExpirationDates(cleanRoot, time,  isClose)
-
     float validCallCost  = na
     float validPutCost   = na
     float selectedStrike = na
     float chosenSpacing  = na
     string finalCallSym  = ""
     string finalPutSym   = ""
+    bool   forceETFConv  = false
 
-    for d = 0 to array.size(expDates) - 1
-        if na(validCallCost)
-            string dateStr = array.get(expDates, d)
+    int targetTime = time
+    if isClose
+        int dow = dayofweek(time)
+        int daysShift = (dow == dayofweek.friday) ? 3 : (dow == dayofweek.saturday) ? 2 : 1
+        targetTime := time + (daysShift * 86400000)
 
-            for i = 0 to array.size(testSpacings) - 1
-                if na(validCallCost)
-                    float spacing = array.get(testSpacings, i)
-                    float candidateCenter = math.round(anchorPrice / spacing) * spacing
-                    
-                    string strikeStr = formatOPRAStrike(candidateCenter)
-                    string callSym   = cleanRoot + dateStr + C_CONTRACT_SIDE_CALL + strikeStr
-                    string putSym    = cleanRoot + dateStr + C_CONTRACT_SIDE_PUT  + strikeStr
-                    
-                    float cCost = getValidContractCost(callSym, isClose)
-                    float pCost = getValidContractCost(putSym, isClose)
+    // 1. PRIMARY ATTEMPT: Direct Instrument Option via CME/COMEX/NYMEX symbol builder.
+    // Only meaningful when we're actually looking at a futures contract in "Futures" mode.
+    // Uses ONE spacing (mainSpacing) to stay within request.security budget.
+    if iOptionSource == SOURCE_FUTURES and syminfo.type == "futures"
+        float spacing = getUniversalSpacing(anchorPrice, syminfo.ticker)
+        float candidateCenter = math.round(anchorPrice / spacing) * spacing
 
-                    if iDebug
-                        log.info("PROBING TICKER=" + callSym + " | DATE=" + dateStr + " | CALL_COST=" + str.tostring(cCost))
+        string callSym = getUniversalOptionSymbol(syminfo.ticker, targetTime, C_CONTRACT_SIDE_CALL, candidateCenter)
+        string putSym  = getUniversalOptionSymbol(syminfo.ticker, targetTime, C_CONTRACT_SIDE_PUT,  candidateCenter)
 
-                    if not na(cCost) and not na(pCost)
-                        validCallCost  := cCost
-                        validPutCost   := pCost
-                        selectedStrike := candidateCenter
-                        chosenSpacing  := spacing
-                        finalCallSym   := callSym
-                        finalPutSym    := putSym
+        if not na(callSym) and not na(putSym)
+            if iDebug
+                log.info("Trying direct symbol: " + callSym + " | Strike: " + str.tostring(candidateCenter))
+
+            float cCost = getValidContractCost(callSym, isClose)
+            float pCost = getValidContractCost(putSym, isClose)
+
+            if not na(cCost) and not na(pCost)
+                validCallCost  := cCost
+                validPutCost   := pCost
+                selectedStrike := candidateCenter
+                chosenSpacing  := spacing
+                finalCallSym   := callSym
+                finalPutSym    := putSym
+
+    // 1b. ETF PROXY FALLBACK (SOURCE_FUTURES only): If the direct futures option
+    // returned na (e.g. YM on CBOT_MINI isn't available via request.security),
+    // try the ETF proxy with auto-detect spacing. The EM will be scaled by
+    // fut/etf in calcEM via useETFConv.
+    // Budget: limited to 1 date × 2 spacings × 2 (call+put) = 4 requests max.
+    if na(validCallCost) and iOptionSource == SOURCE_FUTURES and syminfo.type == "futures"
+        string etfRoot = getETFProxyRoot(syminfo.ticker)
+        if str.length(etfRoot) > 0 and etfRoot != syminfo.ticker
+            float etfAnchorPrice = getContractCost(etfRoot, isClose)
+            if not na(etfAnchorPrice) and etfAnchorPrice > 0
+                array<string> etfDates = getCandidateExpirationDates(etfRoot, time, isClose)
+                array<float> etfSpacings = getCandidateSpacings(etfAnchorPrice, etfRoot)
+
+                // Limit to first 2 spacings and first date only to stay within budget
+                int maxSpacings = math.min(array.size(etfSpacings), 2)
+                int maxDates = math.min(array.size(etfDates), 1)
+
+                for d = 0 to maxDates - 1
+                    if na(validCallCost)
+                        string dateStr = array.get(etfDates, d)
+
+                        for i = 0 to maxSpacings - 1
+                            if na(validCallCost)
+                                float spacing = array.get(etfSpacings, i)
+                                float center  = math.round(etfAnchorPrice / spacing) * spacing
+
+                                string strikeStr = formatOPRAStrike(center)
+                                string etfCall   = etfRoot + dateStr + C_CONTRACT_SIDE_CALL + strikeStr
+                                string etfPut    = etfRoot + dateStr + C_CONTRACT_SIDE_PUT  + strikeStr
+                                
+                                float cC = getValidContractCost(etfCall, isClose)
+                                float pC = getValidContractCost(etfPut, isClose)
+
+                                if iDebug
+                                    log.info("Probing ETF proxy: " + etfCall + " | spacing=" + str.tostring(spacing))
+
+                                if not na(cC) and not na(pC)
+                                    validCallCost  := cC
+                                    validPutCost   := pC
+                                    selectedStrike := center
+                                    chosenSpacing  := spacing
+                                    finalCallSym   := etfCall
+                                    finalPutSym    := etfPut
+                                    // Force ETF conversion for this call so calcEM scales the result
+                                    forceETFConv := true
+
+    // 2. FALLBACK: brute-force multi-spacing / multi-date search against the ETF, Index,
+    // or plain stock/OPRA proxy. This is the auto-detect-spacing behavior from the
+    // earlier version, restored so it covers stocks and any instrument the direct
+    // futures builder can't (or shouldn't, e.g. iOptionSource != Futures) handle.
+    //
+    // Fires when: (a) iOptionSource != SOURCE_FUTURES (user chose ETF/Index), OR
+    // (b) the chart is NOT a futures contract (ETF, stock, index — always use OPRA
+    // path regardless of iOptionSource setting, since futures options don't apply).
+    if na(validCallCost) and (iOptionSource != SOURCE_FUTURES or syminfo.type != "futures")
+        string cleanRoot = (str.length(opts.optionsSymbol) > 0) ? opts.optionsSymbol : syminfo.ticker
+        array<string> expDates = getCandidateExpirationDates(cleanRoot, time, isClose)
+        array<float> testSpacings = getCandidateSpacings(anchorPrice, cleanRoot)
+
+        for d = 0 to array.size(expDates) - 1
+            if na(validCallCost)
+                string dateStr = array.get(expDates, d)
+
+                for i = 0 to array.size(testSpacings) - 1
+                    if na(validCallCost)
+                        float spacing = array.get(testSpacings, i)
+                        float center  = math.round(anchorPrice / spacing) * spacing
+
+                        string strikeStr = formatOPRAStrike(center)
+                        string etfCall   = cleanRoot + dateStr + C_CONTRACT_SIDE_CALL + strikeStr
+                        string etfPut    = cleanRoot + dateStr + C_CONTRACT_SIDE_PUT  + strikeStr
+                        
+                        float cC = getValidContractCost(etfCall, isClose)
+                        float pC = getValidContractCost(etfPut, isClose)
+
+                        if iDebug
+                            log.info("Probing fallback symbol: " + etfCall + " | spacing=" + str.tostring(spacing))
+
+                        if not na(cC) and not na(pC)
+                            validCallCost  := cC
+                            validPutCost   := pC
+                            selectedStrike := center
+                            chosenSpacing  := spacing
+                            finalCallSym   := etfCall
+                            finalPutSym    := etfPut
 
     opts.strike := chosenSpacing
-    [selectedStrike, validCallCost, validPutCost, finalCallSym, finalPutSym]
+    [selectedStrike, validCallCost, validPutCost, finalCallSym, finalPutSym, forceETFConv]
 
 calcEM(bool isClose, OptionsData opts, string underlyingSym, bool useETFConv) =>
     float etfAnchor = getContractCost(underlyingSym, isClose)
@@ -474,27 +1043,35 @@ calcEM(bool isClose, OptionsData opts, string underlyingSym, bool useETFConv) =>
     if useETFConv
         float fut = getContractCost(syminfo.ticker, true)
         r := fut / etfAnchor
-        
-    // Round to nearest dynamic strike interval
-    [center, callCost, putCost, atmCall, atmPut] = getAtmWithFallback(underlyingSym, etfAnchor, opts, isClose)    
-    
+
     float futAnchor = etfAnchor
     if syminfo.type == "futures"
         futAnchor := math.round_to_mintick(getContractCost(syminfo.ticker, isClose))
-        
+
+    [center, callCost, putCost, atmCall, atmPut, forceETF] = getAtmWithFallback(underlyingSym, etfAnchor, opts, isClose)
+
+    // If the ETF proxy fallback was used but useETFConv wasn't set, compute r now
+    if forceETF and not useETFConv and syminfo.type == "futures"
+        string etfProxy = getETFProxyRoot(syminfo.ticker)
+        if str.length(etfProxy) > 0
+            float etfPx = getContractCost(etfProxy, isClose)
+            float futPx = getContractCost(syminfo.ticker, isClose)
+            if not na(etfPx) and etfPx > 0
+                r := futPx / etfPx
+
     float em = na
     if not na(callCost) and not na(putCost)
-        em := useETFConv ? math.round_to_mintick((callCost + putCost) * r) : math.round_to_mintick(callCost + putCost)
+        bool isDirectFuturesOption = str.contains(atmCall, "CME_MINI") or str.contains(atmCall, "CBOT_MINI") or str.contains(atmCall, "COMEX") or str.contains(atmCall, "NYMEX")
+        bool needsScaling = (useETFConv and not isDirectFuturesOption) or forceETF
+        em := needsScaling ? math.round_to_mintick((callCost + putCost) * r) : math.round_to_mintick(callCost + putCost)
         
     if iDebug
         log.info("EM [" + (isClose ? "CLOSE" : "OPEN") + "] " +
-             "anchor=" + str.tostring(futAnchor) +
-             " ratio=" + str.tostring(r) +
+             "Source=" + atmCall +
+             " anchor=" + str.tostring(futAnchor) +
              " strike=" + str.tostring(center) +
-             " call=" + atmCall + "@" + str.tostring(callCost) +
-             " put="  + atmPut  + "@" + str.tostring(putCost) +
-             " etfEM=" + str.tostring(callCost + putCost) +
              " finalEM=" + str.tostring(em))
+             
     [futAnchor, em]
 
 // { logic
@@ -505,6 +1082,16 @@ var string equity_ref = str.contains(syminfo.ticker, "NQ")  ? "QQQ" :
                          str.contains(syminfo.ticker, "ES")  ? "SPY" : 
                          str.contains(syminfo.ticker, "YM")  ? "DIA" : 
                          str.contains(syminfo.ticker, "RTY") ? "IWM" : 
+                         str.contains(syminfo.ticker, "GC")  ? "GLD" :
+                         str.contains(syminfo.ticker, "CL")  ? "USO" :
+                         str.contains(syminfo.ticker, "NG")  ? "UNG" :
+                         str.contains(syminfo.ticker, "ZB")  ? "TLT" :
+                         str.contains(syminfo.ticker, "6E")  ? "FXE" :
+                         str.contains(syminfo.ticker, "6B")  ? "FXB" :
+                         str.contains(syminfo.ticker, "6J")  ? "FXY" :
+                         str.contains(syminfo.ticker, "6S")  ? "FXF" :
+                         str.contains(syminfo.ticker, "6A")  ? "FXA" :
+                         str.contains(syminfo.ticker, "6C")  ? "FXC" :
                          str.contains(syminfo.ticker, "SPX") ? "AMEX:SPY" : syminfo.ticker
 
 // Request the exact RTH session states from the underlying equity index
@@ -539,21 +1126,40 @@ var OptionsData current_symbol_options = OptionsData.new(syminfo.ticker, 1)
 if barstate.isfirst
     current_symbol_options.optionsSymbol := syminfo.ticker
     
-    // Default strike spacing
-    current_symbol_options.strike := 1.0
+    // --- NQ / MNQ Futures Mapping ---
+    if str.contains(syminfo.ticker, "NQ") or str.contains(syminfo.ticker, "MNQ")
+        useETFConv := iOptionSource != SOURCE_FUTURES
+        
+        if iOptionSource == SOURCE_INDEX
+            underlyingSym := "NDX"
+            current_symbol_options.optionsSymbol := "NDXP"
+            current_symbol_options.strike := 25.0
+        else if iOptionSource == SOURCE_ETF
+            underlyingSym := "QQQ"
+            current_symbol_options.optionsSymbol := "QQQ"
+            current_symbol_options.strike := 1.0
+        else // SOURCE_FUTURES
+            underlyingSym := syminfo.ticker
+            current_symbol_options.optionsSymbol := syminfo.ticker
+            current_symbol_options.strike := 10.0
 
-    if str.contains(syminfo.ticker, "NQ")       
-        underlyingSym := "QQQ"
-        current_symbol_options.optionsSymbol := "QQQ"
-        current_symbol_options.strike := 1.0
-        useETFConv := true
+    // --- ES / MES Futures Mapping ---
+    else if str.contains(syminfo.ticker, "ES") or str.contains(syminfo.ticker, "MES")
+        useETFConv := iOptionSource != SOURCE_FUTURES
         
-    else if str.contains(syminfo.ticker, "ES") 
-        underlyingSym := useSPX ? 'CBOE:SPX' : "SPY"
-        current_symbol_options.optionsSymbol := useSPX ? 'SPXW' : "SPY"
-        current_symbol_options.strike := useSPX ? 5.0 : 1.0
-        useETFConv := not useSPX
-        
+        if iOptionSource == SOURCE_INDEX
+            underlyingSym := "CBOE:SPX"
+            current_symbol_options.optionsSymbol := "SPXW"
+            current_symbol_options.strike := 5.0
+        else if iOptionSource == SOURCE_ETF
+            underlyingSym := "SPY"
+            current_symbol_options.optionsSymbol := "SPY"
+            current_symbol_options.strike := 1.0
+        else // SOURCE_FUTURES
+            underlyingSym := syminfo.ticker
+            current_symbol_options.optionsSymbol := syminfo.ticker
+            current_symbol_options.strike := 5.0
+
     else if str.contains(syminfo.ticker, "NDX")
         underlyingSym := "NDX"
         current_symbol_options.optionsSymbol := "NDXP"
@@ -564,23 +1170,72 @@ if barstate.isfirst
         current_symbol_options.optionsSymbol := "SPXW"
         current_symbol_options.strike := 5.0
         
-    else if str.contains(syminfo.ticker, "YM")  
-        underlyingSym := 'DIA'
-        current_symbol_options.optionsSymbol := 'DIA'
-        current_symbol_options.strike := 1.0
-        useETFConv := true
+    else if str.contains(syminfo.ticker, "YM") or str.contains(syminfo.ticker, "MYM")
+        useETFConv := iOptionSource != SOURCE_FUTURES
+
+        if iOptionSource == SOURCE_ETF
+            underlyingSym := "DIA"
+            current_symbol_options.optionsSymbol := "DIA"
+            current_symbol_options.strike := 1.0
+        else // SOURCE_FUTURES
+            underlyingSym := syminfo.ticker
+            current_symbol_options.optionsSymbol := syminfo.ticker
+            current_symbol_options.strike := 50.0
+
+    else if (str.contains(syminfo.ticker, "RTY") or str.contains(syminfo.ticker, "M2K") ) 
+        useETFConv := iOptionSource != SOURCE_FUTURES
         
-    else if str.contains(syminfo.ticker, "RTY") or str.contains(syminfo.ticker, "M2K")  
-        underlyingSym := 'IWM'
-        current_symbol_options.optionsSymbol := 'IWM'
+        if iOptionSource == SOURCE_ETF
+            underlyingSym := "IWM"
+            current_symbol_options.optionsSymbol := "IWM"
+            current_symbol_options.strike := 1.0
+        else // SOURCE_FUTURES
+            underlyingSym := syminfo.ticker
+            current_symbol_options.optionsSymbol := syminfo.ticker
+            current_symbol_options.strike := 5.0
+
+    // --- GC / MGC (Gold) Futures Mapping --- futures-direct only, no ETF proxy
+    else if str.contains(syminfo.ticker, "GC") or str.contains(syminfo.ticker, "MGC")
+        useETFConv := false
+        underlyingSym := syminfo.ticker
+        current_symbol_options.optionsSymbol := syminfo.ticker
+        current_symbol_options.strike := 5.0
+
+    // --- CL (Crude Oil) Futures Mapping --- futures-direct only, no ETF proxy
+    else if str.contains(syminfo.ticker, "CL") or str.contains(syminfo.ticker, "MCL")
+        useETFConv := false
+        underlyingSym := syminfo.ticker
+        current_symbol_options.optionsSymbol := syminfo.ticker
+        current_symbol_options.strike := 0.5
+
+    // --- NG / MNG (Natural Gas) Futures Mapping --- futures-direct only
+    else if str.contains(syminfo.ticker, "NG") or str.contains(syminfo.ticker, "MNG")
+        useETFConv := false
+        underlyingSym := syminfo.ticker
+        current_symbol_options.optionsSymbol := syminfo.ticker
+        current_symbol_options.strike := 0.1
+
+    // --- ZB (30-year Treasury Bond) Futures Mapping --- futures-direct only
+    else if str.contains(syminfo.ticker, "ZB")
+        useETFConv := false
+        underlyingSym := syminfo.ticker
+        current_symbol_options.optionsSymbol := syminfo.ticker
         current_symbol_options.strike := 1.0
-        useETFConv := true
+
+    // --- CME Currency Futures (6E/6B/6J/6S/6A/6C) --- futures-direct only, 0DTE
+    else if str.contains(syminfo.ticker, "6E") or str.contains(syminfo.ticker, "M6E") or
+         str.contains(syminfo.ticker, "6B") or str.contains(syminfo.ticker, "M6B") or
+         str.contains(syminfo.ticker, "6J") or str.contains(syminfo.ticker, "M6J") or
+         str.contains(syminfo.ticker, "6S") or str.contains(syminfo.ticker, "M6S") or
+         str.contains(syminfo.ticker, "6A") or str.contains(syminfo.ticker, "M6A") or
+         str.contains(syminfo.ticker, "6C") or str.contains(syminfo.ticker, "M6C")
+        useETFConv := false
+        underlyingSym := syminfo.ticker
+        current_symbol_options.optionsSymbol := syminfo.ticker
+        current_symbol_options.strike := str.contains(syminfo.ticker, "6E") or str.contains(syminfo.ticker, "M6E") ? 0.005 : 0.0001
 
     else if  str.contains(syminfo.ticker, "VIX") 
         current_symbol_options.strike := 2.5
-        
-    //else if str.contains(syminfo.ticker, "AAPL") or str.contains(syminfo.ticker, "NFLX") or str.contains(syminfo.ticker, "AMZN") or str.contains(syminfo.ticker, "COIN") or str.contains(syminfo.ticker, "BA") or str.contains(syminfo.ticker, "QCOM") or str.contains(syminfo.ticker, "GOOG")
-    //    current_symbol_options.strike := 5.0
         
     else if str.contains(syminfo.ticker, "NIO") or str.contains(syminfo.ticker, "BILI") 
         current_symbol_options.strike := 0.5
@@ -631,11 +1286,9 @@ if barstate.islast and iTable
     
     if daily.size() > 0
         DailyEM d = daily.first()
-        //tableRow(1, "OPEN", str.tostring(d.EM), str.tostring(d.price + d.EM), str.tostring(d.price - d.EM))
         tableRow(1, "OPEN",  str.tostring(d.price), str.tostring(d.EM), str.tostring(d.price + d.EM), str.tostring(d.price - d.EM))
     if dailyClose.size() > 0
         DailyEM c = dailyClose.first()
-        //tableRow(2, "CLOSE", str.tostring(c.EM), str.tostring(c.price + c.EM), str.tostring(c.price - c.EM))
         tableRow(2, "CLOSE", str.tostring(c.price), str.tostring(c.EM), str.tostring(c.price + c.EM), str.tostring(c.price - c.EM))
                 
 // } Table
