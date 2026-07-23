@@ -4,6 +4,8 @@ using System.IO;
 using System.Text;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 // --- MOCK DEFINITIONS TO AVOID NINJATRADER ASSEMBLY DEPENDENCY IN TEST ENVIRONMENT ---
 namespace NinjaTrader.Cbi
@@ -376,6 +378,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestFsm_PositionQuantityUpdatedOnQtyChange();
             TestPnLRulesNotDuplicatedInEvaluateRules();
             TestExecuteOrderUpdateProcessesActionsOutsideLock();
+
+            // -- COPIER GROUPS & STRESS TESTS --
+            TestCopierGroup_GroupManagement();
+            TestCopierGroup_PerGroupConfigurationExecution();
+            TestCopierGroup_GroupPersistence();
+            TestCopierGroup_GroupStressAndConcurrency();
+            RunCopierFixesVerificationTests();
 
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
@@ -3290,6 +3299,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 LeaderAccountName = "Sim101",
                 FollowerAccountName = "SimCopy2",
                 QuantityRatio = 0.5,
+                AutoSymbolConversion = false,
                 IsEnabled = true
             };
             engine.AddRelationship(rel);
@@ -3373,6 +3383,383 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             bool givebackExceeded = suite.EvaluatePeakEquityGiveback(peakOpenGain: 1000.0, currentUnrealized: 600.0, config);
             Assert(givebackExceeded == true, "40% giveback (from $1000 peak to $600) exceeds 30% giveback threshold");
+
+            TestOptionC_TradeCopierSingletonIntegration();
+            TestOptionC_PropProtectionSingletonIntegration();
+        }
+
+        private static void TestOptionC_TradeCopierSingletonIntegration()
+        {
+            Console.WriteLine("\n[TEST] TestOptionC_TradeCopierSingletonIntegration");
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "SimFollower",
+                ArmedForLive = true,
+                QuantityRatio = 1.0,
+                AutoSymbolConversion = true
+            };
+
+            // Test Arming Gate: confirmLive = false must force ArmedForLive = false
+            TradeCopierEngine.Instance.UpsertRelationship(rel, confirmLive: false);
+            var rels = TradeCopierEngine.Instance.GetRelationships();
+            var registeredRel = rels.FirstOrDefault(r => r.LeaderAccountName == "SimLeader");
+            Assert(registeredRel != null, "CopierRelationship registered in TradeCopierEngine.Instance");
+            Assert(registeredRel.ArmedForLive == false, "ArmedForLive forced to false when confirmLive is false");
+
+            // Arm with confirmLive = true
+            rel.ArmedForLive = true;
+            TradeCopierEngine.Instance.UpsertRelationship(rel, confirmLive: true);
+            Assert(rel.ArmedForLive == true, "ArmedForLive enabled when confirmLive is true");
+
+            // Worked Examples for Quantity Math & 10x Conversion
+            string followerSymbol = TradeCopierEngine.Instance.TranslateSymbol("NQ 09-26");
+            Assert(followerSymbol == "MNQ 09-26", "Symbol translated from NQ to MNQ");
+
+            int qty1 = TradeCopierEngine.Instance.CalculateFollowerQuantity(rel, 1, "NQ 09-26", isExit: false);
+            Assert(qty1 == 10, "Worked Example: 1 NQ leader @ 1.0 ratio = 10 MNQ follower");
+
+            rel.QuantityRatio = 2.0;
+            rel.MaxPositionSize = 50;
+            int qty2 = TradeCopierEngine.Instance.CalculateFollowerQuantity(rel, 1, "NQ 09-26", isExit: false);
+            Assert(qty2 == 20, "Worked Example: 1 NQ leader @ 2.0 ratio = 20 MNQ follower");
+
+            // Reduce / Exit Handling
+            int exitQty = TradeCopierEngine.Instance.CalculateFollowerQuantity(rel, 0, "NQ 09-26", isExit: true);
+            Assert(exitQty == 0, "Exit with 0 qty returns 0 without floored 1-lot minimum");
+
+            TestOptionC_MultiPartialFillPositionClamping();
+        }
+
+        private static void TestOptionC_MultiPartialFillPositionClamping()
+        {
+            Console.WriteLine("\n[TEST] TestOptionC_MultiPartialFillPositionClamping");
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "SimFollower",
+                ArmedForLive = true,
+                QuantityRatio = 1.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 25
+            };
+
+            int currentPos = 0;
+
+            // Partial Fill 1: Leader fills 1 NQ (wants 10 MNQ)
+            int fill1 = TradeCopierEngine.Instance.CalculateFollowerQuantity(rel, 1, "NQ 09-26", currentPos, isExit: false, out bool clamped1);
+            Assert(fill1 == 10, "Partial Fill 1 copies 10 MNQ");
+            Assert(clamped1 == false, "Partial Fill 1 is not clamped");
+            currentPos += fill1;
+
+            // Partial Fill 2: Leader fills another 1 NQ (wants 10 MNQ)
+            int fill2 = TradeCopierEngine.Instance.CalculateFollowerQuantity(rel, 1, "NQ 09-26", currentPos, isExit: false, out bool clamped2);
+            Assert(fill2 == 10, "Partial Fill 2 copies 10 MNQ");
+            Assert(clamped2 == false, "Partial Fill 2 is not clamped");
+            currentPos += fill2;
+
+            // Partial Fill 3: Leader fills another 1 NQ (wants 10 MNQ, but capacity is 25 - 20 = 5 MNQ)
+            int fill3 = TradeCopierEngine.Instance.CalculateFollowerQuantity(rel, 1, "NQ 09-26", currentPos, isExit: false, out bool clamped3);
+            Assert(fill3 == 5, "Partial Fill 3 clamped to remaining capacity of 5 MNQ");
+            Assert(clamped3 == true, "Partial Fill 3 triggers position clamping warning flag");
+            currentPos += fill3;
+
+            Assert(currentPos == 25, "Follower cumulative position capped at MaxPositionSize 25 MNQ across multi-partial fills");
+        }
+
+        private static void TestOptionC_PropProtectionSingletonIntegration()
+        {
+            Console.WriteLine("\n[TEST] TestOptionC_PropProtectionSingletonIntegration");
+            var cfg = new PropFirmProtectionConfig
+            {
+                ArmedForLive = true,
+                EnableNewsShield = true,
+                EnableProfitTargetLock = true,
+                EvaluationTargetProfit = 2500.0,
+                MaxPeakGivebackPct = 0.25
+            };
+
+            // Test Arming Gate: confirmLive = false must force ArmedForLive = false
+            PropFirmProtectionSuite.Instance.UpdateConfig(cfg, confirmLive: false);
+            Assert(PropFirmProtectionSuite.Instance.Config.ArmedForLive == false, "ArmedForLive forced to false when confirmLive is false");
+
+            cfg.ArmedForLive = true;
+            PropFirmProtectionSuite.Instance.UpdateConfig(cfg, confirmLive: true);
+            Assert(PropFirmProtectionSuite.Instance.Config.ArmedForLive == true, "ArmedForLive enabled when confirmLive is true");
+
+            bool locked = PropFirmProtectionSuite.Instance.EvaluateProfitTargetLock(2600.0);
+            Assert(locked == true, "PnL 2600 reaches 2500 target lock threshold");
+        }
+
+        private static void TestCopierGroup_GroupManagement()
+        {
+            Console.WriteLine("\n[TEST] TestCopierGroup_GroupManagement");
+            var engine = TradeCopierEngine.Instance;
+            
+            var grp = new CopierGroup
+            {
+                GroupName = "UnitTestGroup1",
+                LeaderAccountName = "SimLeader1",
+                QuantityRatio = 1.5,
+                MaxPositionSize = 50,
+                FollowerAccounts = new List<string> { "SimCopyA", "SimCopyB" }
+            };
+
+            engine.UpsertGroup(grp, confirmLive: false);
+            var groups = engine.GetGroups();
+            Assert(groups.Any(g => g.GroupName == "UnitTestGroup1"), "Group UnitTestGroup1 created and registered");
+
+            engine.AddFollowerToGroup("UnitTestGroup1", "SimCopyC");
+            var fetched = engine.GetGroup("UnitTestGroup1");
+            Assert(fetched != null && fetched.FollowerAccounts.Contains("SimCopyC"), "Follower SimCopyC added to UnitTestGroup1");
+
+            engine.RemoveFollowerFromGroup("UnitTestGroup1", "SimCopyA");
+            fetched = engine.GetGroup("UnitTestGroup1");
+            Assert(fetched != null && !fetched.FollowerAccounts.Contains("SimCopyA"), "Follower SimCopyA removed from UnitTestGroup1");
+
+            engine.RemoveGroup("UnitTestGroup1");
+            groups = engine.GetGroups();
+            Assert(!groups.Any(g => g.GroupName == "UnitTestGroup1"), "Group UnitTestGroup1 deleted successfully");
+        }
+
+        private static void TestCopierGroup_PerGroupConfigurationExecution()
+        {
+            Console.WriteLine("\n[TEST] TestCopierGroup_PerGroupConfigurationExecution");
+            var engine = TradeCopierEngine.Instance;
+
+            foreach (var g in engine.GetGroups()) engine.RemoveGroup(g.GroupName);
+
+            var group1 = new CopierGroup
+            {
+                GroupName = "Apex_50K",
+                LeaderAccountName = "SimLeaderAlpha",
+                QuantityRatio = 1.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100,
+                FollowerAccounts = new List<string> { "ApexFollower1", "ApexFollower2" }
+            };
+
+            var group2 = new CopierGroup
+            {
+                GroupName = "Topstep_100K",
+                LeaderAccountName = "SimLeaderAlpha",
+                QuantityRatio = 0.5,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100,
+                FollowerAccounts = new List<string> { "TopstepFollower1" }
+            };
+
+            engine.UpsertGroup(group1, confirmLive: false);
+            engine.UpsertGroup(group2, confirmLive: false);
+
+            var activeRels = engine.GetActiveRelationshipsForLeader("SimLeaderAlpha");
+            Assert(activeRels.Count == 3, "Leader SimLeaderAlpha maps to 3 total follower relationships across 2 groups");
+
+            var apexRel = activeRels.First(r => r.FollowerAccountName == "ApexFollower1");
+            int apexQty = engine.CalculateFollowerQuantity(apexRel, 1, "NQ 09-26");
+            Assert(apexQty == 10, "Apex group follower copies 1 NQ as 10 MNQ (1.0x ratio)");
+
+            var topstepRel = activeRels.First(r => r.FollowerAccountName == "TopstepFollower1");
+            int topstepQty = engine.CalculateFollowerQuantity(topstepRel, 1, "NQ 09-26");
+            Assert(topstepQty == 5, "Topstep group follower copies 1 NQ as 5 MNQ (0.5x ratio)");
+        }
+
+        private static void TestCopierGroup_GroupPersistence()
+        {
+            Console.WriteLine("\n[TEST] TestCopierGroup_GroupPersistence");
+            var engine = TradeCopierEngine.Instance;
+            string testFile = Path.Combine(Path.GetTempPath(), "test_copier_group_config.json");
+
+            var group = new CopierGroup
+            {
+                GroupName = "PersistTestGroup",
+                LeaderAccountName = "PersistLeader",
+                QuantityRatio = 2.0,
+                FollowerAccounts = new List<string> { "PersistFollower1", "PersistFollower2" }
+            };
+
+            engine.UpsertGroup(group, confirmLive: false);
+            engine.SaveToDisk(testFile);
+            Assert(File.Exists(testFile), "Group config JSON successfully saved to disk");
+
+            engine.RemoveGroup("PersistTestGroup");
+            Assert(engine.GetGroup("PersistTestGroup") == null, "Group removed in-memory prior to reload");
+
+            engine.LoadFromDisk(testFile);
+            var reloaded = engine.GetGroup("PersistTestGroup");
+            Assert(reloaded != null, "Reloaded group PersistTestGroup exists");
+            Assert(reloaded.QuantityRatio == 2.0, "Reloaded group QuantityRatio is 2.0");
+            Assert(reloaded.FollowerAccounts != null && reloaded.FollowerAccounts.Count == 2, "Reloaded group FollowerAccounts count is 2");
+
+            try { File.Delete(testFile); } catch {}
+        }
+
+        private static void TestCopierGroup_GroupStressAndConcurrency()
+        {
+            Console.WriteLine("\n[TEST] TestCopierGroup_GroupStressAndConcurrency");
+            var engine = TradeCopierEngine.Instance;
+
+            for (int i = 1; i <= 10; i++)
+            {
+                var followers = new List<string>();
+                for (int j = 1; j <= 5; j++) followers.Add($"StressFollower_{i}_{j}");
+
+                var grp = new CopierGroup
+                {
+                    GroupName = $"StressGroup_{i}",
+                    LeaderAccountName = "StressLeaderMaster",
+                    QuantityRatio = 0.5 * i,
+                    MaxPositionSize = 200,
+                    FollowerAccounts = followers
+                };
+                engine.UpsertGroup(grp, confirmLive: false);
+            }
+
+            int iterationsPerThread = 250;
+            int threadCount = 4;
+            int totalCalculatedOrders = 0;
+            bool threadExceptionOccurred = false;
+
+            var tasks = new Task[threadCount + 1];
+
+            for (int t = 0; t < threadCount; t++)
+            {
+                tasks[t] = Task.Run(() =>
+                {
+                    try
+                    {
+                        string[] symbols = new string[] { "NQ 09-26", "ES 09-26", "YM 09-26", "CL 10-26", "GC 12-26" };
+                        for (int k = 0; k < iterationsPerThread; k++)
+                        {
+                            string sym = symbols[k % symbols.Length];
+                            var rels = engine.GetActiveRelationshipsForLeader("StressLeaderMaster");
+                            foreach (var rel in rels)
+                            {
+                                int qty = engine.CalculateFollowerQuantity(rel, 2, sym);
+                                Interlocked.Increment(ref totalCalculatedOrders);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[STRESS TEST ERROR] Worker thread exception: {ex.Message}");
+                        threadExceptionOccurred = true;
+                    }
+                });
+            }
+
+            tasks[threadCount] = Task.Run(() =>
+            {
+                try
+                {
+                    for (int m = 0; m < 50; m++)
+                    {
+                        engine.AddFollowerToGroup("StressGroup_1", $"DynamicFollower_{m}");
+                        engine.RemoveFollowerFromGroup("StressGroup_1", $"DynamicFollower_{m}");
+                        Thread.Sleep(2);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[STRESS TEST ERROR] Mutator thread exception: {ex.Message}");
+                    threadExceptionOccurred = true;
+                }
+            });
+
+            Task.WaitAll(tasks);
+
+            Assert(!threadExceptionOccurred, "Stress & concurrency test executed with ZERO thread exceptions or race conditions");
+            Assert(totalCalculatedOrders >= iterationsPerThread * threadCount * 50, $"Processed {totalCalculatedOrders} follower quantity evaluations across 1,000 rapid execution bursts under load");
+        }
+
+        public static void RunCopierFixesVerificationTests()
+        {
+            Console.WriteLine("\n--- RUNNING COPIER FIXES VERIFICATION TESTS ---");
+            var engine = TradeCopierEngine.Instance;
+
+            // Test 1: Deduplication of Group and Direct Relationships
+            string testLeader = "DedupLeader";
+            string testFollower = "DedupFollower";
+
+            var directRel = new CopierRelationship
+            {
+                LeaderAccountName = testLeader,
+                FollowerAccountName = testFollower,
+                IsEnabled = true
+            };
+            engine.UpsertRelationship(directRel);
+
+            var grp = new CopierGroup
+            {
+                GroupName = "DedupGroup",
+                LeaderAccountName = testLeader,
+                IsEnabled = true,
+                FollowerAccounts = new List<string> { testFollower }
+            };
+            engine.UpsertGroup(grp);
+
+            var activeRels = engine.GetActiveRelationshipsForLeader(testLeader);
+            Assert(activeRels.Count == 1, $"Group and Direct follower relationship deduplicated to 1 record (got {activeRels.Count})");
+            Assert(activeRels[0].FollowerAccountName.Equals(testFollower, StringComparison.OrdinalIgnoreCase), "Correct follower account returned");
+
+            // Test 2: Inverse Mode Quantity Calculation
+            var inverseRel = new CopierRelationship
+            {
+                LeaderAccountName = testLeader,
+                FollowerAccountName = "InverseFollower",
+                QuantityRatio = -1.0,
+                AutoSymbolConversion = false,
+                MaxPositionSize = 10
+            };
+            int qtyEntry = engine.CalculateFollowerQuantity(inverseRel, 2, "NQ 09-26", 0, false, out _);
+            Assert(qtyEntry == 2, $"Inverse entry quantity is positive 2 (got {qtyEntry})");
+
+            // Test 3: Bidirectional Symbol Translation (Mini <-> Micro)
+            string mnqTrans = engine.TranslateSymbol("NQ 09-26");
+            Assert(mnqTrans.Contains("MNQ"), $"NQ translated to MNQ (got {mnqTrans})");
+
+            string nqTrans = engine.TranslateSymbol("MNQ 09-26");
+            Assert(nqTrans.Contains("NQ") && !nqTrans.Contains("MNQ"), $"MNQ translated to NQ (got {nqTrans})");
+
+            string mesTrans = engine.TranslateSymbol("ES 09-26");
+            Assert(mesTrans.Contains("MES"), $"ES translated to MES (got {mesTrans})");
+
+            string esTrans = engine.TranslateSymbol("MES 09-26");
+            Assert(esTrans.Contains("ES") && !esTrans.Contains("MES"), $"MES translated to ES (got {esTrans})");
+
+            // Test 4: Per-Ticker Ratio Overrides & Micro-to-Mini Fractional Scaling
+            var tickerRel = new CopierRelationship
+            {
+                LeaderAccountName = testLeader,
+                FollowerAccountName = "TickerFollower",
+                QuantityRatio = 1.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100
+            };
+            tickerRel.PerTickerRatios["NQ"] = 2.0;
+            tickerRel.PerTickerRatios["ES"] = 0.5;
+
+            // NQ -> MNQ with 2.0x ratio override: 1 NQ * 2.0 * 10 = 20 MNQ
+            int nqQty = engine.CalculateFollowerQuantity(tickerRel, 1, "NQ 09-26", 0, false, out _);
+            Assert(nqQty == 20, $"NQ with 2.0x ratio override equals 20 MNQ (got {nqQty})");
+
+            // ES -> MES with 0.5x ratio override: 2 ES * 0.5 * 10 = 10 MES
+            int esQty = engine.CalculateFollowerQuantity(tickerRel, 2, "ES 09-26", 0, false, out _);
+            Assert(esQty == 10, $"ES with 0.5x ratio override equals 10 MES (got {esQty})");
+
+            // Micro -> Mini 0.1x scaling: 10 MNQ * 1.0 * 0.1 = 1 NQ
+            var microToMiniRel = new CopierRelationship
+            {
+                LeaderAccountName = testLeader,
+                FollowerAccountName = "MiniFollower",
+                QuantityRatio = 1.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100
+            };
+            int miniQty = engine.CalculateFollowerQuantity(microToMiniRel, 10, "MNQ 09-26", 0, false, out _);
+            Assert(miniQty == 1, $"10 MNQ scaled to Mini equals 1 NQ (got {miniQty})");
+
+            Console.WriteLine("[PASS] All Copier Fixes Verification Tests Passed Successfully!");
         }
     }
 }

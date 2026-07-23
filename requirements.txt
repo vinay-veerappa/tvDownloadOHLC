@@ -12,3 +12,4 @@ orjson
 requests
 apscheduler>=3.10,<4
 fastmcp
+notebooklm-mcp-cli

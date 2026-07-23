@@ -102,6 +102,8 @@ token.json
 credentials.json
 c7.json
 discord_webhooks.json
+.notebooklm-mcp-cli/
+*.notebooklm-mcp*
 tmp/
 
 # Ignore dynamic runtime state files

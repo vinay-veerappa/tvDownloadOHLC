@@ -31,6 +31,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 {
     public class RiskGuardAddOn : AddOnBase
     {
+        public static RiskGuardAddOn Instance { get; private set; }
         public const string Version = "1.1.0";
         public object StateLock => _stateLock;
         public RiskConfig Config => _config;
@@ -186,7 +187,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         private DateTime _lastHeartbeatTime = DateTime.MinValue;
         private bool _stateDirty = false;
 
-        public static RiskGuardAddOn Instance { get; private set; }
         private Timer _safetyTimer;
         private readonly object _stateLock = new object();
         private bool _isArmed = true;
@@ -671,7 +671,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 foreach (Account account in Account.All)
                 {
                     SubscribeToAccount(account);
-                    if (e.Status == ConnectionStatus.Connected)
+                    if (e.Status.ToString() == "Connected")
                     {
                         foreach (Position pos in account.Positions)
                         {
@@ -1008,6 +1008,51 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (_config.PnLRules.LockoutMinutes > 0)
                         stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.PnLRules.LockoutMinutes);
                     _stateDirty = true;
+                }
+            }
+
+            // Prop Firm Protection Suite Integrations (News Shield, Target Profit Lock, Peak Giveback)
+            var propSuite = PropFirmProtectionSuite.Instance;
+            if (propSuite != null && propSuite.Config != null)
+            {
+                if (propSuite.Config.EnableNewsShield && propSuite.IsInNewsWindow(DateTime.UtcNow, propSuite.Config.NewsBufferMinutesBefore, propSuite.Config.NewsBufferMinutesAfter))
+                {
+                    actions.Add(new GuardAction
+                    {
+                        AccountName = stateModel.AccountName,
+                        ActionType = GuardActionType.FlattenPosition,
+                        RuleId = "NEWS_SHIELD_LOCKOUT"
+                    });
+                    if (!stateModel.IsLockedOut)
+                    {
+                        stateModel.IsLockedOut = true;
+                        _stateDirty = true;
+                    }
+                }
+
+                if (propSuite.EvaluateProfitTargetLock(stateModel.RealizedPnL, propSuite.Config))
+                {
+                    actions.Add(new GuardAction
+                    {
+                        AccountName = stateModel.AccountName,
+                        ActionType = GuardActionType.FlattenPosition,
+                        RuleId = "EVALUATION_TARGET_REACHED"
+                    });
+                    if (!stateModel.IsLockedOut)
+                    {
+                        stateModel.IsLockedOut = true;
+                        _stateDirty = true;
+                    }
+                }
+
+                if (propSuite.EvaluatePeakEquityGiveback(stateModel.PeakEquity, stateModel.UnrealizedPnL, propSuite.Config))
+                {
+                    actions.Add(new GuardAction
+                    {
+                        AccountName = stateModel.AccountName,
+                        ActionType = GuardActionType.FlattenPosition,
+                        RuleId = "PEAK_GIVEBACK_BREACH"
+                    });
                 }
             }
 
@@ -3326,6 +3371,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             configTab.Content = editorScroll;
             tabControl.Items.Add(configTab);
+
+            // TAB 3: TRADE COPIER & GROUP MANAGER
+            var copierTab = new TabItem
+            {
+                Header = "Trade Copier & Group Manager",
+                Background = new SolidColorBrush(Color.FromRgb(45, 45, 48)),
+                Foreground = Brushes.White
+            };
+            copierTab.Content = new TradeCopierControl();
+            tabControl.Items.Add(copierTab);
 
             Grid.SetRow(tabControl, 1);
             mainGrid.Children.Add(tabControl);
