@@ -44,6 +44,10 @@ def run_git_cmd(args: List[str]) -> Tuple[int, str]:
         return 1, str(e)
 
 
+def normalize_path(p: str) -> str:
+    return p.replace("\\", "/").strip("/").lower()
+
+
 def get_changed_files(target_files: Optional[List[str]] = None) -> List[Tuple[str, str]]:
     """Returns list of tuples: (status_code, file_path)."""
     code, out = run_git_cmd(["status", "--porcelain"])
@@ -51,16 +55,17 @@ def get_changed_files(target_files: Optional[List[str]] = None) -> List[Tuple[st
         return []
     
     changed = []
-    target_set = set(target_files) if target_files else None
+    target_norm = [normalize_path(t) for t in target_files] if target_files else None
 
     for line in out.splitlines():
         if len(line) < 3:
             continue
         status = line[:2].strip()
         fpath = line[2:].strip().strip('"')
+        fpath_norm = normalize_path(fpath)
         
         # Filter target files if specified
-        if target_set and not any(t in fpath for t in target_set):
+        if target_norm and not any(t in fpath_norm or fpath_norm in t for t in target_norm):
             continue
 
         # Check ignores
