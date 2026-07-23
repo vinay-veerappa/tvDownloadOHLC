@@ -90,8 +90,22 @@ links = link_candidates_to_units(candidates)  # {unit_id: [candidate_id, ...]}
 | bias | MMXM Simple, TTrades Mechanical, Midnight Open Filter |
 | projections | SD Projections |
 
-## Phase 4 Integration (next)
+## Phase 4 Integration
 
-- `backtest_loop.py`: candidate → `STRATEGY_FACTORY_REGISTRY` → backtest → results
-- Write back: `candidate.epistemic_status`, `unit.metadata.linked_stat_ids`
-- Integration with `PropFirmSimulator` (ADR-021)
+- `backtest_loop.py`: candidate → `STRATEGY_FACTORY_REGISTRY` → signals →
+  `VectorizedBacktester` → `PropFirmSimulator` → `BacktestResult`
+- `apply_backtest_results()`: auto-updates candidate.status + epistemic_status
+- JSON export/import for machine-readable results
+- ADR-021: Uses ONLY `PropFirmSimulator` for prop firm viability
+
+```python
+from scripts.knowledge_bridge import BacktestLoop, export_backtest_results
+
+loop = BacktestLoop(ticker="NQ1")
+result = loop.run_candidate(candidate)
+print(f"Passed: {result.passed}, Grade: {result.grade}")
+for p in result.profiles:
+    print(f"  {p.profile_name}: MC pass={p.mc_pass_rate_pct:.1f}% grade={p.mc_grade}")
+
+export_backtest_results([result], "data/knowledge/backtest_results.json")
+```

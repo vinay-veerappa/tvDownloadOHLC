@@ -38,5 +38,15 @@ from .candidate_export import (
     filter_by_session,
     summary_stats,
 )
+from .backtest_loop import (
+    BacktestLoop,
+    BacktestResult,
+    ProfileResult,
+    run_candidate_backtest,
+    export_backtest_results,
+    load_backtest_results,
+    apply_backtest_results,
+    summarize_results,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
