@@ -88,6 +88,24 @@ function loadMatrixCSV() {
   return { candidates, last_modified: stats.mtime.toISOString() };
 }
 
+async function getDynamicMarketRegime() {
+  try {
+    const pyPath = path.join(REPO_ROOT, '.venv', 'Scripts', 'python.exe');
+    const cmd = `"${pyPath}" -c "import json; from scripts.screener.core.regime import get_market_regime; r=get_market_regime(); print(json.dumps({'status': r.status, 'spy_close': r.spy_close, 'is_macro_high_risk': r.is_macro_high_risk, 'evaluated_at': r.evaluated_at}))"`;
+    const { stdout } = await execAsync(cmd, { cwd: REPO_ROOT, timeout: 5000 });
+    const parsed = JSON.parse(stdout.trim());
+    return parsed;
+  } catch (err) {
+    console.warn('Fallback to default market regime due to evaluation timeout/error:', err);
+    return {
+      status: 'BULL_EXPLOSIVE',
+      spy_close: 500.0,
+      is_macro_high_risk: false,
+      evaluated_at: new Date().toISOString(),
+    };
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const shouldRun = searchParams.get('run') === 'true';
@@ -104,15 +122,11 @@ export async function GET(request: Request) {
   }
 
   const { candidates, last_modified } = loadMatrixCSV();
+  const market_regime = await getDynamicMarketRegime();
 
   return NextResponse.json({
     success: true,
-    market_regime: {
-      status: 'BULL_EXPLOSIVE',
-      spy_close: 742.09,
-      is_macro_high_risk: false,
-      evaluated_at: new Date().toISOString(),
-    },
+    market_regime,
     strategies: STRATEGIES,
     candidates,
     updated_at: last_modified || new Date().toISOString(),

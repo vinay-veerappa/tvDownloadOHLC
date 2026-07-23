@@ -76,14 +76,14 @@ export function AppSidebar() {
             label: "Edgeful Dashboard",
             icon: Beaker,
             href: "/research",
-            active: pathname === "/research" || (pathname?.startsWith("/research/") && pathname !== "/research/screener"),
+            active: pathname === "/research" || (pathname?.startsWith("/research/") && !pathname?.startsWith("/research/screener")),
             badge: "New",
         },
         {
-            label: "Screener",
+            label: "Stock Scanner",
             icon: Layers,
             href: "/research/screener",
-            active: pathname === "/research/screener",
+            active: pathname?.startsWith("/research/screener"),
             badge: "New",
         },
         {

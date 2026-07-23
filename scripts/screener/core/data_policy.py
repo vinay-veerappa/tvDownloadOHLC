@@ -23,10 +23,15 @@ def prepare_price_series(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     # Ensure required columns exist
     for col in ["Open", "High", "Low", "Close", "Volume"]:
         if col not in split_df.columns:
-            raise ValueError(f"Missing required OHLCV column: {col}")
+            if col.lower() in split_df.columns:
+                split_df[col] = split_df[col.lower()]
+            else:
+                raise ValueError(f"Missing required OHLCV column: {col}")
 
     # If yfinance provided Adj Close, use it for total return series
     if "Adj Close" in df.columns:
         tr_df["Close"] = df["Adj Close"]
+    elif "adj_close" in df.columns:
+        tr_df["Close"] = df["adj_close"]
 
     return split_df, tr_df

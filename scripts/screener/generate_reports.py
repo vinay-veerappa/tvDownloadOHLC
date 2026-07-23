@@ -37,7 +37,13 @@ CONFIG_DIR = Path(__file__).resolve().parent / "config"
 OUTPUT_DIR = REPO_ROOT / "reports" / "screener"
 
 
-def generate_screener_reports(limit: int = 100) -> Dict[str, str]:
+from scripts.screener.core.provider import fetch_equity_daily_batch
+
+def generate_screener_reports(
+    limit: int = 100,
+    provider: str = "yfinance",
+    fallback: str = "schwab"
+) -> Dict[str, str]:
     """
     Runs all available YAML strategies against the universe, creates comparison matrix
     and exports TradingView / TOS watchlists.
@@ -60,52 +66,33 @@ def generate_screener_reports(limit: int = 100) -> Dict[str, str]:
     tickers = list(cand_map.keys())
     log.info(f"Building feature matrices for {len(tickers)} universe candidates...")
 
-    # 2. Vectorized Feature Matrix Construction
+    # 2. Vectorized Feature Matrix Construction (via Provider & Local Parquet Cache)
     all_matrices = []
-    if yf is not None and len(tickers) > 0:
-        try:
-            data = yf.download(tickers, period="2y", interval="1d", group_by="ticker", progress=False, threads=True)
-
-            ticker_dfs = {}
-            if len(tickers) == 1:
-                t = tickers[0]
-                if not data.empty:
-                    ticker_dfs[t] = data.dropna()
-            else:
-                for t in tickers:
-                    try:
-                        if hasattr(data.columns, 'levels') and t in data.columns.levels[0]:
-                            df_t = data[t].dropna()
-                            if not df_t.empty and len(df_t) >= 20:
-                                ticker_dfs[t] = df_t
-                    except Exception:
-                        continue
-
-            for t, df in ticker_dfs.items():
-                try:
-                    cand = cand_map.get(t, {})
-                    finviz_float = cand.get("float", 0.0)
-                    float_info = validate_float(finviz_float, None)
-                    
-                    ind_name = cand.get("industry", "")
-                    ind_rs = industry_rs_map.get(ind_name, 50.0)
-                    has_earnings = has_upcoming_earnings(t, window_days=7)
-                    
-                    split_df, tr_df = prepare_price_series(df)
-                    fm = build_feature_matrix(
-                        split_df,
-                        ticker=t,
-                        tr_df=tr_df,
-                        industry_rs_rank=ind_rs,
-                        has_upcoming_earnings=has_earnings,
-                        float_info=float_info
-                    )
-                    if not fm.empty:
-                        all_matrices.append(fm)
-                except Exception as e:
-                    continue
-        except Exception as e:
-            log.error(f"Batch download error: {e}")
+    if len(tickers) > 0:
+        ticker_dfs = fetch_equity_daily_batch(tickers, provider=provider, fallback=fallback)
+        for t, df in ticker_dfs.items():
+            try:
+                cand = cand_map.get(t, {})
+                finviz_float = cand.get("float", 0.0)
+                float_info = validate_float(finviz_float, None)
+                
+                ind_name = cand.get("industry", "")
+                ind_rs = industry_rs_map.get(ind_name, 50.0)
+                has_earnings = has_upcoming_earnings(t, window_days=7)
+                
+                split_df, tr_df = prepare_price_series(df)
+                fm = build_feature_matrix(
+                    split_df,
+                    ticker=t,
+                    tr_df=tr_df,
+                    industry_rs_rank=ind_rs,
+                    has_upcoming_earnings=has_earnings,
+                    float_info=float_info
+                )
+                if not fm.empty:
+                    all_matrices.append(fm)
+            except Exception as e:
+                continue
 
     if not all_matrices:
         log.error("No feature matrices could be constructed.")

@@ -24,6 +24,7 @@ from scripts.screener.core.regime import get_market_regime
 from scripts.screener.core.yaml_evaluator import evaluate_strategy_file
 from scripts.screener.core.industry_rs import calculate_industry_rs
 from scripts.screener.core.float_validator import validate_float
+from scripts.screener.core.provider import fetch_equity_daily_batch
 from scripts.market_data.sync_earnings_calendar import has_upcoming_earnings
 from scripts.screener.tracker.setup_logger import log_setups_to_duckdb
 
@@ -33,10 +34,17 @@ log = logging.getLogger("screener_cli")
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
-def run_screener(strategy_id: str = "qullamaggie_hft", limit: int = 50, log_duckdb: bool = True) -> pd.DataFrame:
+def run_screener(
+    strategy_id: str = "qullamaggie_hft",
+    limit: int = 50,
+    log_duckdb: bool = True,
+    provider: str = "yfinance",
+    fallback: str = "schwab",
+    force_refresh: bool = False
+) -> pd.DataFrame:
     """
     Full pipeline runner:
-    Regime Gatekeeper -> Finviz Funnel & Industry RS -> yfinance Vector Fetch -> Feature Matrix -> YAML Rules -> DuckDB
+    Regime Gatekeeper -> Finviz Funnel & Industry RS -> Pluggable Provider / Local Parquet Cache -> Feature Matrix -> YAML Rules -> DuckDB
     """
     log.info(f"--- STARTING TRADE SCREENER [Strategy: {strategy_id}] ---")
     
@@ -63,54 +71,34 @@ def run_screener(strategy_id: str = "qullamaggie_hft", limit: int = 50, log_duck
     tickers = list(cand_map.keys())
     log.info(f"Processing {len(tickers)} candidates...")
 
-    # 3. Stage 2 Vectorized Market Data Fetch & Feature Matrix Construction
+    # 3. Stage 2 Pluggable Market Data Fetch (Local data/stocks/ Cache + yfinance/schwab)
     all_matrices = []
-    if yf is not None and len(tickers) > 0:
-        try:
-            data = yf.download(tickers, period="2y", interval="1d", group_by="ticker", progress=False, threads=True)
-
-            
-            ticker_dfs = {}
-            if len(tickers) == 1:
-                t = tickers[0]
-                if not data.empty:
-                    ticker_dfs[t] = data.dropna()
-            else:
-                for t in tickers:
-                    try:
-                        if hasattr(data.columns, 'levels') and t in data.columns.levels[0]:
-                            df_t = data[t].dropna()
-                            if not df_t.empty and len(df_t) >= 20:
-                                ticker_dfs[t] = df_t
-                    except Exception:
-                        continue
-
-            for t, df in ticker_dfs.items():
-                try:
-                    cand = cand_map.get(t, {})
-                    finviz_float = cand.get("float", 0.0)
-                    float_info = validate_float(finviz_float, None)
-                    
-                    ind_name = cand.get("industry", "")
-                    ind_rs = industry_rs_map.get(ind_name, 50.0)
-                    has_earnings = has_upcoming_earnings(t, window_days=7)
-                    
-                    split_df, tr_df = prepare_price_series(df)
-                    fm = build_feature_matrix(
-                        split_df,
-                        ticker=t,
-                        tr_df=tr_df,
-                        industry_rs_rank=ind_rs,
-                        has_upcoming_earnings=has_earnings,
-                        float_info=float_info
-                    )
-                    if not fm.empty:
-                        all_matrices.append(fm)
-                except Exception as e:
-                    log.warning(f"Error processing feature matrix for {t}: {e}")
-                    continue
-        except Exception as e:
-            log.error(f"yfinance batch download failed: {e}")
+    if len(tickers) > 0:
+        ticker_dfs = fetch_equity_daily_batch(tickers, provider=provider, fallback=fallback, force_refresh=force_refresh)
+        for t, df in ticker_dfs.items():
+            try:
+                cand = cand_map.get(t, {})
+                finviz_float = cand.get("float", 0.0)
+                float_info = validate_float(finviz_float, None)
+                
+                ind_name = cand.get("industry", "")
+                ind_rs = industry_rs_map.get(ind_name, 50.0)
+                has_earnings = has_upcoming_earnings(t, window_days=7)
+                
+                split_df, tr_df = prepare_price_series(df)
+                fm = build_feature_matrix(
+                    split_df,
+                    ticker=t,
+                    tr_df=tr_df,
+                    industry_rs_rank=ind_rs,
+                    has_upcoming_earnings=has_earnings,
+                    float_info=float_info
+                )
+                if not fm.empty:
+                    all_matrices.append(fm)
+            except Exception as e:
+                log.warning(f"Error processing feature matrix for {t}: {e}")
+                continue
 
     if not all_matrices:
         log.info("No valid feature matrices created.")
@@ -148,15 +136,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run trade_screener engine.")
     parser.add_argument("--strategy", type=str, default="qullamaggie_hft", help="Strategy YAML config ID (or 'all' to run all strategies and generate reports).")
     parser.add_argument("--limit", type=int, default=50, help="Number of universe candidates to fetch.")
+    parser.add_argument("--provider", type=str, default="yfinance", help="Primary market data provider (yfinance or schwab).")
+    parser.add_argument("--fallback", type=str, default="schwab", help="Fallback market data provider (schwab or yfinance).")
     parser.add_argument("--report", action="store_true", help="Generate strategy comparison matrix & export watchlists (TradingView & Thinkorswim).")
     args = parser.parse_args()
 
     if args.report or args.strategy.lower() == "all":
         log.info("--- GENERATING MULTI-STRATEGY COMPARISON MATRIX & WATCHLIST REPORTS ---")
-        paths = generate_screener_reports(limit=args.limit)
+        paths = generate_screener_reports(limit=args.limit, provider=args.provider, fallback=args.fallback)
         log.info("Report generation complete:")
         for name, path in paths.items():
             log.info(f" -> {name}: {path}")
     else:
-        run_screener(strategy_id=args.strategy, limit=args.limit)
+        run_screener(strategy_id=args.strategy, limit=args.limit, provider=args.provider, fallback=args.fallback)
+
 

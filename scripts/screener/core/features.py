@@ -29,12 +29,10 @@ def build_feature_matrix(
         res.columns = res.columns.get_level_values(0)
     
     # Standardize casing to lowercase to prevent KeyError in YAML evaluators
-    # and provide explicit split_adjusted column
-    for col in ["Close", "High", "Low", "Volume", "Open"]:
-        if col in res.columns:
-            res.rename(columns={col: col.lower()}, inplace=True)
+    res.columns = [str(c).lower() for c in res.columns]
+    res = res.loc[:, ~res.columns.duplicated()]
             
-    res["close_split_adjusted"] = res.get("close", res.get("Close"))
+    res["close_split_adjusted"] = res["close"]
     
     close = res["close"]
     high = res["high"]
