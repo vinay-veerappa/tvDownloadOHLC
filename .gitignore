@@ -109,3 +109,5 @@ tmp/
 # Ignore dynamic runtime state files
 scripts/libs_py/strategy_engine/scheduler_state.json
 t r a d i n g v i e w - m c p /  
+# MCP config contains local tokens — do not commit
+.mcp.json
