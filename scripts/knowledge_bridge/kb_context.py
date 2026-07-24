@@ -121,6 +121,30 @@ CONCEPT_TRIGGERS: dict[str, str] = {
     "NFP": "NFP Friday non-farm payroll seek destroy chop week",
     "7 Rule": "Kish 7 Rules execution framework weekly timeframe planning",
     "Kish": "Kish weekly timeframe framework profile execution planning",
+    # ── Calendar / event-specific triggers (news management, macro windows) ──
+    # These fire when the calendar block references specific event types
+    # or Kish macro windows. They retrieve post-news candle management rules,
+    # macro timing, and event-specific ICT behavior.
+    "Jackson Hole": "Jackson Hole Powell speech Friday central bank symposium high impact",
+    "Powell speech": "Powell speech central bank Jackson Hole FOMC high impact catalyst",
+    "Treasury auction": "treasury auction bond auction noon afternoon volatility trading",
+    "bond auction": "treasury auction bond auction noon afternoon volatility trading",
+    # Kish's 6 intraday macro windows
+    "Price Discover": "Price Discover macro Kish intraday settlement window timing",
+    "Liquidity Hunt": "Liquidity Hunt macro 8:15 9:45 Kish time-based entry",
+    "Offset Macro": "Offset macro 9:45 10:00 silver bullet window Kish entry timing",
+    "Rebalance": "Rebalance macro 11:00 morning delivery Kish settlement",
+    "Settlement Check": "Settlement Check macro end of day Kish intraday timing",
+    "Launch Macro": "Launch macro afternoon Kish price delivery timing",
+    # Post-news candle management rules
+    "candle close": "M5 candle close confirmation entry decision news management",
+    "M5 close": "M5 candle close above order block confirmation entry timing",
+    "M1 candle": "first M1 candle session statistically unreliable news day management",
+    "post-news": "post-news candle management wait M5 close recovery entry timing",
+    "news release": "news release spike resolution Judas swing manipulation recovery",
+    "manipulation window": "manipulation window Judas swing 8:35 9:20 news release",
+    "recovery window": "recovery window 9:50 10:10 macro MSS CISD post-news entry",
+    "blackout": "blackout window news release no trade 15 minutes pre-event",
 }
 
 
@@ -169,6 +193,7 @@ def fetch_kb_context(
     *,
     max_context_chars: int = 8000,
     k_per_concept: int = 3,
+    exclude_ids: set[str] | None = None,
     timeout: float = 10.0,
 ) -> str:
     """Retrieve KB context for the cheat sheet via the KB API.
@@ -205,11 +230,19 @@ def fetch_kb_context(
         "NWOG", "new week", "Monday", "Tuesday", "Wednesday",
         "archetype", "engineered origin", "weekly open", "seek and destroy",
         "High-Impact Cluster", "FOMC", "CPI", "NFP", "7 Rule", "Kish",
+        # Calendar / event-specific priorities
+        "Jackson Hole", "Powell speech", "Treasury auction", "bond auction",
+        "Price Discover", "Liquidity Hunt", "Offset Macro", "Rebalance",
+        "Settlement Check", "Launch Macro",
+        "candle close", "M5 close", "M1 candle", "post-news",
+        "news release", "manipulation window", "recovery window", "blackout",
     }
     ordered = sorted(found.items(), key=lambda kv: (0 if kv[0] in _SESSION_PRIORITY else 1, kv[0]))
 
     all_units: list[dict] = []
     seen_ids: set[str] = set()
+    if exclude_ids:
+        seen_ids.update(exclude_ids)
 
     for concept, query in ordered:
         try:
@@ -281,10 +314,118 @@ def fetch_kb_context(
     return "\n".join([header] + lines)
 
 
+def fetch_kb_context_for_queries(
+    queries: list[tuple[str, str]],
+    kb_api_url: str = DEFAULT_KB_API_URL,
+    *,
+    max_context_chars: int = 4000,
+    k_per_query: int = 3,
+    timeout: float = 10.0,
+) -> str:
+    """Retrieve KB context for a list of (label, query) pairs.
+
+    Unlike ``fetch_kb_context`` which scans a cheat sheet for triggers, this
+    function takes explicit queries — useful when the caller knows exactly
+    what calendar/event context it needs (e.g. ``build_calendar_context_block``).
+
+    Args:
+        queries: list of ``(label, semantic_query)`` pairs. The label is used
+            as a section header in the returned block.
+        kb_api_url: KB API base URL.
+        max_context_chars: char budget for the formatted block.
+        k_per_query: KB units to retrieve per query.
+        timeout: per-request timeout in seconds.
+
+    Returns:
+        Tuple of ``(formatted_block, unit_ids_set)``. The block is a formatted
+        ``# ICT KNOWLEDGE BASE CONTEXT`` string (or ``""`` if no units match).
+        The unit_ids_set can be passed to ``fetch_kb_context(exclude_ids=...)``
+        to avoid duplication.
+    """
+    if not check_kb_api(kb_api_url):
+        log.debug("[kb_context] KB API unreachable — returning empty")
+        return "", set()
+
+    all_units: list[dict] = []
+    seen_ids: set[str] = set()
+    query_labels: list[str] = []
+
+    for label, query in queries:
+        try:
+            units = _search_kb(query, k_per_query, kb_api_url, timeout)
+        except Exception as e:
+            log.debug("[kb_context] targeted search failed for %r: %s", label, e)
+            continue
+        added = 0
+        for u in units:
+            uid = u.get("unit_id", str(id(u)))
+            if uid not in seen_ids:
+                all_units.append(u)
+                seen_ids.add(uid)
+                added += 1
+        if added:
+            query_labels.append(label)
+
+    if not all_units:
+        return "", seen_ids
+
+    lines: list[str] = []
+    total = 0
+    for u in all_units:
+        ktype = u.get("knowledge_type", "?")
+        summary = (u.get("summary") or "")[:250]
+        concepts = u.get("concepts", "")
+        confidence = u.get("confidence", 0.0)
+        source_file = u.get("source_file", "?")
+        verbatim = (u.get("verbatim_anchor") or "")
+
+        # Extract timeframe mentions
+        timeframes: list[str] = []
+        if concepts:
+            for token in concepts.split(","):
+                token = token.strip()
+                if token.startswith("timeframe_"):
+                    tf = token.replace("timeframe_", "").upper()
+                    if tf not in timeframes:
+                        timeframes.append(tf)
+
+        meta_parts: list[str] = []
+        if timeframes:
+            meta_parts.append(f"TFs: {', '.join(timeframes)}")
+        sessions = u.get("sessions", "")
+        if sessions and sessions != "any":
+            meta_parts.append(f"Session: {sessions}")
+        instruments = u.get("instruments", "")
+        if instruments and instruments != "any":
+            meta_parts.append(f"Instrument: {instruments}")
+        meta_line = f"  Context: {' | '.join(meta_parts)}\n" if meta_parts else ""
+
+        block = (
+            f"[{ktype}] {source_file} (conf={confidence:.2f})\n"
+            f"  Concepts: {concepts}\n"
+            f"{meta_line}"
+            f"  Summary: {summary}\n"
+            f"  Anchor: {verbatim[:200]}\n"
+        )
+        if total + len(block) > max_context_chars:
+            break
+        lines.append(block)
+        total += len(block)
+
+    header = (
+        f"# ICT KNOWLEDGE BASE CONTEXT (retrieved {len(lines)} units)\n"
+        f"# Query sections: {', '.join(query_labels)}\n"
+        f"# These are grounded source materials from ICT transcripts.\n"
+        f"# Use for event-specific behavior, post-news management, and macro timing.\n"
+    )
+    return "\n".join([header] + lines), seen_ids
+
+
 __all__ = [
     "DEFAULT_KB_API_URL",
     "CONCEPT_TRIGGERS",
     "check_kb_api",
     "detect_concepts",
     "fetch_kb_context",
+    "fetch_kb_context_for_queries",
 ]

@@ -73,6 +73,7 @@ async def get_econ_releases(target_date: date, db: Prisma) -> List[Dict[str, Any
             "name": e.name,
             "impact": impact or "UNKNOWN",
             "time_et": evt_dt.strftime("%H:%M ET"),
+            "datetime": int(evt_dt.timestamp() * 1000),
             "macro_window_conflict": conflict,
             "conflict_window": window_name,
             "forecast": e.forecast,

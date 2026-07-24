@@ -14,7 +14,8 @@ log = logging.getLogger(__name__)
 _CPI_PATTERNS = ["CPI", "CORE CPI", "CONSUMER PRICE"]
 _NFP_PATTERNS = ["NON-FARM PAYROLL", "NFP", "NONFARM PAYROLL"]
 _FOMC_PATTERNS = ["FOMC", "FEDERAL OPEN MARKET", "INTEREST RATE DECISION"]
-_SPECIAL_PATTERNS = ["JACKSON HOLE", "POWELL", "TREASURY AUCTION", "OPEC", "GEOPOLITICAL"]
+_JACKSON_HOLE_PATTERNS = ["JACKSON HOLE", "JACKSONHOLE"]
+_SPECIAL_PATTERNS = ["POWELL", "TREASURY AUCTION", "OPEC", "GEOPOLITICAL"]
 _HOLIDAY_PATTERNS = ["HOLIDAY", "CLOSED", "EARLY CLOSE"]
 
 
@@ -54,7 +55,19 @@ def classify_day_type(events: list[dict], today: date) -> dict:
     dt_start = eastern.localize(datetime(today.year, today.month, today.day, 0, 0, 0))
     today_ms_start = int(dt_start.timestamp() * 1000)
     today_ms_end = today_ms_start + 86400000
-    todays_events = [e for e in events if e.get("datetime", 0) >= today_ms_start and e.get("datetime", 0) < today_ms_end]
+
+    # Events may have either `datetime` (epoch ms) or `time_et` (string like "08:30 ET")
+    # Filter events that fall within today's range using whichever field is available
+    todays_events: list[dict] = []
+    for e in events:
+        dt_ms = e.get("datetime", 0)
+        if dt_ms and dt_ms >= today_ms_start and dt_ms < today_ms_end:
+            todays_events.append(e)
+            continue
+        # Fallback: if datetime is 0 or missing, include the event if it has a time_et
+        # (get_econ_releases already filters to today's events)
+        if not dt_ms and e.get("time_et"):
+            todays_events.append(e)
 
     if not todays_events:
         result["day_type"] = "clean"
@@ -96,6 +109,19 @@ def classify_day_type(events: list[dict], today: date) -> dict:
             result["pre_event_buffer"] = 15
             result["post_event_wait"] = 0  # Wait until resume_after
             result["guidance"] = dt["morning_note"]
+            return result
+
+    # Check for Jackson Hole (treat as FOMC-class event)
+    for e in high_events:
+        name = e.get("name", "").upper()
+        if any(p in name for p in _JACKSON_HOLE_PATTERNS):
+            result["day_type"] = "jackson_hole"
+            dt = day_types_cfg.get("jackson_hole", day_types_cfg["special"])
+            result["sizing_multiplier"] = dt["sizing"]
+            result["event_time"] = dt.get("event_time", "10:00")
+            result["pre_event_buffer"] = dt.get("pre_event_buffer", 15)
+            result["post_event_wait"] = dt.get("post_event_wait", 30)
+            result["guidance"] = dt.get("morning_note", dt.get("note", "Jackson Hole — FOMC-class event. Reduce size."))
             return result
 
     # Check for special events

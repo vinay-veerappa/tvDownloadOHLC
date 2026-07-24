@@ -1956,4 +1956,24 @@ def build_intraday_cheat_sheet(
     else:
         sections.append(f"== UNKNOWN SESSION ==\nCould not determine session for {now_et}.")
 
+    # ── PM time windows + weekly position (intraday mode) ──
+    try:
+        from scripts.trader.briefing_core import (
+            build_ict_time_map,
+            build_weekly_event_timeline,
+            get_weekly_modifiers,
+        )
+        from scripts.trader.signals.day_type import classify_day_type
+        _dt = classify_day_type([], target_date)
+        _pm_map = build_ict_time_map(_dt.get("day_type", "clean"), target_date, mode="intraday")
+        if _pm_map:
+            sections.append(_pm_map)
+        _modifiers = get_weekly_modifiers(target_date, [])
+        _timeline = build_weekly_event_timeline(target_date, [], _modifiers, mode="intraday")
+        if _timeline:
+            sections.append(_timeline)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug("[intraday] PM time windows failed: %s", e)
+
     return "\n\n".join(sections)

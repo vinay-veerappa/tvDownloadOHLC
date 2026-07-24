@@ -6,7 +6,9 @@ classification. Write a narrative that:
 2. Notes the GEX structure — where are the magnets and walls before the open
 3. Reads the prior EOD classification — what was the close bias and does it carry forward
 4. Checks the calendar — what could change the picture today
-5. Ends with "What I'm watching at the open" — 2-3 specific levels and scenarios
+5. References the WEEKLY EVENT TIMELINE — where are we in the week, what's the day's ICT read and regime tag ([CHOP], [EXPANSION], [SWEEP→EXPANSION], etc.)
+6. Uses the ICT INTRADAY TIME MAP — cite the specific time windows for entry timing (e.g. "Silver Bullet 10-11", "macro window 09:50-10:10", "12:45 macro"). Don't list all windows — reference the ones relevant to today's setup.
+7. Ends with "What I'm watching at the open" — 2-3 specific levels and scenarios
 
 Rules:
 - Plain English. Talk like you're explaining to a friend.
@@ -14,6 +16,8 @@ Rules:
 - KB Usage: When the KB context block is present, USE it to infer what could happen next — not just to cite sources. The value is in connecting current conditions to conditional rules (e.g. "large Asia range → NY AM tends to mean-revert", "London low swept → NY open bias"). Attribution is secondary to correct inference.
 - Setup Relevance: Don't just list levels — explain WHICH ICT setup is forming in current conditions and what would confirm or invalidate it. Use the KB context to connect the current market state to specific setup patterns.
 - Conditional Session Inference: The cheat sheet shows session outcomes (Asia range size, Herman sweep result, classification, overnight trajectory). The KB context may contain rules about how one session's behavior predicts the next. CONNECT the current session data to those conditional rules to infer what the open or next session is likely to do.
+- Weekly Timeline + Time Map Usage: The cheat sheet includes a WEEKLY EVENT TIMELINE (day-by-day expectations with regime tags) and an ICT INTRADAY TIME MAP (time windows with regime tags like [SWEEP], [EXPANSION], [CHOP], [NO-TRADE], [SETUP]). USE these to: (1) frame the day in the context of the week (e.g. "Thursday of CPI week — direction resolved by Tuesday's CPI"), (2) cite specific time windows for entry timing (e.g. "the 09:50-10:10 macro window is prime for MSS"), (3) warn about no-trade zones (e.g. "NY lunch 11:30-13:30 is dead — no new entries"). Don't list all windows — pick the 2-3 most relevant for today's setup.
+- Post-News Candle Management (if present): If the cheat sheet includes a POST-NEWS CANDLE MANAGEMENT block, reference the specific rules for today's event (e.g. "wait for M5 candle close above key level before entry", "first two M1 candles retrace — third shows direction").
 - Strict GEX Regime Adherence: Strictly respect the GEX regime specified in the cheat sheet (e.g. POSITIVE, NEGATIVE, or NEUTRAL). Do NOT invert dealer hedging mechanics or claim negative gamma when the cheat sheet states NEUTRAL or POSITIVE.
 - Spatial & Mathematical Precision: Put Walls are downside support/floors (below or near price floor); Call Walls are overhead resistance/ceilings. Double-check level distances and spatial positions relative to current price.
 - Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.

@@ -1,0 +1,39 @@
+# Weekly Macro Sentiment Configuration
+#
+# This file provides CURRENT-WEEK macro context that the KB cannot supply.
+# The KB has historical ICT methodology (how FOMC weeks behave, what news
+# windows are). This YAML provides the "why does it matter THIS week" narrative.
+#
+# Update this file at the start of each trading week (Sunday/Monday).
+# The narrative engine loads it automatically via load_weekly_macro_sentiment().
+# If the file is missing or the week key doesn't match, the block is skipped
+# gracefully (KB calendar context still provides methodology).
+#
+# The week key format is ISO: YYYY-Www (e.g. 2026-W30)
+# The engine matches against the target_date's ISO week.
+
+# ── Template (uncomment and edit for the current week) ──────────────
+
+# 2026-W30:
+#   macro_theme: >-
+#     Market focus is entirely on the upcoming CPI print to confirm Fed rate
+#     cut path. Fed speakers have maintained a data-dependent stance.
+#   event_sentiment:
+#     CPI:
+#       time: "08:30 ET"
+#       consensus: "0.2% MoM"
+#       cooler_than: "Bullish — aim for Upside Ceiling. Risk-on rotation."
+#       hotter_than: "Bearish — downside expansion. Aim for Downside Floor."
+#     FOMC:
+#       time: "14:00 ET"
+#       consensus: "25bps cut"
+#       note: "Powell tone on labor market cooling is key. Hawkish = risk-off."
+#   jackson_hole:
+#     note: "No Jackson Hole this week."
+#   treasury_auctions:
+#     - day: "Wednesday"
+#       time: "13:00 ET"
+#       note: "10Y auction — can cause afternoon volatility."
+#   intermarket_themes:
+#     - "DXY strengthening — dollar-denominated pressure on commodities."
+#     - "VIX term structure in backwardation — near-term vol elevated."

@@ -194,6 +194,12 @@ day_types:
     statement_window: 30
     resume_after: "15:00"
     morning_note: "Quiet AM (50-60% range). Real moves 15:00-16:00."
+  jackson_hole:
+    sizing: 0.50
+    event_time: "10:00"
+    pre_event_buffer: 15
+    post_event_wait: 30
+    morning_note: "Jackson Hole: Powell speech typically 10:00 ET Friday. High impact. Treat as FOMC-like. Pre-market builds strong ranges, expect liquidity sweeps and high volatility. No new entries 15min before speech. Wait for spike resolution post-speech."
   special:
     sizing: 0.50
     note: "Event-specific guidance"

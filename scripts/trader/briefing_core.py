@@ -753,6 +753,105 @@ def load_unified_levels_txt(txt_path: Path) -> dict[str, dict]:
     return result
 
 
+def load_weekly_macro_sentiment(target_date: date | None = None) -> dict | None:
+    """Load the weekly macro sentiment config for the given date's ISO week.
+
+    Reads ``config/weekly_macro_sentiment.yaml`` and returns the week's
+    config dict, or ``None`` if the file is missing or the week key doesn't match.
+
+    The week key format is ISO: ``YYYY-Www`` (e.g. ``2026-W30``).
+    """
+    import yaml
+    from datetime import date as _date
+
+    if target_date is None:
+        target_date = _date.today()
+
+    config_path = REPO_ROOT / "config" / "weekly_macro_sentiment.yaml"
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception as e:
+        log.warning("[macro_sentiment] Failed to load %s: %s", config_path, e)
+        return None
+
+    if not data or not isinstance(data, dict):
+        return None
+
+    # ISO week key: YYYY-Www
+    iso_year, iso_week, _ = target_date.isocalendar()
+    week_key = f"{iso_year}-W{iso_week:02d}"
+
+    week_config = data.get(week_key)
+    if not week_config:
+        return None
+
+    return week_config
+
+
+def format_macro_sentiment_block(sentiment: dict) -> str:
+    """Format the weekly macro sentiment config into a cheat-sheet block."""
+    if not sentiment:
+        return ""
+
+    lines: list[str] = ["== WEEKLY MACRO SENTIMENT =="]
+
+    theme = sentiment.get("macro_theme", "")
+    if theme:
+        lines.append(f"Theme: {theme}")
+
+    event_sentiment = sentiment.get("event_sentiment", {})
+    if event_sentiment:
+        lines.append("Event Sentiment:")
+        for event_name, details in event_sentiment.items():
+            if not isinstance(details, dict):
+                continue
+            time_str = details.get("time", "")
+            consensus = details.get("consensus", "")
+            cooler = details.get("cooler_than", "")
+            hotter = details.get("hotter_than", "")
+            note = details.get("note", "")
+
+            parts = [f"  {event_name}"]
+            if time_str:
+                parts.append(f"({time_str})")
+            if consensus:
+                parts.append(f"Consensus: {consensus}")
+            lines.append(" ".join(parts))
+            if cooler:
+                lines.append(f"    Cooler: {cooler}")
+            if hotter:
+                lines.append(f"    Hotter: {hotter}")
+            if note:
+                lines.append(f"    Note: {note}")
+
+    jh = sentiment.get("jackson_hole", {})
+    if isinstance(jh, dict) and jh.get("note"):
+        lines.append(f"Jackson Hole: {jh['note']}")
+
+    auctions = sentiment.get("treasury_auctions", [])
+    if auctions:
+        lines.append("Treasury Auctions:")
+        for a in auctions:
+            if not isinstance(a, dict):
+                continue
+            day = a.get("day", "?")
+            time_str = a.get("time", "")
+            note = a.get("note", "")
+            lines.append(f"  {day} {time_str}: {note}")
+
+    themes = sentiment.get("intermarket_themes", [])
+    if themes:
+        lines.append("Intermarket Themes:")
+        for t in themes:
+            lines.append(f"  - {t}")
+
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def load_macro_levels(session: str = "live") -> dict[str, dict]:
     """Load unified levels data and return a dict keyed by ticker.
 
@@ -3260,6 +3359,56 @@ def build_premarket_context(
     sections.append(_format_news_block(headlines))
     sections.append(_format_caution_score_block(caution))
 
+    # ── Calendar & structural context (KB-distilled) ──
+    # Queries the KB for event-specific ICT methodology (FOMC/CPI/NFP behavior,
+    # OPEX patterns, Kish macro windows, post-news candle management) based on
+    # today's calendar state. Falls back to plain day_type block if KB is down.
+    _calendar_kb_ids: set[str] = set()
+    try:
+        _cal_block, _calendar_kb_ids = build_calendar_context_block(target_date, econ_releases)
+        if _cal_block:
+            sections.append(_cal_block)
+            log.info("[premarket] Calendar context block appended (%d chars, %d KB units)",
+                     len(_cal_block), len(_calendar_kb_ids))
+    except Exception as e:
+        log.warning("[premarket] Calendar context block failed: %s", e)
+        # Fallback: plain day_type block
+        try:
+            dt = classify_day_type(econ_releases, target_date)
+            sections.append(_format_day_type_block(dt))
+        except Exception:
+            pass
+
+    # ── Weekly event timeline + ICT time map (premarket = full) ──
+    try:
+        _modifiers = get_weekly_modifiers(target_date, econ_releases)
+        _timeline = build_weekly_event_timeline(target_date, econ_releases, _modifiers, mode="premarket")
+        if _timeline:
+            sections.append(_timeline)
+        _dt = classify_day_type(econ_releases, target_date)
+        _time_map = build_ict_time_map(_dt.get("day_type", "clean"), target_date, mode="premarket")
+        if _time_map:
+            sections.append(_time_map)
+        _news_mgmt = build_post_news_management_block(_dt.get("day_type", "clean"))
+        if _news_mgmt:
+            sections.append(_news_mgmt)
+    except Exception as e:
+        log.warning("[premarket] Weekly timeline / time map failed: %s", e)
+
+    # ── Weekly macro sentiment (curated config) ──
+    # Loads config/weekly_macro_sentiment.yaml for the current ISO week.
+    # Provides macro_theme + event_sentiment that the KB cannot (current-week
+    # narrative). Skipped gracefully if file is missing or week not configured.
+    try:
+        _sentiment = load_weekly_macro_sentiment(target_date)
+        if _sentiment:
+            _sentiment_block = format_macro_sentiment_block(_sentiment)
+            if _sentiment_block:
+                sections.append(_sentiment_block)
+                log.info("[premarket] Macro sentiment block appended")
+    except Exception as e:
+        log.warning("[premarket] Macro sentiment load failed: %s", e)
+
     # ICT feature blocks (KZ pivots from overnight, IPDA, gaps as magnets)
     try:
         from scripts.trader.signals.intraday_blocks import (
@@ -3329,12 +3478,15 @@ def build_premarket_context(
     # Fetches grounded ICT source units from the KB API (port 8900) by
     # detecting concept triggers in the assembled cheat sheet. Degrades
     # gracefully (no block) if the KB API is unreachable.
+    # Excludes units already retrieved by the calendar context block to avoid
+    # duplication.
     try:
         from scripts.knowledge_bridge.kb_context import fetch_kb_context as _fetch_kb
-        _kb_ctx = _fetch_kb("\n\n".join(sections))
+        _kb_ctx = _fetch_kb("\n\n".join(sections), exclude_ids=_calendar_kb_ids or None)
         if _kb_ctx:
             sections.append(_kb_ctx)
-            log.info("[premarket] KB context appended (%d chars)", len(_kb_ctx))
+            log.info("[premarket] KB context appended (%d chars, excluded %d calendar units)",
+                     len(_kb_ctx), len(_calendar_kb_ids))
         else:
             log.debug("[premarket] KB context empty (API unreachable or no matches)")
     except Exception as e:
@@ -3344,7 +3496,7 @@ def build_premarket_context(
 
 
 def get_weekly_modifiers(target_date: date, events: list[dict]) -> dict:
-    """Compute week-level context like OpEx, Triple Witching, FOMC."""
+    """Compute week-level context like OpEx, Triple Witching, FOMC, Jackson Hole."""
     days_to_friday = 4 - target_date.weekday()
     friday = target_date + timedelta(days=days_to_friday)
     
@@ -3352,13 +3504,530 @@ def get_weekly_modifiers(target_date: date, events: list[dict]) -> dict:
     is_opex = is_third_friday
     is_triple_witching = is_third_friday and friday.month in [3, 6, 9, 12]
     
-    is_fomc = any("FOMC" in (e.get("name") or "").upper() for e in events)
+    # Scan all events for the week (not just today) for week-level flags
+    week_event_names = " ".join((e.get("name") or "").upper() for e in events)
+    is_fomc = "FOMC" in week_event_names or "FEDERAL OPEN MARKET" in week_event_names
+    is_cpi_week = "CPI" in week_event_names or "CONSUMER PRICE" in week_event_names
+    is_nfp_week = "NFP" in week_event_names or "NON-FARM" in week_event_names or "NONFARM" in week_event_names
+    is_jackson_hole = "JACKSON HOLE" in week_event_names
+    has_treasury_auction = "TREASURY AUCTION" in week_event_names or "BOND AUCTION" in week_event_names
     
     return {
         "is_opex_week": is_opex,
         "is_triple_witching_week": is_triple_witching,
-        "is_fomc_week": is_fomc
+        "is_fomc_week": is_fomc,
+        "is_cpi_week": is_cpi_week,
+        "is_nfp_week": is_nfp_week,
+        "is_jackson_hole_week": is_jackson_hole,
+        "has_treasury_auction": has_treasury_auction,
     }
+
+
+def build_calendar_context_block(
+    target_date: date,
+    econ_events: list[dict],
+    weekly_modifiers: dict | None = None,
+    archetype_info: dict | None = None,
+) -> str:
+    """Build a KB-distilled calendar & structural context block.
+
+    Queries the KB for event-specific ICT methodology (FOMC/CPI/NFP/Jackson Hole
+    behavior, OPEX week patterns, post-news candle management, Kish macro windows)
+    and distills into a structured block for the LLM.
+
+    Unlike the generic ``fetch_kb_context`` scan, this function constructs
+    targeted queries based on today's calendar state — so the LLM gets
+    event-specific ICT teachings rather than generic setup definitions.
+    """
+    from scripts.trader.signals.day_type import classify_day_type
+    from scripts.knowledge_bridge.kb_context import fetch_kb_context_for_queries
+
+    day_type_data = classify_day_type(econ_events, target_date)
+    day_type = day_type_data.get("day_type", "clean")
+    dow = target_date.strftime("%A")
+
+    if weekly_modifiers is None:
+        # Need the week's events for weekly modifiers — use today's events
+        # as a proxy (caller should ideally pass the full week's events)
+        weekly_modifiers = get_weekly_modifiers(target_date, econ_events)
+
+    archetype = ""
+    if archetype_info:
+        archetype = archetype_info.get("archetype", "")
+
+    # ── Build targeted KB queries based on calendar state ──
+    queries: list[tuple[str, str]] = []
+
+    # Event-specific behavior
+    if day_type == "fomc":
+        queries.append(("FOMC Day Behavior",
+            "FOMC day accumulation manipulation distribution 2pm Powell statement trading"))
+        queries.append(("FOMC Pre-PA",
+            "FOMC pre-market weird morning session deliveries reference points"))
+    elif day_type == "jackson_hole":
+        queries.append(("Jackson Hole Behavior",
+            "Jackson Hole Powell speech Friday central bank symposium high impact catalyst liquidity sweep"))
+        queries.append(("Jackson Hole Pre-PA",
+            "FOMC Powell speech pre-market anticipation strong ranges institutional order flow"))
+    elif day_type == "cpi":
+        queries.append(("CPI Day Behavior",
+            "CPI 08:30 spike resolution Judas swing recovery entry post-news"))
+        queries.append(("CPI Liquidity Raid",
+            "CPI news liquidity raid Asian lows London lows buy side sell side sweep"))
+    elif day_type == "nfp":
+        queries.append(("NFP Day Behavior",
+            "NFP 08:30 first direction fakeout Judas swing Silver Bullet 10am"))
+        queries.append(("NFP Liquidity Raid",
+            "NFP news buy side liquidity sweep expansion order block catalyst"))
+    elif day_type == "special":
+        # Check for Jackson Hole or treasury auction specifically
+        event_names = " ".join((e.get("name") or "").upper() for e in econ_events)
+        if "TREASURY" in event_names or "BOND AUCTION" in event_names:
+            queries.append(("Treasury Auction",
+                "treasury auction bond auction noon afternoon volatility speed lower"))
+        else:
+            queries.append(("Special Event",
+                "high impact special event news release spike resolution trading"))
+
+    # Weekly modifiers
+    if weekly_modifiers.get("is_opex_week"):
+        queries.append(("OPEX Week Pattern",
+            "opex week Monday Tuesday run up Wednesday sell-off damage options expiration"))
+    if weekly_modifiers.get("is_triple_witching_week"):
+        queries.append(("Triple Witching",
+            "triple witching quarterly expiration dealer hedging volatility position rollover"))
+    if weekly_modifiers.get("is_jackson_hole_week"):
+        queries.append(("Jackson Hole Week",
+            "Jackson Hole Powell speech Friday central bank symposium high impact anticipation"))
+    if weekly_modifiers.get("has_treasury_auction"):
+        queries.append(("Treasury Auction Week",
+            "treasury auction bond auction noon afternoon volatility trading"))
+
+    # Kish macro windows (always include — they're the intraday timing framework)
+    queries.append(("Kish Macro Windows",
+        "Kish six intraday macros Price Discover Liquidity Hunt Offset Rebalance Launch Settlement"))
+
+    # Post-news candle management (if any high-impact event today)
+    if day_type in ("cpi", "nfp", "fomc", "jackson_hole", "special"):
+        queries.append(("Post-News Candle Management",
+            "post-news candle management wait M5 close first M1 candle unreliable recovery entry"))
+        queries.append(("News Manipulation Windows",
+            "manipulation window Judas swing 8:35 9:20 recovery 9:50 10:10 macro MSS post-news"))
+
+    # Weekly profile pattern (Kish's Monday-Friday framework)
+    if archetype or weekly_modifiers.get("is_opex_week") or weekly_modifiers.get("is_fomc_week"):
+        queries.append(("Weekly Profile Pattern",
+            "Kish weekly profile Monday Tuesday create range Wednesday CSD Thursday Friday run"))
+
+    if not queries:
+        return "", set()  # Clean day — no calendar-specific KB context needed
+
+    # Fetch from KB
+    kb_block, kb_unit_ids = fetch_kb_context_for_queries(queries, max_context_chars=5000, k_per_query=3)
+
+    if not kb_block:
+        # KB unavailable — still return the calendar summary without KB
+        kb_block = ""
+
+    # ── Build the structured block ──
+    lines: list[str] = ["== CALENDAR & STRUCTURAL CONTEXT =="]
+
+    # Calendar summary
+    lines.append(f"Day Type: {day_type.upper()} | {dow}")
+    if day_type_data.get("sizing_multiplier", 1.0) < 1.0:
+        lines.append(f"Sizing: {day_type_data['sizing_multiplier']:.0%} of normal")
+    if day_type_data.get("guidance"):
+        lines.append(f"Guidance: {day_type_data['guidance']}")
+
+    # Events today
+    if day_type_data.get("events_today"):
+        lines.append(f"Events: {', '.join(day_type_data['events_today'])}")
+        if day_type_data.get("event_time"):
+            lines.append(f"Event time: {day_type_data['event_time']} | "
+                         f"Pre-buffer: {day_type_data.get('pre_event_buffer', 0)}min | "
+                         f"Post-wait: {day_type_data.get('post_event_wait', 0)}min")
+
+    # Week modifiers
+    mod_strings: list[str] = []
+    if weekly_modifiers.get("is_triple_witching_week"):
+        mod_strings.append("TRIPLE WITCHING WEEK")
+    elif weekly_modifiers.get("is_opex_week"):
+        mod_strings.append("OPEX WEEK")
+    if weekly_modifiers.get("is_fomc_week"):
+        mod_strings.append("FOMC WEEK")
+    if weekly_modifiers.get("is_cpi_week"):
+        mod_strings.append("CPI WEEK")
+    if weekly_modifiers.get("is_nfp_week"):
+        mod_strings.append("NFP WEEK")
+    if weekly_modifiers.get("is_jackson_hole_week"):
+        mod_strings.append("JACKSON HOLE WEEK")
+    if weekly_modifiers.get("has_treasury_auction"):
+        mod_strings.append("TREASURY AUCTION WEEK")
+    if mod_strings:
+        lines.append(f"Week Modifiers: {' | '.join(mod_strings)}")
+
+    # Archetype
+    if archetype:
+        lines.append(f"Archetype: {archetype}")
+        if archetype_info and archetype_info.get("read"):
+            lines.append(f"  Read: {archetype_info['read']}")
+        if archetype_info and archetype_info.get("execution"):
+            lines.append(f"  Execution: {archetype_info['execution']}")
+
+    # Killzones and no-trade zones
+    if day_type_data.get("killzones"):
+        lines.append(f"Killzones: {' | '.join(day_type_data['killzones'])}")
+    if day_type_data.get("no_trade_zones"):
+        lines.append(f"No-trade zones: {' | '.join(day_type_data['no_trade_zones'])}")
+    if day_type_data.get("no_trade_rules"):
+        lines.append(f"No-trade rules: {' | '.join(day_type_data['no_trade_rules'])}")
+
+    # Append KB block if retrieved
+    if kb_block:
+        lines.append("")
+        lines.append(kb_block)
+
+    return "\n".join(lines), kb_unit_ids
+
+
+# ── ICT Weekly Event Timeline + Intraday Time Map ───────────────────
+# These functions encode ICT methodology (Kish/ICT framework) as structured
+# data — day-by-day expectations during event weeks and a complete intraday
+# time map. KB fragments back up specific rules; the complete framework is
+# assembled from ICT/Kish methodology knowledge.
+#
+# Regime tags: [CHOP] = consolidation/range, [EXPANSION] = directional move,
+#              [SWEEP] = liquidity sweep then reversal, [NO-TRADE] = sit out.
+
+# ICT weekly patterns by event type. Each entry is (day_name, expectation, regime).
+_WEEKLY_PATTERNS: dict[str, list[tuple[str, str, str]]] = {
+    "fomc": [
+        ("Monday",    "Range building, consolidation. Defense-prone direction not established.", "[CHOP]"),
+        ("Tuesday",   "Pre-positioning, range continues. Some direction hints. Reduced size.", "[CHOP]"),
+        ("Wednesday", "FOMC 14:00. AM quiet (50-60% range). NO TRADE 14:00-14:30. Real move 15:00-16:00.", "[CHOP→EXPANSION]"),
+        ("Thursday",  "Post-FOMC distribution — cleanest directional setups of the week. Wed real move continues.", "[EXPANSION]"),
+        ("Friday",    "Standard AM. OPEX pinning if opex week. Close by 15:00. Weekend risk.", "[CHOP]"),
+    ],
+    "cpi": [
+        ("Monday",    "Range building, positioning before CPI. Low conviction.", "[CHOP]"),
+        ("Tuesday",   "CPI 08:30. Blackout 08:15-08:45. Manipulation 08:35-09:20. Recovery 09:50-10:10. 1.5-2x range. Post-spike FVG is entry.", "[SWEEP→EXPANSION]"),
+        ("Wednesday", "Continuation or reversal of CPI direction. Often a trend day.", "[EXPANSION]"),
+        ("Thursday",  "Standard setups. Direction resolved by CPI.", "[EXPANSION]"),
+        ("Friday",    "Standard AM, close by 15:00. Weekend risk.", "[CHOP]"),
+    ],
+    "nfp": [
+        ("Monday",    "Standard trading. Direction establishing.", "[CHOP]"),
+        ("Tuesday",   "Standard setups. All killzones active.", "[EXPANSION]"),
+        ("Wednesday", "Cleanest trend day. Silver Bullet strong.", "[EXPANSION]"),
+        ("Thursday",  "Good setups. Afternoon: reduce size (NFP tomorrow).", "[CHOP→CAUTION]"),
+        ("Friday",    "NFP 08:30. Judas Swing — first direction often fakeout. Wait 09:15. Silver Bullet 10-11 powerful. 9AM green → 70.6% green close.", "[SWEEP→EXPANSION]"),
+    ],
+    "jackson_hole": [
+        ("Monday",    "Anticipation building. Strong pre-market ranges. Institutional positioning. Reduced size.", "[CHOP]"),
+        ("Tuesday",   "Pre-positioning continues. Standard killzones but reduced conviction.", "[CHOP]"),
+        ("Wednesday", "Anticipation peaks. Range-bound. Some directional hints.", "[CHOP]"),
+        ("Thursday", "Last full day before speech. Position sizing down.", "[CHOP→CAUTION]"),
+        ("Friday",    "Powell speech 10:00 ET. FOMC-class event. No entries 15min before. Wait for spike resolution. Afternoon distribution.", "[SWEEP→EXPANSION]"),
+    ],
+    "opex": [
+        ("Monday",    "Run-up begins. Direction establishing.", "[EXPANSION]"),
+        ("Tuesday",   "Takes Monday high, continues up. KB: 'Tuesday OPEX week — you already know what you want to see.' (conf 0.95)", "[EXPANSION]"),
+        ("Wednesday", "Does the damage — sell-off. KB: 'Mon-Tue run up, Wed does the damage' (conf 0.90). Best day for shorts.", "[EXPANSION↓]"),
+        ("Thursday",  "Sell-off may continue or stabilize.", "[CHOP→EXPANSION]"),
+        ("Friday",    "Expiration day. Pinning toward magnet (max pain/peak GEX). Reversals from ceilings/floors reliable. Size down.", "[CHOP/PIN]"),
+    ],
+    "triple_witching": [
+        ("Monday",    "Heavy positioning. Volume building.", "[EXPANSION]"),
+        ("Tuesday",   "Continued run-up. Increased volatility from options/futures rolls.", "[EXPANSION]"),
+        ("Wednesday", "Sell-off / damage. Position rollover accelerates.", "[EXPANSION↓]"),
+        ("Thursday",  "Erratic breakouts due to heavy rollover. Spreads may widen.", "[CHOP/VOLATILE]"),
+        ("Friday",    "Triple expiration. Massive volume. Pinning extreme. Size down significantly.", "[CHOP/PIN]"),
+    ],
+    "clean": [
+        ("Monday",    "Defense-prone, direction not established. Wait for London to set direction.", "[CHOP]"),
+        ("Tuesday",   "Neutral, good for setups. All killzones active.", "[EXPANSION]"),
+        ("Wednesday", "Cleanest trend day of the week. Silver Bullet strong.", "[EXPANSION]"),
+        ("Thursday",  "Good setups. Watch for NFP tomorrow (if NFP week).", "[EXPANSION]"),
+        ("Friday",    "Institutions reduce risk. After 12:00 volume drops. Close by 15:00.", "[CHOP]"),
+    ],
+}
+
+# ICT intraday time map. Each entry is (time_range, window_name, regime, action).
+# Regime: [SWEEP], [EXPANSION], [CHOP], [NO-TRADE], [SETUP], [DELIVERY]
+_INTRADAY_TIME_MAP: list[tuple[str, str, str, str]] = [
+    ("02:00-05:00", "London Open killzone (best 02:00-04:00)",  "[SWEEP]",     "Liquidity runs. Sweep direction. Asia range often taken."),
+    ("04:00-05:00", "London AM",                                "[SETUP]",     "London sets direction. Range H/L become targets for NY."),
+    ("05:00-08:30", "Pre-NY (Herman sweep zone)",               "[SWEEP]",     "Pre-NY sweep of London H/L. Herman dominant signal if sweep occurs."),
+    ("08:15-09:45", "Liquidity Hunt Macro (Kish)",              "[SETUP]",     "Price discovery → liquidity sweep → CSD entry. KB conf 0.90."),
+    ("08:30",       "NY Open / RTH open",                       "[NO-TRADE]",  "First M1 candle unreliable (except news days). Don't read it. KB conf 0.90."),
+    ("09:12",       "9:12 Macro (Kish)",                        "[SETUP]",     "CSD entry signal. 'CSD after 8:15, CSD after 9:12, beautiful.' KB conf 0.90."),
+    ("09:30",       "Equities open",                             "[SWEEP]",     "Wait for first candle close (15-min moat). Judas Swing often here — manipulative sweep then reversal."),
+    ("08:35-09:20", "Manipulation Window (news days)",           "[NO-TRADE]",  "Judas Swing — manipulative sweeps. Wait for valid setup after 09:20. KB §14."),
+    ("09:45-10:00", "Offset Macro (Kish)",                      "[SETUP]",     "'9:45 is the time you only watch.' Silver Bullet begins. KB conf 0.50-0.80."),
+    ("09:50-10:10", "MACRO WINDOW — MSS prime time",             "[SETUP]",     "Prime time for MSS/CISD on LTF. Displacement + FVG. KB §14."),
+    ("10:00-11:00", "SILVER BULLET window",                      "[EXPANSION]", "Highest probability entries. FVGs in direction of confirmed bias."),
+    ("10:45-11:00", "Offset macro rebalance",                    "[CHOP]",      "'Offset's going to be your next time macro.' KB conf 0.40. Rebalance before lunch."),
+    ("11:00",       "Rebalance Macro (Kish)",                   "[DELIVERY]",  "Morning delivery assessment. '11 o'clock should create a delivery that's tradable.' KB conf 0.70."),
+    ("11:30-13:30", "NY LUNCH — dead zone",                      "[CHOP]",      "No new entries. Mean-reverting chop. Volume drops. KB config."),
+    ("12:45",       "12:45 Macro (Kish)",                       "[SWEEP]",     "Time-based liquidity run. After the run, look for CSD entry. KB conf 0.90."),
+    ("13:00",       "Treasury auctions (when scheduled)",        "[VOLATILE]",  "Afternoon volatility. 'Bond auction at noon causing volatility and speed lower.' KB conf 0.85."),
+    ("14:00-14:30", "FOMC statement (when scheduled)",          "[NO-TRADE]",  "NO TRADE — reverses 60%+. Most dangerous phase. PO3: accumulation→manipulation→distribution."),
+    ("15:00-16:00", "POWER HOUR — distribution",                "[EXPANSION]", "Strong directional moves. FOMC real move. Settlement pressure."),
+    ("15:59-16:00", "Last bar — prop-firm exit",                 "[EXIT]",      "ADR-020: max exit at 16:00 ET close of 15:59 bar."),
+    ("16:00+",      "Post-close / Globex opens 18:00",           "[CHOP]",      "After-hours thin. Weekend risk on Fridays — close all."),
+]
+
+# Post-news candle management rules (KB-backed)
+_POST_NEWS_RULES: list[tuple[str, str, float]] = [
+    ("Don't read the first M1 candle of the session — statistically unreliable (except news days).", "2023-11-10 tip", 0.90),
+    ("First two M1 candles of a new M5 typically retrace (OLR) — third shows direction.", "Nov 10 2023 tip", 0.90),
+    ("Require M5 candle close above 50% of order block before taking a trade.", "Jul 21 2023 tip", 0.90),
+    ("Wait for green M5 candle close above key level before making a decision.", "Sep 26 2023 tip", 0.95),
+    ("Don't trade the first candle at 8:15 or equities open — wait for reaction at a key level.", "Jan 15 2024 tip", 0.90),
+    ("15 minutes before equities open is a crack — don't commit before 09:30.", "Jan 15 2024 tip", 0.70),
+    ("News blackout: no new entries 15 min before HIGH event.", "config", 1.0),
+    ("Recovery: 80% of setups occur 20-60 min post-release — wait for MSS/CISD on LTF.", "ICT_CONCEPTS_KB §14", 1.0),
+    ("After large expansion, if next candles don't retrace → retracement is delayed. Sponsored candles = continuation.", "Analysis vs Marking Charts", 0.60),
+    ("After news, any candle body below the lows should incite speed to push lower — Judas swing.", "Aug 1 2023", 0.90),
+]
+
+
+def build_weekly_event_timeline(
+    target_date: date,
+    events: list[dict] | None = None,
+    weekly_modifiers: dict | None = None,
+    archetype_info: dict | None = None,
+    *,
+    mode: str = "premarket",
+) -> str:
+    """Build a day-by-day event timeline for the week.
+
+    Args:
+        target_date: date to anchor the week (Monday of that week is used).
+        events: full week's econ events (for next-week mode, pass next week's events).
+        weekly_modifiers: output of get_weekly_modifiers().
+        archetype_info: output of determine_weekly_archetype().
+        mode: "premarket" (this week, highlight today), "intraday" (weekly position
+              line only), "close" (tomorrow's preview), "weekly" (next week full).
+
+    Returns:
+        Formatted timeline block string.
+    """
+    events = events or []
+    weekly_modifiers = weekly_modifiers or {}
+
+    # Determine the week type
+    if weekly_modifiers.get("is_triple_witching_week"):
+        week_type = "triple_witching"
+    elif weekly_modifiers.get("is_jackson_hole_week"):
+        week_type = "jackson_hole"
+    elif weekly_modifiers.get("is_fomc_week"):
+        week_type = "fomc"
+    elif weekly_modifiers.get("is_cpi_week"):
+        week_type = "cpi"
+    elif weekly_modifiers.get("is_nfp_week"):
+        week_type = "nfp"
+    elif weekly_modifiers.get("is_opex_week"):
+        week_type = "opex"
+    else:
+        week_type = "clean"
+
+    pattern = _WEEKLY_PATTERNS.get(week_type, _WEEKLY_PATTERNS["clean"])
+
+    # Find Monday of the target week
+    monday = target_date - timedelta(days=target_date.weekday())
+
+    if mode == "intraday":
+        # Just the weekly position line
+        dow = target_date.strftime("%A")
+        today_idx = target_date.weekday()
+        day_name, expectation, regime = pattern[today_idx]
+        mod_str = _format_modifiers_short(weekly_modifiers)
+        lines = [f"Weekly Position: {dow} of {mod_str}."]
+        lines.append(f"  ICT Read: {expectation} {regime}")
+        return "\n".join(lines)
+
+    if mode == "close":
+        # Tomorrow's preview — uses THIS week's pattern since tomorrow is in the same week
+        # (unless today is Friday → tomorrow is next week)
+        tomorrow = target_date + timedelta(days=1)
+        if tomorrow.weekday() >= 5:  # Saturday/Sunday → skip to next Monday
+            tomorrow = tomorrow + timedelta(days=(7 - tomorrow.weekday()))
+        tomorrow_idx = min(tomorrow.weekday(), 4)
+        if tomorrow_idx < len(pattern):
+            day_name, expectation, regime = pattern[tomorrow_idx]
+        else:
+            expectation, regime = "No specific pattern data.", ""
+        lines = ["== TOMORROW'S PREVIEW =="]
+        lines.append(f"Tomorrow: {tomorrow.strftime('%A')}")
+        lines.append(f"  ICT Read: {expectation} {regime}")
+        # Weekly position context
+        dow = target_date.strftime("%A")
+        today_idx = target_date.weekday()
+        if today_idx < len(pattern):
+            _, today_exp, _ = pattern[today_idx]
+            lines.append(f"Today was: {dow} — {today_exp}")
+        mod_str = _format_modifiers_short(weekly_modifiers)
+        if mod_str != "Clean Week":
+            lines.append(f"Week context: {mod_str}")
+        return "\n".join(lines)
+
+    # Full timeline (premarket or weekly mode)
+    mod_str = _format_modifiers_short(weekly_modifiers)
+    lines = [f"== WEEKLY EVENT TIMELINE ({mod_str}) =="]
+
+    if archetype_info:
+        arch = archetype_info.get("archetype", "")
+        if arch:
+            lines.append(f"Archetype: {arch}")
+            if archetype_info.get("read"):
+                lines.append(f"  {archetype_info['read']}")
+
+    for i, (day_name, expectation, regime) in enumerate(pattern):
+        day_date = monday + timedelta(days=i)
+        is_today = day_date == target_date
+        marker = " ← TODAY" if is_today else ""
+        lines.append(f"{day_name}{marker}: {expectation} {regime}")
+
+    return "\n".join(lines)
+
+
+def build_ict_time_map(
+    day_type: str = "clean",
+    target_date: date | None = None,
+    *,
+    mode: str = "premarket",
+) -> str:
+    """Build the ICT intraday time map, filtered by mode.
+
+    Args:
+        day_type: output of classify_day_type (clean/cpi/nfp/fomc/jackson_hole/special).
+        target_date: today's date (for Friday check).
+        mode: "premarket" (full day), "open" (AM only 09:30-11:30),
+              "intraday" (PM only 12:00-16:00), "close" (tomorrow's key times).
+
+    Returns:
+        Formatted time map block string.
+    """
+    if mode == "close":
+        # Tomorrow's key times only — compact
+        lines = ["Tomorrow's Key Times:"]
+        key_times = [
+            ("08:15-09:45", "Liquidity Hunt Macro"),
+            ("09:50-10:10", "Macro Window — MSS/CISD prime"),
+            ("10:00-11:00", "Silver Bullet"),
+            ("11:30-13:30", "NY Lunch (dead)"),
+            ("15:00-16:00", "Power Hour"),
+        ]
+        for time_str, name in key_times:
+            lines.append(f"  {time_str}  {name}")
+        return "\n".join(lines)
+
+    # Filter time map by mode
+    if mode == "open":
+        # AM only: 09:30-11:30
+        time_filter = lambda t: _time_in_range(t, "09:30", "11:30")
+    elif mode == "intraday":
+        # PM only: 12:00-16:00 (exclude 16:00+ post-close)
+        time_filter = lambda t: _time_in_range(t, "12:00", "16:00")
+    else:
+        # premarket: full day (include 16:00+ post-close note)
+        time_filter = lambda t: True
+
+    lines: list[str] = []
+    if mode == "premarket":
+        header = f"== ICT INTRADAY TIME MAP ({day_type.upper()} Day) =="
+        lines.append(header)
+    elif mode == "open":
+        lines.append("== TODAY'S AM TIME WINDOWS ==")
+    elif mode == "intraday":
+        lines.append("== PM TIME WINDOWS ==")
+
+    for time_str, window_name, regime, action in _INTRADAY_TIME_MAP:
+        # Extract start time for filtering
+        if "+" in time_str:
+            # Post-close entries (16:00+) only in premarket mode
+            if mode != "premarket":
+                continue
+        else:
+            start_time = time_str.split("-")[0].strip() if "-" in time_str else time_str.strip()
+            if not time_filter(start_time):
+                continue
+
+        # Format line with regime tag
+        lines.append(f"{time_str:<14s} {regime:<14s} {window_name}")
+        lines.append(f"               {action}")
+
+    # Add FOMC-specific warning if FOMC day
+    if day_type == "fomc" and mode in ("premarket", "open", "intraday"):
+        lines.append("")
+        lines.append("⚠ FOMC TODAY at 14:00 ET — NO TRADE 14:00-14:30. Real move is 15:00-16:00 (distribution).")
+
+    # Add Jackson Hole warning
+    if day_type == "jackson_hole" and mode in ("premarket", "open"):
+        lines.append("")
+        lines.append("⚠ JACKSON HOLE: Powell speech 10:00 ET. No entries 15min before. Wait for spike resolution.")
+
+    # Friday close reminder
+    if target_date and target_date.weekday() == 4 and mode in ("premarket", "intraday"):
+        lines.append("")
+        lines.append("⚠ FRIDAY: Close all positions by 15:00 ET. Weekend risk.")
+
+    return "\n".join(lines)
+
+
+def build_post_news_management_block(day_type: str = "clean") -> str:
+    """Build the post-news candle management rules block.
+
+    Only included on event days (cpi/nfp/fomc/jackson_hole/special).
+    """
+    if day_type not in ("cpi", "nfp", "fomc", "jackson_hole", "special"):
+        return ""
+
+    lines = ["== POST-NEWS CANDLE MANAGEMENT =="]
+    for rule, source, conf in _POST_NEWS_RULES:
+        lines.append(f"  • {rule}")
+        lines.append(f"    Source: {source} (conf={conf:.2f})")
+    return "\n".join(lines)
+
+
+def _format_modifiers_short(modifiers: dict) -> str:
+    """Format weekly modifiers into a short string for timeline headers."""
+    parts: list[str] = []
+    if modifiers.get("is_triple_witching_week"):
+        parts.append("TRIPLE WITCHING")
+    elif modifiers.get("is_opex_week"):
+        parts.append("OPEX")
+    if modifiers.get("is_fomc_week"):
+        parts.append("FOMC")
+    if modifiers.get("is_cpi_week"):
+        parts.append("CPI")
+    if modifiers.get("is_nfp_week"):
+        parts.append("NFP")
+    if modifiers.get("is_jackson_hole_week"):
+        parts.append("JACKSON HOLE")
+    if modifiers.get("has_treasury_auction"):
+        parts.append("TREASURY AUCTION")
+    return " + ".join(parts) if parts else "Clean Week"
+
+
+def _time_in_range(time_str: str, start: str, end: str) -> bool:
+    """Check if a time string (HH:MM) falls within [start, end)."""
+    # Handle non-standard entries like "16:00+" — only include in premarket (full day)
+    if "+" in time_str or not ":" in time_str.split("-")[0].split()[0]:
+        return True  # Include in full-day mode, filtered out by mode logic
+    try:
+        # Extract the start time from range strings like "02:00-05:00" or single "08:30"
+        raw = time_str.split("-")[0].strip()
+        h, m = raw.split(":")
+        t = int(h) * 60 + int(m)
+        sh, sm = start.split(":")
+        s = int(sh) * 60 + int(sm)
+        eh, em = end.split(":")
+        e = int(eh) * 60 + int(em)
+        return s <= t < e
+    except (ValueError, IndexError):
+        return True  # If we can't parse, include it
 
 
 def build_ticker_cheat_sheet(
@@ -3887,6 +4556,18 @@ def build_ticker_cheat_sheet(
     except Exception as e:
         log.warning("[cheat_sheet] Matrix failed: %s", e)
 
+    # ── AM time windows + post-news management (open mode) ──
+    try:
+        _dt = classify_day_type([], target_date)
+        _am_map = build_ict_time_map(_dt.get("day_type", "clean"), target_date, mode="open")
+        if _am_map:
+            sections.append(_am_map)
+        _news_mgmt = build_post_news_management_block(_dt.get("day_type", "clean"))
+        if _news_mgmt:
+            sections.append(_news_mgmt)
+    except Exception as e:
+        log.warning("[cheat_sheet] AM time windows failed: %s", e)
+
     return "\n\n".join(sections)
 
 
@@ -4335,6 +5016,18 @@ def build_eod_context(
         sections.append("\n".join(lines))
     except Exception as e:
         log.warning("[eod] ICT dealing range failed: %s", e)
+
+    # ── Tomorrow's preview + weekly position (close mode) ──
+    try:
+        _modifiers = get_weekly_modifiers(target_date, [])
+        _tomorrow_preview = build_weekly_event_timeline(target_date, [], _modifiers, mode="close")
+        if _tomorrow_preview:
+            sections.append(_tomorrow_preview)
+        _tomorrow_times = build_ict_time_map("clean", target_date, mode="close")
+        if _tomorrow_times:
+            sections.append(_tomorrow_times)
+    except Exception as e:
+        log.warning("[eod] Tomorrow preview failed: %s", e)
 
     return "\n\n".join(sections)
     """Build a compact weekly briefing for the LLM.
@@ -4988,6 +5681,21 @@ def build_weekly_cheat_sheet(briefing_data: dict) -> str:
         lines.append(f"• {ticker} Account Invalidation:")
         lines.append(f"  - Downside Floor Fracture: {b_inv} (Dist: {b_dist})")
         lines.append(f"  - Upside Ceiling Fracture: {s_inv} (Dist: {s_dist})")
+
+    # ── Next week event timeline (weekly mode) ──
+    try:
+        _next_monday = target_date + timedelta(days=(7 - target_date.weekday()) if target_date.weekday() < 4 else (14 - target_date.weekday()))
+        _next_modifiers = get_weekly_modifiers(_next_monday, events)
+        _next_timeline = build_weekly_event_timeline(
+            _next_monday, events, _next_modifiers,
+            archetype_info=archetype_info if 'archetype_info' in dir() else None,
+            mode="weekly",
+        )
+        if _next_timeline:
+            lines.extend(["", "[6] NEXT WEEK EVENT TIMELINE", divider])
+            lines.append(_next_timeline)
+    except Exception as e:
+        log.warning("[weekly] Next week timeline failed: %s", e)
 
     lines.extend([
         border,
