@@ -280,10 +280,26 @@ async def run_narrative(model: str, week_start: date | None = None) -> str:
     if selected_week_start is None:
         today = date.today()
         selected_week_start = today - timedelta(days=today.weekday())
+        # If today is Thursday or Friday, prefer NEXT week's briefing if it
+        # exists — the current week is ending and the next week's briefing
+        # is the relevant one for the upcoming trading week.
+        if today.weekday() >= 3:  # Thursday=3, Friday=4
+            next_monday = selected_week_start + timedelta(days=7)
+            next_briefing = await load_weekly_briefing_from_db(next_monday)
+            if next_briefing:
+                log.info("Today is %s; preferring next week's briefing (week_start=%s)",
+                         today.strftime("%A"), next_monday)
+                briefing_data = next_briefing
+            else:
+                briefing_data = await load_weekly_briefing_from_db(selected_week_start)
+        else:
+            briefing_data = await load_weekly_briefing_from_db(selected_week_start)
+    else:
+        briefing_data = await load_weekly_briefing_from_db(selected_week_start)
 
-    briefing_data = await load_weekly_briefing_from_db(selected_week_start)
     if not briefing_data:
-        log.warning("No briefing found for week_start=%s; falling back to latest.", selected_week_start)
+        # Final fallback: load the latest available briefing
+        log.info("No briefing found for week_start=%s; loading latest.", selected_week_start)
         briefing_data = await load_weekly_briefing_from_db(None)
     if not briefing_data:
         raise RuntimeError("No weekly briefing found in DB. Run weekly_briefing.py first.")

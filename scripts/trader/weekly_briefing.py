@@ -51,6 +51,7 @@ from scripts.trader.briefing_core import (
     parse_meta_fields,
     translate_level_to_futures,
     resolve_narrative_ticker,
+    build_weekly_macro_context,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -260,6 +261,9 @@ def build_ticker_block(
     else:
         gex_interp = "GEX neutral — no strong dealer positioning signal."
 
+    # ── Weekly macro context (multi-week GEX regime from Prisma) ──
+    macro_context = build_weekly_macro_context(ticker)
+
     return {
         "ticker": ticker,
         "asset": ticker,  # unified_levels doesn't have a separate asset field
@@ -301,6 +305,7 @@ def build_ticker_block(
         "scored_levels": scored,
         "account_invalidation": invalidation,
         "scenarios": scenarios,
+        "macro_context": macro_context,
     }
 
 

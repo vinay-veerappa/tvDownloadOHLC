@@ -891,12 +891,17 @@ def compute_weekly_ems(unified_entry: dict, spot: float) -> dict:
     We compute a per-day progression using sqrt(time) scaling:
     EM_day = EM_weekly * sqrt(DTE_day / DTE_weekly)
 
+    **0DTE fallback**: When the only EM tokens available are 0DTE (label "0d"),
+    the RTD chain for NQ/ES doesn't have the weekly expiry. In this case we
+    compute the forward Friday EM via the TOS formula (calculate_tos_expected_move)
+    using the ATM IV from META_ fields and the next Friday's DTE.
+
     Returns:
         {"monday": {"upper": x, "lower": y, "em": z}, ...}
     """
     tokens = unified_entry.get("tokens", [])
 
-    # Find EM HI and EM LO tokens
+    # Find EM HI and EM LO tokens (exclude EM85)
     em_hi_token = next((t for t in tokens if "EM HI" in t.get("label", "")), None)
     em_lo_token = next((t for t in tokens if "EM LO" in t.get("label", "") and "EM85" not in t.get("label", "")), None)
 
@@ -917,6 +922,29 @@ def compute_weekly_ems(unified_entry: dict, spot: float) -> dict:
     weekly_dte = int(dte_match.group(1)) if dte_match else 2
     if weekly_dte <= 0:
         weekly_dte = 1
+
+    # ── 0DTE fallback: compute forward Friday EM via TOS formula ──
+    # When the only EM token is 0DTE (DTE=0), the RTD chain doesn't have the
+    # weekly expiry. We compute the forward Friday (next Friday, DTE 3-7)
+    # EM using the TOS formula with the ATM IV from META_ fields.
+    if weekly_dte <= 1:
+        tos_weekly_em = _compute_tos_weekly_em_from_meta(unified_entry, spot)
+        if tos_weekly_em and tos_weekly_em > 0:
+            weekly_em = tos_weekly_em
+            # Use DTE=5 as the Friday target for the √(time) progression
+            weekly_dte = 5
+            log.debug(
+                "[weekly_em] 0DTE fallback: using TOS formula EM=%.2f (DTE=5) for %s",
+                tos_weekly_em, unified_entry.get("ticker", "?"),
+            )
+        else:
+            # TOS formula failed — fall back to the 0DTE value but note it's
+            # an approximation (0DTE scaled by √5 to Friday)
+            weekly_dte = 5
+            log.warning(
+                "[weekly_em] 0DTE fallback failed for %s — using 0DTE EM scaled to Friday (approximation)",
+                unified_entry.get("ticker", "?"),
+            )
 
     # Compute per-day EM using sqrt(time) scaling
     # Monday = DTE 1, Tuesday = DTE 2, ..., Friday = DTE 5
@@ -939,9 +967,397 @@ def compute_weekly_ems(unified_entry: dict, spot: float) -> dict:
     return result
 
 
+def _compute_tos_weekly_em_from_meta(unified_entry: dict, spot: float) -> float | None:
+    """Compute the forward Friday EM using the TOS formula.
+
+    Uses the ATM IV from the META_ fields (parsed from the unified_levels line)
+    and the next Friday's DTE to compute the expected move for the weekly expiry.
+
+    This is the consumer-side counterpart of the producer-side
+    ``_compute_tos_em_fallback()`` in run_options_levels.py — it handles the
+    case where the RTD chain only has 0DTE + monthly expiries and the weekly
+    expiry is missing.
+
+    Returns the EM value (±points) or None if inputs are invalid.
+    """
+    import math
+    from datetime import date, timedelta
+    from zoneinfo import ZoneInfo
+
+    # Get ATM IV from META_ fields
+    meta = parse_meta_fields(unified_entry)
+    atm_iv = meta.get("IV", 0) or 0
+    if atm_iv <= 0:
+        # Try blending 25d IVs if available
+        # (not in META_ but may be in the unified entry)
+        return None
+
+    # Determine if this is a futures ticker (uses futures TOS intercept)
+    ticker = unified_entry.get("ticker", "")
+    is_futures = ticker in ("NQ", "ES", "YM", "RTY", "/NQ", "/ES", "/YM", "/RTY")
+
+    # Compute next Friday DTE
+    tz = ZoneInfo("America/New_York")
+    from datetime import datetime
+    today = datetime.now(tz).date()
+    days_ahead = 4 - today.weekday()  # 4 = Friday
+    if days_ahead <= 0:
+        days_ahead += 7
+    next_friday = today + timedelta(days=days_ahead)
+    dte = (next_friday - today).days
+    if dte < 3:
+        return None
+
+    # TOS formula: EM = Price * IV * sqrt((0.6368 * DTE + intercept) / 365)
+    slope = 0.6368
+    intercept = 0.6900 if is_futures else 0.2400
+    t_eff = slope * dte + intercept
+    t_eff_yr = t_eff / 365.0
+    if t_eff_yr <= 0:
+        return None
+
+    em_value = spot * atm_iv * math.sqrt(t_eff_yr)
+    return em_value if em_value > 0 else None
+
+
 def load_weekly_ems(unified_entry: dict, spot: float) -> dict:
     """Backward-compatible alias for weekly EM envelope computation."""
     return compute_weekly_ems(unified_entry, spot)
+
+
+# ── Weekly Macro Context (multi-week GEX regime) ──────────────────
+
+
+def _query_daily_gex_snapshots(ticker: str, lookback_days: int = 28) -> list[dict]:
+    """Query daily GEX snapshots from Prisma DB for multi-week regime analysis.
+
+    Returns one row per trading day with the EOD (last snapshot) GEX values:
+    [{date, regime, regime_label, total_gex, spot, gamma_magnet}, ...]
+    """
+    import sqlite3
+    from datetime import datetime, timezone
+
+    # Map narrative tickers to GexSnapshot ticker keys
+    ticker_map = {
+        "NQ": "/NQ", "NQ1": "/NQ", "/NQ": "/NQ",
+        "ES": "/ES", "ES1": "/ES", "/ES": "/ES",
+        "QQQ": "QQQ", "SPY": "SPY", "SPX": "SPX",
+        "NDX": "NDX", "IWM": "IWM", "DIA": "DIA",
+    }
+    db_ticker = ticker_map.get(ticker, ticker)
+
+    if not DB_PATH.exists():
+        return []
+
+    try:
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+
+        # Get the last snapshot per trading day for the lookback period
+        cursor.execute(
+            """
+            SELECT 
+                date(tradingDate / 1000, 'unixepoch') as dt,
+                gexRegime,
+                regimeLabel,
+                totalGex,
+                spotPrice,
+                gammaMagnet,
+                callVolumeCentroid,
+                putVolumeCentroid
+            FROM GexSnapshot
+            WHERE ticker = ?
+              AND tradingDate >= strftime('%s', 'now', ?) * 1000
+            GROUP BY dt
+            ORDER BY dt DESC
+            """,
+            (db_ticker, f"-{lookback_days} days"),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        result = []
+        for r in rows:
+            result.append({
+                "date": r[0],
+                "regime": r[1] or "NEUTRAL",
+                "regime_label": r[2] or "NEUTRAL",
+                "total_gex": r[3] or 0,
+                "spot": r[4] or 0,
+                "gamma_magnet": r[5] or 0,
+                "call_centroid": r[6] or 0,
+                "put_centroid": r[7] or 0,
+            })
+        return result
+    except Exception as exc:
+        log.warning("[weekly_macro] GexSnapshot query failed for %s: %s", ticker, exc)
+        return []
+
+
+def _query_macro_snapshots(ticker: str, lookback_days: int = 28) -> list[dict]:
+    """Query daily wall data for wall migration analysis.
+
+    Tries MacroSnapshot first (has explicit call/put walls). If no recent data,
+    falls back to GexSnapshot (has gammaMagnet and pinStrike as wall proxies).
+
+    Returns: [{date, call_wall, put_wall, zero_gamma, gamma_magnet, pin_strike, spot}, ...]
+    """
+    import sqlite3
+    import time
+
+    ticker_map = {
+        "NQ": "NDX", "NQ1": "NDX", "/NQ": "NDX",
+        "ES": "SPX", "ES1": "SPX", "/ES": "SPX",
+        "QQQ": "QQQ", "SPY": "SPY", "SPX": "SPX",
+        "NDX": "NDX", "IWM": "IWM", "DIA": "DIA",
+    }
+    db_ticker = ticker_map.get(ticker, ticker)
+
+    # GexSnapshot ticker (futures-native)
+    gex_ticker_map = {
+        "NQ": "/NQ", "NQ1": "/NQ", "/NQ": "/NQ",
+        "ES": "/ES", "ES1": "/ES", "/ES": "/ES",
+        "QQQ": "QQQ", "SPY": "SPY", "SPX": "SPX",
+        "NDX": "NDX", "IWM": "IWM", "DIA": "DIA",
+    }
+    gex_ticker = gex_ticker_map.get(ticker, ticker)
+
+    if not DB_PATH.exists():
+        return []
+
+    threshold_ms = (int(time.time()) - (lookback_days + 7) * 86400) * 1000
+
+    try:
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+
+        # 1. Try MacroSnapshot (explicit walls)
+        cursor.execute(
+            """
+            SELECT
+                date(tradingDate / 1000, 'unixepoch') as dt,
+                macroCallWall,
+                macroPutWall,
+                zeroGamma,
+                spotPrice
+            FROM MacroSnapshot
+            WHERE ticker = ?
+              AND tradingDate >= ?
+            ORDER BY tradingDate DESC
+            """,
+            (db_ticker, threshold_ms),
+        )
+        rows = cursor.fetchall()
+
+        if rows and len(rows) >= 2:
+            conn.close()
+            return [
+                {
+                    "date": r[0],
+                    "call_wall": r[1] or 0,
+                    "put_wall": r[2] or 0,
+                    "zero_gamma": r[3] or 0,
+                    "gamma_magnet": 0,
+                    "pin_strike": 0,
+                    "spot": r[4] or 0,
+                }
+                for r in rows
+            ]
+
+        # 2. Fallback: GexSnapshot (gammaMagnet + pinStrike as wall proxies)
+        cursor.execute(
+            """
+            SELECT
+                date(tradingDate / 1000, 'unixepoch') as dt,
+                gammaMagnet,
+                pinStrike,
+                spotPrice
+            FROM GexSnapshot
+            WHERE ticker = ?
+              AND tradingDate >= ?
+            GROUP BY dt
+            ORDER BY dt DESC
+            """,
+            (gex_ticker, threshold_ms),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            {
+                "date": r[0],
+                "call_wall": 0,  # GexSnapshot doesn't have explicit walls
+                "put_wall": 0,
+                "zero_gamma": 0,
+                "gamma_magnet": r[1] or 0,
+                "pin_strike": r[2] or 0,
+                "spot": r[3] or 0,
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        log.warning("[weekly_macro] MacroSnapshot/GexSnapshot wall query failed for %s: %s", ticker, exc)
+        return []
+
+
+def build_weekly_macro_context(ticker: str) -> dict:
+    """Build a multi-week macro GEX context for the weekly narrative.
+
+    Pulls 4 weeks of GexSnapshot and MacroSnapshot data from Prisma to answer:
+    - Is this a 1-day flip or a multi-week regime? (regime persistence)
+    - Are the walls drifting? (wall migration)
+    - Is total GEX trending? (rising/falling)
+    - How stable is the regime? (regime stability score)
+
+    Returns:
+        {regime_persistence_pct, current_regime, regime_days, gex_trend,
+         wall_migration, regime_stability, summary_str}
+    """
+    gex_snaps = _query_daily_gex_snapshots(ticker, lookback_days=28)
+    macro_snaps = _query_macro_snapshots(ticker, lookback_days=28)
+
+    if not gex_snaps:
+        return {"summary_str": "No historical GEX data available for macro context."}
+
+    # ── Regime persistence: what % of days in the lookback were NEGATIVE vs POSITIVE ──
+    total_days = len(gex_snaps)
+    neg_days = sum(1 for s in gex_snaps if s["regime"] == "NEGATIVE")
+    pos_days = sum(1 for s in gex_snaps if s["regime"] == "POSITIVE")
+    neg_pct = (neg_days / total_days * 100) if total_days else 0
+    pos_pct = (pos_days / total_days * 100) if total_days else 0
+
+    # Current regime (most recent day)
+    current = gex_snaps[0]
+    current_regime = current["regime"]
+    current_label = current["regime_label"]
+
+    # Count consecutive days in current regime
+    regime_days = 0
+    for s in gex_snaps:
+        if s["regime"] == current_regime:
+            regime_days += 1
+        else:
+            break
+
+    # ── GEX trend: compare recent avg to prior avg ──
+    recent_5 = gex_snaps[:5] if len(gex_snaps) >= 5 else gex_snaps
+    prior_5 = gex_snaps[5:10] if len(gex_snaps) >= 10 else gex_snaps[5:]
+    recent_avg_gex = sum(s["total_gex"] for s in recent_5) / len(recent_5) if recent_5 else 0
+    prior_avg_gex = sum(s["total_gex"] for s in prior_5) / len(prior_5) if prior_5 else 0
+
+    if prior_avg_gex != 0:
+        gex_change_pct = ((recent_avg_gex - prior_avg_gex) / abs(prior_avg_gex)) * 100
+    else:
+        gex_change_pct = 0
+
+    if recent_avg_gex < prior_avg_gex:
+        gex_trend = "FALLING (more negative — vol expanding)"
+    elif recent_avg_gex > prior_avg_gex:
+        gex_trend = "RISING (less negative — vol compressing)"
+    else:
+        gex_trend = "STABLE"
+
+    # ── Wall migration: compare latest walls/magnet to earliest in lookback ──
+    wall_migration = {}
+    if macro_snaps and len(macro_snaps) >= 2:
+        latest = macro_snaps[0]
+        earliest = macro_snaps[-1]
+        has_explicit_walls = latest.get("call_wall", 0) and earliest.get("call_wall", 0)
+
+        if has_explicit_walls:
+            cw_delta = latest["call_wall"] - earliest["call_wall"]
+            pw_delta = latest["put_wall"] - earliest["put_wall"]
+            zg_delta = latest.get("zero_gamma", 0) - earliest.get("zero_gamma", 0)
+            wall_migration = {
+                "call_wall_delta": round(cw_delta, 2),
+                "put_wall_delta": round(pw_delta, 2),
+                "zero_gamma_delta": round(zg_delta, 2),
+                "call_wall_latest": latest["call_wall"],
+                "put_wall_latest": latest["put_wall"],
+                "call_wall_earliest": earliest["call_wall"],
+                "put_wall_earliest": earliest["put_wall"],
+                "source": "MacroSnapshot",
+            }
+        else:
+            # Fallback: use gamma magnet + pin strike as wall proxies
+            magnet_delta = (latest.get("gamma_magnet", 0) - earliest.get("gamma_magnet", 0)) if latest.get("gamma_magnet") and earliest.get("gamma_magnet") else 0
+            pin_delta = (latest.get("pin_strike", 0) - earliest.get("pin_strike", 0)) if latest.get("pin_strike") and earliest.get("pin_strike") else 0
+            wall_migration = {
+                "gamma_magnet_delta": round(magnet_delta, 2),
+                "pin_strike_delta": round(pin_delta, 2),
+                "gamma_magnet_latest": latest.get("gamma_magnet", 0),
+                "pin_strike_latest": latest.get("pin_strike", 0),
+                "gamma_magnet_earliest": earliest.get("gamma_magnet", 0),
+                "pin_strike_earliest": earliest.get("pin_strike", 0),
+                "source": "GexSnapshot (magnet/pin proxy)",
+            }
+
+    # ── Regime stability: how many regime flips in the lookback? ──
+    flips = 0
+    for i in range(1, len(gex_snaps)):
+        if gex_snaps[i]["regime"] != gex_snaps[i - 1]["regime"]:
+            flips += 1
+    # Stability: 0 flips = 100% stable, many flips = low stability
+    if total_days > 1:
+        stability_pct = max(0, 100 - (flips / (total_days - 1) * 100))
+    else:
+        stability_pct = 100
+
+    # ── Build summary string ──
+    regime_desc = "NEGATIVE GAMMA" if current_regime == "NEGATIVE" else "POSITIVE GAMMA" if current_regime == "POSITIVE" else "NEUTRAL"
+    persistence_desc = f"{neg_pct:.0f}% negative / {pos_pct:.0f}% positive over {total_days} trading days"
+    stability_desc = f"{stability_pct:.0f}% stable ({flips} regime flips in {total_days} days)"
+
+    summary_parts = [
+        f"GEX REGIME: {regime_desc} ({current_label}) — {regime_days} consecutive days",
+        f"REGIME PERSISTENCE: {persistence_desc}",
+        f"GEX TREND: {gex_trend} (recent avg GEX: {recent_avg_gex:,.0f} vs prior: {prior_avg_gex:,.0f}, {gex_change_pct:+.1f}%)",
+        f"REGIME STABILITY: {stability_desc}",
+    ]
+    if wall_migration:
+        if wall_migration.get("source") == "MacroSnapshot":
+            cw_dir = "up" if wall_migration["call_wall_delta"] > 0 else "down" if wall_migration["call_wall_delta"] < 0 else "flat"
+            pw_dir = "up" if wall_migration["put_wall_delta"] > 0 else "down" if wall_migration["put_wall_delta"] < 0 else "flat"
+            summary_parts.append(
+                f"WALL MIGRATION: Call Wall {wall_migration['call_wall_delta']:+.2f} ({cw_dir}), "
+                f"Put Wall {wall_migration['put_wall_delta']:+.2f} ({pw_dir}) over {len(macro_snaps)} days"
+            )
+        else:
+            # GexSnapshot fallback: magnet/pin
+            mag_dir = "up" if wall_migration["gamma_magnet_delta"] > 0 else "down" if wall_migration["gamma_magnet_delta"] < 0 else "flat"
+            pin_dir = "up" if wall_migration["pin_strike_delta"] > 0 else "down" if wall_migration["pin_strike_delta"] < 0 else "flat"
+            summary_parts.append(
+                f"GAMMA MIGRATION: Magnet {wall_migration['gamma_magnet_delta']:+.2f} ({mag_dir}), "
+                f"Pin {wall_migration['pin_strike_delta']:+.2f} ({pin_dir}) over {len(macro_snaps)} days"
+            )
+
+    return {
+        "current_regime": current_regime,
+        "current_label": current_label,
+        "regime_days": regime_days,
+        "regime_persistence_neg_pct": round(neg_pct, 1),
+        "regime_persistence_pos_pct": round(pos_pct, 1),
+        "total_days_sampled": total_days,
+        "gex_trend": gex_trend,
+        "recent_avg_gex": round(recent_avg_gex, 2),
+        "prior_avg_gex": round(prior_avg_gex, 2),
+        "gex_change_pct": round(gex_change_pct, 1),
+        "regime_stability_pct": round(stability_pct, 1),
+        "regime_flips": flips,
+        "wall_migration": wall_migration,
+        "summary_str": " | ".join(summary_parts),
+    }
+
+
+def format_weekly_macro_context_block(macro_ctx: dict) -> str:
+    """Format the weekly macro context into a cheat-sheet block."""
+    if not macro_ctx or "summary_str" not in macro_ctx:
+        return "== WEEKLY MACRO CONTEXT ==\nNo historical GEX data available."
+
+    lines = ["== WEEKLY MACRO CONTEXT (multi-week GEX regime) =="]
+    for part in macro_ctx["summary_str"].split(" | "):
+        lines.append(f"• {part}")
+    return "\n".join(lines)
 
 
 def get_friday_em(weekly_ems: dict) -> tuple[float, float]:
@@ -1814,6 +2230,45 @@ def fetch_vol_context(ticker: str, target_date: date) -> dict:
     return context
 
 
+def _reconstruct_weekly_ems(
+    friday_upper: float | None,
+    friday_lower: float | None,
+    friday_em: float | None,
+    spot: float | None,
+) -> dict:
+    """Reconstruct the per-day weekly EM envelope from the Friday EM values
+    stored in the DB.
+
+    The DB only persists the Friday (terminal) EM values. We reconstruct the
+    Mon-Fri progression using √(time) scaling, the same model used by
+    ``compute_weekly_ems()`` but in reverse — Friday is the full envelope,
+    and each prior day scales by √(day/5).
+
+    Returns a dict ``{monday: {upper, lower, em}, ..., friday: {upper, lower, em}}``.
+    """
+    if not friday_upper or not friday_lower or friday_upper <= 0 or friday_lower <= 0:
+        return {}
+
+    import math
+    weekly_em = friday_em or ((friday_upper - friday_lower) / 2)
+    if weekly_em <= 0:
+        return {}
+
+    day_names = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    result = {}
+    for i, day in enumerate(day_names):
+        day_dte = i + 1  # 1 through 5
+        day_em = weekly_em * math.sqrt(day_dte / 5)
+        # Use the spot from the DB; fall back to the midpoint of the Friday envelope
+        ref_spot = spot if spot and spot > 0 else (friday_upper + friday_lower) / 2
+        result[day] = {
+            "upper": round(ref_spot + day_em, 2),
+            "lower": round(ref_spot - day_em, 2),
+            "em": round(day_em, 2),
+        }
+    return result
+
+
 async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict | None:
     """Load the latest (or specified) weekly briefing from DB and assemble
     the in-memory TOON JSON for the LLM.
@@ -1944,7 +2399,12 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
                     "neutral": snap.scenarioNeutral,
                 },
                 "proxy_context": _proxy_context(snap.ticker, snap),
-                "institutional_volatility_context": fetch_vol_context(snap.ticker, briefing.weekStartDate.date())
+                "institutional_volatility_context": fetch_vol_context(snap.ticker, briefing.weekStartDate.date()),
+                "expected_moves": _reconstruct_weekly_ems(
+                    snap.fridayEmUpper, snap.fridayEmLower, snap.fridayEmValue,
+                    snap.spotPrice,
+                ),
+                "macro_context": build_weekly_macro_context(snap.ticker),
             })
 
         from scripts.trader.weekly_briefing import fetch_week_earnings
@@ -5435,6 +5895,14 @@ def build_weekly_static_template(briefing_data: dict) -> str:
             f"**Spot**: {spot} ({weekly_change}) | **GEX Tape**: {ticker_block.get('gex_regime', {}).get('gex_sign', 'N/A')} / {total_gex_str}",
             f"**Boundaries**: Upside Ceiling {call_wall} | Downside Floor {put_wall} | Volatility Pivot {zero_gamma}",
             f"**Risk Envelope**: Expected High {em_upper} <-> Expected Low {em_lower} (+-{em_value}%)",
+        ])
+
+        # Multi-week GEX macro context
+        macro_ctx = ticker_block.get("macro_context", {})
+        if macro_ctx and macro_ctx.get("summary_str"):
+            lines.append(f"**Macro GEX Context**: {macro_ctx['summary_str']}")
+
+        lines.extend([
             "",
             f"**Mandated Track**: {ticker_block.get('mandated_execution_track', 'N/A')} -> {{{{TRACK_NOTE_{ticker}}}}}",
             "",
@@ -5547,6 +6015,13 @@ def build_weekly_cheat_sheet(briefing_data: dict) -> str:
         f"• ICT Profile: {archetype_info['archetype']}",
         f"  Strategy: {archetype_info['execution']}",
     ])
+
+    # ── Weekly Macro Context (multi-week GEX regime) ──
+    for ticker_block in tickers:
+        macro_ctx = ticker_block.get("macro_context", {})
+        if macro_ctx and macro_ctx.get("summary_str"):
+            lines.append("")
+            lines.append(f"  {ticker_block.get('ticker', '?')} MACRO: {macro_ctx['summary_str']}")
 
     # ── Weekly Profile Day-by-Day Expectation ──
     # Maps the ICT archetype to a day-by-day behavioral expectation based

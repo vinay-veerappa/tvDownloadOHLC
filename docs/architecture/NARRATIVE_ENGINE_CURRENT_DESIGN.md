@@ -309,6 +309,211 @@ The weekly narrative uses JSON slot-filling (not free-form prose like the daily 
 
 Investing.com is primary because it fetches 14 days ahead (solves the Friday/Saturday ForexFactory limitation where next week's data isn't available until Sunday). yfinance was tested as an alternative but lacks impact levels (HIGH/MEDIUM/LOW) and has abbreviated event names.
 
+### GEX/EM enhancements (BACKLOG — 2026-07-23)
+
+Three enhancements to make GEX/EM data more actionable in the narrative. Approved 2026-07-23; items 1–2 are backlog, item 3 is the immediate add.
+
+#### 1. Intraday GEX drift block (BACKLOG)
+
+**Problem:** The intraday cheat sheet reads `unified_levels.json` at narrative build time (a point-in-time snapshot). The narrative cannot tell the trader *how GEX has evolved intraday* — e.g. the zero gamma drifting up, the call wall pulling in, or a regime that is *about* to flip.
+
+**What exists:** `GexSnapshot` is written to Prisma every ~60s by the options pipeline (`run_options_levels.py`), so the time-series is available. `compute_gex_verdict()` in `signals/gex_regime.py` already compares live vs. morning-open GEX to detect flips/wall shifts, but it is only invoked from the open-mode cheat sheet, not the intraday builder.
+
+**Required:**
+- New block in `build_intraday_context()` (briefing_core.py): **GEX DRIFT SINCE OPEN**
+- Pull the morning-open `GexSnapshot` (first snapshot after 09:30 ET) and the latest snapshot from Prisma
+- Surface deltas: zero gamma Δ, call wall Δ, put wall Δ, total GEX Δ
+- Produce a read: "Pin weakening — flip approaching spot" / "Walls stable, regime holding" / "Regime flipped at 11:42 ET (positive → negative)"
+- Reuse `compute_gex_verdict()` (already returns regime, bias, wall_shift_note, read)
+- Add a "regime flip watch" alert when spot is within N points of the flip
+
+**Depends on:** Options pipeline running intraday (it is, per `data_freshness.check_gex_levels()`)
+
+#### 2. EM decay model (BACKLOG)
+
+**Problem:** The cheat sheet reports the *morning* EM envelope (e.g. 300pt range). By 14:00 ET most of that envelope has been "used up" but the narrative still quotes the full range, making the "price at 93% of EM HI" read misleading late in the day.
+
+**What exists:** `compute_weekly_ems()` already uses `√(time)` scaling for the weekly → daily EM progression. The same principle applies intraday: as the trading day elapses, the *remaining* expected move shrinks as `√(remaining_time / total_time)`.
+
+**Required:**
+- New helper: `compute_decayed_em(em_upper, em_lower, spot, current_time, session="RTH")` in `signals/expected_move.py`
+- Compute remaining EM width as `full_em_width × √(remaining_bars / total_bars)` where total = RTH 09:30–16:00 (390 1-min bars)
+- Return decayed `em_upper_decay`, `em_lower_decay`, `remaining_em_pct`, `read`
+- Surface in intraday cheat sheet: "EM (decay-adjusted, 14:00): 22,180–22,320 (47% remaining)"
+- Combine with GEX regime for confluence (see item 3)
+
+**Depends on:** RTH session clock (already available via `nqstats/sessions.py`)
+
+#### 3. GEX × EM confluence verdict (IMMEDIATE — approved 2026-07-23)
+
+**Problem:** The cheat sheet reports GEX regime and EM position as separate blocks. The *synthesis* — "what should I actually do given the regime and where price sits relative to EM" — is left to the LLM to infer each time, which is inconsistent.
+
+**What exists:** `resolve_track()` already maps GEX regime → mandated execution track (Python-decided). But the track does not account for *where price is relative to EM* — e.g. a pinned regime with price at EM HI is a fade setup, while a pinned regime with price at the gamma magnet is "stay flat."
+
+**Required — shared module:** `scripts/trader/signals/gex_em_confluence.py`
+```python
+def compute_gex_em_verdict(
+    gex_regime: str,        # POSITIVE/NEGATIVE/NEUTRAL
+    regime_label: str,      # PINNED/TRENDING/COILED/BATTLE ZONE
+    em_upper: float,
+    em_lower: float,
+    spot: float,
+    em85_upper: float | None = None,
+    em85_lower: float | None = None,
+    call_wall: float | None = None,
+    put_wall: float | None = None,
+) -> dict:
+    """Return a single actionable verdict combining GEX regime + EM position.
+
+    Returns: {verdict, setup, invalidation, confidence, read}
+    """
+```
+
+**Logic matrix** (Python-decided, LLM narrates):
+
+| GEX regime | EM position | Verdict | Setup |
+|---|---|---|---|
+| Pinned (positive + tight) | Near EM HI / call wall | Fade | Short near EM HI, target gamma magnet |
+| Pinned | Near EM LO / put wall | Fade | Long near EM LO, target gamma magnet |
+| Pinned | Mid-range (near magnet) | Neutral | Stay flat; wait for edge |
+| Trending (negative + wide) | Above EM HI (broken) | Trend-follow | Long continuation, trail stops |
+| Trending | Below EM LO (broken) | Trend-follow | Short continuation, trail stops |
+| Trending | Inside EM | Wait | Wait for EM break, then join direction |
+| Coiled (negative + tight) | Any | Breakout-wait | Wait for wall break + candle close |
+| Battle zone (positive + wide) | Near wall | Wall-trade | Fade wall, target opposite wall |
+
+**Integration:**
+- Add to `build_premarket_context()` and `build_ticker_cheat_sheet()` as a new `== GEX × EM CONFLUENCE ==` block
+- Add to intraday context with decay-adjusted EM (when item 2 lands)
+- Add `confluence_verdict` field to the weekly briefing ticker block (so the weekly narrative can reference the bigger-picture regime posture)
+
+**EM85 usage:** EM85 straddle bounds are NOT relied upon (per user preference 2026-07-24). Use the **full EM** calculations exclusively. The TOS-validated formula (`calculate_tos_expected_move()`) is the source of truth.
+
+---
+
+### TOS EM verification (2026-07-24)
+
+**Context:** Today is Thursday 2026-07-24. The user captured TOS VxV ExpectedMove v3 values **last Friday (2026-07-17)** for **this week's expiry (2026-07-24)** — the Friday that is tomorrow. The scope capture date and expiry are correct for this week.
+
+**User-provided TOS values** (captured 2026-07-17, expiry 2026-07-24, DTE=7 at capture):
+
+| Ticker | Mon | Tue | Wed | Thu | Wkly/Fri |
+|---|---|---|---|---|---|
+| NQ (futures) | 412.25 | 567.5 | 688.21 | 816.4 | 916.9 |
+| ES (futures) | 62.05 | 83.76 | 100.52 | 119.18 | 134.36 |
+| SPX (index) | 60.89 | 82.14 | 99.64 | 117.78 | 132.16 |
+| SPY (ETF) | 6.16 | 8.26 | 10.14 | 11.75 | 13.26 |
+
+**Findings:**
+
+1. **√(time) scaling is valid** — TOS daily values match `Wkly × √(day/5)` within 1–4%. Monday is consistently ~3% above the pure √ prediction (TOS uses calendar DTE, not fractional days). The per-day progression model in `compute_weekly_ems()` is sound.
+
+2. **Scope expiry is CORRECT** — the scope captured 2026-07-24 (this Friday, DTE=7 at capture on 2026-07-17). This is the right expiry for this trading week. The earlier analysis that called it "wrong expiry" was incorrect — today is Thursday and the expiry is tomorrow.
+
+3. **NQ/ES futures are NOT in `weekly_em_scope.json`** — the scope file has NDX/SPX (cash indices) and SPY/QQQ (ETFs) but not the futures contracts. NQ and ES are processed via the RTD-native path (`RTD_NATIVE_TICKERS = {"NQ", "ES"}`), and the scope capture happens on that path, but the scope file only contains the Schwab-path tickers.
+
+   **Fix:** Ensure the RTD-native path writes NQ/ES scope entries to the same cache file. Verify `_save_weekly_scope_cache()` is called after the RTD path captures the weekly candidate.
+
+4. **SPX EM is 13.3% below TOS** — pipeline scope SPX EM = 114.60 vs TOS SPX EM = 132.16 (same instrument, same expiry, same capture date). Reverse-engineering shows the pipeline SPX IV = 13.34% but TOS-implied IV = 15.38%. **The IV source for SPX is wrong**, not the formula.
+
+5. **SPY EM is only 3.6% below TOS** — pipeline scope SPY EM = 12.79 vs TOS SPY EM = 13.262. Pipeline SPY IV = 14.91% vs TOS-implied IV = 15.46%. The SPY IV is much closer to TOS (3.6% gap vs 13.3% for SPX).
+
+6. **Internal inconsistency confirms the SPX IV bug** — TOS SPX/SPY EM ratio = 9.97 (matches the ~10x price ratio). Pipeline scope SPX/SPY EM ratio = 8.97 (broken). SPX and SPY track the same underlying — their EM ratio should equal their price ratio. The pipeline SPX IV is understated, producing a too-narrow SPX EM.
+
+7. **NQ/ES futures EM** — NDX scope (882.81) vs NQ TOS (916.9) = -3.7% (index vs futures, expected gap from basis). SPX scope (114.60) vs ES TOS (134.36) = -14.7% (index vs futures + the SPX IV bug). If SPX IV were correct, ES futures EM computed via TOS formula would match TOS much more closely.
+
+8. **RTD chain for NQ/ES has only 2 expiries** — NQ has 2026-07-24 (0DTE) + 2026-08-21 (28DTE monthly). Neither has the weekly expiry that TOS displays (though the scope capture on Friday EOD would use the front expiry which IS the weekly).
+
+**Root cause summary:**
+
+| Issue | Root cause | Impact |
+|---|---|---|
+| SPX EM 13.3% too low | Pipeline SPX IV (13.34%) is below TOS SPX IV (15.38%) — Schwab API IV differs from TOS display IV for SPX | All SPX-derived levels understated |
+| SPY EM 3.6% low | Minor IV gap (14.91% vs 15.46%) — acceptable tolerance | Minor |
+| NQ/ES not in scope | RTD-native path scope capture not persisted to scope file | No futures-native weekly EM |
+| NQ pipeline IV 21.5% vs TOS 27% | RTD IV source may differ from TOS display IV | NQ EM understated by ~16% |
+
+**User directive:** NQ/ES must use the **futures TOS EM** (computed from futures spot + futures IV via `calculate_tos_expected_move(is_futures=True)`), NOT the SPY/QQQ translated values. The `basis_ratio` translation from ETF to futures introduces a spot mismatch that compounds the IV discrepancy.
+
+**User preference:** Use **full EM** calculations only — do not rely on EM85 straddle bounds.
+
+**IV time-drift caveat:** The IV gap analysis above is valid because both the pipeline scope and the user's TOS values were captured at the **same time** (Friday 2026-07-17 EOD, DTE=7). Comparing today's live pipeline EM (Thursday, DTE=1) against Friday's TOS values would NOT be a fair comparison — IV drifts over the week as market conditions change, and DTE shrinks. The 13.3% SPX IV gap and 3.6% SPY IV gap are real discrepancies at the same snapshot time, not time-drift artifacts. Any future re-verification should capture TOS values at the same timestamp the pipeline runs (e.g., both on Friday EOD, or both intraday at a specific time).
+
+**Action items (producer side — `scripts/streaming/options/`):**
+
+| # | Fix | File | Status |
+|---|---|---|---|
+| A | Ensure RTD-native path (NQ/ES) writes scope entries to `weekly_em_scope.json` | `run_options_levels.py` RTD path + `_save_weekly_scope_cache()` | ✅ Done — RTD path already saves to cache; added TOS formula fallback |
+| B | When weekly expiry missing from RTD chain, compute EM via TOS formula with futures IV | `run_options_levels.py` `_compute_tos_em_fallback()` | ✅ Done — added `_compute_tos_em_fallback()` + `_next_friday()` |
+| C | Investigate SPX IV discrepancy (pipeline 13.34% vs TOS 15.38%) — check Schwab API IV source for SPX | `options_fetcher.py` + `gex_calculator.py` | 🟡 BACKLOG — deferred per user |
+| D | Investigate NQ IV discrepancy (pipeline 21.5% vs TOS 27%) — check RTD IV source | `tos_rtd/adapter.py` + `gex_calculator.py` | 🟡 BACKLOG — deferred per user |
+| E | Add NQ/ES futures EM directly to `weekly_em_scope.json` (not just NDX/SPX) | `run_options_levels.py` | ✅ Done — RTD path + TOS fallback now writes NQ/ES to scope |
+
+**Action items (consumer side — `scripts/trader/`):**
+
+| # | Fix | File | Status |
+|---|---|---|---|
+| F | `expected_move.py` should read `cash_spot` (populated) not `price` (empty) from `market_structure[]` | `signals/expected_move.py` | ✅ Done — `market_structure[]` entries use `cash_spot`; EM values are read from `expected_moves[]` not `price` |
+| G | `expected_move.py` should prefer NQ/ES futures EM when available (check `translation_mode == "rtd_direct"`) | `signals/expected_move.py` | ✅ Done — futures-native lookup priority + `is_rtd_native` skip of `basis_ratio` scaling |
+| H | Weekly briefing should use futures-native EM for NQ/ES, not ETF-translated | `weekly_briefing.py` `build_ticker_block()` | 🟡 Pending |
+
+---
+
+### Weekly narrative — bigger picture (approved 2026-07-23)
+
+**Problem:** The weekly narrative currently frames the week as a *scaled-up day* — per-ticker walls, zero gamma, intraday invalidation, mandated track. It does not answer the macro question the weekly brief should answer: *what kind of week is this, what is the multi-week positioning context, and what is the structural regime?*
+
+**Current weekly focus (day-trading lens):**
+- Per-ticker: call wall, put wall, zero gamma, gamma magnet, pin strike
+- Weekly EM envelope (Friday EM HI/LO as risk boundary)
+- Mandated execution track (Track A/B/C from GEX regime)
+- Account invalidation (bullish/bearish model-break levels)
+- Scenarios (bullish/bearish/range per ticker)
+
+**Missing — the bigger-picture lens the weekly should provide:**
+
+| Dimension | What it answers | Data source | Status |
+|---|---|---|---|
+| **GEX regime persistence** | Is this a 1-day flip or a multi-week regime? Compare this week's net GEX to prior 2–4 weeks | `GexSnapshot` history (Prisma) | 🔴 Not built |
+| **Vol term structure** | Is vol expanding or compressing? Compare 0DTE vs weekly vs monthly EM width | `daily_levels.json` `expected_moves[]` (multi-expiry) | 🟡 Data exists, not surfaced |
+| **Wall migration** | Are the call/put walls drifting? Compare this week's walls to prior weeks | `MacroSnapshot` history (Prisma) | 🔴 Not built |
+| **Intermarket divergence** | Are NQ and ES in the same regime? Is VIX diverging from GEX? | `unified_levels.json` + `get_intermarket_quotes()` | 🟡 Intermarket matrix exists but not as a *divergence* read |
+| **Weekly range statistics** | What is the typical weekly range vs the current EM? Is this week coiled or expanded? | Live storage parquet (weekly bars) | 🔴 Not built |
+| **Regime stability score** | How stable is the current GEX regime? (low stability = expect regime change) | `GexSnapshot` time-series | 🔴 Not built |
+| **Multi-week EM term structure** | Are front-week EMs wider than back-week (backwardation = vol event priced in)? | `expected_moves[]` across expiries | 🟡 Data exists, not surfaced |
+
+**Required changes:**
+
+1. **New `build_weekly_macro_context()` block** in `briefing_core.py`:
+   - Pull 4 weeks of `GexSnapshot` from Prisma for each ticker
+   - Compute: regime persistence (% of days in same regime), wall migration (Δ call/put wall over 4 weeks), total GEX trend (rising/falling)
+   - Pull multi-expiry EM from `daily_levels.json` → term structure (0DTE vs weekly vs monthly width)
+   - Compute weekly range stats from live storage (prior 4 weeks actual range vs EM-implied range)
+   - Produce a `WEEKLY MACRO CONTEXT` block: "GEX regime: 3 weeks negative → trending. Walls stable. Vol term structure: backwardation (0DTE EM wider than monthly — event risk priced in)."
+
+2. **Add to weekly briefing JSON** (`build_ticker_block()` in `weekly_briefing.py`):
+   - `macro_context: {regime_persistence, wall_migration, vol_term_structure, range_stats, regime_stability}`
+   - This feeds the LLM's `executive_risk_core` slot
+
+3. **Update weekly prompt** (`prompts/weekly_briefing.md`):
+   - Add instruction: "The `executive_risk_core` must frame the week in the context of the multi-week regime (is this a continuation or inflection?) and the vol term structure (is vol expanding or compressing?), not just today's GEX read."
+   - Add a new slot `{{MACRO_REGIME_ASSESSMENT}}` for the bigger-picture synthesis
+
+4. **Add intermarket divergence read**:
+   - Compare NQ vs ES GEX regime (same or divergent)
+   - Compare VIX level vs GEX regime (VIX high + positive GEX = divergence, vol event not yet priced)
+   - Already have `get_intermarket_quotes()` — just need a `compute_intermarket_divergence()` helper
+
+**Data freshness prerequisite (verified 2026-07-24):**
+- `macro_levels.json` — EXISTS but `market_structure[].price` field is empty (spot lives in `cash_spot` which IS populated — consumer bug). EM85 fields are empty but **not needed** (user preference: use full EM only).
+- `weekly_em_scope.json` — EXISTS but captured the **wrong expiry** (2026-07-24, the immediate next Friday at capture, not the forward week 2026-07-31). NQ/ES futures are **missing** from the scope entirely — only NDX/SPX/SPY/QQQ and single-name stocks are present. See TOS EM verification section above.
+- `daily_levels.json` — STALE (2026-07-10, 13 days old). Superseded by `intraday_levels.json` (no longer written as a separate file per `run_options_levels.py` line 1305 comment).
+- `unified_levels.json` — FRESH (today). Tokens populated but `spot` top-level field is empty string.
+
+**Action:** before building the bigger-picture block, the options pipeline needs investigation: why `daily_levels.json` is stale, why `price`/`spot` fields are empty in `macro_levels.json`/`unified_levels.json`, and why NQ/ES futures are missing from `weekly_em_scope.json`. The empty `price`/`spot` is a consumer-side bug (should read `cash_spot`), not a producer gap.
+
+---
+
 ### Mid-week validation mode (BACKLOG — future feature)
 
 A new narrative mode that runs mid-week (e.g. Wednesday evening) and:

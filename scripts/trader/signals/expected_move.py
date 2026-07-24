@@ -3,12 +3,19 @@
 Computes where price sits relative to the EM range.
 EM is a 1-SD range — a magnet/target, not a ceiling.
 
-Source: Pipeline-generated daily_levels.json (via run_options_levels.py)
-Futures are mapped to their index proxies:
-  - NQ1 → /NQ (futures) → QQQ (index/ETF)
-  - ES1 → /ES (futures) → SPY (index/ETF)
-  - YM1 → /YM (futures) → DIA (index/ETF)
-  - RTY1 → /RTY (futures) → IWM (index/ETF)
+Source: Pipeline-generated intraday_levels.json (via run_options_levels.py)
+
+Lookup priority for futures tickers (NQ1, ES1, etc.):
+  1. Futures-native entry (NQ, ES) with translation_mode=rtd_direct —
+     uses TOS futures IV, NOT ETF-translated. Preferred per user directive.
+  2. ETF proxy (QQQ, SPY) — fallback when futures-native not available.
+     Scaled by basis_ratio to futures price space.
+
+Futures-to-ETF fallback mapping (used only when futures-native is absent):
+  - NQ1 → NQ (futures, rtd_direct) → QQQ (index/ETF fallback)
+  - ES1 → ES (futures, rtd_direct) → SPY (index/ETF fallback)
+  - YM1 → YM → DIA
+  - RTY1 → RTY → IWM
   - MES, MNQ, etc. → use /ES, /NQ directly
 """
 from __future__ import annotations
@@ -20,27 +27,48 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 _REPO = Path(__file__).parent.parent.parent.parent
 
-# Futures-to-ETF mapping for EM lookup
+# Futures-to-futures-native mapping (try these FIRST in market_structure)
+FUTURES_NATIVE = {
+    "NQ1": "NQ",
+    "NQ": "NQ",
+    "/NQ": "NQ",
+    "/NQH25": "NQ",  # Micro NQ
+    "MNQ": "NQ",
+    "ES1": "ES",
+    "ES": "ES",
+    "/ES": "ES",
+    "/ESH25": "ES",  # Micro ES
+    "MES": "ES",
+    "YM1": "YM",
+    "YM": "YM",
+    "/YM": "YM",
+    "MYM": "YM",
+    "RTY1": "RTY",
+    "RTY": "RTY",
+    "/RTY": "RTY",
+    "M2K": "RTY",  # Micro Russell
+}
+
+# Futures-to-ETF fallback mapping (used only when futures-native not in file)
 FUTURES_TO_ETF = {
     "NQ1": "QQQ",
     "NQ": "QQQ",
     "/NQ": "QQQ",
-    "/NQH25": "QQQ",  # Micro NQ
+    "/NQH25": "QQQ",
+    "MNQ": "QQQ",
     "ES1": "SPY",
     "ES": "SPY",
     "/ES": "SPY",
-    "/ESH25": "SPY",  # Micro ES
+    "/ESH25": "SPY",
+    "MES": "SPY",
     "YM1": "DIA",
     "YM": "DIA",
     "/YM": "DIA",
+    "MYM": "DIA",
     "RTY1": "IWM",
     "RTY": "IWM",
     "/RTY": "IWM",
-    # Micro contracts
-    "MNQ": "QQQ",
-    "MES": "SPY",
-    "MYM": "DIA",
-    "M2K": "IWM",  # Micro Russell
+    "M2K": "IWM",
 }
 
 
@@ -62,10 +90,22 @@ def get_em_context(spot: float, ticker: str = "NQ1") -> dict:
     has_spot = spot is not None and spot > 0
 
     # Normalize ticker to lookup key
-    lookup_ticker = ticker.upper().strip()
-    if lookup_ticker in FUTURES_TO_ETF:
-        lookup_ticker = FUTURES_TO_ETF[lookup_ticker]
-    
+    raw_ticker = ticker.upper().strip()
+
+    # Build lookup priority: futures-native first, then ETF proxy
+    # Per user directive: NQ/ES must use futures TOS EM, not SPY/QQQ translated.
+    # The pipeline writes NQ/ES with translation_mode=rtd_direct when TOS RTD is active.
+    is_futures_request = raw_ticker in FUTURES_NATIVE or raw_ticker in FUTURES_TO_ETF
+    lookup_candidates: list[str] = []
+    if raw_ticker in FUTURES_NATIVE:
+        lookup_candidates.append(FUTURES_NATIVE[raw_ticker])
+    if raw_ticker in FUTURES_TO_ETF:
+        etf = FUTURES_TO_ETF[raw_ticker]
+        if etf not in lookup_candidates:
+            lookup_candidates.append(etf)
+    if raw_ticker not in lookup_candidates:
+        lookup_candidates.append(raw_ticker)
+
     # Try pipeline-generated intraday_levels.json (canonical path) first,
     # then fall back to daily_levels.json (legacy alias) for backwards compat.
     p = _REPO / "data" / "options" / "intraday_levels.json"
@@ -86,36 +126,55 @@ def get_em_context(spot: float, ticker: str = "NQ1") -> dict:
         # Handle pipeline format: market_structure array
         if "market_structure" in em_data:
             market_struct = em_data.get("market_structure", [])
-            em_entry = None
+            ticker_entry = None
+            matched_ticker = None
             
-            # Find by asset field
-            for entry in market_struct:
-                if entry.get("asset", "").upper() == lookup_ticker:
-                    em_entry = entry
+            # Try each lookup candidate in priority order
+            for lookup_ticker in lookup_candidates:
+                for entry in market_struct:
+                    if entry.get("asset", "").upper() == lookup_ticker:
+                        ticker_entry = entry
+                        matched_ticker = lookup_ticker
+                        break
+                if ticker_entry:
                     break
             
-            if not em_entry:
-                log.warning(f"[em] Ticker {ticker} → {lookup_ticker} not found in market_structure")
+            if not ticker_entry:
+                log.warning(f"[em] Ticker {ticker} (tried {lookup_candidates}) not found in market_structure")
                 return result
             
-            # Get translation ratio for ETF→futures scaling
-            basis_ratio = em_entry.get("basis_ratio")
-            if basis_ratio and basis_ratio != 1.0:
-                log.debug("[em] Scaling EM by basis_ratio=%.4f for %s", basis_ratio, lookup_ticker)
+            log.debug("[em] Matched %s → %s", ticker, matched_ticker)
+            
+            # Determine whether to scale by basis_ratio.
+            # RTD-native entries (NQ, ES with translation_mode=rtd_direct) are already
+            # in futures price space — do NOT scale. Only ETF-proxy entries need scaling,
+            # and only when the caller requested a futures ticker (not the ETF directly).
+            translation_mode = ticker_entry.get("translation_mode", "")
+            is_rtd_native = translation_mode == "rtd_direct"
+            
+            basis_ratio = ticker_entry.get("basis_ratio")
+            should_scale = (
+                not is_rtd_native
+                and is_futures_request
+                and basis_ratio
+                and basis_ratio != 1.0
+            )
+            if should_scale:
+                log.debug("[em] Scaling EM by basis_ratio=%.4f for %s (ETF proxy for futures request)", basis_ratio, matched_ticker)
             else:
-                basis_ratio = None
+                basis_ratio = None  # No scaling needed
             
             # Get first EM (shortest DTE)
-            expected_moves = em_entry.get("expected_moves", [])
+            expected_moves = ticker_entry.get("expected_moves", [])
             if not expected_moves:
-                log.warning(f"[em] No expected_moves for {lookup_ticker}")
+                log.warning(f"[em] No expected_moves for {matched_ticker}")
                 return result
             
-            em_entry = expected_moves[0]  # Shortest DTE
-            em_upper = float(em_entry.get("em_upper") or 0)
-            em_lower = float(em_entry.get("em_lower") or 0)
+            em_first = expected_moves[0]  # Shortest DTE
+            em_upper = float(em_first.get("em_upper") or 0)
+            em_lower = float(em_first.get("em_lower") or 0)
             
-            # Scale to futures if translation ratio available
+            # Scale to futures if ETF proxy with translation ratio
             if basis_ratio:
                 em_upper = round(em_upper * basis_ratio, 2)
                 em_lower = round(em_lower * basis_ratio, 2)
@@ -127,11 +186,14 @@ def get_em_context(spot: float, ticker: str = "NQ1") -> dict:
                 log.warning("[em] Empty data array")
                 return result
 
-            # Find the ticker's EM
+            # Find the ticker's EM — try each lookup candidate
             em_entry = None
-            for e in entries:
-                if isinstance(e, dict) and e.get("ticker", "").upper() in (lookup_ticker, lookup_ticker.replace("1", "")):
-                    em_entry = e
+            for lookup_ticker in lookup_candidates:
+                for e in entries:
+                    if isinstance(e, dict) and e.get("ticker", "").upper() in (lookup_ticker, lookup_ticker.replace("1", "")):
+                        em_entry = e
+                        break
+                if em_entry:
                     break
             if not em_entry and entries:
                 em_entry = entries[0] if isinstance(entries[0], dict) else {}

@@ -47,7 +47,7 @@ if not _IS_RTD_CHILD:
     import argparse
     import json
     from dataclasses import replace
-    from datetime import datetime, date
+    from datetime import datetime, date, timedelta
     from pathlib import Path
     from zoneinfo import ZoneInfo
     from typing import Any
@@ -279,6 +279,68 @@ def _select_weekly_scope_candidate(levels: DealerLevels, today_ny: date):
     candidates.sort(key=lambda item: (item[0], item[1]))
     _, _, em, expiry = candidates[0]
     return em, expiry
+
+
+def _next_friday(today_ny: date) -> date:
+    """Return the next Friday strictly after today (DTE >= 1)."""
+    days_ahead = 4 - today_ny.weekday()  # 4 = Friday
+    if days_ahead <= 0:
+        days_ahead += 7
+    return today_ny + timedelta(days=days_ahead)
+
+
+def _compute_tos_em_fallback(
+    levels: DealerLevels,
+    today_ny: date,
+    is_futures: bool = False,
+) -> tuple[float, float, str] | None:
+    """Compute weekly EM via the TOS formula when the weekly expiry is missing from the chain.
+
+    This handles the case where the RTD chain for NQ/ES only has 0DTE + monthly
+    expiries, but the weekly Friday expiry (DTE 4-10) that TOS displays is not in
+    the chain. We compute EM directly using the calibrated TOS time-scaling model
+    with the chain's spot and ATM IV.
+
+    Returns (em_upper, em_lower, expiry_str) or None if inputs are invalid.
+    """
+    spot = getattr(levels, "spot", 0) or getattr(levels, "spot_price", 0)
+    if not spot or spot <= 0:
+        # Try cash_spot fallback
+        spot = getattr(levels, "cash_spot", 0) or 0
+    if not spot or spot <= 0:
+        return None
+
+    atm_iv = getattr(levels, "atm_iv", 0) or 0
+    if atm_iv <= 0:
+        # Try blending call/put 25d IV
+        c25 = getattr(levels, "call_25d_iv", 0) or 0
+        p25 = getattr(levels, "put_25d_iv", 0) or 0
+        if c25 > 0 and p25 > 0:
+            atm_iv = (c25 + p25) / 2
+    if atm_iv <= 0:
+        return None
+
+    next_fri = _next_friday(today_ny)
+    # Only use this if the next Friday is DTE 4-10 (the weekly window)
+    dte = (next_fri - today_ny).days
+    if dte < 3:
+        # Too close to expiry, skip
+        return None
+
+    try:
+        from .gex_calculator import calculate_tos_expected_move
+        em_value = calculate_tos_expected_move(
+            spot, next_fri.isoformat(), atm_iv * 100, is_futures=is_futures
+        )
+        if em_value <= 0:
+            return None
+        em_upper = round(spot + em_value, 2)
+        em_lower = round(spot - em_value, 2)
+        return em_upper, em_lower, next_fri.strftime("%Y-%m-%d")
+    except Exception as exc:
+        log.warning("[weekly_scope] TOS EM fallback failed for %s: %s",
+                    getattr(levels, "ticker", "?"), exc)
+        return None
 
 
 def _attach_weekly_scope(levels: Any, record: dict[str, Any] | None) -> None:
@@ -569,6 +631,30 @@ def run_pipeline(
                         if weekly_scope_cache.get(ticker) != weekly_scope_record:
                             weekly_scope_cache[ticker] = weekly_scope_record
                             weekly_scope_cache_updated = True
+                    else:
+                        # Fallback: the weekly expiry (DTE 4-10) is missing from the
+                        # RTD chain (NQ/ES only have 0DTE + monthly). Compute EM via
+                        # the TOS formula using the chain's spot + ATM IV.
+                        _is_fut = ticker in ("NQ", "ES", "YM", "RTY")
+                        tos_fb = _compute_tos_em_fallback(rtd_dl_macro, today_ny, is_futures=_is_fut)
+                        if tos_fb is None:
+                            tos_fb = _compute_tos_em_fallback(rtd_dl_intraday, today_ny, is_futures=_is_fut)
+                        if tos_fb is not None:
+                            em_up, em_lo, exp_str = tos_fb
+                            weekly_scope_record = {
+                                "expiry": exp_str,
+                                "captured_on": today_ny.strftime("%Y-%m-%d"),
+                                "source": "FRIDAY_EOD_TOS_FORMULA_FALLBACK",
+                                "em_upper": em_up,
+                                "em_lower": em_lo,
+                                "straddle_85_upper": 0.0,
+                                "straddle_85_lower": 0.0,
+                            }
+                            log.info("[weekly_scope] %s: TOS formula fallback EM ±%.2f for %s expiry",
+                                     ticker, (em_up - em_lo) / 2, exp_str)
+                            if weekly_scope_cache.get(ticker) != weekly_scope_record:
+                                weekly_scope_cache[ticker] = weekly_scope_record
+                                weekly_scope_cache_updated = True
 
                 if weekly_scope_record is None:
                     candidate_record = weekly_scope_cache.get(ticker)
@@ -1010,6 +1096,29 @@ def run_pipeline(
                             weekly_scope_record["em_lower"],
                             weekly_scope_record["em_upper"],
                         )
+                else:
+                    # Fallback: weekly expiry (DTE 4-10) missing from chain.
+                    # Compute EM via TOS formula using chain spot + ATM IV.
+                    _is_fut = futures_sym is not None and futures_sym.startswith("/")
+                    tos_fb = _compute_tos_em_fallback(levels_macro, today_ny, is_futures=_is_fut)
+                    if tos_fb is None:
+                        tos_fb = _compute_tos_em_fallback(levels_intraday, today_ny, is_futures=_is_fut)
+                    if tos_fb is not None:
+                        em_up, em_lo, exp_str = tos_fb
+                        weekly_scope_record = {
+                            "expiry": exp_str,
+                            "captured_on": today_ny.strftime("%Y-%m-%d"),
+                            "source": "FRIDAY_EOD_TOS_FORMULA_FALLBACK",
+                            "em_upper": em_up,
+                            "em_lower": em_lo,
+                            "straddle_85_upper": 0.0,
+                            "straddle_85_lower": 0.0,
+                        }
+                        log.info("[weekly_scope] %s: TOS formula fallback EM +-%.2f for %s expiry",
+                                 ticker, (em_up - em_lo) / 2, exp_str)
+                        if weekly_scope_cache.get(ticker) != weekly_scope_record:
+                            weekly_scope_cache[ticker] = weekly_scope_record
+                            weekly_scope_cache_updated = True
 
             if weekly_scope_record is None:
                 candidate_record = weekly_scope_cache.get(ticker)
