@@ -126,7 +126,9 @@ Phases 3-4 of the KB DESIGN.md roadmap:
 | `strategy_candidates.py` | KB setup units → executable `StrategyCandidate` objects | ✅ Phase 3 |
 | `candidate_export.py` | JSON export/import + bidirectional linking | ✅ Phase 3 |
 | `backtest_loop.py` | Candidate → `PropFirmSimulator` → `BacktestResult` | ✅ Phase 4 |
-| `test_narrative.py` | Narrative integration test (cheat sheet + KB context) | ✅ Tested |
+| `kb_context.py` | Production KB context retriever (`fetch_kb_context`) | ✅ Phase 5 |
+| `confluence_engine.py` | Runtime cross-domain confluence detection (6 signal providers) | ✅ Phase 5 |
+| `test_narrative.py` | Narrative integration test + `--compare` mode harness | ✅ Tested |
 | `test_suite.py` | 8-test unit suite (all passing) | ✅ 8/8 pass |
 
 **Test results (2026-07-23):**
@@ -150,20 +152,34 @@ python -m scripts.knowledge_bridge.test_suite
 - Augmented cheat sheet: 17,335 chars
 - Output saved to `logs/kb_test/`
 
-## 8. Integration TODO (this repo)
+## 8. Integration status (updated 2026-07-23)
 
-1. **Wire KB context into `briefing_core.py`**: In `build_premarket_context()`
-   (and other `build_*_context` functions), call
-   `scripts.knowledge_bridge.test_narrative.fetch_kb_context(cheat_sheet)`
-   and append the returned context block before it goes to the narrative LLM.
-   This is the production wiring of the tested integration.
-2. (Optional) Add `verify_narrative_claim()` to `trader_narrative.py` as a
-   post-generation fact-check pass.
-3. Build an eval set (20-30 Q&A pairs covering OPEX, CSD, killzones, 7 Rules)
-   to measure retrieval quality before/after the bridge is wired in. Keep it
-   at `tests/eval/kb_eval.jsonl`.
-4. **Phase 5**: Confluence engine (`confluence_engine.py` — runtime
-   cross-domain confluence, script mode + LLM mode, integration with narrative).
+**Done:**
+1. ✅ **KB context wired into `briefing_core.build_premarket_context()`** —
+   calls `fetch_kb_context()` and appends the KB block to the cheat sheet
+   before the LLM call. Graceful degradation (no block) if KB API is down.
+2. ✅ **Phase 5: Confluence engine** (`confluence_engine.py`) — 6 signal
+   providers (GEX, Herman, session timing, ICT features, market structure,
+   daily classification). Produces `ConfluenceResult` with `TradePlan`, KB
+   citations, confidence score. CLI: `python -m scripts.knowledge_bridge.confluence_engine --ticker ES1`.
+3. ✅ **`--compare` mode tested** — premarket/open/close/intraday ES1
+   narratives generated with and without KB context. See
+   `logs/kb_test/` for outputs.
+
+**Next (see [KB_NARRATIVE_REPLAY_ROADMAPAP.md](KB_NARRATIVE_REPLAY_ROADMAP.md)):**
+- Phase A: Rewrite prompts to be KB-aware (the `--compare` test showed
+  narratives are nearly identical with/without KB — prompts don't instruct
+  the LLM to use the KB context)
+- Phase B: Historical day replay harness
+- Phase C: Virtual trade execution + outcome evaluation
+- Phase D: End-to-end day replay report
+
+**Still open (lower priority):**
+- (Optional) Add `verify_narrative_claim()` to `trader_narrative.py` as a
+  post-generation fact-check pass.
+- Build an eval set (20-30 Q&A pairs covering OPEX, CSD, killzones, 7 Rules)
+  to measure retrieval quality before/after the bridge is wired in. Keep it
+  at `tests/eval/kb_eval.jsonl`.
 
 ## 9. What NOT to do
 

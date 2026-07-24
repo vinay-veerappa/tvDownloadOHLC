@@ -74,21 +74,39 @@ def build_toon(briefing_data: dict) -> str:
 
 
 def extract_analysis_json(response: str) -> dict | None:
-    """Extract structured weekly analysis payload from the LLM response."""
+    """Extract structured weekly analysis payload from the LLM response.
+
+    Includes a repair step for common LLM JSON errors (missing quotes on
+    keys, trailing commas, etc.) before parsing.
+    """
     match = re.search(r"<analysis_json>(.*?)</analysis_json>", response, re.DOTALL)
     if not match:
         return None
+    raw = match.group(1).strip()
     try:
-        return json.loads(match.group(1).strip())
+        return json.loads(raw)
     except json.JSONDecodeError as exc:
-        log.warning("Failed to decode analysis_json: %s", exc)
-        return None
+        log.warning("Failed to decode analysis_json: %s — attempting repair", exc)
+        # Common LLM JSON errors: missing quote on key like `2":` → `"2":`
+        # Fix: `(\n\s*)(\w+":)` → `(\n\s*)("\2":)` but simpler: replace
+        # patterns like `\n  2":` with `\n  "2":`
+        repaired = re.sub(r'(\n\s*)(\d+":)', r'\1"\2', raw)
+        # Fix trailing commas before closing braces/brackets
+        repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
+        try:
+            result = json.loads(repaired)
+            log.info("✓ Repaired JSON parsed successfully")
+            return result
+        except json.JSONDecodeError as exc2:
+            log.warning("JSON repair also failed: %s", exc2)
+            return None
 
 
 def render_weekly_summary(static_template: str, analysis: dict, tickers: list[dict], events: list[dict]) -> str:
     """Merge bounded LLM analysis slots into the Python-rendered weekly template."""
     summary = static_template
-    summary = summary.replace("{{PRIOR_WEEK_REVIEW_ANALYSIS}}", analysis.get("prior_week_review_analysis", "N/A"))
+    # Prior week review section removed from template — skip if still present
+    summary = summary.replace("{{PRIOR_WEEK_REVIEW_ANALYSIS}}", "")
     summary = summary.replace("{{EXECUTIVE_RISK_CORE}}", analysis.get("executive_risk_core", "N/A"))
 
     event_impacts = analysis.get("event_impacts", {}) or {}
@@ -169,8 +187,8 @@ def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
                     "options": {
                         "temperature": 0.3,
                         "top_p": 0.9,
-                        "num_ctx": 32768,
-                        "num_predict": 16384,
+                        "num_ctx": 262144,
+                        "num_predict": 32768,
                     },
                 },
                 timeout=timeout,
@@ -278,6 +296,18 @@ async def run_narrative(model: str, week_start: date | None = None) -> str:
     log.info("✓ Weekly cheat sheet assembled (%d chars)", len(cheat_sheet))
     write_cheatsheet_to_disk(cheat_sheet, briefing_id)
 
+    # Retrieve KB context for weekly ICT/Kish knowledge
+    kb_context = ""
+    try:
+        from scripts.knowledge_bridge.kb_context import fetch_kb_context as _fetch_kb
+        kb_context = _fetch_kb(cheat_sheet)
+        if kb_context:
+            log.info("✓ KB context retrieved (%d chars)", len(kb_context))
+        else:
+            log.info("  KB context empty (API unreachable or no matches)")
+    except Exception as e:
+        log.warning("KB context fetch failed: %s", e)
+
     # 2. Build compact weekly briefing (saves ~800+ tokens vs raw TOON)
     toon = build_compact_briefing(briefing_data)
     log.info("✓ Compact briefing assembled (%d chars)", len(toon))
@@ -290,8 +320,12 @@ async def run_narrative(model: str, week_start: date | None = None) -> str:
     prior_week_review = await get_prior_week_performance(reference_week_start=briefing_week_start)
     prompt_template = load_prompt_template()
     prompt = prompt_template.replace("{{INSERT_STAGE_1_JSON_TOON}}", toon)
-    prompt = prompt.replace("{{INSERT_PRIOR_WEEK_REVIEW}}", prior_week_review)
+    # Prior week review is disabled until we fix trade generation
+    # prompt = prompt.replace("{{INSERT_PRIOR_WEEK_REVIEW}}", prior_week_review)
+    prompt = prompt.replace("{{INSERT_PRIOR_WEEK_REVIEW}}", "Prior week trades section disabled — pending trade pipeline fix.")
     prompt = prompt.replace("{{INSERT_STATIC_WEEKLY_TEMPLATE}}", static_template)
+    if kb_context:
+        prompt += "\n\n# ICT KNOWLEDGE BASE CONTEXT (weekly)\n" + kb_context
     log.info("✓ Prompt assembled (%d chars)", len(prompt))
 
     # 4. Call Ollama
@@ -309,12 +343,15 @@ async def run_narrative(model: str, week_start: date | None = None) -> str:
         summary = llm_response
         log.warning("Structured analysis missing; falling back to raw LLM output")
 
-    # 5. Store in DB
-    await save_narrative_to_db(briefing_id, summary, is_daily=False)
-    log.info("  Narrative stored in DB")
-
-    # 6. Write to disk (always — for easy viewing)
+    # 5. Write to disk first (always — for easy viewing)
     write_summary_to_disk(summary, briefing_id)
+
+    # 6. Store in DB (best-effort — don't crash if DB times out)
+    try:
+        await save_narrative_to_db(briefing_id, summary, is_daily=False)
+        log.info("  Narrative stored in DB")
+    except Exception as e:
+        log.warning("  DB save failed (narrative still written to disk): %s", e)
 
     # 7. Discord (always send to macro-alerts channel)
     send_discord_summary(summary, webhook_key="macro-alerts")

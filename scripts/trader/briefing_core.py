@@ -106,6 +106,7 @@ def get_latest_rth_date(df_t) -> date:
 # ── Paths ──────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OPTIONS_DATA_DIR = REPO_ROOT / "data" / "options"
+LIVE_DIR = REPO_ROOT / "data" / "live"
 MACRO_LEVELS_JSON = OPTIONS_DATA_DIR / "macro_levels.json"
 UNIFIED_LEVELS_JSON = OPTIONS_DATA_DIR / "unified_levels.json"
 UNIFIED_LEVELS_OPEN_TXT = OPTIONS_DATA_DIR / "current" / "unified_levels_open.txt"
@@ -889,20 +890,41 @@ def _resolve_parquet_symbol(ticker: str) -> str:
 
 
 def load_weekly_price_context(loader: DataLoader, ticker: str) -> dict:
-    """Load HTF price context using the existing DataLoader.
+    """Load HTF price context from live storage parquet.
 
-    Uses DataLoader.load_price() (returns 1m bars in ET timezone),
-    then resamples to weekly via vectorized Pandas operations.
+    The live storage parquet (``data/live/live_storage_-{ticker}.parquet``)
+    contains ~1 year of 1m bars ending at the current bar — sufficient for
+    weekly resampling. The historical parquet (``data/{ticker}_1m.parquet``)
+    covers 2006-2024 but is not needed for the weekly briefing.
+
+    Uses vectorized Pandas resampling (ADR-017: no loops).
 
     Returns prior week OHLCV + momentum metrics.
     """
     parquet_sym = _resolve_parquet_symbol(ticker)
 
+    # Map parquet symbol to live storage filename
+    # ES1 -> -ES, NQ1 -> -NQ, SPY -> SPY, etc.
+    _live_map = {"ES1": "-ES", "NQ1": "-NQ", "RTY1": "-RTY", "YM1": "-YM"}
+    live_ticker = _live_map.get(parquet_sym, parquet_sym)
+    live_path = LIVE_DIR / f"live_storage_{live_ticker}.parquet"
+
     try:
-        df_1m = loader.load_price(parquet_sym)
+        df_1m = pd.read_parquet(live_path)
+        if df_1m.empty:
+            raise ValueError("empty parquet")
+        # Convert epoch ms to datetime index
+        df_1m["datetime"] = pd.to_datetime(df_1m["time"], unit="ms")
+        df_1m = df_1m.set_index("datetime")
     except Exception as e:
-        log.warning("Could not load price data for %s (%s): %s", ticker, parquet_sym, e)
-        return {}
+        log.warning("Could not load live storage for %s (%s): %s — trying fused", ticker, live_path.name, e)
+        # Fallback to fused data loader (live + historical)
+        try:
+            from scripts.utils.fused_data_loader import load_fused_data
+            df_1m = load_fused_data(parquet_sym, timeframe="1m", require_historical=False)
+        except Exception as e2:
+            log.warning("Fused fallback also failed for %s: %s", parquet_sym, e2)
+            return {}
 
     if df_1m.empty:
         return {}
@@ -1228,6 +1250,104 @@ MEDIUM_ALLOWLIST_KEYWORDS = [
     "MICHIGAN CONSUMER SENTIMENT", "CB CONSUMER CONFIDENCE",
 ]
 
+# ── US-relevance filter ──
+# The EconomicEvent DB table has no country/currency field, so we filter
+# by name keywords. Events matching any NON_US_KEYWORD are excluded
+# (they are international events with indirect impact on US futures).
+# Events matching US_KEYWORDS are always kept regardless of impact level.
+# The goal is to keep the narrative focused on events that directly move
+# ES/NQ futures.
+NON_US_KEYWORDS = [
+    # UK
+    "CLAIMANT COUNT", "BOE", "BANK OF ENGLAND", "UK GDP", "UK CPI",
+    "UK MANUFACTURING", "UK SERVICES", "UK CONSTRUCTION", "GFK CONSUMER",
+    "BRC", "RICS", "UK RETAIL", "UK TRADE BALANCE", "UK INDUSTRIAL",
+    "UK AVERAGE EARNINGS", "UK CLAIMANT", "PUBLIC SECTOR NET BORROWING",
+    # Eurozone
+    "FRENCH", "FRANCE", "GERMAN", "GERMANY", "SPANISH", "SPAIN",
+    "ITALIAN", "ITALY", "DUTCH", "BELGIAN", "GREEK", "PORTUGUESE",
+    "IRISH", "AUSTRIAN", "FINNISH", "EUROZONE", "EURO AREA",
+    "EUROZONE FLASH", "EUROZONE COMPOSITE", "EUROZONE MANUFACTURING",
+    "EUROZONE SERVICES", "EUROZONE CPI", "EUROZONE GDP",
+    "EUROZONE INDUSTRIAL", "EUROZONE TRADE", "EUROZONE EMPLOYMENT",
+    "EUROZONE UNEMPLOYMENT", "EUROZONE HICP", "EUROZONE PPI",
+    "ECB", "EUROPEAN CENTRAL BANK", "MAIN REFINANCING RATE",
+    "MONETARY POLICY STATEMENT", "ECB PRESS CONFERENCE",
+    "LAGARDE", "EUROPEAN COMMISSION",
+    # Japan
+    "JAPANESE", "JAPAN", "BOJ", "BANK OF JAPAN", "TANKAN",
+    "JAPAN GDP", "JAPAN CPI", "JAPAN INDUSTRIAL", "JAPAN TRADE",
+    "JAPAN MANUFACTURING", "JAPAN SERVICES", "JAPAN RETAIL",
+    # China
+    "CHINESE", "CHINA", "CHINA GDP", "CHINA CPI", "CHINA PPI",
+    "CHINA INDUSTRIAL", "CHINA RETAIL", "CHINA TRADE BALANCE",
+    "CHINA MANUFACTURING", "CHINA SERVICES", "CAIXIN",
+    # Australia
+    "AUSTRALIAN", "AUSTRALIA", "RBA", "RESERVE BANK OF AUSTRALIA",
+    "AUSTRALIA GDP", "AUSTRALIA CPI", "AUSTRALIA EMPLOYMENT",
+    "AUSTRALIA RETAIL", "AUSTRALIA TRADE", "AUSTRALIA MANUFACTURING",
+    # Canada
+    "CANADIAN", "CANADA", "BOC", "BANK OF CANADA",
+    "CANADA GDP", "CANADA CPI", "CANADA EMPLOYMENT",
+    "CANADA RETAIL", "CANADA TRADE", "CANADA MANUFACTURING",
+    # Switzerland
+    "SWISS", "SWITZERLAND", "SNB", "SWISS NATIONAL BANK",
+    # Other international
+    "NZD", "NEW ZEALAND", "RBNZ",
+    "SOUTH KOREA", "KOREAN", "KOSPI",
+    "INDIA", "INDIAN", "RUSSIAN", "RUSSIA",
+    "BRAZILIAN", "BRAZIL", "MEXICAN", "MEXICO",
+    "SOUTH AFRICAN", "SOUTH AFRICA",
+    "OPEC", "OPEC+",
+    # International organizations (non-US)
+    "IMF", "WORLD BANK", "OECD",
+    # Foreign CPI/GDP that aren't US
+    "CPI Q/Q",  # This is typically UK/EU quarterly CPI
+    "CPI Y/Y",  # This is typically foreign (US uses "CPI M/M" or "CPI Y/Y" but context matters)
+]
+
+# US event keywords — events matching these are always kept (US-relevant)
+US_KEYWORDS = [
+    "CPI M/M", "CORE CPI", "MEDIAN CPI", "TRIMMED CPI", "COMMON CPI",
+    "CPI Q/Q",  # US quarterly CPI (released at 18:45 ET, not 02:00 like foreign)
+    "PCE", "CORE PCE", "PPI", "CORE PPI",
+    "NFP", "NON-FARM", "ADP", "INITIAL JOBLESS", "CONTINUING CLAIMS",
+    "UNEMPLOYMENT RATE", "JOBLESS CLAIMS",
+    "GDP", "GDP PRICE INDEX", "GROSS DOMESTIC PRODUCT",
+    "ISM MANUFACTURING", "ISM SERVICES", "ISM PRICES PAID",
+    "S&P GLOBAL",  # Only US PMIs (S&P Global brand); foreign flash PMIs filtered by NON_US_KEYWORDS
+    "RETAIL SALES", "CORE RETAIL", "DURABLE GOODS", "CORE DURABLE",
+    "FOMC", "FEDERAL OPEN MARKET", "FED CHAIR", "POWELL",
+    "INTEREST RATE DECISION", "FEDERAL FUNDS",
+    "CONSUMER CONFIDENCE", "CONSUMER SENTIMENT", "MICHIGAN",
+    "NEW HOME SALES", "EXISTING HOME SALES", "HOUSING STARTS",
+    "BUILDING PERMITS", "CASE-SHILLER",
+    "CRUDE OIL INVENTORIES", "EIA", "API CRUDE",
+    "TRADE BALANCE", "TIC", "TREASURY INTERNATIONAL",
+    "INDUSTRIAL PRODUCTION", "CAPACITY UTILIZATION",
+    "FACTORY ORDERS", "INVENTORIES", "WHOLESALE",
+    "CURRENT ACCOUNT", "BUDGET BALANCE", "TIC FLOWS",
+    "TREASURY AUCTION", "BOND AUCTION",
+    "JOINT ECONOMIC", "BEIGE BOOK",
+    "PHILLY FED", "NY EMPIRE", "RICHMOND FED", "KC FED",
+    "DALLAS FED", "CHICAGO PMI",
+    "PRESIDENT TRUMP", "TRUMP SPEAKS", "PRESIDENT SPEAKS",
+    "FOSTEC", "FED SURVEY",
+    "MBA MORTGAGE", "JOB CUTS", "CHAIN STORE SALES",
+]
+
+
+def _is_non_us_event(name: str) -> bool:
+    """Check if an event name matches a non-US keyword (international event)."""
+    name_upper = (name or "").upper()
+    return any(kw in name_upper for kw in NON_US_KEYWORDS)
+
+
+def _is_us_event(name: str) -> bool:
+    """Check if an event name matches a US keyword."""
+    name_upper = (name or "").upper()
+    return any(kw in name_upper for kw in US_KEYWORDS)
+
 # Always include these events as macro drivers even if the upstream
 # impact classification is not HIGH/MEDIUM.
 CRITICAL_EVENT_KEYWORDS = [
@@ -1286,6 +1406,13 @@ async def fetch_week_events(start_date: date, end_date: date) -> list[dict]:
         for e in events:
             impact = (e.impact or "").upper()
             is_critical = _is_critical_event(e.name)
+
+            # ── US-relevance filter ──
+            # Exclude international events that don't directly move US futures.
+            # Exception: keep if it matches a US keyword (e.g. "CPI M/M" is US
+            # even if "CPI Y/Y" alone might be foreign).
+            if _is_non_us_event(e.name) and not _is_us_event(e.name):
+                continue
 
             # Filter out LOW unless event is explicitly marked critical.
             if impact == "LOW" and not is_critical:
@@ -1373,7 +1500,16 @@ async def get_db():
     from prisma import Prisma
     _ensure_database_url()
     db = Prisma()
+    # Set a generous timeout for SQLite — the Next.js dev server holds
+    # a concurrent connection to the same DB, which can cause lock
+    # contention. The timeout gives SQLite time to acquire the write lock.
     await db.connect()
+    # Enable WAL mode for better concurrency (readers don't block writers)
+    try:
+        await db.query_raw("PRAGMA journal_mode=WAL;")
+        await db.query_raw("PRAGMA busy_timeout=10000;")
+    except Exception:
+        pass  # WAL mode may already be enabled or not supported
     return db
 
 
@@ -1736,6 +1872,9 @@ async def save_narrative_to_db(briefing_id: str, summary_md: str, is_daily: bool
     """Store the LLM-generated narrative in the DB."""
     db = await get_db()
     try:
+        # Set busy timeout so SQLite waits for the write lock instead of
+        # immediately timing out when the Next.js dev server is connected.
+        await db.query_raw("PRAGMA busy_timeout=15000;")
         if is_daily and eod_id:
             await db.dailyeodupdate.update(
                 where={"id": eod_id},
@@ -3186,6 +3325,21 @@ def build_premarket_context(
     except Exception as e:
         log.warning("[premarket] Delivery triad failed: %s", e)
 
+    # ── Knowledge Base context (ICT concept grounding) ──
+    # Fetches grounded ICT source units from the KB API (port 8900) by
+    # detecting concept triggers in the assembled cheat sheet. Degrades
+    # gracefully (no block) if the KB API is unreachable.
+    try:
+        from scripts.knowledge_bridge.kb_context import fetch_kb_context as _fetch_kb
+        _kb_ctx = _fetch_kb("\n\n".join(sections))
+        if _kb_ctx:
+            sections.append(_kb_ctx)
+            log.info("[premarket] KB context appended (%d chars)", len(_kb_ctx))
+        else:
+            log.debug("[premarket] KB context empty (API unreachable or no matches)")
+    except Exception as e:
+        log.warning("[premarket] KB context fetch failed: %s", e)
+
     return "\n\n".join(sections)
 
 
@@ -4488,9 +4642,6 @@ def build_weekly_static_template(briefing_data: dict) -> str:
     lines = [
         f"## WEEKLY MACRO EXECUTION HORIZON -- {header_dates}",
         "",
-        "### 0. Prior Week Review",
-        "{{PRIOR_WEEK_REVIEW_ANALYSIS}}",
-        "",
         "### 1. Executive Risk Core & Weekly Profile",
         "{{EXECUTIVE_RISK_CORE}}",
         "",
@@ -4511,16 +4662,27 @@ def build_weekly_static_template(briefing_data: dict) -> str:
 
     lines.extend([
         "",
-        "### 3. Mega-Cap Earnings Catalysts",
+        "### 3. Mega-Cap Earnings Catalysts (index-moving only)",
     ])
+    # Filter to only index-moving mega-caps — same filter as the cheat sheet
+    INDEX_MOVING_TICKERS = {
+        "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META",
+        "TSLA", "AVGO", "LLY", "JPM", "V", "UNH", "XOM", "WMT",
+        "MA", "ORCL", "COST", "NFLX", "CRM", "AMD", "INTC",
+        "IBM", "TXN", "RTX", "AXP", "GS", "MS", "C", "BAC",
+        "HD", "DIS", "BABA",
+    }
     if earnings:
         for event in earnings:
-            day = event.get("day_of_week", "Unknown")
-            name = event.get("name", "Unknown")
-            timing = event.get("timing", "N/A")
-            lines.append(f"- **{day}, {timing}**: {name}")
+            name = (event.get("name", "") or "").strip()
+            ticker_part = name.replace(" Earnings", "").strip().upper()
+            if ticker_part in INDEX_MOVING_TICKERS:
+                day = event.get("day_of_week", "Unknown")
+                name = event.get("name", "Unknown")
+                timing = event.get("timing", "N/A")
+                lines.append(f"- **{day}, {timing}**: {name}")
     else:
-        lines.append("No mega-cap earnings scheduled this week.")
+        lines.append("No index-moving mega-cap earnings scheduled this week.")
 
     section_idx = 4
     for ticker_block in tickers:
@@ -4683,6 +4845,55 @@ def build_weekly_cheat_sheet(briefing_data: dict) -> str:
     lines.extend([
         f"• ICT Profile: {archetype_info['archetype']}",
         f"  Strategy: {archetype_info['execution']}",
+    ])
+
+    # ── Weekly Profile Day-by-Day Expectation ──
+    # Maps the ICT archetype to a day-by-day behavioral expectation based
+    # on ICT weekly profile patterns from the KB.
+    profile_lines = ["", "== WEEKLY PROFILE EXPECTATION =="]
+    archetype = archetype_info["archetype"]
+    if "FOMC" in archetype or "Wednesday News" in archetype:
+        profile_lines.extend([
+            "Mon-Tue: Range formation / consolidation. Expect Monday to set initial range.",
+            "Wed: FOMC/News catalyst → compression pre-announcement, then violent expansion post-announcement.",
+            "Thu-Fri: Post-catalyst directional delivery. Trade the new trend established Wednesday.",
+        ])
+    elif "High-Impact Cluster" in archetype:
+        profile_lines.extend([
+            "Mon-Tue: Range formation with catalyst-driven repricing after each print. Not a clean trend — expect two-sided volatility.",
+            "Wed: Mid-week CSD (Change in State of Delivery) likely — sweep of Mon-Tue range extreme before directional expansion.",
+            "Thu-Fri: Continuation or reversal of Wed direction. Friday often marks the weekly extreme (high or low of week).",
+        ])
+    elif "Early Week Catalyst" in archetype:
+        profile_lines.extend([
+            "Mon: CPI/catalyst print → violent repricing. Wait 30-60 min post-print for settlement.",
+            "Tue-Wed: Sustained directional trend from Monday's catalyst. Trade continuation.",
+            "Thu-Fri: Trend continuation or exhaustion. Watch for Friday retracement toward weekly open (NWOG).",
+        ])
+    elif "Seek & Destroy" in archetype:
+        profile_lines.extend([
+            "Mon-Thu: Wide, sweeping liquidity runs on both sides. Fade extremes. Do NOT trust breakouts.",
+            "Fri: NFP/catalyst print → reactive trade only. Pre-print chop into the number.",
+        ])
+    else:  # Classic Tuesday H/L
+        profile_lines.extend([
+            "Mon: Range formation. Identify the weekly open (NWOG) — it's the primary magnet for the week.",
+            "Tue: Often sets the High or Low of the week. Trade away from Tuesday's extreme for the rest of the week.",
+            "Wed: CSD (Change in State of Delivery) — sweep of Mon-Tue range extreme, then directional expansion.",
+            "Thu-Fri: Run in the direction of Wed's CSD. Friday may retrace toward weekly open (NWOG).",
+        ])
+    # Add opex note if applicable
+    modifiers = get_weekly_modifiers(
+        datetime.now(ET).date() if 'target_date' not in dir() else target_date,
+        events,
+    )
+    if modifiers.get("is_opex_week"):
+        profile_lines.append("⚠ OPEX WEEK: Per KB, Monday-Tuesday tend to trade higher, then sell-off Wednesday. Dealer hedging unwinds into Friday close.")
+    if modifiers.get("is_triple_witching_week"):
+        profile_lines.append("⚠ TRIPLE WITCHING: Increased volatility from options/futures expiration. Position size down.")
+    lines.extend(profile_lines)
+
+    lines.extend([
         "",
         "[3] STRUCTURAL PLAYING FIELD & OPTIONS BOUNDARIES",
         divider,
@@ -4728,13 +4939,33 @@ def build_weekly_cheat_sheet(briefing_data: dict) -> str:
     else:
         lines.append("  - No major economic events scheduled.")
 
-    lines.append("• Mega-Cap Earnings Radar:")
+    lines.append("• Mega-Cap Earnings Radar (index-moving only):")
     if earnings:
-        for earn in earnings:
-            day = earn.get("day_of_week", "")[:3]
-            t_timing = earn.get("timing", "")
-            name = earn.get("name", "")
-            lines.append(f"  - {day} ({t_timing}): {name}")
+        # Filter to only index-moving mega-caps — these are the tickers
+        # with enough weight in SPY/QQQ to move the index at the open.
+        # Exclude non-index-moving stocks like NVS, SCHW, IBKR, PM, GEV, T, TTE, SAP, TMUS, TMO, UNP, NEE, VZ.
+        INDEX_MOVING_TICKERS = {
+            "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META",
+            "TSLA", "AVGO", "LLY", "JPM", "V", "UNH", "XOM", "WMT",
+            "MA", "ORCL", "COST", "NFLX", "CRM", "AMD", "INTC",
+            "IBM", "TXN", "RTX", "AXP", "GS", "MS", "C", "BAC",
+            "HD", "DIS", "BABA",
+        }
+        filtered_earnings = []
+        for e in earnings:
+            name = (e.get("name") or "").strip()
+            # Extract the ticker (first word before " Earnings")
+            ticker_part = name.replace(" Earnings", "").strip().upper()
+            if ticker_part in INDEX_MOVING_TICKERS:
+                filtered_earnings.append(e)
+        if filtered_earnings:
+            for earn in filtered_earnings:
+                day = earn.get("day_of_week", "")[:3]
+                t_timing = earn.get("timing", "")
+                name = earn.get("name", "")
+                lines.append(f"  - {day} ({t_timing}): {name}")
+        else:
+            lines.append("  - No index-moving mega-cap earnings this week.")
     else:
         lines.append("  - No mega-cap earnings scheduled.")
 

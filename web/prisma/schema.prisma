@@ -198,6 +198,7 @@ model EconomicEvent {
   datetime  DateTime
   name      String
   impact    String
+  country   String?      // Currency/country code (e.g. "USD", "EUR", "GBP") — null for legacy rows
   actual    Float?
   forecast  Float?
   previous  Float?

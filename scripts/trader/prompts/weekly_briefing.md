@@ -14,8 +14,9 @@ Your job is to fill only the analysis slots.
 - Bullish scenario text must point to higher targets than the trigger.
 - Bearish scenario text must point to lower targets than the trigger.
 - Fade-track scenarios must move back toward Gamma Magnet (Price Magnet).
-- **EVENT HALLUCINATION GUARDRAIL**: You MUST ONLY reference economic events that appear in Section 2 (High-Impact Economic Milestones) of the template. If CPI, NFP, or FOMC do NOT appear in Section 2, you are STRICTLY FORBIDDEN from writing their names anywhere in the summary (including Section 0 Prior Week, Section 1 Risk Core, Section 7 Trade Plan, Section 8 Key Risks, and Section 9 Watch List). Mentioning absent events is a critical failure.
-- For SPY/QQQ scenarios, use both scales when relevant: translated futures value first, raw proxy value in brackets, e.g. `Acceptance above 29,994.82 (QQQ 715.00) -> target 30,324.56 (QQQ 722.86)`.
+- **EVENT HALLUCINATION GUARDRAIL**: You MUST ONLY reference economic events that appear in Section 2 (High-Impact Economic Milestones) of the template. If CPI, NFP, or FOMC do NOT appear in Section 2, you are STRICTLY FORBIDDEN from writing their names anywhere in the summary. Mentioning absent events is a critical failure.
+- **Intermarket Context**: The cheat sheet Section [1] INTERMARKET MACRO MATRIX shows VIX, DXY, US 10-Yr Yield, Brent Crude, NQ/ES ratio, and VVIX. Reference these in the `executive_risk_core` to contextualize the GEX read (e.g. "VIX at 18.70 with DXY rising at 101.38 confirms the risk-off posture").
+- **Weekly Profile**: Use the WEEKLY PROFILE EXPECTATION block in the cheat sheet to inform the `executive_risk_core` — connect the ICT archetype (Mon-Tue range, Wed CSD, Thu-Fri run) to the specific catalysts this week.
 
 # STATIC TEMPLATE
 {{INSERT_STATIC_WEEKLY_TEMPLATE}}
@@ -31,8 +32,7 @@ Return exactly:
 
 <analysis_json>
 {
-  "prior_week_review_analysis": "3-4 sentences max",
-  "executive_risk_core": "2-3 sentences",
+  "executive_risk_core": "3-4 sentences covering: (1) GEX regime + track mandate, (2) intermarket context (VIX/DXY/yields from cheat sheet), (3) weekly profile expectation from the cheat sheet's WEEKLY PROFILE EXPECTATION block, (4) how this week's catalysts fit the profile",
   "event_impacts": {
     "0": "one sentence for first event",
     "1": "one sentence for second event"
@@ -67,3 +67,9 @@ Return exactly:
 - Include one `ticker_analysis` entry for every ticker in the static template, keyed by exact ticker symbol.
 - Keep each `track_note` to one sentence.
 - Keep each scenario string to one line only.
+
+# KB CONTEXT USAGE (if present)
+- The prompt MAY include a block titled "# ICT KNOWLEDGE BASE CONTEXT (weekly)" at the end. These are grounded source units from ICT transcripts/PDFs about weekly profiles, opex behavior, NWOG, and Kish's framework.
+- USE these KB units to inform your analysis: (1) the weekly archetype and how it typically plays out (Monday/Tuesday range, Wednesday CSD, Thursday/Friday run), (2) opex week patterns (Mon-Tue up, Wed sell-off), (3) NWOG as a magnet, (4) Kish's timeframe selection and execution rules.
+- Incorporate KB knowledge into the `executive_risk_core`, `ticker_analysis` track notes, and `weekly_trade_plan` fields. Don't just repeat KB summaries — synthesize with the live data.
+- If the KB context block is absent, proceed without it — do not fabricate.

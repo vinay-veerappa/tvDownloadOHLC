@@ -50,6 +50,16 @@ async def get_econ_releases(target_date: date, db: Prisma) -> List[Dict[str, Any
     for e in events:
         impact = (e.impact or "").upper()
         
+        # ── US-relevance filter ──
+        # Exclude international events that don't directly move US futures.
+        # Import the filter functions from briefing_core to avoid duplication.
+        try:
+            from scripts.trader.briefing_core import _is_non_us_event, _is_us_event
+            if _is_non_us_event(e.name) and not _is_us_event(e.name):
+                continue
+        except ImportError:
+            pass  # If import fails, don't filter (graceful degradation)
+        
         # Convert DB datetime to ET
         if e.datetime.tzinfo:
             evt_dt = e.datetime.astimezone(ET)

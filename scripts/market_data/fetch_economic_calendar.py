@@ -133,6 +133,7 @@ def fetch_events(start_date: datetime.date, end_date: datetime.date) -> list[dic
             'datetime_ms': int(dt_et.timestamp() * 1000),
             'name': meta["name"],
             'impact': meta["importance"],
+            'country': 'USD',  # This fetcher only fetches US (country_id=5)
             'createdAt_ms': int(datetime.datetime.now().timestamp() * 1000)
         })
 

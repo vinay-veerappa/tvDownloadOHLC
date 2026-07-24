@@ -37,6 +37,21 @@
 * **Quarters Theory**: [QUARTERS_THEORY.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/QUARTERS_THEORY.md) (Overnight direction combinations, hourly candle quarter structure, Doji detection, instat extremes)
 * **Profiler Knowledge Base**: [PROFILER_KNOWLEDGE_BASE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/PROFILER_KNOWLEDGE_BASE.md) (Session boxes, status logic, broken logic, auto-filter engine, reference levels, P12 scenarios, HOD/LOD timing, overnight combinations, data architecture)
 
+## Data Architecture — Two Parquet Systems
+
+There are **two separate parquet stores** for OHLCV data:
+
+| Store | Location | Coverage | Use case |
+|---|---|---|---|
+| **Live storage** | `data/live/live_storage_-{ticker}.parquet` | ~1 year (2025-01-01 → current bar) | All live/current analysis, narratives, confluence engine, GEX level reads |
+| **Historical** | `data/{ticker}_1m.parquet` | 2006-2024 (deep history) | Backtesting, long-term studies, regime analysis |
+
+* **Live storage** is written by the streaming pipeline (`stream_chart.py`) and updated in real-time. Ticker mapping: `ES1` → `live_storage_-ES.parquet`, `NQ1` → `live_storage_-NQ.parquet`.
+* **Historical** is a static archive — it does NOT include current-year data.
+* **`load_fused_data()`** (`scripts/utils/fused_data_loader.py`) loads both stores, dedupes, and returns the combined DataFrame. Use this when you need deep history + current data.
+* **For current/live analysis** (narratives, confluence, weekly briefing): load **live storage directly** — do NOT use `DataLoader.load_price()` (which only reads historical parquet, ending 2025-12-31) or `load_fused_data()` (unnecessary overhead from loading historical).
+* **`DataLoader`** (`scripts/shared/data_loader.py`) is the legacy loader that reads historical parquet only. It should NOT be used for current data — use live storage parquet or `load_fused_data()` instead.
+
 ## Development Workflow & Guardrails
 * **Zero-Loop Constraint (ADR-017)**: All Python data engineering and trading strategies must use fully vectorized NumPy/Pandas models. No `for` loops in calculation paths.
 * **Parallel & GPU Sweep (ADR-022)**: Parameter sweeps with ≥32 arms MUST use joblib parallel execution (`run_fvg_cisd_sweep_parallel.py` pattern). Numba `@njit` for bounded per-element loops. CuPy GPU for cumulative ops on >1M element arrays. 24 CPU cores + RTX 4060 8GB available.

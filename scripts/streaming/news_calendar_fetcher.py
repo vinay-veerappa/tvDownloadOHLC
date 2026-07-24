@@ -162,6 +162,7 @@ def parse_ff_xml(xml_text: str, target_date: date = None,
             "time_et": time_et,
             "impact": impact,
             "event": title,
+            "country": country,  # Store the currency code (e.g. "USD", "EUR")
             "forecast": forecast,
             "previous": previous,
         })
@@ -199,6 +200,7 @@ async def save_to_prisma(events: list):
                         'name': ev['event'],
                         'datetime': dt_utc,
                         'impact': ev['impact'].upper(),
+                        'country': ev.get('country', 'USD'),  # Store the currency/country
                         'forecast': float(ev['forecast'].replace('%','')) if ev['forecast'] and '%' in ev['forecast'] else None,
                         'previous': float(ev['previous'].replace('%','')) if ev['previous'] and '%' in ev['previous'] else None,
                     }

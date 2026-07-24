@@ -174,8 +174,8 @@ def call_ollama(prompt: str, model: str, timeout: int = 300) -> str:
                     "options": {
                         "temperature": 0.3,
                         "top_p": 0.9,
-                        "num_ctx": 32768,
-                        "num_predict": 16384,
+                        "num_ctx": 262144,
+                        "num_predict": 32768,
                     },
                 },
                 timeout=timeout,

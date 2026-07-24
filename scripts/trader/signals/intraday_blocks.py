@@ -414,6 +414,101 @@ def _format_kz_pivots_block(ticker: str, ticker_current: float, session: str) ->
         if not has_any:
             return "== ICT KILLZONE PIVOTS ==\nNo pivots computed yet (sessions not complete)"
 
+        # ── Session interplay analysis ──
+        # Compare Asia/London/NY AM range sizes to infer conditional behavior.
+        # Key rules (from KB / Herman stats):
+        #   - Small Asia range (< 0.3% of price) → London tends to break out → NY continuation
+        #   - Large Asia range (> 0.6% of price) → London tends to be choppy → NY mean reversion
+        #   - London range > 2x Asia range → London expansion day (trend bias)
+        #   - London range < Asia range → London inside day (chop/reversal bias)
+        #   - Price below ALL session ranges → bearish continuation
+        #   - Price above ALL session ranges → bullish continuation
+        try:
+            asia_rng = float(row.get("asia_range", 0) or 0)
+            london_rng = float(row.get("london_range", 0) or 0)
+            nyam_rng = float(row.get("nyam_range", 0) or 0)
+            asia_high = float(row.get("asia_high", 0) or 0)
+            asia_low = float(row.get("asia_low", 0) or 0)
+            london_high = float(row.get("london_high", 0) or 0)
+            london_low = float(row.get("london_low", 0) or 0)
+            nyam_high = float(row.get("nyam_high", 0) or 0)
+            nyam_low = float(row.get("nyam_low", 0) or 0)
+            spot = ticker_current if ticker_current > 0 else 0
+
+            if asia_rng > 0 and spot > 0:
+                interplay_lines = ["", "== SESSION INTERPLAY =="]
+
+                # Size classification
+                asia_pct = (asia_rng / spot) * 100
+                if asia_pct < 0.3:
+                    asia_size = "SMALL"
+                elif asia_pct > 0.6:
+                    asia_size = "LARGE"
+                else:
+                    asia_size = "NORMAL"
+
+                interplay_lines.append(f"Asia range: {asia_rng:,.2f} ({asia_pct:.2f}% of price) — {asia_size}")
+
+                # London vs Asia
+                if london_rng > 0 and asia_rng > 0:
+                    london_asia_ratio = london_rng / asia_rng
+                    if london_asia_ratio > 2.0:
+                        interplay_lines.append(
+                            f"London range ({london_rng:,.2f}) = {london_asia_ratio:.1f}x Asia → London EXPANSION (trend day bias)"
+                        )
+                    elif london_asia_ratio < 0.8:
+                        interplay_lines.append(
+                            f"London range ({london_rng:,.2f}) = {london_asia_ratio:.1f}x Asia → London INSIDE (chop/reversal bias)"
+                        )
+                    else:
+                        interplay_lines.append(
+                            f"London range ({london_rng:,.2f}) = {london_asia_ratio:.1f}x Asia → London NORMAL"
+                        )
+
+                    # Small Asia → London breakout → NY continuation
+                    if asia_size == "SMALL" and london_asia_ratio > 1.5:
+                        interplay_lines.append(
+                            "  → Small Asia + London expansion = NY AM continuation edge (trend favored)"
+                        )
+                    elif asia_size == "LARGE":
+                        interplay_lines.append(
+                            "  → Large Asia range = London/NY tend toward mean reversion (fade extremes)"
+                        )
+
+                # NY AM vs London
+                if nyam_rng > 0 and london_rng > 0:
+                    nyam_london_ratio = nyam_rng / london_rng
+                    interplay_lines.append(
+                        f"NY AM range ({nyam_rng:,.2f}) = {nyam_london_ratio:.1f}x London"
+                    )
+
+                # Price position across all sessions
+                if spot > 0 and asia_high > 0 and london_high > 0 and nyam_high > 0:
+                    below_all = spot < min(asia_low, london_low, nyam_low) if nyam_low > 0 else False
+                    above_all = spot > max(asia_high, london_high, nyam_high) if nyam_high > 0 else False
+                    if below_all:
+                        interplay_lines.append("  → Price BELOW all session ranges = bearish continuation (no support until Put Wall)")
+                    elif above_all:
+                        interplay_lines.append("  → Price ABOVE all session ranges = bullish continuation (no resistance until Call Wall)")
+                    else:
+                        # Which ranges has price broken?
+                        broken_below = []
+                        broken_above = []
+                        if spot < london_low:
+                            broken_below.append(f"London Low ({london_low:,.2f})")
+                        if spot < asia_low:
+                            broken_below.append(f"Asia Low ({asia_low:,.2f})")
+                        if spot > london_high:
+                            broken_above.append(f"London High ({london_high:,.2f})")
+                        if broken_below:
+                            interplay_lines.append(f"  → Price broke below: {', '.join(broken_below)} (bearish raid)")
+                        if broken_above:
+                            interplay_lines.append(f"  → Price broke above: {', '.join(broken_above)} (bullish raid)")
+
+                lines.extend(interplay_lines)
+        except Exception as e:
+            log.debug("[kz_pivots] Session interplay analysis failed: %s", e)
+
         return "\n".join(lines)
     except Exception as e:
         log.warning("[kz_pivots] Failed: %s", e)

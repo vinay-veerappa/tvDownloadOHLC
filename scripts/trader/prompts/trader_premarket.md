@@ -9,13 +9,16 @@ classification. Write a narrative that:
 5. Ends with "What I'm watching at the open" — 2-3 specific levels and scenarios
 
 Rules:
-- Plain English. No jargon. Talk like you're explaining to a friend.
-- Jargon Translation Policy: Do not use ICT acronyms (BSL, SSL, FVG, etc.) directly. Translate them into plain English concepts (e.g. "buy stops resting above X", "sell liquidity below Y").
+- Plain English. Talk like you're explaining to a friend.
+- Jargon Policy (KB-aware): You MAY use ICT terminology (FVG, CSD, MSS, liquidity sweep, Silver Bullet, etc.) when the cheat sheet's KB context block provides a grounded source for it. When you use an ICT term, translate it in the same sentence for the reader (e.g. "a fair value gap (FVG — an imbalance gap below price that acts as support)"). If no KB source is present for a concept, use plain English only.
+- KB Usage: When the KB context block is present, USE it to infer what could happen next — not just to cite sources. The value is in connecting current conditions to conditional rules (e.g. "large Asia range → NY AM tends to mean-revert", "London low swept → NY open bias"). Attribution is secondary to correct inference.
+- Setup Relevance: Don't just list levels — explain WHICH ICT setup is forming in current conditions and what would confirm or invalidate it. Use the KB context to connect the current market state to specific setup patterns.
+- Conditional Session Inference: The cheat sheet shows session outcomes (Asia range size, Herman sweep result, classification, overnight trajectory). The KB context may contain rules about how one session's behavior predicts the next. CONNECT the current session data to those conditional rules to infer what the open or next session is likely to do.
 - Strict GEX Regime Adherence: Strictly respect the GEX regime specified in the cheat sheet (e.g. POSITIVE, NEGATIVE, or NEUTRAL). Do NOT invert dealer hedging mechanics or claim negative gamma when the cheat sheet states NEUTRAL or POSITIVE.
 - Spatial & Mathematical Precision: Put Walls are downside support/floors (below or near price floor); Call Walls are overhead resistance/ceilings. Double-check level distances and spatial positions relative to current price.
 - Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.
 - If overnight action contradicts the prior EOD classification, call it out.
-- Keep it under 350 words.
+- No word limit. Write as much as needed for a thorough premarket read. Don't compress — cover the overnight story, GEX structure, classification, and conditional session inference fully.
 - Use the numbers from the cheat sheet. Don't invent prices.
 - Don't give trade recommendations. This is a read, not a plan.
 - This runs BEFORE the 09:30 open — no RTH data yet. Focus on Globex + levels.
@@ -47,6 +50,13 @@ ICT KILLZONE PIVOTS GUIDE (premarket):
 
 CLASSIFICATION (pre-computed in cheat sheet — trust it):
 - The cheat sheet CLASSIFICATION block already includes the full day-type name and description. Use it as-is.
+
+KB CONTEXT USAGE (if present):
+- The cheat sheet MAY include a block titled "# ICT KNOWLEDGE BASE CONTEXT" at the end. These are grounded source units from ICT transcripts/PDFs, each with a confidence score (conf=X.XX), concepts, summary, and verbatim anchor.
+- USE these KB units to: (1) explain WHY a setup is relevant in current conditions, (2) cite the source when referencing a methodology, (3) add depth that pure data cannot — e.g. "the speaker notes that a CSD is the first qualifier for the idea".
+- Do NOT just repeat the KB summaries verbatim. Synthesize them with the live data in the cheat sheet.
+- Timeframe Annotation (STRICT): Whenever you mention a setup or structural level (FVG, CSD, order block, MSS, imbalance, etc.), ALWAYS state the timeframe it applies to. Sources: (1) the cheat sheet block that contains the level usually states the timeframe (e.g. "M5 FVG", "1m imbalance"); (2) the KB unit's Context line shows timeframes (e.g. "TFs: M5, M1"). If no timeframe is available from either source, write "(timeframe not specified)" rather than leaving it ambiguous. This is critical for multi-timeframe analysis.
+- If the KB context block is absent (KB API not running), write the narrative using only the cheat sheet data — no KB citations.
 
 == CHEAT SHEET ==
 {{INSERT_CHEAT_SHEET}}

@@ -29,130 +29,24 @@ if str(_ROOT) not in sys.path:
 
 def check_kb_api(url: str = "http://127.0.0.1:8900") -> bool:
     """Check if the KB API is reachable."""
-    try:
-        import urllib.request
-        req = urllib.request.Request(f"{url}/health", method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-            return data.get("status") == "ok"
-    except Exception:
-        return False
+    from scripts.knowledge_bridge.kb_context import check_kb_api as _check
+    return _check(url)
 
 
 def fetch_kb_context(cheat_sheet: str, kb_api_url: str = "http://127.0.0.1:8900") -> str:
     """Retrieve KB context for the cheat sheet via the KB API.
 
-    Uses the same concept-trigger logic as kb_bridge.py but calls
-    the KB API directly from the consumer repo.
+    Thin wrapper around the production ``kb_context.fetch_kb_context`` so this
+    test module stays in sync with the canonical implementation.
     """
-    import urllib.request
+    from scripts.knowledge_bridge.kb_context import fetch_kb_context as _fetch
+    return _fetch(cheat_sheet, kb_api_url=kb_api_url)
 
-    # Concept triggers (mirrors kb_bridge.py CONCEPT_TRIGGERS)
-    triggers = {
-        "FVG": "fair value gap imbalance entry",
-        "CSD": "change in state of delivery CSD entry",
-        "MSS": "market structure shift MSS",
-        "order block": "order block entry OB",
-        "liquidity sweep": "liquidity sweep buy-side sell-side",
-        "Judas": "Judas swing fake move London session",
-        "Power of Three": "power of three accumulation manipulation distribution",
-        "Po3": "power of three accumulation manipulation distribution",
-        "MMXM": "market maker buy sell model MMXM",
-        "Silver Bullet": "silver bullet entry window",
-        "OTE": "optimal trade entry OTE",
-        "killzone": "killzone trading session timing",
-        "overnight session": "overnight session ONS profile trading",
-        "premium": "premium discount dealing range",
-        "discount": "premium discount dealing range",
-        "PDH": "prior day high low reference level",
-        "PDL": "prior day high low reference level",
-        "midnight open": "midnight open reference level",
-        "7 Rule": "Kish 7 Rules execution framework",
-        "trendline": "trendline entry model",
-        "breaker": "breaker block entry",
-        "turtle soup": "turtle soup liquidity sweep",
-        "CISD": "change in state of delivery CISD",
-        "NWOG": "new week opening gap",
-        "NDOG": "new day opening gap",
-        "IPDA": "interbank price delivery algorithm",
-        "draw on liquidity": "draw on liquidity DOL",
-        "HOD": "high of day",
-        "LOD": "low of day",
-        "target": "target liquidity unfinished business",
-        "stop": "stop placement invalidation",
-    }
 
-    # Detect concepts in cheat sheet
-    cheat_lower = cheat_sheet.lower()
-    found = {}
-    for trigger, query in triggers.items():
-        if trigger.lower() in cheat_lower:
-            found[trigger] = query
-
-    if not found:
-        return ""
-
-    # Search KB for each concept
-    all_units = []
-    seen_ids = set()
-    max_context_chars = 2000
-
-    for concept, query in found.items():
-        try:
-            body = json.dumps({
-                "query": query,
-                "k": 3,
-            }).encode()
-            req = urllib.request.Request(
-                f"{kb_api_url}/search",
-                data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-                # API returns {"results": [...]} or raw list
-                if isinstance(data, dict) and "results" in data:
-                    units = data["results"]
-                elif isinstance(data, list):
-                    units = data
-                else:
-                    units = []
-                for u in units:
-                    uid = u.get("unit_id", str(id(u)))
-                    if uid not in seen_ids:
-                        all_units.append(u)
-                        seen_ids.add(uid)
-        except Exception:
-            continue
-
-    if not all_units:
-        return ""
-
-    # Format as context block
-    lines = []
-    total = 0
-    for u in all_units:
-        ktype = u.get("knowledge_type", "?")
-        summary = (u.get("summary") or "")[:200]
-        concepts = u.get("concepts", "")
-        confidence = u.get("confidence", 0.0)
-        source_file = u.get("source_file", "?")
-        verbatim = u.get("verbatim_anchor") or ""
-
-        block = f"[{ktype}] {source_file} (conf={confidence:.2f})\n  Concepts: {concepts}\n  Summary: {summary}\n  Anchor: {verbatim}\n"
-        if total + len(block) > max_context_chars:
-            break
-        lines.append(block)
-        total += len(block)
-
-    header = (
-        f"# ICT KNOWLEDGE BASE CONTEXT (retrieved {len(lines)} units)\n"
-        f"# Concepts detected: {', '.join(found.keys())}\n"
-        f"# These are grounded source materials from ICT transcripts.\n"
-        f"# Use for terminology, methodology context, and setup definitions.\n"
-    )
-    return "\n".join([header] + lines)
+def _legacy_format_units_unused(all_units, found, max_context_chars=2000):
+    """Legacy inline formatter — kept for reference; production uses kb_context."""
+    # [Truncated — see scripts/knowledge_bridge/kb_context.py for the canonical formatter]
+    pass
 
 
 def main():

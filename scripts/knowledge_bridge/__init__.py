@@ -50,5 +50,21 @@ from .backtest_loop import (
     apply_backtest_results,
     summarize_results,
 )
+from .kb_context import (
+    DEFAULT_KB_API_URL,
+    CONCEPT_TRIGGERS,
+    check_kb_api,
+    detect_concepts,
+    fetch_kb_context,
+)
+from .confluence_engine import (
+    ConfluenceEngine,
+    ConfluenceResult,
+    ConfluenceSignal,
+    TradePlan,
+    LiveContext,
+    DEFAULT_PROVIDERS,
+    DEFAULT_DOMAIN_WEIGHTS,
+)
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
