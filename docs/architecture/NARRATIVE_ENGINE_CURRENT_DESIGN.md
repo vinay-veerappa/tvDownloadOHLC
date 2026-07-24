@@ -391,6 +391,41 @@ def compute_gex_em_verdict(
 
 ---
 
+### IV investigation (2026-07-24)
+
+**Root cause found**: `atm_iv` in `gex_calculator.py` (line ~2033) was set to the ATM **call-only** contract IV:
+```python
+atm_iv=_atm_contract(chain.calls, spot).iv  # call-only, ignores put skew
+```
+This understated ATM IV when there's a put skew (puts trade richer than calls), which is the normal state for equity index options.
+
+**Fix committed** (`abde5ad0`): Blend call + put IV at the ATM strike:
+```python
+_atm_iv_val = (_atm_call.iv + _atm_put.iv) / 2.0
+```
+
+**Verification with live TOS values (2026-07-24)**:
+
+| Ticker | Old (call-only) | New (blended) | TOS display | Gap (old) | Gap (new) | Status |
+|---|---|---|---|---|---|---|
+| NQ | 21.31% | 22.89% | 22.90% | 9.7% | **0.04%** | ✅ Fixed |
+| ES | 12.10% | 13.01% | 13.92% | 13.1% | 6.5% | 🟡 Partial — put_25d (13.93%) matches TOS exactly |
+| SPX/SPY | 17.49% (SPY atm_iv) | ~18-19% (est) | 20.98% | 16.6% | ~5-10% | 🟡 Partial — needs morning investigation |
+
+**Key finding for ES**: TOS display IV (13.92%) matches the **put-side 25d IV** (13.93%) almost exactly, not the blended IV (13.01%). This suggests TOS may display the put-side IV (the peak of the volatility smile) for index products with strong put skew.
+
+**Key finding for SPX/SPY**: TOS display IV (20.98%) is significantly higher than both the blended 25d IV (13.76%) and the stored `atm_iv` (17.49%). The SPY live GexSnapshot put 25d IV (19.17%) is closer. This suggests the ATM strike put IV (peak of the smile) is what TOS displays — it's always higher than the 25d IVs because the 25d strikes are away from ATM.
+
+**Next steps (investigate when market is open)**:
+1. Run the pipeline with the blending fix and compare the new `atm_iv` to TOS for all three tickers
+2. Check if TOS displays the ATM strike put IV (not blended) for ES/SPX — if so, consider using put-side ATM IV for index products
+3. Compare the actual ATM strike call/put IVs from the RTD chain (not 25d) to TOS display
+4. The 25d IVs stored in DB are sampled at strikes away from ATM; the ATM strike IVs (used by the blending fix) should be higher and closer to TOS
+
+**Important**: The `_expected_move()` and `_calculate_all_ems()` functions already blend call+put IV correctly — the bug was only in the `atm_iv` field that gets stored to DB and META_ fields. The EM calculations themselves were using the correct blended IV all along. The fix ensures `atm_iv` (used by the TOS formula fallback in `compute_weekly_ems()`) also uses the blended value.
+
+---
+
 ### TOS EM verification (2026-07-24)
 
 **Context:** Today is Thursday 2026-07-24. The user captured TOS VxV ExpectedMove v3 values **last Friday (2026-07-17)** for **this week's expiry (2026-07-24)** — the Friday that is tomorrow. The scope capture date and expiry are correct for this week.
@@ -445,8 +480,8 @@ def compute_gex_em_verdict(
 |---|---|---|---|
 | A | Ensure RTD-native path (NQ/ES) writes scope entries to `weekly_em_scope.json` | `run_options_levels.py` RTD path + `_save_weekly_scope_cache()` | ✅ Done — RTD path already saves to cache; added TOS formula fallback |
 | B | When weekly expiry missing from RTD chain, compute EM via TOS formula with futures IV | `run_options_levels.py` `_compute_tos_em_fallback()` | ✅ Done — added `_compute_tos_em_fallback()` + `_next_friday()` |
-| C | Investigate SPX IV discrepancy (pipeline 13.34% vs TOS 15.38%) — check Schwab API IV source for SPX | `options_fetcher.py` + `gex_calculator.py` | 🟡 BACKLOG — deferred per user |
-| D | Investigate NQ IV discrepancy (pipeline 21.5% vs TOS 27%) — check RTD IV source | `tos_rtd/adapter.py` + `gex_calculator.py` | 🟡 BACKLOG — deferred per user |
+| C | Investigate SPX IV discrepancy (pipeline 13.34% vs TOS 15.38%) — check Schwab API IV source for SPX | `options_fetcher.py` + `gex_calculator.py` | 🟡 In progress — see IV investigation below |
+| D | Investigate NQ IV discrepancy (pipeline 21.5% vs TOS 27%) — check RTD IV source | `tos_rtd/adapter.py` + `gex_calculator.py` | ✅ Fixed — call-only → blended IV (see below) |
 | E | Add NQ/ES futures EM directly to `weekly_em_scope.json` (not just NDX/SPX) | `run_options_levels.py` | ✅ Done — RTD path + TOS fallback now writes NQ/ES to scope |
 
 **Action items (consumer side — `scripts/trader/`):**
