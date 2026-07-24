@@ -1287,8 +1287,13 @@ def _expected_move(
     blended_iv = (c_iv + p_iv) / 2.0 if (c_iv > 0 and p_iv > 0) else max(c_iv, p_iv)
     
     if blended_iv > 0:
+        # Schwab API returns IV on 252-trading-day basis. TOS formula
+        # expects 365-calendar-day basis. Convert here so the EM matches
+        # TOS display convention.
+        import math as _math
+        blended_iv_365 = blended_iv * _math.sqrt(365.0 / 252.0)
         expiry_str = c.expiry.strftime("%Y-%m-%d") if hasattr(c.expiry, "strftime") else str(c.expiry)
-        em_value = calculate_tos_expected_move(spot, expiry_str, blended_iv * 100, is_futures=is_futures)
+        em_value = calculate_tos_expected_move(spot, expiry_str, blended_iv_365 * 100, is_futures=is_futures)
     else:
         em_value = k * straddle_mid
 
@@ -1782,16 +1787,26 @@ def _compute_blended_atm_iv(chain: OptionChainData, spot: float) -> float | None
 
     Replaces the old call-only: ``_atm_contract(chain.calls, spot).iv``
     which understated ATM IV when there is a put skew.
+
+    The Schwab API returns IV on a 252-trading-day basis (standard
+    institutional convention). TOS displays IV on a 365-calendar-day
+    basis. We convert to 365-day basis here so the stored ``atm_iv``
+    matches TOS display convention. The conversion factor is
+    sqrt(365/252) ≈ 1.2035.
     """
+    import math
     _atm_call = _atm_contract(chain.calls, spot) if chain.calls else None
     _atm_put = _atm_contract(chain.puts, spot) if chain.puts else None
     if _atm_call and _atm_put and _atm_call.iv > 0 and _atm_put.iv > 0:
-        return (_atm_call.iv + _atm_put.iv) / 2.0
-    if _atm_call and _atm_call.iv > 0:
-        return _atm_call.iv
-    if _atm_put and _atm_put.iv > 0:
-        return _atm_put.iv
-    return None
+        blended = (_atm_call.iv + _atm_put.iv) / 2.0
+    elif _atm_call and _atm_call.iv > 0:
+        blended = _atm_call.iv
+    elif _atm_put and _atm_put.iv > 0:
+        blended = _atm_put.iv
+    else:
+        return None
+    # Convert from 252-trading-day to 365-calendar-day basis
+    return blended * math.sqrt(365.0 / 252.0)
 
 
 def calculate_dealer_levels(

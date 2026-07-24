@@ -304,11 +304,12 @@ class HybridCoordinator:
         schwab_hints = self._get_schwab_oi_hints(expiries, futures_prices)
 
         # Build candidate symbols filtered by Schwab ETF hints.
-        # Only use the front 3-4 key expiries (0DTE, next Friday, one monthly)
-        # for the OI scan. Back expiries are for macro analysis and don't need
-        # OI scanning — they get static OI from the Schwab chain instead.
-        # This keeps the COM topic budget low enough for both ES and NQ.
-        key_expiries = expiries[:4] if len(expiries) > 4 else expiries
+        # Use the front 6 key expiries (0DTE, daily Mon-Thu, weekly Friday)
+        # for the OI scan. This covers the weekly Friday expiry (e.g. July 31)
+        # which is the 6th expiry in the ladder. Back expiries are for macro
+        # analysis and don't need OI scanning — they get static OI from the
+        # Schwab chain instead. This keeps the COM topic budget manageable.
+        key_expiries = expiries[:6] if len(expiries) > 6 else expiries
         candidate_symbols = self._build_candidate_symbols(
             self._symbols, key_expiries, futures_prices, schwab_hints
         )
@@ -667,7 +668,7 @@ class HybridCoordinator:
         from .quote_types import QuoteType
 
         # Tunable budget controls per symbol.
-        back_iv_top_n = 6   # calls + puts per back expiry
+        back_iv_top_n = 30  # calls + puts per back expiry (covers ATM band + wings)
         front_iv_max = 60   # cap front-expiry IV subscriptions
 
         all_option_symbols: list[str] = []
@@ -738,7 +739,8 @@ class HybridCoordinator:
                 if put_atm:
                     live_subscriptions.append((QuoteType.LAST, put_atm))
 
-            # Back expiries: subscribe IV to the top OI calls + puts per expiry.
+            # Back expiries: subscribe IV to the top OI calls + puts per expiry,
+            # plus force-include the ATM band so we get straddle/EM data.
             for exp in sorted_expiries:
                 if exp == front_expiry:
                     continue
@@ -753,7 +755,13 @@ class HybridCoordinator:
                     key=lambda x: x[1],
                     reverse=True,
                 )[:back_iv_top_n]
-                for rtd_sym, _ in calls + puts:
+                iv_set = {s for s, _ in calls + puts}
+                # Force-include ATM band for back expiries (same logic as front).
+                for rtd_sym, _ in pairs:
+                    parsed = parse_rtd_option_symbol(rtd_sym)
+                    if parsed and abs(parsed.strike - spot) <= 2 * spacing:
+                        iv_set.add(rtd_sym)
+                for rtd_sym in iv_set:
                     live_subscriptions.append((QuoteType.IMPL_VOL, rtd_sym))
 
             # Base futures LAST.
