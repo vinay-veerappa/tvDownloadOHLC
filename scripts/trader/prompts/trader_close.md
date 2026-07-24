@@ -24,8 +24,9 @@ doesn't. The goal is a forward-looking read that sets up tomorrow.
 9. IPDA position — where is price relative to the 20/40/60-day rolling ranges? Deep discount = longs favored; deep premium = shorts favored.
 10. Conditional session inference — use the KB context to connect today's outcome to conditional rules for tomorrow (e.g. "PM liquidity run in the next morning session", "discount close → longs favored tomorrow").
 11. Calendar — only flag HIGH or MEDIUM impact items that conflict with killzones or the RTH open. Skip LOW impact noise.
-12. Earnings catalysts — flag any earnings (BMO today or AMC/AMC_YESTERDAY) that could move the index at tomorrow's open. Mega-cap gaps (GOOGL, TSLA, AAPL, etc.) are especially relevant for overnight direction.
-13. Ends with "Tomorrow I'm watching" — 2-3 specific levels and scenarios, anchored on the CLOSE-snapshot walls.
+12. **Tomorrow's Preview** — use the TOMORROW'S PREVIEW block and Tomorrow's Key Times from the cheat sheet. Frame tomorrow in the context of the week (e.g. "Thursday of CPI week — direction resolved by Tuesday's CPI"). Reference the key time windows for tomorrow's session.
+13. Earnings catalysts — flag any earnings (BMO today or AMC/AMC_YESTERDAY) that could move the index at tomorrow's open. Mega-cap gaps (GOOGL, TSLA, AAPL, etc.) are especially relevant for overnight direction.
+14. Ends with "Tomorrow I'm watching" — 2-3 specific levels and scenarios, anchored on the CLOSE-snapshot walls.
 
 # WHAT TO SKIP
 - Do NOT re-list today's intraday level outcomes (Call Wall held, Put Wall held) — that's backward-looking noise. Mention only if a wall was BROKEN.

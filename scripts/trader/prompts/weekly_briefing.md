@@ -73,3 +73,9 @@ Return exactly:
 - USE these KB units to inform your analysis: (1) the weekly archetype and how it typically plays out (Monday/Tuesday range, Wednesday CSD, Thursday/Friday run), (2) opex week patterns (Mon-Tue up, Wed sell-off), (3) NWOG as a magnet, (4) Kish's timeframe selection and execution rules.
 - Incorporate KB knowledge into the `executive_risk_core`, `ticker_analysis` track notes, and `weekly_trade_plan` fields. Don't just repeat KB summaries — synthesize with the live data.
 - If the KB context block is absent, proceed without it — do not fabricate.
+
+# NEXT WEEK EVENT TIMELINE (if present)
+- The template MAY include a "[6] NEXT WEEK EVENT TIMELINE" section with a day-by-day Mon-Fri breakdown including regime tags ([CHOP], [EXPANSION], [SWEEP→EXPANSION], etc.).
+- USE this timeline to frame the weekly trade plan: which days to trade, which to sit out, what regime to expect each day.
+- Connect the timeline to the KB context — if the KB says "Mon-Tue create range, Wed is CSD, Thu-Fri is the run," confirm or challenge that with the timeline's regime tags.
+- If the timeline is absent, proceed without it.
