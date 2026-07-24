@@ -2030,7 +2030,21 @@ def calculate_dealer_levels(
         hedge_flow_dn_50=hedge_flow["dn_50"],
         hourly_flow_curve=hourly_flow_curve,
         max_gex_strike=max_gex_strike,
-        atm_iv=_atm_contract(chain.calls, spot).iv if chain.calls else None,
+        # ATM IV: blend call + put IV at the nearest strike (not call-only).
+        # The call-only IV understates ATM IV when there is a put skew
+        # (puts trade richer), which causes EM to be understated.
+        # This matches the blending logic in _expected_move() and _calculate_all_ems().
+        _atm_call = _atm_contract(chain.calls, spot)
+        _atm_put = _atm_contract(chain.puts, spot)
+        if _atm_call and _atm_put and _atm_call.iv > 0 and _atm_put.iv > 0:
+            _atm_iv_val = (_atm_call.iv + _atm_put.iv) / 2.0
+        elif _atm_call and _atm_call.iv > 0:
+            _atm_iv_val = _atm_call.iv
+        elif _atm_put and _atm_put.iv > 0:
+            _atm_iv_val = _atm_put.iv
+        else:
+            _atm_iv_val = None
+        atm_iv=_atm_iv_val,
         strike_gex=strikes,
     )
 
