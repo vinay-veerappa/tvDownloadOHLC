@@ -286,12 +286,28 @@ The weekly narrative uses JSON slot-filling (not free-form prose like the daily 
 - Or keep the JSON structure but make it more flexible (optional sections, free-text fields)
 - This needs a design discussion before implementation
 
-### Econ calendar data quality (OPEN, needs investigation)
+### Econ calendar data quality (FIXED 2026-07-23)
 
-The weekly cheat sheet generated on 2026-07-20 showed CPI m/m on Monday July 20 at 08:30 ET, but the user confirmed there was no CPI on Monday that week. The DB econ event data may have incorrect dates, or the events were from a previous CPI release cycle. The `get_weekly_modifiers` function scans ALL event names for "CPI" and sets `is_cpi_week = True` — this means any event with "CPI" in the name (including international CPI releases like "National Core CPI y/y") triggers the CPI week pattern. Need to:
-- Verify the econ calendar data source is providing correct dates
-- Filter `get_weekly_modifiers` to only match US CPI events (not international)
-- Consider adding a date-range validation step
+**Root causes found and fixed:**
+
+1. **`country` field was null for all 11,662 events** — all three fetchers (Investing.com, ForexFactory, web app) were not writing the `country` field to the DB. Fixed in all fetchers; DB backfilled to `country='USD'`.
+
+2. **International events mixed with US events** — the web app ForexFactory fetcher was fetching 8 currencies (USD, EUR, GBP, CAD, JPY, AUD, CHF, NZD) and inserting them all into the DB. Fixed to USD-only.
+
+3. **`get_weekly_modifiers` over-broad CPI matching** — matched any event containing "CPI" including international releases like "National Core CPI y/y". Fixed to only match US CPI patterns (`CPI M/M`, `CPI Y/Y`, `Core CPI M/M`, etc.).
+
+4. **`get_econ_releases` didn't filter by country at DB level** — relied on unreliable name-based filtering. Fixed to query `WHERE country='USD'`.
+
+**Single-fetcher policy (Investing.com primary):**
+
+| Fetcher | Role | Source | Future data? | Country stored? |
+|---|---|---|---|---|
+| `fetch_economic_calendar.py` | **PRIMARY** | Investing.com API (country_id=5) | ✅ 14 days ahead | ✅ `country='USD'` |
+| `news_calendar_fetcher.py` | Fallback (NinjaTrader) | ForexFactory XML | ❌ Current week only | ✅ via Prisma |
+| `web/lib/economic-calendar.ts` | Web app display | ForexFactory JSON | ❌ Current week only | ✅ (fixed) USD-only |
+| `seed-economic-events.ts` | Historical seed (one-time) | CSV + TradingEconomics API | N/A | ✅ (fixed) `country='USD'` |
+
+Investing.com is primary because it fetches 14 days ahead (solves the Friday/Saturday ForexFactory limitation where next week's data isn't available until Sunday). yfinance was tested as an alternative but lacks impact levels (HIGH/MEDIUM/LOW) and has abbreviated event names.
 
 ### Mid-week validation mode (BACKLOG — future feature)
 
