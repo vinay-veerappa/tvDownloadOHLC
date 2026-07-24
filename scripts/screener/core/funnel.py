@@ -70,6 +70,22 @@ DEFAULT_FALLBACK_UNIVERSE = [
 ]
 
 
+def _get_fallback_candidates(limit: int = 100) -> List[Dict[str, Any]]:
+    candidates = []
+    for item in DEFAULT_FALLBACK_UNIVERSE[:limit]:
+        t = item["ticker"]
+        candidates.append({
+            "ticker": t,
+            "company": item.get("company", f"{t} Corp"),
+            "sector": item.get("sector", "Technology"),
+            "industry": item.get("industry", "General"),
+            "marketCap": 10_000_000_000.0,
+            "price": 100.0,
+            "volume": 2_000_000.0
+        })
+    return candidates
+
+
 def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, limit: int = 100) -> List[Dict[str, Any]]:
     """
     Fetch universe candidate stocks from Finviz.
@@ -79,7 +95,7 @@ def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, lim
     
     if Overview is None:
         log.warning("finvizfinance package not installed. Returning default fallback universe.")
-        return DEFAULT_FALLBACK_UNIVERSE[:limit]
+        return _get_fallback_candidates(limit)
         
     try:
         foverview = Overview()
@@ -88,7 +104,7 @@ def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, lim
         
         if df is None or df.empty:
             log.info("Finviz returned no candidates for the given filters.")
-            return DEFAULT_FALLBACK_UNIVERSE[:limit]
+            return _get_fallback_candidates(limit)
             
         # Sort by Market Cap descending to get the most liquid/real companies first instead of alphabetical junk
         if "Market Cap" in df.columns:
@@ -129,4 +145,5 @@ def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, lim
         return results
     except Exception as e:
         log.error(f"Finviz funnel query failed: {e}. Returning fallback universe.")
-        return DEFAULT_FALLBACK_UNIVERSE[:limit]
+        return _get_fallback_candidates(limit)
+

@@ -14,7 +14,12 @@ import sqlite3
 import os
 import json
 import yfinance as yf
-from ticker_autoseed import get_or_seed_ticker, auto_seed_batch, SP500_SAMPLE, NASDAQ100_SAMPLE, ETF_SAMPLE
+try:
+    from scripts.screener.ticker_autoseed import get_or_seed_ticker, auto_seed_batch, SP500_SAMPLE, NASDAQ100_SAMPLE, ETF_SAMPLE
+except ImportError:
+    from ticker_autoseed import get_or_seed_ticker, auto_seed_batch, SP500_SAMPLE, NASDAQ100_SAMPLE, ETF_SAMPLE
+
+
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../web/prisma/dev.db"))
 OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../web/public/data/heatmaps"))

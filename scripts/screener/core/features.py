@@ -111,7 +111,15 @@ def build_feature_matrix(
 
     
     # 9. Dynamic Feature Binding from Upstream Drivers
-    res["iv_rank_52w"] = 55.0  # Placeholder until Dolt DB integration is live
+    # Calculate 52-week Volatility Rank (HV20 proxy for IV Rank)
+    log_ret = np.log(close / close.shift(1).replace(0, np.nan))
+    vol20 = log_ret.rolling(window=20, min_periods=5).std() * np.sqrt(252) * 100.0
+    vol20_min = vol20.rolling(window=252, min_periods=30).min()
+    vol20_max = vol20.rolling(window=252, min_periods=30).max()
+    vol_range = vol20_max - vol20_min
+    hv_rank = np.where(vol_range > 0, (vol20 - vol20_min) / vol_range * 100.0, 50.0)
+    res["iv_rank_52w"] = np.nan_to_num(hv_rank, nan=50.0)
+
     res["has_upcoming_earnings_7d"] = has_upcoming_earnings
     res["industry_rs_rank"] = float(industry_rs_rank)
 

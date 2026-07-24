@@ -724,12 +724,25 @@ class Runner:
             max_instances=1,
         )
 
+        # Market Heatmaps compile job (16:40 ET Mon-Fri)
+        self.scheduler.add_job(
+            self.compile_heatmaps_job,
+            trigger="cron",
+            day_of_week="mon-fri",
+            hour=16,
+            minute=40,
+            id="compile_heatmaps",
+            name="Compile Market Heatmaps (16:40 ET)",
+            max_instances=1,
+        )
+
         logger.info(
             "Jobs registered: tick_index(60s), tick_staged_execution(10s), tick_stock(5m), tick_daily(10:00), "
-            "eod_analytics(16:30), daily_system_audit(16:35), weekly_analytics(Sun 17:00), "
+            "eod_analytics(16:30), daily_system_audit(16:35), compile_heatmaps(16:40), weekly_analytics(Sun 17:00), "
             "earnings_refresh(Sun 18:00), db_maintenance(03:00), "
             "daily_earnings_briefing(Sun-Thu 19:00), weekly_earnings_briefing(Sun 18:30)"
         )
+
 
     # ------------------------------------------------------------------
     # Market hours guard
@@ -818,6 +831,18 @@ class Runner:
             logger.info("Daily system audit report successfully generated and sent to Discord.")
         except Exception as e:
             logger.error(f"daily_system_audit_job: Failed to run daily audit: {e}", exc_info=True)
+
+    async def compile_heatmaps_job(self):
+        """Compiles S&P 500, Nasdaq 100, ETF, and Theme Treemap JSON heatmaps at EOD (16:40 ET Mon-Fri)."""
+        now_et = datetime.now(TZ_ET)
+        logger.info(f"Compile market heatmaps @ {now_et}")
+        try:
+            from scripts.screener.compile_heatmaps import main as run_compile_heatmaps
+            await asyncio.to_thread(run_compile_heatmaps)
+            logger.info("Market heatmaps Treemaps compiled successfully.")
+        except Exception as e:
+            logger.error(f"compile_heatmaps_job failed: {e}", exc_info=True)
+
 
     async def weekly_analytics_job(self):
         """Weekly rollup on Sunday 17:00 ET (M5)."""

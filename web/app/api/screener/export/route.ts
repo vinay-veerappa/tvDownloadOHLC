@@ -2,8 +2,21 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
-const REPO_ROOT = path.resolve(process.cwd(), '..');
+function getRepoRoot(): string {
+  const cwd = process.cwd();
+  if (fs.existsSync(path.join(cwd, 'reports')) || fs.existsSync(path.join(cwd, 'scripts', 'screener'))) {
+    return cwd;
+  }
+  const parent = path.resolve(cwd, '..');
+  if (fs.existsSync(path.join(parent, 'reports')) || fs.existsSync(path.join(parent, 'scripts', 'screener'))) {
+    return parent;
+  }
+  return cwd;
+}
+
+const REPO_ROOT = getRepoRoot();
 const REPORTS_DIR = path.join(REPO_ROOT, 'reports', 'screener');
+
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

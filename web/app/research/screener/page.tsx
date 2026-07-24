@@ -80,6 +80,9 @@ export default function StockScreenerPage() {
   const [selectedStrategy, setSelectedStrategy] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [limit, setLimit] = useState<number>(100);
+  const [minMatches, setMinMatches] = useState<number>(0);
+  const [sortField, setSortField] = useState<'ticker' | 'company' | 'industry' | 'close' | 'matched_strategies_count'>('matched_strategies_count');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const fetchScreenerData = async (runScan = false) => {
     try {
@@ -108,10 +111,20 @@ export default function StockScreenerPage() {
   const candidates = data?.candidates || [];
   const regime = data?.market_regime || { status: 'BULL_EXPLOSIVE', spy_close: 742.09, is_macro_high_risk: false };
 
-  // Filter candidates based on selected strategy and search query
+  const handleSort = (field: 'ticker' | 'company' | 'industry' | 'close' | 'matched_strategies_count') => {
+    if (sortField === field) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir(field === 'ticker' || field === 'company' || field === 'industry' ? 'asc' : 'desc');
+    }
+  };
+
+  // Filter and sort candidates
   const filteredCandidates = useMemo(() => {
-    return candidates.filter((c) => {
-      // Search filter
+    const filtered = candidates.filter((c) => {
+      if (c.matched_strategies_count < minMatches) return false;
+
       const matchesSearch =
         searchQuery === '' ||
         c.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -120,15 +133,29 @@ export default function StockScreenerPage() {
 
       if (!matchesSearch) return false;
 
-      // Strategy filter
       if (selectedStrategy === 'all') return true;
       return c.strategy_matches[selectedStrategy] === true;
     });
-  }, [candidates, selectedStrategy, searchQuery]);
+
+    return filtered.sort((a, b) => {
+      let aVal: any = a[sortField];
+      let bVal: any = b[sortField];
+
+      if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = (bVal || '').toLowerCase();
+      }
+
+      if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [candidates, selectedStrategy, searchQuery, minMatches, sortField, sortDir]);
 
   const handleExport = (type: 'tradingview' | 'thinkorswim' | 'matrix') => {
     window.open(`/api/screener/export?type=${type}`, '_blank');
   };
+
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-6 space-y-6 font-sans">
@@ -318,17 +345,28 @@ export default function StockScreenerPage() {
 
               <div className="overflow-x-auto max-h-[650px] overflow-y-auto">
                 <table className="w-full text-left text-xs font-mono">
-                  <thead className="bg-zinc-950 text-zinc-400 border-b border-zinc-800 sticky top-0 uppercase tracking-wider">
+                  <thead className="bg-zinc-950 text-zinc-400 border-b border-zinc-800 sticky top-0 uppercase tracking-wider select-none">
                     <tr>
-                      <th className="p-3">Ticker</th>
-                      <th className="p-3">Company</th>
+                      <th onClick={() => handleSort('ticker')} className="p-3 cursor-pointer hover:text-cyan-400">
+                        Ticker {sortField === 'ticker' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                      </th>
+                      <th onClick={() => handleSort('company')} className="p-3 cursor-pointer hover:text-cyan-400">
+                        Company {sortField === 'company' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                      </th>
                       <th className="p-3">Sector</th>
-                      <th className="p-3">Industry</th>
-                      <th className="p-3 text-right">Close</th>
-                      <th className="p-3 text-center">Matches</th>
+                      <th onClick={() => handleSort('industry')} className="p-3 cursor-pointer hover:text-cyan-400">
+                        Industry {sortField === 'industry' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                      </th>
+                      <th onClick={() => handleSort('close')} className="p-3 text-right cursor-pointer hover:text-cyan-400">
+                        Close {sortField === 'close' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                      </th>
+                      <th onClick={() => handleSort('matched_strategies_count')} className="p-3 text-center cursor-pointer hover:text-cyan-400">
+                        Matches {sortField === 'matched_strategies_count' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                      </th>
                       <th className="p-3">Matched Strategies</th>
                     </tr>
                   </thead>
+
                   <tbody className="divide-y divide-zinc-800/50">
                     {filteredCandidates.length === 0 ? (
                       <tr>

@@ -6,7 +6,37 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-const REPO_ROOT = path.resolve(process.cwd(), '..');
+function getRepoRoot(): string {
+  const cwd = process.cwd();
+  if (fs.existsSync(path.join(cwd, 'reports')) || fs.existsSync(path.join(cwd, 'scripts', 'screener'))) {
+    return cwd;
+  }
+  const parent = path.resolve(cwd, '..');
+  if (fs.existsSync(path.join(parent, 'reports')) || fs.existsSync(path.join(parent, 'scripts', 'screener'))) {
+    return parent;
+  }
+  return cwd;
+}
+
+function getPythonExecutable(repoRoot: string): string {
+  const candidates = [
+    path.join(repoRoot, '.venv', 'Scripts', 'python.exe'),
+    path.join(repoRoot, 'venv', 'Scripts', 'python.exe'),
+    path.join(repoRoot, '.venv', 'bin', 'python'),
+    path.join(repoRoot, 'venv', 'bin', 'python'),
+    'python3',
+    'python'
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate.includes(path.sep) && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0]; // fallback
+}
+
+const REPO_ROOT = getRepoRoot();
 const MATRIX_CSV_PATH = path.join(REPO_ROOT, 'reports', 'screener', 'strategy_comparison_matrix.csv');
 
 const STRATEGIES = [
@@ -90,7 +120,7 @@ function loadMatrixCSV() {
 
 async function getDynamicMarketRegime() {
   try {
-    const pyPath = path.join(REPO_ROOT, '.venv', 'Scripts', 'python.exe');
+    const pyPath = getPythonExecutable(REPO_ROOT);
     const cmd = `"${pyPath}" -c "import json; from scripts.screener.core.regime import get_market_regime; r=get_market_regime(); print(json.dumps({'status': r.status, 'spy_close': r.spy_close, 'is_macro_high_risk': r.is_macro_high_risk, 'evaluated_at': r.evaluated_at}))"`;
     const { stdout } = await execAsync(cmd, { cwd: REPO_ROOT, timeout: 5000 });
     const parsed = JSON.parse(stdout.trim());
@@ -113,7 +143,7 @@ export async function GET(request: Request) {
 
   if (shouldRun) {
     try {
-      const pyPath = path.join(REPO_ROOT, '.venv', 'Scripts', 'python.exe');
+      const pyPath = getPythonExecutable(REPO_ROOT);
       const cmd = `"${pyPath}" -m scripts.screener.generate_reports --limit ${limit}`;
       await execAsync(cmd, { cwd: REPO_ROOT, timeout: 120000 });
     } catch (err: any) {
@@ -132,3 +162,4 @@ export async function GET(request: Request) {
     updated_at: last_modified || new Date().toISOString(),
   });
 }
+

@@ -7,39 +7,45 @@ def calculate_retracements(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataF
     """
     Vectorized Retracement Engine.
     Tracks the 'Impulse Leg' from the last confirmed swing high/low.
-    Calculates Fibonacci levels (0.5 equilibrium, 0.618, 0.705, 0.786).
+    Calculates Fibonacci levels (0.5 equilibrium, 0.618, 0.705, 0.786 OTE).
     """
     high = ohlc["high"].values
     low = ohlc["low"].values
     
-    # Track the extreme levels from the last confirmed swings
     last_high = swings["level"].where(swings["shl"] == 1).ffill().values
     last_low = swings["level"].where(swings["shl"] == -1).ffill().values
     
-    # Calculate Range and Retracement %
-    # If last High > last Low = Bullish Trend (we look for retracement back down)
-    current_range = np.abs(last_high - last_low)
+    # Track timestamps/indices of last SH vs last SL to determine trend direction
+    sh_indices = np.where(swings["shl"] == 1, np.arange(len(ohlc)), -1)
+    sl_indices = np.where(swings["shl"] == -1, np.arange(len(ohlc)), -1)
     
-    # Avoid div by zero
+    last_sh_idx = pd.Series(sh_indices).replace(-1, np.nan).ffill().values
+    last_sl_idx = pd.Series(sl_indices).replace(-1, np.nan).ffill().values
+    
+    # Bullish leg if SH occurred after SL
+    is_bullish_leg = np.nan_to_num(last_sh_idx) >= np.nan_to_num(last_sl_idx)
+    
+    current_range = np.abs(last_high - last_low)
     current_range[current_range == 0] = np.nan
     
-    # Retracement % from the High (for Bullish) and from the Low (for Bearish)
     bullish_retracement = (last_high - low) / current_range
     bearish_retracement = (high - last_low) / current_range
     
-    # Equilibrium (0.50)
-    equilibrium = (last_high + last_low) / 2
+    equilibrium = (last_high + last_low) / 2.0
     
-    # OTE Zones (0.62 - 0.79)
-    # Confirming the trend direction from the order of the last swings
-    last_sh_idx = np.where(swings["shl"] == 1)[0]
-    last_sl_idx = np.where(swings["shl"] == -1)[0]
+    # OTE (Optimal Trade Entry) Fib levels
+    ote_618 = np.where(is_bullish_leg, last_high - (current_range * 0.618), last_low + (current_range * 0.618))
+    ote_705 = np.where(is_bullish_leg, last_high - (current_range * 0.705), last_low + (current_range * 0.705))
+    ote_786 = np.where(is_bullish_leg, last_high - (current_range * 0.786), last_low + (current_range * 0.786))
     
-    # (Simplified for now, will enhance with directional logic)
+    current_retr = np.where(is_bullish_leg, bullish_retracement, bearish_retracement)
     
     return pd.DataFrame({
         "equilibrium": equilibrium,
-        "current_retracement": np.where(last_high > last_low, bullish_retracement, bearish_retracement)
+        "current_retracement": current_retr,
+        "ote_618": ote_618,
+        "ote_705": ote_705,
+        "ote_786": ote_786,
     }, index=ohlc.index)
 
 @validate_ohlc(input_type="ohlc")

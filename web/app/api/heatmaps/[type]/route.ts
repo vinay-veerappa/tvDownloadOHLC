@@ -14,13 +14,20 @@ export async function GET(
       return NextResponse.json({ error: 'Invalid heatmap type' }, { status: 400 });
     }
 
-    const filePath = path.join(process.cwd(), 'public/data/heatmaps', `${type}.json`);
-    
-    if (!fs.existsSync(filePath)) {
-      return NextResponse.json({ error: 'Heatmap data file not found' }, { status: 440 });
+    const candidates = [
+      path.join(process.cwd(), 'public/data/heatmaps', `${type}.json`),
+      path.join(process.cwd(), 'web/public/data/heatmaps', `${type}.json`),
+      path.join(process.cwd(), '../web/public/data/heatmaps', `${type}.json`),
+    ];
+
+    let filePath = candidates.find((p) => fs.existsSync(p));
+
+    if (!filePath) {
+      return NextResponse.json({ error: `Heatmap data file '${type}.json' not found` }, { status: 404 });
     }
 
     const fileContent = fs.readFileSync(filePath, 'utf-8');
+
     const data = JSON.parse(fileContent);
 
     return NextResponse.json(data);

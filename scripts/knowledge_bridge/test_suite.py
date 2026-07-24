@@ -19,7 +19,7 @@ if str(_ROOT) not in sys.path:
 
 
 def test_detection_catalog():
-    """Detection catalog has 34 entries, resolves known and unknown terms."""
+    """Detection catalog has 48 entries, resolves known and unknown terms."""
     from scripts.knowledge_bridge import (
         DETECTION_CATALOG,
         resolve_detection,
@@ -28,7 +28,7 @@ def test_detection_catalog():
         search_concepts,
     )
 
-    assert len(DETECTION_CATALOG) == 34, f"Expected 34, got {len(DETECTION_CATALOG)}"
+    assert len(DETECTION_CATALOG) == 48, f"Expected 48, got {len(DETECTION_CATALOG)}"
 
     # Known concepts resolve
     assert resolve_detection("FVG") is not None

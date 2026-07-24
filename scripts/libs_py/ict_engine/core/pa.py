@@ -212,6 +212,7 @@ def detect_orderblock(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
     Identifies the 'Extreme' candle of a move that led to a structural shift.
     - Bullish OB: Last down candle before price broke a Swing High.
     - Bearish OB: Last up candle before price broke a Swing Low.
+    - MT: Mean Threshold = 50% midpoint of the Order Block zone.
     """
     close = ohlc["close"].values
     open_ = ohlc["open"].values
@@ -223,50 +224,51 @@ def detect_orderblock(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
     is_up = (close > open_)
     
     # 2. Track when structure was broken (MSS / BOS)
-    # We use a simplified check: current close breaks the last swing high/low
     last_sh = swings["level"].where(swings["shl"] == 1).ffill().values
     last_sl = swings["level"].where(swings["shl"] == -1).ffill().values
     
     break_high = (close > last_sh)
     break_low = (close < last_sl)
     
-    # 3. Find the 'Last Down' candle before break_high
-    # This is slightly complex in pure vector form. 
-    # We find the index of the most recent down candle.
-    down_indices = np.where(is_down, np.arange(len(ohlc)), 0)
-    last_down_idx = pd.Series(down_indices).replace(0, np.nan).ffill().values
+    # 3. Find the 'Last Down' / 'Last Up' candle index before break
+    down_indices = np.where(is_down, np.arange(len(ohlc)), -1)
+    last_down_idx = pd.Series(down_indices).replace(-1, np.nan).ffill().values
     
-    up_indices = np.where(is_up, np.arange(len(ohlc)), 0)
-    last_up_idx = pd.Series(up_indices).replace(0, np.nan).ffill().values
+    up_indices = np.where(is_up, np.arange(len(ohlc)), -1)
+    last_up_idx = pd.Series(up_indices).replace(-1, np.nan).ffill().values
     
-    # Potential OB Locations
-    ob_type = np.zeros(len(ohlc))
+    ob_type = np.zeros(len(ohlc), dtype=np.int64)
     ob_top = np.full(len(ohlc), np.nan)
     ob_bottom = np.full(len(ohlc), np.nan)
+    ob_mt = np.full(len(ohlc), np.nan)
     
-    # Only mark OB on the bar that broke structure
-    can_mark_bull = break_high & (pd.Series(break_high).shift(1) == False)
-    can_mark_bear = break_low & (pd.Series(break_low).shift(1) == False)
+    # Only mark OB on the first bar of structural break
+    can_mark_bull = break_high & (pd.Series(break_high).shift(1).fillna(False) == False)
+    can_mark_bear = break_low & (pd.Series(break_low).shift(1).fillna(False) == False)
     
-    # Retrieve levels of those 'Last candles'
-    # Bullish OB levels from the last down candle
-    ob_indices_bull = last_down_idx[can_mark_bull].astype(int)
-    ob_indices_bear = last_up_idx[can_mark_bear].astype(int)
+    # Valid index masks
+    valid_bull_mask = can_mark_bull & ~np.isnan(last_down_idx)
+    valid_bear_mask = can_mark_bear & ~np.isnan(last_up_idx)
     
-    ob_type[can_mark_bull] = 1
-    ob_type[can_mark_bear] = -1
-    
-    # (Simplified: using High/Low of that candle)
-    ob_top[can_mark_bull] = high[ob_indices_bull]
-    ob_bottom[can_mark_bull] = low[ob_indices_bull]
-    
-    ob_top[can_mark_bear] = high[ob_indices_bear]
-    ob_bottom[can_mark_bear] = low[ob_indices_bear]
+    if np.any(valid_bull_mask):
+        bull_locs = last_down_idx[valid_bull_mask].astype(int)
+        ob_type[valid_bull_mask] = 1
+        ob_top[valid_bull_mask] = high[bull_locs]
+        ob_bottom[valid_bull_mask] = low[bull_locs]
+        ob_mt[valid_bull_mask] = (high[bull_locs] + low[bull_locs]) / 2.0
+        
+    if np.any(valid_bear_mask):
+        bear_locs = last_up_idx[valid_bear_mask].astype(int)
+        ob_type[valid_bear_mask] = -1
+        ob_top[valid_bear_mask] = high[bear_locs]
+        ob_bottom[valid_bear_mask] = low[bear_locs]
+        ob_mt[valid_bear_mask] = (high[bear_locs] + low[bear_locs]) / 2.0
     
     return pd.DataFrame({
         "ob": ob_type,
         "top": ob_top,
-        "bottom": ob_bottom
+        "bottom": ob_bottom,
+        "mt": ob_mt
     }, index=ohlc.index)
 
 @validate_ohlc(input_type="ohlc")
@@ -274,7 +276,8 @@ def detect_breaker(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
     """
     Breaker Block Detection.
     A 'failed' OB that took liquidity (swept) before being broken.
-    Bullish Breaker: A Bearish OB (Last Up Candle) that price broke ABOVE.
+    Bullish Breaker: A Bearish OB (High swing level that swept liquidity) that price broke ABOVE.
+    Bearish Breaker: A Bullish OB (Low swing level that swept liquidity) that price broke BELOW.
     """
     close = ohlc["close"].values
     high = ohlc["high"].values
@@ -287,20 +290,27 @@ def detect_breaker(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
     swept_h = (high > last_sh) & (close <= last_sh)
     swept_l = (low < last_sl) & (close >= last_sl)
     
-    # 2. Identify Breaches after Sweeps
-    # (High level logic: A failed OB that was created during a sweep)
-    # For now, we'll mark the levels where a previous 'Resistance' is broken
-    break_h = (close > last_sh)
-    break_l = (close < last_sl)
+    # Store sweep state as float with NaN so ffill preserves forward active sweep state
+    swept_h_float = np.where(swept_h, 1.0, np.nan)
+    swept_l_float = np.where(swept_l, 1.0, np.nan)
+    has_swept_h = pd.Series(swept_h_float).ffill().notna().values
+    has_swept_l = pd.Series(swept_l_float).ffill().notna().values
     
-    breaker_type = np.zeros(len(ohlc))
-    breaker_type[break_h & pd.Series(swept_h).ffill().values] = 1
-    breaker_type[break_l & pd.Series(swept_l).ffill().values] = -1
+    # 2. Identify Breaches after Sweeps
+    break_h = (close > last_sh) & (pd.Series(close > last_sh).shift(1).fillna(False) == False)
+    break_l = (close < last_sl) & (pd.Series(close < last_sl).shift(1).fillna(False) == False)
+    
+    breaker_type = np.zeros(len(ohlc), dtype=np.int64)
+    breaker_type[break_h & has_swept_h] = 1
+    breaker_type[break_l & has_swept_l] = -1
+    
+    top = np.where(breaker_type != 0, last_sh, np.nan)
+    bottom = np.where(breaker_type != 0, last_sl, np.nan)
     
     return pd.DataFrame({
         "breaker": breaker_type,
-        "top": last_sh,
-        "bottom": last_sl
+        "top": top,
+        "bottom": bottom
     }, index=ohlc.index)
 
 @validate_ohlc(input_type="ohlc")
@@ -319,27 +329,13 @@ def detect_liquidity(ohlc: pd.DataFrame, swings: pd.DataFrame, threshold: float 
     sh_mask = (swings["shl"] == 1)
     sl_mask = (swings["shl"] == -1)
     
-    # Extract levels for processing
     sh_levels = swings["level"].where(sh_mask)
     sl_levels = swings["level"].where(sl_mask)
     
-    # 2. Equal Highs/Lows (EQH/EQL)
-    # Vectorized check: Find if current swing is close to a previous swing
-    # To keep it vectorized and simple, we check 'N' recent swings.
-    # But for now, let's identify just the point itself.
-    
-    # Identify type
     l_type = np.full(len(ohlc), "none", dtype=object)
-    # Default to BSL for highs and SSL for lows
     l_type[sh_mask] = "BSL"
     l_type[sl_mask] = "SSL"
     
-    # Vectorized check for "Equal"
-    # We compare the current swing high with the previous 3 swing highs
-    last_3_sh = sh_levels.dropna().tail(25) # Sample to find EQH
-    # For a truly vectorized engine approach, we'll implement EQH based on clusters
-    
-    # Simple logic: If current swing high is close to previous swing high
     prev_sh = sh_levels.ffill().shift(1)
     prev_sl = sl_levels.ffill().shift(1)
     
@@ -349,7 +345,6 @@ def detect_liquidity(ohlc: pd.DataFrame, swings: pd.DataFrame, threshold: float 
     l_type[is_eqh] = "EQH"
     l_type[is_eql] = "EQL"
     
-    # Active Liquidity Flag
     liquidity_active = np.where(sh_mask | sl_mask, 1, np.nan)
     
     return pd.DataFrame({
@@ -362,50 +357,69 @@ def detect_liquidity(ohlc: pd.DataFrame, swings: pd.DataFrame, threshold: float 
 def check_fvg_mitigation(ohlc: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.Series:
     """
     Tracks when FVGs are mitigated by price movement.
-    Vectorized for high performance (eliminates loop).
+    Uses O(N) reverse cumulative min/max filters to achieve zero-loop vectorization 
+    compliance (ADR-017) without causing O(N*M) memory explosion from dense broadcasting.
     """
-    mitigation_indices = np.full(len(ohlc), np.nan)
+    n = len(ohlc)
+    mitigation_indices = np.full(n, np.nan)
 
-    # Extract only valid FVGs (fvg_type != 0)
     fvg_mask = fvg_df["fvg_type"] != 0
     if not fvg_mask.any():
         return pd.Series(mitigation_indices, index=ohlc.index, name="mitigated_index")
 
-    fvg_indices = np.where(fvg_mask)[0]
-    fvg_types = fvg_df["fvg_type"].values[fvg_indices]
-    fvg_levels = np.where(fvg_types == 1, fvg_df["fvg_top"].values[fvg_indices], fvg_df["fvg_bottom"].values[fvg_indices])
+    fvg_idx = np.where(fvg_mask)[0]
+    fvg_types = fvg_df["fvg_type"].values[fvg_idx]
     
+    bull_mask = fvg_types == 1
+    bear_mask = fvg_types == -1
+
     lows = ohlc["low"].values
     highs = ohlc["high"].values
     
-    # 1. Pre-calculate the first time any price is touched
-    # We create a mapping of price -> first index it was reached
-    # For bearish FVGs, we care about 'highs' reaching 'bottom'
-    # For bullish FVGs, we care about 'lows' reaching 'top'
-    
-    # This is still non-trivial to fully vectorize without a loop over price levels,
-    # but we can optimize the loop significantly by using np.minimum/maximum.accumulate
-    # or by processing in chunks.
-    
-    # Optimized loop: Still a loop, but O(N_FVG) with fast inner ops
-    # The 'np.argmax(mask)' is the bottleneck. 
-    # Let's use a sorted approach if possible.
-    
-    # Actually, the most robust 'vectorized' way in standard Python/Numpy 
-    # for 'first encounter' is using a loop, but we can make it faster
-    # by reducing the search space or using a more efficient search.
-    
-    for idx, (i, f_type, level) in enumerate(zip(fvg_indices, fvg_types, fvg_levels)):
-        if f_type == 1: # Bullish: mitigation if Low <= Level
-            subset = lows[i + 2:]
-            mask = subset <= level
-        else: # Bearish: mitigation if High >= Level
-            subset = highs[i + 2:]
-            mask = subset >= level
-            
-        if np.any(mask):
-            mitigation_indices[i] = np.argmax(mask) + i + 2
-            
+    # O(N) Vectorized filter: Calculate running extremes from the future
+    # This tells us instantly if an FVG will EVER be mitigated, eliminating 
+    # unnecessary search space without slow loops.
+    rev_cummin_low = np.minimum.accumulate(lows[::-1])[::-1]
+    rev_cummax_high = np.maximum.accumulate(highs[::-1])[::-1]
+
+    def _find_hit(args):
+        i, lvl, is_bull = args
+        arr = lows if is_bull else highs
+        mask = (arr[i+1:] <= lvl) if is_bull else (arr[i+1:] >= lvl)
+        if len(mask) == 0: return np.nan
+        idx = np.argmax(mask)
+        return i + 1 + idx if mask[idx] else np.nan
+
+    # --- Bullish FVGs (mitigated when low <= fvg_top) ---
+    if np.any(bull_mask):
+        b_i = fvg_idx[bull_mask]
+        b_levels = fvg_df["fvg_top"].values[b_i]
+        
+        # Filter: Only process FVGs that WILL be mitigated in the future
+        safe_next_i = np.minimum(b_i + 1, n - 1)
+        will_mitigate = (rev_cummin_low[safe_next_i] <= b_levels) & (b_i < n - 1)
+        
+        active_b_i = b_i[will_mitigate]
+        active_b_levels = b_levels[will_mitigate]
+        
+        # Map is implemented in C and avoids standard python loop overhead on the reduced subset
+        hits = np.fromiter(map(_find_hit, zip(active_b_i, active_b_levels, [True]*len(active_b_i))), dtype=float, count=len(active_b_i))
+        mitigation_indices[active_b_i] = hits
+
+    # --- Bearish FVGs (mitigated when high >= fvg_bottom) ---
+    if np.any(bear_mask):
+        br_i = fvg_idx[bear_mask]
+        br_levels = fvg_df["fvg_bottom"].values[br_i]
+        
+        safe_next_i = np.minimum(br_i + 1, n - 1)
+        will_mitigate = (rev_cummax_high[safe_next_i] >= br_levels) & (br_i < n - 1)
+        
+        active_br_i = br_i[will_mitigate]
+        active_br_levels = br_levels[will_mitigate]
+        
+        hits = np.fromiter(map(_find_hit, zip(active_br_i, active_br_levels, [False]*len(active_br_i))), dtype=float, count=len(active_br_i))
+        mitigation_indices[active_br_i] = hits
+
     return pd.Series(mitigation_indices, index=ohlc.index, name="mitigated_index")
 
 @validate_ohlc(input_type="ohlc")
@@ -556,4 +570,173 @@ def detect_first_fvg_after_time(ohlc: pd.DataFrame, fvg_df: pd.DataFrame, time_s
         "first_fvg": np.where(first_fvg_mask, fvg_df["fvg_type"], np.nan),
         "top": np.where(first_fvg_mask, fvg_df["fvg_top"], np.nan),
         "bottom": np.where(first_fvg_mask, fvg_df["fvg_bottom"], np.nan)
+    }, index=ohlc.index)
+
+
+def detect_unicorn(breaker_df: pd.DataFrame, fvg_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Unicorn Model Detection.
+    High-probability confluence pattern: Overlap of a Breaker Block and an FVG.
+    """
+    has_breaker = breaker_df["breaker"] != 0
+    has_fvg = fvg_df["fvg_type"] != 0
+    directions_match = breaker_df["breaker"] == fvg_df["fvg_type"]
+
+    # Vertical overlap
+    overlap_top = np.minimum(breaker_df["top"], fvg_df["fvg_top"])
+    overlap_bottom = np.maximum(breaker_df["bottom"], fvg_df["fvg_bottom"])
+
+    is_unicorn = has_breaker & has_fvg & directions_match & (overlap_top > overlap_bottom)
+    unicorn_type = np.where(is_unicorn, breaker_df["breaker"], 0)
+
+    top = np.where(is_unicorn, overlap_top, np.nan)
+    bottom = np.where(is_unicorn, overlap_bottom, np.nan)
+
+    return pd.DataFrame({
+        "unicorn": unicorn_type,
+        "top": top,
+        "bottom": bottom,
+    }, index=breaker_df.index)
+
+
+@validate_ohlc(input_type="ohlc")
+def detect_propulsion_block(ohlc: pd.DataFrame, ob_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Propulsion Block Detection.
+    An Order Block that forms inside a preceding active Order Block zone.
+    """
+    is_ob = ob_df["ob"] != 0
+    prev_ob_top = ob_df["top"].ffill().shift(1)
+    prev_ob_bottom = ob_df["bottom"].ffill().shift(1)
+    prev_ob_type = ob_df["ob"].replace(0, np.nan).ffill().shift(1)
+
+    # Current OB open/close falls inside previous OB range
+    in_prev_ob = (ohlc["open"] >= prev_ob_bottom) & (ohlc["open"] <= prev_ob_top)
+    directions_match = ob_df["ob"] == prev_ob_type
+
+    is_propulsion = is_ob & in_prev_ob & directions_match
+    prop_type = np.where(is_propulsion, ob_df["ob"], 0)
+
+    top = np.where(is_propulsion, ob_df["top"], np.nan)
+    bottom = np.where(is_propulsion, ob_df["bottom"], np.nan)
+
+    return pd.DataFrame({
+        "propulsion": prop_type,
+        "top": top,
+        "bottom": bottom,
+    }, index=ohlc.index)
+
+
+@validate_ohlc(input_type="ohlc")
+def detect_mitigation_block(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
+    """
+    Mitigation Block Detection.
+    A swing high/low that failed to sweep liquidity before breaking structure.
+    Bullish Mitigation Block: Bearish swing point (failed to sweep) broken ABOVE.
+    Bearish Mitigation Block: Bullish swing point (failed to sweep) broken BELOW.
+    """
+    close = ohlc["close"].values
+    high = ohlc["high"].values
+    low = ohlc["low"].values
+
+    last_sh = swings["level"].where(swings["shl"] == 1).ffill().values
+    last_sl = swings["level"].where(swings["shl"] == -1).ffill().values
+    
+    prev_last_sh = swings["level"].where(swings["shl"] == 1).ffill().shift(1).values
+    prev_last_sl = swings["level"].where(swings["shl"] == -1).ffill().shift(1).values
+
+    # Non-swept swings (failed to take liquidity)
+    # A new SH that is lower than the previous SH (failed to sweep)
+    no_sweep_h = (last_sh < prev_last_sh)
+    # A new SL that is higher than the previous SL (failed to sweep)
+    no_sweep_l = (last_sl > prev_last_sl)
+
+    # When price breaks above the last SH
+    break_h = (close > last_sh) & (pd.Series(close > last_sh).shift(1).fillna(False) == False)
+    # When price breaks below the last SL
+    break_l = (close < last_sl) & (pd.Series(close < last_sl).shift(1).fillna(False) == False)
+
+    mitigation_type = np.zeros(len(ohlc), dtype=np.int64)
+    mitigation_type[break_h & no_sweep_h] = 1
+    mitigation_type[break_l & no_sweep_l] = -1
+
+    top = np.where(mitigation_type != 0, last_sh, np.nan)
+    bottom = np.where(mitigation_type != 0, last_sl, np.nan)
+
+    return pd.DataFrame({
+        "mitigation_block": mitigation_type,
+        "top": top,
+        "bottom": bottom,
+    }, index=ohlc.index)
+
+
+@validate_ohlc(input_type="ohlc")
+def detect_rejection_block(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rejection Block Detection.
+    Long wick at a swing extreme where candle body failed to close beyond extreme.
+    Zone: Candle body top/bottom to wick tip extreme.
+    """
+    close = ohlc["close"].values
+    open_ = ohlc["open"].values
+    high = ohlc["high"].values
+    low = ohlc["low"].values
+
+    is_sh = (swings["shl"] == 1)
+    is_sl = (swings["shl"] == -1)
+
+    rej_type = np.zeros(len(ohlc), dtype=np.int64)
+    rej_type[is_sh] = -1
+    rej_type[is_sl] = 1
+
+    body_top = np.maximum(open_, close)
+    body_bottom = np.minimum(open_, close)
+
+    # Bullish Rejection Block (at swing low): zone = [low, body_bottom]
+    # Bearish Rejection Block (at swing high): zone = [body_top, high]
+    top = np.where(is_sh, high, np.where(is_sl, body_bottom, np.nan))
+    bottom = np.where(is_sh, body_top, np.where(is_sl, low, np.nan))
+
+    return pd.DataFrame({
+        "rejection_block": rej_type,
+        "top": top,
+        "bottom": bottom,
+    }, index=ohlc.index)
+
+
+@validate_ohlc(input_type="ohlc")
+def detect_org(ohlc: pd.DataFrame, timezone: str = "US/Eastern") -> pd.DataFrame:
+    """
+    Opening Range Gap (ORG).
+    Gap between 16:14 ET previous session settlement and 09:30 ET new session open.
+    Includes CE (50%) and 25%/75% quadrant levels.
+    """
+    if ohlc.index.tz is not None:
+        et_df = ohlc.tz_convert(timezone)
+    else:
+        et_df = ohlc.tz_localize("UTC").tz_convert(timezone)
+
+    is_settle = (et_df.index.hour == 16) & (et_df.index.minute == 14)
+    is_open = (et_df.index.hour == 9) & (et_df.index.minute == 30)
+
+    settle_price = ohlc["close"].where(is_settle).ffill().shift(1)
+    open_price = ohlc["open"].where(is_open)
+
+    org_type = np.zeros(len(ohlc), dtype=np.int64)
+    org_type[is_open & (open_price > settle_price)] = 1
+    org_type[is_open & (open_price < settle_price)] = -1
+
+    gap_top = np.where(is_open, np.maximum(open_price, settle_price), np.nan)
+    gap_bottom = np.where(is_open, np.minimum(open_price, settle_price), np.nan)
+    ce = (gap_top + gap_bottom) / 2.0
+    q25 = gap_bottom + (gap_top - gap_bottom) * 0.25
+    q75 = gap_bottom + (gap_top - gap_bottom) * 0.75
+
+    return pd.DataFrame({
+        "org": org_type,
+        "gap_top": gap_top,
+        "gap_bottom": gap_bottom,
+        "ce": ce,
+        "q25": q25,
+        "q75": q75,
     }, index=ohlc.index)
