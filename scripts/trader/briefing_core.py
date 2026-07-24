@@ -3505,9 +3505,17 @@ def get_weekly_modifiers(target_date: date, events: list[dict]) -> dict:
     is_triple_witching = is_third_friday and friday.month in [3, 6, 9, 12]
     
     # Scan all events for the week (not just today) for week-level flags
+    # Only match US-specific event names — international releases like
+    # "National Core CPI y/y" should NOT trigger CPI week classification
     week_event_names = " ".join((e.get("name") or "").upper() for e in events)
     is_fomc = "FOMC" in week_event_names or "FEDERAL OPEN MARKET" in week_event_names
-    is_cpi_week = "CPI" in week_event_names or "CONSUMER PRICE" in week_event_names
+    # US CPI events: "CPI m/m", "CPI y/y", "Core CPI m/m", "Core CPI y/y"
+    # but NOT "National Core CPI" (international) or "CPI q/q" (international quarterly)
+    is_cpi_week = any(
+        name in week_event_names
+        for name in ["CPI M/M", "CPI Y/Y", "CORE CPI M/M", "CORE CPI Y/Y",
+                     "CONSUMER PRICE INDEX", "CONSUMER PRICE M/M", "CONSUMER PRICE Y/Y"]
+    )
     is_nfp_week = "NFP" in week_event_names or "NON-FARM" in week_event_names or "NONFARM" in week_event_names
     is_jackson_hole = "JACKSON HOLE" in week_event_names
     has_treasury_auction = "TREASURY AUCTION" in week_event_names or "BOND AUCTION" in week_event_names

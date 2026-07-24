@@ -268,18 +268,43 @@ Graceful absence: if file missing or week not configured, block is skipped (KB c
 
 ## 6. Known issues and open work
 
-### GEX levels — macro vs daily (OPEN, needs discussion)
+### GEX levels — macro vs daily + Expected Moves (OPEN, needs discussion + data pipeline fix)
 
 The weekly briefing currently uses **daily/intraday GEX levels** from `unified_levels.json` (front-week weighted, 0D). The `macro_levels.json` / `macro_levels.txt` has **all-expiries weighted** (0-365 DTE) levels which are the correct view for a weekly horizon. The formats differ — need to unify before switching.
+
+Both ES and NQ show "Expected High N/A <-> Expected Low N/A" in the weekly. The options EM pipeline isn't populating weekly EMs for ES/NQ. **The EM fix is related to the macro GEX level fix** — both depend on the same options data pipeline. These should be addressed together in a dedicated session.
 
 | Level type | Source | Scope | ES CW | ES PW |
 |---|---|---|---|---|
 | Daily/intraday (current) | `unified_levels.json` | Front-week 0D | 7,550 | 7,425 |
 | Macro (should use for weekly) | `macro_levels.txt` | All expiries 0-365 DTE | 7,538.50 | 7,357.00 |
 
-### Expected Moves N/A (OPEN, data pipeline)
+### Weekly narrative JSON structure (OPEN, needs discussion)
 
-Both ES and NQ show "Expected High N/A <-> Expected Low N/A" in the weekly. The options EM pipeline isn't populating weekly EMs for ES/NQ.
+The weekly narrative uses JSON slot-filling (not free-form prose like the daily narratives). This limits the LLM's ability to synthesize a cohesive "story of the week." The JSON structure forces a rigid section layout (Executive Risk Core, Economic Milestones, Earnings, Structural Sandbox, Trade Plan, etc.) rather than letting the LLM weave a narrative. A future refactor could:
+- Switch the weekly to free-form prose like the daily narratives
+- Or keep the JSON structure but make it more flexible (optional sections, free-text fields)
+- This needs a design discussion before implementation
+
+### Econ calendar data quality (OPEN, needs investigation)
+
+The weekly cheat sheet generated on 2026-07-20 showed CPI m/m on Monday July 20 at 08:30 ET, but the user confirmed there was no CPI on Monday that week. The DB econ event data may have incorrect dates, or the events were from a previous CPI release cycle. The `get_weekly_modifiers` function scans ALL event names for "CPI" and sets `is_cpi_week = True` — this means any event with "CPI" in the name (including international CPI releases like "National Core CPI y/y") triggers the CPI week pattern. Need to:
+- Verify the econ calendar data source is providing correct dates
+- Filter `get_weekly_modifiers` to only match US CPI events (not international)
+- Consider adding a date-range validation step
+
+### Mid-week validation mode (BACKLOG — future feature)
+
+A new narrative mode that runs mid-week (e.g. Wednesday evening) and:
+1. **Validates** what the week was supposed to do (per the weekly event timeline pattern) against what actually happened
+2. **Shows what to expect** for the rest of the week (remaining days' regime tags)
+3. **Optionally generates** next week's narrative preview (if events are available)
+4. **Configurable** — user can choose whether to show validation only, rest-of-week only, or both
+
+This would be a new `--mode midweek` option in `trader_narrative.py` or a separate script. It would use:
+- `build_weekly_event_timeline(mode="midweek")` — a new mode that highlights remaining days
+- Comparison of the week's actual price action vs the expected pattern
+- Next week's event timeline (if next week's events are available)
 
 ### Prior week trades (DISABLED)
 
