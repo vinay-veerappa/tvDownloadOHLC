@@ -264,6 +264,25 @@ def build_ticker_block(
     # ── Weekly macro context (multi-week GEX regime from Prisma) ──
     macro_context = build_weekly_macro_context(ticker)
 
+    # ── GEX × EM Confluence Verdict ──
+    confluence_verdict = {}
+    try:
+        from scripts.trader.signals.gex_em_confluence import compute_gex_em_verdict
+        friday_em = weekly_ems.get("friday", {})
+        if friday_em and friday_em.get("upper") and friday_em.get("lower") and spot > 0:
+            confluence_verdict = compute_gex_em_verdict(
+                gex_regime=gex_sign,
+                regime_label=regime_label,
+                em_upper=friday_em["upper"],
+                em_lower=friday_em["lower"],
+                spot=spot,
+                call_wall=call_wall,
+                put_wall=put_wall,
+                gamma_magnet=gamma_magnet,
+            )
+    except Exception as e:
+        log.warning("[weekly] GEX×EM confluence failed for %s: %s", ticker, e)
+
     return {
         "ticker": ticker,
         "asset": ticker,  # unified_levels doesn't have a separate asset field
@@ -306,6 +325,7 @@ def build_ticker_block(
         "account_invalidation": invalidation,
         "scenarios": scenarios,
         "macro_context": macro_context,
+        "confluence_verdict": confluence_verdict,
     }
 
 

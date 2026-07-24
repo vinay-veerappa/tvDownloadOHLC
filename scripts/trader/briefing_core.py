@@ -2230,6 +2230,31 @@ def fetch_vol_context(ticker: str, target_date: date) -> dict:
     return context
 
 
+def _reconstruct_confluence(snap) -> dict:
+    """Reconstruct GEX × EM confluence verdict from DB snapshot fields."""
+    try:
+        from scripts.trader.signals.gex_em_confluence import compute_gex_em_verdict
+        gex_sign = snap.gexSign or "NEUTRAL"
+        regime_label = snap.regimeLabel or "NEUTRAL"
+        em_upper = snap.fridayEmUpper
+        em_lower = snap.fridayEmLower
+        spot = snap.spotPrice or 0
+        if em_upper and em_lower and spot > 0:
+            return compute_gex_em_verdict(
+                gex_regime=("NEGATIVE" if gex_sign == "NEGATIVE" else "POSITIVE" if gex_sign == "POSITIVE" else "NEUTRAL"),
+                regime_label=regime_label,
+                em_upper=em_upper,
+                em_lower=em_lower,
+                spot=spot,
+                call_wall=snap.callWall,
+                put_wall=snap.putWall,
+                gamma_magnet=snap.gammaMagnet,
+            )
+    except Exception:
+        pass
+    return {}
+
+
 def _reconstruct_weekly_ems(
     friday_upper: float | None,
     friday_lower: float | None,
@@ -2405,6 +2430,7 @@ async def load_weekly_briefing_from_db(week_start: date | None = None) -> dict |
                     snap.spotPrice,
                 ),
                 "macro_context": build_weekly_macro_context(snap.ticker),
+                "confluence_verdict": _reconstruct_confluence(snap),
             })
 
         from scripts.trader.weekly_briefing import fetch_week_earnings
@@ -4958,6 +4984,36 @@ def build_ticker_cheat_sheet(
     except Exception as e:
         log.warning("[cheat_sheet] EM signal failed for %s: %s", ticker, e)
 
+    # GEX × EM Confluence Verdict
+    try:
+        from scripts.trader.signals.gex_em_confluence import compute_gex_em_verdict, format_confluence_block
+        # Get GEX regime from META_ fields
+        meta = parse_meta_fields(unified_entry) if unified_entry else {}
+        gex_regime = "NEGATIVE" if meta.get("GEX_TOTAL", 0) < 0 else "POSITIVE" if meta.get("GEX_TOTAL", 0) > 0 else "NEUTRAL"
+        regime_label = meta.get("REGIME", "NEUTRAL")
+        # Get levels from tokens
+        tokens = unified_entry.get("tokens", []) if unified_entry else []
+        cw = next((t["strike"] for t in tokens if t.get("label") == "CW"), None)
+        pw = next((t["strike"] for t in tokens if t.get("label") == "PW"), None)
+        gm = next((t["strike"] for t in tokens if "MAGNET" in t.get("label", "")), None)
+        # Get EM bounds from em_data
+        em_upper = em_data.get("em_upper") if em_data else None
+        em_lower = em_data.get("em_lower") if em_data else None
+        if em_upper and em_lower and ticker_spot > 0:
+            verdict = compute_gex_em_verdict(
+                gex_regime=gex_regime,
+                regime_label=regime_label,
+                em_upper=em_upper,
+                em_lower=em_lower,
+                spot=ticker_spot,
+                call_wall=cw,
+                put_wall=pw,
+                gamma_magnet=gm,
+            )
+            sections.append(format_confluence_block(verdict))
+    except Exception as e:
+        log.warning("[cheat_sheet] GEX×EM confluence failed for %s: %s", ticker, e)
+
     # Prior EOD plan
     try:
         from scripts.trader.daily_narrative import get_previous_eod_plan
@@ -5901,6 +5957,11 @@ def build_weekly_static_template(briefing_data: dict) -> str:
         macro_ctx = ticker_block.get("macro_context", {})
         if macro_ctx and macro_ctx.get("summary_str"):
             lines.append(f"**Macro GEX Context**: {macro_ctx['summary_str']}")
+
+        # GEX × EM Confluence verdict
+        confluence = ticker_block.get("confluence_verdict", {})
+        if confluence and confluence.get("read"):
+            lines.append(f"**Confluence**: {confluence['read']}")
 
         lines.extend([
             "",

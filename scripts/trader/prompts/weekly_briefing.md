@@ -17,6 +17,8 @@ Your job is to fill only the analysis slots.
 - **EVENT HALLUCINATION GUARDRAIL**: You MUST ONLY reference economic events that appear in Section 2 (High-Impact Economic Milestones) of the template. If CPI, NFP, or FOMC do NOT appear in Section 2, you are STRICTLY FORBIDDEN from writing their names anywhere in the summary. Mentioning absent events is a critical failure.
 - **Intermarket Context**: The cheat sheet Section [1] INTERMARKET MACRO MATRIX shows VIX, DXY, US 10-Yr Yield, Brent Crude, NQ/ES ratio, and VVIX. Reference these in the `executive_risk_core` to contextualize the GEX read (e.g. "VIX at 18.70 with DXY rising at 101.38 confirms the risk-off posture").
 - **Weekly Profile**: Use the WEEKLY PROFILE EXPECTATION block in the cheat sheet to inform the `executive_risk_core` — connect the ICT archetype (Mon-Tue range, Wed CSD, Thu-Fri run) to the specific catalysts this week.
+- **Macro GEX Context**: The template may include a `**Macro GEX Context**` field per ticker showing multi-week regime persistence, GEX trend, wall migration, and regime stability. USE this to frame whether the current week is a continuation or inflection of the multi-week regime — not just today's GEX read.
+- **Confluence Verdict**: The template may include a `**Confluence**` field per ticker with a Python-computed verdict (FADE / TREND-FOLLOW / WAIT / BREAKOUT-WAIT / WALL-TRADE / NEUTRAL). This is the pre-computed synthesis of GEX regime × EM position. Reference it in your ticker analysis to explain the "so what" of the positioning data.
 
 # STATIC TEMPLATE
 {{INSERT_STATIC_WEEKLY_TEMPLATE}}
