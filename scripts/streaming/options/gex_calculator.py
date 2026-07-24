@@ -1770,6 +1770,23 @@ def _net_vanna_exposure(
     return round(call_vanna + put_vanna, 2)
 
 
+def _compute_blended_atm_iv(chain: OptionChainData, spot: float) -> float | None:
+    """Compute blended ATM IV from call + put at the nearest strike.
+
+    Replaces the old call-only: ``_atm_contract(chain.calls, spot).iv``
+    which understated ATM IV when there is a put skew.
+    """
+    _atm_call = _atm_contract(chain.calls, spot) if chain.calls else None
+    _atm_put = _atm_contract(chain.puts, spot) if chain.puts else None
+    if _atm_call and _atm_put and _atm_call.iv > 0 and _atm_put.iv > 0:
+        return (_atm_call.iv + _atm_put.iv) / 2.0
+    if _atm_call and _atm_call.iv > 0:
+        return _atm_call.iv
+    if _atm_put and _atm_put.iv > 0:
+        return _atm_put.iv
+    return None
+
+
 def calculate_dealer_levels(
     chain: OptionChainData,
     ticker: str,
@@ -2034,17 +2051,7 @@ def calculate_dealer_levels(
         # The call-only IV understates ATM IV when there is a put skew
         # (puts trade richer), which causes EM to be understated.
         # This matches the blending logic in _expected_move() and _calculate_all_ems().
-        _atm_call = _atm_contract(chain.calls, spot)
-        _atm_put = _atm_contract(chain.puts, spot)
-        if _atm_call and _atm_put and _atm_call.iv > 0 and _atm_put.iv > 0:
-            _atm_iv_val = (_atm_call.iv + _atm_put.iv) / 2.0
-        elif _atm_call and _atm_call.iv > 0:
-            _atm_iv_val = _atm_call.iv
-        elif _atm_put and _atm_put.iv > 0:
-            _atm_iv_val = _atm_put.iv
-        else:
-            _atm_iv_val = None
-        atm_iv=_atm_iv_val,
+        atm_iv=_compute_blended_atm_iv(chain, spot),
         strike_gex=strikes,
     )
 
