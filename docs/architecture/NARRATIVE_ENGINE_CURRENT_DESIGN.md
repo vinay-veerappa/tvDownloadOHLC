@@ -424,6 +424,15 @@ _atm_iv_val = (_atm_call.iv + _atm_put.iv) / 2.0
 
 **Important**: The `_expected_move()` and `_calculate_all_ems()` functions already blend call+put IV correctly — the bug was only in the `atm_iv` field that gets stored to DB and META_ fields. The EM calculations themselves were using the correct blended IV all along. The fix ensures `atm_iv` (used by the TOS formula fallback in `compute_weekly_ems()`) also uses the blended value.
 
+**RTD pipeline metadata fix** (2026-07-24): NQ/ES entries in `intraday_levels.json` now have `translation_mode=rtd_direct`, `cash_spot`, and `futures_price` populated. Previously these were `None` because:
+- `DealerLevels` dataclass was missing the translation metadata fields
+- `file_writer.py` section 2 didn't include them in the output
+- `dataclasses.replace()` dropped arbitrary attributes during EOD pinning
+- The RTD OI scan couldn't handle both ES and NQ simultaneously (COM topic budget)
+- Schwab NQ strikes at 100-pt intervals didn't match RTD 5-pt grid
+
+**Fix**: Schwab's futures options chain API provides OI data (but not IV). The OI scan was replaced with direct Schwab OI data, and Schwab hint strikes are rounded to the RTD strike grid. NQ went from 19 → 420 contracts, ES from 154 → 814 contracts.
+
 ---
 
 ### TOS EM verification (2026-07-24)
@@ -493,6 +502,38 @@ _atm_iv_val = (_atm_call.iv + _atm_put.iv) / 2.0
 | H | Weekly briefing should use futures-native EM for NQ/ES, not ETF-translated | `weekly_briefing.py` `build_ticker_block()` | 🟡 Pending |
 
 ---
+
+### RTD pipeline fixes (2026-07-24)
+
+**Problem:** NQ/ES entries in `intraday_levels.json` had `translation_mode=None`, `cash_spot=None`, `futures_price=None` — the narrative layer couldn't tell they were RTD-direct futures options data. The pipeline was falling back to SPY/QQQ ETF-translated values, which use a different IV source.
+
+**Root causes found and fixed:**
+
+| # | Bug | File | Fix |
+|---|---|---|---|
+| 1 | `DealerLevels` dataclass missing `futures_symbol`, `translation_mode`, `basis_ratio`, `basis_spread`, `futures_price` fields | `gex_calculator.py` | Added as proper dataclass fields so `dataclasses.replace()` preserves them |
+| 2 | `file_writer.py` section 2 (translated levels) missing translation metadata in output dict | `file_writer.py` | Added `futures_symbol`, `translation_mode`, `basis_ratio`, `futures_price`, `cash_spot` |
+| 3 | EOD parquet pinning used `_replace()` which dropped arbitrary attributes | `run_options_levels.py` | Re-apply translation metadata after `_replace()` |
+| 4 | RTD OI scan couldn't handle both ES and NQ simultaneously (COM topic budget exhausted) | `hybrid_coordinator.py` | Skip RTD OI scan entirely — use Schwab futures chain OI data directly |
+| 5 | Schwab NQ strikes at 100-pt intervals didn't match RTD 5-pt grid | `hybrid_coordinator.py` | Round Schwab hint strikes to RTD strike grid |
+| 6 | QQQ→NQ ETF translation for OI hints was unreliable (ratio errors miss NQ strike grid) | `hybrid_coordinator.py` | Use direct Schwab futures options chain instead of ETF proxy |
+
+**Key insight:** Schwab's futures options chain API (`fetch_futures_option_chain_data`) returns OI data but **not IV** (IV=0.0 for all contracts). This is by design:
+- **Schwab** → OI data for cache/strike selection
+- **RTD** → live IV streaming for Greeks and EM calculation
+
+**Result after fixes:**
+
+| Metric | Before | After |
+|---|---|---|
+| NQ contracts in RTD chain | 19 (4 calls, 15 puts) | **420** (210 calls, 210 puts) |
+| ES contracts in RTD chain | 154 (62 calls, 92 puts) | **814** (407 calls, 407 puts) |
+| NQ `translation_mode` | `None` | `rtd_direct` |
+| ES `translation_mode` | `None` | `rtd_direct` |
+| NQ `cash_spot` | `None` | `28,468` |
+| ES `cash_spot` | `None` | `7,470` |
+
+**Remaining issue:** The RTD `IMPL_VOL` values (NQ ~11%, ES ~6%) are significantly lower than TOS display (NQ 26.18%, ES 15.25%). The RTD returns IV in percentage format (e.g. `'13.58%'` parsed to `0.1358`), but the values don't match TOS UI. This is a separate investigation — the RTD `IMPL_VOL` field may use a different pricing model or sample a different snapshot than TOS display.
 
 ### Weekly narrative — bigger picture (approved 2026-07-23)
 

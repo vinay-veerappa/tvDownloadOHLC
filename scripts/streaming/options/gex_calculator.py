@@ -377,6 +377,13 @@ class DealerLevels:
     zero_gamma_delta_adj: float | None = None
     opening_gap_target: float | None = None
 
+    # ── Futures translation metadata (set by RTD-native path) ────────────
+    futures_symbol: str | None = None
+    translation_mode: str | None = None
+    basis_ratio: float | None = None
+    basis_spread: float = 0.0
+    futures_price: float | None = None
+
 
 def _best_contract_per_strike(contracts: list[OptionContract]) -> dict[float, OptionContract]:
     """

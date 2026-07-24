@@ -514,6 +514,11 @@ def write_levels(
         market_structure.append({
             "asset": cash_tag(tl.futures_symbol),
             "cash_ticker": tl.cash_ticker,
+            "futures_symbol": tl.futures_symbol,
+            "translation_mode": tl.translation_mode,
+            "basis_ratio": tl.basis_ratio,
+            "futures_price": tl.futures_price,
+            "cash_spot": tl.cash_spot,
             "regime_label": tl.regime_label,
             "gex_regime": tl.gex_regime,
             "total_gex": tl.total_gex,

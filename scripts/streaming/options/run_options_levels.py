@@ -824,6 +824,11 @@ def run_pipeline(
                         from .gex_calculator import calculate_dealer_levels as _calc_dl
                         from .config import MACRO_VIEW as _MACRO_VIEW
                         rtd_dl_intraday = _replace(rtd_gex_result.dealer_levels, spot=parquet_close)
+                        # Re-apply translation metadata (lost by _replace)
+                        rtd_dl_intraday.futures_symbol = futures_sym
+                        rtd_dl_intraday.translation_mode = "rtd_direct"
+                        rtd_dl_intraday.basis_spread = 0.0
+                        rtd_dl_intraday.basis_ratio = 1.0
                         rtd_dl_macro = _calc_dl(
                             rtd_gex_result.chain_data, ticker,
                             min_oi_floor=ticker_profile.min_oi_floor,
@@ -831,6 +836,10 @@ def run_pipeline(
                             wall_dte_range=_MACRO_VIEW.dte_range,
                         )
                         rtd_dl_macro = _replace(rtd_dl_macro, spot=parquet_close)
+                        rtd_dl_macro.futures_symbol = futures_sym
+                        rtd_dl_macro.translation_mode = "rtd_direct"
+                        rtd_dl_macro.basis_spread = 0.0
+                        rtd_dl_macro.basis_ratio = 1.0
                         # Re-score with the pinned spot
                         scored_intraday_by_ticker[ticker] = score_levels(
                             rtd_dl_intraday, rtd_gex_result.chain_data, ticker, ticker_profile, INTRADAY_VIEW

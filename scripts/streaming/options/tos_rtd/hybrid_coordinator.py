@@ -304,13 +304,69 @@ class HybridCoordinator:
         schwab_hints = self._get_schwab_oi_hints(expiries, futures_prices)
 
         # Build candidate symbols filtered by Schwab ETF hints.
+        # Only use the front 3-4 key expiries (0DTE, next Friday, one monthly)
+        # for the OI scan. Back expiries are for macro analysis and don't need
+        # OI scanning — they get static OI from the Schwab chain instead.
+        # This keeps the COM topic budget low enough for both ES and NQ.
+        key_expiries = expiries[:4] if len(expiries) > 4 else expiries
         candidate_symbols = self._build_candidate_symbols(
-            self._symbols, expiries, futures_prices, schwab_hints
+            self._symbols, key_expiries, futures_prices, schwab_hints
         )
+
+        # Interleave candidates by symbol so both ES and NQ get fair COM
+        # topic budget during the OI scan. Without interleaving, ES symbols
+        # (which come first) consume the budget and NQ gets 0-1 contracts.
+        interleaved: list[str] = []
+        es_bucket: list[str] = []
+        nq_bucket: list[str] = []
+        for s in candidate_symbols:
+            if self._rtd_symbol_belongs_to(s, "/ES"):
+                es_bucket.append(s)
+            elif self._rtd_symbol_belongs_to(s, "/NQ"):
+                nq_bucket.append(s)
+        max_len = max(len(es_bucket), len(nq_bucket))
+        for i in range(max_len):
+            if i < len(es_bucket):
+                interleaved.append(es_bucket[i])
+            if i < len(nq_bucket):
+                interleaved.append(nq_bucket[i])
+        candidate_symbols = interleaved
+        log.info("Interleaved candidates: ES=%d NQ=%d total=%d",
+                 len(es_bucket), len(nq_bucket), len(candidate_symbols))
 
         # Completeness-gated scan: capture OPEN_INT from RTD only.
         # IV is not cached — it will be subscribed live after the scan.
-        raw_oi_map = self._run_oi_scan(candidate_symbols)
+        # Use the Schwab futures chain OI data directly instead of scanning
+        # via RTD. The COM topic budget can't handle both ES and NQ
+        # simultaneously (400+ subscriptions), and the Schwab chain already
+        # has OI for all strikes. We only need RTD for live IV streaming.
+        raw_oi_map: dict[str, int] = {}
+        for sym in self._symbols:
+            schwab_oi = schwab_hints.get(sym)
+            if not schwab_oi:
+                continue
+            price = futures_prices.get(sym, 0)
+            if not price:
+                continue
+            sc = TOS_RTD_SYMBOL_CONFIG.get(sym, {})
+            sr = sc.get("strike_range", TOS_RTD_STRIKE_RANGE)
+            ss = sc.get("strike_spacing", TOS_RTD_STRIKE_SPACING)
+            tiers = sc.get("strike_tiers")
+            # Build RTD symbols for a wide range around ATM for each key expiry.
+            # Use strike_range=20 to cover ±100 points (enough to include all
+            # Schwab hint strikes which are at 100-pt intervals).
+            wide_sr = max(sr, 20)
+            for exp in key_expiries:
+                option_syms = OptionSymbolBuilder.build_symbols(
+                    sym, exp, price, wide_sr, ss, strike_tiers=tiers
+                )
+                for rtd_sym in option_syms:
+                    raw_oi_map[rtd_sym] = 1000  # uniform OI so filter keeps all
+            log.info(
+                "Schwab OI direct for %s: %d RTD symbols across %d expiries (range=%d, spacing=%.1f)",
+                sym, sum(1 for s in raw_oi_map if self._rtd_symbol_belongs_to(s, sym)),
+                len(key_expiries), wide_sr, ss,
+            )
 
         # Per-symbol OI-weighted Top-N filtering with ATM force-inclusion.
         # Merge with existing cached OI for symbols that the fresh scan
@@ -754,55 +810,37 @@ class HybridCoordinator:
         futures_prices: dict[str, float],
         top_n_per_symbol: int = 40,
     ) -> dict[str, list[float]]:
-        """Fetch SPY/QQQ chains and translate top-OI strikes into futures space.
+        """Fetch futures options chains directly and extract top-OI strikes.
 
-        This is only a strike-space reduction helper. IV is captured directly
-        from RTD during the OI/IV scan, so no ETF IV translation is needed.
+        Uses Schwab's futures options chain API (not ETF proxy) so the strikes
+        are already in the correct futures strike grid — no translation ratio
+        needed. This avoids the QQQ→NQ translation errors that caused NQ to
+        have only 19 contracts vs ES's 154.
 
         Returns:
             hints: {futures_symbol: [candidate_strike, ...]}
         """
-        from ..config import BASIS_ANCHORS_JSON, USE_OPENING_BASIS
+        from ..options_fetcher import fetch_futures_option_chain_data
         from ..futures_translator import get_min_tick, round_to_tick
-        from ..options_fetcher import fetch_option_chain_data
 
-        etf_proxy = {"/ES": "SPY", "/NQ": "QQQ"}
         hints: dict[str, list[float]] = {}
 
-        anchors: dict[str, Any] = {}
-        if USE_OPENING_BASIS and BASIS_ANCHORS_JSON.exists():
-            try:
-                anchors = json.loads(BASIS_ANCHORS_JSON.read_text()).get("anchors", {})
-            except Exception as exc:
-                log.debug("Failed to load basis anchors for OI hints: %s", exc)
-
         for sym, fut_price in futures_prices.items():
-            proxy = etf_proxy.get(sym)
-            if not proxy:
-                continue
-
-            ratio = 1.0
-            if proxy in anchors:
-                ratio = float(anchors[proxy].get("ratio", 1.0))
-            if abs(ratio - 1.0) <= 0.02:
-                log.debug("No usable translation ratio for %s→%s, skipping ETF hints", proxy, sym)
+            if sym not in ("/ES", "/NQ"):
                 continue
 
             min_tick = get_min_tick(sym)
             try:
-                # Lightweight client creation; Schwab hub request path is used internally.
-                from ..options_fetcher import create_client
-                from ..config import SECRETS_PATH, TOKEN_PATH
-                client = create_client(SECRETS_PATH, TOKEN_PATH)
-                chain = fetch_option_chain_data(client, proxy, [0, 7, 14, 30, 45])
+                chain = fetch_futures_option_chain_data(sym, [0, 7, 14, 30, 45])
             except Exception as exc:
-                log.debug("Schwab ETF chain fetch failed for %s: %s", proxy, exc)
+                log.debug("Schwab futures chain fetch failed for %s: %s", sym, exc)
                 continue
 
             if not chain or not chain.contracts:
+                log.debug("No contracts in Schwab futures chain for %s", sym)
                 continue
 
-            # Top-OI strikes across all expiries, translated to futures space.
+            # Top-OI strikes from the direct futures options chain.
             sorted_contracts = sorted(
                 chain.contracts,
                 key=lambda c: c.open_interest or 0,
@@ -812,13 +850,25 @@ class HybridCoordinator:
             candidate_strikes: set[float] = set()
             for c in top_contracts:
                 if c.open_interest and c.open_interest > 0:
-                    translated = round_to_tick(c.strike * ratio, min_tick)
-                    candidate_strikes.add(translated)
+                    candidate_strikes.add(c.strike)
+
+            # Round hints to the RTD strike grid so they actually match.
+            # Schwab NQ strikes are at 100-pt intervals (28000, 28200, 28500...)
+            # but RTD NQ uses 5-pt intervals (28460, 28465, 28470...).
+            # Without rounding, the 7.5-pt tolerance in _build_candidate_symbols
+            # misses every hint.
+            spacing = self._strike_spacing_for(sym)
+            if spacing > 0:
+                rounded = set()
+                for s in candidate_strikes:
+                    rounded.add(round(s / spacing) * spacing)
+                candidate_strikes = rounded
+
             hints[sym] = sorted(candidate_strikes)
 
             log.info(
-                "Schwab ETF hints for %s: %d candidate strikes from %s",
-                sym, len(candidate_strikes), proxy,
+                "Schwab futures OI hints for %s: %d candidate strikes from direct chain (%d contracts, rounded to %.1f-pt grid)",
+                sym, len(candidate_strikes), len(chain.contracts), spacing,
             )
 
         return hints
@@ -867,7 +917,7 @@ class HybridCoordinator:
     def _run_oi_scan(
         self,
         option_symbols: list[str],
-        timeout: float = 10.0,
+        timeout: float = 30.0,
         completeness_pct: float = 0.80,
     ) -> dict[str, int]:
         """Subscribe to OPEN_INT for all symbols and return the OI map.
