@@ -1307,6 +1307,13 @@ def _expected_move(
 
 def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
     """Calculate the Expected Move for every unique expiry in the chain."""
+    from scripts.streaming.options.config import (
+        EM_STRADDLE_MULTIPLE_DEFAULT,
+        EM_STRADDLE_MULTIPLE_OVERRIDES
+    )
+    clean_ticker = chain.ticker.lstrip("$").upper() if chain.ticker else ""
+    k = EM_STRADDLE_MULTIPLE_OVERRIDES.get(clean_ticker, EM_STRADDLE_MULTIPLE_DEFAULT)
+
     by_expiry: dict[datetime.date, tuple[list[OptionContract], list[OptionContract]]] = {}
     
     for c in chain.calls:
@@ -1382,8 +1389,11 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
             em_upper=round(spot + move, 2),
             em_lower=round(spot - move, 2),
             straddle=round(straddle, 2),
-            straddle_85_upper=round(spot + straddle * 0.85, 2),
-            straddle_85_lower=round(spot - straddle * 0.85, 2)
+            # EM85 is the straddle-based expected move: k * straddle centered on spot.
+            # This is what TOS computes internally — the IV-based EM (em_value) is
+            # backed out from this, not the other way around.
+            straddle_85_upper=round(spot + k * straddle, 2),
+            straddle_85_lower=round(spot - k * straddle, 2)
         ))
 
     if PIPELINE_DEBUG_EM:
