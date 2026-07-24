@@ -1,6 +1,6 @@
 # Narrative Engine — Current Design & Status
 
-**Last updated:** 2026-07-23
+**Last updated:** 2026-07-23 (calendar context + timeline + time map update)
 **Supersedes:** `NARRATIVE_ENGINE_ARCHITECTURE.md`, `NARRATIVE_ENGINE_V2_PLAN.md`,
 `NARRATIVE_ENGINE_V2_BUILD_PLAN.md`, `NARRATIVE_ENGINE_V2_ARCHITECTURE.md`,
 `NARRATIVE_AUDIT_2026-07-14.md`, `NARRATIVE_FEEDBACK_LOOP.md`
@@ -39,7 +39,15 @@ Unified levels JSON ──►  load_macro_levels()         │    trader_morning
                          _extract_gex_levels()      │    trader_close.md
                                                      │
 KB API (port 8900) ──►  fetch_kb_context()  ────────┤
-                         (57 concept triggers)       │
+                         (75 concept triggers)       │
+                         fetch_kb_context_for_queries()│
+                                                     │
+Calendar state ──►      build_calendar_context_block()│
+                         (FOMC/CPI/NFP/Jackson Hole)  │
+                         build_weekly_event_timeline()│
+                         build_ict_time_map()         │
+                         build_post_news_management()│
+                         load_weekly_macro_sentiment()│
                                                      │
 Herman/NQStats ──►      compute_herman_pre_ny_sweep()│
                          compute_all_session_ranges()│
@@ -70,10 +78,13 @@ Weekly briefing:
 | `weekly_narrative.py` | `scripts/trader/` | Weekly narrative CLI (JSON slot-filling) |
 | `weekly_briefing.py` | `scripts/trader/` | Weekly data aggregation → DB |
 | `daily_narrative.py` | `scripts/trader/` | Daily open/EOD narrative CLI (JSON slot-filling) |
-| `kb_context.py` | `scripts/knowledge_bridge/` | KB context retrieval (57 concept triggers) |
+| `kb_context.py` | `scripts/knowledge_bridge/` | KB context retrieval (75 concept triggers + targeted query API) |
 | `confluence_engine.py` | `scripts/knowledge_bridge/` | Runtime cross-domain confluence detection |
 | `intraday_blocks.py` | `scripts/trader/signals/` | Per-session block builders (Asia/London/NY AM/Lunch/PM) |
 | `econ_calendar.py` | `scripts/trader/signals/` | Economic event retrieval + US-only filter |
+| `day_type.py` | `scripts/trader/signals/` | Day type classifier (clean/CPI/NFP/FOMC/Jackson Hole/special) |
+| `narrative_stats.yaml` | `scripts/trader/config/` | Static config: day types, killzones, dead zones, no-trade rules |
+| `weekly_macro_sentiment.yaml` | `config/` | Weekly curated macro theme + event sentiment (ISO week-keyed) |
 
 ### LLM configuration
 
@@ -92,14 +103,25 @@ Weekly briefing:
 ### How it works
 
 1. `build_premarket_context()` assembles the cheat sheet from live data
-2. `fetch_kb_context(cheat_sheet)` scans the cheat sheet for 57 concept triggers:
+2. `build_calendar_context_block()` queries KB with **targeted queries** based on today's calendar state (FOMC/CPI/NFP/Jackson Hole behavior, OPEX patterns, Kish macro windows, post-news candle management) — returns `(block, unit_ids)` tuple
+3. `fetch_kb_context(cheat_sheet, exclude_ids=calendar_unit_ids)` scans the cheat sheet for 75 concept triggers (deduplicated against calendar block units):
    - 34 ICT setup triggers (FVG, CSD, MSS, Silver Bullet, OTE, killzone, etc.)
    - 23 conditional session/weekly triggers (asia, london, pre-ny, classification, macro, profile, opex, NWOG, day-of-week, etc.)
-3. Session-interplay triggers are **prioritized** (processed first) so conditional knowledge isn't crowded out by generic setup triggers
-4. KB API (port 8900) is queried for each trigger; results deduped by `unit_id`
-5. Formatted as `# ICT KNOWLEDGE BASE CONTEXT` block with timeframes, sessions, instruments
-6. Appended to the cheat sheet before the LLM call
-7. Prompts instruct the LLM to USE the KB for inference, not just citation
+   - 18 calendar/event-specific triggers (Jackson Hole, Powell speech, Treasury auction, Kish's 6 macro windows, post-news candle management, manipulation/recovery/blackout windows)
+4. Session-interplay + calendar triggers are **prioritized** (processed first)
+5. KB API (port 8900) is queried for each trigger; results deduped by `unit_id`
+6. Formatted as `# ICT KNOWLEDGE BASE CONTEXT` block with timeframes, sessions, instruments
+7. Appended to the cheat sheet before the LLM call
+8. Prompts instruct the LLM to USE the KB for inference, not just citation
+
+### Two KB retrieval modes
+
+| Mode | Function | Use case |
+|---|---|---|
+| **Cheat-sheet scan** | `fetch_kb_context(cheat_sheet, exclude_ids=)` | Scans full cheat sheet for concept triggers — generic setup definitions |
+| **Targeted query** | `fetch_kb_context_for_queries(queries)` | Takes explicit `(label, query)` pairs — calendar/event-specific methodology |
+
+The calendar block uses targeted queries (knows exactly what to ask for), then passes `exclude_ids` to the generic scan to avoid duplication.
 
 ### KB context budget
 
@@ -121,6 +143,11 @@ Weekly briefing:
 | Prior EOD classification | `analyze_daily_classification_bias` | — |
 | Econ releases + earnings | `get_econ_releases()` (US-only filtered) | — |
 | Caution score | `calculate_caution_score()` | — |
+| **Calendar & structural context** | `build_calendar_context_block()` | ✅ KB-distilled |
+| **Weekly event timeline** | `build_weekly_event_timeline(mode=premarket)` | — (ICT knowledge) |
+| **ICT intraday time map** | `build_ict_time_map(mode=premarket)` | — (ICT knowledge) |
+| **Post-news candle management** | `build_post_news_management_block()` | ✅ KB-backed |
+| **Weekly macro sentiment** | `load_weekly_macro_sentiment()` | — (curated config) |
 | ICT KZ pivots + **session interplay** | `_format_kz_pivots_block()` | ✅ |
 | IPDA 20/40/60 | `_format_ipda_block()` | — |
 | Silver Bullet / macros | `_format_silver_bullet_block()` | — |
@@ -128,7 +155,7 @@ Weekly briefing:
 | FTFC bias | `_format_ftfc_block()` | — |
 | Herman Pre-NY sweep | `compute_herman_pre_ny_sweep()` | ✅ |
 | Delivery triad | `_format_delivery_triad_1liner()` | — |
-| **KB context** | `fetch_kb_context()` | ✅ |
+| **KB context (generic scan)** | `fetch_kb_context(exclude_ids=calendar_ids)` | ✅ |
 
 ### Weekly
 
@@ -141,11 +168,105 @@ Weekly briefing:
 | High-impact catalysts | `fetch_week_events()` (US-only filtered) |
 | Earnings (index-moving only) | `fetch_week_earnings()` filtered to mega-caps |
 | Account invalidation | From ticker blocks |
+| **Next week event timeline** | `build_weekly_event_timeline(mode=weekly)` |
 | **KB context** | `fetch_kb_context()` |
+
+### Per-mode calendar context injection
+
+| Mode | Calendar block | Timeline | Time map | Post-news mgmt | Macro sentiment |
+|---|---|---|---|---|---|
+| **Premarket** | Full (CALENDAR & STRUCTURAL CONTEXT) | Full (WEEKLY EVENT TIMELINE) | Full (ICT INTRADAY TIME MAP) | ✅ (if event day) | ✅ (if configured) |
+| **Open** | — | — | AM only (TODAY'S AM TIME WINDOWS) | ✅ (if event day) | — |
+| **Intraday** | — | Position line only | PM only (PM TIME WINDOWS) | — | — |
+| **Close** | — | Tomorrow preview (TOMORROW'S PREVIEW) | Tomorrow's key times | — | — |
+| **Weekly** | — | Next week (NEXT WEEK EVENT TIMELINE) | — | — | ✅ (if configured) |
 
 ---
 
-## 5. Known issues and open work
+## 5. Calendar context, timeline & time map (2026-07-23)
+
+### Calendar context block (`build_calendar_context_block`)
+
+Queries the KB for event-specific ICT methodology based on today's calendar state. Uses `fetch_kb_context_for_queries()` with targeted queries — not the generic cheat-sheet scan.
+
+| Day type | KB queries fired |
+|---|---|
+| FOMC | FOMC Day Behavior, FOMC Pre-PA, Kish Macro Windows, Post-News Candle Mgmt, News Manipulation Windows |
+| CPI | CPI Day Behavior, CPI Liquidity Raid, Kish Macro Windows, Post-News, Manipulation Windows |
+| NFP | NFP Day Behavior, NFP Liquidity Raid, Kish Macro Windows, Post-News, Manipulation Windows |
+| Jackson Hole | Jackson Hole Behavior, Jackson Hole Pre-PA, Kish Macro Windows, Post-News, Manipulation Windows |
+| Special (Treasury auction) | Treasury Auction, Kish Macro Windows |
+| Clean | Kish Macro Windows only |
+
+Week modifiers (OPEX, triple witching, FOMC week, CPI week, NFP week, Jackson Hole week, Treasury auction) add additional KB queries for weekly patterns.
+
+### Weekly event timeline (`build_weekly_event_timeline`)
+
+Day-by-day Mon-Fri expectations with **regime tags**. 7 week patterns encoded as structured data (ICT/Kish methodology):
+
+| Pattern | Mon | Tue | Wed | Thu | Fri |
+|---|---|---|---|---|---|
+| FOMC | [CHOP] | [CHOP] | [CHOP→EXPANSION] | [EXPANSION] | [CHOP] |
+| CPI | [CHOP] | [SWEEP→EXPANSION] | [EXPANSION] | [EXPANSION] | [CHOP] |
+| NFP | [CHOP] | [EXPANSION] | [EXPANSION] | [CHOP→CAUTION] | [SWEEP→EXPANSION] |
+| Jackson Hole | [CHOP] | [CHOP] | [CHOP] | [CHOP→CAUTION] | [SWEEP→EXPANSION] |
+| OPEX | [EXPANSION] | [EXPANSION] | [EXPANSION↓] | [CHOP→EXPANSION] | [CHOP/PIN] |
+| Triple Witching | [EXPANSION] | [EXPANSION] | [EXPANSION↓] | [CHOP/VOLATILE] | [CHOP/PIN] |
+| Clean | [CHOP] | [EXPANSION] | [EXPANSION] | [EXPANSION] | [CHOP] |
+
+Mode-filtered: premarket (full), intraday (position line), close (tomorrow preview), weekly (next week).
+
+### ICT intraday time map (`build_ict_time_map`)
+
+20-entry time map with regime tags. Kish's 6 intraday macros + ICT killzones + dead zones + post-close:
+
+| Time | Window | Regime |
+|---|---|---|
+| 02:00-05:00 | London Open killzone | [SWEEP] |
+| 08:15-09:45 | Liquidity Hunt Macro (Kish) | [SETUP] |
+| 08:30 | NY Open / RTH open | [NO-TRADE] |
+| 09:12 | 9:12 Macro (Kish) | [SETUP] |
+| 08:35-09:20 | Manipulation Window (news days) | [NO-TRADE] |
+| 09:45-10:00 | Offset Macro (Kish) | [SETUP] |
+| 09:50-10:10 | MACRO WINDOW — MSS prime time | [SETUP] |
+| 10:00-11:00 | SILVER BULLET window | [EXPANSION] |
+| 11:00 | Rebalance Macro (Kish) | [DELIVERY] |
+| 11:30-13:30 | NY LUNCH — dead zone | [CHOP] |
+| 12:45 | 12:45 Macro (Kish) | [SWEEP] |
+| 14:00-14:30 | FOMC statement (when scheduled) | [NO-TRADE] |
+| 15:00-16:00 | POWER HOUR — distribution | [EXPANSION] |
+| 15:59-16:00 | Last bar — prop-firm exit | [EXIT] |
+
+Mode-filtered: premarket (full day), open (AM 09:30-11:30), intraday (PM 12:00-16:00), close (tomorrow's key times).
+
+### Post-news candle management (`build_post_news_management_block`)
+
+10 KB-backed rules for event days (CPI/NFP/FOMC/Jackson Hole/special). Examples:
+- "Don't read the first M1 candle — statistically unreliable (except news days)" (conf 0.90)
+- "First two M1 candles of a new M5 retrace (OLR) — third shows direction" (conf 0.90)
+- "Require M5 candle close above 50% of order block before taking a trade" (conf 0.90)
+- "Recovery: 80% of setups occur 20-60 min post-release" (ICT_CONCEPTS_KB §14)
+
+### Weekly macro sentiment (`config/weekly_macro_sentiment.yaml`)
+
+Curated current-week context that the KB cannot supply (KB = historical methodology, not current market narrative). ISO week-keyed (`YYYY-Www`). Provides:
+- `macro_theme` — one-paragraph current-week narrative
+- `event_sentiment` — per-event consensus + cooler/hotter scenarios
+- `jackson_hole` — note for Jackson Hole weeks
+- `treasury_auctions` — day/time/notes for auctions
+- `intermarket_themes` — DXY, VIX term structure, etc.
+
+Graceful absence: if file missing or week not configured, block is skipped (KB calendar context still provides methodology).
+
+### Day type classifier enhancements
+
+- `jackson_hole` added as dedicated day type (FOMC-class, 10:00 ET event, 50% sizing)
+- `classify_day_type` now handles events with `time_et` string field (not just `datetime` epoch ms)
+- `get_weekly_modifiers` detects CPI week, NFP week, Jackson Hole week, Treasury auctions
+
+---
+
+## 6. Known issues and open work
 
 ### GEX levels — macro vs daily (OPEN, needs discussion)
 
@@ -173,7 +294,7 @@ See `docs/architecture/KB_NARRATIVE_REPLAY_ROADMAP.md` for the phased plan:
 
 ---
 
-## 6. Prompt design principles (2026-07-23)
+## 7. Prompt design principles (2026-07-23)
 
 1. **No word limits** — 256K context, let the LLM write thorough narratives
 2. **KB-aware jargon** — ICT terminology allowed when grounded in KB context, translate for reader
@@ -183,10 +304,13 @@ See `docs/architecture/KB_NARRATIVE_REPLAY_ROADMAP.md` for the phased plan:
 6. **Weekly profile** — map ICT archetype to day-by-day behavioral expectations
 7. **US-only events** — filter international events, focus on what moves ES/NQ
 8. **Index-moving earnings only** — filter to mega-caps that actually move the index
+9. **Weekly timeline + time map usage** — cite specific time windows for entry timing and regime tags for expected behavior; frame the day in the context of the week
+10. **Post-news candle management** — reference specific KB-backed rules for event days (M5 close, OLR retrace, recovery window)
+11. **Tomorrow's preview** (close mode) — frame tomorrow in the context of the week with key time windows
 
 ---
 
-## 7. Narrative goals (from brainstorming doc, still relevant)
+## 8. Narrative goals (from brainstorming doc, still relevant)
 
 From `docs/TRADER_NARRATIVE_BRAINSTORMING.md`:
 
@@ -203,7 +327,7 @@ From `docs/TRADER_NARRATIVE_BRAINSTORMING.md`:
 
 ---
 
-## 8. Related docs
+## 9. Related docs
 
 | Doc | Status | Purpose |
 |---|---|---|
