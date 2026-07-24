@@ -498,7 +498,9 @@ def write_levels(
                     "em_upper": em.em_upper,
                     "em_lower": em.em_lower,
                     "em_value": em.em_value,
-                    "straddle": em.straddle
+                    "straddle": em.straddle,
+                    "em85_upper": getattr(em, 'straddle_85_upper', 0.0),
+                    "em85_lower": getattr(em, 'straddle_85_lower', 0.0),
                 }
                 for em in getattr(levels, 'expected_moves', [])
             ],
@@ -563,7 +565,9 @@ def write_levels(
                     "em_upper": em.em_upper,
                     "em_lower": em.em_lower,
                     "em_value": em.em_value,
-                    "straddle": em.straddle
+                    "straddle": em.straddle,
+                    "em85_upper": getattr(em, 'straddle_85_upper', 0.0),
+                    "em85_lower": getattr(em, 'straddle_85_lower', 0.0),
                 }
                 for em in tl.expected_moves
             ],
