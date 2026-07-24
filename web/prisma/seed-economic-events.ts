@@ -17,7 +17,7 @@ const prisma = new PrismaClient()
 
 const FF_FEED_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
 const TE_CALENDAR_URL = 'https://api.tradingeconomics.com/calendar/country'
-const COUNTRIES = new Set(['USD', 'EUR', 'GBP', 'CAD', 'JPY', 'AUD', 'CHF', 'NZD'])
+const COUNTRIES = new Set(['USD']) // Only USD — international events pollute the narrative engine
 const DEFAULT_GAP_THRESHOLD_DAYS = 14
 const DEFAULT_MAX_API_BACKFILL_DAYS = 180
 
@@ -49,6 +49,7 @@ interface DbEconomicEventInput {
     datetime: Date
     name: string
     impact: 'HIGH' | 'MEDIUM' | 'LOW'
+    country: string  // Always 'USD' — this seed only fetches US data
     actual: number | null
     forecast: number | null
     previous: number | null
@@ -274,6 +275,7 @@ function buildHistoricalEvents(csvPath: string): DbEconomicEventInput[] {
                 datetime: parseEtDateTimeToUtc(date, time),
                 name: indicator,
                 impact: mapImportance(importance),
+                country: 'USD',  // Historical CSV is all US data
                 actual: null,
                 forecast: null,
                 previous: null
@@ -341,6 +343,7 @@ async function fetchTradingEconomicsRange(
                     datetime: dt,
                     name: String(item.Event ?? item.Category ?? 'Unknown Event'),
                     impact: mapTeImportance(item.Importance),
+                    country: 'USD',  // TradingEconomics fetch is country-specific (US)
                     actual: parseNumberOrNull(item.Actual == null ? null : String(item.Actual)),
                     forecast: parseNumberOrNull(item.Forecast == null ? null : String(item.Forecast)),
                     previous: parseNumberOrNull(item.Previous == null ? null : String(item.Previous)),
@@ -415,6 +418,7 @@ async function fetchLiveEvents(): Promise<DbEconomicEventInput[]> {
                     datetime: new Date(e.date),
                     name: e.title,
                     impact: mapImportance(e.impact),
+                    country: e.country,  // Store the currency code from ForexFactory
                     actual: null,
                     forecast: parseNumberOrNull(e.forecast),
                     previous: parseNumberOrNull(e.previous)

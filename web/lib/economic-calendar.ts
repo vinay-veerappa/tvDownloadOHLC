@@ -11,7 +11,7 @@ export interface LiveEconomicEvent {
 }
 
 const FF_FEED_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
-export const COUNTRIES = ['USD', 'EUR', 'GBP', 'CAD', 'JPY', 'AUD', 'CHF', 'NZD']
+export const COUNTRIES = ['USD'] // Only USD events — international events pollute the narrative engine
 
 export async function fetchLiveCalendar(): Promise<LiveEconomicEvent[]> {
     try {
@@ -75,6 +75,7 @@ export async function syncLiveEventsToDb(events: LiveEconomicEvent[]) {
                         datetime: dt,
                         name: e.title,
                         impact: mapImpact(e.impact),
+                        country: e.country,  // Store the currency/country code
                         forecast: parseFloat(e.forecast) || null,
                         previous: parseFloat(e.previous) || null
                     }

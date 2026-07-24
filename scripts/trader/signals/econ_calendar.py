@@ -38,7 +38,8 @@ async def get_econ_releases(target_date: date, db: Prisma) -> List[Dict[str, Any
                 "datetime": {
                     "gte": start_dt,
                     "lte": end_dt
-                }
+                },
+                "country": "USD"
             },
             order={"datetime": "asc"}
         )

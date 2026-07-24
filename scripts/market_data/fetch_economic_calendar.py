@@ -158,15 +158,15 @@ def save_events(events):
             
             if not exists:
                 cursor.execute(
-                    "INSERT INTO EconomicEvent (id, datetime, name, impact, createdAt) VALUES (?, ?, ?, ?, ?)",
-                    (event['id'], event['datetime_ms'], event['name'], event['impact'], event['createdAt_ms'])
+                    "INSERT INTO EconomicEvent (id, datetime, name, impact, country, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+                    (event['id'], event['datetime_ms'], event['name'], event['impact'], event.get('country', 'USD'), event['createdAt_ms'])
                 )
                 added += 1
             else:
-                # Upsert: update the impact if it changed
+                # Upsert: update the impact and country if it changed
                 cursor.execute(
-                    "UPDATE EconomicEvent SET impact = ? WHERE id = ?",
-                    (event['impact'], exists[0])
+                    "UPDATE EconomicEvent SET impact = ?, country = COALESCE(country, ?) WHERE id = ?",
+                    (event['impact'], event.get('country', 'USD'), exists[0])
                 )
         except Exception as e:
             print(f"Error saving event {event['name']}: {e}")
