@@ -5684,11 +5684,17 @@ def build_weekly_cheat_sheet(briefing_data: dict) -> str:
 
     # ── Next week event timeline (weekly mode) ──
     try:
-        _next_monday = target_date + timedelta(days=(7 - target_date.weekday()) if target_date.weekday() < 4 else (14 - target_date.weekday()))
+        from datetime import date as _date, datetime as _dt
+        _week_start = meta.get("week_start_date", "")
+        if _week_start:
+            _target_date = _dt.fromisoformat(_week_start[:10]).date()
+        else:
+            _target_date = _date.today()
+        _next_monday = _target_date + timedelta(days=(7 - _target_date.weekday()) if _target_date.weekday() < 4 else (14 - _target_date.weekday()))
         _next_modifiers = get_weekly_modifiers(_next_monday, events)
         _next_timeline = build_weekly_event_timeline(
             _next_monday, events, _next_modifiers,
-            archetype_info=archetype_info if 'archetype_info' in dir() else None,
+            archetype_info=archetype_info,
             mode="weekly",
         )
         if _next_timeline:
