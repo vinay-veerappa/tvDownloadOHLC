@@ -79,7 +79,9 @@ def _fmt_table(rows: List[Dict], cols: List[str], headers: List[str]) -> str:
 def build_report(symbols: List[str]) -> str:
     sections = []
     sections.append("# IB Strategy Statistics — Comprehensive Report\n")
-    sections.append(f"**Generated:** 2026-07-25  \n**Symbols:** {', '.join(symbols)}\n")
+    sections.append(f"**Generated:** 2026-07-25  \n**Symbols:** {', '.join(symbols)}  ")
+    sections.append("\n**Fixes applied:** BL-2 (MAE R:R), BL-3 (empirical targets), BL-5 (commission), BL-6 (ADR-020 exit), BL-7 (regime look-ahead)  \n")
+    sections.append("**Backtest fixes:** commission model ($2.05/round-turn), 16:00 ET forced exit, trailing regime classifier (no look-ahead)\n")
 
     # ── Empirical baselines ──
     baselines_path = DERIVED / "ib_empirical_baselines.json"
@@ -229,8 +231,23 @@ def build_report(symbols: List[str]) -> str:
                       "n_winners", "n_trades"]].to_dict("records")
         sections.append(_fmt_table(rows,
             ["symbol", "play", "target_lvl", "p95_mae_winners", "p99_mae_winners",
-             "optimal_stop_r", "wr_at_optimal_stop", "expectancy_at_optimal_stop", "n_winners", "n_trades"],
-            ["Symbol", "Play", "Target", "P95 MAE", "P99 MAE", "Stop (R)", "WR @ stop", "Exp @ stop", "N win", "N total"]))
+             "optimal_stop_r", "rr_ratio", "wr_at_optimal_stop", "expectancy_at_optimal_stop", "n_winners", "n_trades"],
+            ["Symbol", "Play", "Target", "P95 MAE", "P99 MAE", "Stop (R)", "R:R", "WR @ stop", "Exp @ stop", "N win", "N total"]))
+
+    # ── Empirical targets (BL-3, FR-10) ──
+    emp_path = DERIVED / "ib_empirical_targets_best.parquet"
+    if emp_path.exists():
+        sections.append("\n## 5.5 Empirical Percentile Targets (Phase 5.5, BL-3, FR-10)\n")
+        sections.append("Gunship-style percentile targets from actual MFE/MAE distribution of winning trades.\n")
+        sections.append("4 selection modes: best_expectancy, balanced (P50/P50), aggressive (P75/P25), conservative (P20/P80).\n")
+        emp = pd.read_parquet(emp_path)
+        sections.append("\n### Sample: NY AM IB / ET_fixed, best expectancy per play\n")
+        sample = emp[(emp.session_slot == "NY AM IB") & (emp.selection == "best_expectancy")]
+        rows = sample[["symbol", "play", "target_r", "stop_r", "rr_ratio", "win_rate", "expectancy_r", "n_trades"]].to_dict("records")
+        sections.append(_fmt_table(rows,
+            ["symbol", "play", "target_r", "stop_r", "rr_ratio", "win_rate", "expectancy_r", "n_trades"],
+            ["Symbol", "Play", "Target R", "Stop R", "R:R", "WR", "Exp (R)", "N"]))
+        sections.append("\n**Key finding:** All NQ1 expectancies are negative — raw IB Pullback has no edge even with empirical targets. Commission and ADR-020 exit further reduce edge.\n")
 
     # ── Optimal ladders ──
     lad_path = DERIVED / "ib_optimal_ladders.parquet"
@@ -321,7 +338,54 @@ def build_report(symbols: List[str]) -> str:
 
     sections.append("\n## 11. Strategy Catalog Reference\n")
     sections.append("See [PRD §10](../../../plans/2026-07-24-ib-data-gathering-plan.md) for the full 83-strategy catalog, 21 entry techniques, 17 stops, 20 take-profit techniques.\n")
-    sections.append("\n## 12. Methodology Notes\n")
+
+    # ── Backtest results (BL-5/6, PropFirmSimulator) ──
+    bt_dir = ROOT / "results" / "ib_backtest"
+    bt_files = list(bt_dir.glob("ib_backtest_*.json")) if bt_dir.exists() else []
+    if bt_files:
+        sections.append("\n## 12. Backtest Results (PropFirmSimulator)\n")
+        sections.append("Results from `ib_backtest_fast.py` with commission ($2.05/round-turn) and ADR-020 16:00 ET forced exit.\n")
+        sections.append("Grade: A >=80% MC pass, B >=65%, C >=50%, D >=30%, F <30%.\n")
+        for bt_path in sorted(bt_files):
+            data = json.loads(bt_path.read_text(encoding="utf-8"))
+            results = data.get("results", [])
+            if not results:
+                continue
+            ticker = results[0].get("ticker", bt_path.stem)
+            sections.append(f"\n### {ticker} ({len(results)} candidates)\n")
+            grades = {}
+            for r in results:
+                g = r.get("grade", "F")
+                grades[g] = grades.get(g, 0) + 1
+            sections.append(f"Grade distribution: {grades}\n")
+            pos = [r for r in results if r.get("total_return_pct", 0) > 0]
+            sections.append(f"Positive return: {len(pos)}/{len(results)} ({len(pos)/len(results)*100:.1f}%)\n")
+            det_pass = set()
+            for r in results:
+                for p in r.get("profiles", []):
+                    if p.get("passed"):
+                        det_pass.add(r["candidate_id"])
+            sections.append(f"Det PASS on >=1 profile: {len(det_pass)} ({len(det_pass)/len(results)*100:.1f}%)\n")
+            valid = [r for r in results if r.get("total_return_pct") is not None and not r.get("error")]
+            top5 = sorted(valid, key=lambda x: x["total_return_pct"], reverse=True)[:5]
+            if top5:
+                sections.append("\n**Top 5 by return:**\n")
+                rows = []
+                for r in top5:
+                    best_mc = max((p["mc_pass_rate_pct"] for p in r.get("profiles", [])), default=0)
+                    rows.append({
+                        "candidate_id": r["candidate_id"],
+                        "return_pct": round(r["total_return_pct"], 2),
+                        "wr": round(r["win_rate_pct"], 1),
+                        "trades": r["n_trades"],
+                        "grade": r.get("grade", "F"),
+                        "best_mc": round(best_mc, 1),
+                    })
+                sections.append(_fmt_table(rows,
+                    ["candidate_id", "return_pct", "wr", "trades", "grade", "best_mc"],
+                    ["Candidate", "Return %", "WR %", "Trades", "Grade", "Best MC %"]))
+
+    sections.append("\n## 13. Methodology Notes\n")
     sections.append("- **Win Rate (WR):** fraction of trades with result == 1.\n")
     sections.append("- **Expectancy:** mean of `realized_r` (in R-multiples).\n")
     sections.append("- **Profit Factor:** gross win R / gross loss R.\n")
@@ -330,6 +394,10 @@ def build_report(symbols: List[str]) -> str:
     sections.append("- **Regime:** from `ib_regime_{SYM}.parquet` (Phase 6 classifier: trend/normal/range/skip).\n")
     sections.append("- **CISD:** from `ib_cisd_dir` in confluence (1=bullish CSD fired, -1=bearish, 0=none). Per the CISD document, a CSD fires when price trades through the candidate candle's open (not close-based).\n")
     sections.append("- All stats are in-sample (no train/test split in this report). Phase 4's validation harness applies bootstrap CIs and min-N guards for production use.\n")
+    sections.append("- **Commission:** $2.05/round-turn per Micro contract, applied as % of notional in backtester. Not reflected in stats tables (only in backtest section).\n")
+    sections.append("- **ADR-020:** 16:00 ET forced exit in backtester. Stats tables use full MAX_SEARCH window (may include overnight holds).\n")
+    sections.append("- **Regime classifier:** Uses trailing 5d percentile (no look-ahead). Previous version used realized ib_range_pct_of_daily (look-ahead bias, fixed BL-7).\n")
+    sections.append("- **ib_range_pct_of_daily:** Now computed as ib_range / (daily_high - daily_low) from 1m data (BL-7 fix). Was previously ib_range/ib_mid (mislabeled proxy).\n")
 
     return "\n".join(sections)
 
