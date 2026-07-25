@@ -29,8 +29,13 @@ GROUP_COLS = ["symbol", "session_slot", "time_basis", "play", "target_lvl"]
 def compute_optimal_stops(df: pd.DataFrame) -> pd.DataFrame:
     """Per-group MAE percentiles of winners + stop-out stats.
 
-    optimal_stop_r = p95_mae_winners normalized by the group's median |mae|
-    (a proxy for stop distance in R when ib_range isn't available here).
+    optimal_stop_r = p95_mae_winners / target_lvl
+    where target_lvl is the R-multiple of the target (0.25, 0.5, 0.75, 1.0).
+    This gives the stop distance in R relative to the target, e.g.:
+      p95_mae=0.15R, target=0.5R -> optimal_stop_r = 0.30 (stop is 30% of target distance)
+
+    BUG FIX (BL-2): Previously used p95 / median_mae which produced nonsensical
+    5R-20R stops on 0.25x targets. Now uses p95 / target_lvl for correct R:R.
     """
     rows = []
     for key, g in df.groupby(GROUP_COLS, sort=False):
@@ -44,15 +49,27 @@ def compute_optimal_stops(df: pd.DataFrame) -> pd.DataFrame:
         mae_abs = mae_win.abs()
         p95 = float(mae_abs.quantile(0.95))
         p99 = float(mae_abs.quantile(0.99))
-        # WR if we had used p95 as the stop: trades whose |mae| <= p95 and result==1
-        # Approximation: winners below p95 would have hit target; losers above p95 stopped out
+
+        # Target R from the group key (target_lvl is the 5th element)
+        target_r = float(key[4]) if len(key) > 4 else 1.0
+        target_r = target_r if target_r > 0 else 1.0  # guard against zero
+
+        # WR if we had used p95 as the stop
         wr_at_p95 = float((g["result"] == 1).sum() / n_total) if n_total else np.nan
         exp_at_p95 = float(g.loc[g["mae"].abs() <= p95, "realized_r"].mean()) if (g["mae"].abs() <= p95).any() else np.nan
-        median_mae = float(g["mae"].abs().median()) or 1.0
+
+        # FIXED: normalize by target_r, not median_mae
+        optimal_stop_r = round(p95 / target_r, 4)
+
+        # Also compute the R:R ratio (target / stop) for quick reference
+        rr_ratio = round(target_r / optimal_stop_r, 4) if optimal_stop_r > 0 else np.nan
+
         rows.append({
             **dict(zip(GROUP_COLS, key)),
             "p95_mae_winners": p95, "p99_mae_winners": p99,
-            "optimal_stop_r": round(p95 / median_mae, 4),
+            "target_r": target_r,
+            "optimal_stop_r": optimal_stop_r,
+            "rr_ratio": rr_ratio,
             "wr_at_optimal_stop": round(wr_at_p95, 4),
             "expectancy_at_optimal_stop": round(exp_at_p95, 4) if pd.notna(exp_at_p95) else np.nan,
             "n_winners": n_win, "n_trades": n_total,
