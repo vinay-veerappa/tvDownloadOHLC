@@ -288,8 +288,14 @@ def compute_open_drive_dir(df_1m: pd.DataFrame, df_facts: pd.DataFrame,
     return out
 
 
-def compute_multi_day_context(df_facts: pd.DataFrame) -> pd.DataFrame:
-    """Pure-facts derived context fields."""
+def compute_multi_day_context(df_facts: pd.DataFrame, df_1m: pd.DataFrame = None) -> pd.DataFrame:
+    """Pure-facts derived context fields.
+
+    BL-7 FIX: ib_range_pct_of_daily now uses true daily range from 1m data
+    (ib_range / (daily_high - daily_low)) when df_1m is provided.
+    Falls back to range_pct (ib_range/ib_mid) when df_1m is None — but this
+    is a mislabeled proxy, not the actual % of daily range.
+    """
     df = df_facts.copy()
     df = df.sort_values(["symbol", "session_slot", "time_basis", "trading_day"])
 
@@ -318,8 +324,32 @@ def compute_multi_day_context(df_facts: pd.DataFrame) -> pd.DataFrame:
     choices = ["inside", "outside"]
     df["ib_inside_outside"] = np.select(conditions, choices, default="overlapping")
 
-    # Range as pct of daily range (use facts range_pct if present, else compute proxy)
-    if "range_pct" in df.columns:
+    # BL-7 FIX: Compute true ib_range_pct_of_daily from 1m data
+    # ib_range_pct_of_daily = ib_range / (daily_high - daily_low)
+    # NOTE: This is a REALIZED metric (uses full day's high/low). It is only
+    # known at end of day — NOT available at trade entry time. For pre-trade
+    # regime estimation, use ib_range_5d_pctile (trailing) instead.
+    if df_1m is not None and "logical_date_str" in df_1m.columns:
+        daily_range = df_1m.groupby("logical_date_str").agg(
+            daily_high=("high", "max"),
+            daily_low=("low", "min"),
+        )
+        daily_range["daily_range"] = daily_range["daily_high"] - daily_range["daily_low"]
+        daily_range_map = daily_range["daily_range"].to_dict()
+
+        # Map daily range to facts by trading_day (which is logical_date_str)
+        df["ib_range_pct_of_daily"] = df["trading_day"].map(daily_range_map)
+        # Compute true ratio: ib_range / daily_range (as fraction 0-1)
+        df["ib_range_pct_of_daily"] = np.where(
+            df["ib_range_pct_of_daily"] > 0,
+            df["ib_range"] / df["ib_range_pct_of_daily"],
+            np.nan,
+        )
+        # Guard against >1.0 (IB range can't exceed daily range, but edge cases)
+        df["ib_range_pct_of_daily"] = df["ib_range_pct_of_daily"].clip(0, 1.5)
+    elif "range_pct" in df.columns:
+        # Fallback: use range_pct (mislabeled proxy: ib_range/ib_mid, not daily range)
+        # This is the OLD behavior — kept for backward compat when 1m data not available
         df["ib_range_pct_of_daily"] = df["range_pct"]
     else:
         df["ib_range_pct_of_daily"] = np.nan
@@ -996,7 +1026,7 @@ def process_symbol(symbol: str) -> pd.DataFrame:
 
     # Pure-facts fields
     out = df_facts[["symbol", "trading_day", "session_slot", "time_basis"]].copy()
-    out = pd.concat([out, compute_multi_day_context(df_facts)], axis=1)
+    out = pd.concat([out, compute_multi_day_context(df_facts, df_1m)], axis=1)
     out = pd.concat([out, compute_break_speed_and_failure(df_facts)], axis=1)
     out = pd.concat([out, compute_vcp_fields(df_facts)], axis=1)
     # Empirical classification needs ib_range_pct_of_daily (from multi-day context above)

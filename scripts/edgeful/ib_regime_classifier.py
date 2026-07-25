@@ -57,23 +57,39 @@ def _classify_regime(row) -> str:
     break_urgency = row.get("ib_break_urgency", "low")
     poc_skew = row.get("ib_tpo_skew", 0)
 
-    # Trend: small IB ratio, fast break, POC near extreme (skew != 0)
-    if day_type == "trend" or (pd.notna(r) and r < 0.30):
+    # BL-7 FIX: Use trailing 5d percentile for pre-trade regime estimation.
+    # The realized ib_range_pct_of_daily is only known at end of day and
+    # creates look-ahead bias if used for trade decisions.
+    # ib_range_5d_pctile: 0 = IB is small relative to recent IBs (trend likely),
+    # 1 = IB is large relative to recent IBs (range likely).
+    r_trailing = row.get("ib_range_5d_pctile")
+
+    # Trend: small IB relative to trailing IBs + fast break + POC near extreme
+    # Use trailing percentile (pre-trade available) instead of realized ratio
+    if pd.notna(r_trailing) and r_trailing < 0.30:
         if break_urgency == "high" and poc_skew != 0:
             return "trend"
         return "trend"  # trend-ish even if break slow
 
-    # Range: large IB ratio, slow break, POC centered (skew == 0)
-    if day_type == "range" or (pd.notna(r) and r >= 0.70):
+    # Range: large IB relative to trailing IBs + slow break + POC centered
+    if pd.notna(r_trailing) and r_trailing >= 0.70:
         if break_urgency == "low" and poc_skew == 0:
             return "range"
         return "range"
 
-    # Normal variation (50–70%)
-    if day_type == "normal_variation" or (pd.notna(r) and 0.50 <= r < 0.70):
+    # Normal variation (50–70% trailing)
+    if pd.notna(r_trailing) and 0.50 <= r_trailing < 0.70:
         return "range"
 
-    # Normal (30–50%) or unknown
+    # Fallback: use day_type label (which uses realized ratio — for analysis only)
+    if day_type == "trend":
+        return "trend"
+    if day_type == "range":
+        return "range"
+    if day_type == "normal_variation":
+        return "range"
+
+    # Normal (30–50% trailing) or unknown
     return "normal"
 
 

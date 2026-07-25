@@ -695,7 +695,7 @@ already bridges `hunt()` → `generate_signals()`, and all DataFrame schemas lin
 | BL-4 | Implement FR-11 custom range support (`config/ib_custom_ranges.yaml`). | PRD §11 | Medium | Open |
 | BL-5 | Fix `VectorizedBacktester` commission model (I1) — add per-contract dollar commission. | PRD §12.2 | Medium | Open |
 | BL-6 | Add ADR-020 16:00 ET forced exit to `VectorizedBacktester` (I2). | PRD §12.2 | Medium | Open |
-| BL-7 | Verify regime router look-ahead (Q4) — is `ib_range_pct_of_daily` using realized same-day value? | PRD §12 Q4 | High | Open |
+| BL-7 | Verify regime router look-ahead (Q4) — is `ib_range_pct_of_daily` using realized same-day value? | PRD §12 Q4 | High | ✅ Done (2026-07-25) |
 
 ---
 
@@ -704,7 +704,7 @@ already bridges `hunt()` → `generate_signals()`, and all DataFrame schemas lin
 1. **VIX futures data availability** — is VIX9D vs VIX (or VIX front-month vs back-month) already loaded anywhere, or does `vix_term_structure` need a new feed? (Affects Tier 1 vs Tier 3 for strategies 76–78.)
 2. **Tick / bid-ask volume** — does `data/{SYM}_1m.parquet` have an up/down volume split, or is delta/CVD entirely Tier 3? (Affects strategies 67–70.)
 3. **NYSE breadth feed** — is the TOS RTD feed from `OPTIONS_INVENTORY.md` wired to capture intraday A/D ratio? (Affects strategies 74–75.)
-4. **Regime router look-ahead** — is `ib_range_pct_of_daily` in the regime classifier using the realized same-day value or a trailing 60-day estimate? (Affects validity of all regime stats.)
+4. **Regime router look-ahead** — is `ib_range_pct_of_daily` in the regime classifier using the realized same-day value or a trailing 60-day estimate? (Affects validity of all regime stats.) **Answer (BL-7): Was using realized same-day value (look-ahead bias). Fixed to use trailing 5d percentile (`ib_range_5d_pctile`) for pre-trade regime estimation. Also fixed the `ib_range_pct_of_daily` computation itself — was `ib_range/ib_mid` (mislabeled proxy), now correctly `ib_range / (daily_high - daily_low)` from 1m data. Regime distribution shifted: range 2,056 → 6,251 (5% → 15%), trend 21,579 → 19,632.**
 5. **Commission model** — does `VectorizedBacktester` deduct $2.25/round-turn per Micro? If not, what is the impact on low-expectancy plays? **Answer (§12.2 I1): No — only 0.01% flat slippage. `$2.05` commission is stored but never applied.**
 6. **Stop mismatch** — does the `IBPullbackStrategy` backtest use `ib_opposite` stop or the Phase 5.1 P95 MAE stop? (Affects whether backtest results match report recommendations.)
 
