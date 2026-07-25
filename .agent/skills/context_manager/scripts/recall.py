@@ -2,6 +2,11 @@ import argparse
 import sys
 import os
 
+# Ensure UTF-8 output on Windows (prevents cp1252 UnicodeEncodeError)
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Add current directory to sys.path to import memory_db
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -24,7 +29,11 @@ def main():
         print("No memories found.")
     else:
         for mem in results:
-            print(f"[{mem['id']}] {mem['created_at']} | [{mem['category']}] {mem['content']} (Tags: {mem['tags']})")
+            # Truncate very long content for console display
+            content = mem['content']
+            if len(content) > 2000:
+                content = content[:2000] + " [...truncated]"
+            print(f"[{mem['id']}] {mem['created_at']} | [{mem['category']}] {content} (Tags: {mem['tags']})")
 
 if __name__ == "__main__":
     main()

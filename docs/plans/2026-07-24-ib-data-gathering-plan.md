@@ -595,35 +595,69 @@ MASTER_CONFLUENCE_SCHEMA = {
     'avwap_confluence_score',  # 0-3: multi-timeframe AVWAP agreement
     
     # ── Composite Scores ──
-    'conviction_score',          # 0-10 composite
+    'conviction_score_naive',    # 0-10 hand-tuned BASELINE (§7.3) — for comparison only
+    'conviction_score_v2',       # 0-1 empirically weighted (Phase 4) — the production score
+    'conviction_filters_active', # JSON list of which validated filters fired today
     'bias_agreement_count',      # How many bias variants agree (0-4)
-    'suggested_play',            # Best play for this regime
+    'suggested_play',            # Best play for this regime (from Phase 6 regime classifier)
     'suggested_direction',       # +1/-1
-    'suggested_expectancy',      # Expected R
+    'suggested_expectancy',      # Expected R (from Phase 5/6 backtest)
 }
 ```
 
-### Phase 4: Validation Harness (P1 — 2 days)
+### Phase 4: Validation Harness & Empirical Conviction (P0 — 3 days)
 
 **Script:** `scripts/edgeful/ib_validate_confluences.py`
 
-For each confluence signal, measure its predictive power:
+**Goal:** Test individual filters and combinations to improve WR and expectancy, then derive an *empirically-weighted* conviction score. This phase produces the validated score — Phase 3 only stores raw filter flags (no hand-tuned composite).
 
+**4a. Single-filter effectiveness (per play):**
 ```python
 # For each filter F and each play P:
-#   1. Split data: F=True vs F=False
-#   2. Measure: WR, expectancy, N for each split
-#   3. Measure: filter precision (P(loss | F=True)), recall (P(F=True | loss))
-#   4. Measure: independence between filters (correlation of filter activations)
-#   5. Output: ranked list of filters by lift
-
-# For filter combinations:
-#   1. Test all pairs, triples of independent filters
-#   2. Measure combined WR and expectancy
-#   3. Identify the optimal filter stack per play per regime
+#   1. Split: F=True vs F=False
+#   2. Measure: WR, expectancy (R), N for each split
+#   3. Lift = WR(F=True) - WR(F=False)
+#   4. Significance: chi-square / bootstrap CI on lift
+#   5. Filter precision (P(loss | F=True)), recall (P(F=True | loss))
+#   Output: ib_filter_effectiveness.parquet (one row per filter × play)
 ```
 
-**Output:** `data/derived/ib_filter_effectiveness.parquet`
+**4b. Filter independence & redundancy:**
+```python
+#   1. Pairwise activation correlation across all filters
+#   2. VIF / condition number check (drop filters with rho > 0.85)
+#   3. Build a non-redundant filter pool per play
+#   Output: ib_filter_correlation.parquet
+```
+
+**4c. Combination search (pairs, triples, stacks):**
+```python
+#   1. For all pairs/triples of non-redundant filters: combined WR, expectancy, N
+#   2. Greedy forward selection: start with best single filter, add filters by marginal lift
+#   3. Track N-shrinkage (each added filter reduces sample size) — stop when N < min_trades
+#   4. Output the optimal filter STACK per play (the set that maximizes expectancy at N ≥ min)
+#   Output: ib_filter_stacks.parquet (one row per stack × play, with the filter list + metrics)
+```
+
+**4d. Empirical conviction score (output of this phase):**
+```python
+#   Weight each filter by its validated lift (or a simple logistic regression on P(win)).
+#   conviction_score_v2 = sum(filter_active × validated_lift) / sum(validated_lift)
+#   → normalized 0–1; a filter with negative lift gets weight 0 (dropped).
+#   Output: ib_conviction_weights.parquet (filter → weight per play)
+#   Add column conviction_score_v2 to ib_master_confluence (joined back)
+```
+
+**Outputs:**
+```
+data/derived/
+├── ib_filter_effectiveness.parquet    # 4a — per-filter lift per play
+├── ib_filter_correlation.parquet      # 4b — pairwise correlations, redundancy flags
+├── ib_filter_stacks.parquet           # 4c — optimal filter combos per play
+└── ib_conviction_weights.parquet      # 4d — validated weights → conviction_score_v2
+```
+
+**Why this replaces the hand-tuned score (§7.3):** The old `conviction_score` asserted fixed integer weights (+2/−2/−1). Phase 4 learns weights from data and drops filters that don't help. The hand-tuned version is kept only as a naive baseline for comparison (see §7.3).
 
 ### Phase 5: Strategy-Specific Derived Data (P1 — 2 days)
 
@@ -789,10 +823,14 @@ def classify_overnight_regime(asia_status, london_status):
     return 'contradicting'
 ```
 
-### 7.3 Conviction Score (Phase 3 — updated with news/OPEX/AVWAP)
+### 7.3 Conviction Score (two versions)
+
+**Important:** This hand-tuned score is a **naive baseline only** — kept for comparison against the empirically-derived `conviction_score_v2` produced by Phase 4. Do NOT use it as the production filter. Its fixed integer weights are asserted, not validated; a +2 bonus may have no edge or even hurt WR. Phase 4 learns the actual weights from `ib_filter_effectiveness.parquet` and drops non-contributing filters.
+
+**Architecture:** Phase 3 stores *raw filter flags* in the master confluence table (no composite). Phase 4 validates each filter, learns weights, and writes `conviction_score_v2` back to the master confluence table. This keeps filtering testable: any individual filter or combination can be sliced independently.
 
 ```python
-def compute_conviction_score(row):
+def compute_conviction_score_naive(row):  # BASELINE ONLY — see Phase 4 for the validated version
     score = 0
     
     # ── Bonuses ──
@@ -884,3 +922,587 @@ After all phases complete, you should be able to answer:
 12. **What's the best custom anchor for trend confirmation?** → Test any anchor via `--anchor HH:MM` flag
 13. **How does multi-timeframe AVWAP confluence affect WR?** → `avwap_confluence_score` 0-3 vs play outcomes
 14. **Are news-distorted IBs tradeable at all?** → Separate stats: "clean IB" vs "news IB" win rates
+
+---
+
+## 9. External Research — Additional Concepts (2026-07-25)
+
+Cross-walk of external IB research against Phases 1–5. Items already covered are marked ✅; genuinely-new additions are marked 🆕 and assigned a phase.
+
+### 9.1 Market Profile / Steidlmayer (Part 1 of research)
+
+| Concept | Status | Mapping |
+|---|---|---|
+| Point of Control (POC) — price with most TPOs | ✅ | `ib_poc_price` (Phase 2) |
+| Value Area (70% TPOs ±1σ) | ✅ | `ib_vah` / `ib_val` (Phase 2) |
+| TPO count by price | ✅ | Backing calc for POC/VA — keep intermediate in `ib_derived` |
+| TPO skew (top-heavy vs bottom-heavy) | ✅ | `ib_tpo_skew` (Phase 2) |
+
+### 9.2 Volume-Weighted IB Levels 🆕
+
+The 1m parquet already has a `volume` column, so these are computable now — they augment (not replace) the TPO-based POC/VA from Phase 2.
+
+| Field | Computation | Use |
+|---|---|---|
+| `ib_vwap` 🆕 | Σ(px × vol) / Σ(vol) during IB | Dynamic mid — more accurate than arithmetic `ib_mid` |
+| `ib_vol_at_high` 🆕 | Sum(volume) on bars tagging `ib_high` | Which extreme had participation? |
+| `ib_vol_at_low` 🆕 | Sum(volume) on bars tagging `ib_low` | Companion to above |
+| `ib_vol_poc_price` 🆕 | Price level with max cumulative volume in IB | Volume-node S/R — harder to break than TPO POC |
+| `ib_vol_skew` 🆕 | +1 if upper-half volume > lower-half, -1 else | Volume-confirmed bias (vs TPO skew) |
+
+**Phase:** Add to Phase 2 (`ib_derived_fields.py`) as a sub-block. No new data source required.
+
+### 9.3 Multi-Day IB Context
+
+| Concept | Status | Mapping |
+|---|---|---|
+| Inside / outside / overlapping day | ✅ | `ib_inside_outside` (Phase 2) |
+| 3-day composite high/low | ✅ | `ib_3day_composite_high` / `_low` (Phase 2) |
+| 5-day rolling contraction/expansion | ✅ | `ib_range_5d_contracting` / `_expanding` (Phase 2) |
+| Contraction→expansion cycle as **pre-break strategy** | 🆕 | See §9.9 (strategy module, not just a flag) |
+
+### 9.4 IB as % of Daily Range (Day-Type Prediction)
+
+| Concept | Status | Mapping |
+|---|---|---|
+| `ib_range_pct_of_daily` | ✅ | Phase 2 |
+| Day-type buckets (<30% trend, 30–50% normal, 50–70% normal-var, >70% range) | 🆕 | Derive `ib_day_type_predicted` categorical from the ratio; backtest WR by bucket in Phase 4 |
+
+**Note:** `ib_range_pct_of_daily` is only knowable *after* the close. For a *pre-trade* filter, use the trailing distribution (Phase 4) to estimate P(trend | today's IB size vs trailing 60d).
+
+### 9.5 Opening Auction (First 5 Minutes)
+
+| Field | Status | Mapping |
+|---|---|---|
+| `ib_open_drive_dir` (9:30–9:35 vs prior close) | ✅ | Phase 2 |
+| Opening range (first 5 min high/low) | 🆕 | `ib_or5_high` / `ib_or5_low` |
+| OR break timing (<15 min → trend, else → range) | 🆕 | `ib_or5_break_minutes` + `ib_or5_broken_in_15` bool |
+| OR direction vs IB close agreement | 🆕 | `ib_or5_ib_close_agree` (+1/-1) — conviction flag |
+
+**Phase:** Add to Phase 2.
+
+### 9.6 Entry Strategy Innovations (Part 2)
+
+| Concept | Status | Notes |
+|---|---|---|
+| Scale-in ladder entries | 🆕 | Strategy module (Phase 6) — 3-tier ladder at break / +0.25x / +0.5x |
+| Time-qualified entries (size by break bucket) | 🆕 (partial) | `first_break_bucket` exists; sizing ruleset is new → Phase 6 |
+| 80% rule (POC-time-above-mid conviction) | 🆕 | `ib_pct_time_above_mid` field (Phase 2) + entry rule (Phase 6) |
+| Two-timeframe (5m confirm + 1m trigger) | 🆕 | Requires 5m resample pipeline — Phase 6, blocked on Phase 2 5m bars |
+| Failed-breakout opposite entry | 🆕 | Distinct from Play 3 fade — Phase 6 strategy module |
+| Opening-drive entry (9:30–9:45) | 🆕 | Phase 6 — uses §9.5 fields |
+
+**New derived field for the 80% rule:**
+
+| Field | Computation | Use |
+|---|---|---|
+| `ib_pct_time_above_mid` 🆕 | % of 1m bars during IB with close > `ib_mid` | >80% → mid accepted as support; <20% → high-break likely fakeout |
+
+### 9.7 Exit Strategy Innovations (Part 3)
+
+| Concept | Status | Mapping |
+|---|---|---|
+| MAE-calibrated stops (P95 of winners) | ✅ | Phase 5.1 |
+| Partial profit ladder | ✅ | Phase 5.3 |
+| Time-decay exit schedule | ✅ | Phase 5.2 |
+| Trailing stop by IB-range fractions | 🆕 | `ib_trail_schedule` — Phase 6 exit module |
+| Session-boundary exits (11:30 / 13:30 / 15:50) | 🆕 | Phase 6 exit module (13:30 NY PM IB & 15:50 prop-firm rule per ADR-020) |
+| VWAP-cross exit (break fails if price re-crosses IB VWAP) | 🆕 | Phase 6 exit module — uses `ib_vwap` from §9.2 |
+| Opposite-side liquidity target (PDH/PDL/P12 next-level) | 🆕 | Phase 6 exit module — joins `reference_levels` from §1.4 |
+
+### 9.8 New Strategy Concepts (Part 4)
+
+| Concept | Status | Notes |
+|---|---|---|
+| IB contraction/expansion cycle (pre-break) | 🆕 | Phase 6 — uses `ib_range_5d_contracting`; enters *before* the break on vol-expansion trigger |
+| IB vs overnight range relationship | ✅ | `ib_vs_overnight_ratio` (Phase 2) |
+| Cumulative delta within IB | 🆕 (deferred) | Needs bid/ask volume — Tier 3, not in current data |
+| IB break speed filter | ✅ | `ib_break_speed` (Phase 2) + Phase 5.4 stats |
+| Pre-IB telegraph (9:25–9:30) | 🆕 | `ib_pre_telegraph_dir` — 5-min window before IB start |
+| Three-touches rule | ✅ | `ib_high_touch_count` / `ib_low_touch_count` (Phase 2) — threshold ≥3 = confirmed |
+| Post-break mid magnet study | 🆕 | `ib_mid_revisited_post_break` bool + `ib_mid_revisit_minutes` — distinct from pre-break mid retest |
+| Economic calendar filter (skip FOMC/NFP/CPI/ISM) | ✅ | Phase 2.5 (`is_fomc_day` etc.) |
+
+**New fields:**
+
+| Field | Computation | Use |
+|---|---|---|
+| `ib_pre_telegraph_dir` 🆕 | +1 if 9:25–9:30 range closes above 9:25 open, -1 below, 0 doji | Pre-IB direction hint |
+| `ib_mid_revisited_post_break` 🆕 | bool — did price return to `ib_mid` *after* first break closed outside? | Regime: magnet day vs trend day |
+| `ib_mid_revisit_post_break_minutes` 🆕 | Minutes from break close to next mid touch | If fast revisit → magnet regime |
+
+### 9.9 Regime-Switching System Architecture (Part 5)
+
+The research's "path to 80% WR" is explicitly **not** a single strategy — it's a regime classifier that routes each day to the optimal play. This is a Phase 6 architecture sitting on top of Phases 1–5.
+
+**Regime classifier → play router:**
+
+| Regime | Trigger | Play | Target WR |
+|---|---|---|---|
+| Trend day | `ib_range_pct_of_daily` < 30% (trailing estimate) + fast break + POC near extreme | Play 1 breakout, full size | 65–70% |
+| Normal day | 30–50% + moderate break + POC near mid | Play 2 retest, half→full | 60–65% |
+| Range day | > 50% + slow/no break + POC centered | Play 3 fade | 60–70% |
+| Skip day | FOMC/NFP/CPI/ISM, contradictory overnight, late mid-lock | No trade | — |
+
+**New derived field:**
+
+| Field | Computation | Use |
+|---|---|---|
+| `ib_regime` 🆕 | "trend" / "normal" / "range" / "skip" — classifier combining the above | Master play router |
+| `ib_regime_confidence` 🆕 | 0–1 — agreement score across regime triggers | Sizing scalar |
+
+**Phase:** Phase 6 — `scripts/edgeful/ib_regime_classifier.py`. Depends on Phases 2, 2.5, 2.6 (all derived fields), Phase 4 (validated filters), Phase 5 (entry/exit modules).
+
+### 9.10 Implementation Priority (revised, incorporating §9)
+
+| Tier | Items | Phase |
+|---|---|---|
+| **Tier 1 — Immediate (1–2 wk)** | MAE-calibrated stops (5.1) ✅, time-qualified entries 🆕, partial profit ladder (5.3) ✅, economic calendar filter (2.5) ✅, **volume-weighted IB (§9.2)** 🆕, **80% rule field (§9.6)** 🆕 | Phase 2 + 5 + 6 |
+| **Tier 2 — Medium (2–3 wk)** | Value Area/POC (Phase 2) ✅, multi-day context (Phase 2) ✅, break speed filter (5.4) ✅, **failed-breakout entry** 🆕, **opening-drive entry** 🆕, **pre-IB telegraph** 🆕, **post-break mid magnet** 🆕, **trailing-by-IB-fractions** 🆕, **session-boundary exits** 🆕, **VWAP-cross exit** 🆕, **liquidity targets** 🆕 | Phase 2 + 6 |
+| **Tier 3 — New data (3–4 wk)** | Cumulative delta (needs tick data), two-timeframe entry (needs 5m pipeline) 🆕, **regime classifier (§9.9)** 🆕 | Phase 6 |
+
+### 9.11 New Scripts & Fields Summary
+
+**New scripts (Phase 6):**
+- `scripts/edgeful/ib_regime_classifier.py` — trend/normal/range/skip router
+- `scripts/edgeful/ib_entry_modules.py` — scale-in, time-qualified, 80%-rule, failed-breakout, opening-drive, two-timeframe
+- `scripts/edgeful/ib_exit_modules.py` — trailing-by-IB-fractions, session-boundary, VWAP-cross, liquidity-target
+- `scripts/edgeful/ib_pre_break.py` — contraction/expansion cycle strategy
+
+**New derived fields (added to Phase 2):**
+- Volume-weighted: `ib_vwap`, `ib_vol_at_high`, `ib_vol_at_low`, `ib_vol_poc_price`, `ib_vol_skew`
+- Opening auction: `ib_or5_high`, `ib_or5_low`, `ib_or5_break_minutes`, `ib_or5_broken_in_15`, `ib_or5_ib_close_agree`
+- 80% rule: `ib_pct_time_above_mid`
+- Pre-IB telegraph: `ib_pre_telegraph_dir`
+- Post-break magnet: `ib_mid_revisited_post_break`, `ib_mid_revisit_post_break_minutes`
+- Day-type: `ib_day_type_predicted` (categorical from `ib_range_pct_of_daily` buckets)
+- Regime: `ib_regime`, `ib_regime_confidence` (computed in Phase 6, joined back to master confluence)
+
+**New derived fields from §10.14 external research (added to Phase 2):**
+- ACD framework: `ib_or_acd_a_up`, `ib_or_acd_a_down`, `ib_or_acd_c_level`, `ib_or_acd_a_held`
+- VCP contraction: `ib_vcp_3day_contracting`, `ib_vcp_volume_ratio`, `ib_vcp_setup`
+- Single prints: `ib_has_upper_single_print`, `ib_has_lower_single_print`, `ib_single_print_high`, `ib_single_print_low`
+- RVOL: `ib_rvol` (= VCP volume ratio, reused), `ib_rvol_bucket`
+- VIX term structure: `vix_term_structure`, `vix_regime_intraday` (Tier 1 if VIX futures data loaded, else Tier 3)
+- Empirical baselines (§10.14.8): `ib_range_size_class`, `ib_break_urgency`, `ib_extension_expectation`
+- Wicks/bodies: `ib_high_wick_pct`, `ib_low_wick_pct`, `ib_high_body_close`, `ib_low_body_close`
+- Sweep detail: `ib_high_swept`, `ib_low_swept`, `ib_sweep_reclaim_dir`
+- Tier 3 (deferred): `breadth_ad_ratio_at_break`, `breadth_divergence`, CVD/delta fields (need tick/breadth feed)
+
+**New Phase 4 baseline file:** `data/derived/ib_empirical_baselines.json` — TrevorTrades 10-year ES probabilities (§10.14.8) used as the no-filter reference distribution for every filter's lift calculation.
+
+**Updated output manifest (additions):**
+```
+data/derived/
+├── ib_derived_{SYM}.parquet              # Phase 2 (+ §9.2, §9.5, §9.6, §9.8 fields)
+├── ib_regime_{SYM}.parquet               # Phase 6 — regime classifier output
+├── ib_entry_signals_{SYM}.parquet        # Phase 6 — entry module signals
+├── ib_exit_signals_{SYM}.parquet         # Phase 6 — exit module signals
+└── ib_pre_break_signals_{SYM}.parquet    # Phase 6 — contraction/expansion pre-break
+```
+
+---
+
+## 10. Strategy Catalog — All Testable IB Strategies
+
+Comprehensive list of every strategy the IB system can produce, so none are forgotten. Each is a testable hypothesis against the master confluence table. The **regime-switching router (§10.5)** selects among these per-day rather than running them all blindly.
+
+### 10.1 Core IB Plays (existing — from `ib_facts` / `ib_play_detail`)
+
+| # | Strategy | Entry | Stop | Target | Phase | Status |
+|---|---|---|---|---|---|---|
+| 1 | **Play 1 — IB Breakout** | Enter at IB high/low break (close outside) | Opposite IB boundary | 0.5x / 1.0x / 1.5x extensions | Existing | ✅ |
+| 2 | **Play 2 — IB Retest** | Enter on retest of IB high/low from outside after a break | Opposite IB boundary | 0.5x / 1.0x | Existing | ✅ |
+| 3 | **Play 3 — IB Fade** | Enter fade at 0.5x / 1.0x extension (mean reversion) | IB high/low + buffer | IB mid | Existing | ✅ |
+
+### 10.2 Market Profile / TPO-Based Strategies (Phase 2 data)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 4 | **VAH Break with POC-top** | Break of VAH when POC is in top half of IB | VAH−1.0×IB range | 1.0x extension | 2 |
+| 5 | **VAL Break with POC-bottom** | Symmetric short | VAL+1.0×IB range | 1.0x extension | 2 |
+| 6 | **POC Reversion** | Fade first touch of POC from outside VA | VA boundary | Opposite VA boundary | 2 |
+| 7 | **80% Rule Long** | If >80% of IB time above mid, enter long on first mid touch after high break | IB low | IB high + 0.5x | 2+6 |
+| 8 | **80% Rule Short** | Symmetric: <20% above mid → high break = fakeout → short | IB high | IB low − 0.5x | 2+6 |
+| 9 | **Three-Touches Breakout** | Break of a level touched ≥3× during IB formation | Opposite boundary | 1.0x | 2 |
+
+### 10.3 Volume-Weighted Strategies (Phase 2 §9.2)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 10 | **IB VWAP Trend** | Enter at IB high break only if break is above `ib_vwap` | `ib_vwap` | 1.0x | 2+6 |
+| 11 | **Volume-Node Break** | Break of `ib_vol_poc_price` (high-volume node) — stronger S/R | Opposite IB boundary | 1.0x | 2+6 |
+| 12 | **Volume Skew Filter** | Only take breakouts in direction of `ib_vol_skew` | Opposite boundary | 1.0x | 2 |
+| 13 | **Volume-at-Extreme Fade** | Fade IB high if `ib_vol_at_high` < `ib_vol_at_low` (low participation extreme) | IB high + 0.25x | IB mid | 2+6 |
+
+### 10.4 Multi-Day Context Strategies (Phase 2 §9.3)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 14 | **Inside-Day Breakout** | Today's IB inside yesterday's → trade the break of either IB extreme | 3-day composite low/high | 3-day composite | 2+6 |
+| 15 | **Outside-Day Fade** | Today's IB engulfs yesterday's → fade extensions (mean reversion likely) | 1.5× IB range | IB mid | 2+6 |
+| 16 | **3-Day Composite Break** | Break of `ib_3day_composite_high`/`_low` | Opposite composite boundary | 1.0× composite range | 2+6 |
+| 17 | **5-Day Contraction Pre-Break** | When `ib_range_5d_contracting`, enter vol-expansion trigger before the break | 5-day low/high | 1.0× avg expanded range | 2+6 |
+
+### 10.5 Day-Type / Regime Strategies (Phase 6 §9.9)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 18 | **Trend Day Breakout** | `ib_range_pct_of_daily` <30% (trailing est) + fast break + POC near extreme | MAE-calibrated | 1.5x+ runner | 6 |
+| 19 | **Normal Day Retest** | 30–50% ratio + moderate break + POC near mid | Opposite boundary | 1.0x | 6 |
+| 20 | **Range Day Fade** | >50% ratio + POC centered + no clean break | 0.25x past extreme | IB mid | 6 |
+| 21 | **Regime Router (system)** | Routes each day to strategies 18/19/20/skip via `ib_regime` classifier | — | — | 6 |
+
+### 10.6 Entry Innovation Strategies (Phase 6 §9.6)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 22 | **Scale-In Ladder** | 3 entries: at break / +0.25x / +0.5x (40%/30%/30% size) | Opposite boundary | Laddered 0.5x/1.0x/trail | 6 |
+| 23 | **Time-Qualified Entry** | Full size 10:30–10:45, half 10:45–11:30, skip 11:30–13:00, half 13:00–14:30, skip late | Opposite boundary | 1.0x | 6 |
+| 24 | **Two-Timeframe (5m+1m)** | 5m close above IB high → wait for 1m pullback to 5m bar mid → enter on next 1m close above 5m bar high | 5m bar low | 1.0x | 6 |
+| 25 | **Failed-Breakout Reversal** | Price breaks high, closes back inside IB → enter SHORT (opposite) | IB high + 0.25x | IB low | 6 |
+| 26 | **Opening Drive Entry** | First 15 min (9:30–9:45) sets tone; enter continuation if OR5 breaks in direction of `ib_open_drive_dir` | OR5 opposite | 1.0x | 6 |
+| 27 | **Pre-IB Telegraph** | 9:25–9:30 closes above 9:25 open → bias long for IB break | Opposite boundary | 1.0x | 2+6 |
+
+### 10.7 Exit Innovation Strategies (Phase 6 §9.7)
+
+| # | Strategy | Mechanism | Phase |
+|---|---|---|---|
+| 28 | **MAE-Calibrated Stop** | Stop at P95 MAE of winners (from `ib_play_detail`) instead of opposite boundary | 5.1 |
+| 29 | **Trailing by IB Fractions** | +0.25x→BE, +0.5x→+0.25x, +0.75x→+0.5x, +1.0x→+0.5x trail, >1.0x→0.5x trail | 6 |
+| 30 | **Time-Decay Exit** | 0–30min hold, 30–60 tighten to BE, 60–90 exit 50%, 90–120 exit rest, after 13:00 exit all | 5.2 |
+| 31 | **Session-Boundary Exit** | Reduce at 11:30 (NY2), re-eval at 13:30 (PM IB), exit all at 15:50 (ADR-020) | 6 |
+| 32 | **Partial Profit Ladder** | 40% at 0.5x / 30% at 1.0x / 20% at 1.5x / 10% trailing | 5.3 |
+| 33 | **VWAP-Cross Exit** | If price breaks IB high then re-crosses `ib_vwap` → exit immediately (failed break) | 6 |
+| 34 | **Liquidity Target** | Target next PDH/PDL/P12 level from `reference_levels` instead of fixed extension | 6 |
+
+### 10.8 Post-Break Magnet Strategies (Phase 2 §9.8)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 35 | **Mid-Magnet Fast Exit** | If `ib_mid_revisit_post_break_minutes` < 15 (magnet regime) → exit early at mid | — | — | 2+6 |
+| 36 | **Trend-Day Hold** | If `ib_mid_revisited_post_break` = False (no magnet) → hold to 1.5x+ | — | — | 2+6 |
+
+### 10.9 News / OPEX Filter Strategies (Phase 2.5)
+
+| # | Strategy | Rule | Phase |
+|---|---|---|---|
+| 37 | **News-Distortion Skip** | Skip trade if `ib_news_distorted` = True | 2.5 |
+| 38 | **News-Break Skip** | Skip if `ib_news_break` = True | 2.5 |
+| 39 | **Post-News Entry** | Wait N minutes after news (`minutes_since_news`) before entering | 2.5 |
+| 40 | **OPEX Friday Range Fade** | On `is_opex_friday`, prefer Play 3 (fade) over breakout | 2.5 |
+| 41 | **Quarterly OPEX Skip** | Skip on `is_quarterly_opex` (triple witching) | 2.5 |
+| 42 | **Calendar Hard Skip** | Skip FOMC/NFP/CPI/ISM days (from `is_fomc_day` etc.) | 2.5 |
+
+### 10.10 Trend / Confluence Filter Strategies (Phase 2.6 + Phase 4)
+
+| # | Strategy | Filter | Phase |
+|---|---|---|---|
+| 43 | **AVWAP(09:30) Confluence** | Only take breaks where `break_vs_avwap_0930` = +1 | 2.6+4 |
+| 44 | **Multi-TF AVWAP Stack** | `avwap_confluence_score` ≥ 2 required | 2.6+4 |
+| 45 | **EMA20>EMA50 Trend Filter** | Only take breakouts in EMA trend direction | 2.6+4 |
+| 46 | **HH/HL Structure Filter** | Only long if `higher_highs_ib`, only short if `lower_lows_ib` | 2.6+4 |
+| 47 | **Validated Filter Stack** | Use the optimal stack from `ib_filter_stacks.parquet` (Phase 4c) | 4 |
+| 48 | **Conviction Score v2** | Trade only when `conviction_score_v2` ≥ threshold (empirically tuned) | 4 |
+
+### 10.11 Overnight / Cross-Session Strategies (existing data + Phase 2)
+
+| # | Strategy | Filter | Phase |
+|---|---|---|---|
+| 49 | **IB-vs-Overnight Dominance** | `ib_vs_overnight_ratio` >1 → trade breaks aggressively; <1 → fade | 2+6 |
+| 50 | **Profiler Trending Overnight** | `profiler_overnight_regime` = trending → favor breakouts | existing |
+| 51 | **Herman Asia Size** | `herman_asia_type` = Small → favor trend; Large → caution | existing |
+| 52 | **Herman PL Sweep** | `herman_pl_sweep` = True → reversal/continuation signal | existing |
+| 53 | **9AM Candle Color** | `sb_nine_am_candle_green` aligned with bias → +1 confluence | existing |
+| 54 | **Midpoint Bias** | `ib_close > ib_mid` → 82.3% high break edge | existing |
+
+### 10.12 Quarterly Theory Strategies (existing data)
+
+| # | Strategy | Filter | Phase |
+|---|---|---|---|
+| 55 | **10:00 Reversion Hour** | `qtr_10_hour_mode` = Reversion → fade breakouts in 10:00 hour | existing |
+| 56 | **09:00 Expansion Hour** | `qtr_09_hour_mode` = Expansion → favor breakouts in 09:00 hour | existing |
+
+### 10.13 SDEV Reversion Strategies (Phase 2.7)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 57 | **0.5 SD Reversion** | Fade at `sdev_05_price` touch | 1.0 SD | Open anchor | 2 |
+| 58 | **1.0 SD Reversion** | Fade at `sdev_10_price` (84% edge) | 1.5 SD | Open anchor | 2 |
+| 59 | **1.5 SD Reversion** | Fade at `sdev_15_price` (93% edge) | 2.0 SD | Open anchor | 2 |
+
+### 10.14 External Research Additions (2026-07-25)
+
+Concepts from external research (TrevorTrades stats, ACD/Fisher, VCP, order-flow labs, volatility-box, breadth literature) that were NOT in the prior catalog.
+
+#### 10.14.1 Opening Range / ACD Framework (Mark Fisher)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 60 | **ACD Pivot Trade** | Mark Fisher ACD: A-up (OR high + 0.1×OR) holds → long; A-down holds → short | A-down / A-up level | C level (3× OR distance) | 2+6 |
+| 61 | **ACD Failure (Key Reversal)** | Price breaks A-up then closes back below OR high → short (failed A-up) | A-up + buffer | OR low | 2+6 |
+| 62 | **Pivot Range Break** | Fisher daily pivot range (prior H/L range) — break above pivot range = trend day | Opposite pivot | Next pivot | 2+6 |
+
+**New derived fields:** `ib_or_acd_a_up` (OR5 high + 0.1×OR5 range), `ib_or_acd_a_down`, `ib_or_acd_c_level` (3×OR5 from open), `ib_or_acd_a_held` (bool — did price hold above A-up for ≥5 min).
+
+#### 10.14.2 Volatility Contraction Pattern (Minervini VCP) applied to IB
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 63 | **VCP IB Contraction** | 3-day sequence of shrinking IB ranges (IB₁ > IB₂ > IB₃) → enter break of IB₃ | IB₃ opposite | Avg(IB₁,IB₂) range extension | 2+6 |
+| 64 | **VCP Volume Dry-Up** | VCP contraction + IB volume < 60% of 20-day avg IB volume → high-prob break | IB opposite | 1.5× IB₃ range | 2+6 |
+
+**New derived fields:** `ib_vcp_3day_contracting` (bool — IB₁>IB₂>IB₃), `ib_vcp_volume_ratio` (today's IB volume / 20d avg IB volume), `ib_vcp_setup` (contraction AND volume dry-up).
+
+#### 10.14.3 Single Prints / Fast-Move TPO Strategy (Market Profile)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 65 | **Single-Print Reclaim** | If a single-print TPO column exists in upper IB (fast up-move) and price reclaims it after pullback → long (single prints = support, un-revisited) | Below single print | Next VAH / 1.0x | 2 |
+| 66 | **Single-Print Fade** | If price re-enters a single-print zone from above (failed trend) → fade (single prints = excess, not value) | Single print + buffer | IB mid | 2 |
+
+**New derived fields:** `ib_has_upper_single_print` (bool — TPO column with single count in upper IB), `ib_has_lower_single_print`, `ib_single_print_high`, `ib_single_print_low`.
+
+#### 10.14.4 Order Flow / Delta Divergence (if tick/volume data available)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 67 | **CVD Bullish Divergence at IB Low** | Price makes IB low but cumulative delta makes higher low → bullish absorption → long | IB low − 0.25x | IB high | 6 (Tier 3) |
+| 68 | **CVD Bearish Divergence at IB High** | Price makes IB high but CVD makes lower high → bearish exhaustion → short | IB high + 0.25x | IB low | 6 (Tier 3) |
+| 69 | **Delta-Confirmed Break** | IB high break + positive delta spike (aggressive buyers) → take breakout | Opposite boundary | 1.0x | 6 (Tier 3) |
+| 70 | **Delta-Fade Break (Absorption)** | IB high break but delta flat/negative (absorbed) → fade the break | IB high + 0.25x | IB mid | 6 (Tier 3) |
+
+**Status:** Tier 3 — needs bid/ask volume or tick data (currently not in 1m parquet). Defer to Phase 6+ pending data pipeline. Proxy available: intrabar volume distribution if 1m data has up/down volume split (check `data/{SYM}_1m.parquet` columns during Phase 2 implementation).
+
+#### 10.14.5 Relative Volume (RVOL) Filters
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 71 | **High-RVOL IB Break Filter** | Only take IB breakouts when IB RVOL ≥ 1.5 (high participation confirms break) | Opposite boundary | 1.0x | 2 |
+| 72 | **Low-RVOL Fade Filter** | If IB RVOL < 0.7 (low participation), prefer fade/Play 3 (breakouts likely fail) | — | — | 2 |
+| 73 | **RVOL-Scaled Position Sizing** | Position size = f(IB RVOL): RVOL<0.7 → 0.5×, 0.7–1.5 → 1.0×, >1.5 → 1.5× | — | — | 2+6 |
+
+**New derived fields:** `ib_rvol` (IB volume / 20d avg IB volume — same as VCP volume ratio, reused), `ib_rvol_bucket` ("low"/"normal"/"high").
+
+#### 10.14.6 Market Breadth Divergence (index futures only)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 74 | **Breadth-Confirmed Break** | IB high break + breadth (adv/dec ratio) expanding >1.2 → take break (broad participation) | Opposite boundary | 1.0x | 6 (Tier 3) |
+| 75 | **Breadth Divergence Fade** | IB high break but breadth <0.8 (narrow rally) → fade the break (index driven by few stocks) | IB high + 0.25x | IB mid | 6 (Tier 3) |
+
+**Status:** Tier 3 — needs intraday advance/decline data (NYSE/TICK). Available via Schwab/TOS RTD feed per `OPTIONS_INVENTORY.md`. Defer to Phase 6+ pending feed integration. Proxy: TICK readings at IB break time (already potentially capturable).
+
+**New derived fields (Tier 3):** `breadth_ad_ratio_at_break`, `breadth_divergence` (bool — price break direction ≠ breadth direction).
+
+#### 10.14.7 VIX Term Structure Regime Filter
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 76 | **Contango Breakout Bias** | VIX contango (front < back) → favor IB breakouts (calm regime, trend days) | Opposite boundary | 1.0x | 2+4 |
+| 77 | **Backwardation Fade Bias** | VIX backwardation (front > back) → favor IB fades (stress regime, mean reversion) | — | — | 2+4 |
+| 78 | **VIX Regime Position Scalar** | Position size scaled by VIX regime: low-vol → 1.0×, high-vol → 0.5× | — | — | 2+6 |
+
+**New derived fields:** `vix_term_structure` ("contango"/"flat"/"backwardation" — from VIX futures, requires daily VIX futures data or proxy via VIX9D vs VIX), `vix_regime_intraday` ("low"/"mid"/"high" — already in `daily_context.vix_regime`, promoted to intraday filter). Tier 1 if VIX futures data already loaded; Tier 3 otherwise.
+
+#### 10.14.8 IB Probability Stats (TrevorTrades findings — empirically validated baselines)
+
+These aren't new strategies but **empirical priors** from a 10-year ES study (n=2,577) that should calibrate the regime classifier (§9.9) and Phase 4 baselines:
+
+| Stat | Value | Use |
+|---|---|---|
+| High breakout (any time) | 67.1% | Baseline for breakout strategies |
+| Low breakout (any time) | 72.4% | Baseline (slightly bearish skew) |
+| Both breached | 40.1% | Warning: 40% of days break both — manage risk |
+| Contained in IB | 0.6% | IB containment is essentially zero — always plan for a break |
+| IB close above mid → high breakout | 83.5% | **Validates `sb_ib_midpoint_bias` strategy #54** |
+| IB close below mid → low breakout | 94.9% | Strong bearish-confirmation edge |
+| 25% extension hit | 85.3% | Most extensions reach 0.25x — set partials early |
+| 50% extension hit | 69.5% | |
+| 100% extension hit | 44.5% | Less than half reach full extension — don't hold all for 1.0x |
+| Breakouts in first 30 min | 84.1% | **Time decay is steep — entries after 30min are late** |
+| Breakouts in first 60 min | 91.8% | After 10:30, only 8% of breaks remain |
+| Avg first breakout | 18 min | Median 2 min — early breaks dominate |
+
+**Action:** Store these as `ib_empirical_baselines.json` in Phase 4 as the "no-filter" reference distribution. Every filter's lift is measured against THESE baselines, not against a naive 50%.
+
+**New derived fields (categorical, from TrevorTrades):**
+
+| Field | Computation | Use |
+|---|---|---|
+| `ib_range_size_class` 🆕 | "small" (<12pt ES-equiv) / "average" / "large" (>25pt) — per TrevorTrades thresholds | Position sizing: small=1.5×, large=0.75× conviction |
+| `ib_break_urgency` 🆕 | "high" (break <30min) / "medium" (30–60) / "low" (>60) | High-urgency breaks = 84% of all breaks |
+| `ib_extension_expectation` 🆕 | "likely_25" / "likely_50" / "unlikely_100" — categorical from extension probabilities | Sets default partial-profit ladder |
+
+#### 10.14.9 IB High/Low Symmetry & Wicks
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 79 | **Wick-Dominant Extreme Fade** | If IB high is a single-bar wick (close far below high) and IB low is a body close → fade the high (it's not "accepted") | IB high + 0.1x | IB mid | 2 |
+| 80 | **Body-Close Extreme Break** | If IB high close is near the high (body close, small upper wick) → high is "accepted" → favor breakouts | Opposite boundary | 1.0x | 2 |
+
+**New derived fields:** `ib_high_wick_pct` ((ib_high − max(close at high bar)) / ib_range × 100), `ib_low_wick_pct`, `ib_high_body_close` (bool — close within 10% of high), `ib_low_body_close`.
+
+#### 10.14.10 Gap-and-Crumb (Liquidity Sweep at IB)
+
+| # | Strategy | Entry | Stop | Target | Phase |
+|---|---|---|---|---|---|
+| 81 | **IB High Sweep + Reclaim** | Price pokes above IB high then closes back inside → short (liquidity sweep / stop run) | IB high + 0.1x | IB mid | 2+6 |
+| 82 | **IB Low Sweep + Reclaim** | Symmetric long | IB low − 0.1x | IB mid | 2+6 |
+| 83 | **Sweep + MSS Confirmation** | IB sweep + market structure shift (close back through prior 1m high) → enter reversal | Sweep extreme | Opposite IB boundary | 2+6 |
+
+**New derived fields:** `ib_high_swept` (bool — high exceeded intrabar but close back inside), `ib_low_swept`, `ib_sweep_reclaim_dir` (+1 low sweep bullish, −1 high sweep bearish, 0 none). This extends existing `false_break_high`/`false_break_low` with intrabar sweep detail.
+
+**Updated grand total: 83 testable strategies** (3 existing core + 80 new across Phases 2–6, including 14 Tier-3 strategies pending tick/breadth/VIX-futures data). Each is a hypothesis testable against `ib_master_confluence_{SYM}.parquet` via Phase 4's validation harness. The 14 Tier-3 strategies are stubbed in the catalog and gated behind Phase 6+ data pipeline work.
+
+### 10.15 Entry Techniques (building blocks)
+
+Each strategy in §10.1–10.14 is built from one or more of these entry *techniques*. Enumerated separately so no entry mechanic is forgotten when assembling new strategies or testing variants.
+
+| # | Technique | Mechanic | Used by | Phase |
+|---|---|---|---|---|
+| E1 | **Break-close entry** | Enter on first 1m close outside IB boundary | 1, 4, 5, 14, 16, 60 | existing |
+| E2 | **Break-tick entry** | Enter on first tick beyond IB boundary (aggressive) | variant of 1 | existing |
+| E3 | **Retest entry** | Enter on first pullback to IB high/low from outside | 2, 6 | existing |
+| E4 | **Mid retest entry** | Enter on first pullback to IB mid after a break | variant of 2 | existing |
+| E5 | **Scale-in ladder** | 3 entries at break / +0.25x / +0.5x (40/30/30) | 22 | 6 |
+| E6 | **Time-qualified size** | Size by break bucket: full 10:30–10:45, half 10:45–11:30, skip 11:30–13:00, half 13:00–14:30, skip late | 23 | 6 |
+| E7 | **Two-timeframe trigger** | 5m close confirms break → 1m pullback to 5m mid → enter on next 1m close above 5m bar high | 24 | 6 |
+| E8 | **Failed-breakout reversal** | Price breaks high then closes back inside IB → enter opposite | 25, 61, 81 | 6 |
+| E9 | **Opening-drive continuation** | Enter continuation of first 15-min direction | 26 | 6 |
+| E10 | **Pre-IB telegraph** | Enter in direction of 9:25–9:30 close vs 9:25 open | 27 | 2+6 |
+| E11 | **80%-rule mid-touch** | Enter long on mid touch (after high break) only if >80% IB time was above mid | 7, 8 | 2+6 |
+| E12 | **ACD A-up/A-down hold** | Enter when price holds beyond A level for ≥5 min | 60 | 2+6 |
+| E13 | **VCP contraction break** | Enter break of smallest of 3 contracting IBs | 63, 64 | 2+6 |
+| E14 | **Single-print reclaim** | Enter on reclaim of a single-print TPO column | 65 | 2 |
+| E15 | **Sweep + reclaim** | Enter after IB extreme swept then close back inside | 81, 82, 83 | 2+6 |
+| E16 | **Sweep + MSS** | Sweep + market structure shift confirmation | 83 | 2+6 |
+| E17 | **Body-close break** | Only enter break when extreme was a body-close (accepted), not a wick | 80 | 2 |
+| E18 | **Wick-dominant fade** | Fade wick-dominant extreme (unaccepted) | 79 | 2 |
+| E19 | **CVD divergence entry** | Enter reversal on price/CVD divergence at IB extreme | 67, 68 | 6 (Tier 3) |
+| E20 | **Delta-confirmed break** | Take break only with positive delta spike | 69 | 6 (Tier 3) |
+| E21 | **Post-news entry** | Wait N min after 10:00/10:30 release then enter | 39 | 2.5 |
+
+**21 entry techniques total** (8 existing, 13 new). Each can be swapped into any strategy in §10 as a parameter, enabling combinatorial strategy-space testing in Phase 4/6.
+
+### 10.16 Stop-Loss Techniques (building blocks)
+
+| # | Technique | Mechanic | Used by | Phase |
+|---|---|---|---|---|
+| S1 | **Opposite IB boundary** | Stop at opposite IB high/low (current default, 1.0× range) | 1, 2, 3 | existing |
+| S2 | **MAE-calibrated (P95 winners)** | Stop at P95 of winning-trade MAE from `ib_play_detail` | 18, 28 | 5.1 |
+| S3 | **MAE-calibrated (P99 winners)** | Wider P99 variant for higher win rate | variant | 5.1 |
+| S4 | **AVWAP stop** | Stop at `ib_vwap` (or AVWAP(09:30)) instead of IB boundary | 10, 33 | 2+6 |
+| S5 | **3-day composite stop** | Stop at 3-day composite high/low | 14, 16 | 2+6 |
+| S6 | **VCP range stop** | Stop at avg(IB₁,IB₂) opposite | 63, 64 | 2+6 |
+| S7 | **Single-print stop** | Stop below/above the single-print zone | 65, 66 | 2 |
+| S8 | **Sweep-extreme stop** | Stop just beyond the sweep extreme + buffer | 81, 82, 83 | 2+6 |
+| S9 | **OR5 stop** | Stop at OR5 opposite (for opening-drive entries) | 26 | 2+6 |
+| S10 | **ACD stop** | Stop at A-down (long) / A-up (short) level | 60 | 2+6 |
+| S11 | **VWAP-2σ band stop** | Stop at AVWAP ±2σ band | — | 2.6 |
+| S12 | **SDEV stop** | Stop at 1.0/1.5/2.0 SD level for SDEV-reversion strategies | 57, 58, 59 | 2 |
+| S13 | **ATR-based stop** | Stop at N×ATR from entry (regime-scaled) | — | 2 |
+| S14 | **Time-based invalidation** | If trade not profitable by T minutes → exit (not a stop per se but a risk control) | 30 | 5.2 |
+| S15 | **Trailing by IB fractions** | +0.25x→BE, +0.5x→+0.25x, +0.75x→+0.5x, +1.0x→+0.5x trail, >1.0x→0.5x trail | 29 | 6 |
+| S16 | **Break-even after +0.25x** | Move stop to BE once +0.25× IB reached | variant of S15 | 6 |
+| S17 | **Liquidity-stop (below prior-day low / above PDH)** | Stop beyond the relevant liquidity level | — | 6 |
+
+**17 stop techniques total** (1 existing default, 16 new). Stop selection is a per-strategy parameter testable in Phase 4 (each stop × each entry × each strategy = full combinatorial sweep).
+
+### 10.17 Take-Profit Techniques (building blocks)
+
+| # | Technique | Mechanic | Used by | Phase |
+|---|---|---|---|---|
+| T1 | **Fixed extension 0.5x / 1.0x / 1.5x** | Exit at IB range × multiplier | 1, 2, 3 | existing |
+| T2 | **Opposite IB boundary** | Target opposite IB high/low (full range) | variants of 1 | existing |
+| T3 | **IB mid** | Target mid (for fade/reversion plays) | 3, 6, 13, 25, 79 | existing |
+| T4 | **Partial profit ladder** | 40% at 0.5x / 30% at 1.0x / 20% at 1.5x / 10% trailing | 22, 32 | 5.3 |
+| T5 | **VWAP-cross exit** | Exit if price re-crosses `ib_vwap` after break (failed break) | 33 | 6 |
+| T6 | **Liquidity target (next PDH/PDL/P12)** | Target next liquidity level from `reference_levels` | 34 | 6 |
+| T7 | **3-day composite target** | Target opposite 3-day composite boundary | 14, 16 | 2+6 |
+| T8 | **VCP expansion target** | Target avg(IB₁,IB₂) extension | 63, 64 | 2+6 |
+| T9 | **ACD C level** | Target at 3×OR distance from open (Fisher) | 60 | 2+6 |
+| T10 | **Single-print reclaim target** | Target next VAH / 1.0x after single-print reclaim | 65 | 2 |
+| T11 | **Sweep opposite boundary** | Target opposite IB boundary for sweep-reversal | 81, 82, 83 | 2+6 |
+| T12 | **SDEV open anchor** | Target session open (0 SD) for SDEV fades | 57, 58, 59 | 2 |
+| T13 | **Trailing stop only** | No fixed target; trail until trailing stop hit | trend-day holds (36) | 6 |
+| T14 | **Time-decay ladder exit** | Exit 50% at 60–90 min, rest 90–120 min, all by 13:00 | 30 | 5.2 |
+| T15 | **Session-boundary exit** | Reduce at 11:30, re-eval 13:30, exit all 15:50 (ADR-020) | 31 | 6 |
+| T16 | **Extension-probability target** | Use `ib_extension_expectation` to set ladder: likely_25 → TP at 0.25x, unlikely_100 → don't hold for 1.0x | 32 variant | 2 |
+| T17 | **MAE-scaled target** | Target = 2× the MAE-calibrated stop distance (2:1 R minimum) | — | 5.1 |
+| T18 | **Next-volume-node target** | Target `ib_vol_poc_price` on opposite side (next high-volume node) | variant of 11 | 2 |
+| T19 | **Round-number / strike target** | Target nearest 00/50 handle or large OI strike (OPEX weeks) | — | 6 |
+| T20 | **Runner after partial** | 10% position trailing after 90% taken at fixed targets | 22, 32 | 5.3 |
+
+**20 take-profit techniques total** (3 existing, 17 new). Like stops, TP selection is a per-strategy parameter.
+
+### 10.18 Combinatorial Strategy Space
+
+The full strategy space is the cross-product of entry × stop × TP techniques:
+
+$$\text{strategies} = \sum_{E \in \text{Entries}} \sum_{S \in \text{Stops}} \sum_{T \in \text{TPs}} \mathbb{1}[\text{compatible}(E,S,T)]$$
+
+With 21 entries × 17 stops × 20 TPs = **7,140 theoretical combinations**. Most are incompatible (e.g., a fade entry + a full-extension target). Phase 4's validation harness tests the *compatible subset* per play per regime, not the full grid. This is why the techniques are enumerated separately: the catalog in §10.1–10.14 lists **validated configurations**, while §10.15–10.17 list the **building blocks** for future exploration.
+
+---
+
+## 11. Conviction Score — Final Design
+
+### 11.1 Why the Old Score Was Wrong for Filter Testing
+
+The original `conviction_score` (§7.3) is a **fixed-weighted composite** with hand-tuned integer bonuses/penalties. This breaks the filter-testing goal in three ways:
+
+1. **Non-decomposable** — once summed, you can't tell which filter drove the score.
+2. **Weights asserted, not validated** — a +2 bonus may have zero or negative edge.
+3. **Bypasses Phase 4** — Phase 4 validates filters individually and in combos, but the composite pre-bakes a fixed weighting that ignores empirical results.
+
+### 11.2 New Architecture
+
+| Layer | What it stores | Who computes |
+|---|---|---|
+| **Phase 3 (master confluence)** | Raw filter flags only (`profiler_overnight_regime`, `break_vs_avwap_0930`, `ib_news_distorted`, etc.) — NO composite | Phase 3 join |
+| **Phase 4a (single-filter)** | Per-filter lift, WR, expectancy, N, significance | `ib_filter_effectiveness.parquet` |
+| **Phase 4b (independence)** | Pairwise correlations, redundancy drops | `ib_filter_correlation.parquet` |
+| **Phase 4c (stacks)** | Optimal filter combos per play via greedy forward selection | `ib_filter_stacks.parquet` |
+| **Phase 4d (weights)** | Validated weight per filter (lift-weighted or logistic coef) | `ib_conviction_weights.parquet` |
+| **Phase 4 → Phase 3 (join back)** | `conviction_score_v2` (0–1, empirical) + `conviction_filters_active` (which fired) written to master confluence | Phase 4 |
+
+### 11.3 How to Test Filters / Combos with This Design
+
+| Question | How to answer |
+|---|---|
+| Does filter F improve WR for play P? | Slice `ib_master_confluence` by F=True/False, compare play P WR — or read `ib_filter_effectiveness.parquet` |
+| Are filters F1 and F2 redundant? | Read `ib_filter_correlation.parquet` (rho > 0.85 = redundant) |
+| What's the best filter combo for play P? | Read `ib_filter_stacks.parquet` (greedy-selected, N-shrinkage-bounded) |
+| What's today's conviction? | Read `conviction_score_v2` (sum of active filters × validated weights) |
+| Does the old hand-tuned score beat the empirical one? | Compare `conviction_score_naive` vs `conviction_score_v2` as predictors of play outcomes (Phase 4 sanity check) |
+
+### 11.4 Key Constraint
+
+**Never collapse filters before Phase 4 validates them.** The master confluence table must keep every filter as its own column so the validation harness can test any subset, combination, or interaction. The conviction score is the *output* of validation, not the *input*.
+
+---
+
+## 12. Revised Execution Order (with §10/§11)
+
+```
+Phase 1 (ib_aggregates.py)           — aggregate stats from existing tables
+    ↓
+Phase 2 (ib_derived_fields.py)       — + §9.2 volume-weighted, §9.5 OR5, §9.6 80%-rule,
+    ↓                                  §9.8 pre-telegraph, mid-magnet fields
+Phase 2.5 (ib_news_opex.py)          — news timing + OPEX phases
+    ↓
+Phase 2.6 (ib_avwap_trend.py)        — anchored VWAP + trend confirmations
+    ↓
+Phase 3 (ib_master_confluence.py)    — join ALL fields; store raw filter flags only
+    ↓                                  (no composite conviction score here)
+Phase 4 (ib_validate_confluences.py)— 4a single-filter, 4b independence,
+    ↓                                  4c stacks, 4d empirical weights → conviction_score_v2
+Phase 5 (ib_mae_stops / time_decay / — exit mechanics (calibrated stops, ladders)
+         ladder_optimizer / break_speed)
+    ↓
+Phase 6 (ib_regime_classifier +      — regime router + entry/exit modules + pre-break
+         ib_entry_modules + ib_exit_modules + ib_pre_break)
+    ↓
+Validation: run all §10 strategies through PropFirmSimulator (ADR-021)
+```
