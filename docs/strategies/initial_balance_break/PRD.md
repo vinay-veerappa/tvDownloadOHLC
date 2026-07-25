@@ -333,15 +333,244 @@ After all phases, the system must answer:
 
 ---
 
-## 10. Open Questions
+## 10. Prop Trader Gap Analysis (2026-07-25 Review)
+
+After generating the full 6-instrument `STRATEGY_STATISTICS.md` and inventorying the
+trading framework's evaluation capabilities (`PropFirmSimulator`, `BacktestLoop`,
+`RiskProfiler`, `tearsheet.py`), a prop-firm trader identified the following gaps.
+These are grouped by theme and prioritized. Each gap references the framework
+component that already exists but is **not yet wired to the IB pipeline**.
+
+### 10.1 Dollar P&L, Account Sizing & Drawdown (CRITICAL)
+
+The current report is entirely in **R-multiples**. A prop trader thinks in **dollars
+and drawdown**. The `PropFirmSimulator` (ADR-021) computes all of this, but the IB
+pipeline does not feed into it.
+
+| Gap | Question | Framework asset that exists | IB pipeline status |
+| :--- | :--- | :--- | :--- |
+| **Dollar expectancy** | What is the dollar P&L per trade at 1 Micro on a $50K Apex account? | `PropFirmSimulator.run_deterministic` | ❌ Not wired |
+| **Max losing streak** | What is the max consecutive losing streak per regime per play? | `RiskProfiler.print_report` | ❌ Not wired |
+| **Risk of ruin** | What is RoR at each play's WR and R:R on a $50K account risking 1%? | `RiskProfiler` (`((1-edge)/(1+edge))^bankroll`) | ❌ Not wired |
+| **Monte Carlo pass rate** | In 5,000 permutation simulations, what % pass Apex/TopStep/FTMO eval? | `PropFirmSimulator.run_monte_carlo` | ❌ Not wired |
+| **Drawdown in dollars** | What is the 95th-percentile max drawdown in USD? | `MonteCarloSimulator` (`MDD_95%`) | ❌ Not wired |
+| **Days to pass** | How many calendar days to reach the $3K/$6K profit target? | `MonteCarloResult.avg_days_to_pass` | ❌ Not wired |
+| **Grade** | Does this strategy get an A (≥80% pass) or F (<30%)? | `MonteCarloResult.grade` | ❌ Not wired |
+
+**Priority action:** Wire the IB param grid into `BacktestLoop` (see §10.7).
+
+### 10.2 MAE Stop R:R Problem (BUG)
+
+The Phase 5.1 `ib_mae_stops.py` computes `optimal_stop_r = p95_mae / median_mae`.
+This is **wrong** — it normalizes the stop distance by the median MAE, not by the
+target distance. The result: stops appear as 5R-20R from the target, which is
+nonsensical for a 0.25x target trade.
+
+**Current (broken):** `optimal_stop_r = p95_mae_winners / median_mae`
+**Should be:** `optimal_stop_r = p95_mae_winners / target_r_value` (where
+`target_r_value` is the R-multiple of the target level, e.g., 0.25, 0.5, 1.0).
+
+A 5R stop on a 0.25x target means R:R is 1:20 — you'd need 95%+ WR to break even.
+The report shows 73% WR at 0.25x target with a 4.96R stop → **negative edge**.
+This must be fixed before any prop-firm evaluation.
+
+### 10.3 Trade Frequency & Selectivity
+
+| Gap | Question |
+| :--- | :--- |
+| **Per-day trade count** | N=166,016 for NQ1 Play 1 across 20 years × 6 sessions = ~8,000/year. But a prop trader takes 1-2 trades/day. How many are same-day duplicates? |
+| **Skip-day profitability** | The "skip" regime still shows positive expectancy (NQ1: 0.08R). Either the skip filter is too aggressive or the regime label uses look-ahead. Is `ib_range_pct_of_daily` the realized value? |
+| **Tradeable days/year** | After regime filtering, how many actual tradeable days remain? If <100, statistical significance per regime is questionable. |
+| **Minimum N for viability** | What is the minimum trade count for a prop-viable strategy? 30? 50? 100? |
+
+### 10.4 Entry Timing & Execution Realism
+
+| Gap | Question |
+| :--- | :--- |
+| **Entry time distribution** | How many entries happen in the first 30 min (clean) vs after 13:00 (chop)? The time-decay curve (Phase 5.2) exists but isn't in the report. |
+| **Stop mismatch** | `IBPullbackStrategy` uses `stop_loss_type=ib_opposite` (full IB range). But Phase 5.1 recommends P95 MAE (which could be wider). Which stop does the backtest actually use? |
+| **Commissions & slippage** | `VALIDATION_RESULTS.md` shows +28% return on CL1 Tokyo. But no commissions ($2.25/round-turn per Micro) or slippage. On 800 trades, $3,600 in commissions could wipe out the edge. |
+| **Session-boundary enforcement** | ADR-020 says exit by 16:00 ET. Does the `VectorizedBacktester` enforce this? Is there a 15:50 hard-exit flag? |
+
+### 10.5 Regime Router Validity
+
+| Gap | Question |
+| :--- | :--- |
+| **Look-ahead bias** | `ib_range_pct_of_daily` is only known post-close. The regime classifier uses the realized value. Are the trend/range/skip WR differences real or illusory? |
+| **CL1 range regime** | CL1 "range" regime has Play 1 WR 41% / PF 1.14 (profitable). NQ1 "range" has WR 36% / PF 0.81 (losing). Why does range work for CL1 but not NQ1? |
+| **News-day granularity** | "Skip" triggers on FOMC/NFP/CPI/ISM. But skip days are profitable. Are we leaving money on the table? What is WR on FOMC days specifically? |
+| **Pre-trade regime estimate** | The PRD says "use trailing 60d distribution for pre-trade estimate." Is this implemented? If not, the regime router is post-hoc. |
+
+### 10.6 Filter Effectiveness Concerns
+
+| Gap | Question |
+| :--- | :--- |
+| **`break_vs_avwap_0930` artifact** | Top filter shows +55% lift but N=19,976 (12% of rows). Flag-off WR is 0.003. Is this a session-coverage artifact (flag only computed for NY AM IB)? |
+| **Filter stack overfitting** | Phase 4c stacks have N=56-241 with 5 filters ANDed. Severe overfitting risk. What is the out-of-sample lift? (Report says "all in-sample.") |
+| **Min-N guard** | `ib_news_distorted` shows +19% lift but N=15. PRD says min-N=20. This violated the guard. |
+| **Walk-forward validation** | `ib_breakout_filter.py` has walk-forward calibration. Is it applied to all filter stacks or just the breakout filter? |
+
+### 10.7 PropFirmSimulator Integration (THE critical gap)
+
+The `BacktestLoop` harness in `scripts/knowledge_bridge/backtest_loop.py` is the
+bridge. It already:
+1. Resolves a strategy via the registry → `IBPullbackStrategy`
+2. Runs `VectorizedBacktester` → gets `trades_detailed` (with `pnl_pct` + `exit_time`)
+3. Iterates `FIRM_PROFILES` (Apex/TopStep/FTMO) running det + MC each
+4. Auto-marks `VALIDATED/REJECTED` per `pass_threshold_pct`
+5. Exports JSON via `export_backtest_results`
+
+**What's needed:** Build 83 `StrategyCandidate` objects (one per param combo from
+`IBPullbackStrategy.get_param_grid()`), set `strategy_key="ib_pullback"`, then
+call `run_batch()`. This is ADR-021 compliant and produces the dollar-P&L, MC pass
+rate, and grade that a prop trader needs.
+
+### 10.8 Framework Enhancement Needs
+
+| Gap | Framework asset | IB pipeline status |
+| :--- | :--- | :--- |
+| **Sharpe/Sortino/Calmar** | `tearsheet.py:compute_performance_metrics` | ❌ Not in IB report |
+| **MDD_95% / MaxStreak_95%** | `monte_carlo.py:MonteCarloSimulator` | ❌ Not in IB report |
+| **Daily trade cap per session** | `PropFirmSimulator` (max_trades_per_day) | ⚠️ Set to 999 (disabled) |
+| **Consistency rule** | `PropFirmSimulator` (FTMO 30% rule) | ⚠️ Enabled for FTMO only |
+| **Commission/slippage model** | Not in `VectorizedBacktester` | ❌ Missing entirely |
+
+---
+
+## 11. Empirical Target Framework (Gunship-Inspired)
+
+### 11.1 Problem with Fixed-Multiple Targets
+
+The current IB framework uses **fixed multiples** of the IB range as targets:
+`0.25x, 0.5x, 0.75x, 1.0x`. This is rigid — it doesn't adapt to volatility regime,
+session, or instrument personality. A 1.0x target on a quiet Globex day is very
+different from 1.0x on a volatile NQ AM session.
+
+The Gunship indicator (`DailyNYLevelsAnalytics.pine`, harmonized via
+`gunship_consistency.md`) takes a fundamentally different approach: **empirical
+percentiles of historical MFE/MAE distributions**, split by bull/bear side and
+filtered by outcome (wins vs fakes).
+
+### 11.2 Gunship Percentile Target Model
+
+| Level | Gunship variable | Percentile | Anchor | Filter | "What it answers" |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Cashflow (minimum target) | `p20_bo` → `y_cash` | P20 BO MFE | Breakout px | Wins | "Where will price at least reach?" |
+| Median target | `p50_bo` | P50 BO MFE | Breakout px | Wins | "Where will price typically go?" |
+| Confirm target | `p75_fake` → `y_conf` | P75 fakeout MFE | Breakout px | Fakes | "How far can a fake stretch?" |
+| Pivot (fakeout reversal) | `p50_fake` → `pivot_px` | P50 fakeout MFE | Breakout px | Fakes | "Where do fakes typically reverse?" |
+| Pullback entry | `p25_mae` → `pullback_px` | P25 MAE | Breakout px | Wins | "How much will it pull back before continuing?" |
+| Invalidation (stop) | `p80_mae_wins` → `invalid_px` | P80 MAE | Breakout px | Wins | "How deep can a winner pull back before failing?" |
+| Reversal zone | `rev_p25`, `rev_p50` | P25-P50 fake MAE | OR High/Low | Fakes | "Where will a fakeout reverse to?" |
+| EV target (fixed) | `target_px` | `i_ev_target_pct` (0.30%) | Breakout px | — | "Minimum acceptable EV target" |
+
+**Key difference:** Instead of asking "did price reach 1.0x IB range?", the
+Gunship asks "did price reach the P75 of where winning breakouts typically go?"
+This is **self-adapting** to each session's volatility.
+
+### 11.3 Extensibility to Any Custom Time Range
+
+The IB framework must be extensible beyond the 6 predefined IB sessions to **any
+custom time range** (e.g., 18:00 break, 09:30 OR, a custom 2-hour window). The
+infrastructure already exists:
+
+| Component | File | Role |
+| :--- | :--- | :--- |
+| Custom range resolver | `scripts/indicators-pine/lib-pine/RangeSessionLib.pine` → `f_resolve_preset` | Supports Custom branch: `custom_start`, `custom_end`, `custom_cutoff` → builds session strings |
+| Session helpers | `RangeSessionLib.pine` → `f_parse_hhmm`, `f_build_session_string`, `f_in_session_minutes` | Midnight-crossing aware, minute-of-day arithmetic |
+| IB session config | `IB_Stats_Extensions.pine` → `input.session()` strings (6 presets) | Already editable; add a new preset or use Custom |
+| MFE/MAE tracking | `StatsLib.pine` → `f_track_mfe`, `f_track_mae_abs`, `f_track_mae_pullback` | Anchor-agnostic — works off any breakout px |
+| Percentile fallback | `DailyNYLevelsAnalytics.pine` → `f_get_pct_fallback` | Cold-start defaults when history < min-N |
+
+### 11.4 FR-10: Empirical Target Engine (New Requirement)
+
+**Requirement:** Add a Phase 5.5 module that computes Gunship-style percentile
+targets for every `(symbol, session_slot, time_basis, play)` group, replacing
+the fixed-multiple targets with empirical, self-adapting levels.
+
+**Script:** `scripts/edgeful/ib_empirical_targets.py`
+
+**Outputs:** `data/derived/ib_empirical_targets.parquet`
+
+| Column | Description |
+| :--- | :--- |
+| `symbol, session_slot, time_basis, play` | Group keys |
+| `p20_bo_mfe, p50_bo_mfe, p75_bo_mfe` | "How far can it go" percentiles (wins only) |
+| `p50_fake_mfe, p75_fake_mfe` | Fakeout stretch percentiles (fakes only) |
+| `p25_mae_entry, p80_mae_invalidation` | "How much can it pull back" percentiles |
+| `p25_rev, p50_rev` | Reversal zone percentiles (fakes, anchored at OR boundary) |
+| `bull_p50_bo, bear_p50_bo` | Side-split median targets |
+| `n_wins, n_fakes, n_losses` | Sample counts per cell |
+| `ev_target_pct` | Fixed minimum EV target (instrument-specific: 0.30% NQ, 0.20% ES) |
+
+**Acceptance:**
+- All percentiles computed from per-group historical MFE/MAE distributions
+- Cold-start fallback: if group N < 30, fall back to session-level distribution; if session N < 50, fall back to symbol-level
+- Side-split (bull/bear) for all MFE levels — NQ bull breakouts have different volatility than bear breakouts
+- Must work for **any custom time range** — the group keys include `session_slot` which can be any custom range name (e.g., "Custom 1400-1600")
+
+### 11.5 FR-11: Custom Range Support (New Requirement)
+
+**Requirement:** The IB pipeline must accept a custom time range definition
+(start time, end time, cutoff/outcome window) and produce the full Phase 1-6
+derived data for that range, using the same percentile target engine.
+
+**Config:** `config/ib_custom_ranges.yaml`
+
+```yaml
+custom_ranges:
+  - name: "1400-1600 Range"
+    start: "1400"
+    end: "1600"
+    cutoff: "1800"      # outcome evaluation window end
+    timezone: "America/New_York"
+    days: "12345"        # Mon-Fri
+  - name: "Overnight Break 1800"
+    start: "1800"
+    end: "1815"
+    cutoff: "0300"
+    timezone: "America/New_York"
+    days: "12345"
+```
+
+**Implementation:**
+- `scripts/edgeful/ib_session_config.py` reads the YAML and produces `RangeSpec` objects
+- Each custom range gets its own `session_slot` label in all derived parquet files
+- The `ib_derived_fields.py` `_session_cfg()` function already accepts arbitrary `session_slot` strings — no change needed to the compute path
+- The regime classifier, entry/exit modules, and empirical target engine all group by `session_slot` — custom ranges flow through automatically
+
+**Acceptance:**
+- A user can define a custom range in YAML and run `ib_derived_fields --custom-ranges config/ib_custom_ranges.yaml`
+- All downstream phases (aggregates, confluence, validation, regime, entry, exit, empirical targets) produce outputs for the custom range
+- The `STRATEGY_STATISTICS.md` report includes the custom range in all breakdown tables
+
+### 11.6 Target Model Comparison
+
+| Dimension | Fixed-Multiple (current) | Empirical Percentile (Gunship-inspired) |
+| :--- | :--- | :--- |
+| Target basis | `ibH + mult * ibRange` | P20/P50/P75 of historical BO MFE |
+| Pullback | `ibH - 0.25 * ibRange` (fixed) | P25 MAE (empirical entry), P80 MAE (invalidation) |
+| Anchor | IB High/Low | Breakout px (self-adapting) |
+| Direction split | Symmetric | Bull/bear split (different volatility) |
+| Sample filter | All sessions | Wins for MFE, Fakes for pivot, Wins for MAE |
+| Reversal target | IB Mid | P25-P50 fake MAE, anchored at OR boundary |
+| Volatility adaptivity | ❌ Fixed | ✅ Self-adapting per session/symbol |
+| Custom range support | ✅ (via input.session) | ✅ (anchor-agnostic) |
+
+---
+
+## 12. Open Questions
 
 1. **VIX futures data availability** — is VIX9D vs VIX (or VIX front-month vs back-month) already loaded anywhere, or does `vix_term_structure` need a new feed? (Affects Tier 1 vs Tier 3 for strategies 76–78.)
 2. **Tick / bid-ask volume** — does `data/{SYM}_1m.parquet` have an up/down volume split, or is delta/CVD entirely Tier 3? (Affects strategies 67–70.)
 3. **NYSE breadth feed** — is the TOS RTD feed from `OPTIONS_INVENTORY.md` wired to capture intraday A/D ratio? (Affects strategies 74–75.)
+4. **Regime router look-ahead** — is `ib_range_pct_of_daily` in the regime classifier using the realized same-day value or a trailing 60-day estimate? (Affects validity of all regime stats.)
+5. **Commission model** — does `VectorizedBacktester` deduct $2.25/round-turn per Micro? If not, what is the impact on low-expectancy plays?
+6. **Stop mismatch** — does the `IBPullbackStrategy` backtest use `ib_opposite` stop or the Phase 5.1 P95 MAE stop? (Affects whether backtest results match report recommendations.)
 
 ---
 
-## 11. References
+## 13. References
 
 - Source plan: [`docs/plans/2026-07-24-ib-data-gathering-plan.md`](../../plans/2026-07-24-ib-data-gathering-plan.md)
 - Prior pipeline spec: [`IB_STATS_PIPELINE_SPEC_v5.md`](./IB_STATS_PIPELINE_SPEC_v5.md)
