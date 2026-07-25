@@ -374,7 +374,7 @@ def run_fast_backtest(
             })
             continue
 
-        bt = engine.run(signals, data, {"leverage": 1.0, "ticker": ticker})
+        bt = engine.run(signals, data, {"leverage": 1.0, "ticker": ticker, "force_exit_time": "16:00"})
         trades_detailed = bt.get("trades_detailed")
 
         if trades_detailed is None or len(trades_detailed) == 0:

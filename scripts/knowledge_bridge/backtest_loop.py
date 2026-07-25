@@ -263,6 +263,7 @@ class BacktestLoop:
             bt_result = engine.run(signals, self._df, {
                 "leverage": 1.0,
                 "ticker": self.ticker,
+                "force_exit_time": "16:00",
             })
 
             trades_detailed = bt_result.get("trades_detailed")

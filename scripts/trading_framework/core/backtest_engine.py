@@ -225,10 +225,55 @@ class VectorizedBacktester(BaseBacktester):
         
         # Apply Institutional Multipliers and Costs
         multiplier = self.tick_multipliers.get(ticker, 1.0)
+        
+        # BL-5 FIX: Apply per-contract commission as % of notional
+        # commission is $ per round-turn per contract (default $2.05 for Micros)
+        # As a fraction of notional: commission / (entry_price * multiplier)
+        # This is a conservative approximation — actual commission is fixed $,
+        # not % of notional, but this is close enough for backtest purposes.
+        if self.commission > 0 and len(entry_prices) > 0:
+            commission_pct = self.commission / (np.median(entry_prices) * multiplier)
+            trade_returns -= commission_pct
+        
+        # BL-5: Also apply slippage (already present, kept as-is)
         trade_returns -= self.slippage_pct 
 
-        # 5. Equity Curve Mapping
+        # BL-6: ADR-020 — Force exit at 16:00 ET if neither TP nor SL hit
+        # Check if a forced exit time is provided in risk_params
         exit_pos = np.clip(entry_indices + hit_bars, 0, n_bars - 1)
+        force_exit_time = risk_params.get('force_exit_time')  # e.g., "16:00"
+        if force_exit_time:
+            from datetime import time as dtime
+            if isinstance(force_exit_time, str):
+                h, m = map(int, force_exit_time.split(':'))
+                force_exit = dtime(h, m)
+            else:
+                force_exit = force_exit_time
+            # Find the first bar at or after force_exit on each trade's entry day
+            bar_times = data.index.time
+            # For trades that didn't hit TP/SL, use the 16:00 close instead
+            for i in range(len(trade_returns)):
+                if not hit_occurred[i]:
+                    # exit_closes already has the close at MAX_SEARCH-1 position
+                    # Override with 16:00 close if available
+                    entry_idx = entry_indices[i]
+                    # Find bars after entry on the same trading day
+                    entry_date = data.index[entry_idx].date()
+                    for j in range(entry_idx, min(entry_idx + MAX_SEARCH, n_bars)):
+                        if data.index[j].date() != entry_date:
+                            break
+                        if bar_times[j] >= force_exit:
+                            exit_prices[i] = close_vals[j]
+                            trade_returns[i] = ((exit_prices[i] - entry_prices[i]) / entry_prices[i]) * direction_vec[i]
+                            if self.commission > 0:
+                                trade_returns[i] -= commission_pct
+                            trade_returns[i] -= self.slippage_pct
+                            # Update exit position and time
+                            exit_pos[i] = j
+                            break
+
+        # 5. Equity Curve Mapping
+        exit_pos = np.clip(exit_pos, 0, n_bars - 1)
         exit_times = data.index[exit_pos]
         equity_returns = pd.Series(0.0, index=data.index)
         equity_returns.loc[exit_times] += trade_returns
