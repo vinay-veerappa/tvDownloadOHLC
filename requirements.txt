@@ -13,3 +13,4 @@ requests
 apscheduler>=3.10,<4
 fastmcp
 notebooklm-mcp-cli
+playwright>=1.40.0

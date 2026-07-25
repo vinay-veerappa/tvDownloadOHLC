@@ -1,5 +1,8 @@
 # tvDownloadOHLC Project Guidelines
 
+## Global Rules
+See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness rules. These apply to all agents (Copilot, Antigravity, Claude Code).
+
 ## Core Commands
 * **Start Next.js App**: `cd web && npm run dev`
 * **Prisma Schema Update**: `cd web && npx prisma db push && npx prisma generate`
