@@ -109,7 +109,7 @@ def _compute_confluence_score(df: pd.DataFrame) -> pd.DataFrame:
 
 def _walk_forward_calibration(
     df: pd.DataFrame,
-    min_obs: int = 30,
+    min_obs: int = 20,
     smooth_k: float = 10.0,
 ) -> pd.DataFrame:
     """
@@ -124,13 +124,15 @@ def _walk_forward_calibration(
       - Mean realized magnitude (play3_mfe) for strict-pass and lenient-pass
         cells to inform target sizing.
 
-    Win is defined as ``realized_dir_ext == first_break_dir``.  Targets are
-    lagged by one trading day so a row never sees its own outcome.  Cells with
-    fewer than ``min_obs`` observations fall back to the instrument-wide prior,
-    blended with a Laplace/smooth shrinkage of ``smooth_k`` pseudo-observations.
+    Win is defined as ``play3_result > 0`` — a profitable trade outcome.
+    Outcomes are lagged by one trading day (via per-day groupby shift) so a
+    row never sees any same-day outcome, eliminating same-day leakage.
+    Cells with fewer than ``min_obs`` observations fall back to the
+    instrument-wide prior, blended with Laplace shrinkage of ``smooth_k``
+    pseudo-observations.
 
-    ADR-017: fully vectorized; the only group-level operation is an
-    ``expanding().mean()`` on sorted data.
+    ADR-017: fully vectorized; group-level operations are ``expanding().mean()``
+    and ``groupby().shift(1)`` on sorted data.
     """
     out = pd.DataFrame(index=df.index)
 
@@ -140,7 +142,8 @@ def _walk_forward_calibration(
     work["session_slot"] = df["session_slot"].astype(str)
     work["range_bucket_full"] = df["range_bucket_full"].astype(str)
     work["first_break_dir"] = df["first_break_dir"].fillna(0).astype(int)
-    work["win"] = (df["realized_dir_ext"].fillna(0) == work["first_break_dir"]).astype(float)
+    # Win = profitable play3 trade, not direction-extension match.
+    work["win"] = (df["play3_result"].fillna(0) > 0).astype(float)
     work["play3_mfe"] = df["play3_mfe"].fillna(0).astype(float)
     work["strict"] = (
         (df["trend_aligned_with_break"].fillna(0) == 1)
@@ -150,26 +153,27 @@ def _walk_forward_calibration(
     ).astype(int)
     work["lenient"] = (df["trend_aligned_with_break"].fillna(0) == 1).astype(int)
 
-    # Sort by trading_day for expanding-window (walk-forward) estimation.
-    work = work.sort_values(["trading_day"]).reset_index(drop=True)
+    # Sort by (trading_day, session_slot) for deterministic within-day ordering.
+    work = work.sort_values(["trading_day", "session_slot"]).reset_index(drop=True)
 
-    # Instrument-wide prior from all prior days (exclude today by shifting).
-    prior_win = work["win"].expanding(min_periods=1).mean().shift(1)
-    prior_mfe = work["play3_mfe"].expanding(min_periods=1).mean().shift(1)
-
-    # Build a numeric cell key for vectorized grouping instead of a MultiIndex.
+    # Build a string cell key for vectorized grouping.
     def _cell_key(cols: list[str]) -> pd.Series:
-        # Concatenate string columns and direction code into a single string key.
         key = work["session_slot"].astype(str) + "|" + work["range_bucket_full"].astype(str)
         if "first_break_dir" in cols:
             key = key + "|" + work["first_break_dir"].astype(str)
         return key
 
-    # Strict calibration cell: session_slot x range_bucket_full x first_break_dir.
+    # --- Strict calibration cell: session_slot x range_bucket_full x first_break_dir ---
     strict_key = _cell_key(["first_break_dir"])
     work["strict_key"] = strict_key.where(work["strict"] == 1, np.nan)
-    work["win_strict_lag"] = work["win"].where(work["strict"] == 1, np.nan).shift(1)
-    work["mfe_strict_lag"] = work["play3_mfe"].where(work["strict"] == 1, np.nan).shift(1)
+
+    # Mask win/mfe to strict-pass rows, then lag by one trading day.
+    # groupby(trading_day).shift(1) ensures first row of each day gets NaN,
+    # preventing same-day leakage across session slots.
+    win_strict_masked = work["win"].where(work["strict"] == 1, np.nan)
+    mfe_strict_masked = work["play3_mfe"].where(work["strict"] == 1, np.nan)
+    work["win_strict_lag"] = win_strict_masked.groupby(work["trading_day"]).shift(1)
+    work["mfe_strict_lag"] = mfe_strict_masked.groupby(work["trading_day"]).shift(1)
 
     strict_win_rate = work.groupby("strict_key")["win_strict_lag"].transform(
         lambda s: s.expanding(min_periods=min_obs).mean()
@@ -181,11 +185,13 @@ def _walk_forward_calibration(
         lambda s: s.expanding(min_periods=1).count()
     )
 
-    # Lenient calibration cell: session_slot x range_bucket_full.
+    # --- Lenient calibration cell: session_slot x range_bucket_full ---
     lenient_key = _cell_key([])
     work["lenient_key"] = lenient_key.where(work["lenient"] == 1, np.nan)
-    work["win_lenient_lag"] = work["win"].where(work["lenient"] == 1, np.nan).shift(1)
-    work["mfe_lenient_lag"] = work["play3_mfe"].where(work["lenient"] == 1, np.nan).shift(1)
+    win_lenient_masked = work["win"].where(work["lenient"] == 1, np.nan)
+    mfe_lenient_masked = work["play3_mfe"].where(work["lenient"] == 1, np.nan)
+    work["win_lenient_lag"] = win_lenient_masked.groupby(work["trading_day"]).shift(1)
+    work["mfe_lenient_lag"] = mfe_lenient_masked.groupby(work["trading_day"]).shift(1)
 
     lenient_win_rate = work.groupby("lenient_key")["win_lenient_lag"].transform(
         lambda s: s.expanding(min_periods=min_obs).mean()
@@ -197,17 +203,18 @@ def _walk_forward_calibration(
         lambda s: s.expanding(min_periods=1).count()
     )
 
-    # Instrument-wide prior from all prior days (exclude current row by shifting).
-    prior_win = work["win"].shift(1).expanding(min_periods=1).mean()
-    prior_mfe = work["play3_mfe"].shift(1).expanding(min_periods=1).mean()
-    lenient_prior_win = (
-        work["win"].where(work["lenient"] == 1, np.nan)
-        .shift(1).expanding(min_periods=1).mean()
-    )
-    lenient_prior_mfe = (
-        work["play3_mfe"].where(work["lenient"] == 1, np.nan)
-        .shift(1).expanding(min_periods=1).mean()
-    )
+    # --- Instrument-wide prior (lagged by one trading day) ---
+    # Use first row per day as the daily value, shift by one day.
+    prior_win = work.groupby("trading_day")["win"].transform("first")
+    prior_win = prior_win.shift(1).expanding(min_periods=1).mean()
+    prior_mfe = work.groupby("trading_day")["play3_mfe"].transform("first")
+    prior_mfe = prior_mfe.shift(1).expanding(min_periods=1).mean()
+    lenient_win_first = work["win"].where(work["lenient"] == 1, np.nan)
+    lenient_win_first = lenient_win_first.groupby(work["trading_day"]).transform("first")
+    lenient_prior_win = lenient_win_first.shift(1).expanding(min_periods=1).mean()
+    lenient_mfe_first = work["play3_mfe"].where(work["lenient"] == 1, np.nan)
+    lenient_mfe_first = lenient_mfe_first.groupby(work["trading_day"]).transform("first")
+    lenient_prior_mfe = lenient_mfe_first.shift(1).expanding(min_periods=1).mean()
 
     # Shrinkage fallback: blend cell estimate with prior.
     def _blend(cell: pd.Series, prior: pd.Series, nobs: pd.Series) -> pd.Series:
@@ -251,10 +258,11 @@ def _compute_recommendations(df: pd.DataFrame) -> pd.DataFrame:
 
     # Expectation bucket now uses walk-forward empirical strict win-rate
     # calibrated by (session_slot, range_bucket_full, first_break_dir).
-    ewr = df["empirical_win_rate_strict"].fillna(0.5) if "empirical_win_rate_strict" in df.columns else pd.Series(0.5, index=df.index)
+    # Win = play3_result > 0, so base rate is ~14%, thresholds reflect that.
+    ewr = df["empirical_win_rate_strict"].fillna(0.14) if "empirical_win_rate_strict" in df.columns else pd.Series(0.14, index=df.index)
     out["expectation_bucket"] = np.where(
-        ewr >= 0.90, "high",
-        np.where(ewr >= 0.80, "medium", "low")
+        ewr >= 0.25, "high",
+        np.where(ewr >= 0.18, "medium", "low")
     )
 
     return out

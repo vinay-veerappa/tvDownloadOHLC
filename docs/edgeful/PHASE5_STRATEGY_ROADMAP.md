@@ -8,18 +8,26 @@ This document lists all candidate Phase 5 derived-data products that consume the
 
 ## 1. IB Breakout Enhanced Filter Set ✅ DONE
 **What it does**
-Produces a strict/lenient entry filter table for the existing `IB Break` and `IB Breakout Modular` strategies. It joins the confluence flags (`trend_aligned_with_break`, `avwap_aligned`, `break_dir_matches_avwap0930`, `fail_setup_score`, news/OPEX) with the raw IB break facts.
+Produces a strict/lenient entry filter table for the existing `IB Break` and `IB Breakout Modular` strategies. It joins the confluence flags (`trend_aligned_with_break`, `avwap_aligned`, `break_dir_matches_avwap0930`, `fail_setup_score`, news/OPEX) with the raw IB break facts. Walk-forward empirical calibration keyed by (session_slot, range_bucket_full, first_break_dir) estimates P(play3 win) for each cell.
 
 **Why it matters**
-Validation showed `trend_aligned_with_break` lifts `bias_correct_combined_05x` by ~13–17 percentage points across every instrument. A precomputed filter table lets the strategy skip low-probability breaks and bias size toward high-confluence ones.
+Validation showed `trend_aligned_with_break` lifts `bias_correct_combined_05x` by ~13–17 percentage points across every instrument. A precomputed filter table lets the strategy skip low-probability breaks and bias size toward high-confluence ones. The walk-forward calibration provides an `expectation_bucket` (high/medium/low) that is monotonically predictive of actual play3 win rates across all six instruments (top quintile ~2x bottom quintile).
+
+**Calibration details**
+- Win = `play3_result > 0` (profitable trade outcome, ~15% base rate)
+- Lag: `groupby(trading_day).shift(1)` prevents same-day session-slot leakage
+- Shrinkage: Laplace blend `(n_obs * cell + k * prior) / (n_obs + k)` with `k=10`, `min_obs=20`
+- Thresholds: `>=0.25` high, `>=0.18` medium, else low (calibrated to play3 base rate)
+- Validated: correlation 0.07-0.10 across NQ1/ES1/YM1/RTY1/CL1/GC1; Q0→Q4 win rate spread 0.09→0.20
 
 **Output**
 - `data/derived/ib_breakout_filter_{SYM}.parquet`
-- Columns: `break_direction`, `entry_side`, `filter_pass`, `confluence_score`, `recommended_target_multiple`, `recommended_stop_multiple`, `expectation_bucket`.
+- Columns: `break_direction`, `entry_side`, `filter_pass`, `confluence_score`, `recommended_target_multiple`, `recommended_stop_multiple`, `expectation_bucket`, `empirical_win_rate_strict`, `empirical_mean_mfe_strict`, `empirical_win_rate_lenient`, `empirical_mean_mfe_lenient`.
 
 **Downstream strategy**
 - [scripts/strategies/initial_balance/core/initial_balance_break.py](../scripts/strategies/initial_balance/core/initial_balance_break.py)
 - [scripts/strategies/logic/ib_breakout_modular.py](../scripts/strategies/logic/ib_breakout_modular.py)
+- [scripts/edgeful/universal_signal_classifier_input.py](../scripts/edgeful/universal_signal_classifier_input.py) (maps `expectation_bucket` → `signal_bucket`)
 
 ---
 
