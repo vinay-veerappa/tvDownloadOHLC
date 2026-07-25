@@ -693,8 +693,8 @@ already bridges `hunt()` → `generate_signals()`, and all DataFrame schemas lin
 | BL-2 | Fix MAE stop R:R bug in `ib_mae_stops.py` — `optimal_stop_r = p95_mae / target_r` (not `median_mae`). Currently shows 5R-20R stops on 0.25x targets. | PRD §10.2 | High | ✅ Done (2026-07-25) |
 | BL-3 | Implement FR-10 empirical target engine (`ib_empirical_targets.py`) — Gunship-style percentile targets. | PRD §11 | High | ✅ Done (2026-07-25) |
 | BL-4 | Implement FR-11 custom range support (`config/ib_custom_ranges.yaml`). | PRD §11 | Medium | Open |
-| BL-5 | Fix `VectorizedBacktester` commission model (I1) — add per-contract dollar commission. | PRD §12.2 | Medium | Open |
-| BL-6 | Add ADR-020 16:00 ET forced exit to `VectorizedBacktester` (I2). | PRD §12.2 | Medium | Open |
+| BL-5 | Fix `VectorizedBacktester` commission model (I1) — add per-contract dollar commission. | PRD §12.2 | Medium | ✅ Done (2026-07-25) |
+| BL-6 | Add ADR-020 16:00 ET forced exit to `VectorizedBacktester` (I2). | PRD §12.2 | Medium | ✅ Done (2026-07-25) |
 | BL-7 | Verify regime router look-ahead (Q4) — is `ib_range_pct_of_daily` using realized same-day value? | PRD §12 Q4 | High | ✅ Done (2026-07-25) |
 
 ---
