@@ -169,7 +169,7 @@ class BacktestLoop:
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
 
-        from scripts.trading_framework.config_loader import load_config
+        from scripts.trading_framework.config.config_loader import load_config
         from scripts.libs_py.data.loader import DataLoader
         from scripts.trading_framework.ml.prop_firm_simulator import (
             PropFirmSimulator,
