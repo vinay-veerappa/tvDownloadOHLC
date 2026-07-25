@@ -1,0 +1,45 @@
+# IB Custom Range Definitions (FR-11, BL-4)
+#
+# Define custom time ranges for IB analysis. Each range gets its own
+# session_slot label in all derived parquet files and flows through
+# the full Phase 1-6 pipeline automatically.
+#
+# Usage:
+#   python -m scripts.edgeful.ib_derived_fields --custom-ranges config/ib_custom_ranges.yaml
+#
+# Fields:
+#   name:      Human-readable label (becomes the session_slot in parquet files)
+#   start:     IB window start time (HHMM format, ET timezone)
+#   end:       IB window end time (HHMM format, ET timezone)
+#   cutoff:    Outcome evaluation window end (HHMM format, ET timezone)
+#   timezone:  Always America/New_York (ET) for futures sessions
+#   days:      Day-of-week filter (1=Mon ... 5=Fri, 6=Sat, 7=Sun)
+#   time_basis: "ET_fixed" or "event_anchored" (use ET_fixed for custom ranges)
+
+custom_ranges:
+  # Example: 2-hour afternoon range (1400-1600 ET)
+  - name: "Afternoon Range 1400-1600"
+    start: "1400"
+    end: "1600"
+    cutoff: "1800"
+    timezone: "America/New_York"
+    days: "12345"
+    time_basis: "ET_fixed"
+
+  # Example: 15-min overnight break (1800-1815 ET)
+  - name: "Overnight Break 1800"
+    start: "1800"
+    end: "1815"
+    cutoff: "0300"
+    timezone: "America/New_York"
+    days: "12345"
+    time_basis: "ET_fixed"
+
+  # Example: Extended AM session (0930-1100 ET, 90min IB)
+  - name: "Extended AM 0930-1100"
+    start: "0930"
+    end: "1100"
+    cutoff: "1600"
+    timezone: "America/New_York"
+    days: "12345"
+    time_basis: "ET_fixed"

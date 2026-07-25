@@ -206,8 +206,19 @@ def main():
         "--workers", "-w", type=int, default=0,
         help="Number of parallel workers to use (default: min of CPU count, target list, capped at 3 for memory safety)"
     )
+    parser.add_argument(
+        "--custom-ranges", type=str, default=None,
+        help="Path to custom ranges YAML config (FR-11, BL-4). Custom ranges are registered into SESSION_CONFIGS_V5 and appended to the session list."
+    )
     
     args = parser.parse_args()
+
+    # BL-4: Load custom ranges if specified
+    if args.custom_ranges:
+        from scripts.edgeful.ib_session_config import load_custom_ranges
+        registered = load_custom_ranges(args.custom_ranges)
+        SESSIONS.extend(registered)
+        print(f"Loaded {len(registered)} custom ranges: {registered}")
     
     target_list = args.instruments.split(",") if args.instruments else INSTRUMENTS
     out_dir = Path(args.outdir)

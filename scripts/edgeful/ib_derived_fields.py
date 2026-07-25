@@ -1115,8 +1115,18 @@ def main():
     parser = argparse.ArgumentParser(description="Build IB derived fields per symbol")
     parser.add_argument("--instruments", type=str, default=",".join(INSTRUMENTS),
                         help="Comma-separated symbols (default: all)")
+    parser.add_argument(
+        "--custom-ranges", type=str, default=None,
+        help="Path to custom ranges YAML config (FR-11, BL-4). Registers custom time ranges into SESSION_CONFIGS_V5."
+    )
     args = parser.parse_args()
     symbols = [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
+
+    # BL-4: Load custom ranges if specified
+    if args.custom_ranges:
+        from scripts.edgeful.ib_session_config import load_custom_ranges
+        registered = load_custom_ranges(args.custom_ranges)
+        logger.info("Loaded %d custom ranges: %s", len(registered), registered)
 
     DERIVED_DIR.mkdir(parents=True, exist_ok=True)
     for sym in symbols:
