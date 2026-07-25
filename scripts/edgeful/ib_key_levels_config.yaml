@@ -1,0 +1,116 @@
+# Configurable anchor levels registry for ib_key_levels.py
+# Each entry defines an anchor price (open or mid) that is materialized
+# per session row in data/derived/ib_key_levels_{SYM}.parquet.
+#
+# Types:
+#   fixed_open       - open price of the first 1m bar at the specified wall-clock time on the same logical trading day.
+#   rolling_open     - open price of the first 1m bar at the specified time, looking back up to N days if session has no such bar.
+#   period_mid       - midpoint (high + low)/2 over a calendar period.
+#   period_close     - close of the last bar of a calendar period.
+#   h4_series        - special: generates one level per 4-hour bracket (00,04,08,12,16,20 ET).
+
+anchors:
+  - name: midnight_open
+    type: fixed_open
+    time: "00:00"
+    timezone: America/New_York
+
+  - name: globex_1800_open
+    type: fixed_open
+    time: "18:00"
+    timezone: America/New_York
+
+  - name: globex_2000_open
+    type: fixed_open
+    time: "20:00"
+    timezone: America/New_York
+
+  - name: london_0300_open
+    type: fixed_open
+    time: "03:00"
+    timezone: America/New_York
+
+  - name: london_0400_open
+    type: fixed_open
+    time: "04:00"
+    timezone: America/New_York
+
+  - name: am_0730_open
+    type: fixed_open
+    time: "07:30"
+    timezone: America/New_York
+
+  - name: ny_0930_open
+    type: fixed_open
+    time: "09:30"
+    timezone: America/New_York
+
+  - name: pm_1330_open
+    type: fixed_open
+    time: "13:30"
+    timezone: America/New_York
+
+  - name: weekly_open
+    type: rolling_open
+    time: "00:00"
+    timezone: America/New_York
+    lookback_days: 7
+    rule: first_bar_of_week
+
+  - name: monthly_open
+    type: rolling_open
+    time: "00:00"
+    timezone: America/New_York
+    lookback_days: 31
+    rule: first_bar_of_month
+
+  - name: prev_day_mid
+    type: period_mid
+    period: 1D
+    timezone: America/New_York
+
+  - name: prev_week_mid
+    type: period_mid
+    period: 1W
+    timezone: America/New_York
+
+  - name: prev_month_mid
+    type: period_mid
+    period: ME
+    timezone: America/New_York
+
+  - name: prev_month_close
+    type: period_close
+    period: ME
+    timezone: America/New_York
+
+  - name: prev_week_close
+    type: period_close
+    period: 1W
+    timezone: America/New_York
+
+  - name: prev_month_close
+    type: period_close
+    period: 1M
+    timezone: America/New_York
+
+  - name: h4_opens
+    type: h4_series
+    timezone: America/New_York
+    # produces h4_open_00, h4_open_04, ..., h4_open_20
+
+  # P12 mid placeholder - uncomment and define once P12 profiler levels are stable.
+  # - name: p12_mid
+  #   type: external_lookup
+  #   source: data/processed/profiler_p12_levels_{SYM}.parquet
+  #   column: p12_mid
+
+# ICT detector parameters
+ict:
+  swing_length: 5
+  liquidity_threshold: 0.0001
+
+# IB midpoint equilibrium zone for PD-array detection
+ib_mid_zone:
+  lower_frac: -0.10   # 40% of IB range below mid
+  upper_frac: 0.10    # 60% of IB range above mid
