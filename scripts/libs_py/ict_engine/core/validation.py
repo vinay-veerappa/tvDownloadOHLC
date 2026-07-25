@@ -9,9 +9,12 @@ def validate_ohlc(input_type="ohlc"):
     def decorator(func):
         @wraps(func)
         def wrapper(ohlc_df: pd.DataFrame, *args, **kwargs):
-            # Normalize column names
-            ohlc_df.columns = [c.lower() for c in ohlc_df.columns]
-            
+            # Normalize column names (avoid mutation if already lowercase).
+            cols = ohlc_df.columns
+            lower_cols = cols.str.lower()
+            if not lower_cols.equals(cols):
+                ohlc_df = ohlc_df.rename(columns=dict(zip(cols, lower_cols)))
+            # Ensure required columns exist without re-validating repeatedly.
             required_cols = {
                 "o": "open",
                 "h": "high",
@@ -19,12 +22,13 @@ def validate_ohlc(input_type="ohlc"):
                 "c": "close",
                 "v": "volume"
             }
-            
-            for char in input_type:
-                col_name = required_cols.get(char)
-                if col_name not in ohlc_df.columns:
-                    raise KeyError(f"Missing required column: {col_name}")
-            
+            missing = [
+                required_cols[char]
+                for char in input_type
+                if required_cols[char] not in cols
+            ]
+            if missing:
+                raise KeyError(f"Missing required columns: {missing}")
             return func(ohlc_df, *args, **kwargs)
         return wrapper
     return decorator

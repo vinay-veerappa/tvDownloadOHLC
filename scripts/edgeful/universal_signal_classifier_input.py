@@ -137,7 +137,12 @@ def _source_rows(df: pd.DataFrame, source: str, mapping: dict) -> pd.DataFrame:
             side > 0, "LONG", np.where(side < 0, "SHORT", "NONE")
         )
     else:
-        out["signal_side"] = side.fillna("NONE").astype(str).str.upper()
+        out["signal_side"] = (
+            side.fillna("NONE")
+            .astype(str)
+            .str.upper()
+            .replace({"0": "NONE", "1": "LONG", "-1": "SHORT"})
+        )
 
     out["signal_source"] = np.full(len(df), source, dtype=object)
     out["signal_score"] = df[mapping["score_col"]].fillna(0).astype(float)

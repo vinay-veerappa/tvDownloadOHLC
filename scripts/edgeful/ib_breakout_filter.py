@@ -107,6 +107,127 @@ def _compute_confluence_score(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({"confluence_score": score})
 
 
+def _walk_forward_calibration(
+    df: pd.DataFrame,
+    min_obs: int = 30,
+    smooth_k: float = 10.0,
+) -> pd.DataFrame:
+    """
+    Walk-forward empirical probability calibration keyed by filter features.
+
+    For every row we estimate:
+      - P(win | strict-pass features) via expanding-window lookback on prior
+        trading days that share the same (session_slot, range_bucket_full,
+        first_break_dir) calibration cell.
+      - P(win | lenient-pass features) using the same expanding-window logic but
+        keyed by (session_slot, range_bucket_full) so the estimate is less sparse.
+      - Mean realized magnitude (play3_mfe) for strict-pass and lenient-pass
+        cells to inform target sizing.
+
+    Win is defined as ``realized_dir_ext == first_break_dir``.  Targets are
+    lagged by one trading day so a row never sees its own outcome.  Cells with
+    fewer than ``min_obs`` observations fall back to the instrument-wide prior,
+    blended with a Laplace/smooth shrinkage of ``smooth_k`` pseudo-observations.
+
+    ADR-017: fully vectorized; the only group-level operation is an
+    ``expanding().mean()`` on sorted data.
+    """
+    out = pd.DataFrame(index=df.index)
+
+    # Build a clean sorted working frame aligned with df.index.
+    work = pd.DataFrame(index=df.index)
+    work["trading_day"] = df["trading_day"].astype(str)
+    work["session_slot"] = df["session_slot"].astype(str)
+    work["range_bucket_full"] = df["range_bucket_full"].astype(str)
+    work["first_break_dir"] = df["first_break_dir"].fillna(0).astype(int)
+    work["win"] = (df["realized_dir_ext"].fillna(0) == work["first_break_dir"]).astype(float)
+    work["play3_mfe"] = df["play3_mfe"].fillna(0).astype(float)
+    work["strict"] = (
+        (df["trend_aligned_with_break"].fillna(0) == 1)
+        & (df["avwap_aligned"].fillna(0) == 1)
+        & (df["break_dir_matches_avwap0930"].fillna(0) == 1)
+        & (df["fail_setup_score"].fillna(0) == 0)
+    ).astype(int)
+    work["lenient"] = (df["trend_aligned_with_break"].fillna(0) == 1).astype(int)
+
+    # Sort by trading_day for expanding-window (walk-forward) estimation.
+    work = work.sort_values(["trading_day"]).reset_index(drop=True)
+
+    # Instrument-wide prior from all prior days (exclude today by shifting).
+    prior_win = work["win"].expanding(min_periods=1).mean().shift(1)
+    prior_mfe = work["play3_mfe"].expanding(min_periods=1).mean().shift(1)
+
+    # Build a numeric cell key for vectorized grouping instead of a MultiIndex.
+    def _cell_key(cols: list[str]) -> pd.Series:
+        # Concatenate string columns and direction code into a single string key.
+        key = work["session_slot"].astype(str) + "|" + work["range_bucket_full"].astype(str)
+        if "first_break_dir" in cols:
+            key = key + "|" + work["first_break_dir"].astype(str)
+        return key
+
+    # Strict calibration cell: session_slot x range_bucket_full x first_break_dir.
+    strict_key = _cell_key(["first_break_dir"])
+    work["strict_key"] = strict_key.where(work["strict"] == 1, np.nan)
+    work["win_strict_lag"] = work["win"].where(work["strict"] == 1, np.nan).shift(1)
+    work["mfe_strict_lag"] = work["play3_mfe"].where(work["strict"] == 1, np.nan).shift(1)
+
+    strict_win_rate = work.groupby("strict_key")["win_strict_lag"].transform(
+        lambda s: s.expanding(min_periods=min_obs).mean()
+    )
+    strict_mfe = work.groupby("strict_key")["mfe_strict_lag"].transform(
+        lambda s: s.expanding(min_periods=min_obs).mean()
+    )
+    strict_nobs = work.groupby("strict_key")["win_strict_lag"].transform(
+        lambda s: s.expanding(min_periods=1).count()
+    )
+
+    # Lenient calibration cell: session_slot x range_bucket_full.
+    lenient_key = _cell_key([])
+    work["lenient_key"] = lenient_key.where(work["lenient"] == 1, np.nan)
+    work["win_lenient_lag"] = work["win"].where(work["lenient"] == 1, np.nan).shift(1)
+    work["mfe_lenient_lag"] = work["play3_mfe"].where(work["lenient"] == 1, np.nan).shift(1)
+
+    lenient_win_rate = work.groupby("lenient_key")["win_lenient_lag"].transform(
+        lambda s: s.expanding(min_periods=min_obs).mean()
+    )
+    lenient_mfe = work.groupby("lenient_key")["mfe_lenient_lag"].transform(
+        lambda s: s.expanding(min_periods=min_obs).mean()
+    )
+    lenient_nobs = work.groupby("lenient_key")["win_lenient_lag"].transform(
+        lambda s: s.expanding(min_periods=1).count()
+    )
+
+    # Instrument-wide prior from all prior days (exclude current row by shifting).
+    prior_win = work["win"].shift(1).expanding(min_periods=1).mean()
+    prior_mfe = work["play3_mfe"].shift(1).expanding(min_periods=1).mean()
+    lenient_prior_win = (
+        work["win"].where(work["lenient"] == 1, np.nan)
+        .shift(1).expanding(min_periods=1).mean()
+    )
+    lenient_prior_mfe = (
+        work["play3_mfe"].where(work["lenient"] == 1, np.nan)
+        .shift(1).expanding(min_periods=1).mean()
+    )
+
+    # Shrinkage fallback: blend cell estimate with prior.
+    def _blend(cell: pd.Series, prior: pd.Series, nobs: pd.Series) -> pd.Series:
+        # Laplace-style shrinkage: (n_obs * cell + k * prior) / (n_obs + k)
+        cell = cell.fillna(prior)
+        blended = (nobs.fillna(0).astype(float) * cell + smooth_k * prior) / (
+            nobs.fillna(0).astype(float) + smooth_k
+        )
+        return blended.fillna(prior)
+
+    out["empirical_win_rate_strict"] = _blend(strict_win_rate, prior_win, strict_nobs)
+    out["empirical_mean_mfe_strict"] = _blend(strict_mfe, prior_mfe, strict_nobs)
+    out["empirical_win_rate_lenient"] = _blend(lenient_win_rate, lenient_prior_win, lenient_nobs)
+    out["empirical_mean_mfe_lenient"] = _blend(lenient_mfe, lenient_prior_mfe, lenient_nobs)
+
+    # Restore original row order.
+    out = out.reindex(df.index)
+    return out
+
+
 def _compute_recommendations(df: pd.DataFrame) -> pd.DataFrame:
     """
     Suggested target/stop multiples and expectation bucket based on observed
@@ -128,12 +249,12 @@ def _compute_recommendations(df: pd.DataFrame) -> pd.DataFrame:
 
     out["recommended_stop_multiple"] = 1.0
 
-    # Expectation bucket: placeholder until walk-forward empirical calibration is wired in.
-    # Uses the composite confluence score to label low / medium / high edge.
-    cs = df["confluence_score"].fillna(0) if "confluence_score" in df.columns else pd.Series(0, index=df.index)
+    # Expectation bucket now uses walk-forward empirical strict win-rate
+    # calibrated by (session_slot, range_bucket_full, first_break_dir).
+    ewr = df["empirical_win_rate_strict"].fillna(0.5) if "empirical_win_rate_strict" in df.columns else pd.Series(0.5, index=df.index)
     out["expectation_bucket"] = np.where(
-        cs >= 6.0, "high",
-        np.where(cs >= 3.0, "medium", "low")
+        ewr >= 0.90, "high",
+        np.where(ewr >= 0.80, "medium", "low")
     )
 
     return out
@@ -161,12 +282,17 @@ def process_symbol(sym: str) -> None:
 
     meta = df[KEY_COLS].copy()
 
+    # Calibration must be visible to recommendation logic, so merge before calling it.
+    cal = _walk_forward_calibration(df)
+    df_cal = pd.concat([df, cal], axis=1)
+
     parts = [
         meta,
         _compute_break_context(df),
         _compute_filter_flags(df),
         _compute_confluence_score(df),
-        _compute_recommendations(df),
+        cal,
+        _compute_recommendations(df_cal),
         _select_outcomes(df),
     ]
 
@@ -177,6 +303,12 @@ def process_symbol(sym: str) -> None:
     for col in ["entry_side", "expectation_bucket"]:
         if col in result.columns:
             result[col] = result[col].astype(str)
+
+    # Float columns from calibration may arrive as object because of reindex;
+    # ensure clean numeric dtypes.
+    for col in result.columns:
+        if result[col].dtype == object:
+            result[col] = pd.to_numeric(result[col], errors="ignore")
 
     out_path = DATA_DERIVED / f"ib_breakout_filter_{sym}.parquet"
     result.to_parquet(out_path, index=False)

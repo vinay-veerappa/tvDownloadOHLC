@@ -72,21 +72,25 @@ def _et_localize(df: pd.DataFrame) -> pd.DataFrame:
 def _compute_fixed_opens(df: pd.DataFrame, anchors: List[Dict]) -> pd.DataFrame:
     """For each fixed_open anchor, materialize the open price at the first bar >= time."""
     out = pd.DataFrame(index=df.index)
-    times = pd.Series(df.index.time, index=df.index)
-    dates = pd.Series(df.index.date, index=df.index)
+    times = df.index.view("int64")
+    # Cache daily boundary midnight in ns since epoch for the date partition.
+    day_ns = (times // 86_400_000_000_000) * 86_400_000_000_000
+    day_ns_s = pd.Series(day_ns, index=df.index)
+    opens = df["open"].values
 
     for a in anchors:
         if a.get("type") != "fixed_open":
             continue
         target = _to_dt_time(a["time"])
-        # first bar of each day at or after target time
-        mask = times >= target
-        first_bar = df[mask].groupby(dates[mask])["open"].first()
-        day_map = pd.Series(
-            {d: v for d, v in zip(first_bar.index, first_bar.values)},
-            index=df.index,
+        # target instant in ns relative to each day, then compare with raw index.
+        target_delta_ns = int(target.hour * 3_600_000_000_000 + target.minute * 60_000_000_000)
+        mask = (times - day_ns) >= target_delta_ns
+        first_open = (
+            pd.Series(np.where(mask, opens, np.nan), index=df.index)
+            .groupby(day_ns_s)
+            .transform("first")
         )
-        out[a["name"]] = day_map.ffill().values
+        out[a["name"]] = first_open.ffill().values
     return out
 
 
@@ -116,36 +120,41 @@ def _compute_period_stats(df: pd.DataFrame, anchors: List[Dict]) -> pd.DataFrame
 def _compute_h4_opens(df: pd.DataFrame) -> pd.DataFrame:
     """Generate 4-hour anchored opens (00,04,08,12,16,20 ET)."""
     out = pd.DataFrame(index=df.index)
-    hour = pd.Series(df.index.hour, index=df.index)
-    date = pd.Series(df.index.date, index=df.index)
+    times = df.index.view("int64")
+    day_ns = (times // 86_400_000_000_000) * 86_400_000_000_000
+    day_ns_s = pd.Series(day_ns, index=df.index)
+    opens = df["open"].values
 
     for h in [0, 4, 8, 12, 16, 20]:
-        # first bar at or after h for each day
-        mask = hour >= h
-        day_first = df[mask].groupby(date[mask])["open"].first()
-        series = pd.Series(
-            {d: v for d, v in zip(day_first.index, day_first.values)},
-            index=df.index,
-        ).ffill()
-        # Only valid from hour h until next h bracket.
-        active = (hour >= h) & (hour < (h + 4))
-        out[f"h4_open_{h:02d}"] = np.where(active, series.values, np.nan)
+        target_delta_ns = int(h * 3_600_000_000_000)
+        mask = (times - day_ns) >= target_delta_ns
+        first_open = (
+            pd.Series(np.where(mask, opens, np.nan), index=df.index)
+            .groupby(day_ns_s)
+            .transform("first")
+        )
+        series = pd.Series(first_open.values, index=df.index).groupby(day_ns_s).ffill().values
+        # Bracket end in ns relative to day start; h4 period is [h, h+4)
+        bracket_end_ns = int((h + 4) * 3_600_000_000_000)
+        active = ((times - day_ns) >= target_delta_ns) & ((times - day_ns) < bracket_end_ns)
+        out[f"h4_open_{h:02d}"] = np.where(active, series, np.nan)
     return out.ffill(axis=0)
 
 
 def _compute_rolling_opens(df: pd.DataFrame, anchors: List[Dict]) -> pd.DataFrame:
     """Rolling open anchors like weekly_open / monthly_open — fully vectorized."""
     out = pd.DataFrame(index=df.index)
-    n = len(df)
     opens = df["open"].values
-    times = pd.Series(df.index.time, index=df.index).values
+    times = df.index.view("int64")
+    day_ns = (times // 86_400_000_000_000) * 86_400_000_000_000
+    day_ns_s = pd.Series(day_ns, index=df.index)
 
     for a in anchors:
         if a.get("type") != "rolling_open":
             continue
         target = _to_dt_time(a["time"])
-        # Boolean mask: bar time is at or after anchor time.
-        mask = pd.Series([t >= target for t in times], index=df.index)
+        target_delta_ns = int(target.hour * 3_600_000_000_000 + target.minute * 60_000_000_000)
+        mask = (times - day_ns) >= target_delta_ns
         rule = a.get("rule")
 
         if rule == "first_bar_of_week":
@@ -157,18 +166,18 @@ def _compute_rolling_opens(df: pd.DataFrame, anchors: List[Dict]) -> pd.DataFram
                 + df.index.month.astype(np.int64).values
             )
         else:
-            # fallback to daily rolling open; reuse fixed_open logic below.
-            first_bar = df.loc[mask].groupby(df.index[mask].date)["open"].first()
-            day_map = pd.Series(np.nan, index=df.index)
-            for d, price in first_bar.items():
-                day_map[df.index.date == d] = price
-            out[a["name"]] = day_map.ffill().values
+            # fallback to daily rolling open
+            first_open = (
+                pd.Series(np.where(mask, opens, np.nan), index=df.index)
+                .groupby(day_ns_s)
+                .transform("first")
+            )
+            out[a["name"]] = first_open.ffill().values
             continue
 
         # Vectorized first valid open per group at/after target time.
-        # cumsum of mask within each group -> 1 at the first qualifying bar.
         group_key_s = pd.Series(group_key, index=df.index)
-        first_qualifying = ((mask.groupby(group_key_s).cumsum() == 1) & mask).values
+        first_qualifying = ((pd.Series(mask, index=df.index).groupby(group_key_s).cumsum() == 1) & mask)
         vals = np.where(first_qualifying, opens, np.nan)
         vals = pd.Series(vals, index=df.index).groupby(group_key_s).ffill().values
         out[a["name"]] = vals
@@ -272,6 +281,31 @@ def _compute_ib_end_ts(row: pd.Series) -> pd.Timestamp:
     return pd.Timestamp.combine(trading_day, time(end_min // 60, end_min % 60))
 
 
+# Pre-computed vectorized version used at DataFrame scale.
+_SESSION_SLOTS_WITH_OFFSET = {"Tokyo IB", "London IB"}
+
+
+def _compute_ib_end_ts_vec(ib_facts: pd.DataFrame) -> pd.Series:
+    """Vectorized IB end timestamp computation for all rows in ib_facts."""
+    trading_day = pd.to_datetime(ib_facts["trading_day"]).dt.date
+    slot = ib_facts["session_slot"]
+    basis = ib_facts["time_basis"]
+
+    # Map slot -> ib_end minute-of-day.
+    end_min = slot.map(lambda s: SESSION_CONFIGS_V5[s]["ib_end"].hour * 60 + SESSION_CONFIGS_V5[s]["ib_end"].minute)
+
+    offset = ib_facts.get("et_window_offset_hours", 0).astype(int)
+    needs_offset = (basis == "event_anchored") & slot.isin(_SESSION_SLOTS_WITH_OFFSET)
+    end_min = np.where(needs_offset, (end_min + offset * 60) % 1440, end_min)
+
+    hour = end_min // 60
+    minute = end_min % 60
+    return pd.Series(
+        [pd.Timestamp.combine(d, time(int(h), int(m))) for d, h, m in zip(trading_day, hour, minute)],
+        index=ib_facts.index,
+    )
+
+
 def _session_key_levels(session_df: pd.DataFrame, ict_bars: pd.DataFrame, ib_facts: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     """
     For each ib_facts session row, sample the anchor prices and PD-array context
@@ -280,7 +314,7 @@ def _session_key_levels(session_df: pd.DataFrame, ict_bars: pd.DataFrame, ib_fac
     reflects the state just after IB formation.
     """
     keys = ib_facts[["symbol", "trading_day", "session_slot", "time_basis"]].copy()
-    keys["sample_ts"] = ib_facts.apply(_compute_ib_end_ts, axis=1)
+    keys["sample_ts"] = _compute_ib_end_ts_vec(ib_facts)
 
     # Build a lookup of timestamp -> anchor prices.
     anchor_cols = [c for c in session_df.columns if c not in ["open", "high", "low", "close", "volume"]]
