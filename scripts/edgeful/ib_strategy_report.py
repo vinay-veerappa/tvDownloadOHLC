@@ -42,6 +42,14 @@ MONTH_NAMES = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
                7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
 DOW_NAMES = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri"}
 
+# Commission model (BL-5): $2.05/round-turn per Micro contract
+# As R-multiple: commission_r = 2.05 / (ib_mid * tick_multiplier)
+# NQ1: ib_mid ~20000, multiplier 2.0 → commission_r ≈ 0.000051R per trade
+# For stats tables (in R), commission impact is negligible per trade but
+# significant over 100+ trades. Show aggregate impact in commission section.
+COMMISSION_USD = 2.05  # per round-turn per Micro
+TICK_MULTIPLIERS = {"NQ1": 20.0, "ES1": 50.0, "YM1": 5.0, "RTY1": 50.0, "CL1": 1000.0, "GC1": 100.0}
+
 
 def _stats(g: pd.DataFrame) -> Dict:
     """Core stats for a group of trades."""
@@ -98,6 +106,26 @@ def build_report(symbols: List[str]) -> str:
             sections.append(f"\n**{sym}:**\n")
             sb_rows = [{"target": k, "baseline_wr": v} for k, v in sb.items()]
             sections.append(_fmt_table(sb_rows, ["target", "baseline_wr"], ["Target", "Baseline WR"]))
+
+    # ── Commission impact (BL-5) ──
+    sections.append("\n### Commission Impact (BL-5)\n")
+    sections.append(f"Commission: ${COMMISSION_USD}/round-turn per Micro contract. Slippage: 0.01% per trade.\n")
+    sections.append("Note: Stats tables show raw R-multiples (pre-commission). Backtest section includes commission.\n")
+    sections.append("Commission as % of notional is small per trade but compounds over 100+ trades.\n\n")
+    sections.append("| Symbol | Tick Mult | Avg Price (approx) | Commission $ | Commission % | Cost per 100 trades |\n")
+    sections.append("|---|---|---|---|---|---|\n")
+    for sym in symbols:
+        mult = TICK_MULTIPLIERS.get(sym, 1.0)
+        # Approximate average price
+        pp = DERIVED / f"ib_facts_{sym}.parquet"
+        if pp.exists():
+            df_f = pd.read_parquet(pp, columns=["ib_mid"])
+            avg_price = float(df_f["ib_mid"].median())
+        else:
+            avg_price = 20000.0
+        comm_pct = COMMISSION_USD / (avg_price * mult) * 100
+        cost_100 = COMMISSION_USD * 100
+        sections.append(f"| {sym} | {mult} | {avg_price:.0f} | ${COMMISSION_USD} | {comm_pct:.4f}% | ${cost_100:.0f} |\n")
 
     # ── Per-symbol per-play overall stats ──
     sections.append("\n## 2. Overall Strategy Statistics by Symbol\n")
@@ -346,6 +374,7 @@ def build_report(symbols: List[str]) -> str:
         sections.append("\n## 12. Backtest Results (PropFirmSimulator)\n")
         sections.append("Results from `ib_backtest_fast.py` with commission ($2.05/round-turn) and ADR-020 16:00 ET forced exit.\n")
         sections.append("Grade: A >=80% MC pass, B >=65%, C >=50%, D >=30%, F <30%.\n")
+        sections.append("Profiles: Apex 50K ($3K target/$2.5K trailing DD/30-day), TopStep 50K ($3K/$2K/$1K daily/60-day), FTMO 50K ($5K/$5K static/$2.5K daily/30-day).\n")
         for bt_path in sorted(bt_files):
             data = json.loads(bt_path.read_text(encoding="utf-8"))
             results = data.get("results", [])
@@ -353,37 +382,129 @@ def build_report(symbols: List[str]) -> str:
                 continue
             ticker = results[0].get("ticker", bt_path.stem)
             sections.append(f"\n### {ticker} ({len(results)} candidates)\n")
+
+            # Grade distribution
             grades = {}
             for r in results:
                 g = r.get("grade", "F")
                 grades[g] = grades.get(g, 0) + 1
-            sections.append(f"Grade distribution: {grades}\n")
-            pos = [r for r in results if r.get("total_return_pct", 0) > 0]
-            sections.append(f"Positive return: {len(pos)}/{len(results)} ({len(pos)/len(results)*100:.1f}%)\n")
+            sections.append(f"**Grade distribution:** {grades}\n")
+
+            # Positive return
+            valid = [r for r in results if r.get("total_return_pct") is not None and not r.get("error")]
+            pos = [r for r in valid if r["total_return_pct"] > 0]
+            sections.append(f"**Positive return:** {len(pos)}/{len(valid)} ({len(pos)/len(valid)*100:.1f}%)\n")
+
+            # Det PASS per profile
             det_pass = set()
-            for r in results:
+            profile_pass = {}
+            for r in valid:
                 for p in r.get("profiles", []):
+                    pn = p.get("profile_name", "?")
                     if p.get("passed"):
                         det_pass.add(r["candidate_id"])
-            sections.append(f"Det PASS on >=1 profile: {len(det_pass)} ({len(det_pass)/len(results)*100:.1f}%)\n")
-            valid = [r for r in results if r.get("total_return_pct") is not None and not r.get("error")]
-            top5 = sorted(valid, key=lambda x: x["total_return_pct"], reverse=True)[:5]
-            if top5:
-                sections.append("\n**Top 5 by return:**\n")
+                        profile_pass[pn] = profile_pass.get(pn, 0) + 1
+            sections.append(f"**Det PASS on >=1 profile:** {len(det_pass)} ({len(det_pass)/len(valid)*100:.1f}%)\n")
+            if profile_pass:
+                sections.append(f"**Det PASS by profile:** {profile_pass}\n")
+
+            # Top 10 by return with full prop-firm details
+            top10 = sorted(valid, key=lambda x: x["total_return_pct"], reverse=True)[:10]
+            if top10:
+                sections.append("\n**Top 10 by return — full prop-firm metrics:**\n")
                 rows = []
-                for r in top5:
-                    best_mc = max((p["mc_pass_rate_pct"] for p in r.get("profiles", [])), default=0)
+                for r in top10:
+                    best_mc = 0
+                    best_mc_prof = ""
+                    best_det_delta = 0
+                    worst_dd = 0
+                    avg_days = None
+                    for p in r.get("profiles", []):
+                        if p["mc_pass_rate_pct"] > best_mc:
+                            best_mc = p["mc_pass_rate_pct"]
+                            best_mc_prof = p.get("profile_name", "?")
+                        if p.get("final_equity_delta", 0) > best_det_delta:
+                            best_det_delta = p["final_equity_delta"]
+                        dd = p.get("max_drawdown_used", 0)
+                        if dd > worst_dd:
+                            worst_dd = dd
+                        if p.get("avg_days_to_pass") and (avg_days is None or p["avg_days_to_pass"] < avg_days):
+                            avg_days = p["avg_days_to_pass"]
                     rows.append({
-                        "candidate_id": r["candidate_id"],
+                        "candidate_id": r["candidate_id"][:20],
                         "return_pct": round(r["total_return_pct"], 2),
                         "wr": round(r["win_rate_pct"], 1),
                         "trades": r["n_trades"],
+                        "max_dd_pct": round(r.get("max_drawdown_pct", 0), 1),
                         "grade": r.get("grade", "F"),
                         "best_mc": round(best_mc, 1),
+                        "best_mc_prof": best_mc_prof,
+                        "det_delta_usd": round(best_det_delta),
+                        "worst_dd_usd": round(worst_dd),
+                        "days_to_pass": int(avg_days) if avg_days else "N/A",
                     })
                 sections.append(_fmt_table(rows,
-                    ["candidate_id", "return_pct", "wr", "trades", "grade", "best_mc"],
-                    ["Candidate", "Return %", "WR %", "Trades", "Grade", "Best MC %"]))
+                    ["candidate_id", "return_pct", "wr", "trades", "max_dd_pct", "grade",
+                     "best_mc", "best_mc_prof", "det_delta_usd", "worst_dd_usd", "days_to_pass"],
+                    ["Candidate", "Ret %", "WR %", "Trades", "MaxDD %", "Grade",
+                     "Best MC %", "MC Profile", "Det $ Delta", "Worst DD $", "Days to Pass"]))
+
+            # Best by MC pass rate (different from best by return)
+            mc_ranked = []
+            for r in valid:
+                for p in r.get("profiles", []):
+                    mc_ranked.append((p["mc_pass_rate_pct"], p.get("mc_grade", "F"),
+                                     p.get("profile_name", "?"), r["candidate_id"][:20],
+                                     r["total_return_pct"], r["win_rate_pct"], r["n_trades"],
+                                     p.get("final_equity_delta", 0), p.get("max_drawdown_used", 0)))
+            mc_ranked.sort(key=lambda x: x[0], reverse=True)
+            if mc_ranked:
+                sections.append("\n**Top 5 by MC pass rate (any profile):**\n")
+                rows = []
+                for mc, g, prof, cid, ret, wr, trades, det_d, dd in mc_ranked[:5]:
+                    rows.append({
+                        "mc_pass": round(mc, 1),
+                        "grade": g,
+                        "profile": prof,
+                        "candidate_id": cid,
+                        "return_pct": round(ret, 2),
+                        "wr": round(wr, 1),
+                        "trades": trades,
+                        "det_delta": round(det_d),
+                        "max_dd_usd": round(dd),
+                    })
+                sections.append(_fmt_table(rows,
+                    ["mc_pass", "grade", "profile", "candidate_id", "return_pct", "wr", "trades", "det_delta", "max_dd_usd"],
+                    ["MC %", "Grade", "Profile", "Candidate", "Ret %", "WR %", "Trades", "Det $", "MaxDD $"]))
+
+            # Risk metrics: max consecutive losses, risk of ruin
+            # Compute from the best candidate's trade sequence
+            if top10:
+                best = top10[0]
+                wr = best.get("win_rate_pct", 50) / 100.0
+                # Risk of ruin: ((1-edge)/(1+edge))^bankroll, where edge = wr*avg_win - (1-wr)*avg_loss
+                # Approximation: assume 1R win, 1R loss (simplified)
+                edge = wr * 1.0 - (1 - wr) * 1.0  # = 2*wr - 1
+                bankroll_r = 50  # 50R bankroll (conservative for $50K at 1% risk = 500 trades of $100)
+                if edge > 0:
+                    ror = ((1 - edge) / (1 + edge)) ** bankroll_r
+                else:
+                    ror = 1.0  # certain ruin if no edge
+                # Max consecutive losses estimate: for n trades at WR w, expected max streak ~ log(n) / log(1/(1-w))
+                import math
+                n_trades = best.get("n_trades", 100)
+                if wr < 1:
+                    max_streak_est = math.log(n_trades) / math.log(1 / (1 - wr)) if wr < 0.99 else 1
+                else:
+                    max_streak_est = 0
+                sections.append(f"\n**Risk metrics (best candidate):**\n")
+                sections.append(f"- Win rate: {wr*100:.1f}%\n")
+                sections.append(f"- Edge (approx): {edge:.4f}R per trade\n")
+                sections.append(f"- Risk of ruin (50R bankroll): {ror*100:.2f}%\n")
+                sections.append(f"- Max consecutive loss streak (est.): {max_streak_est:.0f} trades\n")
+                sections.append(f"- Dollar P&L per trade (1 Micro, $50K): ${edge * 2.0:.2f} (at $2/pt NQ multiplier)\n")
+                sections.append(f"- Commission per trade: $2.05 (already deducted in backtest)\n")
+                sections.append(f"- Max drawdown: {best.get('max_drawdown_pct', 0):.1f}% price / ${best.get('max_drawdown_pct', 0) * 500:.0f} on $50K\n")
 
     sections.append("\n## 13. Methodology Notes\n")
     sections.append("- **Win Rate (WR):** fraction of trades with result == 1.\n")
@@ -394,10 +515,14 @@ def build_report(symbols: List[str]) -> str:
     sections.append("- **Regime:** from `ib_regime_{SYM}.parquet` (Phase 6 classifier: trend/normal/range/skip).\n")
     sections.append("- **CISD:** from `ib_cisd_dir` in confluence (1=bullish CSD fired, -1=bearish, 0=none). Per the CISD document, a CSD fires when price trades through the candidate candle's open (not close-based).\n")
     sections.append("- All stats are in-sample (no train/test split in this report). Phase 4's validation harness applies bootstrap CIs and min-N guards for production use.\n")
-    sections.append("- **Commission:** $2.05/round-turn per Micro contract, applied as % of notional in backtester. Not reflected in stats tables (only in backtest section).\n")
-    sections.append("- **ADR-020:** 16:00 ET forced exit in backtester. Stats tables use full MAX_SEARCH window (may include overnight holds).\n")
-    sections.append("- **Regime classifier:** Uses trailing 5d percentile (no look-ahead). Previous version used realized ib_range_pct_of_daily (look-ahead bias, fixed BL-7).\n")
+    sections.append("- **Walk-forward:** Not yet implemented. All filter lifts, regime stats, and filter stacks are in-sample. The backtest section (§12) uses the full historical period for both parameter selection and evaluation — this inflates results. A proper walk-forward split (e.g., 70% train / 30% test) is needed before trusting any positive expectancy.\n")
+    sections.append("- **Commission:** $2.05/round-turn per Micro contract, applied as % of notional in backtester. Stats tables show raw R (pre-commission). See §1 Commission Impact table for the per-trade cost. Over 100 trades, commission costs $205 — enough to turn marginal strategies negative.\n")
+    sections.append("- **ADR-020:** 16:00 ET forced exit in backtester. Stats tables use full MAX_SEARCH window (may include overnight holds for Globex/Tokyo sessions).\n")
+    sections.append("- **Regime classifier:** Uses trailing 5d percentile (no look-ahead, BL-7 fix). Previous version used realized ib_range_pct_of_daily (look-ahead bias).\n")
     sections.append("- **ib_range_pct_of_daily:** Now computed as ib_range / (daily_high - daily_low) from 1m data (BL-7 fix). Was previously ib_range/ib_mid (mislabeled proxy).\n")
+    sections.append("- **Risk of ruin:** Computed as ((1-edge)/(1+edge))^bankroll where edge = 2*WR - 1 (simplified, assumes 1R win/loss). Bankroll = 50R (conservative for $50K at 1% risk per trade).\n")
+    sections.append("- **Max consecutive losses:** Estimated as log(N) / log(1/(1-WR)) — the expected max losing streak in N trades at win rate WR.\n")
+    sections.append("- **Dollar P&L per trade:** Approximated as edge * tick_multiplier * $1 (for NQ1: edge * 20 * $1 = edge * $20). Actual P&L depends on contract size and entry price.\n")
 
     return "\n".join(sections)
 

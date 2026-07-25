@@ -46,6 +46,22 @@ These are the reference win rates every filter's lift is measured against.
 | realized_dir_break | 0.4747 |
 
 
+### Commission Impact (BL-5)
+
+Commission: $2.05/round-turn per Micro contract. Slippage: 0.01% per trade.
+
+Note: Stats tables show raw R-multiples (pre-commission). Backtest section includes commission.
+
+Commission as % of notional is small per trade but compounds over 100+ trades.
+
+
+| Symbol | Tick Mult | Avg Price (approx) | Commission $ | Commission % | Cost per 100 trades |
+
+|---|---|---|---|---|---|
+
+| NQ1 | 20.0 | 7672 | $2.05 | 0.0013% | $205 |
+
+
 ## 2. Overall Strategy Statistics by Symbol
 
 
@@ -602,25 +618,62 @@ Results from `ib_backtest_fast.py` with commission ($2.05/round-turn) and ADR-02
 
 Grade: A >=80% MC pass, B >=65%, C >=50%, D >=30%, F <30%.
 
-
-### NQ1 (8 candidates)
-
-Grade distribution: {'F': 8}
-
-Positive return: 1/8 (12.5%)
-
-Det PASS on >=1 profile: 0 (0.0%)
+Profiles: Apex 50K ($3K target/$2.5K trailing DD/30-day), TopStep 50K ($3K/$2K/$1K daily/60-day), FTMO 50K ($5K/$5K static/$2.5K daily/30-day).
 
 
-**Top 5 by return:**
+### NQ1 (432 candidates)
 
-| Candidate | Return % | WR % | Trades | Grade | Best MC % |
-|---|---|---|---|---|---|
-| ib_cand_3b2913260c | 2.12 | 50.0 | 274 | F | 18.0 |
-| ib_cand_6dff0a3782 | -3.26 | 48.8 | 80 | F | 0.0 |
-| ib_cand_db38f06cb5 | -4.3 | 46.7 | 182 | F | 2.0 |
-| ib_cand_9d2d9f1717 | -8.65 | 49.3 | 759 | F | 4.5 |
-| ib_cand_fee8192925 | -17.2 | 41.9 | 155 | F | 0.5 |
+**Grade distribution:** {'F': 432}
+
+**Positive return:** 56/432 (13.0%)
+
+**Det PASS on >=1 profile:** 12 (2.8%)
+
+**Det PASS by profile:** {'FTMO 50K': 7, 'Apex 50K': 11, 'TopStep 50K': 11}
+
+
+**Top 10 by return — full prop-firm metrics:**
+
+| Candidate | Ret % | WR % | Trades | MaxDD % | Grade | Best MC % | MC Profile | Det $ Delta | Worst DD $ | Days to Pass |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ib_cand_13e8749410 | 14.04 | 37.1 | 1524 | -18.3 | F | 19.5 | TopStep 50K | 0 | 5049 | 21 |
+| ib_cand_eb1f746e8b | 11.79 | 50.5 | 202 | -1.4 | F | 21.5 | TopStep 50K | 5053 | 704 | 23 |
+| ib_cand_7de418c681 | 10.83 | 38.9 | 296 | -3.3 | F | 9.5 | TopStep 50K | 5333 | 1686 | 16 |
+| ib_cand_1e059cf8ed | 9.32 | 60.1 | 296 | -2.2 | F | 1.5 | TopStep 50K | 4500 | 1098 | 50 |
+| ib_cand_d6244bd330 | 9.28 | 53.7 | 2195 | -15.2 | F | 0 |  | 5364 | 1964 | N/A |
+| ib_cand_4fb370034f | 8.68 | 71.3 | 202 | -1.2 | F | 0 |  | 4180 | 621 | N/A |
+| ib_cand_a813d7b5c1 | 8.16 | 71.0 | 1479 | -6.4 | F | 0 |  | 5050 | 2888 | N/A |
+| ib_cand_d420a47336 | 7.36 | 35.9 | 2195 | -18.4 | F | 1.5 | TopStep 50K | 5227 | 1356 | 26 |
+| ib_cand_22532d8258 | 7.12 | 49.8 | 261 | -12.3 | F | 27.5 | TopStep 50K | 0 | 5096 | 21 |
+| ib_cand_50bad7bb0e | 6.31 | 41.9 | 191 | -1.7 | F | 5.5 | TopStep 50K | 3118 | 846 | 23 |
+
+
+**Top 5 by MC pass rate (any profile):**
+
+| MC % | Grade | Profile | Candidate | Ret % | WR % | Trades | Det $ | MaxDD $ |
+|---|---|---|---|---|---|---|---|---|
+| 27.5 | F | TopStep 50K | ib_cand_22532d8258 | 7.12 | 49.8 | 261 | -1492 | 2062 |
+| 23.5 | F | TopStep 50K | ib_cand_3b2913260c | 2.12 | 50.0 | 274 | -1929 | 2188 |
+| 22.5 | F | TopStep 50K | ib_cand_fa5acaa2ad | -0.73 | 42.3 | 274 | -775 | 2009 |
+| 21.5 | F | TopStep 50K | ib_cand_eb1f746e8b | 11.79 | 50.5 | 202 | 3083 | 704 |
+| 21.0 | F | TopStep 50K | ib_cand_2f9310b726 | -1.02 | 42.5 | 261 | -888 | 2050 |
+
+
+**Risk metrics (best candidate):**
+
+- Win rate: 37.1%
+
+- Edge (approx): -0.2572R per trade
+
+- Risk of ruin (50R bankroll): 100.00%
+
+- Max consecutive loss streak (est.): 16 trades
+
+- Dollar P&L per trade (1 Micro, $50K): $-0.51 (at $2/pt NQ multiplier)
+
+- Commission per trade: $2.05 (already deducted in backtest)
+
+- Max drawdown: -18.3% price / $-9159 on $50K
 
 
 ## 13. Methodology Notes
@@ -641,10 +694,18 @@ Det PASS on >=1 profile: 0 (0.0%)
 
 - All stats are in-sample (no train/test split in this report). Phase 4's validation harness applies bootstrap CIs and min-N guards for production use.
 
-- **Commission:** $2.05/round-turn per Micro contract, applied as % of notional in backtester. Not reflected in stats tables (only in backtest section).
+- **Walk-forward:** Not yet implemented. All filter lifts, regime stats, and filter stacks are in-sample. The backtest section (§12) uses the full historical period for both parameter selection and evaluation — this inflates results. A proper walk-forward split (e.g., 70% train / 30% test) is needed before trusting any positive expectancy.
 
-- **ADR-020:** 16:00 ET forced exit in backtester. Stats tables use full MAX_SEARCH window (may include overnight holds).
+- **Commission:** $2.05/round-turn per Micro contract, applied as % of notional in backtester. Stats tables show raw R (pre-commission). See §1 Commission Impact table for the per-trade cost. Over 100 trades, commission costs $205 — enough to turn marginal strategies negative.
 
-- **Regime classifier:** Uses trailing 5d percentile (no look-ahead). Previous version used realized ib_range_pct_of_daily (look-ahead bias, fixed BL-7).
+- **ADR-020:** 16:00 ET forced exit in backtester. Stats tables use full MAX_SEARCH window (may include overnight holds for Globex/Tokyo sessions).
+
+- **Regime classifier:** Uses trailing 5d percentile (no look-ahead, BL-7 fix). Previous version used realized ib_range_pct_of_daily (look-ahead bias).
 
 - **ib_range_pct_of_daily:** Now computed as ib_range / (daily_high - daily_low) from 1m data (BL-7 fix). Was previously ib_range/ib_mid (mislabeled proxy).
+
+- **Risk of ruin:** Computed as ((1-edge)/(1+edge))^bankroll where edge = 2*WR - 1 (simplified, assumes 1R win/loss). Bankroll = 50R (conservative for $50K at 1% risk per trade).
+
+- **Max consecutive losses:** Estimated as log(N) / log(1/(1-WR)) — the expected max losing streak in N trades at win rate WR.
+
+- **Dollar P&L per trade:** Approximated as edge * tick_multiplier * $1 (for NQ1: edge * 20 * $1 = edge * $20). Actual P&L depends on contract size and entry price.
