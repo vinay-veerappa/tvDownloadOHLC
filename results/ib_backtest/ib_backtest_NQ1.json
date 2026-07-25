@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "exported_at": "2026-07-25T17:20:07.496288+00:00",
+  "exported_at": "2026-07-25T17:21:40.325568+00:00",
   "result_count": 8,
   "results": [
     {
@@ -25,11 +25,11 @@
           "profit_factor": 0.9448568540979628,
           "total_trades": 759,
           "trading_days": 741,
-          "mc_pass_rate_pct": 0.6,
-          "mc_blow_rate_pct": 5.6000000000000005,
+          "mc_pass_rate_pct": 1.0,
+          "mc_blow_rate_pct": 5.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 23.833333333333332,
-          "p50_final_equity": -73.50329936591686
+          "avg_days_to_pass": 19.0,
+          "p50_final_equity": -9.251779262923485
         },
         {
           "profile_name": "TopStep 50K",
@@ -41,11 +41,11 @@
           "profit_factor": 0.9448568540979628,
           "total_trades": 759,
           "trading_days": 741,
-          "mc_pass_rate_pct": 4.7,
-          "mc_blow_rate_pct": 40.699999999999996,
+          "mc_pass_rate_pct": 1.0,
+          "mc_blow_rate_pct": 45.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 45.361702127659576,
-          "p50_final_equity": -393.5642894862664
+          "avg_days_to_pass": 22.0,
+          "p50_final_equity": -562.7373668811183
         },
         {
           "profile_name": "FTMO 50K",
@@ -61,12 +61,12 @@
           "mc_blow_rate_pct": 0.0,
           "mc_grade": "F",
           "avg_days_to_pass": null,
-          "p50_final_equity": -183.2456474502382
+          "p50_final_equity": -60.222959158611886
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:18:33.264366+00:00",
+      "run_at": "2026-07-25T17:20:20.885618+00:00",
       "error": null
     },
     {
@@ -91,11 +91,11 @@
           "profit_factor": 0.8103621799114684,
           "total_trades": 80,
           "trading_days": 80,
-          "mc_pass_rate_pct": 0.2,
-          "mc_blow_rate_pct": 7.7,
+          "mc_pass_rate_pct": 0.0,
+          "mc_blow_rate_pct": 9.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 26.0,
-          "p50_final_equity": -626.7317590941486
+          "avg_days_to_pass": null,
+          "p50_final_equity": -791.0607380682316
         },
         {
           "profile_name": "TopStep 50K",
@@ -108,10 +108,10 @@
           "total_trades": 80,
           "trading_days": 80,
           "mc_pass_rate_pct": 0.0,
-          "mc_blow_rate_pct": 65.10000000000001,
+          "mc_blow_rate_pct": 68.0,
           "mc_grade": "F",
           "avg_days_to_pass": null,
-          "p50_final_equity": -1310.792143333119
+          "p50_final_equity": -1512.3347919152409
         },
         {
           "profile_name": "FTMO 50K",
@@ -127,12 +127,12 @@
           "mc_blow_rate_pct": 0.0,
           "mc_grade": "F",
           "avg_days_to_pass": null,
-          "p50_final_equity": -558.9609487173814
+          "p50_final_equity": -606.5825652557415
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:18:44.867883+00:00",
+      "run_at": "2026-07-25T17:20:31.017666+00:00",
       "error": null
     },
     {
@@ -157,11 +157,11 @@
           "profit_factor": 0.6535370439979841,
           "total_trades": 1271,
           "trading_days": 1144,
-          "mc_pass_rate_pct": 1.3,
-          "mc_blow_rate_pct": 48.699999999999996,
+          "mc_pass_rate_pct": 1.0,
+          "mc_blow_rate_pct": 48.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 21.615384615384617,
-          "p50_final_equity": -1651.2877105391833
+          "avg_days_to_pass": 29.0,
+          "p50_final_equity": -1402.982154086269
         },
         {
           "profile_name": "TopStep 50K",
@@ -173,11 +173,11 @@
           "profit_factor": 0.6526752922812574,
           "total_trades": 1270,
           "trading_days": 1144,
-          "mc_pass_rate_pct": 2.5,
-          "mc_blow_rate_pct": 91.4,
+          "mc_pass_rate_pct": 2.0,
+          "mc_blow_rate_pct": 93.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 31.52,
-          "p50_final_equity": -1687.3362272616018
+          "avg_days_to_pass": 15.5,
+          "p50_final_equity": -1705.2709798831372
         },
         {
           "profile_name": "FTMO 50K",
@@ -190,15 +190,15 @@
           "total_trades": 1271,
           "trading_days": 1144,
           "mc_pass_rate_pct": 0.0,
-          "mc_blow_rate_pct": 2.3,
+          "mc_blow_rate_pct": 5.0,
           "mc_grade": "F",
           "avg_days_to_pass": null,
-          "p50_final_equity": -1630.4495370060276
+          "p50_final_equity": -2015.1230185342492
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:18:55.553225+00:00",
+      "run_at": "2026-07-25T17:20:40.719998+00:00",
       "error": null
     },
     {
@@ -223,11 +223,11 @@
           "profit_factor": 0.6907250504535192,
           "total_trades": 155,
           "trading_days": 154,
-          "mc_pass_rate_pct": 0.8,
-          "mc_blow_rate_pct": 48.6,
+          "mc_pass_rate_pct": 0.0,
+          "mc_blow_rate_pct": 56.99999999999999,
           "mc_grade": "F",
-          "avg_days_to_pass": 20.375,
-          "p50_final_equity": -1622.0625143547636
+          "avg_days_to_pass": null,
+          "p50_final_equity": -1933.8256905831736
         },
         {
           "profile_name": "TopStep 50K",
@@ -239,11 +239,11 @@
           "profit_factor": 0.6907250504535192,
           "total_trades": 155,
           "trading_days": 154,
-          "mc_pass_rate_pct": 1.0999999999999999,
-          "mc_blow_rate_pct": 94.19999999999999,
+          "mc_pass_rate_pct": 1.0,
+          "mc_blow_rate_pct": 97.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 20.818181818181817,
-          "p50_final_equity": -1731.0594661015928
+          "avg_days_to_pass": 54.0,
+          "p50_final_equity": -1777.3380956750395
         },
         {
           "profile_name": "FTMO 50K",
@@ -255,16 +255,16 @@
           "profit_factor": 0.6907250504535192,
           "total_trades": 155,
           "trading_days": 154,
-          "mc_pass_rate_pct": 0.1,
-          "mc_blow_rate_pct": 2.3,
+          "mc_pass_rate_pct": 0.0,
+          "mc_blow_rate_pct": 3.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 23.0,
-          "p50_final_equity": -1516.4822703999312
+          "avg_days_to_pass": null,
+          "p50_final_equity": -1576.7366766729078
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:19:07.147875+00:00",
+      "run_at": "2026-07-25T17:20:49.910751+00:00",
       "error": null
     },
     {
@@ -289,11 +289,11 @@
           "profit_factor": 0.9235687427723892,
           "total_trades": 1670,
           "trading_days": 1578,
-          "mc_pass_rate_pct": 0.3,
-          "mc_blow_rate_pct": 4.6,
+          "mc_pass_rate_pct": 0.0,
+          "mc_blow_rate_pct": 4.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 26.333333333333332,
-          "p50_final_equity": -268.3417240211886
+          "avg_days_to_pass": null,
+          "p50_final_equity": -46.14744667092301
         },
         {
           "profile_name": "TopStep 50K",
@@ -305,11 +305,11 @@
           "profit_factor": 0.9235687427723892,
           "total_trades": 1670,
           "trading_days": 1578,
-          "mc_pass_rate_pct": 2.9000000000000004,
-          "mc_blow_rate_pct": 38.0,
+          "mc_pass_rate_pct": 0.0,
+          "mc_blow_rate_pct": 40.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 43.44827586206897,
-          "p50_final_equity": -489.19431528979874
+          "avg_days_to_pass": null,
+          "p50_final_equity": -522.8928780916626
         },
         {
           "profile_name": "FTMO 50K",
@@ -325,12 +325,12 @@
           "mc_blow_rate_pct": 0.0,
           "mc_grade": "F",
           "avg_days_to_pass": null,
-          "p50_final_equity": -277.01489430171443
+          "p50_final_equity": 7.974560939672045
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:19:16.874425+00:00",
+      "run_at": "2026-07-25T17:20:59.951924+00:00",
       "error": null
     },
     {
@@ -356,10 +356,10 @@
           "total_trades": 182,
           "trading_days": 181,
           "mc_pass_rate_pct": 0.0,
-          "mc_blow_rate_pct": 4.3999999999999995,
+          "mc_blow_rate_pct": 4.0,
           "mc_grade": "F",
           "avg_days_to_pass": null,
-          "p50_final_equity": -307.4416888836005
+          "p50_final_equity": -248.91893429842324
         },
         {
           "profile_name": "TopStep 50K",
@@ -371,11 +371,11 @@
           "profit_factor": 0.8855257639532015,
           "total_trades": 182,
           "trading_days": 181,
-          "mc_pass_rate_pct": 0.8,
-          "mc_blow_rate_pct": 45.6,
+          "mc_pass_rate_pct": 1.0,
+          "mc_blow_rate_pct": 47.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 43.0,
-          "p50_final_equity": -813.6564116012325
+          "avg_days_to_pass": 60.0,
+          "p50_final_equity": -1041.8421475291434
         },
         {
           "profile_name": "FTMO 50K",
@@ -391,12 +391,12 @@
           "mc_blow_rate_pct": 0.0,
           "mc_grade": "F",
           "avg_days_to_pass": null,
-          "p50_final_equity": -315.9367356416136
+          "p50_final_equity": -426.34945456582057
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:19:30.131452+00:00",
+      "run_at": "2026-07-25T17:21:10.182455+00:00",
       "error": null
     },
     {
@@ -421,11 +421,11 @@
           "profit_factor": 0.8251757187750877,
           "total_trades": 2314,
           "trading_days": 1940,
-          "mc_pass_rate_pct": 2.3,
-          "mc_blow_rate_pct": 27.200000000000003,
+          "mc_pass_rate_pct": 4.0,
+          "mc_blow_rate_pct": 27.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 22.434782608695652,
-          "p50_final_equity": -653.062602545717
+          "avg_days_to_pass": 27.25,
+          "p50_final_equity": -780.9035435476831
         },
         {
           "profile_name": "TopStep 50K",
@@ -437,11 +437,11 @@
           "profit_factor": 0.8244651972637331,
           "total_trades": 2313,
           "trading_days": 1940,
-          "mc_pass_rate_pct": 7.6,
-          "mc_blow_rate_pct": 78.9,
+          "mc_pass_rate_pct": 5.0,
+          "mc_blow_rate_pct": 76.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 37.78947368421053,
-          "p50_final_equity": -1274.3388447834427
+          "avg_days_to_pass": 34.2,
+          "p50_final_equity": -1166.266960335373
         },
         {
           "profile_name": "FTMO 50K",
@@ -453,16 +453,16 @@
           "profit_factor": 0.8251757187750877,
           "total_trades": 2314,
           "trading_days": 1940,
-          "mc_pass_rate_pct": 0.2,
-          "mc_blow_rate_pct": 0.7000000000000001,
+          "mc_pass_rate_pct": 0.0,
+          "mc_blow_rate_pct": 0.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 26.5,
-          "p50_final_equity": -712.5387252842811
+          "avg_days_to_pass": null,
+          "p50_final_equity": -657.1039849960925
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:19:41.159515+00:00",
+      "run_at": "2026-07-25T17:21:20.234518+00:00",
       "error": null
     },
     {
@@ -487,11 +487,11 @@
           "profit_factor": 1.0820115771117258,
           "total_trades": 274,
           "trading_days": 271,
-          "mc_pass_rate_pct": 8.5,
-          "mc_blow_rate_pct": 15.2,
+          "mc_pass_rate_pct": 12.0,
+          "mc_blow_rate_pct": 17.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 22.611764705882354,
-          "p50_final_equity": 280.30564453945897
+          "avg_days_to_pass": 21.666666666666668,
+          "p50_final_equity": 627.9940670200994
         },
         {
           "profile_name": "TopStep 50K",
@@ -503,11 +503,11 @@
           "profit_factor": 1.0820115771117258,
           "total_trades": 274,
           "trading_days": 271,
-          "mc_pass_rate_pct": 21.7,
-          "mc_blow_rate_pct": 57.99999999999999,
+          "mc_pass_rate_pct": 24.0,
+          "mc_blow_rate_pct": 52.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 35.23041474654378,
-          "p50_final_equity": -158.9296974860792
+          "avg_days_to_pass": 39.833333333333336,
+          "p50_final_equity": -83.27334243087701
         },
         {
           "profile_name": "FTMO 50K",
@@ -519,16 +519,16 @@
           "profit_factor": 1.0820115771117258,
           "total_trades": 274,
           "trading_days": 271,
-          "mc_pass_rate_pct": 0.3,
+          "mc_pass_rate_pct": 0.0,
           "mc_blow_rate_pct": 0.0,
           "mc_grade": "F",
-          "avg_days_to_pass": 24.666666666666668,
-          "p50_final_equity": 369.16816361827546
+          "avg_days_to_pass": null,
+          "p50_final_equity": 268.74134657786055
         }
       ],
       "passed": false,
       "grade": "F",
-      "run_at": "2026-07-25T17:19:56.685087+00:00",
+      "run_at": "2026-07-25T17:21:30.438109+00:00",
       "error": null
     }
   ]

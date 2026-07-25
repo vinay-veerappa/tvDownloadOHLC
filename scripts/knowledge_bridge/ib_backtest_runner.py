@@ -59,6 +59,20 @@ BIAS_SOURCES = ["ib_close", "fvg", "fvg_inversion", "confluence"]
 TP_MULTS_FULL = [0.5, 1.0, 1.5, 2.0, 3.0]
 TP_MULTS_SMOKE = [1.0]
 
+# Moderate grid — curated subset based on STRATEGY_STATISTICS findings
+# Best sessions: RTH (primary) + Tokyo (high WR for NQ1)
+# Top durations: 45, 60 min
+# Both entry variants (pre/post break)
+# Top 3 pullback levels from filter analysis
+# All 3 stop types (for comparison)
+# 2 bias sources (ib_close baseline + confluence filtered)
+# 3 TP multipliers
+MODERATE_SESSIONS = ["RTH", "Tokyo"]
+MODERATE_DURATIONS = [45, 60]
+MODERATE_PULLBACKS = ["fib_382", "fib_50", "ib_edge"]
+MODERATE_BIAS = ["ib_close", "confluence"]
+MODERATE_TPS = [0.5, 1.0, 2.0]
+
 # Smoke test subset (reduced grid for fast validation)
 SMOKE_SESSIONS = ["RTH"]
 SMOKE_DURATIONS = [45]
@@ -87,6 +101,7 @@ def _candidate_name(params: Dict[str, Any]) -> str:
 def build_candidates(
     ticker: str,
     smoke: bool = False,
+    moderate: bool = False,
     tp_mults: Optional[List[float]] = None,
 ) -> List[StrategyCandidate]:
     """Build IB StrategyCandidate grid from param combinations.
@@ -97,6 +112,8 @@ def build_candidates(
         Instrument (e.g., "NQ1").
     smoke : bool
         If True, use reduced grid for fast validation.
+    moderate : bool
+        If True, use curated moderate grid (576 candidates).
     tp_mults : list[float], optional
         Override TP multipliers. Ignored if smoke=True.
 
@@ -112,6 +129,14 @@ def build_candidates(
         stops = SMOKE_STOPS
         biases = SMOKE_BIAS
         tps = TP_MULTS_SMOKE
+    elif moderate:
+        sessions = MODERATE_SESSIONS
+        durations = MODERATE_DURATIONS
+        entry_variants = ENTRY_VARIANTS
+        pullbacks = MODERATE_PULLBACKS
+        stops = STOP_LOSS_TYPES
+        biases = MODERATE_BIAS
+        tps = MODERATE_TPS
     else:
         sessions = SESSIONS
         durations = IB_DURATIONS
@@ -257,6 +282,10 @@ def main():
         help="Use reduced grid for fast validation"
     )
     parser.add_argument(
+        "--moderate", action="store_true",
+        help="Use curated moderate grid (576 candidates) based on stats findings"
+    )
+    parser.add_argument(
         "--tp-mults", type=str, default=None,
         help="Comma-separated TP multipliers (e.g., 0.5,1.0,2.0)"
     )
@@ -303,7 +332,7 @@ def main():
     all_outputs = []
     for ticker in tickers:
         candidates = build_candidates(
-            ticker, smoke=args.smoke, tp_mults=tp_mults
+            ticker, smoke=args.smoke, moderate=args.moderate, tp_mults=tp_mults
         )
         print(f"\nBuilt {len(candidates)} candidates for {ticker}")
         out = run_backtest(
