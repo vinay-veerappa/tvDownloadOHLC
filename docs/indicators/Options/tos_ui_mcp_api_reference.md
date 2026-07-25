@@ -244,10 +244,13 @@ target_x, target_y = resolve_ocr_box_click_coords(
 
 ## 8. Diagnostic & Verification Scripts
 
+All diagnostic and test scripts are organized under `debug/` and `tests/`:
+
 | Script Path | Purpose | Execution Command |
 | :--- | :--- | :--- |
-| `verify_win32_coords.py` | Win32 Window Rect, Client Area, and DPI Scale Ratio Diagnostic | `.\.venv\Scripts\python.exe tos-ui-mcp\verify_win32_coords.py` |
-| `debug_trade_tab_ocr.py` | Trade Tab OCR Text Bounding Box Visual Inspection | `.\.venv\Scripts\python.exe tos-ui-mcp\debug_trade_tab_ocr.py` |
-| `debug_password_screen.py` | Password Screen Layout OCR Inspection | `.\.venv\Scripts\python.exe tos-ui-mcp\debug_password_screen.py` |
-| `debug_find_windows.py` | List All Active Top-Level Windows & Handles | `.\.venv\Scripts\python.exe tos-ui-mcp\debug_find_windows.py` |
-| `test_desktop_login_click.py` | Standalone Precision Desktop Login Click Test | `.\.venv\Scripts\python.exe tos-ui-mcp\test_desktop_login_click.py` |
+| `debug/verify_win32_coords.py` | Win32 Window Rect, Client Area, and DPI Scale Ratio Diagnostic | `.\.venv\Scripts\python.exe tos-ui-mcp\debug\verify_win32_coords.py` |
+| `debug/debug_trade_tab_ocr.py` | Trade Tab OCR Text Bounding Box Visual Inspection | `.\.venv\Scripts\python.exe tos-ui-mcp\debug\debug_trade_tab_ocr.py` |
+| `debug/debug_password_screen.py` | Password Screen Layout OCR Inspection | `.\.venv\Scripts\python.exe tos-ui-mcp\debug\debug_password_screen.py` |
+| `debug/debug_find_windows.py` | List All Active Top-Level Windows & Handles | `.\.venv\Scripts\python.exe tos-ui-mcp\debug\debug_find_windows.py` |
+| `tests/test_mcp_call.py` | Direct FastMCP Tool Call Simulator | `.\.venv\Scripts\python.exe tos-ui-mcp\tests\test_mcp_call.py` |
+| `tests/test_desktop_login_click.py` | Standalone Precision Desktop Login Click Test | `.\.venv\Scripts\python.exe tos-ui-mcp\tests\test_desktop_login_click.py` |
