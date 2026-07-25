@@ -559,18 +559,123 @@ custom_ranges:
 
 ---
 
-## 12. Open Questions
+## 12. Framework Audit (Pre-Integration, 2026-07-25)
+
+Before wiring IB strategies into `BacktestLoop`, the full pipeline was audited end-to-end:
+`StrategyCandidate` → `registry.get_strategy()` → `HunterStrategyAdapter.generate_signals()` →
+`VectorizedBacktester.run()` → `PropFirmSimulator.run_deterministic()` / `run_monte_carlo()`.
+
+### 12.1 Integration Contract — CONFIRMED WORKING
+
+| Layer | Component | Interface | Status |
+|---|---|---|---|
+| Registry | `STRATEGY_FACTORY_REGISTRY["ib_pullback"]` | `HunterStrategyAdapter(IBPullbackStrategy(ticker=ticker), "IB Pullback")` | ✅ Registered |
+| Adapter | `HunterStrategyAdapter.generate_signals(df, config)` | Delegates to `IBPullbackStrategy.hunt(df, params=config)` | ✅ Interface matches |
+| Strategy | `IBPullbackStrategy.hunt()` returns | DataFrame[signal_time, direction, entry_price, stop_price, target1_price] | ✅ Matches `_standard_signal_columns()` |
+| Backtester | `VectorizedBacktester.run(signals_df, data, risk_params)` | `_run_standardized_matches` path — expects exactly those 5 columns | ✅ Contract matches |
+| Backtester output | `trades_detailed` columns | `pnl_pct, mae_pct, mfe_pct, mfe_wick_pct, mfe_close_pct, exit_time` | ✅ All 6 columns produced |
+| PropFirmSimulator input | `run_deterministic(trades_detailed, profile)` | Needs `pnl_pct` + `exit_time` minimum — both present | ✅ Minimum satisfied |
+| PropFirmSimulator output | `det.passed`, `det.final_equity_delta`, `mc.pass_rate_pct`, `mc.grade` | Consumed by `ProfileResult` | ✅ All fields mapped |
+| Profiles | `FIRM_PROFILES` | apex_50k, apex_100k, topstep_50k, topstep_100k, ftmo_50k, generic_50k | ✅ All 6 configured |
+| Config | `sessions.yaml` `prop_firm.run_profiles` | `["apex_50k", "topstep_50k", "ftmo_50k"]` | ✅ Resolved by `_ensure_loaded()` |
+
+**Conclusion: No interface mismatch. The pipeline is wireable as-is.** The `HunterStrategyAdapter`
+already bridges `hunt()` → `generate_signals()`, and all DataFrame schemas line up.
+
+### 12.2 Blockers & Issues Found
+
+#### BLOCKER B1: `DataLoader.load_enriched()` reads historical parquet only (no 2025+ live data)
+
+- `backtest_loop.py` line 181: `self._df = loader.load_enriched(self.ticker)`.
+- `loader.py` `_price_path()` resolves to `data/{symbol}_1m.parquet` (historical archive, 2006 → 2025-12-31).
+- `sessions.yaml` `date_range: start: 2016-01-01, end: 2026-03-31` — but the historical parquet ends at **2025-12-31 21:59**. No 2026 data in this file.
+- **Live storage** (`data/live/live_storage_-{ticker}.parquet`) covers 2025-01-01 → current but is **not loaded** by `load_enriched()`.
+- **Impact**: Any `BacktestLoop` run for 2025-2026 will silently use a truncated 2025 dataset, missing the entire current year. For prop-firm evaluation (30/60-day windows), this is critical — we need current data.
+- **Fix needed**: Either (a) inject `load_fused_data()` output into `BacktestLoop._df` directly, bypassing `load_enriched()`, or (b) modify `loader.py` to merge live storage. Option (a) is preferred — minimal change, no framework edit. Add a `data_override` parameter to `BacktestLoop.__init__()` that accepts a pre-loaded DataFrame.
+
+#### BLOCKER B2: `IBPullbackStrategy.hunt()` requires §9.2+ derived columns that are missing for 5 of 6 instruments
+
+- `hunt()` reads bias source, CISD, regime, and other §9.2/9.5/9.6/9.8/10.14 columns from the input DataFrame.
+- These columns are currently only populated for NQ1 (the async job for ES1/YM1/RTY1/CL1/GC1 is in progress).
+- **Impact**: `hunt()` will either crash or produce 0 signals for 5 instruments.
+- **Fix needed**: Wait for the `ib_derived_fields` async job to complete for all 6 symbols, then run BacktestLoop.
+
+#### ISSUE I1: `VectorizedBacktester` commission model is flat slippage, not per-contract
+
+- `backtest_engine.py` line 26: `commission: float = 2.05, slippage_pct: float = 0.0001`.
+- `commission` is set but **never used** in `_run_standardized_matches()`. Only `slippage_pct` (0.01% per trade) is deducted.
+- This is a flat % deduction, not a per-contract dollar commission ($2.05/round-turn per Micro).
+- **Impact**: Low-expectancy plays (0.25x targets) may look profitable when they're not after real commissions.
+- **Severity**: Medium — documented in PRD §10.1, affects all prop-firm dollar P&L outputs. Not a blocker for initial integration but must be addressed before trusting grade A/B results.
+
+#### ISSUE I2: No ADR-020 enforcement in backtester or simulator
+
+- `PropFirmSimulator` docstring says "All exits are assumed to already comply with ADR-020 (16:00 ET hard exit)."
+- `VectorizedBacktester._run_standardized_matches()` uses `MAX_SEARCH = 1440` (24 hours of 1-min bars) — it will hold trades overnight if neither TP nor SL is hit.
+- **Impact**: Trades that don't hit TP/SL within RTH will be carried past 16:00, violating ADR-020.
+- **Severity**: Medium — affects any trade that doesn't hit TP or SL within the session. Needs a time-based exit filter in the backtester or a forced 16:00 close. For IB Pullback (entries at 10:30+), the 1440-bar search window extends to next day's 10:30+.
+
+#### ISSUE I3: `max_trades_per_day=999` (disabled) in all profiles
+
+- All 6 `FIRM_PROFILES` have `max_trades_per_day=999`, which effectively disables the daily trade count limit.
+- Real prop firms (Apex, TopStep) enforce max trades per day (e.g., TopStep = unlimited but with daily loss limit).
+- **Impact**: No constraint on trade frequency. For IB Pullback (1-2 trades/day), this is fine. For high-frequency strategies, this would overstate pass rates.
+- **Severity**: Low for IB integration, but should be parameterized for future strategies.
+
+#### ISSUE I4: `BacktestResult.to_dict()` uses `asdict()` which may not serialize nested dataclasses
+
+- `to_dict()` at line 111: `d = asdict(self); d["profiles"] = [p.to_dict() for p in self.profiles]`.
+- `asdict()` recursively converts dataclass fields, but `profiles` is a list of `ProfileResult` — already handled explicitly.
+- However, if any field contains a pandas Timestamp or Path, JSON export via `json.dumps(default=str)` will work but lose type info.
+- **Severity**: Low — cosmetic, not a blocker.
+
+### 12.3 Items Requiring Fixes Before Integration
+
+| ID | Severity | Fix | Effort |
+|---|---|---|---|
+| B1 | **Blocker** | Add `data_override` param to `BacktestLoop.__init__()` to accept pre-loaded fused data | 15 min |
+| B2 | **Blocker** | Wait for `ib_derived_fields` async job to finish for all 6 symbols | Wait only |
+| I1 | Medium | Add per-contract commission to `VectorizedBacktester._run_standardized_matches()` | 30 min |
+| I2 | Medium | Add 16:00 ET forced exit to backtester (ADR-020 enforcement) | 1 hr |
+| I3 | Low | Parameterize `max_trades_per_day` in `sessions.yaml` overrides | 15 min |
+| I4 | Low | Add `default=str` to JSON export (already present) | 0 |
+
+### 12.4 Recommended Integration Plan
+
+1. **Fix B1** — Add `data_override: Optional[pd.DataFrame] = None` to `BacktestLoop.__init__()`. If provided, skip `load_enriched()` and use the override directly. Load fused data via `load_fused_data(ticker)` externally.
+2. **Wait for B2** — Confirm all 6 symbols have §9.2+ fields in `ib_derived_{SYM}.parquet`.
+3. **Build IB candidate grid** — Expand `IBPullbackStrategy.get_param_grid()` into 83 `StrategyCandidate` objects (3 sessions × 3 durations × 2 entries × 6 pullbacks × 3 stops × ... → filter to 83 viable combos).
+4. **Run `run_batch()`** for each ticker × profile combo. Export results via `export_backtest_results()` to `results/ib_backtest/`.
+5. **Post-fix I1 + I2** — After initial smoke test, add commission and ADR-020 enforcement, re-run, and compare grades.
+
+---
+
+## 13. Backlog
+
+| ID | Item | Source | Priority | Status |
+|---|---|---|---|---|
+| BL-1 | Report format & storage — IB stats reports are currently scattered as individual parquet/csv files in `results/ib_stats/`. Consolidate into a structured directory with a manifest, and add a summary HTML/MD dashboard. | User request 2026-07-25 | Medium | Open |
+| BL-2 | Fix MAE stop R:R bug in `ib_mae_stops.py` — `optimal_stop_r = p95_mae / target_r` (not `median_mae`). Currently shows 5R-20R stops on 0.25x targets. | PRD §10.2 | High | Open |
+| BL-3 | Implement FR-10 empirical target engine (`ib_empirical_targets.py`) — Gunship-style percentile targets. | PRD §11 | High | Open |
+| BL-4 | Implement FR-11 custom range support (`config/ib_custom_ranges.yaml`). | PRD §11 | Medium | Open |
+| BL-5 | Fix `VectorizedBacktester` commission model (I1) — add per-contract dollar commission. | PRD §12.2 | Medium | Open |
+| BL-6 | Add ADR-020 16:00 ET forced exit to `VectorizedBacktester` (I2). | PRD §12.2 | Medium | Open |
+| BL-7 | Verify regime router look-ahead (Q4) — is `ib_range_pct_of_daily` using realized same-day value? | PRD §12 Q4 | High | Open |
+
+---
+
+## 14. Open Questions
 
 1. **VIX futures data availability** — is VIX9D vs VIX (or VIX front-month vs back-month) already loaded anywhere, or does `vix_term_structure` need a new feed? (Affects Tier 1 vs Tier 3 for strategies 76–78.)
 2. **Tick / bid-ask volume** — does `data/{SYM}_1m.parquet` have an up/down volume split, or is delta/CVD entirely Tier 3? (Affects strategies 67–70.)
 3. **NYSE breadth feed** — is the TOS RTD feed from `OPTIONS_INVENTORY.md` wired to capture intraday A/D ratio? (Affects strategies 74–75.)
 4. **Regime router look-ahead** — is `ib_range_pct_of_daily` in the regime classifier using the realized same-day value or a trailing 60-day estimate? (Affects validity of all regime stats.)
-5. **Commission model** — does `VectorizedBacktester` deduct $2.25/round-turn per Micro? If not, what is the impact on low-expectancy plays?
+5. **Commission model** — does `VectorizedBacktester` deduct $2.25/round-turn per Micro? If not, what is the impact on low-expectancy plays? **Answer (§12.2 I1): No — only 0.01% flat slippage. `$2.05` commission is stored but never applied.**
 6. **Stop mismatch** — does the `IBPullbackStrategy` backtest use `ib_opposite` stop or the Phase 5.1 P95 MAE stop? (Affects whether backtest results match report recommendations.)
 
 ---
 
-## 13. References
+## 15. References
 
 - Source plan: [`docs/plans/2026-07-24-ib-data-gathering-plan.md`](../../plans/2026-07-24-ib-data-gathering-plan.md)
 - Prior pipeline spec: [`IB_STATS_PIPELINE_SPEC_v5.md`](./IB_STATS_PIPELINE_SPEC_v5.md)
