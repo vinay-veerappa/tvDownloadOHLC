@@ -377,18 +377,20 @@ def automate_tos_login(username: str | None = None, password: str | None = None,
         return False
 
 
-def is_tos_gui_visible() -> bool:
-    """Check if Thinkorswim desktop GUI window is currently open and visible."""
+def is_tos_main_dashboard_visible() -> bool:
+    """Check if main Thinkorswim trading dashboard (Paper/Live) is open and active."""
     if sys.platform != "win32" or not _WIN32_AVAILABLE:
-        return is_tos_running()
+        return False
 
     found = False
     def enum_windows_cb(hwnd, extra):
         nonlocal found
         if win32gui.IsWindowVisible(hwnd):
             title = win32gui.GetWindowText(hwnd).lower()
-            if "thinkorswim" in title or "log in" in title:
-                found = True
+            if "thinkorswim" in title and any(w in title for w in ["paper", "live", "build"]):
+                rect = win32gui.GetWindowRect(hwnd)
+                if rect[2] - rect[0] > 600:
+                    found = True
 
     try:
         win32gui.EnumWindows(enum_windows_cb, None)
@@ -399,11 +401,15 @@ def is_tos_gui_visible() -> bool:
 
 def launch_and_login_tos() -> bool:
     """
-    Main entry point: Checks if ToS is running, launches it if missing, and automates login.
+    Main entry point: Checks if ToS main dashboard is running; if not, launches / executes login.
     """
-    if is_tos_gui_visible():
-        log.info("Thinkorswim GUI window is already active and visible.")
+    if is_tos_main_dashboard_visible():
+        log.info("Thinkorswim main trading dashboard is already active and visible.")
         return True
+
+    if is_tos_running():
+        log.info("Thinkorswim launcher/login window detected. Triggering automated login sequence...")
+        return automate_tos_login()
 
     exe_path = find_tos_executable()
     if not exe_path:
