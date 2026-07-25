@@ -582,16 +582,17 @@ Before wiring IB strategies into `BacktestLoop`, the full pipeline was audited e
 **Conclusion: No interface mismatch. The pipeline is wireable as-is.** The `HunterStrategyAdapter`
 already bridges `hunt()` → `generate_signals()`, and all DataFrame schemas line up.
 
-### 12.2 Blockers & Issues Found
+### 12.2 Issues Found (No Blockers)
 
-#### BLOCKER B1: `DataLoader.load_enriched()` reads historical parquet only (no 2025+ live data)
+#### NOTE N1: `DataLoader.load_enriched()` reads historical parquet only — BY DESIGN
 
 - `backtest_loop.py` line 181: `self._df = loader.load_enriched(self.ticker)`.
 - `loader.py` `_price_path()` resolves to `data/{symbol}_1m.parquet` (historical archive, 2006 → 2025-12-31).
-- `sessions.yaml` `date_range: start: 2016-01-01, end: 2026-03-31` — but the historical parquet ends at **2025-12-31 21:59**. No 2026 data in this file.
-- **Live storage** (`data/live/live_storage_-{ticker}.parquet`) covers 2025-01-01 → current but is **not loaded** by `load_enriched()`.
-- **Impact**: Any `BacktestLoop` run for 2025-2026 will silently use a truncated 2025 dataset, missing the entire current year. For prop-firm evaluation (30/60-day windows), this is critical — we need current data.
-- **Fix needed**: Either (a) inject `load_fused_data()` output into `BacktestLoop._df` directly, bypassing `load_enriched()`, or (b) modify `loader.py` to merge live storage. Option (a) is preferred — minimal change, no framework edit. Add a `data_override` parameter to `BacktestLoop.__init__()` that accepts a pre-loaded DataFrame.
+- This is **correct for backtesting** — deep history (20 years) is what we want for strategy verification.
+- **Live storage** (`data/live/live_storage_-{ticker}.parquet`, 2025-01-01 → current) is a **separate forward-validation step**, intentionally separate from the backtest.
+- **Two-phase workflow**: (1) Backtest on historical to verify strategies → (2) Forward-validate survivors on live storage recent price action.
+- **No fix needed for the backtest phase.** The `data_override` parameter on `BacktestLoop.__init__()` is still useful for the forward-validation phase (inject live/fused data), but it is not a blocker for the initial backtest integration.
+- **Forward-validation hook**: When ready to validate on live data, add `data_override` param to `BacktestLoop.__init__()` and pass `load_fused_data(ticker)` output (which merges historical + live storage).
 
 #### BLOCKER B2: `IBPullbackStrategy.hunt()` requires §9.2+ derived columns that are missing for 5 of 6 instruments
 
@@ -633,8 +634,8 @@ already bridges `hunt()` → `generate_signals()`, and all DataFrame schemas lin
 
 | ID | Severity | Fix | Effort |
 |---|---|---|---|
-| B1 | **Blocker** | Add `data_override` param to `BacktestLoop.__init__()` to accept pre-loaded fused data | 15 min |
-| B2 | **Blocker** | Wait for `ib_derived_fields` async job to finish for all 6 symbols | Wait only |
+| N1 | **Note (not a blocker)** | Historical-only data is correct for backtest. Add `data_override` param later for forward-validation phase only. | 0 min (now) |
+| B2 | ~~Blocker~~ ✅ **Cleared** | All 6 `ib_derived_{SYM}.parquet` files now exist with 69 cols, fully populated. | Done |
 | I1 | Medium | Add per-contract commission to `VectorizedBacktester._run_standardized_matches()` | 30 min |
 | I2 | Medium | Add 16:00 ET forced exit to backtester (ADR-020 enforcement) | 1 hr |
 | I3 | Low | Parameterize `max_trades_per_day` in `sessions.yaml` overrides | 15 min |
@@ -642,11 +643,11 @@ already bridges `hunt()` → `generate_signals()`, and all DataFrame schemas lin
 
 ### 12.4 Recommended Integration Plan
 
-1. **Fix B1** — Add `data_override: Optional[pd.DataFrame] = None` to `BacktestLoop.__init__()`. If provided, skip `load_enriched()` and use the override directly. Load fused data via `load_fused_data(ticker)` externally.
-2. **Wait for B2** — Confirm all 6 symbols have §9.2+ fields in `ib_derived_{SYM}.parquet`.
+1. **Run initial backtest** — No blockers remain. `BacktestLoop` as-is works with historical data (2006–2025). Build IB candidate grid, run `run_batch()`, export results.
+2. **Fix I1 + I2** — After smoke test, add commission and ADR-020 enforcement, re-run, and compare grades.
 3. **Build IB candidate grid** — Expand `IBPullbackStrategy.get_param_grid()` into 83 `StrategyCandidate` objects (3 sessions × 3 durations × 2 entries × 6 pullbacks × 3 stops × ... → filter to 83 viable combos).
 4. **Run `run_batch()`** for each ticker × profile combo. Export results via `export_backtest_results()` to `results/ib_backtest/`.
-5. **Post-fix I1 + I2** — After initial smoke test, add commission and ADR-020 enforcement, re-run, and compare grades.
+5. **Forward-validation phase** — After backtest verification, add `data_override` param to inject `load_fused_data()` for live-storage validation of surviving strategies.
 
 ---
 
