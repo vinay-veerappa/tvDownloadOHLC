@@ -17,14 +17,14 @@ Use this protocol during all development tasks to keep parent token consumption 
 * Subagents process data in their own isolated background context windows and report back concise 3-line summaries to the primary parent context.
 
 ### 2. Zero-Cost Local & Cloud Model Delegation (`ollama_bridge`)
-* For routine stubs, syntax checks, or isolated model queries, call the local/cloud Ollama router:
+* For routine stubs, syntax checks, or isolated model queries, call the local/cloud Ollama router with `--output scratch/file.txt`:
   ```powershell
-  # Zero-cost local coding model:
-  .\.venv\Scripts\python.exe -m scripts.utils.ollama_bridge --model qwen2.5-coder:3b --prompt "<task>"
-
-  # Deep thinking cloud model:
-  .\.venv\Scripts\python.exe -m scripts.utils.ollama_bridge --model deepseek-v4-pro:cloud --prompt "<task>"
+  # Save Ollama output directly to disk to prevent thousands of tokens entering parent context:
+  .\.venv\Scripts\python.exe -m scripts.utils.ollama_bridge --model qwen3.6:latest --prompt "<task>" --output scratch/task_result.txt
   ```
 
-### 3. Reserving High-Reasoning Models (`pro` / `inherit`)
+### 3. Log & Test Output Piping
+* Always pipe test suite runs and verbose outputs into log files (`> scratch/test.log`) and parse summaries rather than printing raw logs directly to terminal stdout.
+
+### 4. Reserving High-Reasoning Models (`pro` / `inherit`)
 * Reserve `pro` subagents or parent reasoning (`High` mode) strictly for high-ambiguity architecture decisions and complex multi-file trade math derivations.

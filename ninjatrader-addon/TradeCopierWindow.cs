@@ -796,7 +796,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 FontSize = 14
             });
 
-            string statusText = $"Mode: {rel.SizingMode} | Ratio: {rel.QuantityRatio:F1}x | MaxPos: {rel.MaxPositionSize} | Stealth: {(rel.StealthMode ? "ON" : "OFF")} | Armed: {(rel.ArmedForLive ? "LIVE" : "SIM")}";
+            string statusText = $"Mode: {rel.SizingMode} | Ratio: {rel.QuantityRatio:F1}x | MaxPos: {rel.MaxPositionSize} | Latency: {rel.LatencyMs:F0}ms | Slippage: {rel.AvgSlippageTicks:F1}t | Stealth: {(rel.StealthMode ? "ON" : "OFF")} | Armed: {(rel.ArmedForLive ? "LIVE" : "SIM")}";
             info.Children.Add(new TextBlock
             {
                 Text = statusText,

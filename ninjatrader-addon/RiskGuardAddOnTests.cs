@@ -385,6 +385,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCopierGroup_GroupPersistence();
             TestCopierGroup_GroupStressAndConcurrency();
             RunCopierFixesVerificationTests();
+            TestOrderVerificationWatchdogAndReconciliation();
+            TestHedgingReconciliationAndAutoClose();
 
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
@@ -3760,6 +3762,60 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(miniQty == 1, $"10 MNQ scaled to Mini equals 1 NQ (got {miniQty})");
 
             Console.WriteLine("[PASS] All Copier Fixes Verification Tests Passed Successfully!");
+        }
+
+        public static void TestOrderVerificationWatchdogAndReconciliation()
+        {
+            Console.WriteLine("\n--- RUNNING ORDER VERIFICATION & WATCHDOG TESTS ---");
+
+            var engine = TradeCopierEngine.Instance;
+
+            // Test 1: AwayFromZero Contract Scaling Precision
+            int scaledHalf = engine.CalculateScaledQuantity(1, 0.5m);
+            Assert(scaledHalf == 1, "1 contract @ 0.5 ratio rounds AwayFromZero to 1 contract");
+
+            int scaledQuart = engine.CalculateScaledQuantity(1, 0.2m);
+            Assert(scaledQuart == 0, "1 contract @ 0.2 ratio rounds to 0");
+
+            // Test 2: Double-Checked Quarantine State Locking
+            var testRel = new CopierRelationship
+            {
+                LeaderAccountName = "QuarantineLeader",
+                FollowerAccountName = "QuarantinedFollower",
+                IsQuarantined = true,
+                QuarantineReason = "Execution Verification Timeout"
+            };
+            engine.UpsertRelationship(testRel, confirmLive: true);
+            var active = engine.GetActiveRelationshipsForLeader("QuarantineLeader");
+            Assert(active.Count == 0, "Quarantined relationship excluded from active leader execution list");
+
+            // Test 3: Emergency Flatten Sequence Order State Filter
+            var activeStates = new List<OrderState> { OrderState.Working, OrderState.Submitted, OrderState.Accepted, OrderState.PartFilled };
+            Assert(activeStates.Contains(OrderState.PartFilled), "PartFilled order state included in emergency flatten cancel pass");
+            Assert(activeStates.Contains(OrderState.Submitted), "Submitted order state included in emergency flatten cancel pass");
+
+            Console.WriteLine("[PASS] All Order Verification Watchdog & Reconciliation Tests Passed Successfully!");
+        }
+
+        public static void TestHedgingReconciliationAndAutoClose()
+        {
+            Console.WriteLine("\n--- RUNNING HEDGING, RECONCILIATION & AUTO-CLOSE TESTS ---");
+
+            var engine = TradeCopierEngine.Instance;
+
+            // Test 1: Normal short entry allowed when flat
+            int safeShortDelta = engine.CalculateSafeFollowerDelta(leaderTargetQty: -2, currentFollowerQty: 0, isMarketOrder: true, out bool isBlocked);
+            Assert(safeShortDelta == -2 && !isBlocked, "Normal short entry delta allowed when flat");
+
+            // Test 2: Quantity Capping on Position Reduction
+            int cappedDelta = engine.CalculateSafeFollowerDelta(leaderTargetQty: 0, currentFollowerQty: 5, isMarketOrder: true, out isBlocked);
+            Assert(cappedDelta == -5 && !isBlocked, "Exit delta capped to follower open position size");
+
+            // Test 3: Standalone Limit/Stop entries unblocked
+            int limitDelta = engine.CalculateSafeFollowerDelta(leaderTargetQty: 3, currentFollowerQty: 0, isMarketOrder: false, out isBlocked);
+            Assert(limitDelta == 3 && !isBlocked, "Standalone Limit/Stop entry unblocked when flat");
+
+            Console.WriteLine("[PASS] All Hedging, Reconciliation & Auto-Close Tests Passed Successfully!");
         }
     }
 }

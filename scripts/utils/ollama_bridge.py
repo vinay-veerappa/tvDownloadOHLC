@@ -79,6 +79,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="qwen3.6:latest", help="Model name to query.")
     parser.add_argument("--prompt", type=str, default=None, help="Prompt text to send.")
     parser.add_argument("--system", type=str, default=None, help="Optional system prompt.")
+    parser.add_argument("--output", type=str, default=None, help="Save response directly to output filepath to save tokens.")
     
     args = parser.parse_args()
 
@@ -93,8 +94,15 @@ if __name__ == "__main__":
         print(f"Querying Ollama model [{args.model}]...")
         ans = query_ollama(args.prompt, model=args.model, system_prompt=args.system)
         if ans:
-            print("\n--- RESPONSE ---")
-            print(ans)
+            sys.stdout.reconfigure(encoding='utf-8')
+            if args.output:
+                os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+                with open(args.output, "w", encoding="utf-8") as f:
+                    f.write(ans)
+                print(f"[ollama_bridge] Saved {len(ans)} chars to file: {args.output}")
+            else:
+                print("\n--- RESPONSE ---")
+                print(ans)
         else:
             print("Failed to get response from model.")
     else:

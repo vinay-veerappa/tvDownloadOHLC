@@ -1,29 +1,36 @@
 # RiskGuard & McpBridge AddOn — Version History & Changelog
 
-## Current Release: `v1.5.0` (2026-07-21)
+## Current Release: `v1.7.0-ui-audit` (2026-07-25)
 
+### UI/UX Critical Audit & Feature Enhancements
+1. **Interactive UI Enhancements (`TradeCopierWindow.cs`)**:
+   - Added inline `🔓 Unquarantine / ☣ Quarantine` toggle buttons to relationships and group controls.
+   - Designed non-blocking 1.5s Hold-To-Confirm Panic controls for mass account liquidations.
+   - Added real-time Execution Audit stream panel for tracking order fills and auto-sync drift.
 
-### Major Changes & Feature Additions
-1. **Local Trade Copier Engine (`TradeCopierEngine.cs`)**:
-   - Multi-Account Leader-to-Follower replication with ratio scaling, fixed-lot sizing, and Mini-to-Micro symbol translation ($1\text{ NQ} = 10\text{ MNQ}$).
-2. **Prop-Firm Protection Suite (`PropFirmProtectionSuite.cs`)**:
-   - High-Impact USD Red-Folder News Shield (CPI/FOMC), Evaluation Target Lock ($+\$3,000$), Intraday Peak Equity Protection (30% giveback cap).
-3. **Four Dynamic Prop-Firm ATM Strategies (`DynamicAtmManager.cs`)**:
-   - Swing-Point Trailing, ATR Volatility-Adaptive, Drawdown Shield (Breakeven to `Entry + 2` at $+1.0R$), Scaled Runner ATM.
-4. **Per-Instrument Caps & Blacklist Filtering (`RiskGuardAddOn.cs`)**:
-   - Per-instrument max contract limits (e.g. `MNQ`: 10, `MES`: 10) and blacklisted ticker cancellation (`NQ`, `ES`, `YM`).
-5. **Five New MCP Protocol Expansion Tools (`McpBridgeAddOn.cs`)**:
-   - `nt_inspect_strategy` (C# reflection schema discovery for 62 loaded strategies), `nt_get_logs` (Tail `interventions.jsonl`), `nt_capture_chart` (WPF RenderTargetBitmap base64 PNG rendering), `nt_open_chart` (Programmatic chart tab opening), `nt_subscribe_fills` / `/api/events/fills` (Real-time fill streaming).
-6. **Multi-Contract Trade Lifecycle Counting & Sweep Watchdog**:
-   - Trade counting (`TradesToday`) debounced on genuine `Flat -> Non-Flat` transitions.
-   - Active 1s watchdog sweep flattens locked accounts with open positions.
-   - Position-reducing closing orders (`Sell`/`BuyToCover`) permitted during lockouts.
-7. **Versioning & Endpoints**:
-   - Centralized `Version = "1.1.0"`, exposed `GET /api/riskguard/version`.
+2. **3 Core Copier Safety Rules (`TradeCopierEngine.cs`)**:
+   - **Hedging Prevention**: Delta-based netting logic blocks opposite-side market orders when flat and caps reduction quantities.
+   - **Position Reconciler**: Event-driven fill verification comparing follower vs leader position direction.
+   - **Auto-Close Follower Positions**: Automatically flattens follower positions and cancels working orders when leader reaches 0 qty.
+
+3. **Multi-Agent Industry Benchmark Roadmap**:
+   - Planned **Execution Latency & Slippage Badges** (100ms real-time WPF binding).
+   - Planned **Red-Folder News Shield Overlay** with Break-Glass override controls.
 
 ---
 
-## Past Versions
+## Past Releases
+
+### `v1.6.0-audit` (2026-07-25)
+- **Thread-Safe Emergency Flatten Sequence (`AUDIT-NT8-001`)**.
+- **Atomic RiskGuard Persistence Model (`AUDIT-NT8-002`)**.
+- **Trade Copier Threading & Scaling Precision (`AUDIT-NT8-003`)**.
+
+### `v1.5.0` (2026-07-21)
+- **Local Trade Copier Engine (`TradeCopierEngine.cs`)**: Multi-Account Leader-to-Follower replication with ratio scaling.
+- **Prop-Firm Protection Suite (`PropFirmProtectionSuite.cs`)**: USD Red-Folder News Shield, Evaluation Target Lock.
+- **Five New MCP Protocol Expansion Tools (`McpBridgeAddOn.cs`)**: `nt_inspect_strategy`, `nt_get_logs`, `nt_capture_chart`, `nt_open_chart`, `nt_subscribe_fills`.
 
 ### `v1.0.0` (Initial Release)
-- Base RiskGuard AddOn release with event-driven protective stop guard (FSM state machine), daily loss limits, trailing drawdown limits, cooldown timers, edge window gates, and MCP bridge REST inspection endpoints.
+- Base RiskGuard AddOn release with protective stop guard (FSM state machine), daily loss limits, trailing drawdown limits.
+

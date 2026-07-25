@@ -40,6 +40,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double DailyLossLimit { get; set; } = 1000.0;
         public bool IsQuarantined { get; set; } = false;
         public string QuarantineReason { get; set; }
+        public double LatencyMs { get; set; }
+        public double AvgSlippageTicks { get; set; }
     }
 
     public class CopierGroup
@@ -150,6 +152,81 @@ namespace NinjaTrader.NinjaScript.AddOns
                     (string.IsNullOrEmpty(followerAccount) || r.FollowerAccountName.Equals(followerAccount, StringComparison.OrdinalIgnoreCase)));
             }
         }
+
+        public int CalculateScaledQuantity(int sourceQuantity, decimal scaleFactor)
+        {
+            if (sourceQuantity <= 0 || scaleFactor <= 0) return 0;
+            decimal rawQuantity = (decimal)sourceQuantity * scaleFactor;
+            decimal rounded = Math.Round(rawQuantity, 0, MidpointRounding.AwayFromZero);
+            if (rounded > int.MaxValue) return int.MaxValue;
+            return (int)rounded;
+        }
+
+        public int CalculateSafeFollowerDelta(int leaderTargetQty, int currentFollowerQty, bool isMarketOrder, out bool isBlocked)
+        {
+            isBlocked = false;
+            int delta = leaderTargetQty - currentFollowerQty;
+            if (delta == 0) return 0;
+
+            if (isMarketOrder && currentFollowerQty == 0)
+            {
+                bool isLeaderShort = leaderTargetQty < 0;
+                bool isLeaderLong = leaderTargetQty > 0;
+                bool isOppositeMarketOrder = (isLeaderShort && delta > 0) || (isLeaderLong && delta < 0);
+
+                if (isOppositeMarketOrder)
+                {
+                    isBlocked = true;
+                    return 0;
+                }
+            }
+
+            if (currentFollowerQty != 0 && ((currentFollowerQty > 0 && delta < 0) || (currentFollowerQty < 0 && delta > 0)))
+            {
+                int maxReduce = Math.Abs(currentFollowerQty);
+                delta = Math.Sign(delta) * Math.Min(Math.Abs(delta), maxReduce);
+            }
+
+            return delta;
+        }
+
+#if !TESTING
+        public void ReconcileFollowerPosition(Account leaderAccount, Account followerAccount, Instrument instrument)
+        {
+            if (leaderAccount == null || followerAccount == null || instrument == null) return;
+
+            var leaderPosObj = leaderAccount.Positions.FirstOrDefault(p => p.Instrument == instrument);
+            var followerPosObj = followerAccount.Positions.FirstOrDefault(p => p.Instrument == instrument);
+            double leaderQty = leaderPosObj != null ? leaderPosObj.Quantity : 0;
+            double followerQty = followerPosObj != null ? followerPosObj.Quantity : 0;
+
+            if (Math.Abs(leaderQty) < double.Epsilon)
+            {
+                if (Math.Abs(followerQty) > double.Epsilon)
+                {
+                    System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
+                    {
+                        var workingOrders = followerAccount.Orders
+                            .Where(o => o.Instrument == instrument && (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted))
+                            .ToList();
+                        foreach (var ord in workingOrders) { try { followerAccount.Cancel(new[] { ord }); } catch {} }
+                        try { followerAccount.Flatten(new[] { instrument }); } catch {}
+                    });
+                }
+                return;
+            }
+
+            bool directionMismatch = (leaderQty > 0 && followerQty < 0) || (leaderQty < 0 && followerQty > 0);
+            if (directionMismatch)
+            {
+                System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
+                {
+                    NinjaTrader.Code.Output.Process($"[RECONCILER MISMATCH] Leader: {leaderQty}, Follower: {followerQty}. Exiting follower position.", PrintTo.OutputTab1);
+                    try { followerAccount.Flatten(new[] { instrument }); } catch {}
+                });
+            }
+        }
+#endif
 
         public List<CopierRelationship> GetRelationships()
         {
