@@ -728,6 +728,14 @@ After the pilot completes, answer these 4 questions:
 
 **HIGH PRIORITY (directly affects the automation strategy):**
 
+0. **STOP-DISTANCE OPTIMIZATION FOR PROP VIABILITY (NEW — critical)** — The validated edge assumes `ib_opposite` (full IB range stop). On NQ1 at ~20K with a 1.3% range, that's ~260 points = $520 per Micro = 1.04% of a $50K account. On large IB days (>0.9%), the stop could be $400+ which eats the edge. We need to find the **minimum stop that preserves the edge**:
+   - MAE distribution of winners by range_bucket → P80/P90/P95 MAE = the stop that doesn't kill winners
+   - MAE distribution of losers → where do losers peak before failing?
+   - The optimal stop sits between P80 MAE of winners (don't stop out winners) and P50 MAE of losers (stop out losers early)
+   - Conditional expectancy at each stop distance: `E[R | stop = X]` for X ∈ {0.25R, 0.5R, 0.75R, 1.0R, ib_opposite}
+   - Dollar risk per trade at each stop distance: `stop_points × point_value × contracts` — must be < 1% of account
+   - Prop-firm viability: can we pass Apex/TopStep/FTMO with the tighter stop?
+
 1. **Part 1.2 — MAE/MFE distribution by range_bucket** — needed to set stops per IB size. Currently we use `ib_opposite` (full range) which the review showed is too wide. The MAE distribution by range size would give us size-adaptive stops.
 
 2. **Part 1.4 — Pullback depth for winners** — needed to set the Play 3 fade entry level. Currently we use 0.25x overshoot; the P25 MAE of winners would give us the empirical pullback entry.
