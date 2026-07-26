@@ -1,6 +1,17 @@
 """IB Statistics Pilot — Phase A: Load data + add missing derived fields.
 
-3-month horizon, NQ1, NY AM IB. Validates fast before expanding.
+Pilot scope: NQ1 NY AM IB, 3-12 month windows. Validates fast before expanding.
+
+Code review fixes applied (2026-07-26):
+  B1: dropped double-shifted prior_close (prior_session_close is already prior-day)
+  B2: renamed day_color → day_color_outcome (post-trade); added prior_day_color (pre-trade)
+  B3: renamed opened_inside_prior_range → ib_open_inside_prior_range (NY AM semantics)
+  B4: separated active vs no-setup rows in play-detail stats (fixes understated WR/E[R])
+  B5: defensive bool comparisons using ~ / sum()
+  E1: guard zero-range IB to avoid silent inf → 1.0 clipping
+  E2: report warm-up NaN drops from shift(1)
+  E3: use calendar months via PeriodIndex for accurate month boundaries
+  E4: guard empty pilot window to prevent ValueError on min/max
 """
 import pandas as pd
 import numpy as np
@@ -9,49 +20,81 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DERIVED = ROOT / "data" / "derived"
 
+# Edgeful rule thresholds (from STATISTICAL_DISCOVERY_PLAN.md §7.5; TODO: verify against Edgeful PDF)
+EDGEFUL_TOP25 = 0.75          # Rule 1A: close in top 25% of IB range
+EDGEFUL_BOT25 = 0.25          # Rule 1B: close in bottom 25%
+EDGEFUL_SIZE_THRESHOLDS = (0.47, 0.70, 0.90)  # small / mid / large (huge = >0.90)
+NY_AM_IB_END = "10:30"        # IB close for NY AM session
+NOON_BREAK_MINUTES = 90       # minutes after 10:30 = 12:00 ET
+
 
 def load_pilot(symbol="NQ1", session="NY AM IB", months=3):
-    """Load ib_confluence filtered to pilot scope."""
+    """Load ib_confluence filtered to pilot scope (last N calendar months)."""
     path = DERIVED / f"ib_confluence_{symbol}.parquet"
     df = pd.read_parquet(path)
     df = df[df["session_slot"] == session].copy()
-    # Last N months of trading days
     df["trading_day"] = pd.to_datetime(df["trading_day"])
     max_day = df["trading_day"].max()
-    min_day = max_day - pd.Timedelta(days=months * 30)
+    # E3: use calendar months via PeriodIndex (accurate month boundaries)
+    min_day = (max_day.to_period("M") - months).to_timestamp()
     df = df[df["trading_day"] >= min_day].copy()
+    # E4: guard empty window
+    if len(df) == 0:
+        print(f"[Pilot] {symbol} {session}: 0 sessions in {months}-month window. Aborting.")
+        return df
     print(f"[Pilot] {symbol} {session}: {len(df)} sessions from {df['trading_day'].min().date()} to {df['trading_day'].max().date()}")
     return df
 
 
 def add_missing_fields(df):
-    """Add the 6 Edgeful-style derived fields."""
-    # 1. ib_close_position: where IB close sits within IB range (0=at low, 1=at high)
-    df["ib_close_position"] = (df["ib_close"] - df["ib_low"]) / (df["ib_high"] - df["ib_low"])
-    df["ib_close_position"] = df["ib_close_position"].clip(0, 1)
+    """Add the 6 Edgeful-style derived fields (with review fixes applied)."""
+    if len(df) == 0:
+        return df
+    df = df.sort_values("trading_day").reset_index(drop=True)
 
-    # 2. ib_candle_color: green/red first hour
+    # 1. ib_close_position: where IB close sits within IB range (0=at low, 1=at high)
+    # E1: guard zero-range IB to avoid silent inf → 1.0 clipping
+    ib_range = df["ib_high"] - df["ib_low"]
+    df["ib_close_position"] = np.where(
+        ib_range > 0,
+        ((df["ib_close"] - df["ib_low"]) / ib_range).clip(0, 1),
+        0.5,  # mid-point for doji-IB (zero range)
+    )
+
+    # 2. ib_candle_color: green/red first hour (knowable at 10:30)
     df["ib_candle_color"] = np.where(df["ib_close"] > df["ib_open"], "green",
                                      np.where(df["ib_close"] < df["ib_open"], "red", "doji"))
 
-    # 3. day_color: green/red close vs prior session close
-    df = df.sort_values("trading_day")
-    df["prior_close"] = df["prior_session_close"].shift(1) if "prior_session_close" in df.columns else np.nan
-    if "outcome_close" in df.columns:
-        # day_color = sign(outcome_close - prior_session_close) where prior_session_close is the previous day's close
-        # prior_session_close already stores the prior day's RTH close for NY AM
-        df["day_color"] = np.where(df["outcome_close"] > df["prior_session_close"], "green",
-                                    np.where(df["outcome_close"] < df["prior_session_close"], "red", "flat"))
+    # 3a. day_color_outcome: POST-TRADE green/red close vs prior session close (knowable at 16:00)
+    #     B2: renamed from day_color to make post-trade status explicit
+    if "outcome_close" in df.columns and "prior_session_close" in df.columns:
+        # prior_session_close is ALREADY the prior day's RTH close (no extra shift needed — B1 fix)
+        df["day_color_outcome"] = np.where(df["outcome_close"] > df["prior_session_close"], "green",
+                                            np.where(df["outcome_close"] < df["prior_session_close"], "red", "flat"))
     else:
-        df["day_color"] = "unknown"
+        df["day_color_outcome"] = "unknown"
 
-    # 4. opened_inside_prior_range: did today's open fall within yesterday's IB range?
-    # We need prior day's ib_high/ib_low
+    # 3b. prior_day_color: PRE-TRADE — what direction did yesterday close vs its own IB close?
+    #     This is the Edgeful-equivalent of "was yesterday green/red?" (knowable at 09:30)
+    if "realized_dir_close" in df.columns:
+        df["prior_day_color"] = df["realized_dir_close"].shift(1).map(
+            {1: "green", -1: "red", 0: "flat"}).fillna("unknown")
+    else:
+        df["prior_day_color"] = "unknown"
+
+    # 4. ib_open_inside_prior_range: did today's IB open fall within yesterday's IB range?
+    #    B3: renamed from opened_inside_prior_range. For NY AM, ib_open = 09:30 bar open = session open.
+    #    DO NOT generalize to other sessions without verifying open semantics.
     df["prior_ib_high"] = df["ib_high"].shift(1)
     df["prior_ib_low"] = df["ib_low"].shift(1)
-    df["opened_inside_prior_range"] = (df["ib_open"] >= df["prior_ib_low"]) & (df["ib_open"] <= df["prior_ib_high"])
+    # E2: report warm-up drops
+    n_warmup = df["prior_ib_high"].isna().sum()
+    if n_warmup > 0:
+        print(f"  [add_missing_fields] Dropped {n_warmup} warm-up day(s) with no prior-day IB (shift boundary).")
+    df["ib_open_inside_prior_range"] = (df["ib_open"] >= df["prior_ib_low"]) & (df["ib_open"] <= df["prior_ib_high"])
 
-    # 5. close_location_3way: above IB high / inside / below IB low
+    # 5. close_location: POST-TRADE 3-way classification (knowable at 16:00)
+    #    Used in Rule 5 (post-hoc analysis). Boundary at exact ib_high/ib_low → "inside" (strict > / <).
     if "outcome_close" in df.columns:
         df["close_location"] = np.where(df["outcome_close"] > df["ib_high"], "above",
                                          np.where(df["outcome_close"] < df["ib_low"], "below", "inside"))
@@ -59,10 +102,12 @@ def add_missing_fields(df):
         df["close_location"] = "unknown"
 
     # 6. ib_size_bucket_edgeful: Edgeful thresholds on range_pct
+    #    Thresholds from STATISTICAL_DISCOVERY_PLAN.md §7.5; TODO: verify 0.47 against Edgeful PDF
     if "range_pct" in df.columns:
-        df["ib_size_bucket_edgeful"] = np.where(df["range_pct"] < 0.47, "small",
-                                                np.where(df["range_pct"] < 0.70, "mid",
-                                                         np.where(df["range_pct"] < 0.90, "large", "huge")))
+        s1, s2, s3 = EDGEFUL_SIZE_THRESHOLDS
+        df["ib_size_bucket_edgeful"] = np.where(df["range_pct"] < s1, "small",
+                                                np.where(df["range_pct"] < s2, "mid",
+                                                         np.where(df["range_pct"] < s3, "large", "huge")))
     else:
         df["ib_size_bucket_edgeful"] = "unknown"
 
@@ -77,12 +122,14 @@ def baseline_table(df):
         print("No data.")
         return
 
-    single_break = ((df["first_break_dir"] != 0) & (df["double_break"] == False)).sum()
-    double_break = (df["double_break"] == True).sum()
+    # B5: defensive bool comparisons using ~ / sum() instead of == False / == True
+    single_break = ((df["first_break_dir"] != 0) & (~df["double_break"].fillna(False))).sum()
+    double_break = df["double_break"].fillna(False).sum()
     no_break = (df["first_break_dir"] == 0).sum()
     high_first = (df["first_break_dir"] == 1).sum()
     low_first = (df["first_break_dir"] == -1).sum()
-    green_day = (df["day_color"] == "green").sum() if "day_color" in df.columns else 0
+    # B2: use day_color_outcome (post-trade) — labeled as OUTCOME in the table
+    green_day = (df["day_color_outcome"] == "green").sum() if "day_color_outcome" in df.columns else 0
 
     print(f"{'Stat':<30} {'N':>5} {'%':>8}")
     print(f"{'-'*48}")
@@ -92,7 +139,11 @@ def baseline_table(df):
     print(f"{'No break':<30} {no_break:>5} {100*no_break/n:>7.1f}%")
     print(f"{'First break = IB high':<30} {high_first:>5} {100*high_first/n:>7.1f}%")
     print(f"{'First break = IB low':<30} {low_first:>5} {100*low_first/n:>7.1f}%")
-    print(f"{'Green day':<30} {green_day:>5} {100*green_day/n:>7.1f}%")
+    print(f"{'Green day (OUTCOME - post-close)':<30} {green_day:>5} {100*green_day/n:>7.1f}%")
+    # Pre-trade prior day color for comparison
+    if "prior_day_color" in df.columns:
+        prior_green = (df["prior_day_color"] == "green").sum()
+        print(f"{'Prior day green (PRE-TRADE)':<30} {prior_green:>5} {100*prior_green/n:>7.1f}%")
 
     # IB size distribution
     print(f"\nIB size distribution (Edgeful buckets):")
@@ -189,6 +240,7 @@ def rule3_clock_filter(df):
             print(f"  {'  + prior day red':<55} {n2:>4} {'':>10} {'':>7} fade: {100*fade/n2:.1f}%")
 
     # Edgeful YM reference: 85.8% baseline, 94.6% early, 42.9% late fade
+    # Note: NQ1 may INVERT this pattern — late breaks hold, early breaks fade more
 
 
 def rule4_extension_targets(df):
@@ -317,26 +369,36 @@ if __name__ == "__main__":
         plays_12m = plays[plays["trading_day"] >= min_day]
         print(f"\nPlay detail rows (12 months): {len(plays_12m)}")
 
+        # B4: separate active vs no-setup rows (result=0 is no-setup, not a loss)
+        # realized_r is 0 for no-setup days, +target_mult for wins, -1.0 for stop-outs,
+        # and directionally signed timeout_r for in-trade drifts.
         for play in [1, 2, 3]:
             g = plays_12m[plays_12m["play"] == play]
             n = len(g)
             if n == 0: continue
-            wins = (g["result"] == 1).sum()
-            wr = 100 * wins / n
-            exp = g["realized_r"].mean()
-            pf_pos = g[g["result"] == 1]["realized_r"].sum()
-            pf_neg = abs(g[g["result"] == -1]["realized_r"].sum())
+            active = g[g["result"] != 0]
+            n_active = len(active)
+            if n_active == 0:
+                print(f"\n  Play {play}: N={n}  no active trades.")
+                continue
+            wins = (active["result"] == 1).sum()
+            wr = 100 * wins / n_active  # B4: denominator is active, not all rows
+            exp = active["realized_r"].mean()  # B4: mean over active only (no zero-dilution)
+            pf_pos = active[active["result"] == 1]["realized_r"].sum()
+            pf_neg = abs(active[active["result"] == -1]["realized_r"].sum())
             pf = pf_pos / pf_neg if pf_neg > 0 else float('nan')
-            print(f"\n  Play {play}: N={n}  WR={wr:.1f}%  E[R]={exp:.4f}  PF={pf:.2f}")
+            coverage = 100 * n_active / n
+            print(f"\n  Play {play}: N={n}  active={n_active} ({coverage:.1f}% coverage)  WR={wr:.1f}%  E[R]={exp:.4f}  PF={pf:.2f}")
 
-            # By target level
+            # By target level (also active-only)
             for lvl in sorted(g["target_lvl"].unique()):
                 gl = g[g["target_lvl"] == lvl]
-                n2 = len(gl)
+                gl_active = gl[gl["result"] != 0]
+                n2 = len(gl_active)
                 if n2 < 10: continue
-                wr2 = 100 * (gl["result"] == 1).sum() / n2
-                exp2 = gl["realized_r"].mean()
-                print(f"    target={lvl}x: N={n2}  WR={wr2:.1f}%  E[R]={exp2:.4f}")
+                wr2 = 100 * (gl_active["result"] == 1).sum() / n2
+                exp2 = gl_active["realized_r"].mean()
+                print(f"    target={lvl}x: N_active={n2}  WR={wr2:.1f}%  E[R]={exp2:.4f}")
 
     print(f"\n{'='*70}")
     print("PILOT COMPLETE")
