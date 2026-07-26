@@ -1,34 +1,84 @@
 # IB Strategy Automation Design Document
 
-**Status:** Draft (2026-07-26)
-**Reference:** `EDGE_VALIDATION_REPORT.md` (validated metrics), `STRATEGY_COMPENDIUM.md` (IF/THEN/ELSE rules)
+**Status:** Draft (2026-07-26, updated with Phase D-F findings)
+**Reference:** `EDGE_VALIDATION_REPORT.md` (validated metrics), `STRATEGY_COMPENDIUM.md` (IF/THEN/ELSE rules), `STATISTICAL_DISCOVERY_PLAN.md` (coverage status)
 **Target platforms:** NinjaTrader 8 (C#), TradingView (Pine Script v5)
-**Instrument:** NQ1 (MNQ for live), ES1 (MES for live) — NY AM IB session only
+**Instrument:** NQ1 (MNQ for live), ES1 (MES for live) — NY AM IB session, customizable to any time range
+
+---
+
+## 0. Resumption Guide (for future sessions)
+
+This section is for picking up the implementation in a later session.
+
+### 0.1 What has been done
+
+| Phase | Script | What was validated | Commit |
+|---|---|---|---|
+| A | `ib_pilot_stats.py` | 6 missing derived fields, baseline stats, 5 Edgeful rules | `ff2ccca7` |
+| B | `ib_pilot_stacks.py` | Condition stacks, bootstrap CIs, ES1 cross-check | `94a689b7` |
+| C | `ib_pilot_5year.py` | 5-year edge survival (per year/DOW/month/target) | `0270d74d` |
+| D | `ib_pilot_stops.py` | Stop optimization, MAE/MFE, pullback depth, predictive model | `27de0ac7` |
+| E | `ib_pilot_comprehensive.py` | All 3 plays, all 8 bias variants, all 13 entry modules, exit features | `76f75755` |
+| F | `ib_pilot_durations.py` | Multi-duration IB comparison (5/15/30/45/60 min) | `5a2913b4` |
+
+### 0.2 What needs to be implemented
+
+| Phase | Deliverable | Status |
+|---|---|---|
+| 1 | `IBStrategyBase.cs` + `IBRange.cs` indicator | NOT STARTED |
+| 2 | `IBBreakoutBot.cs` (Play 1) | NOT STARTED |
+| 3 | `IBFadeBot.cs` (Play 3) | NOT STARTED |
+| 4 | NT backtest validation (5 steps) | NOT STARTED |
+| 5 | `IBStrategyLib.pine` + `IBBreakoutStrategy.pine` | NOT STARTED |
+| 6 | `IBFadeStrategy.pine` | NOT STARTED |
+| 7 | TV Strategy Tester validation | NOT STARTED |
+| 8 | Live sim deployment (MNQ) | NOT STARTED |
+
+### 0.3 Key decisions already made
+
+1. **Default IB duration = 30 min** (not 60) — IB30 has stronger Rule 1 (86.8% vs 84.6%) and 29% less dollar risk. See Section 2.1.
+2. **Default stop = 0.25R** (not ib_opposite 1.0R) — tighter stops don't change E[R] because MAE rarely exceeds 0.25R. See Section 4.2.
+3. **Default play = 3 (fade) at 0.25x target** — E[R] +0.259, the strongest significant edge. See Section 4.1.
+4. **Rule 3 clock filter is INVERTED on NQ1/ES1** — late breaks hold (92.8%), early breaks fade (78.8%). See Section 2.4.
+5. **Calendar filters: skip Monday (Play 2), May (Play 1), October (Play 3)**. See Section 2.5.
+6. **Skip huge IB days** (range_pct > 0.9%) — the predictive model shows range_pct is the strongest negative predictor. See Section 2.7.
+7. **The IB duration, start time, and end time are ALL fully customizable** — the strategy works on any time range, not just 09:30-10:30. See Section 2.1.
+
+### 0.4 Files to read before starting implementation
+
+- `docs/strategies/initial_balance_break/EDGE_VALIDATION_REPORT.md` — all validated metrics
+- `docs/strategies/initial_balance_break/STRATEGY_COMPENDIUM.md` — all IF/THEN/ELSE rules
+- `docs/strategies/initial_balance_break/STATISTICAL_DISCOVERY_PLAN.md` — coverage status (19 of 22 done)
+- `docs/strategies/ninjatrader/risk_manager_suite/RiskManagerBase.cs` — the existing base class to extend
+- `scripts/edgeful/ib_pilot_stats.py` — the Python reference implementation (all derived fields)
+- `scripts/edgeful/ib_pilot_durations.py` — the multi-duration comparison logic
 
 ---
 
 ## 1. Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    IB Strategy Automation                │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │  IB Window   │──>│  Direction   │──>│  Entry Gate  │ │
-│  │  (09:30-10:30)│   │  Trigger     │   │  (break/     │ │
-│  │  Range build │   │  (Rule 1)    │   │   fade)      │ │
-│  └──────────────┘   └──────────────┘   └──────┬───────┘ │
-│                                                │         │
-│                                                v         │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │  Exit Manager│<──│  Risk Manager│<──│  Position    │ │
-│  │  (TP/SL/     │   │  (size, DD,  │   │  Manager     │ │
-│  │   time/      │   │   daily loss,│   │  (entry,     │ │
-│  │   trailing)  │   │   ADR-020)   │   │   scale-in)  │ │
-│  └──────────────┘   └──────────────┘   └──────────────┘ │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    IB Strategy Automation                    │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐     │
+│  │  IB Window   │──>│  Direction   │──>│  Entry Gate  │     │
+│  │  (custom     │   │  Trigger     │   │  (break/     │     │
+│  │  start/end/  │   │  (Rule 1)    │   │   fade)      │     │
+│  │  duration)   │   │              │   │              │     │
+│  └──────────────┘   └──────────────┘   └──────┬───────┘     │
+│                                                │             │
+│                                                v             │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐     │
+│  │  Exit Manager│<──│  Risk Manager│<──│  Position    │     │
+│  │  (TP/SL/     │   │  (size, DD,  │   │  Manager     │     │
+│  │   time/      │   │   daily loss,│   │  (entry,     │     │
+│  │   trailing)  │   │   ADR-020)   │   │   scale-in)  │     │
+│  └──────────────┘   └──────────────┘   └──────────────┘     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### 1.1 Dual-platform parity
@@ -37,26 +87,44 @@ The strategy must produce **identical signals** on both NinjaTrader and TradingV
 
 | Component | NinjaTrader (C#) | TradingView (Pine v5) |
 |---|---|---|
-| IB window | `Bars.IsFirstBarOfSession` + time check | `time.session("0930-1030")` |
+| IB window | `Bars.IsFirstBarOfSession` + time check | `time.session(start-end)` |
 | Direction trigger | `bias_formation_firstreach` computed inline | Same logic in Pine |
 | Entry gate | `OnBarUpdate()` close-based check | `barstate.isconfirmed` close check |
 | Stop/target | `SetStopLoss()` / `SetProfitTarget()` | `strategy.entry` + `strategy.exit` |
 | Risk manager | `RiskManagerBase` (existing) | Pine `strategy` with `qty` sizing |
-| ADR-020 | `FlattenBy = 1600` (existing) | `session("0930-1600")` + `close_entries` |
+| ADR-020 | `FlattenBy = 1600` (existing) | `session(start-1600)` + `close_entries` |
+
+### 1.2 Custom time range support
+
+The IB window is **fully customizable** — any start time, end time, and duration. The strategy is not hardcoded to 09:30-10:30. Examples:
+
+| Config | Start | Duration | Use case |
+|---|---|---|---|
+| NY AM IB (default) | 09:30 ET | 30 min | Primary validated strategy |
+| NY AM IB60 | 09:30 ET | 60 min | Original IB (more data, wider stop) |
+| Midnight OR | 00:00 ET | 30 min | ICT midnight open range |
+| London IB | 03:00 ET | 60 min | London session IB |
+| Globex IB | 18:00 ET | 60 min | Overnight IB |
+| Custom | any | any | User-defined via `ib_custom_ranges.yaml` |
+
+The `ib_start_time` and `ib_duration_min` parameters drive everything downstream — the direction trigger, entry gate, clock filter, and exit manager all adapt automatically.
 
 ---
 
 ## 2. Strategy Parameters
 
-### 2.1 IB Window Parameters
+### 2.1 IB Window Parameters (FULLY CUSTOMIZABLE)
 
 | Parameter | Default | Range | Description |
 |---|---|---|---|
-| `ib_start_time` | 09:30 ET | fixed | IB window start |
-| `ib_end_time` | 10:30 ET | fixed | IB window end (60 min) |
-| `ib_duration_min` | 60 | 30, 45, 60 | IB duration in minutes |
-| `session_end_time` | 16:00 ET | fixed | RTH session end (ADR-020) |
-| `flatten_by_time` | 15:50 ET | 15:30-16:00 | Hard exit time (ADR-020) |
+| `ib_start_time` | 09:30 ET | any HH:MM | IB window start (any time, any session) |
+| `ib_duration_min` | **30** | 5-120 | IB duration in minutes (30 = optimal per Phase F) |
+| `ib_end_time` | computed | — | Auto-computed: `ib_start_time + ib_duration_min` |
+| `session_end_time` | 16:00 ET | any HH:MM | Session end (for ADR-020 forced exit) |
+| `flatten_by_time` | 15:50 ET | any HH:MM | Hard exit time (ADR-020) |
+| `outcome_window_min` | computed | — | Auto-computed: `session_end - ib_end` |
+
+**Phase F finding:** IB30 is the optimal duration — it captures 72% of the IB60 range, has a stronger Rule 1 trigger (86.8% vs 84.6%), and reduces dollar risk by 29% ($61 vs $86 per Micro). IB5 and IB15 cannot front-run the IB60 direction (AUC 0.47, no predictive power). The user can override to any duration (5-120 min) for custom time ranges.
 
 ### 2.2 Direction Trigger Parameters (Rule 1)
 
@@ -71,9 +139,12 @@ The strategy must produce **identical signals** on both NinjaTrader and TradingV
 
 | Parameter | Default | Range | Description |
 |---|---|---|---|
-| `active_play` | 3 | 1, 2, 3 | Which play to execute (1=breakout, 2=retest, 3=fade) |
-| `target_lvl` | 0.25 | 0.25, 0.5, 0.75, 1.0 | Target level in IB range multiples |
-| `stop_type` | ib_opposite | ib_opposite, ib_edge, mae_calibrated | Stop placement method |
+| `active_play` | **3** | 1, 2, 3 | Which play to execute (1=breakout, 2=retest, 3=fade) |
+| `target_lvl` | **0.25** | 0.25, 0.5, 0.75, 1.0 | Target level in IB range multiples |
+| `stop_type` | **mae_calibrated_025** | ib_opposite, ib_edge, mae_calibrated_025, mae_calibrated_030, fixed_r | Stop placement method |
+| `stop_r_mult` | **0.25** | 0.10-1.0 | Stop distance in R-multiples (0.25R = optimal per Phase D) |
+
+**Phase D finding:** A 0.25R stop preserves the full edge (E[R] unchanged) while reducing dollar risk by 75%. The MAE of winners rarely exceeds 0.25R (P80 winner MAE = 0.232R). The optimal stop sits between P80 winner MAE (0.232R) and P50 loser MAE (0.405R) — a 0.30R stop is the theoretical optimum.
 
 ### 2.4 Clock Filter (Rule 3)
 
@@ -104,16 +175,46 @@ The strategy must produce **identical signals** on both NinjaTrader and TradingV
 | `starting_account` | 50000 | — | Starting account size (for sim) |
 | `contract_type` | micro | micro, mini | Micro (MNQ/MES) or Mini (NQ/ES) |
 
+### 2.7 IB Size Filter (from Phase D predictive model)
+
+| Parameter | Default | Range | Description |
+|---|---|---|---|
+| `skip_huge_ib` | true | bool | Skip days where range_pct > 0.9% (huge IB = rotation, negative E[R]) |
+| `max_range_pct` | 0.90 | 0.50-2.0 | Maximum IB range_pct to trade (skip above this) |
+| `min_range_pct` | 0.10 | 0.01-0.50 | Minimum IB range_pct to trade (skip below — too tight) |
+
+**Phase D finding:** `range_pct` is the strongest negative predictor in the logistic model (coefficient -0.88). Huge IB days (>0.9% range) are rotation days — the edge disappears. The optimal Play 1 stack (Rule 1A + skip huge + skip Monday) lifts E[R] from +0.079 to +0.115 (+46%).
+
+### 2.8 Bias Variant Selection (from Phase E)
+
+| Parameter | Default | Range | Description |
+|---|---|---|---|
+| `bias_variant` | bias_combined | bias_formation_firstreach, bias_formation_lasttouch, bias_close_dir, bias_fvg, bias_fvg_ifvg, bias_fvg_rth, bias_fvg_1011, bias_combined | Which bias variant to use for direction filtering |
+| `use_bias_filter` | true | bool | Only trade in the bias direction |
+
+**Phase E finding:** `bias_combined` direction +1 is the strongest bias filter (+0.022 lift, PF 1.69). `bias_fvg_1011` direction -1 is surprisingly strong (+0.025 lift). All bias variants add positive lift when filtering for the +1 direction.
+
+### 2.9 Entry Module Selection (from Phase E)
+
+| Parameter | Default | Range | Description |
+|---|---|---|---|
+| `entry_module` | none | none, E11_80_rule, E18_wick_fade, E8_failed_breakout, E9_opening_drive | Optional entry confirmation module |
+
+**Phase E finding:** E11 80%-rule is the strongest entry module (+0.093 lift, PF 4.95) but only fires on 4% of days. E18 wick-dominant fade is second (+0.020 lift, 61% WR). Most entry modules add zero lift because they fire on ~100% of days. Default is `none` (no entry module filter) for maximum coverage.
+
 ---
 
 ## 3. Algorithm Specification
 
-### 3.1 IB Window Builder
+### 3.1 IB Window Builder (CUSTOMIZABLE — any start time, any duration)
 
 ```
+PARAMETERS: ib_start_time (HH:MM), ib_duration_min (int), session_end_time (HH:MM)
+COMPUTED: ib_end_time = ib_start_time + ib_duration_min
+
 STATE: ib_high, ib_low, ib_open, ib_close, ib_range, ib_mid
        ib_close_position, ib_candle_color, bias_firstreach
-       ib_complete (bool)
+       ib_complete (bool), first_high_done_time, first_low_done_time
 
 ON each 1-min bar:
   IF  time >= ib_start_time AND time < ib_end_time
@@ -162,13 +263,19 @@ ON ib_complete = true:
 ON each 1-min bar after ib_complete:
   IF  already_in_trade THEN return
 
+  # IB size filter (Phase D)
+  IF  range_pct > max_range_pct OR range_pct < min_range_pct THEN skip
+
+  # Calendar filter
+  IF  calendar_filter(active_play, dow, month) == SKIP THEN skip
+
   IF  bar.close > ib_high  (close-confirmed break)
   THEN
       IF  require_direction_trigger AND predicted_break_dir != +1
       THEN skip (direction trigger disagrees)
       ELSE
           entry_price = bar.close
-          stop_price = ib_low  (opposite boundary)
+          stop_price = entry_price - stop_r_mult * target_lvl * ib_range  (MAE-calibrated)
           target_price = ib_high + target_lvl * ib_range
           size = base_size * clock_size_multiplier(first_break_minutes)
           ENTER LONG
@@ -179,7 +286,7 @@ ON each 1-min bar after ib_complete:
       THEN skip
       ELSE
           entry_price = bar.close
-          stop_price = ib_high
+          stop_price = entry_price + stop_r_mult * target_lvl * ib_range  (MAE-calibrated)
           target_price = ib_low - target_lvl * ib_range
           size = base_size * clock_size_multiplier(first_break_minutes)
           ENTER SHORT
@@ -318,19 +425,40 @@ public abstract class IBStrategyBase : RiskManagerBase
     protected int    predictedBreakDir;  // +1, -1, 0
 
     // Parameters (in addition to RiskManagerBase params)
-    [NinjaScriptProperty] public int IbDurationMin { get; set; } = 60;
+    // IB Window (FULLY CUSTOMIZABLE — any start time, any duration)
+    [NinjaScriptProperty] public int IbStartHour { get; set; } = 9;
+    [NinjaScriptProperty] public int IbStartMinute { get; set; } = 30;
+    [NinjaScriptProperty] public int IbDurationMin { get; set; } = 30;  // Phase F: 30 is optimal
+    [NinjaScriptProperty] public int SessionEndHour { get; set; } = 16;
+    [NinjaScriptProperty] public int SessionEndMinute { get; set; } = 0;
+    [NinjaScriptProperty] public int FlattenByHour { get; set; } = 15;
+    [NinjaScriptProperty] public int FlattenByMinute { get; set; } = 50;
+
+    // Direction Trigger (Rule 1)
     [NinjaScriptProperty] public double ClosePositionTopPct { get; set; } = 0.75;
     [NinjaScriptProperty] public double ClosePositionBotPct { get; set; } = 0.25;
     [NinjaScriptProperty] public bool RequireDirectionTrigger { get; set; } = true;
-    [NinjaScriptProperty] public int ActivePlay { get; set; } = 3;
-    [NinjaScriptProperty] public double TargetLvl { get; set; } = 0.25;
+
+    // Play Selection
+    [NinjaScriptProperty] public int ActivePlay { get; set; } = 3;  // Phase D: Play 3 is strongest
+    [NinjaScriptProperty] public double TargetLvl { get; set; } = 0.25;  // Phase D: 0.25x is optimal
+    [NinjaScriptProperty] public double StopRMult { get; set; } = 0.25;  // Phase D: 0.25R stop
+
+    // Clock Filter (Rule 3 — INVERTED on NQ1/ES1)
     [NinjaScriptProperty] public int EarlyBreakThresholdMin { get; set; } = 90;
     [NinjaScriptProperty] public double EarlyBreakSizeMult { get; set; } = 0.5;
     [NinjaScriptProperty] public double LateBreakSizeMult { get; set; } = 1.0;
+
+    // Calendar Filters
     [NinjaScriptProperty] public bool SkipMondayPlay2 { get; set; } = true;
     [NinjaScriptProperty] public bool SkipFebruaryPlay2 { get; set; } = true;
     [NinjaScriptProperty] public bool SkipMayPlay1 { get; set; } = true;
     [NinjaScriptProperty] public bool SkipOctoberPlay3 { get; set; } = true;
+
+    // IB Size Filter (Phase D)
+    [NinjaScriptProperty] public bool SkipHugeIb { get; set; } = true;
+    [NinjaScriptProperty] public double MaxRangePct { get; set; } = 0.90;
+    [NinjaScriptProperty] public double MinRangePct { get; set; } = 0.10;
 
     protected override void OnBarUpdate()
     {
@@ -533,8 +661,11 @@ strategy("IB Breakout Strategy (Play 1)", overlay=true,
 import Vinay/IBStrategyLib/1 as IBLib
 
 // Parameters
-ib_start = input.session("0930-1030", "IB Window")
+ib_start = input.session("0930-0930", "IB Start Time (HHMM)")
+ib_duration = input.int(30, "IB Duration (minutes)", minval=5, maxval=120)  // Phase F: 30 is optimal
+ib_end = ib_start + ib_duration  // auto-computed
 target_lvl = input.float(0.25, "Target Level (x IB range)", step=0.25)
+stop_r_mult = input.float(0.25, "Stop Distance (R-multiples)", step=0.05)  // Phase D: 0.25R
 require_trigger = input.bool(true, "Require Direction Trigger")
 top_pct = input.float(0.75, "Close Position Top %")
 bot_pct = input.float(0.25, "Close Position Bottom %")
@@ -542,6 +673,9 @@ early_threshold = input.int(90, "Early Break Threshold (min)")
 early_mult = input.float(0.5, "Early Break Size Mult")
 late_mult = input.float(1.0, "Late Break Size Mult")
 skip_may = input.bool(true, "Skip May")
+skip_huge = input.bool(true, "Skip Huge IB (>0.9%)")
+max_range_pct = input.float(0.90, "Max IB Range %")
+min_range_pct = input.float(0.10, "Min IB Range %")
 
 // Build IB
 [ib_h, ib_l, ib_m, ib_r, ib_cp, bias_fr, ib_done] = IBLib.build_ib_window(ib_start, ib_start)
