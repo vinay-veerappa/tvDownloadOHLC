@@ -171,11 +171,11 @@ def rule1_direction_trigger(df):
 
     # Rule 1A: low first + close in top 25%
     low_first = df[df["bias_formation_firstreach"] == 1]
-    low_first_top25 = low_first[low_first["ib_close_position"] >= 0.75]
+    low_first_top25 = low_first[low_first["ib_close_position"] >= EDGEFUL_TOP25]
 
     # Rule 1B: high first + close in bottom 25%
     high_first = df[df["bias_formation_firstreach"] == -1]
-    high_first_bot25 = high_first[high_first["ib_close_position"] <= 0.25]
+    high_first_bot25 = high_first[high_first["ib_close_position"] <= EDGEFUL_BOT25]
 
     print(f"\nRule 1A (long-side trigger):")
     print(f"  {'Condition':<55} {'N':>4} {'Hit':>6} {'%':>7}")
@@ -212,31 +212,32 @@ def rule3_clock_filter(df):
 
     # Convert first_break_minutes to clock time. IB closes at 10:30 for NY AM.
     # first_break_minutes = minutes after IB close (10:30)
-    # break before 12:00 = first_break_minutes < 90
-    early = broke[broke["first_break_minutes"] < 90]
-    late = broke[broke["first_break_minutes"] >= 90]
+    # break before 12:00 = first_break_minutes < NOON_BREAK_MINUTES (90 min after 10:30)
+    early = broke[broke["first_break_minutes"] < NOON_BREAK_MINUTES]
+    late = broke[broke["first_break_minutes"] >= NOON_BREAK_MINUTES]
 
     print(f"\n  {'Condition':<55} {'N':>4} {'No double':>10} {'%':>7}")
     # Baseline: any break
-    no_double = (broke["double_break"] == False).sum()
+    # B5: defensive bool comparisons using ~ / sum() instead of == False / == True
+    no_double = (~broke["double_break"].fillna(False)).sum()
     print(f"  {'Baseline (any break)':<55} {n_total:>4} {no_double:>10} {100*no_double/n_total:>6.1f}%")
     # Early break
     n = len(early)
     if n > 0:
-        no_double = (early["double_break"] == False).sum()
+        no_double = (~early["double_break"].fillna(False)).sum()
         print(f"  {'Break before 12:00':<55} {n:>4} {no_double:>10} {100*no_double/n:>6.1f}%")
     # Late break
     n = len(late)
     if n > 0:
-        no_double = (late["double_break"] == False).sum()
-        fade = (late["double_break"] == True).sum()
+        no_double = (~late["double_break"].fillna(False)).sum()
+        fade = late["double_break"].fillna(False).sum()
         print(f"  {'Break after 12:00':<55} {n:>4} {no_double:>10} {100*no_double/n:>6.1f}% (fade: {100*fade/n:.1f}%)")
     # Late + prior day red
     if n > 0 and "prior_day_result" in late.columns:
         late_prior_red = late[late["prior_day_result"] == -1]
         n2 = len(late_prior_red)
         if n2 > 0:
-            fade = (late_prior_red["double_break"] == True).sum()
+            fade = late_prior_red["double_break"].fillna(False).sum()
             print(f"  {'  + prior day red':<55} {n2:>4} {'':>10} {'':>7} fade: {100*fade/n2:.1f}%")
 
     # Edgeful YM reference: 85.8% baseline, 94.6% early, 42.9% late fade
@@ -263,7 +264,7 @@ def rule4_extension_targets(df):
     print(f"\n  Small IB + low break before 12:00:")
     small_low = df[(df["ib_size_bucket_edgeful"] == "small") &
                    (df["first_break_dir"] == -1) &
-                   (df["first_break_minutes"] < 90)]
+                   (df["first_break_minutes"] < NOON_BREAK_MINUTES)]
     n = len(small_low)
     if n > 0 and "ext_down_0_5_hit" in df.columns:
         hit = small_low["ext_down_0_5_hit"].sum()
@@ -307,7 +308,7 @@ def rule5_close_location(df):
         print(f"  {'IB high breaks first':<50} {n:>4} {100*a/n:>7.1f}% {100*i/n:>7.1f}% {100*b/n:>7.1f}%")
 
         # + before 12:00
-        early = high_first[high_first["first_break_minutes"] < 90]
+        early = high_first[high_first["first_break_minutes"] < NOON_BREAK_MINUTES]
         n = len(early)
         if n > 0:
             a = (early["close_location"] == "above").sum()
@@ -364,8 +365,9 @@ if __name__ == "__main__":
         plays = pd.read_parquet(play_path)
         plays = plays[plays["session_slot"] == "NY AM IB"].copy()
         plays["trading_day"] = pd.to_datetime(plays["trading_day"])
+        # R1 fix: use calendar months via PeriodIndex (consistent with load_pilot)
         max_day = df["trading_day"].max()
-        min_day = max_day - pd.Timedelta(days=12 * 30)  # 12 months
+        min_day = (max_day.to_period("M") - 12).to_timestamp()  # 12 calendar months
         plays_12m = plays[plays["trading_day"] >= min_day]
         print(f"\nPlay detail rows (12 months): {len(plays_12m)}")
 
