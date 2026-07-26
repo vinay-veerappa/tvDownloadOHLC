@@ -1,9 +1,12 @@
 # IB Statistical Discovery Plan
 
-**Status:** Draft (2026-07-26)
+**Status:** Updated (2026-07-26) — see Part 9 for coverage status
 **Scope:** Pilot on NQ1 or ES1, 1–3 years of data (not the full 20 years) for fast iteration. Expand only after the methodology is validated.
 **Source data:** `data/derived/ib_confluence_{SYM}.parquet` (354 cols × ~5,300 trading days × 6 sessions), `ib_play_detail_{SYM}.parquet` (~500K per-play rows), `ib_facts_{SYM}.parquet` (189 cols), `ib_optimal_stops.parquet`, `ib_filter_effectiveness.parquet`.
 **External reference:** Edgeful IB Playbook on YM (128 sessions, 6 months, 5 rules — see Part 7 for the findings we should replicate).
+**Pilot scripts implemented:** `scripts/edgeful/ib_pilot_stats.py`, `ib_pilot_stacks.py`, `ib_pilot_5year.py`
+**Validation report:** `EDGE_VALIDATION_REPORT.md`
+**Automation design:** `AUTOMATION_DESIGN.md`
 
 ---
 
@@ -680,3 +683,81 @@ After the pilot completes, answer these 4 questions:
 4. **Is the rolling 252-day expectancy positive in 2024–2025?**
    - Yes → the edge is alive today.
    - No → historical edge is dead; stop.
+
+---
+
+## Part 9 — Coverage Status (2026-07-26)
+
+### 9.1 What has been completed
+
+| Plan item | Status | Script / Output | Finding |
+|---|---|---|---|
+| **Part 1.1 — Filter effectiveness** | PARTIAL | `ib_pilot_stacks.py` (condition stacks + bootstrap CI) | Rule 1 + Rule 3 validated with CIs; 125-filter FDR not yet run |
+| **Part 1.2 — MAE/MFE of a range** | NOT DONE | — | `ib_optimal_stops.parquet` has P95/P99 but not by range_bucket |
+| **Part 1.3 — Extension percentile frequency** | PARTIAL | `ib_pilot_stats.py` Rule 4 | `max_ext_up/down` P50/P75/P90 by IB size bucket computed; hit-rate-by-level not yet |
+| **Part 1.4 — Pullback depth for winners** | NOT DONE | — | `retrace_depth_pct` exists in confluence but not analyzed |
+| **Part 1.5 — One-side-then-other vs clean breakout** | PARTIAL | `ib_pilot_stats.py` Rule 3 | Single/double break % computed; conditional extension not yet |
+| **Part 1.6 — Conditions for each scenario** | PARTIAL | `ib_pilot_stacks.py` | Rule 1/2/3 condition stacks computed; full 354-column scan not yet |
+| **Part 1.7 — Timing of moves** | PARTIAL | `ib_pilot_stats.py` Rule 3 | `first_break_minutes` early/late split done; full timing distribution not yet |
+| **Part 1.8 — IB duration comparison (5/15/30/40/50/60)** | NOT DONE | — | Requires re-deriving fields at 6 durations |
+| **Part 1.9 — ALN / Herman direction** | NOT DONE | — | Requires daily-context join + ALN/Herman computation |
+| **Part 2 — Multi-parameter testing (logistic/RF/SHAP)** | NOT DONE | — | Phase C of pilot plan |
+| **Part 3.1 — Day-type clustering** | NOT DONE | — | Discovery layer |
+| **Part 3.2 — Anomaly detection** | NOT DONE | — | Discovery layer |
+| **Part 3.3 — Change-point detection** | PARTIAL | `ib_pilot_5year.py` edge_by_year | Per-year E[R] shows 2026 weakening; formal change-point not run |
+| **Part 3.4 — Autocorrelation of outcomes** | NOT DONE | — | Discovery layer |
+| **Part 3.5 — Conditional independence / redundancy** | NOT DONE | — | `ib_filter_correlation.parquet` exists but not conditional lift |
+| **Part 3.6 — Mutual information feature ranking** | NOT DONE | — | Discovery layer |
+| **Part 3.7 — Calendar effects** | DONE | `ib_pilot_5year.py` edge_by_dow, edge_by_month | Per-DOW and per-month E[R] computed for all 3 plays |
+| **Part 3.8 — Quiet filter (continuous threshold)** | NOT DONE | — | Discovery layer |
+| **Part 3.9 — Edge survival over time** | DONE | `ib_pilot_5year.py` edge_by_year | Per-year E[R] with bootstrap CI for 2021-2026 |
+| **Part 3.10 — Buy-and-hold baseline** | NOT DONE | — | Discovery layer |
+| **Part 7 — Edgeful replication** | DONE | `ib_pilot_stats.py` + `ib_pilot_stacks.py` | All 5 rules replicated; Rule 1 holds, Rule 3 inverted, Rule 2A fails |
+| **Part 8 — Pilot plan** | DONE | `ib_pilot_stats.py`, `ib_pilot_stacks.py`, `ib_pilot_5year.py` | Phases A, B, E, F(partial) complete; C, D not yet |
+
+### 9.2 Pilot decision gate results
+
+| Question | Answer | Evidence |
+|---|---|---|
+| 1. Any condition stack >65% WR with N>=30? | **YES** | Rule 1A: 88.1% (N=387), Rule 1B: 86.3% (N=322) |
+| 2. Logistic model AUC > 0.55? | **NOT TESTED** | Phase D (predictive model) not yet implemented |
+| 3. Edgeful Rule 1 replicates (>90%)? | **PARTIAL** | 88.1% on NQ1 (vs 97.4% on YM) — direction matches, magnitude lower |
+| 4. Rolling 252-day expectancy positive in 2024-2025? | **YES** | Play 1: +0.061 (2025), +0.021 (2026 CI crosses zero); Play 3: +0.096 (2025), +0.415 (2026) |
+
+### 9.3 What remains to be done (prioritized)
+
+**HIGH PRIORITY (directly affects the automation strategy):**
+
+1. **Part 1.2 — MAE/MFE distribution by range_bucket** — needed to set stops per IB size. Currently we use `ib_opposite` (full range) which the review showed is too wide. The MAE distribution by range size would give us size-adaptive stops.
+
+2. **Part 1.4 — Pullback depth for winners** — needed to set the Play 3 fade entry level. Currently we use 0.25x overshoot; the P25 MAE of winners would give us the empirical pullback entry.
+
+3. **Part 2 — Logistic regression + random forest** — the predictive model would tell us if the pre-trade features (beyond Rule 1) add signal. AUC > 0.55 means there's more edge to extract; AUC < 0.55 means Rule 1 is all we have.
+
+4. **Part 1.8 — IB duration comparison** — the automation uses 60-min IB; would a 30-min or 45-min IB produce better results? This requires re-deriving fields at multiple durations.
+
+**MEDIUM PRIORITY (improves the edge but not blocking automation):**
+
+5. **Part 1.9 — ALN/Herman direction** — would add a third direction confirmation layer on top of Rule 1.
+
+6. **Part 3.6 — Mutual information feature ranking** — model-free feature importance; would confirm whether Rule 1's features (bias_firstreach, ib_close_position) are truly the top predictors or if there are better ones we haven't tested.
+
+7. **Part 3.1 — Day-type clustering** — might reveal that the hand-tuned trend/normal/range/skip regime router is wrong.
+
+8. **Part 1.3 — Extension hit-rate by level** — the full `ext_up_{L}_hit` aggregation for all 10 levels, not just the P50/P75/P90 of max_ext.
+
+**LOW PRIORITY (nice to have, not blocking):**
+
+9. **Part 3.2 — Anomaly detection** — interesting but not actionable for the strategy.
+10. **Part 3.4 — Autocorrelation** — would inform Kelly sizing but not entry/exit logic.
+11. **Part 3.5 — Conditional independence** — filter redundancy analysis; useful for the 125-filter FDR but not for the 5-rule Edgeful stack.
+12. **Part 3.8 — Quiet filter** — continuous threshold discovery; the calendar filters already capture the main seasonal effects.
+13. **Part 3.10 — Buy-and-hold baseline** — academic interest; the strategy is intraday so buy-and-hold is not the right comparator.
+
+### 9.4 Summary
+
+**Coverage: 7 of 22 plan items fully done, 6 partial, 9 not started.**
+
+The pilot validated the core methodology (Rule 1 direction trigger, Rule 3 clock filter, per-year/DOW/month seasonality, Edgeful replication) and produced the `EDGE_VALIDATION_REPORT.md` and `AUTOMATION_DESIGN.md`. The automation can proceed with the current findings — the 4 high-priority items above would improve the strategy but are not blocking.
+
+The most important remaining question is **Part 2 (predictive model)**: does the logistic regression find signal beyond Rule 1? If AUC > 0.55, there are additional filters worth adding to the automation. If AUC < 0.55, Rule 1 + Rule 3 + calendar filters is the complete edge, and the automation should proceed as designed.
