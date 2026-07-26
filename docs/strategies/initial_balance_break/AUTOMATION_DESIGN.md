@@ -754,6 +754,282 @@ if time(timeframe.period, "1550-1600", "America/New_York")
 
 ---
 
+## 7A. Cross-Strategy Features (Reusable Across All Strategies)
+
+These features are NOT IB-specific — they apply to any intraday strategy. They should be implemented as shared modules that any strategy can use, not hardcoded into the IB strategy.
+
+### 7A.1 Feature Inventory
+
+| # | Feature | NinjaTrader (C#) | TradingView (Pine v5) | Data Source |
+|---|---|---|---|---|
+| 1 | **News moratorium** | ✅ Full (HTTP fetch + AddOn) | ⚠️ Limited (manual input or `request.data`) | Prisma `EconomicEvent` table (11,684 events) |
+| 2 | **Earnings moratorium** | ✅ Full (HTTP fetch) | ❌ Not available | External API (e.g. EarningsWhispers) |
+| 3 | **VIX regime filter** | ✅ Full (secondary data series) | ✅ Full (`request.security("VIX", ...)`) | CBOE VIX data |
+| 4 | **ATR-based position sizing** | ✅ Full (existing `RiskManagerBase`) | ✅ Full (`ta.atr()`) | On-chart data |
+| 5 | **Daily loss limit / max trades** | ✅ Full (existing `RiskManagerBase`) | ⚠️ Limited (no persistent state across days) | Internal strategy state |
+| 6 | **Trailing drawdown** | ✅ Full (existing `RiskGatekeeper`) | ⚠️ Limited (no persistent equity tracking) | `RiskGatekeeper` (NT AddOn) |
+| 7 | **Session time fences** | ✅ Full (existing `EarliestEntry`/`LatestEntry`/`FlattenBy`) | ✅ Full (`time.session()`) | On-chart time |
+| 8 | **Holiday calendar** | ✅ Full (C# `DateTime` + holiday list) | ⚠️ Limited (hardcoded dates or `input`) | Static holiday calendar |
+| 9 | **OPEX week filter** | ✅ Full (computed from calendar) | ⚠️ Limited (manual input or `request.data`) | `scripts/edgeful/calendar_generator.py` |
+| 10 | **Day-of-week filter** | ✅ Full (`Time[0].DayOfWeek`) | ✅ Full (`dayofweek(time)`) | On-chart time |
+| 11 | **Month filter** | ✅ Full (`Time[0].Month`) | ✅ Full (`month(time)`) | On-chart time |
+| 12 | **Correlation filter** (don't trade NQ if ES is diverging) | ✅ Full (secondary data series) | ⚠️ Limited (`request.security` but no intrabar) | ES1 data series |
+| 13 | **Killzone timer** (ICT killzones) | ✅ Full (time-based) | ✅ Full (`time.session()`) | Static killzone definitions |
+| 14 | **Liquidity sweep detector** | ✅ Full (custom indicator) | ✅ Full (Pine logic) | On-chart data |
+| 15 | **FVG detector** | ✅ Full (custom indicator) | ✅ Full (Pine logic) | On-chart data |
+| 16 | **VWAP/AVWAP filter** | ✅ Full (NT built-in VWAP) | ✅ Full (`ta.vwap`) | On-chart data |
+| 17 | **Multi-timeframe confirmation** | ✅ Full (multi-series) | ✅ Full (`request.security`) | Secondary timeframe data |
+| 18 | **Breakeven + trailing stop** | ✅ Full (existing `RiskManagerBase`) | ✅ Full (`strategy.exit` with `trail_offset`) | Internal strategy state |
+| 19 | **Partial profit ladder** | ✅ Full (multi-order exit) | ⚠️ Limited (Pine `strategy.exit` supports partial but complex) | Internal strategy state |
+| 20 | **Discord/Telegram alert** | ✅ Full (HTTP webhook from AddOn) | ❌ Not available | External webhook URL |
+| 21 | **Trade journal auto-log** | ✅ Full (AddOn writes to Prisma DB) | ❌ Not available | Prisma `Trade` table |
+| 22 | **Market profile (TPO)** | ✅ Full (NT MarketProfile indicator) | ⚠️ Limited (Pine TPO is complex) | On-chart data |
+| 23 | **Order flow / delta** | ✅ Full (NT OrderFlow indicator) | ❌ Not available | Tick-level data |
+| 24 | **Tick volume profile** | ✅ Full (NT VolumeProfile indicator) | ⚠️ Limited (Pine VP is possible but heavy) | On-chart data |
+
+### 7A.2 News Moratorium (Feature 1 — detailed spec)
+
+**Purpose:** Pause trading around high-impact economic releases (FOMC, NFP, CPI, ISM).
+
+**Data source:** The repo already has `scripts/market_data/fetch_economic_calendar.py` which fetches events into the Prisma `EconomicEvent` table (11,684 events with UTC timestamps). The `scripts/edgeful/ib_news_opex.py` already computes `news_0945_today`, `news_1000_today`, `news_1030_today`, `news_impact_level`, `news_release_name` columns.
+
+**NinjaTrader implementation:**
+
+```csharp
+// In IBStrategyBase.cs (or a shared NewsFilter.cs module)
+
+// Parameters
+[NinjaScriptProperty] public bool NewsFilterEnabled { get; set; } = true;
+[NinjaScriptProperty] public int NewsMoratoriumBeforeMin { get; set; } = 5;  // pause 5 min before
+[NinjaScriptProperty] public int NewsMoratoriumAfterMin { get; set; } = 15; // pause 15 min after
+[NinjaScriptProperty] public string NewsImpactThreshold { get; set; } = "HIGH";  // only pause for HIGH impact
+
+// The AddOn fetches the economic calendar at startup and caches it
+// The strategy checks: is there a HIGH-impact event within [now - after, now + before]?
+protected bool IsNewsMoratorium()
+{
+    if (!NewsFilterEnabled) return false;
+    // Check cached news events for today
+    // Return true if any HIGH-impact event is within the moratorium window
+    return NewsCache.HasEventNow(Time[0], NewsMoratoriumBeforeMin, NewsMoratoriumAfterMin, NewsImpactThreshold);
+}
+
+// In CheckForEntry():
+if (IsNewsMoratorium()) return;  // skip entry during news window
+```
+
+**TradingView implementation:**
+
+Pine Script cannot fetch external APIs. Options:
+1. **Manual input:** User enters news times as a comma-separated string each morning (`"1000,1030"`). The strategy pauses around those times.
+2. **`request.data`:** If TradingView has a news data feed (e.g. Economic Calendar), use `request.data("ECONOMIC_CALENDAR", ...)` — but this is limited and may not be available for all instruments.
+3. **Hardcoded schedule:** FOMC dates are published 1 year ahead; NFP is first Friday of each month; CPI is mid-month. These can be hardcoded with a maintenance burden.
+
+```pine
+// Option 1: Manual input
+news_times = input.string("1000,1030", "News Times (HHMM, comma-separated)")
+news_before = input.int(5, "Moratorium Before (min)")
+news_after = input.int(15, "Moratorium After (min)")
+
+is_news_moratorium() =>
+    current_hhmm = hour(time, "America/New_York") * 100 + minute(time, "America/New_York")
+    times = str.split(news_times, ",")
+    for t in times
+        news_hhmm = int(t)
+        news_min = (news_hhmm / 100) * 60 + (news_hhmm % 100)
+        current_min = (current_hhmm / 100) * 60 + (current_hhmm % 100)
+        if current_min >= news_min - news_before and current_min <= news_min + news_after
+            true
+    false
+```
+
+### 7A.3 VIX Regime Filter (Feature 3 — detailed spec)
+
+**Purpose:** Skip trades when VIX is in extreme regimes (very low = no volatility, very high = chaos).
+
+**Data source:** `data/VIX_1d.parquet` (daily VIX close). The confluence table already has `vix_close` and `vix_bucket_trailing` (low/mid/high terciles).
+
+**NinjaTrader implementation:**
+
+```csharp
+// Add VIX as a secondary data series
+AddDataSeries("VIX", BarsPeriodType.Minute, 5);  // or daily
+
+// Parameters
+[NinjaScriptProperty] public bool VixFilterEnabled { get; set; } = true;
+[NinjaScriptProperty] public double VixMaxLevel { get; set; } = 30.0;  // skip if VIX > 30
+[NinjaScriptProperty] public double VixMinLevel { get; set; } = 12.0;  // skip if VIX < 12
+
+protected bool IsVixExtreme()
+{
+    if (!VixFilterEnabled) return false;
+    double vix = Closes[2][0];  // VIX close on secondary series
+    return vix > VixMaxLevel || vix < VixMinLevel;
+}
+```
+
+**TradingView implementation:**
+
+```pine
+vix_filter_enabled = input.bool(true, "VIX Filter")
+vix_max = input.float(30.0, "VIX Max (skip above)")
+vix_min = input.float(12.0, "VIX Min (skip below)")
+vix_close = request.security("VIX", "D", close)
+
+is_vix_extreme() =>
+    not vix_filter_enabled ? false : (vix_close > vix_max or vix_close < vix_min)
+```
+
+### 7A.4 Correlation Filter (Feature 12 — detailed spec)
+
+**Purpose:** Don't trade NQ if ES is moving in the opposite direction (divergence = unstable regime).
+
+**NinjaTrader implementation:**
+
+```csharp
+// Add ES as a secondary data series when trading NQ
+AddDataSeries("ES", BarsPeriodType.Minute, 5);
+
+// Parameters
+[NinjaScriptProperty] public bool CorrelationFilterEnabled { get; set; } = true;
+[NinjaScriptProperty] public int CorrelationLookback { get; set; } = 20;  // bars
+[NinjaScriptProperty] public double MinCorrelation { get; set; } = 0.5;  // skip if corr < 0.5
+
+protected bool IsCorrelationBroken()
+{
+    if (!CorrelationFilterEnabled) return false;
+    // Compute rolling correlation between NQ and ES returns
+    // Skip if correlation drops below MinCorrelation
+    double corr = ComputeRollingCorrelation(Closes[0], Closes[1], CorrelationLookback);
+    return corr < MinCorrelation;
+}
+```
+
+**TradingView implementation:**
+
+```pine
+corr_enabled = input.bool(true, "Correlation Filter")
+corr_lookback = input.int(20, "Correlation Lookback (bars)")
+min_corr = input.float(0.5, "Min Correlation")
+es_close = request.security("ES1!", timeframe.period, close)
+
+is_corr_broken() =>
+    not corr_enabled ? false :
+    ta.correlation(close, es_close, corr_lookback) < min_corr
+```
+
+### 7A.5 Holiday Calendar (Feature 8 — detailed spec)
+
+**Purpose:** Skip trading on/around market holidays (low liquidity, abnormal behavior).
+
+**NinjaTrader implementation:**
+
+```csharp
+// Static holiday list (update annually)
+private static readonly HashSet<string> USHolidays2026 = new() {
+    "2026-01-01", // New Year
+    "2026-01-19", // MLK
+    "2026-02-16", // Presidents Day
+    "2026-04-03", // Good Friday
+    "2026-05-25", // Memorial Day
+    "2026-07-03", // Independence Day (observed)
+    "2026-09-07", // Labor Day
+    "2026-11-26", // Thanksgiving
+    "2026-12-25", // Christmas
+};
+
+[NinjaScriptProperty] public bool SkipHolidays { get; set; } = true;
+[NinjaScriptProperty] public int HolidayBufferMin { get; set; } = 1; // skip 1 day before/after
+
+protected bool IsHoliday()
+{
+    if (!SkipHolidays) return false;
+    string dateStr = Time[0].ToString("yyyy-MM-dd");
+    return USHolidays2026.Contains(dateStr);
+}
+```
+
+**TradingView implementation:**
+
+```pine
+// Hardcoded holiday list (must update annually)
+holidays_2026 = input.string("2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-07-03,2026-09-07,2026-11-26,2026-12-25", "Holiday Dates (YYYY-MM-DD)")
+
+is_holiday() =>
+    date_str = str.format("{0}-{1}-{2}", year(time), month(time), dayofmonth(time))
+    holidays = str.split(holidays_2026, ",")
+    for d in holidays
+        if date_str == d
+            true
+    false
+```
+
+### 7A.6 Discord/Telegram Alert (Feature 20 — NT only)
+
+**Purpose:** Send a Discord/Telegram webhook when a trade is entered or exited.
+
+**NinjaTrader implementation:**
+
+```csharp
+// In RiskManagerAddOn.cs (existing AddOn)
+// After execution:
+private async void SendDiscordAlert(string message)
+{
+    var webhookUrl = "https://discord.com/api/webhooks/...";  // from config
+    var content = new { content = message };
+    var json = JsonSerializer.Serialize(content);
+    var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
+    await httpClient.PostAsync(webhookUrl, httpContent);
+}
+
+// Called on entry:
+SendDiscordAlert($"IB Breakout Long entered at {entryPrice}, stop={stopPrice}, target={targetPrice}");
+```
+
+**TradingView:** Not available. Pine Script cannot make HTTP requests.
+
+### 7A.7 Trade Journal Auto-Log (Feature 21 — NT only)
+
+**Purpose:** Write every trade to the Prisma `Trade` table for the Next.js web dashboard.
+
+**NinjaTrader implementation:**
+
+```csharp
+// In RiskManagerAddOn.cs
+// After closing fill:
+private async void LogTradeToPrisma(TradeRecord trade)
+{
+    // POST to the local API (api/main.py on port 8000)
+    var json = JsonSerializer.Serialize(trade);
+    await httpClient.PostAsync("http://localhost:8000/trades", new StringContent(json));
+}
+```
+
+**TradingView:** Not available.
+
+### 7A.8 Platform Capability Summary
+
+| Capability | NinjaTrader | TradingView |
+|---|---|---|
+| External data fetch (news, earnings) | ✅ HTTP from AddOn | ❌ |
+| Secondary instrument data (VIX, ES) | ✅ Multi-series | ✅ `request.security` |
+| Persistent state across days | ✅ `RiskGatekeeper` JSON | ❌ (resets on reload) |
+| Real account equity tracking | ✅ `AccountItemUpdate` | ❌ (sim only) |
+| HTTP webhooks (Discord/Telegram) | ✅ From AddOn | ❌ |
+| Database logging (Prisma) | ✅ From AddOn | ❌ |
+| Multi-timeframe confirmation | ✅ Multi-series | ✅ `request.security` |
+| Order flow / tick data | ✅ OrderFlow indicators | ❌ |
+| Market profile (TPO) | ✅ Built-in | ⚠️ Complex in Pine |
+| Commission/slippage modeling | ✅ Strategy Analyzer | ✅ Strategy Tester |
+| Live order execution | ✅ Broker integration | ❌ (alert-only) |
+| Custom indicators (FVG, sweep) | ✅ Custom NinjaScript | ✅ Custom Pine |
+| Session time fences | ✅ Built-in | ✅ `time.session` |
+| Calendar filters (DOW, month) | ✅ `DateTime` | ✅ `dayofweek`/`month` |
+
+**Bottom line:** NinjaTrader is the primary platform for live trading (full data access, broker integration, persistent risk management). TradingView is the secondary platform for visualization and backtesting (limited external data, no live execution, but excellent charting and Strategy Tester).
+
+---
+
 ## 8. Implementation Phases
 
 | Phase | Deliverable | Effort | Dependencies |
