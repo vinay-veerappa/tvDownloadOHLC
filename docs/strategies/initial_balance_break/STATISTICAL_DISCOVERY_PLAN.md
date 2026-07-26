@@ -764,8 +764,8 @@ After the pilot completes, answer these 4 questions:
 
 ### 9.4 Summary
 
-**Coverage: 7 of 22 plan items fully done, 6 partial, 9 not started.**
+**Coverage: 18 of 22 plan items fully done, 2 partial, 2 not started.**
 
-The pilot validated the core methodology (Rule 1 direction trigger, Rule 3 clock filter, per-year/DOW/month seasonality, Edgeful replication) and produced the `EDGE_VALIDATION_REPORT.md` and `AUTOMATION_DESIGN.md`. The automation can proceed with the current findings — the 4 high-priority items above would improve the strategy but are not blocking.
+The pilot validated the core methodology (Rule 1 direction trigger, Rule 3 clock filter, per-year/DOW/month seasonality, Edgeful replication) and produced the `EDGE_VALIDATION_REPORT.md` and `AUTOMATION_DESIGN.md`. The comprehensive evaluation (Phase D + E) covered all 3 plays, all 8 bias variants, all 13 entry modules, exit features, condition stacks, stop optimization, and the predictive model. The automation can proceed with the current findings — the 2 remaining items (IB duration comparison, ALN/Herman) would improve the strategy but are not blocking.
 
-The most important remaining question is **Part 2 (predictive model)**: does the logistic regression find signal beyond Rule 1? If AUC > 0.55, there are additional filters worth adding to the automation. If AUC < 0.55, Rule 1 + Rule 3 + calendar filters is the complete edge, and the automation should proceed as designed.
+The predictive model (AUC 0.61) confirmed there IS pre-trade signal beyond Rule 1. The top additional filters are: `range_pct` (skip huge IB days), `dow_Monday` (skip Monday), and `mid_lock_frac` Q5 (trade only when mid is locked). The stop optimization showed that a 0.25R stop preserves the full edge while reducing dollar risk by 75%, making all play+target combos prop-viable on a $50K account with Micro contracts.
