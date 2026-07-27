@@ -114,11 +114,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             EarliestEntry = 930;
             LatestEntry = 1430;
 
-            // ATR — we don't use ATR for stops (range-based), but RiskManagerBase.CanEnterTrade
-            // requires GetCurrentATR() > 0. With AtrPeriod=1 and a 1-min secondary (see ConfigureStrategy),
-            // ATR is available after just 1 bar.
-            StopAtrMult = 0.25;
-            AtrPeriod = 1;
+            // Range-based strategy — do NOT add the 5-min secondary series.
+            // IB strategies use rangeRange as the risk metric (via IntradayStrategyBase.GetCurrentATR override),
+            // not ATR from a 5-min secondary. Skipping AddDataSeries(Minute,5) eliminates the 250-min warmup
+            // that was blocking all entries before ~13:20. RiskManagerBase gates on CurrentBars[1] only when
+            // AddSecondaryTimeframe=true, so with false we only need CurrentBars[0] >= BarsRequiredToTrade.
+            AddSecondaryTimeframe = false;
 
             // Lower BarsRequiredToTrade — base requires 50 on BOTH series (primary + 5-min secondary).
             // With 50 on the 5-min, that's 250 min before CanEnterTrade passes. Set to 1 so

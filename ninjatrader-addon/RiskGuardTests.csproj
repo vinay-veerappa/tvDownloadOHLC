@@ -5,7 +5,11 @@
     <DefineConstants>TESTING</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="McpBridgeAddOn.cs" />
+    <!-- Include all addon .cs files EXCEPT McpBridgeAddOn.cs (WPF dependencies break test build).
+         This matches the old behavior when files were in this directory and auto-globbed. -->
+    <Compile Include="..\scripts\strategies\nt8\addons\*.cs" Link="%(Filename)%(Extension)" />
+    <Compile Remove="..\scripts\strategies\nt8\addons\McpBridgeAddOn.cs" />
+    <Compile Remove="..\scripts\strategies\nt8\addons\RiskManagerAddOn.cs" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 </Project>

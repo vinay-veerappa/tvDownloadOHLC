@@ -264,15 +264,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         /// <summary>
-        /// ATR override — our strategies use range-based stops, not ATR.
-        /// RiskManagerBase.CanEnterTrade() checks atr > 0 and blocks ALL entries
-        /// if the 5-min secondary series hasn't loaded AtrPeriod bars.
-        /// Since our IB completes at 10:00 but the 5-min ATR needs 14 bars (70 min),
-        /// CanEnterTrade blocks all early entries. Fix: set AtrPeriod=1 in SetStrategyDefaults
-        /// so ATR is available after just 1 bar. The actual stop is set by EnterWithRangeStop().
+        /// ATR override — range-based strategies use the IB/range range as their risk
+        /// metric, NOT ATR. RiskManagerBase.CanEnterTrade() gates on GetCurrentATR() > 0.
+        /// By overriding to return rangeRange once the range completes, the gate passes
+        /// immediately at range completion (10:00 for IB) without waiting for a 5-min ATR
+        /// to warm up. Before rangeComplete, returns 0 so the gate blocks pre-range entries
+        /// (the time fence EarliestEntry also guards this).
+        /// This works for ALL range-bounded intraday strategies (IB, ORB, Asia session).
         /// </summary>
-        // GetCurrentATR() is non-virtual in RiskManagerBase so we can't override it.
-        // Instead we set AtrPeriod=1 (see SetStrategyDefaults in IBStrategyBase).
+        protected override double GetCurrentATR()
+        {
+            if (rangeComplete && rangeRange > 0)
+                return rangeRange;
+            return 0;
+        }
 
         /// <summary>
         /// Checks registered calendar rules.

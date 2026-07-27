@@ -97,6 +97,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public double TargetRMultiple { get; set; }
         #endregion
 
+        #region Timeframe Configuration
+        /// <summary>
+        /// When true (default), adds a 5-minute secondary series and computes ATR on it.
+        /// Range-based strategies (IB, ORB) should set this false in SetStrategyDefaults()
+        /// and override GetCurrentATR() to return their range-based risk metric instead.
+        /// When false, Close5m/High5m/Low5m helpers MUST NOT be called.
+        /// </summary>
+        [NinjaScriptProperty]
+        [Display(Name = "Add Secondary Timeframe (5m)", Order = 0, GroupName = "Timeframe")]
+        public bool AddSecondaryTimeframe { get; set; }
+        #endregion
+
         // ──────────────────────────────────────────────────────────────
         // STATE FIELDS
         // ──────────────────────────────────────────────────────────────
@@ -173,16 +185,28 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 TrailAtrMult        = 2.0;
                 TargetRMultiple     = 2.0;
 
+                // Timeframe — default true for backward compat with ATR-based strategies.
+                // Range-based strategies (IB/ORB) override to false in SetStrategyDefaults().
+                AddSecondaryTimeframe = true;
+
                 SetStrategyDefaults();
             }
             else if (State == State.Configure)
             {
-                AddDataSeries(BarsPeriodType.Minute, 5);
+                // Only add the 5-min secondary when the strategy actually uses it.
+                // Range-based strategies set AddSecondaryTimeframe=false and override
+                // GetCurrentATR() to return their range-based risk metric.
+                if (AddSecondaryTimeframe)
+                    AddDataSeries(BarsPeriodType.Minute, 5);
                 ConfigureStrategy();
             }
             else if (State == State.DataLoaded)
             {
-                atrIndicator = ATR(BarsArray[1], AtrPeriod);
+                // Only construct the ATR indicator when the secondary series exists.
+                // When AddSecondaryTimeframe=false, atrIndicator stays null and
+                // GetCurrentATR() returns 0 unless overridden by the subclass.
+                if (AddSecondaryTimeframe)
+                    atrIndicator = ATR(BarsArray[1], AtrPeriod);
 
                 // Account state — initialise once from the parameter
                 // HWM starts at the same value so no phantom drawdown on day 1
@@ -221,7 +245,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (BarsRequiredToTradeParam > 0)
                 BarsRequiredToTrade = BarsRequiredToTradeParam;
 
-            if (CurrentBars[0] < BarsRequiredToTrade || CurrentBars[1] < BarsRequiredToTrade)
+            // Gate on primary series always; gate on secondary only when it exists.
+            // When AddSecondaryTimeframe=false, there is no BarsArray[1] to check.
+            if (CurrentBars[0] < BarsRequiredToTrade)
+                return;
+            if (AddSecondaryTimeframe && CurrentBars[1] < BarsRequiredToTrade)
                 return;
 
             // ── New session detection ──
@@ -581,8 +609,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // HELPERS
         // ──────────────────────────────────────────────────────────────
 
-        protected double GetCurrentATR()
+        /// <summary>
+        /// Returns the current ATR value from the 5-min secondary series.
+        /// VIRTUAL so range-based subclasses (IntradayStrategyBase) can override
+        /// it to return their range-based risk metric (e.g. IB rangeRange) instead —
+        /// this unblocks the CanEnterTrade atr&gt;0 gate as soon as the range completes,
+        /// without waiting for the 5-min ATR to warm up.
+        /// When AddSecondaryTimeframe=false, the base returns 0; subclasses MUST override.
+        /// </summary>
+        protected virtual double GetCurrentATR()
         {
+            if (!AddSecondaryTimeframe || atrIndicator == null)
+                return 0;
             if (CurrentBars[1] < AtrPeriod)
                 return 0;
             return atrIndicator[0];
@@ -640,9 +678,23 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return current >= startHHMM * 100 && current <= endHHMM * 100;
         }
 
-        protected double Close5m(int barsAgo = 0) => Closes[1][barsAgo];
-        protected double High5m(int barsAgo  = 0) => Highs[1][barsAgo];
-        protected double Low5m(int barsAgo   = 0) => Lows[1][barsAgo];
+        // 5-min secondary helpers — ONLY valid when AddSecondaryTimeframe=true.
+        // Calling these when the secondary was not added will throw an index error.
+        protected double Close5m(int barsAgo = 0)
+        {
+            if (!AddSecondaryTimeframe) throw new InvalidOperationException("Close5m requires AddSecondaryTimeframe=true");
+            return Closes[1][barsAgo];
+        }
+        protected double High5m(int barsAgo  = 0)
+        {
+            if (!AddSecondaryTimeframe) throw new InvalidOperationException("High5m requires AddSecondaryTimeframe=true");
+            return Highs[1][barsAgo];
+        }
+        protected double Low5m(int barsAgo   = 0)
+        {
+            if (!AddSecondaryTimeframe) throw new InvalidOperationException("Low5m requires AddSecondaryTimeframe=true");
+            return Lows[1][barsAgo];
+        }
 
         private string GetSignalName(string direction)
         {
