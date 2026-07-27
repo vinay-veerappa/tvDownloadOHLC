@@ -446,6 +446,10 @@ def main():
     parser.add_argument("--tickers", type=str, nargs="+", default=["NQ1", "ES1"], help="List of tickers to process")
     args = parser.parse_args()
 
+    # Normalize short tickers (ES→ES1, NQ→NQ1, YM→YM1, RTY→RTY1)
+    _short_map = {"ES": "ES1", "NQ": "NQ1", "YM": "YM1", "RTY": "RTY1"}
+    args.tickers = [_short_map.get(t.upper(), t.upper()) for t in args.tickers]
+
     try:
         run_narrative(
             mode=args.mode,

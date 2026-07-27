@@ -5,13 +5,14 @@
     <LangVersion>latest</LangVersion>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
-  <ItemGroup>
-    <Compile Include="..\ninjatrader-addon\McpBridgeAddOn.cs" />
-    <Compile Include="..\ninjatrader-addon\RiskGuardAddOn.cs" />
-    <Compile Include="..\ninjatrader-addon\DynamicAtmManager.cs" />
-    <Compile Include="..\ninjatrader-addon\PropFirmProtectionSuite.cs" />
-    <Compile Include="..\ninjatrader-addon\TradeCopierEngine.cs" />
-  </ItemGroup>
+    <ItemGroup>
+      <Compile Include="..\ninjatrader-addon\McpBridgeAddOn.cs" />
+      <Compile Include="..\ninjatrader-addon\RiskGuardAddOn.cs" />
+      <Compile Include="..\ninjatrader-addon\DynamicAtmManager.cs" />
+      <Compile Include="..\ninjatrader-addon\PropFirmProtectionSuite.cs" />
+      <Compile Include="..\ninjatrader-addon\TradeCopierEngine.cs" />
+      <Compile Include="..\ninjatrader-addon\TradeCopierWindow.cs" />
+    </ItemGroup>
   <ItemGroup>
     <Reference Include="NinjaTrader.Core">
       <HintPath>C:\Program Files\NinjaTrader 8\bin\NinjaTrader.Core.dll</HintPath>

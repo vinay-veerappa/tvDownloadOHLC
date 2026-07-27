@@ -1766,8 +1766,12 @@ MEDIUM_ALLOWLIST_KEYWORDS = [
 ]
 
 # ── US-relevance filter ──
-# The EconomicEvent DB table has no country/currency field, so we filter
-# by name keywords. Events matching any NON_US_KEYWORD are excluded
+# The EconomicEvent DB table now has a `country` field (e.g. "USD", "EUR").
+# Some callers (econ_calendar.py) filter by country="USD" directly.
+# This function (fetch_week_events) uses keyword-based filtering as a
+# secondary layer — it catches events where country is null (legacy rows)
+# and provides finer-grained control via NON_US_KEYWORDS / US_KEYWORDS.
+# Events matching any NON_US_KEYWORD are excluded
 # (they are international events with indirect impact on US futures).
 # Events matching US_KEYWORDS are always kept regardless of impact level.
 # The goal is to keep the narrative focused on events that directly move
