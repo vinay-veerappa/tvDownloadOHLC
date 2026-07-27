@@ -11,7 +11,12 @@ the same memory store (`.agent/memory.db`), and the same skill catalog
 
 ## MANDATORY STARTUP SEQUENCE (every new conversation)
 
-Run these steps at the start of **every** session, before any substantive work:
+Run these steps at the start of **every** session, before any substantive work.
+
+### "sync" keyword convention
+If the user's first message is exactly `sync` (case-insensitive), treat it as a
+request to run the full Mandatory Startup Sequence below and announce the
+result. Do not ask for clarification — just execute steps 1-4.
 
 ### 1. Load global rules
 Read `.agents/AGENTS.md` — global rules (fail-fast on stale errors, GPU/hardware
@@ -37,7 +42,28 @@ Load the returned memories into your working context.
 State: "Synchronized with AGENTS.md, memory.db (N entries recalled), and the
 following ADRs/concepts are active: [list the key ones from recalled memories]."
 
-### 4. Check skills before responding
+### 4. Verify codebase-memory MCP default project
+Before any code-search task, ensure the codebase-memory MCP is usable. If
+`mcp_codebase-memo_search_graph` returns `"no project loaded"`, the
+`default_project` config has been lost. The CLI `config set` command does NOT
+reliably persist to disk — use the persistence helper script instead:
+
+```bash
+.\.venv\Scripts\python.exe scripts\utils\persist_mcp_default_project.py
+```
+
+To just check the current value:
+
+```bash
+.\.venv\Scripts\python.exe scripts\utils\persist_mcp_default_project.py --verify
+```
+
+The config is stored in `~\.cache\codebase-memory-mcp\_config.db` (SQLite
+`config(key, value)` table). The CLI `config list` display omits `default_project`
+even when set — use `config get default_project` or the helper's `--verify`
+flag to confirm the value.
+
+### 5. Check skills before responding
 Skill catalog: `.agent/skills/*/SKILL.md` (same as Antigravity).
 
 - If a skill applies to the user's task (even a 1% chance), read its `SKILL.md`
@@ -96,6 +122,28 @@ Key skills in this repo:
 - `nqstats_analyzer` — NQ statistics
 - `backtest_commander` — backtesting
 - `daily_analysis` — daily analysis workflow
+
+## CODE SEARCH — USE CODEBASE-MEMORY MCP FIRST (mandatory)
+
+For **any** code-exploration task — finding a function/class/route, who-calls-what,
+architecture questions, refactor-impact analysis, dead-code detection — you MUST
+use the `codebase-memory-mcp` tools **first**, not `grep_search` / `file_search`.
+
+Preferred tools (in order):
+1. `mcp_codebase-memo_search_graph` — find functions/classes/routes by name pattern
+2. `mcp_codebase-memo_trace_call_path` — who calls what, dependency chains
+3. `mcp_codebase-memo_get_architecture` — high-level package/service overview
+4. `mcp_codebase-memo_search_code` — grep + graph enrichment (fallback)
+
+Only fall back to `grep_search` / `file_search` if:
+- The MCP returns no results, OR
+- You need a plain-text substring match with no structural meaning (e.g. a literal
+  string in a config file), OR
+- The user explicitly asks for a grep.
+
+**Rationale**: the code graph (27k+ nodes) gives precise definitions, call edges,
+and ranked results. grep is a flat text scan and misses structural relationships.
+Using the MCP first is faster and more accurate for code questions.
 
 ## CONTEXT ANCHORS (same as Antigravity's sync-trading-brain)
 

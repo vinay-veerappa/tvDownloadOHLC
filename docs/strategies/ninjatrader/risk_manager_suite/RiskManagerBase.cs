@@ -55,6 +55,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         #region Time Parameters
         [NinjaScriptProperty]
+        [Display(Name = "Bars Required To Trade", Order = 0, GroupName = "Time")]
+        public int BarsRequiredToTradeParam { get; set; }
+
+        [NinjaScriptProperty]
         [Display(Name = "Earliest Entry (HHMM)", Order = 1, GroupName = "Time")]
         public int EarliestEntry { get; set; }
 
@@ -140,7 +144,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 ExitOnSessionCloseSeconds    = 60;
                 IsFillLimitOnTouch           = false;
                 TraceOrders                  = false;
-                BarsRequiredToTrade          = 50;
+                BarsRequiredToTrade          = 1;   // FIX: was 50 — blocked IB entries for 250 min on 5-min secondary
+                BarsRequiredToTradeParam     = 1;   // exposed as NinjaScriptProperty so SA params can override
                 StartBehavior                = StartBehavior.WaitUntilFlat;
                 RealtimeErrorHandling        = RealtimeErrorHandling.StopCancelClose;
 
@@ -155,6 +160,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 StopOnAccountBlown        = false; // log only by default — don't kill backtest
 
                 // Time defaults
+                BarsRequiredToTradeParam = 1;  // default: 1 bar warmup (SA can override via params)
                 EarliestEntry = 930;
                 LatestEntry   = 1430;
                 FlattenBy     = 1545;
@@ -210,6 +216,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Only process the primary (1-min) series
             if (BarsInProgress != 0)
                 return;
+
+            // Apply BarsRequiredToTradeParam (NinjaScriptProperty — SA params can override)
+            if (BarsRequiredToTradeParam > 0)
+                BarsRequiredToTrade = BarsRequiredToTradeParam;
 
             if (CurrentBars[0] < BarsRequiredToTrade || CurrentBars[1] < BarsRequiredToTrade)
                 return;

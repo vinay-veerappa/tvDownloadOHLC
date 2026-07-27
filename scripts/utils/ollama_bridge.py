@@ -46,7 +46,8 @@ def query_ollama(
     model: str = "qwen3.6:latest",
     system_prompt: Optional[str] = None,
     temperature: float = 0.2,
-    stream: bool = False
+    stream: bool = False,
+    timeout: int = 120
 ) -> Optional[str]:
     """Sends a completion request to the specified Ollama model."""
     url = f"{OLLAMA_HOST}/api/generate"
@@ -62,7 +63,7 @@ def query_ollama(
     try:
         json_data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=json_data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             if response.status == 200:
                 res_json = json.loads(response.read().decode("utf-8"))
                 return res_json.get("response", "")

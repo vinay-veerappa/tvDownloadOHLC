@@ -26,14 +26,22 @@ This section is for picking up the implementation in a later session.
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| 1 | `IBStrategyBase.cs` + `IBRange.cs` indicator | NOT STARTED |
-| 2 | `IBBreakoutBot.cs` (Play 1) | NOT STARTED |
-| 3 | `IBFadeBot.cs` (Play 3) | NOT STARTED |
-| 4 | NT backtest validation (5 steps) | NOT STARTED |
-| 5 | `IBStrategyLib.pine` + `IBBreakoutStrategy.pine` | NOT STARTED |
-| 6 | `IBFadeStrategy.pine` | NOT STARTED |
-| 7 | TV Strategy Tester validation | NOT STARTED |
-| 8 | Live sim deployment (MNQ) | NOT STARTED |
+| 1 | `IntradayStrategyBase.cs` (generic, reusable) + `RangeWindow.cs` indicator | NOT STARTED |
+| 2 | `IBStrategyBase.cs` (IB subclass: Rule 1 + overshoot SM) | NOT STARTED |
+| 3 | `IBBreakoutBot.cs` (P1) + `IBRetestBot.cs` (P2) + `IBFadeBot.cs` (P3) | NOT STARTED |
+| 4 | Pluggable `IStopModel` / `ITargetModel` registry + 3 stops + 3 TPs | NOT STARTED |
+| 5 | Structured logging + journal POST + skip-reason audit | NOT STARTED |
+| 6 | `strategy_parity_check.py` (3-tier Python/NT/TV validator) | NOT STARTED |
+| 7 | `walk_forward.py` + Monte Carlo pass-rate gate | NOT STARTED |
+| 8 | `IBStrategyLib.pine` + `IBBreakoutStrategy.pine` + `IBFadeStrategy.pine` | NOT STARTED |
+| 9 | TV Strategy Tester validation + parity | NOT STARTED |
+| 10 | Regime hook (E1) + conviction gate (E2) + equity-curve break (E8) | NOT STARTED |
+| 11 | Copy-trader leader integration + cascade config | NOT STARTED |
+| 12 | Live sim deployment (MNQ) — 20 sessions | NOT STARTED |
+
+**Note:** Phases 1–2 are the two-layer base split (generic + IB). Any new strategy
+(ORB, sweep, key-level, macro-time) only implements Phases 1's abstract methods and
+inherits Phases 4, 5, 10, 11 for free.
 
 ### 0.3 Key decisions already made
 
@@ -58,56 +66,85 @@ This section is for picking up the implementation in a later session.
 
 ## 1. Architecture Overview
 
+> **Design principle (2026-07-27):** The IB strategy is the *first concrete instance* of a
+> reusable intraday-strategy framework. The core layer (`IntradayStrategyBase`) contains
+> **nothing IB-specific** — every capability that is generic to time-bounded intraday
+> strategies lives in the base so any future strategy (ORB, session sweep, key-level,
+> macro-time, FVG) inherits it for free. Adding a feature to the base automatically
+> propagates to all derived strategies. The IB-specific layer is a thin subclass that
+> implements only `BuildRangeWindow()` + `CheckForEntry()`.
+
+### 1.0 Two-layer inheritance contract
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    IB Strategy Automation                    │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐     │
-│  │  IB Window   │──>│  Direction   │──>│  Entry Gate  │     │
-│  │  (custom     │   │  Trigger     │   │  (break/     │     │
-│  │  start/end/  │   │  (Rule 1)    │   │   fade)      │     │
-│  │  duration)   │   │              │   │              │     │
-│  └──────────────┘   └──────────────┘   └──────┬───────┘     │
-│                                                │             │
-│                                                v             │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐     │
-│  │  Exit Manager│<──│  Risk Manager│<──│  Position    │     │
-│  │  (TP/SL/     │   │  (size, DD,  │   │  Manager     │     │
-│  │   time/      │   │   daily loss,│   │  (entry,     │     │
-│  │   trailing)  │   │   ADR-020)   │   │   scale-in)  │     │
-│  └──────────────┘   └──────────────┘   └──────────────┘     │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+                    ┌───────────────────────────────────────────┐
+                    │  IntradayStrategyBase  (GENERIC, reusable) │   ← extend THIS for new strategies
+                    │  ───────────────────────────────────────  │
+                    │  • RangeWindowBuilder  (any start/dur)    │   abstract: BuildRangeWindow()
+                    │  • DirectionBias        (pluggable)       │   abstract: ComputeBias()
+                    │  • ClockSizeMultiplier  (Rule 3 generic)  │
+                    │  • CalendarFilter       (DOW/month)       │
+                    │  • IbSizeFilter→RangeSizeFilter (generic) │
+                    │  • ExitManager          (TP/SL/trail/time)│
+                    │  • RiskManagerBase      (existing)        │   daily loss, DD, ADR-020, sizing
+                    │  • News/VIX/correlation moratorium hooks  │   §7A features, optional + pluggable
+                    └────────────────┬──────────────────────────┘
+                                     │ inherits
+                    ┌────────────────┴──────────────────────────┐
+                    │  IBStrategyBase  (IB-SPECIFIC layer)      │   ← thin subclass
+                    │  ───────────────────────────────────────  │
+                    │  • BuildRangeWindow() = 09:30-10:30 IB    │
+                    │  • ComputeBias()       = Rule 1 trigger   │
+                    │  • overshoot state machine (Play 3 only)  │
+                    └────────────────┬──────────────────────────┘
+                                     │ inherits
+        ┌────────────────────────────┼────────────────────────────┐
+        │                            │                            │
+  IBBreakoutBot (Play 1)       IBRetestBot (Play 2)        IBFadeBot (Play 3)
 ```
+
+**Inheritance contract (what a new strategy MUST implement vs. gets for free):**
+
+| Layer | Must implement | Gets free from base |
+|---|---|---|
+| **`IntradayStrategyBase`** | — | Everything generic (the framework itself) |
+| **New strategy** (e.g. `ORBSweepBot`) | `BuildRangeWindow()`, `ComputeBias()`, `CheckForEntry()` | Clock sizing, calendar filter, range-size filter, exit manager, risk manager, news/VIX/correlation moratorium, ADR-020 flatten, position sizing, daily loss, trailing DD |
+| **IB subclass** | `BuildRangeWindow()` = IB window, `ComputeBias()` = Rule 1, Play 3 overshoot SM | All of the above + nothing else IB-specific leaks down |
+
+**Rule of thumb:** if a feature is generic to *any* intraday time-bounded strategy, it goes in `IntradayStrategyBase`. If it is specific to the IB (09:30-10:30 first hour, Rule 1 close-position trigger, 0.25x overshoot fade), it goes in `IBStrategyBase`. If it is specific to one play (breakout vs fade), it goes in the play bot.
 
 ### 1.1 Dual-platform parity
 
-The strategy must produce **identical signals** on both NinjaTrader and TradingView. The shared logic:
+The strategy must produce **identical signals** on both NinjaTrader and TradingView. The shared logic, split by layer:
 
-| Component | NinjaTrader (C#) | TradingView (Pine v5) |
-|---|---|---|
-| IB window | `Bars.IsFirstBarOfSession` + time check | `time.session(start-end)` |
-| Direction trigger | `bias_formation_firstreach` computed inline | Same logic in Pine |
-| Entry gate | `OnBarUpdate()` close-based check | `barstate.isconfirmed` close check |
-| Stop/target | `SetStopLoss()` / `SetProfitTarget()` | `strategy.entry` + `strategy.exit` |
-| Risk manager | `RiskManagerBase` (existing) | Pine `strategy` with `qty` sizing |
-| ADR-020 | `FlattenBy = 1600` (existing) | `session(start-1600)` + `close_entries` |
+| Component | Layer | NinjaTrader (C#) | TradingView (Pine v5) |
+|---|---|---|---|
+| Range window builder | base (abstract) | `Bars.IsFirstBarOfSession` + time check | `time.session(start-end)` |
+| Direction bias | base (abstract `ComputeBias`) | inline in subclass | same logic in Pine |
+| Entry gate | subclass (`CheckForEntry`) | `OnBarUpdate()` close-based check | `barstate.isconfirmed` close check |
+| Clock size multiplier | base | `ClockSizeMultiplier()` | `IBLib.clock_size_mult()` |
+| Calendar filter | base | `CalendarFilter()` | `IBLib.calendar_filter()` |
+| Range-size filter | base | `RangeSizeFilter()` | `IBLib.range_size_filter()` |
+| Stop/target | base | `SetStopLoss()` / `SetProfitTarget()` | `strategy.entry` + `strategy.exit` |
+| Risk manager | base (`RiskManagerBase`) | existing | Pine `strategy` with `qty` sizing |
+| ADR-020 flatten | base | `FlattenBy` (existing) | `session(start-1559)` + `close_entries` |
+| News/VIX/correlation moratorium | base (pluggable hooks) | AddOn HTTP fetch | manual input / `request.security` |
 
 ### 1.2 Custom time range support
 
-The IB window is **fully customizable** — any start time, end time, and duration. The strategy is not hardcoded to 09:30-10:30. Examples:
+The range window is **fully customizable** via the base — any start time, end time, and duration. The IB is just one configuration. Examples:
 
-| Config | Start | Duration | Use case |
-|---|---|---|---|
-| NY AM IB (default) | 09:30 ET | 30 min | Primary validated strategy |
-| NY AM IB60 | 09:30 ET | 60 min | Original IB (more data, wider stop) |
-| Midnight OR | 00:00 ET | 30 min | ICT midnight open range |
-| London IB | 03:00 ET | 60 min | London session IB |
-| Globex IB | 18:00 ET | 60 min | Overnight IB |
-| Custom | any | any | User-defined via `ib_custom_ranges.yaml` |
+| Config | Start | Duration | Use case | Which subclass |
+|---|---|---|---|---|
+| NY AM IB (default) | 09:30 ET | 30 min | Primary validated IB strategy | `IBStrategyBase` |
+| NY AM IB60 | 09:30 ET | 60 min | Original IB (more data, wider stop) | `IBStrategyBase` |
+| Midnight OR | 00:00 ET | 30 min | ICT midnight open range | new `MidnightORBot` (inherits base) |
+| London IB | 03:00 ET | 60 min | London session IB | `IBStrategyBase` (config override) |
+| Globex IB | 18:00 ET | 60 min | Overnight IB | `IBStrategyBase` (config override) |
+| Asia range | 20:00 ET | 240 min | Session sweep study (Plan Study 2) | new `AsiaRangeBot` (inherits base) |
+| Custom | any | any | User-defined via `custom_ranges.yaml` | any |
 
-The `ib_start_time` and `ib_duration_min` parameters drive everything downstream — the direction trigger, entry gate, clock filter, and exit manager all adapt automatically.
+The `range_start_time` and `range_duration_min` parameters on the **base** drive everything downstream — direction bias, entry gate, clock filter, and exit manager all adapt automatically. A new strategy only overrides `BuildRangeWindow()` if its window logic differs from "high/low of [start, start+dur]."
 
 ---
 
@@ -145,6 +182,19 @@ The `ib_start_time` and `ib_duration_min` parameters drive everything downstream
 | `stop_r_mult` | **0.25** | 0.10-1.0 | Stop distance in R-multiples (0.25R = optimal per Phase D) |
 
 **Phase D finding:** A 0.25R stop preserves the full edge (E[R] unchanged) while reducing dollar risk by 75%. The MAE of winners rarely exceeds 0.25R (P80 winner MAE = 0.232R). The optimal stop sits between P80 winner MAE (0.232R) and P50 loser MAE (0.405R) — a 0.30R stop is the theoretical optimum.
+
+**Alignment with IB 96% rule (SecondBrain_Trading.md):** the IB 96% rule states that
+the IB high/low holds as a boundary for 96% of the session. The 0.25R stop is *not* an
+arbitrary multiplier — it is the MAE-calibrated distance that sits between the P80
+winner MAE (0.232R) and the P50 loser MAE (0.405R) from the 5-year validated data. This
+is the statistically grounded placement: winners pull back < 0.25R (so we don't get
+stopped out of winners), losers pull back > 0.40R (so the stop *does* catch losers).
+This is consistent with the 96% rule because the stop is calibrated to the empirical
+MAE distribution, not placed inside the IB range arbitrarily. The legacy
+`ib_opposite` (full 1.0R IB-range) stop was the *wrong* model — it destroyed the edge
+(the 20-year BacktestLoop all-F result was this bug). Play 3 (fade) uses a 0.5R stop
+because its R is defined relative to the boundary, not the IB range; the fade's MAE
+distribution is tighter and 0.5R covers its P95 loser MAE.
 
 ### 2.4 Clock Filter (Rule 3)
 
@@ -347,7 +397,10 @@ FUNCTION calendar_filter(play, dow, month):
 
 ```
 ON each bar while in_trade:
-  # 1. Target hit (touch-based)
+  # 0. Same-bar tie-break (Q1 resolution): target-first, deterministic
+  #    Rationale: preserves parity with play_detail evaluator; NT native OCO
+  #    must be verified equivalent via parity harness (§7B Q1).
+  # 1. Target hit (touch-based, checked BEFORE stop)
   IF  position == LONG AND bar.high >= target_price
   THEN EXIT at target_price
 
@@ -361,9 +414,13 @@ ON each bar while in_trade:
   IF  position == SHORT AND bar.high >= stop_price
   THEN EXIT at stop_price
 
-  # 3. ADR-020 forced exit
+  # 3. ADR-020 forced exit (close of 15:59 bar; 15:50 is conservative)
   IF  time >= flatten_by_time (15:50 ET)
   THEN EXIT at market
+
+  # 3b. End-of-data graceful flatten (replay/backtest safety)
+  IF  Bars.IsLastBarOfSession OR no_more_data
+  THEN EXIT at market  # avoids holding a position past the data
 
   # 4. Trailing stop (S15 — optional)
   IF  trailing_enabled
@@ -374,6 +431,14 @@ ON each bar while in_trade:
       THEN stop_price = max(stop_price, entry_price + 0.5 * ib_range)
       # Mirror for SHORT
 ```
+
+**ADR-002 compliance:** all MAE/MFE logged on exit are stored as
+`mae / ib_mid * 100` and `mfe / ib_mid * 100` (price percentage), never raw
+points, so cross-instrument comparisons are valid.
+
+**ADR-001 compliance:** `rangeCompleteTime`, `entryTime`, `exitTime` are stored
+internally as ET; all persisted log/journal timestamps are converted to UTC
+via `Time.ToUniversalTime()` before writing.
 
 ### 3.8 Risk Manager (reuses existing RiskManagerBase)
 
@@ -399,125 +464,318 @@ ON each bar:
 ninjatrader-addon/
 ├── Strategies/
 │   └── Vinay/
-│       ├── IBStrategyBase.cs      # Abstract base (IB window, direction trigger, calendar filter)
-│       ├── IBBreakoutBot.cs       # Play 1 concrete strategy
-│       ├── IBFadeBot.cs           # Play 3 concrete strategy
-│       └── IBRetestBot.cs         # Play 2 concrete strategy (optional)
+│       ├── IntradayStrategyBase.cs   # GENERIC base — reusable for ANY time-bounded intraday strategy
+│       ├── IBStrategyBase.cs         # IB-specific subclass (Rule 1 trigger, overshoot SM)
+│       ├── IBBreakoutBot.cs          # Play 1 concrete strategy
+│       ├── IBRetestBot.cs            # Play 2 concrete strategy
+│       ├── IBFadeBot.cs              # Play 3 concrete strategy (default — strongest edge)
+│       └── (future) ORBSweepBot.cs   # example: a new strategy inheriting IntradayStrategyBase
 ├── Indicators/
 │   └── Vinay/
-│       └── IBRange.cs             # Visual indicator (IB high/low/mid lines)
+│       └── RangeWindow.cs            # Generic range-window visual indicator (any start/dur)
 └── AddOns/
     └── Vinay/
-        └── RiskManagerAddOn.cs    # Existing — reuse as-is
+        └── RiskManagerAddOn.cs       # Existing — reuse as-is
 ```
 
-### 4.2 IBStrategyBase.cs — class skeleton
+**Why split `IntradayStrategyBase` from `IBStrategyBase`:** a future ORB / sweep / key-level / macro-time strategy should NOT have to copy-paste the clock sizing, calendar filter, exit manager, or risk manager. Those are generic. By putting them in `IntradayStrategyBase`, a new strategy only implements `BuildRangeWindow()`, `ComputeBias()`, and `CheckForEntry()` — everything else is inherited. When we fix a bug in the calendar filter or add a news-moratorium hook, every derived strategy gets the fix automatically.
+
+### 4.2 IntradayStrategyBase.cs — GENERIC base (reusable, no IB code)
+
+This is the class to extend for any new intraday strategy. It contains only generic time-bounded-strategy logic.
 
 ```csharp
-public abstract class IBStrategyBase : RiskManagerBase
+public abstract class IntradayStrategyBase : RiskManagerBase
 {
-    // IB Window State
-    protected double ibHigh, ibLow, ibOpen, ibClose, ibRange, ibMid;
-    protected double ibClosePosition;  // 0-1
-    protected int    biasFirstreach;   // +1, -1, 0
-    protected bool   ibComplete;
+    // ── Range Window State (generic — IB is one configuration) ──
+    protected double rangeHigh, rangeLow, rangeOpen, rangeClose, rangeRange, rangeMid;
+    protected double rangeClosePosition;       // 0-1
+    protected int    biasFirstreach;           // +1, -1, 0 (which extreme touched first)
+    protected bool   rangeComplete;
+    protected DateTime rangeCompleteTime;       // ET internally; UTC when persisted (ADR-001)
     protected DateTime firstHighTouch, firstLowTouch;
-    protected int    predictedBreakDir;  // +1, -1, 0
+    protected int    predictedDir;             // +1, -1, 0 (set by ComputeBias)
+    protected bool   rangeStarted;              // session-open reset guard
 
-    // Parameters (in addition to RiskManagerBase params)
-    // IB Window (FULLY CUSTOMIZABLE — any start time, any duration)
-    [NinjaScriptProperty] public int IbStartHour { get; set; } = 9;
-    [NinjaScriptProperty] public int IbStartMinute { get; set; } = 30;
-    [NinjaScriptProperty] public int IbDurationMin { get; set; } = 30;  // Phase F: 30 is optimal
+    // ── Generic Parameters (any time-bounded intraday strategy) ──
+    [NinjaScriptProperty] public int RangeStartHour { get; set; } = 9;
+    [NinjaScriptProperty] public int RangeStartMinute { get; set; } = 30;
+    [NinjaScriptProperty] public int RangeDurationMin { get; set; } = 30;
+    // RangeEndTime is computed via DateTime arithmetic, NOT int*100+min (avoids
+    // the 09:30 + 90min = 1020 rollover bug flagged by edge-case review).
+    // ADR-001: Time[0] on NT is Exchange/CT; convert to ET explicitly before arithmetic.
+    protected DateTime ToET(DateTime t) => t.IsDaylightSavingTime()
+        ? TimeZoneInfo.ConvertTime(t, TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"),
+                                       TimeZoneInfo.FindSystemTimeZoneById("US Eastern Standard Time"))
+        : TimeZoneInfo.ConvertTimeBySystemTimeZoneId(t, "Eastern Standard Time", "US Eastern Standard Time");
+    protected DateTime RangeStart => new DateTime(Time[0].Year, Time[0].Month, Time[0].Day,
+                                                   RangeStartHour, RangeStartMinute, 0);  // built in ET
+    protected DateTime RangeEnd   => RangeStart.AddMinutes(RangeDurationMin);
     [NinjaScriptProperty] public int SessionEndHour { get; set; } = 16;
     [NinjaScriptProperty] public int SessionEndMinute { get; set; } = 0;
     [NinjaScriptProperty] public int FlattenByHour { get; set; } = 15;
     [NinjaScriptProperty] public int FlattenByMinute { get; set; } = 50;
 
-    // Direction Trigger (Rule 1)
+    // Slippage (Q3 resolution) — base param, wired to NT SetSlippage / Pine strategy(slippage)
+    [NinjaScriptProperty] public int SlippageTicks { get; set; } = 1;
+
+    // Direction bias (pluggable — subclass defines the rule)
     [NinjaScriptProperty] public double ClosePositionTopPct { get; set; } = 0.75;
     [NinjaScriptProperty] public double ClosePositionBotPct { get; set; } = 0.25;
-    [NinjaScriptProperty] public bool RequireDirectionTrigger { get; set; } = true;
+    [NinjaScriptProperty] public bool RequireDirectionBias { get; set; } = true;
 
-    // Play Selection
-    [NinjaScriptProperty] public int ActivePlay { get; set; } = 3;  // Phase D: Play 3 is strongest
-    [NinjaScriptProperty] public double TargetLvl { get; set; } = 0.25;  // Phase D: 0.25x is optimal
-    [NinjaScriptProperty] public double StopRMult { get; set; } = 0.25;  // Phase D: 0.25R stop
+    // Play/target/stop (generic — subclass assigns meaning)
+    [NinjaScriptProperty] public double TargetLvl { get; set; } = 0.25;
+    [NinjaScriptProperty] public double StopRMult { get; set; } = 0.25;
+    // NOTE: ActivePlay (1/2/3) is IB-specific and lives in IBStrategyBase, NOT here —
+    // a generic ORB/sweep strategy has no "plays". The base only exposes TargetLvl/StopRMult.
 
-    // Clock Filter (Rule 3 — INVERTED on NQ1/ES1)
+    // Clock sizing (Rule 3 — generic time-of-day sizing; per-instrument config, Q6)
     [NinjaScriptProperty] public int EarlyBreakThresholdMin { get; set; } = 90;
-    [NinjaScriptProperty] public double EarlyBreakSizeMult { get; set; } = 0.5;
+    [NinjaScriptProperty] public double EarlyBreakSizeMult { get; set; } = 0.5;  // NQ/ES default; YM uses 1.0
     [NinjaScriptProperty] public double LateBreakSizeMult { get; set; } = 1.0;
 
-    // Calendar Filters
+    // Calendar filter — generic DOW/month hooks; the *rules* are registered by the subclass
+    // (not hardcoded here). IB registers SkipMondayPlay2 etc. via RegisterCalendarRule().
+    protected List<CalendarSkipRule> CalendarRules = new();
+    protected void RegisterCalendarRule(Func<DateTime, bool> shouldSkip, string name)
+        => CalendarRules.Add(new(shouldSkip, name));
+
+    // Range-size filter (generic — "skip huge range days")
+    [NinjaScriptProperty] public bool SkipHugeRange { get; set; } = true;
+    [NinjaScriptProperty] public double MaxRangePct { get; set; } = 0.90;
+    [NinjaScriptProperty] public double MinRangePct { get; set; } = 0.10;
+
+    // ── Pluggable moratorium hooks (§7A features — off by default, any strategy can enable) ──
+    [NinjaScriptProperty] public bool NewsMoratoriumEnabled { get; set; } = false;
+    [NinjaScriptProperty] public bool VixRegimeFilterEnabled { get; set; } = false;
+    [NinjaScriptProperty] public bool CorrelationFilterEnabled { get; set; } = false;
+
+    // ── Abstract methods a new strategy MUST implement ──
+    protected abstract void BuildRangeWindow();   // e.g. IB = high/low of 09:30-10:30
+    protected abstract void ComputeBias();        // e.g. Rule 1 close-position trigger
+    protected abstract void CheckForEntry();      // e.g. breakout / fade / retest
+
+    // ── Session-open state reset (FIX #1 from edge-case review) ──
+    // Every state variable that could carry stale data across sessions MUST be
+    // reset here. Without this the bot trades against yesterday's IB range.
+    protected virtual void OnSessionOpen()
+    {
+        rangeComplete = false;
+        rangeStarted = false;
+        rangeHigh = rangeLow = rangeOpen = rangeClose = rangeRange = rangeMid = 0;
+        rangeClosePosition = 0.5;
+        biasFirstreach = 0;
+        predictedDir = 0;
+        firstHighTouch = firstLowTouch = DateTime.MinValue;
+        rangeCompleteTime = DateTime.MinValue;
+        // IB subclass overrides to also reset overshootAbove/overshootBelow, firstBreakDir
+    }
+
+    // ── Shared logic every derived strategy gets free ──
+    protected override void OnBarUpdate()
+    {
+        // Session boundary detection — reset state once per session
+        if (IsNewSession()) OnSessionOpen();
+
+        if (!InSession()) return;
+        if (!rangeComplete) { BuildRangeWindow(); return; }
+        if (CurrentBar < BarsRequired) return;
+
+        if (Position.MarketPosition != MarketPosition.Flat) { ManageOpenTrade(); return; }
+
+        // Pluggable moratoriums (any strategy inherits these for free)
+        if (NewsMoratoriumEnabled && IsNewsMoratorium()) return;
+        if (VixRegimeFilterEnabled && IsVixHostile()) return;
+        if (CorrelationFilterEnabled && IsCorrelationDiverging()) return;
+
+        if (CalendarFilter()) return;
+        if (RangeSizeFilter()) return;
+        // FIX #2 from edge-case review: zero-range guard — skip if range degenerate
+        if (rangeRange < TickSize) { LogSkip("zero_range"); return; }
+        CheckForEntry();
+    }
+
+    // FIX #2: gap-open / target-sanity guard — called by subclasses before EnterLong/Short
+    protected bool TargetIsSane(double entry, double target, int dir)
+    {
+        // Long: target must be above entry by at least 1 tick; Short: below by 1 tick
+        return dir > 0 ? target > entry + TickSize : target < entry - TickSize;
+    }
+
+    private bool IsNewSession() => Bars.IsFirstBarOfSession;  // NT built-in; Pine uses dayofweek change
+
+    // Clock sizing, calendar filter, range-size filter, exit manager, risk sizing
+    // all live here in the base — see §3.5/3.6/3.7/3.8 for the algorithm.
+    protected double ClockSizeMultiplier(int breakMinutes) =>
+        breakMinutes < EarlyBreakThresholdMin ? EarlyBreakSizeMult : LateBreakSizeMult;
+
+    private bool CalendarFilter() { /* spec §3.6 — uses ActivePlay */ }
+    private bool RangeSizeFilter() { /* spec §2.7 — generic range_pct guard */ }
+    private void ManageOpenTrade() { /* spec §3.7 — TP/SL/trail/ADR-020 */ }
+
+    // ── Order-state reconciliation (FIX for edge-case review: partial fills, rejections, disconnect) ──
+    // Without these the strategy's internal state desyncs from the broker position.
+    protected override void OnOrderUpdate(Order order, double limitPrice,
+        int quantity, int filled, double averagePrice, OrderState orderState,
+        DateTime time, ErrorCode error, string nativeError)
+    {
+        // Partial fill: re-anchor stop/target to the FILLED qty, not the requested qty
+        if (filled > 0 && filled < quantity && Position.MarketPosition != MarketPosition.Flat)
+            ReanchorProtectiveOrders(filled);
+
+        // Rejection: log + reset trade state so the bot can re-arm on the next signal
+        if (orderState == OrderState.Rejected)
+        {
+            LogError($"order rejected: {nativeError}");
+            tradeActive = false;  // allow re-entry attempts; daily-loss counter not charged
+        }
+    }
+
+    // Broker disconnect/reconnect: re-sync to the actual account position
+    protected override void OnConnectionStatusUpdate(ConnectionStatus status,
+        ConnectionStatus previous)
+    {
+        if (status == ConnectionStatus.Connected && previous != ConnectionStatus.Connected)
+        {
+            if (Position.MarketPosition == MarketPosition.Flat) { OnSessionOpen(); tradeActive = false; }
+            else { ReanchorProtectiveOrders(Position.Quantity); }  // adopt the orphaned position
+        }
+    }
+
+    protected virtual void ReanchorProtectiveOrders(int filledQty) { /* adjust SetStopLoss/SetProfitTarget qty */ }
+
+    // Pluggable hook stubs (§7A — implementations live in AddOn/inline)
+    protected virtual bool IsNewsMoratorium() => false;   // overridden if AddOn provides news cache
+    protected virtual bool IsVixHostile() => false;
+    protected virtual bool IsCorrelationDiverging() => false;
+
+    // Shared record type for calendar rules registered by subclasses
+    protected record CalendarSkipRule(Func<DateTime, bool> ShouldSkip, string Name);
+}
+```
+
+### 4.3 IBStrategyBase.cs — IB-specific subclass (thin)
+
+Only the IB-specific logic: the 09:30-10:30 window builder, the Rule 1 direction trigger, and the Play 3 overshoot state machine. Everything else is inherited from `IntradayStrategyBase`.
+
+```csharp
+public abstract class IBStrategyBase : IntradayStrategyBase
+{
+    // IB-specific state (Play 3 overshoot state machine)
+    protected bool overshootAbove, overshootBelow;
+
+    // IB-specific: ActivePlay (1/2/3) — an IB concept, NOT in the generic base.
+    [NinjaScriptProperty] public int ActivePlay { get; set; } = 3;  // Phase D: Play 3 is strongest
+
+    // IB-specific calendar filters (the generic base provides RegisterCalendarRule; IB registers its 4)
     [NinjaScriptProperty] public bool SkipMondayPlay2 { get; set; } = true;
     [NinjaScriptProperty] public bool SkipFebruaryPlay2 { get; set; } = true;
     [NinjaScriptProperty] public bool SkipMayPlay1 { get; set; } = true;
     [NinjaScriptProperty] public bool SkipOctoberPlay3 { get; set; } = true;
 
-    // IB Size Filter (Phase D)
-    [NinjaScriptProperty] public bool SkipHugeIb { get; set; } = true;
-    [NinjaScriptProperty] public double MaxRangePct { get; set; } = 0.90;
-    [NinjaScriptProperty] public double MinRangePct { get; set; } = 0.10;
-
-    protected override void OnBarUpdate()
+    // IB defaults (override base's generic defaults for the validated IB configuration)
+    protected IBStrategyBase()
     {
-        if (!InSession()) return;
+        RangeStartHour = 9; RangeStartMinute = 30; RangeDurationMin = 30;  // IB30 optimal (Phase F)
+        TargetLvl = 0.25; StopRMult = 0.25;                                  // Phase D defaults
+        // Register IB's 4 play-specific calendar rules with the generic base
+        RegisterCalendarRule(d => ActivePlay == 2 && SkipMondayPlay2   && d.DayOfWeek == DayOfWeek.Monday, "skip_mon_p2");
+        RegisterCalendarRule(d => ActivePlay == 2 && SkipFebruaryPlay2 && d.Month == 2,                    "skip_feb_p2");
+        RegisterCalendarRule(d => ActivePlay == 1 && SkipMayPlay1      && d.Month == 5,                    "skip_may_p1");
+        RegisterCalendarRule(d => ActivePlay == 3 && SkipOctoberPlay3  && d.Month == 10,                   "skip_oct_p3");
+    }
 
-        if (!ibComplete)
+    // IB session-open reset (FIX #1) — also reset Play 3 + Play 2 state
+    protected override void OnSessionOpen()
+    {
+        base.OnSessionOpen();
+        overshootAbove = false; overshootBelow = false;
+    }
+
+    // IB implements the abstract BuildRangeWindow — spec §3.1
+    protected override void BuildRangeWindow()
+    {
+        // Use DateTime arithmetic from the base (FIX: avoids the 09:30+90=1020 rollover bug;
+        // the base exposes RangeStart/RangeEnd as DateTime, not int*100+min).
+        DateTime now = Time[0];
+        DateTime rStart = RangeStart, rEnd = RangeEnd;
+
+        // Finalize on the first bar AT OR AFTER the range end — handles the edge case
+        // where the exact 10:30 bar is dropped by the live feed (else rangeComplete
+        // stays false all day and the bot never trades).
+        if (!rangeComplete && now >= rEnd)
         {
-            BuildIBWindow();
+            rangeRange = rangeHigh - rangeLow;
+            rangeMid   = (rangeHigh + rangeLow) / 2.0;
+            rangeClosePosition = rangeRange > 0 ? (rangeClose - rangeLow) / rangeRange : 0.5;
+            rangeComplete = true;
+            rangeCompleteTime = now;
+            ComputeBias();
             return;
         }
+        if (now < rStart || now >= rEnd) return;
 
-        if (CurrentBar < BarsRequired) return;
-
-        if (tradeIsActive)
+        if (!rangeStarted)
         {
-            ManageOpenTrade();
-            if (Position.MarketPosition == MarketPosition.Flat) return;
+            rangeHigh = High[0]; rangeLow = Low[0]; rangeOpen = Open[0];
+            firstHighTouch = Time[0]; firstLowTouch = Time[0];
+            rangeStarted = true;
         }
         else
         {
-            if (CalendarFilter()) return;
-            CheckForEntry();  // abstract — implemented by Play 1/2/3 subclasses
+            if (High[0] > rangeHigh) { rangeHigh = High[0]; firstHighTouch = Time[0]; }
+            if (Low[0]  < rangeLow)  { rangeLow  = Low[0];  firstLowTouch = Time[0]; }
         }
+        rangeClose = Close[0];
     }
 
-    protected abstract void CheckForEntry();
+    // IB implements Rule 1 direction trigger — spec §3.2
+    protected override void ComputeBias()
+    {
+        biasFirstreach = firstLowTouch < firstHighTouch ? 1
+                       : firstHighTouch < firstLowTouch ? -1 : 0;
+        if (!RequireDirectionBias) { predictedDir = 0; return; }
+        if (biasFirstreach == 1 && rangeClosePosition >= ClosePositionTopPct) predictedDir = 1;
+        else if (biasFirstreach == -1 && rangeClosePosition <= ClosePositionBotPct) predictedDir = -1;
+        else predictedDir = 0;
+    }
 
-    private void BuildIBWindow() { /* ... */ }
-    private void ComputeDirectionTrigger() { /* ... */ }
-    private bool CalendarFilter() { /* ... */ }
-    protected double ClockSizeMultiplier(int breakMinutes) { /* ... */ }
+    // CheckForEntry stays abstract — implemented by IBBreakoutBot / IBRetestBot / IBFadeBot
+    protected static int ToTimeInt(DateTime t) => t.Hour * 100 + t.Minute;
 }
 ```
 
-### 4.3 IBBreakoutBot.cs (Play 1)
+### 4.4 IBBreakoutBot.cs (Play 1)
 
 ```csharp
 public class IBBreakoutBot : IBStrategyBase
 {
     protected override void CheckForEntry()
     {
-        if (Close[0] > ibHigh)
+        int breakMinutes = (int)(Time[0] - rangeCompleteTime).TotalMinutes;
+        double sizeMult = ClockSizeMultiplier(breakMinutes);
+
+        if (Close[0] > rangeHigh)  // close-confirmed break (spec §3.3)
         {
-            if (RequireDirectionTrigger && predictedBreakDir != 1) return;
-            double stop = ibLow;
-            double target = ibHigh + TargetLvl * ibRange;
-            int qty = CalcQuantity(stop, Close[0]);
-            SetStopLoss(CalcStopLoss(StopAtrMult));
-            SetProfitTarget(target);
+            if (RequireDirectionBias && predictedDir != 1) return;
+            double entry   = Close[0];
+            double stop    = entry - StopRMult * TargetLvl * rangeRange;   // MAE-calibrated (R = target distance)
+            double target  = rangeHigh + TargetLvl * rangeRange;
+            int qty        = CalcQuantity(entry - stop, sizeMult);
+            SetStopLoss(CalculationMode.Ticks, stop / TickSize);
+            SetProfitTarget(CalculationMode.Ticks, target / TickSize);
             EnterLong(qty, "IB Breakout Long");
         }
-        else if (Close[0] < ibLow)
+        else if (Close[0] < rangeLow)
         {
-            if (RequireDirectionTrigger && predictedBreakDir != -1) return;
-            double stop = ibHigh;
-            double target = ibLow - TargetLvl * ibRange;
-            int qty = CalcQuantity(stop, Close[0]);
-            SetStopLoss(CalcStopLoss(StopAtrMult));
-            SetProfitTarget(target);
+            if (RequireDirectionBias && predictedDir != -1) return;
+            double entry   = Close[0];
+            double stop    = entry + StopRMult * TargetLvl * rangeRange;
+            double target  = rangeLow - TargetLvl * rangeRange;
+            int qty        = CalcQuantity(stop - entry, sizeMult);
+            SetStopLoss(CalculationMode.Ticks, stop / TickSize);
+            SetProfitTarget(CalculationMode.Ticks, target / TickSize);
             EnterShort(qty, "IB Breakout Short");
         }
     }
@@ -526,43 +784,126 @@ public class IBBreakoutBot : IBStrategyBase
 }
 ```
 
-### 4.4 IBFadeBot.cs (Play 3)
+### 4.5 IBRetestBot.cs (Play 2)
+
+```csharp
+public class IBRetestBot : IBStrategyBase
+{
+    // Play 2 requires first_break_dir to be set; track it here.
+    private int firstBreakDir;  // +1, -1, 0
+
+    protected override void CheckForEntry()
+    {
+        // Track first break direction (needed for retest entry)
+        if (firstBreakDir == 0)
+        {
+            if (Close[0] > rangeHigh) firstBreakDir = 1;
+            else if (Close[0] < rangeLow) firstBreakDir = -1;
+        }
+
+        if (firstBreakDir == 0) return;  // no break yet
+
+        int breakMinutes = (int)(Time[0] - rangeCompleteTime).TotalMinutes;
+        double sizeMult  = ClockSizeMultiplier(breakMinutes);
+
+        // Play 2: touch of range_mid after break, continue in break direction (spec §3.4-retest)
+        if (firstBreakDir == 1 && Low[0] <= rangeMid && Close[0] >= rangeMid)
+        {
+            if (RequireDirectionBias && predictedDir != 1) return;
+            double entry   = rangeMid;
+            double stop    = rangeLow;
+            double target  = rangeHigh + 0.5 * rangeRange;  // Play 2 default target = 0.5x
+            int qty        = CalcQuantity(entry - stop, sizeMult);
+            SetStopLoss(CalculationMode.Ticks, stop / TickSize);
+            SetProfitTarget(CalculationMode.Ticks, target / TickSize);
+            EnterLong(qty, "IB Retest Long");
+        }
+        else if (firstBreakDir == -1 && High[0] >= rangeMid && Close[0] <= rangeMid)
+        {
+            if (RequireDirectionBias && predictedDir != -1) return;
+            double entry   = rangeMid;
+            double stop    = rangeHigh;
+            double target  = rangeLow - 0.5 * rangeRange;
+            int qty        = CalcQuantity(stop - entry, sizeMult);
+            SetStopLoss(CalculationMode.Ticks, stop / TickSize);
+            SetProfitTarget(CalculationMode.Ticks, target / TickSize);
+            EnterShort(qty, "IB Retest Short");
+        }
+    }
+
+    public override string GetStrategyName() => "IB Retest Bot (Play 2)";
+}
+```
+
+### 4.6 IBFadeBot.cs (Play 3 — default, strongest edge)
 
 ```csharp
 public class IBFadeBot : IBStrategyBase
 {
-    private bool overshootAbove, overshootBelow;
+    // overshootAbove / overshootBelow are inherited from IBStrategyBase (Play 3 SM)
 
     protected override void CheckForEntry()
     {
-        // Detect overshoot
-        if (High[0] > ibHigh + 0.25 * ibRange) overshootAbove = true;
-        if (Low[0] < ibLow - 0.25 * ibRange) overshootBelow = true;
+        // Detect 0.25x overshoot (spec §3.4) — IB-specific, lives in the subclass
+        if (High[0] > rangeHigh + 0.25 * rangeRange) overshootAbove = true;
+        if (Low[0]  < rangeLow  - 0.25 * rangeRange) overshootBelow = true;
 
-        // Fade: close back inside after overshoot
-        if (overshootAbove && Close[0] < ibHigh)
+        int breakMinutes = (int)(Time[0] - rangeCompleteTime).TotalMinutes;
+        double sizeMult   = ClockSizeMultiplier(breakMinutes);
+
+        // Fade: close back inside after overshoot — Play 3 is the DEFAULT and strongest play
+        // Stop = 0.5 * range beyond boundary (validated, see §2.3 — Play 3 uses 0.5R not 0.25R)
+        if (overshootAbove && Close[0] < rangeHigh)
         {
-            double stop = ibHigh + 0.5 * ibRange;
-            double target = ibMid;
-            int qty = CalcQuantity(stop, ibHigh);
-            SetStopLoss(CalcStopLoss(StopAtrMult));
-            SetProfitTarget(target);
+            double entry   = rangeHigh;
+            double stop    = rangeHigh + 0.5 * rangeRange;
+            double target  = rangeMid;
+            int qty        = CalcQuantity(stop - entry, sizeMult);
+            SetStopLoss(CalculationMode.Ticks, stop / TickSize);
+            SetProfitTarget(CalculationMode.Ticks, target / TickSize);
             EnterShort(qty, "IB Fade Short");
             overshootAbove = false;
         }
-        else if (overshootBelow && Close[0] > ibLow)
+        else if (overshootBelow && Close[0] > rangeLow)
         {
-            double stop = ibLow - 0.5 * ibRange;
-            double target = ibMid;
-            int qty = CalcQuantity(stop, ibLow);
-            SetStopLoss(CalcStopLoss(StopAtrMult));
-            SetProfitTarget(target);
+            double entry   = rangeLow;
+            double stop    = rangeLow - 0.5 * rangeRange;
+            double target  = rangeMid;
+            int qty        = CalcQuantity(entry - stop, sizeMult);
+            SetStopLoss(CalculationMode.Ticks, stop / TickSize);
+            SetProfitTarget(CalculationMode.Ticks, target / TickSize);
             EnterLong(qty, "IB Fade Long");
             overshootBelow = false;
         }
     }
 
     public override string GetStrategyName() => "IB Fade Bot (Play 3)";
+}
+```
+
+### 4.7 Example: a new non-IB strategy inheriting the base
+
+To illustrate the reuse contract — here is a minimal sketch of an Opening Range Breakout strategy that gets the clock sizing, calendar filter, range-size filter, exit manager, risk manager, and moratorium hooks **for free** from `IntradayStrategyBase`. Only the three abstract methods are IB-independent:
+
+```csharp
+public class ORBBot : IntradayStrategyBase
+{
+    protected ORBBot() { RangeStartHour = 9; RangeStartMinute = 30; RangeDurationMin = 5; }  // 5-min OR
+
+    // ORB uses the same high/low-of-window logic as IB — just a shorter window
+    protected override void BuildRangeWindow() { /* same as IBStrategyBase.BuildRangeWindow */ }
+
+    // ORB has no Rule 1 trigger — trade both directions
+    protected override void ComputeBias() { predictedDir = 0; }
+
+    protected override void CheckForEntry()
+    {
+        int breakMinutes = (int)(Time[0] - rangeCompleteTime).TotalMinutes;
+        double sizeMult = ClockSizeMultiplier(breakMinutes);  // inherited for free
+        // ... ORB-specific breakout logic, reusing rangeHigh/rangeLow/rangeRange from base
+    }
+
+    public override string GetStrategyName() => "ORB Bot";
 }
 ```
 
@@ -1030,6 +1371,115 @@ private async void LogTradeToPrisma(TradeRecord trade)
 
 ---
 
+## 7B. Resolved Open Questions (from Agent-as-a-Judge review, 2026-07-27)
+
+All 6 open questions in §7 were resolved by a 4-judge debate panel (architecture /
+consistency / edge-cases / trading-rules) + moderator merge. All resolved at **high
+confidence**. Each resolution includes a concrete verification step that doubles as
+the acceptance criterion for implementation.
+
+### Q1 — Stop model (same-bar stop+target tie-break)
+
+**Resolved:** Adopt a deterministic **target-first** same-bar tie-break in the base
+`ExitManager`. Rationale: preserves parity with the `play_detail` evaluator (which is
+the source of truth for the validated E[R]). NT's native `SetStopLoss` + `SetProfitTarget`
+OCO must be verified equivalent; only if it is may the managed calls be used unchanged.
+
+**Verification:** Build a parity harness that scans historical 1-min bars for
+ambiguity bars (both TP and SL inside `[low, high]` for an open position) and replays
+each through (1) the target-first `play_detail` evaluator, (2) an NT Strategy with
+explicit target-first logic, (3) a Pine v5 equivalent. Assert exit price, timestamp,
+and PnL match across all three for every ambiguity bar. Any divergence fails CI.
+
+**Dissent:** 1 judge preferred stop-first (conservative, avoids over-optimistic
+backtests) and regenerating `play_detail` to match live NT semantics. Rejected to
+preserve the existing validated dataset.
+
+### Q2 — Commission model
+
+**Resolved:** Include **$2.05/round-turn commission** at the platform/wrapper layer
+(NT Strategy Analyzer config), NOT in `IntradayStrategyBase` signal logic. Re-interpret
+the validated E[R] target as post-commission so live results are directly comparable.
+
+**Verification:** Run IBStrategyBase (Play 1/2/3) in NT Strategy Analyzer with
+commission = $2.05/round-turn/Micro over the same 2021-2026 window. Assert
+`|post_comm_E[R] - pre_comm_E[R]| / N_trades <= 0.0025R` per trade. Cross-check the NT
+post-commission equity curve against the TV gross curve minus a flat 0.002R drag per
+round-turn — curves must agree within 1% terminal equity.
+
+**Dissent:** 1 judge wanted a `CommissionPerRoundTurn` property in the base. Rejected —
+keeps the base platform-agnostic; commission is a platform execution detail.
+
+### Q3 — Slippage model
+
+**Resolved:** Add a configurable **`SlippageTicks` parameter (default 1 for MNQ)** to
+`IntradayStrategyBase`, wired to NT's `SetSlippage(CalculationMode.Ticks, n)` and Pine's
+`strategy(slippage=n)`. Signal generation stays close-based and slippage-agnostic.
+
+**Verification:** Run a 3-way backtest on identical data with `SlippageTicks ∈ {0,1,2}`:
+trade count identical across all three; per-trade fill price differs by exactly the
+slippage amount in the adverse direction; aggregate net P&L degrades by
+`trades × ticks × tick_value × contracts`; max DD increases monotonically; WR unchanged.
+Also export 20 live MNQ fills, compute empirical median slippage vs the triggering
+bar close — if closer to 2, update the default to 2.
+
+### Q4 — Contract sizing
+
+**Resolved:** Adopt the **risk-scaled Micro model** as default in `RiskManagerBase`:
+`qty = max(1, floor((equity * risk_pct) / (stop_distance * point_value)))`, with two
+guards: a configurable `max_qty` cap (prevents runaway sizing on tight stops) and a
+`skip_if_min_exceeds 2.0x` threshold (decline the trade if 1 Micro risks > 2× the
+intended fraction). Also enforce the daily risk budget cap.
+
+**Verification:** Create `tests/test_risk_sizing.py` covering: normal case; tight
+stop that overshoots `max_qty` (capped); tiny equity where 1 Micro > 2× `risk_pct`
+(`qty=0`, skip); equity=0 (blocked); `stop_distance=0` or `point_value=0` (config
+error); daily cap enforcement. Run a multi-equity backtest across
+$5k/$10k/$25k/$50k/$100k comparing fixed-1-Micro vs risk-scaled: assert sub-linear max
+DD scaling and no single trade loses > `risk_pct * equity`.
+
+### Q5 — Play 3 overshoot detection (state machine)
+
+**Resolved:** Implement the fade as a **two-state, bar-close-only state machine** in
+`IBFadeBot` (IB subclass, not the base), using persistent `overshootAbove`/
+`overshootBelow` bool fields that survive across `OnBarUpdate` calls (mirroring Pine's
+`var`). State 0 (idle) → on a confirmed bar close where high pierces
+`rangeHigh + 0.25*rangeRange` (or low pierces below), set the flag. State 1 (armed) →
+on a subsequent confirmed bar whose close prints back inside the IB range, fire the
+fade and reset the flag. Reset flags on: (a) successful entry, (b) new IB window,
+(c) opposing-side overshoot, (d) price closing beyond a 1.0× overshoot (abandonment),
+(e) session-open flatten, (f) EOD flatten (ADR-020).
+
+**Verification:** Deterministic NT8 bar-replay unit test (mirrored in Pine v5 with
+`barstate.isconfirmed` gating) covering 6 cases: (1) overshoot bar N, close-back N+1
+→ entry on N+1; (2) overshoot + close-back same bar N → entry on N; (3) overshoot then
+1.0× abandonment → no entry, flag cleared; (4) opposing overshoot after armed → flag
+flips; (5) session rollover with armed flag → cleared at 09:30; (6) overshoot N,
+close-back N+2 → entry on N+2 (persistence). Diff entry timestamps bar-for-bar NT↔Pine.
+
+**Dissent:** 1 judge disallowed same-bar overshoot+close-back (Q5 case 2). Rejected to
+maximize signal capture; the permissive path is adopted with the dissent noted.
+
+### Q6 — Rule 3 clock inversion (per-instrument)
+
+**Resolved:** Make `ClockSizeMultiplier` a **per-instrument configurable parameter** in
+`IntradayStrategyBase`, with symbol-specific defaults loaded from an external config
+table (`early_mult=0.5` for NQ1/ES1, `1.0` for YM) — NOT hardcoded branches. The base
+owns the generic mechanism; no subclass or play bot contains symbol-aware conditionals.
+
+**Verification:** (1) Per-instrument sweep of `early_mult ∈ {0.3,0.5,0.75,1.0,1.25}` on
+NQ1/ES1/YM over ≥2 years, holding other params fixed — confirm NQ/ES peak near 0.5, YM
+near 1.0. (2) Grep the base layer for `YM`/`NQ`/`ES` → must return **0 hits** (proves
+config-driven, not branch-coded). (3) Instantiate a different strategy subclassing
+`IntradayStrategyBase` (e.g. `ORBSweepBot`) using the same instrument table → it
+inherits clock-size behavior without code changes. (4) Dual-platform parity: identical
+`early_mult` produces identical entry sizes/timestamps on NT C# and Pine v5 per
+instrument.
+
+**Dissent:** consensus (all 4 judges agreed).
+
+---
+
 ## 8. Implementation Phases
 
 | Phase | Deliverable | Effort | Dependencies |
@@ -1044,3 +1494,272 @@ private async void LogTradeToPrisma(TradeRecord trade)
 | **8** | Live sim deployment (MNQ) | 20 sessions | Phases 4, 7 |
 
 **Total: ~4.5 days implementation + 20 sessions live sim.**
+
+---
+
+## 9. Operational Concerns (cross-cutting, inherited by all strategies)
+
+> Every item in this section is a **base-layer concern**. Because `IntradayStrategyBase`
+> owns the trade lifecycle (entry → manage → exit → log), implementing these once in the
+> base propagates them to IB, ORB, sweep, key-level, and every future strategy. A new
+> strategy should not have to re-implement journaling, validation hooks, or copier
+> integration — it should just implement `CheckForEntry()` and inherit the rest.
+
+### 9.1 Strategy Validation Pipeline (3-tier parity)
+
+The strategy must pass **three independent validation tiers** before live money. Each
+tier uses a different engine; agreement across tiers is the signal that the edge is
+real and not a platform artifact.
+
+```mermaid
+flowchart LR
+    PY[Python<br/>PropFirmSimulator<br/>ADR-021 source of truth] -->|trade log CSV| CMP[Parity compare]
+    NT[NinjaTrader<br/>Strategy Analyzer] -->|trade log CSV| CMP
+    TV[TradingView<br/>Strategy Tester] -->|trade log CSV| CMP
+    CMP -->|within 5%| PASS[✅ Validated]
+    CMP -->|divergence| DEBUG[❌ Debug platform diff]
+    PASS --> SIM[20-session live sim]
+    SIM -->|E[R] within 1σ| LIVE[Live eval]
+```
+
+**Tier 1 — Python (source of truth, ADR-021):** the **`PropFirmSimulator`**
+(`scripts/trading_framework/ml/prop_firm_simulator.py`) is the **mandatory sole source
+of truth** for all backtest and forward-test viability metrics, per ADR-021. Run it on
+`ib_play_detail_{SYM}.parquet`. Already run — produces E[R], PF, WR, equity curve,
+prop-firm pass probability. `prop_eval_mc.py`, `06_prop_sim.py`, and
+`simulate_prop_pass.py` are frozen legacy and must NOT be used. This is the validated
+baseline the other tiers must match.
+
+**Tier 2 — NinjaTrader Strategy Analyzer:** run `IBBreakoutBot` / `IBFadeBot` on NQ1
+5-min, 2021-2026. Configure commission ($2.05/round-turn Micro) and 1-tick slippage.
+Export trade log to CSV.
+
+**Tier 3 — TradingView Strategy Tester:** run `IBBreakoutStrategy.pine` /
+`IBFadeStrategy.pine` on NQ1 5-min, same window. Export trade log.
+
+**Parity check (automated):** a new `scripts/validation/strategy_parity_check.py`
+compares the three CSVs bar-by-bar on (entry_time, entry_price, exit_time, exit_price,
+P&L). Tolerance: ±5% on count and aggregate P&L, ±1 bar on entry/exit timing. Any
+divergence > tolerance blocks promotion to live and triggers a platform-diff debug
+task (per the §7 Open Questions — stop-tiebreak, commission, slippage).
+
+**Where this hooks the base:** `IntradayStrategyBase` emits a structured `TradeRecord`
+on every exit (see §9.2). The parity checker consumes that record format from all
+three platforms after a normalizer adapter per platform. The base owns the record
+contract so all strategies emit the same shape.
+
+### 9.2 Automated Journaling (Prisma `Trade` table)
+
+Every trade — backtest, sim, or live — is journaled to the same Prisma `Trade` table
+that the Next.js `JournalDashboard` already reads (`docs/architecture/unified_journal.md`).
+No separate "backtest journal" vs "live journal" — the `Trade.source` field
+(`backtest_python` | `backtest_nt` | `backtest_tv` | `sim_nt` | `live`) distinguishes them,
+so the dashboard can filter or compare.
+
+**NinjaTrader (live + sim):** the `RiskManagerAddOn` posts each closed trade to the
+local API on exit:
+
+```csharp
+// In IntradayStrategyBase.ManageOpenTrade() — on detected exit, emit one record:
+private async void JournalTrade(TradeRecord rec)
+{
+    rec.strategy_name  = GetStrategyName();
+    rec.play           = ActivePlay;
+    rec.source         = Account.IsSimAccount ? "sim_nt" : "live";
+    rec.ib_high        = rangeHigh;   // context fields, for later study
+    rec.ib_low         = rangeLow;
+    rec.ib_range       = rangeRange;
+    rec.predicted_dir  = predictedDir;
+    rec.break_minutes  = (int)(entryTime - rangeCompleteTime).TotalMinutes;
+    rec.calendar       = new { dow, month };
+    rec.tags           = new[] { "IB", $"play{ActivePlay}", $"t{TargetLvl}" };
+    var json = JsonSerializer.Serialize(rec);
+    await httpClient.PostAsync("http://localhost:8000/trades",
+        new StringContent(json, Encoding.UTF8, "application/json"));
+}
+```
+
+**Python (backtest):** `PropFirmSimulator` already writes `trade_log.csv`; a thin
+adapter `scripts/validation/upload_backtest_trades.py` posts the same records to
+`/trades` with `source="backtest_python"`. This lets the dashboard show backtest
+trades alongside live ones for the same strategy.
+
+**TradingView:** Pine cannot POST. The TV Strategy Tester exports a CSV; a manual
+`scripts/validation/import_tv_trades.py` ingests it with `source="backtest_tv"`.
+
+**Why this matters:** because every strategy inherits `JournalTrade()` from the base,
+a new `ORBSweepBot` is journaled automatically with full context (range geometry,
+predicted dir, break timing) — no per-strategy journal code. The dashboard's existing
+`Strategy` and `Playbook` models filter by `rec.strategy_name`, so the IB bot, an ORB
+bot, and a sweep bot all appear as separate strategies in the same cockpit.
+
+### 9.3 Structured Logging & Debugging
+
+The RiskGuard spec (§5.1) already mandates an ingestible intervention-log format. The
+strategy base uses the same structured-log contract so all logs — strategy entries,
+exits, RiskGuard interventions, copier replications — join one timeline.
+
+**Log schema (one JSON line per event, written to `logs/strategy_{name}_{date}.jsonl`):**
+
+```json
+{"ts":"2026-07-27T14:32:00-04:00","level":"INFO","strategy":"IBFadeBot","event":"entry",
+ "play":3,"dir":"short","price":18542.5,"stop":18580.0,"target":18500.0,"qty":2,
+ "ib_high":18570.0,"ib_low":18520.0,"break_min":122,"predicted_dir":-1,
+ "account":"Apex1","source":"sim_nt"}
+{"ts":"2026-07-27T14:47:00-04:00","level":"INFO","strategy":"IBFadeBot","event":"exit",
+ "reason":"target","price":18500.0,"pnl":"+$85","r_multiple":"+1.0","mae":-0.18,"mfe":+1.0}
+{"ts":"2026-07-27T14:47:01-04:00","level":"WARN","component":"RiskGuard","event":"intervene",
+ "rule":"daily_loss_80pct","account":"Apex1","action":"disarm"}
+```
+
+**Log levels:**
+- `DEBUG` — IB window build per bar (only if `VerboseLogging` on; off by default to avoid disk spam).
+- `INFO` — entry, exit, skip (with skip reason: calendar / size filter / direction bias / news moratorium).
+- `WARN` — RiskGuard intervention, copier partial-fill, moratorium triggered.
+- `ERROR` — order rejection, journal POST failure, news-cache miss (degrade to `IsNewsMoratorium()=false` + emit).
+
+**Debugging aids built into the base:**
+1. **Skip-reason audit:** every `return` in `CheckForEntry()` that skips emits an `INFO` with the specific reason. This ends "why didn't my bot trade today?" mysteries — grep the day's log.
+2. **State dump on exit:** MAE/MFE/predicted_dir/break_min are always logged on exit, so post-trade review in the dashboard has full context without re-querying the chart.
+3. **Replay mode:** `IntradayStrategyBase` supports a `ReplayMode` flag that re-runs a logged day's bars from `data/live/live_storage_-{SYM}.parquet` and asserts the strategy fires the same entries as the log. This is the regression test for "did my refactoring break the bot."
+
+### 9.4 Pluggable Take-Profit / Stop-Loss Mechanisms
+
+The IB study validated that the stop model changes the edge dramatically (the 20-year
+BacktestLoop "all-F" result was caused by the wrong stop model). Stop/TP selection is
+therefore **a first-class pluggable concern**, not a hardcoded constant.
+
+**Stop types (from `ib_optimal_stops.parquet` + `STRATEGY_COMPENDIUM.md`):**
+
+| Key | Stop model | R-definition | When validated |
+|---|---|---|---|
+| `ib_opposite` | opposite IB boundary (1.0R where R=IB range) | R = range | Original IB; destroyed edge |
+| `ib_edge` | IB edge ± small buffer | R = buffer | Tighter but unvalidated |
+| `mae_calibrated_025` | 0.25R from entry (R = target distance) | R = target | **Default, optimal** (Phase D) |
+| `mae_calibrated_030` | 0.30R — theoretical optimum between P80 winner & P50 loser MAE | R = target | Use for slightly wider edge |
+| `fixed_r` | fixed dollar risk (e.g. $50) → derived stop distance | $ | Prop-firm risk-budget mode |
+| `atr_mult` | ATR(tick) × multiplier | ticks | Volatility-scaled (new, §7A) |
+
+**TP types:**
+
+| Key | TP model | Notes |
+|---|---|---|
+| `fixed_mult` | `range_high + target_lvl * range_range` | Current default |
+| `ib_mid` | fade to range midpoint | Play 3 default |
+| `r_multiple` | entry + N × stop_distance | R:R-fixed mode |
+| `ladder` | partial at 0.25R, 0.5R, 1.0R | `ib_exit_modules.py` T4/T5/T6 |
+| `trailing` | breakeven at +0.5R, trail by 0.5R after +1.0R | S15 trailing |
+
+**Pluggable contract on `IntradayStrategyBase`:**
+
+```csharp
+public interface IStopModel  { (double stopPrice, double rDistance) Compute(double entry, int dir, IntradayStrategyBase s); }
+public interface ITargetModel { (double tpPrice, bool isLadder) Compute(double entry, int dir, IntradayStrategyBase s); }
+
+[NinjaScriptProperty] public string StopModel  { get; set; } = "mae_calibrated_025";
+[NinjaScriptProperty] public string TargetModel { get; set; } = "fixed_mult";
+```
+
+The base resolves the strings to an `IStopModel` / `ITargetModel` instance via a small
+registry. A new strategy can ship its own stop model by registering one class — no
+base changes. This also lets us A/B stop/TP variants in the validator without touching
+strategy code: same `trade_log.csv`, different `StopModel` column, compare E[R].
+
+### 9.5 Copy Trader & Account Cascade Integration
+
+The `TradeCopierEngine.cs` (`docs/trading/TRADE_COPIER_PRD.md`) already handles
+leader→follower replication with `OrderEntry.Manual` stealth tagging, and RiskGuard
+auto-scales `expected_copies` so follower entries aren't misflagged as aggregate
+oversizing. The strategy base integrates as the **leader signal source**; the copier
+does the replication.
+
+**Two integration modes:**
+
+| Mode | Who is leader | Who is follower | Use case |
+|---|---|---|---|
+| **A — Bot leads, manual follows** | `IBFadeBot` on the leader account | N manual/eval accounts via copier | Run the validated bot on one funded account; copy to evals to scale |
+| **B — Manual leads, bot validates** | Manual trade (TradingView/webhook) | Bot runs in **shadow mode** on follower accounts | Bot logs what it *would* have done; compare to manual for coaching |
+
+**Cascade across accounts (one after another, not simultaneous):**
+
+RiskGuard already does aggregate sizing. For *sequential* cascade (fund account A
+first; once A is funded, route signals to B; etc.), the base emits an `account_target`
+field on each entry signal. The copier's routing config maps
+`account_target → [eligible accounts]` and skips accounts marked `quarantined` /
+`already_funded` / `in_loss_lockout`. Sequence:
+
+```mermaid
+flowchart TD
+    SIG[Bot emits entry<br/>account_target=active_eval] --> COP[TradeCopierEngine]
+    COP --> R{RiskGuard<br/>filter} -->|account A: in_loss_lockout| SKIP_A[skip A]
+    R -->|account B: eligible| EXEC_B[execute B]
+    R -->|account C: already_funded| SKIP_C[skip C]
+    EXEC_B --> LOG[journal<br/>source=live account=B]
+```
+
+**Cascade config (per `sessions.yaml` under `cascade:`):**
+
+```yaml
+cascade:
+  leader_strategy: "IBFadeBot"
+  routing:
+    active_eval: [Apex1, Topstep2]   # try Apex1 first; if locked, route to Topstep2
+    funded_scale: [Apex1, Apex2, Topstep1]  # once funded, scale across these
+  quarantine_after_blow: true
+  re_arm_on_new_session: true
+```
+
+The base does **not** know about accounts — it emits `account_target="active_eval"`.
+The copier resolves the target. This keeps account-routing logic out of the strategy
+so a new strategy inherits cascade support by emitting one string field.
+
+---
+
+## 10. Proposed Enhancements (research-backed, prioritized)
+
+Beyond the user's explicit asks, here are enhancements that compound with the above.
+Each is sized by effort and mapped to whether it lives in the base (all-strategy) or
+the IB subclass.
+
+| # | Enhancement | Layer | Effort | Why it earns its place |
+|---|---|---|---|---|
+| E1 | **Regime classifier hook** | base | 1d | The IB study already built `ib_regime_classifier` (trend/skip/normal/range). Expose `OnRegime(regime)` on the base; a strategy can skip `range` days. One hook → every strategy gets regime-awareness. |
+| E2 | **Conviction score gate** | base | 0.5d | `conviction_score_v2` (0–0.88, mean 0.60) already exists. Add `MinConviction` param; base skips entries below threshold. Reuses the IB-validated score; new strategies can plug a different score. |
+| E3 | **Walk-forward validator** | tooling | 1.5d | The §1.1 audit flagged all measurements as in-sample. A `scripts/validation/walk_forward.py` that trains on 2021-23, tests 2024-26, slides — produces a decay curve. Catches the 2026 Play-1 weakening early. |
+| E4 | **Monte Carlo pass-rate** | tooling | 0.5d | Permutation of trade order × 1000 → P(pass eval before $2k DD). Already in `06_prop_sim.py`; expose as a validator gate the base can require before live. |
+| E5 | **Multi-timeframe confirmation** | base | 1d | `request.security` (TV) / multi-series (NT). Avoid IB breakouts against the 1h trend. Hook: `OnHTFConfirm()` returning bool. |
+| E6 | **Liquidity-sweep entry filter** | base | 1d | `ib_high_swept` / `ib_low_swept` already computed (E8 failed-breakout). Expose as a base entry-precondition flag any strategy can toggle. |
+| E7 | **Discord alert on entry/exit** | base | 0.5d | RiskGuard already has the HTTP plumbing. One hook `OnTradeEvent` → webhook. Live coaching + remote monitoring. |
+| E8 | **Equity-curve break detector** | base | 1d | Monitor rolling 20-trade E[R]; if CI crosses zero (like 2026 Play 1), auto-disarm + alert. Prevents trading a decayed edge. |
+| E9 | **Parameter sensitivity report** | tooling | 1d | For each NinjaScriptProperty, run ±20% sweep, report ΔE[R]. Catches overfit params before live. |
+| E10 | **Shadow-vs-live diff dashboard** | web | 1d | Mode B (§9.5) produces shadow trades; the Next.js dashboard already has the `Trade` table. A new view diffs shadow vs live per day — the coaching tool. |
+| E11 | **FVG/IFVG bias pluggable** | base | 0.5d | `bias_fvg` / `bias_fvg_ifvg` already computed and validated (+0.022 lift). Add `IBiasModel` interface like `IStopModel`; switch bias without code changes. |
+| E12 | **News-cache fallback contract** | base | 0.25d | If news AddOn is down, base emits WARN and degrades to `IsNewsMoratorium()=false` (never silently blocks all trading). Makes the moratorium fail-open visible. |
+
+**Recommended first batch (highest leverage, lowest effort):** E1 + E2 + E8 + E12.
+These four turn the base from "runs the strategy" into "runs the strategy safely and
+regime-aware" — and they're all <1 day each. E3 + E4 belong in the validator tier (§9.1)
+and should be built alongside the parity checker.
+
+---
+
+## 11. Updated Implementation Phases (with §9–§10 work)
+
+| Phase | Deliverable | Effort | Dependencies |
+|---|---|---|---|
+| 1 | `IntradayStrategyBase.cs` + `RangeWindow.cs` indicator | 1.5d | Existing `RiskManagerBase.cs` (now split: generic base) |
+| 2 | `IBStrategyBase.cs` (Rule 1 + overshoot SM) | 0.5d | Phase 1 |
+| 3 | `IBBreakoutBot.cs` + `IBRetestBot.cs` + `IBFadeBot.cs` | 1d | Phase 2 |
+| 4 | `IStopModel` / `ITargetModel` registry + 3 stop models + 3 TP models | 1d | Phase 1 |
+| 5 | Structured logging + journal POST + skip-reason audit | 1d | Phase 1 |
+| 6 | `strategy_parity_check.py` (3-tier validator) | 1.5d | Phases 3-5 |
+| 7 | `walk_forward.py` + Monte Carlo pass-rate gate (E3, E4) | 2d | Phase 6 |
+| 8 | `IBStrategyLib.pine` + `IBBreakoutStrategy.pine` + `IBFadeStrategy.pine` | 1.5d | Phase 3 (validated logic) |
+| 9 | TV Strategy Tester validation + parity | 1d | Phase 8 |
+| 10 | Regime hook (E1) + conviction gate (E2) + equity-curve break (E8) | 2d | Phase 5 |
+| 11 | Copy-trader leader integration + cascade config | 1d | Phase 3, existing `TradeCopierEngine` |
+| 12 | Live sim deployment (MNQ) — 20 sessions | 20 sessions | Phases 6, 9, 11 |
+
+**Total: ~13.5 days implementation + 20 sessions live sim** (up from 4.5d — the added
+time buys a reusable base, pluggable exits, journaling, 3-tier validation, regime
+gating, and copy-trader integration that all future strategies inherit).
