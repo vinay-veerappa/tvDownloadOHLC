@@ -91,6 +91,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return Math.Max(1, qty);
         }
 
+        /// <summary>
+        /// IBFadeBot stop geometry differs from the default IB formula: the stop
+        /// is placed StopRMult * rangeRange beyond the IB boundary (0.5R), with NO
+        /// TargetLvl multiplier. Override so the daily-max-loss gate uses the
+        /// actual stop distance instead of over-estimating via TargetLvl.
+        /// </summary>
+        protected override double GetEstimatedRiskDistance()
+        {
+            if (!rangeComplete || rangeRange <= 0) return 0;
+            return StopRMult * rangeRange;
+        }
+
         protected override string GetStrategyName() => "IB Fade Bot (Play 3)";
     }
 }

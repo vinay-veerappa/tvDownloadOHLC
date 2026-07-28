@@ -289,6 +289,37 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         /// <summary>
+        /// Range-based potential-loss override. Uses the ACTUAL stop distance
+        /// (GetEstimatedRiskDistance()) instead of the ATR formula
+        /// (StopAtrMult * rangeRange), which over-estimates by ~8-16x and would
+        /// block legitimate entries on funded accounts with tight daily loss
+        /// limits. Returns 0 when the range has not completed — the time fence
+        /// (EarliestEntry) guards pre-range entries, not the potential-loss gate.
+        /// Subclasses with different stop geometry override GetEstimatedRiskDistance().
+        /// </summary>
+        protected override double GetPotentialLoss()
+        {
+            double riskDistance = GetEstimatedRiskDistance();
+            if (riskDistance <= 0)
+                return 0;
+            return riskDistance * GetPointValue() * Math.Max(1, DefaultQuantity);
+        }
+
+        /// <summary>
+        /// Estimated stop distance in points for the next trade, used by the
+        /// daily-max-loss gate. Default uses the common IB break/retest geometry:
+        /// StopRMult * TargetLvl * rangeRange. Override in subclasses with a
+        /// different stop formula (e.g. IBFadeBot uses StopRMult * rangeRange
+        /// with no TargetLvl multiplier).
+        /// Returns 0 before the range completes (gate via time fence instead).
+        /// </summary>
+        protected virtual double GetEstimatedRiskDistance()
+        {
+            if (!rangeComplete || rangeRange <= 0) return 0;
+            return StopRMult * TargetLvl * rangeRange;
+        }
+
+        /// <summary>
         /// Checks registered calendar rules.
         /// </summary>
         /// <returns>True if any rule indicates a skip.</returns>

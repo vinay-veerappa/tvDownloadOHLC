@@ -1857,11 +1857,11 @@ produce a `SystemPerformance` object, so the detection works for all cases.
 clear any zombie SA window from a prior timed-out run. The SA won't start a
 new backtest while one is in progress.
 
-### 12.4 Known issue: `RiskGatekeeper.potentialLoss` for live accounts
+### 12.4 `RiskGatekeeper.potentialLoss` for live accounts — RESOLVED (Session 4, 2026-07-27)
 
-**Status:** TODO (not blocking for backtest; will block on live eval/funded accounts)
+**Status:** ✅ Fixed
 
-The `CanEnterTrade` potential-loss calculation uses the ATR formula:
+The `CanEnterTrade` potential-loss calculation previously used the ATR formula:
 `potentialLoss = StopAtrMult * atrForRisk * PointValue * Qty`
 
 For range-based IB strategies, `atrForRisk = rangeRange` (via the
@@ -1869,14 +1869,27 @@ For range-based IB strategies, `atrForRisk = rangeRange` (via the
 for MNQ. The actual range-based stop distance is much smaller:
 `StopRMult * TargetLvl * rangeRange = 0.25 * 0.5 * 143.75 ≈ 18 points ≈ $9`.
 
-The gatekeeper over-estimates potential loss by ~8x. On funded accounts with
-tight daily loss limits (e.g. Apex $100/day), this will block legitimate entries.
+The gatekeeper over-estimated potential loss by ~8x. On funded accounts with
+tight daily loss limits (e.g. Apex $100/day), this would block legitimate entries.
 
-**Planned fix:** Override the `potentialLoss` calculation in
-`IntradayStrategyBase` to use the actual range-based stop distance
-(`StopRMult * TargetLvl * rangeRange * PointValue * Qty`) instead of the ATR
-formula. This requires making the `potentialLoss` calculation virtual in
-`RiskManagerBase.CanEnterTrade`.
+**Fix applied (Session 4):** Extracted the potential-loss calculation into a
+virtual `GetPotentialLoss()` in `RiskManagerBase`, overridden in
+`IntradayStrategyBase` to use the actual range-based stop distance via a
+virtual `GetEstimatedRiskDistance()` hook:
+
+| Strategy | Stop geometry | `GetEstimatedRiskDistance()` |
+|---|---|---|
+| `IBBreakoutBot` (Play 1) | `StopRMult * TargetLvl * rangeRange` (0.125 × range) | default (inherited) |
+| `IBRetestBot` (Play 2) | `StopRMult * TargetLvl * rangeRange` (0.5 × range) | default (inherited) |
+| `IBFadeBot` (Play 3) | `StopRMult * rangeRange` (0.5 × range, no `TargetLvl`) | overridden |
+
+`CanEnterTrade` now calls `GetPotentialLoss()` which dispatches to the correct
+formula per strategy. The ATR fallback remains in the base for non-range
+strategies that still use the 5-min secondary. Returns 0 before the range
+completes (the time fence `EarliestEntry` guards pre-range entries, not the
+potential-loss gate).
+
+**Files changed:** `RiskManagerBase.cs`, `IntradayStrategyBase.cs`, `IBFadeBot.cs`
 
 ### 12.5 Diagnostic logging status
 

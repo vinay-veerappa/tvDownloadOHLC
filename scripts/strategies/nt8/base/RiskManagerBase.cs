@@ -467,11 +467,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // called AFTER CanEnterTrade passes. So rangeComplete could never become
             // true, blocking all entries. The atr>0 check in OnBarUpdate (after
             // CheckForSignal returns non-zero) still protects the EnterTrade path.
-            // Use a nominal risk distance for the daily-max-loss potential calc.
-            double atrForRisk = GetCurrentATR();
-            if (atrForRisk <= 0)
-                atrForRisk = StopAtrMult * TickSize * 100;  // nominal fallback before range completes
-            double potentialLoss = StopAtrMult * atrForRisk * GetPointValue() * Math.Max(1, DefaultQuantity);
+            // Use the strategy's actual estimated risk distance for the daily-max-loss
+            // potential calc. VIRTUAL so range-based subclasses override with their
+            // real stop geometry (StopRMult * TargetLvl * rangeRange) instead of the
+            // ATR formula (StopAtrMult * rangeRange), which over-estimates by ~8-16x
+            // and would block legitimate entries on funded accounts with tight daily
+            // loss limits. See GetPotentialLoss() / GetEstimatedRiskDistance().
+            double potentialLoss = GetPotentialLoss();
             if (!isBacktest && RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
             {
                 if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL gatekeeperDailyMaxLoss: bar={CurrentBar} potentialLoss={potentialLoss}", LogLevel.Information);
@@ -694,6 +696,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (CurrentBars[1] < AtrPeriod)
                 return 0;
             return atrIndicator[0];
+        }
+
+        /// <summary>
+        /// Estimated dollar loss if the next trade is stopped out. Used by the
+        /// daily-max-loss gate in CanEnterTrade. VIRTUAL so range-based subclasses
+        /// (IntradayStrategyBase) can override with their ACTUAL stop distance
+        /// instead of the ATR formula, which over-estimates by ~8-16x for IB
+        /// strategies and would block legitimate entries on funded accounts with
+        /// tight daily loss limits (e.g. Apex $100/day).
+        /// Default: StopAtrMult * GetCurrentATR() * PointValue * Qty (ATR-based).
+        /// Range-based override: GetEstimatedRiskDistance() * PointValue * Qty.
+        /// </summary>
+        protected virtual double GetPotentialLoss()
+        {
+            double atrForRisk = GetCurrentATR();
+            if (atrForRisk <= 0)
+                atrForRisk = StopAtrMult * TickSize * 100;  // nominal fallback before range/warmup completes
+            double riskDistance = StopAtrMult * atrForRisk;
+            return riskDistance * GetPointValue() * Math.Max(1, DefaultQuantity);
         }
 
         protected double GetPointValue()
