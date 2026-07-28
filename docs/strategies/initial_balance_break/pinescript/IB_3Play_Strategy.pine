@@ -1,0 +1,442 @@
+// This Pine Script code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// (c) vveerappa
+//
+// IB Strategy (3 Plays) -- Pine Script v6 equivalent of the NT8 IB bots.
+// Ported from scripts/strategies/nt8/ib_breakout/{IBBreakoutBot, IBRetestBot, IBFadeBot}.cs
+// Validated: IBBreakoutBot + TrendMisaligned filter PF 1.489 IS / 1.426 OOS (MNQ).
+//
+// Plays:
+//   1 = Breakout  (close beyond IB high/low -> ride trend)
+//   2 = Retest    (first break, pullback to IB mid, continue in break direction)
+//   3 = Fade      (overshoot beyond IB boundary, close back inside -> fade)
+//
+// Production default: Play 1 + TrendMisaligned filter ON.
+
+//@version=6
+strategy("IB Strategy (3 Plays) [NT8 Parity]", shorttitle="IB 3-Play", overlay=true,
+          initial_capital=50000, default_qty_type=strategy.fixed, default_qty_value=1,
+          commission_type=strategy.commission.cash_per_contract, commission_value=2.05,
+          margin_long=0, margin_short=0)
+
+// =============================================================================
+// 1. INPUTS
+// =============================================================================
+grp_core = "Core IB Settings"
+activePlay = input.int(1, "Active Play (1=BO, 2=Retest, 3=Fade)", minval=1, maxval=3, group=grp_core)
+ibSession  = input.session("0930-1000", "IB Window (ET)", group=grp_core)
+tradeWindow = input.session("1000-1600", "Trading Window (ET)", group=grp_core)
+flattenTime = input.session("1550-1551", "Flatten By (ET, ADR-020)", group=grp_core)
+
+grp_geo = "Stop / Target Geometry"
+targetLvl   = input.float(0.5, "Target Level (x range)", step=0.05, group=grp_geo)
+stopRMult   = input.float(2.0, "Stop R Mult (x TargetLvl x range)", step=0.25, group=grp_geo)
+overshootMult = input.float(0.35, "Overshoot Threshold (x range, Play 3)", step=0.05, group=grp_geo)
+
+grp_filter = "Confluence Filters"
+useTrendMisaligned = input.bool(true, "P1: Trend Misaligned (daily EMA 20/50)", group=grp_filter)
+useVcpFilter       = input.bool(false, "P1: VCP 3-Day Contraction", group=grp_filter)
+useOpexFilter      = input.bool(false, "P1: OPEX Week", group=grp_filter)
+useLowBodyClose    = input.bool(false, "P1: Low Body Close", group=grp_filter)
+useP3Vcp           = input.bool(false, "P3: VCP 3-Day", group=grp_filter)
+useP3QuarterlyOpex = input.bool(false, "P3: Quarterly OPEX", group=grp_filter)
+useP3HighBodyClose = input.bool(false, "P3: High Body Close", group=grp_filter)
+
+grp_cal = "Calendar Filters"
+skipMondayP2  = input.bool(true, "Skip Monday (Play 2)", group=grp_cal)
+skipFebP2     = input.bool(true, "Skip February (Play 2)", group=grp_cal)
+skipMayP1     = input.bool(true, "Skip May (Play 1)", group=grp_cal)
+skipOctP3     = input.bool(true, "Skip October (Play 3)", group=grp_cal)
+
+grp_risk = "Risk Management"
+riskPct      = input.float(0.5, "Risk per Trade (%)", step=0.1, group=grp_risk)
+maxTradesDay = input.int(2, "Max Trades Per Day", minval=1, maxval=10, group=grp_risk)
+maxRangePct  = input.float(2.0, "Max Range % (skip huge)", step=0.1, group=grp_risk)
+minRangePct  = input.float(0.05, "Min Range % (skip tiny)", step=0.01, group=grp_risk)
+useBiasGate  = input.bool(false, "Require Direction Bias", group=grp_risk)
+
+grp_exit = "Exit Policy"
+exitPolicy = input.string("BreakevenTrail", "Exit Policy", options=["FixedTarget", "BreakevenTrail"], group=grp_exit)
+beTriggerR = input.float(1.0, "BE Trigger (R-multiple)", step=0.25, group=grp_exit)
+trailAtrMult = input.float(2.0, "Trail ATR Mult", step=0.5, group=grp_exit)
+
+// =============================================================================
+// 2. TIMEZONE HELPERS (ET = America/New_York)
+// =============================================================================
+// Pine session() uses the chart timezone if "America/New_York" not specified.
+// We explicitly pass the timezone for correctness across chart timezones.
+etTZ = "America/New_York"
+isIBBar      = not na(time(timeframe.period, ibSession, etTZ))
+isTradeBar   = not na(time(timeframe.period, tradeWindow, etTZ))
+isFlattenBar = not na(time(timeframe.period, flattenTime, etTZ))
+isNewDay     = ta.change(time("D", etTZ)) != 0
+
+// =============================================================================
+// 3. IB RANGE CALCULATION (09:30-10:00 ET, 30 min)
+// =============================================================================
+var float ibHigh = na
+var float ibLow  = na
+var float ibOpen = na
+var float ibClose = na
+var bool  ibComplete = false
+var float ibRange = na
+var float ibMid = na
+var int   ibHighBar = na
+var int   ibLowBar = na
+var bool  ibHighBodyCloseFlag = false
+var bool  ibLowBodyCloseFlag = false
+
+if isNewDay
+    ibHigh := na
+    ibLow := na
+    ibOpen := na
+    ibClose := na
+    ibComplete := false
+    ibRange := na
+    ibMid := na
+    ibHighBar := na
+    ibLowBar := na
+    ibHighBodyCloseFlag := false
+    ibLowBodyCloseFlag := false
+
+// Build IB window
+if isIBBar and not ibComplete
+    if na(ibHigh)
+        ibHigh := high
+        ibLow := low
+        ibOpen := open
+        ibHighBar := bar_index
+        ibLowBar := bar_index
+        ibHighBodyCloseFlag := close >= ibHigh - 0.1 * (ibHigh - ibLow)
+        ibLowBodyCloseFlag  := close <= ibLow + 0.1 * (ibHigh - ibLow)
+    else
+        if high > ibHigh
+            ibHigh := high
+            ibHighBar := bar_index
+            ibHighBodyCloseFlag := close >= ibHigh - 0.1 * (ibHigh - ibLow)
+        if low < ibLow
+            ibLow := low
+            ibLowBar := bar_index
+            ibLowBodyCloseFlag := close <= ibLow + 0.1 * (ibHigh - ibLow)
+
+// Finalize IB at the first bar AT OR AFTER the end of the IB session.
+// time() returns non-na for bars INSIDE the session; the first bar OUTSIDE
+// is where we finalize (matches NT8 "first bar at or after range end").
+if not isIBBar and not ibComplete and not na(ibHigh)
+    ibClose := close
+    ibRange := ibHigh - ibLow
+    ibMid := (ibHigh + ibLow) / 2
+    ibComplete := true
+
+// =============================================================================
+// 4. DAILY EMA 20/50 (Trend Misaligned Filter -- computed on DAILY close)
+// =============================================================================
+// NT8 computes EMA on session-window bars (one update per day at IB finalize),
+// NOT on every 1m bar. We replicate by requesting daily close and computing EMA
+// on the daily timeframe.
+dailyClose = request.security(syminfo.tickerid, "D", close, gaps=barmerge.gaps_off)
+var float dailyEma20 = na
+var float dailyEma50 = na
+var int   dailyEmaCount = 0
+var bool  dailyEmaUpdatedToday = false
+
+// EMA update -- once per day (on the first bar of the new day)
+alpha20 = 2.0 / (20.0 + 1.0)
+alpha50 = 2.0 / (50.0 + 1.0)
+
+if isNewDay and not na(dailyClose)
+    if dailyEmaCount == 0
+        dailyEma20 := dailyClose
+        dailyEma50 := dailyClose
+        dailyEmaCount := 1
+    else
+        dailyEma20 := alpha20 * dailyClose + (1 - alpha20) * nz(dailyEma20, dailyClose)
+        dailyEma50 := alpha50 * dailyClose + (1 - alpha50) * nz(dailyEma50, dailyClose)
+        dailyEmaCount += 1
+    dailyEmaUpdatedToday := true
+
+// =============================================================================
+// 5. VCP 3-DAY CONTRACTION (prev2 > prev1 > today IB range)
+// =============================================================================
+var float prevIBRange1 = na  // yesterday
+var float prevIBRange2 = na  // day before yesterday
+
+if isNewDay and ibComplete
+    // Roll: today's range becomes prev1, prev1 becomes prev2
+    prevIBRange2 := prevIBRange1
+    prevIBRange1 := ibRange
+
+vcp3Day = not na(prevIBRange2) and not na(prevIBRange1) and not na(ibRange) and
+          prevIBRange2 > prevIBRange1 and prevIBRange1 > ibRange
+
+// =============================================================================
+// 6. OPEX WEEK / QUARTERLY OPEX (3rd Friday of month)
+// =============================================================================
+// OPEX week: the week containing the 3rd Friday.
+// Quarterly OPEX: March, June, September, December 3rd Friday.
+dom = dayofmonth(time, etTZ)
+dow = dayofweek(time, etTZ)
+// Determine if today is in the week of the 3rd Friday
+thirdFriday = 15 + (5 - dayofweek(timestamp(year(time, etTZ), month(time, etTZ), 1), etTZ)) % 7
+// Simplified: OPEX week is when dom >= thirdFriday-4 and dom <= thirdFriday
+isOpexWeek = dom >= (thirdFriday - 4) and dom <= thirdFriday
+isQuarterlyOpex = isOpexWeek and (month(time, etTZ) == 3 or month(time, etTZ) == 6 or
+                                   month(time, etTZ) == 9 or month(time, etTZ) == 12)
+
+// =============================================================================
+// 7. RANGE SIZE FILTER
+// =============================================================================
+rangePct = ibComplete ? (ibRange / close) * 100 : 0
+rangeSizeOK = ibComplete and rangePct >= minRangePct and rangePct <= maxRangePct
+
+// =============================================================================
+// 8. CALENDAR FILTERS
+// =============================================================================
+calFiltered = (activePlay == 2 and skipMondayP2 and dayofweek == dayofweek.monday) or
+              (activePlay == 2 and skipFebP2 and month(time, etTZ) == 2) or
+              (activePlay == 1 and skipMayP1 and month(time, etTZ) == 5) or
+              (activePlay == 3 and skipOctP3 and month(time, etTZ) == 10)
+
+// =============================================================================
+// 9. TREND MISALIGNED FILTER (Play 1)
+// =============================================================================
+// Trend misaligned: break direction OPPOSITE to daily EMA 20/50 alignment.
+// If EMA20 > EMA50 (bullish trend), only take SHORT breaks (fade the trend).
+// If EMA20 < EMA50 (bearish trend), only take LONG breaks.
+// This is a counter-trend filter -- the Python research found it lifts WR.
+trendBull = not na(dailyEma20) and not na(dailyEma50) and dailyEma20 > dailyEma50
+trendBear = not na(dailyEma20) and not na(dailyEma50) and dailyEma20 < dailyEma50
+
+// =============================================================================
+// 10. ENTRY-TRACKING STATE (one entry per direction per session)
+// =============================================================================
+var bool longTakenToday = false
+var bool shortTakenToday = false
+var int  tradesToday = 0
+var int  firstBreakDir = 0  // 1=up first, -1=down first, 0=none
+var bool overshootAbove = false
+var bool overshootBelow = false
+var float entryPrice = na
+var float stopPrice = na
+var float targetPrice = na
+var int   entryBar = na
+
+if isNewDay
+    longTakenToday := false
+    shortTakenToday := false
+    tradesToday := 0
+    firstBreakDir := 0
+    overshootAbove := false
+    overshootBelow := false
+    entryPrice := na
+    stopPrice := na
+    targetPrice := na
+    entryBar := na
+
+// Track first break direction (for Play 2 retest)
+if ibComplete and firstBreakDir == 0
+    if close > ibHigh
+        firstBreakDir := 1
+    else if close < ibLow
+        firstBreakDir := -1
+
+// Detect overshoot (for Play 3 fade)
+if ibComplete
+    if high > ibHigh + overshootMult * ibRange
+        overshootAbove := true
+    if low < ibLow - overshootMult * ibRange
+        overshootBelow := true
+
+// =============================================================================
+// 11. CONFLUENCE FILTER GATE
+// =============================================================================
+// Returns true if the trade is ALLOWED (all enabled filters pass).
+confluenceAllow(bool isLong) =>
+    if activePlay == 1
+        // Play 1 stack: trend_misaligned & vcp_3day & is_opex_week & ib_low_body_close
+        // Trend misaligned: long only if trend bear, short only if trend bull
+        trendOK = not useTrendMisaligned or (isLong and trendBear) or (not isLong and trendBull)
+        vcpOK   = not useVcpFilter or vcp3Day
+        opexOK  = not useOpexFilter or isOpexWeek
+        bodyOK  = not useLowBodyClose or ibLowBodyCloseFlag
+        trendOK and vcpOK and opexOK and bodyOK
+    else if activePlay == 3
+        vcpOK   = not useP3Vcp or vcp3Day
+        opexOK  = not useP3QuarterlyOpex or isQuarterlyOpex
+        bodyOK  = not useP3HighBodyClose or ibHighBodyCloseFlag
+        vcpOK and opexOK and bodyOK
+    else
+        true  // Play 2: no filter stack (negative expectancy in Python)
+
+// =============================================================================
+// 12. QUANTITY CALCULATION (risk-scaled)
+// =============================================================================
+calcQty(float stopDist) =>
+    if stopDist <= 0
+        1
+    else
+        math.max(1, math.floor((strategy.equity * riskPct / 100) / (stopDist * syminfo.pointvalue)))
+
+// =============================================================================
+// 13. ENTRY LOGIC (per play)
+// =============================================================================
+inTrade = strategy.position_size != 0
+canTrade = ibComplete and isTradeBar and not inTrade and tradesToday < maxTradesDay and
+           rangeSizeOK and not calFiltered
+
+// --- Play 1: Breakout ---
+play1Entry = canTrade and activePlay == 1
+boLong  = play1Entry and not longTakenToday and close > ibHigh and confluenceAllow(true)
+boShort = play1Entry and not shortTakenToday and close < ibLow and confluenceAllow(false)
+
+// --- Play 2: Retest ---
+play2Entry = canTrade and activePlay == 2 and firstBreakDir != 0
+retestLong  = play2Entry and not longTakenToday and firstBreakDir == 1 and low <= ibMid and close >= ibMid
+retestShort = play2Entry and not shortTakenToday and firstBreakDir == -1 and high >= ibMid and close <= ibMid
+
+// --- Play 3: Fade ---
+play3Entry = canTrade and activePlay == 3
+fadeShort = play3Entry and not shortTakenToday and overshootAbove and close < ibHigh and confluenceAllow(false)
+fadeLong  = play3Entry and not longTakenToday and overshootBelow and close > ibLow and confluenceAllow(true)
+
+// =============================================================================
+// 14. EXECUTE ENTRIES
+// =============================================================================
+// Play 1 Breakout entries
+if boLong
+    stop = close - stopRMult * targetLvl * ibRange
+    target = ibHigh + targetLvl * ibRange
+    qty = calcQty(close - stop)
+    strategy.entry("P1 Long", strategy.long, qty=qty, comment="P1 BO Long")
+    strategy.exit("P1 Long TP/SL", "P1 Long", stop=stop, limit=target)
+    entryPrice := close
+    stopPrice := stop
+    targetPrice := target
+    entryBar := bar_index
+    longTakenToday := true
+    tradesToday += 1
+
+if boShort
+    stop = close + stopRMult * targetLvl * ibRange
+    target = ibLow - targetLvl * ibRange
+    qty = calcQty(stop - close)
+    strategy.entry("P1 Short", strategy.short, qty=qty, comment="P1 BO Short")
+    strategy.exit("P1 Short TP/SL", "P1 Short", stop=stop, limit=target)
+    entryPrice := close
+    stopPrice := stop
+    targetPrice := target
+    entryBar := bar_index
+    shortTakenToday := true
+    tradesToday += 1
+
+// Play 2 Retest entries
+if retestLong
+    stop = ibLow  // opposite IB boundary
+    target = ibHigh + targetLvl * ibRange
+    qty = calcQty(ibMid - stop)
+    strategy.entry("P2 Long", strategy.long, qty=qty, comment="P2 Retest Long")
+    strategy.exit("P2 Long TP/SL", "P2 Long", stop=stop, limit=target)
+    entryPrice := ibMid
+    stopPrice := stop
+    targetPrice := target
+    entryBar := bar_index
+    longTakenToday := true
+    tradesToday += 1
+
+if retestShort
+    stop = ibHigh  // opposite IB boundary
+    target = ibLow - targetLvl * ibRange
+    qty = calcQty(stop - ibMid)
+    strategy.entry("P2 Short", strategy.short, qty=qty, comment="P2 Retest Short")
+    strategy.exit("P2 Short TP/SL", "P2 Short", stop=stop, limit=target)
+    entryPrice := ibMid
+    stopPrice := stop
+    targetPrice := target
+    entryBar := bar_index
+    shortTakenToday := true
+    tradesToday += 1
+
+// Play 3 Fade entries
+if fadeShort
+    stop = ibHigh + stopRMult * ibRange  // StopRMult * range beyond boundary (no TargetLvl)
+    target = ibHigh - targetLvl * ibRange  // full reversion
+    qty = calcQty(stop - ibHigh)
+    strategy.entry("P3 Short", strategy.short, qty=qty, comment="P3 Fade Short")
+    strategy.exit("P3 Short TP/SL", "P3 Short", stop=stop, limit=target)
+    entryPrice := ibHigh
+    stopPrice := stop
+    targetPrice := target
+    entryBar := bar_index
+    overshootAbove := false  // reset after entry
+    shortTakenToday := true
+    tradesToday += 1
+
+if fadeLong
+    stop = ibLow - stopRMult * ibRange
+    target = ibLow + targetLvl * ibRange
+    qty = calcQty(ibLow - stop)
+    strategy.entry("P3 Long", strategy.long, qty=qty, comment="P3 Fade Long")
+    strategy.exit("P3 Long TP/SL", "P3 Long", stop=stop, limit=target)
+    entryPrice := ibLow
+    stopPrice := stop
+    targetPrice := target
+    entryBar := bar_index
+    overshootBelow := false
+    longTakenToday := true
+    tradesToday += 1
+
+// =============================================================================
+// 15. EXIT MANAGEMENT (BreakevenTrail policy)
+// =============================================================================
+// For BreakevenTrail: move stop to entry price once price reaches BE trigger (R-multiple).
+// R = stop distance at entry. This is a simplified version -- NT8 uses a more
+// sophisticated trail, but this captures the core BE + trail logic.
+if inTrade and exitPolicy == "BreakevenTrail" and not na(entryBar)
+    barsSinceEntry = bar_index - entryBar
+    if barsSinceEntry > 0
+        riskDist = math.abs(stopPrice - entryPrice)
+        if riskDist > 0
+            // Move stop to breakeven once price reaches entry + beTriggerR * risk
+            if strategy.position_size > 0  // long
+                beLevel = entryPrice + beTriggerR * riskDist
+                if high >= beLevel and stopPrice < entryPrice
+                    stopPrice := entryPrice  // move stop to BE
+                    strategy.exit("P_Long BE", from_entry="P1 Long", stop=entryPrice)
+                    strategy.exit("P_Long BE2", from_entry="P2 Long", stop=entryPrice)
+                    strategy.exit("P_Long BE3", from_entry="P3 Long", stop=entryPrice)
+            else if strategy.position_size < 0  // short
+                beLevel = entryPrice - beTriggerR * riskDist
+                if low <= beLevel and stopPrice > entryPrice
+                    stopPrice := entryPrice
+                    strategy.exit("P_Short BE", from_entry="P1 Short", stop=entryPrice)
+                    strategy.exit("P_Short BE2", from_entry="P2 Short", stop=entryPrice)
+                    strategy.exit("P_Short BE3", from_entry="P3 Short", stop=entryPrice)
+
+// =============================================================================
+// 16. FLATTEN AT 15:50 ET (ADR-020)
+// =============================================================================
+if isFlattenBar and inTrade
+    strategy.close_all(comment="Flatten 15:50")
+
+// =============================================================================
+// 17. VISUAL: IB Range Box + Levels
+// =============================================================================
+var float plotIbHigh = na
+var float plotIbLow = na
+var float plotIbMid = na
+
+if ibComplete
+    plotIbHigh := ibHigh
+    plotIbLow := ibLow
+    plotIbMid := ibMid
+
+plot(ibComplete ? plotIbHigh : na, "IB High", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=1)
+plot(ibComplete ? plotIbLow : na, "IB Low", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=1)
+plot(ibComplete ? plotIbMid : na, "IB Mid", color=color.new(color.gray, 0), style=plot.style_linebr, linewidth=1)
+
+// Debug plots (hidden by default)
+plot(ibComplete ? 1 : 0, "IB Complete", display=display.none)
+plot(tradesToday, "Trades Today", display=display.none)
+plot(firstBreakDir, "First Break Dir", display=display.none)
+plot(rangePct, "Range %", display=display.none)
+plot(overshootAbove ? 1 : 0, "Overshoot Above", display=display.none)
+plot(overshootBelow ? 1 : 0, "Overshoot Below", display=display.none)
