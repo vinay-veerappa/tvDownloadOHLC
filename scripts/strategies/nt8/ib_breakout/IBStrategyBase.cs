@@ -363,13 +363,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         /// <summary>
-        /// Detects 0.25× overshoot for Play 3 fade entry.
+        /// Detects overshoot for Play 3 fade entry.
+        /// Overshoot threshold = LateBreakSizeMult × rangeRange (default 0.25×).
         /// Sets overshootAbove/Below flags — the fade bot checks for close-back-inside.
         /// </summary>
         protected void DetectOvershoot()
         {
-            if (High[0] > rangeHigh + 0.25 * rangeRange) overshootAbove = true;
-            if (Low[0] < rangeLow - 0.25 * rangeRange) overshootBelow = true;
+            double threshold = LateBreakSizeMult * rangeRange;
+            if (High[0] > rangeHigh + threshold) overshootAbove = true;
+            if (Low[0] < rangeLow - threshold) overshootBelow = true;
         }
 
         #endregion

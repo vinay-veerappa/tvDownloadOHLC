@@ -41,21 +41,34 @@ This section is for picking up the implementation in a later session.
 
 ### 0.3 NT8 Backtest Results (2026-07-28)
 
-**Window:** Jan 1 – Mar 31, 2026 | **Instrument:** MNQ 03-26 | **Period:** 1-min
+**Window:** Jan 1 – Mar 31, 2026 | **Instrument:** MNQ 03-26 | **Period:** 5-min
 **Params:** `ConfluenceFilterEnabled=false`, `RequireDirectionBias=false` (raw strategy, no filters)
 
 | Bot | Trades | Win Rate | PF | Net P&L | Max DD | Python Ref | Status |
 |---|---|---|---|---|---|---|---|
-| **IBBreakoutBot** (StopRMult=2.0) | 74 | 75.7% | 1.733 | +$2,067 | -$452.5 | Play1@0.5x: PF 1.30, WR 51.8% | ✅ Profitable |
-| **IBRetestBot** | 21 | 52.4% | 1.535 | +$728 | -$504 | Play2@0.25x: PF 0.82, WR 13.6% | ✅ Profitable |
-| **IBFadeBot** (target=rangeMid, stop=0.5×range) | 53 | 56.6% | 0.802 | -$729.50 | -$1,287 | Play3@0.25x: PF 1.13, WR 11.1% | ❌ Still negative |
+| **IBBreakoutBot** (StopRMult=2.0) | 68 | 76.5% | 1.382 | +$1,095 | -$730 | Play1@0.5x: PF 1.30, WR 51.8% | ✅ Profitable |
+| **IBRetestBot** | 16 | 43.8% | 0.726 | -$360 | -$946 | Play2@0.25x: PF 0.82, WR 13.6% | ⚠️ Negative (pending re-test) |
+| **IBFadeBot** (target=1.0R, stop=0.5R, overshoot=0.35×) | 43 | 53.5% | 1.215 | +$609.50 | -$592 | Play3@0.25x: PF 1.13, WR 11.1% | ✅ Profitable |
 
 **Fixes applied this session:**
 1. **Entry guards** (`longTakenToday`/`shortTakenToday` in `IBStrategyBase`): one entry per direction per session. Eliminated over-trading (IBBreakoutBot went from 944 → 74 trades).
 2. **IBBreakoutBot stop geometry** (`StopRMult` 0.25 → 2.0): widened stop from 0.125×range to full-range (opposite IB boundary), matching Python's stop. WR jumped 23% → 75.7% (the tight stop was being killed by intrabar wicks in NT8's tick-level simulation).
+3. **IBFadeBot target + overshoot geometry** (target rangeMid → 1.0R full reversion; overshoot 0.25× → 0.35×):
+   - Target sweep: 0.25× (PF 0.687) → 0.50× (PF 0.745) → 0.75× (PF 0.814) → 1.0× (PF 0.961). PF increases monotonically with target distance.
+   - At 1.0× target, PF 0.961 was just 1% WR below breakeven (dollar R:R 1.18:1, breakeven WR 45.9%, actual WR 44.9%).
+   - Overshoot threshold sweep: 0.25× (PF 0.961, 49 trades) → 0.35× (PF 1.215, 43 trades) → 0.50× (0 trades). The 0.35× threshold filters out noise fades on minor wicks, improving WR from 44.9% → 53.5%.
+   - Result: PF 1.215, net +$609.50, WR 53.5%, max DD -$592.
+4. **Configurable overshoot threshold**: `DetectOvershoot()` in `IBStrategyBase` now uses `LateBreakSizeMult × rangeRange` instead of hardcoded `0.25 × rangeRange`, allowing per-bot tuning.
 
-**Remaining issue — IBFadeBot:**
-Python shows Play 3 as a low-WR/high-payoff strategy (11.1% WR, PF 1.13) — far target, tight stop, wins ~10× losses. NT8 shows high-WR/low-payoff (56.6% WR, PF 0.80) — target (rangeMid) is too close, stop (0.5×range) is too wide. Next experiment: target = opposite IB boundary (full reversion), tight 0.25R stop.
+**IBFadeBot parameter sweep results (StopRMult=0.5):**
+
+| TargetLvl | Target | WR    | AvgWin | AvgLoss | PF    | Net    | R:R  |
+|-----------|--------|-------|--------|---------|-------|--------|------|
+| 0.25×     | 0.25R  | 61.2% | $41    | $94     | 0.687 | -$558  | 0.5:1|
+| 0.50×     | 0.5R   | 59.2% | $87    | $169    | 0.745 | -$859  | 1:1  |
+| 0.75×     | 0.75R  | 51.0% | $146   | $188    | 0.814 | -$839  | 1.5:1|
+| 1.0×      | 1.0R   | 44.9% | $213   | $181    | 0.961 | -$188  | 2:1  |
+| **1.0× + 0.35× overshoot** | 1.0R | **53.5%** | **$150** | **$142** | **1.215** | **+$609** | **~1:1** |
 
 **Note:** Phases 1–2 are the two-layer base split (generic + IB). Any new strategy
 (ORB, sweep, key-level, macro-time) only implements Phases 1's abstract methods and

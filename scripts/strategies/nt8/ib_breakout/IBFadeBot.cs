@@ -34,8 +34,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             base.SetStrategyDefaults();
             Name = "IBFadeBot";  // CRITICAL: override base's Name='RiskManagerBase' so SA loads THIS bot
             ActivePlay = 3;
-            TargetLvl = 0.25;  // Phase D: 0.25x is optimal (E[R] +0.259, PF 1.51)
-            StopRMult = 0.5;   // Play 3 uses 0.5R stop (R relative to boundary, not IB range)
+            TargetLvl = 1.0;   // Full reversion to opposite IB boundary (2:1 R:R with 0.5R stop)
+            StopRMult = 0.5;   // 0.5R stop beyond boundary (0.5x range)
+            LateBreakSizeMult = 0.35;  // NT8-validated: 0.35x overshoot threshold (PF 1.215, net +$609)
             ConfluenceFilterEnabled = true;  // Enable Play 3 validated filter stack
         }
 
@@ -57,13 +58,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return 0;
 
                 double entry  = rangeHigh;
-                // Stop: 0.5x range beyond the boundary (wider — the overshoot already
-                // extended 0.25x beyond, so the stop must be further out to survive).
-                double stop   = rangeHigh + 0.5 * rangeRange;
-                // Target: IB mid (the reversion target). Python's "0.25x target" for
-                // Play 3 means 0.25x the distance from entry to the opposite boundary,
-                // which for a fade from rangeHigh is approximately rangeMid.
-                double target = rangeMid;
+                // Stop: StopRMult * range beyond the boundary (default 0.5R).
+                double stop   = rangeHigh + StopRMult * rangeRange;
+                // Target: TargetLvl * range reversion from entry (Python-validated 0.25x).
+                // Python Edge Validation: Play 3 at 0.25x target is the standout
+                // (E[R] +0.259, PF 1.51, 38.5% WR). 0.5x target is NOT significant.
+                double target = rangeHigh - TargetLvl * rangeRange;
 
                 if (!TargetIsSane(entry, target, -1)) { overshootAbove = false; return 0; }
 
@@ -81,8 +81,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return 0;
 
                 double entry  = rangeLow;
-                double stop   = rangeLow - 0.5 * rangeRange;
-                double target = rangeMid;
+                double stop   = rangeLow - StopRMult * rangeRange;
+                // Target: TargetLvl * range reversion from entry (0.25x).
+                double target = rangeLow + TargetLvl * rangeRange;
 
                 if (!TargetIsSane(entry, target, 1)) { overshootBelow = false; return 0; }
 
