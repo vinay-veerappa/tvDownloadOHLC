@@ -402,7 +402,7 @@ def run_panel_pipeline(
         print(f"  => weighted_score={weighted_score}  approved={approved}")
 
         if approved:
-            print("✅ PANEL APPROVED")
+            print("[OK] PANEL APPROVED")
             return PanelReport(
                 approved=True,
                 weighted_score=weighted_score,
@@ -424,7 +424,7 @@ def run_panel_pipeline(
             if redraft:
                 current_code = redraft
 
-    print("❌ PANEL EXHAUSTED RETRIES — returning best draft with feedback.")
+    print("[FAIL] PANEL EXHAUSTED RETRIES — returning best draft with feedback.")
     return PanelReport(
         approved=False,
         weighted_score=weighted_score,

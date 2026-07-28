@@ -1,0 +1,118 @@
+{
+  "doc_path": "c:\\Users\\vinay\\tvDownloadOHLC\\docs\\strategies\\initial_balance_break\\AUTOMATION_DESIGN.md",
+  "overall_approved": false,
+  "overall_score": 5.67,
+  "verdicts": [
+    {
+      "judge": "architecture",
+      "model": "glm-5.2:cloud",
+      "score": 7,
+      "approved": true,
+      "detail": {
+        "score": 7,
+        "approved": true,
+        "blocking_flaws": [
+          "No IStopModel/ITargetModel abstraction \u2014 stop and target level formulas are hardcoded inside each subclass's CheckForEntry(), making it impossible to swap exit models (e.g. ATR-based vs range-based) without rewriting the entire entry gate. Play 1 couples stop distance to target_lvl (stop = stop_r_mult * target_lvl * ib_range), while Play 3 uses entirely different hardcoded constants (0.5*range stop, mid target). The base ExitManager correctly handles the exit mechanism generically, but the level-generation contract is ad-hoc and inconsistent across plays."
+        ],
+        "suggestions": [
+          "Extract IStopModel/ITargetModel interfaces so the base ExitManager receives levels from a pluggable provider rather than relying on each CheckForEntry to set stop_price/target_price directly. This lets a new strategy define its exit geometry declaratively instead of duplicating exit-level math inside entry logic.",
+          "Same-bar extreme-touch ordering is ambiguous: if a single 1-min bar sets both a new range high and a new range low, first_high_touch_time and first_low_touch_time are both set, yielding bias_firstreach=0 (tie). This is deterministic across platforms (parity preserved) but may suppress valid directional bias. Consider using intrabar tick data or a documented tie-break heuristic (e.g. open-to-extreme distance) to resolve.",
+          "ClosePositionTopPct/ClosePositionBotPct on the base are only consumed by IB's Rule 1 via ComputeBias. A pure ORB or session-sweep strategy may use an entirely different bias method and these become dead parameters. Consider moving these thresholds into IBStrategyBase or making ComputeBias responsible for its own parameter surface via a bias-config object.",
+          "Trailing stop thresholds (0.5*range and 1.0*range) in section 3.7 appear hardcoded in the base. These should be base parameters (TrailTrigger1Mult, TrailTrigger2Mult, TrailStop1Mult, TrailStop2Mult) for the same generic-configurability reason as the clock-size multipliers.",
+          "News/VIX/correlation moratorium parity gap: C# AddOn HTTP fetch vs Pine request.security/manual input are fundamentally different data sources. While the doc marks these as optional+pluggable, the architectural contract should explicitly state that signal parity holds only when moratorium is disabled or when both platforms consume an identical normalized feed \u2014 otherwise a parity harness test cannot meaningfully cover this path.",
+          "Play 3 (Fade) ignores the base's TargetLvl and StopRMult parameters entirely and uses hardcoded 0.25/0.5/mid constants. If these are intended as strategy-level tunables, they should be Play-3-specific parameters on the subclass; if they are fixed by design, the base parameters should document that subclasses may ignore them."
+        ],
+        "summary": "The two-layer IntradayStrategyBase/IBStrategyBase split is clean and well-reasoned: IB-specific concepts (09:30 window, Rule 1 trigger, Play 3 overshoot SM, ActivePlay) are correctly isolated in the subclass, while genuinely generic capabilities (range window, clock sizing, calendar filter, exit mechanism, risk manager) live in the base. The primary architectural gap is the absence of pluggable stop/target model interfaces \u2014 exit levels are hardcoded ad-hoc in each CheckForEntry, coupling entry and exit concerns and making exit-model substitution require full entry-gate rewrites. Secondary concerns include minor IB-assumption leakage via base-level close-position thresholds and a trailing-stop parameter gap, but neither blocks the design."
+      }
+    },
+    {
+      "judge": "consistency",
+      "model": "minimax-m3:cloud",
+      "score": 7,
+      "approved": true,
+      "detail": {
+        "score": 7,
+        "approved": true,
+        "inconsistencies": [
+          {
+            "where": "\u00a73.1 (state declaration) vs \u00a73.1 (algorithm body) vs \u00a73.1 (bias_firstreach line)",
+            "issue": "Three different names for the same field within \u00a73.1: state declares `first_high_done_time`/`first_low_done_time`, the touch-detection algorithm writes `first_high_touch_time`/`first_low_touch_time`, and the bias_firstreach line reads `first_high_touch`/`first_low_touch` (suffixless).",
+            "fix": "Pick one canonical name (e.g. `first_high_touch_time`) and use it consistently in the STATE block, the touch-detection IF block, and the bias_firstreach assignment."
+          },
+          {
+            "where": "\u00a73.2 vs \u00a74.2",
+            "issue": "Direction-bias variable named `predicted_break_dir` in \u00a73.2 pseudocode but `predictedDir` in \u00a74.2 C# code \u2014 same concept, different names.",
+            "fix": "Either rename the C# field to `predictedBreakDir` or rewrite the \u00a73.2 pseudocode to use `predictedDir`. Mention the chosen name in \u00a71.0 glossary if needed."
+          },
+          {
+            "where": "\u00a73.3 (pseudocode) vs \u00a74.2 (C# property)",
+            "issue": "Direction-gate parameter named `require_direction_trigger` in \u00a73.3 but `RequireDirectionBias` in \u00a74.2 \u2014 same concept, different names.",
+            "fix": "Standardize on `RequireDirectionBias` (matches \u00a71.0's `DirectionBias` terminology) and update \u00a73.3 pseudocode accordingly."
+          },
+          {
+            "where": "\u00a73.3 vs \u00a73.5",
+            "issue": "Time-since-IB-completion argument named `first_break_minutes` at the call site in \u00a73.3 but `break_minutes` in the \u00a73.5 function signature \u2014 same concept, different names within the same section.",
+            "fix": "Use one name consistently; recommend `break_minutes` (shorter) in both places, or rename the \u00a73.5 parameter to `first_break_minutes`."
+          },
+          {
+            "where": "\u00a73.1 (state) vs \u00a73.2-\u00a73.7 (usage)",
+            "issue": "`ib_candle_color` is computed in \u00a73.1 state but never referenced anywhere downstream in the visible \u00a73.2-\u00a73.7 algorithm \u2014 dead variable.",
+            "fix": "Either remove `ib_candle_color` from the \u00a73.1 state block, or document explicitly which downstream consumer (e.g. a Play 2 retest gate in a non-truncated section) reads it."
+          },
+          {
+            "where": "\u00a73.4 Play 3 stop vs \u00a74.2 StopRMult default",
+            "issue": "\u00a73.4 hardcodes Play 3 stop at `0.5 * ib_range` (does not use the `stop_r_mult` parameter), while \u00a74.2 advertises `StopRMult { get; set; } = 0.25` as the generic stop-R multiplier and \u00a73.3 Play 1 uses `stop_r_mult * target_lvl * ib_range`. The relationship between the Play 3 hardcoded 0.5 and the generic `StopRMult=0.25` parameter is not reconciled.",
+            "fix": "Add a one-line note in \u00a73.4 explaining why Play 3 ignores the generic StopRMult (e.g. 'fade stops are deliberately wider and IB-specific, so the multiplier is hardcoded per-play and the base parameter does not apply here'), or unify both plays under `stop_r_mult`."
+          },
+          {
+            "where": "\u00a73.7 exit comment vs \u00a74.2 FlattenBy defaults",
+            "issue": "\u00a73.7 comment reads 'ADR-020 forced exit (close of 15:59 bar; 15:50 is conservative)' \u2014 the two times are presented without clearly stating which one the code actually uses. \u00a74.2 sets FlattenByHour=15, FlattenByMinute=50, so the code uses 15:50, but the phrasing 'close of 15:59 bar' is ambiguous (does that mean the bar ending at 15:59, or the close of the 16:00 bar?).",
+            "fix": "Clarify the comment to 'ADR-020 forced exit at 15:50 ET (10 min before the 16:00 RTH close; preserves the conservative buffer vs. waiting for the bar close).'"
+          },
+          {
+            "where": "\u00a71.0, \u00a71.1, \u00a73.7 forward references",
+            "issue": "Multiple references to \u00a77A features, \u00a77B Q1/Q3/Q6 resolutions, and 'S15 \u2014 optional' trailing stop that cannot be cross-checked in the provided excerpt. If those sections are renumbered, all forward refs break.",
+            "fix": "After finalizing \u00a77's numbering, run a doc-wide grep for '\u00a77A', '\u00a77B', 'S15' to confirm each resolves to an extant heading. (Flagged as a verification task, not a contradiction.)"
+          }
+        ],
+        "summary": "No blocking contradictions found \u2014 all numeric defaults (FlattenBy 15:50, EarlyBreakThresholdMin 90, TargetLvl 0.25, StopRMult 0.25, ClosePositionTopPct 0.75, ClosePositionBotPct 0.25, SlippageTicks 1) are internally consistent across \u00a73 and \u00a74.2, and the play/play-number taxonomy (Play 1 breakout, Play 2 retest, Play 3 fade) is stable across \u00a71.0, \u00a73.3, \u00a73.4, \u00a73.6. However, there is meaningful naming drift that will trip up implementers: \u00a73.1 uses three different names for the first-touch timestamps within a single section; \u00a73.2/\u00a73.3 use `predicted_break_dir`/`require_direction_trigger` while \u00a74.2 uses `predictedDir`/`RequireDirectionBias`; and \u00a73.3 vs \u00a73.5 disagree on the clock-sizing argument name. Additionally, the Play 3 stop is hardcoded at 0.5\u00d7 IB range with no reconciliation note against the generic `StopRMult` parameter advertised in \u00a74.2, and `ib_candle_color` is computed but never referenced downstream. Approving with cleanup \u2014 these are hygiene fixes, not correctness blockers. Re-review after naming standardization."
+      }
+    },
+    {
+      "judge": "edge_cases",
+      "model": "kimi-k2.7-code:cloud",
+      "score": 0,
+      "approved": false,
+      "detail": {}
+    },
+    {
+      "judge": "trading_rules",
+      "model": "qwen3.5:397b-cloud",
+      "score": 3,
+      "approved": false,
+      "detail": {
+        "score": 3,
+        "approved": false,
+        "violations": [
+          {
+            "adr": "ADR-001",
+            "issue": "IntradayStrategyBase.cs snippet uses Time[0] (Exchange/CT) to construct RangeStart without explicit ET conversion, risking session mismatch despite claimed compliance.",
+            "fix": "Implement explicit ET conversion helper (e.g., Time.ToET()) before constructing RangeStart DateTime; verify Time[0] kind is UTC/ET before arithmetic."
+          },
+          {
+            "adr": "ADR-021",
+            "issue": "Design lacks explicit reference to PropFirmSimulator in validation pipeline (\u00a79.1 missing); uses generic RiskManagerBase instead of required simulator for viability.",
+            "fix": "Update \u00a79.1 to explicitly wire validation pipeline to PropFirmSimulator as source of truth; replace generic RiskManagerBase calls with PropFirmSimulator methods where viability is assessed."
+          },
+          {
+            "adr": "SecondBrain_Trading.md",
+            "issue": "Play 1 (Breakout) stop placement is inside IB range (0.0625 * range below entry), contradicting IB 96% rule which implies high probability of re-entry into IB.",
+            "fix": "Move stop loss outside IB range (e.g., below IB Low for longs) to align with statistical edge, or restrict strategy to Fade plays if breakout probability is low."
+          }
+        ],
+        "summary": "Design fails critical timezone implementation details (ADR-001), lacks required PropFirmSimulator integration (ADR-021), and contradicts statistical edge rules for stop placement (SecondBrain). Approval withheld until fixes implemented."
+      }
+    }
+  ],
+  "open_questions": []
+}

@@ -50,6 +50,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (firstBreakDir == 1 && Low[0] <= rangeMid && Close[0] >= rangeMid)
             {
                 if (RequireDirectionBias && predictedDir != 1) return 0;
+                if (!CanEnterLong) return 0;  // one entry per direction per session
 
                 double entry  = rangeMid;
                 double stop   = rangeLow;                         // opposite IB boundary
@@ -59,6 +60,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 int qty = CalcQuantity(entry - stop, sizeMult);
                 EnterWithRangeStop(1, entry, stop, target, qty);
+                longTakenToday = true;  // prevent re-entry in this direction today
                 return 1;
             }
 
@@ -66,6 +68,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (firstBreakDir == -1 && High[0] >= rangeMid && Close[0] <= rangeMid)
             {
                 if (RequireDirectionBias && predictedDir != -1) return 0;
+                if (!CanEnterShort) return 0;  // one entry per direction per session
 
                 double entry  = rangeMid;
                 double stop   = rangeHigh;
@@ -75,6 +78,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 int qty = CalcQuantity(stop - entry, sizeMult);
                 EnterWithRangeStop(-1, entry, stop, target, qty);
+                shortTakenToday = true;  // prevent re-entry in this direction today
                 return -1;
             }
 

@@ -78,7 +78,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         [NinjaScriptProperty]
         [Display(Name = "Require Direction Bias", Order = 1, GroupName = "Filters")]
-        public bool RequireDirectionBias { get; set; } = false;  // default false — matches standalone proof; set true for bias-gated variants
+        public bool RequireDirectionBias { get; set; } = true;
 
         [NinjaScriptProperty]
         [Display(Name = "Target Level (R)", Order = 2, GroupName = "Risk Geometry")]
@@ -102,15 +102,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         [NinjaScriptProperty]
         [Display(Name = "Skip Huge Range", Order = 1, GroupName = "Range Filter")]
-        public bool SkipHugeRange { get; set; } = false;  // default off — avoids over-filtering; enable per-strategy if needed
+        public bool SkipHugeRange { get; set; } = true;
 
         [NinjaScriptProperty]
         [Display(Name = "Max Range %", Order = 2, GroupName = "Range Filter")]
-        public double MaxRangePct { get; set; } = 2.0;  // percent value (2.0 = 2% of prior session close)
+        public double MaxRangePct { get; set; } = 0.90;
 
         [NinjaScriptProperty]
         [Display(Name = "Min Range %", Order = 3, GroupName = "Range Filter")]
-        public double MinRangePct { get; set; } = 0.05;  // percent value (0.05 = 0.05% of prior session close)
+        public double MinRangePct { get; set; } = 0.10;
 
         [NinjaScriptProperty]
         [Display(Name = "News Moratorium Enabled", Order = 1, GroupName = "Moratorium")]
@@ -163,10 +163,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 // Capture prior session close before resetting
                 if (BarsArray[0] != null && BarsArray[0].Count > 1)
                     priorSessionClose = BarsArray[0].GetClose(BarsArray[0].Count - 2);
-                // Call OnSessionOpenReset BEFORE ResetRangeState so subclasses can
-                // access the previous session's rangeRange (e.g. VCP history roll).
-                OnSessionOpenReset();
                 ResetRangeState();
+                OnSessionOpenReset();
             }
         }
 
@@ -201,15 +199,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             try
             {
             // DIAG: log every 60 bars to confirm CheckForSignal is called
-            if (DebugMode && CurrentBar % 60 == 0) Log($"[DIAG] CheckForSignal bar={CurrentBar} time={Time[0]:HH:mm} BIP={BarsInProgress} rangeComplete={rangeComplete}", LogLevel.Information);
+            if (CurrentBar % 60 == 0) Print($"[DIAG] CheckForSignal bar={CurrentBar} time={Time[0]:HH:mm} BIP={BarsInProgress} rangeComplete={rangeComplete}");
 
             // Use Time[0] directly — NT8 is set to ET per user.
             DateTime now = Time[0];
             CheckSessionReset(now);  // detect session boundary + reset state
-
-            // Update confluence indicators (AVWAP, EMA, break direction) on EVERY bar
-            // — the AVWAP needs to accumulate from 09:30 even during the IB window.
-            UpdateConfluenceIndicatorsHook();
 
             DateTime rangeStart = new DateTime(now.Year, now.Month, now.Day, RangeStartHour, RangeStartMinute, 0);
             DateTime rangeEnd = rangeStart.AddMinutes(RangeDurationMin);
@@ -223,25 +217,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 else if (now >= rangeEnd)
                 {
                     FinalizeRange();
-                    Log($"[DIAG] IB finalized: high={rangeHigh} low={rangeLow} range={rangeRange} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir}", LogLevel.Information);
+                    Print($"[DIAG] IB finalized: high={rangeHigh} low={rangeLow} range={rangeRange} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir}");
                 }
                 return 0;
             }
 
-            // After range complete — log only in DebugMode during entry window
-            if (DebugMode)
-            {
-                int hour = now.Hour;
-                if (hour >= 10 && hour <= 14)
-                    Log($"[DIAG] post-range bar={CurrentBar} time={now:HH:mm} close={Close[0]} rH={rangeHigh} rL={rangeLow} range={rangeRange} priorClose={priorSessionClose} rComplete={rangeComplete}", LogLevel.Information);
-            }
-
-            if (CalendarFilter(now)) { if (DebugMode) Log($"[DIAG] skipped by calendar filter at {now:HH:mm} bar={CurrentBar}", LogLevel.Information); return 0; }
-            if (RangeSizeFilter()) { if (DebugMode) Log($"[DIAG] skipped by range-size filter at {now:HH:mm} bar={CurrentBar} rangePct={(rangeRange/priorSessionClose*100)} MaxPct={MaxRangePct} MinPct={MinRangePct}", LogLevel.Information); return 0; }
+            if (CalendarFilter(now)) { Print($"[DIAG] skipped by calendar filter at {now:HH:mm}"); return 0; }
+            if (RangeSizeFilter()) { Print($"[DIAG] skipped by range-size filter at {now:HH:mm} rangePct={rangeRange/priorSessionClose*100}"); return 0; }
 
             if (rangeRange < TickSize)
             {
-                if (DebugMode) Log($"[DIAG] Range too small ({rangeRange}) to trade.", LogLevel.Information);
+                Print($"[DIAG] Range too small ({rangeRange}) to trade.");
                 return 0;
             }
 
@@ -249,18 +235,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (VixRegimeFilterEnabled && IsVixHostile()) return 0;
             if (CorrelationFilterEnabled && IsCorrelationDiverging()) return 0;
 
-            // Confluence filter stack — validated Python filter combos ported to NT8.
-            // Default: disabled (returns false). Subclasses override to implement
-            // the per-play validated filter stack (see IBStrategyBase.ConfluenceFilter).
-            if (ConfluenceFilterEnabled && ConfluenceFilter())
-            {
-                if (DebugMode) Log($"[DIAG] skipped by confluence filter at {now:HH:mm} bar={CurrentBar}", LogLevel.Information);
-                return 0;
-            }
-
-            if (DebugMode) Log($"[DIAG] pre-CheckForEntry bar={CurrentBar} time={now:HH:mm} close={Close[0]} rH={rangeHigh} rL={rangeLow}", LogLevel.Information);
             int signal = CheckForEntry();
-            if (signal != 0 && DebugMode) Log($"[DIAG] CheckForEntry returned signal={signal} at {now:HH:mm} close={Close[0]} rangeHigh={rangeHigh} rangeLow={rangeLow}", LogLevel.Information);
+            if (signal != 0) Print($"[DIAG] CheckForEntry returned signal={signal} at {now:HH:mm} close={Close[0]} rangeHigh={rangeHigh} rangeLow={rangeLow}");
             // CRITICAL: return 0 so RiskManagerBase.OnBarUpdate does NOT call EnterTrade()
             // with ATR stops — our CheckForEntry already entered via EnterWithRangeStop().
             // Returning the signal would cause a double-entry attempt with wrong stops.
@@ -269,7 +245,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             catch (Exception ex)
             {
                 // Log once, then suppress — don't crash the backtest
-                if (CurrentBar % 100 == 0) Log($"[DIAG] CheckForSignal exception at bar {CurrentBar}: {ex.Message}", LogLevel.Error);
+                if (CurrentBar % 100 == 0) Print($"[DIAG] CheckForSignal exception at bar {CurrentBar}: {ex.Message}");
                 return 0;
             }
         }
@@ -284,7 +260,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             rangeMid = (rangeHigh + rangeLow) / 2.0;
             rangeRange = rangeHigh - rangeLow;
             ComputeBias();
-            if (DebugMode) Log($"[DIAG] FinalizeRange: high={rangeHigh} low={rangeLow} range={rangeRange} mid={rangeMid} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir} time={Time[0]:HH:mm}", LogLevel.Information);
+            Print($"[DIAG] FinalizeRange: high={rangeHigh} low={rangeLow} range={rangeRange} mid={rangeMid} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir} time={Time[0]:HH:mm}");
         }
 
         /// <summary>
@@ -301,37 +277,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (rangeComplete && rangeRange > 0)
                 return rangeRange;
             return 0;
-        }
-
-        /// <summary>
-        /// Range-based potential-loss override. Uses the ACTUAL stop distance
-        /// (GetEstimatedRiskDistance()) instead of the ATR formula
-        /// (StopAtrMult * rangeRange), which over-estimates by ~8-16x and would
-        /// block legitimate entries on funded accounts with tight daily loss
-        /// limits. Returns 0 when the range has not completed — the time fence
-        /// (EarliestEntry) guards pre-range entries, not the potential-loss gate.
-        /// Subclasses with different stop geometry override GetEstimatedRiskDistance().
-        /// </summary>
-        protected override double GetPotentialLoss()
-        {
-            double riskDistance = GetEstimatedRiskDistance();
-            if (riskDistance <= 0)
-                return 0;
-            return riskDistance * GetPointValue() * Math.Max(1, DefaultQuantity);
-        }
-
-        /// <summary>
-        /// Estimated stop distance in points for the next trade, used by the
-        /// daily-max-loss gate. Default uses the common IB break/retest geometry:
-        /// StopRMult * TargetLvl * rangeRange. Override in subclasses with a
-        /// different stop formula (e.g. IBFadeBot uses StopRMult * rangeRange
-        /// with no TargetLvl multiplier).
-        /// Returns 0 before the range completes (gate via time fence instead).
-        /// </summary>
-        protected virtual double GetEstimatedRiskDistance()
-        {
-            if (!rangeComplete || rangeRange <= 0) return 0;
-            return StopRMult * TargetLvl * rangeRange;
         }
 
         /// <summary>
@@ -354,8 +299,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// <summary>
         /// Filters based on range size relative to prior session close (ADR-002: percentage, not points).
         /// Uses priorSessionClose captured at OnNewSession, not the previous intraday bar.
-        /// MaxRangePct/MinRangePct are PERCENT values (e.g. 0.90 = 0.90%, 90.0 = 90%).
-        /// rangePct is computed as a percent (range/prior*100), so we compare directly.
         /// </summary>
         /// <returns>True if range should be skipped.</returns>
         protected bool RangeSizeFilter()
@@ -363,7 +306,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (!SkipHugeRange) return false;
             if (priorSessionClose <= 0) return false;
             double rangePct = (rangeRange / priorSessionClose) * 100.0;
-            return (rangePct > MaxRangePct || rangePct < MinRangePct);
+            return (rangePct > MaxRangePct * 100.0 || rangePct < MinRangePct * 100.0);
         }
 
         /// <summary>
@@ -383,29 +326,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (dir == -1) return target < entry - TickSize;
             return false;
         }
-
-        /// <summary>
-        /// Confluence filter stack toggle. Default false — set true in subclasses
-        /// that implement a validated filter stack via ConfluenceFilter().
-        /// </summary>
-        [NinjaScriptProperty]
-        [Display(Name = "Confluence Filter Enabled", Order = 4, GroupName = "Moratorium")]
-        public bool ConfluenceFilterEnabled { get; set; } = false;
-
-        /// <summary>
-        /// Hook for the validated confluence filter stack. Default: no filter (false).
-        /// Subclasses override to implement per-play filter stacks ported from the
-        /// Python research pipeline (ib_filter_stacks.parquet).
-        /// Returns true to SKIP the trade (filter rejects), false to allow.
-        /// </summary>
-        protected virtual bool ConfluenceFilter() => false;
-
-        /// <summary>
-        /// Hook to update confluence indicators (AVWAP, EMA, etc.) on each bar.
-        /// Default: no-op. Subclasses override to compute indicator values needed
-        /// by their ConfluenceFilter() implementation.
-        /// </summary>
-        protected virtual void UpdateConfluenceIndicatorsHook() { }
 
         /// <summary>
         /// Hook for news moratorium check. Default false.

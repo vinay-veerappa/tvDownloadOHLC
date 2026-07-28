@@ -1,0 +1,704 @@
+#region Using declarations
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using NinjaTrader.Cbi;
+using NinjaTrader.Data;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.Indicators;
+using NinjaTrader.NinjaScript.Strategies;
+#endregion
+
+namespace NinjaTrader.NinjaScript.Strategies.Vinay
+{
+    public abstract class RiskManagerBase : Strategy
+    {
+        // ──────────────────────────────────────────────────────────────
+        // INPUT PARAMETERS
+        // ──────────────────────────────────────────────────────────────
+
+        #region Risk Management Parameters
+        [NinjaScriptProperty]
+        [Display(Name = "Starting Account Balance ($)", Order = 0, GroupName = "Risk Management")]
+        public double StartingAccountBalance { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Daily Max Loss ($)", Order = 1, GroupName = "Risk Management")]
+        public double DailyMaxLoss { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Max Consecutive Losers (pause)", Order = 2, GroupName = "Risk Management")]
+        public int MaxConsecutiveLosers { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Pause Minutes After Consec Loss", Order = 3, GroupName = "Risk Management")]
+        public int PauseMinutes { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Hard Stop Consecutive Losers (done for day)", Order = 4, GroupName = "Risk Management")]
+        public int HardStopConsecutiveLosers { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Max Trades Per Day", Order = 5, GroupName = "Risk Management")]
+        public int MaxTradesPerDay { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Trailing Drawdown ($)", Order = 6, GroupName = "Risk Management")]
+        public double TrailingDrawdown { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Stop Trading When Account Blown", Order = 7, GroupName = "Risk Management")]
+        public bool StopOnAccountBlown { get; set; }
+        #endregion
+
+        #region Time Parameters
+        [NinjaScriptProperty]
+        [Display(Name = "Bars Required To Trade", Order = 0, GroupName = "Time")]
+        public int BarsRequiredToTradeParam { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Earliest Entry (HHMM)", Order = 1, GroupName = "Time")]
+        public int EarliestEntry { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Latest Entry (HHMM)", Order = 2, GroupName = "Time")]
+        public int LatestEntry { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Flatten By (HHMM)", Order = 3, GroupName = "Time")]
+        public int FlattenBy { get; set; }
+        #endregion
+
+        #region Trade Management Parameters
+        [NinjaScriptProperty]
+        [Display(Name = "Stop ATR Multiplier", Order = 1, GroupName = "Trade Management")]
+        public double StopAtrMult { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "ATR Period", Order = 2, GroupName = "Trade Management")]
+        public int AtrPeriod { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Policy (BreakevenTrail / FixedTarget)", Order = 3, GroupName = "Trade Management")]
+        public string TradePolicy { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "BE Trigger (R-multiple)", Order = 4, GroupName = "Trade Management")]
+        public double BreakevenTriggerR { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Trail ATR Multiplier", Order = 5, GroupName = "Trade Management")]
+        public double TrailAtrMult { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Target R-Multiple", Order = 6, GroupName = "Trade Management")]
+        public double TargetRMultiple { get; set; }
+        #endregion
+
+        #region Timeframe Configuration
+        /// <summary>
+        /// When true (default), adds a 5-minute secondary series and computes ATR on it.
+        /// Range-based strategies (IB, ORB) should set this false in SetStrategyDefaults()
+        /// and override GetCurrentATR() to return their range-based risk metric instead.
+        /// When false, Close5m/High5m/Low5m helpers MUST NOT be called.
+        /// </summary>
+        [NinjaScriptProperty]
+        [Display(Name = "Add Secondary Timeframe (5m)", Order = 0, GroupName = "Timeframe")]
+        public bool AddSecondaryTimeframe { get; set; }
+        #endregion
+
+        // ──────────────────────────────────────────────────────────────
+        // STATE FIELDS
+        // ──────────────────────────────────────────────────────────────
+
+        // Session state — local per-strategy (trade-level counters delegated to RiskGatekeeper in live mode)
+        protected DateTime currentTradingDate;
+
+        // Trade state — reset on each entry
+        protected double entryPrice;
+        protected double initialStopPrice;
+        protected double currentStopPrice;
+        protected double riskPoints;
+        protected bool   breakevenMoved;
+        protected bool   tradeIsActive;
+        protected string tradeDirection;
+
+        // Backtest-only account state (not used in live mode — RiskGatekeeper owns this)
+        protected double accountEquity;
+        protected double highWaterMark;
+        protected bool   accountBlown;
+        protected int    todayTradeCount;
+        protected int    consecutiveLosers;
+        protected double sessionPnL;
+        protected bool   isDoneForDay;
+        protected bool   isPaused;
+        protected DateTime pauseUntil;
+
+        // Indicator
+        protected ATR atrIndicator;
+
+        // ──────────────────────────────────────────────────────────────
+        // LIFECYCLE
+        // ──────────────────────────────────────────────────────────────
+
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Description                  = "Risk Manager Base — inherited by all strategies";
+                Name                         = "RiskManagerBase";
+                Calculate                    = Calculate.OnBarClose;
+                EntriesPerDirection          = 1;
+                EntryHandling                = EntryHandling.AllEntries;
+                IsExitOnSessionCloseStrategy = true;
+                ExitOnSessionCloseSeconds    = 60;
+                IsFillLimitOnTouch           = false;
+                TraceOrders                  = false;
+                BarsRequiredToTrade          = 1;   // FIX: was 50 — blocked IB entries for 250 min on 5-min secondary
+                BarsRequiredToTradeParam     = 1;   // exposed as NinjaScriptProperty so SA params can override
+                StartBehavior                = StartBehavior.WaitUntilFlat;
+                RealtimeErrorHandling        = RealtimeErrorHandling.StopCancelClose;
+
+                // Risk defaults
+                StartingAccountBalance    = 50000;
+                DailyMaxLoss              = 400;
+                MaxConsecutiveLosers      = 2;
+                PauseMinutes              = 30;
+                HardStopConsecutiveLosers = 3;
+                MaxTradesPerDay           = 3;
+                TrailingDrawdown          = 2000;
+                StopOnAccountBlown        = false; // log only by default — don't kill backtest
+
+                // Time defaults
+                BarsRequiredToTradeParam = 1;  // default: 1 bar warmup (SA can override via params)
+                EarliestEntry = 930;
+                LatestEntry   = 1430;
+                FlattenBy     = 1545;
+
+                // Trade management defaults
+                StopAtrMult         = 2.0;
+                AtrPeriod           = 14;
+                TradePolicy         = "BreakevenTrail";
+                BreakevenTriggerR   = 1.0;
+                TrailAtrMult        = 2.0;
+                TargetRMultiple     = 2.0;
+
+                // Timeframe — default true for backward compat with ATR-based strategies.
+                // Range-based strategies (IB/ORB) override to false in SetStrategyDefaults().
+                AddSecondaryTimeframe = true;
+
+                SetStrategyDefaults();
+            }
+            else if (State == State.Configure)
+            {
+                // Only add the 5-min secondary when the strategy actually uses it.
+                // Range-based strategies set AddSecondaryTimeframe=false and override
+                // GetCurrentATR() to return their range-based risk metric.
+                if (AddSecondaryTimeframe)
+                    AddDataSeries(BarsPeriodType.Minute, 5);
+                ConfigureStrategy();
+            }
+            else if (State == State.DataLoaded)
+            {
+                // Only construct the ATR indicator when the secondary series exists.
+                // When AddSecondaryTimeframe=false, atrIndicator stays null and
+                // GetCurrentATR() returns 0 unless overridden by the subclass.
+                if (AddSecondaryTimeframe)
+                    atrIndicator = ATR(BarsArray[1], AtrPeriod);
+
+                // Account state — initialise once from the parameter
+                // HWM starts at the same value so no phantom drawdown on day 1
+                accountEquity  = StartingAccountBalance;
+                highWaterMark  = StartingAccountBalance;
+                accountBlown   = false;
+
+                currentTradingDate = DateTime.MinValue;
+
+                ResetSessionState();
+                InitializeStrategy();
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // ABSTRACT HOOKS — implemented by each child strategy
+        // ──────────────────────────────────────────────────────────────
+
+        protected abstract void   SetStrategyDefaults();
+        protected abstract void   ConfigureStrategy();
+        protected abstract void   InitializeStrategy();
+        protected abstract int    CheckForSignal();   // return 1 = long, -1 = short, 0 = flat
+        protected abstract string GetStrategyName();
+
+        // ──────────────────────────────────────────────────────────────
+        // BAR UPDATE
+        // ──────────────────────────────────────────────────────────────
+
+        protected override void OnBarUpdate()
+        {
+            // Only process the primary (1-min) series
+            if (BarsInProgress != 0)
+                return;
+
+            // Apply BarsRequiredToTradeParam (NinjaScriptProperty — SA params can override)
+            if (BarsRequiredToTradeParam > 0)
+                BarsRequiredToTrade = BarsRequiredToTradeParam;
+
+            // Gate on primary series always; gate on secondary only when it exists.
+            // When AddSecondaryTimeframe=false, there is no BarsArray[1] to check.
+            if (CurrentBars[0] < BarsRequiredToTrade)
+                return;
+            if (AddSecondaryTimeframe && CurrentBars[1] < BarsRequiredToTrade)
+                return;
+
+            // ── New session detection ──
+            DateTime barDate = Times[0][0].Date;
+            if (barDate != currentTradingDate)
+                OnNewSession(barDate);
+
+            // ── End-of-day flatten ──
+            int currentTime = ToTime(Times[0][0]);
+            if (currentTime >= FlattenBy * 100 && Position.MarketPosition != MarketPosition.Flat)
+            {
+                FlattenPosition("Flatten by time");
+                return;
+            }
+
+            // ── Manage open trade ──
+            if (Position.MarketPosition != MarketPosition.Flat)
+            {
+                ManageOpenTrade();
+                // FIX: don't blindly return — ManageOpenTrade may have just flattened
+                // us (e.g. daily max loss). If we're now flat, fall through to the
+                // entry gate so the rest of this bar is not wasted.
+                if (Position.MarketPosition != MarketPosition.Flat)
+                    return;
+            }
+
+            // ── Entry gate ──
+            if (!CanEnterTrade(currentTime))
+                return;
+
+            int signal = CheckForSignal();
+            if (signal == 0)
+                return;
+
+            double atr = GetCurrentATR();
+            if (atr <= 0)
+                return;
+
+            double stopDistance = StopAtrMult * atr;
+            if (signal == 1)
+                EnterTrade("Long",  Closes[0][0], Closes[0][0] - stopDistance, stopDistance);
+            else if (signal == -1)
+                EnterTrade("Short", Closes[0][0], Closes[0][0] + stopDistance, stopDistance);
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // SESSION MANAGEMENT
+        // ──────────────────────────────────────────────────────────────
+
+        private void OnNewSession(DateTime newDate)
+        {
+            if (currentTradingDate != DateTime.MinValue)
+                OnSessionClose();
+
+            currentTradingDate = newDate;
+            ResetSessionState();
+
+            Print(string.Format("[{0}] {1} New session | Equity: {2:C} | HWM: {3:C} | Blown: {4}",
+                GetStrategyName(), newDate.ToShortDateString(),
+                accountEquity, highWaterMark, accountBlown));
+        }
+
+        private void OnSessionClose()
+        {
+            // Commit session PnL to running equity
+            accountEquity += sessionPnL;
+
+            // Ratchet high-water mark upward only
+            if (accountEquity > highWaterMark)
+                highWaterMark = accountEquity;
+
+            // Trailing drawdown check — measured from peak, using real equity
+            double drawdownFromPeak = highWaterMark - accountEquity;
+            if (!accountBlown && drawdownFromPeak >= TrailingDrawdown)
+            {
+                accountBlown = true;
+                Print(string.Format("[{0}] *** ACCOUNT BLOWN *** drawdown {1:C} exceeded limit {2:C} | Equity: {3:C}",
+                    GetStrategyName(), drawdownFromPeak, TrailingDrawdown, accountEquity));
+
+                // StopOnAccountBlown=false → log the event but keep running (useful for research)
+                // StopOnAccountBlown=true  → halt all further trading
+            }
+
+            Print(string.Format("[{0}] Session close | PnL: {1:C} | Equity: {2:C} | HWM: {3:C} | DrawnFrom Peak: {4:C}",
+                GetStrategyName(), sessionPnL, accountEquity, highWaterMark, drawdownFromPeak));
+        }
+
+        private void ResetSessionState()
+        {
+            todayTradeCount   = 0;
+            consecutiveLosers = 0;
+            sessionPnL        = 0;
+            isDoneForDay      = false;
+            isPaused          = false;
+            pauseUntil        = DateTime.MinValue;
+
+            // FIX: reset ALL trade-level fields so stale values can't
+            // bleed into the next session or the next entry
+            tradeIsActive    = false;
+            breakevenMoved   = false;
+            tradeDirection   = null;
+            entryPrice       = 0;
+            initialStopPrice = 0;
+            currentStopPrice = 0;
+            riskPoints       = 0;
+
+            // NOTE: accountBlown intentionally NOT reset here —
+            // it persists across sessions for the life of the backtest
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // ENTRY GATE
+        // ──────────────────────────────────────────────────────────────
+
+        private bool CanEnterTrade(int currentTime)
+        {
+            // ── RiskGatekeeper check (live/sim mode — cross-strategy, cross-session) ──
+            // When the AddOn is running, all account-level gates (blown, done-for-day,
+            // pause, max-trades) are owned by RiskGatekeeper.  The local backtest flags
+            // below act as a fallback when no AddOn is present.
+            if (!RiskGatekeeper.CanTrade(Account.Name))
+                return false;
+
+            // ── Local backtest / fallback gates ──
+            // These kick in when RiskGatekeeper has no registration for this account
+            // (i.e. the AddOn is not loaded), preserving backward-compatible behaviour.
+            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                if (accountBlown && StopOnAccountBlown)
+                    return false;
+
+                if (isDoneForDay)
+                    return false;
+
+                if (isPaused)
+                {
+                    if (Times[0][0] < pauseUntil)
+                        return false;
+                    isPaused = false;
+                }
+
+                if (todayTradeCount >= MaxTradesPerDay)
+                    return false;
+            }
+
+            // Time fence — always enforced locally (strategy-specific windows)
+            if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
+                return false;
+
+            // ATR sanity
+            double atr = GetCurrentATR();
+            if (atr <= 0)
+                return false;
+
+            // Daily max loss potential — delegate to gatekeeper when registered,
+            // otherwise use local sessionPnL
+            double potentialLoss = StopAtrMult * atr * GetPointValue() * Math.Max(1, DefaultQuantity);
+            if (RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
+                return false;
+
+            // Local fallback for daily max loss
+            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                if (sessionPnL - potentialLoss < -DailyMaxLoss)
+                    return false;
+            }
+
+            return true;
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // TRADE ENTRY
+        // ──────────────────────────────────────────────────────────────
+
+        private void EnterTrade(string direction, double entry, double stop, double stopDist)
+        {
+            string signalName = GetSignalName(direction);
+
+            entryPrice        = entry;
+            initialStopPrice  = stop;
+            currentStopPrice  = stop;
+            riskPoints        = stopDist;
+            breakevenMoved    = false;
+            tradeIsActive     = true;
+            tradeDirection    = direction;
+
+            if (direction == "Long")
+            {
+                EnterLong(1, signalName);
+                SetStopLoss(signalName, CalculationMode.Price, stop, false);
+
+                if (TradePolicy == "FixedTarget")
+                    SetProfitTarget(signalName, CalculationMode.Price, entry + TargetRMultiple * riskPoints);
+            }
+            else
+            {
+                EnterShort(1, signalName);
+                SetStopLoss(signalName, CalculationMode.Price, stop, false);
+
+                if (TradePolicy == "FixedTarget")
+                    SetProfitTarget(signalName, CalculationMode.Price, entry - TargetRMultiple * riskPoints);
+            }
+
+            todayTradeCount++;
+
+            Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | Risk {4:C} | Trade #{5}",
+                GetStrategyName(), direction, entry, stop,
+                stopDist * GetPointValue(), todayTradeCount));
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // OPEN TRADE MANAGEMENT
+        // ──────────────────────────────────────────────────────────────
+
+        private void ManageOpenTrade()
+        {
+            if (Position.MarketPosition == MarketPosition.Flat)
+            {
+                tradeIsActive = false;
+                return;
+            }
+
+            double currentPrice    = Closes[0][0];
+            double unrealizedPnL   = GetUnrealizedPnL(currentPrice);
+
+            // Intraday max loss including open position
+            if (sessionPnL + unrealizedPnL <= -DailyMaxLoss)
+            {
+                FlattenPosition("Daily max loss breached (with open PnL)");
+                isDoneForDay = true;
+                // Notify gatekeeper so other strategies on this account also stop
+                RiskGatekeeper.MarkDailyMaxLossBreached(Account.Name);
+                return;
+            }
+
+            if (TradePolicy == "BreakevenTrail")
+                ManageBreakevenTrail(currentPrice);
+        }
+
+        private void ManageBreakevenTrail(double currentPrice)
+        {
+            string signalName = GetSignalName(tradeDirection);
+            double currentR   = GetCurrentRMultiple(currentPrice);
+
+            // Move stop to breakeven once trigger R is reached
+            if (!breakevenMoved && currentR >= BreakevenTriggerR)
+            {
+                breakevenMoved   = true;
+                currentStopPrice = entryPrice;
+                SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+
+                Print(string.Format("[{0}] Breakeven moved @ {1:F2} | R={2:F2}",
+                    GetStrategyName(), entryPrice, currentR));
+            }
+
+            // Trail stop after breakeven
+            if (breakevenMoved)
+            {
+                double atr = GetCurrentATR();
+                if (atr <= 0)
+                    return;
+
+                double trailDistance = TrailAtrMult * atr;
+
+                if (tradeDirection == "Long")
+                {
+                    double newStop = currentPrice - trailDistance;
+                    if (newStop > currentStopPrice)
+                    {
+                        currentStopPrice = newStop;
+                        SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                    }
+                }
+                else
+                {
+                    double newStop = currentPrice + trailDistance;
+                    if (newStop < currentStopPrice)
+                    {
+                        currentStopPrice = newStop;
+                        SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                    }
+                }
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // EXECUTION UPDATE — only process closing fills
+        // ──────────────────────────────────────────────────────────────
+
+        protected override void OnExecutionUpdate(
+            Execution execution, string executionId,
+            double price, int quantity,
+            MarketPosition marketPosition, string orderId, DateTime time)
+        {
+            // FIX: Guard against entry fills triggering exit logic.
+            // An entry fill leaves the position non-flat; an exit fill leaves it flat.
+            // We also check tradeIsActive so we don't double-fire if multiple
+            // exit fills arrive (e.g. partial fills).
+            if (!tradeIsActive)
+                return;
+
+            // FIX: Use execution.Order to distinguish entry vs. exit orders.
+            // Entry orders are Buy/BuyToCover/Sell (opening); exit orders are
+            // the complementary direction that closes the position.
+            // The simplest reliable check: position is flat after this fill.
+            if (Position.MarketPosition != MarketPosition.Flat)
+                return; // Still in a position — this was an entry or partial fill
+
+            tradeIsActive = false;
+
+            // PnL from the last completed trade (more reliable than execution.Price math)
+            double pnl = 0;
+            if (SystemPerformance.AllTrades.Count > 0)
+            {
+                Trade lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
+                pnl = lastTrade.ProfitCurrency;
+            }
+
+            // ── Update local backtest state ──
+            sessionPnL += pnl;
+            todayTradeCount++;
+
+            if (pnl < 0)
+            {
+                consecutiveLosers++;
+
+                if (consecutiveLosers >= HardStopConsecutiveLosers)
+                {
+                    isDoneForDay = true;
+                    Print(string.Format("[{0}] DONE FOR DAY — {1} consecutive losers",
+                        GetStrategyName(), consecutiveLosers));
+                }
+                else if (consecutiveLosers >= MaxConsecutiveLosers)
+                {
+                    isPaused   = true;
+                    pauseUntil = Times[0][0].AddMinutes(PauseMinutes);
+                    Print(string.Format("[{0}] PAUSED until {1} — {2} consecutive losers",
+                        GetStrategyName(), pauseUntil.ToShortTimeString(), consecutiveLosers));
+                }
+            }
+            else
+            {
+                consecutiveLosers = 0;
+            }
+
+            // ── Forward to RiskGatekeeper (live/sim — cross-strategy awareness) ──
+            RiskGatekeeper.RecordTrade(Account.Name, pnl, time);
+
+            Print(string.Format("[{0}] EXIT | PnL: {1:C} | Session: {2:C} | Trades: {3} | ConsecL: {4} | DoneForDay: {5}",
+                GetStrategyName(), pnl, sessionPnL,
+                todayTradeCount, consecutiveLosers, isDoneForDay));
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // HELPERS
+        // ──────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the current ATR value from the 5-min secondary series.
+        /// VIRTUAL so range-based subclasses (IntradayStrategyBase) can override
+        /// it to return their range-based risk metric (e.g. IB rangeRange) instead —
+        /// this unblocks the CanEnterTrade atr&gt;0 gate as soon as the range completes,
+        /// without waiting for the 5-min ATR to warm up.
+        /// When AddSecondaryTimeframe=false, the base returns 0; subclasses MUST override.
+        /// </summary>
+        protected virtual double GetCurrentATR()
+        {
+            if (!AddSecondaryTimeframe || atrIndicator == null)
+                return 0;
+            if (CurrentBars[1] < AtrPeriod)
+                return 0;
+            return atrIndicator[0];
+        }
+
+        protected double GetPointValue()
+        {
+            return Instrument.MasterInstrument.PointValue;
+        }
+
+        protected double GetCurrentRMultiple(double currentPrice)
+        {
+            if (riskPoints <= 0)
+                return 0;
+
+            return tradeDirection == "Long"
+                ? (currentPrice - entryPrice) / riskPoints
+                : (entryPrice - currentPrice) / riskPoints;
+        }
+
+        protected double GetUnrealizedPnL(double currentPrice)
+        {
+            double points = tradeDirection == "Long"
+                ? currentPrice - entryPrice
+                : entryPrice - currentPrice;
+
+            return points * GetPointValue() * Math.Max(1, Position.Quantity);
+        }
+
+        protected void FlattenPosition(string reason)
+        {
+            if (Position.MarketPosition == MarketPosition.Long)
+                ExitLong(reason, GetSignalName("Long"));
+            else if (Position.MarketPosition == MarketPosition.Short)
+                ExitShort(reason, GetSignalName("Short"));
+
+            // FIX: reset tradeIsActive immediately so OnBarUpdate doesn't stay
+            // stuck in ManageOpenTrade on subsequent bars before the fill confirms.
+            // OnExecutionUpdate will see tradeIsActive==false and skip its logic,
+            // but that's safe — FlattenPosition callers (time/risk exits) handle
+            // state (isDoneForDay etc.) themselves before calling us.
+            tradeIsActive = false;
+
+            Print(string.Format("[{0}] FLATTEN — {1}", GetStrategyName(), reason));
+        }
+
+        protected int GetCurrentTimeInt()
+        {
+            return ToTime(Times[0][0]);
+        }
+
+        protected bool IsInTimeWindow(int startHHMM, int endHHMM)
+        {
+            int current = GetCurrentTimeInt();
+            return current >= startHHMM * 100 && current <= endHHMM * 100;
+        }
+
+        // 5-min secondary helpers — ONLY valid when AddSecondaryTimeframe=true.
+        // Calling these when the secondary was not added will throw an index error.
+        protected double Close5m(int barsAgo = 0)
+        {
+            if (!AddSecondaryTimeframe) throw new InvalidOperationException("Close5m requires AddSecondaryTimeframe=true");
+            return Closes[1][barsAgo];
+        }
+        protected double High5m(int barsAgo  = 0)
+        {
+            if (!AddSecondaryTimeframe) throw new InvalidOperationException("High5m requires AddSecondaryTimeframe=true");
+            return Highs[1][barsAgo];
+        }
+        protected double Low5m(int barsAgo   = 0)
+        {
+            if (!AddSecondaryTimeframe) throw new InvalidOperationException("Low5m requires AddSecondaryTimeframe=true");
+            return Lows[1][barsAgo];
+        }
+
+        private string GetSignalName(string direction)
+        {
+            return string.Format("{0}_{1}", GetStrategyName(), direction);
+        }
+    }
+}

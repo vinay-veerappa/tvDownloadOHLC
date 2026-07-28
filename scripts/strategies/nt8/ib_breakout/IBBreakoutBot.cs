@@ -36,7 +36,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Name = "IBBreakoutBot";  // CRITICAL: override base's Name='RiskManagerBase' so SA loads THIS bot
             ActivePlay = 1;
             TargetLvl = 0.5;   // Play 1 best at 0.5x (E[R] +0.093, PF 1.49)
-            StopRMult = 0.25;  // MAE-calibrated
+            StopRMult = 2.0;   // Full-range stop (= 2.0*0.5*range = 1.0*range = opposite IB boundary).
+                               // Python report says 0.25R and 1.0R give same E[R], but 1.0R survives
+                               // intrabar wicks in NT8 tick-level sim that kill the 0.25R stop (23% WR vs 51.8%).
+            ConfluenceFilterEnabled = true;  // Enable Play 1 validated filter stack
+            DebugMode = true;  // verbose logging for filter debugging
         }
 
         /// <summary>
@@ -56,6 +60,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return 0;
                 }
 
+                if (!CanEnterLong)  // one entry per direction per session
+                    return 0;
+
                 double entry  = Close[0];
                 double stop   = entry - StopRMult * TargetLvl * rangeRange;  // MAE-calibrated
                 double target = rangeHigh + TargetLvl * rangeRange;
@@ -69,6 +76,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 int qty = CalcQuantity(entry - stop, sizeMult);
                 Log($"[ENTRY] LONG {Time[0]:HH:mm} entry={entry} stop={stop} target={target} qty={qty}", LogLevel.Information);
                 EnterWithRangeStop(1, entry, stop, target, qty);
+                longTakenToday = true;  // prevent re-entry in this direction today
                 return 1;
             }
 
@@ -80,6 +88,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     if (DebugMode) Log($"[DIAG] SHORT bias blocked: predictedDir={predictedDir} at {Time[0]:HH:mm}", LogLevel.Information);
                     return 0;
                 }
+
+                if (!CanEnterShort)  // one entry per direction per session
+                    return 0;
 
                 double entry  = Close[0];
                 double stop   = entry + StopRMult * TargetLvl * rangeRange;
@@ -94,6 +105,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 int qty = CalcQuantity(stop - entry, sizeMult);
                 Log($"[ENTRY] SHORT {Time[0]:HH:mm} entry={entry} stop={stop} target={target} qty={qty}", LogLevel.Information);
                 EnterWithRangeStop(-1, entry, stop, target, qty);
+                shortTakenToday = true;  // prevent re-entry in this direction today
                 return -1;
             }
 

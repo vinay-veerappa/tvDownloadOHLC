@@ -26,18 +26,36 @@ This section is for picking up the implementation in a later session.
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| 1 | `IntradayStrategyBase.cs` (generic, reusable) + `RangeWindow.cs` indicator | NOT STARTED |
-| 2 | `IBStrategyBase.cs` (IB subclass: Rule 1 + overshoot SM) | NOT STARTED |
-| 3 | `IBBreakoutBot.cs` (P1) + `IBRetestBot.cs` (P2) + `IBFadeBot.cs` (P3) | NOT STARTED |
-| 4 | Pluggable `IStopModel` / `ITargetModel` registry + 3 stops + 3 TPs | NOT STARTED |
-| 5 | Structured logging + journal POST + skip-reason audit | NOT STARTED |
-| 6 | `strategy_parity_check.py` (3-tier Python/NT/TV validator) | NOT STARTED |
+| 1 | `IntradayStrategyBase.cs` (generic, reusable) + `RangeWindow.cs` indicator | ✅ DONE — deployed to NT8 `Custom\Strategies\Vinay\`, compiles clean |
+| 2 | `IBStrategyBase.cs` (IB subclass: Rule 1 + overshoot SM + entry guards) | ✅ DONE — includes `longTakenToday`/`shortTakenToday` one-entry-per-direction guards, confluence filter stack (AVWAP, EMA, VCP, OPEX, body-close) |
+| 3 | `IBBreakoutBot.cs` (P1) + `IBRetestBot.cs` (P2) + `IBFadeBot.cs` (P3) | ✅ DONE — deployed + compiled. See §0.3 for backtest results. |
+| 4 | Pluggable `IStopModel` / `ITargetModel` registry + 3 stops + 3 TPs | PARTIAL — stop/target geometry is parameterized via `StopRMult`/`TargetLvl` but not via interfaces. |
+| 5 | Structured logging + journal POST + skip-reason audit | PARTIAL — `[DIAG]`/`[ENTRY]` Log() traces emit to SA log file. No journal POST yet. |
+| 6 | `strategy_parity_check.py` (3-tier Python/NT/TV validator) | PARTIAL — `scripts/orb_generic/parity_check.py` exists for ORB; IB parity harness not yet built. |
 | 7 | `walk_forward.py` + Monte Carlo pass-rate gate | NOT STARTED |
 | 8 | `IBStrategyLib.pine` + `IBBreakoutStrategy.pine` + `IBFadeStrategy.pine` | NOT STARTED |
 | 9 | TV Strategy Tester validation + parity | NOT STARTED |
 | 10 | Regime hook (E1) + conviction gate (E2) + equity-curve break (E8) | NOT STARTED |
 | 11 | Copy-trader leader integration + cascade config | NOT STARTED |
 | 12 | Live sim deployment (MNQ) — 20 sessions | NOT STARTED |
+
+### 0.3 NT8 Backtest Results (2026-07-28)
+
+**Window:** Jan 1 – Mar 31, 2026 | **Instrument:** MNQ 03-26 | **Period:** 1-min
+**Params:** `ConfluenceFilterEnabled=false`, `RequireDirectionBias=false` (raw strategy, no filters)
+
+| Bot | Trades | Win Rate | PF | Net P&L | Max DD | Python Ref | Status |
+|---|---|---|---|---|---|---|---|
+| **IBBreakoutBot** (StopRMult=2.0) | 74 | 75.7% | 1.733 | +$2,067 | -$452.5 | Play1@0.5x: PF 1.30, WR 51.8% | ✅ Profitable |
+| **IBRetestBot** | 21 | 52.4% | 1.535 | +$728 | -$504 | Play2@0.25x: PF 0.82, WR 13.6% | ✅ Profitable |
+| **IBFadeBot** (target=rangeMid, stop=0.5×range) | 53 | 56.6% | 0.802 | -$729.50 | -$1,287 | Play3@0.25x: PF 1.13, WR 11.1% | ❌ Still negative |
+
+**Fixes applied this session:**
+1. **Entry guards** (`longTakenToday`/`shortTakenToday` in `IBStrategyBase`): one entry per direction per session. Eliminated over-trading (IBBreakoutBot went from 944 → 74 trades).
+2. **IBBreakoutBot stop geometry** (`StopRMult` 0.25 → 2.0): widened stop from 0.125×range to full-range (opposite IB boundary), matching Python's stop. WR jumped 23% → 75.7% (the tight stop was being killed by intrabar wicks in NT8's tick-level simulation).
+
+**Remaining issue — IBFadeBot:**
+Python shows Play 3 as a low-WR/high-payoff strategy (11.1% WR, PF 1.13) — far target, tight stop, wins ~10× losses. NT8 shows high-WR/low-payoff (56.6% WR, PF 0.80) — target (rangeMid) is too close, stop (0.5×range) is too wide. Next experiment: target = opposite IB boundary (full reversion), tight 0.25R stop.
 
 **Note:** Phases 1–2 are the two-layer base split (generic + IB). Any new strategy
 (ORB, sweep, key-level, macro-time) only implements Phases 1's abstract methods and
