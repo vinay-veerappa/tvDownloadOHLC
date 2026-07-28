@@ -78,7 +78,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         [NinjaScriptProperty]
         [Display(Name = "Require Direction Bias", Order = 1, GroupName = "Filters")]
-        public bool RequireDirectionBias { get; set; } = true;
+        public bool RequireDirectionBias { get; set; } = false;  // default false — matches standalone proof; set true for bias-gated variants
 
         [NinjaScriptProperty]
         [Display(Name = "Target Level (R)", Order = 2, GroupName = "Risk Geometry")]
@@ -102,15 +102,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         [NinjaScriptProperty]
         [Display(Name = "Skip Huge Range", Order = 1, GroupName = "Range Filter")]
-        public bool SkipHugeRange { get; set; } = true;
+        public bool SkipHugeRange { get; set; } = false;  // default off — avoids over-filtering; enable per-strategy if needed
 
         [NinjaScriptProperty]
         [Display(Name = "Max Range %", Order = 2, GroupName = "Range Filter")]
-        public double MaxRangePct { get; set; } = 0.90;
+        public double MaxRangePct { get; set; } = 2.0;  // percent value (2.0 = 2% of prior session close)
 
         [NinjaScriptProperty]
         [Display(Name = "Min Range %", Order = 3, GroupName = "Range Filter")]
-        public double MinRangePct { get; set; } = 0.10;
+        public double MinRangePct { get; set; } = 0.05;  // percent value (0.05 = 0.05% of prior session close)
 
         [NinjaScriptProperty]
         [Display(Name = "News Moratorium Enabled", Order = 1, GroupName = "Moratorium")]
@@ -199,7 +199,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             try
             {
             // DIAG: log every 60 bars to confirm CheckForSignal is called
-            if (CurrentBar % 60 == 0) Print($"[DIAG] CheckForSignal bar={CurrentBar} time={Time[0]:HH:mm} BIP={BarsInProgress} rangeComplete={rangeComplete}");
+            if (DebugMode && CurrentBar % 60 == 0) Log($"[DIAG] CheckForSignal bar={CurrentBar} time={Time[0]:HH:mm} BIP={BarsInProgress} rangeComplete={rangeComplete}", LogLevel.Information);
 
             // Use Time[0] directly — NT8 is set to ET per user.
             DateTime now = Time[0];
@@ -217,17 +217,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 else if (now >= rangeEnd)
                 {
                     FinalizeRange();
-                    Print($"[DIAG] IB finalized: high={rangeHigh} low={rangeLow} range={rangeRange} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir}");
+                    Log($"[DIAG] IB finalized: high={rangeHigh} low={rangeLow} range={rangeRange} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir}", LogLevel.Information);
                 }
                 return 0;
             }
 
-            if (CalendarFilter(now)) { Print($"[DIAG] skipped by calendar filter at {now:HH:mm}"); return 0; }
-            if (RangeSizeFilter()) { Print($"[DIAG] skipped by range-size filter at {now:HH:mm} rangePct={rangeRange/priorSessionClose*100}"); return 0; }
+            // After range complete — log only in DebugMode during entry window
+            if (DebugMode)
+            {
+                int hour = now.Hour;
+                if (hour >= 10 && hour <= 14)
+                    Log($"[DIAG] post-range bar={CurrentBar} time={now:HH:mm} close={Close[0]} rH={rangeHigh} rL={rangeLow} range={rangeRange} priorClose={priorSessionClose} rComplete={rangeComplete}", LogLevel.Information);
+            }
+
+            if (CalendarFilter(now)) { if (DebugMode) Log($"[DIAG] skipped by calendar filter at {now:HH:mm} bar={CurrentBar}", LogLevel.Information); return 0; }
+            if (RangeSizeFilter()) { if (DebugMode) Log($"[DIAG] skipped by range-size filter at {now:HH:mm} bar={CurrentBar} rangePct={(rangeRange/priorSessionClose*100)} MaxPct={MaxRangePct} MinPct={MinRangePct}", LogLevel.Information); return 0; }
 
             if (rangeRange < TickSize)
             {
-                Print($"[DIAG] Range too small ({rangeRange}) to trade.");
+                if (DebugMode) Log($"[DIAG] Range too small ({rangeRange}) to trade.", LogLevel.Information);
                 return 0;
             }
 
@@ -235,8 +243,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (VixRegimeFilterEnabled && IsVixHostile()) return 0;
             if (CorrelationFilterEnabled && IsCorrelationDiverging()) return 0;
 
+            if (DebugMode) Log($"[DIAG] pre-CheckForEntry bar={CurrentBar} time={now:HH:mm} close={Close[0]} rH={rangeHigh} rL={rangeLow}", LogLevel.Information);
             int signal = CheckForEntry();
-            if (signal != 0) Print($"[DIAG] CheckForEntry returned signal={signal} at {now:HH:mm} close={Close[0]} rangeHigh={rangeHigh} rangeLow={rangeLow}");
+            if (signal != 0 && DebugMode) Log($"[DIAG] CheckForEntry returned signal={signal} at {now:HH:mm} close={Close[0]} rangeHigh={rangeHigh} rangeLow={rangeLow}", LogLevel.Information);
             // CRITICAL: return 0 so RiskManagerBase.OnBarUpdate does NOT call EnterTrade()
             // with ATR stops — our CheckForEntry already entered via EnterWithRangeStop().
             // Returning the signal would cause a double-entry attempt with wrong stops.
@@ -245,7 +254,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             catch (Exception ex)
             {
                 // Log once, then suppress — don't crash the backtest
-                if (CurrentBar % 100 == 0) Print($"[DIAG] CheckForSignal exception at bar {CurrentBar}: {ex.Message}");
+                if (CurrentBar % 100 == 0) Log($"[DIAG] CheckForSignal exception at bar {CurrentBar}: {ex.Message}", LogLevel.Error);
                 return 0;
             }
         }
@@ -260,7 +269,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             rangeMid = (rangeHigh + rangeLow) / 2.0;
             rangeRange = rangeHigh - rangeLow;
             ComputeBias();
-            Print($"[DIAG] FinalizeRange: high={rangeHigh} low={rangeLow} range={rangeRange} mid={rangeMid} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir} time={Time[0]:HH:mm}");
+            if (DebugMode) Log($"[DIAG] FinalizeRange: high={rangeHigh} low={rangeLow} range={rangeRange} mid={rangeMid} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir} time={Time[0]:HH:mm}", LogLevel.Information);
         }
 
         /// <summary>
@@ -299,6 +308,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// <summary>
         /// Filters based on range size relative to prior session close (ADR-002: percentage, not points).
         /// Uses priorSessionClose captured at OnNewSession, not the previous intraday bar.
+        /// MaxRangePct/MinRangePct are PERCENT values (e.g. 0.90 = 0.90%, 90.0 = 90%).
+        /// rangePct is computed as a percent (range/prior*100), so we compare directly.
         /// </summary>
         /// <returns>True if range should be skipped.</returns>
         protected bool RangeSizeFilter()
@@ -306,7 +317,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (!SkipHugeRange) return false;
             if (priorSessionClose <= 0) return false;
             double rangePct = (rangeRange / priorSessionClose) * 100.0;
-            return (rangePct > MaxRangePct * 100.0 || rangePct < MinRangePct * 100.0);
+            return (rangePct > MaxRangePct || rangePct < MinRangePct);
         }
 
         /// <summary>

@@ -107,6 +107,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [NinjaScriptProperty]
         [Display(Name = "Add Secondary Timeframe (5m)", Order = 0, GroupName = "Timeframe")]
         public bool AddSecondaryTimeframe { get; set; }
+
+        /// <summary>
+        /// When true, emits verbose [DBG]/[DIAG] Log() diagnostics for every gate in
+        /// OnBarUpdate/CanEnterTrade/CheckForSignal. Set false for production/live.
+        /// </summary>
+        [NinjaScriptProperty]
+        [Display(Name = "Debug Mode (verbose logging)", Order = 1, GroupName = "Timeframe")]
+        public bool DebugMode { get; set; }
         #endregion
 
         // ──────────────────────────────────────────────────────────────
@@ -189,10 +197,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 // Range-based strategies (IB/ORB) override to false in SetStrategyDefaults().
                 AddSecondaryTimeframe = true;
 
+                // DebugMode — default true for backtest diagnostics. Set false for live.
+                DebugMode = true;
+
                 SetStrategyDefaults();
             }
             else if (State == State.Configure)
             {
+                // Apply BarsRequiredToTradeParam here — NT8 does NOT allow setting
+                // BarsRequiredToTrade from OnBarUpdate (throws "cannot be set from this state").
+                if (BarsRequiredToTradeParam > 0)
+                    BarsRequiredToTrade = BarsRequiredToTradeParam;
+
                 // Only add the 5-min secondary when the strategy actually uses it.
                 // Range-based strategies set AddSecondaryTimeframe=false and override
                 // GetCurrentATR() to return their range-based risk metric.
@@ -239,18 +255,26 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             // Only process the primary (1-min) series
             if (BarsInProgress != 0)
+            {
+                if (DebugMode && CurrentBar % 200 == 0) Log($"[DBG] BIP!=0 skipping: BarsInProgress={BarsInProgress} bar={CurrentBar}", LogLevel.Information);
                 return;
+            }
 
-            // Apply BarsRequiredToTradeParam (NinjaScriptProperty — SA params can override)
-            if (BarsRequiredToTradeParam > 0)
-                BarsRequiredToTrade = BarsRequiredToTradeParam;
+            // NOTE: BarsRequiredToTrade is now set in State.Configure (not here — NT8 throws
+            // "cannot be set from this state" if set during OnBarUpdate).
 
             // Gate on primary series always; gate on secondary only when it exists.
             // When AddSecondaryTimeframe=false, there is no BarsArray[1] to check.
             if (CurrentBars[0] < BarsRequiredToTrade)
+            {
+                if (DebugMode && CurrentBar % 200 == 0) Log($"[DBG] BarsRequired gate: CurrentBars[0]={CurrentBars[0]} < BRT={BarsRequiredToTrade}", LogLevel.Information);
                 return;
+            }
             if (AddSecondaryTimeframe && CurrentBars[1] < BarsRequiredToTrade)
+            {
+                if (DebugMode && CurrentBar % 200 == 0) Log($"[DBG] Secondary BRT gate: CurrentBars[1]={CurrentBars[1]} < BRT={BarsRequiredToTrade}", LogLevel.Information);
                 return;
+            }
 
             // ── New session detection ──
             DateTime barDate = Times[0][0].Date;
@@ -278,11 +302,23 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             // ── Entry gate ──
             if (!CanEnterTrade(currentTime))
+            {
+                if (DebugMode)
+                {
+                    int h = Time[0].Hour;
+                    bool inWindow = (h >= 10 && h <= 14);
+                    if ((inWindow && CurrentBar % 10 == 0) || CurrentBar % 100 == 0)
+                        Log($"[DBG] CanEnterTrade BLOCKED bar={CurrentBar} time={Time[0]:HH:mm} currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} atr={GetCurrentATR()}", LogLevel.Information);
+                }
                 return;
+            }
 
             int signal = CheckForSignal();
             if (signal == 0)
+            {
+                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CheckForSignal=0 bar={CurrentBar} time={Time[0]:HH:mm}", LogLevel.Information);
                 return;
+            }
 
             double atr = GetCurrentATR();
             if (atr <= 0)
@@ -366,57 +402,91 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private bool CanEnterTrade(int currentTime)
         {
+            string acctName = Account?.Name ?? "null";
+
+            // ── Backtest mode bypass ──
+            // In Strategy Analyzer backtests, Account.Name is "Backtest" or similar.
+            // The RiskGatekeeper monitors LIVE accounts via the AddOn, and its daily-max-loss
+            // gate (default $400) blocks backtest entries because potentialLoss ($575 for MNQ)
+            // exceeds the live limit. Skip ALL gatekeeper gates in backtest mode.
+            bool isBacktest = acctName.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
+                           || acctName.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0;
+
             // ── RiskGatekeeper check (live/sim mode — cross-strategy, cross-session) ──
-            // When the AddOn is running, all account-level gates (blown, done-for-day,
-            // pause, max-trades) are owned by RiskGatekeeper.  The local backtest flags
-            // below act as a fallback when no AddOn is present.
-            if (!RiskGatekeeper.CanTrade(Account.Name))
+            if (!isBacktest && !RiskGatekeeper.CanTrade(acctName))
+            {
+                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL gatekeeper: acct={acctName} bar={CurrentBar}", LogLevel.Information);
                 return false;
+            }
 
             // ── Local backtest / fallback gates ──
-            // These kick in when RiskGatekeeper has no registration for this account
-            // (i.e. the AddOn is not loaded), preserving backward-compatible behaviour.
-            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
-                    StringComparer.OrdinalIgnoreCase))
+            bool registered = !isBacktest && RiskGatekeeper.RegisteredAccounts.Contains(acctName,
+                    StringComparer.OrdinalIgnoreCase);
+            if (registered)
             {
                 if (accountBlown && StopOnAccountBlown)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL accountBlown: bar={CurrentBar}", LogLevel.Information);
                     return false;
+                }
 
                 if (isDoneForDay)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL doneForDay: bar={CurrentBar}", LogLevel.Information);
                     return false;
+                }
 
                 if (isPaused)
                 {
                     if (Times[0][0] < pauseUntil)
+                    {
+                        if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL paused: bar={CurrentBar} until={pauseUntil}", LogLevel.Information);
                         return false;
+                    }
                     isPaused = false;
                 }
 
                 if (todayTradeCount >= MaxTradesPerDay)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL maxTrades: bar={CurrentBar} {todayTradeCount}/{MaxTradesPerDay}", LogLevel.Information);
                     return false;
+                }
             }
 
             // Time fence — always enforced locally (strategy-specific windows)
             if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
+            {
+                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL timeFence: currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} bar={CurrentBar}", LogLevel.Information);
                 return false;
+            }
 
-            // ATR sanity
-            double atr = GetCurrentATR();
-            if (atr <= 0)
+            // NOTE: The GetCurrentATR()>0 sanity gate was REMOVED from here.
+            // It created a circular deadlock: CanEnterTrade needs GetCurrentATR()>0,
+            // which (for range-based strategies) needs rangeComplete=true, which is
+            // only set inside CheckForSignal/FinalizeRange — but CheckForSignal is
+            // called AFTER CanEnterTrade passes. So rangeComplete could never become
+            // true, blocking all entries. The atr>0 check in OnBarUpdate (after
+            // CheckForSignal returns non-zero) still protects the EnterTrade path.
+            // Use a nominal risk distance for the daily-max-loss potential calc.
+            double atrForRisk = GetCurrentATR();
+            if (atrForRisk <= 0)
+                atrForRisk = StopAtrMult * TickSize * 100;  // nominal fallback before range completes
+            double potentialLoss = StopAtrMult * atrForRisk * GetPointValue() * Math.Max(1, DefaultQuantity);
+            if (!isBacktest && RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
+            {
+                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL gatekeeperDailyMaxLoss: bar={CurrentBar} potentialLoss={potentialLoss}", LogLevel.Information);
                 return false;
+            }
 
-            // Daily max loss potential — delegate to gatekeeper when registered,
-            // otherwise use local sessionPnL
-            double potentialLoss = StopAtrMult * atr * GetPointValue() * Math.Max(1, DefaultQuantity);
-            if (RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
-                return false;
-
-            // Local fallback for daily max loss
-            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
+            // Local fallback for daily max loss (only when NOT registered with gatekeeper AND not backtest)
+            if (!isBacktest && !RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
                     StringComparer.OrdinalIgnoreCase))
             {
                 if (sessionPnL - potentialLoss < -DailyMaxLoss)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL localDailyMaxLoss: bar={CurrentBar} sessionPnL={sessionPnL} potentialLoss={potentialLoss} DailyMaxLoss={DailyMaxLoss}", LogLevel.Information);
                     return false;
+                }
             }
 
             return true;

@@ -24,12 +24,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     {
         protected override void ConfigureStrategy()
         {
-            Print("[DIAG] IBBreakoutBot.ConfigureStrategy called");
         }
 
         protected override void InitializeStrategy()
         {
-            Print("[DIAG] IBBreakoutBot.InitializeStrategy called");
         }
 
         protected override void SetStrategyDefaults()
@@ -46,25 +44,30 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// </summary>
         protected override int CheckForEntry()
         {
-            // DIAG: log once per ~30 bars to avoid spam
-            if (CurrentBar % 30 == 0)
-                Print($"[DIAG] CheckForEntry bar={CurrentBar} time={ToET(Time[0]):HH:mm} close={Close[0]} rangeHigh={rangeHigh} rangeLow={rangeLow} rangeComplete={rangeComplete} predictedDir={predictedDir}");
-
             int breakMinutes = MinutesSinceIBComplete;
             double sizeMult = ClockSizeMultiplier(breakMinutes);
 
             // Long break: close above IB high
             if (Close[0] > rangeHigh)
             {
-                if (RequireDirectionBias && predictedDir != 1) return 0;
+                if (RequireDirectionBias && predictedDir != 1)
+                {
+                    if (DebugMode) Log($"[DIAG] LONG bias blocked: predictedDir={predictedDir} at {Time[0]:HH:mm}", LogLevel.Information);
+                    return 0;
+                }
 
                 double entry  = Close[0];
                 double stop   = entry - StopRMult * TargetLvl * rangeRange;  // MAE-calibrated
                 double target = rangeHigh + TargetLvl * rangeRange;
 
-                if (!TargetIsSane(entry, target, 1)) return 0;
+                if (!TargetIsSane(entry, target, 1))
+                {
+                    if (DebugMode) Log($"[DIAG] LONG target not sane: entry={entry} target={target} at {Time[0]:HH:mm}", LogLevel.Information);
+                    return 0;
+                }
 
                 int qty = CalcQuantity(entry - stop, sizeMult);
+                Log($"[ENTRY] LONG {Time[0]:HH:mm} entry={entry} stop={stop} target={target} qty={qty}", LogLevel.Information);
                 EnterWithRangeStop(1, entry, stop, target, qty);
                 return 1;
             }
@@ -72,15 +75,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Short break: close below IB low
             if (Close[0] < rangeLow)
             {
-                if (RequireDirectionBias && predictedDir != -1) return 0;
+                if (RequireDirectionBias && predictedDir != -1)
+                {
+                    if (DebugMode) Log($"[DIAG] SHORT bias blocked: predictedDir={predictedDir} at {Time[0]:HH:mm}", LogLevel.Information);
+                    return 0;
+                }
 
                 double entry  = Close[0];
                 double stop   = entry + StopRMult * TargetLvl * rangeRange;
                 double target = rangeLow - TargetLvl * rangeRange;
 
-                if (!TargetIsSane(entry, target, -1)) return 0;
+                if (!TargetIsSane(entry, target, -1))
+                {
+                    if (DebugMode) Log($"[DIAG] SHORT target not sane: entry={entry} target={target} at {Time[0]:HH:mm}", LogLevel.Information);
+                    return 0;
+                }
 
                 int qty = CalcQuantity(stop - entry, sizeMult);
+                Log($"[ENTRY] SHORT {Time[0]:HH:mm} entry={entry} stop={stop} target={target} qty={qty}", LogLevel.Information);
                 EnterWithRangeStop(-1, entry, stop, target, qty);
                 return -1;
             }
