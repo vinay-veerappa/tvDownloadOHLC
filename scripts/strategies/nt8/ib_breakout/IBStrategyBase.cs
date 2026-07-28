@@ -64,27 +64,27 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         [NinjaScriptProperty]
         [Display(Name = "P1: VCP 3-Day", Order = 7, GroupName = "IB Confluence Filters")]
-        public bool Play1VcpFilter { get; set; } = true;  // enable for 3+ month backtests
+        public bool Play1VcpFilter { get; set; } = false;  // over-restrictive in NT8 (kills trades); enable for ablation only
 
         [NinjaScriptProperty]
         [Display(Name = "P1: OPEX Week", Order = 8, GroupName = "IB Confluence Filters")]
-        public bool Play1OpexWeekFilter { get; set; } = true;  // enable for 3+ month backtests
+        public bool Play1OpexWeekFilter { get; set; } = false;  // over-restrictive in NT8; enable for ablation only
 
         [NinjaScriptProperty]
         [Display(Name = "P1: Low Body Close", Order = 9, GroupName = "IB Confluence Filters")]
-        public bool Play1LowBodyCloseFilter { get; set; } = true;
+        public bool Play1LowBodyCloseFilter { get; set; } = false;  // over-restrictive in NT8; enable for ablation only
 
         [NinjaScriptProperty]
         [Display(Name = "P3: VCP 3-Day", Order = 10, GroupName = "IB Confluence Filters")]
-        public bool Play3VcpFilter { get; set; } = true;  // enable for 3+ month backtests
+        public bool Play3VcpFilter { get; set; } = false;  // kills all IBFadeBot entries in NT8; enable for ablation only
 
         [NinjaScriptProperty]
         [Display(Name = "P3: Quarterly OPEX", Order = 11, GroupName = "IB Confluence Filters")]
-        public bool Play3QuarterlyOpexFilter { get; set; } = true;  // enable for 3+ month backtests
+        public bool Play3QuarterlyOpexFilter { get; set; } = false;  // over-restrictive in NT8; enable for ablation only
 
         [NinjaScriptProperty]
         [Display(Name = "P3: High Body Close", Order = 12, GroupName = "IB Confluence Filters")]
-        public bool Play3HighBodyCloseFilter { get; set; } = true;
+        public bool Play3HighBodyCloseFilter { get; set; } = false;  // over-restrictive in NT8; enable for ablation only
 
         #endregion
 

@@ -1,6 +1,6 @@
 # IB Strategy Automation Design Document
 
-**Status:** Draft (2026-07-26, updated with Phase D-F findings)
+**Status:** Draft (2026-07-28, updated with Session 5 OOS validation + filter default change)
 **Reference:** `EDGE_VALIDATION_REPORT.md` (validated metrics), `STRATEGY_COMPENDIUM.md` (IF/THEN/ELSE rules), `STATISTICAL_DISCOVERY_PLAN.md` (coverage status)
 **Target platforms:** NinjaTrader 8 (C#), TradingView (Pine Script v5)
 **Instrument:** NQ1 (MNQ for live), ES1 (MES for live) — NY AM IB session, customizable to any time range
@@ -40,6 +40,43 @@ This section is for picking up the implementation in a later session.
 | 12 | Live sim deployment (MNQ) — 20 sessions | NOT STARTED |
 
 ### 0.3 NT8 Backtest Results (2026-07-28)
+
+#### Session 5 (2026-07-28) — In-sample + Out-of-sample validation
+
+**In-sample:** MNQ 03-25, Jan 2 – Mar 20 2025, 1-min, SA default params, `ConfluenceFilterEnabled=false`
+
+| Bot | Trades | Win Rate | PF | Net P&L | Max DD | Trades/Day | Status |
+|---|---|---|---|---|---|---|---|
+| **IBBreakoutBot** | 75 | 73.3% | **1.285** | +$903.50 | -$765 | 1.39 | ✅ Profitable |
+| **IBRetestBot** | 17 | 58.8% | **1.638** | +$679.50 | -$425 | 0.34 | ✅ Profitable (low count) |
+| **IBFadeBot** | 50 | 34.0% | 0.742 | -$973.50 | -$1,443 | 0.98 | ❌ Negative |
+
+**Out-of-sample:** MNQ 06-25, Mar 21 – Jun 20 2025, 1-min, SA default params, `ConfluenceFilterEnabled=false`
+
+| Bot | Trades | Win Rate | PF | Net P&L | Max DD | Trades/Day | Status |
+|---|---|---|---|---|---|---|---|
+| **IBBreakoutBot** | 92 | 67.4% | 1.029 | +$129.50 | -$1,280.50 | 1.48 | ✅ Marginal positive |
+| **IBRetestBot** | 38 | 36.8% | **1.409** | +$1,255.00 | -$792.50 | 0.61 | ✅ Profitable |
+
+**Out-of-sample with TrendMisaligned filter (new production default):**
+
+| Bot | Sample | Trades | Win Rate | PF | Net P&L | Max DD | Status |
+|---|---|---|---|---|---|---|---|
+| **IBBreakoutBot** | In-sample | 30 | 76.7% | **1.489** | +$570.50 | -$326.50 | ✅ Best config |
+| **IBBreakoutBot** | Out-of-sample | 35 | 74.3% | **1.426** | +$640.50 | -$530.50 | ✅ Edge persists |
+
+**Root cause of improvement vs prior sessions:** the cumulative fixes from Sessions 3–4
+(4-bug zero-trade chain + `GetPotentialLoss` virtual override using actual range-based
+stop distance instead of the ~8× over-estimated ATR formula). The prior 1090-trade
+result was over-trading due to broken risk gates; now 1.39 trades/day with positive edge.
+
+**Filter default change (Session 5):** Only `Play1TrendMisalignedFilter` stays ON by
+default (improves PF 1.285→1.489 IS, 1.029→1.426 OOS; cuts drawdown ~60%). VCP, OPEX,
+LowBodyClose, and all P3 filters are now OFF by default (over-restrictive in NT8,
+killed trades). All filters remain toggleable in the SA property grid for ablation.
+See §12.6 for details.
+
+#### Session 4 (2026-07-28 earlier) — prior 3-month result (pre-filter-default-change)
 
 **Window:** Jan 1 – Mar 31, 2026 | **Instrument:** MNQ 03-26 | **Period:** 5-min
 **Params:** `ConfluenceFilterEnabled=false`, `RequireDirectionBias=false` (raw strategy, no filters)
@@ -1929,3 +1966,36 @@ at every gate in `OnBarUpdate`, `CanEnterTrade`, `CheckForSignal`, and
 `CheckForEntry`. These should be cleaned up (reduced to essential error logging
 or gated behind a `DebugMode` flag) before live deployment. The diagnostic
 versions are useful for validating new strategies inheriting the base.
+
+### 12.6 Filter default change + OOS validation (Session 5, 2026-07-28)
+
+**Status:** ✅ Complete
+
+**Filter default change:** Only `Play1TrendMisalignedFilter` stays ON by default;
+the over-restrictive filters (VCP, OPEX, LowBodyClose, all P3 filters) are now OFF
+by default. All filters remain toggleable in the SA property grid for ablation.
+
+| Filter | Old default | New default | Rationale |
+|---|---|---|---|
+| `Play1TrendMisalignedFilter` | true | **true** (kept) | Improves PF 1.285→1.489 IS, 1.029→1.426 OOS; cuts drawdown ~60% |
+| `Play1VcpFilter` | true | **false** | Over-restrictive in NT8 (kills trades); 1 trade with full stack |
+| `Play1OpexWeekFilter` | true | **false** | Over-restrictive in NT8 |
+| `Play1LowBodyCloseFilter` | true | **false** | Over-restrictive in NT8 |
+| `Play3VcpFilter` | true | **false** | Kills all IBFadeBot entries in NT8 |
+| `Play3QuarterlyOpexFilter` | true | **false** | Over-restrictive in NT8 |
+| `Play3HighBodyCloseFilter` | true | **false** | Over-restrictive in NT8 |
+
+**OOS validation:** IBBreakoutBot + TrendMisaligned filter edge persists out-of-sample
+(PF 1.489 IS → 1.426 OOS, drawdown -$326 → -$530). IBRetestBot also shows OOS edge
+(PF 1.638 IS → 1.409 OOS) but low trade count (17 IS / 38 OOS). IBFadeBot remains
+negative in both samples — not deployable.
+
+**Conclusion:** IBBreakoutBot + TrendMisaligned filter is the production default.
+IBRetestBot is a candidate for SIM deployment alongside IBBreakoutBot. IBFadeBot
+needs rework — the fade logic or stop geometry does not match the Python expectancy.
+
+**Files changed:** `IBStrategyBase.cs` (filter defaults), `IBBreakoutBot.cs` (no
+change — `ConfluenceFilterEnabled=true` already set in `SetStrategyDefaults`).
+
+**Next steps:** SIM deployment of IBBreakoutBot + IBRetestBot on live data, or
+extend OOS to a 3rd contract period for more robust sample size.
