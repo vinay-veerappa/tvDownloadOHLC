@@ -550,11 +550,24 @@ def calculate_ib_statistics_v5(
     df_1m_precalc: Optional[pd.DataFrame] = None,
     fvg_df_precalc: Optional[pd.DataFrame] = None,
     daily_atr_precalc: Optional[pd.Series] = None,
-    legacy_default_play_levels: Optional[Dict[int, float]] = None
+    legacy_default_play_levels: Optional[Dict[int, float]] = None,
+    confluence_filter: Optional[Dict[str, bool]] = None,
+    confluence_path: Optional[str] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Computes complete Initial Balance stats and details for the selected session (v5 Spec).
     Returns (facts_df, level_touch_df, play_detail_df).
+
+    confluence_filter: optional dict of per-play filter toggles mirroring NT8
+        IBStrategyBase. When provided, loads the confluence parquet and ANDs
+        the enabled filters into the p1_active / p3_active masks. Keys:
+          'Play1TrendMisalignedFilter', 'Play1VcpFilter', 'Play1OpexWeekFilter',
+          'Play1LowBodyCloseFilter', 'Play3VcpFilter', 'Play3QuarterlyOpexFilter',
+          'Play3HighBodyCloseFilter', 'ConfluenceFilterEnabled'.
+        A missing key defaults to False (filter off). 'ConfluenceFilterEnabled'
+        defaults to False; set True to activate the common break_vs_avwap_0930 gate.
+    confluence_path: optional override for the confluence parquet path.
+        Defaults to data/derived/ib_confluence_{symbol_no_suffix}.parquet.
     """
     if session_choice not in SESSION_CONFIGS_V5:
         raise ValueError(f"Unknown session choice: {session_choice}")
@@ -1360,7 +1373,27 @@ def calculate_ib_statistics_v5(
 
     # Keep block layout compact before subsequent column additions.
     ib_agg = ib_agg.copy()
-            
+
+    # ── Confluence filter (NT8 parity: mirrors IBStrategyBase.ConfluenceFilter) ──
+    # Loads the confluence parquet keyed by (trading_day, session_slot) and ANDs
+    # the enabled per-play filters into the p*_active masks below.
+    _conf_cols: Optional[pd.DataFrame] = None
+    if confluence_filter and confluence_filter.get('ConfluenceFilterEnabled', False):
+        cpath = confluence_path or f"data/derived/ib_confluence_{symbol}.parquet"
+        try:
+            _conf_cols = pd.read_parquet(cpath)
+            _conf_cols = _conf_cols[
+                _conf_cols['session_slot'] == session_choice
+            ].set_index('trading_day')
+            # Align to ib_agg index (logical_date == trading_day).
+            # ib_agg.index is datetime.date; confluence trading_day is str.
+            # Convert confluence index to date objects for reindex alignment.
+            _conf_cols.index = pd.to_datetime(_conf_cols.index).date
+            _conf_cols = _conf_cols.reindex(ib_agg.index)
+        except Exception as e:
+            print(f'[WARN] confluence_filter: could not load {cpath}: {e}')
+            _conf_cols = None
+    
     # 11. Plays Evaluation
     play_levels = [0.25, 0.5, 0.75, 1.0]
     
@@ -1405,6 +1438,19 @@ def calculate_ib_statistics_v5(
     for lvl in play_levels:
         # Play 1
         p1_active = first_break_dir != 0
+        # NT8 parity: ConfluenceFilter for Play 1 (break_vs_avwap_0930 common gate + per-play filters)
+        if _conf_cols is not None:
+            # Common gate: break_vs_avwap_0930 != 0 (both +1 and -1 pass; only 0 fails)
+            bva = _conf_cols['break_vs_avwap_0930'].fillna(0).ne(0).to_numpy()
+            p1_active = p1_active & bva
+            if confluence_filter.get('Play1TrendMisalignedFilter', False):
+                p1_active = p1_active & _conf_cols['trend_misaligned_with_break'].fillna(False).to_numpy()
+            if confluence_filter.get('Play1VcpFilter', False):
+                p1_active = p1_active & _conf_cols['ib_vcp_3day_contracting'].fillna(False).to_numpy()
+            if confluence_filter.get('Play1OpexWeekFilter', False):
+                p1_active = p1_active & _conf_cols['is_opex_week'].fillna(False).to_numpy()
+            if confluence_filter.get('Play1LowBodyCloseFilter', False):
+                p1_active = p1_active & _conf_cols['ib_low_body_close'].fillna(False).to_numpy()
         p1_dir = first_break_dir
         p1_entry_price = np.where(first_break_dir == 1, ib_high, ib_low)
         p1_target_price = p1_entry_price + p1_dir * lvl * ib_range
@@ -1486,6 +1532,16 @@ def calculate_ib_statistics_v5(
         p3_has_next = (p3_fill_idx < len(df)) & (p3_fill_next_idx < len(df))
         # If fill and stop-exceed occur on the same bar, classify as triggered and loss later.
         p3_active = (first_break_dir != 0) & p3_has_next & (p3_fill_idx <= p3_stop_exceed_idx)
+        # NT8 parity: ConfluenceFilter for Play 3 (break_vs_avwap_0930 common gate + per-play filters)
+        if _conf_cols is not None:
+            bva = _conf_cols['break_vs_avwap_0930'].fillna(0).ne(0).to_numpy()
+            p3_active = p3_active & bva
+            if confluence_filter.get('Play3VcpFilter', False):
+                p3_active = p3_active & _conf_cols['ib_vcp_3day_contracting'].fillna(False).to_numpy()
+            if confluence_filter.get('Play3QuarterlyOpexFilter', False):
+                p3_active = p3_active & _conf_cols['is_quarterly_opex'].fillna(False).to_numpy()
+            if confluence_filter.get('Play3HighBodyCloseFilter', False):
+                p3_active = p3_active & _conf_cols['ib_high_body_close'].fillna(False).to_numpy()
         p3_dir = -first_break_dir
         # Entry price = open of the bar AFTER the close-back-inside signal (NT8 market fill)
         p3_entry_price = df['open'].values[p3_fill_next_idx_safe]
