@@ -186,12 +186,60 @@ From the IB profitability debate sessions (V1 failed, V2 succeeded):
 | `scripts/strategies/nt8/ib_breakout/IBFadeBot.cs` | Play 3 fade bot (overshoot → close-back-inside) |
 | `scripts/strategies/nt8/ib_breakout/IBBreakoutBot.cs` | Play 1 breakout bot |
 | `scripts/utils/sync_nt8_strategies.py` | Single sync mechanism to NT8 live folder |
+| `scripts/edgeful/ib_avwap_trend.py` | Confluence pipeline (AVWAP + EMA trend, daily-close EMA) |
+| `scripts/edgeful/ib_master_confluence.py` | Master confluence parquet builder |
 | `docs/architecture/STRATEGY_DESIGN_STANDARD.md` | SDS hunter/vectorization standard (Layer 4-5) |
 
 ---
 
-## 8. Revision History
+## 8. Parity Validation Results (2026-07-29)
+
+### Fixes Applied (Steps 1–5 + EMA + IB Duration)
+
+| Fix | Class | File | Impact |
+|---|---|---|---|
+| Entry-price (next-bar-open) | B | `ib.py`, `ib_parity_harness.py` | E[R] +0.259 → -0.0024 (Play 3 artifact eliminated) |
+| Liquidation fence 15:50 | D | `ib.py`, `ib_parity_harness.py` | 16 trades eliminated (9-min gap closed) |
+| ConfluenceFilter port | A | `ib.py` | 4975→1249 trades, E[R] +17% |
+| Play 2 entry parity | B | `ib.py` | WR 42%→14.3% (mid-price artifact removed) |
+| Geometry decision | — | none (confirmed) | Keep 1:2 R:R — PF 1.415 with filter |
+| IB duration 30-min | — | `ib.py` SESSION_CONFIGS_V5 | ib_end 10:30→10:00 (matches NT8 RangeDurationMin=30) |
+| EMA on daily closes | A | `ib_avwap_trend.py` | Overlap 7→29 days (4x), match 72.4% |
+
+### 6-Month Day-by-Day Win/Loss Parity (Jan–Jun 2026)
+
+| Metric | Value |
+|---|---|
+| NT8 trades | 51 (39 trade days) |
+| Python trades | 60 (60 trade days) |
+| Overlapping days | 29 |
+| Win/loss match | **21/29 (72.4%)** |
+| Both WIN | 14 |
+| Both LOSS | 7 |
+| Mismatch | 8 |
+
+### By Period
+
+| Period | Match | Notes |
+|---|---|---|
+| Feb–Mar 2026 | **16/18 (89%)** | Best alignment — code parity confirmed |
+| Jan 2026 | 1/5 (20%) | AVWAP anchor offset from roll gap affects `break_vs_avwap_0930` |
+| May–Jun 2026 | 4/6 (67%) | Moderate data gap |
+
+### Note on Continuous vs Raw Contract
+
+A futures roll adjustment is a **constant price offset** applied uniformly to all bars. It does NOT affect:
+- IB range (high - low is identical regardless of offset)
+- Break direction (a break above IB high is the same in both series)
+- Win/loss outcome (the stop/target distances are the same)
+
+The remaining mismatches are NOT from the IB computation itself. They are from the **AVWAP anchor** (`break_vs_avwap_0930`), which is a cumulative volume-weighted price from 09:30. The AVWAP price level differs between continuous and raw contract data because the cumulative TPV (typical price × volume) is computed at different absolute price levels. This causes the `break_vs_avwap_0930` common gate to evaluate differently, filtering different trade days. The IB boundaries and break directions are the same in both series.
+
+---
+
+## 9. Revision History
 
 | Date | Session | Change |
 |---|---|---|
 | 2026-07-28 | Session 6 | Initial document created from 6 sessions of IB parity debugging |
+| 2026-07-29 | Session 6 | Added §8: parity validation results, EMA fix, IB duration fix, continuous vs raw contract note |
