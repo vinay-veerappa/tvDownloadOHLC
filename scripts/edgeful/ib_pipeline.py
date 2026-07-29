@@ -137,8 +137,8 @@ def process_single_symbol(symbol, start_date, end_date, vix_series, force_regen=
             if not fvg_db_path.exists():
                 print(f"  -> [WARN] FVG database not found. Run: python -m scripts.edgeful.fvg_database")
             print(f"  -> Resampling 1m->5m and detecting FVGs (fallback)...")
-            df_5m = df_1m_precalc[["high", "low"]].resample("5min", origin="start_day").agg(
-                {"high": "max", "low": "min"}
+            df_5m = df_1m_precalc[["open", "high", "low", "close"]].resample("5min", origin="start_day").agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last"}
             ).dropna()
             fvg_df_precalc = detect_fvgs_v5(df_5m, "5min")
             fvg_df_precalc["logical_date"] = get_logical_trading_date(fvg_df_precalc.index)

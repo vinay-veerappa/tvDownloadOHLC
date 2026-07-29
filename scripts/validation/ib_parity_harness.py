@@ -616,11 +616,7 @@ def diff_ledgers(py: List[Dict], nt8: List[Dict], out_path: Optional[str] = None
     # Parse entry times to datetime for matching (normalize both to tz-aware ET)
     for df in (py_df, nt8_df):
         if "entry_time" in df.columns:
-            dt = pd.to_datetime(df["entry_time"], errors="coerce")
-            if dt.dt.tz is None:
-                dt = dt.dt.tz_localize("America/New_York", ambiguous="NaT", nonexistent="shift_forward")
-            else:
-                dt = dt.dt.tz_convert("America/New_York")
+            dt = pd.to_datetime(df["entry_time"], errors="coerce", utc=True).dt.tz_convert("America/New_York")
             df["entry_dt"] = dt
             df["date"] = df["entry_dt"].dt.date
 

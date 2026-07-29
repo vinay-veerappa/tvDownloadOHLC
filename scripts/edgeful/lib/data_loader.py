@@ -151,12 +151,22 @@ class DataLoader:
             return df
         
         # 1. Identify and normalize time column
+        # Prefer an existing DatetimeIndex over a numeric 'time' column.
+        # NQ1_1m.parquet has a DatetimeIndex (ET-naive) AND a 'time' column
+        # (epoch seconds storing ET-naive-as-UTC). Using the 'time' column
+        # would shift bars by -5h (UTC->ET conversion on already-ET data).
+        # The index is the correct timestamp source.
         time_col = None
-        for candidate in ['datetime', 'time', 'timestamp']:
-            if candidate in df.columns:
-                time_col = candidate
-                break
-        
+        if isinstance(df.index, pd.DatetimeIndex) and df.index.name:
+            # Use the index directly — it's already a proper datetime
+            time_col = df.index.name
+            df = df.reset_index()
+        else:
+            for candidate in ['datetime', 'timestamp', 'time']:
+                if candidate in df.columns:
+                    time_col = candidate
+                    break
+
         if time_col is None and isinstance(df.index, pd.DatetimeIndex):
             time_col = df.index.name or 'datetime'
             df = df.reset_index()
@@ -179,6 +189,17 @@ class DataLoader:
                     raise ValueError(f"Unrecognized time scale in {path}: max={max_val}")
             except Exception as e:
                 raise ValueError(f"Failed to parse timestamps in {path}: {e}")
+        elif pd.api.types.is_datetime64tz_dtype(df[time_col]):
+            # Already tz-aware datetime — convert to UTC for normalization
+            df[time_col] = df[time_col].dt.tz_convert('UTC')
+        elif pd.api.types.is_datetime64_any_dtype(df[time_col]):
+            # Tz-naive datetime — could be ET-naive (from NQ1_1m.parquet index)
+            # or UTC-naive (from live_storage 'timestamp' column).
+            # live_storage timestamps are UTC; historical index is ET-naive.
+            if is_live:
+                # live_storage 'timestamp' column is UTC-naive
+                df[time_col] = df[time_col].dt.tz_localize('UTC')
+            # else: ET-naive from historical DatetimeIndex — keep as-is
         else:
             df[time_col] = pd.to_datetime(df[time_col], utc=True)
         

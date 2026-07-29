@@ -21,6 +21,7 @@ Over 6 sessions of debugging the IB (Initial Balance) strategy family, we discov
 | **C** | Stop-geometry mismatch | Python uses one stop formula; NT8 inherits a different one from base class | 8x risk over-estimation |
 | **D** | Liquidation fence mismatch | Python liquidates at 15:59; NT8 flattens at 15:50 | 5 extra trades held to close in Python |
 | **E** | Session filter mismatch | Python includes Globex; NT8 trades RTH only (or vice versa) | First NT8 trade at 06:34 ET = pre-open |
+| **F** | Timestamp convention mismatch | `data_loader.py` preferred numeric `time` column (ET-naive-as-UTC seconds) over `DatetimeIndex`, causing −5 h shift. IB computed on 04:30–05:00 ET (Globex) instead of 09:30–10:00 ET (RTH) | IB range sourced from wrong session; all downstream signals corrupted |
 
 ---
 
@@ -275,10 +276,71 @@ ConfluenceFilter, reducing over-trading from 127 to 60 trades.
 
 ---
 
-## 9. Revision History
+## 10. Session 8 — Data Integrity & Timestamp Fix (2026-07-30)
+
+### Root Cause: Class F — Timestamp Convention Mismatch
+
+The dominant root cause of residual parity divergence was a **timestamp
+convention bug** in `scripts/edgeful/lib/data_loader.py`. The loader fused
+historical (`NQ1_1m.parquet`) and live (`live_storage_-NQ.parquet`) parquet
+stores but had two compounding defects:
+
+1. **NQ1_1m.parquet 2025+ corruption**: The historical file contained stale
+   NT8 import data (not back-adjusted) from 2025-01-01 onward, and its `time`
+   column had mixed units (ms vs sec vs corrupted values) introduced during a
+   live merge.
+2. **Loader preference bug**: `_read_and_normalize()` preferred the numeric
+   `time` column over the `DatetimeIndex`. For historical data, the `time`
+   column stores ET-naive-as-UTC unix seconds. When interpreted as UTC and
+   converted to ET, this shifts all bars **−5 h** (EST) / **−4 h** (EDT),
+   moving the 09:30 RTH open to 04:30/05:00 Globex.
+
+### Fixes Applied
+
+| Fix | File | Impact |
+|---|---|---|
+| Replace 2025+ data with live_storage back-adjusted | `scripts/data_processing/merge/fix_nq1_live_merge.py` (new) | NQ1_1m.parquet 2025+ now matches NT8 back-adjusted feed |
+| Normalize mixed time units (ms/sec/corrupted) | `scripts/data_processing/merge/fix_nq1_time_column_v2.py` (new) | `time` column all unix seconds, consistent |
+| Prefer DatetimeIndex over `time` column | `scripts/edgeful/lib/data_loader.py` | Eliminates −5 h shift; IB correctly at 09:30–10:00 ET |
+| FVG fallback resample include open/close | `scripts/edgeful/ib_pipeline.py` | Fixes KeyError in FVG fallback path |
+| Timezone handling in diff_ledgers | `scripts/validation/ib_parity_harness.py` | Correct ET conversion for trade time comparison |
+
+### Regenerated Derived Tables
+
+All downstream parquet tables rebuilt with the corrected loader:
+
+| Table | Rows | Notes |
+|---|---|---|
+| `data/derived/ib_facts_NQ1.parquet` | 41,422 | IB ranges now ~197 pts for 2026 (was ~5 pts when shifted to Globex) |
+| `data/derived/ib_avwap_NQ1.parquet` | 41,422 | AVWAP anchored to correct 09:30 ET session |
+| `data/derived/ib_confluence_NQ1.parquet` | 41,422 × 352 | Full confluence matrix regenerated |
+
+### Final Parity Result (Jan–Jun 2026, NQ JUN26 back-adjusted)
+
+| Metric | Python | NT8 |
+|---|---|---|
+| Trades | 56 | 71 |
+| Win rate | 64.3% | 63.4% |
+| **Result agreement** | **93.6% (44/47 overlapping trades)** | |
+
+**Key insight**: The contract price offset between NT8 NQ JUN26 and the Python
+continuous feed is **irrelevant** to parity because the IB strategy is
+relative (break = close > ib_high; both series shift by the same offset).
+
+### Checklist Addition (Class F)
+
+Before running any IB-family backtest, verify:
+- [ ] `data_loader._read_and_normalize()` prefers `DatetimeIndex` over numeric `time` column
+- [ ] `NQ1_1m.parquet` `time` column units are consistent (all unix seconds)
+- [ ] IB range for a known date is sourced from 09:30–10:00 ET (not 04:30–05:00)
+
+---
+
+## 11. Revision History
 
 | Date | Session | Change |
 |---|---|---|
 | 2026-07-28 | Session 6 | Initial document created from 6 sessions of IB parity debugging |
 | 2026-07-29 | Session 6 | Added §8: parity validation results, EMA fix, IB duration fix, continuous vs raw contract note |
 | 2026-07-29 | Session 7 | Corrected "constant offset" claim (empirically disproven: std=233pts). Added AVWAP feed fix (--avwap-source flag), secondary bug fix (confluence_row not wired in main()). |
+| 2026-07-30 | Session 8 | Added Class F (timestamp convention mismatch), §10: data integrity & timestamp fix, 93.6% parity result. Fixed data_loader.py, ib_pipeline.py, ib_parity_harness.py. Regenerated derived tables. |
