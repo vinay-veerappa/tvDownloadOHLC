@@ -1469,10 +1469,22 @@ def calculate_ib_statistics_v5(
         df_se['stop_exceed_idx'] = np.where(stop_exceed_cond, df['bar_idx'], len(df))
         p3_stop_exceed_idx = df_se.groupby('logical_date')['stop_exceed_idx'].min().reindex(ib_agg.index, fill_value=len(df))
         
+        # NT8 parity fix: IBFadeBot enters via EnterLong()/EnterShort() (market
+        # order) on the bar AFTER the close-back-inside signal. The fill happens
+        # at the next bar's open, NOT at the IB boundary price. This removes the
+        # Class B price-inflation artifact (Python was entering at boundary, NT8
+        # enters at next-bar-open which is already inside the range).
+        # p3_fill_idx = signal bar (close crosses back inside boundary)
+        # p3_fill_next_idx = entry bar (next bar after signal; NT8 market-order fill)
+        p3_fill_next_idx = np.where(p3_fill_idx < len(df), p3_fill_idx + 1, len(df))
+        p3_fill_next_idx_safe = np.minimum(p3_fill_next_idx, len(df) - 1)
+        # Must have a next bar available to enter; if fill is on the last bar, no entry
+        p3_has_next = (p3_fill_idx < len(df)) & (p3_fill_next_idx < len(df))
         # If fill and stop-exceed occur on the same bar, classify as triggered and loss later.
-        p3_active = (first_break_dir != 0) & (p3_fill_idx < len(df)) & (p3_fill_idx <= p3_stop_exceed_idx)
+        p3_active = (first_break_dir != 0) & p3_has_next & (p3_fill_idx <= p3_stop_exceed_idx)
         p3_dir = -first_break_dir
-        p3_entry_price = np.where(first_break_dir == 1, ib_high, ib_low)
+        # Entry price = open of the bar AFTER the close-back-inside signal (NT8 market fill)
+        p3_entry_price = df['open'].values[p3_fill_next_idx_safe]
         p3_target_price = ib_mid
         p3_stop_price = np.where(first_break_dir == 1, ib_high + lvl * ib_range, ib_low - lvl * ib_range)
         
@@ -1482,7 +1494,7 @@ def calculate_ib_statistics_v5(
             'entry_price': pd.Series(p3_entry_price, index=ib_agg.index),
             'target_price': pd.Series(p3_target_price, index=ib_agg.index),
             'stop_price': pd.Series(p3_stop_price, index=ib_agg.index),
-            'entry_idx': p3_fill_idx
+            'entry_idx': pd.Series(p3_fill_next_idx, index=ib_agg.index)
         })
         config_meta.append((3, lvl))
         
