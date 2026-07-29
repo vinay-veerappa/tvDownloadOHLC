@@ -37,8 +37,8 @@ SESSION_CONFIGS = {
     "Tokyo IB":    {"ib_start": time(20, 0), "ib_end": time(21, 0), "out_end": time(2, 0)},
     "London IB":   {"ib_start": time(3, 0),  "ib_end": time(4, 0),  "out_end": time(6, 0)},
     "Midnight OR": {"ib_start": time(0, 0),  "ib_end": time(0, 30), "out_end": time(15, 51)},
-    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 30), "out_end": time(15, 51)},
-    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 30), "out_end": time(15, 51)}
+    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 0), "out_end": time(15, 51)},
+    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 0), "out_end": time(15, 51)}
 }
 
 # New v5 session configs
@@ -50,8 +50,8 @@ SESSION_CONFIGS_V5 = {
     "Tokyo IB":    {"ib_start": time(20, 0), "ib_end": time(21, 0), "out_end": time(2, 0), "time_basis": "event_anchored"},
     "London IB":   {"ib_start": time(3, 0),  "ib_end": time(4, 0),  "out_end": time(6, 0),  "time_basis": "event_anchored"},
     "Midnight OR": {"ib_start": time(0, 0),  "ib_end": time(0, 30), "out_end": time(15, 51), "time_basis": "ET_fixed"},
-    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 30), "out_end": time(15, 51), "time_basis": "ET_fixed"},
-    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 30), "out_end": time(15, 51), "time_basis": "ET_fixed"}
+    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 0), "out_end": time(15, 51), "time_basis": "ET_fixed"},
+    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 0), "out_end": time(15, 51), "time_basis": "ET_fixed"}
 }
 
 
