@@ -236,30 +236,43 @@ def _aggregate_session_features(
         ])
     avwap_out = last[["trading_day"] + feat_cols].copy()
 
-    # Trend confirmations over the session window per day.
-    def _trend_group(g: pd.DataFrame) -> pd.Series:
-        if len(g) < 10:
-            return pd.Series({
-                "ema_20_gt_50": np.nan,
-                "ema_20_slope": np.nan,
-                "higher_highs_ib": np.nan,
-                "lower_lows_ib": np.nan,
-            })
-        close = g["close"]
-        ema20 = close.ewm(span=20, adjust=False, min_periods=10).mean()
-        ema50 = close.ewm(span=50, adjust=False, min_periods=20).mean()
-        higher_highs = (g["high"].diff() > 0).rolling(2).sum().max() >= 2
-        higher_lows = (g["low"].diff() > 0).rolling(2).sum().max() >= 2
-        lower_lows = (g["low"].diff() < 0).rolling(2).sum().max() >= 2
-        lower_highs = (g["high"].diff() < 0).rolling(2).sum().max() >= 2
-        return pd.Series({
-            "ema_20_gt_50": bool(ema20.iloc[-1] > ema50.iloc[-1]),
-            "ema_20_slope": float(ema20.iloc[-1] - ema20.iloc[-10]),
-            "higher_highs_ib": bool(higher_highs and higher_lows),
-            "lower_lows_ib": bool(lower_lows and lower_highs),
+    # Trend confirmations — EMA on DAILY closes (NT8 parity).
+    # NT8 IBStrategyBase computes EMA(20/50) on daily closes (one value per
+    # trading day = rangeClose), NOT on intraday 1-min bars. The 1-min EMA
+    # always trends WITH the break (not misaligned), so it must be computed
+    # across days to match NT8's TrendMisalignedWithBreak filter.
+    # Step 1: extract the daily close (last bar of session window per day).
+    daily_close = sub.groupby("trading_day")["close"].last().sort_index()
+    # Step 2: compute EMA across the daily close series (chronological).
+    ema20_daily = daily_close.ewm(span=20, adjust=False, min_periods=2).mean()
+    ema50_daily = daily_close.ewm(span=50, adjust=False, min_periods=2).mean()
+    # Step 3: map EMA values back to each trading day.
+    ema20_by_day = ema20_daily.to_dict()
+    ema50_by_day = ema50_daily.to_dict()
+    # Step 4: build per-day trend features from the daily EMA series.
+    trend_records = []
+    for day in daily_close.index:
+        e20 = ema20_by_day.get(day, np.nan)
+        e50 = ema50_by_day.get(day, np.nan)
+        # ema_20_slope = change over last 10 days (or available history)
+        day_pos = daily_close.index.get_loc(day)
+        slope_start = max(0, day_pos - 10)
+        e20_slope = float(ema20_daily.iloc[day_pos] - ema20_daily.iloc[slope_start]) if day_pos >= 1 else 0.0
+        # Higher highs / lower lows: 2-bar pattern on daily close
+        if day_pos >= 2:
+            hh = (daily_close.iloc[day_pos] > daily_close.iloc[day_pos - 1] > daily_close.iloc[day_pos - 2])
+            ll = (daily_close.iloc[day_pos] < daily_close.iloc[day_pos - 1] < daily_close.iloc[day_pos - 2])
+        else:
+            hh = False
+            ll = False
+        trend_records.append({
+            "trading_day": day,
+            "ema_20_gt_50": bool(e20 > e50) if not (pd.isna(e20) or pd.isna(e50)) else np.nan,
+            "ema_20_slope": e20_slope,
+            "higher_highs_ib": bool(hh),
+            "lower_lows_ib": bool(ll),
         })
-
-    trend = sub.groupby("trading_day").apply(_trend_group).reset_index()
+    trend = pd.DataFrame(trend_records)
     avwap_out["session_slot"] = session_slot
     avwap_out["time_basis"] = time_basis
     trend["session_slot"] = session_slot
