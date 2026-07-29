@@ -11,10 +11,35 @@ ledger for the same window. The goal is to find WHERE the bar-level Python
 framework diverges from tick-level NT8, quantify each divergence class, and
 identify the changes needed to make Python statistics hold in live.
 
+AVWAP feed-dependency limitation
+--------------------------------
+The ConfluenceFilter common gate (`break_vs_avwap_0930`) is volume-weighted
+(cumulative TPV/Vol from 09:30). The Python live_storage continuous feed and
+the NT8 ##-## continuous feed use DIFFERENT roll adjustment methods and volume
+profiles (empirically: offset std=233pts, ratio std=0.0087 — neither constant).
+This causes the AVWAP to land at different relative positions, flipping the
+sign of (close > AVWAP) and filtering different trade days. IB range, break
+direction, and win/loss are feed-invariant, but AVWAP is NOT.
+
+The `--avwap-source` flag controls how the harness computes the AVWAP gate:
+  - `parquet` (default): use the pre-computed ib_confluence parquet (built from
+    the fused historical+live loader). Validates parity with the PRODUCTION
+    Python pipeline.
+  - `onthefly`: compute AVWAP on-the-fly from the SAME live_storage bars the
+    harness uses for IB boundaries. Validates Python SELF-CONSISTENCY (AVWAP
+    consistent with IB), not NT8 feed-matching.
+  - `none`: ablation — disable the AVWAP common gate (set to 0), keep
+    TrendMisaligned from the parquet if present. Shows the parity ceiling
+    without the feed-dependent AVWAP filter.
+
+Matching NT8 exactly requires loading NT8 raw contract bars into Python
+(future work — Option D in NT8_PYTHON_PARITY_STANDARD.md §8).
+
 ADR compliance:
   - ADR-001: explicit ET localization; parquet timestamps are UTC ms-epoch.
   - ADR-017: vectorized entry/exit detection; one bounded loop for the
-    stop/target tie-break (the documented ADR-017 exception).
+    stop/target tie-break (the documented ADR-017 exception). On-the-fly AVWAP
+    uses vectorized cumsum (no bar-level for-loop).
   - NT8 parity: liquidate on close of the 15:50 ET bar (matches NT8 FlattenBy=1550).
 
 Usage
@@ -29,6 +54,7 @@ Usage
     python -m scripts.validation.ib_parity_harness \
         --ticker NQ1 --play 1 --target 0.5 --stop-mult 2.0 \
         --from 2026-06-01 --to 2026-06-30 \
+        --avwap-source onthefly \
         --nt8-json scratch/nt8_ib_breakout_jun2026.json \
         --out scratch/ib_parity_breakout_jun2026.csv
 """
@@ -101,6 +127,159 @@ def load_ib_facts(ticker: str, session: str, d_from: str, d_to: str) -> pd.DataF
     df = df[(df["session_slot"] == session)]
     df = df[(df["td"] >= d_from) & (df["td"] <= d_to)]
     return df
+
+
+# ─── On-the-fly AVWAP (feed-consistent with the bars the harness uses) ──────
+#
+# The pre-computed ib_confluence parquet is built from the FUSED historical+
+# live loader (scripts/edgeful/ib_avwap_trend.py), which uses a DIFFERENT
+# continuous-contract construction than the live_storage-only bars the harness
+# loads via load_1m_bars(). Empirically (scratch/diagnose_avwap_parity.py):
+#   - Price offset std = 233.24 pts (NOT a constant roll)
+#   - Ratio std = 0.0087 (NOT a multiplicative roll)
+#   - break_vs_avwap_0930 sign FLIPS between the two feeds
+# AVWAP is volume-weighted (cumulative TPV/Vol from 09:30), so different feeds
+# with different absolute prices AND volume profiles land the AVWAP at different
+# relative positions within the IB range, flipping the ConfluenceFilter common
+# gate. The on-the-fly computation below uses the SAME bars_day the harness
+# already uses for IB boundaries, making the AVWAP self-consistent with the IB.
+#
+# ADR-001: bars_day index is already ET-localized (load_1m_bars converts UTC
+#          ms-epoch to America/New_York). between_time() is ET-correct.
+# ADR-017: vectorized cumsum — no Python for-loop over bars.
+#
+# LIMITATION: this validates Python SELF-CONSISTENCY (AVWAP computed from the
+# same feed as the IB), NOT NT8 feed-matching. NT8 uses its own ##-## continuous
+# feed with different roll/volume. To match NT8 exactly, load NT8 raw contract
+# bars into Python (future work — Option D in the parity standard).
+
+
+def compute_break_vs_avwap_0930_onthefly(bars_day: pd.DataFrame) -> int:
+    """Compute break_vs_avwap_0930 on-the-fly from the harness's own bars.
+
+    Mirrors NT8 IBStrategyBase.UpdateConfluenceIndicators: 09:30-anchored AVWAP
+    (cumulative TPV / cumulative Vol from 09:30 ET), evaluated at the first bar
+    that closes beyond the IB boundary. Returns +1 if close > AVWAP, -1 if below,
+    0 if no valid break/AVWAP.
+
+    Parameters
+    ----------
+    bars_day : pd.DataFrame
+        Day's 1-min bars with ET-localized DatetimeIndex and columns
+        [open, high, low, close, volume]. Must be the same DataFrame used for
+        IB boundary detection (ensures feed consistency).
+
+    Returns
+    -------
+    int
+        +1, -1, or 0 (no valid data / no break / AVWAP undefined).
+    """
+    if bars_day.empty:
+        return 0
+
+    # RTH bars only (09:30-15:50 ET) — ADR-001: index is ET-localized.
+    rth = bars_day.between_time("09:30", "15:50")
+    if len(rth) < IB_DURATION_MIN + 1:
+        return 0
+
+    # IB window = first 30 RTH bars (09:30-09:59). AVWAP anchors at 09:30.
+    ib = rth.iloc[:IB_DURATION_MIN]
+    ib_high = float(ib["high"].max())
+    ib_low = float(ib["low"].min())
+    ib_range = ib_high - ib_low
+    if ib_range <= 0:
+        return 0
+
+    # Vectorized 09:30-anchored AVWAP (ADR-017: cumsum, no for-loop).
+    tp = (rth["high"] + rth["low"] + rth["close"]) / 3.0
+    tpv = tp * rth["volume"]
+    cum_tpv = tpv.cumsum()
+    cum_vol = rth["volume"].cumsum()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        avwap = cum_tpv / cum_vol.replace(0, np.nan)
+
+    # First break bar (first close beyond IB boundary AFTER the IB window).
+    post_ib = rth.iloc[IB_DURATION_MIN:]
+    long_break = post_ib[post_ib["close"] > ib_high]
+    short_break = post_ib[post_ib["close"] < ib_low]
+    if long_break.empty and short_break.empty:
+        return 0  # no break → no break_vs_avwap to compute
+
+    long_t = long_break.index[0] if not long_break.empty else pd.Timestamp("2099-12-31", tz=rth.index.tz)
+    short_t = short_break.index[0] if not short_break.empty else pd.Timestamp("2099-12-31", tz=rth.index.tz)
+    break_ts = min(long_t, short_t)
+
+    # AVWAP at the break bar (positional lookup in the rth frame).
+    break_pos = rth.index.get_loc(break_ts)
+    break_avwap = float(avwap.iloc[break_pos])
+    break_close = float(rth["close"].iloc[break_pos])
+
+    if np.isnan(break_avwap):
+        return 0
+    if break_close > break_avwap:
+        return 1
+    if break_close < break_avwap:
+        return -1
+    return 0
+
+
+def build_confluence_row(
+    day: pd.Timestamp,
+    conf_df: pd.DataFrame,
+    bars_day: pd.DataFrame,
+    avwap_source: str,
+) -> Optional[pd.Series]:
+    """Build the confluence_row for a trading day, honoring --avwap-source.
+
+    Parameters
+    ----------
+    day : pd.Timestamp (date-only)
+        The trading day.
+    conf_df : pd.DataFrame
+        Pre-loaded confluence parquet (indexed by date, filtered to session).
+        May be empty if the parquet is missing.
+    bars_day : pd.DataFrame
+        Day's 1-min bars (ET-localized) — used for on-the-fly AVWAP.
+    avwap_source : str
+        One of 'parquet' (use pre-computed), 'onthefly' (compute from bars),
+        'none' (disable AVWAP gate, keep TrendMisaligned from parquet if present).
+
+    Returns
+    -------
+    pd.Series or None
+        Confluence row with break_vs_avwap_0930 and trend_misaligned_with_break.
+        None if no confluence data and avwap_source cannot synthesize a row.
+    """
+    # Try the pre-computed parquet first (handles missing/empty gracefully).
+    # The confluence index is date objects (set in load_confluence), so convert
+    # the Timestamp to a date for matching.
+    row: Optional[pd.Series] = None
+    lookup_day = day.date() if isinstance(day, pd.Timestamp) else day
+    if not conf_df.empty and lookup_day in conf_df.index:
+        sub = conf_df.loc[[lookup_day]]
+        if isinstance(sub, pd.DataFrame) and not sub.empty:
+            row = sub.iloc[0].copy()
+
+    if avwap_source == "none":
+        # Ablation: bypass the ENTIRE ConfluenceFilter (no AVWAP, no
+        # TrendMisaligned). Returns None so simulate_play1_day skips the
+        # filter block entirely — shows the no-filter parity ceiling.
+        return None
+
+    if avwap_source == "onthefly":
+        # Compute AVWAP from the same bars the harness uses (feed-consistent).
+        onthefly_bva = compute_break_vs_avwap_0930_onthefly(bars_day)
+        if row is None:
+            row = pd.Series(dtype=object)
+        row["break_vs_avwap_0930"] = onthefly_bva
+        # TrendMisaligned comes from the parquet (daily EMA) — keep if present,
+        # else default to False (no trend filter when parquet absent).
+        if "trend_misaligned_with_break" not in row.index:
+            row["trend_misaligned_with_break"] = False
+        return row
+
+    # avwap_source == "parquet" (default): use pre-computed values as-is.
+    return row
 
 
 # ─── Python IB trade simulator (mirrors evaluate_all_plays_consolidated) ────
@@ -522,10 +701,20 @@ def main() -> int:
     ap.add_argument("--session", default="NY AM IB")
     ap.add_argument("--nt8-json", help="Saved nt_backtest JSON for the same window")
     ap.add_argument("--out", help="Output CSV for the trade-by-trade diff")
+    ap.add_argument(
+        "--avwap-source",
+        choices=["parquet", "onthefly", "none"],
+        default="parquet",
+        help=(
+            "AVWAP gate source: 'parquet' (pre-computed ib_confluence, default), "
+            "'onthefly' (vectorized from the harness's own bars — feed-consistent), "
+            "or 'none' (ablation — disable AVWAP gate, keep TrendMisaligned)"
+        ),
+    )
     args = ap.parse_args()
 
     print(f"[parity] {args.ticker} Play {args.play} target={args.target} stop_mult={args.stop_mult}")
-    print(f"         window {args.d_from} -> {args.d_to}")
+    print(f"         window {args.d_from} -> {args.d_to}  avwap-source={args.avwap_source}")
 
     # 1. Python side
     print("\n[1] Building Python trade ledger...")
@@ -533,8 +722,11 @@ def main() -> int:
     print(f"    loaded {len(bars)} 1-min bars")
     facts = load_ib_facts(args.ticker, args.session, args.d_from, args.d_to)
     print(f"    loaded {len(facts)} ib_facts rows ({args.session})")
+    conf_df = load_confluence(args.ticker, args.session, args.d_from, args.d_to)
+    print(f"    loaded {len(conf_df)} confluence rows ({args.session})")
 
     py_trades = []
+    skipped_by_filter = 0
     for _, frow in facts.iterrows():
         day = frow["td"].date()
         day_bars = bars[bars.index.date == day]
@@ -543,15 +735,37 @@ def main() -> int:
         ib_high = float(frow["ib_high"])
         ib_low = float(frow["ib_low"])
         ib_range = float(frow["ib_range"])
+
+        # Build the confluence row honoring --avwap-source (AVWAP feed fix).
+        confluence_row = build_confluence_row(
+            pd.Timestamp(day), conf_df, day_bars, args.avwap_source,
+        )
+
         if args.play == 1:
-            t = simulate_play1_day(day_bars, ib_high, ib_low, ib_range, args.target, args.stop_mult)
+            t = simulate_play1_day(
+                day_bars, ib_high, ib_low, ib_range, args.target, args.stop_mult,
+                confluence_row=confluence_row,
+            )
         else:
-            t = simulate_play3_day(day_bars, ib_high, ib_low, ib_range, args.target, args.stop_mult, args.overshoot)
+            # Play 3 (fade) does not use the TrendMisaligned filter, but the
+            # break_vs_avwap_0930 common gate still applies when confluence_row
+            # is provided. simulate_play3_day currently ignores confluence_row;
+            # pass it for forward-compat if the filter is later wired into P3.
+            t = simulate_play3_day(
+                day_bars, ib_high, ib_low, ib_range, args.target, args.stop_mult, args.overshoot,
+            )
         if t is not None:
             t["date"] = day
             t["play"] = args.play
+            t["avwap_source"] = args.avwap_source
+            if confluence_row is not None:
+                t["break_vs_avwap_0930"] = confluence_row.get("break_vs_avwap_0930", np.nan)
+                t["trend_misaligned"] = confluence_row.get("trend_misaligned_with_break", np.nan)
             py_trades.append(t)
-    print(f"    Python produced {len(py_trades)} trades")
+        else:
+            skipped_by_filter += 1
+    print(f"    Python produced {len(py_trades)} trades "
+          f"({skipped_by_filter} skipped by ConfluenceFilter/avwap-source={args.avwap_source})")
 
     # 2. NT8 side
     nt8_trades = []

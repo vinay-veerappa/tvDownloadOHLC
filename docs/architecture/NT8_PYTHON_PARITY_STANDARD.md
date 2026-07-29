@@ -226,14 +226,52 @@ From the IB profitability debate sessions (V1 failed, V2 succeeded):
 | Jan 2026 | 1/5 (20%) | AVWAP anchor offset from roll gap affects `break_vs_avwap_0930` |
 | May–Jun 2026 | 4/6 (67%) | Moderate data gap |
 
-### Note on Continuous vs Raw Contract
+### Note on Continuous vs Raw Contract (empirically verified 2026-07-29)
 
-A futures roll adjustment is a **constant price offset** applied uniformly to all bars. It does NOT affect:
-- IB range (high - low is identical regardless of offset)
-- Break direction (a break above IB high is the same in both series)
-- Win/loss outcome (the stop/target distances are the same)
+**CORRECTION**: The initial assumption that "a futures roll adjustment is a
+constant price offset" is **WRONG**. Empirical testing
+(`scratch/diagnose_avwap_parity.py`) across 51 NT8 trades (Jan-Jun 2026) showed:
 
-The remaining mismatches are NOT from the IB computation itself. They are from the **AVWAP anchor** (`break_vs_avwap_0930`), which is a cumulative volume-weighted price from 09:30. The AVWAP price level differs between continuous and raw contract data because the cumulative TPV (typical price × volume) is computed at different absolute price levels. This causes the `break_vs_avwap_0930` common gate to evaluate differently, filtering different trade days. The IB boundaries and break directions are the same in both series.
+- Price offset (NT8 - Python): mean=55.75, **std=233.24**, range -643.75 to +438.00
+- Price ratio (NT8/Python): mean=1.0025, **std=0.0087**, range 0.979 to 1.017
+- **Neither constant nor multiplicative** — the two "continuous" feeds use
+  fundamentally different roll adjustment methods and volume profiles.
+
+**What IS feed-invariant** (unaffected by the roll construction):
+- IB range (high - low is the same within a day)
+- Break direction (close > ib_high is the same in both series)
+- Win/loss outcome (stop/target distances are the same)
+
+**What is NOT feed-invariant** (affected by the roll construction):
+- **AVWAP** (`break_vs_avwap_0930`): cumulative TPV/Vol from 09:30. Different
+  feeds have different absolute prices AND volume profiles, so the AVWAP lands
+  at different relative positions. The sign of (close > AVWAP) **flips** on
+  ~36% of days (8/22 June days). This is the `break_vs_avwap_0930` common gate.
+- **TrendMisaligned** (`trend_misaligned_with_break`): daily EMA20/EMA50. The
+  EMA is computed on daily closes from the fused historical+live loader, which
+  uses a different continuous construction than NT8's ##-## feed. The EMA
+  crossover can differ, flipping the trend filter.
+
+### AVWAP Feed Fix (2026-07-29 Session 7)
+
+Added `--avwap-source {parquet,onthefly,none}` CLI flag to `ib_parity_harness.py`:
+
+| Source | Description | Trade count (6mo) | W/L match | Use case |
+|---|---|---|---|---|
+| `none` | Disable ConfluenceFilter entirely | 127 | 29/39 (74.4%) | Ablation baseline |
+| `parquet` | Pre-computed ib_confluence (fused loader) | 60 | 22/29 (75.9%) | Production pipeline parity |
+| `onthefly` | Compute AVWAP from harness's own bars | 60 | 22/29 (75.9%) | Python self-consistency |
+
+**Key finding**: `parquet` and `onthefly` produce IDENTICAL trade counts and
+match rates. The TrendMisaligned filter (from the parquet) is the dominant gate;
+the AVWAP common gate (break_vs_avwap_0930 != 0) rarely blocks since most days
+have a clear break direction. The AVWAP sign flip on 36% of days does NOT change
+which days pass the filter. The remaining 24.1% mismatch is from entry-time,
+entry-price, and fill-resolution differences, NOT from AVWAP.
+
+The secondary bug (harness `main()` not passing `confluence_row` to
+`simulate_play1_day`) was also fixed — the harness now applies the
+ConfluenceFilter, reducing over-trading from 127 to 60 trades.
 
 ---
 
@@ -243,3 +281,4 @@ The remaining mismatches are NOT from the IB computation itself. They are from t
 |---|---|---|
 | 2026-07-28 | Session 6 | Initial document created from 6 sessions of IB parity debugging |
 | 2026-07-29 | Session 6 | Added §8: parity validation results, EMA fix, IB duration fix, continuous vs raw contract note |
+| 2026-07-29 | Session 7 | Corrected "constant offset" claim (empirically disproven: std=233pts). Added AVWAP feed fix (--avwap-source flag), secondary bug fix (confluence_row not wired in main()). |
