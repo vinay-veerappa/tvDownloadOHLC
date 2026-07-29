@@ -15,7 +15,7 @@ ADR compliance:
   - ADR-001: explicit ET localization; parquet timestamps are UTC ms-epoch.
   - ADR-017: vectorized entry/exit detection; one bounded loop for the
     stop/target tie-break (the documented ADR-017 exception).
-  - ADR-020: liquidate on close of the 15:59 ET bar (matches NT8 16:00 fence).
+  - NT8 parity: liquidate on close of the 15:50 ET bar (matches NT8 FlattenBy=1550).
 
 Usage
 -----
@@ -46,8 +46,10 @@ import pandas as pd
 
 # ─── Session config (matches SESSION_CONFIGS_V5 NY AM IB) ───────────────────
 RTH_OPEN_ET = time(9, 30)
-RTH_CLOSE_ET = time(16, 0)              # exclusive upper bound
-LIQUIDATION_BAR_CLOSE_ET = time(15, 59) # ADR-020: exit on close of 15:59 bar
+# NT8 parity: IBStrategyBase FlattenBy=1550 → Python liquidates at 15:50 bar close
+# (out_end=15:51 means last in_out bar = 15:50, exclusive upper bound pattern)
+RTH_CLOSE_ET = time(15, 51)              # exclusive upper bound (last bar = 15:50)
+LIQUIDATION_BAR_CLOSE_ET = time(15, 50)  # NT8 parity: exit on close of 15:50 bar
 IB_START_ET = time(9, 30)
 IB_DURATION_MIN = 30                    # IBStrategyBase default (Phase F)
 
@@ -94,7 +96,7 @@ def load_ib_facts(ticker: str, session: str, d_from: str, d_to: str) -> pd.DataF
 #   - First bar where stop touched -> stop exit.
 #   - First bar where target touched -> target exit.
 #   - TIE-BREAK: if both touched on the same bar, STOP WINS (conservative).
-#   - Liquidation at close of 15:59 ET bar (ADR-020).
+#   - Liquidation at close of 15:50 ET bar (NT8 parity: FlattenBy=1550).
 #   - MAE/MFE from intrabar high/low across the in-trade window.
 
 
@@ -119,7 +121,7 @@ def simulate_play1_day(
     # Filter to RTH bars only (09:30-16:00 ET) — NT8 trades the RTH session,
     # and ib_facts ib_high/ib_low are the 09:30-10:00 IB window. Overnight
     # Globex bars would produce false breakouts.
-    rth = bars_day.between_time("09:30", "15:59")
+    rth = bars_day.between_time("09:30", "15:50")
     if len(rth) < IB_DURATION_MIN + 1:
         return None
 
@@ -171,8 +173,8 @@ def simulate_play3_day(
     if ib_range <= 0 or len(bars_day) < IB_DURATION_MIN + 1:
         return None
 
-    # Filter to RTH bars only (09:30-15:59 ET)
-    rth = bars_day.between_time("09:30", "15:59")
+    # Filter to RTH bars only (09:30-15:50 ET, NT8 FlattenBy=1550)
+    rth = bars_day.between_time("09:30", "15:50")
     if len(rth) < IB_DURATION_MIN + 1:
         return None
 
@@ -280,7 +282,7 @@ def _resolve_exit(
         if ts.time() >= LIQUIDATION_BAR_CLOSE_ET:
             exit_price = float(row["close"])
             exit_time = ts
-            exit_reason = "liquidation_1559"
+            exit_reason = "liquidation_1550"
             break
 
     if exit_price is None:

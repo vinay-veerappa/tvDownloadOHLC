@@ -31,23 +31,27 @@ from scripts.libs_py.nqstats.sessions import (
 )
 
 # Legacy session configs for backward compatibility
+# NT8 parity: out_end = 15:51 so last in_out bar = 15:50 (matches NT8 FlattenBy=1550)
 SESSION_CONFIGS = {
     "Globex IB":   {"ib_start": time(18, 0), "ib_end": time(19, 0), "out_end": time(2, 0)},
     "Tokyo IB":    {"ib_start": time(20, 0), "ib_end": time(21, 0), "out_end": time(2, 0)},
     "London IB":   {"ib_start": time(3, 0),  "ib_end": time(4, 0),  "out_end": time(6, 0)},
-    "Midnight OR": {"ib_start": time(0, 0),  "ib_end": time(0, 30), "out_end": time(16, 0)},
-    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 30), "out_end": time(16, 0)},
-    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 30), "out_end": time(16, 0)}
+    "Midnight OR": {"ib_start": time(0, 0),  "ib_end": time(0, 30), "out_end": time(15, 51)},
+    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 30), "out_end": time(15, 51)},
+    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 30), "out_end": time(15, 51)}
 }
 
 # New v5 session configs
+# NT8 parity: RTH sessions use out_end = 15:51 so last in_out bar = 15:50
+# (matches NT8 IBStrategyBase FlattenBy=1550). The mask is (times < out_end),
+# so out_end=15:51 includes the 15:50 bar but excludes 15:51+.
 SESSION_CONFIGS_V5 = {
     "Globex IB":   {"ib_start": time(18, 0), "ib_end": time(19, 0), "out_end": time(20, 0), "time_basis": "ET_fixed"},
     "Tokyo IB":    {"ib_start": time(20, 0), "ib_end": time(21, 0), "out_end": time(2, 0), "time_basis": "event_anchored"},
     "London IB":   {"ib_start": time(3, 0),  "ib_end": time(4, 0),  "out_end": time(6, 0),  "time_basis": "event_anchored"},
-    "Midnight OR": {"ib_start": time(0, 0),  "ib_end": time(0, 30), "out_end": time(16, 0), "time_basis": "ET_fixed"},
-    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 30), "out_end": time(16, 0), "time_basis": "ET_fixed"},
-    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 30), "out_end": time(16, 0), "time_basis": "ET_fixed"}
+    "Midnight OR": {"ib_start": time(0, 0),  "ib_end": time(0, 30), "out_end": time(15, 51), "time_basis": "ET_fixed"},
+    "NY AM IB":    {"ib_start": time(9, 30), "ib_end": time(10, 30), "out_end": time(15, 51), "time_basis": "ET_fixed"},
+    "NY PM IB":    {"ib_start": time(13, 30), "ib_end": time(14, 30), "out_end": time(15, 51), "time_basis": "ET_fixed"}
 }
 
 
