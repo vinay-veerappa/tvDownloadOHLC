@@ -56,6 +56,26 @@ IB_DURATION_MIN = 30                    # IBStrategyBase default (Phase F)
 # ─── Data loading ──────────────────────────────────────────────────────────
 LIVE_STORAGE_TMPL = "data/live/live_storage_-{ticker}.parquet"
 FACTS_PATH_TMPL = "data/derived/ib_facts_{ticker}.parquet"
+CONFLUENCE_PATH_TMPL = "data/derived/ib_confluence_{ticker}.parquet"
+
+
+def load_confluence(ticker: str, session: str, d_from: str, d_to: str) -> pd.DataFrame:
+    """Load ib_confluence parquet for the window, filtered to one session slot.
+
+    Returns a DataFrame indexed by trading_day (date) with filter columns:
+    break_vs_avwap_0930, trend_misaligned_with_break, ib_vcp_3day_contracting,
+    is_opex_week, is_quarterly_opex, ib_low_body_close, ib_high_body_close.
+    """
+    path = CONFLUENCE_PATH_TMPL.format(ticker=ticker)
+    try:
+        df = pd.read_parquet(path)
+    except FileNotFoundError:
+        return pd.DataFrame()
+    df = df[df["session_slot"] == session].copy()
+    df["td"] = pd.to_datetime(df["trading_day"]).dt.date
+    df = df.set_index("td")
+    df = df.loc[pd.Timestamp(d_from).date() : pd.Timestamp(d_to).date()]
+    return df
 
 
 def load_1m_bars(ticker: str, d_from: str, d_to: str) -> pd.DataFrame:
@@ -107,6 +127,7 @@ def simulate_play1_day(
     ib_range: float,
     target_lvl: float,
     stop_mult: float,
+    confluence_row: Optional[pd.Series] = None,
 ) -> Optional[Dict[str, Any]]:
     """Play 1 (breakout): one trade per day, first close beyond IB boundary.
 
@@ -114,7 +135,20 @@ def simulate_play1_day(
     actual stop distance = stop_mult * target_lvl * ib_range.
     With stop_mult=2.0 and target_lvl=0.5, stop = 2.0*0.5*range = 1.0*range
     = opposite IB boundary (matches IBBreakoutBot.cs StopRMult=2.0).
+
+    confluence_row: optional Series with NT8 ConfluenceFilter columns for this
+    trading day. When provided, applies the break_vs_avwap_0930 common gate and
+    the TrendMisaligned filter (mirrors NT8 IBStrategyBase default).
     """
+    # NT8 parity: ConfluenceFilter gate (mirrors IBStrategyBase.ConfluenceFilter)
+    if confluence_row is not None:
+        bva = confluence_row.get("break_vs_avwap_0930", 0)
+        if pd.isna(bva) or bva == 0:
+            return None  # common gate: skip if no clear break-vs-AVWAP direction
+        if confluence_row.get("trend_misaligned_with_break", False):
+            pass  # TrendMisaligned filter ON — allow only when misaligned
+        else:
+            return None  # TrendMisaligned filter rejects
     if ib_range <= 0 or len(bars_day) < IB_DURATION_MIN + 1:
         return None
 

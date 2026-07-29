@@ -1467,10 +1467,19 @@ def calculate_ib_statistics_v5(
         config_meta.append((1, lvl))
         
         # Play 2
+        # NT8 parity: IBRetestBot enters via EnterLong()/EnterShort() (market order)
+        # on the bar AFTER the close-confirmed mid touch. The fill happens at the
+        # next bar's open, NOT at ib_mid. Python was entering at ib_mid (the signal
+        # bar's mid price), inflating the entry for continuation plays.
+        # p2_entry_idx = signal bar (mid touch); p2_entry_next_idx = entry bar (next bar open)
+        p2_entry_next_idx = np.where(p2_entry_idx < len(df), p2_entry_idx + 1, len(df))
+        p2_entry_next_idx_safe = np.minimum(p2_entry_next_idx, len(df) - 1)
+        p2_has_next = (p2_entry_idx < len(df)) & (p2_entry_next_idx < len(df))
         # If entry and invalidation occur on the same bar, classify as triggered and loss later.
-        p2_active = (first_break_dir != 0) & (p2_entry_idx < len(df)) & (p2_entry_idx <= first_viol_idx)
+        p2_active = (first_break_dir != 0) & p2_has_next & (p2_entry_idx <= first_viol_idx)
         p2_dir = first_break_dir
-        p2_entry_price = ib_mid
+        # Entry price = open of the bar AFTER the mid touch signal (NT8 market fill)
+        p2_entry_price = df['open'].values[p2_entry_next_idx_safe]
         p2_target_price = np.where(p2_dir == 1, ib_high + lvl * ib_range, ib_low - lvl * ib_range)
         p2_stop_price = np.where(p2_dir == 1, ib_low, ib_high)
         
@@ -1480,7 +1489,7 @@ def calculate_ib_statistics_v5(
             'entry_price': pd.Series(p2_entry_price, index=ib_agg.index),
             'target_price': pd.Series(p2_target_price, index=ib_agg.index),
             'stop_price': pd.Series(p2_stop_price, index=ib_agg.index),
-            'entry_idx': p2_entry_idx
+            'entry_idx': pd.Series(p2_entry_next_idx, index=ib_agg.index)
         })
         config_meta.append((2, lvl))
         
