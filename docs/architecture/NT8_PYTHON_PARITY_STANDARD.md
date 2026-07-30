@@ -399,7 +399,54 @@ price levels, producing different IB boundaries and different trade days.
 
 ---
 
-## 11. Revision History
+## 11. Session 9 Final Updates — Stop Fix + Missing Bars + MAE Analysis
+
+### Stop Fix: IB-Relative (not entry-relative)
+
+IBBreakoutBot had the stop computed as `entry - StopRMult * TargetLvl * range`
+(entry-relative). Changed to `rangeLow` (long) / `rangeHigh` (short) = opposite
+IB boundary (IB-relative). The canonical `ib.py` already had this correct.
+
+**IBRetestBot** and **IBFadeBot** were already correct — no fix needed:
+- IBRetestBot: stop at `rangeLow`/`rangeHigh` (opposite IB boundary) ✓
+- IBFadeBot: stop at `rangeHigh + StopRMult*range` (beyond boundary, IB-relative) ✓
+
+### Missing Bars Root Cause (1 remaining disagreement)
+
+The 1 disagreement on 2026-05-25 is caused by NT8's cached data **missing bars**
+during low-volume periods. On that day, NT8 has only 15 of 30 IB-window bars,
+causing different IB boundaries (NT8 IB high=30,272 vs Python IB high=30,286)
+and a different break bar (NT8 enters 2 bars later). This is a data completeness
+issue, not a code bug.
+
+### MAE/MFE Analysis (188 trades, 19 months)
+
+**Key findings:**
+- Avg IB range: 158 pts, WR: 66.5%
+- Winners MAE: median=37pts (23% of range), P80=80pts (51% of range)
+- Losers MAE: median=156pts (99% of range) — losers almost always reach the full opposite boundary
+- Losers MFE: median=24pts (15% of range) — losers barely move in favor before reversing
+- 0% of losers touched the 0.5*range target → clean winner/loser separation
+
+**Current geometry problem (after stop fix):**
+- Stop = opposite IB boundary (1.0*range), Target = 0.5*range
+- R:R = 0.5:1.0 (inverted — risk 2x to make 1x)
+- Breakeven WR = 66.7%, actual WR = 66.5% → PF < 1 → negative expectancy
+
+**Stop optimization insights:**
+- Tighter stops are better: losers have very low MFE (24pts median), so tight stops catch them early
+- Stop at 0.25*range: WR=39%, PF=1.27, E[pts]=+6.6, 54 trades (marginally positive)
+- Stop at 0.15*range: WR=45%, PF=2.73, but only 20 trades (too few)
+- The IB-relative stop (1.0*range) is too wide — the edge is in the tight stop
+
+**Recommendation:** Revert to entry-relative stop at 0.25*range (tight, catches losers
+early) with target at 0.5*range (2:1 R:R in favor). This gives PF 1.27 with 54 trades
+over 19 months. Alternatively, explore Play 2 (retest) which showed PF 1.638 in prior
+backtests.
+
+---
+
+## 12. Revision History
 
 | Date | Session | Change |
 |---|---|---|
@@ -408,3 +455,4 @@ price levels, producing different IB boundaries and different trade days.
 | 2026-07-29 | Session 7 | Added `--avwap-source` flag, confluence_row wiring fix |
 | 2026-07-30 | Session 8 | Added Class F (timestamp convention mismatch), data_loader fix, 93.6% parity |
 | 2026-07-29 | Session 9 | **Canonical update**: Contract fix (NQ 09-26), EMA IB-close fix, compile verification, 97.9% parity (46/47). Rewrote §8-§11 to remove stale NQ 03-26 results and incorrect roll-adjustment claims. |
+| 2026-07-29 | Session 9 final | Stop fix (IB-relative), missing bars root cause, MAE/MFE analysis. 100% on live July data. IBRetestBot/IBFadeBot verified already correct. Geometry problem identified: R:R inverted after stop fix. |
