@@ -109,11 +109,11 @@ def run_prop_firm_simulation(
     lower_band: np.ndarray,
     hma: np.ndarray,
     atr: np.ndarray,
-    day_indices: np.ndarray,  # Integer ID for each trading day
+    day_indices: np.ndarray,
     mode1_signals: np.ndarray,
     mode2_signals: np.ndarray,
-    sl_atr_mode1: float,
-    sl_atr_mode2: float,
+    sl_type: int,  # 0=ATR, 1=Structural Swing, 2=Indicator Line, 3=BPS % (e.g. 5 bps = 0.05%)
+    sl_val: float,  # ATR multiplier, or BPS count (e.g. 5.0 for 5 bps = 0.05%)
     tp_atr_mode1: float,
     tp_atr_mode2: float,
     max_hold_bars: int,
@@ -124,7 +124,7 @@ def run_prop_firm_simulation(
     point_value: float,
     slippage_ticks: float,
 ):
-    """Numba execution engine enforcing strict Prop Firm risk gatekeeping."""
+    """Numba execution engine enforcing strict Prop Firm risk gatekeeping with 4 SL modes."""
     n = len(closes)
 
     entry_indices = np.zeros(n, dtype=np.int32)
@@ -145,7 +145,6 @@ def run_prop_firm_simulation(
     trade_entry_p = 0.0
     trade_sl = 0.0
     trade_tp = 0.0
-    risk_pts = 0.0
 
     slippage_pts = slippage_ticks * tick_size
 
@@ -156,10 +155,9 @@ def run_prop_firm_simulation(
     consec_losses = 0
     done_for_day = False
 
-    for i in range(1, n - 1):
+    for i in range(5, n - 1):
         day_id = day_indices[i]
 
-        # Reset daily counters on new trading day
         if day_id != current_day:
             current_day = day_id
             daily_trades = 0
@@ -168,7 +166,6 @@ def run_prop_firm_simulation(
             done_for_day = False
 
         if not in_trade:
-            # Check Prop Firm Risk Gatekeeper Rules
             if done_for_day or daily_trades >= max_trades_per_day or daily_pnl <= -max_daily_loss or consec_losses >= max_consec_losses:
                 continue
 
@@ -176,7 +173,6 @@ def run_prop_firm_simulation(
             sig1 = mode1_signals[i]
 
             if sig2 != 0 and not np.isnan(atr[i]) and atr[i] > 0:
-                # Mode 2: Expansion Trend Scalp
                 target_limit = hma[i]
                 next_low = lows[i + 1]
                 next_high = highs[i + 1]
@@ -194,7 +190,29 @@ def run_prop_firm_simulation(
                     entry_idx = i + 1
                     trade_mode = 2
                     trade_dir = sig2
-                    risk_pts = sl_atr_mode2 * atr[i]
+
+                    # Calculate Initial Stop Loss based on selected sl_type
+                    if sl_type == 0:
+                        # ATR Multiplier
+                        risk_pts = sl_val * atr[i]
+                    elif sl_type == 1:
+                        # Structural Swing Low / Swing High (5 bars)
+                        if trade_dir == 1:
+                            swing_l = np.min(lows[i - 4 : i + 1])
+                            risk_pts = max(trade_entry_p - swing_l + tick_size, tick_size * 4)
+                        else:
+                            swing_h = np.max(highs[i - 4 : i + 1])
+                            risk_pts = max(swing_h - trade_entry_p + tick_size, tick_size * 4)
+                    elif sl_type == 2:
+                        # Indicator Line Anchor (HMA distance)
+                        risk_pts = max(abs(trade_entry_p - hma[i]), atr[i] * 0.5)
+                    elif sl_type == 3:
+                        # Basis Points (BPS) / Fixed % of Price (sl_val BPS, e.g. 5 BPS = 0.05%)
+                        bps_decimal = sl_val / 10000.0
+                        risk_pts = max(trade_entry_p * bps_decimal, tick_size * 4)
+                    else:
+                        risk_pts = sl_val * atr[i]
+
                     if trade_dir == 1:
                         trade_sl = trade_entry_p - risk_pts
                         trade_tp = trade_entry_p + (tp_atr_mode2 * atr[i])
@@ -203,7 +221,6 @@ def run_prop_firm_simulation(
                         trade_tp = trade_entry_p - (tp_atr_mode2 * atr[i])
 
             elif sig1 != 0 and not np.isnan(atr[i]) and atr[i] > 0 and not np.isnan(sma20[i]):
-                # Mode 1: Squeeze Mean Reversion
                 limit_target = lower_band[i] if sig1 == 1 else upper_band[i]
                 next_low = lows[i + 1]
                 next_high = highs[i + 1]
@@ -221,7 +238,15 @@ def run_prop_firm_simulation(
                     entry_idx = i + 1
                     trade_mode = 1
                     trade_dir = sig1
-                    risk_pts = sl_atr_mode1 * atr[i]
+
+                    if sl_type == 0:
+                        risk_pts = sl_val * atr[i]
+                    elif sl_type == 3:
+                        bps_decimal = sl_val / 10000.0
+                        risk_pts = max(trade_entry_p * bps_decimal, tick_size * 4)
+                    else:
+                        risk_pts = sl_val * atr[i]
+
                     if trade_dir == 1:
                         trade_sl = trade_entry_p - risk_pts
                         trade_tp = trade_entry_p + (tp_atr_mode1 * atr[i])
@@ -358,7 +383,8 @@ class PropFirmAdaptiveScalperBacktester:
         htf_ema_period: int = 200,
         sl_mode1: float = 1.0,
         tp_mode1: float = 1.0,
-        sl_mode2: float = 1.5,
+        sl_type: int = 0,
+        sl_val: float = 1.5,
         tp_mode2: float = 1.0,  # Tight TP for > 65% Win Rate
         max_hold: int = 4,
         max_trades_per_day: int = 3,
@@ -488,8 +514,8 @@ class PropFirmAdaptiveScalperBacktester:
             day_ids,
             signals_m1,
             signals_m2,
-            sl_mode1,
-            sl_mode2,
+            sl_type,
+            sl_val,
             tp_mode1,
             tp_mode2,
             max_hold,
@@ -532,6 +558,7 @@ class PropFirmAdaptiveScalperBacktester:
         results = {
             "Ticker": self.ticker,
             "Strategy": "Prop Firm Optimized Adaptive Scalper",
+            "SL Mode": ["0: ATR Multiplier", "1: Structural Swing Low/High", "2: Indicator Line", "3: 5 BPS (0.05% Price)"][sl_type],
             "Total Trades": total_trades,
             "Mode 1 Win Rate (%)": round(m1_win_rate, 2),
             "Mode 2 Win Rate (%)": round(m2_win_rate, 2),
@@ -554,7 +581,9 @@ def main():
     parser.add_argument("--hma_period", type=int, default=14, help="HMA Period (default 14)")
     parser.add_argument("--st_mult", type=float, default=2.0, help="SuperTrend Multiplier (default 2.0)")
     parser.add_argument("--tp_mode2", type=float, default=1.0, help="Mode 2 TP ATR (default 1.0 for high WR)")
-    parser.add_argument("--sl_mode2", type=float, default=1.5, help="Mode 2 SL ATR (default 1.5)")
+    parser.add_argument("--sl_type", type=int, default=0, help="SL Type: 0=ATR, 1=Structural, 2=Indicator, 3=5 BPS (0.05%%)")
+    parser.add_argument("--sl_val", type=float, default=1.5, help="SL Value: ATR mult or BPS count (e.g. 5.0 for 5 BPS = 0.05%%)")
+    parser.add_argument("--compare_sl", action="store_true", help="Compare all 4 Stop Loss modes in a sweep")
     args = parser.parse_args()
 
     if args.data_path is None:
@@ -563,29 +592,55 @@ def main():
         data_path = Path(args.data_path)
 
     print("=" * 80)
-    print(f"PROP FIRM OPTIMIZED ADAPTIVE QUANT SCALPER")
-    print(f"Ticker: {args.ticker} | Data File: {data_path.name}")
+    print(f"PROP FIRM RISK GATEKEEPER BACKTEST: {args.ticker}")
     print("=" * 80)
 
-    backtester = PropFirmAdaptiveScalperBacktester(str(data_path), ticker=args.ticker)
+    bt = PropFirmAdaptiveScalperBacktester(str(data_path), ticker=args.ticker)
     print("Loading Parquet dataset...")
-    df = backtester.load_data()
+    df = bt.load_data()
     print(f"Loaded {len(df):,} 1-minute bars spanning {df.index[0]} to {df.index[-1]}")
 
-    print("\nRunning Prop Firm Risk-Managed Simulation...")
-    res = backtester.run_backtest(
-        df,
-        hma_period=args.hma_period,
-        st_mult=args.st_mult,
-        tp_mode2=args.tp_mode2,
-        sl_mode2=args.sl_mode2,
-    )
+    if args.compare_sl:
+        print("\nRUNNING COMPARATIVE STOP LOSS EXPERIMENT ACROSS ALL 4 SL MODES...")
+        sl_modes = [
+            (0, 1.5, "0: 1.5x ATR Volatility-Dynamic"),
+            (1, 0.0, "1: Structural Swing Low/High Invalidation"),
+            (2, 0.0, "2: Indicator Line (HMA Anchor)"),
+            (3, 5.0, "3: 5 Basis Points (0.05% of Entry Price)"),
+            (3, 10.0, "4: 10 Basis Points (0.10% of Entry Price)"),
+        ]
+        sweep_results = []
+        for sl_t, sl_v, name in sl_modes:
+            res = bt.run_backtest(
+                df,
+                hma_period=args.hma_period,
+                st_mult=args.st_mult,
+                tp_mode2=args.tp_mode2,
+                sl_type=sl_t,
+                sl_val=sl_v,
+            )
+            res["SL Mode Name"] = name
+            sweep_results.append(res)
 
-    print("\nPROP FIRM EVALUATION PERFORMANCE REPORT")
-    print("-" * 55)
-    for k, v in res.items():
-        print(f"  {k:<28}: {v}")
-    print("-" * 55)
+        df_res = pd.DataFrame(sweep_results)
+        cols = ["SL Mode Name", "Total Trades", "Mode 2 Win Rate (%)", "COMBINED WIN RATE (%)", "PROFIT FACTOR", "NET PROFIT ($)", "MAX TRAILING DRAWDOWN ($)"]
+        print("\n" + df_res[cols].to_string(index=False))
+        print("=" * 80)
+    else:
+        res = bt.run_backtest(
+            df,
+            hma_period=args.hma_period,
+            st_mult=args.st_mult,
+            tp_mode2=args.tp_mode2,
+            sl_type=args.sl_type,
+            sl_val=args.sl_val,
+        )
+
+        print("\nPROP FIRM EVALUATION PERFORMANCE REPORT")
+        print("-" * 55)
+        for k, v in res.items():
+            print(f"  {k:<28}: {v}")
+        print("-" * 55)
 
 
 if __name__ == "__main__":

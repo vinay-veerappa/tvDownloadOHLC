@@ -40,7 +40,7 @@ def anchored_vwap(df: pd.DataFrame, anchor_time_et: str = '09:30') -> pd.Series:
     df['pv'] = df['typical'] * df['volume']
     df['in_session'] = df['minute_of_day'] >= anchor_min
     df['session_id'] = (df['date'].astype(str) + '_' + df['in_session'].astype(str)).where(df['in_session'], np.nan)
-    df['session_id'] = df['session_id'].fillna(method='ffill')
+    df['session_id'] = df['session_id'].ffill()
     df['cum_pv'] = df.groupby('session_id')['pv'].cumsum()
     df['cum_vol'] = df.groupby('session_id')['volume'].cumsum()
     vwap = np.where(df['cum_vol'] > 0, df['cum_pv'] / df['cum_vol'], df['close'])

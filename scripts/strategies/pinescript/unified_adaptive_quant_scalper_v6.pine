@@ -25,6 +25,11 @@ GRP_MODE         = "Strategy Execution Mode"
 i_stratMode      = input.string("Adaptive Dual-Engine", "Execution Mode", options=["Adaptive Dual-Engine", "Expansion Trend Only", "Squeeze Mean Reversion Only"], group=GRP_MODE)
 i_rthOnly        = input.bool(true, "RTH Session Only (9:30-11:30 & 14:00-15:30 EST)", group=GRP_MODE)
 
+// ── Initial Stop Loss Method Selection ──
+GRP_SL           = "Initial Stop Loss System"
+i_slType         = input.string("0.05% Basis Points (5 BPS)", "Initial Stop Loss Method", options=["0.05% Basis Points (5 BPS)", "ATR Multiplier", "Structural Swing Low/High", "Indicator Line Anchor"], group=GRP_SL)
+i_slBpsVal       = input.float(5.0, "Basis Points Count (e.g. 5 BPS = 0.05%)", minval=1.0, maxval=100.0, step=0.5, group=GRP_SL)
+
 // ── SuperTrend & HMA Parameters (Mode 2 Trend Expansion) ──
 GRP_EXPANSION    = "Mode 2: Trend Expansion Settings"
 i_stPeriod       = input.int(10, "SuperTrend Period", minval=1, group=GRP_EXPANSION)
@@ -163,28 +168,32 @@ bounceShort = high >= hmaVal and close < hmaVal and close < open
 mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
 mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
 
+// ── Initial Stop Loss Calculation Engine ──
+slDistLong  = i_slType == "0.05% Basis Points (5 BPS)" ? math.max(close * (i_slBpsVal / 10000.0), syminfo.mintick * 4) : i_slType == "Structural Swing Low/High" ? math.max(close - ta.lowest(low, 5) + (2 * syminfo.mintick), syminfo.mintick * 4) : i_slType == "Indicator Line Anchor" ? math.max(close - math.min(stLine, hmaVal), atrVal * 0.5) : (i_mode2SlAtr * atrVal)
+slDistShort = i_slType == "0.05% Basis Points (5 BPS)" ? math.max(close * (i_slBpsVal / 10000.0), syminfo.mintick * 4) : i_slType == "Structural Swing Low/High" ? math.max(ta.highest(high, 5) - close + (2 * syminfo.mintick), syminfo.mintick * 4) : i_slType == "Indicator Line Anchor" ? math.max(math.max(stLine, hmaVal) - close, atrVal * 0.5) : (i_mode2SlAtr * atrVal)
+
 // ── Entry & Exit Execution ──
 if strategy.position_size == 0
     if mode2Long
         strategy.entry("Mode2_Long", strategy.long, comment="Mode 2 Trend Long")
         strategy.exit("Mode2_Long_Exit", "Mode2_Long", 
           profit=close + (i_mode2TpAtr * atrVal), 
-          loss=close - (i_mode2SlAtr * atrVal))
+          loss=close - slDistLong)
     else if mode2Short
         strategy.entry("Mode2_Short", strategy.short, comment="Mode 2 Trend Short")
         strategy.exit("Mode2_Short_Exit", "Mode2_Short", 
           profit=close - (i_mode2TpAtr * atrVal), 
-          loss=close + (i_mode2SlAtr * atrVal))
+          loss=close + slDistShort)
     else if mode1Long
         strategy.entry("Mode1_Long", strategy.long, comment="Mode 1 MeanRev Long")
         strategy.exit("Mode1_Long_Exit", "Mode1_Long", 
           limit=bbMid, 
-          loss=close - (i_mode1SlAtr * atrVal))
+          loss=close - slDistLong)
     else if mode1Short
         strategy.entry("Mode1_Short", strategy.short, comment="Mode 1 MeanRev Short")
         strategy.exit("Mode1_Short_Exit", "Mode1_Short", 
           limit=bbMid, 
-          loss=close + (i_mode1SlAtr * atrVal))
+          loss=close + slDistShort)
 
 // ── RORO (Right or Right Out) Fail-Fast Risk Management Engine ──
 if strategy.position_size != 0

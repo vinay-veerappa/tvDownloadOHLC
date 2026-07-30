@@ -28,6 +28,10 @@ i_useEmaFilter   = input.bool(true, "Use 200 EMA Macro Filter", group=GRP_TREND)
 i_emaPeriod      = input.int(200, "EMA Filter Period", minval=1, group=GRP_TREND)
 i_maxChopIndex   = input.float(55.0, "Max Chop Index Guard (Blocks Chop > 55)", minval=10.0, maxval=100.0, step=1.0, group=GRP_TREND)
 
+GRP_SL           = "Initial Stop Loss System"
+i_slType         = input.string("0.05% Basis Points (5 BPS)", "Initial Stop Loss Method", options=["0.05% Basis Points (5 BPS)", "ATR Multiplier", "Structural Swing Low/High", "Indicator Line Anchor"], group=GRP_SL)
+i_slBpsVal       = input.float(5.0, "Basis Points Count (e.g. 5 BPS = 0.05%)", minval=1.0, maxval=100.0, step=0.5, group=GRP_SL)
+
 GRP_EXECUTION    = "Execution & Risk Settings"
 i_rthOnly        = input.bool(true, "RTH Session Windows Only (9:30-11:30 & 14:00-15:30 EST)", group=GRP_EXECUTION)
 i_tpAtr          = input.float(1.0, "Take Profit ATR Mult (Target High Win-Rate)", step=0.1, group=GRP_EXECUTION)
@@ -127,17 +131,20 @@ bounceShort = high >= hmaVal and close < hmaVal and close < open
 longSignal  = stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
 shortSignal = stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
 
+slDistLong  = i_slType == "0.05% Basis Points (5 BPS)" ? math.max(close * (i_slBpsVal / 10000.0), syminfo.mintick * 4) : i_slType == "Structural Swing Low/High" ? math.max(close - ta.lowest(low, 5) + (2 * syminfo.mintick), syminfo.mintick * 4) : i_slType == "Indicator Line Anchor" ? math.max(close - math.min(stLine, hmaVal), atrVal * 0.5) : (i_slAtr * atrVal)
+slDistShort = i_slType == "0.05% Basis Points (5 BPS)" ? math.max(close * (i_slBpsVal / 10000.0), syminfo.mintick * 4) : i_slType == "Structural Swing Low/High" ? math.max(ta.highest(high, 5) - close + (2 * syminfo.mintick), syminfo.mintick * 4) : i_slType == "Indicator Line Anchor" ? math.max(math.max(stLine, hmaVal) - close, atrVal * 0.5) : (i_slAtr * atrVal)
+
 if strategy.position_size == 0
     if longSignal
         strategy.entry("Long", strategy.long, comment="HMA Trend Long")
         strategy.exit("Long_Exit", "Long", 
           profit=close + (i_tpAtr * atrVal), 
-          loss=close - (i_slAtr * atrVal))
+          loss=close - slDistLong)
     else if shortSignal
         strategy.entry("Short", strategy.short, comment="HMA Trend Short")
         strategy.exit("Short_Exit", "Short", 
           profit=close - (i_tpAtr * atrVal), 
-          loss=close + (i_slAtr * atrVal))
+          loss=close + slDistShort)
 
 // ── RORO (Right or Right Out) Fail-Fast Risk Management Engine ──
 if strategy.position_size != 0
