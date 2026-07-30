@@ -211,6 +211,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // With 50 on the 5-min, that's 250 min before CanEnterTrade passes. Set to 1 so
             // only 1 bar of 5-min secondary is needed (5 min warmup).
             BarsRequiredToTrade = 1;
+
+            // Enable ConfluenceFilter (the per-play validated filter stack) — Session 10:
+            // required for the FVG-aligned bias filter on Play 2 to take effect.
+            ConfluenceFilterEnabled = true;
         }
 
         /// <summary>
