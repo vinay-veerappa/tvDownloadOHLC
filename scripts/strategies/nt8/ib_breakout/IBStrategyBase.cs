@@ -86,6 +86,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "P3: High Body Close", Order = 12, GroupName = "IB Confluence Filters")]
         public bool Play3HighBodyCloseFilter { get; set; } = false;  // over-restrictive in NT8; enable for ablation only
 
+        [NinjaScriptProperty]
+        [Display(Name = "P2: FVG Bias Aligned", Order = 13, GroupName = "IB Confluence Filters")]
+        public bool Play2FvgBiasFilter { get; set; } = true;  // Session 10: FVG-aligned is the only OOS-valid ex-ante filter
+
         #endregion
 
         #region IB-Specific State (Play 3 overshoot state machine + entry guards)
@@ -136,6 +140,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         // ── Break-vs-AVWAP direction (computed at first break) ──
         private int breakVsAvwap0930;    // +1 if close > AVWAP at first break, -1 if below, 0 unknown
+
+        // ── FVG (Fair Value Gap) bias from the IB window ──
+        // Mirrors Python's detect_fvgs_v5 on 5-min resampled bars within the IB window.
+        // bias_fvg = +1 (bullish FVG), -1 (bearish FVG), 0 (none).
+        // Only the FIRST FVG finalized within the IB window (09:30-09:59) counts.
+        // FVG finalized time = bar_start + 5min must be <= IB end (09:59).
+        private int biasFvg;
+        private bool biasFvgComputed;
+        // 5-min bar accumulator (built from 1-min bars during the IB window)
+        private double fvg5mOpen, fvg5mHigh, fvg5mLow, fvg5mClose;
+        private int fvg5mBarCount;  // 1-min bars in the current 5-min bucket (0-4)
+        private DateTime fvg5mBucketStart;
+        // Rolling 5-min bars for the 3-bar FVG pattern (need bars i-2, i-1, i)
+        private double[] prev5mHigh = new double[2];  // [i-2 high, i-1 high]
+        private double[] prev5mLow = new double[2];    // [i-2 low,  i-1 low]
+        private int prev5mCount;  // how many completed 5-min bars we have (0, 1, 2+)
 
         #endregion
 
@@ -232,6 +252,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             ibHighBodyClose = false;
             ibLowBodyClose = false;
             dailyEmaUpdatedThisSession = false;
+            // FVG state — reset at session open
+            biasFvg = 0;
+            biasFvgComputed = false;
+            fvg5mBarCount = 0;
+            fvg5mBucketStart = DateTime.MinValue;
+            prev5mCount = 0;
+            prev5mHigh[0] = prev5mHigh[1] = 0;
+            prev5mLow[0] = prev5mLow[1] = 0;
         }
 
         #endregion
@@ -454,6 +482,123 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Log AVWAP state periodically for debugging
             if (DebugMode && avwapActive && CurrentBar % 30 == 0)
                 Log($"[DIAG] avwap: price={avwap0930Price} cumTPV={avwapCumTPV} cumVol={avwapCumVol} active={avwapActive} at {Time[0]:HH:mm}", LogLevel.Information);
+
+            // ── FVG detection on 5-min resampled bars (IB window only) ───────────
+            // Mirrors Python detect_fvgs_v5 on '5min' resampled bars, filtered to
+            // FVGs finalized within the IB window (09:30-09:59). The FIRST such FVG
+            // sets bias_fvg for the day. Bullish FVG: high[i-2] < low[i]. Bearish: low[i-2] > high[i].
+            if (!biasFvgComputed && now >= new DateTime(now.Year, now.Month, now.Day, RangeStartHour, RangeStartMinute, 0))
+            {
+                Update5mFvgAccumulator(now);
+            }
+        }
+
+        /// <summary>
+        /// Builds 5-min OHLC bars from 1-min bars and detects the first IB-window FVG.
+        /// Mirrors Python's detect_fvgs_v5(resample='5min') + is_eligible_ib filter.
+        /// A 5-min bar is finalized at minute :04, :09, :14, ... (bar_start + 5min).
+        /// FVG finalized time = 5-min bar close, must be <= IB end (09:59 for 30-min IB).
+        /// </summary>
+        private void Update5mFvgAccumulator(DateTime now)
+        {
+            DateTime ibStart = new DateTime(now.Year, now.Month, now.Day, RangeStartHour, RangeStartMinute, 0);
+            DateTime ibEnd = ibStart.AddMinutes(RangeDurationMin);  // 10:00 for 30-min IB
+
+            // Skip bars outside the IB window (only finalize FVGs whose 5-min bar closes by ibEnd)
+            if (now >= ibEnd.AddMinutes(5))  // 5-min bar starting at 09:55 closes at 10:00 — too late
+            {
+                biasFvgComputed = true;  // IB window elapsed, no more FVGs can finalize in time
+                return;
+            }
+
+            // Determine which 5-min bucket this 1-min bar belongs to
+            int minuteOfDay = now.Hour * 60 + now.Minute;
+            int bucketStartMin = (minuteOfDay / 5) * 5;
+            DateTime bucketStart = new DateTime(now.Year, now.Month, now.Day, bucketStartMin / 60, bucketStartMin % 60, 0);
+
+            // If we moved to a new 5-min bucket, finalize the previous one
+            if (fvg5mBucketStart != DateTime.MinValue && bucketStart > fvg5mBucketStart)
+            {
+                Finalize5mBar();
+            }
+
+            // Accumulate this 1-min bar into the current 5-min bucket
+            if (fvg5mBarCount == 0)
+            {
+                fvg5mBucketStart = bucketStart;
+                fvg5mOpen = Open[0];
+                fvg5mHigh = High[0];
+                fvg5mLow = Low[0];
+            }
+            else
+            {
+                if (High[0] > fvg5mHigh) fvg5mHigh = High[0];
+                if (Low[0] < fvg5mLow) fvg5mLow = Low[0];
+            }
+            fvg5mClose = Close[0];
+            fvg5mBarCount++;
+        }
+
+        /// <summary>
+        /// Finalize the current 5-min bar and check for a 3-bar FVG pattern.
+        /// Bullish FVG: high[i-2] < low[i] (gap above the middle bar).
+        /// Bearish FVG: low[i-2] > high[i] (gap below the middle bar).
+        /// Only the FIRST FVG finalized within the IB window is kept.
+        /// </summary>
+        private void Finalize5mBar()
+        {
+            if (fvg5mBarCount == 0) return;
+
+            // Check for FVG if we have at least 3 completed 5-min bars (i-2, i-1, i)
+            // At prev5mCount==2, prev5mHigh[0]=i-2, prev5mHigh[1]=i-1, current=i
+            if (prev5mCount >= 2 && biasFvg == 0)
+            {
+                double highIm2 = prev5mHigh[0];  // high[i-2]
+                double lowIm2 = prev5mLow[0];    // low[i-2]
+                double highI = fvg5mHigh;        // high[i]
+                double lowI = fvg5mLow;          // low[i]
+
+                if (highIm2 < lowI)
+                {
+                    biasFvg = 1;  // bullish FVG
+                    biasFvgComputed = true;
+                    if (DebugMode) Log($"[DIAG] FVG bullish detected: high[i-2]={highIm2} < low[i]={lowI} at {Time[0]:HH:mm}", LogLevel.Information);
+                }
+                else if (lowIm2 > highI)
+                {
+                    biasFvg = -1;  // bearish FVG
+                    biasFvgComputed = true;
+                    if (DebugMode) Log($"[DIAG] FVG bearish detected: low[i-2]={lowIm2} > high[i]={highI} at {Time[0]:HH:mm}", LogLevel.Information);
+                }
+            }
+
+            // Shift the rolling window: [i-1] becomes [i-2], current becomes [i-1]
+            prev5mHigh[0] = prev5mHigh[1];
+            prev5mLow[0] = prev5mLow[1];
+            prev5mHigh[1] = fvg5mHigh;
+            prev5mLow[1] = fvg5mLow;
+            if (prev5mCount < 2) prev5mCount++;
+
+            fvg5mBarCount = 0;  // reset for the next 5-min bucket
+        }
+
+        /// <summary>
+        /// bias_fvg: +1 (bullish FVG in IB window), -1 (bearish), 0 (none).
+        /// Mirrors Python's ib_confluence bias_fvg column (first IB-window FVG).
+        /// </summary>
+        protected int BiasFvg => biasFvg;
+
+        /// <summary>
+        /// bias_fvg aligned with first break direction (the validated FVG filter).
+        /// True when the IB-window FVG direction matches the first break direction.
+        /// </summary>
+        protected bool BiasFvgAlignedWithBreak
+        {
+            get
+            {
+                if (biasFvg == 0 || firstBreakDir == 0) return false;
+                return biasFvg == firstBreakDir;
+            }
         }
 
         /// <summary>
@@ -634,6 +779,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 if (Play3QuarterlyOpexFilter && !IsQuarterlyOpex) { if (DebugMode) Log($"[DIAG] filter P3: is_quarterly_opex FAIL at {Time[0]:HH:mm} date={Time[0]:yyyy-MM-dd}", LogLevel.Information); return true; }
                 if (Play3HighBodyCloseFilter && !ibHighBodyClose) { if (DebugMode) Log($"[DIAG] filter P3: ib_high_body_close FAIL at {Time[0]:HH:mm}", LogLevel.Information); return true; }
                 return false;  // all filters passed — allow trade
+            }
+
+            // Play 2: FVG-aligned bias filter (Session 10: only OOS-valid ex-ante filter)
+            if (ActivePlay == 2)
+            {
+                if (Play2FvgBiasFilter)
+                {
+                    if (biasFvg == 0)
+                    {
+                        if (DebugMode) Log($"[DIAG] filter P2: no IB-window FVG at {Time[0]:HH:mm}", LogLevel.Information);
+                        return true;  // skip if no FVG formed in the IB window
+                    }
+                    if (!BiasFvgAlignedWithBreak)
+                    {
+                        if (DebugMode) Log($"[DIAG] filter P2: FVG not aligned w/ break (biasFvg={biasFvg} firstBreakDir={firstBreakDir}) at {Time[0]:HH:mm}", LogLevel.Information);
+                        return true;  // skip if FVG direction disagrees with break
+                    }
+                }
+                return false;  // FVG-aligned or filter disabled — allow trade
             }
 
             // Play 2: stack has negative expectancy — skip filtering (let all entries through)

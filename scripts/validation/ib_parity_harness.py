@@ -449,6 +449,129 @@ def simulate_play3_day(
                          stop_price, target_price, signal_side, ib_range)
 
 
+def simulate_play2_day(
+    bars_day: pd.DataFrame,
+    ib_high: float,
+    ib_low: float,
+    ib_range: float,
+    target_lvl: float,
+    stop_mult: float,
+    retest_low_pct: float = 0.40,
+    retest_high_pct: float = 0.60,
+    confluence_row: Optional[pd.Series] = None,
+) -> Optional[Dict[str, Any]]:
+    """Play 2 (retest-continuation): break, then retest into IB, continue in break dir.
+
+    Mirrors IBRetestBot.cs with a CONFIGURABLE retest entry zone (not just mid):
+      - Signal: first close beyond IB boundary (TrackFirstBreak), then price
+        pulls back into the IB and touches the retest zone.
+      - Entry zone: for a long (broke ib_high), the retest zone is
+        [ib_low + retest_low_pct*range, ib_low + retest_high_pct*range].
+        The classic mid = retest_low_pct=0.50, retest_high_pct=0.50.
+        The thesis default = 40-60% band (wider, captures shallow+deep retests).
+        A retest is "complete" when price touches ANY part of the zone and
+        closes back in the break direction (close beyond zone edge toward break).
+      - Entry price: next-bar-open after the retest signal (NT8 market-order fill).
+      - Stop: opposite IB boundary (ib_low for long, ib_high for short) — IB-relative.
+      - Target: ib_high + target_lvl*range (long) / ib_low - target_lvl*range (short).
+      - Tie-break: conservative (stop-wins), matching Play 1/3.
+      - TargetIsSane: reject if target <= entry (long) or target >= entry (short).
+      - One entry per direction per session (longTakenToday/shortTakenToday guard).
+
+    confluence_row: optional Series with ConfluenceFilter columns. When provided,
+    applies the break_vs_avwap_0930 common gate (same as Play 1).
+    """
+    # ConfluenceFilter common gate (same as Play 1 — break_vs_avwap_0930)
+    if confluence_row is not None:
+        bva = confluence_row.get("break_vs_avwap_0930", 0)
+        if pd.isna(bva) or bva == 0:
+            return None
+    if ib_range <= 0 or len(bars_day) < IB_DURATION_MIN + 1:
+        return None
+
+    rth = bars_day.between_time("09:30", "15:50")
+    if len(rth) < IB_DURATION_MIN + 1:
+        return None
+
+    ib_end_ts = rth.index[IB_DURATION_MIN - 1]  # 09:59 (last IB bar)
+    post_ib = rth.loc[rth.index > ib_end_ts]
+
+    # ── Step 1: detect first break direction (TrackFirstBreak) ───────────
+    # First close beyond ib_high or ib_low AFTER the IB window.
+    long_breaks = post_ib[post_ib["close"] > ib_high]
+    short_breaks = post_ib[post_ib["close"] < ib_low]
+    if long_breaks.empty and short_breaks.empty:
+        return None
+
+    long_t0 = long_breaks.index[0] if not long_breaks.empty else pd.Timestamp("2099-12-31", tz=rth.index.tz)
+    short_t0 = short_breaks.index[0] if not short_breaks.empty else pd.Timestamp("2099-12-31", tz=rth.index.tz)
+    first_break_dir = 1 if long_t0 <= short_t0 else -1
+    first_break_ts = min(long_t0, short_t0)
+
+    # ── Step 2: wait for retest into the entry zone ──────────────────────
+    # Retest zone (in IB-range fractions from ib_low):
+    #   Long (broke up): zone = [ib_low + lo*range, ib_low + hi*range]
+    #   Short (broke down): zone = [ib_high - hi*range, ib_high - lo*range]
+    lo = retest_low_pct
+    hi = retest_high_pct
+    if lo > hi:
+        lo, hi = hi, lo  # safety swap
+
+    if first_break_dir == 1:
+        zone_low = ib_low + lo * ib_range
+        zone_high = ib_low + hi * ib_range
+        # Long retest: price pulled back down into zone, then closes back >= zone_high
+        # (NT8: Low <= rangeMid && Close >= rangeMid, generalized to the zone)
+        # Scan bars after the first break for: low <= zone_high (touched zone from above)
+        #   AND close >= zone_low (closed back above the zone, confirming continuation)
+        retest_bars = post_ib.loc[post_ib.index > first_break_ts]
+        # A retest signal: bar's low penetrates the zone (low <= zone_high) and
+        # close is back above zone_low (still in/above zone, continuing up).
+        # For the mid-only case (lo==hi==0.50), this is Low <= mid && Close >= mid.
+        touched = retest_bars[retest_bars["low"] <= zone_high]
+        if touched.empty:
+            return None
+        # First bar where low touched the zone AND close is at/above zone_low
+        signal_bars = touched[touched["close"] >= zone_low]
+        if signal_bars.empty:
+            return None
+        signal_ts = signal_bars.index[0]
+        signal_side = "LONG"
+    else:
+        zone_low = ib_high - hi * ib_range
+        zone_high = ib_high - lo * ib_range
+        retest_bars = post_ib.loc[post_ib.index > first_break_ts]
+        touched = retest_bars[retest_bars["high"] >= zone_low]
+        if touched.empty:
+            return None
+        signal_bars = touched[touched["close"] <= zone_high]
+        if signal_bars.empty:
+            return None
+        signal_ts = signal_bars.index[0]
+        signal_side = "SHORT"
+
+    # ── Step 3: entry = next-bar-open (NT8 market-order fill) ───────────
+    after_signal = rth.loc[rth.index > signal_ts]
+    if after_signal.empty:
+        return None
+    entry_idx = after_signal.index[0]
+    entry_price = float(after_signal["open"].iloc[0])
+
+    if signal_side == "LONG":
+        stop_price = ib_low                        # opposite IB boundary
+        target_price = ib_high + target_lvl * ib_range
+        if target_price <= entry_price:            # TargetIsSane
+            return None
+    else:
+        stop_price = ib_high
+        target_price = ib_low - target_lvl * ib_range
+        if target_price >= entry_price:
+            return None
+
+    return _resolve_exit(rth, entry_idx, entry_price,
+                         stop_price, target_price, signal_side, ib_range)
+
+
 def _resolve_exit(
     bars_day: pd.DataFrame,
     entry_idx: pd.Timestamp,
@@ -701,7 +824,11 @@ def diff_ledgers(py: List[Dict], nt8: List[Dict], out_path: Optional[str] = None
 def main() -> int:
     ap = argparse.ArgumentParser(description="IB Python<->NT8 trade-by-trade parity harness")
     ap.add_argument("--ticker", default="NQ1")
-    ap.add_argument("--play", type=int, default=1, choices=[1, 3])
+    ap.add_argument("--play", type=int, default=1, choices=[1, 2, 3])
+    ap.add_argument("--retest-low-pct", type=float, default=0.40,
+                    help="Play 2 retest zone lower bound (fraction of IB range from ib_low). Default 0.40.")
+    ap.add_argument("--retest-high-pct", type=float, default=0.60,
+                    help="Play 2 retest zone upper bound (fraction of IB range from ib_low). Default 0.60.")
     ap.add_argument("--target", type=float, default=0.5)
     ap.add_argument("--stop-mult", type=float, default=2.0, help="StopRMult (Play1: 2.0=ib_opposite; Play3: 0.5)")
     ap.add_argument("--overshoot", type=float, default=0.35, help="Play 3 overshoot threshold (default 0.35)")
@@ -753,6 +880,12 @@ def main() -> int:
         if args.play == 1:
             t = simulate_play1_day(
                 day_bars, ib_high, ib_low, ib_range, args.target, args.stop_mult,
+                confluence_row=confluence_row,
+            )
+        elif args.play == 2:
+            t = simulate_play2_day(
+                day_bars, ib_high, ib_low, ib_range, args.target, args.stop_mult,
+                retest_low_pct=args.retest_low_pct, retest_high_pct=args.retest_high_pct,
                 confluence_row=confluence_row,
             )
         else:

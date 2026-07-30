@@ -59,6 +59,7 @@ Strategy documentation organized by strategy type.
 
 ### Standards
 - **[Backtest Standards](strategies/BACKTEST_STANDARDS.md)**: How to document and validate strategies.
+- **[NinjaTrader 8 Legacy Strategies Index](From_NT8/README.md)**: Comprehensive sitemap and index of all 34 strategies in `From_NT8/`.
 
 ### 9:30 Opening Range Breakout (`strategies/9_30_breakout/`)
 - **[9:30 NQ Strategy](strategies/9_30_breakout/9_30_NQ_STRATEGY.md)**: Original opening range breakout for NQ.

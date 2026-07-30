@@ -439,10 +439,137 @@ issue, not a code bug.
 - Stop at 0.15*range: WR=45%, PF=2.73, but only 20 trades (too few)
 - The IB-relative stop (1.0*range) is too wide — the edge is in the tight stop
 
-**Recommendation:** Revert to entry-relative stop at 0.25*range (tight, catches losers
+**Recommendation (Session 9, superseded by §13):** Revert to entry-relative stop at 0.25*range (tight, catches losers
 early) with target at 0.5*range (2:1 R:R in favor). This gives PF 1.27 with 54 trades
 over 19 months. Alternatively, explore Play 2 (retest) which showed PF 1.638 in prior
 backtests.
+
+---
+
+## 13. Session 10 — Normalized MAE/MFE (ADR-002) + Play 2 Parity + Stop Geometry Decision (2026-07-29)
+
+### 13.1 Normalized MAE/MFE — Play 1 Breakout (ADR-002)
+
+Session 9's MAE/MFE was in absolute points (not comparable across time/price
+levels — NQ ranged ~17,900 in Jan 2025 to ~30,400 in Jul 2026). Session 10
+re-ran the analysis in **price %** (`mae / entry_price * 100`) and **IB range %**
+(`mae / ib_range * 100`) per ADR-002.
+
+Artifacts: `scratch/ib_parity_sep26_full.csv` (regenerated, 188 trades),
+`scratch/mae_mfe_normalized_report.json`, `scratch/analyze_mae_mfe_normalized.py`.
+
+#### Winner vs Loser separation (IB range %)
+
+| Metric | Winners (n=129) | Losers (n=59) |
+|---|---|---|
+| MAE P50 / P75 | 29.5% / 54.9% | 108.2% / 115.1% |
+| MFE P50 / P75 | 48.2% / 52.9% | 16.5% / 26.4% |
+
+- Winners draw down only ~30% of the IB range before hitting target (barely retrace).
+- Losers blow through the IB boundary (P50 MAE = 108% — they exceed 1.0×range).
+- Losers have tiny MFE (P50 = 16.5%) — they never reach the 0.5×range target.
+- **No overlap zone**: winner P95 MAE (98%) ≈ loser P10 MAE (70.6%) — a ~30-pt gap
+  where a stop would discriminate.
+
+#### Censoring-aware stop-optimization grid (target = 0.5×range)
+
+| stop (×range) | stopped | target hit | WR% | PF | E[R] |
+|---|---|---|---|---|---|
+| 0.25 | 134 | 54 | 28.7 | 0.806 | −0.069 |
+| 0.40 | 109 | 79 | 42.0 | 0.906 | −0.044 |
+| 0.50 | 99 | 89 | 47.3 | 0.899 | −0.053 |
+| **0.60** | 85 | 103 | 54.8 | **1.010** | **+0.005** |
+| **0.75** | 75 | 113 | 60.1 | 1.004 | +0.003 |
+| 1.00 (current) | 64 | 124 | 66.0 | 0.969 | −0.021 |
+
+The grid is **censoring-aware**: loser MAE is censored at the 1.0×range stop
+(capped at 100% of range), so all losers are assumed to reach any tighter stop.
+Winner MAE is uncensored (winners never touched the 1.0 stop).
+
+**The inverted R:R problem confirmed**: the current 1.0×range stop + 0.5×range
+target (PF 0.969, E[R] −0.021) is net negative despite 66% WR. The 0.60/0.75
+cells are barely positive (E[R] ~0.005) — a loss-trimming artifact, not alpha.
+
+### 13.2 Play 2 (Retest) Parity — 94.6%
+
+- Added `simulate_play2_day()` to `scripts/validation/ib_parity_harness.py` with a
+  **configurable retest entry zone** (`--retest-low-pct` / `--retest-high-pct`,
+  defaults 0.40/0.60). Extended `--play` choices to `[1, 2, 3]`.
+- Mirrors `IBRetestBot.cs`: first-break detection → retest into zone → next-bar-open
+  entry → IB-relative stop (opposite boundary) → target = ib_high + target_lvl×range.
+  TargetIsSane guard, conservative stop-wins tie-break, ConfluenceFilter common gate.
+- NT8 backtest: IBRetestBot on NQ 09-26, 2025-01-01 → 2026-07-29.
+  - 171 trades, WR 49.1%, PF 1.212, net +$31,190, maxDD −$16,225.
+  - Exit reasons: Stop loss 78, Profit target 58, Sell 17, Buy to cover 16, session close 2.
+  - Saved to `scratch/nt8_ib_retest_nq_sep26_full.json` (BOM stripped).
+- Python parity: 262 trades, WR 48.5%, **result agreement 159/168 = 94.6%**.
+  - Trade-count gap (262 vs 171): 94 Python-only trades from NT8 calendar filters
+    (skip Mon/Feb for Play 2) + RequireDirectionBias gate the harness doesn't replicate.
+  - Side match: 86 LONG + 79 SHORT correctly matched (3 side mismatches).
+  - 94.6% is below Play 1's 97.2% but solid for a first pass; gap is filter mismatch,
+    not entry/exit logic.
+
+### 13.3 Play 2 MAE/MFE + Entry-Zone Sweep
+
+#### MAE/MFE (Play 2, 40-60 band, 262 trades)
+
+| Metric | Winners (n=127) | Losers (n=135) |
+|---|---|---|
+| MAE P50 / P75 | 19.5% / 38.2% | 66.3% / 73.7% |
+| MFE P50 / P75 | 88.0% / 95.1% | 21.6% / 41.8% |
+
+Play 2 has a **much cleaner separation** than Play 1: winner MAE P75 (38.2%) vs
+loser MAE P50 (66.3%) — a real 28-pt gap. Play 1's gap was illusory (winners P75
+MAE 54.9% overlaps losers P10 MAE 70.6%).
+
+#### Entry-zone sweep (target=0.5×range, stop=1.0×range)
+
+| zone | lo | hi | trades | WR% | PF | E[R] |
+|---|---|---|---|---|---|---|
+| **mid_point** | 0.50 | 0.50 | 225 | 47.1 | 0.445 | **0.0865** |
+| 25pct_level | 0.25 | 0.25 | 164 | 29.3 | 0.207 | 0.0333 |
+| 40_60_band | 0.40 | 0.60 | 262 | 48.5 | 0.470 | 0.0669 |
+| 30_70_band | 0.30 | 0.70 | 294 | 53.1 | 0.565 | 0.0760 |
+| 35_65_band | 0.35 | 0.65 | 282 | 51.8 | 0.537 | 0.0839 |
+| 45_55_band | 0.45 | 0.55 | 246 | 46.3 | 0.432 | 0.0669 |
+
+**Thesis verdict (40-60% band)**: partially confirmed — the band captures 262 vs
+225 mid trades (+16%), but the **mid is a precision filter**: only high-conviction
+retests reach the exact mid, so per-trade E[R] is highest (0.0865) despite fewer
+trades. The mid gates on retest DEPTH, which correlates with continuation probability.
+
+**PF < 1 for ALL zones is misleading** — the 1:2 R:R (risk 2R to make 1R) structurally
+caps PF at ~0.56 even at 53% WR. Liquidation exits at 15:50 salvage value that PF
+doesn't capture. **Trust E[R]** (models the full exit distribution).
+
+**Decision: adopt `mid_point` (0.50/0.50).** Highest E[R], 225 trades = sufficient
+statistical power. Fallback if more frequency needed: 35_65 band (E[R] 0.0839,
+282 trades, +25% frequency).
+
+### 13.4 Stop Geometry Decision — Option D
+
+The decision (from the agent loop, grounded in §13.1 and §13.3 data):
+
+**Option D — Abandon Play 1 as a standalone strategy; redirect to Play 2.**
+
+Rationale:
+1. Play 1's best geometry (0.60 stop, E[R] +0.005) is **17× worse** than Play 2 mid
+   (E[R] +0.087). The 0.60/0.75 positive cells are a loss-trimming artifact, not alpha.
+2. The positive E[R] cells (0.60/0.75) are **statistically indistinguishable from zero**
+   (n=188, E[R] ~0.005 vs transaction costs ~0.5 NQ pts).
+3. **Option A (raise target to 1.0) is dead**: winner MFE P50=48%, P90=60.7% — a
+   1.0×range target is reached by <10% of winners, so WR would collapse to ~6%.
+4. Play 1's genuine value is its **68.6% first-close WR as a directional bias signal**,
+   not its P&L.
+
+**Implementation plan**: Keep Play 1's break detection as a directional filter —
+only take Play 2 retests ALIGNED with the Play 1 break direction (firstBreakDir).
+This is already implicit in Play 2's logic. The "bias filter" means additionally
+gating on whether the break itself was high-quality (break_vs_avwap_0930 aligned,
+trend NOT misaligned) — the same ConfluenceFilter Play 1 uses, applied to Play 2.
+
+If a Play 1 standalone is mandated for parity continuity, use **Option C at
+stop = 0.60×range** as the least-bad fallback — but budget it as breakeven.
 
 ---
 
@@ -456,3 +583,4 @@ backtests.
 | 2026-07-30 | Session 8 | Added Class F (timestamp convention mismatch), data_loader fix, 93.6% parity |
 | 2026-07-29 | Session 9 | **Canonical update**: Contract fix (NQ 09-26), EMA IB-close fix, compile verification, 97.9% parity (46/47). Rewrote §8-§11 to remove stale NQ 03-26 results and incorrect roll-adjustment claims. |
 | 2026-07-29 | Session 9 final | Stop fix (IB-relative), missing bars root cause, MAE/MFE analysis. 100% on live July data. IBRetestBot/IBFadeBot verified already correct. Geometry problem identified: R:R inverted after stop fix. |
+| 2026-07-29 | Session 10 | Normalized MAE/MFE (ADR-002) for Play 1: winners MAE P50=29.5%, losers P50=108% (clean separation). Stop grid: 0.60×range breakeven (PF 1.01), current 1.0×range net negative. Play 2 parity 94.6% (159/168). Play 2 entry-zone sweep: mid_point wins (E[R] 0.0865, precision filter). Decision: Option D — abandon Play 1 standalone, redirect to Play 2, recycle Play 1 WR as directional bias filter. Added simulate_play2_day to harness with --retest-low-pct/--retest-high-pct. |

@@ -435,16 +435,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return;
             }
 
+            // Set tradeDirection + entrySignalName so RiskManagerBase.FlattenPosition
+            // can cancel managed orders and exit with the correct fromEntrySignal.
             if (dir == 1)
             {
-                EnterLong(qty, "IntradayBaseLong");
+                tradeDirection = "Long";
+                entrySignalName = "IntradayBaseLong";
+                EnterLong(qty, entrySignalName);
                 // Target-first tie-break (Q1): SetProfitTarget before SetStopLoss
                 SetProfitTarget(CalculationMode.Price, targetPrice);
                 SetStopLoss(CalculationMode.Price, stopPrice);
             }
             else if (dir == -1)
             {
-                EnterShort(qty, "IntradayBaseShort");
+                tradeDirection = "Short";
+                entrySignalName = "IntradayBaseShort";
+                EnterShort(qty, entrySignalName);
                 // Target-first tie-break (Q1): SetProfitTarget before SetStopLoss
                 SetProfitTarget(CalculationMode.Price, targetPrice);
                 SetStopLoss(CalculationMode.Price, stopPrice);
