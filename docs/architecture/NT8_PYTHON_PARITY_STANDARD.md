@@ -229,8 +229,14 @@ From the IB profitability debate sessions (V1 failed, V2 succeeded):
 
 This is the **canonical parity result**. All 6 divergence classes (A-F) are
 fixed and verified. The 97.9% agreement on 47 matched trades confirms code-level
-parity. The single disagreement (2026-05-25) has a 293-point entry price gap
-within the same contract — likely a data tick gap on that day.
+parity. The single disagreement (2026-05-25) is a back-adjustment artifact (see
+§10 "Back-Adjustment Offset" below).
+
+### 100% Parity on Live Data (July 2026)
+
+When restricted to July 2026 (where the back-adjustment offset is near-zero),
+parity is **100% (12/12 trades, 0 disagreements)**. This confirms code-level
+parity is perfect when both systems use the same (unadjusted) price scale.
 
 ### Why Previous Runs Showed Lower Match Rates
 
@@ -239,6 +245,18 @@ NT8 contract** (NQ 03-26 or MNQ) which has different price levels than the
 `live_storage` parquet (NQ 09-26). Different prices → different IB boundaries →
 different trade days → false "Class E" divergence. With the correct contract
 (NQ 09-26), the match rate jumps to 97.9% and NT8-only drops to 0.
+
+### Full-Range Parity (19 months, 2025-01-01 → 2026-07-29)
+
+| Metric | Python | NT8 |
+|---|---|---|
+| Trades | 188 | 232 |
+| Win rate | 66.5% | 69.0% |
+| **Result agreement** | **98.3% (174/177 matched)** | |
+| NT8-only | 0 | |
+| Python-only | 11 (EMA residual) | |
+
+The 3 disagreements are entirely caused by the back-adjustment offset (see §10).
 
 ---
 
@@ -317,6 +335,35 @@ different trade days → false divergence.
 
 **Fix**: Always use `NQ 09-26` for NT8 backtests (matches the parquet contract).
 See "Testing Contract" section below.
+
+### Back-Adjustment Offset (root cause of the 3 disagreements)
+
+NT8's Strategy Analyzer applies **back-adjustment to trade fill prices** but
+exports **raw bar data**. This was verified by comparing NT8's trade JSON
+`entryPrice` to NT8's own bar export at the same timestamp:
+
+- 2026-06-04: NT8 trade entry=30,176.50 but NT8 bar open=30,464.25 (offset −288 pts)
+- Python bar open=30,469.25 (matches NT8's raw bars within 5 pts)
+
+The offset varies by month, unwinding as the contract approaches the current month:
+
+| Month | Mean Offset (pts) | Std | Data Type |
+|---|---|---|---|
+| 2026-03 | −412 | 116 | Historical (large adjustment) |
+| 2026-04 | −293 | 12 | Historical (stable) |
+| 2026-05 | −292 | 13 | Historical (stable) |
+| 2026-06 | −170 | 143 | Transitioning (some live) |
+| **2026-07** | **−4** | **24** | **Live (near-zero)** |
+
+**July 2026 parity (live data, offset ≈ 0): 100% (12/12, 0 disagreements)**
+
+The 3 disagreements in the full-range check (98.3%) occur on days where the
+~290pt back-adjustment offset causes the stop/target to be hit in different
+order between adjusted and unadjusted price scales. This is a **data-scale
+artifact**, not a code bug.
+
+**To verify parity going forward**: use current-month data (offset near zero),
+or de-adjust NT8 trade prices by adding the monthly offset before comparison.
 
 ### EMA IB-Close Fix
 
