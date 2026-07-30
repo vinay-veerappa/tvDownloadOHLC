@@ -3323,6 +3323,41 @@ Write-Host 'COPIED_MP3'
         public int DayIBFontSize { get; set; }
         
         // ═══════════════════════════════════════════════
+        // Public Data Exposure (for IB Confluence consumers)
+        // Non-breaking: [Browsable(false)] = no UI, [XmlIgnore] = no serialization impact
+        // ═══════════════════════════════════════════════
+        
+        [XmlIgnore]
+        [Browsable(false)]
+        public double DayIbHigh => dayInitialBalance != null && dayInitialBalance.High > 0 ? dayInitialBalance.High : 0;
+
+        [XmlIgnore]
+        [Browsable(false)]
+        public double DayIbLow => dayInitialBalance != null && dayInitialBalance.High > 0 ? dayInitialBalance.Low : 0;
+
+        [XmlIgnore]
+        [Browsable(false)]
+        public double DayIbMid => dayInitialBalance != null && dayInitialBalance.High > 0
+            ? (dayInitialBalance.High + dayInitialBalance.Low) / 2.0 : 0;
+
+        [XmlIgnore]
+        [Browsable(false)]
+        public double DayIbRange => dayInitialBalance != null && dayInitialBalance.High > 0
+            ? dayInitialBalance.High - dayInitialBalance.Low : 0;
+
+        [XmlIgnore]
+        [Browsable(false)]
+        public bool DayIbComplete => dayInitialBalance != null && !dayInitialBalance.IsForming && dayInitialBalance.High > 0;
+
+        [XmlIgnore]
+        [Browsable(false)]
+        public double NyOrHigh => nyOpeningRange != null && nyOpeningRange.High > 0 ? nyOpeningRange.High : 0;
+
+        [XmlIgnore]
+        [Browsable(false)]
+        public double NyOrLow => nyOpeningRange != null && nyOpeningRange.High > 0 ? nyOpeningRange.Low : 0;
+
+        // ═══════════════════════════════════════════════
         // General Display Settings
         // ═══════════════════════════════════════════════
         
