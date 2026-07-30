@@ -35,6 +35,7 @@ i_emaPeriod      = input.int(200, "EMA Filter Period", minval=1, group=GRP_EXPAN
 i_mode2TpAtr     = input.float(1.5, "Mode 2 Take Profit (ATR Mult)", step=0.1, group=GRP_EXPANSION)
 i_mode2SlAtr     = input.float(2.0, "Mode 2 Stop Loss (ATR Mult)", step=0.1, group=GRP_EXPANSION)
 i_mode2MaxHold   = input.int(6, "Mode 2 Max Hold Bars", minval=1, group=GRP_EXPANSION)
+i_maxChopIndex   = input.float(55.0, "Max Chop Index Guard (Blocks Chop > 55)", minval=10.0, maxval=100.0, step=1.0, group=GRP_EXPANSION)
 
 // ── Bollinger Band Parameters (Mode 1 Squeeze Mean Reversion) ──
 GRP_SQUEEZE      = "Mode 1: Squeeze Mean Reversion Settings"
@@ -102,6 +103,12 @@ bbWidthSma = ta.sma(bbWidth, i_bbPeriod)
 isSqueeze   = bbWidth <= bbWidthSma    // Volatility Compression
 isExpansion = bbWidth > bbWidthSma     // Volatility Expansion
 
+// ── Choppiness Index (14) Chop Guard Calculation ──
+trSum14 = math.sum(ta.tr(true), 14)
+range14 = math.max(ta.highest(high, 14) - ta.lowest(low, 14), 0.0001)
+chopIndex = 100.0 * math.log10(trSum14 / range14) / math.log10(14.0)
+chopGuardOK = chopIndex < i_maxChopIndex
+
 // ── 200 EMA Macro Filter ──
 ema200 = ta.ema(close, i_emaPeriod)
 macroBull = not i_useEmaFilter or close > ema200
@@ -149,9 +156,9 @@ riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit
 mode1Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and low <= bbLower and close > bbLower and inRthWindow and riskGatekeeperOK
 mode1Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and high >= bbUpper and close < bbUpper and inRthWindow and riskGatekeeperOK
 
-// ── Mode 2: Expansion Trend Scalp Signals ──
-mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and low <= hmaVal and hmaSlopeUp and macroBull and inRthWindow and riskGatekeeperOK
-mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and high >= hmaVal and hmaSlopeDn and macroBear and inRthWindow and riskGatekeeperOK
+// ── Mode 2: Expansion Trend Scalp Signals (With Chop Guard Filter) ──
+mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and low <= hmaVal and (hmaSlopeUp or (hmaVal > hmaVal[1])) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
+mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and high >= hmaVal and (hmaSlopeDn or (hmaVal < hmaVal[1])) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
 
 // ── Entry & Exit Execution ──
 if strategy.position_size == 0

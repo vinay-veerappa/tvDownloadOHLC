@@ -435,6 +435,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return;
             }
 
+            // ── trade-tracking state (mirror RiskManagerBase.EnterTrade) ──
+            // Without this, OnExecutionUpdate bails on `if (!tradeIsActive) return;`
+            // and the exit execution is never recorded — NT8 chart then draws entry
+            // arrows but no P&L trade lines connecting entry to exit. Also
+            // todayTradeCount must increment here so MaxTradesPerDay / pause gates
+            // see the trade (OnExecutionUpdate also increments, but only if
+            // tradeIsActive was set first — chicken-and-egg without this line).
+            entryPrice        = entry;
+            initialStopPrice  = stopPrice;
+            currentStopPrice  = stopPrice;
+            riskPoints        = Math.Abs(entry - stopPrice);
+            breakevenMoved    = false;
+            tradeIsActive     = true;
+
             // Set tradeDirection + entrySignalName so RiskManagerBase.FlattenPosition
             // can cancel managed orders and exit with the correct fromEntrySignal.
             if (dir == 1)
@@ -442,19 +456,28 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 tradeDirection = "Long";
                 entrySignalName = "IntradayBaseLong";
                 EnterLong(qty, entrySignalName);
-                // Target-first tie-break (Q1): SetProfitTarget before SetStopLoss
-                SetProfitTarget(CalculationMode.Price, targetPrice);
-                SetStopLoss(CalculationMode.Price, stopPrice);
+                // Target-first tie-break (Q1): SetProfitTarget before SetStopLoss.
+                // Use the named-signal overload (matches EnterTrade) so the exit
+                // orders are associated with this specific entry — required for
+                // NT8 chart trade-line rendering and correct OCO cancellation.
+                SetProfitTarget(entrySignalName, CalculationMode.Price, targetPrice);
+                SetStopLoss(entrySignalName, CalculationMode.Price, stopPrice, false);
             }
             else if (dir == -1)
             {
                 tradeDirection = "Short";
                 entrySignalName = "IntradayBaseShort";
                 EnterShort(qty, entrySignalName);
-                // Target-first tie-break (Q1): SetProfitTarget before SetStopLoss
-                SetProfitTarget(CalculationMode.Price, targetPrice);
-                SetStopLoss(CalculationMode.Price, stopPrice);
+                // Target-first tie-break (Q1): SetProfitTarget before SetStopLoss.
+                SetProfitTarget(entrySignalName, CalculationMode.Price, targetPrice);
+                SetStopLoss(entrySignalName, CalculationMode.Price, stopPrice, false);
             }
+
+            todayTradeCount++;
+
+            Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | Target {4:F2} | Qty {5} | Risk {6:C} | Trade #{7}",
+                GetStrategyName(), tradeDirection, entry, stopPrice, targetPrice, qty,
+                riskPoints * GetPointValue(), todayTradeCount));
         }
 
         /// <summary>

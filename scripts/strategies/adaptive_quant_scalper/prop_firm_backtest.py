@@ -399,7 +399,7 @@ class PropFirmAdaptiveScalperBacktester:
         squeeze_mask = (bbw <= bbw_sma)
         expansion_mask = (bbw > bbw_sma)
 
-        # 2. HTF Trend Filter
+        # 2. HTF Trend Filter & Chop Guard
         if htf_ema_period > 0:
             ema_filter = pd.Series(closes).ewm(span=htf_ema_period, adjust=False).mean().values
             long_ema_ok = closes > ema_filter
@@ -408,17 +408,46 @@ class PropFirmAdaptiveScalperBacktester:
             long_ema_ok = np.ones(n, dtype=bool)
             short_ema_ok = np.ones(n, dtype=bool)
 
+        # Choppiness Index (14) Chop Guard Calculation
+        sum_tr14 = pd.Series(tr).rolling(14).sum().values
+        max_high14 = pd.Series(highs).rolling(14).max().values
+        min_low14 = pd.Series(lows).rolling(14).min().values
+        range14 = np.maximum(max_high14 - min_low14, 1e-5)
+        chop_index = 100.0 * np.log10(np.maximum(sum_tr14, 1e-5) / range14) / np.log10(14.0)
+        chop_guard_ok = chop_index < 52.0  # Blocks trend entries when market is choppy (>= 52)
+
+        # Calculate 9:30-09:45 EST Opening Range (ORB) High & Low per day
+        times_est = df.index.tz_convert("America/New_York") if df.index.tz is not None else df.index
+        time_mins = times_est.hour * 60 + times_est.minute
+        is_orb_window = (time_mins >= 570) & (time_mins < 585)  # 09:30 to 09:45 AM
+
+        df_temp = pd.DataFrame({"day_id": day_ids, "high": highs, "low": lows, "is_orb": is_orb_window})
+        orb_highs_series = df_temp[df_temp["is_orb"]].groupby("day_id")["high"].transform("max")
+        orb_lows_series = df_temp[df_temp["is_orb"]].groupby("day_id")["low"].transform("min")
+
+        df_temp["orb_high"] = orb_highs_series
+        df_temp["orb_low"] = orb_lows_series
+        df_temp["orb_high"] = df_temp.groupby("day_id")["orb_high"].ffill()
+        df_temp["orb_low"] = df_temp.groupby("day_id")["orb_low"].ffill()
+
+        orb_high = df_temp["orb_high"].values
+        orb_low = df_temp["orb_low"].values
+
+        above_orb_high = closes > orb_high
+        below_orb_low = closes < orb_low
+
         # 3. Signals
         m1_long = squeeze_mask & (lows <= lower_band) & (closes > lower_band)
         m1_short = squeeze_mask & (highs >= upper_band) & (closes < upper_band)
 
-        hma_inc = np.zeros(n, dtype=bool)
-        hma_dec = np.zeros(n, dtype=bool)
-        hma_inc[2:] = (hma[2:] > hma[1:-1]) & (hma[1:-1] <= hma[:-2])
-        hma_dec[2:] = (hma[2:] < hma[1:-1]) & (hma[1:-1] >= hma[:-2])
+        # Continuous Slope + Pullback to HMA during Trend Expansion + ORB Trend Anchor
+        hma_rising = np.zeros(n, dtype=bool)
+        hma_falling = np.zeros(n, dtype=bool)
+        hma_rising[1:] = hma[1:] > hma[:-1]
+        hma_falling[1:] = hma[1:] < hma[:-1]
 
-        m2_long = expansion_mask & (st_dir == 1) & (lows <= hma) & hma_inc & long_ema_ok
-        m2_short = expansion_mask & (st_dir == -1) & (highs >= hma) & hma_dec & short_ema_ok
+        m2_long = expansion_mask & (st_dir == 1) & (lows <= hma) & hma_rising & long_ema_ok & above_orb_high & chop_guard_ok
+        m2_short = expansion_mask & (st_dir == -1) & (highs >= hma) & hma_falling & short_ema_ok & below_orb_low & chop_guard_ok
 
         if rth_only and "rth_mask" in df.columns:
             rth_mask = df["rth_mask"].values

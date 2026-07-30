@@ -4,9 +4,14 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Windows.Media;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
 #endregion
@@ -116,6 +121,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "P2: Depth Moderate Size Mult", Order = 18, GroupName = "IB Confluence Filters")]
         public double DepthModerateSizeMult { get; set; } = 0.50; // moderate retest size fraction
 
+        [NinjaScriptProperty]
+        [Display(Name = "Draw Visuals (IB+Q+FVG+HUD)", Order = 19, GroupName = "IB Confluence Filters")]
+        public bool DrawVisuals { get; set; } = true;  // draw IB boundaries, quarters, FVG, HUD
+
         #endregion
 
         #region IB-Specific State (Play 3 overshoot state machine + entry guards)
@@ -183,6 +192,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // FVG finalized time = bar_start + 5min must be <= IB end (09:59).
         private int biasFvg;
         private bool biasFvgComputed;
+        // FVG price band (for chart drawing)
+        private double fvgTop, fvgBottom;
+        private DateTime fvgFinalizedTime;
         // 5-min bar accumulator (built from 1-min bars during the IB window)
         private double fvg5mOpen, fvg5mHigh, fvg5mLow, fvg5mClose;
         private int fvg5mBarCount;  // 1-min bars in the current 5-min bucket (0-4)
@@ -295,6 +307,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             dailyEmaUpdatedThisSession = false;
             // FVG state — reset at session open
             biasFvg = 0;
+            fvgTop = fvgBottom = 0;
+            fvgFinalizedTime = DateTime.MinValue;
             biasFvgComputed = false;
             fvg5mBarCount = 0;
             fvg5mBucketStart = DateTime.MinValue;
@@ -402,6 +416,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 predictedDir = 0;   // no directional edge
         }
 
+        /// <summary>
+        /// Override FinalizeRange to draw IB boundaries + quarters once the range completes.
+        /// </summary>
+        protected override void FinalizeRange()
+        {
+            base.FinalizeRange();
+            DrawIBBoundaries();
+        }
+
         // CheckForEntry() stays abstract — implemented by IBBreakoutBot / IBRetestBot / IBFadeBot
 
         #endregion
@@ -450,6 +473,131 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (depthRatio < DepthWeakThreshold) return DepthWeakSizeMult;
             if (depthRatio < DepthStrongThreshold) return DepthModerateSizeMult;
             return 1.0;
+        }
+
+        // ── CHART VISUALIZATION (Session 12) ────────────────────────────────
+        // Draws IB boundaries (high/low/mid), quarter levels (25/50/75%), FVG box,
+        // and a HUD text panel with all filter criteria so you can visually verify
+        // the bot is computing the same values as the Python harness.
+        // All drawing uses NT8 Draw.* API (auto-managed — objects are tagged with
+        // the current bar so they update/expire correctly).
+        //
+        // Drawing schedule:
+        //   - IB boundaries + quarters: drawn once at FinalizeRange (10:00 ET)
+        //   - FVG box: drawn when the FVG is detected (during IB window)
+        //   - HUD: updated every bar (so filter states stay current)
+        //
+        // Toggle via the DrawVisuals NinjaScriptProperty (default true).
+
+        /// <summary>
+        /// Draws the IB range box, quarter levels, and mid line on the chart.
+        /// Called once at FinalizeRange. Lines extend to session end (16:00 ET).
+        /// </summary>
+        protected void DrawIBBoundaries()
+        {
+            if (!DrawVisuals || !rangeComplete || rangeRange <= 0) return;
+            if (BarsArray == null || BarsArray.Length == 0) return;
+
+            int sessionEndBar = BarsArray[0].GetBar(Time[0].Date.AddHours(16));
+            if (sessionEndBar < CurrentBar) sessionEndBar = CurrentBar + 390;
+            DateTime sessionEnd = BarsArray[0].GetTime(sessionEndBar);
+            if (sessionEnd < Time[0]) sessionEnd = Time[0].Date.AddHours(16);
+
+            // IB high (blue dashed)
+            Draw.Line(this, "IB_High", false, rangeCompleteTime, rangeHigh, sessionEnd, rangeHigh,
+                Brushes.DodgerBlue, DashStyleHelper.Dash, 2);
+            Draw.Text(this, "IB_High_L", $"IB H {rangeHigh:F2}", 0, rangeHigh + TickSize * 2);
+
+            // IB low (blue dashed)
+            Draw.Line(this, "IB_Low", false, rangeCompleteTime, rangeLow, sessionEnd, rangeLow,
+                Brushes.DodgerBlue, DashStyleHelper.Dash, 2);
+            Draw.Text(this, "IB_Low_L", $"IB L {rangeLow:F2}", 0, rangeLow - TickSize * 2);
+
+            // IB mid (orange dotted)
+            Draw.Line(this, "IB_Mid", false, rangeCompleteTime, rangeMid, sessionEnd, rangeMid,
+                Brushes.Orange, DashStyleHelper.Dot, 2);
+            Draw.Text(this, "IB_Mid_L", $"Mid {rangeMid:F2}", 0, rangeMid);
+
+            // Quarter levels: 25% and 75% of IB range (thin gray)
+            double q25 = rangeLow + 0.25 * rangeRange;
+            double q75 = rangeLow + 0.75 * rangeRange;
+            Draw.Line(this, "IB_Q25", false, rangeCompleteTime, q25, sessionEnd, q25,
+                Brushes.Gray, DashStyleHelper.Dot, 1);
+            Draw.Text(this, "IB_Q25_L", "25%", 0, q25);
+            Draw.Line(this, "IB_Q75", false, rangeCompleteTime, q75, sessionEnd, q75,
+                Brushes.Gray, DashStyleHelper.Dot, 1);
+            Draw.Text(this, "IB_Q75_L", "75%", 0, q75);
+
+            // IB box shading (light blue rectangle)
+            Draw.Rectangle(this, "IB_Box", false, rangeCompleteTime, rangeHigh,
+                rangeCompleteTime.AddMinutes(-RangeDurationMin), rangeLow,
+                Brushes.LightSkyBlue, Brushes.LightSkyBlue, 30);
+        }
+
+        /// <summary>
+        /// Draws the IB-window FVG as a colored box on the chart.
+        /// Called when the FVG is first detected. Bullish=green, bearish=red.
+        /// </summary>
+        protected void DrawFVG()
+        {
+            if (!DrawVisuals || biasFvg == 0 || fvgTop <= 0 || fvgBottom <= 0) return;
+            if (BarsArray == null || BarsArray.Length == 0) return;
+
+            int sessionEndBar = BarsArray[0].GetBar(Time[0].Date.AddHours(16));
+            if (sessionEndBar < CurrentBar) sessionEndBar = CurrentBar + 390;
+            DateTime sessionEnd = BarsArray[0].GetTime(sessionEndBar);
+            if (sessionEnd < Time[0]) sessionEnd = Time[0].Date.AddHours(16);
+
+            Brush fvgColor = biasFvg == 1 ? Brushes.LimeGreen : Brushes.IndianRed;
+            string fvgDir = biasFvg == 1 ? "BULL" : "BEAR";
+
+            Draw.Rectangle(this, "FVG_Box", false, fvgFinalizedTime, fvgTop,
+                sessionEnd, fvgBottom, fvgColor, fvgColor, 50);
+            Draw.Text(this, "FVG_L", $"FVG {fvgDir} [{fvgBottom:F1}-{fvgTop:F1}]", 0, fvgTop + TickSize * 2);
+        }
+
+        /// <summary>
+        /// Draws a HUD text panel in the upper-left of the chart showing all filter
+        /// criteria and their current state. Updated every bar.
+        /// Layout: Play | Time | IB range | First break | FVG | AVWAP | Trend | Depth
+        /// </summary>
+        protected void DrawHUD()
+        {
+            if (!DrawVisuals) return;
+            if (BarsArray == null || BarsArray.Length == 0) return;
+
+            string playName = ActivePlay == 1 ? "P1 Breakout" : ActivePlay == 2 ? "P2 Retest" : ActivePlay == 3 ? "P3 Fade" : "?";
+            string breakStr = firstBreakDir == 0 ? "none" : firstBreakDir == 1 ? "UP" : "DOWN";
+            string fvgStr = biasFvg == 0 ? "none" : biasFvg == 1 ? "bull" : "bear";
+            string fvgAligned = BiasFvgAlignedWithBreak ? "YES" : "NO";
+            string avwapStr = breakVsAvwap0930 == 0 ? "n/a" : breakVsAvwap0930 == 1 ? "above" : "below";
+            string trendStr = firstBreakDir == 0 ? "n/a" : TrendMisalignedWithBreak ? "misaligned" : "aligned";
+            double depthRatio = rangeRange > 0 ? maxExcursionPastMid / rangeRange : 0;
+            string depthTier = depthRatio < DepthWeakThreshold ? "weak" : depthRatio < DepthStrongThreshold ? "moderate" : "strong";
+            string depthOverlay = (Play2DepthSizeOverlay && ActivePlay == 2) ? $"x{DepthSizeMultiplier():F2}" : "off";
+
+            // Calendar filters
+            string calFilters = "";
+            if (SkipMondayPlay2 && ActivePlay == 2) calFilters += "SkipMon ";
+            if (SkipFebruaryPlay2 && ActivePlay == 2) calFilters += "SkipFeb ";
+            if (SkipMayPlay1 && ActivePlay == 1) calFilters += "SkipMay ";
+            if (SkipOctoberPlay3 && ActivePlay == 3) calFilters += "SkipOct ";
+            if (string.IsNullOrEmpty(calFilters)) calFilters = "none";
+
+            string confState = ConfluenceFilterEnabled ? "ON" : "OFF";
+            string ibCompStr = rangeComplete ? "YES @ " + rangeCompleteTime.ToString("HH:mm") : "NO";
+
+            string hud = $"=== {GetStrategyName()} ===\n" +
+                $"Play: {playName}  |  Time: {Time[0]:HH:mm} ET  |  Date: {Time[0]:yyyy-MM-dd}\n" +
+                $"IB: H={rangeHigh:F2} L={rangeLow:F2} Mid={rangeMid:F2} Range={rangeRange:F2}\n" +
+                $"IB complete: {ibCompStr}\n" +
+                $"First break: {breakStr}  |  AVWAP: {avwapStr}  |  Trend: {trendStr}\n" +
+                $"FVG: {fvgStr} aligned={fvgAligned}  |  Depth: {depthRatio:F2} [{depthTier}] {depthOverlay}\n" +
+                $"ConfluenceFilter: {confState}  |  Calendar: {calFilters}\n" +
+                $"EMA20={dailyEma20:F2} EMA50={dailyEma50:F2}  |  MaxTrades={MaxTradesPerDay} Today={todayTradeCount}";
+
+            // Draw HUD as text at the upper-left (barsAgo=0, price=High[0] offset up)
+            Draw.Text(this, "HUD", hud, 0, High[0] + rangeRange * 0.5);
         }
 
         /// <summary>
@@ -561,7 +709,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (!biasFvgComputed && now >= new DateTime(now.Year, now.Month, now.Day, RangeStartHour, RangeStartMinute, 0))
             {
                 Update5mFvgAccumulator(now);
+                // Draw the FVG box as soon as it's detected (first detection only)
+                if (biasFvg != 0 && fvgFinalizedTime == Time[0])
+                    DrawFVG();
             }
+
+            // ── HUD: update every bar so filter states stay current ──
+            DrawHUD();
         }
 
         /// <summary>
@@ -631,15 +785,21 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 if (highIm2 < lowI)
                 {
-                    biasFvg = 1;  // bullish FVG
+                    biasFvg = 1;  // bullish FVG: gap between high[i-2] and low[i]
                     biasFvgComputed = true;
-                    if (DebugMode) Log($"[DIAG] FVG bullish detected: high[i-2]={highIm2} < low[i]={lowI} at {Time[0]:HH:mm}", LogLevel.Information);
+                    fvgBottom = highIm2;
+                    fvgTop = lowI;
+                    fvgFinalizedTime = Time[0];
+                    if (DebugMode) Log($"[DIAG] FVG bullish detected: high[i-2]={highIm2} < low[i]={lowI} gap=[{fvgBottom},{fvgTop}] at {Time[0]:HH:mm}", LogLevel.Information);
                 }
                 else if (lowIm2 > highI)
                 {
-                    biasFvg = -1;  // bearish FVG
+                    biasFvg = -1;  // bearish FVG: gap between low[i-2] and high[i]
                     biasFvgComputed = true;
-                    if (DebugMode) Log($"[DIAG] FVG bearish detected: low[i-2]={lowIm2} > high[i]={highI} at {Time[0]:HH:mm}", LogLevel.Information);
+                    fvgTop = lowIm2;
+                    fvgBottom = highI;
+                    fvgFinalizedTime = Time[0];
+                    if (DebugMode) Log($"[DIAG] FVG bearish detected: low[i-2]={lowIm2} > high[i]={highI} gap=[{fvgBottom},{fvgTop}] at {Time[0]:HH:mm}", LogLevel.Information);
                 }
             }
 

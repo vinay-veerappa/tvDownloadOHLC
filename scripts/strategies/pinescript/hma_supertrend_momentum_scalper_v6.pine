@@ -26,6 +26,7 @@ i_stMult         = input.float(2.0, "SuperTrend Multiplier", minval=0.1, step=0.
 i_hmaPeriod      = input.int(14, "HMA Period", minval=1, group=GRP_TREND)
 i_useEmaFilter   = input.bool(true, "Use 200 EMA Macro Filter", group=GRP_TREND)
 i_emaPeriod      = input.int(200, "EMA Filter Period", minval=1, group=GRP_TREND)
+i_maxChopIndex   = input.float(55.0, "Max Chop Index Guard (Blocks Chop > 55)", minval=10.0, maxval=100.0, step=1.0, group=GRP_TREND)
 
 GRP_EXECUTION    = "Execution & Risk Settings"
 i_rthOnly        = input.bool(true, "RTH Session Windows Only (9:30-11:30 & 14:00-15:30 EST)", group=GRP_EXECUTION)
@@ -112,14 +113,14 @@ if strategy.closedtrades > prevClosedTrades
         consecLosses := 0
     prevClosedTrades := strategy.closedtrades
 
-riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit and consecLosses < i_maxConsecLoss
+// ── Choppiness Index (14) Chop Guard Calculation ──
+trSum14 = math.sum(ta.tr(true), 14)
+range14 = math.max(ta.highest(high, 14) - ta.lowest(low, 14), 0.0001)
+chopIndex = 100.0 * math.log10(trSum14 / range14) / math.log10(14.0)
+chopGuardOK = chopIndex < i_maxChopIndex
 
-// ══════════════════════════════════════════════
-// ══ 5. SIGNALS & STRATEGY EXECUTION
-// ══════════════════════════════════════════════
-
-longSignal  = stBullish and low <= hmaVal and hmaSlopeUp and macroBull and inRthWindow and riskGatekeeperOK
-shortSignal = stBearish and high >= hmaVal and hmaSlopeDn and macroBear and inRthWindow and riskGatekeeperOK
+longSignal  = stBullish and low <= hmaVal and (hmaSlopeUp or (hmaVal > hmaVal[1])) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
+shortSignal = stBearish and high >= hmaVal and (hmaSlopeDn or (hmaVal < hmaVal[1])) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
 
 if strategy.position_size == 0
     if longSignal
