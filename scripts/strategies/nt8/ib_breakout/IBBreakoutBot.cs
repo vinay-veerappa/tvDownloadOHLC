@@ -64,7 +64,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return 0;
 
                 double entry  = Close[0];
-                double stop   = entry - StopRMult * TargetLvl * rangeRange;  // MAE-calibrated
+                double stop   = rangeLow;  // IB-relative: opposite IB boundary (not entry-relative)
                 double target = rangeHigh + TargetLvl * rangeRange;
 
                 if (!TargetIsSane(entry, target, 1))
@@ -93,7 +93,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return 0;
 
                 double entry  = Close[0];
-                double stop   = entry + StopRMult * TargetLvl * rangeRange;
+                double stop   = rangeHigh;  // IB-relative: opposite IB boundary (not entry-relative)
                 double target = rangeLow - TargetLvl * rangeRange;
 
                 if (!TargetIsSane(entry, target, -1))

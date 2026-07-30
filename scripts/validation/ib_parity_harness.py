@@ -356,14 +356,22 @@ def simulate_play1_day(
         side = "LONG"
         entry_idx = long_t
         entry_price = float(long_entry["close"].iloc[0])
-        stop_price = entry_price - stop_mult * target_lvl * ib_range
+        stop_price = ib_low   # IB-relative: opposite IB boundary (not entry-relative)
         target_price = ib_high + target_lvl * ib_range
+        # TargetIsSane (mirrors NT8 IntradayStrategyBase.TargetIsSane):
+        # if the breakout bar gapped past the target level, the target is
+        # behind the entry — NT8 rejects this trade, so Python must too.
+        if target_price <= entry_price:
+            return None
     else:
         side = "SHORT"
         entry_idx = short_t
         entry_price = float(short_entry["close"].iloc[0])
-        stop_price = entry_price + stop_mult * target_lvl * ib_range
+        stop_price = ib_high  # IB-relative: opposite IB boundary (not entry-relative)
         target_price = ib_low - target_lvl * ib_range
+        # TargetIsSane for SHORT: target must be below entry
+        if target_price >= entry_price:
+            return None
 
     return _resolve_exit(rth, entry_idx, entry_price, stop_price,
                          target_price, side, ib_range)
@@ -614,11 +622,16 @@ def diff_ledgers(py: List[Dict], nt8: List[Dict], out_path: Optional[str] = None
         nt8_df = pd.DataFrame(columns=["entry_time", "entry_price", "side", "pnl"])
 
     # Parse entry times to datetime for matching (normalize both to tz-aware ET)
-    for df in (py_df, nt8_df):
-        if "entry_time" in df.columns:
-            dt = pd.to_datetime(df["entry_time"], errors="coerce", utc=True).dt.tz_convert("America/New_York")
-            df["entry_dt"] = dt
-            df["date"] = df["entry_dt"].dt.date
+    # Python entry_time is tz-aware ET (from simulate_play1_day which uses ET-localized bars).
+    # NT8 entry_time is ET-naive (NT8 Strategy Analyzer exports in the chart timezone = ET).
+    # Treating NT8 timestamps as UTC and converting to ET would shift them −4h/−5h — a bug.
+    if "entry_time" in py_df.columns:
+        py_df["entry_dt"] = pd.to_datetime(py_df["entry_time"], errors="coerce", utc=True).dt.tz_convert("America/New_York")
+        py_df["date"] = py_df["entry_dt"].dt.date
+    if "entry_time" in nt8_df.columns:
+        # NT8 timestamps are ET-naive — localize directly to ET (do NOT treat as UTC)
+        nt8_df["entry_dt"] = pd.to_datetime(nt8_df["entry_time"], errors="coerce").dt.tz_localize("America/New_York", ambiguous="NaT", nonexistent="shift_forward")
+        nt8_df["date"] = nt8_df["entry_dt"].dt.date
 
     # Aggregate stats
     print("\n" + "=" * 78)
