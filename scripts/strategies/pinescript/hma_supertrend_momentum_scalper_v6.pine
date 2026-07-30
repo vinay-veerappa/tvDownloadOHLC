@@ -139,8 +139,30 @@ if strategy.position_size == 0
           profit=close - (i_tpAtr * atrVal), 
           loss=close + (i_slAtr * atrVal))
 
+// ── RORO (Right or Right Out) Fail-Fast Risk Management Engine ──
 if strategy.position_size != 0
     int barsInTrade = bar_index - strategy.opentrades.entry_bar_index(0)
+    float entryPrice = strategy.opentrades.entry_price(0)
+    bool isLong = strategy.position_size > 0
+    float unrealizedPts = isLong ? (close - entryPrice) : (entryPrice - close)
+
+    // 1. RORO Breakeven Trail (+0.5 ATR Profit Lock)
+    if unrealizedPts >= (0.5 * atrVal)
+        if isLong
+            strategy.exit("RORO_BE_Long", "Long", stop=entryPrice + syminfo.mintick, profit=entryPrice + (i_tpAtr * atrVal))
+        else
+            strategy.exit("RORO_BE_Short", "Short", stop=entryPrice - syminfo.mintick, profit=entryPrice - (i_tpAtr * atrVal))
+
+    // 2. RORO Stalled Momentum Exit (If trade is flat after 3 bars -> Fail Fast Out!)
+    if barsInTrade >= 3 and unrealizedPts < (0.3 * atrVal)
+        strategy.close_all(comment="RORO Stalled Exit")
+
+    // 3. RORO Adverse Expansion Exit (If candle closes strongly against trade -> Fail Fast Out!)
+    bool adverseExit = isLong ? (close < open and close < entryPrice - 0.4 * atrVal) : (close > open and close > entryPrice + 0.4 * atrVal)
+    if adverseExit
+        strategy.close_all(comment="RORO Adverse Exit")
+
+    // 4. Hard Time Decay Limit
     if barsInTrade >= i_maxHoldBars
         strategy.close_all(comment="Time Decay Exit")
 

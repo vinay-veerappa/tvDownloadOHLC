@@ -1,8 +1,24 @@
 # IB Confluence Indicator — Architecture Brainstorm
 
 > **Date**: 2026-07-30 (Session 12)
-> **Status**: Design phase — brainstorming
-> **Goal**: Extract IB confluence computation + visualization from `IBStrategyBase` into a standalone reusable NT8 Indicator, with a clean HUD table and chart drawing.
+> **Status**: Design DECIDED — agent loop recommendation adopted (Option B: Compose)
+> **Goal**: Build `IBConfluenceIndicator` that composes RedTailAutoVWAP + FairValueGapICT(visual) + @Swing, driven by a shared `IBConfluenceEngine` extracted from IBStrategyBase (parity-locked by construction).
+
+---
+
+## 0. Architecture Decision (Agent Loop — adopted)
+
+After a 3-expert panel debate (ICT trading expert, NT8 NinjaScript architect, quantitative systems engineer), **Option B** was selected:
+
+**Create a new `IBConfluenceIndicator` that COMPOSES RedTailAutoVWAP + FairValueGapICT (visual) + `@Swing`, with a shared `IBConfluenceEngine` extracted from IBStrategyBase.**
+
+Key positions:
+- **FVG:** detection = IBStrategyBase's parity-verified 5-min FVG (single source of truth); visual = `FairValueGapICT` with IB time window. Never two detectors.
+- **Structure:** `@Swing` + custom BoS/CHoCH; LuxAlgo SMC is visual-only (compiled, no API).
+- **OB:** custom minimal detector scoped to IB break impulse; do not adapt SupDemZones.
+- **Liquidity:** `@PriorDayOHLC` + `@CurrentDayOHL` as refs + custom sweep detector.
+- **RedTailAutoVWAP:** do NOT fork the 147KB. Add ~10 lines exposing `IbHigh/IbLow/IbMid/IbRange` public props; otherwise leave untouched.
+- **Parity:** the `IBConfluenceEngine` is the SAME class IBStrategyBase uses — extract to a shared file. Indicator and strategy see identical confluence state. Parity preserved by construction, not re-implementation.
 
 ---
 
@@ -323,70 +339,130 @@ Note: EMA on daily close is a **step function** (one value per day, flat intrada
 
 ---
 
-## 5. File Structure
+## 5. File Structure (revised per Option B)
 
 ```
 scripts/strategies/nt8/
+├── shared/
+│   └── IBConfluenceEngine.cs          ← NEW: parity-verified engine (extracted from IBStrategyBase)
+│         IB range, FVG (5-min), break dir, depth, VCP, OPEX, EMA, calendar,
+│         StructureDetector (BoS/CHoCH on @Swing), OrderBlockDetector, LiquiditySweepDetector,
+│         Confluence evaluator (P1/P2/P3 filter stacks)
 ├── indicators/
-│   └── IBConfluenceIndicator.cs      ← NEW: standalone indicator
+│   └── IBConfluenceIndicator.cs       ← NEW: standalone indicator (IsOverlay)
+│         Composes: RedTailAutoVWAP (AddChartIndicator), FairValueGapICT (visual), @Swing,
+│                   @PriorDayOHLC, @CurrentDayOHL
+│         Owns: IBConfluenceEngine instance
+│         Draws: clean HUD table (Draw.TextFixed), OB box, sweep arrows, IB boundaries
+│         Exposes: all confluence properties for strategies to read
 ├── base/
-│   ├── RiskManagerBase.cs            (unchanged)
-│   └── IntradayStrategyBase.cs       (simplified — range window only, no confluence)
+│   ├── RiskManagerBase.cs             (unchanged)
+│   └── IntradayStrategyBase.cs        (unchanged — range window only)
 ├── ib_breakout/
-│   ├── IBStrategyBase.cs             (simplified — just play-specific entry logic + calendar)
-│   ├── IBBreakoutBot.cs              (thin — reads indicator properties)
-│   ├── IBRetestBot.cs                (thin — reads indicator properties)
-│   └── IBFadeBot.cs                  (thin — reads indicator properties)
+│   ├── IBStrategyBase.cs              (refactored — references IBConfluenceEngine, no internal confluence)
+│   ├── IBBreakoutBot.cs               (thin — reads engine via indicator)
+│   ├── IBRetestBot.cs                 (thin — reads engine via indicator)
+│   └── IBFadeBot.cs                   (thin — reads engine via indicator)
 ```
 
-The indicator lives in `indicators/` so it can be used independently of the strategies. The sync script (`sync_nt8_strategies.py`) needs to be updated to also sync the `indicators/` folder to NT8's `Indicators/Vinay/` directory.
+The `IBConfluenceEngine` is shared — both the indicator and IBStrategyBase reference it. This guarantees identical confluence state. Parity is preserved by construction.
 
 ---
 
-## 6. Migration Plan
+## 6. Feature-to-Indicator Mapping (Agent Loop — final)
 
-### Phase 1: Build the indicator (no strategy changes)
-1. Create `IBConfluenceIndicator.cs` — extract all computation + drawing from `IBStrategyBase`
-2. Add `[NinjaScriptProperty]` for all configurable params (colors, toggles, thresholds)
-3. Implement clean HUD table using `Draw.TextFixed` + `Consolas`
-4. Draw IB boundaries, quarters, FVG box, AVWAP line, depth shade
-5. Expose all public properties for strategies to read
-6. Compile and test standalone on a chart (no strategy attached)
-
-### Phase 2: Refactor IBRetestBot (incremental)
-1. Add `AddChartIndicator(IBConfluenceIndicator())` in `IBRetestBot.ConfigureStrategy`
-2. Replace internal confluence computation with reads from `IBConfluenceIndicator1`
-3. Remove `DrawIBBoundaries`/`DrawFVG`/`DrawHUD` from `IBStrategyBase` (indicator handles drawing)
-4. Run NT8 backtest → compare to existing `scratch/nt8_ib_retest_fvg_sep26_full.json`
-5. Verify: same 65 trades, same P&L, same WR/PF → parity preserved
-
-### Phase 3: Refactor remaining bots
-1. `IBBreakoutBot` — same pattern as IBRetestBot
-2. `IBFadeBot` — same pattern
-3. Verify each against existing backtest JSONs
-
-### Phase 4: Enhancements
-1. Add optional built-in `FVGICT` integration (`UseBuiltInFVGDrawing` property)
-2. Add BoS (Break of Structure) via `ZigZag` to confluence stack
-3. Generalize to `RangeConfluenceIndicator` (configurable window for ORB/London/Asia)
-4. Add multi-day IB level persistence (like `PAX30OpeningRange` shows last N days)
+| Concept | Best indicator | Programmatic access | Visual drawing | Integration approach |
+|---|---|---|---|---|
+| **IB range** | RedTailAutoVWAP (consumer) + IBConfluenceEngine (parity logic) | Add `IbHigh/IbLow/IbMid/IbRange` props to RedTail (~10 lines) | RedTail's existing IB box | Consume RedTail's IB props; authoritative calc in engine |
+| **VWAP / AVWAP** | RedTailAutoVWAP | Public VWAP Series (already) | Existing plots | Overlay; engine reads AVWAP from IBStrategyBase's 09:30-anchored calc (parity) — do NOT recompute from RedTail's session VWAP |
+| **FVG (detection)** | IBConfluenceEngine (5-min resampled, parity-verified) | `biasFvg`, `fvgTop`, `fvgBottom` | `Draw.Rectangle` | Single source of truth — lifted from IBStrategyBase |
+| **FVG (visual)** | `FairValueGapICT` | `FVGList`, `getUpperPrice/LowerPrice` | Custom SharpDX + CE line | Chart overlay only, time window=09:30–10:00; does NOT feed filter |
+| **BoS / CHoCH** | `@Swing` (built-in) + custom logic | `SwingHighBar/SwingLowBar` | Custom `Draw.Arrow` + text | New `StructureDetector` in engine; emits `biasStructure` |
+| **Order Blocks** | Custom (build in engine) | `DetectOrderBlock()` → `(obTop,obBottom,obTime)` | `Draw.Rectangle` per day | New `OrderBlockDetector`; feeds depth-tier + retest viz |
+| **Liquidity** | `@PriorDayOHLC` + `@CurrentDayOHL` + custom sweep logic | `PriorHigh/PriorLow/CurrentHigh/CurrentLow` | `Draw.Arrow` on sweep | New `LiquiditySweepDetector`; emits `biasLiquiditySweep` |
+| **Supply/Demand** | `SupDemZones` (unimported) — optional, defer | None (private `Zones`) | Its own OnRender | Defer to Phase 4; OB covers the IB-relevant case |
+| **EMA trend** | IBConfluenceEngine (daily EMA 20/50, session-window close) | Direct fields | HUD text | Lift from IBStrategyBase — parity contract; do NOT use NT8's EMA (different convention) |
+| **Depth / retest** | IBConfluenceEngine `RetestDepth` + depth tier | Direct fields | Depth shade | Lift from IBStrategyBase |
+| **Calendar filters** | IBConfluenceEngine (Mon/Feb/May/Oct, OPEX, quarterly OPEX) | Bool props | HUD text only | Lift from IBStrategyBase |
+| **Pivots / levels** | `@Pivots`, `@CamarillaPivots` (built-in) | `Pp/R1..R3/S1..S3` | Built-in OnRender | Overlay only — not a confluence input (IB doesn't use pivots) |
+| **Prior day** | `@PriorDayOHLC` (built-in) | `PriorHigh/PriorLow/PriorClose` | Built-in | Liquidity ref + bias context |
+| **Confluence HUD** | New `IBConfluenceIndicator` | — | `Draw.TextFixed` clean table | Build fresh (IBStrategyBase's HUD is the model to copy) |
 
 ---
 
-## 7. Open Questions (updated post-survey)
+## 7. Architecture (Option B — adopted)
 
-1. ~~**Which built-in NT8 indicators do you already have installed?**~~ — **ANSWERED**: ~170 indicators surveyed. Key finds: `FairValueGapICT` (full ICT FVG with time windows), `ORB_0930_1min_Indicator` (closest ORB template), `PAX30OpeningRange` (multi-day persistence), `RedTailAutoVWAP` (already has IB range!), `Swing` (for BoS), `PriorDayOHLC` + `Pivots` + `CamarillaPivots` (confluence levels).
-2. **FVG approach**: Use `FairValueGapICT` via `AddChartIndicator` (pre-built boxes, time-windowed) OR keep the custom 5-min detection from `IBStrategyBase` (parity-verified)? Or both (`UseBuiltInFVG` toggle)?
-3. **RedTailAutoVWAP**: It already computes `dayInitialBalance` — should we investigate its `RangeData` class and potentially extend it rather than building from scratch?
-4. **BoS/MSS**: Should the indicator include Break of Structure via `Swing` indicator in Phase 1, or defer to Phase 4?
-5. **Confluence levels**: Should we add `PriorDayOHLC` (prior H/L/C) and `Pivots` (floor pivots) as confluence factors in Phase 1?
-6. **HUD position**: TopRight (like ORB_0930) or TopLeft?
-7. **Multi-day IB display**: Should the indicator show prior days' IB levels (like `PAX30OpeningRange` shows 8 days)? Useful for IB range persistence patterns.
-8. **Custom rendering vs Draw.***: Start with `Draw.*` calls (simpler, proven) and switch to SharpDX `OnRender` (like `SampleCustomRender`) only if performance becomes an issue?
+```
+IBConfluenceIndicator (new, IsOverlay=true)
+  ├─ Adds: RedTailAutoVWAP (AddChartIndicator)         [VWAP + IB range + OR — untouched]
+  ├─ Adds: FairValueGapICT (visual, IB time window)     [FVG drawing — untouched, no logic coupling]
+  ├─ Adds: @Swing (Strength=3)                         [structure pivots]
+  ├─ Adds: @PriorDayOHLC, @CurrentDayOHL                [liquidity refs]
+  ├─ Owns: IBConfluenceEngine (extracted from IBStrategyBase)
+  │     ├─ IB range calc (parity)        → reads RedTail's IbHigh/IbLow if exposed, else recomputes
+  │     ├─ 5-min FVG detection (parity)  → biasFvg, fvgTop/Bottom
+  │     ├─ Break direction + time
+  │     ├─ Retest depth + depth tier
+  │     ├─ VCP 3-day contracting
+  │     ├─ OPEX / quarterly OPEX / calendar filters
+  │     ├─ Daily EMA 20/50 (session-close convention)
+  │     ├─ StructureDetector (BoS/CHoCH on @Swing)     → biasStructure
+  │     ├─ OrderBlockDetector                          → obTop/Bottom/Time
+  │     ├─ LiquiditySweepDetector (PDH/PDL/IBH/IBL)    → biasLiquiditySweep
+  │     └─ Confluence evaluator (P1/P2/P3 filter stacks) → per-play pass/fail
+  └─ Draws: clean HUD table (Draw.TextFixed) + OB box + sweep arrows + IB boundaries
+```
+
+**Key reuse property:** the `IBConfluenceEngine` is the SAME class IBStrategyBase uses — extract it to a shared file, have the strategy reference it, and the indicator references it. This guarantees the indicator and the live strategy see **identical** confluence state. Parity is preserved by construction, not by re-implementation.
+
+**Why not fork RedTailAutoVWAP (Option A):**
+1. 147KB = ~5000 lines. Risk of breaking existing VWAP/IB/OR logic the user relies on.
+2. Redundant IB range — its IB logic may differ subtly from the parity-verified IBStrategyBase IB logic. Forking risks two IB definitions diverging.
+3. Maintenance: every RedTail update forces a re-merge.
+4. Single Responsibility: VWAP + IB range + OR is a coherent "anchored-volume + range" indicator. Confluence (structure, FVG, OB, liquidity, filters) is a different concern.
 
 ---
 
-## 8. References
+## 8. Phase Plan (Agent Loop — final)
+
+### Phase 1 — Engine extraction + parity lock (no new visuals)
+- Extract `IBConfluenceEngine` from `IBStrategyBase.cs` into a shared `shared/IBConfluenceEngine.cs`.
+- Strategy and indicator both reference it.
+- Run the parity harness against the strategy to confirm 100% identical trades.
+- **Exit gate:** harness shows zero divergence vs `scratch/nt8_ib_retest_fvg_sep26_full.json`.
+
+### Phase 2 — IBConfluenceIndicator skeleton + HUD
+- New indicator, overlay, adds `@Swing` + `@PriorDayOHLC` + `@CurrentDayOHL`.
+- Wire engine. Render the **clean HUD table** (`Draw.TextFixed` rows: Play | Time | IB range | Break | FVG | Structure | OB | Liquidity | AVWAP | Trend | Depth | Confluence).
+- Add `AddChartIndicator<RedTailAutoVWAP>()` and `AddChartIndicator<FairValueGapICT>()` (IB time window) so one install = full stack.
+- **Exit gate:** HUD matches strategy HUD on a replay day.
+
+### Phase 3 — Detectors (structure, OB, liquidity)
+- `StructureDetector` on `@Swing` → `biasStructure`, draw BoS/CHoCH arrows.
+- `OrderBlockDetector` → daily OB box near IB break.
+- `LiquiditySweepDetector` → pre-IB sweep bias + post-IB sweep fade, arrows on chart.
+- Add `BiasStructureAlignedWithBreak` / `LiquiditySweepFavorsBreak` as **non-blocking** confluence tiers (display only initially; gate only after live validation).
+
+### Phase 4 — Optional supply/demand layer
+- Import `SupDemZones.cs`, add public `GetZones()` accessor, overlay only. Low priority — OB covers the IB-critical case.
+
+### Phase 5 — Strategy wiring
+- Expose confluence tiers in IBStrategyBase as `BiasStructure`, `BiasLiquiditySweep`, `BiasOrderBlock` props (mirroring `BiasFvgAlignedWithBreak`).
+- Backtest each tier independently to measure OOS edge before promoting from "display" to "filter" — repeat the Session 10 OOS-validation discipline that flagged FVG-aligned as the only valid filter.
+
+---
+
+## 9. Open Questions (remaining)
+
+1. **HUD position**: TopRight (like ORB_0930) or TopLeft? → user preference
+2. **Multi-day IB display**: Should the indicator show prior days' IB levels (like `PAX30OpeningRange` shows 8 days)? Useful for IB range persistence patterns.
+3. **RedTailAutoVWAP IB props**: Can we confirm RedTail exposes `IbHigh/IbLow` or do we need to add them? Need to read the 147KB file's property section.
+4. **FairValueGapICT time window**: Can we set a single window to 09:30-10:00 via its `StartTime1`/`TimeRangeMinutes1` properties? (Confirmed yes from the survey — `UseTimeRange1` + `StartTime1` + `TimeRangeMinutes1`).
+5. **OB detection scope**: Should OB detection be limited to the IB break impulse only, or also track subsequent OBs formed during the retest phase?
+
+---
+
+## 10. References
 
 | Doc | Path |
 |---|---|

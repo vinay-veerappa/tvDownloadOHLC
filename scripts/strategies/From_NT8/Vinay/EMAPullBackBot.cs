@@ -29,7 +29,27 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         [NinjaScriptProperty]
         [Display(Name = "Use Engulfing Confirmation", Order = 5, GroupName = "EMA Pullback")]
-        public bool UseEngulfingConfirmation { get; set; }
+        public bool UseEngulfingConfirmation { get; set; }
+        [NinjaScriptProperty]
+        [Display(Name = "Use VWAP Distance Filter", Order = 6, GroupName = "EMA Pullback")]
+        public bool UseVwapFilter { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "VWAP Min Distance (ATR mult)", Order = 7, GroupName = "EMA Pullback")]
+        public double VwapMinDistanceAtr { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use Relative Volume Filter", Order = 8, GroupName = "EMA Pullback")]
+        public bool UseVolumeFilter { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Volume Percentile Threshold", Order = 9, GroupName = "EMA Pullback")]
+        public double VolumePercentile { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Volume Lookback (bars)", Order = 10, GroupName = "EMA Pullback")]
+        public int VolumeLookback { get; set; }
+
 
         private EMA emaIndicator;
 
