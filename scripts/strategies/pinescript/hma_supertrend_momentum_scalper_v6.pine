@@ -113,6 +113,8 @@ if strategy.closedtrades > prevClosedTrades
         consecLosses := 0
     prevClosedTrades := strategy.closedtrades
 
+riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit and consecLosses < i_maxConsecLoss
+
 // ── Choppiness Index (14) Chop Guard Calculation ──
 trSum14 = math.sum(ta.tr(true), 14)
 range14 = math.max(ta.highest(high, 14) - ta.lowest(low, 14), 0.0001)
