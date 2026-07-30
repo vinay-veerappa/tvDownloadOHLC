@@ -16,7 +16,6 @@ using NinjaTrader.NinjaScript.DrawingTools;
 using SharpDX;
 using SharpDX.Direct2D1;
 using System.IO;
-using System.Speech.Synthesis;
 #endregion
 
 namespace NinjaTrader.NinjaScript.Indicators.RedTail
@@ -1459,49 +1458,8 @@ Write-Host 'COPIED_MP3'
         
         private void GenerateSAPIVoiceAlerts(string soundDir, Dictionary<string, string> alerts)
         {
-            using (var synth = new SpeechSynthesizer())
-            {
-                Print("RedTail VWAP SAPI voices available:");
-                foreach (var voice in synth.GetInstalledVoices())
-                {
-                    if (voice.Enabled)
-                        Print("  - " + voice.VoiceInfo.Name + " (" + voice.VoiceInfo.Gender + ", " + voice.VoiceInfo.Culture + ")");
-                }
-                
-                foreach (var voice in synth.GetInstalledVoices())
-                {
-                    if (voice.VoiceInfo.Gender == VoiceGender.Female && voice.Enabled)
-                    {
-                        synth.SelectVoice(voice.VoiceInfo.Name);
-                        Print("RedTail VWAP: Selected SAPI voice: " + voice.VoiceInfo.Name);
-                        break;
-                    }
-                }
-                
-                synth.Rate = Math.Max(-10, Math.Min(10, VoiceAlertRate));
-                
-                foreach (var kvp in alerts)
-                {
-                    string fileName = "RTVWAP_" + instrumentName + "_" + kvp.Key + ".wav";
-                    string filePath = Path.Combine(soundDir, fileName);
-                    
-                    if (File.Exists(filePath))
-                        continue;
-                    
-                    try
-                    {
-                        synth.SetOutputToWaveFile(filePath);
-                        synth.SpeakSsml(BuildSSML(kvp.Value));
-                        synth.SetOutputToNull();
-                        Print("RedTail VWAP SAPI: Generated " + fileName);
-                    }
-                    catch (Exception ex)
-                    {
-                        Print("RedTail VWAP SAPI failed '" + kvp.Key + "': " + ex.Message);
-                        continue;
-                    }
-                }
-            }
+            // SAPI voice generation disabled (System.Speech not available in NT8 compile environment)
+            Print("RedTail VWAP: SAPI voice generation disabled (System.Speech assembly not referenced)");
         }
         
         private string BuildSSML(string phrase)

@@ -2,7 +2,7 @@
 
 > **Date**: 2026-07-30
 > **Commit**: `9dbf8712` — "Session 12: NT8 restructure + RedTail indicators + IB Confluence design + visualizer"
-> **Status**: Baseline committed. Ready for next session: compile + test RedTail indicators in NT8.
+> **Status**: ✅ Clean compile achieved (Session 13, 2026-07-30). 0 errors, 25 pre-existing warnings. Ready for IB bot testing + RedTail API investigation.
 
 ---
 
@@ -44,17 +44,38 @@
 
 ---
 
+## Session 13 — Compile Fixes (2026-07-30)
+
+### What Was Done
+1. **System.Speech dependency removed**: `RedTailMarketStructure.cs` + `RedTailAutoVWAP.cs` referenced `System.Speech.Synthesis` (SpeechSynthesizer for voice alerts). Stubbed `GenerateSAPIVoiceAlerts()` to no-op (prints a message, does nothing). User also added the System.Speech DLL reference to NT8 as a backup.
+2. **Orphan duplicate deleted**: `MyCustomIndicator.cs` in NT8 `Custom/Indicators/` was an old copy of `RedTailAutoVWAP.cs` (same classes, `using System.Speech.Synthesis` already commented out). Caused CS0101 "already contains a definition" for `RedTailAutoVWAP`. Deleted.
+3. **Corrupted backup deleted**: `EMAPullBackBot_backup.cs` in NT8 `Custom/Strategies/Vinay/` was a single-line 10KB corrupted file causing CS1038 "#endregion directive expected". Deleted.
+4. **Duplicate generated block removed**: `RedTailMarketStructure.cs` source had a pre-existing `#region NinjaScript generated code` block. NT8's Roslyn generator appended a second copy on compile (class name `RedTailMarketStructureV2` ≠ filename `RedTailMarketStructure`), causing 105 CS0102/CS0111/CS0121/CS0229 ambiguity errors. Removed the generated block from source — NT8 now regenerates it fresh.
+5. **RiskGatekeeper.cs synced**: File was missing from NT8 `Custom/Strategies/Vinay/`. Synced from `scripts/ninjatrader/strategies/base/`. Required NT8 restart for hot-swap compiler to detect the new file.
+6. **RiskGatekeeper stale cache**: NT8 Roslyn cached the old `RiskGatekeeper.cs` (with `Tuple<double, DateTime>`) even after the updated file (with `ValueTuple (double pnl, DateTime time)`) was on disk. Required a second NT8 restart to clear the stale compilation cache.
+
+### Compile Result
+- **✅ success=True, 0 errors, 25 pre-existing warnings**
+- All RedTail indicators compile clean
+- All Vinay strategies compile clean
+- All AddOns compile clean
+
+### Key Lesson
+NT8's Roslyn hot-swap compiler:
+- Can update **existing** files in-place (hot-swap)
+- Cannot detect **new** files added to `Custom/` — requires NT8 restart
+- Can cache stale versions of files even after disk update — requires NT8 restart to clear
+- Auto-appends a `#region NinjaScript generated code` block if the class name doesn't match the filename — don't include a pre-existing generated block in source for mismatched names
+
+---
+
 ## Next Session Priorities
 
-### 1. Verify RedTail indicator compilation in NT8
-- Restart NT8
-- Run sync: `.\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py`
-- Compile in NT8 (F5 or via bridge `http://localhost:7890/api/compile`)
-- Fix any compile errors (RedTail indicators may have dependencies we don't have)
-- Test each key indicator on a chart: RedTailMarketStructure, RedTailAutoVWAP, RedTailKeyLevels
+### 1. ✅ ~~Verify RedTail indicator compilation in NT8~~ — DONE (Session 13)
+- Clean compile achieved. Still need to test each key indicator on a chart: RedTailMarketStructure, RedTailAutoVWAP, RedTailKeyLevels
 
 ### 2. Verify IB bot fixes compile + render
-- The `EnterWithRangeStop` fix + `DrawIBBoundaries`/`DrawFVG`/`DrawHUD` additions need compile verification
+- The `EnterWithRangeStop` fix + `DrawIBBoundaries`/`DrawFVG`/`DrawHUD` additions now compile clean
 - Run IBRetestBot in Strategy Analyzer — check if trade markers now appear on chart
 - Check if HUD/IB boundaries/FVG box render correctly
 
@@ -64,9 +85,9 @@
 - If not exposed, plan what modifications to add (the source is open — we can fork it)
 
 ### 4. Delete old `scripts/strategies/nt8/` folder
-- Only after verifying sync + compile works from `scripts/ninjatrader/`
+- ✅ Sync + compile verified from `scripts/ninjatrader/` — safe to delete old folder
 
-### 5. Start Phase 1 (engine extraction) — if compile verification passes
+### 5. Start Phase 1 (engine extraction)
 - Extract `IBConfluenceEngine` from `IBStrategyBase.cs` into `scripts/ninjatrader/shared/`
 - Run parity harness to verify zero divergence
 
@@ -84,6 +105,8 @@
 | `scripts/viz/viz_ib_retest_trades.py` | NEW | Python trade visualizer |
 | `scripts/ninjatrader/strategies/base/IntradayStrategyBase.cs` | MODIFIED | EnterWithRangeStop fix (tradeIsActive etc.) |
 | `scripts/ninjatrader/strategies/ib_breakout/IBStrategyBase.cs` | MODIFIED | DrawIBBoundaries/DrawFVG/DrawHUD + FVG fields + DrawVisuals prop |
+| `scripts/ninjatrader/indicators/redtail/RedTailMarketStructure.cs` | MODIFIED (S13) | Removed `using System.Speech.Synthesis` + stubbed `GenerateSAPIVoiceAlerts` + removed pre-existing generated block |
+| `scripts/ninjatrader/indicators/redtail/RedTailAutoVWAP.cs` | MODIFIED (S13) | Removed `using System.Speech.Synthesis` + stubbed `GenerateSAPIVoiceAlerts` |
 
 > **Note**: The old copies at `scripts/strategies/nt8/` still have the UNMODIFIED versions (pre-fix). The new copies at `scripts/ninjatrader/` have the fixes. After verifying the new location compiles, delete the old folder.
 

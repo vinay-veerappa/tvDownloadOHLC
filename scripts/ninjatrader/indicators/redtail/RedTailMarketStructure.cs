@@ -6,7 +6,6 @@ using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
-using System.Speech.Synthesis;
 using System.Windows;
 
 using System.Xml.Serialization;
@@ -1195,49 +1194,8 @@ Write-Host 'COPIED_MP3'
 
         private void GenerateSAPIVoiceAlerts(string soundDir, Dictionary<string, string> alerts)
         {
-            using (var synth = new SpeechSynthesizer())
-            {
-                Print("RedTail MS SAPI voices available:");
-                foreach (var voice in synth.GetInstalledVoices())
-                {
-                    if (voice.Enabled)
-                        Print("  - " + voice.VoiceInfo.Name + " (" + voice.VoiceInfo.Gender + ", " + voice.VoiceInfo.Culture + ")");
-                }
-
-                foreach (var voice in synth.GetInstalledVoices())
-                {
-                    if (voice.VoiceInfo.Gender == VoiceGender.Female && voice.Enabled)
-                    {
-                        synth.SelectVoice(voice.VoiceInfo.Name);
-                        Print("RedTail MS: Selected SAPI voice: " + voice.VoiceInfo.Name);
-                        break;
-                    }
-                }
-
-                synth.Rate = Math.Max(-10, Math.Min(10, VoiceAlertRate));
-
-                foreach (var kvp in alerts)
-                {
-                    string fileName = "RTMS_" + instrumentName + "_" + kvp.Key + ".wav";
-                    string filePath = Path.Combine(soundDir, fileName);
-
-                    if (File.Exists(filePath))
-                        continue;
-
-                    try
-                    {
-                        synth.SetOutputToWaveFile(filePath);
-                        synth.SpeakSsml(BuildSSML(kvp.Value));
-                        synth.SetOutputToNull();
-                        Print("RedTail MS SAPI: Generated " + fileName);
-                    }
-                    catch (Exception ex)
-                    {
-                        Print("RedTail MS SAPI failed '" + kvp.Key + "': " + ex.Message);
-                        continue;
-                    }
-                }
-            }
+            // SAPI voice generation disabled (System.Speech not available in NT8 compile environment)
+            Print("RedTail MS: SAPI voice generation disabled (System.Speech assembly not referenced)");
         }
 
         private string BuildSSML(string phrase)
@@ -4272,60 +4230,3 @@ Write-Host 'COPIED_MP3'
         #endregion
     }
 }
-
-#region NinjaScript generated code. Neither change nor remove.
-
-namespace NinjaTrader.NinjaScript.Indicators
-{
-	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
-	{
-		private RedTail.RedTailMarketStructureV2[] cacheRedTailMarketStructureV2;
-		public RedTail.RedTailMarketStructureV2 RedTailMarketStructureV2(int swingLength, string bOSConfirmation, bool showCHoCH, bool showBOS, bool showSwingLabels, string bOSStyle, int bOSWidth, string trendDisplayPosition, bool showHalfRetracement, string halfRetracementStyle, int halfRetracementWidth, bool showStrongWeakLevels, double strongLevelVolumeMultiplier, int strongLevelMinScore, string strongLevelMitigation, int oBSwingLength, double maxATRMultiplier, bool showHistoricZones, string zoneInvalidation, string oBDrawStyle, string zoneCount, int boxExtendBars, bool deleteBrokenBoxes, bool filterOBsByValueArea, bool enableFRVP, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH, string alertSoundOB, string alertSoundAVWAP, string alertSoundFib, double displacementATRMultiplier, double sweepVolumeMultiplier, string alertSoundSweep)
-		{
-			return RedTailMarketStructureV2(Input, swingLength, bOSConfirmation, showCHoCH, showBOS, showSwingLabels, bOSStyle, bOSWidth, trendDisplayPosition, showHalfRetracement, halfRetracementStyle, halfRetracementWidth, showStrongWeakLevels, strongLevelVolumeMultiplier, strongLevelMinScore, strongLevelMitigation, oBSwingLength, maxATRMultiplier, showHistoricZones, zoneInvalidation, oBDrawStyle, zoneCount, boxExtendBars, deleteBrokenBoxes, filterOBsByValueArea, enableFRVP, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH, alertSoundOB, alertSoundAVWAP, alertSoundFib, displacementATRMultiplier, sweepVolumeMultiplier, alertSoundSweep);
-		}
-
-		public RedTail.RedTailMarketStructureV2 RedTailMarketStructureV2(ISeries<double> input, int swingLength, string bOSConfirmation, bool showCHoCH, bool showBOS, bool showSwingLabels, string bOSStyle, int bOSWidth, string trendDisplayPosition, bool showHalfRetracement, string halfRetracementStyle, int halfRetracementWidth, bool showStrongWeakLevels, double strongLevelVolumeMultiplier, int strongLevelMinScore, string strongLevelMitigation, int oBSwingLength, double maxATRMultiplier, bool showHistoricZones, string zoneInvalidation, string oBDrawStyle, string zoneCount, int boxExtendBars, bool deleteBrokenBoxes, bool filterOBsByValueArea, bool enableFRVP, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH, string alertSoundOB, string alertSoundAVWAP, string alertSoundFib, double displacementATRMultiplier, double sweepVolumeMultiplier, string alertSoundSweep)
-		{
-			if (cacheRedTailMarketStructureV2 != null)
-				for (int idx = 0; idx < cacheRedTailMarketStructureV2.Length; idx++)
-					if (cacheRedTailMarketStructureV2[idx] != null && cacheRedTailMarketStructureV2[idx].SwingLength == swingLength && cacheRedTailMarketStructureV2[idx].BOSConfirmation == bOSConfirmation && cacheRedTailMarketStructureV2[idx].ShowCHoCH == showCHoCH && cacheRedTailMarketStructureV2[idx].ShowBOS == showBOS && cacheRedTailMarketStructureV2[idx].ShowSwingLabels == showSwingLabels && cacheRedTailMarketStructureV2[idx].BOSStyle == bOSStyle && cacheRedTailMarketStructureV2[idx].BOSWidth == bOSWidth && cacheRedTailMarketStructureV2[idx].TrendDisplayPosition == trendDisplayPosition && cacheRedTailMarketStructureV2[idx].ShowHalfRetracement == showHalfRetracement && cacheRedTailMarketStructureV2[idx].HalfRetracementStyle == halfRetracementStyle && cacheRedTailMarketStructureV2[idx].HalfRetracementWidth == halfRetracementWidth && cacheRedTailMarketStructureV2[idx].ShowStrongWeakLevels == showStrongWeakLevels && cacheRedTailMarketStructureV2[idx].StrongLevelVolumeMultiplier == strongLevelVolumeMultiplier && cacheRedTailMarketStructureV2[idx].StrongLevelMinScore == strongLevelMinScore && cacheRedTailMarketStructureV2[idx].StrongLevelMitigation == strongLevelMitigation && cacheRedTailMarketStructureV2[idx].OBSwingLength == oBSwingLength && cacheRedTailMarketStructureV2[idx].MaxATRMultiplier == maxATRMultiplier && cacheRedTailMarketStructureV2[idx].ShowHistoricZones == showHistoricZones && cacheRedTailMarketStructureV2[idx].ZoneInvalidation == zoneInvalidation && cacheRedTailMarketStructureV2[idx].OBDrawStyle == oBDrawStyle && cacheRedTailMarketStructureV2[idx].ZoneCount == zoneCount && cacheRedTailMarketStructureV2[idx].BoxExtendBars == boxExtendBars && cacheRedTailMarketStructureV2[idx].DeleteBrokenBoxes == deleteBrokenBoxes && cacheRedTailMarketStructureV2[idx].FilterOBsByValueArea == filterOBsByValueArea && cacheRedTailMarketStructureV2[idx].EnableFRVP == enableFRVP && cacheRedTailMarketStructureV2[idx].FRVPTrigger == fRVPTrigger && cacheRedTailMarketStructureV2[idx].KeepPreviousFRVP == keepPreviousFRVP && cacheRedTailMarketStructureV2[idx].FRVPRows == fRVPRows && cacheRedTailMarketStructureV2[idx].FRVPProfileWidth == fRVPProfileWidth && cacheRedTailMarketStructureV2[idx].FRVPVPAlignment == fRVPVPAlignment && cacheRedTailMarketStructureV2[idx].AlertSoundBOS == alertSoundBOS && cacheRedTailMarketStructureV2[idx].AlertSoundCHoCH == alertSoundCHoCH && cacheRedTailMarketStructureV2[idx].AlertSoundOB == alertSoundOB && cacheRedTailMarketStructureV2[idx].AlertSoundAVWAP == alertSoundAVWAP && cacheRedTailMarketStructureV2[idx].AlertSoundFib == alertSoundFib && cacheRedTailMarketStructureV2[idx].DisplacementATRMultiplier == displacementATRMultiplier && cacheRedTailMarketStructureV2[idx].SweepVolumeMultiplier == sweepVolumeMultiplier && cacheRedTailMarketStructureV2[idx].AlertSoundSweep == alertSoundSweep && cacheRedTailMarketStructureV2[idx].EqualsInput(input))
-						return cacheRedTailMarketStructureV2[idx];
-			return CacheIndicator<RedTail.RedTailMarketStructureV2>(new RedTail.RedTailMarketStructureV2(){ SwingLength = swingLength, BOSConfirmation = bOSConfirmation, ShowCHoCH = showCHoCH, ShowBOS = showBOS, ShowSwingLabels = showSwingLabels, BOSStyle = bOSStyle, BOSWidth = bOSWidth, TrendDisplayPosition = trendDisplayPosition, ShowHalfRetracement = showHalfRetracement, HalfRetracementStyle = halfRetracementStyle, HalfRetracementWidth = halfRetracementWidth, ShowStrongWeakLevels = showStrongWeakLevels, StrongLevelVolumeMultiplier = strongLevelVolumeMultiplier, StrongLevelMinScore = strongLevelMinScore, StrongLevelMitigation = strongLevelMitigation, OBSwingLength = oBSwingLength, MaxATRMultiplier = maxATRMultiplier, ShowHistoricZones = showHistoricZones, ZoneInvalidation = zoneInvalidation, OBDrawStyle = oBDrawStyle, ZoneCount = zoneCount, BoxExtendBars = boxExtendBars, DeleteBrokenBoxes = deleteBrokenBoxes, FilterOBsByValueArea = filterOBsByValueArea, EnableFRVP = enableFRVP, FRVPTrigger = fRVPTrigger, KeepPreviousFRVP = keepPreviousFRVP, FRVPRows = fRVPRows, FRVPProfileWidth = fRVPProfileWidth, FRVPVPAlignment = fRVPVPAlignment, AlertSoundBOS = alertSoundBOS, AlertSoundCHoCH = alertSoundCHoCH, AlertSoundOB = alertSoundOB, AlertSoundAVWAP = alertSoundAVWAP, AlertSoundFib = alertSoundFib, DisplacementATRMultiplier = displacementATRMultiplier, SweepVolumeMultiplier = sweepVolumeMultiplier, AlertSoundSweep = alertSoundSweep }, input, ref cacheRedTailMarketStructureV2);
-		}
-	}
-}
-
-namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
-{
-	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
-	{
-		public Indicators.RedTail.RedTailMarketStructureV2 RedTailMarketStructureV2(int swingLength, string bOSConfirmation, bool showCHoCH, bool showBOS, bool showSwingLabels, string bOSStyle, int bOSWidth, string trendDisplayPosition, bool showHalfRetracement, string halfRetracementStyle, int halfRetracementWidth, bool showStrongWeakLevels, double strongLevelVolumeMultiplier, int strongLevelMinScore, string strongLevelMitigation, int oBSwingLength, double maxATRMultiplier, bool showHistoricZones, string zoneInvalidation, string oBDrawStyle, string zoneCount, int boxExtendBars, bool deleteBrokenBoxes, bool filterOBsByValueArea, bool enableFRVP, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH, string alertSoundOB, string alertSoundAVWAP, string alertSoundFib, double displacementATRMultiplier, double sweepVolumeMultiplier, string alertSoundSweep)
-		{
-			return indicator.RedTailMarketStructureV2(Input, swingLength, bOSConfirmation, showCHoCH, showBOS, showSwingLabels, bOSStyle, bOSWidth, trendDisplayPosition, showHalfRetracement, halfRetracementStyle, halfRetracementWidth, showStrongWeakLevels, strongLevelVolumeMultiplier, strongLevelMinScore, strongLevelMitigation, oBSwingLength, maxATRMultiplier, showHistoricZones, zoneInvalidation, oBDrawStyle, zoneCount, boxExtendBars, deleteBrokenBoxes, filterOBsByValueArea, enableFRVP, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH, alertSoundOB, alertSoundAVWAP, alertSoundFib, displacementATRMultiplier, sweepVolumeMultiplier, alertSoundSweep);
-		}
-
-		public Indicators.RedTail.RedTailMarketStructureV2 RedTailMarketStructureV2(ISeries<double> input , int swingLength, string bOSConfirmation, bool showCHoCH, bool showBOS, bool showSwingLabels, string bOSStyle, int bOSWidth, string trendDisplayPosition, bool showHalfRetracement, string halfRetracementStyle, int halfRetracementWidth, bool showStrongWeakLevels, double strongLevelVolumeMultiplier, int strongLevelMinScore, string strongLevelMitigation, int oBSwingLength, double maxATRMultiplier, bool showHistoricZones, string zoneInvalidation, string oBDrawStyle, string zoneCount, int boxExtendBars, bool deleteBrokenBoxes, bool filterOBsByValueArea, bool enableFRVP, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH, string alertSoundOB, string alertSoundAVWAP, string alertSoundFib, double displacementATRMultiplier, double sweepVolumeMultiplier, string alertSoundSweep)
-		{
-			return indicator.RedTailMarketStructureV2(input, swingLength, bOSConfirmation, showCHoCH, showBOS, showSwingLabels, bOSStyle, bOSWidth, trendDisplayPosition, showHalfRetracement, halfRetracementStyle, halfRetracementWidth, showStrongWeakLevels, strongLevelVolumeMultiplier, strongLevelMinScore, strongLevelMitigation, oBSwingLength, maxATRMultiplier, showHistoricZones, zoneInvalidation, oBDrawStyle, zoneCount, boxExtendBars, deleteBrokenBoxes, filterOBsByValueArea, enableFRVP, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH, alertSoundOB, alertSoundAVWAP, alertSoundFib, displacementATRMultiplier, sweepVolumeMultiplier, alertSoundSweep);
-		}
-	}
-}
-
-namespace NinjaTrader.NinjaScript.Strategies
-{
-	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
-	{
-		public Indicators.RedTail.RedTailMarketStructureV2 RedTailMarketStructureV2(int swingLength, string bOSConfirmation, bool showCHoCH, bool showBOS, bool showSwingLabels, string bOSStyle, int bOSWidth, string trendDisplayPosition, bool showHalfRetracement, string halfRetracementStyle, int halfRetracementWidth, bool showStrongWeakLevels, double strongLevelVolumeMultiplier, int strongLevelMinScore, string strongLevelMitigation, int oBSwingLength, double maxATRMultiplier, bool showHistoricZones, string zoneInvalidation, string oBDrawStyle, string zoneCount, int boxExtendBars, bool deleteBrokenBoxes, bool filterOBsByValueArea, bool enableFRVP, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH, string alertSoundOB, string alertSoundAVWAP, string alertSoundFib, double displacementATRMultiplier, double sweepVolumeMultiplier, string alertSoundSweep)
-		{
-			return indicator.RedTailMarketStructureV2(Input, swingLength, bOSConfirmation, showCHoCH, showBOS, showSwingLabels, bOSStyle, bOSWidth, trendDisplayPosition, showHalfRetracement, halfRetracementStyle, halfRetracementWidth, showStrongWeakLevels, strongLevelVolumeMultiplier, strongLevelMinScore, strongLevelMitigation, oBSwingLength, maxATRMultiplier, showHistoricZones, zoneInvalidation, oBDrawStyle, zoneCount, boxExtendBars, deleteBrokenBoxes, filterOBsByValueArea, enableFRVP, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH, alertSoundOB, alertSoundAVWAP, alertSoundFib, displacementATRMultiplier, sweepVolumeMultiplier, alertSoundSweep);
-		}
-
-		public Indicators.RedTail.RedTailMarketStructureV2 RedTailMarketStructureV2(ISeries<double> input , int swingLength, string bOSConfirmation, bool showCHoCH, bool showBOS, bool showSwingLabels, string bOSStyle, int bOSWidth, string trendDisplayPosition, bool showHalfRetracement, string halfRetracementStyle, int halfRetracementWidth, bool showStrongWeakLevels, double strongLevelVolumeMultiplier, int strongLevelMinScore, string strongLevelMitigation, int oBSwingLength, double maxATRMultiplier, bool showHistoricZones, string zoneInvalidation, string oBDrawStyle, string zoneCount, int boxExtendBars, bool deleteBrokenBoxes, bool filterOBsByValueArea, bool enableFRVP, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH, string alertSoundOB, string alertSoundAVWAP, string alertSoundFib, double displacementATRMultiplier, double sweepVolumeMultiplier, string alertSoundSweep)
-		{
-			return indicator.RedTailMarketStructureV2(input, swingLength, bOSConfirmation, showCHoCH, showBOS, showSwingLabels, bOSStyle, bOSWidth, trendDisplayPosition, showHalfRetracement, halfRetracementStyle, halfRetracementWidth, showStrongWeakLevels, strongLevelVolumeMultiplier, strongLevelMinScore, strongLevelMitigation, oBSwingLength, maxATRMultiplier, showHistoricZones, zoneInvalidation, oBDrawStyle, zoneCount, boxExtendBars, deleteBrokenBoxes, filterOBsByValueArea, enableFRVP, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH, alertSoundOB, alertSoundAVWAP, alertSoundFib, displacementATRMultiplier, sweepVolumeMultiplier, alertSoundSweep);
-		}
-	}
-}
-
-#endregion
