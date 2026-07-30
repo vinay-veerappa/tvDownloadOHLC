@@ -788,6 +788,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Play 2: FVG-aligned bias filter (Session 10: only OOS-valid ex-ante filter)
             if (ActivePlay == 2)
             {
+                // Param-propagation guard: the SA grid may not inherit SetStrategyDefaults
+                // values for NinjaScriptProperty booleans. If the ConfluenceFilter is
+                // enabled but Play2FvgBiasFilter got reset to false by the SA template,
+                // force it back on (the only OOS-valid filter — never trade Play 2 without it).
+                if (ConfluenceFilterEnabled && !Play2FvgBiasFilter)
+                {
+                    Play2FvgBiasFilter = true;
+                    if (DebugMode) Log("[DIAG] filter P2: Play2FvgBiasFilter was false — forced ON (OOS-valid filter)", LogLevel.Information);
+                }
                 if (Play2FvgBiasFilter)
                 {
                     if (biasFvg == 0)
