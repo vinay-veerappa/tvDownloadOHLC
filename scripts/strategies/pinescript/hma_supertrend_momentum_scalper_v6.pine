@@ -28,6 +28,13 @@ i_useEmaFilter   = input.bool(true, "Use 200 EMA Macro Filter", group=GRP_TREND)
 i_emaPeriod      = input.int(200, "EMA Filter Period", minval=1, group=GRP_TREND)
 i_maxChopIndex   = input.float(55.0, "Max Chop Index Guard (Blocks Chop > 55)", minval=10.0, maxval=100.0, step=1.0, group=GRP_TREND)
 
+GRP_HTF          = "15-Minute HTF Trend Bias Filter"
+i_useHtfFilter   = input.bool(true, "Enable 15-Min HTF Trend Bias Filter", group=GRP_HTF)
+i_htfTf          = input.timeframe("15", "HTF Timeframe", group=GRP_HTF)
+i_htfEmaPeriod   = input.int(50, "HTF EMA Period", minval=1, group=GRP_HTF)
+i_htfStPeriod    = input.int(10, "HTF SuperTrend Period", minval=1, group=GRP_HTF)
+i_htfStMult      = input.float(3.0, "HTF SuperTrend Multiplier", minval=0.1, step=0.1, group=GRP_HTF)
+
 GRP_SL           = "Initial Stop Loss System"
 i_slType         = input.string("0.05% Basis Points (5 BPS)", "Initial Stop Loss Method", options=["0.05% Basis Points (5 BPS)", "ATR Multiplier", "Structural Swing Low/High", "Indicator Line Anchor"], group=GRP_SL)
 i_slBpsVal       = input.float(5.0, "Basis Points Count (e.g. 5 BPS = 0.05%)", minval=1.0, maxval=100.0, step=0.5, group=GRP_SL)
@@ -125,11 +132,18 @@ range14 = math.max(ta.highest(high, 14) - ta.lowest(low, 14), 0.0001)
 chopIndex = 100.0 * math.log10(trSum14 / range14) / math.log10(14.0)
 chopGuardOK = chopIndex < i_maxChopIndex
 
+// ── 15-Minute High-Timeframe (HTF) Trend Security Calculation ──
+[htfStLine, htfStDir] = request.security(syminfo.tickerid, i_htfTf, ta.supertrend(i_htfStMult, i_htfStPeriod), barmerge.gaps_off, barmerge.lookahead_off)
+htfEma = request.security(syminfo.tickerid, i_htfTf, ta.ema(close, i_htfEmaPeriod), barmerge.gaps_off, barmerge.lookahead_off)
+
+htfBullish = not i_useHtfFilter or (htfStDir < 0 and close > htfEma)
+htfBearish = not i_useHtfFilter or (htfStDir > 0 and close < htfEma)
+
 bounceLong  = low <= hmaVal and close > hmaVal and close > open
 bounceShort = high >= hmaVal and close < hmaVal and close < open
 
-longSignal  = stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
-shortSignal = stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
+longSignal  = stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and htfBullish and chopGuardOK and inRthWindow and riskGatekeeperOK
+shortSignal = stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and htfBearish and chopGuardOK and inRthWindow and riskGatekeeperOK
 
 slDistLong  = i_slType == "0.05% Basis Points (5 BPS)" ? math.max(close * (i_slBpsVal / 10000.0), syminfo.mintick * 4) : i_slType == "Structural Swing Low/High" ? math.max(close - ta.lowest(low, 5) + (2 * syminfo.mintick), syminfo.mintick * 4) : i_slType == "Indicator Line Anchor" ? math.max(close - math.min(stLine, hmaVal), atrVal * 0.5) : (i_slAtr * atrVal)
 slDistShort = i_slType == "0.05% Basis Points (5 BPS)" ? math.max(close * (i_slBpsVal / 10000.0), syminfo.mintick * 4) : i_slType == "Structural Swing Low/High" ? math.max(ta.highest(high, 5) - close + (2 * syminfo.mintick), syminfo.mintick * 4) : i_slType == "Indicator Line Anchor" ? math.max(math.max(stLine, hmaVal) - close, atrVal * 0.5) : (i_slAtr * atrVal)

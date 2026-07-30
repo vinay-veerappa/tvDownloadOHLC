@@ -30,6 +30,14 @@ GRP_SL           = "Initial Stop Loss System"
 i_slType         = input.string("0.05% Basis Points (5 BPS)", "Initial Stop Loss Method", options=["0.05% Basis Points (5 BPS)", "ATR Multiplier", "Structural Swing Low/High", "Indicator Line Anchor"], group=GRP_SL)
 i_slBpsVal       = input.float(5.0, "Basis Points Count (e.g. 5 BPS = 0.05%)", minval=1.0, maxval=100.0, step=0.5, group=GRP_SL)
 
+// ── High-Timeframe (15-Minute) Trend Bias Filter ──
+GRP_HTF          = "15-Minute HTF Trend Bias Filter"
+i_useHtfFilter   = input.bool(true, "Enable 15-Min HTF Trend Bias Filter", group=GRP_HTF)
+i_htfTf          = input.timeframe("15", "HTF Timeframe", group=GRP_HTF)
+i_htfEmaPeriod   = input.int(50, "HTF EMA Period", minval=1, group=GRP_HTF)
+i_htfStPeriod    = input.int(10, "HTF SuperTrend Period", minval=1, group=GRP_HTF)
+i_htfStMult      = input.float(3.0, "HTF SuperTrend Multiplier", minval=0.1, step=0.1, group=GRP_HTF)
+
 // ── SuperTrend & HMA Parameters (Mode 2 Trend Expansion) ──
 GRP_EXPANSION    = "Mode 2: Trend Expansion Settings"
 i_stPeriod       = input.int(10, "SuperTrend Period", minval=1, group=GRP_EXPANSION)
@@ -114,6 +122,13 @@ range14 = math.max(ta.highest(high, 14) - ta.lowest(low, 14), 0.0001)
 chopIndex = 100.0 * math.log10(trSum14 / range14) / math.log10(14.0)
 chopGuardOK = chopIndex < i_maxChopIndex
 
+// ── 15-Minute High-Timeframe (HTF) Trend Security Calculation ──
+[htfStLine, htfStDir] = request.security(syminfo.tickerid, i_htfTf, ta.supertrend(i_htfStMult, i_htfStPeriod), barmerge.gaps_off, barmerge.lookahead_off)
+htfEma = request.security(syminfo.tickerid, i_htfTf, ta.ema(close, i_htfEmaPeriod), barmerge.gaps_off, barmerge.lookahead_off)
+
+htfBullish = not i_useHtfFilter or (htfStDir < 0 and close > htfEma)
+htfBearish = not i_useHtfFilter or (htfStDir > 0 and close < htfEma)
+
 // ── 200 EMA Macro Filter ──
 ema200 = ta.ema(close, i_emaPeriod)
 macroBull = not i_useEmaFilter or close > ema200
@@ -161,12 +176,12 @@ riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit
 mode1Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and low <= bbLower and close > bbLower and inRthWindow and riskGatekeeperOK
 mode1Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and high >= bbUpper and close < bbUpper and inRthWindow and riskGatekeeperOK
 
-// ── Mode 2: Expansion Trend Scalp Signals (Confirmed Bounce + Chop Guard) ──
+// ── Mode 2: Expansion Trend Scalp Signals (Confirmed Bounce + Chop Guard + 15m HTF Filter) ──
 bounceLong  = low <= hmaVal and close > hmaVal and close > open
 bounceShort = high >= hmaVal and close < hmaVal and close < open
 
-mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
-mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
+mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and htfBullish and chopGuardOK and inRthWindow and riskGatekeeperOK
+mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and htfBearish and chopGuardOK and inRthWindow and riskGatekeeperOK
 
 // ── Initial Stop Loss Calculation Engine ──
 slDistLong  = i_slType == "0.05% Basis Points (5 BPS)" ? math.max(close * (i_slBpsVal / 10000.0), syminfo.mintick * 4) : i_slType == "Structural Swing Low/High" ? math.max(close - ta.lowest(low, 5) + (2 * syminfo.mintick), syminfo.mintick * 4) : i_slType == "Indicator Line Anchor" ? math.max(close - math.min(stLine, hmaVal), atrVal * 0.5) : (i_mode2SlAtr * atrVal)
