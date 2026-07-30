@@ -459,6 +459,7 @@ def simulate_play2_day(
     retest_low_pct: float = 0.40,
     retest_high_pct: float = 0.60,
     confluence_row: Optional[pd.Series] = None,
+    fvg_filter: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Play 2 (retest-continuation): break, then retest into IB, continue in break dir.
 
@@ -486,6 +487,7 @@ def simulate_play2_day(
         bva = confluence_row.get("break_vs_avwap_0930", 0)
         if pd.isna(bva) or bva == 0:
             return None
+
     if ib_range <= 0 or len(bars_day) < IB_DURATION_MIN + 1:
         return None
 
@@ -507,6 +509,20 @@ def simulate_play2_day(
     short_t0 = short_breaks.index[0] if not short_breaks.empty else pd.Timestamp("2099-12-31", tz=rth.index.tz)
     first_break_dir = 1 if long_t0 <= short_t0 else -1
     first_break_ts = min(long_t0, short_t0)
+
+    # FVG bias filter (Play 2): gate on bias_fvg aligned with the RUNTIME first
+    # break direction. Mirrors NT8 ConfluenceFilter Play2FvgBiasFilter: skip if
+    # no IB-window FVG (bias_fvg == 0) or if the FVG direction disagrees with
+    # the break direction. The runtime break dir is authoritative (matches NT8's
+    # BiasFvgAlignedWithBreak which uses the live first-break detection).
+    # When confluence_row is None (missing data), skip the day — NT8 always has
+    # biasFvg (defaults to 0 → not aligned → skip) so we must not trade either.
+    if fvg_filter:
+        if confluence_row is None:
+            return None
+        bias_fvg = confluence_row.get("bias_fvg", 0)
+        if pd.isna(bias_fvg) or int(bias_fvg) == 0 or int(bias_fvg) != first_break_dir:
+            return None
 
     # ── Step 2: wait for retest into the entry zone ──────────────────────
     # Retest zone (in IB-range fractions from ib_low):
@@ -847,6 +863,16 @@ def main() -> int:
             "or 'none' (ablation — disable AVWAP gate, keep TrendMisaligned)"
         ),
     )
+    ap.add_argument(
+        "--fvg-filter",
+        action="store_true",
+        default=False,
+        help=(
+            "Play 2 FVG bias filter: gate entries on bias_fvg aligned with first "
+            "break direction (mirrors NT8 Play2FvgBiasFilter). Requires confluence "
+            "parquet with bias_fvg + first_break_dir columns."
+        ),
+    )
     args = ap.parse_args()
 
     print(f"[parity] {args.ticker} Play {args.play} target={args.target} stop_mult={args.stop_mult}")
@@ -886,7 +912,7 @@ def main() -> int:
             t = simulate_play2_day(
                 day_bars, ib_high, ib_low, ib_range, args.target, args.stop_mult,
                 retest_low_pct=args.retest_low_pct, retest_high_pct=args.retest_high_pct,
-                confluence_row=confluence_row,
+                confluence_row=confluence_row, fvg_filter=args.fvg_filter,
             )
         else:
             # Play 3 (fade) does not use the TrendMisaligned filter, but the

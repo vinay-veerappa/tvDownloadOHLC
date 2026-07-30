@@ -1,0 +1,33 @@
+{
+  "actual_max_dd": -23145.0,
+  "H1_2025_01_to_2026_03": {
+    "n": 49,
+    "wins": 33,
+    "WR": 67.3,
+    "net": 46720.0,
+    "PF": 3.187,
+    "avg_win": 2063.0,
+    "avg_loss": 1335.0
+  },
+  "H2_2026_04_to_07": {
+    "n": 16,
+    "wins": 4,
+    "WR": 25.0,
+    "net": -21120.0,
+    "PF": 0.35,
+    "avg_win": 2845.0,
+    "avg_loss": 2708.0
+  },
+  "monte_carlo_reshuffle": {
+    "n_paths": 10000,
+    "p95_max_dd": -7965.0,
+    "p99_max_dd": -6970.0,
+    "actual_dd_percentile": 0.0159,
+    "interpretation": "p_value = fraction of random reshuffles with DD as bad or worse than actual. p<0.05 => temporal clustering is real (regime decay), p>=0.05 => DD is within random variance."
+  },
+  "verdict": {
+    "regime_decay": "YES",
+    "h2_pf": 0.35,
+    "temporal_clustering_significant": true
+  }
+}

@@ -400,19 +400,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
                 return false;
 
-            // ATR sanity
-            double atr = GetCurrentATR();
-            if (atr <= 0)
+            // NOTE: The GetCurrentATR()>0 sanity gate was REMOVED from here.
+            // It created a circular deadlock: CanEnterTrade needs GetCurrentATR()>0,
+            // which (for range-based strategies) needs rangeComplete=true, which is
+            // only set inside CheckForSignal/FinalizeRange — but CheckForSignal is
+            // called AFTER CanEnterTrade passes. So rangeComplete could never become
+            // true, blocking all entries. The atr>0 check in OnBarUpdate (after
+            // CheckForSignal returns non-zero) still protects the EnterTrade path.
+            // Use the strategy's actual estimated risk distance for the daily-max-loss
+            // potential calc. VIRTUAL so range-based subclasses override with their
+            // real stop geometry (StopRMult * TargetLvl * rangeRange) instead of the
+            // ATR formula (StopAtrMult * rangeRange), which over-estimates by ~8-16x
+            // and would block legitimate entries on funded accounts with tight daily
+            // loss limits. See GetPotentialLoss() / GetEstimatedRiskDistance().
+            double potentialLoss = GetPotentialLoss();
+            if (!isBacktest && RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
                 return false;
 
-            // Daily max loss potential — delegate to gatekeeper when registered,
-            // otherwise use local sessionPnL
-            double potentialLoss = StopAtrMult * atr * GetPointValue() * Math.Max(1, DefaultQuantity);
-            if (RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
-                return false;
-
-            // Local fallback for daily max loss
-            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
+            // Local fallback for daily max loss (only when NOT registered with gatekeeper AND not backtest)
+            if (!isBacktest && !RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
                     StringComparer.OrdinalIgnoreCase))
             {
                 if (sessionPnL - potentialLoss < -DailyMaxLoss)
@@ -631,6 +637,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (CurrentBars[1] < AtrPeriod)
                 return 0;
             return atrIndicator[0];
+        }
+
+        /// <summary>
+        /// Estimated dollar loss if the next trade is stopped out. Used by the
+        /// daily-max-loss gate in CanEnterTrade. VIRTUAL so range-based subclasses
+        /// (IntradayStrategyBase) can override with their ACTUAL stop distance
+        /// instead of the ATR formula, which over-estimates by ~8-16x for IB
+        /// strategies and would block legitimate entries on funded accounts with
+        /// tight daily loss limits (e.g. Apex $100/day).
+        /// Default: StopAtrMult * GetCurrentATR() * PointValue * Qty (ATR-based).
+        /// Range-based override: GetEstimatedRiskDistance() * PointValue * Qty.
+        /// </summary>
+        protected virtual double GetPotentialLoss()
+        {
+            double atrForRisk = GetCurrentATR();
+            if (atrForRisk <= 0)
+                atrForRisk = StopAtrMult * TickSize * 100;  // nominal fallback before range/warmup completes
+            double riskDistance = StopAtrMult * atrForRisk;
+            return riskDistance * GetPointValue() * Math.Max(1, DefaultQuantity);
         }
 
         protected double GetPointValue()

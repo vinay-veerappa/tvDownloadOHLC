@@ -90,6 +90,32 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "P2: FVG Bias Aligned", Order = 13, GroupName = "IB Confluence Filters")]
         public bool Play2FvgBiasFilter { get; set; } = true;  // Session 10: FVG-aligned is the only OOS-valid ex-ante filter
 
+        // ── Play 2 retest-depth bias overlay (Session 11 regime kill-switch) ──
+        // Scales position size by retest quality: shallow retests (weak breaks that
+        // reverse) get reduced size; deep retests (genuine thrusts) get full size.
+        // Forensic (2026-07-30): depth>=0.9 H2 WR 0.50 (positive EV), depth<0.9 H2 WR 0.00.
+        // Overlay (0.10/0.50/1.00 @ 0.6/0.9): MaxDD -23,145 -> -7,157 (-69%), PF 1.475 -> 2.024.
+        // NOT a hard skip — keeps all trades, penalizes the weak-retest root cause via size.
+        [NinjaScriptProperty]
+        [Display(Name = "P2: Depth Size Overlay", Order = 14, GroupName = "IB Confluence Filters")]
+        public bool Play2DepthSizeOverlay { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "P2: Depth Weak Threshold", Order = 15, GroupName = "IB Confluence Filters")]
+        public double DepthWeakThreshold { get; set; } = 0.6;   // depth < this -> weak size
+
+        [NinjaScriptProperty]
+        [Display(Name = "P2: Depth Strong Threshold", Order = 16, GroupName = "IB Confluence Filters")]
+        public double DepthStrongThreshold { get; set; } = 0.9; // depth >= this -> full size
+
+        [NinjaScriptProperty]
+        [Display(Name = "P2: Depth Weak Size Mult", Order = 17, GroupName = "IB Confluence Filters")]
+        public double DepthWeakSizeMult { get; set; } = 0.10;   // weak retest size fraction
+
+        [NinjaScriptProperty]
+        [Display(Name = "P2: Depth Moderate Size Mult", Order = 18, GroupName = "IB Confluence Filters")]
+        public double DepthModerateSizeMult { get; set; } = 0.50; // moderate retest size fraction
+
         #endregion
 
         #region IB-Specific State (Play 3 overshoot state machine + entry guards)
@@ -105,6 +131,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         /// <summary>Time of the first break — for clock-size multiplier.</summary>
         protected DateTime firstBreakTime;
+
+        // ── Retest-depth tracker (Play 2 bias overlay — Session 11 regime kill-switch) ──
+        // Max excursion past rangeMid in the break direction, measured in POINTS,
+        // accumulated each bar AFTER the first break and BEFORE the retest entry.
+        // depth_ratio = maxExcursionPastMid / rangeRange. Ex-ante at entry time.
+        // Root cause (forensic 2026-07-30): shallow retests (depth<0.9) are weak/false
+        // breaks that reverse to the opposite IB boundary (H2-2026 loss mechanism);
+        // deep retests (depth>=0.9) are genuine momentum thrusts that continue.
+        protected double maxExcursionPastMid;
 
         // ── One-entry-per-direction guards (prevents over-trading: Python enters
         //    once per session per direction; without these guards, the bot re-enters
@@ -237,6 +272,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             overshootBelow = false;
             firstBreakDir = 0;
             firstBreakTime = DateTime.MinValue;
+            // Reset retest-depth tracker at session open
+            maxExcursionPastMid = 0;
             // Reset one-entry-per-direction guards at session open
             longTakenToday = false;
             shortTakenToday = false;
@@ -395,6 +432,27 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         /// <summary>
+        /// Retest-depth size multiplier (Play 2 regime kill-switch overlay, Session 11).
+        /// Scales position size by retest quality. Root cause: shallow retests (depth &lt;
+        /// DepthStrongThreshold) are weak/false breaks that reverse to the opposite IB
+        /// boundary (confirmed H2-2026 loss mechanism, 91.7% full reversal); deep retests
+        /// are genuine momentum thrusts that continue (H2 depth>=0.9 WR 0.50 vs depth<0.9 WR 0.00).
+        /// depth_ratio = maxExcursionPastMid / rangeRange (ex-ante, known at entry).
+        /// Returns: DepthWeakSizeMult if depth &lt; DepthWeakThreshold, DepthModerateSizeMult
+        /// if depth &lt; DepthStrongThreshold, else 1.0 (full size). Falls back to 1.0 when
+        /// the overlay is disabled or range is unavailable (never blocks entry).
+        /// </summary>
+        protected double DepthSizeMultiplier()
+        {
+            if (!Play2DepthSizeOverlay || ActivePlay != 2) return 1.0;
+            if (!rangeComplete || rangeRange <= 0) return 1.0;
+            double depthRatio = maxExcursionPastMid / rangeRange;
+            if (depthRatio < DepthWeakThreshold) return DepthWeakSizeMult;
+            if (depthRatio < DepthStrongThreshold) return DepthModerateSizeMult;
+            return 1.0;
+        }
+
+        /// <summary>
         /// Detects overshoot for Play 3 fade entry.
         /// Overshoot threshold = LateBreakSizeMult × rangeRange (default 0.25×).
         /// Sets overshootAbove/Below flags — the fade bot checks for close-back-inside.
@@ -481,6 +539,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 breakVsAvwap0930 = Close[0] > avwap0930Price ? 1
                                 : Close[0] < avwap0930Price ? -1 : 0;
                 if (DebugMode) Log($"[DIAG] breakVsAvwap computed: dir={firstBreakDir} close={Close[0]} avwap={avwap0930Price} result={breakVsAvwap0930} at {Time[0]:HH:mm}", LogLevel.Information);
+            }
+
+            // ── Retest-depth tracker: max excursion past rangeMid in break dir (Play 2 overlay) ──
+            // Updated every bar AFTER the first break, BEFORE the retest entry. Ex-ante at entry.
+            // depth_ratio = maxExcursionPastMid / rangeRange. Used by DepthSizeMultiplier().
+            if (firstBreakDir != 0 && rangeRange > 0 && rangeComplete)
+            {
+                double excursion = firstBreakDir == 1 ? High[0] - rangeMid : rangeMid - Low[0];
+                if (excursion > maxExcursionPastMid) maxExcursionPastMid = excursion;
             }
 
             // Log AVWAP state periodically for debugging

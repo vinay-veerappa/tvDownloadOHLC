@@ -44,7 +44,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (firstBreakDir == 0) return 0;  // no break yet
 
             int breakMinutes = MinutesSinceIBComplete;
-            double sizeMult = ClockSizeMultiplier(breakMinutes);
+            // Session 11 regime kill-switch: scale size by retest depth (root-cause fix for
+            // H2 weak-retest reversal). Shallow retests get reduced size; deep thrusts full.
+            double sizeMult = ClockSizeMultiplier(breakMinutes) * DepthSizeMultiplier();
 
             // Long retest: first break was UP, price pulled back to IB mid, close back above mid
             if (firstBreakDir == 1 && Low[0] <= rangeMid && Close[0] >= rangeMid)
@@ -95,5 +97,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         protected override string GetStrategyName() => "IB Retest Bot (Play 2)";
+
+        /// <summary>
+        /// Explicit risk-distance override for the daily-max-loss gate.
+        /// Entry = rangeMid, stop = opposite IB boundary → distance = 0.5 * rangeRange.
+        /// This matches the inherited default (StopRMult*TargetLvl*rangeRange = 1.0*0.5*range)
+        /// but is pinned here so future TargetLvl/StopRMult changes don't silently break
+        /// the estimate-to-actual ratio (which must stay 1.0 for the gate to be accurate).
+        /// </summary>
+        protected override double GetEstimatedRiskDistance()
+        {
+            if (!rangeComplete || rangeRange <= 0) return 0;
+            return 0.5 * rangeRange;  // mid → opposite boundary
+        }
     }
 }
