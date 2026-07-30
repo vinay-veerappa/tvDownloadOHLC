@@ -156,29 +156,32 @@ riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit
 mode1Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and low <= bbLower and close > bbLower and inRthWindow and riskGatekeeperOK
 mode1Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and high >= bbUpper and close < bbUpper and inRthWindow and riskGatekeeperOK
 
-// ── Mode 2: Expansion Trend Scalp Signals (With Chop Guard Filter) ──
-mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and low <= hmaVal and (hmaSlopeUp or (hmaVal > hmaVal[1])) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
-mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and high >= hmaVal and (hmaSlopeDn or (hmaVal < hmaVal[1])) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
+// ── Mode 2: Expansion Trend Scalp Signals (Confirmed Bounce + Chop Guard) ──
+bounceLong  = low <= hmaVal and close > hmaVal and close > open
+bounceShort = high >= hmaVal and close < hmaVal and close < open
+
+mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
+mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
 
 // ── Entry & Exit Execution ──
 if strategy.position_size == 0
     if mode2Long
-        strategy.entry("Mode2_Long", strategy.long, limit=hmaVal, comment="Mode 2 Trend Long")
+        strategy.entry("Mode2_Long", strategy.long, comment="Mode 2 Trend Long")
         strategy.exit("Mode2_Long_Exit", "Mode2_Long", 
           profit=close + (i_mode2TpAtr * atrVal), 
           loss=close - (i_mode2SlAtr * atrVal))
     else if mode2Short
-        strategy.entry("Mode2_Short", strategy.short, limit=hmaVal, comment="Mode 2 Trend Short")
+        strategy.entry("Mode2_Short", strategy.short, comment="Mode 2 Trend Short")
         strategy.exit("Mode2_Short_Exit", "Mode2_Short", 
           profit=close - (i_mode2TpAtr * atrVal), 
           loss=close + (i_mode2SlAtr * atrVal))
     else if mode1Long
-        strategy.entry("Mode1_Long", strategy.long, limit=bbLower, comment="Mode 1 MeanRev Long")
+        strategy.entry("Mode1_Long", strategy.long, comment="Mode 1 MeanRev Long")
         strategy.exit("Mode1_Long_Exit", "Mode1_Long", 
           limit=bbMid, 
           loss=close - (i_mode1SlAtr * atrVal))
     else if mode1Short
-        strategy.entry("Mode1_Short", strategy.short, limit=bbUpper, comment="Mode 1 MeanRev Short")
+        strategy.entry("Mode1_Short", strategy.short, comment="Mode 1 MeanRev Short")
         strategy.exit("Mode1_Short_Exit", "Mode1_Short", 
           limit=bbMid, 
           loss=close + (i_mode1SlAtr * atrVal))

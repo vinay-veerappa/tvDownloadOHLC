@@ -201,6 +201,38 @@ A full survey of `C:\Users\vinay\Documents\NinjaTrader 8\bin\Custom\Indicators\`
 | **amaRangeProjectionsDaily** | `amaRangeProjectionsDaily.cs` (104KB) | Daily range projections, ADN (Average Daily Noise) bands — could be IB confluence targets |
 | **ActiveSwing** | `ActiveSwing.cs` (7KB) | `LowBar()`/`HighBar()` — simpler swing API than built-in `Swing` |
 
+### 3e. Unimported indicators in `C:\ICT_Videos\NinjaTraderIndicators`
+
+| File | Size | What it does | Reusable for IB Confluence? |
+|---|---|---|---|
+| **LuxAlgo SmartMoneyConcepts** | 15.8KB | Full SMC suite (BoS/CHoCH, order blocks, FVG, PDHL/PWHL/PMHL, supply/demand, trend). **Compiled DLL** — `.cs` is wrapper stub only. 50+ constructor params. MTF FVG support. | **Partial** — visual overlay only. No programmatic data access (no public zone lists). Use as visual reference; build own detection for filter logic. |
+| **SupDemZones** | 34.2KB | Supply/demand zones via swing fractals + Keltner Channel impulse + continuation patterns. Full source. Custom `OnRender` (SharpDX). Private `Zones` list (needs public accessor). | **Partial** — excellent zone-detection source template. Must add public `Zones` accessor + convert to `Draw.Rectangle`. |
+| **mjTimeAndPriceLines** | 36.4KB | Draws horizontal rays at the **open price** of user-specified times (up to 20 levels). `Draw.Ray` + custom `OnRender` labels. `DaysBack` controls persistence. | **Yes** — perfect for IB time levels (09:30 open, 10:00). `LevelCollection` with `LevelEnabled`/`Time`/`Stroke` per level. |
+| **HalfTrend** | 10.7KB | ATR-based trend-following channel. Public `Trend` Series for programmatic access. `UpSignal`/`DnSignal` reversal markers. `Draw.Region` for shaded area. | **Yes** — trend filter via `Trend[0]`. Channel bands as dynamic S/R. Clean source. |
+| **RCTitanium_V1 / RCTrillium_V1** | 1.1KB each | **Empty stubs** — no code, just NT8 generated wrappers. | **No** |
+| **ChartToCSV** | 11.2KB | Data export utility — reads all indicators on chart + OHLCV, writes CSV. `Draw.TextFixed` status. | **No** (utility) — useful for exporting indicator values to CSV for Python analysis. |
+
+### 3f. LuxAlgo free library (www.luxalgo.com/library)
+
+The LuxAlgo library has **6,535 indicators** across TradingView, NinjaTrader, and MT4/5. Several are directly relevant to IB Confluence and available for NT8:
+
+| Indicator | What it does | NT8 available? | IB Confluence value |
+|---|---|---|---|
+| **Smart Money Concepts** (already installed) | BoS/CHoCH, order blocks, FVG, PDHL/PWHL, supply/demand, trend | ✅ Installed | Full SMC confluence layer |
+| **Structure & Trend Dashboard** | Multi-timeframe structure, liquidity sweeps, trend alignment dashboard | Soon | HUD + multi-TF confluence |
+| **Session Sweep & iFVG RR** | Liquidity sweep setups during sessions + Inverted FVG risk/reward | Soon | Session-based sweep + iFVG (directly relevant to IB) |
+| **Significant Breakout Levels (FVG)** | FVG + pivot-based S/R + volume volatility filter + breakout signals | Soon | FVG breakout confluence at IB boundaries |
+| **Gap Fill Breakouts** | FVG detection with ATR volatility filter + adaptive box shrink on mitigation + pivot breakout signals | Soon | FVG mitigation tracking (relevant to IB retest) |
+| **MSS Sweep Fib Retrace** | Liquidity sweep + MSS + Fibonacci retracement entries | Soon | Sweep + reversal confluence |
+| **HTF Swing Structure Signals** | Multi-TF trend + swing points + dynamic Fib retracement pullback zones | Soon | HTF structure alignment for IB bias |
+| **8am Road Map Zone** | 8:00-8:15 EST opening range + 9:30 AM breakout tracking | Soon | Pre-IB range (8am) → IB (9:30) confluence |
+| **9:30 AM 15m Fib Breakout** | 15-min NY opening range + ATR filter + Fib projections | Soon | ORB confluence at IB time |
+| **HTF CISD Projections** | Change in Support/Demand zones + HTF trend filter | Soon | CISD confluence for IB bias |
+| **Ultimate AMD Indicator** | Accumulation/Manipulation/Distribution cycle + FVG | Soon | AMD cycle for IB session structure |
+| **Market Structure & Fibonacci Zones + RR** | Structure breaks + Fib zones + auto RR calculation | Soon | Structure + Fib confluence at IB levels |
+
+> **Note**: LuxAlgo's GitHub (github.com/LuxAlgo) only has PineTS and pinets-cli (TypeScript Pine Script runtime) — no NT8 indicator source code. The NT8 indicators are distributed via the LuxAlgo platform/library, compiled.
+
 ### Integration approach for the IB Confluence Indicator
 
 The indicator should **compose** existing indicators rather than reimplementing:

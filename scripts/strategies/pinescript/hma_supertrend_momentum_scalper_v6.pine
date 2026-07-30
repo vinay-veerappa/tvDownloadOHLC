@@ -121,17 +121,20 @@ range14 = math.max(ta.highest(high, 14) - ta.lowest(low, 14), 0.0001)
 chopIndex = 100.0 * math.log10(trSum14 / range14) / math.log10(14.0)
 chopGuardOK = chopIndex < i_maxChopIndex
 
-longSignal  = stBullish and low <= hmaVal and (hmaSlopeUp or (hmaVal > hmaVal[1])) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
-shortSignal = stBearish and high >= hmaVal and (hmaSlopeDn or (hmaVal < hmaVal[1])) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
+bounceLong  = low <= hmaVal and close > hmaVal and close > open
+bounceShort = high >= hmaVal and close < hmaVal and close < open
+
+longSignal  = stBullish and bounceLong and (hmaVal >= hmaVal[1]) and macroBull and chopGuardOK and inRthWindow and riskGatekeeperOK
+shortSignal = stBearish and bounceShort and (hmaVal <= hmaVal[1]) and macroBear and chopGuardOK and inRthWindow and riskGatekeeperOK
 
 if strategy.position_size == 0
     if longSignal
-        strategy.entry("Long", strategy.long, limit=hmaVal, comment="HMA Trend Long")
+        strategy.entry("Long", strategy.long, comment="HMA Trend Long")
         strategy.exit("Long_Exit", "Long", 
           profit=close + (i_tpAtr * atrVal), 
           loss=close - (i_slAtr * atrVal))
     else if shortSignal
-        strategy.entry("Short", strategy.short, limit=hmaVal, comment="HMA Trend Short")
+        strategy.entry("Short", strategy.short, comment="HMA Trend Short")
         strategy.exit("Short_Exit", "Short", 
           profit=close - (i_tpAtr * atrVal), 
           loss=close + (i_slAtr * atrVal))
