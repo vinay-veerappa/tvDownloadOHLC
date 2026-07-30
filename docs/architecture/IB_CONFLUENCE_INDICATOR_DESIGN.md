@@ -462,13 +462,182 @@ IBConfluenceIndicator (new, IsOverlay=true)
 
 ---
 
-## 10. References
+## 10. Liquidity Levels Catalog
+
+A comprehensive list of all liquidity levels the IB Confluence system should reference. Each level is a potential sweep target or confluence factor.
+
+### 10a. Time-based opens (liquidity resting at session opens)
+
+| Level | Time (ET) | Description | Source indicator | Status |
+|---|---|---|---|---|
+| **Midnight open** | 00:00 | Price at midnight — key ICT reference for daily bias | **NONE** — needs custom indicator or adapt `mjTimeAndPriceLines` | ❌ Missing |
+| **4H opens** | 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 | 4-hour candle opens — institutional reference points | **NONE** — needs custom indicator or adapt `mjTimeAndPriceLines` | ❌ Missing |
+| **London open** | 02:00/03:00 (DST) | London session open price | **NONE** — needs custom | ❌ Missing |
+| **NY open** | 09:30 | RTH session open — this IS the IB open | IBConfluenceEngine (IB open) | ✅ Have |
+| **Prior day close** | 16:00 prev | Previous session close | `@PriorDayOHLC` / RedTail Key Levels (`PDC`) | ✅ Have |
+| **Settlement price** | ~16:00/17:00 | Daily settlement (varies by instrument) | RedTail Goldbach Po3 (has settlement detection) | ⚠️ Optional |
+
+> **Action item**: Build a **Session Opens** indicator (or adapt `mjTimeAndPriceLines`) that draws horizontal lines at midnight, 4H opens, London open, and NY open. This fills the gap no existing indicator covers.
+
+### 10b. Prior session ranges (resting liquidity from prior sessions)
+
+| Level | Description | Source indicator | Plot output? |
+|---|---|---|---|
+| **PDH / PDL** | Prior day high/low — primary sweep targets | RedTail Key Levels (`PDH`/`PDL`), `@PriorDayOHLC` (`PriorHigh`/`PriorLow`) | ✅ Yes |
+| **PWH / PWL** | Prior week high/low — major liquidity | RedTail Key Levels (`PWH`/`PWL`) | ✅ Yes |
+| **PMH / PML** | Prior month high/low — institutional levels | RedTail Key Levels (`PMH`/`PML`) | ✅ Yes |
+| **PDC** | Prior day close — gap reference | `@PriorDayOHLC` (`PriorClose`), RedTail Key Levels | ✅ Yes |
+| **Monday H/L** | Monday session range — ICT weekly reference | RedTail Key Levels (`MH`/`ML`) | ✅ Yes |
+| **Globex H/L** | Full Globex week range | RedTail Key Levels (`GH`/`GL`) | ✅ Yes |
+| **RTH H/L (NYH/NYL)** | Current RTH session H/L (developing) | RedTail Key Levels (`NYH`/`NYL`), `@CurrentDayOHL` | ✅ Yes |
+| **Overnight H/L** | Overnight session (18:00-08:30) H/L | RedTail Volume Profile (overnight levels) | ✅ Yes |
+
+### 10c. Intraday liquidity (developing during the session)
+
+| Level | Description | Source indicator | Plot output? |
+|---|---|---|---|
+| **IB High / Low / Mid** | 09:30-09:59 IB range | IBConfluenceEngine, RedTail AutoVWAP (Day IB) | ✅ Yes |
+| **NY Opening Range H/L** | 09:30-09:45 OR | RedTail AutoVWAP (`ShowNyOpeningRange`) | ✅ Yes |
+| **HOD / LOD** | High/low of day (developing) | `@CurrentDayOHL` (`CurrentHigh`/`CurrentLow`) | ✅ Yes |
+| **Session VWAP** | 09:30-anchored VWAP | RedTail AutoVWAP (`NyVwap`) | ✅ Yes |
+| **Prior session VWAP** | Yesterday's NY VWAP | RedTail AutoVWAP (`PrevDayNyVwap`) | ✅ Yes |
+| **EQH / EQL** | Equal highs/lows — liquidity pools | RedTail Market Structure | ⚠️ Visual only (check if exposeable) |
+| **Strong/Weak levels** | Scored swing levels | RedTail Market Structure | ⚠️ Visual only (check if exposeable) |
+
+### 10d. Volume profile levels (structural liquidity)
+
+| Level | Description | Source indicator | Plot output? |
+|---|---|---|---|
+| **POC** | Point of Control — highest volume price | RedTail Volume Profile | ✅ Yes |
+| **VAH / VAL** | Value Area High/Low | RedTail Volume Profile | ✅ Yes |
+| **Naked POC** | Un revisited prior POC levels | RedTail Volume Profile | ✅ Yes |
+| **Prior day POC/VAH/VAL** | Previous session volume levels | RedTail Volume Profile | ✅ Yes |
+| **LVN zones** | Low Volume Nodes — breakout zones | RedTail LVN Hunter | ⚠️ Visual only |
+
+### 10e. Pivot / Fibonacci levels (calculated liquidity)
+
+| Level | Description | Source indicator | Plot output? |
+|---|---|---|---|
+| **Floor pivots** | PP, R1-R3, S1-S3 | RedTail Key Levels, `@Pivots` | ✅ Yes (33 plots) |
+| **Camarilla pivots** | R1-R4, S1-S4 | `@CamarillaPivots` | ✅ Yes |
+| **Daily/Weekly/Monthly Fibs** | Auto Fib retracements | RedTail Auto Fibs, RedTail Key Levels (Fib1-10) | ✅ Yes |
+
+### 10f. Summary — gaps to fill
+
+| Missing level | Solution | Priority |
+|---|---|---|
+| **Midnight open** | Build "Session Opens" indicator (or adapt `mjTimeAndPriceLines`) | HIGH |
+| **4H opens** | Same indicator — configurable 4H intervals | HIGH |
+| **London open** | Same indicator — London session open price | MEDIUM |
+| **Round numbers / psychological** | Build custom "Psychological Levels" indicator | LOW |
+| **EQH/EQL (programmatic)** | Fork RedTail Market Structure to expose lists | MEDIUM |
+
+---
+
+## 11. PineScript Indicators to Port to NinjaTrader
+
+The repo has **70+ PineScript files** across `scripts/indicators-pine/`, `pinescript/`, and `docs/`. Here's the prioritized port roadmap:
+
+### Tier 1 — Port first (core IB/ICT workflow)
+
+| PineScript | Path | What it does | NT8 port priority | Why |
+|---|---|---|---|---|
+| **DailyNYLevels** | `scripts/indicators-pine/daily-ny-levels/` | Daily NY session levels (open, high, low, mid, IB, OR) | 🥇 HIGH | Core levels for IB trading — complement RedTail |
+| **DailyClassification** | `scripts/indicators-pine/DailyClassification/` | R1/R2/DWP/DNP daily classification | 🥇 HIGH | Daily bias classification — gates IB direction |
+| **IB Stats Extensions** | `scripts/indicators-pine/IB/` | IB statistics, probability maps, extensions | 🥇 HIGH | IB range analysis + probability — core IB tool |
+| **ProfilerIndicator** | `scripts/indicators-pine/profiler/ProfilerIndicator.pine` | Daily Profiler — session boxes, status logic, P12 scenarios, HOD/LOD timing | 🥇 HIGH | Session profiling — IB context + timing |
+| **HTF EMA Analysis** | `scripts/indicators-pine/htf_ema_analysis/` | Higher-timeframe EMA trend analysis | 🥈 MEDIUM | Trend filter for IB bias (replaces simple EMA 20/50) |
+| **ProbabilityMap** | `scripts/indicators-pine/ProbabilityMap/` | ICT probability map for directional bias | 🥈 MEDIUM | ICT bias model — confluence for IB direction |
+
+### Tier 2 — Port second (statistical / session analysis)
+
+| PineScript | Path | What it does | NT8 port priority | Why |
+|---|---|---|---|---|
+| **Magic Hour Analysis** | `scripts/indicators-pine/magic_hour_analysis/` | Magic hour (10:00-11:00) statistics and signals | 🥈 MEDIUM | Post-IB session timing |
+| **NQStats Playbook** | `docs/nqstats/strategies/` | NQ statistical playbook strategy | 🥈 MEDIUM | NQ-specific session stats |
+| **Noon Curve Strategy** | `docs/nqstats/noon_curve/` | Noon reversal curve analysis | 🥈 MEDIUM | Post-noon IB reversal timing |
+| **ICT Probability Engine** | `docs/research/ict/indicators/` | ICT directional probability engine | 🥈 MEDIUM | ICT concept probability scoring |
+| **Session Statistical Levels** | Already available as RedTail indicator | Percentile-based session ranges | ✅ Have | Covered by RedTail |
+
+### Tier 3 — Port later (options / advanced)
+
+| PineScript | Path | What it does | NT8 port priority | Why |
+|---|---|---|---|---|
+| **Options: Daily OC Levels** | `scripts/indicators-pine/options/Daily_OC_levels.pine` | Options open interest levels | 🥉 LOW | GEX/Dealer levels — advanced confluence |
+| **Options: Expected Move** | `scripts/indicators-pine/options/DailyExpectedMove.pine` | Expected move from options data | 🥉 LOW | Volatility expectation for IB range |
+| **Options: Dealer Levels** | `scripts/indicators-pine/options/DealerLevels.pine` | Dealer positioning levels | 🥉 LOW | Institutional level reference |
+| **Options: ExecutionHUD** | `scripts/indicators-pine/options/ExecutionHUD.pine` | Options execution HUD | 🥉 LOW | Options execution dashboard |
+| **CandleScience** | `scripts/indicators-pine/CandleScience/` | Candle pattern analysis | 🥉 LOW | Candle pattern confluence |
+| **TCM/ONS** | `scripts/indicators-pine/TCM/` | TCM ONS verification indicators | 🥉 LOW | TCM strategy verification |
+
+### Tier 4 — Strategies (port as NT8 strategies, not indicators)
+
+| PineScript | Path | What it does | Port priority | Why |
+|---|---|---|---|---|
+| **IB 3 Play Strategy** | `docs/strategies/initial_balance_break/pinescript/` | IB 3-play strategy (breakout/retest/fade) | Already in NT8 (IBBreakoutBot/RetestBot/FadeBot) | ✅ Done |
+| **ORB V7 Strategy** | `docs/strategies/9_30_breakout/pinescript/` | 9:30 ORB strategy | Already in NT8 (ORB_0930_1min) | ✅ Done |
+| **ORB AllDay MultiTP** | `docs/strategies/9_30_breakout/0930_AllDay/pinescript/` | All-day ORB with multi-TP | Already in NT8 | ✅ Done |
+| **HMA SuperTrend Scalper** | `scripts/strategies/pinescript/` | HMA + SuperTrend momentum scalper | 🥈 MEDIUM | Independent strategy — port for variety |
+| **Unified Quant Scalper** | `scripts/strategies/pinescript/` | BBW squeeze + HMA expansion dual-engine | 🥈 MEDIUM | Independent strategy — port for variety |
+| **Generic Periodic ORB** | `docs/strategies/generic_periodic_orb/` | Generic ORB for any session | 🥉 LOW | Generalization of ORB |
+| **Herman IB Probability** | `pinescript/ib_probability_map_herman.pine` | Herman IB probability map | 🥉 LOW | IB probability analysis |
+| **NQStats Playbook Strategy** | `docs/nqstats/strategies/` | NQ statistical playbook | 🥉 LOW | NQ-specific strategy |
+
+### Libraries (port as NT8 shared code, not standalone indicators)
+
+| PineScript Library | Path | What it does | Port priority |
+|---|---|---|---|
+| **RangeSessionLib** | `scripts/indicators-pine/lib-pine/RangeSessionLib.pine` | Range session utilities | 🥈 MEDIUM — needed by IB indicator |
+| **PineDrawingLib** (7 files) | `scripts/indicators-pine/lib-pine/PineDrawing*.pine` | Drawing utilities (lines, boxes, zones, tables, markers) | 🥈 MEDIUM — needed for HUD/drawing |
+| **StatsLib** | `scripts/indicators-pine/lib-pine/StatsLib.pine` | Statistical functions | 🥉 LOW |
+| **market_calendar** | `scripts/indicators-pine/lib-pine/market_calendar.pine` | Market calendar (holidays, OPEX) | 🥈 MEDIUM — needed for calendar filters |
+| **HitTracking** | `scripts/indicators-pine/lib-pine/HitTracking.pine` | Level touch/hit tracking | 🥉 LOW |
+
+---
+
+## 12. File Organization — COMPLETED
+
+> **Status**: Option A restructure completed on 2026-07-30.
+
+### New structure (source of truth)
+```
+scripts/ninjatrader/
+├── strategies/                    → Custom/Strategies/Vinay/
+│   ├── base/                      (RiskManagerBase, IntradayStrategyBase)
+│   ├── ib_breakout/               (IBStrategyBase, 3 bots)
+│   ├── ema_pullback/
+│   ├── failed_auction/
+│   └── vwap_reclaim/
+├── indicators/                    → Custom/Indicators/
+│   ├── vinay/                     (our custom indicators — IBConfluenceIndicator goes here)
+│   ├── redtail/                   (14 RedTail .cs files + README.md + INDEX.md)
+│   └── third_party/               (future third-party indicators)
+├── addons/                        → Custom/AddOns/
+│   (McpBridge, RiskGuard, TradeCopier, etc.)
+└── shared/                        → Custom/Strategies/Vinay/ (compiled with strategies)
+    (IBConfluenceEngine goes here)
+```
+
+### Sync script — updated
+`scripts/utils/sync_nt8_strategies.py` now syncs from `scripts/ninjatrader/`:
+- `strategies/**/*.cs` → `Custom/Strategies/Vinay/`
+- `shared/*.cs` → `Custom/Strategies/Vinay/`
+- `indicators/**/*.cs` → `Custom/Indicators/` (NEW)
+- `addons/*.cs` → `Custom/AddOns/`
+- Orphan detection covers all 3 destinations
+
+### Old location
+`scripts/strategies/nt8/` still exists (not yet deleted). Once the first real sync + compile from the new location is verified, the old folder can be removed.
+
+---
+
+## 13. References
 
 | Doc | Path |
 |---|---|
-| IB Strategy Base (current) | `scripts/strategies/nt8/ib_breakout/IBStrategyBase.cs` |
-| Intraday Strategy Base | `scripts/strategies/nt8/base/IntradayStrategyBase.cs` |
-| Risk Manager Base | `scripts/strategies/nt8/base/RiskManagerBase.cs` |
+| IB Strategy Base (current) | `scripts/ninjatrader/strategies/ib_breakout/IBStrategyBase.cs` |
+| Intraday Strategy Base | `scripts/ninjatrader/strategies/base/IntradayStrategyBase.cs` |
+| Risk Manager Base | `scripts/ninjatrader/strategies/base/RiskManagerBase.cs` |
 | PAX30 ORB Indicator (template) | `docs/strategies/9_30_breakout/ninjatrader/PAX30OpeningRange.cs` |
 | ORB AllDay HUD (template) | `docs/strategies/9_30_breakout/0930_AllDay/ninjascript/ORB_AllDay_MultiTP.cs` |
 | ICTFVGBoS (FVG reference) | `scripts/strategies/From_NT8/Vinay/ICTFVGBoS.cs` |
@@ -476,3 +645,9 @@ IBConfluenceIndicator (new, IsOverlay=true)
 | Session 11 handover | `docs/architecture/SESSION_11_REGIME_KILLSWITCH_HANDOVER.md` |
 | NT8 framework constraints | `.agents/skills/nt8-framework-constraints/SKILL.md` |
 | Parity standard | `docs/architecture/NT8_PYTHON_PARITY_STANDARD.md` |
+| RedTail indicators index | `scripts/ninjatrader/indicators/redtail/INDEX.md` |
+| RedTail full README | `scripts/ninjatrader/indicators/redtail/README.md` |
+| NT8 file organization | `docs/architecture/NT8_FILE_ORGANIZATION.md` |
+| Sync script | `scripts/utils/sync_nt8_strategies.py` |
+| PineScript indicators | `scripts/indicators-pine/` (70+ files) |
+| PineScript strategies | `scripts/strategies/pinescript/` + `docs/strategies/` |

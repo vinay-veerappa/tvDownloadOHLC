@@ -3,15 +3,18 @@
 sync_nt8_strategies.py
 =======================
 
-Sync strategy and addon .cs files from the repo source-of-truth to the
+Sync NinjaScript .cs files from the repo source-of-truth to the
 NinjaTrader 8 live compilation folder.
 
 Source (repo, git-tracked):
-    ninjatrader-addon/Strategies/Vinay/*.cs  ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/
-    ninjatrader-addon/*.cs (addon root)      ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/AddOns/
+    scripts/ninjatrader/strategies/**/*.cs  ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/
+    scripts/ninjatrader/indicators/**/*.cs  ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Indicators/
+    scripts/ninjatrader/addons/*.cs         ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/AddOns/
+    scripts/ninjatrader/shared/*.cs         ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/  (shared classes compile with strategies)
 
 Destination (NT8 live, untracked):
     %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/
+    %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Indicators/
     %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/AddOns/
 
 Usage:
@@ -20,7 +23,7 @@ Usage:
     python scripts/utils/sync_nt8_strategies.py --dry-run # show what would be copied
 
 This script is the SINGLE source-of-truth sync mechanism. Never manually copy
-.cs files to the NT8 folder — always run this script after editing strategy code.
+.cs files to the NT8 folder — always run this script after editing NinjaScript code.
 """
 from __future__ import annotations
 
@@ -38,18 +41,32 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-NT8_SRC = REPO_ROOT / "scripts" / "strategies" / "nt8"
+NT8_SRC = REPO_ROOT / "scripts" / "ninjatrader"
+
+# Strategy source dirs — all subfolders sync to a single flat NT8 Strategies/Vinay/
 STRATEGIES_SRC_DIRS = [
-    ("base",          NT8_SRC / "base"),
-    ("ib_breakout",   NT8_SRC / "ib_breakout"),
-    ("ema_pullback",  NT8_SRC / "ema_pullback"),
-    ("failed_auction",NT8_SRC / "failed_auction"),
-    ("vwap_reclaim",  NT8_SRC / "vwap_reclaim"),
+    ("base",           NT8_SRC / "strategies" / "base"),
+    ("ib_breakout",    NT8_SRC / "strategies" / "ib_breakout"),
+    ("ema_pullback",   NT8_SRC / "strategies" / "ema_pullback"),
+    ("failed_auction", NT8_SRC / "strategies" / "failed_auction"),
+    ("vwap_reclaim",   NT8_SRC / "strategies" / "vwap_reclaim"),
 ]
+
+# Shared source dir — classes used by both strategies and indicators
+SHARED_SRC = NT8_SRC / "shared"
+
+# Indicator source dirs — all subfolders sync to a single flat NT8 Indicators/
+INDICATOR_SRC_DIRS = [
+    ("vinay",        NT8_SRC / "indicators" / "vinay"),
+    ("redtail",      NT8_SRC / "indicators" / "redtail"),
+    ("third_party",  NT8_SRC / "indicators" / "third_party"),
+]
+
 ADDONS_SRC = NT8_SRC / "addons"
 
 NT8_HOME = Path(os.environ.get("USERPROFILE", "")) / "Documents" / "NinjaTrader 8" / "bin" / "Custom"
 STRATEGIES_DST = NT8_HOME / "Strategies" / "Vinay"  # NT8 expects this folder name
+INDICATORS_DST = NT8_HOME / "Indicators"
 ADDONS_DST = NT8_HOME / "AddOns"
 
 
@@ -172,7 +189,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 70)
-    print("NT8 Strategy Sync — repo source -> NT8 live compilation folder")
+    print("NT8 NinjaScript Sync — repo source -> NT8 live compilation folder")
     print("=" * 70)
     print(f"  Source:   {NT8_SRC}")
     print(f"  NT8 dest: {NT8_HOME}")
@@ -200,6 +217,28 @@ def main():
         all_strategy_src_names.update(f.name for f in src_dir.glob("*.cs"))
         print()
 
+    # ── Shared files: shared classes -> NT8 Strategies/Vinay/ (compiled with strategies) ──
+    if SHARED_SRC.exists():
+        print(f"[Shared/] {SHARED_SRC} -> {STRATEGIES_DST}")
+        r = sync_dir(SHARED_SRC, STRATEGIES_DST, "shared", args.dry_run, args.verify)
+        all_results.append(("Shared", r))
+        all_strategy_src_names.update(f.name for f in SHARED_SRC.glob("*.cs"))
+        print()
+
+    # ── Indicator files: all subfolders -> NT8 Indicators/ ──
+    # NT8 compiles all .cs in Indicators/ together. All indicator subfolders
+    # (vinay/, redtail/, third_party/) sync to the same flat Indicators/ folder.
+    all_indicator_src_names = set()
+    for label, src_dir in INDICATOR_SRC_DIRS:
+        if not src_dir.exists():
+            continue
+        print(f"[Indicators/{label}/] {src_dir} -> {INDICATORS_DST}")
+        r = sync_dir(src_dir, INDICATORS_DST, label, args.dry_run, args.verify)
+        all_results.append(("Indicators/" + label, r))
+        all_indicator_src_names.update(f.name for f in src_dir.glob("*.cs"))
+        print()
+        print()
+
     # ── AddOns: copy trading + riskguard -> NT8 AddOns/ ──
     print(f"[AddOns/] {ADDONS_SRC} -> {ADDONS_DST}")
     addon_result = sync_addon_files(args.dry_run, args.verify)
@@ -211,6 +250,11 @@ def main():
         dst_names = set(f.name for f in STRATEGIES_DST.glob("*.cs"))
         strategy_orphans = sorted(dst_names - all_strategy_src_names)
 
+    indicator_orphans = []
+    if INDICATORS_DST.exists():
+        ind_dst_names = set(f.name for f in INDICATORS_DST.glob("*.cs"))
+        indicator_orphans = sorted(ind_dst_names - all_indicator_src_names)
+
     addon_orphans = addon_result.get("extra_dst", [])
 
     # ── Summary ──
@@ -220,7 +264,7 @@ def main():
     total_copied = sum(len(r["missing_dst"]) for _, r in all_results)
     total_identical = sum(len(r["identical"]) for _, r in all_results)
     total_drift = total_synced + total_copied
-    total_orphans = len(strategy_orphans) + len(addon_orphans)
+    total_orphans = len(strategy_orphans) + len(indicator_orphans) + len(addon_orphans)
 
     if args.verify:
         if total_drift == 0:
@@ -238,6 +282,8 @@ def main():
         print(f"  Orphan files in NT8 (not in repo source):")
         for name in strategy_orphans:
             print(f"    Strategies/Vinay/{name}")
+        for name in indicator_orphans:
+            print(f"    Indicators/{name}")
         for name in addon_orphans:
             print(f"    AddOns/{name}")
 
