@@ -1,0 +1,186 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradingView Quant Suite
+// HMA Slope + SuperTrend Momentum Scalper v6.0
+// Dedicated High-Win-Rate Trend Continuation Scalping Strategy for 1-Minute / 3-Minute Futures
+
+//@version=6
+strategy("HMA SuperTrend Momentum Scalper v6", 
+  overlay=true, 
+  initial_capital=50000, 
+  default_qty_type=strategy.fixed, 
+  default_qty_value=1, 
+  commission_type=strategy.commission.cash_per_contract, 
+  commission_value=1.5, 
+  slippage=2,
+  max_boxes_count=500, 
+  max_lines_count=500, 
+  max_labels_count=500)
+
+// ══════════════════════════════════════════════
+// ══ 1. INPUTS & CONFIGURATION
+// ══════════════════════════════════════════════
+
+GRP_TREND        = "Trend & Indicator Settings"
+i_stPeriod       = input.int(10, "SuperTrend Period", minval=1, group=GRP_TREND)
+i_stMult         = input.float(2.0, "SuperTrend Multiplier", minval=0.1, step=0.1, group=GRP_TREND)
+i_hmaPeriod      = input.int(14, "HMA Period", minval=1, group=GRP_TREND)
+i_useEmaFilter   = input.bool(true, "Use 200 EMA Macro Filter", group=GRP_TREND)
+i_emaPeriod      = input.int(200, "EMA Filter Period", minval=1, group=GRP_TREND)
+
+GRP_EXECUTION    = "Execution & Risk Settings"
+i_rthOnly        = input.bool(true, "RTH Session Windows Only (9:30-11:30 & 14:00-15:30 EST)", group=GRP_EXECUTION)
+i_tpAtr          = input.float(1.0, "Take Profit ATR Mult (Target High Win-Rate)", step=0.1, group=GRP_EXECUTION)
+i_slAtr          = input.float(1.5, "Stop Loss ATR Mult", step=0.1, group=GRP_EXECUTION)
+i_maxHoldBars    = input.int(4, "Time Decay Exit (Max Hold Bars)", minval=1, group=GRP_EXECUTION)
+
+GRP_RISK         = "Prop Firm Risk Management"
+i_maxTradesDay   = input.int(3, "Max Trades Per Day", minval=1, group=GRP_RISK)
+i_maxConsecLoss  = input.int(2, "Max Consecutive Losses", minval=1, group=GRP_RISK)
+i_dailyLossLimit = input.float(400.0, "Daily Loss Limit ($)", minval=0.0, group=GRP_RISK)
+
+GRP_VISUAL       = "Visual & Dashboard Settings"
+i_showDashboard  = input.bool(true, "Show Performance Dashboard", group=GRP_VISUAL)
+i_tablePos       = input.string("Top Right", "Dashboard Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group=GRP_VISUAL)
+i_tableSize      = input.string("normal", "Dashboard Text Size", options=["tiny", "small", "normal", "large"], group=GRP_VISUAL)
+i_textFont       = input.string("Monospace", "Font Family", options=["Monospace", "Default"], group=GRP_VISUAL)
+
+// ══════════════════════════════════════════════
+// ══ 2. HELPER FUNCTIONS
+// ══════════════════════════════════════════════
+
+f_tablePos(string p) =>
+    switch p
+        "Top Left"     => position.top_left
+        "Top Right"    => position.top_right
+        "Bottom Left"  => position.bottom_left
+        => position.bottom_right
+
+f_tableSize(string s) =>
+    switch s
+        "tiny"   => size.tiny
+        "small"  => size.small
+        "normal" => size.normal
+        => size.large
+
+f_font(string f) => f == "Monospace" ? font.family_monospace : font.family_default
+
+// ══════════════════════════════════════════════
+// ══ 3. CORE TECHNICAL CALCULATIONS
+// ══════════════════════════════════════════════
+
+atrVal = ta.atr(14)
+hmaVal = ta.hma(close, i_hmaPeriod)
+
+hmaSlopeUp = hmaVal > hmaVal[1] and hmaVal[1] <= hmaVal[2]
+hmaSlopeDn = hmaVal < hmaVal[1] and hmaVal[1] >= hmaVal[2]
+
+[stLine, stDir] = ta.supertrend(i_stMult, i_stPeriod)
+stBullish = stDir < 0
+stBearish = stDir > 0
+
+ema200 = ta.ema(close, i_emaPeriod)
+macroBull = not i_useEmaFilter or close > ema200
+macroBear = not i_useEmaFilter or close < ema200
+
+inRthWindow = not i_rthOnly or not na(time(timeframe.period, "0930-1130:23456", "America/New_York")) or not na(time(timeframe.period, "1400-1530:23456", "America/New_York"))
+
+// ══════════════════════════════════════════════
+// ══ 4. PROP FIRM RISK GATEKEEPER STATE
+// ══════════════════════════════════════════════
+
+var int   todayTrades   = 0
+var float todayPnL      = 0.0
+var int   consecLosses  = 0
+var int   lastTradeDay  = -1
+
+currentDay = dayofweek(time, "America/New_York")
+if currentDay != lastTradeDay
+    todayTrades  := 0
+    todayPnL     := 0.0
+    consecLosses := 0
+    lastTradeDay := currentDay
+
+if strategy.closedtrades > 0 and ta.change(strategy.closedtrades)
+    float lastPnL = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    todayTrades  += 1
+    todayPnL     += lastPnL
+    if lastPnL < 0
+        consecLosses += 1
+    else
+        consecLosses := 0
+
+riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit and consecLosses < i_maxConsecLoss
+
+// ══════════════════════════════════════════════
+// ══ 5. SIGNALS & STRATEGY EXECUTION
+// ══════════════════════════════════════════════
+
+longSignal  = stBullish and low <= hmaVal and hmaSlopeUp and macroBull and inRthWindow and riskGatekeeperOK
+shortSignal = stBearish and high >= hmaVal and hmaSlopeDn and macroBear and inRthWindow and riskGatekeeperOK
+
+if strategy.position_size == 0
+    if longSignal
+        strategy.entry("Long", strategy.long, limit=hmaVal, comment="HMA Trend Long")
+        strategy.exit("Long_Exit", "Long", 
+          profit=close + (i_tpAtr * atrVal), 
+          loss=close - (i_slAtr * atrVal))
+    else if shortSignal
+        strategy.entry("Short", strategy.short, limit=hmaVal, comment="HMA Trend Short")
+        strategy.exit("Short_Exit", "Short", 
+          profit=close - (i_tpAtr * atrVal), 
+          loss=close + (i_slAtr * atrVal))
+
+if strategy.position_size != 0
+    int barsInTrade = bar_index - strategy.opentrades.entry_bar_index(0)
+    if barsInTrade >= i_maxHoldBars
+        strategy.close_all(comment="Time Decay Exit")
+
+// ══════════════════════════════════════════════
+// ══ 6. VISUAL OVERLAYS & CHART PLOTS
+// ══════════════════════════════════════════════
+
+plot(hmaVal, "HMA Line", color=hmaVal > hmaVal[1] ? color.green : color.red, linewidth=2)
+plot(stLine, "SuperTrend", color=stBullish ? color.green : color.red, linewidth=2)
+plot(ema200, "200 EMA Filter", color=color.blue, linewidth=1, style=plot.style_linebr)
+
+plotshape(longSignal,  title="Long Signal Marker",  style=shape.triangleup,   location=location.belowbar, color=color.green, size=size.small)
+plotshape(shortSignal, title="Short Signal Marker", style=shape.triangledown, location=location.abovebar, color=color.red,   size=size.small)
+
+// ══════════════════════════════════════════════
+// ══ 7. PERFORMANCE DASHBOARD TABLE
+// ══════════════════════════════════════════════
+
+var table infoDash = na
+
+if i_showDashboard and barstate.islast
+    if not na(infoDash)
+        table.delete(infoDash)
+
+    infoDash := table.new(f_tablePos(i_tablePos), 2, 6, 
+      bgcolor=color.new(color.black, 15), 
+      border_color=color.gray, 
+      border_width=1)
+
+    tSz = f_tableSize(i_tableSize)
+    tFont = f_font(i_textFont)
+
+    table.cell(infoDash, 0, 0, "HMA SuperTrend Scalper", text_color=color.white, text_size=tSz, font_family=tFont, bgcolor=color.navy)
+    table.cell(infoDash, 1, 0, syminfo.ticker, text_color=color.yellow, text_size=tSz, font_family=tFont, bgcolor=color.navy)
+
+    float netProfit = strategy.netprofit
+    float pf = strategy.grossprofit / (strategy.grossloss == 0 ? 1 : strategy.grossloss)
+
+    table.cell(infoDash, 0, 1, "Net Profit", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 1, str.format("${0,number,#.##}", netProfit), text_color=netProfit >= 0 ? color.green : color.red, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 2, "Profit Factor", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 2, str.format("{0,number,#.##}", pf), text_color=pf >= 1.1 ? color.green : color.orange, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 3, "Total Trades", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 3, str.tostring(strategy.closedtrades), text_color=color.white, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 4, "Daily Trades Used", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 4, str.tostring(todayTrades) + " / " + str.tostring(i_maxTradesDay), text_color=todayTrades >= i_maxTradesDay ? color.red : color.white, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 5, "Risk Gatekeeper", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 5, riskGatekeeperOK ? "PASS (Active)" : "LOCKED OUT", text_color=riskGatekeeperOK ? color.green : color.red, text_size=tSz, font_family=tFont)

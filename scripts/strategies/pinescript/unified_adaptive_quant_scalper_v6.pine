@@ -1,0 +1,252 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradingView Quant Suite
+// Unified Adaptive Quant Scalper Strategy v6.0
+// Combines Bollinger Band Width (BBW) Squeeze Mean Reversion & HMA Slope Inflection + SuperTrend Trend Expansion
+
+//@version=6
+strategy("Unified Adaptive Quant Scalper v6", 
+  overlay=true, 
+  initial_capital=50000, 
+  default_qty_type=strategy.fixed, 
+  default_qty_value=1, 
+  commission_type=strategy.commission.cash_per_contract, 
+  commission_value=1.5, 
+  slippage=2,
+  max_boxes_count=500, 
+  max_lines_count=500, 
+  max_labels_count=500)
+
+// ══════════════════════════════════════════════
+// ══ 1. INPUTS & CONFIGURATION
+// ══════════════════════════════════════════════
+
+// ── Strategy Mode Selection ──
+GRP_MODE         = "Strategy Execution Mode"
+i_stratMode      = input.string("Adaptive Dual-Engine", "Execution Mode", options=["Adaptive Dual-Engine", "Expansion Trend Only", "Squeeze Mean Reversion Only"], group=GRP_MODE)
+i_rthOnly        = input.bool(true, "RTH Session Only (9:30-11:30 & 14:00-15:30 EST)", group=GRP_MODE)
+
+// ── SuperTrend & HMA Parameters (Mode 2 Trend Expansion) ──
+GRP_EXPANSION    = "Mode 2: Trend Expansion Settings"
+i_stPeriod       = input.int(10, "SuperTrend Period", minval=1, group=GRP_EXPANSION)
+i_stMult         = input.float(2.0, "SuperTrend Multiplier", minval=0.1, step=0.1, group=GRP_EXPANSION)
+i_hmaPeriod      = input.int(14, "HMA Period", minval=1, group=GRP_EXPANSION)
+i_useEmaFilter   = input.bool(true, "Use 200 EMA Macro Trend Filter", group=GRP_EXPANSION)
+i_emaPeriod      = input.int(200, "EMA Filter Period", minval=1, group=GRP_EXPANSION)
+i_mode2TpAtr     = input.float(1.5, "Mode 2 Take Profit (ATR Mult)", step=0.1, group=GRP_EXPANSION)
+i_mode2SlAtr     = input.float(2.0, "Mode 2 Stop Loss (ATR Mult)", step=0.1, group=GRP_EXPANSION)
+i_mode2MaxHold   = input.int(6, "Mode 2 Max Hold Bars", minval=1, group=GRP_EXPANSION)
+
+// ── Bollinger Band Parameters (Mode 1 Squeeze Mean Reversion) ──
+GRP_SQUEEZE      = "Mode 1: Squeeze Mean Reversion Settings"
+i_bbPeriod       = input.int(20, "Bollinger Band Period", minval=1, group=GRP_SQUEEZE)
+i_bbStdDev       = input.float(2.5, "Bollinger StdDev Multiplier", step=0.1, group=GRP_SQUEEZE)
+i_mode1SlAtr     = input.float(1.0, "Mode 1 Stop Loss (ATR Mult)", step=0.1, group=GRP_SQUEEZE)
+i_mode1MaxHold   = input.int(5, "Mode 1 Max Hold Bars", minval=1, group=GRP_SQUEEZE)
+
+// ── Risk & Prop Firm Gatekeeper Controls ──
+GRP_RISK         = "Prop Firm Risk Management"
+i_maxTradesDay   = input.int(3, "Max Trades Per Day", minval=1, group=GRP_RISK)
+i_maxConsecLoss  = input.int(2, "Max Consecutive Losses Before Pause", minval=1, group=GRP_RISK)
+i_dailyLossLimit = input.float(400.0, "Daily Loss Limit ($)", minval=0.0, group=GRP_RISK)
+
+// ── Visual Display Controls ──
+GRP_VISUAL       = "Visual & Dashboard Settings"
+i_showDashboard  = input.bool(true, "Show Performance Dashboard", group=GRP_VISUAL)
+i_tablePos       = input.string("Top Right", "Dashboard Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group=GRP_VISUAL)
+i_tableSize      = input.string("normal", "Dashboard Text Size", options=["tiny", "small", "normal", "large"], group=GRP_VISUAL)
+i_textFont       = input.string("Monospace", "Font Family", options=["Monospace", "Default"], group=GRP_VISUAL)
+i_showRegimeBg   = input.bool(true, "Highlight Volatility Regimes", group=GRP_VISUAL)
+
+// ══════════════════════════════════════════════
+// ══ 2. HELPER FUNCTIONS
+// ══════════════════════════════════════════════
+
+f_tablePos(string p) =>
+    switch p
+        "Top Left"     => position.top_left
+        "Top Right"    => position.top_right
+        "Bottom Left"  => position.bottom_left
+        => position.bottom_right
+
+f_tableSize(string s) =>
+    switch s
+        "tiny"   => size.tiny
+        "small"  => size.small
+        "normal" => size.normal
+        => size.large
+
+f_font(string f) => f == "Monospace" ? font.family_monospace : font.family_default
+
+// ══════════════════════════════════════════════
+// ══ 3. CORE TECHNICAL CALCULATIONS
+// ══════════════════════════════════════════════
+
+// ── ATR Calculation ──
+atrVal = ta.atr(14)
+
+// ── HMA Calculation ──
+hmaVal = ta.hma(close, i_hmaPeriod)
+hmaSlopeUp = hmaVal > hmaVal[1] and hmaVal[1] <= hmaVal[2]
+hmaSlopeDn = hmaVal < hmaVal[1] and hmaVal[1] >= hmaVal[2]
+
+// ── SuperTrend Calculation ──
+[stLine, stDir] = ta.supertrend(i_stMult, i_stPeriod)
+// stDir: -1 is Bullish in Pine Script ta.supertrend, 1 is Bearish
+stBullish = stDir < 0
+stBearish = stDir > 0
+
+// ── Bollinger Band & Volatility Squeeze Check ──
+[bbMid, bbUpper, bbLower] = ta.bb(close, i_bbPeriod, i_bbStdDev)
+bbWidth = (bbUpper - bbLower) / bbMid
+bbWidthSma = ta.sma(bbWidth, i_bbPeriod)
+
+isSqueeze   = bbWidth <= bbWidthSma    // Volatility Compression
+isExpansion = bbWidth > bbWidthSma     // Volatility Expansion
+
+// ── 200 EMA Macro Filter ──
+ema200 = ta.ema(close, i_emaPeriod)
+macroBull = not i_useEmaFilter or close > ema200
+macroBear = not i_useEmaFilter or close < ema200
+
+// ── Session Time Window (EST) ──
+inRthWindow = not i_rthOnly or not na(time(timeframe.period, "0930-1130:23456", "America/New_York")) or not na(time(timeframe.period, "1400-1530:23456", "America/New_York"))
+
+// ══════════════════════════════════════════════
+// ══ 4. PROP FIRM RISK GATEKEEPER STATE
+// ══════════════════════════════════════════════
+
+var int   todayTrades   = 0
+var float todayPnL      = 0.0
+var int   consecLosses  = 0
+var int   lastTradeDay  = -1
+
+currentDay = dayofweek(time, "America/New_York")
+if currentDay != lastTradeDay
+    todayTrades  := 0
+    todayPnL     := 0.0
+    consecLosses := 0
+    lastTradeDay := currentDay
+
+// Check closed trades to update daily stats
+if strategy.closedtrades > 0 and ta.change(strategy.closedtrades)
+    float lastPnL = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    todayTrades  += 1
+    todayPnL     += lastPnL
+    if lastPnL < 0
+        consecLosses += 1
+    else
+        consecLosses := 0
+
+riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit and consecLosses < i_maxConsecLoss
+
+// ══════════════════════════════════════════════
+// ══ 5. SIGNAL GENERATION & STRATEGY EXECUTION
+// ══════════════════════════════════════════════
+
+// ── Mode 1: Squeeze Mean Reversion Signals ──
+mode1Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and low <= bbLower and close > bbLower and inRthWindow and riskGatekeeperOK
+mode1Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Squeeze Mean Reversion Only") and isSqueeze and high >= bbUpper and close < bbUpper and inRthWindow and riskGatekeeperOK
+
+// ── Mode 2: Expansion Trend Scalp Signals ──
+mode2Long  = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBullish and low <= hmaVal and hmaSlopeUp and macroBull and inRthWindow and riskGatekeeperOK
+mode2Short = (i_stratMode == "Adaptive Dual-Engine" or i_stratMode == "Expansion Trend Only") and isExpansion and stBearish and high >= hmaVal and hmaSlopeDn and macroBear and inRthWindow and riskGatekeeperOK
+
+// ── Entry & Exit Execution ──
+if strategy.position_size == 0
+    if mode2Long
+        strategy.entry("Mode2_Long", strategy.long, limit=hmaVal, comment="Mode 2 Trend Long")
+        strategy.exit("Mode2_Long_Exit", "Mode2_Long", 
+          profit=close + (i_mode2TpAtr * atrVal), 
+          loss=close - (i_mode2SlAtr * atrVal))
+    else if mode2Short
+        strategy.entry("Mode2_Short", strategy.short, limit=hmaVal, comment="Mode 2 Trend Short")
+        strategy.exit("Mode2_Short_Exit", "Mode2_Short", 
+          profit=close - (i_mode2TpAtr * atrVal), 
+          loss=close + (i_mode2SlAtr * atrVal))
+    else if mode1Long
+        strategy.entry("Mode1_Long", strategy.long, limit=bbLower, comment="Mode 1 MeanRev Long")
+        strategy.exit("Mode1_Long_Exit", "Mode1_Long", 
+          limit=bbMid, 
+          loss=close - (i_mode1SlAtr * atrVal))
+    else if mode1Short
+        strategy.entry("Mode1_Short", strategy.short, limit=bbUpper, comment="Mode 1 MeanRev Short")
+        strategy.exit("Mode1_Short_Exit", "Mode1_Short", 
+          limit=bbMid, 
+          loss=close + (i_mode1SlAtr * atrVal))
+
+// ── Time Decay Exit (Max Hold Bars Guard) ──
+if strategy.position_size != 0
+    int barsInTrade = bar_index - strategy.opentrades.entry_bar_index(0)
+    bool isMode1 = str.contains(strategy.opentrades.entry_id(0), "Mode1")
+    int maxHold = isMode1 ? i_mode1MaxHold : i_mode2MaxHold
+    if barsInTrade >= maxHold
+        strategy.close_all(comment="Time Decay Exit")
+
+// ══════════════════════════════════════════════
+// ══ 6. VISUAL OVERLAYS & CHART PLOTS
+// ══════════════════════════════════════════════
+
+// ── Indicator Overlays ──
+plot(hmaVal, "HMA Line", color=hmaVal > hmaVal[1] ? color.green : color.red, linewidth=2)
+plot(stLine, "SuperTrend", color=stBullish ? color.green : color.red, linewidth=2)
+plot(ema200, "200 EMA Filter", color=color.blue, linewidth=1, style=plot.style_linebr)
+
+// ── Bollinger Bands Fills ──
+pUpper = plot(bbUpper, "BB Upper", color=color.new(#2962FF, 40))
+pMid   = plot(bbMid,   "BB Middle", color=color.new(#FF6D00, 40))
+pLower = plot(bbLower, "BB Lower", color=color.new(#2962FF, 40))
+fill(pUpper, pLower, color=isSqueeze ? color.new(color.purple, 90) : color.new(color.teal, 90), title="BB Background Fill")
+
+// ── Volatility Regime Background ──
+bgcolor(i_showRegimeBg ? (isSqueeze ? color.new(color.blue, 95) : color.new(color.green, 95)) : na, title="Regime Background")
+
+// ── Entry Signal Markers ──
+plotshape(mode2Long,  title="Mode 2 Long Marker",  style=shape.triangleup,   location=location.belowbar, color=color.green, size=size.small)
+plotshape(mode2Short, title="Mode 2 Short Marker", style=shape.triangledown, location=location.abovebar, color=color.red,   size=size.small)
+plotshape(mode1Long,  title="Mode 1 Long Marker",  style=shape.circle,        location=location.belowbar, color=color.cyan,  size=size.small)
+plotshape(mode1Short, title="Mode 1 Short Marker", style=shape.circle,        location=location.abovebar, color=color.orange,size=size.small)
+
+// ══════════════════════════════════════════════
+// ══ 7. PERFORMANCE DASHBOARD TABLE
+// ══════════════════════════════════════════════
+
+var table infoDash = na
+
+if i_showDashboard and barstate.islast
+    if not na(infoDash)
+        table.delete(infoDash)
+
+    infoDash := table.new(f_tablePos(i_tablePos), 2, 7, 
+      bgcolor=color.new(color.black, 15), 
+      border_color=color.gray, 
+      border_width=1)
+
+    tSz = f_tableSize(i_tableSize)
+    tFont = f_font(i_textFont)
+
+    // Header
+    table.cell(infoDash, 0, 0, "Quant Scalper Dashboard", text_color=color.white, text_size=tSz, font_family=tFont, bgcolor=color.navy)
+    table.cell(infoDash, 1, 0, i_stratMode, text_color=color.yellow, text_size=tSz, font_family=tFont, bgcolor=color.navy)
+
+    // Metrics
+    float winRate = strategy.closedtrades > 0 ? (strategy.closedtrades.profit(0) > 0 ? 1 : 0) : 0
+    float netProfit = strategy.netprofit
+    float pf = strategy.grossprofit / (strategy.grossloss == 0 ? 1 : strategy.grossloss)
+
+    table.cell(infoDash, 0, 1, "Net Profit", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 1, str.format("${0,number,#.##}", netProfit), text_color=netProfit >= 0 ? color.green : color.red, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 2, "Profit Factor", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 2, str.format("{0,number,#.##}", pf), text_color=pf >= 1.1 ? color.green : color.orange, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 3, "Total Trades", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 3, str.tostring(strategy.closedtrades), text_color=color.white, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 4, "Current Regime", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 4, isSqueeze ? "SQUEEZE (Mode 1)" : "EXPANSION (Mode 2)", text_color=isSqueeze ? color.cyan : color.lime, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 5, "Daily Trades Used", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 5, str.tostring(todayTrades) + " / " + str.tostring(i_maxTradesDay), text_color=todayTrades >= i_maxTradesDay ? color.red : color.white, text_size=tSz, font_family=tFont)
+
+    table.cell(infoDash, 0, 6, "Risk Gatekeeper", text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 1, 6, riskGatekeeperOK ? "PASS (Active)" : "LOCKED OUT", text_color=riskGatekeeperOK ? color.green : color.red, text_size=tSz, font_family=tFont)
