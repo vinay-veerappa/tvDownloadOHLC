@@ -474,6 +474,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return;
             }
 
+            // If a flatten has already been submitted (tradeIsActive=false),
+            // skip trade management — the exit order is pending fill and
+            // managed orders have been cancelled. Running the daily max loss
+            // or breakeven trail here would re-flatten with a different signal.
+            if (!tradeIsActive)
+                return;
+
             double currentPrice    = Closes[0][0];
             double unrealizedPnL   = GetUnrealizedPnL(currentPrice);
 
@@ -652,19 +659,31 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected void FlattenPosition(string reason)
         {
+            // Plain market close — do NOT pass fromEntrySignal. Passing an entry
+            // signal (ExitLong(fromEntry, reason)) cancels the managed
+            // SetProfitTarget/SetStopLoss OCO immediately, but the market exit
+            // fills on the NEXT bar in SA backtest. On that next bar
+            // ManageOpenTrade sees an unprotected open position and triggers a
+            // spurious "Daily max loss" exit (regression observed in v2-v6:
+            // 15 false daily-max-loss exits, WR 63.4% -> 59.2%).
+            //
+            // A plain ExitLong()/ExitShort() submits a market exit without
+            // touching the managed OCO. The managed orders auto-cancel when the
+            // position goes flat from this fill. This was also the root cause of
+            // the original bug: the old ExitLong(reason, GetSignalName) passed
+            // "Flatten by time" as fromEntrySignal, which matched no entry, so
+            // the exit never associated and the position survived to 17:00.
             if (Position.MarketPosition == MarketPosition.Long)
-                ExitLong(reason, GetSignalName("Long"));
+                ExitLong();
             else if (Position.MarketPosition == MarketPosition.Short)
-                ExitShort(reason, GetSignalName("Short"));
+                ExitShort();
 
             // FIX: reset tradeIsActive immediately so OnBarUpdate doesn't stay
             // stuck in ManageOpenTrade on subsequent bars before the fill confirms.
-            // OnExecutionUpdate will see tradeIsActive==false and skip its logic,
-            // but that's safe — FlattenPosition callers (time/risk exits) handle
-            // state (isDoneForDay etc.) themselves before calling us.
             tradeIsActive = false;
 
-            Print(string.Format("[{0}] FLATTEN — {1}", GetStrategyName(), reason));
+            Print(string.Format("[{0}] FLATTEN — {1} at {2:HH:mm} (plain market close)",
+                GetStrategyName(), reason, Times[0][0]));
         }
 
         protected int GetCurrentTimeInt()

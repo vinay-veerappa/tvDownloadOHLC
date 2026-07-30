@@ -218,6 +218,8 @@ def _aggregate_session_features(
     For one session/time-basis, take the last bar of each trading day inside the
     session window and extract AVWAP features plus trend confirmations.
     """
+    from scripts.libs_py.nqstats.ib import SESSION_CONFIGS_V5
+    cfg = SESSION_CONFIGS_V5.get(session_slot, SESSION_CONFIGS_V5.get("NY AM IB"))
     sub = avwap_all.loc[session_mask].copy()
     if sub.empty:
         return pd.DataFrame()
@@ -237,12 +239,22 @@ def _aggregate_session_features(
     avwap_out = last[["trading_day"] + feat_cols].copy()
 
     # Trend confirmations — EMA on DAILY closes (NT8 parity).
-    # NT8 IBStrategyBase computes EMA(20/50) on daily closes (one value per
-    # trading day = rangeClose), NOT on intraday 1-min bars. The 1-min EMA
-    # always trends WITH the break (not misaligned), so it must be computed
-    # across days to match NT8's TrendMisalignedWithBreak filter.
-    # Step 1: extract the daily close (last bar of session window per day).
-    daily_close = sub.groupby("trading_day")["close"].last().sort_index()
+    # NT8 IBStrategyBase computes EMA(20/50) on daily closes using rangeClose,
+    # which is the close of the LAST bar of the IB window (09:30-09:59, finalized
+    # on the first bar AT OR AFTER 10:00). The 1-min EMA always trends WITH the
+    # break (not misaligned), so it must be computed across days to match NT8's
+    # TrendMisalignedWithBreak filter.
+    # Step 1: extract the daily close = IB window last bar close (≈09:59).
+    #         This matches NT8 rangeClose (NOT the session-window last close 15:50).
+    #         The session_slot determines the IB window; for NY AM IB, ib_end=10:00
+    #         so the last IB bar is 09:59. We use the last bar with time < ib_end.
+    ib_end_time = cfg["ib_end"]  # e.g. time(10, 0) for NY AM IB
+    ib_bars = sub[sub["bar_time"] < ib_end_time]
+    if ib_bars.empty:
+        # Fallback: use session-window last close if IB window is empty
+        daily_close = sub.groupby("trading_day")["close"].last().sort_index()
+    else:
+        daily_close = ib_bars.groupby("trading_day")["close"].last().sort_index()
     # Step 2: compute EMA across the daily close series (chronological).
     ema20_daily = daily_close.ewm(span=20, adjust=False, min_periods=2).mean()
     ema50_daily = daily_close.ewm(span=50, adjust=False, min_periods=2).mean()
