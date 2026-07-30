@@ -237,6 +237,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     case LevelSource.SessionRanges:
                         // TODO P5: read from composed indicators
                         break;
+
+                    case LevelSource.Internal:
+                        {
+                            level.Price = ComputeInternalLevel(level.Def.Accessor);
+                            level.IsActive = level.Price > 0;
+                            if (level.Price != prevPrice && level.Price > 0)
+                                level.SetBarIndex = CurrentBar;
+                        }
+                        break;
                 }
             }
         }
@@ -261,6 +270,77 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 case "CurrentOpen": return CurrentDayOHL().CurrentOpen[0];
                 default: return 0;
             }
+        }
+
+        // ═══ Compute internal levels (mids, settlement, PWC) ═══
+        // These aren't available as plot outputs from RedTail or built-ins,
+        // so we compute them from the data we already read.
+        private double prevWeekClose = 0;
+        private DateTime prevWeekCloseDate = DateTime.MinValue;
+
+        private double ComputeInternalLevel(string accessor)
+        {
+            double pdh = PriorDayOHLC().PriorHigh[0];
+            double pdl = PriorDayOHLC().PriorLow[0];
+            double pdc = PriorDayOHLC().PriorClose[0];
+
+            switch (accessor)
+            {
+                // Prior Day Mid = (PDH + PDL) / 2
+                case "PriorDayMid":
+                    return (pdh > 0 && pdl > 0) ? (pdh + pdl) / 2.0 : 0;
+
+                // Settlement = prior day close (futures settlement ≈ PDC for daily)
+                case "Settlement":
+                    return pdc;
+
+                // Prior Week Mid = (PWH + PWL) / 2 — PWH/PWL from RedTailKeyLevels (P5)
+                // For now compute from PriorDayOHLC weekly (approximation until P5)
+                case "PriorWeekMid":
+                    // TODO P5: read PWH/PWL from RedTailKeyLevels
+                    return 0;
+
+                // Prior Week Close (settlement close)
+                // Tracked from the close of the last bar of the prior week (Friday 16:00 ET)
+                case "PriorWeekClose":
+                    return UpdatePriorWeekClose();
+
+                // Prior Month Mid = (PMH + PML) / 2 — from RedTailKeyLevels (P5)
+                case "PriorMonthMid":
+                    // TODO P5: read PMH/PML from RedTailKeyLevels
+                    return 0;
+
+                // Session mids — from SessionRanges indicator (P6)
+                case "Asia Range.Mid":
+                case "London Range.Mid":
+                case "London OR.Mid":
+                case "Globex Range.Mid":
+                    // TODO P6: read from SessionRanges indicator
+                    return 0;
+
+                default:
+                    return 0;
+            }
+        }
+
+        // Track prior week close: capture Close[0] on the last bar of each week
+        // (Friday ~16:00 ET or the last available bar before weekend)
+        private double UpdatePriorWeekClose()
+        {
+            DateTime barEt = ToEt(Time[0]);
+            DayOfWeek dow = barEt.DayOfWeek;
+
+            // Capture the close on Friday after 15:00 ET (near session close)
+            if (dow == DayOfWeek.Friday && barEt.Hour >= 15)
+            {
+                if (prevWeekCloseDate.Date != barEt.Date)
+                {
+                    prevWeekClose = Close[0];
+                    prevWeekCloseDate = barEt.Date;
+                }
+            }
+
+            return prevWeekClose;
         }
 
         #endregion

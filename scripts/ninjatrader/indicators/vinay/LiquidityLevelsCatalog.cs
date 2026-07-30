@@ -19,10 +19,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("PDH", LevelCategory.PriorDay, LevelRole.SweepTarget, LevelSource.RedTailKeyLevels, "PDH"));
             levels.Add(new LevelDef("PDL", LevelCategory.PriorDay, LevelRole.SweepTarget, LevelSource.RedTailKeyLevels, "PDL"));
             levels.Add(new LevelDef("PDC", LevelCategory.PriorDay, LevelRole.SweepTarget, LevelSource.PriorDayOHLC, "PriorClose"));
+            levels.Add(new LevelDef("PDM", LevelCategory.PriorDay, LevelRole.ConfluenceFactor, LevelSource.Internal, "PriorDayMid"));  // (PDH+PDL)/2
+            levels.Add(new LevelDef("Settlement", LevelCategory.PriorDay, LevelRole.ConfluenceFactor, LevelSource.Internal, "Settlement"));  // prior day settlement close
 
             // ── Prior Week (T1/T3) ──
             levels.Add(new LevelDef("PWH", LevelCategory.PriorWeek, LevelRole.SweepTarget, LevelSource.RedTailKeyLevels, "PWH"));
             levels.Add(new LevelDef("PWL", LevelCategory.PriorWeek, LevelRole.SweepTarget, LevelSource.RedTailKeyLevels, "PWL"));
+            levels.Add(new LevelDef("PWM", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.Internal, "PriorWeekMid"));  // (PWH+PWL)/2
+            levels.Add(new LevelDef("PWC", LevelCategory.PriorWeek, LevelRole.SweepTarget, LevelSource.Internal, "PriorWeekClose"));  // prev week close (settlement)
             levels.Add(new LevelDef("MH", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "MH"));
             levels.Add(new LevelDef("ML", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "ML"));
             levels.Add(new LevelDef("GH", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "GH"));
@@ -30,8 +34,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             // ── Prior Month (T3) ──
             levels.Add(new LevelDef("PMH", LevelCategory.PriorMonth, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "PMH"));
-            levels.Add(new LevelDef("PML", LevelCategory.PriorMonth, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "PML"));
-
+            levels.Add(new LevelDef("PML", LevelCategory.PriorMonth, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "PML"));            levels.Add(new LevelDef("PMM", LevelCategory.PriorMonth, LevelRole.ConfluenceFactor, LevelSource.Internal, "PriorMonthMid"));  // (PMH+PML)/2
             // ── Session Opens (T2 — NEW via SessionOpensEngine) ──
             levels.Add(new LevelDef("MidnightOpen", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "MidnightOpen"));
             levels.Add(new LevelDef("LondonOpen", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "LondonOpen"));
@@ -45,10 +48,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             // ── Session Ranges (T1 — from SessionRanges indicator) ──
             levels.Add(new LevelDef("AsiaHigh", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "Asia Range.High"));
             levels.Add(new LevelDef("AsiaLow", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "Asia Range.Low"));
+            levels.Add(new LevelDef("AsiaMid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Asia Range.Mid"));  // (AsiaH+AsiaL)/2
             levels.Add(new LevelDef("LondonHigh", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "London Range.High"));
             levels.Add(new LevelDef("LondonLow", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "London Range.Low"));
+            levels.Add(new LevelDef("LondonMid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "London Range.Mid"));  // (LonH+LonL)/2
+            levels.Add(new LevelDef("LondonOrMid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "London OR.Mid"));  // (LonOrH+LonOrL)/2
             levels.Add(new LevelDef("GlobexHigh", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.High"));
             levels.Add(new LevelDef("GlobexLow", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.Low"));
+            levels.Add(new LevelDef("GlobexMid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.Mid"));  // (GlbH+GlbL)/2
             levels.Add(new LevelDef("IBHigh", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.High"));
             levels.Add(new LevelDef("IBLow", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.Low"));
             levels.Add(new LevelDef("IBMid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "IB.Mid"));
