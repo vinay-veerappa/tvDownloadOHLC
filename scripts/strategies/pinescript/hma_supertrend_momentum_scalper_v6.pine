@@ -88,10 +88,11 @@ inRthWindow = not i_rthOnly or not na(time(timeframe.period, "0930-1130:23456", 
 // ══ 4. PROP FIRM RISK GATEKEEPER STATE
 // ══════════════════════════════════════════════
 
-var int   todayTrades   = 0
-var float todayPnL      = 0.0
-var int   consecLosses  = 0
-var int   lastTradeDay  = -1
+var int   todayTrades      = 0
+var float todayPnL         = 0.0
+var int   consecLosses     = 0
+var int   lastTradeDay     = -1
+var int   prevClosedTrades = 0
 
 currentDay = dayofweek(time, "America/New_York")
 if currentDay != lastTradeDay
@@ -100,14 +101,16 @@ if currentDay != lastTradeDay
     consecLosses := 0
     lastTradeDay := currentDay
 
-if strategy.closedtrades > 0 and ta.change(strategy.closedtrades)
-    float lastPnL = strategy.closedtrades.profit(strategy.closedtrades - 1)
+if strategy.closedtrades > prevClosedTrades
+    int lastTradeIdx = strategy.closedtrades - 1
+    float lastPnL = strategy.closedtrades.profit(lastTradeIdx)
     todayTrades  += 1
     todayPnL     += lastPnL
     if lastPnL < 0
         consecLosses += 1
     else
         consecLosses := 0
+    prevClosedTrades := strategy.closedtrades
 
 riskGatekeeperOK = todayTrades < i_maxTradesDay and todayPnL > -i_dailyLossLimit and consecLosses < i_maxConsecLoss
 
@@ -164,23 +167,23 @@ if i_showDashboard and barstate.islast
     tSz = f_tableSize(i_tableSize)
     tFont = f_font(i_textFont)
 
-    table.cell(infoDash, 0, 0, "HMA SuperTrend Scalper", text_color=color.white, text_size=tSz, font_family=tFont, bgcolor=color.navy)
-    table.cell(infoDash, 1, 0, syminfo.ticker, text_color=color.yellow, text_size=tSz, font_family=tFont, bgcolor=color.navy)
+    table.cell(infoDash, 0, 0, "HMA SuperTrend Scalper", text_color=color.white, text_size=tSz, text_font_family=tFont, bgcolor=color.navy)
+    table.cell(infoDash, 1, 0, syminfo.ticker, text_color=color.yellow, text_size=tSz, text_font_family=tFont, bgcolor=color.navy)
 
     float netProfit = strategy.netprofit
     float pf = strategy.grossprofit / (strategy.grossloss == 0 ? 1 : strategy.grossloss)
 
-    table.cell(infoDash, 0, 1, "Net Profit", text_color=color.white, text_size=tSz, font_family=tFont)
-    table.cell(infoDash, 1, 1, str.format("${0,number,#.##}", netProfit), text_color=netProfit >= 0 ? color.green : color.red, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 0, 1, "Net Profit", text_color=color.white, text_size=tSz, text_font_family=tFont)
+    table.cell(infoDash, 1, 1, str.format("${0,number,#.##}", netProfit), text_color=netProfit >= 0 ? color.green : color.red, text_size=tSz, text_font_family=tFont)
 
-    table.cell(infoDash, 0, 2, "Profit Factor", text_color=color.white, text_size=tSz, font_family=tFont)
-    table.cell(infoDash, 1, 2, str.format("{0,number,#.##}", pf), text_color=pf >= 1.1 ? color.green : color.orange, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 0, 2, "Profit Factor", text_color=color.white, text_size=tSz, text_font_family=tFont)
+    table.cell(infoDash, 1, 2, str.format("{0,number,#.##}", pf), text_color=pf >= 1.1 ? color.green : color.rgb(255, 152, 0), text_size=tSz, text_font_family=tFont)
 
-    table.cell(infoDash, 0, 3, "Total Trades", text_color=color.white, text_size=tSz, font_family=tFont)
-    table.cell(infoDash, 1, 3, str.tostring(strategy.closedtrades), text_color=color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 0, 3, "Total Trades", text_color=color.white, text_size=tSz, text_font_family=tFont)
+    table.cell(infoDash, 1, 3, str.tostring(strategy.closedtrades), text_color=color.white, text_size=tSz, text_font_family=tFont)
 
-    table.cell(infoDash, 0, 4, "Daily Trades Used", text_color=color.white, text_size=tSz, font_family=tFont)
-    table.cell(infoDash, 1, 4, str.tostring(todayTrades) + " / " + str.tostring(i_maxTradesDay), text_color=todayTrades >= i_maxTradesDay ? color.red : color.white, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 0, 4, "Daily Trades Used", text_color=color.white, text_size=tSz, text_font_family=tFont)
+    table.cell(infoDash, 1, 4, str.tostring(todayTrades) + " / " + str.tostring(i_maxTradesDay), text_color=todayTrades >= i_maxTradesDay ? color.red : color.white, text_size=tSz, text_font_family=tFont)
 
-    table.cell(infoDash, 0, 5, "Risk Gatekeeper", text_color=color.white, text_size=tSz, font_family=tFont)
-    table.cell(infoDash, 1, 5, riskGatekeeperOK ? "PASS (Active)" : "LOCKED OUT", text_color=riskGatekeeperOK ? color.green : color.red, text_size=tSz, font_family=tFont)
+    table.cell(infoDash, 0, 5, "Risk Gatekeeper", text_color=color.white, text_size=tSz, text_font_family=tFont)
+    table.cell(infoDash, 1, 5, riskGatekeeperOK ? "PASS (Active)" : "LOCKED OUT", text_color=riskGatekeeperOK ? color.green : color.red, text_size=tSz, text_font_family=tFont)
