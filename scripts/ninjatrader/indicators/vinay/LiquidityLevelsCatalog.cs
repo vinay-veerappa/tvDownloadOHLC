@@ -38,6 +38,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             // ── Session Opens (T2 — NEW via SessionOpensEngine) ──
             levels.Add(new LevelDef("MidnightOpen", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "MidnightOpen"));
             levels.Add(new LevelDef("LondonOpen", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "LondonOpen"));
+            levels.Add(new LevelDef("GlobexOpen", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "GlobexOpen"));  // 18:00 ET overnight session open
+            levels.Add(new LevelDef("RTHOpen", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "RTHOpen"));  // 09:30 ET RTH session open
             levels.Add(new LevelDef("NYOpen", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.CurrentDayOHL, "CurrentOpen"));
             levels.Add(new LevelDef("Open_04H", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_04H"));
             levels.Add(new LevelDef("Open_08H", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_08H"));
@@ -59,6 +61,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("IBHigh", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.High"));
             levels.Add(new LevelDef("IBLow", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.Low"));
             levels.Add(new LevelDef("IBMid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "IB.Mid"));
+
+            // ── P12 (18:00-06:00 ET overnight range) — Profiler levels 8-10 ──
+            levels.Add(new LevelDef("P12High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.Internal, "P12High"));   // 18:00-06:00 ET H
+            levels.Add(new LevelDef("P12Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.Internal, "P12Low"));    // 18:00-06:00 ET L
+            levels.Add(new LevelDef("P12Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.Internal, "P12Mid"));   // (P12H+P12L)/2
+
+            // ── NY P12 (06:00-17:00 ET NY session range) + Prev ──
+            levels.Add(new LevelDef("NYP12High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.Internal, "NYP12High"));    // 06:00-17:00 ET H
+            levels.Add(new LevelDef("NYP12Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.Internal, "NYP12Low"));     // 06:00-17:00 ET L
+            levels.Add(new LevelDef("NYP12Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.Internal, "NYP12Mid"));    // (NY_P12H+NY_P12L)/2
+            levels.Add(new LevelDef("PrevNYP12High", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.Internal, "PrevNYP12High"));
+            levels.Add(new LevelDef("PrevNYP12Low", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.Internal, "PrevNYP12Low"));
+            levels.Add(new LevelDef("PrevNYP12Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.Internal, "PrevNYP12Mid"));
 
             // ── Intraday (T1/T3) ──
             levels.Add(new LevelDef("HOD", LevelCategory.Intraday, LevelRole.SweepTarget, LevelSource.CurrentDayOHL, "CurrentHigh"));
@@ -143,6 +158,24 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 Name = "LondonOpen",
                 HourET = 2, MinuteET = 0,
                 IsDSTAware = true, DstHourET = 3,
+                IsEnabled = true
+            });
+
+            // Globex open: 18:00 ET (overnight session start)
+            opens.Add(new SessionOpenDef
+            {
+                Name = "GlobexOpen",
+                HourET = 18, MinuteET = 0,
+                IsDSTAware = false, DstHourET = 18,
+                IsEnabled = true
+            });
+
+            // RTH open: 09:30 ET (regular trading hours start = IB open)
+            opens.Add(new SessionOpenDef
+            {
+                Name = "RTHOpen",
+                HourET = 9, MinuteET = 30,
+                IsDSTAware = false, DstHourET = 9,
                 IsEnabled = true
             });
 

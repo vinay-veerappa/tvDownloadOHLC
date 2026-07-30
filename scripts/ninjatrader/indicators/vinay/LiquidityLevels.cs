@@ -98,6 +98,25 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "Draw Sweep Markers", Order = 9, GroupName = "3. Visuals")]
         public bool DrawSweepMarkers { get; set; } = true;
 
+        [NinjaScriptProperty]
+        [Display(Name = "Proximity Fade", Description = "Fade levels far from price; brighten when close", Order = 10, GroupName = "3. Visuals")]
+        public bool ProximityFade { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Range(0, 500)]
+        [Display(Name = "Proximity Threshold (pts)", Description = "Distance within which levels glow. 0 = auto (use ATR)", Order = 11, GroupName = "3. Visuals")]
+        public int ProximityThresholdPoints { get; set; } = 0;
+
+        [NinjaScriptProperty]
+        [Range(0, 100)]
+        [Display(Name = "Far Fade Opacity %", Description = "Opacity for far levels (0=hidden, 100=full)", Order = 12, GroupName = "3. Visuals")]
+        public int FarFadeOpacity { get; set; } = 15;
+
+        [NinjaScriptProperty]
+        [Range(0, 100)]
+        [Display(Name = "Near Glow Opacity %", Description = "Opacity for near levels (0=hidden, 100=full)", Order = 13, GroupName = "3. Visuals")]
+        public int NearGlowOpacity { get; set; } = 90;
+
         #endregion
 
         #region OnStateChange
@@ -176,6 +195,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             // Update session opens
             sessionOpens.OnBarUpdate(barTimeEt, openP, CurrentBar);
+
+            // Update P12 / NY P12 ranges
+            UpdateP12Ranges(barTimeEt, highP, lowP);
 
             // Update level prices from sources
             UpdateLevelPrices();
@@ -272,11 +294,22 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
         }
 
-        // ═══ Compute internal levels (mids, settlement, PWC) ═══
-        // These aren't available as plot outputs from RedTail or built-ins,
-        // so we compute them from the data we already read.
+        // ═══ Compute internal levels (mids, settlement, PWC, P12, NY P12) ═══
         private double prevWeekClose = 0;
         private DateTime prevWeekCloseDate = DateTime.MinValue;
+
+        // P12 tracking (18:00-06:00 ET overnight range)
+        private double p12High, p12Low;
+        private bool p12Building;
+        private DateTime p12Date;
+
+        // NY P12 tracking (06:00-17:00 ET NY session range)
+        private double nyP12High, nyP12Low;
+        private bool nyP12Building;
+        private DateTime nyP12Date;
+
+        // Prev NY P12 (previous day's NY P12)
+        private double prevNyP12High, prevNyP12Low, prevNyP12Mid;
 
         private double ComputeInternalLevel(string accessor)
         {
@@ -290,32 +323,42 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 case "PriorDayMid":
                     return (pdh > 0 && pdl > 0) ? (pdh + pdl) / 2.0 : 0;
 
-                // Settlement = prior day close (futures settlement ≈ PDC for daily)
+                // Settlement = prior day close (futures settlement ~ PDC for daily)
                 case "Settlement":
                     return pdc;
 
-                // Prior Week Mid = (PWH + PWL) / 2 — PWH/PWL from RedTailKeyLevels (P5)
-                // For now compute from PriorDayOHLC weekly (approximation until P5)
+                // Prior Week Mid = (PWH + PWL) / 2 (P5: from RedTailKeyLevels)
                 case "PriorWeekMid":
-                    // TODO P5: read PWH/PWL from RedTailKeyLevels
                     return 0;
 
                 // Prior Week Close (settlement close)
-                // Tracked from the close of the last bar of the prior week (Friday 16:00 ET)
                 case "PriorWeekClose":
                     return UpdatePriorWeekClose();
 
-                // Prior Month Mid = (PMH + PML) / 2 — from RedTailKeyLevels (P5)
+                // Prior Month Mid = (PMH + PML) / 2 (P5: from RedTailKeyLevels)
                 case "PriorMonthMid":
-                    // TODO P5: read PMH/PML from RedTailKeyLevels
                     return 0;
 
-                // Session mids — from SessionRanges indicator (P6)
+                // P12 (18:00-06:00 ET overnight range)
+                case "P12High": return p12High;
+                case "P12Low": return p12Low;
+                case "P12Mid": return (p12High > 0 && p12Low > 0) ? (p12High + p12Low) / 2.0 : 0;
+
+                // NY P12 (06:00-17:00 ET NY session range)
+                case "NYP12High": return nyP12High;
+                case "NYP12Low": return nyP12Low;
+                case "NYP12Mid": return (nyP12High > 0 && nyP12Low > 0) ? (nyP12High + nyP12Low) / 2.0 : 0;
+
+                // Prev NY P12
+                case "PrevNYP12High": return prevNyP12High;
+                case "PrevNYP12Low": return prevNyP12Low;
+                case "PrevNYP12Mid": return prevNyP12Mid;
+
+                // Session mids (P6: from SessionRanges)
                 case "Asia Range.Mid":
                 case "London Range.Mid":
                 case "London OR.Mid":
                 case "Globex Range.Mid":
-                    // TODO P6: read from SessionRanges indicator
                     return 0;
 
                 default:
@@ -341,6 +384,93 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
 
             return prevWeekClose;
+        }
+
+        // ═══ P12 range tracking (18:00-06:00 ET overnight) ═══
+        // Mirrors Profiler's p12_h/p12_l: the overnight range from 18:00 to 06:00 ET
+        private void UpdateP12Ranges(DateTime barEt, double high, double low)
+        {
+            int barMins = barEt.Hour * 60 + barEt.Minute;
+            DateTime today = barEt.Date;
+
+            // P12: 18:00-06:00 ET (crosses midnight)
+            // Reset at 18:00 ET each day
+            if (barMins >= 18 * 60 && (p12Date != today || !p12Building))
+            {
+                // Archive previous day's NY P12 before reset
+                if (nyP12High > 0 && nyP12Low > 0)
+                {
+                    prevNyP12High = nyP12High;
+                    prevNyP12Low = nyP12Low;
+                    prevNyP12Mid = (nyP12High + nyP12Low) / 2.0;
+                }
+                p12High = high;
+                p12Low = low;
+                p12Building = true;
+                p12Date = today;
+            }
+            else if (p12Building)
+            {
+                // P12 builds from 18:00 to 06:00 next day
+                bool inP12 = barMins >= 18 * 60 || barMins < 6 * 60;
+                if (inP12)
+                {
+                    if (high > p12High) p12High = high;
+                    if (low < p12Low) p12Low = low;
+                }
+                else if (barMins >= 6 * 60)
+                {
+                    p12Building = false;  // P12 finalized at 06:00
+                }
+            }
+
+            // NY P12: 06:00-17:00 ET (NY session range, Profiler's ny_p12)
+            // Reset at 06:00 ET
+            if (barMins >= 6 * 60 && (nyP12Date != today || !nyP12Building))
+            {
+                nyP12High = high;
+                nyP12Low = low;
+                nyP12Building = true;
+                nyP12Date = today;
+            }
+            else if (nyP12Building)
+            {
+                bool inNyP12 = barMins >= 6 * 60 && barMins < 17 * 60;
+                if (inNyP12)
+                {
+                    if (high > nyP12High) nyP12High = high;
+                    if (low < nyP12Low) nyP12Low = low;
+                }
+                else if (barMins >= 17 * 60)
+                {
+                    nyP12Building = false;  // NY P12 finalized at 17:00
+                }
+            }
+        }
+
+        // ═══ Proximity-based alpha computation ═══
+        // Returns alpha (0-1) based on distance from current price.
+        // Near = NearGlowOpacity, Far = FarFadeOpacity, linear interpolation between.
+        private float ComputeProximityAlpha(double levelPrice, double currentPrice)
+        {
+            if (!ProximityFade) return levelPrice > 0 ? 0.7f : 0f;
+
+            double threshold = ProximityThresholdPoints > 0
+                ? (double)ProximityThresholdPoints
+                : Math.Max(50, (High[0] - Low[0]) * 20);  // auto: 20x bar range or 50pts min
+
+            double distance = Math.Abs(levelPrice - currentPrice);
+
+            if (distance >= threshold)
+                return (float)FarFadeOpacity / 100f;
+            if (distance <= threshold * 0.1)
+                return (float)NearGlowOpacity / 100f;
+
+            // Linear interpolation between near and far
+            double t = (distance - threshold * 0.1) / (threshold * 0.9);
+            float nearA = (float)NearGlowOpacity / 100f;
+            float farA = (float)FarFadeOpacity / 100f;
+            return nearA + (float)t * (farA - nearA);
         }
 
         #endregion
@@ -598,13 +728,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             float xStart = chartControl.GetXByBarIndex(ChartBars, Math.Max(0, CurrentBar - 100));
             float xEnd = chartControl.GetXByBarIndex(ChartBars, CurrentBar) + (float)chartControl.Properties.BarDistance;
 
+            // Current price for proximity fade
+            double currentPrice = Close[0];
+
             foreach (var level in activeLevelsToDraw)
             {
                 SharpDX.Color color = categoryColors.TryGetValue(level.Def.Category, out var c)
                     ? c : new SharpDX.Color(0x80, 0x80, 0x80, 255);
 
-                // Fade swept levels
-                float alpha = level.Swept ? 0.3f : 0.7f;
+                // Proximity-based alpha: brighten when close to price, fade when far
+                float alpha;
+                if (level.Swept)
+                    alpha = 0.2f;  // swept levels always faded
+                else if (ProximityFade)
+                    alpha = ComputeProximityAlpha(level.Price, currentPrice);
+                else
+                    alpha = 0.7f;
+
                 var lineColor = new Color4(color.R / 255f, color.G / 255f, color.B / 255f, alpha);
 
                 float y = chartScale.GetYByValue(level.Price);
@@ -614,8 +754,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 RenderTarget.DrawLine(new SharpDX.Vector2(xStart, y), new SharpDX.Vector2(xEnd, y),
                     brush, lineWidth);
 
-                // Label
-                if (DrawLabels && textFormat != null)
+                // Label — skip for very faded levels when proximity fade is on (clean charts)
+                float labelAlphaThreshold = (float)FarFadeOpacity / 100f + 0.05f;
+                bool showLabel = DrawLabels && textFormat != null
+                    && (!ProximityFade || alpha > labelAlphaThreshold || level.Swept == false && level.StacksWith.Count > 0);
+
+                if (showLabel)
                 {
                     string label = $"{level.Def.Name} {level.Price:F1}";
                     if (level.Swept) label += " ✗";
