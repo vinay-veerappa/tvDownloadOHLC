@@ -145,6 +145,14 @@ Only fall back to `grep_search` / `file_search` if:
 and ranked results. grep is a flat text scan and misses structural relationships.
 Using the MCP first is faster and more accurate for code questions.
 
+## NT8 / NINJATRADER TOOLING (MANDATORY)
+
+- **Compile**: ALWAYS use the `mcp_nt-mcp-server_nt_compile` MCP tool. NEVER use curl, PowerShell `Invoke-RestMethod`, Python `requests`, or any manual HTTP call to `http://localhost:7890/api/compile`. The MCP tool handles the connection-reset/hot-swap correctly via the `/api/compile/result` polling fallback. Manual HTTP calls crash because the bridge's HTTP listener thread is not the WPF UI thread.
+- **Sync**: Use `.\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py` to push repo source to NT8 Custom folder. After syncing new files, NT8 may need a restart to detect them (hot-swap only updates existing files, not new ones).
+- **Stale cache**: If the MCP compile returns errors referencing line numbers beyond the file's actual length, or referencing code you've already fixed, NT8 is caching a stale version. Restart NT8 to clear the Roslyn cache.
+- **Bridge port**: 7890 (NOT 51328 — that port is stale).
+- **Audit other bridge endpoints**: Before using any `/api/*` endpoint, check whether it marshals to the WPF Dispatcher. Endpoints that call NT8 APIs (compile, backtest, indicator operations) MUST run on the UI thread via `Dispatcher.Invoke()`. The `McpBridgeAddOn.cs` source is at `scripts/ninjatrader/addons/McpBridgeAddOn.cs` — read it before assuming an endpoint works.
+
 ## CONTEXT ANCHORS (same as Antigravity's sync-trading-brain)
 
 These files are the "source of truth" — do targeted, line-specific reads on demand:
