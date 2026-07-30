@@ -425,7 +425,41 @@ class PropFirmAdaptiveScalperBacktester:
         squeeze_mask = (bbw <= bbw_sma)
         expansion_mask = (bbw > bbw_sma)
 
-        # 2. HTF Trend Filter & Chop Guard
+        # 2. HTF 15-Minute Trend Filter & Chop Guard
+        try:
+            df_15m = df.resample("15min").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+            c_15 = df_15m["Close"].values
+            h_15 = df_15m["High"].values
+            l_15 = df_15m["Low"].values
+            
+            htf_ema50_series = df_15m["Close"].ewm(span=50, adjust=False).mean()
+            
+            atr15 = pd.Series(np.maximum(h_15 - l_15, 1e-5)).rolling(10).mean().values
+            hl2_15 = (h_15 + l_15) / 2.0
+            up_15 = hl2_15 - 3.0 * atr15
+            dn_15 = hl2_15 + 3.0 * atr15
+            st_dir15 = np.ones(len(c_15), dtype=np.int32)
+            for k in range(1, len(c_15)):
+                if c_15[k - 1] > dn_15[k - 1]:
+                    up_15[k] = max(up_15[k], up_15[k - 1])
+                if c_15[k - 1] < up_15[k - 1]:
+                    dn_15[k] = min(dn_15[k], dn_15[k - 1])
+                if c_15[k] > dn_15[k - 1]:
+                    st_dir15[k] = 1
+                elif c_15[k] < up_15[k - 1]:
+                    st_dir15[k] = -1
+                else:
+                    st_dir15[k] = st_dir15[k - 1]
+
+            df_15m["htf_bull"] = (st_dir15 == 1) & (df_15m["Close"] > htf_ema50_series)
+            df_15m["htf_bear"] = (st_dir15 == -1) & (df_15m["Close"] < htf_ema50_series)
+
+            htf_bull_1m = df_15m["htf_bull"].reindex(df.index, method="ffill").fillna(False).values
+            htf_bear_1m = df_15m["htf_bear"].reindex(df.index, method="ffill").fillna(False).values
+        except Exception:
+            htf_bull_1m = np.ones(n, dtype=bool)
+            htf_bear_1m = np.ones(n, dtype=bool)
+
         if htf_ema_period > 0:
             ema_filter = pd.Series(closes).ewm(span=htf_ema_period, adjust=False).mean().values
             long_ema_ok = closes > ema_filter
@@ -466,14 +500,14 @@ class PropFirmAdaptiveScalperBacktester:
         m1_long = squeeze_mask & (lows <= lower_band) & (closes > lower_band)
         m1_short = squeeze_mask & (highs >= upper_band) & (closes < upper_band)
 
-        # Continuous Slope + Pullback to HMA during Trend Expansion + ORB Trend Anchor
+        # Continuous Slope + Pullback to HMA during Trend Expansion + ORB Trend Anchor + 15m HTF Filter
         hma_rising = np.zeros(n, dtype=bool)
         hma_falling = np.zeros(n, dtype=bool)
         hma_rising[1:] = hma[1:] > hma[:-1]
         hma_falling[1:] = hma[1:] < hma[:-1]
 
-        m2_long = expansion_mask & (st_dir == 1) & (lows <= hma) & hma_rising & long_ema_ok & above_orb_high & chop_guard_ok
-        m2_short = expansion_mask & (st_dir == -1) & (highs >= hma) & hma_falling & short_ema_ok & below_orb_low & chop_guard_ok
+        m2_long = expansion_mask & (st_dir == 1) & (lows <= hma) & hma_rising & long_ema_ok & above_orb_high & chop_guard_ok & htf_bull_1m
+        m2_short = expansion_mask & (st_dir == -1) & (highs >= hma) & hma_falling & short_ema_ok & below_orb_low & chop_guard_ok & htf_bear_1m
 
         if rth_only and "rth_mask" in df.columns:
             rth_mask = df["rth_mask"].values
