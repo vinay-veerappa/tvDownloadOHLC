@@ -63,6 +63,31 @@ The config is stored in `~\.cache\codebase-memory-mcp\_config.db` (SQLite
 even when set — use `config get default_project` or the helper's `--verify`
 flag to confirm the value.
 
+**IMPORTANT**: The project slug is case-sensitive. The correct value is
+`C-Users-vinay-tvDownloadOHLC` (capital C), NOT `c-Users-vinay-tvDownloadOHLC`.
+A lowercase `c` causes `"no project loaded"` errors silently.
+
+### 4. Verify codebase-memory MCP default project
+Before any code-search task, ensure the codebase-memory MCP is usable. If
+`mcp_codebase-memo_search_graph` returns `"no project loaded"`, the
+`default_project` config has been lost. The CLI `config set` command does NOT
+reliably persist to disk — use the persistence helper script instead:
+
+```bash
+.\.venv\Scripts\python.exe scripts\utils\persist_mcp_default_project.py
+```
+
+To just check the current value:
+
+```bash
+.\.venv\Scripts\python.exe scripts\utils\persist_mcp_default_project.py --verify
+```
+
+The config is stored in `~\.cache\codebase-memory-mcp\_config.db` (SQLite
+`config(key, value)` table). The CLI `config list` display omits `default_project`
+even when set — use `config get default_project` or the helper's `--verify`
+flag to confirm the value.
+
 ### 5. Check skills before responding
 Skill catalog: `.agent/skills/*/SKILL.md` (same as Antigravity).
 
@@ -148,9 +173,12 @@ Using the MCP first is faster and more accurate for code questions.
 ## NT8 / NINJATRADER TOOLING (MANDATORY)
 
 - **Compile**: ALWAYS use the `mcp_nt-mcp-server_nt_compile` MCP tool. NEVER use curl, PowerShell `Invoke-RestMethod`, Python `requests`, or any manual HTTP call to `http://localhost:7890/api/compile`. The MCP tool handles the connection-reset/hot-swap correctly via the `/api/compile/result` polling fallback. Manual HTTP calls crash because the bridge's HTTP listener thread is not the WPF UI thread.
+- **All NT8 operations**: Use MCP tools (prefixed `mcp_nt-mcp-server_nt_*`) for everything — compile, backtest, accounts, quotes, bars, search, logs, indicator values, draw levels, open chart, script execute, riskguard. The MCP server (`nt-mcp-server.js`) handles the HTTP bridge correctly. Only use direct `curl` to `http://localhost:7890/api/*` as a fallback if the MCP tool is unavailable.
 - **Sync**: Use `.\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py` to push repo source to NT8 Custom folder. After syncing new files, NT8 may need a restart to detect them (hot-swap only updates existing files, not new ones).
 - **Stale cache**: If the MCP compile returns errors referencing line numbers beyond the file's actual length, or referencing code you've already fixed, NT8 is caching a stale version. Restart NT8 to clear the Roslyn cache.
 - **Bridge port**: 7890 (NOT 51328 — that port is stale).
+- **Indicator values fix**: The `indicator_values` endpoint uses `AppDomain.CurrentDomain.GetAssemblies()` to find `NinjaTrader.Custom` (Type.GetType fails because it's in a separate AssemblyLoadContext). If it still fails, the indicator needs to be hosted on a chart or strategy instead.
+- **DevMode**: Create `mcp_dev.on` in NT8 UserDataDir to enable `script_execute` and dev endpoints. Currently enabled.
 - **Audit other bridge endpoints**: Before using any `/api/*` endpoint, check whether it marshals to the WPF Dispatcher. Endpoints that call NT8 APIs (compile, backtest, indicator operations) MUST run on the UI thread via `Dispatcher.Invoke()`. The `McpBridgeAddOn.cs` source is at `scripts/ninjatrader/addons/McpBridgeAddOn.cs` — read it before assuming an endpoint works.
 
 ## CONTEXT ANCHORS (same as Antigravity's sync-trading-brain)
