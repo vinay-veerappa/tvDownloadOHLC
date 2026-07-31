@@ -31,7 +31,30 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "Use Engulfing Confirmation", Order = 5, GroupName = "EMA Pullback")]
         public bool UseEngulfingConfirmation { get; set; }
 
+        // ── VWAP-distance filter ──
+        [NinjaScriptProperty]
+        [Display(Name = "Use VWAP Distance Filter", Order = 6, GroupName = "EMA Pullback")]
+        public bool UseVwapFilter { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "VWAP Min Distance (ATR mult)", Order = 7, GroupName = "EMA Pullback")]
+        public double VwapMinDistanceAtr { get; set; }
+
+        // ── Relative-volume filter ──
+        [NinjaScriptProperty]
+        [Display(Name = "Use Relative Volume Filter", Order = 8, GroupName = "EMA Pullback")]
+        public bool UseVolumeFilter { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Volume Lookback (bars)", Order = 9, GroupName = "EMA Pullback")]
+        public int VolumeLookback { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Volume Percentile Threshold", Order = 10, GroupName = "EMA Pullback")]
+        public double VolumePercentile { get; set; }
+
         private EMA emaIndicator;
+        private VWAP8 vwapIndicator;
 
         private DateTime sessionDate;
         private double sessionOpen;
@@ -54,13 +77,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Description = "EMA pullback continuation strategy with centralized risk manager";
             Name = "EMAPullbackBot";
 
+            // Trade management defaults tuned to Python backtest harness
             StopAtrMult = 1.25;
             AtrPeriod = 14;
             TradePolicy = "FixedTarget";
-            TargetRMultiple = 3.75;
+            TargetRMultiple = 3.0;
             BreakevenTriggerR = 1.0;
             TrailAtrMult = 2.0;
 
+            // Risk/session defaults
             DailyMaxLoss = 400;
             MaxConsecutiveLosers = 2;
             PauseMinutes = 30;
@@ -70,11 +95,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             LatestEntry = 1100;
             FlattenBy = 1545;
 
-            MinMoveFromOpen = 4.0;
+            // Signal defaults tuned to Python harness (NQ 5m)
+            MinMoveFromOpen = 2.0;
             PullbackProximity = 0.3;
             EmaPeriod = 20;
             MinPullbackBars = 2;
             UseEngulfingConfirmation = true;
+
+            // Filter defaults tuned to Python harness
+            UseVwapFilter = true;
+            VwapMinDistanceAtr = 0.33;
+            UseVolumeFilter = true;
+            VolumeLookback = 20;
+            VolumePercentile = 27.0;
         }
 
         protected override void ConfigureStrategy()
@@ -84,6 +117,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override void InitializeStrategy()
         {
             emaIndicator = EMA(BarsArray[1], EmaPeriod);
+            if (UseVwapFilter)
+                vwapIndicator = VWAP8();
 
             sessionDate = DateTime.MinValue;
             sessionOpen = 0;
@@ -166,19 +201,58 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             bool longConfirm = UseEngulfingConfirmation ? bullishEngulf : bullishBar;
             bool shortConfirm = UseEngulfingConfirmation ? bearishEngulf : bearishBar;
 
+            int signal = 0;
             if (moveDirection == 1 && longConfirm)
+                signal = 1;
+            else if (moveDirection == -1 && shortConfirm)
+                signal = -1;
+
+            if (signal == 0)
+                return 0;
+
+            // ── VWAP distance filter ──
+            if (UseVwapFilter && vwapIndicator != null)
             {
-                lastSignalDate = barDate;
-                return 1;
+                double vwap = vwapIndicator.PlotVWAP[0];
+                if (vwap > 0 && Math.Abs(close - vwap) / atr < VwapMinDistanceAtr)
+                    return 0;
             }
 
-            if (moveDirection == -1 && shortConfirm)
+            // ── Relative volume filter ──
+            if (UseVolumeFilter && CurrentBar > 0)
             {
-                lastSignalDate = barDate;
-                return -1;
+                double threshold = VolumePercentileForBar(VolumeLookback, VolumePercentile);
+                if (Volume[0] < threshold)
+                    return 0;
             }
 
-            return 0;
+            lastSignalDate = barDate;
+            return signal;
+        }
+
+        /// <summary>
+        /// Computes the requested percentile of the prior N bars' volume.
+        /// Uses a simple nearest-rank percentile to avoid LINQ/ordering overhead.
+        /// </summary>
+        private double VolumePercentileForBar(int lookback, double percentile)
+        {
+            int start = Math.Max(0, CurrentBar - lookback);
+            int count = CurrentBar - start;
+            if (count <= 0)
+                return Volume[0];
+
+            double[] values = new double[count];
+            for (int i = 0; i < count; i++)
+                values[i] = Volume[i + 1]; // skip current bar
+
+            Array.Sort(values);
+            double rank = (percentile / 100.0) * (count - 1);
+            int lower = (int)Math.Floor(rank);
+            int upper = (int)Math.Ceiling(rank);
+            if (lower == upper)
+                return values[lower];
+            double weight = rank - lower;
+            return values[lower] * (1.0 - weight) + values[upper] * weight;
         }
     }
 }
