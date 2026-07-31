@@ -18,13 +18,31 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-PYTHON_TARGET = {
-    'trades': 273,
-    'total_pnl': 11539.0,
-    'profit_factor': 1.44,
-    'avg_trade': 42.27,
-    'max_drawdown': 2813.0,
-}
+
+def load_python_baseline(path: Path = Path('emapb_tuned_results.txt')) -> dict:
+    default = {
+        'trades': 255,
+        'total_pnl': 11255.10,
+        'profit_factor': 1.47,
+        'avg_trade': 44.14,
+        'max_drawdown': 2812.69,
+    }
+    if not path.exists():
+        return default
+    baseline = {}
+    with open(path) as f:
+        for line in f:
+            if ':' not in line:
+                continue
+            k, v = line.split(':', 1)
+            k = k.strip()
+            v = v.strip()
+            if k in default:
+                try:
+                    baseline[k] = float(v)
+                except ValueError:
+                    baseline[k] = default[k]
+    return baseline or default
 
 
 def find_column(df: pd.DataFrame, candidates):
@@ -73,18 +91,19 @@ def main():
     path = Path(sys.argv[1])
     if not path.exists():
         raise FileNotFoundError(path)
+    baseline = load_python_baseline()
     df = pd.read_csv(path)
     metrics = compute_metrics(df)
 
     print(f"\nNT8 Strategy Analyzer: {path}")
-    print("-" * 50)
-    for key in PYTHON_TARGET:
-        target = PYTHON_TARGET[key]
+    print("-" * 60)
+    for key in baseline:
+        target = baseline[key]
         actual = metrics[key]
         diff = pct_diff(actual, target)
-        print(f"{key:20s}: {actual:>12,.2f}  target {target:>10,.2f}  ({diff:+.1f}%)")
+        print(f"{key:20s}: {actual:>12,.2f}  baseline {target:>10,.2f}  ({diff:+.1f}%)")
 
-    print("-" * 50)
+    print("-" * 60)
     print(f"Win rate: {metrics['win_rate']*100:.1f}%")
 
 
