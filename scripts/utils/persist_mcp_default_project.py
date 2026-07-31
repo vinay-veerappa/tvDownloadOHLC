@@ -16,7 +16,7 @@ import os
 import sys
 import argparse
 
-DEFAULT_PROJECT = "c-Users-vinay-tvDownloadOHLC"
+DEFAULT_PROJECT = "C-Users-vinay-tvDownloadOHLC"
 CONFIG_DB = os.path.expanduser(r"~\.cache\codebase-memory-mcp\_config.db")
 
 
