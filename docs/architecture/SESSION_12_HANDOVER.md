@@ -136,3 +136,49 @@ NT8's Roslyn hot-swap compiler:
 - `[architecture]` memory [137]: NT8 file restructure + RedTail indicators + design doc + IB bot fixes
 - User memory `ib_parity_state.md`: unchanged (parity work complete)
 - User memory `nt8_flattenby_bug.md`, `nt8_sa_timestamps.md`, `python_targetisane_bug.md`: unchanged
+
+---
+
+## Session 13 — Complete Summary (2026-07-30)
+
+### New Indicators Built (all compile clean, 0 errors)
+
+**SessionRanges** (`scripts/ninjatrader/indicators/vinay/`):
+- `SessionRangesModels.cs` — RangeSpec, RangeState, ExcursionHistory (PineScript UDT port)
+- `SessionRangesPresets.cs` — 8 preset groups (ICT Core, DailyNYLevels A/B/C, Herman, Magic Hours, All, Custom)
+- `SessionRanges.cs` — Main indicator: minute-based detection, SharpDX box drawing, public API (IbHigh, AsiaRangePct, LondonHigh, etc.)
+
+**LiquidityLevels** (`scripts/ninjatrader/indicators/vinay/`):
+- `LiquidityLevelsModels.cs` — LevelDef, LevelState, SweepEvent + enums (65+ levels)
+- `LiquidityLevelsCatalog.cs` — 65+ level definitions (PDH/PDL/PDM, PWH/PWL/PWM, PMH/PML/PMM, session opens, P12/NYP12, volume profile, structure, pivots, fibs)
+- `SessionOpensEngine.cs` — midnight/4H/London/NY/Globex/RTH opens tracking with DST handling
+- `LiquidityLevels.cs` — Main indicator: sweep detection (wick/body), proximity fade rendering, SharpDX lines/labels/markers
+
+**RedTailAutoVWAP** modified:
+- Added 7 non-breaking public properties (DayIbHigh/Low/Mid/Range/Complete + NyOrHigh/Low)
+
+### Bridge Fixes
+
+1. **Compile endpoint fix**: `CompileCore()` was calling `Compiler.Compile()` on HTTP thread, not UI Dispatcher → crash. Fixed with `disp.Invoke()`.
+2. **Indicator values fix**: `BarsRequest` was running off UI thread → returned 0 bars. Fixed with `disp.Invoke()`.
+3. **Remaining limitation**: `NinjaTrader.Custom` assembly is in a separate AppDomain — indicator instantiation via reflection doesn't work from AddOn context. Need chart-based or strategy-hosted approach for custom indicators.
+4. **Tooling rules added** to `tool-profile-global.instructions.md` and `.github/copilot-instructions.md`: ALWAYS use `mcp_nt-mcp-server_nt_compile`, never curl/manual HTTP.
+
+### Design Docs Created
+- `docs/architecture/SESSION_RANGES_INDICATOR_DESIGN.md` — SessionRanges architecture (agent loop reviewed)
+- `docs/architecture/LIQUIDITY_LEVELS_INDICATOR_DESIGN.md` — LiquidityLevels architecture (agent loop reviewed)
+- `docs/architecture/IB_CONFLUENCE_INDICATOR_DESIGN.md` — IB Confluence blueprint (updated with RedTail gap analysis)
+
+### MCP Documentation
+- `mcp/ninjatrader-mcp/README.md` — existing MCP server README (account, trading, strategy, backtest, compile features)
+- Bridge AddOn source: `scripts/ninjatrader/addons/McpBridgeAddOn.cs` (v1.5.0, 65+ endpoints)
+- **MCP tool to use**: `mcp_nt-mcp-server_nt_compile` — handles connection reset via `/api/compile/result` polling fallback
+
+### Next Session Priorities
+
+1. **Test MCP features** — compile, backtest, chart operations, indicator values (verify all endpoints work)
+2. **Test indicators on chart** — add SessionRanges + LiquidityLevels to NQ chart, verify visual rendering
+3. **Verify IB bot fixes** — run IBRetestBot in Strategy Analyzer, check trade markers + HUD
+4. **Delete old `scripts/strategies/nt8/`** — safe now that new location compiles
+5. **Start Phase 1** — IBConfluenceEngine extraction from IBStrategyBase
+6. **Fix indicator values endpoint** — use chart-based approach for custom indicators (AppDomain crossing)
