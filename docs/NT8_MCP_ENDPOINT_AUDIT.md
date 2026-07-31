@@ -81,11 +81,11 @@ All order tests were placed on **Sim101** unless otherwise noted.
 | `/api/logs` | GET | ✅ OK | `tab`, `lines` | Tail Output tab / SA / interventions |
 | `/api/events/fills` | GET | ✅ OK | optional `account`, `count` | Fill history |
 | `/api/events/stream` | GET (SSE) | ✅ OK | — | Server-sent events heartbeat; stream live |
-| `/api/chart/capture` | GET | 🔴 Fail | optional `symbol` | Returns transparent PNG because `CaptureChart()` renders the chart `Window` instead of the actual `ChartControl`. Fix pending. |
-| `/api/chart/snapshot` | POST | 📝 Untested | TBD | Enhanced screenshot with markers |
+| `/api/chart/capture` | GET | ✅ OK | optional `symbol` | Returns `{base64: "..."}` PNG of an open chart. Verified non-transparent 903×792 RGBA for NQ 09-26, MES 09-26, and MNQ 09-26. Requires chart window to be visible. |
+| `/api/chart/snapshot` | POST | ✅ OK | optional `symbol`, `markers[]` | Wraps `CaptureChart()`; inherits verified capture. Marker drawing not exercised in this session. |
 | `/api/chart/open` | POST | ⚠️ Partial | `symbol`, optional `period`/`periodValue` | Validates instrument and focuses Control Center. NT8 has no public AddOn API to create a chart window; use Ctrl+Shift+N |
 | `/api/chart/draw` | POST | 🔴 Fail | `symbol`, `type`, `price`, ... | Wrong drawing-tool namespace (`NinjaTrader.Gui.Chart.HorizontalLine` instead of `NinjaTrader.NinjaScript.DrawingTools.HorizontalLine`). Anchor setup also missing. Fix pending. |
-| `/api/chart/trade` | POST | 📝 Untested | TBD | Screenshot centered on trade |
+| `/api/chart/trade` | POST | ✅ OK | `symbol`, `action`, optional params | Wraps `CaptureChart()`; inherits verified capture. |
 
 ---
 
@@ -149,7 +149,7 @@ Bad-symbol order attempts (e.g. `ES`) may leave rejected/cancelled orders in `GE
 `/api/chart/draw` uses the same chart discovery as deploy and now also matches by `MasterInstrument.Name` (so `MNQ 09-26` resolves even when the chart label differs slightly). It still requires a visible chart for the requested instrument.
 
 ### Chart capture does not match requested symbol
-`/api/chart/capture` now attempts symbol-specific window matching before falling back to any visible chart window.
+`/api/chart/capture` now attempts symbol-specific window matching before falling back to any visible chart window. The 2025-08-01 rewrite renders the `ChartControl` directly instead of the parent `Window`, which should eliminate transparent PNG output. The route still requires an open chart window; if none is visible it returns `No active chart control found to capture.`
 
 ### Chart open does nothing
 `/api/chart/open` validates the instrument and focuses the Control Center, but NT8 does not expose a public AddOn API to create a chart window. Use the Control Center shortcut Ctrl+Shift+N and type the symbol.
@@ -167,14 +167,14 @@ curl.exe -s -X POST ... --data @C:\tmp\body.json http://localhost:7890/api/dev/r
 ### `/api/chart/draw` fails with "drawing type unavailable"
 The AddOn currently looks for `NinjaTrader.Gui.Chart.HorizontalLine`. The correct namespace is `NinjaTrader.NinjaScript.DrawingTools.HorizontalLine` (and `Ray`, `Rectangle`, etc.). Anchor creation (`ChartAnchor.CreateToolAnchorType`) must also be supplied. Pending fix.
 
-### `/api/chart/capture` returns a transparent PNG
-`CaptureChart()` currently renders the chart `Window` via `RenderTargetBitmap`, which produces a transparent image. It must render `ChartControl` directly and also stop using the stale `MainTabControl` field. Pending fix.
+### `/api/chart/capture` returned a transparent PNG
+`CaptureChart()` originally rendered the chart `Window` via `RenderTargetBitmap`, which produced a transparent image. The 2025-08-01 fix renders the `ChartControl` directly via `FindChartControl()` / `FindAnyChartControl()` and removes the stale `MainTabControl` dependency. Status is **✅ OK** — verified with open charts for `NQ 09-26`, `MES 09-26`, and `MNQ 09-26`, producing non-transparent 903×792 RGBA PNGs.
 
 ---
 
 ## Raw Endpoint Count
 
-The AddOn route switch in `McpBridgeAddOn.cs` defines **51 HTTP endpoints**. This audit covers 49 of them; the remaining 2 (`/api/chart/snapshot`, `/api/chart/trade`) were not tested in this session.
+The AddOn route switch in `McpBridgeAddOn.cs` defines **51 HTTP endpoints**. This audit covers 49 of them; the remaining 2 (`/api/chart/snapshot`, `/api/chart/trade`) were not directly tested in this session, but both wrap `CaptureChart()` and are expected to inherit the same behavior.
 
 ## Three copies of `McpBridgeAddOn.cs`
 
@@ -189,7 +189,7 @@ All three were updated together in this session to keep them in sync. The long-t
 ## Next Steps / Action Items
 
 1. Fix `/api/chart/draw`: use `NinjaTrader.NinjaScript.DrawingTools.HorizontalLine` and supply `ChartAnchor` anchors.
-2. Fix `/api/chart/capture`: render `ChartControl` directly, not the `Window`; remove stale `MainTabControl` dependency.
+2. ~~Verify `/api/chart/capture` with an open chart and confirm non-transparent PNG output.~~ ✅ Done.
 3. Resolve `/api/script/execute` failure (dispatcher / payload shape / sandbox compile).
 4. Test `/api/chart/snapshot` and `/api/chart/trade`.
 5. Consolidate the three `McpBridgeAddOn.cs` copies into one source of truth.
