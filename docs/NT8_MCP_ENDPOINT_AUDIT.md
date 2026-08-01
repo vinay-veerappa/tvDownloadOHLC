@@ -1,10 +1,12 @@
 # NT8 MCP/HTTP Bridge Endpoint Audit
 
-Audit date: 2026-07-30
+Audit date: 2026-07-31
 Bridge version: 1.5.0
 Bridge URL: `http://localhost:7890`
 Default account used for order tests: `Sim101`
 All order tests were placed on **Sim101** unless otherwise noted.
+
+> **Handover note (2026-07-31)**: `/api/chart/draw` is under active repair. See `docs/handover/NT8_MCP_DRAW_HANDOVER_2026-07-31.md` for verified API facts, open questions, and a restart checklist.
 
 ## Legend
 

@@ -38,7 +38,7 @@ def fetch_pipeline_expected_moves(source: str = "desktop", tickers: list[str] = 
     else:
         import asyncio
         from tos_ui_mcp.extractor import extract_tos_ui_expected_moves
-        results = asyncio.run(extract_tos_ui_expected_moves(tickers=tickers, headless=True, save_json=False))
+        results = asyncio.run(extract_tos_ui_expected_moves(tickers=tickers, headless=False, save_json=False))
 
     if results.get("status") == "error":
         print(f"[PIPELINE-ERROR] Failed to extract expected moves: {results.get('message')}")
@@ -71,8 +71,9 @@ def fetch_pipeline_expected_moves(source: str = "desktop", tickers: list[str] = 
             dte = front_exp.get("dte")
             expiry = front_exp.get("expiry")
 
-            upper_bound = price + em if price and em else "N/A"
-            lower_bound = price - em if price and em else "N/A"
+            price_float = float(price.replace(',', '')) if price else None
+            upper_bound = price_float + em if (price_float is not None and em is not None) else "N/A"
+            lower_bound = price_float - em if (price_float is not None and em is not None) else "N/A"
 
             print(f" [{symbol}] Price: ${price} | Front Expiry: {expiry} ({dte} DTE) | IV: {iv}%")
             print(f"      Expected Move: ±{em}  ==> Range: [ ${lower_bound:.2f}  to  ${upper_bound:.2f} ]" if isinstance(upper_bound, float) else f"      Expected Move: ±{em}")
