@@ -109,8 +109,20 @@ tmp/
 # Ignore dynamic runtime state files
 scripts/libs_py/strategy_engine/scheduler_state.json
 t r a d i n g v i e w - m c p /  
-# MCP config contains local tokens — do not commit
+# MCP config contains local tokens â€” do not commit
 .mcp.json
+
+# Databases & SQLite runtime sidecars (never commit binary DB state)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+.agent/memory.db
+mcp/memory.db
+optuna_research.db
+scripts/trading_framework/research.db
+scripts/trading_framework/research_optuna.db
 
 # Standalone MCP repositories
 tos-ui-mcp/
