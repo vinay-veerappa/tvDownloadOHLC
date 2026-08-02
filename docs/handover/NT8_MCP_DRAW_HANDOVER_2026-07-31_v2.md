@@ -1,7 +1,17 @@
-# NT8 MCP Bridge `/api/chart/draw` — Handover v2 (2026-07-31)
+# NT8 MCP Bridge — Draw API Handover v2 (2026-07-31)
 
-## Session outcome
-Fixed the compilation errors blocking AddOn reload. Chart discovery still returns 0 charts due to a **WPF dispatcher deadlock** — the HTTP listener thread is not the UI thread, and `Dispatcher.Invoke` with a timeout cannot complete while the UI thread is blocked.
+> **STATUS: RESOLVED** (2026-08-01). All issues from this handover have been fixed.
+> See `docs/NT8_MCP_ENDPOINT_AUDIT.md` for the current comprehensive audit.
+>
+> This handover is kept for historical reference only. The original issues (C# 7 `out var`
+> compile failure, WPF dispatcher deadlock, indexer-safe GetP/SetP, chart discovery
+> returning 0 charts) are all resolved. The bridge version is now `1.5.2-chart-discovery`
+> with 31 total fixes across 4 review passes.
+
+## Original session outcome (superseded)
+Fixed the compilation errors blocking AddOn reload. Chart discovery still returned 0
+charts due to a WPF dispatcher deadlock — the HTTP listener thread is not the UI thread,
+and `Dispatcher.Invoke` with a timeout could not complete while the UI thread was blocked.
 
 ## What was fixed this session
 

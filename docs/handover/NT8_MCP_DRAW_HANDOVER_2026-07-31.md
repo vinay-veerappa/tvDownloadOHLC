@@ -1,13 +1,21 @@
-# NT8 MCP Bridge `/api/chart/draw` — Handover (2026-07-31)
+# NT8 MCP Bridge — Draw API Handover (2026-07-31)
 
-## Session outcome
-First pass (earlier today) made code changes but could not verify them because the
-AddOn assembly was assumed not to be reloading — that turned out to be a red herring
-(the live AddOn had since advanced to `1.5.1-draw-fix`; the "stale `1.5.0`" claim was
-wrong). Second pass **confirmed the real root cause** of the chart-discovery failure
-in-process via `/api/dev/reflect`, **applied the fix** to the source (version →
-`1.5.2-chart-discovery`), and synced it to the NT8 live folder. **Pending: live
-verification** — NT8 was restarted to load the new source but the bridge port had not
+> **STATUS: RESOLVED** (2026-08-01). All issues from this handover have been fixed.
+> See `docs/NT8_MCP_ENDPOINT_AUDIT.md` for the current comprehensive audit.
+>
+> This handover is kept for historical reference only. The original issues (C# 7 `out var`
+> compile failure, WPF dispatcher deadlock, wrong DrawingTools namespace, ChartAnchor
+> setup) are all resolved. The bridge version is now `1.5.2-chart-discovery` with 31
+> total fixes across 4 review passes.
+
+## Original session outcome (superseded)
+First pass made code changes but could not verify them because the AddOn assembly was
+assumed not to be reloading — that turned out to be a red herring (the live AddOn had
+since advanced to `1.5.1-draw-fix`; the "stale `1.5.0`" claim was wrong). Second pass
+confirmed the real root cause of the chart-discovery failure in-process via
+`/api/dev/reflect`, applied the fix to the source (version -> `1.5.2-chart-discovery`),
+and synced it to the NT8 live folder. Pending: live verification — NT8 was restarted
+to load the new source but the bridge port had not
 returned when the session paused (NT8 maintenance window).
 
 ## ROOT CAUSE CONFIRMED (2026-07-31, second pass) — multi-thread dispatcher bug
