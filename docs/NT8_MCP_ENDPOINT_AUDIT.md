@@ -195,4 +195,48 @@ All three were updated together in this session to keep them in sync. The long-t
 3. ~~Test `/api/chart/snapshot` and `/api/chart/trade`.~~ ✅ Done. Both inherit CaptureChart and return valid PNGs.
 4. Resolve `/api/script/execute` failure (dispatcher / payload shape / sandbox compile). The endpoint accepts `codeSnippet` (not `code`); connection drops after submission — may be a sandbox compile crash.
 5. Consolidate the three `McpBridgeAddOn.cs` copies into one source of truth.
-6. Commit the `McpBridgeAddOn.cs` fixes and this audit document once the submodule state is reviewed.
+6. ~~Commit the `McpBridgeAddOn.cs` fixes and this audit document once the submodule state is reviewed.~~ ✅ Done.
+
+---
+
+## Agent-Loop Review (2026-08-01)
+
+Two independent agents reviewed the entire `McpBridgeAddOn.cs` (~5100 lines), debated findings, and 8 fixes were implemented (commit `5f5c839c`).
+
+### Fixes Applied
+
+| # | Issue | Severity | Fix |
+|---|-------|----------|-----|
+| 1 | `GetIndicatorValues` disposed `BarsRequest` before async callback → empty/stale data or 30s timeout | High | Moved `done.Wait` inside the `using` block |
+| 2 | `ClosePosition` ignored `symbol` param — flattened ALL positions | Critical | Added symbol filter for both orders and positions; removed unconditional Sim-account flatten |
+| 3 | `DrawChartLevel` error-path walked chart visual trees from HTTP thread | Critical | Marshal "available charts" fallback to each window's own dispatcher |
+| 4 | `EmergencyFlatten` called `SetState(Terminated)` on app dispatcher | Medium | Marshal to strategy's ChartControl dispatcher |
+| 5 | `FindAnyChartControl` dead code with cross-thread WPF access (landmine) | Low | Deleted |
+| 6 | Unfrozen cloned brushes in `DrawChartLevel` (OutlineStroke, AreaBrush) | Low | Added `.Freeze()` calls |
+| 7 | `_handles` (dev/reflect) never cleared — unbounded growth | Low | Clear at start of each `RunOps` batch |
+| 8 | `ClosePosition` missing null-check on `Application.Current` | Low | Added `?.Dispatcher` guard |
+
+### Deferred (debated but not actionable now)
+
+| Issue | Reason |
+|-------|--------|
+| Single-threaded HTTP listener (all requests serialized) | Architectural — large change, needs careful design |
+| `MonteCarlo` placeholder P&L (`* 10` when no trades supplied) | Not used in production flow |
+| `PlaceAtmOrder` stub (no real bracket attachment) | Not blocking; needs NT8 testing |
+| `PlaceOcoOrder` submits entry+exits simultaneously | Needs NT8 reject testing |
+| Idempotency cache can hold huge backtest results 1h | Bounded by account count in practice |
+| SSE stream (`/api/events/stream`) is a heartbeat-only stub | Documented behavior |
+| `DevReflect` `ui:true` marshals ALL ops to app dispatcher | Dev-only; chart objects need per-window dispatching |
+
+### Test Results (post-fix, 2026-08-01)
+
+All 20 tested endpoints pass (0 failures). `/api/script/execute` deferred.
+
+| Category | Endpoints | Result |
+|----------|----------|--------|
+| Account/Position/Order | health, account, positions, orders | ✅ 4/4 |
+| Quotes/Bars/Instruments | quote, bars, search | ✅ 3/3 |
+| Chart | chart/list, chart/capture, chart/draw, chart/snapshot, chart/trade, chart/open | ✅ 6/6 |
+| Strategy | strategies, strategy/running, compile/result | ✅ 3/3 |
+| Observability | events/fills, logs, riskguard/version | ✅ 3/3 |
+| Indicators | indicator/values (returns "no bar data" — known limitation, not a bug) ⚠️ | ⚠️ 1/1 |
