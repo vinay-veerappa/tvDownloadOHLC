@@ -1,12 +1,12 @@
 # NT8 MCP/HTTP Bridge Endpoint Audit
 
-Audit date: 2026-07-31
-Bridge version: 1.5.0
+Audit date: 2026-08-01 (updated)
+Bridge version: 1.5.2-chart-discovery
 Bridge URL: `http://localhost:7890`
 Default account used for order tests: `Sim101`
 All order tests were placed on **Sim101** unless otherwise noted.
 
-> **Handover note (2026-07-31)**: `/api/chart/draw` is under active repair. See `docs/handover/NT8_MCP_DRAW_HANDOVER_2026-07-31.md` for verified API facts, open questions, and a restart checklist.
+> **Update (2026-08-01)**: `/api/chart/draw` is now **✅ OK** — fixed cross-thread dispatcher issue (ChartControl's own dispatcher instead of app dispatcher). All 5 shape types verified (HorizontalLine, Ray, VerticalLine, Rectangle, Line). Same fix applied to `DeployStrategy`, `StopStrategy`, and `FindChartWindow` (used by `CaptureChart`). See commits `f64b9618` and `cd6fda31`.
 
 ## Legend
 
@@ -83,11 +83,11 @@ All order tests were placed on **Sim101** unless otherwise noted.
 | `/api/logs` | GET | ✅ OK | `tab`, `lines` | Tail Output tab / SA / interventions |
 | `/api/events/fills` | GET | ✅ OK | optional `account`, `count` | Fill history |
 | `/api/events/stream` | GET (SSE) | ✅ OK | — | Server-sent events heartbeat; stream live |
-| `/api/chart/capture` | GET | ✅ OK | optional `symbol` | Returns `{base64: "..."}` PNG of an open chart. Verified non-transparent 903×792 RGBA for NQ 09-26, MES 09-26, and MNQ 09-26. Requires chart window to be visible. |
-| `/api/chart/snapshot` | POST | ✅ OK | optional `symbol`, `markers[]` | Wraps `CaptureChart()`; inherits verified capture. Marker drawing not exercised in this session. |
+| `/api/chart/capture` | GET | ✅ OK | optional `symbol` | Returns `{base64: "..."}` PNG of an open chart. Verified non-transparent capture for MNQ SEP26 (120KB base64). Requires chart window to be visible. Fixed: `FindChartWindow` now marshals to each chart window's own dispatcher (was using app dispatcher → cross-thread exception). |
+| `/api/chart/snapshot` | POST | ✅ OK | optional `symbol`, `markers[]` | Wraps `CaptureChart()`; inherits verified capture. Verified: `imageId`, `width=1280`, `height=720`. Marker drawing not exercised. |
 | `/api/chart/open` | POST | ⚠️ Partial | `symbol`, optional `period`/`periodValue` | Validates instrument and focuses Control Center. NT8 has no public AddOn API to create a chart window; use Ctrl+Shift+N |
-| `/api/chart/draw` | POST | 🔴 Fail | `symbol`, `type`, `price`, ... | Wrong drawing-tool namespace (`NinjaTrader.Gui.Chart.HorizontalLine` instead of `NinjaTrader.NinjaScript.DrawingTools.HorizontalLine`). Anchor setup also missing. Fix pending. |
-| `/api/chart/trade` | POST | ✅ OK | `symbol`, `action`, optional params | Wraps `CaptureChart()`; inherits verified capture. |
+| `/api/chart/draw` | POST | ✅ OK | `symbol`, `shapeType`, `price1` (required), optional `price2`, `time1`, `time2`, `color`, `width`, `dashStyle` | Draws on the chart for the requested symbol. Uses `ChartControl`'s own dispatcher (not app dispatcher) to avoid cross-thread exception. Verified: HorizontalLine, Ray, VerticalLine, Rectangle, Line all draw successfully on MNQ SEP26. Idempotent: re-draw with same `tag` replaces prior object. |
+| `/api/chart/trade` | POST | ✅ OK | `symbol`, `action`, optional params | Wraps `CaptureChart()`; inherits verified capture. Returns base64 PNG + metadata. |
 
 ---
 
@@ -190,9 +190,9 @@ All three were updated together in this session to keep them in sync. The long-t
 
 ## Next Steps / Action Items
 
-1. Fix `/api/chart/draw`: use `NinjaTrader.NinjaScript.DrawingTools.HorizontalLine` and supply `ChartAnchor` anchors.
+1. ~~Fix `/api/chart/draw`~~ ✅ Done (2026-08-01). All 5 shape types verified.
 2. ~~Verify `/api/chart/capture` with an open chart and confirm non-transparent PNG output.~~ ✅ Done.
-3. Resolve `/api/script/execute` failure (dispatcher / payload shape / sandbox compile).
-4. Test `/api/chart/snapshot` and `/api/chart/trade`.
+3. ~~Test `/api/chart/snapshot` and `/api/chart/trade`.~~ ✅ Done. Both inherit CaptureChart and return valid PNGs.
+4. Resolve `/api/script/execute` failure (dispatcher / payload shape / sandbox compile). The endpoint accepts `codeSnippet` (not `code`); connection drops after submission — may be a sandbox compile crash.
 5. Consolidate the three `McpBridgeAddOn.cs` copies into one source of truth.
 6. Commit the `McpBridgeAddOn.cs` fixes and this audit document once the submodule state is reviewed.
