@@ -167,7 +167,9 @@ curl.exe -s -X POST ... --data @C:\tmp\body.json http://localhost:7890/api/dev/r
 ```
 
 ### `/api/chart/draw` fails with "drawing type unavailable"
-The AddOn currently looks for `NinjaTrader.Gui.Chart.HorizontalLine`. The correct namespace is `NinjaTrader.NinjaScript.DrawingTools.HorizontalLine` (and `Ray`, `Rectangle`, etc.). Anchor creation (`ChartAnchor.CreateToolAnchorType`) must also be supplied. Pending fix.
+~~The AddOn currently looks for `NinjaTrader.Gui.Chart.HorizontalLine`. The correct namespace is `NinjaTrader.NinjaScript.DrawingTools.HorizontalLine` (and `Ray`, `Rectangle`, etc.). Anchor creation (`ChartAnchor.CreateToolAnchorType`) must also be supplied. Pending fix.~~
+
+**Fixed (2026-08-01)**: Now uses correct `DrawingTools` namespace, `ChartControl`'s own dispatcher, and proper `ChartAnchor` setup. All 5 shape types verified on MNQ SEP26.
 
 ### `/api/chart/capture` returned a transparent PNG
 `CaptureChart()` originally rendered the chart `Window` via `RenderTargetBitmap`, which produced a transparent image. The 2025-08-01 fix renders the `ChartControl` directly via `FindChartControl()` / `FindAnyChartControl()` and removes the stale `MainTabControl` dependency. Status is **✅ OK** — verified with open charts for `NQ 09-26`, `MES 09-26`, and `MNQ 09-26`, producing non-transparent 903×792 RGBA PNGs.
@@ -176,7 +178,7 @@ The AddOn currently looks for `NinjaTrader.Gui.Chart.HorizontalLine`. The correc
 
 ## Raw Endpoint Count
 
-The AddOn route switch in `McpBridgeAddOn.cs` defines **51 HTTP endpoints**. This audit covers 49 of them; the remaining 2 (`/api/chart/snapshot`, `/api/chart/trade`) were not directly tested in this session, but both wrap `CaptureChart()` and are expected to inherit the same behavior.
+The AddOn route switch in `McpBridgeAddOn.cs` defines **51 HTTP endpoints**. This audit covers all of them. `/api/chart/snapshot` and `/api/chart/trade` were verified this session (both wrap `CaptureChart()` and return valid PNGs).
 
 ## Three copies of `McpBridgeAddOn.cs`
 
@@ -238,11 +240,46 @@ Two independent agents reviewed the entire `McpBridgeAddOn.cs` (~5100 lines), de
 
 All 20 tested endpoints pass (0 failures). `/api/script/execute` deferred per user request.
 
-| Category | Endpoints | Result |
-|----------|----------|--------|
-| Account/Position/Order | health, account, positions, orders | ✅ 4/4 |
-| Quotes/Bars/Instruments | quote, bars, search | ✅ 3/3 |
-| Chart | chart/list, chart/capture, chart/draw, chart/snapshot, chart/trade, chart/open | ✅ 6/6 |
-| Strategy | strategies, strategy/running, compile/result | ✅ 3/3 |
-| Observability | events/fills, logs, riskguard/version | ✅ 3/3 |
-| Indicators | indicator/values (returns "no bar data" — known limitation, not a bug) ⚠️ | ⚠️ 1/1 |
+#### Fully Verified (functional behavior confirmed)
+
+| Endpoint | What was verified | Result |
+|----------|-----------------|--------|
+| `/api/health` | Returns status=ok, version, accounts, feedConnected | ✅ Verified |
+| `/api/account` | Returns account balances/PnL | ✅ Verified |
+| `/api/positions` | Returns open positions | ✅ Verified |
+| `/api/orders` | Returns working/historical orders with state | ✅ Verified |
+| `/api/quote` | Returns bid/ask/last for MNQ SEP26 | ✅ Verified |
+| `/api/bars` | Returns 3 1-min bars with OHLCV for MNQ SEP26 | ✅ Verified |
+| `/api/search` | Returns instrument matches for "MNQ" | ✅ Verified |
+| `/api/chart/list` | Returns 2 open chart windows with instrument info | ✅ Verified |
+| `/api/chart/capture` | Returns valid PNG: 90KB, valid PNG header, 95.3% non-zero bytes (not transparent) | ✅ Verified |
+| `/api/chart/draw` | All 5 shapes draw with correct tag. Idempotent: same tag replaces prior object | ✅ Verified |
+| `/api/chart/snapshot` | Returns imageId, width=1280, height=720 | ✅ Verified |
+| `/api/chart/trade` | Returns imageId + executionId (capture wrapper works) | ✅ Verified |
+| `/api/chart/open` | Validates instrument, focuses Control Center (best-effort) | ✅ Verified |
+| `/api/strategies` | Lists source files in Custom/Strategies | ✅ Verified |
+| `/api/strategy/running` | Returns running strategy count | ✅ Verified |
+| `/api/compile/result` | Returns success/errorCount/warnings | ✅ Verified |
+| `/api/events/fills` | Returns fill history | ✅ Verified |
+| `/api/riskguard/version` | Returns RiskGuard version | ✅ Verified |
+| `/api/logs` | Returns log lines | ✅ Verified |
+| `/api/trades/monte-carlo` | Verified with 10-trade input, 500 iterations: returns valid riskOfRuinPct, CVaR, drawdown percentiles, equity percentiles. Empty trades → honest error (no more placeholder `*10` P&L) | ✅ Verified |
+| `/api/order/atm` | Without stopLossTicks/takeProfitTicks → error. With both → submits entry, `isAtmBracket=false`, `bracketState=EntryOnly_BracketRequiresPrices`, note directs to `/api/order/oco` | ✅ Verified |
+| `/api/emergency-flatten` | Triggers flatten + lockout. Lockout then blocks `PlaceOrder` with "Order blocked: Account Sim101 is locked out.". Unlock via `/api/lockout` clears it → orders accepted again | ✅ Verified |
+
+#### Market-Closed — Code Verified, Functional Pending Market Hours
+
+These endpoints were verified at the **code level** (correct logic, no crashes, correct response shape) but could not be **functionally validated** because the market is closed (Friday evening, no live fills). They should be re-verified during RTH.
+
+| Endpoint | What was tested (market closed) | What needs verification (market open) | Code Status |
+|----------|-------------------------------|---------------------------------------|-------------|
+| `/api/order` | Market order submitted, state=Submitted (not Filled — market closed) | Order fills, position appears in `/api/positions`, fill appears in `/api/events/fills` | ✅ Code correct |
+| `/api/order/oco` | OCO submitted, all 3 legs state=Submitted, `rejectedExitOrders=null` | Exit orders activate after entry fill; OCO cancels one leg when the other fills | ⚠️ Pending market hours |
+| `/api/position/close` | `symbol=MNQ SEP26` → cancelled 2 MNQ working orders, `positionClosed=false` (no position to close). Symbol filter verified: only MNQ orders cancelled | Close an actual open position, verify it flattens only that symbol | ✅ Symbol filter verified; ⚠️ Position close pending market hours |
+| `/api/indicator/values` | BarsRequest callback fires correctly (status=NoError, 291ms — was 30s timeout before fix). Returns "no bar data" (no cached bars on this NT8 instance) | Re-run with an instrument with cached bar data, verify SMA/EMA/RSI values returned | ✅ BarsRequest fix verified (291ms vs 30s); ⚠️ Data pending market hours |
+| `/api/backtest` | Not re-tested (takes 180s, single-threaded listener blocks all other requests) | Run a backtest with a compiled strategy on NQ 09-26, verify trade list and PnL | ⚠️ Pending |
+| `/api/strategy/deploy` | Not re-tested (requires open chart + strategy compiled) | Deploy a strategy to an open chart, verify it appears in `/api/strategy/running` | ⚠️ Pending |
+| `/api/strategy/stop` | Not re-tested (no running strategies) | Deploy then stop a strategy, verify position flatten | ⚠️ Pending |
+| `/api/order/change` | Not re-tested (no working orders) | Modify a working limit order, verify price/quantity changes | ⚠️ Pending |
+| `/api/order/cancel` | Not re-tested | Cancel a working order by orderId and by ocoId | ⚠️ Pending |
+| `/api/script/execute` | Deferred per user request | Accepts `codeSnippet` param; connection drops after submission | ⏭️ Deferred |
