@@ -220,10 +220,15 @@ Two independent agents reviewed the entire `McpBridgeAddOn.cs` (~5100 lines), de
 
 ### Deferred (debated but not actionable now)
 
-| Issue | Reason |
-|-------|--------|
-| Single-threaded HTTP listener (all requests serialized) | Architectural — large change, needs careful design |
-| `DevReflect` `ui:true` marshals ALL ops to app dispatcher | Dev-only; chart objects need per-window dispatching |
+~~Both items have been fixed (commit below).~~
+
+### Third-pass fixes (commit `73a5c019`)
+
+| # | Issue | Fix |
+|---|-------|-----|
+| 15 | Single-threaded HTTP listener (all requests serialized) | `HandleRequests` now dispatches each request to `ThreadPool.QueueUserWorkItem` — blocking handlers no longer stall other endpoints. 3 concurrent requests verified: 267ms total. |
+| 16 | Backtest shared SA window conflict under concurrency | Added `_saLock` (static object) — only one backtest runs at a time; other request types remain fully concurrent. |
+| 17 | `DevReflect` `ui:true` marshals ALL ops to app dispatcher | Documented `"dispatcher":"auto"` option (resolves target object's own dispatcher per-op for chart-owned objects). `"ui":true` remains for app-level objects. |
 
 ### Second-pass fixes (commit `12d94c9c`)
 
