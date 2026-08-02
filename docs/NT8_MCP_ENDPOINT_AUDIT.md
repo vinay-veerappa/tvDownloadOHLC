@@ -221,16 +221,22 @@ Two independent agents reviewed the entire `McpBridgeAddOn.cs` (~5100 lines), de
 | Issue | Reason |
 |-------|--------|
 | Single-threaded HTTP listener (all requests serialized) | Architectural — large change, needs careful design |
-| `MonteCarlo` placeholder P&L (`* 10` when no trades supplied) | Not used in production flow |
-| `PlaceAtmOrder` stub (no real bracket attachment) | Not blocking; needs NT8 testing |
-| `PlaceOcoOrder` submits entry+exits simultaneously | Needs NT8 reject testing |
-| Idempotency cache can hold huge backtest results 1h | Bounded by account count in practice |
-| SSE stream (`/api/events/stream`) is a heartbeat-only stub | Documented behavior |
 | `DevReflect` `ui:true` marshals ALL ops to app dispatcher | Dev-only; chart objects need per-window dispatching |
 
-### Test Results (post-fix, 2026-08-01)
+### Second-pass fixes (commit `12d94c9c`)
 
-All 20 tested endpoints pass (0 failures). `/api/script/execute` deferred.
+| # | Issue | Fix |
+|---|-------|-----|
+| 9 | `MonteCarlo` placeholder P&L (`* 10` when no trades supplied) | Removed fallback; returns honest error with usage instructions |
+| 10 | `PlaceAtmOrder` stub (no real bracket attachment) | Requires stopLossTicks + takeProfitTicks; submits entry only, directs to `/api/order/oco` for bracket |
+| 11 | `PlaceOcoOrder` submits entry+exits simultaneously with no reject check | Now checks exit order states after submit; reports rejected orders |
+| 12 | `EmergencyFlatten` lockout never enforced | Added `IsAccountLocked()` helper; `PlaceOrder`/`PlaceOcoOrder` now check both RiskGuard and `_lockoutExpiry` |
+| 13 | SSE stream (`/api/events/stream`) was heartbeat-only stub | Now loops with 15s heartbeats while `_running` is true |
+| 14 | `FindAnyChartWindow` used 3-arg `Invoke` with Background priority (file's own comments warn against this) | Switched to no-timeout `Invoke` |
+
+### Test Results (post-all-fixes, 2026-08-01)
+
+All 20 tested endpoints pass (0 failures). `/api/script/execute` deferred per user request.
 
 | Category | Endpoints | Result |
 |----------|----------|--------|
