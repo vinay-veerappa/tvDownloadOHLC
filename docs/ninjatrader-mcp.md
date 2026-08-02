@@ -149,7 +149,8 @@ The **NinjaTrader Unified Hub** ([scripts/streaming/ninjatrader_hub.py](file:///
 | Tool Name | Endpoint | Description |
 | :--- | :--- | :--- |
 | `nt_place_oco_order` | `POST /api/order/oco` | Place atomic paired OCO (One-Cancels-Other) limit/stop orders. |
-| `nt_place_atm_order` | `POST /api/order/atm` | Place order tied to `DynamicAtmManager.cs` server-side bracket strategies. |
+| `nt_place_atm_order` | `POST /api/order/atm` | Place a server-side ATM bracket (entry + stop + target OCO) via `DynamicAtmManager.cs`. Supports 8 strategies: `FixedTicks`, `AtrAdaptive`, `SwingPoint`, `DrawdownShield`, `ScaledRunner`, `VolatilityScaled`, `SessionAdaptive`, `KellyOptimal`. Auto-selects per-instrument strategy (13 profiles) if `strategyName` omitted. DrawdownShield & ScaledRunner register for 5s breakeven/trailing monitoring. Response is camelCase: `{status, bracketId, ocoId, stopPrice, targetPrice, strategyName, entryOrderId, stopOrderId, targetOrderId}`. Master-instrument symbols rejected (use full futures contract e.g. `NQ 09-26`). |
+| `nt_atm_bracket_status` | `GET /api/order/atm/status` | Query an active ATM bracket by `bracketId` (returns `{bracketId, symbol, account, isLong, entryPrice, strategy, currentStop, currentTarget, breakevenTriggered, partialProfitTaken, isComplete, ageSeconds}`) or omit `bracketId` to list all active brackets (`{count, brackets[]}`). |
 | `nt_riskguard_state` | `GET /api/riskguard/fsm-state` | Read live RiskGuard FSM state, peak equity drawdown, and daily loss limit snapshots. |
 | `nt_copier_config` | `POST /api/copier/config` | Configure `TradeCopierEngine.cs` ratios, Micro/Mini lot scaling, and account quarantine. |
 | `nt_prop_limits` | `POST /api/prop/limits` | Configure `PropFirmProtectionSuite.cs` Target Lock, Giveback Cap, and News Shield. |
@@ -174,6 +175,34 @@ The **NinjaTrader Unified Hub** ([scripts/streaming/ninjatrader_hub.py](file:///
 | `nt_riskguard_config` | `POST /api/riskguard/config` | Dynamic configuration of trailing drawdown limits and volatility position caps. |
 | `nt_compliance_report`| `GET /api/compliance/report` | One-click generation of prop firm / broker compliance reports. |
 | `nt_multi_account_orchestrator`| `POST /api/orchestrator/multi-account`| Coordinated order routing and hedging across multiple accounts. |
+
+---
+
+## 11. Test Harness
+
+The bridge is covered by two test suites. Run both after modifying AddOn source (`DynamicAtmManager.cs`, `McpBridgeAddOn.cs`, `RiskGuardAddOn.cs`, `TradeCopierEngine.cs`) or the mock/stub layer.
+
+### C# Unit Tests — `ninjatrader-addon\RiskGuardTests.csproj`
+
+Pure-logic tests with NT8 runtime types stubbed under `#if TESTING` (`TestingStubs.cs` + mocks in `RiskGuardAddOnTests.cs`). No NinjaTrader assembly required.
+
+```powershell
+dotnet build ninjatrader-addon\RiskGuardTests.csproj
+dotnet run --project ninjatrader-addon\RiskGuardTests.csproj --no-build
+```
+
+**323 tests** covering RiskGuard FSM/lockout/sizing, TradeCopier hedging/reconciliation, and the **DynamicAtmManager** bracket engine (20 ATM tests: 8-strategy math, OCO wiring, bracket registration, breakeven logic, profile fallback, rejected-exit `partial_submit`, quantity caps). ATR/swing tests inject deterministic bars via `BarsRequest.TestBarsFactory`.
+
+### Python Integration Tests — `tests\test_risk_guard_integration.py`
+
+Live HTTP tests against the running bridge (requires NT8 + McpBridge AddOn). Auth: `Authorization: Bearer <NT8_MCP_TOKEN>` (token from env or `.mcp.json`).
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_risk_guard_integration.py -k atm -v   # ATM subset (10 tests, ~1s)
+.\.venv\Scripts\python.exe -m pytest tests\test_risk_guard_integration.py -v          # full suite (live orders)
+```
+
+Covers RiskGuard lockout/sizing/cooldown, Firm Mirror persistence, and the **ATM bracket API** (10 tests: auth, FixedTicks long/short response contract, idempotency dedupe, unknown-strategy/master-instrument/missing-field rejections, bracket status listing + unknown-id, order visibility). ATM tests use a lightweight cleanup path (`wait=False`) to avoid the 7.5s settle-wait on a closed market.
 
 ---
 *Document maintained by Quantitative Trading Architecture Team.*

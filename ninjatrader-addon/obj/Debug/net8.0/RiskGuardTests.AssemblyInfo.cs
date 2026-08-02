@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RiskGuardTests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+12197f28378116845358edc7642f5feb0b9f2226")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+23d78f760d942c0c9ee7fd057c6e66bfde6bd955")]
 [assembly: System.Reflection.AssemblyProductAttribute("RiskGuardTests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RiskGuardTests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

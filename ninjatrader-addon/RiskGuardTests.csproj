@@ -5,11 +5,13 @@
     <DefineConstants>TESTING</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Exclude stray strategy source folders auto-globbed from the project directory. -->
+    <Compile Remove="Strategies\**\*.cs" />
     <!-- Include all addon .cs files EXCEPT McpBridgeAddOn.cs (WPF dependencies break test build).
          This matches the old behavior when files were in this directory and auto-globbed. -->
-    <Compile Include="..\scripts\strategies\nt8\addons\*.cs" Link="%(Filename)%(Extension)" />
-    <Compile Remove="..\scripts\strategies\nt8\addons\McpBridgeAddOn.cs" />
-    <Compile Remove="..\scripts\strategies\nt8\addons\RiskManagerAddOn.cs" />
+    <Compile Include="..\scripts\ninjatrader\addons\*.cs" Link="%(Filename)%(Extension)" />
+    <Compile Remove="..\scripts\ninjatrader\addons\McpBridgeAddOn.cs" />
+    <Compile Remove="..\scripts\ninjatrader\addons\RiskManagerAddOn.cs" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 </Project>

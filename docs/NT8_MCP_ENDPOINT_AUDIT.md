@@ -1,12 +1,14 @@
 # NT8 MCP/HTTP Bridge Endpoint Audit
 
-Audit date: 2026-08-01 (updated)
+Audit date: 2026-08-01 (updated 2026-08-02)
 Bridge version: 1.5.2-chart-discovery
 Bridge URL: `http://localhost:7890`
 Default account used for order tests: `Sim101`
 All order tests were placed on **Sim101** unless otherwise noted.
 
 > **Update (2026-08-01)**: `/api/chart/draw` is now **✅ OK** — fixed cross-thread dispatcher issue (ChartControl's own dispatcher instead of app dispatcher). All 5 shape types verified (HorizontalLine, Ray, VerticalLine, Rectangle, Line). Same fix applied to `DeployStrategy`, `StopStrategy`, and `FindChartWindow` (used by `CaptureChart`). See commits `f64b9618` and `cd6fda31`.
+
+> **Update (2026-08-02)**: `/api/order/atm` is now a **full server-side bracket engine** — the old stub that directed callers to `/api/order/oco` is replaced by `DynamicAtmManager.cs` implementing 8 ATM strategies (FixedTicks, AtrAdaptive, SwingPoint, DrawdownShield, ScaledRunner, VolatilityScaled, SessionAdaptive, KellyOptimal), 13 instrument profiles, OCO-wired entry/stop/target, and a 5s background monitor for breakeven/trailing on DrawdownShield & ScaledRunner. Response normalized to **camelCase** (`status`, `bracketId`, `ocoId`, `stopPrice`, `targetPrice`, `strategyName`, order ids) to match every other endpoint. Bracket status queryable via `GET /api/order/atm/status?bracketId=` (omit for all-active listing). Covered by 20 C# unit tests + 10 Python integration tests (see Test Harness section below).
 
 ## Legend
 
@@ -30,7 +32,7 @@ All order tests were placed on **Sim101** unless otherwise noted.
 | `/api/orders` | GET | ✅ OK | `account`, `limit`, `offset` | Working/historical orders |
 | `/api/order` | POST | ✅ OK | `symbol`, `action`, `quantity`, `orderType`, `idempotencyKey` | Market/Limit/StopMarket/StopLimit/MIT |
 | `/api/order/oco` | POST | ✅ OK | `symbol`, `action`, `quantity`, `stopPrice`, `targetPrice`, `idempotencyKey` | Use `targetPrice`, NOT `limitPrice` |
-| `/api/order/atm` | POST | ✅ OK | `symbol`, `action`, `quantity`, `strategyName`, `idempotencyKey` | Optional `stopTicks`, `targetTicks` |
+| `/api/order/atm` | POST | ✅ OK | `symbol`, `action`, `quantity`, `strategyName`, `idempotencyKey` | Full bracket engine via `DynamicAtmManager` (8 strategies). Optional `stopTicks`, `targetTicks`, `atrMultiplierSL/TP`, `swingLookbackBars`, `riskPerTrade`, etc. Master-instrument symbols rejected. Returns camelCase `{status, bracketId, ocoId, stopPrice, targetPrice, strategyName, entryOrderId, stopOrderId, targetOrderId}`. |
 | `/api/order/change` | POST | ✅ OK | `orderId`, optional `limitPrice`/`stopPrice`/`quantity` | Modify working order |
 | `/api/order/cancel` | POST | ✅ OK | `orderId` or `ocoId` | Cancel single or OCO group |
 | `/api/orders/cancel-all` | POST | ✅ OK | — | Cancels all working orders across accounts |
@@ -235,7 +237,7 @@ Two independent agents reviewed the entire `McpBridgeAddOn.cs` (~5100 lines), de
 | # | Issue | Fix |
 |---|-------|-----|
 | 9 | `MonteCarlo` placeholder P&L (`* 10` when no trades supplied) | Removed fallback; returns honest error with usage instructions |
-| 10 | `PlaceAtmOrder` stub (no real bracket attachment) | Requires stopLossTicks + takeProfitTicks; submits entry only, directs to `/api/order/oco` for bracket |
+| 10 | `PlaceAtmOrder` stub (no real bracket attachment) | **Replaced (2026-08-02)** with full `DynamicAtmManager` server-side bracket engine: 8 strategies, 13 instrument profiles, OCO-wired entry/stop/target, 5s monitor for DrawdownShield/ScaledRunner breakeven+trailing. Master-instrument guard rejects root tickers. Response normalized to camelCase. Covered by 30 ATM tests (20 C# unit + 10 Python integration). |
 | 11 | `PlaceOcoOrder` submits entry+exits simultaneously with no reject check | Now checks exit order states after submit; reports rejected orders |
 | 12 | `EmergencyFlatten` lockout never enforced | Added `IsAccountLocked()` helper; `PlaceOrder`/`PlaceOcoOrder` now check both RiskGuard and `_lockoutExpiry` |
 | 13 | SSE stream (`/api/events/stream`) was heartbeat-only stub | Now loops with 15s heartbeats while `_running` is true |
@@ -269,7 +271,7 @@ All 20 tested endpoints pass (0 failures). `/api/script/execute` deferred per us
 | `/api/riskguard/version` | Returns RiskGuard version | ✅ Verified |
 | `/api/logs` | Returns log lines | ✅ Verified |
 | `/api/trades/monte-carlo` | Verified with 10-trade input, 500 iterations: returns valid riskOfRuinPct, CVaR, drawdown percentiles, equity percentiles. Empty trades → honest error (no more placeholder `*10` P&L) | ✅ Verified |
-| `/api/order/atm` | Without stopLossTicks/takeProfitTicks → error. With both → submits entry, `isAtmBracket=false`, `bracketState=EntryOnly_BracketRequiresPrices`, note directs to `/api/order/oco` | ✅ Verified |
+| `/api/order/atm` | FixedTicks bracket on MNQ 09-26 → `status=submitted`, `bracketId`, `ocoId`, `stopPrice/targetPrice` (8/16 ticks), 3 order ids. IdempotencyKey dedupes. Unknown strategy / master instrument (`MNQ`) / missing fields → errors. Bracket orders visible in `/api/orders` as `AtmEntry_*`/`Stop_*`/`Target_*`. `GET /api/order/atm/status` lists active brackets; unknown id → `{error:"bracket not found"}`. DrawdownShield/ScaledRunner register for 5s breakeven/trailing monitor | ✅ Verified (closed market — orders Rejected by simulator, not a bridge bug) |
 | `/api/emergency-flatten` | Triggers flatten + lockout. Lockout then blocks `PlaceOrder` with "Order blocked: Account Sim101 is locked out.". Unlock via `/api/lockout` clears it → orders accepted again | ✅ Verified |
 | `/api/schedule/task` | In-process scheduler with Timer (30s tick). Supports interval + basic 5-field cron. Fires loopback HTTP calls to command endpoint | ✅ Verified |
 | `/api/alert/create` | Price-level monitor via instrument.MarketData.Last.Price. Fires AlertCallback into Alerts Log on cross_above/cross_below | ✅ Verified |
@@ -299,3 +301,72 @@ These endpoints were verified at the **code level** (correct logic, no crashes, 
 | `/api/order/change` | Not re-tested (no working orders) | Modify a working limit order, verify price/quantity changes | ⚠️ Pending |
 | `/api/order/cancel` | Not re-tested | Cancel a working order by orderId and by ocoId | ⚠️ Pending |
 | `/api/script/execute` | Deferred per user request | Accepts `codeSnippet` param; connection drops after submission | ⏭️ Deferred |
+
+---
+
+## Test Harness (added 2026-08-02)
+
+The ATM bracket engine is covered by two complementary test suites. Run both after touching `DynamicAtmManager.cs`, `McpBridgeAddOn.cs` `PlaceAtmOrder`/`GetAtmBracketStatus`, or the mock/stub layer.
+
+### C# Unit Harness — `ninjatrader-addon\RiskGuardTests.csproj`
+
+Pure-logic tests of `DynamicAtmManager` strategy math, profile lookup, OCO wiring, bracket registration, and error paths. **No NinjaTrader assembly required** — NT8 runtime types are stubbed under `#if TESTING` in `TestingStubs.cs` + `RiskGuardAddOnTests.cs`.
+
+```powershell
+dotnet build ninjatrader-addon\RiskGuardTests.csproj
+dotnet run --project ninjatrader-addon\RiskGuardTests.csproj --no-build
+```
+
+**Result: 323 tests passed, 0 failed.** 20 ATM-specific tests added this session:
+
+| Test | Verifies |
+|------|----------|
+| `TestAtm_FixedTicksLong` / `...Short` | stop/target price formulas, order actions, order names |
+| `TestAtm_OcoIdSharedAcrossExitOrders` | stop+target share OcoId; entry has empty Oco |
+| `TestAtm_DrawdownShieldRegistersBracket` / `TestAtm_ScaledRunnerRegistersBracket` | monitored strategies register in `GetActiveBrackets()` |
+| `TestAtm_MonitoredStrategiesNotDoubleRegistered` | FixedTicks does NOT register |
+| `TestAtm_VolatilityScaledQuantityCapped` / `...RiskBasedQuantity` | risk-based qty = `floor(RiskPerTrade/riskPerContract)`, capped at `MaxContracts` |
+| `TestAtm_AtrAdaptiveFallbackUsesDefaultAtr` | no bars → atr = `DefaultATR*TickSize` |
+| `TestAtm_AtrAdaptiveUsesLiveAtr` | injected bars → live ATR drives stop/target |
+| `TestAtm_SwingPointUsesSwingLow` | injected bars → swing low ± buffer drives stop |
+| `TestAtm_SessionAdaptiveMultiplier` | RTH/ETH multiplier smoke (deterministic: both ≥1) |
+| `TestAtm_UnknownSymbolFallsBackToDefaults` | unknown root → default profile (FixedTicks) |
+| `TestAtm_GetProfileKnownAndUnknown` | 13 profiles; unknown root → null |
+| `TestAtm_ZeroPriceReturnsError` | zero entry → "Could not calculate stop/target prices" |
+| `TestAtm_RejectedExitOrdersPartialSubmit` | rejected exits → `status=partial_submit` |
+| `TestAtm_ShouldTriggerBreakeven` / `TestAtm_CalculateBreakevenStopPrice` | pure breakeven logic |
+| `TestAtm_ActiveBracketStatus` | `GetBracketStatus` returns camelCase payload; unknown id → error |
+
+**Injecting bars for ATR/swing tests:** set `BarsRequest.TestBarsFactory` (static on the stub) to a `Func<BarsRequest, Bars>` returning deterministic OHLCV. Reset to `null` after — the fallback-dependent tests do this defensively for isolation.
+
+### Python Integration Harness — `tests\test_risk_guard_integration.py`
+
+Live bridge tests via HTTP. **Requires NT8 running with the McpBridge AddOn.** Auth: sends `Authorization: Bearer <token>` (token read from env `NT8_MCP_TOKEN` or `.mcp.json`).
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_risk_guard_integration.py -k atm -v
+```
+
+**Result: 10 ATM tests passed, 0 failed** (run against live bridge with closed market — orders Rejected by simulator, not a bridge bug). ATM tests use a lightweight cleanup (no 7.5s settle-wait) via a `wait=False` path in `cleanup_all()`.
+
+| Test | Verifies |
+|------|----------|
+| `test_atm_health_requires_auth` | no-token → 401 (only when token configured) |
+| `test_atm_place_fixed_ticks_bracket` / `..._short_bracket` | response contract (status/bracketId/ocoId/prices/ids), stop<target for long, stop>target for short |
+| `test_atm_idempotency_dedupes` | same `idempotencyKey` → same `bracketId` |
+| `test_atm_unknown_strategy_rejected` | invalid `strategyName` → "unknown strategy" error |
+| `test_atm_master_instrument_rejected` | root ticker (`MNQ`) → "instrument not found" or "master instrument" error |
+| `test_atm_missing_symbol_or_action_rejected` | missing fields → "symbol and action required" |
+| `test_atm_bracket_status_listing` | `GET /api/order/atm/status` → `{count, brackets[]}` shape |
+| `test_atm_bracket_status_unknown_id` | unknown bracketId → `{error: "bracket not found"}` |
+| `test_atm_bracket_orders_visible_in_orders_list` | bracket orders appear in `GET /api/orders` as `AtmEntry_*`/`Stop_*`/`Target_*` |
+
+### Harness completeness fixes (2026-08-02)
+
+The C# harness was **broken** (could not build) before this session. Fixes applied:
+
+1. **csproj glob path** pointed to non-existent `scripts\strategies\nt8\addons\` (real: `scripts\ninjatrader\addons\`) — corrected; also excluded auto-globbed `Strategies\Vinay\*.cs` that dragged in NinjaScript-base dependencies (68 → 0 errors).
+2. **Missing NT8 stubs** for `DynamicAtmManager` deps: `OrderState.CancelPending`, `Account.Change()`, `MarketData.Ask/Bid`, `BarsPeriod` props, `Bars`, `BarsRequest` (with `TestBarsFactory` hook), `ErrorCode`.
+3. **WPF dispatcher guard** in `DynamicAtmManager.MonitorTick` — `#if TESTING` calls `MonitorTickCore()` directly (no `System.Windows.Application`), matching the `RiskGuardAddOn` pattern.
+4. **`Account.SimulateExitRejection`** flag added to the mock so the `partial_submit` path is unit-testable.
+5. **Python auth** — requests now send the Bearer token (previously 401 against the live bridge).

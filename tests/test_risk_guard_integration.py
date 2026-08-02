@@ -8,13 +8,39 @@ import pytest
 
 NT8_BASE = "http://localhost:7890"
 
+
+def _read_token():
+    """Resolve the McpBridge Bearer token: env NT8_MCP_TOKEN, then .mcp.json."""
+    tok = os.environ.get("NT8_MCP_TOKEN")
+    if tok:
+        return tok
+    mcp_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".mcp.json")
+    try:
+        with open(mcp_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        server = cfg.get("mcpServers", {}).get("ninjatrader", {})
+        return server.get("env", {}).get("NT8_MCP_TOKEN", "")
+    except Exception:
+        return ""
+
+
+NT8_TOKEN = _read_token()
+
+
+def _headers():
+    headers = {"Content-Type": "application/json"}
+    if NT8_TOKEN:
+        headers["Authorization"] = "Bearer " + NT8_TOKEN
+    return headers
+
+
 def nt_post(path, data=None):
     url = f"{NT8_BASE}{path}"
     payload = json.dumps(data).encode("utf-8") if data else b""
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"}
+        headers=_headers()
     )
     try:
         with urllib.request.urlopen(req) as res:
@@ -26,10 +52,11 @@ def nt_post(path, data=None):
 
 def nt_get(path):
     url = f"{NT8_BASE}{path}"
-    with urllib.request.urlopen(url) as res:
+    req = urllib.request.Request(url, headers=_headers())
+    with urllib.request.urlopen(req) as res:
         return json.loads(res.read().decode("utf-8"))
 
-def cleanup_all():
+def cleanup_all(wait=True):
     print("Running cleanup: Cancelling all orders and flattening Sim101...")
     try:
         nt_post("/api/orders/cancel-all")
@@ -56,6 +83,9 @@ def cleanup_all():
                 })
     except Exception as e:
         print(f"Cleanup flatten failed: {e}")
+
+    if not wait:
+        return
     
     # Wait for the cleanup to settle (positions flat and orders cancelled)
     active_states = ["Working", "Submitted", "Accepted", "Initialized"]
@@ -77,7 +107,18 @@ def cleanup_all():
     print("WARNING: Cleanup timed out! Sim101 might not be fully flat.")
 
 @pytest.fixture(autouse=True)
-def setup_teardown():
+def setup_teardown(request):
+    # ATM validation tests only cancel orders (no fill-dependent assertions),
+    # so skip the long settle-wait that the live-order tests need.
+    if "atm" in request.node.name:
+        try:
+            nt_post("/api/dev/reset-risk")
+        except Exception as e:
+            print(f"ATM reset-risk failed: {e}")
+        cleanup_all(wait=False)
+        yield
+        cleanup_all(wait=False)
+        return
     # Make sure we clean up before and after each test
     cleanup_all()
     yield
@@ -347,4 +388,169 @@ def test_firm_mirror_persistence_restart():
     
     print("Persistence deserialization test passed!")
     nt_post("/api/dev/reset-risk")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DYNAMIC ATM BRACKET INTEGRATION TESTS
+#
+# These verify the /api/order/atm bracket engine end-to-end against the live
+# bridge. NOTE: they are designed to run against the LIVE NT8 bridge, so when
+# the futures market is CLOSED the underlying orders come back Rejected (that
+# is expected and not a failure). The assertions below target the bracket
+# placement response contract (status/bracketId/ocoId/prices/order-ids) and the
+# validation error paths, which are deterministic regardless of market hours.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Contract symbol used for ATM bracket placement. Must be a tradable contract,
+# NOT a master instrument (e.g. "NQ 09-26" works, "NQ" does not).
+ATM_SYMBOL = "MNQ 09-26"
+ATM_MASTER_SYMBOL = "MNQ"
+
+
+def test_atm_health_requires_auth():
+    """Verify the bridge rejects unauthenticated calls (completeness check)."""
+    url = f"{NT8_BASE}/api/health"
+    req = urllib.request.Request(url)  # intentionally NO auth header
+    try:
+        with urllib.request.urlopen(req) as res:
+            body = res.read().decode("utf-8")
+            # If a token is configured, no-token must fail with 401; if no token
+            # is configured the bridge bypasses auth, so accept a 200 too.
+            if NT8_TOKEN:
+                pytest.fail(f"Expected 401 without token but got 200: {body}")
+            return
+    except urllib.error.HTTPError as e:
+        if NT8_TOKEN:
+            assert e.code == 401, f"Expected 401, got {e.code}"
+            return
+        raise e
+
+
+def test_atm_place_fixed_ticks_bracket():
+    """Place a FixedTicks bracket and validate the response contract."""
+    res = nt_post("/api/order/atm", {
+        "symbol": ATM_SYMBOL,
+        "action": "buy",
+        "quantity": 1,
+        "strategyName": "FixedTicks",
+        "stopTicks": 8,
+        "targetTicks": 16,
+        "idempotencyKey": f"pytest-atm-fixed-{int(time.time())}"
+    })
+    assert res.get("status") == "submitted", f"Expected submitted, got: {res}"
+    assert res.get("strategyName") == "FixedTicks"
+    assert res.get("bracketId"), f"Missing bracketId: {res}"
+    assert res.get("ocoId"), f"Missing ocoId: {res}"
+    assert res.get("entryOrderId") and res.get("stopOrderId") and res.get("targetOrderId"), f"Missing order ids: {res}"
+    assert res.get("stopPrice", 0) > 0, f"Missing stopPrice: {res}"
+    assert res.get("targetPrice", 0) > 0, f"Missing targetPrice: {res}"
+    assert res.get("stopPrice") < res.get("targetPrice"), "Stop must be below target for a long bracket"
+
+
+def test_atm_place_short_bracket():
+    """Place a short FixedTicks bracket; stop must be above target."""
+    res = nt_post("/api/order/atm", {
+        "symbol": ATM_SYMBOL,
+        "action": "sell",
+        "quantity": 1,
+        "strategyName": "FixedTicks",
+        "stopTicks": 8,
+        "targetTicks": 16,
+        "idempotencyKey": f"pytest-atm-short-{int(time.time())}"
+    })
+    assert res.get("status") == "submitted", f"Expected submitted, got: {res}"
+    assert res.get("stopPrice") > res.get("targetPrice"), "Stop must be above target for a short bracket"
+
+
+def test_atm_idempotency_dedupes():
+    """Same idempotencyKey must return the same bracketId (no duplicate placement)."""
+    key = f"pytest-atm-idem-{int(time.time())}"
+    payload = {
+        "symbol": ATM_SYMBOL,
+        "action": "buy",
+        "quantity": 1,
+        "strategyName": "FixedTicks",
+        "stopTicks": 8,
+        "targetTicks": 16,
+        "idempotencyKey": key
+    }
+    first = nt_post("/api/order/atm", payload)
+    second = nt_post("/api/order/atm", payload)
+    assert first.get("status") == "submitted", f"First submit failed: {first}"
+    assert second.get("bracketId") == first.get("bracketId"), "Idempotency key did not dedupe bracket placement"
+
+
+def test_atm_unknown_strategy_rejected():
+    """Unknown strategyName must be rejected with a validation error."""
+    res = nt_post("/api/order/atm", {
+        "symbol": ATM_SYMBOL,
+        "action": "buy",
+        "strategyName": "NotARealStrategy"
+    })
+    assert "error" in res, f"Expected error for unknown strategy, got: {res}"
+    assert "unknown strategy" in res.get("error", "").lower()
+
+
+def test_atm_master_instrument_rejected():
+    """A master instrument / non-contract symbol must be rejected with a clear message.
+
+    Depending on whether NT8 has the root symbol registered as an instrument, the
+    bridge either reports "instrument not found" or the explicit master-instrument
+    guard. Both are valid rejections of a non-tradable contract symbol.
+    """
+    res = nt_post("/api/order/atm", {
+        "symbol": ATM_MASTER_SYMBOL,
+        "action": "buy",
+        "strategyName": "FixedTicks"
+    })
+    assert "error" in res, f"Expected error for master instrument, got: {res}"
+    err = res.get("error", "").lower()
+    assert "master instrument" in err or "instrument not found" in err, f"Unexpected rejection message: {res}"
+
+
+def test_atm_missing_symbol_or_action_rejected():
+    """Missing symbol/action must be rejected."""
+    res = nt_post("/api/order/atm", {"strategyName": "FixedTicks"})
+    assert "error" in res, f"Expected error for missing symbol/action, got: {res}"
+    assert "symbol and action required" in res.get("error", "")
+
+
+def test_atm_bracket_status_listing():
+    """GET /api/order/atm/status without bracketId returns the active bracket list shape."""
+    res = nt_get("/api/order/atm/status")
+    assert "count" in res, f"Expected count in status listing, got: {res}"
+    assert isinstance(res.get("brackets"), list), "Expected brackets array in status listing"
+    for b in res.get("brackets", []):
+        assert "bracketId" in b and "symbol" in b and "strategy" in b, f"Malformed bracket entry: {b}"
+
+
+def test_atm_bracket_status_unknown_id():
+    """Unknown bracketId returns an error payload (not a crash)."""
+    res = nt_get("/api/order/atm/status?bracketId=does-not-exist-pytest")
+    assert "error" in res, f"Expected error for unknown bracketId, got: {res}"
+
+
+def test_atm_bracket_orders_visible_in_orders_list():
+    """After placement, the bracket orders appear in /api/orders with Atm* names."""
+    key = f"pytest-atm-vis-{int(time.time())}"
+    res = nt_post("/api/order/atm", {
+        "symbol": ATM_SYMBOL,
+        "action": "buy",
+        "quantity": 1,
+        "strategyName": "FixedTicks",
+        "stopTicks": 8,
+        "targetTicks": 16,
+        "idempotencyKey": key
+    })
+    assert res.get("status") == "submitted", f"Bracket placement failed: {res}"
+
+    orders = nt_get("/api/orders")
+    bracket_ids = res.get("bracketId")
+    atm_names = [
+        o for o in orders
+        if isinstance(o.get("name"), str) and o.get("name", "").endswith("_" + bracket_ids)
+    ]
+    assert len(atm_names) >= 3, (
+        f"Expected at least 3 Atm_* bracket orders in /api/orders, got: {[o.get('name') for o in atm_names]}"
+    )
 

@@ -20,7 +20,7 @@ namespace NinjaTrader.Cbi
         public double Value { get; set; }
         public Currency Currency { get; set; }
     }
-    public enum OrderState { Submitted, Accepted, Working, Cancelled, Filled, PartFilled, Rejected, Unknown, Initialized }
+    public enum OrderState { Submitted, Accepted, Working, Cancelled, CancelPending, Filled, PartFilled, Rejected, Unknown, Initialized }
     public enum OrderType { Limit, StopMarket, StopLimit, Market }
     public enum OrderAction { Buy, Sell, BuyToCover, SellShort }
     public enum TimeInForce { Day, Gtc }
@@ -49,9 +49,21 @@ namespace NinjaTrader.Cbi
     public class MarketData
     {
         public Last Last { get; set; }
+        public Ask Ask { get; set; }
+        public Bid Bid { get; set; }
     }
 
     public class Last
+    {
+        public double Price { get; set; }
+    }
+
+    public class Ask
+    {
+        public double Price { get; set; }
+    }
+
+    public class Bid
     {
         public double Price { get; set; }
     }
@@ -97,6 +109,7 @@ namespace NinjaTrader.Cbi
         public List<Order> Orders { get; set; } = new List<Order>();
         public List<Position> Positions { get; set; } = new List<Position>();
         public static List<Account> All { get; set; } = new List<Account>();
+        public bool SimulateExitRejection { get; set; }
 
         public event EventHandler<PositionEventArgs> PositionUpdate;
         public event EventHandler<OrderEventArgs> OrderUpdate;
@@ -137,6 +150,7 @@ namespace NinjaTrader.Cbi
                 Id = Guid.NewGuid().ToString(),
                 OrderId = Guid.NewGuid().ToString(),
                 Name = name,
+                Oco = oco,
                 OrderState = OrderState.Initialized,
                 OrderType = type,
                 Quantity = qty,
@@ -153,7 +167,17 @@ namespace NinjaTrader.Cbi
             foreach (var o in orders)
             {
                 o.OrderState = OrderState.Submitted;
+                if (SimulateExitRejection && (o.Name.StartsWith("Stop_") || o.Name.StartsWith("Target_")))
+                    o.OrderState = OrderState.Rejected;
                 Orders.Add(o);
+            }
+        }
+
+        public void Change(Order[] orders)
+        {
+            foreach (var o in orders)
+            {
+                o.OrderState = OrderState.Working;
             }
         }
 
@@ -250,6 +274,7 @@ namespace NinjaTrader.NinjaScript
 namespace NinjaTrader.NinjaScript.AddOns
 {
     using NinjaTrader.Cbi;
+    using NinjaTrader.Data;
 
     // --- TEST EXECUTION HARNESS ---
     public class Program
@@ -387,6 +412,27 @@ namespace NinjaTrader.NinjaScript.AddOns
             RunCopierFixesVerificationTests();
             TestOrderVerificationWatchdogAndReconciliation();
             TestHedgingReconciliationAndAutoClose();
+
+            // -- DYNAMIC ATM BRACKET TESTS --
+            TestAtm_FixedTicksLong();
+            TestAtm_FixedTicksShort();
+            TestAtm_DrawdownShieldRegistersBracket();
+            TestAtm_ScaledRunnerRegistersBracket();
+            TestAtm_MonitoredStrategiesNotDoubleRegistered();
+            TestAtm_VolatilityScaledQuantityCapped();
+            TestAtm_VolatilityScaledRiskBasedQuantity();
+            TestAtm_AtrAdaptiveFallbackUsesDefaultAtr();
+            TestAtm_AtrAdaptiveUsesLiveAtr();
+            TestAtm_SwingPointUsesSwingLow();
+            TestAtm_SessionAdaptiveMultiplier();
+            TestAtm_UnknownSymbolFallsBackToDefaults();
+            TestAtm_GetProfileKnownAndUnknown();
+            TestAtm_ZeroPriceReturnsError();
+            TestAtm_RejectedExitOrdersPartialSubmit();
+            TestAtm_OcoIdSharedAcrossExitOrders();
+            TestAtm_ShouldTriggerBreakeven();
+            TestAtm_CalculateBreakevenStopPrice();
+            TestAtm_ActiveBracketStatus();
 
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
@@ -3816,6 +3862,375 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(limitDelta == 3 && !isBlocked, "Standalone Limit/Stop entry unblocked when flat");
 
             Console.WriteLine("[PASS] All Hedging, Reconciliation & Auto-Close Tests Passed Successfully!");
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // DYNAMIC ATM BRACKET TESTS
+        // Exercises DynamicAtmManager.PlaceBracket strategy math, profile
+        // fallback, OCO wiring, bracket registration, and error paths without
+        // requiring a live NinjaTrader runtime or open market.
+        // ─────────────────────────────────────────────────────────────────────
+
+        private static bool Approx(double a, double b, double tol = 0.0001)
+        {
+            return Math.Abs(a - b) <= tol;
+        }
+
+        private static Account CreateAtmAccount(string name = "Sim101")
+        {
+            return new Account { Name = name };
+        }
+
+        private static Instrument CreateAtmInstrument(string root, string fullName = null)
+        {
+            var instr = new Instrument(fullName ?? root);
+            instr.MasterInstrument.Name = root;
+            instr.MasterInstrument.TickSize = 0.25;
+            return instr;
+        }
+
+        private static void TestAtm_FixedTicksLong()
+        {
+            Console.WriteLine("\n[TEST] ATM: FixedTicks Long");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.FixedTicks, StopTicks = 8, TargetTicks = 16 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "FixedTicks long submitted");
+            Assert(result.StrategyName == "FixedTicks", "Strategy name is FixedTicks");
+            Assert(Approx(result.StopPrice, 17998.0), "Stop = entry - 8 ticks (17998)");
+            Assert(Approx(result.TargetPrice, 18004.0), "Target = entry + 16 ticks (18004)");
+            Assert(!string.IsNullOrEmpty(result.BracketId), "BracketId generated");
+            Assert(!string.IsNullOrEmpty(result.OcoId), "OcoId generated");
+            Assert(!string.IsNullOrEmpty(result.EntryOrderId) && !string.IsNullOrEmpty(result.StopOrderId) && !string.IsNullOrEmpty(result.TargetOrderId), "All 3 order ids returned");
+            Assert(account.Orders.Count == 3, "3 orders submitted to account");
+            Assert(account.Orders.Count(o => o.Name.StartsWith("AtmEntry_")) == 1, "Entry order named AtmEntry_*");
+            Assert(account.Orders.Count(o => o.Name.StartsWith("Stop_")) == 1, "Stop order named Stop_*");
+            Assert(account.Orders.Count(o => o.Name.StartsWith("Target_")) == 1, "Target order named Target_*");
+        }
+
+        private static void TestAtm_FixedTicksShort()
+        {
+            Console.WriteLine("\n[TEST] ATM: FixedTicks Short");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.FixedTicks, StopTicks = 8, TargetTicks = 16 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "sell", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "FixedTicks short submitted");
+            Assert(Approx(result.StopPrice, 18002.0), "Short stop = entry + 8 ticks (18002)");
+            Assert(Approx(result.TargetPrice, 17996.0), "Short target = entry - 16 ticks (17996)");
+            var entry = account.Orders.First(o => o.Name.StartsWith("AtmEntry_"));
+            var stop = account.Orders.First(o => o.Name.StartsWith("Stop_"));
+            var target = account.Orders.First(o => o.Name.StartsWith("Target_"));
+            Assert(entry.OrderAction == OrderAction.Sell, "Short entry order action is Sell");
+            Assert(stop.OrderAction == OrderAction.Buy, "Short stop order action is Buy");
+            Assert(target.OrderAction == OrderAction.Buy, "Short target order action is Buy");
+        }
+
+        private static void TestAtm_OcoIdSharedAcrossExitOrders()
+        {
+            Console.WriteLine("\n[TEST] ATM: OCO Id Shared Across Exit Orders");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.FixedTicks, StopTicks = 8, TargetTicks = 16 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            var stop = account.Orders.First(o => o.Name.StartsWith("Stop_"));
+            var target = account.Orders.First(o => o.Name.StartsWith("Target_"));
+            var entry = account.Orders.First(o => o.Name.StartsWith("AtmEntry_"));
+            Assert(!string.IsNullOrEmpty(stop.Oco) && stop.Oco == result.OcoId, "Stop order carries result OcoId");
+            Assert(!string.IsNullOrEmpty(target.Oco) && target.Oco == result.OcoId, "Target order carries result OcoId");
+            Assert(string.IsNullOrEmpty(entry.Oco), "Entry order has empty Oco id (not OCO-linked)");
+        }
+
+        private static void TestAtm_DrawdownShieldRegistersBracket()
+        {
+            Console.WriteLine("\n[TEST] ATM: DrawdownShield Registers Monitor Bracket");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.DrawdownShield, StopTicks = 10, TargetTicks = 20, BreakevenTriggerTicks = 12, BreakevenOffsetTicks = 2 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "DrawdownShield submitted");
+            Assert(result.Note != null && result.Note.Contains("registered"), "Bracket registered note present");
+            var brackets = DynamicAtmManager.Instance.GetActiveBrackets();
+            Assert(brackets.Any(b => b.BracketId == result.BracketId), "Bracket appears in GetActiveBrackets()");
+            var bracket = brackets.First(b => b.BracketId == result.BracketId);
+            Assert(bracket.Symbol == "MNQ" && bracket.IsLong && bracket.Quantity == 1, "Bracket metadata correct (symbol/isLong/qty)");
+            Assert(bracket.Config.Type == AtmStrategyType.DrawdownShield, "Bracket carries strategy config");
+
+            DynamicAtmManager.Instance.RemoveBracket(result.BracketId);
+        }
+
+        private static void TestAtm_ScaledRunnerRegistersBracket()
+        {
+            Console.WriteLine("\n[TEST] ATM: ScaledRunner Registers Monitor Bracket");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("NQ", "NQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.ScaledRunner, StopTicks = 8, TargetTicks = 30 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 20.0);
+
+            Assert(result.Status == "submitted", "ScaledRunner submitted");
+            var brackets = DynamicAtmManager.Instance.GetActiveBrackets();
+            Assert(brackets.Any(b => b.BracketId == result.BracketId), "ScaledRunner bracket registered");
+            Assert(brackets.First(b => b.BracketId == result.BracketId).Config.Type == AtmStrategyType.ScaledRunner, "Bracket carries ScaledRunner config");
+
+            DynamicAtmManager.Instance.RemoveBracket(result.BracketId);
+        }
+
+        private static void TestAtm_MonitoredStrategiesNotDoubleRegistered()
+        {
+            Console.WriteLine("\n[TEST] ATM: Non-monitored Strategy Does Not Register Bracket");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.FixedTicks, StopTicks = 8, TargetTicks = 16 };
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "FixedTicks submitted");
+            var brackets = DynamicAtmManager.Instance.GetActiveBrackets();
+            Assert(!brackets.Any(b => b.BracketId == result.BracketId), "FixedTicks bracket NOT registered for monitoring");
+        }
+
+        private static void TestAtm_VolatilityScaledQuantityCapped()
+        {
+            Console.WriteLine("\n[TEST] ATM: VolatilityScaled Quantity Capped At MaxContracts");
+            BarsRequest.TestBarsFactory = null; // ensure fallback ATR path (isolation from prior live-ATR tests)
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.VolatilityScaled, RiskPerTrade = 100000.0 };
+
+            // MNQ profile: MaxContracts = 50, DefaultATR = 30 (tick 0.25) -> fallback atr = 7.5
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "VolatilityScaled submitted");
+            Assert(result.CalculatedQuantity == 50, "Calculated quantity capped at profile MaxContracts (50)");
+        }
+
+        private static void TestAtm_VolatilityScaledRiskBasedQuantity()
+        {
+            Console.WriteLine("\n[TEST] ATM: VolatilityScaled Risk-Based Quantity");
+            BarsRequest.TestBarsFactory = null; // ensure fallback ATR path (isolation from prior live-ATR tests)
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.VolatilityScaled, RiskPerTrade = 200.0 };
+
+            // fallback atr = 30*0.25 = 7.5; riskPerContract = 7.5*1.5*2.0 = 22.5; qty = floor(200/22.5) = 8
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "VolatilityScaled submitted");
+            Assert(result.CalculatedQuantity == 8, "Calculated quantity = floor(RiskPerTrade / riskPerContract) = 8");
+        }
+
+        private static void TestAtm_AtrAdaptiveFallbackUsesDefaultAtr()
+        {
+            Console.WriteLine("\n[TEST] ATM: AtrAdaptive Fallback To Profile DefaultATR");
+            BarsRequest.TestBarsFactory = null; // ensure fallback ATR path (no live bars injected)
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.AtrAdaptive };
+
+            // No bars factory -> atr = DefaultATR * tickSize = 30*0.25 = 7.5
+            // slDist = 7.5*1.5 = 11.25, tpDist = 7.5*2.5 = 18.75
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "AtrAdaptive submitted");
+            Assert(Approx(result.StopPrice, 17988.75), "Stop = entry - 11.25 (profile default ATR fallback)");
+            Assert(Approx(result.TargetPrice, 18018.75), "Target = entry + 18.75 (profile default ATR fallback)");
+        }
+
+        private static void TestAtm_AtrAdaptiveUsesLiveAtr()
+        {
+            Console.WriteLine("\n[TEST] ATM: AtrAdaptive Uses Live ATR From Bars");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.AtrAdaptive };
+
+            // Constant range bars -> TR = 1.0 for every bar -> ATR = 1.0
+            int n = 20;
+            var high = new double[n];
+            var low = new double[n];
+            var close = new double[n];
+            var open = new double[n];
+            var vol = new long[n];
+            var time = new DateTime[n];
+            var baseTime = new DateTime(2026, 8, 1, 9, 30, 0);
+            for (int i = 0; i < n; i++)
+            {
+                high[i] = 100.0;
+                low[i] = 99.0;
+                close[i] = 99.5;
+                open[i] = 99.5;
+                vol[i] = 1000;
+                time[i] = baseTime.AddMinutes(i);
+            }
+            BarsRequest.TestBarsFactory = req => new Bars(high, low, close, open, vol, time);
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            // ATR = 1.0 -> slDist = 1.5, tpDist = 2.5
+            Assert(result.Status == "submitted", "AtrAdaptive submitted with live ATR");
+            Assert(Approx(result.StopPrice, 17998.5), "Stop = entry - 1.5 (live ATR=1.0)");
+            Assert(Approx(result.TargetPrice, 18002.5), "Target = entry + 2.5 (live ATR=1.0)");
+
+            BarsRequest.TestBarsFactory = null;
+        }
+
+        private static void TestAtm_SwingPointUsesSwingLow()
+        {
+            Console.WriteLine("\n[TEST] ATM: SwingPoint Uses Swing Low");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.SwingPoint, SwingLookbackBars = 5, SwingBufferTicks = 4 };
+
+            // lows descending: last lookback window min = 17996; buffer = 4 ticks = 1.0 -> stop = 17995
+            int n = 10;
+            double[] lows = { 18010, 18009, 18008, 18007, 18006, 18005, 18004, 18003, 18002, 17996 };
+            var high = new double[n];
+            var low = new double[n];
+            var close = new double[n];
+            var open = new double[n];
+            var vol = new long[n];
+            var time = new DateTime[n];
+            var baseTime = new DateTime(2026, 8, 1, 9, 30, 0);
+            for (int i = 0; i < n; i++)
+            {
+                low[i] = lows[i];
+                high[i] = low[i] + 2.0;
+                close[i] = high[i] - 0.5;
+                open[i] = high[i] - 0.5;
+                vol[i] = 1000;
+                time[i] = baseTime.AddMinutes(i * 5);
+            }
+            BarsRequest.TestBarsFactory = req => new Bars(high, low, close, open, vol, time);
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "SwingPoint submitted");
+            Assert(Approx(result.StopPrice, 17995.0), "Stop = swing low 17996 - buffer 1.0 = 17995");
+            Assert(Approx(result.TargetPrice, 18010.0), "Target = entry + 2x(entry-stop) = 18010");
+
+            BarsRequest.TestBarsFactory = null;
+        }
+
+        private static void TestAtm_SessionAdaptiveMultiplier()
+        {
+            Console.WriteLine("\n[TEST] ATM: SessionAdaptive Smoke Test");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.SessionAdaptive, StopTicks = 8, TargetTicks = 16 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "submitted", "SessionAdaptive submitted");
+            Assert(result.StrategyName == "SessionAdaptive", "Strategy name is SessionAdaptive");
+            Assert(result.StopPrice < 18000 && result.TargetPrice > 18000, "Stop below entry and target above entry for long");
+            Assert(result.StopPrice < result.TargetPrice, "Stop strictly below target");
+        }
+
+        private static void TestAtm_UnknownSymbolFallsBackToDefaults()
+        {
+            Console.WriteLine("\n[TEST] ATM: Unknown Symbol Falls Back To Default Profile");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("XYZ", "XYZ 12-26");
+            instrument.MasterInstrument.TickSize = 0.25;
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.FixedTicks, StopTicks = 8, TargetTicks = 16 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 100, 0.25, 50.0);
+
+            Assert(result.Status == "submitted", "Unknown-symbol bracket submitted");
+            Assert(result.StrategyName == "FixedTicks", "Fallback profile uses FixedTicks");
+            Assert(Approx(result.StopPrice, 98.0), "Fallback stop = entry - 8 ticks (98)");
+            Assert(Approx(result.TargetPrice, 104.0), "Fallback target = entry + 16 ticks (104)");
+        }
+
+        private static void TestAtm_GetProfileKnownAndUnknown()
+        {
+            Console.WriteLine("\n[TEST] ATM: GetProfile Known And Unknown");
+            var mnq = DynamicAtmManager.GetProfile("MNQ");
+            Assert(mnq != null && mnq.MaxContracts == 50 && mnq.DefaultStrategy == AtmStrategyType.AtrAdaptive, "MNQ profile returns MaxContracts=50, AtrAdaptive default");
+            var es = DynamicAtmManager.GetProfile("ES");
+            Assert(es != null && es.DefaultStrategy == AtmStrategyType.SwingPoint, "ES profile default strategy is SwingPoint");
+            var sixE = DynamicAtmManager.GetProfile("6E");
+            Assert(sixE != null && sixE.DefaultStrategy == AtmStrategyType.FixedTicks, "6E profile default strategy is FixedTicks");
+            Assert(DynamicAtmManager.GetProfile("ZZZZ") == null, "Unknown root returns null profile");
+        }
+
+        private static void TestAtm_ZeroPriceReturnsError()
+        {
+            Console.WriteLine("\n[TEST] ATM: Zero Price Returns Error");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.FixedTicks, StopTicks = 8, TargetTicks = 16 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 0, 0.25, 2.0);
+
+            Assert(result.Status == "error", "Zero entry price produces error status");
+            Assert(!string.IsNullOrEmpty(result.Error), "Error message populated for zero price");
+        }
+
+        private static void TestAtm_RejectedExitOrdersPartialSubmit()
+        {
+            Console.WriteLine("\n[TEST] ATM: Rejected Exit Orders -> partial_submit");
+            var account = CreateAtmAccount();
+            account.SimulateExitRejection = true;
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.FixedTicks, StopTicks = 8, TargetTicks = 16 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+
+            Assert(result.Status == "partial_submit", "Status becomes partial_submit when exit orders rejected");
+            Assert(result.Note != null && result.Note.Contains("rejected"), "Note mentions rejected exit orders");
+        }
+
+        private static void TestAtm_ShouldTriggerBreakeven()
+        {
+            Console.WriteLine("\n[TEST] ATM: ShouldTriggerBreakeven Logic");
+            var mgr = DynamicAtmManager.Instance;
+            var config = new AtmStrategyConfig { BreakevenTriggerTicks = 12 };
+
+            Assert(mgr.ShouldTriggerBreakeven(config, 18000, 18003.0, true, 0.25), "Long at exactly +12 ticks triggers breakeven");
+            Assert(!mgr.ShouldTriggerBreakeven(config, 18000, 18002.75, true, 0.25), "Long at +11 ticks does not trigger breakeven");
+            Assert(mgr.ShouldTriggerBreakeven(config, 18000, 17997.0, false, 0.25), "Short at -12 ticks triggers breakeven");
+            Assert(!mgr.ShouldTriggerBreakeven(config, 18000, 18002.75, false, 0.25), "Short at +11 ticks does not trigger breakeven");
+        }
+
+        private static void TestAtm_CalculateBreakevenStopPrice()
+        {
+            Console.WriteLine("\n[TEST] ATM: CalculateBreakevenStopPrice Logic");
+            var mgr = DynamicAtmManager.Instance;
+
+            Assert(Approx(mgr.CalculateBreakevenStopPrice(18000, true, 0.25, 2), 18000.5), "Long breakeven stop = entry + offset 0.5");
+            Assert(Approx(mgr.CalculateBreakevenStopPrice(18000, false, 0.25, 2), 17999.5), "Short breakeven stop = entry - offset 0.5");
+            Assert(Approx(mgr.CalculateBreakevenStopPrice(18000, true, 0.25, 0), 18000.0), "Long breakeven stop = entry with zero offset");
+        }
+
+        private static void TestAtm_ActiveBracketStatus()
+        {
+            Console.WriteLine("\n[TEST] ATM: GetBracketStatus");
+            var account = CreateAtmAccount();
+            var instrument = CreateAtmInstrument("MNQ", "MNQ 09-26");
+            var config = new AtmStrategyConfig { Type = AtmStrategyType.DrawdownShield, StopTicks = 10, TargetTicks = 20 };
+
+            var result = DynamicAtmManager.Instance.PlaceBracket(account, instrument, "buy", 1, config, 18000, 0.25, 2.0);
+            var status = DynamicAtmManager.Instance.GetBracketStatus(result.BracketId) as dynamic;
+
+            Assert(status != null, "GetBracketStatus returns an object for a registered bracket");
+            string statusBracketId = status.bracketId;
+            Assert(statusBracketId == result.BracketId, "Status bracketId matches result BracketId");
+            bool isComplete = status.isComplete;
+            Assert(isComplete == false, "Newly registered bracket is not complete");
+            var missing = DynamicAtmManager.Instance.GetBracketStatus("does-not-exist");
+            Assert(missing is dynamic && ((dynamic)missing).error != null, "Unknown bracketId returns error payload");
+
+            DynamicAtmManager.Instance.RemoveBracket(result.BracketId);
         }
     }
 }
