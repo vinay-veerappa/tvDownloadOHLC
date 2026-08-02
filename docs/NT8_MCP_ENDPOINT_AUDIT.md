@@ -271,6 +271,17 @@ All 20 tested endpoints pass (0 failures). `/api/script/execute` deferred per us
 | `/api/trades/monte-carlo` | Verified with 10-trade input, 500 iterations: returns valid riskOfRuinPct, CVaR, drawdown percentiles, equity percentiles. Empty trades → honest error (no more placeholder `*10` P&L) | ✅ Verified |
 | `/api/order/atm` | Without stopLossTicks/takeProfitTicks → error. With both → submits entry, `isAtmBracket=false`, `bracketState=EntryOnly_BracketRequiresPrices`, note directs to `/api/order/oco` | ✅ Verified |
 | `/api/emergency-flatten` | Triggers flatten + lockout. Lockout then blocks `PlaceOrder` with "Order blocked: Account Sim101 is locked out.". Unlock via `/api/lockout` clears it → orders accepted again | ✅ Verified |
+| `/api/schedule/task` | Returns `status:"persisted"` with note that no scheduler engine exists (was `"scheduled"` — misleading) | ⚠️ Partial |
+| `/api/alert/create` | Returns `status:"recorded"` with note that NT8 has no public AddOn API for alert registration (was `"active"` — misleading) | ⚠️ Partial |
+| `/api/orchestrator/multi-account` | Now actually iterates target accounts and submits orders via CreateOrder/Submit. Returns per-account results with orderId. Without orders array → error | ✅ Verified |
+| `/api/strategy/inspect` | Returns 214 properties with `isInput` flag (62 marked as NinjaScriptProperty inputs). Includes inherited StrategyBase properties (previously filtered out) | ✅ Verified |
+| `/api/trades/extract` | Returns executions with `commission` field (exec.Commission). MAE/MFE null with note explaining limitation | ✅ Verified |
+| `/api/backtest/signal` | Returns error for unsupported `entryRule` (was silently running SMA cross for any rule). Only `sma_crossover` supported | ⚠️ Partial |
+| `/api/riskguard/config` | Returns `status:"persisted"` with note that file is NOT the live RiskGuard config (RiskGuard reads `config.json`, not `riskguard_config.json`) | ⚠️ Partial |
+| `/api/compliance/report` | Now tries PropFirmProtectionSuite.Config.DailyLossLimit (was hardcoded -2500). Returns `account not found` for non-existent accounts | ✅ Verified |
+| `/api/trades/journal` | Supports add/create + delete + update (was Create+Read only). Loads from disk at top of every call. Stores loaded at startup | ✅ Verified |
+| `/api/copier/config` | Real enforcement via TradeCopierEngine.OnExecution → CreateOrder/Submit | ✅ Verified |
+| `/api/prop/limits` | Real — consumed by RiskGuardAddOn (News/Target/Peak subset) | ✅ Verified |
 
 #### Market-Closed — Code Verified, Functional Pending Market Hours
 
