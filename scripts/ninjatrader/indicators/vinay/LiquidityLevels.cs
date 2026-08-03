@@ -157,8 +157,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "London Open (03:00 ET)", Order = 10, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowLondonOpen { get; set; } = true;
 
-        [Display(Name = "NY Open (09:30 ET)", Order = 11, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowNyOpen { get; set; } = true;
+        [Display(Name = "RTH / NY Open (09:30 ET)", Order = 11, GroupName = "1. Specific Level Toggles (Granular)")]
+        public bool ShowRTHOpen { get; set; } = true;
 
         [Display(Name = "4-Hour Session Opens", Order = 12, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool Show4HOpens { get; set; } = false;
@@ -175,19 +175,25 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "Initial Balance High/Low", Order = 16, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowIB { get; set; } = true;
 
-        [Display(Name = "Current Session POC", Order = 17, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "High of Day (HOD)", Order = 17, GroupName = "1. Specific Level Toggles (Granular)")]
+        public bool ShowHOD { get; set; } = true;
+
+        [Display(Name = "Low of Day (LOD)", Order = 18, GroupName = "1. Specific Level Toggles (Granular)")]
+        public bool ShowLOD { get; set; } = true;
+
+        [Display(Name = "Current Session POC", Order = 19, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowCurrentPOC { get; set; } = false;
 
-        [Display(Name = "Current Session Value Area (VAH/VAL)", Order = 18, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Current Session Value Area (VAH/VAL)", Order = 20, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowCurrentVA { get; set; } = false;
 
-        [Display(Name = "Prev Day POC", Order = 19, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prev Day POC", Order = 21, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowPrevDayPOC { get; set; } = false;
 
-        [Display(Name = "Prev Day Value Area (VAH/VAL)", Order = 20, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prev Day Value Area (VAH/VAL)", Order = 22, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowPrevDayVA { get; set; } = false;
 
-        [Display(Name = "Overnight POC / VAH / VAL", Order = 21, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Overnight POC / VAH / VAL", Order = 23, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowOvernightPOC { get; set; } = false;
 
         #endregion
@@ -238,13 +244,29 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         #endregion
 
+        #region NinjaScript Properties — Voice Alerts
+
+        [Display(Name = "Enable Voice Alerts", Description = "Speak audio alerts via Windows Speech Synthesis when levels are swept", Order = 1, GroupName = "4. Voice Alerts")]
+        public bool EnableVoiceAlerts { get; set; } = false;
+
+        [Display(Name = "Voice Gender", Description = "Female or Male voice for speech synthesis", Order = 2, GroupName = "4. Voice Alerts")]
+        public VoiceGenderSelection VoiceGender { get; set; } = VoiceGenderSelection.Female;
+
+        [Display(Name = "Voice Volume (10-100)", Description = "Audio volume for voice alerts", Order = 3, GroupName = "4. Voice Alerts")]
+        public int VoiceVolume { get; set; } = 80;
+
+        [Display(Name = "Voice Rate (-10 to 10)", Description = "Speech rate speed (-10 slowest, 10 fastest)", Order = 4, GroupName = "4. Voice Alerts")]
+        public int VoiceRate { get; set; } = 0;
+
+        #endregion
+
         #region State Initialization
 
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
-                Description = "Displays key liquidity levels (PDH/PDL, PWH/PWL, PMH/PML, Session Opens, Session Ranges, Pivots, Fibs) with hover tooltips and origin-anchored rays. v1.2.0";
+                Description = "Displays key liquidity levels (PDH/PDL, PWH/PWL, PMH/PML, Session Opens, Session Ranges, Pivots, Fibs) with hover tooltips, voice alerts, and origin-anchored rays. v1.3.0";
                 Name = "LiquidityLevels";
                 Calculate = Calculate.OnBarClose;
                 IsOverlay = true;
@@ -312,21 +334,26 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             if (name == "PDH" && !ShowPDH) return false;
             if (name == "PDL" && !ShowPDL) return false;
             if (name == "PDC" && !ShowPDC) return false;
+
             if (name == "PWH" && !ShowPWH) return false;
             if (name == "PWL" && !ShowPWL) return false;
             if (name == "PWC" && !ShowPWC) return false;
+
             if (name == "PMH" && !ShowPMH) return false;
             if (name == "PML" && !ShowPML) return false;
 
             if (name == "MidnightOpen" && !ShowMidnightOpen) return false;
             if (name == "LondonOpen" && !ShowLondonOpen) return false;
-            if (name == "NyOpen" && !ShowNyOpen) return false;
-            if (name.StartsWith("4H_") && !Show4HOpens) return false;
+            if ((name == "RTHOpen" || name == "NYOpen") && !ShowRTHOpen) return false;
+            if (name.StartsWith("Open_") && !Show4HOpens) return false;
 
-            if (name.StartsWith("Asia") && !ShowAsiaRange) return false;
-            if (name.StartsWith("London") && !ShowLondonRange) return false;
-            if (name.StartsWith("Globex") && !ShowGlobexRange) return false;
-            if (name.StartsWith("IB") && !ShowIB) return false;
+            if ((name == "AsiaH" || name == "AsiaL" || name == "AsiaMid") && !ShowAsiaRange) return false;
+            if ((name == "LonH" || name == "LonL" || name == "LonMid" || name == "LonOrMid") && !ShowLondonRange) return false;
+            if ((name == "GlbH" || name == "GlbL" || name == "GlbMid") && !ShowGlobexRange) return false;
+            if ((name == "IBH" || name == "IBL" || name == "IBMid") && !ShowIB) return false;
+
+            if (name == "HOD" && !ShowHOD) return false;
+            if (name == "LOD" && !ShowLOD) return false;
 
             if (name.Contains("CurrentPOC") && !ShowCurrentPOC) return false;
             if ((name.Contains("CurrentVAH") || name.Contains("CurrentVAL")) && !ShowCurrentVA) return false;
@@ -933,10 +960,43 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     level.Swept = true;
                     level.SweptTime = barTime;
                     level.TouchCount++;
+
+                    if (EnableVoiceAlerts)
+                    {
+                        double roundedP = TickSize > 0 ? Math.Round(level.Price / TickSize) * TickSize : level.Price;
+                        string formattedP = Instrument != null ? Instrument.MasterInstrument.FormatPrice(roundedP) : roundedP.ToString("F2");
+                        string side = sweep.IsBullSweep ? "Bullish Sweep" : "Bearish Sweep";
+                        string spokenName = level.Def.FullName ?? level.Def.Name;
+                        string alertMsg = $"{side}: {spokenName} swept at {formattedP}";
+                        SpeakVoiceAlert(alertMsg);
+                    }
                 }
             }
 
             UpdateStacking();
+        }
+
+        private void SpeakVoiceAlert(string message)
+        {
+            if (string.IsNullOrEmpty(message)) return;
+            try
+            {
+                // 1. Native NinjaTrader Alert Window + Sound
+                Alert("LiquiditySweep", Priority.High, message, NinjaTrader.Core.Globals.InstallDir + @"\sounds\Alert1.wav", 10, System.Windows.Media.Brushes.White, System.Windows.Media.Brushes.DarkRed);
+
+                // 2. Windows Text-to-Speech Synthesis
+                if (EnableVoiceAlerts)
+                {
+                    string cleanMsg = message.Replace("'", "").Replace("\"", "");
+                    string psCmd = $"-Command \"Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Volume = {Math.Min(100, Math.Max(10, VoiceVolume))}; $s.Rate = {Math.Min(10, Math.Max(-10, VoiceRate))}; $s.Speak('{cleanMsg}')\"";
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell", psCmd)
+                    {
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    });
+                }
+            }
+            catch {}
         }
 
         private void UpdateStacking()

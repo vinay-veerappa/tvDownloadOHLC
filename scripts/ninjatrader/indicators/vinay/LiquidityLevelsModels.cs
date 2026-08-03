@@ -63,6 +63,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         Both         // Draw labels at both origin and right margin
     }
 
+    public enum VoiceGenderSelection
+    {
+        Female,
+        Male
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // LevelDef — immutable catalog entry (one per level type)
     // ════════════════════════════════════════════════════════════════════════
