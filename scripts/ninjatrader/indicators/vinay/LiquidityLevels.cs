@@ -104,10 +104,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public bool ShowIntraday { get; set; } = true;
 
         [Display(Name = "Show Volume Profile Levels", Order = 7, GroupName = "0. Level Categories (Master)")]
-        public bool ShowVolumeProfile { get; set; } = true;
+        public bool ShowVolumeProfile { get; set; } = false;
 
         [Display(Name = "Show Structure Levels", Order = 8, GroupName = "0. Level Categories (Master)")]
-        public bool ShowStructure { get; set; } = true;
+        public bool ShowStructure { get; set; } = false;
 
         [Display(Name = "Show Pivot Levels", Order = 9, GroupName = "0. Level Categories (Master)")]
         public bool ShowPivots { get; set; } = false;
@@ -126,7 +126,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public bool ShowPDL { get; set; } = true;
 
         [Display(Name = "Prior Day Close (PDC)", Order = 3, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowPDC { get; set; } = true;
+        public bool ShowPDC { get; set; } = false;
 
         [Display(Name = "Prior Week High (PWH)", Order = 4, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowPWH { get; set; } = true;
@@ -135,7 +135,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public bool ShowPWL { get; set; } = true;
 
         [Display(Name = "Prior Week Close (PWC)", Order = 6, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowPWC { get; set; } = true;
+        public bool ShowPWC { get; set; } = false;
 
         [Display(Name = "Prev Month High (PMH)", Order = 7, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowPMH { get; set; } = true;
@@ -153,7 +153,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public bool ShowNyOpen { get; set; } = true;
 
         [Display(Name = "4-Hour Session Opens", Order = 12, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool Show4HOpens { get; set; } = true;
+        public bool Show4HOpens { get; set; } = false;
 
         [Display(Name = "Asia Range High/Low", Order = 13, GroupName = "1. Specific Level Toggles (Granular)")]
         public bool ShowAsiaRange { get; set; } = true;
@@ -168,19 +168,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public bool ShowIB { get; set; } = true;
 
         [Display(Name = "Current Session POC", Order = 17, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowCurrentPOC { get; set; } = true;
+        public bool ShowCurrentPOC { get; set; } = false;
 
         [Display(Name = "Current Session Value Area (VAH/VAL)", Order = 18, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowCurrentVA { get; set; } = true;
+        public bool ShowCurrentVA { get; set; } = false;
 
         [Display(Name = "Prev Day POC", Order = 19, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowPrevDayPOC { get; set; } = true;
+        public bool ShowPrevDayPOC { get; set; } = false;
 
         [Display(Name = "Prev Day Value Area (VAH/VAL)", Order = 20, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowPrevDayVA { get; set; } = true;
+        public bool ShowPrevDayVA { get; set; } = false;
 
         [Display(Name = "Overnight POC / VAH / VAL", Order = 21, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool ShowOvernightPOC { get; set; } = true;
+        public bool ShowOvernightPOC { get; set; } = false;
 
         #endregion
 
@@ -1123,7 +1123,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     string nameStr = UseFullLevelNames && !string.IsNullOrEmpty(level.Def.FullName) ? level.Def.FullName : level.Def.Name;
                     string label = $"{nameStr} {level.Price:F1}";
                     if (level.Swept) label += " ✗";
-                    if (level.StacksWith.Count > 0) label += " [STACK]";
 
                     var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, label, textFormat,
                         float.MaxValue, float.MaxValue);

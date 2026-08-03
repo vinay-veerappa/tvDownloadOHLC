@@ -113,8 +113,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("S3", "Support 3", LevelCategory.Pivot, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "S3"));
 
             // ── Fibs (T5 — off by default) ──
-            for (int i = 1; i <= 10; i++)
-                levels.Add(new LevelDef($"Fib{i}", $"Fibonacci Level {i}", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, $"FibLevel{i}"));
+            levels.Add(new LevelDef("Fib 23.6%", "Fibonacci 23.6%", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel1"));
+            levels.Add(new LevelDef("Fib 38.2%", "Fibonacci 38.2%", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel2"));
+            levels.Add(new LevelDef("Fib 50.0%", "Fibonacci 50.0% (Mid)", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel3"));
+            levels.Add(new LevelDef("Fib 61.8%", "Fibonacci 61.8%", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel4"));
+            levels.Add(new LevelDef("Fib 78.6%", "Fibonacci 78.6%", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel5"));
+            levels.Add(new LevelDef("Fib 100%", "Fibonacci 100% (PDH)", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel6"));
+            levels.Add(new LevelDef("Fib 127.2%", "Fibonacci 127.2% (Ext)", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel7"));
+            levels.Add(new LevelDef("Fib 161.8%", "Fibonacci 161.8% (Ext)", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel8"));
+            levels.Add(new LevelDef("Fib -27.2%", "Fibonacci -27.2% (Ext)", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel9"));
+            levels.Add(new LevelDef("Fib -61.8%", "Fibonacci -61.8% (Ext)", LevelCategory.Fib, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "FibLevel10"));
 
             return levels;
         }
