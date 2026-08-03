@@ -214,7 +214,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public bool DrawSweepMarkers { get; set; } = true;
 
         [Display(Name = "Proximity Fade", Description = "Fade levels far from price; brighten when close", Order = 9, GroupName = "3. Visuals")]
-        public bool ProximityFade { get; set; } = true;
+        public bool ProximityFade { get; set; } = false;
 
         [Range(0, 500)]
         [Display(Name = "Proximity Threshold (pts)", Description = "Distance within which levels glow. 0 = auto (use ATR)", Order = 10, GroupName = "3. Visuals")]
@@ -229,7 +229,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public int NearGlowOpacity { get; set; } = 90;
 
         [Display(Name = "Use Full Level Names", Description = "Show full level names (e.g., 'Prev Month High', 'Prior Day High') instead of abbreviations ('PMH', 'PDH')", Order = 13, GroupName = "3. Visuals")]
-        public bool UseFullLevelNames { get; set; } = true;
+        public bool UseFullLevelNames { get; set; } = false;
 
         #endregion
 
@@ -628,14 +628,41 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private double ReadRedTailKeyLevels(string accessor)
         {
+            double pdh = PriorDayOHLC().PriorHigh[0];
+            double pdl = PriorDayOHLC().PriorLow[0];
+            double pdc = PriorDayOHLC().PriorClose[0];
+            double range = pdh - pdl;
+
             switch (accessor)
             {
-                case "PDH": return PriorDayOHLC().PriorHigh[0];
-                case "PDL": return PriorDayOHLC().PriorLow[0];
-                case "PWH": return prevWeekHigh > 0 ? prevWeekHigh : PriorDayOHLC().PriorHigh[0];
-                case "PWL": return prevWeekLow > 0 ? prevWeekLow : PriorDayOHLC().PriorLow[0];
-                case "PMH": return prevMonthHigh > 0 ? prevMonthHigh : PriorDayOHLC().PriorHigh[0];
-                case "PML": return prevMonthLow > 0 ? prevMonthLow : PriorDayOHLC().PriorLow[0];
+                case "PDH": return pdh;
+                case "PDL": return pdl;
+                case "PWH": return prevWeekHigh > 0 ? prevWeekHigh : pdh;
+                case "PWL": return prevWeekLow > 0 ? prevWeekLow : pdl;
+                case "PMH": return prevMonthHigh > 0 ? prevMonthHigh : pdh;
+                case "PML": return prevMonthLow > 0 ? prevMonthLow : pdl;
+
+                // Daily Floor Pivots
+                case "Pp": return (pdh > 0 && pdl > 0 && pdc > 0) ? (pdh + pdl + pdc) / 3.0 : 0;
+                case "R1": { double pp = (pdh + pdl + pdc) / 3.0; return (pdh > 0 && pdl > 0) ? (2.0 * pp - pdl) : 0; }
+                case "R2": { double pp = (pdh + pdl + pdc) / 3.0; return (pdh > 0 && pdl > 0) ? (pp + range) : 0; }
+                case "R3": { double pp = (pdh + pdl + pdc) / 3.0; return (pdh > 0 && pdl > 0) ? (pdh + 2.0 * (pp - pdl)) : 0; }
+                case "S1": { double pp = (pdh + pdl + pdc) / 3.0; return (pdh > 0 && pdl > 0) ? (2.0 * pp - pdh) : 0; }
+                case "S2": { double pp = (pdh + pdl + pdc) / 3.0; return (pdh > 0 && pdl > 0) ? (pp - range) : 0; }
+                case "S3": { double pp = (pdh + pdl + pdc) / 3.0; return (pdh > 0 && pdl > 0) ? (pdl - 2.0 * (pdh - pp)) : 0; }
+
+                // Fibs (Fibonacci retracements / extensions based on Prior Day Range)
+                case "FibLevel1": return (pdh > 0 && range > 0) ? pdl + 0.236 * range : 0;
+                case "FibLevel2": return (pdh > 0 && range > 0) ? pdl + 0.382 * range : 0;
+                case "FibLevel3": return (pdh > 0 && range > 0) ? pdl + 0.500 * range : 0;
+                case "FibLevel4": return (pdh > 0 && range > 0) ? pdl + 0.618 * range : 0;
+                case "FibLevel5": return (pdh > 0 && range > 0) ? pdl + 0.786 * range : 0;
+                case "FibLevel6": return (pdh > 0 && range > 0) ? pdh : 0;
+                case "FibLevel7": return (pdh > 0 && range > 0) ? pdl + 1.272 * range : 0;
+                case "FibLevel8": return (pdh > 0 && range > 0) ? pdl + 1.618 * range : 0;
+                case "FibLevel9": return (pdh > 0 && range > 0) ? pdl - 0.272 * range : 0;
+                case "FibLevel10": return (pdh > 0 && range > 0) ? pdl - 0.618 * range : 0;
+
                 default: return 0;
             }
         }
@@ -1056,11 +1083,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                 float alpha;
                 if (level.Swept)
-                    alpha = 0.2f;
+                    alpha = 0.25f;
                 else if (ProximityFade)
                     alpha = ComputeProximityAlpha(level.Price, currentPrice);
                 else
-                    alpha = 0.7f;
+                    alpha = 0.95f;
 
                 var lineColor = new Color4(color.R / 255f, color.G / 255f, color.B / 255f, alpha);
 
@@ -1073,7 +1100,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                 float labelAlphaThreshold = (float)FarFadeOpacity / 100f + 0.05f;
                 bool showLabel = DrawLabels && textFormat != null
-                    && (!ProximityFade || alpha > labelAlphaThreshold || level.Swept == false && level.StacksWith.Count > 0);
+                    && (!ProximityFade || alpha > labelAlphaThreshold || (level.Swept == false && level.StacksWith.Count > 0));
 
                 if (showLabel)
                 {
@@ -1087,13 +1114,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     float labelX = xEnd + 4;
                     float labelY = y - (float)textLayout.Metrics.Height / 2;
 
-                    var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0, 0, 0, 0.6f));
-                    var bgRect = new RectangleF(labelX - 2, labelY, (float)textLayout.Metrics.Width + 4,
-                        (float)textLayout.Metrics.Height);
-                    RenderTarget.FillRectangle(bgRect, bgBrush);
-                    bgBrush.Dispose();
+                    var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f));
+                    var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(color.R / 255f, color.G / 255f, color.B / 255f, 0.9f));
+                    var labelBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f));
 
-                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(labelX, labelY), textLayout, brush);
+                    var bgRect = new RectangleF(labelX - 2, labelY - 1, (float)textLayout.Metrics.Width + 4,
+                        (float)textLayout.Metrics.Height + 2);
+                    RenderTarget.FillRectangle(bgRect, bgBrush);
+                    RenderTarget.DrawRectangle(bgRect, borderBrush, 1.0f);
+
+                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(labelX, labelY), textLayout, labelBrush);
+
+                    bgBrush.Dispose();
+                    borderBrush.Dispose();
+                    labelBrush.Dispose();
                     textLayout.Dispose();
                 }
 
