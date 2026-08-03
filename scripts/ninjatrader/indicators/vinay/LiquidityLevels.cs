@@ -44,6 +44,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private List<SweepEvent> sweepEvents;
         private List<SweepEvent> todaySweeps;
 
+        // Open Tracking Fields
+        private double currentMonthOpen, prevMonthOpen;
+        private double currentWeekOpen, prevWeekOpen;
+        private double tueOpen, wedOpen, thuOpen, friOpen;
+
         // Native Engines & Helpers
         private SessionOpensEngine sessionOpens;
 
@@ -58,11 +63,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         // Native Week & Month Tracking
         private double prevWeekHigh, prevWeekLow, prevWeekCloseVal;
-        private double curWeekHigh, curWeekLow, curWeekClose;
+        private double curWeekHigh, curWeekLow, curWeekClose, curWeekOpen;
         private int curWeekNum = -1;
 
         private double prevMonthHigh, prevMonthLow, prevMonthCloseVal;
-        private double curMonthHigh, curMonthLow, curMonthClose;
+        private double curMonthHigh, curMonthLow, curMonthClose, curMonthOpen;
         private int curMonthNum = -1;
 
         // Native Session Range Tracking (Asia, London, Globex, IB)
@@ -430,12 +435,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     prevWeekHigh = curWeekHigh;
                     prevWeekLow = curWeekLow;
                     prevWeekCloseVal = curWeekClose;
+                    prevWeekOpen = curWeekOpen;
                 }
                 curWeekHigh = high;
                 curWeekLow = low;
                 curWeekClose = close;
+                curWeekOpen = Open[0];
                 curWeekNum = weekNum;
                 weekStartBar = CurrentBar;
+                tueOpen = 0; wedOpen = 0; thuOpen = 0; friOpen = 0;
             }
             else
             {
@@ -444,6 +452,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 curWeekClose = close;
             }
             if (weekStartBar < 0) weekStartBar = CurrentBar;
+
+            // Daily Opens of Current Week
+            if (barEt.DayOfWeek == DayOfWeek.Tuesday && tueOpen == 0) tueOpen = Open[0];
+            if (barEt.DayOfWeek == DayOfWeek.Wednesday && wedOpen == 0) wedOpen = Open[0];
+            if (barEt.DayOfWeek == DayOfWeek.Thursday && thuOpen == 0) thuOpen = Open[0];
+            if (barEt.DayOfWeek == DayOfWeek.Friday && friOpen == 0) friOpen = Open[0];
 
             // Month Tracking
             int monthNum = barEt.Year * 12 + barEt.Month;
@@ -454,10 +468,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     prevMonthHigh = curMonthHigh;
                     prevMonthLow = curMonthLow;
                     prevMonthCloseVal = curMonthClose;
+                    prevMonthOpen = curMonthOpen;
                 }
                 curMonthHigh = high;
                 curMonthLow = low;
                 curMonthClose = close;
+                curMonthOpen = Open[0];
                 curMonthNum = monthNum;
                 monthStartBar = CurrentBar;
             }
@@ -752,8 +768,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 case "PriorWeekClose":
                     return prevWeekCloseVal > 0 ? prevWeekCloseVal : pdc;
 
+                case "PriorWeekOpen":
+                    return prevWeekOpen;
+
                 case "PriorMonthMid":
                     return (prevMonthHigh > 0 && prevMonthLow > 0) ? (prevMonthHigh + prevMonthLow) / 2.0 : 0;
+
+                case "PriorMonthOpen":
+                    return prevMonthOpen;
+
+                case "TueOpen": return tueOpen;
+                case "WedOpen": return wedOpen;
+                case "ThuOpen": return thuOpen;
+                case "FriOpen": return friOpen;
 
                 case "P12High": return p12High;
                 case "P12Low": return p12Low;
@@ -1144,6 +1171,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             float xEnd = chartControl.GetXByBarIndex(ChartBars, CurrentBar) + (float)chartControl.Properties.BarDistance;
 
             double currentPrice = Close[0];
+            var labelItems = new List<RenderLabelItem>();
 
             foreach (var level in activeLevelsToDraw)
             {
@@ -1182,49 +1210,98 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     string label = $"{nameStr} {priceStr}";
                     if (level.Swept) label += " ✗";
 
-                    var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, label, textFormat,
-                        float.MaxValue, float.MaxValue);
-                    float textW = (float)textLayout.Metrics.Width;
-                    float textH = (float)textLayout.Metrics.Height;
-                    float labelY = y - textH / 2;
-
-                    var bgBrush = isDark
-                        ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
-                        : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.98f, 0.98f, 1.0f, 0.95f));
-
-                    var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(color.R / 255f, color.G / 255f, color.B / 255f, 0.9f));
-
-                    var labelBrush = isDark
-                        ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
-                        : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
-
-                    // 1. Draw Right Margin Label (Default, clean on right margin)
-                    if (LabelPlacement == LabelPlacement.RightMargin || LabelPlacement == LabelPlacement.Both)
+                    labelItems.Add(new RenderLabelItem
                     {
+                        Level = level,
+                        Y = y,
+                        XStart = xStart,
+                        Color = color,
+                        Text = label
+                    });
+                }
+            }
+
+            // ── Smart Label Harmonization (Y-Staggering) ──
+            if (labelItems.Count > 0)
+            {
+                var sortedLabels = labelItems.OrderBy(l => l.Y).ToList();
+                float minSpacing = 16f;
+
+                // 1. Render Right Margin Labels (Y-Staggered)
+                if (LabelPlacement == LabelPlacement.RightMargin || LabelPlacement == LabelPlacement.Both)
+                {
+                    float prevY = -1000f;
+                    foreach (var item in sortedLabels)
+                    {
+                        var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue);
+                        float textW = (float)textLayout.Metrics.Width;
+                        float textH = (float)textLayout.Metrics.Height;
+                        float labelY = item.Y - textH / 2f;
+
+                        if (labelY < prevY + minSpacing)
+                            labelY = prevY + minSpacing;
+                        prevY = labelY;
+
+                        var bgBrush = isDark
+                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
+                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.98f, 0.98f, 1.0f, 0.95f));
+
+                        var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(item.Color.R / 255f, item.Color.G / 255f, item.Color.B / 255f, 0.9f));
+
+                        var labelBrush = isDark
+                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
+                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
+
                         float rightLabelX = xEnd + 4;
                         var rightBgRect = new RectangleF(rightLabelX - 2, labelY - 1, textW + 4, textH + 2);
                         RenderTarget.FillRectangle(rightBgRect, bgBrush);
                         RenderTarget.DrawRectangle(rightBgRect, borderBrush, 1.0f);
                         RenderTarget.DrawTextLayout(new SharpDX.Vector2(rightLabelX, labelY), textLayout, labelBrush);
-                    }
 
-                    // 2. Draw Origin Label (Right at xStart where line originates)
-                    if (LabelPlacement == LabelPlacement.Origin || LabelPlacement == LabelPlacement.Both)
+                        bgBrush.Dispose();
+                        borderBrush.Dispose();
+                        labelBrush.Dispose();
+                        textLayout.Dispose();
+                    }
+                }
+
+                // 2. Render Origin Labels (Y-Staggered)
+                if (LabelPlacement == LabelPlacement.Origin || LabelPlacement == LabelPlacement.Both)
+                {
+                    float prevY = -1000f;
+                    foreach (var item in sortedLabels)
                     {
-                        float originLabelX = xStart + 4;
+                        var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue);
+                        float textW = (float)textLayout.Metrics.Width;
+                        float textH = (float)textLayout.Metrics.Height;
+                        float labelY = item.Y - textH / 2f;
+
+                        if (labelY < prevY + minSpacing)
+                            labelY = prevY + minSpacing;
+                        prevY = labelY;
+
+                        var bgBrush = isDark
+                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
+                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.98f, 0.98f, 1.0f, 0.95f));
+
+                        var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(item.Color.R / 255f, item.Color.G / 255f, item.Color.B / 255f, 0.9f));
+
+                        var labelBrush = isDark
+                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
+                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
+
+                        float originLabelX = item.XStart + 4;
                         var originBgRect = new RectangleF(originLabelX - 2, labelY - 1, textW + 4, textH + 2);
                         RenderTarget.FillRectangle(originBgRect, bgBrush);
                         RenderTarget.DrawRectangle(originBgRect, borderBrush, 1.0f);
                         RenderTarget.DrawTextLayout(new SharpDX.Vector2(originLabelX, labelY), textLayout, labelBrush);
+
+                        bgBrush.Dispose();
+                        borderBrush.Dispose();
+                        labelBrush.Dispose();
+                        textLayout.Dispose();
                     }
-
-                    bgBrush.Dispose();
-                    borderBrush.Dispose();
-                    labelBrush.Dispose();
-                    textLayout.Dispose();
                 }
-
-                brush.Dispose();
             }
 
             // Draw sweep markers
@@ -1296,6 +1373,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
             }
             return true;
+        }
+
+        private class RenderLabelItem
+        {
+            public LevelState Level { get; set; }
+            public float Y { get; set; }
+            public float XStart { get; set; }
+            public SharpDX.Color Color { get; set; }
+            public string Text { get; set; }
         }
 
         private void RenderHoverTooltip(ChartControl chartControl, ChartScale chartScale, LevelState level, float mouseX, float mouseY, double currentPrice)

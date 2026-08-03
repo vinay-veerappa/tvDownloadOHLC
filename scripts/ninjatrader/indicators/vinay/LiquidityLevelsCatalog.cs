@@ -19,6 +19,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("PDH", "Prior Day High", LevelCategory.PriorDay, LevelRole.SweepTarget, LevelSource.RedTailKeyLevels, "PDH"));
             levels.Add(new LevelDef("PDL", "Prior Day Low", LevelCategory.PriorDay, LevelRole.SweepTarget, LevelSource.RedTailKeyLevels, "PDL"));
             levels.Add(new LevelDef("PDC", "Prior Day Close", LevelCategory.PriorDay, LevelRole.SweepTarget, LevelSource.PriorDayOHLC, "PriorClose"));
+            levels.Add(new LevelDef("PDO", "Prior Day Open", LevelCategory.PriorDay, LevelRole.SweepTarget, LevelSource.PriorDayOHLC, "PriorOpen"));
             levels.Add(new LevelDef("PDM", "Prior Day Mid", LevelCategory.PriorDay, LevelRole.ConfluenceFactor, LevelSource.Internal, "PriorDayMid"));  // (PDH+PDL)/2
             levels.Add(new LevelDef("Settlement", "Settlement", LevelCategory.PriorDay, LevelRole.ConfluenceFactor, LevelSource.Internal, "Settlement"));  // prior day settlement close
 
@@ -27,6 +28,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("PWL", "Prior Week Low", LevelCategory.PriorWeek, LevelRole.SweepTarget, LevelSource.RedTailKeyLevels, "PWL"));
             levels.Add(new LevelDef("PWM", "Prior Week Mid", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.Internal, "PriorWeekMid"));  // (PWH+PWL)/2
             levels.Add(new LevelDef("PWC", "Prior Week Close", LevelCategory.PriorWeek, LevelRole.SweepTarget, LevelSource.Internal, "PriorWeekClose"));  // prev week close (settlement)
+            levels.Add(new LevelDef("PWO", "Prior Week Open", LevelCategory.PriorWeek, LevelRole.SweepTarget, LevelSource.Internal, "PriorWeekOpen"));
             levels.Add(new LevelDef("MH", "Monday High", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "MH"));
             levels.Add(new LevelDef("ML", "Monday Low", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "ML"));
             levels.Add(new LevelDef("GH", "Globex High", LevelCategory.PriorWeek, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "GH"));
@@ -36,12 +38,17 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("PMH", "Prev Month High", LevelCategory.PriorMonth, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "PMH"));
             levels.Add(new LevelDef("PML", "Prev Month Low", LevelCategory.PriorMonth, LevelRole.ConfluenceFactor, LevelSource.RedTailKeyLevels, "PML"));
             levels.Add(new LevelDef("PMM", "Prev Month Mid", LevelCategory.PriorMonth, LevelRole.ConfluenceFactor, LevelSource.Internal, "PriorMonthMid"));  // (PMH+PML)/2
+            levels.Add(new LevelDef("PMO", "Prev Month Open", LevelCategory.PriorMonth, LevelRole.SweepTarget, LevelSource.Internal, "PriorMonthOpen"));
 
             // ── Session Opens (T2 — NEW via SessionOpensEngine) ──
             levels.Add(new LevelDef("MidnightOpen", "Midnight Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "MidnightOpen"));
             levels.Add(new LevelDef("LondonOpen", "London Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "LondonOpen"));
             levels.Add(new LevelDef("GlobexOpen", "Globex Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "GlobexOpen"));  // 18:00 ET overnight session open
             levels.Add(new LevelDef("RTHOpen", "RTH / NY Open (09:30 ET)", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "RTHOpen"));  // 09:30 ET RTH open
+            levels.Add(new LevelDef("TueOpen", "Tuesday Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.Internal, "TueOpen"));
+            levels.Add(new LevelDef("WedOpen", "Wednesday Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.Internal, "WedOpen"));
+            levels.Add(new LevelDef("ThuOpen", "Thursday Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.Internal, "ThuOpen"));
+            levels.Add(new LevelDef("FriOpen", "Friday Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.Internal, "FriOpen"));
             levels.Add(new LevelDef("Open_04H", "Open 04:00", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_04H"));
             levels.Add(new LevelDef("Open_08H", "Open 08:00", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_08H"));
             levels.Add(new LevelDef("Open_12H", "Open 12:00", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_12H"));
