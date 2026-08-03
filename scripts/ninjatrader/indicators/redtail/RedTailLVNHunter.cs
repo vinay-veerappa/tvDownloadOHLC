@@ -19,7 +19,7 @@ public enum LookbackModeRTLVN
 	Session
 }
 
-namespace NinjaTrader.NinjaScript.Indicators
+namespace NinjaTrader.NinjaScript.Indicators.RedTail
 {
 	public class RedTailLVNHunter : Indicator
 	{
@@ -428,19 +428,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private RedTailLVNHunter[] cacheRedTailLVNHunter;
-		public RedTailLVNHunter RedTailLVNHunter(LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
+		private RedTail.RedTailLVNHunter[] cacheRedTailLVNHunter;
+		public RedTail.RedTailLVNHunter RedTailLVNHunter(LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
 		{
 			return RedTailLVNHunter(Input, lookbackModeRTLVN, profileLookbackLength, profileNumberOfRows, lVNFillOpacity, lVNBorderOpacity, lVNDetectionPercent, showAdjacentLVNNodes);
 		}
 
-		public RedTailLVNHunter RedTailLVNHunter(ISeries<double> input, LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
+		public RedTail.RedTailLVNHunter RedTailLVNHunter(ISeries<double> input, LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
 		{
 			if (cacheRedTailLVNHunter != null)
 				for (int idx = 0; idx < cacheRedTailLVNHunter.Length; idx++)
 					if (cacheRedTailLVNHunter[idx] != null && cacheRedTailLVNHunter[idx].LookbackModeRTLVN == lookbackModeRTLVN && cacheRedTailLVNHunter[idx].ProfileLookbackLength == profileLookbackLength && cacheRedTailLVNHunter[idx].ProfileNumberOfRows == profileNumberOfRows && cacheRedTailLVNHunter[idx].LVNFillOpacity == lVNFillOpacity && cacheRedTailLVNHunter[idx].LVNBorderOpacity == lVNBorderOpacity && cacheRedTailLVNHunter[idx].LVNDetectionPercent == lVNDetectionPercent && cacheRedTailLVNHunter[idx].ShowAdjacentLVNNodes == showAdjacentLVNNodes && cacheRedTailLVNHunter[idx].EqualsInput(input))
 						return cacheRedTailLVNHunter[idx];
-			return CacheIndicator<RedTailLVNHunter>(new RedTailLVNHunter(){ LookbackModeRTLVN = lookbackModeRTLVN, ProfileLookbackLength = profileLookbackLength, ProfileNumberOfRows = profileNumberOfRows, LVNFillOpacity = lVNFillOpacity, LVNBorderOpacity = lVNBorderOpacity, LVNDetectionPercent = lVNDetectionPercent, ShowAdjacentLVNNodes = showAdjacentLVNNodes }, input, ref cacheRedTailLVNHunter);
+			return CacheIndicator<RedTail.RedTailLVNHunter>(new RedTail.RedTailLVNHunter(){ LookbackModeRTLVN = lookbackModeRTLVN, ProfileLookbackLength = profileLookbackLength, ProfileNumberOfRows = profileNumberOfRows, LVNFillOpacity = lVNFillOpacity, LVNBorderOpacity = lVNBorderOpacity, LVNDetectionPercent = lVNDetectionPercent, ShowAdjacentLVNNodes = showAdjacentLVNNodes }, input, ref cacheRedTailLVNHunter);
 		}
 	}
 }
@@ -449,12 +449,12 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.RedTailLVNHunter RedTailLVNHunter(LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
+		public Indicators.RedTail.RedTailLVNHunter RedTailLVNHunter(LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
 		{
 			return indicator.RedTailLVNHunter(Input, lookbackModeRTLVN, profileLookbackLength, profileNumberOfRows, lVNFillOpacity, lVNBorderOpacity, lVNDetectionPercent, showAdjacentLVNNodes);
 		}
 
-		public Indicators.RedTailLVNHunter RedTailLVNHunter(ISeries<double> input , LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
+		public Indicators.RedTail.RedTailLVNHunter RedTailLVNHunter(ISeries<double> input , LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
 		{
 			return indicator.RedTailLVNHunter(input, lookbackModeRTLVN, profileLookbackLength, profileNumberOfRows, lVNFillOpacity, lVNBorderOpacity, lVNDetectionPercent, showAdjacentLVNNodes);
 		}
@@ -465,12 +465,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.RedTailLVNHunter RedTailLVNHunter(LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
+		public Indicators.RedTail.RedTailLVNHunter RedTailLVNHunter(LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
 		{
 			return indicator.RedTailLVNHunter(Input, lookbackModeRTLVN, profileLookbackLength, profileNumberOfRows, lVNFillOpacity, lVNBorderOpacity, lVNDetectionPercent, showAdjacentLVNNodes);
 		}
 
-		public Indicators.RedTailLVNHunter RedTailLVNHunter(ISeries<double> input , LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
+		public Indicators.RedTail.RedTailLVNHunter RedTailLVNHunter(ISeries<double> input , LookbackModeRTLVN lookbackModeRTLVN, int profileLookbackLength, int profileNumberOfRows, int lVNFillOpacity, int lVNBorderOpacity, int lVNDetectionPercent, bool showAdjacentLVNNodes)
 		{
 			return indicator.RedTailLVNHunter(input, lookbackModeRTLVN, profileLookbackLength, profileNumberOfRows, lVNFillOpacity, lVNBorderOpacity, lVNDetectionPercent, showAdjacentLVNNodes);
 		}

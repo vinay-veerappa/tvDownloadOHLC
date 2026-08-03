@@ -19,7 +19,7 @@ using SharpDX.Direct2D1;
 using SharpDX.DirectWrite;
 #endregion
 
-namespace NinjaTrader.NinjaScript.Indicators
+namespace NinjaTrader.NinjaScript.Indicators.RedTail
 {
 	/// <summary>
 	/// Session Opening Bar Range - Plots the first bar's high/low/mid of a selected session

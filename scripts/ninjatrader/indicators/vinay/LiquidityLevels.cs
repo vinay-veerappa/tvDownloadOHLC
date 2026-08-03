@@ -117,6 +117,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "Near Glow Opacity %", Description = "Opacity for near levels (0=hidden, 100=full)", Order = 13, GroupName = "3. Visuals")]
         public int NearGlowOpacity { get; set; } = 90;
 
+        [NinjaScriptProperty]
+        [Display(Name = "Use Full Level Names", Description = "Show full level names (e.g., 'Prev Month High', 'Prior Day High') instead of abbreviations ('PMH', 'PDH')", Order = 14, GroupName = "3. Visuals")]
+        public bool UseFullLevelNames { get; set; } = true;
+
         #endregion
 
         #region OnStateChange
@@ -761,7 +765,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                 if (showLabel)
                 {
-                    string label = $"{level.Def.Name} {level.Price:F1}";
+                    string nameStr = UseFullLevelNames && !string.IsNullOrEmpty(level.Def.FullName) ? level.Def.FullName : level.Def.Name;
+                    string label = $"{nameStr} {level.Price:F1}";
                     if (level.Swept) label += " ✗";
                     if (level.StacksWith.Count > 0) label += " [STACK]";
 

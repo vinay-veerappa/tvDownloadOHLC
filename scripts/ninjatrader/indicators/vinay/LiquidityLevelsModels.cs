@@ -61,22 +61,30 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
     // ════════════════════════════════════════════════════════════════════════
     public class LevelDef
     {
-        public string Name { get; set; }               // "PDH", "MidnightOpen", "POC"
+        public string Name { get; set; }               // Short key e.g. "PDH", "PMH"
+        public string FullName { get; set; }           // Full form e.g. "Prior Day High", "Prev Month High"
         public LevelCategory Category { get; set; }
         public LevelRole Role { get; set; }
         public LevelSource Source { get; set; }
         public string Accessor { get; set; }            // property/method name on source indicator
         public bool IsArray { get; set; }               // true for lists (naked POCs, strong levels, OB zones)
 
-        public LevelDef(string name, LevelCategory cat, LevelRole role, LevelSource src,
+        public LevelDef(string name, string fullName, LevelCategory cat, LevelRole role, LevelSource src,
             string accessor = null, bool isArray = false)
         {
             Name = name;
+            FullName = fullName ?? name;
             Category = cat;
             Role = role;
             Source = src;
             Accessor = accessor;
             IsArray = isArray;
+        }
+
+        public LevelDef(string name, LevelCategory cat, LevelRole role, LevelSource src,
+            string accessor = null, bool isArray = false)
+            : this(name, name, cat, role, src, accessor, isArray)
+        {
         }
     }
 

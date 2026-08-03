@@ -17,7 +17,7 @@ using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
 
-namespace NinjaTrader.NinjaScript.Indicators
+namespace NinjaTrader.NinjaScript.Indicators.RedTail
 {
     #region TypeConverters
 
@@ -1382,19 +1382,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
-		private RedTailFRVPV2[] cacheRedTailFRVPV2;
-		public RedTailFRVPV2 RedTailFRVPV2(int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
+		private RedTail.RedTailFRVPV2[] cacheRedTailFRVPV2;
+		public RedTail.RedTailFRVPV2 RedTailFRVPV2(int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
 		{
 			return RedTailFRVPV2(Input, swingLength, bOSConfirmation, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH);
 		}
 
-		public RedTailFRVPV2 RedTailFRVPV2(ISeries<double> input, int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
+		public RedTail.RedTailFRVPV2 RedTailFRVPV2(ISeries<double> input, int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
 		{
 			if (cacheRedTailFRVPV2 != null)
 				for (int idx = 0; idx < cacheRedTailFRVPV2.Length; idx++)
 					if (cacheRedTailFRVPV2[idx] != null && cacheRedTailFRVPV2[idx].SwingLength == swingLength && cacheRedTailFRVPV2[idx].BOSConfirmation == bOSConfirmation && cacheRedTailFRVPV2[idx].FRVPTrigger == fRVPTrigger && cacheRedTailFRVPV2[idx].KeepPreviousFRVP == keepPreviousFRVP && cacheRedTailFRVPV2[idx].FRVPRows == fRVPRows && cacheRedTailFRVPV2[idx].FRVPProfileWidth == fRVPProfileWidth && cacheRedTailFRVPV2[idx].FRVPVPAlignment == fRVPVPAlignment && cacheRedTailFRVPV2[idx].AlertSoundBOS == alertSoundBOS && cacheRedTailFRVPV2[idx].AlertSoundCHoCH == alertSoundCHoCH && cacheRedTailFRVPV2[idx].EqualsInput(input))
 						return cacheRedTailFRVPV2[idx];
-			return CacheIndicator<RedTailFRVPV2>(new RedTailFRVPV2(){ SwingLength = swingLength, BOSConfirmation = bOSConfirmation, FRVPTrigger = fRVPTrigger, KeepPreviousFRVP = keepPreviousFRVP, FRVPRows = fRVPRows, FRVPProfileWidth = fRVPProfileWidth, FRVPVPAlignment = fRVPVPAlignment, AlertSoundBOS = alertSoundBOS, AlertSoundCHoCH = alertSoundCHoCH }, input, ref cacheRedTailFRVPV2);
+			return CacheIndicator<RedTail.RedTailFRVPV2>(new RedTail.RedTailFRVPV2(){ SwingLength = swingLength, BOSConfirmation = bOSConfirmation, FRVPTrigger = fRVPTrigger, KeepPreviousFRVP = keepPreviousFRVP, FRVPRows = fRVPRows, FRVPProfileWidth = fRVPProfileWidth, FRVPVPAlignment = fRVPVPAlignment, AlertSoundBOS = alertSoundBOS, AlertSoundCHoCH = alertSoundCHoCH }, input, ref cacheRedTailFRVPV2);
 		}
 	}
 }
@@ -1403,12 +1403,12 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.RedTailFRVPV2 RedTailFRVPV2(int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
+		public Indicators.RedTail.RedTailFRVPV2 RedTailFRVPV2(int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
 		{
 			return indicator.RedTailFRVPV2(Input, swingLength, bOSConfirmation, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH);
 		}
 
-		public Indicators.RedTailFRVPV2 RedTailFRVPV2(ISeries<double> input , int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
+		public Indicators.RedTail.RedTailFRVPV2 RedTailFRVPV2(ISeries<double> input , int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
 		{
 			return indicator.RedTailFRVPV2(input, swingLength, bOSConfirmation, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH);
 		}
@@ -1419,12 +1419,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.RedTailFRVPV2 RedTailFRVPV2(int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
+		public Indicators.RedTail.RedTailFRVPV2 RedTailFRVPV2(int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
 		{
 			return indicator.RedTailFRVPV2(Input, swingLength, bOSConfirmation, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH);
 		}
 
-		public Indicators.RedTailFRVPV2 RedTailFRVPV2(ISeries<double> input , int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
+		public Indicators.RedTail.RedTailFRVPV2 RedTailFRVPV2(ISeries<double> input , int swingLength, string bOSConfirmation, string fRVPTrigger, bool keepPreviousFRVP, int fRVPRows, int fRVPProfileWidth, string fRVPVPAlignment, string alertSoundBOS, string alertSoundCHoCH)
 		{
 			return indicator.RedTailFRVPV2(input, swingLength, bOSConfirmation, fRVPTrigger, keepPreviousFRVP, fRVPRows, fRVPProfileWidth, fRVPVPAlignment, alertSoundBOS, alertSoundCHoCH);
 		}

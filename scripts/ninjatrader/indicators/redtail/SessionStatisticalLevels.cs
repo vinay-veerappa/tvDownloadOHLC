@@ -18,7 +18,7 @@ using SharpDX.Direct2D1;
 using SharpDX.DirectWrite;
 #endregion
 
-namespace NinjaTrader.NinjaScript.Indicators
+namespace NinjaTrader.NinjaScript.Indicators.RedTail
 {
     public class SessionStatisticalLevels : Indicator
     {
