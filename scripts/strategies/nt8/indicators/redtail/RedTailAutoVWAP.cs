@@ -1261,10 +1261,23 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
             {
                 Print("RedTail VWAP: Checking for edge-tts...");
                 
+                string ttsExe = ResolvePythonScriptExe("edge-tts.exe");
+                string pythonExe = ResolvePythonExe();
+                string pipExe = ResolvePythonScriptExe("pip.exe");
+                bool pipIsModule = false;
+                if (pipExe == null && pythonExe != null) { pipExe = pythonExe; pipIsModule = true; }
+                Print("RedTail VWAP: edge-tts=" + (ttsExe ?? "not found") + ", pip=" + (pipExe ?? "not found"));
+
+                if (ttsExe == null && pythonExe == null)
+                {
+                    Print("RedTail VWAP Neural: edge-tts unavailable. Install with 'pip install edge-tts' and restart NinjaTrader.");
+                    return false;
+                }
+
                 var checkPsi = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "pip",
-                    Arguments = "show edge-tts",
+                    FileName = pipExe,
+                    Arguments = pipIsModule ? "-m pip show edge-tts" : "show edge-tts",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -1288,8 +1301,8 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                     Print("RedTail VWAP: Installing edge-tts via pip...");
                     var installPsi = new System.Diagnostics.ProcessStartInfo
                     {
-                        FileName = "pip",
-                        Arguments = "install edge-tts",
+                        FileName = pipExe,
+                        Arguments = pipIsModule ? "-m pip install edge-tts" : "install edge-tts",
                         UseShellExecute = false,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -1314,6 +1327,8 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                     Print("RedTail VWAP: edge-tts already installed.");
                 }
                 
+                if (ttsExe == null) ttsExe = ResolvePythonScriptExe("edge-tts.exe");
+
                 string voice = "en-US-JennyNeural";
                 string rateStr = GetEdgeTtsRate();
                 int successCount = 0;
@@ -1327,10 +1342,17 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                     
                     try
                     {
+                        string ttsFile = ttsExe;
+                        string ttsArgs = "--voice " + voice + " --rate=" + rateStr + " --text \"" + phrase.Replace("\"", "'") + "\" --write-media \"" + mp3Path + "\"";
+                        if (ttsFile == null)
+                        {
+                            ttsFile = pythonExe;
+                            ttsArgs = "-m edge_tts " + ttsArgs;
+                        }
                         var ttsPsi = new System.Diagnostics.ProcessStartInfo
                         {
-                            FileName = "edge-tts",
-                            Arguments = "--voice " + voice + " --rate=" + rateStr + " --text \"" + phrase.Replace("\"", "'") + "\" --write-media \"" + mp3Path + "\"",
+                            FileName = ttsFile,
+                            Arguments = ttsArgs,
                             UseShellExecute = false,
                             RedirectStandardOutput = true,
                             RedirectStandardError = true,
@@ -1448,6 +1470,70 @@ Write-Host 'COPIED_MP3'
             }
         }
         
+        private static string ResolvePythonScriptExe(string exeName)
+        {
+            string[] roots =
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Python"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python")
+            };
+            try
+            {
+                foreach (var root in roots)
+                {
+                    if (!Directory.Exists(root)) continue;
+                    foreach (var dir in Directory.GetDirectories(root))
+                    {
+                        string p = Path.Combine(dir, "Scripts", exeName);
+                        if (File.Exists(p)) return p;
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                foreach (var dir in Directory.GetDirectories("C:\\", "Python3*"))
+                {
+                    string p = Path.Combine(dir, "Scripts", exeName);
+                    if (File.Exists(p)) return p;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string ResolvePythonExe()
+        {
+            string[] roots =
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Python"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python")
+            };
+            try
+            {
+                foreach (var root in roots)
+                {
+                    if (!Directory.Exists(root)) continue;
+                    foreach (var dir in Directory.GetDirectories(root))
+                    {
+                        string p = Path.Combine(dir, "python.exe");
+                        if (File.Exists(p)) return p;
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                foreach (var dir in Directory.GetDirectories("C:\\", "Python3*"))
+                {
+                    string p = Path.Combine(dir, "python.exe");
+                    if (File.Exists(p)) return p;
+                }
+            }
+            catch { }
+            return null;
+        }
+
         private string GetEdgeTtsRate()
         {
             int pct = VoiceAlertRate * 10;
