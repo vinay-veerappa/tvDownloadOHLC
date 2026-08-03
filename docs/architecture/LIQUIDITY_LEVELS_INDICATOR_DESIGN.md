@@ -1,7 +1,7 @@
 # LiquidityLevels NT8 Indicator — Unified Design Document
 
-> **Date**: 2026-07-30 (Session 13b)
-> **Status**: Design — 3-expert panel reviewed
+> **Date**: 2026-07-30 (Session 13b) | **Updated**: 2026-08-03 (bug fixes + voice alerts)
+> **Status**: Implemented — v1.3.0
 > **Predecessor**: `IB_CONFLUENCE_INDICATOR_DESIGN.md` §10 (Liquidity Levels Catalog), `SESSION_RANGES_INDICATOR_DESIGN.md` §D (Gap Analysis)
 > **Goal**: Build a unified `LiquidityLevels` NT8 indicator that aggregates ALL liquidity levels (prior day/week/month, session opens, intraday, volume profile, pivots/fibs) into one indicator, exposes every level programmatically, draws them on chart, detects liquidity sweeps, and fills the "Session Opens" gap.
 
@@ -222,12 +222,49 @@ LiquidityLevels (IsOverlay, composes)
 | PDH/PDL/PWH/PWL/PMH/PML + Monday/Globex/RTH | ✅ Have (RedTailKeyLevels) | Read directly |
 | POC/VAH/VAL + naked levels | ✅ Have (RedTailVolumeProfile) | Read directly |
 | EQH/EQL + Strong levels + OB zones | ✅ Have (RedTailMarketStructure) | GetStrongLevels() + GetOBZones() |
-| PDC / HOD / LOD | ✅ Have (@PriorDayOHLC / @CurrentDayOHL) | Read directly |
-| **Midnight Open** | ❌ MISSING | P1: SessionOpensEngine |
-| **4H opens** | ❌ MISSING | P1: SessionOpensEngine |
-| **London Open** | ❌ MISSING | P1: SessionOpensEngine (DST-aware) |
-| **Sweep detection on 52+ levels** | ❌ MISSING | P3: SweepDetector |
-| **Level aggregation API** | ❌ MISSING | P2: LevelAggregator |
-| **Stacking detection** | ❌ MISSING | P8 |
-| **DOL assessment** | ❌ MISSING | P8 |
-| `mjTimeAndPriceLines` | ❌ Not in workspace | Build SessionOpensEngine from scratch |
+| PDC / HOD / LOD / PDO | ✅ Have (@PriorDayOHLC / @CurrentDayOHL) | Read directly (PDO fixed 2026-08-03) |
+| **Midnight Open** | ✅ Implemented (SessionOpensEngine) | P1 |
+| **4H opens** | ✅ Implemented (SessionOpensEngine) | P1 |
+| **London Open** | ✅ Implemented (SessionOpensEngine, DST-aware) | P1 |
+| **Sweep detection on 52+ levels** | ✅ Implemented (SweepDetector) | P3 |
+| **Level aggregation API** | ✅ Implemented (LevelAggregator) | P2 |
+| **Stacking detection** | ✅ Implemented | P8 |
+| **DOL assessment** | ❌ Deferred | Phase 2 |
+| **Voice alerts** | ✅ Implemented (System.Speech pre-generated WAVs) | 2026-08-03 |
+
+---
+
+## J. Implementation Notes (2026-08-03)
+
+### J.1 End-of-Bar Timestamp Convention
+
+NinjaTrader bars carry **close timestamps** (bar stamped 09:31 covers 09:30-09:31, opened at 09:30).
+TradingView bars carry **open timestamps**.
+All session window gating uses end-of-bar convention:
+- **Window start**: `barMins > startMin` (first bar whose open is at/after start)
+- **Window end (inclusive)**: `barMins <= endMin` (last bar whose open is within window)
+
+### J.2 Voice Alert System
+
+Pre-generated WAV files via `System.Speech.Synthesis.SpeechSynthesizer` (in-process, fast):
+- **Startup**: Generates WAV files per sweep target level (Bull/Bear variants) — cached in `UserDataDir/sounds/`
+- **At sweep time**: Plays pre-generated WAV via NT8 native `Alert()` — instant, no process spawn
+- **Cooldown**: Per-level+direction cooldown (default 30s) prevents alert spam
+- **Live bar only**: Alerts only fire on `CurrentBar == BarsArray[0].Count - 1` — no historical replay
+- **Voice gender**: Female (Zira/Hazel/Susan) or Male (David/George/Mark) selected from installed SAPI voices
+- **Async generation**: WAV generation runs on ThreadPool to not block chart loading
+- **Settings cache**: Marker file tracks voice settings; regenerates only when gender/rate changes
+
+### J.3 Bug Fixes Applied (2026-08-03)
+
+| Bug | Fix |
+|---|---|
+| Asia range `barMins < 0` always false | Changed to `barMins == 0` (include midnight bar) |
+| P12 fence-post at 06:00/17:00 | Changed `>=` to `>` for cutoffs, `<=` for inclusion |
+| PDO always returned 0 | Added `PriorOpen` case to `ReadPriorDayOHLC()` |
+| `prevClose` uninitialized on bar 0 | Initialize to `Close[0]` on `CurrentBar < 1` |
+| Voice alerts fired on historical bars | Gate to live bar only (`CurrentBar == BarsArray[0].Count - 1`) |
+| Voice alerts all fired at once on toggle | Live-bar guard + cooldown per level |
+| Male voice despite Female selected | SAPI voice selection by name (Zira/Hazel/etc.) |
+| PowerShell process spawned per alert | Replaced with System.Speech in-process WAV generation |
+| Voice generation blocked chart | Run async on ThreadPool |

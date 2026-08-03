@@ -1,7 +1,7 @@
 # SessionRanges NT8 Indicator — Unified Design Document
 
-> **Date**: 2026-07-30 (Session 13)
-> **Status**: Design — agent loop reviewed (3-expert panel)
+> **Date**: 2026-07-30 (Session 13) | **Updated**: 2026-08-03 (bug fixes + end-of-bar convention)
+> **Status**: Implemented — v1.1.0 (window gating + Globex rollover fixed)
 > **Predecessor**: `IB_CONFLUENCE_INDICATOR_DESIGN.md` (Option B: Compose)
 > **Goal**: Build a unified `SessionRanges` NT8 indicator that tracks ALL session ranges (Asia, London, Globex, IB, NY OR, Magic Hours, custom) with public data exposure + visual boxes, serving as the range data provider for `IBConfluenceEngine`.
 
@@ -336,15 +336,63 @@ public double NyOrLow => nyOpeningRange?.Low ?? 0;
 
 | Need | Status | Solution |
 |---|---|---|
-| IB range (09:30-10:00) | ⚠️ Private in RedTail + parity-locked in engine | P4: RedTail public props + P1: SessionRanges |
-| Asia range (00:00-02:00) | ❌ No NT8 indicator | P1: SessionRanges |
-| London range/OR (02:00-05:00) | ❌ No NT8 indicator | P1: SessionRanges |
-| Globex range (18:00-08:30) | ⚠️ RedTailKeyLevels has weekly GH/GL, not daily | P1: SessionRanges |
-| NY Opening Range (09:30-09:35) | ⚠️ Private in RedTail | P4: RedTail public props |
-| DailyNYLevels 9 presets | ❌ Pine only | P3: SessionRanges |
-| Magic Hours (7) | ❌ Pine only | P3: SessionRanges |
-| MFE/MAE tracking | ❌ Pine only (CORE_ENGINE_SPEC) | P2: SessionRanges |
-| Custom range config | ⚠️ YAML exists for Python | P3: SessionRanges |
-| Midnight/4H opens | ❌ Missing entirely | P7: SessionOpens indicator |
+| IB range (09:30-10:00) | ✅ Implemented | SessionRanges with window gating |
+| Asia range (00:00-02:00) | ✅ Implemented | SessionRanges |
+| London range/OR (02:00-05:00) | ✅ Implemented | SessionRanges |
+| Globex range (18:00-08:30) | ✅ Implemented | SessionRanges (crosses midnight) |
+| NY Opening Range (09:30-09:35) | ✅ Implemented | SessionRanges |
+| DailyNYLevels 9 presets | ✅ Implemented | SessionRangesPresets |
+| Magic Hours (7) | ✅ Implemented | SessionRangesPresets |
+| MFE/MAE tracking | ✅ Wired (CheckBreakout/UpdateMfe/UpdateMidHit called post-OR) | SessionRanges |
+| Custom range config | ✅ Implemented | CustomRangeDefs string parser |
+| Midnight/4H opens | ✅ Implemented | SessionOpensEngine (in LiquidityLevels) |
 | BoS/CHoCH events | ⚠️ Private in RedTailMarketStructure | Defer — build custom in engine |
 | EQH/EQL | ⚠️ Private in RedTailMarketStructure | Defer — build custom in engine |
+| Historical stats exposure | ❌ Phase 2 | ExcursionHistory populated but not yet exposed via public API |
+| Percentile bands | ❌ Phase 2 | ExcursionHistory.Percentile exists, not wired to UI |
+
+---
+
+## E. Implementation Notes (2026-08-03)
+
+### E.1 End-of-Bar Timestamp Convention
+
+NinjaTrader bars carry **close timestamps** (bar stamped 09:31 covers 09:30-09:31, opened at 09:30).
+All session window gating uses end-of-bar convention via `IsBarInWindow()`:
+- **Window start**: `barMins > startMin` (first bar whose open is at/after start)
+- **Window end (inclusive)**: `barMins <= endMin` (last bar whose open is within window)
+- **Cross-midnight windows** (e.g. Globex 18:00-08:30): `barMins > startMin || barMins <= endMin`
+
+### E.2 Globex Day Rollover
+
+Day rollover uses **Globex date** (18:00 ET boundary), not calendar midnight:
+- Bar stamped 18:05 ET → opened at 18:00 → belongs to next calendar day's Globex session
+- Bar stamped 18:00 ET → opened at 17:55 → still prior session (uses `>` not `>=`)
+- All range states reset on Globex date change, not calendar date change
+
+### E.3 Window Gating + Finalization
+
+`OnBarUpdate` processes each range spec:
+1. **Days filter**: Skip if current day-of-week not in spec.Days (TV convention: 1=Sun..7=Sat)
+2. **Window check**: `IsBarInWindow(barMins, spec)` determines if bar is within OR window
+3. **Building**: First in-window bar → `UpdateOr()` captures H/L/open. Subsequent in-window bars extend H/L.
+4. **Finalization**: First bar OUT of window after building → `FinalizeOr(CurrentBar)` sets `OrComplete`, `IsCommitted`, `OrEndBarIndex`
+5. **Post-OR analysis**: After finalization, `CheckBreakout/UpdateMfe/UpdateMidHit` run on each bar
+
+### E.4 Rendering
+
+- **Building ranges**: Box extends from `OrStartBarIndex` to current bar (live)
+- **Completed ranges**: Box extends from `OrStartBarIndex` to `OrEndBarIndex` (fixed)
+- **IsCommitted flag**: Controls whether x2 extends to current bar or stops at `OrEndBarIndex`
+
+### E.5 Bug Fixes Applied (2026-08-03)
+
+| Bug | Fix |
+|---|---|
+| Ranges never finalized (one big box) | Added `IsBarInWindow()` gating + `FinalizeOr()` call on window end |
+| Day rollover used calendar midnight | Changed to Globex date (18:00 ET boundary) |
+| `FinalizeOr()` called without bar index | Pass `CurrentBar` to set `OrEndBarIndex` |
+| `IsCommitted` never set | Set in `FinalizeOr()` |
+| `CheckBreakout/UpdateMfe/UpdateMidHit` never called | Wired in `OnBarUpdate` post-OR |
+| Days-of-week filter missing | Added `IsDayEnabled()` with TV convention (1=Sun..7=Sat) |
+| Render extended completed ranges to current bar | Use `OrEndBarIndex` when `OrComplete && OrEndBarIndex > 0` |
