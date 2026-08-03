@@ -169,6 +169,9 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
             public int PocIndex, VaUpIndex, VaDownIndex;
             public double ProfileLowest, ProfileInterval;
             public List<KeyValuePair<int, double>> AvwapPoints;
+            public double AvwapCumTV;   // running cumulative typical-price*vol since anchor (live AVWAP)
+            public double AvwapCumVol;  // running cumulative volume since anchor (live AVWAP)
+            public int AvwapCumBar;     // last bar index folded into AvwapCumTV/AvwapCumVol
             public List<ClusterLevelInfo> ClusterLevels;
             public List<bool> VolumePolarities;
             public bool Dirty;
@@ -303,6 +306,12 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
 
         // OB touch tracking (to avoid repeated alerts for same OB)
         private HashSet<string> _obTouchAlerted;
+
+        // Early (intra-bar) breakout alert dedupe — keyed by the swing bar they fired on
+        private int _earlyBullBreakIndex = -1;
+        private int _earlyBearBreakIndex = -1;
+        private int _earlyBullObIndex = -1;
+        private int _earlyBearObIndex = -1;
 
         // SharpDX-only render data lists (replaces Draw.* objects for speed)
         private List<BOSRenderInfo> _bosRenders;
@@ -573,6 +582,7 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                 VoiceAlertRate = 2;
                 AlertCooldownSeconds = 30;
                 AlertFallbackSound = "Alert1.wav";
+                AlertEarlyBreakout = true;
 
                 // Displacement Candles
                 ShowDisplacement = false; DisplacementATRMultiplier = 1.5;
@@ -635,6 +645,8 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                 lastAlertTime = new Dictionary<string, DateTime>();
                 lastTouchState = new Dictionary<string, bool>();
                 _obTouchAlerted = new HashSet<string>();
+                _earlyBullBreakIndex = -1; _earlyBearBreakIndex = -1;
+                _earlyBullObIndex = -1; _earlyBearObIndex = -1;
 
                 // Initialize SharpDX render data lists
                 _bosRenders = new List<BOSRenderInfo>();
@@ -720,19 +732,16 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
         protected override void OnMarketData(MarketDataEventArgs e)
         {
             if (e.MarketDataType != MarketDataType.Last) return;
-            CheckLevelAlerts();
+            CheckLevelAlerts(e.Price, e.Volume);
+            CheckEarlyBreakouts(e.Price);
         }
 
         #region Level Touch Alerts
 
-        private void CheckLevelAlerts()
+        private void CheckLevelAlerts(double tickPrice, double tickVolume)
         {
             if (State != State.Realtime) return;
             if (!AlertOnOBTouch && !AlertOnAVWAPTouch && !AlertOnFibTouch) return;
-
-            double closePrice = Close[0];
-            double highPrice = High[0];
-            double lowPrice = Low[0];
 
             // ── OB Touch Alerts ──
             if (AlertOnOBTouch)
@@ -741,7 +750,7 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                 {
                     if (ob.Disabled || ob.Breaker) continue;
                     if (!OBPassesValueAreaFilter(ob)) continue;
-                    bool isTouching = lowPrice <= ob.Top && highPrice >= ob.Bottom;
+                    bool isTouching = tickPrice >= ob.Bottom && tickPrice <= ob.Top;
                     string touchKey = "OBTouch_" + ob.Tag;
                     if (isTouching && !_obTouchAlerted.Contains(touchKey))
                     {
@@ -760,7 +769,7 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                 {
                     if (ob.Disabled || ob.Breaker) continue;
                     if (!OBPassesValueAreaFilter(ob)) continue;
-                    bool isTouching = lowPrice <= ob.Top && highPrice >= ob.Bottom;
+                    bool isTouching = tickPrice >= ob.Bottom && tickPrice <= ob.Top;
                     string touchKey = "OBTouch_" + ob.Tag;
                     if (isTouching && !_obTouchAlerted.Contains(touchKey))
                     {
@@ -781,36 +790,49 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
             if (AlertOnAVWAPTouch && FRVPDisplayAVWAP)
             {
                 // Check active FRVP zone AVWAP
-                CheckAvwapTouch(_activeFrvp, "ActiveAVWAP", closePrice, highPrice, lowPrice);
+                CheckAvwapTouch(_activeFrvp, "ActiveAVWAP", tickPrice, tickVolume);
                 // Check historic FRVP zone AVWAPs
                 if (_historicFrvps != null)
                 {
                     for (int i = 0; i < _historicFrvps.Count; i++)
-                        CheckAvwapTouch(_historicFrvps[i], "HistAVWAP_" + i, closePrice, highPrice, lowPrice);
+                        CheckAvwapTouch(_historicFrvps[i], "HistAVWAP_" + i, tickPrice, tickVolume);
                 }
             }
 
             // ── Fib Touch Alerts ──
             if (AlertOnFibTouch && FRVPDisplayFibs)
             {
-                CheckFibTouch(_activeFrvp, "ActiveFib", closePrice, highPrice, lowPrice);
+                CheckFibTouch(_activeFrvp, "ActiveFib", tickPrice);
                 if (_historicFrvps != null)
                 {
                     for (int i = 0; i < _historicFrvps.Count; i++)
-                        CheckFibTouch(_historicFrvps[i], "HistFib_" + i, closePrice, highPrice, lowPrice);
+                        CheckFibTouch(_historicFrvps[i], "HistFib_" + i, tickPrice);
                 }
             }
         }
 
-        private void CheckAvwapTouch(FRVPZone zone, string key, double close, double high, double low)
+        private void CheckAvwapTouch(FRVPZone zone, string key, double tickPrice, double tickVolume)
         {
             if (zone == null || zone.AvwapPoints == null || zone.AvwapPoints.Count == 0) return;
 
-            // Get the most recent AVWAP value
-            double avwapValue = zone.AvwapPoints[zone.AvwapPoints.Count - 1].Value;
+            double avwapValue;
+            if (zone.IsActive && zone.AvwapCumVol > 0)
+            {
+                // Live AVWAP (active zone only): fold in any bars not yet accumulated, then the current tick.
+                UpdateLiveAvwap(zone, tickPrice, tickVolume);
+                avwapValue = zone.AvwapCumVol > 0 ? zone.AvwapCumTV / zone.AvwapCumVol : 0;
+            }
+            else
+            {
+                // Fallback: no cumulative snapshot yet, or a closed historic zone — use the last computed AVWAP point.
+                avwapValue = zone.AvwapPoints[zone.AvwapPoints.Count - 1].Value;
+            }
             if (avwapValue <= 0) return;
 
-            bool isTouching = low <= avwapValue && high >= avwapValue;
+            double tolerance = _atrValue * 0.05; // tight tolerance for avwap touch
+            if (tolerance <= 0) tolerance = TickSize * 2;
+
+            bool isTouching = Math.Abs(tickPrice - avwapValue) <= tolerance;
             string touchKey = key + "_Touch";
 
             if (!lastTouchState.ContainsKey(touchKey)) lastTouchState[touchKey] = false;
@@ -829,7 +851,7 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
             lastTouchState[touchKey] = isTouching;
         }
 
-        private void CheckFibTouch(FRVPZone zone, string key, double close, double high, double low)
+        private void CheckFibTouch(FRVPZone zone, string key, double tickPrice)
         {
             if (zone == null) return;
             double fibRange = zone.StartPrice - zone.EndPrice;
@@ -846,7 +868,7 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                 string fibPct = (lv.Ratio * 100).ToString("F1");
                 string touchKey = key + "_Fib_" + fibPct + "_Touch";
 
-                bool isTouching = low <= fibPrice + tolerance && high >= fibPrice - tolerance;
+                bool isTouching = Math.Abs(tickPrice - fibPrice) <= tolerance;
 
                 if (!lastTouchState.ContainsKey(touchKey)) lastTouchState[touchKey] = false;
 
@@ -862,6 +884,107 @@ namespace NinjaTrader.NinjaScript.Indicators.RedTail
                     }
                 }
                 lastTouchState[touchKey] = isTouching;
+            }
+        }
+
+        // Fold closed bars plus the current tick into the zone's cumulative AVWAP sums.
+        private void UpdateLiveAvwap(FRVPZone zone, double tickPrice, double tickVolume)
+        {
+            // Fold only CLOSED bars since the last snapshot (catchUp < CurrentBar); the forming
+            // bar is handled via tick accumulation below so bar volume is never double counted.
+            int catchUp = zone.AvwapCumBar + 1;
+            while (catchUp < CurrentBar)
+            {
+                double vol = Volume[catchUp];
+                if (vol > 0)
+                {
+                    double src = (Open[catchUp] + High[catchUp] + Low[catchUp] + Close[catchUp]) / 4.0;
+                    zone.AvwapCumTV += src * vol;
+                    zone.AvwapCumVol += vol;
+                }
+                catchUp++;
+            }
+            zone.AvwapCumBar = CurrentBar - 1;
+
+            if (tickVolume > 0)
+            {
+                zone.AvwapCumTV += tickPrice * tickVolume;
+                zone.AvwapCumVol += tickVolume;
+            }
+        }
+
+        // Fast lane: intra-bar CHoCH/BOS + OB-break alerts, fired the tick price trades
+        // through the reference level. The confirmed bar-close alerts still fire later and
+        // are deduped against these via the *_Index fields.
+        private void CheckEarlyBreakouts(double tickPrice)
+        {
+            if (State != State.Realtime) return;
+            if (!AlertEarlyBreakout) return;
+
+            // ── Early bull CHoCH/BOS: price trades through the last swing high intra-bar ──
+            if (_prevHigh != double.MinValue && _highActive && tickPrice > _prevHigh
+                && _prevHighIndex != _earlyBullBreakIndex)
+            {
+                _earlyBullBreakIndex = _prevHighIndex;
+                bool choch = ((_prevBreakoutDir == -1 || _prevBreakoutDir == 0) && ShowCHoCH);
+                if (choch && AlertOnCHoCH)
+                {
+                    string msg = instrumentName + " Bullish CHoCH at " + _prevHigh.ToString("F2");
+                    Alert("RT_EARLY_CHoCH_" + CurrentBar + "_" + _prevHighIndex, Priority.High, msg,
+                        GetVoiceAlertPath("BullCHoCH", AlertSoundCHoCH), 10,
+                        System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.Lime);
+                }
+                else if (!choch && AlertOnBOS)
+                {
+                    string msg = instrumentName + " Bullish BOS at " + _prevHigh.ToString("F2");
+                    Alert("RT_EARLY_BOS_" + CurrentBar + "_" + _prevHighIndex, Priority.Medium, msg,
+                        GetVoiceAlertPath("BullBOS", AlertSoundBOS), 10,
+                        System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.DodgerBlue);
+                }
+            }
+
+            // ── Early bear CHoCH/BOS: price trades through the last swing low intra-bar ──
+            if (_prevLow != double.MaxValue && _lowActive && tickPrice < _prevLow
+                && _prevLowIndex != _earlyBearBreakIndex)
+            {
+                _earlyBearBreakIndex = _prevLowIndex;
+                bool choch = ((_prevBreakoutDir == 1 || _prevBreakoutDir == 0) && ShowCHoCH);
+                if (choch && AlertOnCHoCH)
+                {
+                    string msg = instrumentName + " Bearish CHoCH at " + _prevLow.ToString("F2");
+                    Alert("RT_EARLY_CHoCH_" + CurrentBar + "_" + _prevLowIndex, Priority.High, msg,
+                        GetVoiceAlertPath("BearCHoCH", AlertSoundCHoCH), 10,
+                        System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.OrangeRed);
+                }
+                else if (!choch && AlertOnBOS)
+                {
+                    string msg = instrumentName + " Bearish BOS at " + _prevLow.ToString("F2");
+                    Alert("RT_EARLY_BOS_" + CurrentBar + "_" + _prevLowIndex, Priority.Medium, msg,
+                        GetVoiceAlertPath("BearBOS", AlertSoundBOS), 10,
+                        System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.DodgerBlue);
+                }
+            }
+
+            // ── Early bull OB break: price trades through the OB swing high intra-bar ──
+            if (AlertOnOBCreation && _obSwingTop != null && _obSwingTop.Y != double.MinValue
+                && tickPrice > _obSwingTop.Y && _obSwingTop.X != _earlyBullObIndex)
+            {
+                _earlyBullObIndex = _obSwingTop.X;
+                string msg = instrumentName + " breaking above OB swing high at " + _obSwingTop.Y.ToString("F2");
+                Alert("RT_EARLY_OB_" + CurrentBar + "_" + _obSwingTop.X, Priority.Medium, msg,
+                    GetVoiceAlertPath("BullOBCreated", AlertSoundOB), 10,
+                    System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.SeaGreen);
+            }
+
+            // ── Early bear OB break: price trades through the OB swing low intra-bar ──
+            if (AlertOnOBCreation && _obSwingBottom != null && _obSwingBottom.Y != double.MaxValue
+                && tickPrice < _obSwingBottom.Y && _obSwingBottom.X != _earlyBearObIndex)
+            {
+                _earlyBearObIndex = _obSwingBottom.X;
+                string msg = instrumentName + " breaking below OB swing low at " + _obSwingBottom.Y.ToString("F2");
+                Alert("RT_EARLY_OB_" + CurrentBar + "_" + _obSwingBottom.X, Priority.Medium, msg,
+                    GetVoiceAlertPath("BearOBCreated", AlertSoundOB), 10,
+                    System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.Crimson);
             }
         }
 
@@ -2336,6 +2459,7 @@ Write-Host 'COPIED_MP3'
                         cumVol += vol; cumTV += src * vol;
                         if (cumVol > 0) z.AvwapPoints.Add(new KeyValuePair<int, double>(i, cumTV / cumVol));
                     }
+                    z.AvwapCumTV = cumTV; z.AvwapCumVol = cumVol; z.AvwapCumBar = bars.Count - 1;
                 }
 
                 // Update dynamic fib endpoints for active zones
@@ -2466,6 +2590,7 @@ Write-Host 'COPIED_MP3'
                     cumVol += vol; cumTV += src * vol;
                     if (cumVol > 0) z.AvwapPoints.Add(new KeyValuePair<int, double>(i, cumTV / cumVol));
                 }
+                z.AvwapCumTV = cumTV; z.AvwapCumVol = cumVol; z.AvwapCumBar = bars.Count - 1;
             }
 
             // Cluster Levels (K-Means)
@@ -2810,13 +2935,14 @@ Write-Host 'COPIED_MP3'
 
                 if (State == State.Realtime)
                 {
-                    if (choch && AlertOnCHoCH)
+                    bool earlyFired = (_prevHighIndex == _earlyBullBreakIndex);
+                    if (choch && AlertOnCHoCH && !earlyFired)
                     {
                         string msg = instrumentName + " Bullish CHoCH at " + _prevHigh.ToString("F2");
                         Alert("RT_CHoCH_" + CurrentBar, Priority.High, msg,
                             GetVoiceAlertPath("BullCHoCH", AlertSoundCHoCH), 10, System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.Lime);
                     }
-                    else if (!choch && AlertOnBOS)
+                    else if (!choch && AlertOnBOS && !earlyFired)
                     {
                         string msg = instrumentName + " Bullish BOS at " + _prevHigh.ToString("F2");
                         Alert("RT_BOS_" + CurrentBar, Priority.Medium, msg,
@@ -2866,13 +2992,14 @@ Write-Host 'COPIED_MP3'
 
                 if (State == State.Realtime)
                 {
-                    if (choch && AlertOnCHoCH)
+                    bool earlyFired = (_prevLowIndex == _earlyBearBreakIndex);
+                    if (choch && AlertOnCHoCH && !earlyFired)
                     {
                         string msg = instrumentName + " Bearish CHoCH at " + _prevLow.ToString("F2");
                         Alert("RT_CHoCH_" + CurrentBar, Priority.High, msg,
                             GetVoiceAlertPath("BearCHoCH", AlertSoundCHoCH), 10, System.Windows.Media.Brushes.Transparent, System.Windows.Media.Brushes.OrangeRed);
                     }
-                    else if (!choch && AlertOnBOS)
+                    else if (!choch && AlertOnBOS && !earlyFired)
                     {
                         string msg = instrumentName + " Bearish BOS at " + _prevLow.ToString("F2");
                         Alert("RT_BOS_" + CurrentBar, Priority.Medium, msg,
@@ -2976,7 +3103,7 @@ Write-Host 'COPIED_MP3'
                     if (_bullOBList.Count > 30) { RmOB(_bullOBList[_bullOBList.Count - 1]); _bullOBList.RemoveAt(_bullOBList.Count - 1); _zoneVersion++; }
 
                     // Alert on bull OB creation
-                    if (AlertOnOBCreation && State == State.Realtime)
+                    if (AlertOnOBCreation && State == State.Realtime && _obSwingTop.X != _earlyBullObIndex)
                     {
                         string msg = instrumentName + " Bullish Order Block formed at " + drawBottom.ToString("F2") + " - " + drawTop.ToString("F2");
                         Alert("RT_OB_Bull_" + CurrentBar, Priority.Medium, msg,
@@ -3052,7 +3179,7 @@ Write-Host 'COPIED_MP3'
                     if (_bearOBList.Count > 30) { RmOB(_bearOBList[_bearOBList.Count - 1]); _bearOBList.RemoveAt(_bearOBList.Count - 1); _zoneVersion++; }
 
                     // Alert on bear OB creation
-                    if (AlertOnOBCreation && State == State.Realtime)
+                    if (AlertOnOBCreation && State == State.Realtime && _obSwingBottom.X != _earlyBearObIndex)
                     {
                         string msg = instrumentName + " Bearish Order Block formed at " + drawBottom.ToString("F2") + " - " + drawTop.ToString("F2");
                         Alert("RT_OB_Bear_" + CurrentBar, Priority.Medium, msg,
@@ -4159,6 +4286,9 @@ Write-Host 'COPIED_MP3'
 
         [Display(Name = "Alert on CHoCH", Order = 2, GroupName = "12. Alerts — Structure")]
         public bool AlertOnCHoCH { get; set; }
+
+        [Display(Name = "Alert Early Breakout", Description = "Fire CHoCH/BOS and OB-break alerts on the tick price trades through the level, instead of waiting for the 5-min bar close. Confirmed bar-close alerts still fire and are deduped.", Order = 2, GroupName = "12b. Alerts — Fast Lane")]
+        public bool AlertEarlyBreakout { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "BOS Sound File", Description = "WAV file name in NinjaTrader sounds folder", Order = 3, GroupName = "12. Alerts — Structure")]
