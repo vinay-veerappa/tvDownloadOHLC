@@ -44,10 +44,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private List<SweepEvent> sweepEvents;
         private List<SweepEvent> todaySweeps;
 
-        // Open Tracking Fields
+        // Open & Settlement Tracking Fields
         private double currentMonthOpen, prevMonthOpen;
         private double currentWeekOpen, prevWeekOpen;
         private double tueOpen, wedOpen, thuOpen, friOpen;
+        private double settlementPrice;
 
         // Native Engines & Helpers
         private SessionOpensEngine sessionOpens;
@@ -395,6 +396,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
 
             if (dayStartBar < 0) dayStartBar = CurrentBar;
+
+            int barMins = barTimeEt.Hour * 60 + barTimeEt.Minute;
+            if (barMins == 17 * 60 || barMins == 16 * 60 + 15)
+            {
+                settlementPrice = closeP;
+            }
 
             // Native Week & Month Tracking
             UpdateWeekMonthTracking(barTimeEt, highP, lowP, closeP);
@@ -760,7 +767,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     return (pdh > 0 && pdl > 0) ? (pdh + pdl) / 2.0 : 0;
 
                 case "Settlement":
-                    return pdc;
+                    return settlementPrice > 0 ? settlementPrice : pdc;
 
                 case "PriorWeekMid":
                     return (prevWeekHigh > 0 && prevWeekLow > 0) ? (prevWeekHigh + prevWeekLow) / 2.0 : 0;
