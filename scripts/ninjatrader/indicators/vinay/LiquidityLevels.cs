@@ -49,6 +49,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private double currentWeekOpen, prevWeekOpen;
         private double tueOpen, wedOpen, thuOpen, friOpen;
         private double settlementPrice;
+        private double dailySettlementPrice;
 
         // Native Engines & Helpers
         private SessionOpensEngine sessionOpens;
@@ -131,137 +132,223 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         #endregion
 
-        #region NinjaScript Properties — Specific Level Toggles (Granular)
+        #region NinjaScript Properties — Granular Level Toggles
 
-        [Display(Name = "Prior Day High (PDH)", Order = 1, GroupName = "1. Specific Level Toggles (Granular)")]
+        // ── 1. Prior Day / Week / Month ──
+        [Display(Name = "Prior Day High (PDH)", Order = 1, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPDH { get; set; } = true;
 
-        [Display(Name = "Prior Day Low (PDL)", Order = 2, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prior Day Low (PDL)", Order = 2, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPDL { get; set; } = true;
 
-        [Display(Name = "Prior Day Close (PDC)", Order = 3, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prior Day Close (PDC)", Order = 3, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPDC { get; set; } = false;
 
-        [Display(Name = "Prior Week High (PWH)", Order = 4, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prior Day Open (PDO)", Order = 4, GroupName = "1. Toggles — Prior Day/Week/Month")]
+        public bool ShowPDO { get; set; } = false;
+
+        [Display(Name = "Daily Settlement", Order = 5, GroupName = "1. Toggles — Prior Day/Week/Month")]
+        public bool ShowSettlement { get; set; } = false;
+
+        [Display(Name = "Prior Week High (PWH)", Order = 6, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPWH { get; set; } = true;
 
-        [Display(Name = "Prior Week Low (PWL)", Order = 5, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prior Week Low (PWL)", Order = 7, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPWL { get; set; } = true;
 
-        [Display(Name = "Prior Week Close (PWC)", Order = 6, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prior Week Close (PWC)", Order = 8, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPWC { get; set; } = false;
 
-        [Display(Name = "Prev Month High (PMH)", Order = 7, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prior Week Open (PWO)", Order = 9, GroupName = "1. Toggles — Prior Day/Week/Month")]
+        public bool ShowPWO { get; set; } = false;
+
+        [Display(Name = "Prev Month High (PMH)", Order = 10, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPMH { get; set; } = true;
 
-        [Display(Name = "Prev Month Low (PML)", Order = 8, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prev Month Low (PML)", Order = 11, GroupName = "1. Toggles — Prior Day/Week/Month")]
         public bool ShowPML { get; set; } = true;
 
-        [Display(Name = "Midnight Open (00:00 ET)", Order = 9, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prev Month Mid (PMM)", Order = 12, GroupName = "1. Toggles — Prior Day/Week/Month")]
+        public bool ShowPMM { get; set; } = false;
+
+        [Display(Name = "Prev Month Open (PMO)", Order = 13, GroupName = "1. Toggles — Prior Day/Week/Month")]
+        public bool ShowPMO { get; set; } = false;
+
+        // ── 2. Session Opens ──
+        [Display(Name = "Midnight Open (00:00 ET)", Order = 1, GroupName = "2. Toggles — Session Opens")]
         public bool ShowMidnightOpen { get; set; } = true;
 
-        [Display(Name = "London Open (03:00 ET)", Order = 10, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "London Open (03:00 ET)", Order = 2, GroupName = "2. Toggles — Session Opens")]
         public bool ShowLondonOpen { get; set; } = true;
 
-        [Display(Name = "RTH / NY Open (09:30 ET)", Order = 11, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "RTH / NY Open (09:30 ET)", Order = 3, GroupName = "2. Toggles — Session Opens")]
         public bool ShowRTHOpen { get; set; } = true;
 
-        [Display(Name = "4-Hour Session Opens", Order = 12, GroupName = "1. Specific Level Toggles (Granular)")]
-        public bool Show4HOpens { get; set; } = false;
+        [Display(Name = "Globex Open (18:00 ET)", Order = 4, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowGlobexOpen { get; set; } = false;
 
-        [Display(Name = "Asia Range High/Low", Order = 13, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Open 04:00 ET", Order = 5, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowOpen04H { get; set; } = false;
+
+        [Display(Name = "Open 08:00 ET", Order = 6, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowOpen08H { get; set; } = false;
+
+        [Display(Name = "Open 12:00 ET", Order = 7, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowOpen12H { get; set; } = false;
+
+        [Display(Name = "Open 16:00 ET", Order = 8, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowOpen16H { get; set; } = false;
+
+        [Display(Name = "Open 20:00 ET", Order = 9, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowOpen20H { get; set; } = false;
+
+        [Display(Name = "Tuesday Open", Order = 10, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowTueOpen { get; set; } = false;
+
+        [Display(Name = "Wednesday Open", Order = 11, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowWedOpen { get; set; } = false;
+
+        [Display(Name = "Thursday Open", Order = 12, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowThuOpen { get; set; } = false;
+
+        [Display(Name = "Friday Open", Order = 13, GroupName = "2. Toggles — Session Opens")]
+        public bool ShowFriOpen { get; set; } = false;
+
+        // ── 3. Session Ranges ──
+        [Display(Name = "Asia Range High/Low", Order = 1, GroupName = "3. Toggles — Session Ranges")]
         public bool ShowAsiaRange { get; set; } = true;
 
-        [Display(Name = "London Range High/Low", Order = 14, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "London Range High/Low", Order = 2, GroupName = "3. Toggles — Session Ranges")]
         public bool ShowLondonRange { get; set; } = true;
 
-        [Display(Name = "Globex Range High/Low", Order = 15, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Globex Range High/Low", Order = 3, GroupName = "3. Toggles — Session Ranges")]
         public bool ShowGlobexRange { get; set; } = true;
 
-        [Display(Name = "Initial Balance High/Low", Order = 16, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Initial Balance High/Low", Order = 4, GroupName = "3. Toggles — Session Ranges")]
         public bool ShowIB { get; set; } = true;
 
-        [Display(Name = "High of Day (HOD)", Order = 17, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Overnight P12 Range (18:00-06:00 ET)", Order = 5, GroupName = "3. Toggles — Session Ranges")]
+        public bool ShowP12 { get; set; } = false;
+
+        [Display(Name = "NY P12 Range (06:00-17:00 ET)", Order = 6, GroupName = "3. Toggles — Session Ranges")]
+        public bool ShowNYP12 { get; set; } = false;
+
+        // ── 4. Pivots & Fibs ──
+        [Display(Name = "Pivot Point (PP)", Order = 1, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowPivotPP { get; set; } = false;
+
+        [Display(Name = "Resistance 1 / Support 1", Order = 2, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowPivotR1S1 { get; set; } = false;
+
+        [Display(Name = "Resistance 2 / Support 2", Order = 3, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowPivotR2S2 { get; set; } = false;
+
+        [Display(Name = "Resistance 3 / Support 3", Order = 4, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowPivotR3S3 { get; set; } = false;
+
+        [Display(Name = "Fib 23.6%", Order = 5, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowFib236 { get; set; } = false;
+
+        [Display(Name = "Fib 38.2%", Order = 6, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowFib382 { get; set; } = false;
+
+        [Display(Name = "Fib 50.0%", Order = 7, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowFib500 { get; set; } = false;
+
+        [Display(Name = "Fib 61.8%", Order = 8, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowFib618 { get; set; } = false;
+
+        [Display(Name = "Fib 78.6%", Order = 9, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowFib786 { get; set; } = false;
+
+        [Display(Name = "Fib 100%", Order = 10, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowFib100 { get; set; } = false;
+
+        [Display(Name = "Fib Extensions (127.2%, 161.8%, -27.2%, -61.8%)", Order = 11, GroupName = "4. Toggles — Pivots & Fibs")]
+        public bool ShowFibExt { get; set; } = false;
+
+        // ── 5. Volume Profile & Intraday ──
+        [Display(Name = "High of Day (HOD)", Order = 1, GroupName = "5. Toggles — Volume Profile & Intraday")]
         public bool ShowHOD { get; set; } = true;
 
-        [Display(Name = "Low of Day (LOD)", Order = 18, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Low of Day (LOD)", Order = 2, GroupName = "5. Toggles — Volume Profile & Intraday")]
         public bool ShowLOD { get; set; } = true;
 
-        [Display(Name = "Current Session POC", Order = 19, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Current Session POC", Order = 3, GroupName = "5. Toggles — Volume Profile & Intraday")]
         public bool ShowCurrentPOC { get; set; } = false;
 
-        [Display(Name = "Current Session Value Area (VAH/VAL)", Order = 20, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Current Session Value Area (VAH/VAL)", Order = 4, GroupName = "5. Toggles — Volume Profile & Intraday")]
         public bool ShowCurrentVA { get; set; } = false;
 
-        [Display(Name = "Prev Day POC", Order = 21, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prev Day POC", Order = 5, GroupName = "5. Toggles — Volume Profile & Intraday")]
         public bool ShowPrevDayPOC { get; set; } = false;
 
-        [Display(Name = "Prev Day Value Area (VAH/VAL)", Order = 22, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Prev Day Value Area (VAH/VAL)", Order = 6, GroupName = "5. Toggles — Volume Profile & Intraday")]
         public bool ShowPrevDayVA { get; set; } = false;
 
-        [Display(Name = "Overnight POC / VAH / VAL", Order = 23, GroupName = "1. Specific Level Toggles (Granular)")]
+        [Display(Name = "Overnight POC / VAH / VAL", Order = 7, GroupName = "5. Toggles — Volume Profile & Intraday")]
         public bool ShowOvernightPOC { get; set; } = false;
 
         #endregion
 
         #region NinjaScript Properties — General Config
 
-        [Display(Name = "Enable Sweep Detection", Order = 1, GroupName = "2. Sweeps")]
+        [Display(Name = "Enable Sweep Detection", Order = 1, GroupName = "6. Sweeps & Proximity")]
         public bool EnableSweepDetection { get; set; } = true;
 
-        [Display(Name = "Sweep Mode", Order = 2, GroupName = "2. Sweeps")]
+        [Display(Name = "Sweep Mode", Order = 2, GroupName = "6. Sweeps & Proximity")]
         public SweepMode SweepMode { get; set; } = SweepMode.Wick;
 
-        [Display(Name = "Min Sweep Depth (ticks)", Order = 3, GroupName = "2. Sweeps")]
+        [Display(Name = "Min Sweep Depth (ticks)", Order = 3, GroupName = "6. Sweeps & Proximity")]
         public int SweepMinDepthTicks { get; set; } = 1;
 
-        [Display(Name = "Min Wick % of Bar Range", Order = 4, GroupName = "2. Sweeps")]
+        [Display(Name = "Min Wick % of Bar Range", Order = 4, GroupName = "6. Sweeps & Proximity")]
         public double SweepMinWickPct { get; set; } = 25.0;
 
-        [Display(Name = "Stacking Tolerance (ticks)", Order = 5, GroupName = "2. Sweeps")]
+        [Display(Name = "Stacking Tolerance (ticks)", Order = 5, GroupName = "6. Sweeps & Proximity")]
         public int StackingToleranceTicks { get; set; } = 5;
 
-        [Display(Name = "Proximity Fade", Order = 1, GroupName = "3. Visuals")]
+        [Display(Name = "Proximity Fade", Order = 6, GroupName = "6. Sweeps & Proximity")]
         public bool ProximityFade { get; set; } = false;
 
-        [Display(Name = "Proximity Threshold (points)", Order = 2, GroupName = "3. Visuals")]
+        [Display(Name = "Proximity Threshold (points)", Order = 7, GroupName = "6. Sweeps & Proximity")]
         public int ProximityThresholdPoints { get; set; } = 0;
 
-        [Display(Name = "Near Glow Opacity %", Order = 3, GroupName = "3. Visuals")]
+        [Display(Name = "Near Glow Opacity %", Order = 8, GroupName = "6. Sweeps & Proximity")]
         public int NearGlowOpacity { get; set; } = 100;
 
-        [Display(Name = "Far Fade Opacity %", Order = 4, GroupName = "3. Visuals")]
+        [Display(Name = "Far Fade Opacity %", Order = 9, GroupName = "6. Sweeps & Proximity")]
         public int FarFadeOpacity { get; set; } = 25;
 
-        [Display(Name = "Draw Lines", Order = 5, GroupName = "3. Visuals")]
+        [Display(Name = "Draw Lines", Order = 1, GroupName = "7. Visuals & Layout")]
         public bool DrawLines { get; set; } = true;
 
-        [Display(Name = "Draw Labels", Order = 6, GroupName = "3. Visuals")]
+        [Display(Name = "Draw Labels", Order = 2, GroupName = "7. Visuals & Layout")]
         public bool DrawLabels { get; set; } = true;
 
-        [Display(Name = "Draw Sweep Markers", Order = 7, GroupName = "3. Visuals")]
+        [Display(Name = "Draw Sweep Markers", Order = 3, GroupName = "7. Visuals & Layout")]
         public bool DrawSweepMarkers { get; set; } = true;
 
-        [Display(Name = "Use Full Level Names", Order = 8, GroupName = "3. Visuals")]
+        [Display(Name = "Use Full Level Names", Order = 4, GroupName = "7. Visuals & Layout")]
         public bool UseFullLevelNames { get; set; } = false;
 
-        [Display(Name = "Label Placement", Description = "Where to draw line labels: RightMargin (default), Origin, or Both", Order = 9, GroupName = "3. Visuals")]
+        [Display(Name = "Label Placement", Description = "Where to draw line labels: RightMargin (default), Origin, or Both", Order = 5, GroupName = "7. Visuals & Layout")]
         public LabelPlacement LabelPlacement { get; set; } = LabelPlacement.RightMargin;
 
         #endregion
 
         #region NinjaScript Properties — Voice Alerts
 
-        [Display(Name = "Enable Voice Alerts", Description = "Speak audio alerts via Windows Speech Synthesis when levels are swept", Order = 1, GroupName = "4. Voice Alerts")]
+        [Display(Name = "Enable Voice Alerts", Description = "Speak audio alerts via Windows Speech Synthesis when levels are swept", Order = 1, GroupName = "8. Voice Alerts")]
         public bool EnableVoiceAlerts { get; set; } = false;
 
-        [Display(Name = "Voice Gender", Description = "Female or Male voice for speech synthesis", Order = 2, GroupName = "4. Voice Alerts")]
+        [Display(Name = "Voice Gender", Description = "Female or Male voice for speech synthesis", Order = 2, GroupName = "8. Voice Alerts")]
         public VoiceGenderSelection VoiceGender { get; set; } = VoiceGenderSelection.Female;
 
-        [Display(Name = "Voice Volume (10-100)", Description = "Audio volume for voice alerts", Order = 3, GroupName = "4. Voice Alerts")]
+        [Display(Name = "Voice Volume (10-100)", Description = "Audio volume for voice alerts", Order = 3, GroupName = "8. Voice Alerts")]
         public int VoiceVolume { get; set; } = 80;
 
-        [Display(Name = "Voice Rate (-10 to 10)", Description = "Speech rate speed (-10 slowest, 10 fastest)", Order = 4, GroupName = "4. Voice Alerts")]
+        [Display(Name = "Voice Rate (-10 to 10)", Description = "Speech rate speed (-10 slowest, 10 fastest)", Order = 4, GroupName = "8. Voice Alerts")]
         public int VoiceRate { get; set; } = 0;
 
         #endregion
@@ -285,6 +372,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
             else if (State == State.Configure)
             {
+                AddDataSeries(BarsArray[0].Instrument.FullName, BarsPeriodType.Day, 1);
+
                 sweepEvents = new List<SweepEvent>();
                 todaySweeps = new List<SweepEvent>();
                 sessionOpens = new SessionOpensEngine(include4H: true);
@@ -299,6 +388,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 catch
                 {
                     etZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+                }
+            }
+            else if (State == State.DataLoaded)
+            {
+                if (EnableVoiceAlerts)
+                {
+                    SpeakVoiceAlert("Voice alerts enabled for Liquidity Levels indicator.");
                 }
             }
             else if (State == State.Terminated)
@@ -337,27 +433,63 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             string name = level.Def.Name;
 
+            // 1. Prior Day / Week / Month
             if (name == "PDH" && !ShowPDH) return false;
             if (name == "PDL" && !ShowPDL) return false;
             if (name == "PDC" && !ShowPDC) return false;
+            if (name == "PDO" && !ShowPDO) return false;
+            if (name == "Settlement" && !ShowSettlement) return false;
 
             if (name == "PWH" && !ShowPWH) return false;
             if (name == "PWL" && !ShowPWL) return false;
             if (name == "PWC" && !ShowPWC) return false;
+            if (name == "PWO" && !ShowPWO) return false;
 
             if (name == "PMH" && !ShowPMH) return false;
             if (name == "PML" && !ShowPML) return false;
+            if (name == "PMM" && !ShowPMM) return false;
+            if (name == "PMO" && !ShowPMO) return false;
 
+            // 2. Session Opens
             if (name == "MidnightOpen" && !ShowMidnightOpen) return false;
             if (name == "LondonOpen" && !ShowLondonOpen) return false;
             if ((name == "RTHOpen" || name == "NYOpen") && !ShowRTHOpen) return false;
-            if (name.StartsWith("Open_") && !Show4HOpens) return false;
+            if (name == "GlobexOpen" && !ShowGlobexOpen) return false;
 
+            if (name == "Open_04H" && !ShowOpen04H) return false;
+            if (name == "Open_08H" && !ShowOpen08H) return false;
+            if (name == "Open_12H" && !ShowOpen12H) return false;
+            if (name == "Open_16H" && !ShowOpen16H) return false;
+            if (name == "Open_20H" && !ShowOpen20H) return false;
+
+            if (name == "TueOpen" && !ShowTueOpen) return false;
+            if (name == "WedOpen" && !ShowWedOpen) return false;
+            if (name == "ThuOpen" && !ShowThuOpen) return false;
+            if (name == "FriOpen" && !ShowFriOpen) return false;
+
+            // 3. Session Ranges
             if ((name == "AsiaH" || name == "AsiaL" || name == "AsiaMid") && !ShowAsiaRange) return false;
             if ((name == "LonH" || name == "LonL" || name == "LonMid" || name == "LonOrMid") && !ShowLondonRange) return false;
             if ((name == "GlbH" || name == "GlbL" || name == "GlbMid") && !ShowGlobexRange) return false;
             if ((name == "IBH" || name == "IBL" || name == "IBMid") && !ShowIB) return false;
+            if (name.StartsWith("P12") && !ShowP12) return false;
+            if (name.Contains("NYP12") && !ShowNYP12) return false;
 
+            // 4. Pivots & Fibs
+            if (name == "PP" && !ShowPivotPP) return false;
+            if ((name == "R1" || name == "S1") && !ShowPivotR1S1) return false;
+            if ((name == "R2" || name == "S2") && !ShowPivotR2S2) return false;
+            if ((name == "R3" || name == "S3") && !ShowPivotR3S3) return false;
+
+            if (name == "Fib 23.6%" && !ShowFib236) return false;
+            if (name == "Fib 38.2%" && !ShowFib382) return false;
+            if (name == "Fib 50.0%" && !ShowFib500) return false;
+            if (name == "Fib 61.8%" && !ShowFib618) return false;
+            if (name == "Fib 78.6%" && !ShowFib786) return false;
+            if (name == "Fib 100%" && !ShowFib100) return false;
+            if ((name == "Fib 127.2%" || name == "Fib 161.8%" || name == "Fib -27.2%" || name == "Fib -61.8%") && !ShowFibExt) return false;
+
+            // 5. Volume Profile & Intraday
             if (name == "HOD" && !ShowHOD) return false;
             if (name == "LOD" && !ShowLOD) return false;
 
@@ -376,6 +508,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         protected override void OnBarUpdate()
         {
+            if (BarsInProgress == 1)
+            {
+                if (CurrentBar >= 1)
+                {
+                    dailySettlementPrice = Closes[1][1];
+                }
+                return;
+            }
+
             if (CurrentBar < 1) return;
 
             DateTime barTimeEt = ToEt(Time[0]);
@@ -767,7 +908,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     return (pdh > 0 && pdl > 0) ? (pdh + pdl) / 2.0 : 0;
 
                 case "Settlement":
-                    return settlementPrice > 0 ? settlementPrice : pdc;
+                    return dailySettlementPrice > 0 ? dailySettlementPrice : (settlementPrice > 0 ? settlementPrice : pdc);
 
                 case "PriorWeekMid":
                     return (prevWeekHigh > 0 && prevWeekLow > 0) ? (prevWeekHigh + prevWeekLow) / 2.0 : 0;
