@@ -335,6 +335,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "Label Placement", Description = "Where to draw line labels: RightMargin (default), Origin, or Both", Order = 5, GroupName = "7. Visuals & Layout")]
         public LabelPlacement LabelPlacement { get; set; } = LabelPlacement.RightMargin;
 
+        [Display(Name = "Font Size", Description = "Font size for chart label badges and hover tooltips (default: 11)", Order = 6, GroupName = "7. Visuals & Layout")]
+        public int FontSize { get; set; } = 11;
+
         #endregion
 
         #region NinjaScript Properties — Voice Alerts
@@ -388,13 +391,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 catch
                 {
                     etZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
-                }
-            }
-            else if (State == State.DataLoaded)
-            {
-                if (EnableVoiceAlerts)
-                {
-                    SpeakVoiceAlert("Voice alerts enabled for Liquidity Levels indicator.");
                 }
             }
             else if (State == State.Terminated)
@@ -1159,15 +1155,28 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 // 1. Native NinjaTrader Alert Window + Sound
                 Alert("LiquiditySweep", Priority.High, message, NinjaTrader.Core.Globals.InstallDir + @"\sounds\Alert1.wav", 10, System.Windows.Media.Brushes.White, System.Windows.Media.Brushes.DarkRed);
 
-                // 2. Windows Text-to-Speech Synthesis
+                // 2. Windows Text-to-Speech Synthesis (Async ThreadPool worker — zero UI freeze)
                 if (EnableVoiceAlerts)
                 {
                     string cleanMsg = message.Replace("'", "").Replace("\"", "");
-                    string psCmd = $"-Command \"Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Volume = {Math.Min(100, Math.Max(10, VoiceVolume))}; $s.Rate = {Math.Min(10, Math.Max(-10, VoiceRate))}; $s.Speak('{cleanMsg}')\"";
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell", psCmd)
+                    int vol = Math.Min(100, Math.Max(10, VoiceVolume));
+                    int rate = Math.Min(10, Math.Max(-10, VoiceRate));
+
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                     {
-                        CreateNoWindow = true,
-                        UseShellExecute = false
+                        try
+                        {
+                            string psCmd = $"-Command \"Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Volume = {vol}; $s.Rate = {rate}; $s.Speak('{cleanMsg}')\"";
+                            using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell", psCmd)
+                            {
+                                CreateNoWindow = true,
+                                UseShellExecute = false
+                            }))
+                            {
+                                p?.WaitForExit(3000);
+                            }
+                        }
+                        catch {}
                     });
                 }
             }
@@ -1275,12 +1284,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         {
             if (!DrawLines || ChartControl == null || RenderTarget == null) return;
 
-            if (!resourcesCreated)
+            if (!resourcesCreated || textFormat == null || Math.Abs(textFormat.FontSize - (float)FontSize) > 0.1f)
             {
-                textFormat = new TextFormat(Core.Globals.DirectWriteFactory, "Consolas",
-                    SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 9f);
+                if (textFormat != null) textFormat.Dispose();
+                if (tooltipFormat != null) tooltipFormat.Dispose();
+
+                float fontSize = Math.Max(8f, (float)FontSize);
+                textFormat = new TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI",
+                    SharpDX.DirectWrite.FontWeight.SemiBold, SharpDX.DirectWrite.FontStyle.Normal, fontSize);
                 tooltipFormat = new TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI",
-                    SharpDX.DirectWrite.FontWeight.SemiBold, SharpDX.DirectWrite.FontStyle.Normal, 11f);
+                    SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, fontSize);
                 resourcesCreated = true;
             }
 
@@ -1554,8 +1567,24 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             List<string> lines = new List<string> { title, priceText, catText, statusText, distText };
             if (stackText != null) lines.Add(stackText);
 
-            float width = 240f;
-            float lineHeight = 16f;
+            var activeFormat = tooltipFormat ?? textFormat;
+
+            // Measure maximum required text width dynamically
+            float maxLineWidth = 0f;
+            if (activeFormat != null)
+            {
+                foreach (var line in lines)
+                {
+                    using (var layout = new TextLayout(Core.Globals.DirectWriteFactory, line, activeFormat, float.MaxValue, float.MaxValue))
+                    {
+                        if (layout.Metrics.Width > maxLineWidth)
+                            maxLineWidth = layout.Metrics.Width;
+                    }
+                }
+            }
+
+            float width = Math.Max(260f, maxLineWidth + 24f);
+            float lineHeight = Math.Max(16f, (activeFormat?.FontSize ?? 11f) + 5f);
             float height = lines.Count * lineHeight + 12f;
 
             float boxX = mouseX + 15;
@@ -1594,7 +1623,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             for (int i = 0; i < lines.Count; i++)
             {
                 var curBrush = (i == 0) ? titleBrush : (lines[i].Contains("Swept")) ? sweptBrush : textBrush;
-                var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, lines[i], tooltipFormat ?? textFormat, width - 12, lineHeight + 2);
+                var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, lines[i], activeFormat, float.MaxValue, float.MaxValue);
+                textLayout.WordWrapping = WordWrapping.NoWrap;
                 RenderTarget.DrawTextLayout(new SharpDX.Vector2(boxX + 6, textY), textLayout, curBrush);
                 textLayout.Dispose();
                 textY += lineHeight;
