@@ -231,6 +231,91 @@ LiquidityLevels (IsOverlay, composes)
 | **Stacking detection** | ✅ Implemented | P8 |
 | **DOL assessment** | ❌ Deferred | Phase 2 |
 | **Voice alerts** | ✅ Implemented (System.Speech pre-generated WAVs) | 2026-08-03 |
+| **Hit Rate Tracking (Phase 2 Stats)** | ✅ Implemented | 2026-08-03 |
+
+---
+
+## K. Hit Rate Tracking (Phase 2 Statistics — 2026-08-03)
+
+### K.1 Overview
+
+Per-level hit-rate statistics tracking how often price reaches a level within a configurable time window. Validated against the TradingView ProbabilityMap indicator (`scripts/indicators-pine/ProbabilityMap/ProbabilityMap.pine`).
+
+### K.2 Architecture — Reusable Engine
+
+```
+scripts/ninjatrader/indicators/vinay/
+├── HitRateTrackerLib.cs    ← Pure C#, NT8-free (HitWindow, HitRateConfig, HitSample, LevelHitStats, HitRateEngine)
+└── LiquidityLevels.cs      ← Host indicator (wires engine, renders tooltip + debug table)
+```
+
+The engine (`HitRateEngine` static class) is NT8-free and reusable by `SessionRanges` and future Asia/London indicators. Each host indicator supplies:
+- A `HitWindow` (session time range, e.g. NY RTH 08:00-16:00 ET)
+- A `Func<DateTime, double>` price provider per level (e.g. PDH from daily series, P12High from intraday reconstruction)
+
+### K.3 Hit Definition
+
+Direction-agnostic: `bar.High >= level && bar.Low <= level` (bar range intersects level). The **first** such bar in the window is the hit; its time (minutes-of-day) is recorded as `HitTimeMin` for future time-distribution analysis.
+
+### K.4 Session Boundary
+
+- **CME settlement boundary: 17:00 ET** (matches TV `isNewDay` at `hhmm >= 1700`, line 404 of ProbabilityMap.pine).
+- `HrSessionDateFromBarEt`: bars at `>= 17:00 ET` belong to the NEXT calendar day's session.
+
+### K.5 Fence-Post Convention
+
+NT8 uses **close-timestamped** bars (bar stamped 08:05 opens at 08:00):
+- Window start: `barMins > StartMin` (first bar whose open is at/after start)
+- Window end (inclusive): `barMins <= EndMin` (last bar that closes within window)
+
+### K.6 Historical vs Live
+
+- **Historical sessions** (committed past sessions, up to yesterday) drive: HitRate, TotalHits, DaysInHistory, CurrentStreak, MaxHitStreak, MaxMissStreak, RecentHistory.
+- **Today's session** = live, tracked separately: `TodayPrice`, `TodayHit`, `InWindow`. NOT counted in hit_rate/streak stats. On day rollover it commits into history.
+- Sessions with 0 window bars (weekends/holidays) are **excluded** from the history — only trading days count.
+- `HrCommitDay` and `HrAdvanceToday` fire **only on the live bar** (`CurrentBar == BarsArray[0].Count - 1`), not during historical replay.
+
+### K.7 Tracked Levels (v1)
+
+| Level | Price Source | Provider |
+|---|---|---|
+| PDH | Daily series (BarsArray[1]) prior high | `request.security("D", high[1])` parity |
+| PDL | Daily series prior low | Same |
+| PDC | Daily series prior close | Same |
+| P12High | Reconstructed from intraday 18:00-06:00 ET overnight window | Back-scan BarsArray[0] |
+| P12Low | Same | Same |
+
+Session-range levels (Asia/London/Globex/IB H/L) require historical per-date reconstruction — deferred.
+
+### K.8 Config Properties (Group "9. Hit Rate Tracking")
+
+| Property | Default | Description |
+|---|---|---|
+| EnableHitRate | true | Enable hit-rate tracking |
+| HitRateLookbackDays | 500 | Max historical trading days |
+| HitRateWindowStart | "09:30" | Hit-check window start (ET HH:mm) |
+| HitRateWindowEnd | "16:00" | Hit-check window end |
+| HitRateDebugLevel | "PDH" | Level shown in debug table |
+| ShowHitRateDebugTable | true | Display top-right debug table |
+| ShowHitRateTooltips | true | Append hit-rate stats to hover tooltips |
+
+### K.9 Debug Table + Tooltip
+
+- **Debug table** (top-right): shows one level's full stats. Click to cycle through tracked levels.
+- **Hover tooltip**: appended to the existing level hover tooltip with Hit Ratio, Days Tracked, Current Streak, Max Hit/Miss Streak.
+- Recent history: `x` = hit, `-` = miss, `/` = today/pending.
+
+### K.10 Public API
+
+```csharp
+public LevelHitStats GetHitRateStats(string levelName);
+public Dictionary<string, LevelHitStats> GetAllHitRateStats();
+public List<string> GetHitRateTrackedLevels();
+```
+
+### K.11 Validation
+
+PDH hit rate validated against TradingView ProbabilityMap indicator (MNQ, 74-day lookback, 08:00-16:00 ET window). NT8 matches TV within ~1% (50.0% vs 51.1%). The small residual gap is attributable to one day where the daily bar boundary shifts the PDH price by one session.
 
 ---
 

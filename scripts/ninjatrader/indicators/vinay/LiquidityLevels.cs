@@ -103,6 +103,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private SharpDX.DirectWrite.TextFormat tooltipFormat;
         private bool resourcesCreated;
 
+        // ── Hit Rate Tracking State ──
+        private HitRateConfig hrCfg;
+        private HitWindow hrWindow;
+        private List<SessionBars> hrSessionBars;
+        private Dictionary<string, List<HitSample>> hrHistory;           // per-level committed history
+        private Dictionary<string, LevelHitStats> hrStats;              // per-level computed stats
+        private Dictionary<string, Func<DateTime, double>> hrProviders;  // per-level price providers
+        private Dictionary<string, bool> hrTodayHit;                    // per-level: did today hit?
+        private Dictionary<string, int> hrTodayHitMin;                   // per-level: first-hit time today
+        private Dictionary<string, double> hrTodayLevel;                 // per-level: today's level price
+        private List<string> hrTrackedLevels;                            // ordered list of tracked sweep-target level names
+        private int hrDebugLevelIdx;                                      // index into hrTrackedLevels for cycling
+        private int hrNewDaysDetected;                                    // total session dates detected
+        private DateTime hrLastSessionDate;                               // last committed session date
+        private RectangleF hrDebugTableRect;                              // hit-test rect for click-to-cycle
+        private bool hrEngineReady;                                      // set true after DataLoaded build
+
         // Voice Alerts — pre-generated WAV files (edge-tts neural voices)
         private Dictionary<string, string> voiceAlertPaths = new Dictionary<string, string>();
         private Dictionary<string, DateTime> lastAlertTime = new Dictionary<string, DateTime>();
@@ -372,6 +389,32 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         #endregion
 
+        #region NinjaScript Properties — Hit Rate Tracking
+
+        [Display(Name = "Enable Hit Rate", Description = "Track per-level hit rate statistics", Order = 1, GroupName = "9. Hit Rate Tracking")]
+        public bool EnableHitRate { get; set; } = true;
+
+        [Display(Name = "Lookback (days)", Description = "Maximum number of historical days to include in hit rate stats", Order = 2, GroupName = "9. Hit Rate Tracking")]
+        [Range(10, 2000)]
+        public int HitRateLookbackDays { get; set; } = 500;
+
+        [Display(Name = "Window Start (HH:mm)", Description = "Hit-check window start time in ET (e.g. 09:30)", Order = 3, GroupName = "9. Hit Rate Tracking")]
+        public string HitRateWindowStart { get; set; } = "09:30";
+
+        [Display(Name = "Window End (HH:mm)", Description = "Hit-check window end time in ET (e.g. 16:00)", Order = 4, GroupName = "9. Hit Rate Tracking")]
+        public string HitRateWindowEnd { get; set; } = "16:00";
+
+        [Display(Name = "Debug Level", Description = "Level name to show in the debug table (e.g. PDH, PDL, P12High). Click the debug table on chart to cycle.", Order = 5, GroupName = "9. Hit Rate Tracking")]
+        public string HitRateDebugLevel { get; set; } = "PDH";
+
+        [Display(Name = "Show Debug Table", Description = "Display the hit rate debug table in the top-right corner", Order = 6, GroupName = "9. Hit Rate Tracking")]
+        public bool ShowHitRateDebugTable { get; set; } = true;
+
+        [Display(Name = "Show Hit Rate in Tooltips", Description = "Append hit rate stats to hover tooltips on levels", Order = 7, GroupName = "9. Hit Rate Tracking")]
+        public bool ShowHitRateTooltips { get; set; } = true;
+
+        #endregion
+
         #region State Initialization
 
         protected override void OnStateChange()
@@ -412,6 +455,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 {
                     etZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
                 }
+
+                // Hit rate tracking — initialize collections
+                hrCfg = new HitRateConfig { LookbackDays = HitRateLookbackDays, RecentN = 10, StreakMinHits = 1, Mode = HitMode.Through };
+                hrHistory = new Dictionary<string, List<HitSample>>();
+                hrStats = new Dictionary<string, LevelHitStats>();
+                hrProviders = new Dictionary<string, Func<DateTime, double>>();
+                hrTodayHit = new Dictionary<string, bool>();
+                hrTodayHitMin = new Dictionary<string, int>();
+                hrTodayLevel = new Dictionary<string, double>();
+                hrTrackedLevels = new List<string>();
+                hrDebugLevelIdx = 0;
+                hrNewDaysDetected = 0;
+                hrLastSessionDate = DateTime.MinValue;
+                hrEngineReady = false;
             }
             else if (State == State.Terminated)
             {
@@ -431,6 +488,458 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                         catch (Exception ex) { Print("LiquidityLevels: Voice gen error: " + ex.Message); }
                     });
                 }
+
+                if (EnableHitRate)
+                {
+                    try
+                    {
+                        BuildHitRateEngine();
+                    }
+                    catch (Exception ex)
+                    {
+                        Print("LiquidityLevels: Hit rate engine build error: " + ex.Message);
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+        #region Hit Rate Tracking — Engine Build, Live Update, Commit, Rendering
+
+        // ── Session date mapping: a bar's ET time → its session date ──────────
+        // Futures Globex day boundary = 18:00 ET. Bars at/after 18:00 ET belong
+        // to the NEXT calendar day's session.
+        private DateTime HrSessionDateFromBarEt(DateTime barEt)
+        {
+            // Match TV ProbabilityMap: new day at 17:00 ET (CME settlement boundary)
+            // TV line 404: if hhmm >= 1700 and hhmm < 1801 → new day
+            int barMins = barEt.Hour * 60 + barEt.Minute;
+            return barMins >= 17 * 60 ? barEt.Date.AddDays(1) : barEt.Date;
+        }
+
+        // ── Build the hit-rate engine on DataLoaded ──────────────────────────
+        // Scans intraday bars (BarsArray[0]) to build per-session window-bar
+        // groupings, registers level price providers, then computes history +
+        // stats for each tracked sweep-target level.
+        private void BuildHitRateEngine()
+        {
+            // Build the hit window from config props
+            int startMin = HitWindow.TimeStrToMin(HitRateWindowStart);
+            int endMin = HitWindow.TimeStrToMin(HitRateWindowEnd);
+            if (startMin < 0 || endMin < 0)
+            {
+                Print("LiquidityLevels: HitRateWindowStart/End invalid, defaulting to 09:30-16:00");
+                startMin = 570; endMin = 960;
+            }
+            hrWindow = new HitWindow { StartMin = startMin, EndMin = endMin, Label = "Hit Window" };
+            hrCfg = new HitRateConfig
+            {
+                LookbackDays = HitRateLookbackDays,
+                RecentN = 10,
+                StreakMinHits = 1,
+                Mode = HitMode.Through
+            };
+
+            // Collect all bars from BarsArray[0] (intraday)
+            var allBars = new List<BarData>();
+            int totalBars = BarsArray[0].Count;
+            for (int i = 0; i < totalBars; i++)
+            {
+                DateTime bt = ToEt(BarsArray[0].GetTime(i));
+                if (etZone != null && bt.Kind != DateTimeKind.Utc)
+                {
+                    // ToEt already converts UTC→ET; if not UTC, assume it's already ET
+                }
+                allBars.Add(new BarData
+                {
+                    TimeEt = bt,
+                    BarMins = bt.Hour * 60 + bt.Minute,
+                    High = BarsArray[0].GetHigh(i),
+                    Low = BarsArray[0].GetLow(i),
+                    Open = BarsArray[0].GetOpen(i),
+                    Close = BarsArray[0].GetClose(i),
+                    BarIndex = i
+                });
+            }
+
+            // Build session-date groupings (one pass)
+            hrSessionBars = HitRateEngine.BuildSessionBars(allBars, hrWindow, HrSessionDateFromBarEt);
+            hrNewDaysDetected = hrSessionBars.Count;
+
+            // Separate today's session (the last one) from historical
+            // Use the LAST bar's time, not Time[0] (which is bar 0 = oldest during DataLoaded)
+            DateTime lastBarEt = ToEt(BarsArray[0].GetTime(BarsArray[0].Count - 1));
+            DateTime todaySessionDate = HrSessionDateFromBarEt(lastBarEt);
+            var historicalSessions = hrSessionBars
+                .Where(s => s.SessionDate < todaySessionDate)
+                .ToList();
+
+            // Register level price providers for sweep-target levels
+            RegisterLevelProviders();
+
+            // Build history + stats for each tracked level
+            foreach (var levelName in hrTrackedLevels)
+            {
+                if (!hrProviders.TryGetValue(levelName, out var provider)) continue;
+
+                var history = HitRateEngine.BuildHistory(levelName, provider, historicalSessions, hrCfg);
+                hrHistory[levelName] = history;
+
+                // Today's state (live)
+                double todayPrice = GetTodayLevelPrice(levelName);
+                hrTodayLevel[levelName] = todayPrice;
+                hrTodayHit[levelName] = false;
+                hrTodayHitMin[levelName] = 0;
+
+                DateTime lastBarEt0 = ToEt(BarsArray[0].GetTime(BarsArray[0].Count - 1));
+                bool inWindow = hrWindow.InWindow(lastBarEt0.Hour * 60 + lastBarEt0.Minute);
+                hrStats[levelName] = HitRateEngine.ComputeStats(
+                    levelName, history, todayPrice, false, inWindow,
+                    CurrentBar, hrNewDaysDetected, hrCfg, hrWindow);
+            }
+
+            // Set debug level index
+            hrDebugLevelIdx = Math.Max(0, hrTrackedLevels.IndexOf(HitRateDebugLevel));
+            if (hrDebugLevelIdx < 0) hrDebugLevelIdx = 0;
+
+            hrLastSessionDate = todaySessionDate;
+            hrEngineReady = true;
+            Print($"LiquidityLevels: Hit rate engine ready — {hrTrackedLevels.Count} levels, {hrNewDaysDetected} sessions detected");
+        }
+
+        // ── Register level price providers for tracked sweep-target levels ───
+        // Each provider takes a session date D and returns the level price
+        // that was active FOR that session (e.g., PDH = high of the day BEFORE D).
+        private void RegisterLevelProviders()
+        {
+            hrTrackedLevels.Clear();
+            hrProviders.Clear();
+
+            // Only track PriorDay levels + P12 levels for v1.
+            // Session-range levels (Asia/London/etc.) require historical
+            // reconstruction of those ranges — deferred to a follow-up.
+
+            // PDH — prior day high from daily series (BarsArray[1])
+            hrProviders["PDH"] = (sessDate) =>
+            {
+                for (int i = BarsArray[1].Count - 1; i >= 0; i--)
+                {
+                    DateTime dTime = BarsArray[1].GetTime(i);
+                    DateTime dEt = ToEt(dTime);
+                    DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                    if (dSessDate < sessDate)
+                        return BarsArray[1].GetHigh(i);
+                }
+                return 0;
+            };
+            hrTrackedLevels.Add("PDH");
+
+            // PDL — prior day low
+            hrProviders["PDL"] = (sessDate) =>
+            {
+                for (int i = BarsArray[1].Count - 1; i >= 0; i--)
+                {
+                    DateTime dTime = BarsArray[1].GetTime(i);
+                    DateTime dEt = ToEt(dTime);
+                    DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                    if (dSessDate < sessDate)
+                        return BarsArray[1].GetLow(i);
+                }
+                return 0;
+            };
+            hrTrackedLevels.Add("PDL");
+
+            // PDC — prior day close
+            hrProviders["PDC"] = (sessDate) =>
+            {
+                for (int i = BarsArray[1].Count - 1; i >= 0; i--)
+                {
+                    DateTime dTime = BarsArray[1].GetTime(i);
+                    DateTime dEt = ToEt(dTime);
+                    DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                    if (dSessDate < sessDate)
+                        return BarsArray[1].GetClose(i);
+                }
+                return 0;
+            };
+            hrTrackedLevels.Add("PDC");
+
+            // P12High — overnight P12 high (18:00 ET → 06:00 ET) reconstructed
+            // from intraday bars for the session date.
+            hrProviders["P12High"] = (sessDate) =>
+            {
+                return ReconstructP12High(sessDate);
+            };
+            hrTrackedLevels.Add("P12High");
+
+            // P12Low — overnight P12 low
+            hrProviders["P12Low"] = (sessDate) =>
+            {
+                return ReconstructP12Low(sessDate);
+            };
+            hrTrackedLevels.Add("P12Low");
+        }
+
+        // ── Reconstruct P12 High for a historical session date ───────────────
+        // P12 = 18:00 ET to 06:00 ET overnight range. For session date D:
+        // scan bars from 18:00 ET of (D-1) to 06:00 ET of D, return the high.
+        private double ReconstructP12High(DateTime sessDate)
+        {
+            double hi = 0;
+            DateTime windowStart = sessDate.AddDays(-1).Date.AddHours(18);  // 18:00 ET prev day
+            DateTime windowEnd = sessDate.Date.AddHours(6);                 // 06:00 ET session day
+
+            for (int i = 0; i < BarsArray[0].Count; i++)
+            {
+                DateTime bt = ToEt(BarsArray[0].GetTime(i));
+                if (bt < windowStart) continue;
+                if (bt > windowEnd) break;
+                double h = BarsArray[0].GetHigh(i);
+                if (h > hi) hi = h;
+            }
+            return hi;
+        }
+
+        // ── Reconstruct P12 Low for a historical session date ────────────────
+        private double ReconstructP12Low(DateTime sessDate)
+        {
+            double lo = double.MaxValue;
+            DateTime windowStart = sessDate.AddDays(-1).Date.AddHours(18);
+            DateTime windowEnd = sessDate.Date.AddHours(6);
+
+            for (int i = 0; i < BarsArray[0].Count; i++)
+            {
+                DateTime bt = ToEt(BarsArray[0].GetTime(i));
+                if (bt < windowStart) continue;
+                if (bt > windowEnd) break;
+                double l = BarsArray[0].GetLow(i);
+                if (l < lo) lo = l;
+            }
+            return lo == double.MaxValue ? 0 : lo;
+        }
+
+        // ── Get today's live level price (from the indicator's current state) ──
+        private double GetTodayLevelPrice(string levelName)
+        {
+            var level = GetLevel(levelName);
+            return level?.Price ?? 0;
+        }
+
+        // ── Live update within today's window (called from OnBarUpdate) ─────
+        private void HrAdvanceToday(DateTime barEt, double barHigh, double barLow)
+        {
+            if (!hrEngineReady || !EnableHitRate) return;
+            int barMins = barEt.Hour * 60 + barEt.Minute;
+            if (!hrWindow.InWindow(barMins)) return;
+
+            foreach (var levelName in hrTrackedLevels)
+            {
+                if (!hrTodayHit.ContainsKey(levelName)) continue;
+                if (hrTodayHit[levelName]) continue;  // first hit only
+
+                double price = hrTodayLevel.ContainsKey(levelName) ? hrTodayLevel[levelName] : 0;
+                if (price <= 0)
+                {
+                    // Refresh today's price if not yet set
+                    price = GetTodayLevelPrice(levelName);
+                    if (price <= 0) continue;
+                    hrTodayLevel[levelName] = price;
+                }
+
+                if (barHigh >= price && barLow <= price)
+                {
+                    hrTodayHit[levelName] = true;
+                    hrTodayHitMin[levelName] = barMins;
+                }
+            }
+        }
+
+        // ── Commit today's results into history on day rollover ──────────────
+        private void HrCommitDay(DateTime newSessionDate)
+        {
+            if (!hrEngineReady || !EnableHitRate) return;
+
+            // Commit the previous session's results
+            foreach (var levelName in hrTrackedLevels)
+            {
+                if (!hrHistory.ContainsKey(levelName)) continue;
+                if (!hrTodayHit.ContainsKey(levelName)) continue;
+
+                double levelPrice = hrTodayLevel.ContainsKey(levelName) ? hrTodayLevel[levelName] : 0;
+                bool hit = hrTodayHit[levelName];
+                int hitMin = hrTodayHitMin.ContainsKey(levelName) ? hrTodayHitMin[levelName] : 0;
+
+                var sample = HitRateEngine.CommitToday(levelName, hrLastSessionDate, levelPrice, hit, hitMin);
+                hrHistory[levelName].Add(sample);
+
+                // Trim to lookback
+                hrHistory[levelName] = HitRateEngine.TrimHistory(hrHistory[levelName], hrCfg.LookbackDays);
+            }
+
+            // Recompute stats for all levels
+            foreach (var levelName in hrTrackedLevels)
+            {
+                if (!hrHistory.ContainsKey(levelName)) continue;
+                double todayPrice = GetTodayLevelPrice(levelName);
+                hrTodayLevel[levelName] = todayPrice;
+                hrTodayHit[levelName] = false;
+                hrTodayHitMin[levelName] = 0;
+
+                DateTime lastBarEtC = ToEt(BarsArray[0].GetTime(BarsArray[0].Count - 1));
+                bool inWindow = hrWindow.InWindow(lastBarEtC.Hour * 60 + lastBarEtC.Minute);
+                hrStats[levelName] = HitRateEngine.ComputeStats(
+                    levelName, hrHistory[levelName], todayPrice, false, inWindow,
+                    CurrentBar, hrNewDaysDetected, hrCfg, hrWindow);
+            }
+
+            hrLastSessionDate = newSessionDate;
+        }
+
+        // ── Refresh stats for a level (called when lookback/window changes) ──
+        private void HrRefreshStats()
+        {
+            if (!hrEngineReady || !EnableHitRate) return;
+
+            hrCfg.LookbackDays = HitRateLookbackDays;
+
+            int startMin = HitWindow.TimeStrToMin(HitRateWindowStart);
+            int endMin = HitWindow.TimeStrToMin(HitRateWindowEnd);
+            if (startMin >= 0 && endMin >= 0)
+            {
+                hrWindow.StartMin = startMin;
+                hrWindow.EndMin = endMin;
+            }
+
+            DateTime lastBarEtR = ToEt(BarsArray[0].GetTime(BarsArray[0].Count - 1));
+            DateTime todaySessDate = HrSessionDateFromBarEt(lastBarEtR);
+            var historicalSessions = hrSessionBars
+                .Where(s => s.SessionDate < todaySessDate)
+                .ToList();
+
+            foreach (var levelName in hrTrackedLevels)
+            {
+                if (!hrProviders.TryGetValue(levelName, out var provider)) continue;
+                var history = HitRateEngine.BuildHistory(levelName, provider, historicalSessions, hrCfg);
+                hrHistory[levelName] = history;
+
+                double todayPrice = GetTodayLevelPrice(levelName);
+                hrTodayLevel[levelName] = todayPrice;
+                bool inWindow = hrWindow.InWindow(lastBarEtR.Hour * 60 + lastBarEtR.Minute);
+                hrStats[levelName] = HitRateEngine.ComputeStats(
+                    levelName, history, todayPrice, hrTodayHit.ContainsKey(levelName) && hrTodayHit[levelName],
+                    inWindow, CurrentBar, hrNewDaysDetected, hrCfg, hrWindow);
+            }
+        }
+
+        // ── Cycle debug level on click ───────────────────────────────────────
+        private void HrCycleDebugLevel()
+        {
+            if (hrTrackedLevels.Count == 0) return;
+            hrDebugLevelIdx = (hrDebugLevelIdx + 1) % hrTrackedLevels.Count;
+            HitRateDebugLevel = hrTrackedLevels[hrDebugLevelIdx];
+        }
+
+        // ── Render the debug table (top-right corner) ────────────────────────
+        private void RenderHitRateDebugTable(ChartControl chartControl, bool isDark)
+        {
+            if (!ShowHitRateDebugTable || !hrEngineReady || hrTrackedLevels.Count == 0) return;
+            if (!hrStats.TryGetValue(HitRateDebugLevel, out var stats)) return;
+            if (stats == null) return;
+
+            var lines = new List<string>
+            {
+                "Hit Rate Debug",
+                $"Level,{HitRateDebugLevel}",
+                $"HR Enabled?,{EnableHitRate}",
+                $"Days in history,{stats.DaysInHistory}",
+                $"{HitRateDebugLevel} hit_rate,{stats.HitRate:F1}%",
+                $"{HitRateDebugLevel} total_hits,{stats.TotalHits}",
+                $"{HitRateDebugLevel} streak,{stats.CurrentStreak}",
+                $"{HitRateDebugLevel} max hits/miss,{stats.MaxHitStreak}/{stats.MaxMissStreak}",
+                $"Today {HitRateDebugLevel} price,{stats.TodayPrice:F2}",
+                $"Today {HitRateDebugLevel} hit?,{stats.TodayHit}",
+                $"In time window?,{stats.InWindow}",
+                $"Time Window,{stats.TimeWindowLabel}",
+                $"New days detected,{stats.NewDaysDetected}",
+                $"Local_Index,{stats.LocalIndex}",
+                $"Lookback (days),{stats.LookbackDays}",
+                "--- Recent History ---",
+                $"Last 10 days,{stats.RecentHistoryString}",
+                $"Recent 10 Hits,{stats.RecentHitsCount}/{stats.RecentN}",
+                $"Streak config,{stats.StreakMinHits} Hit",
+            };
+
+            float padX = 8f;
+            float padY = 5f;
+            float lineHeight = 15f;
+
+            // Measure max width
+            float maxW = 0f;
+            var measureFormat = textFormat ?? tooltipFormat;
+            if (measureFormat == null) return;
+            foreach (var line in lines)
+            {
+                using (var tl = new SharpDX.DirectWrite.TextLayout(
+                    Core.Globals.DirectWriteFactory, line, measureFormat, float.MaxValue, float.MaxValue))
+                {
+                    if (tl.Metrics.Width > maxW) maxW = tl.Metrics.Width;
+                }
+            }
+
+            float boxW = maxW + padX * 2;
+            float boxH = lines.Count * lineHeight + padY * 2;
+
+            // Top-right corner with a small margin
+            float boxX = (float)chartControl.ActualWidth - boxW - 10;
+            float boxY = 10;
+
+            hrDebugTableRect = new RectangleF(boxX, boxY, boxW, boxH);
+
+            var bgBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.05f, 0.07f, 0.10f, 0.92f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.97f, 0.97f, 0.99f, 0.95f));
+
+            var borderBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.2f, 0.6f, 1.0f, 0.8f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.1f, 0.4f, 0.8f, 0.8f));
+
+            var headerBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.4f, 0.8f, 1.0f, 1.0f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.05f, 0.3f, 0.6f, 1.0f));
+
+            var textBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.82f, 0.85f, 0.90f, 1.0f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.10f, 0.12f, 0.16f, 1.0f));
+
+            RenderTarget.FillRectangle(hrDebugTableRect, bgBrush);
+            RenderTarget.DrawRectangle(hrDebugTableRect, borderBrush, 1.0f);
+
+            float textY = boxY + padY;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var brush = (i == 0) ? headerBrush : textBrush;
+                using (var tl = new SharpDX.DirectWrite.TextLayout(
+                    Core.Globals.DirectWriteFactory, lines[i], measureFormat, float.MaxValue, float.MaxValue))
+                {
+                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(boxX + padX, textY), tl, brush);
+                }
+                textY += lineHeight;
+            }
+
+            bgBrush.Dispose();
+            borderBrush.Dispose();
+            headerBrush.Dispose();
+            textBrush.Dispose();
+        }
+
+        // ── Check if mouse click is on debug table and cycle ──────────────────
+        private void HrCheckDebugTableClick(float mouseX, float mouseY)
+        {
+            if (!ShowHitRateDebugTable || !hrEngineReady) return;
+            if (hrDebugTableRect.Contains(mouseX, mouseY))
+            {
+                HrCycleDebugLevel();
             }
         }
 
@@ -564,6 +1073,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             if (globexDate != lastDate)
             {
+                // Hit rate: commit previous day's results before resetting
+                // Only on the live bar (not historical replay) to avoid duplicating history
+                if (hrEngineReady && EnableHitRate && hrLastSessionDate != DateTime.MinValue
+                    && CurrentBar == BarsArray[0].Count - 1)
+                    HrCommitDay(globexDate);
+
                 lastDate = globexDate;
                 dayStartBar = CurrentBar;
                 todaySweeps.Clear();
@@ -597,6 +1112,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             // Run sweep detection
             if (EnableSweepDetection)
                 RunSweepDetection(highP, lowP, openP, closeP, barTimeEt, CurrentBar);
+
+            // Hit rate: live update within today's window (first-hit only, live bar only)
+            if (hrEngineReady && EnableHitRate && CurrentBar == BarsArray[0].Count - 1)
+                HrAdvanceToday(barTimeEt, highP, lowP);
 
             prevClose = closeP;
         }
@@ -1493,6 +2012,27 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public double HOD => ReadCurrentDayOHL("CurrentHigh");
         public double LOD => ReadCurrentDayOHL("CurrentLow");
 
+        // ── Hit Rate Public API ──
+        /// <summary>Get hit-rate statistics for a specific level by name (e.g. "PDH", "P12High").</summary>
+        public LevelHitStats GetHitRateStats(string levelName)
+        {
+            if (hrStats != null && hrStats.TryGetValue(levelName, out var stats))
+                return stats;
+            return null;
+        }
+
+        /// <summary>Get all computed hit-rate statistics, keyed by level name.</summary>
+        public Dictionary<string, LevelHitStats> GetAllHitRateStats()
+        {
+            return hrStats != null ? new Dictionary<string, LevelHitStats>(hrStats) : new Dictionary<string, LevelHitStats>();
+        }
+
+        /// <summary>List of level names currently being tracked for hit rate.</summary>
+        public List<string> GetHitRateTrackedLevels()
+        {
+            return hrTrackedLevels != null ? new List<string>(hrTrackedLevels) : new List<string>();
+        }
+
         #endregion
 
         #region Helpers
@@ -1735,6 +2275,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                     if (mouseX >= 0 && mouseX <= (float)chartControl.ActualWidth && mouseY >= 0 && mouseY <= (float)chartControl.ActualHeight)
                     {
+                        // Hit rate debug table click-to-cycle
+                        if (System.Windows.Input.Mouse.LeftButton == System.Windows.Input.MouseButtonState.Pressed)
+                        {
+                            try { HrCheckDebugTableClick(mouseX, mouseY); } catch {}
+                        }
+
                         LevelState hoveredLevel = null;
                         float minHitDist = 8.0f;
 
@@ -1758,6 +2304,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
                 catch {}
             }
+
+            // Hit rate debug table (top-right corner)
+            try
+            {
+                RenderHitRateDebugTable(chartControl, isDark);
+            }
+            catch {}
         }
 
         private bool IsDarkChart(ChartControl chartControl)
@@ -1803,6 +2356,21 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             List<string> lines = new List<string> { title, priceText, catText, statusText, distText };
             if (stackText != null) lines.Add(stackText);
+
+            // Hit rate stats block (if enabled and stats available for this level)
+            if (ShowHitRateTooltips && hrEngineReady && hrStats != null)
+            {
+                string hrLevelName = level.Def.Name;
+                if (hrStats.TryGetValue(hrLevelName, out var hrStat) && hrStat != null && hrStat.DaysInHistory > 0)
+                {
+                    lines.Add($"── {hrLevelName} Hit Rate Stats ──");
+                    lines.Add($"Hit Ratio: {hrStat.HitRate:F1}%");
+                    lines.Add($"Days Tracked: {hrStat.DaysInHistory}");
+                    lines.Add($"Current Streak: {hrStat.CurrentStreakDisplay}");
+                    lines.Add($"Max Hit Streak: {hrStat.MaxHitStreak}");
+                    lines.Add($"Max Miss Streak: -{hrStat.MaxMissStreak}");
+                }
+            }
 
             var activeFormat = tooltipFormat ?? textFormat;
 
