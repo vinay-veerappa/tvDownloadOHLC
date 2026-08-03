@@ -1,11 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // SessionOpensEngine.cs — Tracks open prices at configurable session times
 //
-// Fills the "Session Opens" gap from IB_CONFLUENCE_INDICATOR_DESIGN.md §10a:
-//   - Midnight Open (00:00 ET) — ICT Judas Swing axis
-//   - 4H opens (00/04/08/12/16/20 ET) — institutional reference points
-//   - London Open (02:00 EST / 03:00 EDT — DST-aware)
-//   - NY Open (09:30 ET) — IB open (also from @CurrentDayOHL)
+// For CME futures (NQ/MNQ/ES/MES), the trading day starts at 18:00 ET.
+// Session opens (Midnight, London, RTH, 4H opens) belong to the GLOBEX day
+// that began at 18:00 ET the prior evening — so we reset daily at 18:00 ET.
+//
+// NinjaTrader bar timestamp convention: Time[0] = bar CLOSE time.
+// TradingView bar timestamp convention: timestamp = bar OPEN time.
+//
+// To capture the price at a target open time T:
+//   → Find the first bar whose close time is AFTER T (barMins > targetMins)
+//   → Use Open[0] of that bar — it opened AT T (or within the same bar).
 //
 // This is NOT an NT8 indicator — it's a plain C# class instantiated by
 // the LiquidityLevels indicator's OnBarUpdate.
@@ -23,11 +28,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private Dictionary<string, DateTime> openTimes;
         private Dictionary<string, int> openBarIndices;
         private Dictionary<string, bool> openSet;
-        private TimeZoneInfo etZone;
-        private DateTime lastDate = DateTime.MinValue;
 
-        // Previous day's opens (for sweep target persistence)
-        private Dictionary<string, double> prevDayOpens;
+        // Globex date = date the current 18:00 ET session belongs to (next calendar day)
+        // e.g. Sunday 18:05 ET → globexDate = Monday
+        private DateTime lastGlobexDate = DateTime.MinValue;
+
+        // Previous session's opens (for sweep target persistence)
+        private Dictionary<string, double> prevSessionOpens;
 
         public SessionOpensEngine(bool include4H = true)
         {
@@ -36,7 +43,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             openTimes = new Dictionary<string, DateTime>();
             openBarIndices = new Dictionary<string, int>();
             openSet = new Dictionary<string, bool>();
-            prevDayOpens = new Dictionary<string, double>();
+            prevSessionOpens = new Dictionary<string, double>();
 
             foreach (var o in opens)
             {
@@ -45,35 +52,34 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 openBarIndices[o.Name] = -1;
                 openSet[o.Name] = false;
             }
+        }
 
-            try
-            {
-                etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
-            }
-            catch
-            {
-                etZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
-            }
+        // ═══ Returns the "Globex date" for a given ET bar time ═══
+        // Futures day starts at 18:00 ET: bars from 18:00-23:59 belong to the NEXT calendar day.
+        private static DateTime GetGlobexDate(DateTime barTimeEt)
+        {
+            return barTimeEt.Hour >= 18 ? barTimeEt.Date.AddDays(1) : barTimeEt.Date;
         }
 
         // ═══ Called every bar by the host indicator ═══
-        // barTimeEt = bar time in ET, openPrice = Open[0], closePrice = Close[0]
+        // barTimeEt = bar close time in ET (NT convention), openPrice = Open[0]
         public void OnBarUpdate(DateTime barTimeEt, double openPrice, double closePrice, int barIndex)
         {
-            // Day rollover — archive previous day's opens
-            if (barTimeEt.Date != lastDate)
+            // Globex session rollover at 18:00 ET — archive previous session's opens
+            DateTime globexDate = GetGlobexDate(barTimeEt);
+            if (globexDate != lastGlobexDate)
             {
-                if (lastDate != DateTime.MinValue)
+                if (lastGlobexDate != DateTime.MinValue)
                 {
                     foreach (var o in opens)
                     {
                         if (openSet[o.Name] && currentOpens[o.Name] > 0)
-                            prevDayOpens[o.Name] = currentOpens[o.Name];
+                            prevSessionOpens[o.Name] = currentOpens[o.Name];
                     }
                 }
 
-                // Reset for new day
-                lastDate = barTimeEt.Date;
+                // Reset all opens for the new Globex session
+                lastGlobexDate = globexDate;
                 foreach (var o in opens)
                 {
                     currentOpens[o.Name] = 0;
@@ -93,15 +99,40 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                 int openMins = o.MinutesOfDay(barTimeEt);
 
-                if (barMins >= openMins)
+                // NinjaTrader timestamps bars at their CLOSE time.
+                // TradingView timestamps bars at their OPEN time.
+                //
+                // Example for RTH Open (09:30 ET) on a 5-min chart:
+                //   NT bar Time[0]=09:30 → opened 09:25–09:30  → Open[0] = 09:25 price ✗
+                //   NT bar Time[0]=09:35 → opened 09:30–09:35  → Open[0] = 09:30 price ✅
+                //
+                // Rule: capture Open[0] from the FIRST bar whose close time is AFTER the target.
+                // Skip session opens that are in the "prior session" range (>= 18:00 ET),
+                // since those are set during their own Globex session day.
+                if (openMins >= 18 * 60)
                 {
-                    // If bar ends exactly at open time (e.g. 09:30:00), open price at 09:30 is Close[0].
-                    // If bar ends after open time (e.g. 09:35:00 on 5-min chart), open price at 09:30 is Open[0].
-                    double capturedPrice = (barMins == openMins) ? closePrice : openPrice;
-                    currentOpens[o.Name] = capturedPrice;
-                    openTimes[o.Name] = barTimeEt;
-                    openBarIndices[o.Name] = barIndex;
-                    openSet[o.Name] = true;
+                    // Globex open (18:00 ET): capture on the first bar after 18:00 ET
+                    if (barMins > openMins)
+                    {
+                        currentOpens[o.Name] = openPrice;
+                        openTimes[o.Name] = barTimeEt;
+                        openBarIndices[o.Name] = barIndex;
+                        openSet[o.Name] = true;
+                    }
+                }
+                else
+                {
+                    // Midnight open, London open, RTH open, 4H opens (00:00–17:00 ET range)
+                    // CRITICAL: Only fire during the 00:00–17:59 portion of the day.
+                    // Without the barMins < 18*60 guard, these would ALL fire at 18:05 ET
+                    // (first bar of new Globex session) because 1085 > 0/180/570 is always true.
+                    if (barMins < 18 * 60 && barMins > openMins)
+                    {
+                        currentOpens[o.Name] = openPrice;
+                        openTimes[o.Name] = barTimeEt;
+                        openBarIndices[o.Name] = barIndex;
+                        openSet[o.Name] = true;
+                    }
                 }
             }
         }
@@ -118,8 +149,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         }
 
         public double MidnightOpen => GetOpen("MidnightOpen");
-        public double LondonOpen => GetOpen("LondonOpen");
-        public double NyOpen => GetOpen("NYOpen");
+        public double LondonOpen   => GetOpen("LondonOpen");
+        public double NyOpen       => GetOpen("RTHOpen");
 
         public double Get4HOpen(int hour)
         {
@@ -135,11 +166,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     result[o.Name] = currentOpens[o.Name];
             }
             return result;
-        }
-
-        public Dictionary<string, double> GetPrevDayOpens()
-        {
-            return new Dictionary<string, double>(prevDayOpens);
         }
 
         public DateTime GetOpenTime(string name)

@@ -73,6 +73,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public bool OrBuilding;
         public bool OrComplete;
         public int OrStartBarIndex;
+        public int OrEndBarIndex;
 
         // References
         public double BullRef;     // = OrHigh when complete
@@ -161,6 +162,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             OrBuilding = false;
             OrComplete = false;
             OrStartBarIndex = 0;
+            OrEndBarIndex = 0;
             BullRef = 0;
             BearRef = 0;
             OrMid = 0;
@@ -202,11 +204,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         }
 
         // ═══ Finalize OR (called when OR window ends) ═══
-        public void FinalizeOr()
+        public void FinalizeOr(int endBarIndex = -1)
         {
             if (!OrBuilding) return;
             OrBuilding = false;
             OrComplete = true;
+            IsCommitted = true;
+            OrEndBarIndex = endBarIndex >= 0 ? endBarIndex : OrStartBarIndex;
             OrMid = (OrHigh + OrLow) / 2.0;
             BullRef = OrHigh;
             BearRef = OrLow;

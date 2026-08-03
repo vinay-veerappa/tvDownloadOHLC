@@ -18,7 +18,9 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.IO;
 using System.Linq;
+using System.Speech.Synthesis;
 using NinjaTrader.Cbi;
 using NinjaTrader.Core;
 using NinjaTrader.Data;
@@ -54,6 +56,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         // Native Engines & Helpers
         private SessionOpensEngine sessionOpens;
 
+        // Cached sub-indicator references (must be initialized in State.Configure)
+        private NinjaTrader.NinjaScript.Indicators.PriorDayOHLC _priorDayOHLC;
+        private NinjaTrader.NinjaScript.Indicators.CurrentDayOHL _currentDayOHL;
+
         // Origin Bar Tracking (where levels originated)
         private int dayStartBar = -1;
         private int weekStartBar = -1;
@@ -67,6 +73,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private double prevWeekHigh, prevWeekLow, prevWeekCloseVal;
         private double curWeekHigh, curWeekLow, curWeekClose, curWeekOpen;
         private int curWeekNum = -1;
+        private DateTime lastGlobexTrackingDate = DateTime.MinValue;
 
         private double prevMonthHigh, prevMonthLow, prevMonthCloseVal;
         private double curMonthHigh, curMonthLow, curMonthClose, curMonthOpen;
@@ -95,6 +102,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private SharpDX.DirectWrite.TextFormat textFormat;
         private SharpDX.DirectWrite.TextFormat tooltipFormat;
         private bool resourcesCreated;
+
+        // Voice Alerts — pre-generated WAV files (edge-tts neural voices)
+        private Dictionary<string, string> voiceAlertPaths = new Dictionary<string, string>();
+        private Dictionary<string, DateTime> lastAlertTime = new Dictionary<string, DateTime>();
+        private string instrumentName = "";
 
         #endregion
 
@@ -342,17 +354,21 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         #region NinjaScript Properties — Voice Alerts
 
-        [Display(Name = "Enable Voice Alerts", Description = "Speak audio alerts via Windows Speech Synthesis when levels are swept", Order = 1, GroupName = "8. Voice Alerts")]
+        [Display(Name = "Enable Voice Alerts", Description = "Pre-generate neural voice WAV files and play them when levels are swept", Order = 1, GroupName = "8. Voice Alerts")]
         public bool EnableVoiceAlerts { get; set; } = false;
 
-        [Display(Name = "Voice Gender", Description = "Female or Male voice for speech synthesis", Order = 2, GroupName = "8. Voice Alerts")]
+        [Display(Name = "Voice Gender", Description = "Female or Male neural voice", Order = 2, GroupName = "8. Voice Alerts")]
         public VoiceGenderSelection VoiceGender { get; set; } = VoiceGenderSelection.Female;
 
-        [Display(Name = "Voice Volume (10-100)", Description = "Audio volume for voice alerts", Order = 3, GroupName = "8. Voice Alerts")]
-        public int VoiceVolume { get; set; } = 80;
-
-        [Display(Name = "Voice Rate (-10 to 10)", Description = "Speech rate speed (-10 slowest, 10 fastest)", Order = 4, GroupName = "8. Voice Alerts")]
+        [Display(Name = "Voice Rate (-10 to 10)", Description = "Speech rate speed (-10 slowest, 10 fastest)", Order = 3, GroupName = "8. Voice Alerts")]
         public int VoiceRate { get; set; } = 0;
+
+        [Display(Name = "Alert Cooldown (seconds)", Description = "Minimum seconds between alerts for the same level", Order = 4, GroupName = "8. Voice Alerts")]
+        [Range(5, 300)]
+        public int AlertCooldownSeconds { get; set; } = 30;
+
+        [Display(Name = "Fallback Sound", Description = "NT8 sound file to use if voice WAV generation fails", Order = 5, GroupName = "8. Voice Alerts")]
+        public string AlertFallbackSound { get; set; } = "Alert1.wav";
 
         #endregion
 
@@ -377,6 +393,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             {
                 AddDataSeries(BarsArray[0].Instrument.FullName, BarsPeriodType.Day, 1);
 
+                // Cache sub-indicator references here so their AddDataSeries calls happen during Configure
+                _priorDayOHLC = PriorDayOHLC();
+                _currentDayOHL = CurrentDayOHL();
+
                 sweepEvents = new List<SweepEvent>();
                 todaySweeps = new List<SweepEvent>();
                 sessionOpens = new SessionOpensEngine(include4H: true);
@@ -398,6 +418,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (textFormat != null) textFormat.Dispose();
                 if (tooltipFormat != null) tooltipFormat.Dispose();
                 resourcesCreated = false;
+            }
+            else if (State == State.DataLoaded)
+            {
+                if (EnableVoiceAlerts)
+                {
+                    instrumentName = Instrument != null ? Instrument.MasterInstrument.Name : "Instrument";
+                    // Run async so chart loading isn't blocked by voice generation
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        try { GenerateVoiceAlerts(); }
+                        catch (Exception ex) { Print("LiquidityLevels: Voice gen error: " + ex.Message); }
+                    });
+                }
             }
         }
 
@@ -513,7 +546,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 return;
             }
 
-            if (CurrentBar < 1) return;
+            if (CurrentBar < 1)
+            {
+                prevClose = Close[0];
+                return;
+            }
 
             DateTime barTimeEt = ToEt(Time[0]);
             double openP = Open[0];
@@ -521,10 +558,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             double lowP = Low[0];
             double closeP = Close[0];
 
-            // Day rollover
-            if (barTimeEt.Date != lastDate)
+            // Day rollover — use Globex 18:00 ET boundary for futures
+            int barMins = barTimeEt.Hour * 60 + barTimeEt.Minute;
+            DateTime globexDate = barMins >= 18 * 60 ? barTimeEt.Date.AddDays(1) : barTimeEt.Date;
+
+            if (globexDate != lastDate)
             {
-                lastDate = barTimeEt.Date;
+                lastDate = globexDate;
                 dayStartBar = CurrentBar;
                 todaySweeps.Clear();
 
@@ -534,7 +574,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             if (dayStartBar < 0) dayStartBar = CurrentBar;
 
-            int barMins = barTimeEt.Hour * 60 + barTimeEt.Minute;
             if (barMins == 17 * 60 || barMins == 16 * 60 + 15)
             {
                 settlementPrice = closeP;
@@ -568,63 +607,94 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private void UpdateWeekMonthTracking(DateTime barEt, double high, double low, double close)
         {
-            // Week Tracking
-            int weekNum = System.Globalization.CultureInfo.CurrentCulture.Calendar.GetWeekOfYear(
-                barEt, System.Globalization.CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+            int barMins = barEt.Hour * 60 + barEt.Minute;
 
-            if (weekNum != curWeekNum)
+            // ── Globex Day Boundary: 18:00 ET ──
+            // For CME futures the new trading day starts at 18:00 ET.
+            // In NinjaTrader (close-timestamped bars), the bar that OPENED at 18:00 ET
+            // has Time[0] slightly AFTER 18:00 (e.g. 18:05 on a 5-min chart).
+            // So we detect "new Globex session started" when barMins > 18*60
+            // and the Globex date has changed.
+            //
+            // Globex date mapping: 18:00–23:59 ET belong to the NEXT calendar day.
+            DateTime globexDate = barMins >= 18 * 60 ? barEt.Date.AddDays(1) : barEt.Date;
+
+            bool isFirstBarOfGlobexSession = barMins > 18 * 60 && globexDate != lastGlobexTrackingDate;
+            if (isFirstBarOfGlobexSession)
+            {
+                lastGlobexTrackingDate = globexDate;
+
+                // ── Day-of-Week Opens (capture at Globex session open = 18:00 ET prev calendar day) ──
+                // NT: Open[0] on the first bar AFTER 18:00 ET = the 18:00 ET open price ✅
+                // TradingView: Tuesday's daily bar open = 18:00 ET Monday's price → same value ✅
+                switch (barEt.DayOfWeek)  // barEt is still the prior calendar day (e.g. Monday evening)
+                {
+                    case DayOfWeek.Monday:    // Monday 18:05 → Tuesday's session open
+                        tueOpen = Open[0];
+                        break;
+                    case DayOfWeek.Tuesday:   // Tuesday 18:05 → Wednesday's session open
+                        wedOpen = Open[0];
+                        break;
+                    case DayOfWeek.Wednesday: // Wednesday 18:05 → Thursday's session open
+                        thuOpen = Open[0];
+                        break;
+                    case DayOfWeek.Thursday:  // Thursday 18:05 → Friday's session open
+                        friOpen = Open[0];
+                        break;
+                }
+            }
+
+            // ── Week Tracking: roll at Sunday 18:00 ET (Globex week open) ──
+            // globexDate == Monday when barEt == Sunday evening
+            bool isNewGlobexWeek = globexDate.DayOfWeek == DayOfWeek.Monday && isFirstBarOfGlobexSession;
+            if (isNewGlobexWeek)
             {
                 if (curWeekNum != -1)
                 {
-                    prevWeekHigh = curWeekHigh;
-                    prevWeekLow = curWeekLow;
+                    prevWeekHigh     = curWeekHigh;
+                    prevWeekLow      = curWeekLow;
                     prevWeekCloseVal = curWeekClose;
-                    prevWeekOpen = curWeekOpen;
+                    prevWeekOpen     = curWeekOpen;
                 }
-                curWeekHigh = high;
-                curWeekLow = low;
+                curWeekOpen  = Open[0];   // Sunday 18:00 ET open = weekly open (matches TradingView)
+                curWeekHigh  = high;
+                curWeekLow   = low;
                 curWeekClose = close;
-                curWeekOpen = Open[0];
-                curWeekNum = weekNum;
+                curWeekNum   = 1;         // marker: week is active
                 weekStartBar = CurrentBar;
                 tueOpen = 0; wedOpen = 0; thuOpen = 0; friOpen = 0;
             }
             else
             {
                 if (high > curWeekHigh) curWeekHigh = high;
-                if (low < curWeekLow) curWeekLow = low;
+                if (low  < curWeekLow)  curWeekLow  = low;
                 curWeekClose = close;
             }
             if (weekStartBar < 0) weekStartBar = CurrentBar;
 
-            // Daily Opens of Current Week
-            if (barEt.DayOfWeek == DayOfWeek.Tuesday && tueOpen == 0) tueOpen = Open[0];
-            if (barEt.DayOfWeek == DayOfWeek.Wednesday && wedOpen == 0) wedOpen = Open[0];
-            if (barEt.DayOfWeek == DayOfWeek.Thursday && thuOpen == 0) thuOpen = Open[0];
-            if (barEt.DayOfWeek == DayOfWeek.Friday && friOpen == 0) friOpen = Open[0];
-
-            // Month Tracking
-            int monthNum = barEt.Year * 12 + barEt.Month;
+            // ── Month Tracking: roll at first Globex session open of a new calendar month ──
+            // The Globex date tells us which month we're "in" for futures.
+            int monthNum = globexDate.Year * 12 + globexDate.Month;
             if (monthNum != curMonthNum)
             {
                 if (curMonthNum != -1)
                 {
-                    prevMonthHigh = curMonthHigh;
-                    prevMonthLow = curMonthLow;
+                    prevMonthHigh     = curMonthHigh;
+                    prevMonthLow      = curMonthLow;
                     prevMonthCloseVal = curMonthClose;
-                    prevMonthOpen = curMonthOpen;
+                    prevMonthOpen     = curMonthOpen;
                 }
-                curMonthHigh = high;
-                curMonthLow = low;
+                curMonthOpen  = Open[0];   // first Globex session open of new month (matches TradingView)
+                curMonthHigh  = high;
+                curMonthLow   = low;
                 curMonthClose = close;
-                curMonthOpen = Open[0];
-                curMonthNum = monthNum;
+                curMonthNum   = monthNum;
                 monthStartBar = CurrentBar;
             }
             else
             {
                 if (high > curMonthHigh) curMonthHigh = high;
-                if (low < curMonthLow) curMonthLow = low;
+                if (low  < curMonthLow)  curMonthLow  = low;
             }
             if (monthStartBar < 0) monthStartBar = CurrentBar;
         }
@@ -635,7 +705,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             DateTime today = barEt.Date;
 
             // Asia Range: 20:00 ET to 00:00 ET
-            bool inAsia = barMins >= 20 * 60 || barMins < 0;
+            // End-of-bar: barMins=1205 covers 20:00-20:05 (opened at 20:00) → first bar in window.
+            // barMins=0 covers 23:55-00:00 (opened at 23:55) → last bar in window.
+            bool inAsia = barMins > 20 * 60 || barMins == 0;
             if (inAsia)
             {
                 if (asiaDate != today || !asiaBuilding)
@@ -650,13 +722,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
                 asiaMid = (asiaHigh + asiaLow) / 2.0;
             }
-            else if (asiaBuilding && barMins >= 0)
+            else if (asiaBuilding && barMins > 0)
             {
                 asiaBuilding = false;
             }
 
-            // London Range: 02:00 ET to 05:00 ET
-            bool inLondon = barMins >= 2 * 60 && barMins < 5 * 60;
+            // London Range: 02:00 ET to 05:00 ET (end-of-bar: first bar at barMins>120, last at barMins<=300)
+            bool inLondon = barMins > 2 * 60 && barMins <= 5 * 60;
             if (inLondon)
             {
                 if (londonDate != today || !londonBuilding)
@@ -671,13 +743,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
                 londonMid = (londonHigh + londonLow) / 2.0;
             }
-            else if (londonBuilding && barMins >= 5 * 60)
+            else if (londonBuilding && barMins > 5 * 60)
             {
                 londonBuilding = false;
             }
 
-            // Globex Range: 18:00 ET to 09:30 ET
-            bool inGlobex = barMins >= 18 * 60 || barMins < 9 * 60 + 30;
+            // Globex Range: 18:00 ET to 09:30 ET (crosses midnight)
+            bool inGlobex = barMins > 18 * 60 || barMins <= 9 * 60 + 30;
             if (inGlobex)
             {
                 if (globexDate != today || !globexBuilding)
@@ -692,13 +764,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
                 globexMid = (globexHigh + globexLow) / 2.0;
             }
-            else if (globexBuilding && barMins >= 9 * 60 + 30)
+            else if (globexBuilding && barMins > 9 * 60 + 30)
             {
                 globexBuilding = false;
             }
 
-            // Initial Balance (IB): 09:30 ET to 10:30 ET
-            bool inIb = barMins >= 9 * 60 + 30 && barMins < 10 * 60 + 30;
+            // Initial Balance (IB): 09:30 ET to 10:30 ET (first bar at barMins>570, last at barMins<=630)
+            bool inIb = barMins > 9 * 60 + 30 && barMins <= 10 * 60 + 30;
             if (inIb)
             {
                 if (ibDate != today || !ibBuilding)
@@ -713,7 +785,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
                 ibMid = (ibHigh + ibLow) / 2.0;
             }
-            else if (ibBuilding && barMins >= 10 * 60 + 30)
+            else if (ibBuilding && barMins > 10 * 60 + 30)
             {
                 ibBuilding = false;
             }
@@ -787,31 +859,35 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private double ReadPriorDayOHLC(string accessor)
         {
+            if (_priorDayOHLC == null) return 0;
             switch (accessor)
             {
-                case "PriorHigh": return PriorDayOHLC().PriorHigh[0];
-                case "PriorLow": return PriorDayOHLC().PriorLow[0];
-                case "PriorClose": return PriorDayOHLC().PriorClose[0];
+                case "PriorHigh":  return _priorDayOHLC.PriorHigh[0];
+                case "PriorLow":   return _priorDayOHLC.PriorLow[0];
+                case "PriorClose": return _priorDayOHLC.PriorClose[0];
+                case "PriorOpen":  return _priorDayOHLC.PriorOpen[0];
                 default: return 0;
             }
         }
 
         private double ReadCurrentDayOHL(string accessor)
         {
+            if (_currentDayOHL == null) return 0;
             switch (accessor)
             {
-                case "CurrentHigh": return CurrentDayOHL().CurrentHigh[0];
-                case "CurrentLow": return CurrentDayOHL().CurrentLow[0];
-                case "CurrentOpen": return CurrentDayOHL().CurrentOpen[0];
+                case "CurrentHigh": return _currentDayOHL.CurrentHigh[0];
+                case "CurrentLow":  return _currentDayOHL.CurrentLow[0];
+                case "CurrentOpen": return _currentDayOHL.CurrentOpen[0];
                 default: return 0;
             }
         }
 
         private double ReadRedTailKeyLevels(string accessor)
         {
-            double pdh = PriorDayOHLC().PriorHigh[0];
-            double pdl = PriorDayOHLC().PriorLow[0];
-            double pdc = PriorDayOHLC().PriorClose[0];
+            if (_priorDayOHLC == null) return 0;
+            double pdh = _priorDayOHLC.PriorHigh[0];
+            double pdl = _priorDayOHLC.PriorLow[0];
+            double pdc = _priorDayOHLC.PriorClose[0];
             double range = pdh - pdl;
 
             switch (accessor)
@@ -851,8 +927,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private double ReadRedTailVolumeProfile(string accessor)
         {
             // Fallbacks for Volume Profile levels (POC / VAH / VAL)
-            double pdh = PriorDayOHLC().PriorHigh[0];
-            double pdl = PriorDayOHLC().PriorLow[0];
+            if (_priorDayOHLC == null) return 0;
+            double pdh = _priorDayOHLC.PriorHigh[0];
+            double pdl = _priorDayOHLC.PriorLow[0];
             if (pdh <= 0 || pdl <= 0) return 0;
 
             switch (accessor)
@@ -860,7 +937,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 case "CurrentPOCPlot":   return (High[0] + Low[0] + Close[0]) / 3.0;
                 case "CurrentVAHPlot":   return High[0];
                 case "CurrentVALPlot":   return Low[0];
-                case "PrevDayPOCPlot":   return (pdh + pdl + PriorDayOHLC().PriorClose[0]) / 3.0;
+                case "PrevDayPOCPlot":   return (pdh + pdl + _priorDayOHLC.PriorClose[0]) / 3.0;
                 case "PrevDayVAHPlot":   return pdh - (pdh - pdl) * 0.15;
                 case "PrevDayVALPlot":   return pdl + (pdh - pdl) * 0.15;
                 case "OvernightPOCPlot": return (p12High > 0 && p12Low > 0) ? (p12High + p12Low) / 2.0 : 0;
@@ -894,9 +971,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private double ComputeInternalLevel(string accessor)
         {
-            double pdh = PriorDayOHLC().PriorHigh[0];
-            double pdl = PriorDayOHLC().PriorLow[0];
-            double pdc = PriorDayOHLC().PriorClose[0];
+            double pdh = _priorDayOHLC != null ? _priorDayOHLC.PriorHigh[0] : 0;
+            double pdl = _priorDayOHLC != null ? _priorDayOHLC.PriorLow[0]  : 0;
+            double pdc = _priorDayOHLC != null ? _priorDayOHLC.PriorClose[0] : 0;
 
             switch (accessor)
             {
@@ -948,7 +1025,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             int barMins = barEt.Hour * 60 + barEt.Minute;
             DateTime today = barEt.Date;
 
-            if (barMins >= 18 * 60 && (p12Date != today || !p12Building))
+            // P12 Overnight: 18:00 ET to 06:00 ET (crosses midnight)
+            // End-of-bar: first bar at barMins>1080, last bar at barMins<=360
+            if (barMins > 18 * 60 && (p12Date != today || !p12Building))
             {
                 if (nyP12High > 0 && nyP12Low > 0)
                 {
@@ -963,19 +1042,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
             else if (p12Building)
             {
-                bool inP12 = barMins >= 18 * 60 || barMins < 6 * 60;
+                bool inP12 = barMins > 18 * 60 || barMins <= 6 * 60;
                 if (inP12)
                 {
                     if (high > p12High) p12High = high;
                     if (low < p12Low) p12Low = low;
                 }
-                else if (barMins >= 6 * 60)
+                else if (barMins > 6 * 60)
                 {
                     p12Building = false;
                 }
             }
 
-            if (barMins >= 6 * 60 && (nyP12Date != today || !nyP12Building))
+            // NY P12: 06:00 ET to 17:00 ET (first bar at barMins>360, last at barMins<=1020)
+            if (barMins > 6 * 60 && (nyP12Date != today || !nyP12Building))
             {
                 nyP12High = high;
                 nyP12Low = low;
@@ -984,13 +1064,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
             else if (nyP12Building)
             {
-                bool inNyP12 = barMins >= 6 * 60 && barMins < 17 * 60;
+                bool inNyP12 = barMins > 6 * 60 && barMins <= 17 * 60;
                 if (inNyP12)
                 {
                     if (high > nyP12High) nyP12High = high;
                     if (low < nyP12Low) nyP12Low = low;
                 }
-                else if (barMins >= 17 * 60)
+                else if (barMins > 17 * 60)
                 {
                     nyP12Building = false;
                 }
@@ -1134,12 +1214,21 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                     if (EnableVoiceAlerts)
                     {
-                        double roundedP = TickSize > 0 ? Math.Round(level.Price / TickSize) * TickSize : level.Price;
-                        string formattedP = Instrument != null ? Instrument.MasterInstrument.FormatPrice(roundedP) : roundedP.ToString("F2");
-                        string side = sweep.IsBullSweep ? "Bullish Sweep" : "Bearish Sweep";
-                        string spokenName = level.Def.FullName ?? level.Def.Name;
-                        string alertMsg = $"{side}: {spokenName} swept at {formattedP}";
-                        SpeakVoiceAlert(alertMsg);
+                        // Only fire alerts on the live/realtime bar, not during historical bar processing.
+                        if (State == State.DataLoaded && CurrentBar == BarsArray[0].Count - 1)
+                        {
+                            string alertKey = level.Def.Name + "_" + (sweep.IsBullSweep ? "Bull" : "Bear");
+                            if (CanAlert(alertKey))
+                            {
+                                double roundedP = TickSize > 0 ? Math.Round(level.Price / TickSize) * TickSize : level.Price;
+                                string formattedP = Instrument != null ? Instrument.MasterInstrument.FormatPrice(roundedP) : roundedP.ToString("F2");
+                                string side = sweep.IsBullSweep ? "Bullish Sweep" : "Bearish Sweep";
+                                string spokenName = level.Def.FullName ?? level.Def.Name;
+                                string alertMsg = $"{side}: {spokenName} swept at {formattedP}";
+                                PlaySweepAlert(alertKey, alertMsg);
+                                RecordAlert(alertKey);
+                            }
+                        }
                     }
                 }
             }
@@ -1147,41 +1236,185 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             UpdateStacking();
         }
 
-        private void SpeakVoiceAlert(string message)
+        #region Voice Alert Infrastructure (System.Speech pre-generated WAV files)
+
+        private bool CanAlert(string key)
         {
-            if (string.IsNullOrEmpty(message)) return;
-            try
+            if (!lastAlertTime.ContainsKey(key)) return true;
+            return (DateTime.Now - lastAlertTime[key]).TotalSeconds >= AlertCooldownSeconds;
+        }
+
+        private void RecordAlert(string key)
+        {
+            lastAlertTime[key] = DateTime.Now;
+        }
+
+        private void PlaySweepAlert(string alertKey, string message)
+        {
+            string soundPath = GetVoiceAlertPath(alertKey, AlertFallbackSound);
+            Alert("LiqSweep_" + alertKey + "_" + CurrentBar, Priority.High, message,
+                soundPath, 10, System.Windows.Media.Brushes.White, System.Windows.Media.Brushes.DarkRed);
+        }
+
+        private string GetVoiceAlertPath(string alertKey, string fallbackSoundFile)
+        {
+            if (EnableVoiceAlerts && voiceAlertPaths.ContainsKey(alertKey))
+                return voiceAlertPaths[alertKey];
+            return ResolveSoundPath(fallbackSoundFile);
+        }
+
+        private string ResolveSoundPath(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            if (Path.IsPathRooted(raw)) return raw;
+            var install = Path.Combine(NinjaTrader.Core.Globals.InstallDir, "sounds", raw);
+            if (File.Exists(install)) return install;
+            var user = Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "sounds", raw);
+            if (File.Exists(user)) return user;
+            return raw;
+        }
+
+        private void GenerateVoiceAlerts()
+        {
+            string soundDir = Path.Combine(NinjaTrader.Core.Globals.UserDataDir, "sounds");
+            if (!Directory.Exists(soundDir))
+                Directory.CreateDirectory(soundDir);
+
+            // Build alert phrases for all sweep target levels (two per level: Bull + Bear)
+            var alerts = new Dictionary<string, string>();
+            foreach (var def in LiquidityLevelsCatalog.GetSweepTargets())
             {
-                // 1. Native NinjaTrader Alert Window + Sound
-                Alert("LiquiditySweep", Priority.High, message, NinjaTrader.Core.Globals.InstallDir + @"\sounds\Alert1.wav", 10, System.Windows.Media.Brushes.White, System.Windows.Media.Brushes.DarkRed);
+                string name = def.FullName ?? def.Name;
+                alerts[def.Name + "_Bull"] = instrumentName + " bullish sweep at " + name;
+                alerts[def.Name + "_Bear"] = instrumentName + " bearish sweep at " + name;
+            }
+            int totalAlerts = alerts.Count;
 
-                // 2. Windows Text-to-Speech Synthesis (Async ThreadPool worker — zero UI freeze)
-                if (EnableVoiceAlerts)
+            // Marker file to cache voice settings
+            string markerPath = Path.Combine(soundDir, "LiqLevel_" + instrumentName + "_voicesettings.txt");
+            string currentSettings = "rate=" + VoiceRate + "|gender=" + VoiceGender;
+            bool settingsChanged = true;
+
+            if (File.Exists(markerPath))
+            {
+                try
                 {
-                    string cleanMsg = message.Replace("'", "").Replace("\"", "");
-                    int vol = Math.Min(100, Math.Max(10, VoiceVolume));
-                    int rate = Math.Min(10, Math.Max(-10, VoiceRate));
+                    string savedSettings = File.ReadAllText(markerPath).Trim();
+                    if (savedSettings == currentSettings) settingsChanged = false;
+                }
+                catch { }
+            }
 
-                    System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-                    {
-                        try
-                        {
-                            string psCmd = $"-Command \"Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Volume = {vol}; $s.Rate = {rate}; $s.Speak('{cleanMsg}')\"";
-                            using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell", psCmd)
-                            {
-                                CreateNoWindow = true,
-                                UseShellExecute = false
-                            }))
-                            {
-                                p?.WaitForExit(3000);
-                            }
-                        }
-                        catch {}
-                    });
+            // Check if all files exist
+            bool allExist = true;
+            foreach (var kvp in alerts)
+            {
+                string fileName = "LiqLevel_" + instrumentName + "_" + kvp.Key + ".wav";
+                if (!File.Exists(Path.Combine(soundDir, fileName)))
+                {
+                    allExist = false;
+                    break;
                 }
             }
-            catch {}
+
+            if (settingsChanged || !allExist)
+            {
+                // Delete old files
+                foreach (var kvp in alerts)
+                {
+                    string fileName = "LiqLevel_" + instrumentName + "_" + kvp.Key + ".wav";
+                    string filePath = Path.Combine(soundDir, fileName);
+                    try { if (File.Exists(filePath)) File.Delete(filePath); } catch { }
+                }
+
+                Print("LiquidityLevels: Generating voice alerts for " + instrumentName + " (" + totalAlerts + " files)...");
+
+                int successCount = GenerateSapiVoiceAlerts(soundDir, alerts);
+
+                if (successCount > 0)
+                    Print("LiquidityLevels: Voice generation complete (" + successCount + "/" + totalAlerts + " files).");
+                else
+                    Print("LiquidityLevels: Voice generation failed. Using fallback sound.");
+
+                try { File.WriteAllText(markerPath, currentSettings); } catch { }
+            }
+            else
+            {
+                Print("LiquidityLevels: Voice alert files already cached for " + instrumentName + ".");
+            }
+
+            // Register all paths
+            foreach (var kvp in alerts)
+            {
+                string fileName = "LiqLevel_" + instrumentName + "_" + kvp.Key + ".wav";
+                string filePath = Path.Combine(soundDir, fileName);
+                if (File.Exists(filePath))
+                    voiceAlertPaths[kvp.Key] = filePath;
+            }
+
+            Print("LiquidityLevels: Voice alerts ready for " + instrumentName + " (" + voiceAlertPaths.Count + "/" + totalAlerts + " files).");
         }
+
+        private int GenerateSapiVoiceAlerts(string soundDir, Dictionary<string, string> alerts)
+        {
+            int successCount = 0;
+            try
+            {
+                using (var synth = new SpeechSynthesizer())
+                {
+                    // Select voice by gender
+                    var voices = synth.GetInstalledVoices();
+                    string[] femaleNames = { "Zira", "Hazel", "Susan", "Catherine", "Helena" };
+                    string[] maleNames = { "David", "George", "Mark", "Richard", "Sean" };
+                    var names = VoiceGender == VoiceGenderSelection.Female ? femaleNames : maleNames;
+
+                    bool voiceSelected = false;
+                    foreach (var vn in names)
+                    {
+                        var match = voices.FirstOrDefault(v => v.VoiceInfo.Name.Contains(vn));
+                        if (match != null)
+                        {
+                            synth.SelectVoice(match.VoiceInfo.Name);
+                            Print("LiquidityLevels: Using voice: " + match.VoiceInfo.Name);
+                            voiceSelected = true;
+                            break;
+                        }
+                    }
+                    if (!voiceSelected && voices.Count > 0)
+                    {
+                        Print("LiquidityLevels: Preferred voice not found, using default: " + voices[0].VoiceInfo.Name);
+                    }
+
+                    int rate = Math.Min(10, Math.Max(-10, VoiceRate));
+                    synth.Rate = rate;
+
+                    foreach (var kvp in alerts)
+                    {
+                        string fileName = "LiqLevel_" + instrumentName + "_" + kvp.Key + ".wav";
+                        string wavPath = Path.Combine(soundDir, fileName);
+
+                        try
+                        {
+                            synth.SetOutputToWaveFile(wavPath);
+                            synth.Speak(kvp.Value);
+                            synth.SetOutputToNull();
+                            successCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Print("LiquidityLevels: Voice gen FAIL " + kvp.Key + ": " + ex.Message);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Print("LiquidityLevels: SAPI voice error: " + ex.Message);
+            }
+            return successCount;
+        }
+
+        #endregion
 
         private void UpdateStacking()
         {
@@ -1329,15 +1562,18 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     { LevelCategory.Fib,          new SharpDX.Color(0xF5, 0x7F, 0x17, 255) }, // Dark Amber
                 };
 
-            float xEnd = chartControl.GetXByBarIndex(ChartBars, CurrentBar) + (float)chartControl.Properties.BarDistance;
+            float chartLeftX = chartControl.GetXByBarIndex(ChartBars, ChartBars.FromIndex);
+            float chartRightX = chartControl.GetXByBarIndex(ChartBars, ChartBars.ToIndex) + (float)chartControl.Properties.BarDistance;
 
             double currentPrice = Close[0];
             var labelItems = new List<RenderLabelItem>();
 
             foreach (var level in activeLevelsToDraw)
             {
-                int originBar = level.SetBarIndex > 0 ? Math.Min(CurrentBar, level.SetBarIndex) : Math.Max(0, CurrentBar - 100);
+                int originBar = level.SetBarIndex > 0 ? Math.Min(CurrentBar, level.SetBarIndex) : ChartBars.FromIndex;
                 float xStart = chartControl.GetXByBarIndex(ChartBars, originBar);
+                if (xStart < chartLeftX) xStart = chartLeftX;
+                float xEnd = chartRightX;
 
                 SharpDX.Color color = categoryColors.TryGetValue(level.Def.Category, out var c)
                     ? c : new SharpDX.Color(0x80, 0x80, 0x80, 255);
@@ -1355,9 +1591,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 float y = chartScale.GetYByValue(level.Price);
                 float lineWidth = level.StacksWith.Count > 0 ? 2f : 1f;
 
-                var brush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, lineColor);
-                RenderTarget.DrawLine(new SharpDX.Vector2(xStart, y), new SharpDX.Vector2(xEnd, y),
-                    brush, lineWidth);
+                using (var lineBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, lineColor))
+                {
+                    RenderTarget.DrawLine(new SharpDX.Vector2(xStart, y), new SharpDX.Vector2(xEnd, y), lineBrush, lineWidth);
+                }
 
                 float labelAlphaThreshold = (float)FarFadeOpacity / 100f + 0.05f;
                 bool showLabel = DrawLabels && textFormat != null
@@ -1413,7 +1650,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                             ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
                             : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
 
-                        float rightLabelX = xEnd + 4;
+                        float rightLabelX = chartRightX + 4;
                         var rightBgRect = new RectangleF(rightLabelX - 2, labelY - 1, textW + 4, textH + 2);
                         RenderTarget.FillRectangle(rightBgRect, bgBrush);
                         RenderTarget.DrawRectangle(rightBgRect, borderBrush, 1.0f);

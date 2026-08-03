@@ -39,7 +39,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private List<VinayNS.RangeSpec> specs = new List<VinayNS.RangeSpec>();
         private Dictionary<string, VinayNS.RangeState> states = new Dictionary<string, VinayNS.RangeState>();
         private Dictionary<string, VinayNS.ExcursionHistory> histories = new Dictionary<string, VinayNS.ExcursionHistory>();
-        private DateTime lastBarDate = DateTime.MinValue;
+        private DateTime lastGlobexDate = DateTime.MinValue;
 
         // SharpDX resources
         private SharpDX.Direct2D1.StrokeStyle strokeSolid, strokeDash, strokeDot;
@@ -172,12 +172,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             int barMins = barTimeEt.Hour * 60 + barTimeEt.Minute;
             int dow = (int)barTimeEt.DayOfWeek;
 
-            if (barTimeEt.Date != lastBarDate)
+            // Globex date: 18:00 ET starts the next futures trading day.
+            // With end-of-bar timestamps, the bar with Time[0]=18:05 opened at 18:00 ET
+            // → belongs to the next calendar day's Globex session.
+            // Bar stamped 18:00 opened at 17:55 → still prior session. Use > not >=.
+            DateTime globexDate = barMins > 18 * 60 ? barTimeEt.Date.AddDays(1) : barTimeEt.Date;
+
+            if (globexDate != lastGlobexDate)
             {
-                if (lastBarDate != DateTime.MinValue)
+                if (lastGlobexDate != DateTime.MinValue)
                 {
                     foreach (var kvp in states)
                     {
+                        if (kvp.Value.OrBuilding)
+                            kvp.Value.FinalizeOr(CurrentBar);
                         if (kvp.Value.OrComplete)
                             histories[kvp.Key].AppendDay(kvp.Value, dow, false, false, 0, 0, false, false);
                     }
@@ -186,15 +194,86 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 foreach (var spec in specs)
                 {
                     states[spec.Name].Reset();
+                    states[spec.Name].SessionDate = globexDate;
                 }
-                lastBarDate = barTimeEt.Date;
+                lastGlobexDate = globexDate;
             }
 
             foreach (var spec in specs)
             {
                 var state = states[spec.Name];
-                state.UpdateOr(High[0], Low[0], Open[0], Close[0], CurrentBar);
+
+                // Days filter: "23456" = Mon-Fri (1=Sun..7=Sat). Skip if today not in Days.
+                if (!IsDayEnabled(dow, spec.Days))
+                {
+                    // If we were building and the day changed, finalize
+                    if (state.OrBuilding)
+                        state.FinalizeOr(CurrentBar);
+                    state.PrevInOr = false;
+                    state.PrevInData = false;
+                    continue;
+                }
+
+                bool inWindow = IsBarInWindow(barMins, spec);
+
+                if (inWindow && !state.OrBuilding)
+                {
+                    // First bar of the window
+                    state.UpdateOr(High[0], Low[0], Open[0], Close[0], CurrentBar);
+                    state.PrevInOr = true;
+                }
+                else if (inWindow && state.OrBuilding)
+                {
+                    // Extending the window
+                    state.UpdateOr(High[0], Low[0], Open[0], Close[0], CurrentBar);
+                }
+                else if (!inWindow && state.OrBuilding)
+                {
+                    // Window just ended — finalize
+                    state.FinalizeOr(CurrentBar);
+                    state.PrevInOr = false;
+                }
+
+                // Post-OR analysis: breakout / MFE / mid-hit (only after finalized)
+                if (state.OrComplete && !inWindow)
+                {
+                    state.CheckBreakout(High[0], Low[0], CurrentBar, barTimeEt);
+                    state.UpdateMfe(High[0], Low[0]);
+                    state.UpdateMidHit(High[0], Low[0]);
+                }
+
+                state.PrevInData = inWindow;
             }
+        }
+
+        // ═══ End-of-bar window gating ═══
+        // NT bars carry CLOSE timestamps. A bar stamped 09:31 covers 09:30-09:31
+        // and OPENED at 09:30. So for an OR window [startMin, endMin]:
+        //   - START: first bar whose open is at/after startMin → barMins > startMin
+        //   - END (inclusive): last bar whose open is within window → barMins > endMin means past window
+        // For cross-midnight windows (OrEndMin < OrStartMin), wrap around midnight.
+        private bool IsBarInWindow(int barMins, VinayNS.RangeSpec spec)
+        {
+            int start = spec.OrStartMin;
+            int end = spec.OrEndMin;
+
+            if (spec.CrossesMidnight)
+            {
+                // e.g. 23:00-00:00 or 18:00-08:30 — bar is in window if barMins > start OR barMins <= end
+                return barMins > start || barMins <= end;
+            }
+            return barMins > start && barMins <= end;
+        }
+
+        // ═══ Day-of-week filter ═══
+        // Days string: "23456" means Mon-Fri. NT DayOfWeek: 0=Sun, 1=Mon, ..., 6=Sat.
+        // Days string uses 1=Sun, 2=Mon, ..., 7=Sat (TradingView convention).
+        private bool IsDayEnabled(int dow, string days)
+        {
+            if (string.IsNullOrEmpty(days)) return true;
+            // Convert .NET DayOfWeek (0=Sun) to TV convention (1=Sun)
+            int tvDow = dow == 0 ? 1 : dow + 1;
+            return days.Contains(tvDow.ToString());
         }
 
         #endregion
@@ -277,7 +356,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (state.OrHigh <= 0 || state.OrLow <= 0) continue;
 
                 int startBarIdx = state.OrStartBarIndex;
-                int endBarIdx = CurrentBar;
+                int endBarIdx = state.OrComplete && state.OrEndBarIndex > 0
+                    ? state.OrEndBarIndex
+                    : CurrentBar;
                 if (startBarIdx < 0 || startBarIdx > CurrentBar) continue;
 
                 float x1 = chartControl.GetXByBarIndex(ChartBars, startBarIdx);
