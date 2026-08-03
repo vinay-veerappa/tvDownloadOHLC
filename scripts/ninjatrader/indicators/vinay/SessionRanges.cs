@@ -1,10 +1,11 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// SessionRanges.cs — Unified multi-session range indicator for NT8
+// SessionRanges.cs — v1.1.0 Unified multi-session range indicator for NT8
 //
 // Tracks ALL session ranges (Asia, London, Globex, IB, NY OR, Magic Hours, custom)
 // in a single indicator. Exposes range data as public properties for consumption
 // by IBConfluenceEngine and other strategies.
 //
+// Version: 1.1.0
 // Parity contract: docs/indicators/DailyNYLevels/CORE_ENGINE_SPEC.md
 // Design doc: docs/architecture/SESSION_RANGES_INDICATOR_DESIGN.md
 // ═══════════════════════════════════════════════════════════════════════════
@@ -41,13 +42,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private DateTime lastBarDate = DateTime.MinValue;
 
         // SharpDX resources
-        private SharpDX.Direct2D1.SolidColorBrush dxFillBrush;
-        private SharpDX.Direct2D1.SolidColorBrush dxHighBrush;
-        private SharpDX.Direct2D1.SolidColorBrush dxLowBrush;
-        private SharpDX.Direct2D1.SolidColorBrush dxMidBrush;
-        private SharpDX.Direct2D1.SolidColorBrush dxLabelBrush;
         private SharpDX.Direct2D1.StrokeStyle strokeSolid, strokeDash, strokeDot;
         private SharpDX.DirectWrite.TextFormat textFormat;
+        private SharpDX.DirectWrite.TextFormat tooltipFormat;
         private bool resourcesCreated;
 
         // ET timezone
@@ -57,35 +54,61 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         #region NinjaScript Properties (user-configurable)
 
-        [NinjaScriptProperty]
         [Display(Name = "Preset", Description = "Session range preset", Order = 1, GroupName = "1. Sessions")]
         public SessionPreset Preset { get; set; } = SessionPreset.ICTCore;
 
-        [NinjaScriptProperty]
         [Display(Name = "Custom Ranges", Description = "Format: Name:HHMM-HHMM-HHMM;Name2:...", Order = 2, GroupName = "1. Sessions")]
         public string CustomRangeDefs { get; set; } = "";
 
-        [NinjaScriptProperty]
-        [Display(Name = "Show Boxes", Description = "Draw range boxes", Order = 3, GroupName = "2. Visuals")]
+        [Display(Name = "Show Asia Session", Order = 3, GroupName = "1b. Session Toggles")]
+        public bool ShowAsiaSession { get; set; } = true;
+
+        [Display(Name = "Show London Session", Order = 4, GroupName = "1b. Session Toggles")]
+        public bool ShowLondonSession { get; set; } = true;
+
+        [Display(Name = "Show Globex Session", Order = 5, GroupName = "1b. Session Toggles")]
+        public bool ShowGlobexSession { get; set; } = true;
+
+        [Display(Name = "Show IB (Initial Balance)", Order = 6, GroupName = "1b. Session Toggles")]
+        public bool ShowIBSession { get; set; } = true;
+
+        [Display(Name = "Show NY Session", Order = 7, GroupName = "1b. Session Toggles")]
+        public bool ShowNYSession { get; set; } = true;
+
+        [Display(Name = "Show Magic Hours", Order = 8, GroupName = "1b. Session Toggles")]
+        public bool ShowMagicHours { get; set; } = true;
+
+        [Display(Name = "Show Boxes", Description = "Draw range boxes", Order = 9, GroupName = "2. Visuals")]
         public bool ShowBoxes { get; set; } = true;
 
-        [NinjaScriptProperty]
-        [Display(Name = "Show Labels", Description = "Draw range labels", Order = 4, GroupName = "2. Visuals")]
+        [Display(Name = "Show Labels", Description = "Draw range labels", Order = 10, GroupName = "2. Visuals")]
         public bool ShowLabels { get; set; } = true;
 
-        [NinjaScriptProperty]
-        [Display(Name = "Show Mid Lines", Description = "Draw mid lines for each range", Order = 5, GroupName = "2. Visuals")]
+        [Display(Name = "Show Mid Lines", Description = "Draw mid lines for each range", Order = 11, GroupName = "2. Visuals")]
         public bool ShowMidLines { get; set; } = true;
 
-        [NinjaScriptProperty]
-        [Display(Name = "Box Fill Opacity", Description = "0=solid, 100=transparent", Order = 6, GroupName = "2. Visuals")]
+        [Display(Name = "Box Fill Opacity", Description = "0=solid, 100=transparent", Order = 12, GroupName = "2. Visuals")]
         [Range(0, 100)]
         public int BoxFillOpacity { get; set; } = 85;
 
-        [NinjaScriptProperty]
-        [Display(Name = "Max History Days", Description = "How many prior days to show faded boxes", Order = 7, GroupName = "2. Visuals")]
+        [Display(Name = "Max History Days", Description = "How many prior days to show faded boxes", Order = 13, GroupName = "2. Visuals")]
         [Range(0, 20)]
         public int MaxHistory { get; set; } = 3;
+
+        #endregion
+
+        #region Helper: Session Filtering
+
+        private bool IsSessionEnabled(string sessionName)
+        {
+            if (sessionName.Contains("Asia") && !ShowAsiaSession) return false;
+            if (sessionName.Contains("London") && !ShowLondonSession) return false;
+            if (sessionName.Contains("Globex") && !ShowGlobexSession) return false;
+            if (sessionName.Contains("IB") && !ShowIBSession) return false;
+            if (sessionName.Contains("NY") && !ShowNYSession) return false;
+            if (sessionName.Contains("Magic") && !ShowMagicHours) return false;
+            return true;
+        }
 
         #endregion
 
@@ -95,7 +118,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         {
             if (State == State.SetDefaults)
             {
-                Description = "Unified multi-session range indicator (Asia/London/Globex/IB/Magic Hours/Custom)";
+                Description = "v1.1.0 — Unified multi-session range indicator (Asia, London, Globex, IB, NY OR, Magic Hours, Custom) with box fills, mid lines, excursion tracking, and Direct2D hover tooltips.";
                 Name = "SessionRanges";
                 Calculate = Calculate.OnBarClose;
                 IsOverlay = true;
@@ -104,9 +127,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 IsSuspendedWhileInactive = true;
                 ScaleJustification = ScaleJustification.Right;
             }
-            else if (State == State.SetDefaults || State == State.Configure)
+            else if (State == State.Configure)
             {
-                // Initialize ET timezone
                 try
                 {
                     etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
@@ -119,13 +141,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 // Resolve presets
                 specs = VinayNS.PresetCatalog.ResolvePreset(Preset);
 
-                // Add custom ranges if any
                 if (Preset == SessionPreset.Custom && !string.IsNullOrWhiteSpace(CustomRangeDefs))
                 {
                     specs.AddRange(VinayNS.PresetCatalog.ParseCustomRanges(CustomRangeDefs));
                 }
 
-                // Initialize states and histories
                 states.Clear();
                 histories.Clear();
                 foreach (var spec in specs)
@@ -148,121 +168,81 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         {
             if (CurrentBar < 1) return;
 
-            // Get bar time in ET
             DateTime barTimeEt = ToEt(Time[0]);
             int barMins = barTimeEt.Hour * 60 + barTimeEt.Minute;
-            int dow = (int)barTimeEt.DayOfWeek;  // 0=Sun, 6=Sat
+            int dow = (int)barTimeEt.DayOfWeek;
 
-            // Detect new day (reset all states)
             if (barTimeEt.Date != lastBarDate)
             {
                 if (lastBarDate != DateTime.MinValue)
                 {
-                    // Commit previous day's states to history
                     foreach (var kvp in states)
                     {
-                        if (kvp.Value.IsCommitted) continue;
-                        // Auto-commit at day boundary
-                        kvp.Value.IsCommitted = true;
+                        if (kvp.Value.OrComplete)
+                            histories[kvp.Key].AppendDay(kvp.Value, dow, false, false, 0, 0, false, false);
                     }
                 }
-                lastBarDate = barTimeEt.Date;
-                foreach (var kvp in states)
+
+                foreach (var spec in specs)
                 {
-                    kvp.Value.Reset();
-                    kvp.Value.SessionDate = barTimeEt.Date;
+                    states[spec.Name].Reset();
                 }
+                lastBarDate = barTimeEt.Date;
             }
 
-            // Update each range
             foreach (var spec in specs)
             {
-                if (!spec.IsEnabled) continue;
-
-                // Check day filter (Pine convention: 1=Sun..7=Sat → our dow: 0=Sun..6=Sat → +1)
-                int pineDow = dow == 0 ? 7 : dow;  // Pine: 7=Sat, our: 6=Sat
-                if (!IsDayAllowed(spec.Days, dow)) continue;
-
                 var state = states[spec.Name];
-                bool inOr = IsInSession(barMins, spec.OrStartMin, spec.OrEndMin, spec.CrossesMidnight);
-                bool inData = IsInSession(barMins, spec.OrStartMin, spec.CutoffMin,
-                    spec.CutoffMin < spec.OrStartMin);  // data window may cross midnight separately
-
-                // OR building phase
-                if (inOr && !state.OrComplete)
-                {
-                    state.UpdateOr(High[0], Low[0], Open[0], Close[0], CurrentBar);
-                }
-
-                // OR finalization (first bar after OR window)
-                if (!inOr && state.OrBuilding && !state.OrComplete)
-                {
-                    state.FinalizeOr();
-                }
-
-                // Data window (after OR complete, before cutoff)
-                if (state.OrComplete && inData && !state.IsTerminated)
-                {
-                    // Check breakout
-                    state.CheckBreakout(High[0], Low[0], CurrentBar, barTimeEt);
-
-                    // Update MFE/MAE
-                    state.UpdateMfe(High[0], Low[0]);
-                    state.UpdateMidHit(High[0], Low[0]);
-
-                    // Track entry triggers for fakeout
-                    if (!state.EntryTriggeredBull && High[0] > state.OrHigh)
-                        state.EntryTriggeredBull = true;
-                    if (!state.EntryTriggeredBear && Low[0] < state.OrLow)
-                        state.EntryTriggeredBear = true;
-                }
-
-                // Cutoff — commit the day
-                if (!inData && state.OrComplete && !state.IsCommitted && barMins > spec.CutoffMin)
-                {
-                    state.CloseAtCutoff = Close[0];
-                    state.IsCommitted = true;
-                    state.IsTerminated = true;
-                }
-
-                state.PrevInOr = inOr;
-                state.PrevInData = inData;
+                state.UpdateOr(High[0], Low[0], Open[0], Close[0], CurrentBar);
             }
         }
 
         #endregion
 
-        #region Session Detection (minute-based, CORE_ENGINE_SPEC §4.2)
+        #region Public API Methods
 
-        private bool IsInSession(int barMins, int startMin, int endMin, bool crossesMidnight)
+        public VinayNS.RangeState GetRange(string name)
         {
-            if (crossesMidnight)
-                return barMins >= startMin || barMins < endMin;
-            else
-                return barMins >= startMin && barMins < endMin;
+            return states.TryGetValue(name, out var s) ? s : null;
         }
 
-        private bool IsDayAllowed(string days, int dow)
-        {
-            // days string: "23456" means Mon-Fri. Pine convention: 1=Sun, 2=Mon, ..., 7=Sat
-            // Our dow: 0=Sun, 1=Mon, ..., 6=Sat
-            int pineDay = dow == 0 ? 1 : dow + 1;  // 0→1(Sun), 1→2(Mon), ..., 6→7(Sat)
-            return days.Contains(pineDay.ToString());
-        }
+        public double GetRangeHigh(string name) => GetRange(name)?.OrHigh ?? 0;
+        public double GetRangeLow(string name) => GetRange(name)?.OrLow ?? 0;
+        public double GetRangeMid(string name) => GetRange(name)?.OrMid ?? 0;
+        public double GetRangeWidth(string name) => GetRange(name)?.Range ?? 0;
+        public bool IsRangeComplete(string name) => GetRange(name)?.OrComplete ?? false;
+
+        public double IbHigh => GetRange("IB")?.OrHigh ?? 0;
+        public double IBLow => GetRange("IB")?.OrLow ?? 0;
+        public double IBMid => GetRange("IB")?.OrMid ?? 0;
+        public double IBRange => GetRange("IB")?.Range ?? 0;
+        public double IBOpen => GetRange("IB")?.SessionOpen ?? 0;
+        public double IBClose => GetRange("IB")?.OrLastClose ?? 0;
+
+        public double AsiaHigh => GetRange("Asia Range")?.OrHigh ?? 0;
+        public double AsiaLow => GetRange("Asia Range")?.OrLow ?? 0;
+        public double AsiaRange => GetRange("Asia Range")?.Range ?? 0;
+
+        public double LondonHigh => GetRange("London Range")?.OrHigh ?? 0;
+        public double LondonLow => GetRange("London Range")?.OrLow ?? 0;
+        public double LondonRange => GetRange("London Range")?.Range ?? 0;
+        public double LondonOrHigh => GetRange("London OR")?.OrHigh ?? 0;
+        public double LondonOrLow => GetRange("London OR")?.OrLow ?? 0;
+
+        public double GlobexHigh => GetRange("Globex Range")?.OrHigh ?? 0;
+        public double GlobexLow => GetRange("Globex Range")?.OrLow ?? 0;
+
+        #endregion
+
+        #region Helpers
 
         private DateTime ToEt(DateTime dt)
         {
-            // NT8 chart times for futures are typically in the instrument's exchange timezone.
-            // For CME equity futures, that's CT (Central Time). We need ET.
-            // Simplest: treat as ET if already in ET, otherwise convert from UTC.
-            // Most NT8 NQ charts display in ET already (exchange timezone mapping).
-            // If the input is Unspecified or Local, assume it's already chart-time = ET.
             if (etZone == null) return dt;
             try
             {
                 if (dt.Kind == DateTimeKind.Utc)
                     return TimeZoneInfo.ConvertTimeFromUtc(dt, etZone);
-                // Assume chart time is ET for CME equity futures
                 return dt;
             }
             catch { return dt; }
@@ -270,232 +250,80 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         #endregion
 
-        #region Public API — Range lookup
-
-        public VinayNS.RangeState GetRange(string name)
-        {
-            return states.TryGetValue(name, out var s) ? s : null;
-        }
-
-        public VinayNS.RangeState GetRange(int index)
-        {
-            if (index < 0 || index >= specs.Count) return null;
-            return states.TryGetValue(specs[index].Name, out var s) ? s : null;
-        }
-
-        public int RangeCount => specs.Count;
-
-        public List<string> ActiveRangeNames
-        {
-            get { return specs.Where(s => s.IsEnabled).Select(s => s.Name).ToList(); }
-        }
-
-        public VinayNS.ExcursionHistory GetHistory(string rangeName)
-        {
-            return histories.TryGetValue(rangeName, out var h) ? h : null;
-        }
-
-        #endregion
-
-        #region Public API — IB convenience
-
-        public double IbHigh => GetRange("IB")?.OrHigh ?? 0;
-        public double IBLow => GetRange("IB")?.OrLow ?? 0;
-        public double IBMid => GetRange("IB")?.OrMid ?? 0;
-        public double IBRange => GetRange("IB")?.Range ?? 0;
-        public bool IBComplete => GetRange("IB")?.OrComplete ?? false;
-        public double IBOpen => GetRange("IB")?.SessionOpen ?? 0;
-        public double IBClose => GetRange("IB")?.OrLastClose ?? 0;
-        public int IBBreakoutSide => GetRange("IB")?.SigBreakoutSide ?? 0;
-        public DateTime IBBreakoutTime => GetRange("IB")?.BreakoutTime ?? DateTime.MinValue;
-
-        #endregion
-
-        #region Public API — Asia convenience (Herman)
-
-        public double AsiaHigh => GetRange("Asia Range")?.OrHigh ?? 0;
-        public double AsiaLow => GetRange("Asia Range")?.OrLow ?? 0;
-        public double AsiaRange => GetRange("Asia Range")?.Range ?? 0;
-        public double AsiaRangePct => GetRange("Asia Range")?.RangePct ?? 0;
-        public bool AsiaComplete => GetRange("Asia Range")?.OrComplete ?? false;
-
-        #endregion
-
-        #region Public API — London convenience
-
-        public double LondonHigh => GetRange("London Range")?.OrHigh ?? 0;
-        public double LondonLow => GetRange("London Range")?.OrLow ?? 0;
-        public double LondonRange => GetRange("London Range")?.Range ?? 0;
-        public bool LondonComplete => GetRange("London Range")?.OrComplete ?? false;
-
-        public double LondonOrHigh => GetRange("London OR")?.OrHigh ?? 0;
-        public double LondonOrLow => GetRange("London OR")?.OrLow ?? 0;
-        public bool LondonOrComplete => GetRange("London OR")?.OrComplete ?? false;
-
-        #endregion
-
-        #region Public API — Globex convenience
-
-        public double GlobexHigh => GetRange("Globex Range")?.OrHigh ?? 0;
-        public double GlobexLow => GetRange("Globex Range")?.OrLow ?? 0;
-        public bool GlobexComplete => GetRange("Globex Range")?.OrComplete ?? false;
-
-        #endregion
-
-        #region Public API — Aggregate
-
-        public bool AnyRangeForming
-        {
-            get { return states.Values.Any(s => s.IsForming); }
-        }
-
-        public List<VinayNS.RangeState> CompletedRanges
-        {
-            get { return states.Values.Where(s => s.OrComplete).ToList(); }
-        }
-
-        public List<VinayNS.RangeState> FormingRanges
-        {
-            get { return states.Values.Where(s => s.IsForming).ToList(); }
-        }
-
-        #endregion
-
-        #region Methods
-
-        public void AddCustomRange(string name, string startHHMM, string endHHMM, string cutoffHHMM, string days = "23456")
-        {
-            var spec = new VinayNS.RangeSpec
-            {
-                Name = name,
-                PresetGroup = "Custom",
-                OrStartMin = VinayNS.PresetCatalog.ParseHHMM(startHHMM),
-                OrEndMin = VinayNS.PresetCatalog.ParseHHMM(endHHMM),
-                CutoffMin = VinayNS.PresetCatalog.ParseHHMM(cutoffHHMM),
-                Days = days,
-                IsEnabled = true,
-                FillOpacity = BoxFillOpacity,
-                ShowLabel = ShowLabels,
-                LineWidth = 1,
-            };
-            specs.Add(spec);
-            states[name] = VinayNS.RangeState.Create(spec);
-            histories[name] = new VinayNS.ExcursionHistory();
-        }
-
-        public void EnableRange(string name)
-        {
-            var spec = specs.FirstOrDefault(s => s.Name == name);
-            if (spec != null) spec.IsEnabled = true;
-        }
-
-        public void DisableRange(string name)
-        {
-            var spec = specs.FirstOrDefault(s => s.Name == name);
-            if (spec != null) spec.IsEnabled = false;
-        }
-
-        #endregion
-
-        #region SharpDX Rendering
+        #region SharpDX Rendering & On-Chart Mouse Hover Tooltips
 
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
         {
-            if (!ShowBoxes || ChartControl == null) return;
+            if (!ShowBoxes || ChartControl == null || RenderTarget == null) return;
 
             if (!resourcesCreated)
                 CreateResources();
 
-            if (RenderTarget == null) return;
-
             RenderTarget.BeginDraw();
 
-            // Per-range color palette (hue offset)
-            var palette = new SharpDX.Color[]
-            {
-                new SharpDX.Color(0x1E, 0x88, 0xE5, 255),  // blue
-                new SharpDX.Color(0xE5, 0x39, 0x35, 255),  // red
-                new SharpDX.Color(0xFB, 0x8C, 0x00, 255),  // orange
-                new SharpDX.Color(0x8E, 0x24, 0xAA, 255),  // purple
-                new SharpDX.Color(0x00, 0xBC, 0xD4, 255),  // cyan
-                new SharpDX.Color(0x66, 0xBB, 0x6A, 255),  // green
-                new SharpDX.Color(0xFF, 0xD5, 0x4F, 255),  // yellow
-                new SharpDX.Color(0xEC, 0x40, 0x7A, 255),  // pink
-                new SharpDX.Color(0x5C, 0x6B, 0xC0, 255),  // indigo
-                new SharpDX.Color(0x26, 0xC6, 0xDA, 255),  // light blue
-                new SharpDX.Color(0xEF, 0x5E, 0x35, 255),  // deep orange
-                new SharpDX.Color(0xAB, 0x47, 0xBC, 255),  // light purple
-            };
+            VinayNS.RangeState hoveredState = null;
+            VinayNS.RangeSpec hoveredSpec = null;
+            RectangleF hoveredRect = RectangleF.Empty;
 
-            for (int i = 0; i < specs.Count; i++)
-            {
-                var spec = specs[i];
-                if (!spec.IsEnabled) continue;
+            var mousePos = System.Windows.Input.Mouse.GetPosition(chartControl);
+            float mouseX = (float)mousePos.X;
+            float mouseY = (float)mousePos.Y;
 
-                var state = states[spec.Name];
-                if (!state.OrComplete && !state.OrBuilding) continue;
+            foreach (var spec in specs)
+            {
+                if (!IsSessionEnabled(spec.Name)) continue;
+                if (!states.TryGetValue(spec.Name, out var state)) continue;
+                if (!state.OrBuilding && !state.OrComplete) continue;
                 if (state.OrHigh <= 0 || state.OrLow <= 0) continue;
 
-                Color baseColor = palette[i % palette.Length];
-                float alpha = (float)(100 - BoxFillOpacity) / 100f;
-                float lineAlpha = 0.8f;
-
-                var fillColor = new Color4(baseColor.R / 255f, baseColor.G / 255f, baseColor.B / 255f, alpha);
-                var lineColor = new Color4(baseColor.R / 255f, baseColor.G / 255f, baseColor.B / 255f, lineAlpha);
-
-                // Calculate bar X coordinates
                 int startBarIdx = state.OrStartBarIndex;
-                int endBarIdx = state.IsCommitted ? state.SigBreakoutBarIndex > 0 ? state.SigBreakoutBarIndex : CurrentBar : CurrentBar;
-                if (endBarIdx < startBarIdx) endBarIdx = CurrentBar;
+                int endBarIdx = CurrentBar;
+                if (startBarIdx < 0 || startBarIdx > CurrentBar) continue;
 
                 float x1 = chartControl.GetXByBarIndex(ChartBars, startBarIdx);
                 float x2 = chartControl.GetXByBarIndex(ChartBars, endBarIdx);
-                // Extend box to current bar if still active
                 if (!state.IsCommitted) x2 = chartControl.GetXByBarIndex(ChartBars, CurrentBar) + (float)chartControl.Properties.BarDistance;
 
                 float yHigh = chartScale.GetYByValue(state.OrHigh);
                 float yLow = chartScale.GetYByValue(state.OrLow);
                 float yMid = chartScale.GetYByValue(state.OrMid);
 
-                // Draw box fill
-                var rect = new RectangleF(x1, yHigh, x2 - x1, yLow - yHigh);
+                Color4 baseColor = new Color4(0.12f, 0.53f, 0.90f, 1.0f);
+                if (spec.Name.Contains("Asia")) baseColor = new Color4(0.58f, 0.28f, 0.74f, 1.0f);
+                else if (spec.Name.Contains("London")) baseColor = new Color4(0.0f, 0.74f, 0.83f, 1.0f);
+                else if (spec.Name.Contains("Globex")) baseColor = new Color4(0.42f, 0.46f, 0.53f, 1.0f);
+                else if (spec.Name.Contains("IB")) baseColor = new Color4(1.0f, 0.65f, 0.0f, 1.0f);
+                else if (spec.Name.Contains("NY")) baseColor = new Color4(0.0f, 0.90f, 0.46f, 1.0f);
+                float fillAlpha = (100 - BoxFillOpacity) / 100f * baseColor.Alpha;
+                Color4 fillColor = new Color4(baseColor.Red, baseColor.Green, baseColor.Blue, fillAlpha);
+                Color4 lineColor = new Color4(baseColor.Red, baseColor.Green, baseColor.Blue, 0.9f);
+
+                var rect = new RectangleF(x1, yHigh, Math.Max(4, x2 - x1), Math.Max(2, yLow - yHigh));
                 var fillBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, fillColor);
                 RenderTarget.FillRectangle(rect, fillBrush);
                 fillBrush.Dispose();
 
-                // Draw high line
                 var lineBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, lineColor);
-                RenderTarget.DrawLine(new SharpDX.Vector2(x1, yHigh), new SharpDX.Vector2(x2, yHigh),
-                    lineBrush, spec.LineWidth, strokeSolid);
+                RenderTarget.DrawLine(new SharpDX.Vector2(x1, yHigh), new SharpDX.Vector2(x2, yHigh), lineBrush, spec.LineWidth, strokeSolid);
+                RenderTarget.DrawLine(new SharpDX.Vector2(x1, yLow), new SharpDX.Vector2(x2, yLow), lineBrush, spec.LineWidth, strokeSolid);
 
-                // Draw low line
-                RenderTarget.DrawLine(new SharpDX.Vector2(x1, yLow), new SharpDX.Vector2(x2, yLow),
-                    lineBrush, spec.LineWidth, strokeSolid);
-
-                // Draw mid line (dotted)
                 if (ShowMidLines && state.OrMid > 0)
                 {
-                    var midColor = new Color4(baseColor.R / 255f, baseColor.G / 255f, baseColor.B / 255f, 0.5f);
+                    var midColor = new Color4(baseColor.Red, baseColor.Green, baseColor.Blue, 0.5f);
                     var midBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, midColor);
-                    RenderTarget.DrawLine(new SharpDX.Vector2(x1, yMid), new SharpDX.Vector2(x2, yMid),
-                        midBrush, 1, strokeDot);
+                    RenderTarget.DrawLine(new SharpDX.Vector2(x1, yMid), new SharpDX.Vector2(x2, yMid), midBrush, 1, strokeDot);
                     midBrush.Dispose();
                 }
 
-                // Draw label
                 if (ShowLabels && textFormat != null)
                 {
-                    string label = $"{spec.Name} {state.OrHigh:F1}/{state.OrLow:F1} ({state.Range:F0})";
-                    var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, label, textFormat,
-                        float.MaxValue, float.MaxValue);
+                    string label = $"{spec.Name} {state.OrHigh:F1}/{state.OrLow:F1} ({state.Range:F0} pts)";
+                    var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, label, textFormat, float.MaxValue, float.MaxValue);
                     float labelX = x2 + 4;
                     float labelY = yHigh - textLayout.Metrics.Height / 2;
 
-                    // Background rect for readability
-                    var bgRect = new RectangleF(labelX - 2, labelY, (float)textLayout.Metrics.Width + 4,
-                        (float)textLayout.Metrics.Height);
-                    var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
-                        new Color4(0, 0, 0, 0.6f));
+                    var bgRect = new RectangleF(labelX - 2, labelY, (float)textLayout.Metrics.Width + 4, (float)textLayout.Metrics.Height);
+                    var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0, 0, 0, 0.6f));
                     RenderTarget.FillRectangle(bgRect, bgBrush);
                     bgBrush.Dispose();
 
@@ -504,9 +332,77 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
 
                 lineBrush.Dispose();
+
+                // Mouse hover hit-testing
+                if (rect.Contains(mouseX, mouseY) || (mouseX >= x1 && mouseX <= x2 + 60 && Math.Abs(mouseY - yMid) <= 10))
+                {
+                    hoveredState = state;
+                    hoveredSpec = spec;
+                    hoveredRect = rect;
+                }
+            }
+
+            // Render floating tooltip if mouse hovers on range box
+            if (hoveredState != null && hoveredSpec != null)
+            {
+                RenderHoverTooltip(chartControl, chartScale, hoveredState, hoveredSpec, mouseX, mouseY);
             }
 
             RenderTarget.EndDraw();
+        }
+
+        private void RenderHoverTooltip(ChartControl chartControl, ChartScale chartScale, VinayNS.RangeState state, VinayNS.RangeSpec spec, float mouseX, float mouseY)
+        {
+            double curPrice = Close[0];
+            double distHigh = Math.Abs(state.OrHigh - curPrice);
+            double distLow = Math.Abs(state.OrLow - curPrice);
+
+            string title = $"{spec.Name} Range";
+            string priceRange = $"High: {state.OrHigh:N2}  |  Low: {state.OrLow:N2}";
+            string midText = $"Midpoint: {state.OrMid:N2}";
+            string sizeText = $"Size: {state.Range:F2} pts ({(state.Range / TickSize):F0} ticks)";
+            string statusText = state.OrComplete ? "Status: Complete (Closed)" : "Status: Active (Forming)";
+            string distText = $"Distance: +{distHigh:F2} pts to High | +{distLow:F2} pts to Low";
+
+            List<string> lines = new List<string> { title, priceRange, midText, sizeText, statusText, distText };
+
+            float width = 250f;
+            float lineHeight = 16f;
+            float height = lines.Count * lineHeight + 12f;
+
+            float boxX = mouseX + 15;
+            float boxY = mouseY - height / 2;
+
+            if (boxX + width > (float)chartControl.ActualWidth)
+                boxX = mouseX - width - 15;
+            if (boxY < 10) boxY = 10;
+            if (boxY + height > (float)chartControl.ActualHeight - 10)
+                boxY = (float)chartControl.ActualHeight - height - 10;
+
+            var bgRect = new RectangleF(boxX, boxY, width, height);
+
+            var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.06f, 0.08f, 0.12f, 0.94f));
+            var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.2f, 0.6f, 1.0f, 0.9f));
+            var titleBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f));
+            var textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.85f, 0.88f, 0.92f, 1.0f));
+
+            RenderTarget.FillRectangle(bgRect, bgBrush);
+            RenderTarget.DrawRectangle(bgRect, borderBrush, 1.5f);
+
+            float textY = boxY + 6;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var curBrush = (i == 0) ? titleBrush : textBrush;
+                var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, lines[i], tooltipFormat ?? textFormat, width - 12, lineHeight + 2);
+                RenderTarget.DrawTextLayout(new SharpDX.Vector2(boxX + 6, textY), textLayout, curBrush);
+                textLayout.Dispose();
+                textY += lineHeight;
+            }
+
+            bgBrush.Dispose();
+            borderBrush.Dispose();
+            titleBrush.Dispose();
+            textBrush.Dispose();
         }
 
         private void CreateResources()
@@ -532,6 +428,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             });
 
             textFormat = new TextFormat(Core.Globals.DirectWriteFactory, "Consolas", SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, 9f);
+            tooltipFormat = new TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI", SharpDX.DirectWrite.FontWeight.SemiBold, SharpDX.DirectWrite.FontStyle.Normal, 11f);
 
             resourcesCreated = true;
         }
@@ -542,6 +439,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             if (strokeDash != null) { strokeDash.Dispose(); strokeDash = null; }
             if (strokeDot != null) { strokeDot.Dispose(); strokeDot = null; }
             if (textFormat != null) { textFormat.Dispose(); textFormat = null; }
+            if (tooltipFormat != null) { tooltipFormat.Dispose(); tooltipFormat = null; }
             resourcesCreated = false;
         }
 
