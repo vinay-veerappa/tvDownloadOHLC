@@ -259,8 +259,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             if (!resourcesCreated)
                 CreateResources();
 
-            RenderTarget.BeginDraw();
-
             VinayNS.RangeState hoveredState = null;
             VinayNS.RangeSpec hoveredSpec = null;
             RectangleF hoveredRect = RectangleF.Empty;
@@ -347,8 +345,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             {
                 RenderHoverTooltip(chartControl, chartScale, hoveredState, hoveredSpec, mouseX, mouseY);
             }
-
-            RenderTarget.EndDraw();
         }
 
         private void RenderHoverTooltip(ChartControl chartControl, ChartScale chartScale, VinayNS.RangeState state, VinayNS.RangeSpec spec, float mouseX, float mouseY)

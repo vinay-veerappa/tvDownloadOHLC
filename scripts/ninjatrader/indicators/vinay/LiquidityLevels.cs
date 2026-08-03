@@ -1028,8 +1028,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 resourcesCreated = true;
             }
 
-            RenderTarget.BeginDraw();
-
             var activeLevelsToDraw = GetActiveLevels();
 
             var categoryColors = new Dictionary<LevelCategory, SharpDX.Color>
