@@ -233,6 +233,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "Use Full Level Names", Order = 8, GroupName = "3. Visuals")]
         public bool UseFullLevelNames { get; set; } = false;
 
+        [Display(Name = "Label Placement", Description = "Where to draw line labels: RightMargin (default), Origin, or Both", Order = 9, GroupName = "3. Visuals")]
+        public LabelPlacement LabelPlacement { get; set; } = LabelPlacement.RightMargin;
+
         #endregion
 
         #region State Initialization
@@ -1114,7 +1117,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (showLabel)
                 {
                     string nameStr = UseFullLevelNames && !string.IsNullOrEmpty(level.Def.FullName) ? level.Def.FullName : level.Def.Name;
-                    string label = $"{nameStr} {level.Price:F1}";
+                    double roundedPrice = TickSize > 0 ? Math.Round(level.Price / TickSize) * TickSize : level.Price;
+                    string priceStr = Instrument != null ? Instrument.MasterInstrument.FormatPrice(roundedPrice) : roundedPrice.ToString("F2");
+                    string label = $"{nameStr} {priceStr}";
                     if (level.Swept) label += " ✗";
 
                     var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, label, textFormat,
@@ -1133,21 +1138,24 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                         ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
                         : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
 
-                    // 1. Draw Origin Label (Right at xStart where line originates)
-                    float originLabelX = xStart + 4;
-                    var originBgRect = new RectangleF(originLabelX - 2, labelY - 1, textW + 4, textH + 2);
-                    RenderTarget.FillRectangle(originBgRect, bgBrush);
-                    RenderTarget.DrawRectangle(originBgRect, borderBrush, 1.0f);
-                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(originLabelX, labelY), textLayout, labelBrush);
-
-                    // 2. Draw Right Margin Label (At xEnd on the right margin) if line is longer than text
-                    if (xEnd - xStart > textW + 20)
+                    // 1. Draw Right Margin Label (Default, clean on right margin)
+                    if (LabelPlacement == LabelPlacement.RightMargin || LabelPlacement == LabelPlacement.Both)
                     {
                         float rightLabelX = xEnd + 4;
                         var rightBgRect = new RectangleF(rightLabelX - 2, labelY - 1, textW + 4, textH + 2);
                         RenderTarget.FillRectangle(rightBgRect, bgBrush);
                         RenderTarget.DrawRectangle(rightBgRect, borderBrush, 1.0f);
                         RenderTarget.DrawTextLayout(new SharpDX.Vector2(rightLabelX, labelY), textLayout, labelBrush);
+                    }
+
+                    // 2. Draw Origin Label (Right at xStart where line originates)
+                    if (LabelPlacement == LabelPlacement.Origin || LabelPlacement == LabelPlacement.Both)
+                    {
+                        float originLabelX = xStart + 4;
+                        var originBgRect = new RectangleF(originLabelX - 2, labelY - 1, textW + 4, textH + 2);
+                        RenderTarget.FillRectangle(originBgRect, bgBrush);
+                        RenderTarget.DrawRectangle(originBgRect, borderBrush, 1.0f);
+                        RenderTarget.DrawTextLayout(new SharpDX.Vector2(originLabelX, labelY), textLayout, labelBrush);
                     }
 
                     bgBrush.Dispose();

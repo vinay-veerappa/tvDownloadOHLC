@@ -56,6 +56,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         Both        // detect both modes
     }
 
+    public enum LabelPlacement
+    {
+        RightMargin, // Draw labels on right margin (default, cleanest)
+        Origin,      // Draw labels at ray origin bar
+        Both         // Draw labels at both origin and right margin
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // LevelDef — immutable catalog entry (one per level type)
     // ════════════════════════════════════════════════════════════════════════

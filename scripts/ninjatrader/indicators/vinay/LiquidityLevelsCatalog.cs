@@ -41,8 +41,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("MidnightOpen", "Midnight Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "MidnightOpen"));
             levels.Add(new LevelDef("LondonOpen", "London Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "LondonOpen"));
             levels.Add(new LevelDef("GlobexOpen", "Globex Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "GlobexOpen"));  // 18:00 ET overnight session open
-            levels.Add(new LevelDef("RTHOpen", "RTH Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "RTHOpen"));  // 09:30 ET RTH session open
-            levels.Add(new LevelDef("NYOpen", "NY Open", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.CurrentDayOHL, "CurrentOpen"));
+            levels.Add(new LevelDef("RTHOpen", "RTH / NY Open (09:30 ET)", LevelCategory.SessionOpen, LevelRole.SweepTarget, LevelSource.SessionOpens, "RTHOpen"));  // 09:30 ET RTH open
             levels.Add(new LevelDef("Open_04H", "Open 04:00", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_04H"));
             levels.Add(new LevelDef("Open_08H", "Open 08:00", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_08H"));
             levels.Add(new LevelDef("Open_12H", "Open 12:00", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_12H"));
