@@ -1057,19 +1057,35 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             var activeLevelsToDraw = GetActiveLevels();
 
-            var categoryColors = new Dictionary<LevelCategory, SharpDX.Color>
-            {
-                { LevelCategory.PriorDay,     new SharpDX.Color(0x00, 0xE6, 0x76, 255) },
-                { LevelCategory.PriorWeek,    new SharpDX.Color(0x69, 0xF0, 0xAE, 255) },
-                { LevelCategory.PriorMonth,   new SharpDX.Color(0x00, 0xBC, 0xD4, 255) },
-                { LevelCategory.SessionOpen,  new SharpDX.Color(0xFF, 0xFF, 0xFF, 255) },
-                { LevelCategory.SessionRange, new SharpDX.Color(0x1E, 0x88, 0xE5, 255) },
-                { LevelCategory.Intraday,     new SharpDX.Color(0x76, 0xFF, 0x03, 255) },
-                { LevelCategory.VolumeProfile,new SharpDX.Color(0xFF, 0xA7, 0x26, 255) },
-                { LevelCategory.Structure,    new SharpDX.Color(0xAB, 0x47, 0xBC, 255) },
-                { LevelCategory.Pivot,        new SharpDX.Color(0x9E, 0x9E, 0x9E, 255) },
-                { LevelCategory.Fib,          new SharpDX.Color(0xBD, 0xBD, 0xBD, 255) },
-            };
+            bool isDark = IsDarkChart(chartControl);
+
+            var categoryColors = isDark
+                ? new Dictionary<LevelCategory, SharpDX.Color>
+                {
+                    { LevelCategory.PriorDay,     new SharpDX.Color(0x00, 0xE6, 0x76, 255) }, // Neon Green
+                    { LevelCategory.PriorWeek,    new SharpDX.Color(0x00, 0xE5, 0xFF, 255) }, // Electric Cyan
+                    { LevelCategory.PriorMonth,   new SharpDX.Color(0x00, 0xB0, 0xFF, 255) }, // Sky Blue
+                    { LevelCategory.SessionOpen,  new SharpDX.Color(0xFF, 0xEA, 0x00, 255) }, // Bright Yellow
+                    { LevelCategory.SessionRange, new SharpDX.Color(0x29, 0x79, 0xFF, 255) }, // Vivid Blue
+                    { LevelCategory.Intraday,     new SharpDX.Color(0x76, 0xFF, 0x03, 255) }, // Lime
+                    { LevelCategory.VolumeProfile,new SharpDX.Color(0xFF, 0x91, 0x00, 255) }, // Vivid Orange
+                    { LevelCategory.Structure,    new SharpDX.Color(0xD5, 0x00, 0xF9, 255) }, // Bright Purple
+                    { LevelCategory.Pivot,        new SharpDX.Color(0xFF, 0x40, 0x81, 255) }, // Pink/Magenta
+                    { LevelCategory.Fib,          new SharpDX.Color(0xFF, 0xAB, 0x00, 255) }, // Gold
+                }
+                : new Dictionary<LevelCategory, SharpDX.Color>
+                {
+                    { LevelCategory.PriorDay,     new SharpDX.Color(0x00, 0x7E, 0x33, 255) }, // Dark Green
+                    { LevelCategory.PriorWeek,    new SharpDX.Color(0x00, 0x83, 0x8F, 255) }, // Deep Cyan
+                    { LevelCategory.PriorMonth,   new SharpDX.Color(0x02, 0x77, 0xBD, 255) }, // Deep Ocean Blue
+                    { LevelCategory.SessionOpen,  new SharpDX.Color(0xD8, 0x43, 0x15, 255) }, // Burnt Orange
+                    { LevelCategory.SessionRange, new SharpDX.Color(0x15, 0x65, 0xC0, 255) }, // Royal Blue
+                    { LevelCategory.Intraday,     new SharpDX.Color(0x2E, 0x7D, 0x32, 255) }, // Dark Lime/Forest
+                    { LevelCategory.VolumeProfile,new SharpDX.Color(0xEF, 0x6C, 0x00, 255) }, // Dark Orange
+                    { LevelCategory.Structure,    new SharpDX.Color(0x6A, 0x1B, 0x9A, 255) }, // Deep Purple
+                    { LevelCategory.Pivot,        new SharpDX.Color(0xC2, 0x18, 0x5B, 255) }, // Deep Crimson
+                    { LevelCategory.Fib,          new SharpDX.Color(0xF5, 0x7F, 0x17, 255) }, // Dark Amber
+                };
 
             float xStart = chartControl.GetXByBarIndex(ChartBars, Math.Max(0, CurrentBar - 100));
             float xEnd = chartControl.GetXByBarIndex(ChartBars, CurrentBar) + (float)chartControl.Properties.BarDistance;
@@ -1114,9 +1130,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     float labelX = xEnd + 4;
                     float labelY = y - (float)textLayout.Metrics.Height / 2;
 
-                    var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f));
+                    var bgBrush = isDark
+                        ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
+                        : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.98f, 0.98f, 1.0f, 0.95f));
+
                     var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(color.R / 255f, color.G / 255f, color.B / 255f, 0.9f));
-                    var labelBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f));
+
+                    var labelBrush = isDark
+                        ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
+                        : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
 
                     var bgRect = new RectangleF(labelX - 2, labelY - 1, (float)textLayout.Metrics.Width + 4,
                         (float)textLayout.Metrics.Height + 2);
@@ -1145,8 +1167,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     float markerSize = 6f;
 
                     var markerColor = sweep.IsBullSweep
-                        ? new SharpDX.Color(0x00, 0xC8, 0x53, 255)
-                        : new SharpDX.Color(0xFF, 0x17, 0x44, 255);
+                        ? (isDark ? new SharpDX.Color(0x00, 0xE6, 0x76, 255) : new SharpDX.Color(0x00, 0x89, 0x7B, 255))
+                        : (isDark ? new SharpDX.Color(0xFF, 0x17, 0x44, 255) : new SharpDX.Color(0xC6, 0x28, 0x28, 255));
 
                     var markerBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
                         new Color4(markerColor.R / 255f, markerColor.G / 255f, markerColor.B / 255f, 0.9f));
@@ -1156,9 +1178,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
             }
 
-            // ════════════════════════════════════════════════════════════════
             // Interactive On-Chart Mouse Hover Tooltips
-            // ════════════════════════════════════════════════════════════════
             if (chartControl != null)
             {
                 try
@@ -1170,7 +1190,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     if (mouseX >= 0 && mouseX <= (float)chartControl.ActualWidth && mouseY >= 0 && mouseY <= (float)chartControl.ActualHeight)
                     {
                         LevelState hoveredLevel = null;
-                        float minHitDist = 8.0f; // 8px Y tolerance
+                        float minHitDist = 8.0f;
 
                         foreach (var level in activeLevelsToDraw)
                         {
@@ -1194,8 +1214,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
         }
 
+        private bool IsDarkChart(ChartControl chartControl)
+        {
+            if (chartControl != null && chartControl.Properties != null && chartControl.Properties.ChartBackground != null)
+            {
+                if (chartControl.Properties.ChartBackground is System.Windows.Media.SolidColorBrush scb)
+                {
+                    double luminance = (0.299 * scb.Color.R + 0.587 * scb.Color.G + 0.114 * scb.Color.B) / 255.0;
+                    return luminance < 0.5;
+                }
+            }
+            return true;
+        }
+
         private void RenderHoverTooltip(ChartControl chartControl, ChartScale chartScale, LevelState level, float mouseX, float mouseY, double currentPrice)
         {
+            bool isDark = IsDarkChart(chartControl);
+
             string title = level.Def.FullName ?? level.Def.Name;
             string priceText = $"Price: {level.Price:N2}";
             string catText = $"Category: {level.Def.Category} | Source: {level.Def.Source}";
@@ -1229,11 +1264,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             var bgRect = new RectangleF(boxX, boxY, width, height);
 
-            var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.06f, 0.08f, 0.12f, 0.94f));
-            var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.0f, 0.7f, 1.0f, 0.9f));
-            var titleBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f));
-            var textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.85f, 0.88f, 0.92f, 1.0f));
-            var sweptBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 0.35f, 0.35f, 1.0f));
+            var bgBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.06f, 0.08f, 0.12f, 0.95f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.96f, 0.97f, 0.99f, 0.96f));
+
+            var borderBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.0f, 0.7f, 1.0f, 0.9f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.1f, 0.4f, 0.8f, 0.9f));
+
+            var titleBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
+
+            var textBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.85f, 0.88f, 0.92f, 1.0f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.12f, 0.15f, 0.20f, 1.0f));
+
+            var sweptBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 0.3f, 0.3f, 1.0f));
 
             RenderTarget.FillRectangle(bgRect, bgBrush);
             RenderTarget.DrawRectangle(bgRect, borderBrush, 1.5f);

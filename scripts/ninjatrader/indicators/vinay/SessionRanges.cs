@@ -267,6 +267,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             float mouseX = (float)mousePos.X;
             float mouseY = (float)mousePos.Y;
 
+            bool isDark = IsDarkChart(chartControl);
+
             foreach (var spec in specs)
             {
                 if (!IsSessionEnabled(spec.Name)) continue;
@@ -286,12 +288,26 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 float yLow = chartScale.GetYByValue(state.OrLow);
                 float yMid = chartScale.GetYByValue(state.OrMid);
 
-                Color4 baseColor = new Color4(0.12f, 0.53f, 0.90f, 1.0f);
-                if (spec.Name.Contains("Asia")) baseColor = new Color4(0.58f, 0.28f, 0.74f, 1.0f);
-                else if (spec.Name.Contains("London")) baseColor = new Color4(0.0f, 0.74f, 0.83f, 1.0f);
-                else if (spec.Name.Contains("Globex")) baseColor = new Color4(0.42f, 0.46f, 0.53f, 1.0f);
-                else if (spec.Name.Contains("IB")) baseColor = new Color4(1.0f, 0.65f, 0.0f, 1.0f);
-                else if (spec.Name.Contains("NY")) baseColor = new Color4(0.0f, 0.90f, 0.46f, 1.0f);
+                Color4 baseColor;
+                if (isDark)
+                {
+                    baseColor = new Color4(0.16f, 0.60f, 1.0f, 1.0f);
+                    if (spec.Name.Contains("Asia")) baseColor = new Color4(0.70f, 0.35f, 0.90f, 1.0f);
+                    else if (spec.Name.Contains("London")) baseColor = new Color4(0.0f, 0.85f, 0.95f, 1.0f);
+                    else if (spec.Name.Contains("Globex")) baseColor = new Color4(0.55f, 0.60f, 0.68f, 1.0f);
+                    else if (spec.Name.Contains("IB")) baseColor = new Color4(1.0f, 0.68f, 0.0f, 1.0f);
+                    else if (spec.Name.Contains("NY")) baseColor = new Color4(0.0f, 0.90f, 0.46f, 1.0f);
+                }
+                else
+                {
+                    baseColor = new Color4(0.10f, 0.40f, 0.80f, 1.0f);
+                    if (spec.Name.Contains("Asia")) baseColor = new Color4(0.48f, 0.15f, 0.68f, 1.0f);
+                    else if (spec.Name.Contains("London")) baseColor = new Color4(0.0f, 0.50f, 0.65f, 1.0f);
+                    else if (spec.Name.Contains("Globex")) baseColor = new Color4(0.28f, 0.32f, 0.40f, 1.0f);
+                    else if (spec.Name.Contains("IB")) baseColor = new Color4(0.85f, 0.45f, 0.0f, 1.0f);
+                    else if (spec.Name.Contains("NY")) baseColor = new Color4(0.0f, 0.60f, 0.28f, 1.0f);
+                }
+
                 float fillAlpha = (100 - BoxFillOpacity) / 100f * baseColor.Alpha;
                 Color4 fillColor = new Color4(baseColor.Red, baseColor.Green, baseColor.Blue, fillAlpha);
                 Color4 lineColor = new Color4(baseColor.Red, baseColor.Green, baseColor.Blue, 0.9f);
@@ -320,12 +336,21 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     float labelX = x2 + 4;
                     float labelY = yHigh - textLayout.Metrics.Height / 2;
 
-                    var bgRect = new RectangleF(labelX - 2, labelY, (float)textLayout.Metrics.Width + 4, (float)textLayout.Metrics.Height);
-                    var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0, 0, 0, 0.6f));
-                    RenderTarget.FillRectangle(bgRect, bgBrush);
-                    bgBrush.Dispose();
+                    var bgBrush = isDark
+                        ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
+                        : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.98f, 0.98f, 1.0f, 0.95f));
 
-                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(labelX, labelY), textLayout, lineBrush);
+                    var labelBrush = isDark
+                        ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
+                        : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
+
+                    var bgRect = new RectangleF(labelX - 2, labelY - 1, (float)textLayout.Metrics.Width + 4, (float)textLayout.Metrics.Height + 2);
+                    RenderTarget.FillRectangle(bgRect, bgBrush);
+                    RenderTarget.DrawRectangle(bgRect, lineBrush, 1.0f);
+
+                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(labelX, labelY), textLayout, labelBrush);
+                    bgBrush.Dispose();
+                    labelBrush.Dispose();
                     textLayout.Dispose();
                 }
 
@@ -347,8 +372,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
         }
 
+        private bool IsDarkChart(ChartControl chartControl)
+        {
+            if (chartControl != null && chartControl.Properties != null && chartControl.Properties.ChartBackground != null)
+            {
+                if (chartControl.Properties.ChartBackground is System.Windows.Media.SolidColorBrush scb)
+                {
+                    double luminance = (0.299 * scb.Color.R + 0.587 * scb.Color.G + 0.114 * scb.Color.B) / 255.0;
+                    return luminance < 0.5;
+                }
+            }
+            return true;
+        }
+
         private void RenderHoverTooltip(ChartControl chartControl, ChartScale chartScale, VinayNS.RangeState state, VinayNS.RangeSpec spec, float mouseX, float mouseY)
         {
+            bool isDark = IsDarkChart(chartControl);
+
             double curPrice = Close[0];
             double distHigh = Math.Abs(state.OrHigh - curPrice);
             double distLow = Math.Abs(state.OrLow - curPrice);
@@ -377,10 +417,21 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             var bgRect = new RectangleF(boxX, boxY, width, height);
 
-            var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.06f, 0.08f, 0.12f, 0.94f));
-            var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.2f, 0.6f, 1.0f, 0.9f));
-            var titleBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f));
-            var textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.85f, 0.88f, 0.92f, 1.0f));
+            var bgBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.06f, 0.08f, 0.12f, 0.95f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.96f, 0.97f, 0.99f, 0.96f));
+
+            var borderBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.2f, 0.6f, 1.0f, 0.9f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.1f, 0.4f, 0.8f, 0.9f));
+
+            var titleBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
+
+            var textBrush = isDark
+                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.85f, 0.88f, 0.92f, 1.0f))
+                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.12f, 0.15f, 0.20f, 1.0f));
 
             RenderTarget.FillRectangle(bgRect, bgBrush);
             RenderTarget.DrawRectangle(bgRect, borderBrush, 1.5f);
