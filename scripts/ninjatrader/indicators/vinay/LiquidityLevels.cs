@@ -35,26 +35,34 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 {
     public class LiquidityLevels : Indicator
     {
-        #region Private Variables
+        #region Private Fields — State & Engines
 
-        private SessionOpensEngine sessionOpens;
-        private List<LevelState> activeLevels = new List<LevelState>();
-        private List<SweepEvent> sweepEvents = new List<SweepEvent>();
-        private List<SweepEvent> todaySweeps = new List<SweepEvent>();
+        private List<LevelState> activeLevels;
         private DateTime lastDate = DateTime.MinValue;
-        private TimeZoneInfo etZone;
-
-        // Built-in indicators & data
-        private double tickSize;
         private double prevClose;
+        private TimeZoneInfo etZone;
+        private List<SweepEvent> sweepEvents;
+        private List<SweepEvent> todaySweeps;
 
-        // Native Prior Week / Month Tracking
-        private double curWeekHigh, curWeekLow, curWeekClose;
+        // Native Engines & Helpers
+        private SessionOpensEngine sessionOpens;
+
+        // Origin Bar Tracking (where levels originated)
+        private int dayStartBar = -1;
+        private int weekStartBar = -1;
+        private int monthStartBar = -1;
+        private int asiaStartBar = -1;
+        private int londonStartBar = -1;
+        private int globexStartBar = -1;
+        private int ibStartBar = -1;
+
+        // Native Week & Month Tracking
         private double prevWeekHigh, prevWeekLow, prevWeekCloseVal;
+        private double curWeekHigh, curWeekLow, curWeekClose;
         private int curWeekNum = -1;
 
-        private double curMonthHigh, curMonthLow;
-        private double prevMonthHigh, prevMonthLow;
+        private double prevMonthHigh, prevMonthLow, prevMonthCloseVal;
+        private double curMonthHigh, curMonthLow, curMonthClose;
         private int curMonthNum = -1;
 
         // Native Session Range Tracking (Asia, London, Globex, IB)
@@ -192,44 +200,83 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "Sweep Mode", Order = 2, GroupName = "2. Sweeps")]
         public SweepMode SweepMode { get; set; } = SweepMode.Wick;
 
-        [Range(1, 20)]
-        [Display(Name = "Sweep Min Depth (ticks)", Order = 3, GroupName = "2. Sweeps")]
-        public int SweepMinDepthTicks { get; set; } = 2;
+        [Display(Name = "Min Sweep Depth (ticks)", Order = 3, GroupName = "2. Sweeps")]
+        public int SweepMinDepthTicks { get; set; } = 1;
 
-        [Range(10, 100)]
-        [Display(Name = "Sweep Min Wick %", Order = 4, GroupName = "2. Sweeps")]
-        public double SweepMinWickPct { get; set; } = 40;
+        [Display(Name = "Min Wick % of Bar Range", Order = 4, GroupName = "2. Sweeps")]
+        public double SweepMinWickPct { get; set; } = 25.0;
 
-        [Range(1, 20)]
         [Display(Name = "Stacking Tolerance (ticks)", Order = 5, GroupName = "2. Sweeps")]
         public int StackingToleranceTicks { get; set; } = 5;
 
-        [Display(Name = "Draw Lines", Order = 6, GroupName = "3. Visuals")]
-        public bool DrawLines { get; set; } = true;
-
-        [Display(Name = "Draw Labels", Order = 7, GroupName = "3. Visuals")]
-        public bool DrawLabels { get; set; } = true;
-
-        [Display(Name = "Draw Sweep Markers", Order = 8, GroupName = "3. Visuals")]
-        public bool DrawSweepMarkers { get; set; } = true;
-
-        [Display(Name = "Proximity Fade", Description = "Fade levels far from price; brighten when close", Order = 9, GroupName = "3. Visuals")]
+        [Display(Name = "Proximity Fade", Order = 1, GroupName = "3. Visuals")]
         public bool ProximityFade { get; set; } = false;
 
-        [Range(0, 500)]
-        [Display(Name = "Proximity Threshold (pts)", Description = "Distance within which levels glow. 0 = auto (use ATR)", Order = 10, GroupName = "3. Visuals")]
+        [Display(Name = "Proximity Threshold (points)", Order = 2, GroupName = "3. Visuals")]
         public int ProximityThresholdPoints { get; set; } = 0;
 
-        [Range(0, 100)]
-        [Display(Name = "Far Fade Opacity %", Description = "Opacity for far levels (0=hidden, 100=full)", Order = 11, GroupName = "3. Visuals")]
-        public int FarFadeOpacity { get; set; } = 15;
+        [Display(Name = "Near Glow Opacity %", Order = 3, GroupName = "3. Visuals")]
+        public int NearGlowOpacity { get; set; } = 100;
 
-        [Range(0, 100)]
-        [Display(Name = "Near Glow Opacity %", Description = "Opacity for near levels (0=hidden, 100=full)", Order = 12, GroupName = "3. Visuals")]
-        public int NearGlowOpacity { get; set; } = 90;
+        [Display(Name = "Far Fade Opacity %", Order = 4, GroupName = "3. Visuals")]
+        public int FarFadeOpacity { get; set; } = 25;
 
-        [Display(Name = "Use Full Level Names", Description = "Show full level names (e.g., 'Prev Month High', 'Prior Day High') instead of abbreviations ('PMH', 'PDH')", Order = 13, GroupName = "3. Visuals")]
+        [Display(Name = "Draw Lines", Order = 5, GroupName = "3. Visuals")]
+        public bool DrawLines { get; set; } = true;
+
+        [Display(Name = "Draw Labels", Order = 6, GroupName = "3. Visuals")]
+        public bool DrawLabels { get; set; } = true;
+
+        [Display(Name = "Draw Sweep Markers", Order = 7, GroupName = "3. Visuals")]
+        public bool DrawSweepMarkers { get; set; } = true;
+
+        [Display(Name = "Use Full Level Names", Order = 8, GroupName = "3. Visuals")]
         public bool UseFullLevelNames { get; set; } = false;
+
+        #endregion
+
+        #region State Initialization
+
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Description = "Displays key liquidity levels (PDH/PDL, PWH/PWL, PMH/PML, Session Opens, Session Ranges, Pivots, Fibs) with hover tooltips and origin-anchored rays. v1.2.0";
+                Name = "LiquidityLevels";
+                Calculate = Calculate.OnBarClose;
+                IsOverlay = true;
+                DisplayInDataBox = true;
+                DrawHorizontalGridLines = false;
+                DrawVerticalGridLines = false;
+                PaintPriceMarkers = false;
+                ScaleJustification = ScaleJustification.Right;
+                IsSuspendedWhileInactive = true;
+            }
+            else if (State == State.Configure)
+            {
+                sweepEvents = new List<SweepEvent>();
+                todaySweeps = new List<SweepEvent>();
+                sessionOpens = new SessionOpensEngine(include4H: true);
+                activeLevels = new List<LevelState>();
+                foreach (var def in LiquidityLevelsCatalog.GetAllLevels())
+                    activeLevels.Add(new LevelState(def));
+
+                try
+                {
+                    etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+                }
+                catch
+                {
+                    etZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+                }
+            }
+            else if (State == State.Terminated)
+            {
+                if (textFormat != null) textFormat.Dispose();
+                if (tooltipFormat != null) tooltipFormat.Dispose();
+                resourcesCreated = false;
+            }
+        }
 
         #endregion
 
@@ -289,56 +336,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         #endregion
 
-        #region OnStateChange
-
-        protected override void OnStateChange()
-        {
-            if (State == State.SetDefaults)
-            {
-                Description = "v1.1.0 — Unified liquidity levels engine aggregating 52+ key levels (Prior Day/Week/Month, Session Opens, Session Ranges, Volume Profile, Market Structure) with granular toggles, sweep detection, and Direct2D hover tooltips.";
-                Name = "LiquidityLevels";
-                Calculate = Calculate.OnBarClose;
-                IsOverlay = true;
-                DrawOnPricePanel = true;
-                DisplayInDataBox = true;
-                IsSuspendedWhileInactive = true;
-                ScaleJustification = ScaleJustification.Right;
-            }
-            else if (State == State.Configure)
-            {
-                try
-                {
-                    etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
-                }
-                catch
-                {
-                    etZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
-                }
-
-                sessionOpens = new SessionOpensEngine(Show4HOpens);
-
-                // Initialize level states from catalog
-                activeLevels.Clear();
-                foreach (var def in LiquidityLevelsCatalog.GetAllLevels())
-                {
-                    activeLevels.Add(new LevelState(def));
-                }
-            }
-            else if (State == State.DataLoaded)
-            {
-                tickSize = TickSize;
-                if (tickSize <= 0) tickSize = 0.25;  // fallback for NQ
-            }
-            else if (State == State.Terminated)
-            {
-                if (textFormat != null) { textFormat.Dispose(); textFormat = null; }
-                if (tooltipFormat != null) { tooltipFormat.Dispose(); tooltipFormat = null; }
-                resourcesCreated = false;
-            }
-        }
-
-        #endregion
-
         #region OnBarUpdate
 
         protected override void OnBarUpdate()
@@ -355,11 +352,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             if (barTimeEt.Date != lastDate)
             {
                 lastDate = barTimeEt.Date;
+                dayStartBar = CurrentBar;
                 todaySweeps.Clear();
 
                 foreach (var level in activeLevels)
                     level.Swept = false;
             }
+
+            if (dayStartBar < 0) dayStartBar = CurrentBar;
 
             // Native Week & Month Tracking
             UpdateWeekMonthTracking(barTimeEt, highP, lowP, closeP);
@@ -367,8 +367,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             // Native Session Range Tracking (Asia, London, Globex, IB)
             UpdateSessionRangesTracking(barTimeEt, highP, lowP);
 
-            // Update session opens engine
-            sessionOpens.OnBarUpdate(barTimeEt, openP, CurrentBar);
+            // Update session opens engine (pass both openP and closeP for exact open matching)
+            sessionOpens.OnBarUpdate(barTimeEt, openP, closeP, CurrentBar);
 
             // Update P12 / NY P12 ranges
             UpdateP12Ranges(barTimeEt, highP, lowP);
@@ -405,6 +405,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 curWeekLow = low;
                 curWeekClose = close;
                 curWeekNum = weekNum;
+                weekStartBar = CurrentBar;
             }
             else
             {
@@ -412,6 +413,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (low < curWeekLow) curWeekLow = low;
                 curWeekClose = close;
             }
+            if (weekStartBar < 0) weekStartBar = CurrentBar;
 
             // Month Tracking
             int monthNum = barEt.Year * 12 + barEt.Month;
@@ -421,16 +423,20 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 {
                     prevMonthHigh = curMonthHigh;
                     prevMonthLow = curMonthLow;
+                    prevMonthCloseVal = curMonthClose;
                 }
                 curMonthHigh = high;
                 curMonthLow = low;
+                curMonthClose = close;
                 curMonthNum = monthNum;
+                monthStartBar = CurrentBar;
             }
             else
             {
                 if (high > curMonthHigh) curMonthHigh = high;
                 if (low < curMonthLow) curMonthLow = low;
             }
+            if (monthStartBar < 0) monthStartBar = CurrentBar;
         }
 
         private void UpdateSessionRangesTracking(DateTime barEt, double high, double low)
@@ -445,6 +451,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (asiaDate != today || !asiaBuilding)
                 {
                     asiaHigh = high; asiaLow = low; asiaBuilding = true; asiaDate = today;
+                    asiaStartBar = CurrentBar;
                 }
                 else
                 {
@@ -465,6 +472,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (londonDate != today || !londonBuilding)
                 {
                     londonHigh = high; londonLow = low; londonBuilding = true; londonDate = today;
+                    londonStartBar = CurrentBar;
                 }
                 else
                 {
@@ -485,6 +493,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (globexDate != today || !globexBuilding)
                 {
                     globexHigh = high; globexLow = low; globexBuilding = true; globexDate = today;
+                    globexStartBar = CurrentBar;
                 }
                 else
                 {
@@ -505,6 +514,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (ibDate != today || !ibBuilding)
                 {
                     ibHigh = high; ibLow = low; ibBuilding = true; ibDate = today;
+                    ibStartBar = CurrentBar;
                 }
                 else
                 {
@@ -533,53 +543,35 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     continue;
                 }
 
-                double prevPrice = level.Price;
-
                 switch (level.Def.Source)
                 {
                     case LevelSource.SessionOpens:
                         level.Price = sessionOpens.GetOpen(level.Def.Name);
                         level.IsActive = sessionOpens.IsOpenSet(level.Def.Name);
-                        if (level.Price != prevPrice && level.Price > 0)
-                        {
-                            level.SetTime = sessionOpens.GetOpenTime(level.Def.Name);
-                            level.SetBarIndex = CurrentBar;
-                        }
+                        int openIdx = sessionOpens.GetOpenBarIndex(level.Def.Name);
+                        level.SetBarIndex = openIdx > 0 ? openIdx : (dayStartBar > 0 ? dayStartBar : CurrentBar);
                         break;
 
                     case LevelSource.PriorDayOHLC:
-                        {
-                            level.Price = ReadPriorDayOHLC(level.Def.Accessor);
-                            level.IsActive = level.Price > 0;
-                            if (level.Price != prevPrice && level.Price > 0)
-                                level.SetBarIndex = CurrentBar;
-                        }
-                        break;
-
                     case LevelSource.CurrentDayOHL:
-                        {
-                            level.Price = ReadCurrentDayOHL(level.Def.Accessor);
-                            level.IsActive = level.Price > 0;
-                            if (level.Price != prevPrice && level.Price > 0)
-                                level.SetBarIndex = CurrentBar;
-                        }
-                        break;
-
                     case LevelSource.RedTailKeyLevels:
-                        {
-                            level.Price = ReadRedTailKeyLevels(level.Def.Accessor);
-                            level.IsActive = level.Price > 0;
-                            if (level.Price != prevPrice && level.Price > 0)
-                                level.SetBarIndex = CurrentBar;
-                        }
-                        break;
-
                     case LevelSource.RedTailVolumeProfile:
+                    case LevelSource.Internal:
                         {
-                            level.Price = ReadRedTailVolumeProfile(level.Def.Accessor);
+                            if (level.Def.Category == LevelCategory.PriorWeek)
+                                level.SetBarIndex = weekStartBar > 0 ? weekStartBar : (dayStartBar > 0 ? dayStartBar : CurrentBar);
+                            else if (level.Def.Category == LevelCategory.PriorMonth)
+                                level.SetBarIndex = monthStartBar > 0 ? monthStartBar : (dayStartBar > 0 ? dayStartBar : CurrentBar);
+                            else
+                                level.SetBarIndex = dayStartBar > 0 ? dayStartBar : CurrentBar;
+
+                            if (level.Def.Source == LevelSource.PriorDayOHLC) level.Price = ReadPriorDayOHLC(level.Def.Accessor);
+                            else if (level.Def.Source == LevelSource.CurrentDayOHL) level.Price = ReadCurrentDayOHL(level.Def.Accessor);
+                            else if (level.Def.Source == LevelSource.RedTailKeyLevels) level.Price = ReadRedTailKeyLevels(level.Def.Accessor);
+                            else if (level.Def.Source == LevelSource.RedTailVolumeProfile) level.Price = ReadRedTailVolumeProfile(level.Def.Accessor);
+                            else if (level.Def.Source == LevelSource.Internal) level.Price = ComputeInternalLevel(level.Def.Accessor);
+
                             level.IsActive = level.Price > 0;
-                            if (level.Price != prevPrice && level.Price > 0)
-                                level.SetBarIndex = CurrentBar;
                         }
                         break;
 
@@ -587,17 +579,16 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                         {
                             level.Price = ReadSessionRanges(level.Def.Accessor);
                             level.IsActive = level.Price > 0;
-                            if (level.Price != prevPrice && level.Price > 0)
-                                level.SetBarIndex = CurrentBar;
-                        }
-                        break;
-
-                    case LevelSource.Internal:
-                        {
-                            level.Price = ComputeInternalLevel(level.Def.Accessor);
-                            level.IsActive = level.Price > 0;
-                            if (level.Price != prevPrice && level.Price > 0)
-                                level.SetBarIndex = CurrentBar;
+                            if (level.Def.Accessor.StartsWith("Asia"))
+                                level.SetBarIndex = asiaStartBar > 0 ? asiaStartBar : (dayStartBar > 0 ? dayStartBar : CurrentBar);
+                            else if (level.Def.Accessor.StartsWith("London"))
+                                level.SetBarIndex = londonStartBar > 0 ? londonStartBar : (dayStartBar > 0 ? dayStartBar : CurrentBar);
+                            else if (level.Def.Accessor.StartsWith("Globex"))
+                                level.SetBarIndex = globexStartBar > 0 ? globexStartBar : (dayStartBar > 0 ? dayStartBar : CurrentBar);
+                            else if (level.Def.Accessor.StartsWith("IB"))
+                                level.SetBarIndex = ibStartBar > 0 ? ibStartBar : (dayStartBar > 0 ? dayStartBar : CurrentBar);
+                            else
+                                level.SetBarIndex = dayStartBar > 0 ? dayStartBar : CurrentBar;
                         }
                         break;
                 }
@@ -835,7 +826,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             double range = high - low;
             if (range <= 0) return;
 
-            double minDepth = tickSize * SweepMinDepthTicks;
+            double minDepth = TickSize * SweepMinDepthTicks;
 
             foreach (var level in activeLevels)
             {
@@ -864,7 +855,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                                 LevelPrice = level.Price,
                                 SweepTime = barTime,
                                 IsBullSweep = false,
-                                SweepDepth = sweepDepth / tickSize,
+                                SweepDepth = sweepDepth / TickSize,
                                 WickPct = wickPct,
                                 ClosePrice = close,
                                 BarIndex = barIndex,
@@ -885,7 +876,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                                 LevelPrice = level.Price,
                                 SweepTime = barTime,
                                 IsBullSweep = true,
-                                SweepDepth = sweepDepth / tickSize,
+                                SweepDepth = sweepDepth / TickSize,
                                 WickPct = wickPct,
                                 ClosePrice = close,
                                 BarIndex = barIndex,
@@ -905,7 +896,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                             LevelPrice = level.Price,
                             SweepTime = barTime,
                             IsBullSweep = false,
-                            SweepDepth = (high - level.Price) / tickSize,
+                            SweepDepth = (high - level.Price) / TickSize,
                             WickPct = 0,
                             ClosePrice = close,
                             BarIndex = barIndex,
@@ -920,7 +911,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                             LevelPrice = level.Price,
                             SweepTime = barTime,
                             IsBullSweep = true,
-                            SweepDepth = (level.Price - low) / tickSize,
+                            SweepDepth = (level.Price - low) / TickSize,
                             WickPct = 0,
                             ClosePrice = close,
                             BarIndex = barIndex,
@@ -947,7 +938,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private void UpdateStacking()
         {
-            double tolerance = tickSize * StackingToleranceTicks;
+            double tolerance = TickSize * StackingToleranceTicks;
             var active = activeLevels.Where(l => l.IsActive && l.Price > 0).ToList();
 
             foreach (var level in active)
@@ -1000,7 +991,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         public List<LevelState> GetStackedLevels(double price, double toleranceTicks)
         {
-            double tolerance = tickSize * toleranceTicks;
+            double tolerance = TickSize * toleranceTicks;
             return activeLevels.Where(l => IsLevelEnabled(l) && l.IsActive && l.Price > 0 && Math.Abs(l.Price - price) <= tolerance).ToList();
         }
 
@@ -1087,13 +1078,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     { LevelCategory.Fib,          new SharpDX.Color(0xF5, 0x7F, 0x17, 255) }, // Dark Amber
                 };
 
-            float xStart = chartControl.GetXByBarIndex(ChartBars, Math.Max(0, CurrentBar - 100));
             float xEnd = chartControl.GetXByBarIndex(ChartBars, CurrentBar) + (float)chartControl.Properties.BarDistance;
 
             double currentPrice = Close[0];
 
             foreach (var level in activeLevelsToDraw)
             {
+                int originBar = level.SetBarIndex > 0 ? Math.Min(CurrentBar, level.SetBarIndex) : Math.Max(0, CurrentBar - 100);
+                float xStart = chartControl.GetXByBarIndex(ChartBars, originBar);
+
                 SharpDX.Color color = categoryColors.TryGetValue(level.Def.Category, out var c)
                     ? c : new SharpDX.Color(0x80, 0x80, 0x80, 255);
 
@@ -1126,8 +1119,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                     var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, label, textFormat,
                         float.MaxValue, float.MaxValue);
-                    float labelX = xEnd + 4;
-                    float labelY = y - (float)textLayout.Metrics.Height / 2;
+                    float textW = (float)textLayout.Metrics.Width;
+                    float textH = (float)textLayout.Metrics.Height;
+                    float labelY = y - textH / 2;
 
                     var bgBrush = isDark
                         ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
@@ -1139,12 +1133,22 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                         ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
                         : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
 
-                    var bgRect = new RectangleF(labelX - 2, labelY - 1, (float)textLayout.Metrics.Width + 4,
-                        (float)textLayout.Metrics.Height + 2);
-                    RenderTarget.FillRectangle(bgRect, bgBrush);
-                    RenderTarget.DrawRectangle(bgRect, borderBrush, 1.0f);
+                    // 1. Draw Origin Label (Right at xStart where line originates)
+                    float originLabelX = xStart + 4;
+                    var originBgRect = new RectangleF(originLabelX - 2, labelY - 1, textW + 4, textH + 2);
+                    RenderTarget.FillRectangle(originBgRect, bgBrush);
+                    RenderTarget.DrawRectangle(originBgRect, borderBrush, 1.0f);
+                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(originLabelX, labelY), textLayout, labelBrush);
 
-                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(labelX, labelY), textLayout, labelBrush);
+                    // 2. Draw Right Margin Label (At xEnd on the right margin) if line is longer than text
+                    if (xEnd - xStart > textW + 20)
+                    {
+                        float rightLabelX = xEnd + 4;
+                        var rightBgRect = new RectangleF(rightLabelX - 2, labelY - 1, textW + 4, textH + 2);
+                        RenderTarget.FillRectangle(rightBgRect, bgBrush);
+                        RenderTarget.DrawRectangle(rightBgRect, borderBrush, 1.0f);
+                        RenderTarget.DrawTextLayout(new SharpDX.Vector2(rightLabelX, labelY), textLayout, labelBrush);
+                    }
 
                     bgBrush.Dispose();
                     borderBrush.Dispose();
@@ -1238,7 +1242,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 : "Status: Active (Unswept)";
 
             double distPts = Math.Abs(level.Price - currentPrice);
-            double distTicks = distPts / tickSize;
+            double distTicks = distPts / TickSize;
             string distText = $"Distance: {distPts:F2} pts ({distTicks:F0} ticks)";
 
             string stackText = level.StacksWith.Count > 0

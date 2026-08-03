@@ -21,6 +21,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private List<SessionOpenDef> opens;
         private Dictionary<string, double> currentOpens;
         private Dictionary<string, DateTime> openTimes;
+        private Dictionary<string, int> openBarIndices;
         private Dictionary<string, bool> openSet;
         private TimeZoneInfo etZone;
         private DateTime lastDate = DateTime.MinValue;
@@ -33,6 +34,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             opens = LiquidityLevelsCatalog.GetSessionOpens(include4H);
             currentOpens = new Dictionary<string, double>();
             openTimes = new Dictionary<string, DateTime>();
+            openBarIndices = new Dictionary<string, int>();
             openSet = new Dictionary<string, bool>();
             prevDayOpens = new Dictionary<string, double>();
 
@@ -40,6 +42,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             {
                 currentOpens[o.Name] = 0;
                 openTimes[o.Name] = DateTime.MinValue;
+                openBarIndices[o.Name] = -1;
                 openSet[o.Name] = false;
             }
 
@@ -54,8 +57,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         }
 
         // ═══ Called every bar by the host indicator ═══
-        // barTimeEt = bar time in ET, openPrice = Open[0]
-        public void OnBarUpdate(DateTime barTimeEt, double openPrice, int barIndex)
+        // barTimeEt = bar time in ET, openPrice = Open[0], closePrice = Close[0]
+        public void OnBarUpdate(DateTime barTimeEt, double openPrice, double closePrice, int barIndex)
         {
             // Day rollover — archive previous day's opens
             if (barTimeEt.Date != lastDate)
@@ -75,6 +78,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 {
                     currentOpens[o.Name] = 0;
                     openTimes[o.Name] = DateTime.MinValue;
+                    openBarIndices[o.Name] = -1;
                     openSet[o.Name] = false;
                 }
             }
@@ -88,12 +92,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 if (openSet[o.Name]) continue;
 
                 int openMins = o.MinutesOfDay(barTimeEt);
-                // Capture the open price on the first bar AT OR AFTER the open time
-                // (within 1 minute tolerance for 1-min charts)
-                if (barMins >= openMins && barMins <= openMins + 1)
+
+                if (barMins >= openMins)
                 {
-                    currentOpens[o.Name] = openPrice;
+                    // If bar ends exactly at open time (e.g. 09:30:00), open price at 09:30 is Close[0].
+                    // If bar ends after open time (e.g. 09:35:00 on 5-min chart), open price at 09:30 is Open[0].
+                    double capturedPrice = (barMins == openMins) ? closePrice : openPrice;
+                    currentOpens[o.Name] = capturedPrice;
                     openTimes[o.Name] = barTimeEt;
+                    openBarIndices[o.Name] = barIndex;
                     openSet[o.Name] = true;
                 }
             }
@@ -103,6 +110,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public double GetOpen(string name)
         {
             return currentOpens.TryGetValue(name, out var p) ? p : 0;
+        }
+
+        public int GetOpenBarIndex(string name)
+        {
+            return openBarIndices.TryGetValue(name, out var idx) ? idx : -1;
         }
 
         public double MidnightOpen => GetOpen("MidnightOpen");

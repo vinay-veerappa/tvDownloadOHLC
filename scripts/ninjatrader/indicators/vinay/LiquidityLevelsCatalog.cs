@@ -50,18 +50,18 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             levels.Add(new LevelDef("Open_20H", "Open 20:00", LevelCategory.SessionOpen, LevelRole.ConfluenceFactor, LevelSource.SessionOpens, "Open_20H"));
 
             // ── Session Ranges (T1 — from SessionRanges indicator) ──
-            levels.Add(new LevelDef("AsiaHigh", "Asia Range High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "Asia Range.High"));
-            levels.Add(new LevelDef("AsiaLow", "Asia Range Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "Asia Range.Low"));
+            levels.Add(new LevelDef("AsiaH", "Asia Range High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "Asia Range.High"));
+            levels.Add(new LevelDef("AsiaL", "Asia Range Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "Asia Range.Low"));
             levels.Add(new LevelDef("AsiaMid", "Asia Range Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Asia Range.Mid"));  // (AsiaH+AsiaL)/2
-            levels.Add(new LevelDef("LondonHigh", "London Range High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "London Range.High"));
-            levels.Add(new LevelDef("LondonLow", "London Range Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "London Range.Low"));
-            levels.Add(new LevelDef("LondonMid", "London Range Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "London Range.Mid"));  // (LonH+LonL)/2
-            levels.Add(new LevelDef("LondonOrMid", "London OR Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "London OR.Mid"));  // (LonOrH+LonOrL)/2
-            levels.Add(new LevelDef("GlobexHigh", "Globex Range High", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.High"));
-            levels.Add(new LevelDef("GlobexLow", "Globex Range Low", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.Low"));
-            levels.Add(new LevelDef("GlobexMid", "Globex Range Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.Mid"));  // (GlbH+GlbL)/2
-            levels.Add(new LevelDef("IBHigh", "Initial Balance High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.High"));
-            levels.Add(new LevelDef("IBLow", "Initial Balance Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.Low"));
+            levels.Add(new LevelDef("LonH", "London Range High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "London Range.High"));
+            levels.Add(new LevelDef("LonL", "London Range Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "London Range.Low"));
+            levels.Add(new LevelDef("LonMid", "London Range Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "London Range.Mid"));  // (LonH+LonL)/2
+            levels.Add(new LevelDef("LonOrMid", "London OR Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "London OR.Mid"));  // (LonOrH+LonOrL)/2
+            levels.Add(new LevelDef("GlbH", "Globex Range High", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.High"));
+            levels.Add(new LevelDef("GlbL", "Globex Range Low", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.Low"));
+            levels.Add(new LevelDef("GlbMid", "Globex Range Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "Globex Range.Mid"));  // (GlbH+GlbL)/2
+            levels.Add(new LevelDef("IBH", "Initial Balance High", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.High"));
+            levels.Add(new LevelDef("IBL", "Initial Balance Low", LevelCategory.SessionRange, LevelRole.SweepTarget, LevelSource.SessionRanges, "IB.Low"));
             levels.Add(new LevelDef("IBMid", "Initial Balance Mid", LevelCategory.SessionRange, LevelRole.ConfluenceFactor, LevelSource.SessionRanges, "IB.Mid"));
 
             // ── P12 (18:00-06:00 ET overnight range) — Profiler levels 8-10 ──
