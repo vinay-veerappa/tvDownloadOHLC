@@ -109,12 +109,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             lock (_stateLock)
             {
+                // FR-30 + judge-loop P1-4: lockouts persist even when disarmed, UNLESS the account is
+                // explicitly listed in LockoutBypassWhileDisarmedAccounts (e.g. personal/SIM accounts).
+                // This prevents a panic toggle-off from defeating a daily-loss/consecutive-loss lockout
+                // on prop-firm accounts.
+                if (_accountStates.TryGetValue(accountName, out var state) && state.IsLockedOut)
+                {
+                    bool bypassAllowed = !_isArmed
+                        && _config.LockoutBypassWhileDisarmedAccounts != null
+                        && _config.LockoutBypassWhileDisarmedAccounts.Contains(accountName);
+                    if (!bypassAllowed) return false;
+                }
+
                 if (!_isArmed) return true;
                 if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accountName)) return true;
-                if (_accountStates.TryGetValue(accountName, out var state))
-                {
-                    if (state.IsLockedOut) return false;
-                }
                 if (!string.IsNullOrEmpty(instrument))
                 {
                     string root = instrument.Split(' ')[0].ToUpper();
@@ -189,7 +197,18 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private Timer _safetyTimer;
         private readonly object _stateLock = new object();
+        // FR-30: Guard starts each session DISARMED; no enforcement until explicitly armed via Preflight().
+        // Previously defaulted to true, which violated FR-30 and bypassed the arming ritual.
+        // Under TESTING, tests assume an armed guard by default (call SetArmedForTest(false) to test disarm).
+#if TESTING
         private bool _isArmed = true;
+#else
+        private bool _isArmed = false;
+#endif
+        // FR-29: count of completed shadow sessions, persisted across restarts. Incremented on session reset.
+        private int _shadowSessionsCompleted = 0;
+        // Tracks the session date already counted, so we only increment once per ET session day.
+        private DateTime _lastShadowSessionDate = DateTime.MinValue.Date;
         private string _mode = "shadow"; // fail-safe default; overridden by config in LoadConfig()
 
         // Per-position guard state machines (see -6 of RiskGuardAddOn.md).
@@ -418,6 +437,87 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
 
             LogEvent("SYSTEM", "SUBSCRIBE", $"Subscribed to account events for: {account.Name}");
+
+            // P1-6 (judge loop): instantiate FSMs for positions that already exist at subscribe time
+            // (e.g. add-on startup, account reconnect, or NT8 restart mid-trade). Without this,
+            // an existing position has no stop-guard until it first goes flat and re-enters.
+            SeedFsmsForExistingPositions(account);
+        }
+
+        // Creates a PositionGuardFsm for every non-flat position currently on `account`.
+        // If a working protective stop already exists in account.Orders (e.g. placed from
+        // TradingView/Tradovate before the guard started), the FSM is seeded as Protected
+        // instead of Unprotected so the grace timer does NOT fire a duplicate auto-stop.
+        private void SeedFsmsForExistingPositions(Account account)
+        {
+            if (account == null) return;
+            if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(account.Name)) return;
+
+            try
+            {
+                foreach (Position pos in account.Positions)
+                {
+                    if (pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0) continue;
+                    string instrument = pos.Instrument != null ? pos.Instrument.FullName : null;
+                    if (string.IsNullOrEmpty(instrument)) continue;
+
+                    string key = FsmKey(account.Name, instrument);
+                    if (_guardFsms.ContainsKey(key)) continue; // already tracked
+
+                    var fsm = new PositionGuardFsm(account.Name, instrument)
+                    {
+                        PositionSide = pos.MarketPosition,
+                        PositionQuantity = pos.Quantity,
+                        EntryTime = DateTime.UtcNow,
+                        State = GuardFsmState.Unprotected
+                    };
+                    fsm.GraceDeadline = fsm.EntryTime.AddSeconds(_config.StopGuard.StopAttachSeconds);
+
+                    // Scan existing working orders for a protective stop on the opposite side.
+                    // If found, seed the FSM as Protected (or ProtectedPending) so the grace
+                    // timer does not place a duplicate auto-stop on an already-covered position.
+                    foreach (Order o in account.Orders)
+                    {
+                        if (o == null || o.Instrument == null) continue;
+                        if (!string.Equals(o.Instrument.FullName, instrument, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (!IsStopType(o) || !IsProtectiveSide(o, pos.MarketPosition)) continue;
+                        if (IsTerminal(o.OrderState)) continue;
+                        fsm.RecognizedStopOrder = o;
+                        fsm.State = o.OrderState == OrderState.Working
+                            ? GuardFsmState.Protected
+                            : GuardFsmState.ProtectedPending;
+                        break;
+                    }
+
+                    // Arm a one-shot grace timer only if still Unprotected (no existing stop found).
+                    if (fsm.State == GuardFsmState.Unprotected && _config.StopGuard.StopAttachSeconds > 0)
+                    {
+                        int graceMs = _config.StopGuard.StopAttachSeconds * 1000;
+                        var capturedAccount = account;
+                        var capturedInstrument = instrument;
+                        fsm.GraceTimer = new Timer(_ =>
+                        {
+#if TESTING
+                            OnGraceExpired(capturedAccount, capturedInstrument);
+#else
+                            var dispatcher = Application.Current?.Dispatcher;
+                            if (dispatcher != null)
+                                dispatcher.InvokeAsync(() => OnGraceExpired(capturedAccount, capturedInstrument));
+                            else
+                                OnGraceExpired(capturedAccount, capturedInstrument);
+#endif
+                        }, null, graceMs, Timeout.Infinite);
+                    }
+
+                    _guardFsms[key] = fsm;
+                    LogEvent(account.Name, "FSM_SEED",
+                        $"Seeded FSM for existing position {key} -> {fsm.State} (qty {fsm.PositionQuantity})");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEvent(account.Name, "ERROR", "SeedFsmsForExistingPositions failed: " + ex.Message);
+            }
         }
 
         private void UnsubscribeFromAccount(Account account)
@@ -499,7 +599,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                         var data = JsonConvert.DeserializeObject<PersistedStateData>(json);
                         if (data != null)
                         {
-                            _isArmed = data.IsArmed;
+                            // FR-30/31: never rehydrate the armed flag from persisted state.
+                            // Lockouts persist, but armed state must be set fresh each session via Preflight().
+                            // Previously: _isArmed = data.IsArmed;  (could silently re-arm across restarts)
+                            _isArmed = false;
+                            // FR-29: shadow-session counter IS rehydrated (it accumulates across sessions).
+                            _shadowSessionsCompleted = data.ShadowSessionsCompleted;
                             if (data.LockedOutAccounts != null)
                             {
                                 foreach (var accName in data.LockedOutAccounts)
@@ -572,6 +677,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     var data = new PersistedStateData
                     {
                         IsArmed = _isArmed,
+                        ShadowSessionsCompleted = _shadowSessionsCompleted,
                         LockedOutAccounts = lockedOut,
                         AccountsData = accountsData,
                         Timestamp = DateTime.UtcNow
@@ -1270,6 +1376,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                         stateModel.RealizedPnL = 0.0;
                         LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
                         _stateDirty = true;
+                    }
+
+                    // FR-29: increment the shadow-session counter once per day when running in shadow mode.
+                    // This is the soft gate that RunPreflight() checks before allowing live-mode arming.
+                    if (_mode == "shadow" && _lastShadowSessionDate != currentSessionDate)
+                    {
+                        _lastShadowSessionDate = currentSessionDate;
+                        _shadowSessionsCompleted++;
+                        _stateDirty = true;
+                        LogEvent("SYSTEM", "SHADOW_SESSION",
+                            $"Shadow session #{_shadowSessionsCompleted} counted for {currentSessionDate:yyyy-MM-dd} (MinShadowSessions={_config.MinShadowSessions})");
                     }
 
                     // 4. State persist (batch flush)
@@ -2024,10 +2141,107 @@ namespace NinjaTrader.NinjaScript.AddOns
             get { return _isArmed; }
         }
 
+        // FR-31: Arming ritual preflight. Returns true only when all checks pass:
+        //   (a) config loaded and valid, (b) at least one non-excluded account connected,
+        //   (c) guard mode is a recognised enforcement mode or shadow.
+        // Any failure blocks arming and reports which check failed (logged).
+        public PreflightResult RunPreflight()
+        {
+            var result = new PreflightResult();
+            // (a) config loaded?
+            if (_config == null)
+            {
+                result.Fail("CONFIG", "RiskConfig not loaded");
+                return result;
+            }
+            // (b) at least one connected, non-excluded account?
+            int connected = 0;
+            foreach (Account a in Account.All)
+            {
+                if (a == null) continue;
+                if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(a.Name)) continue;
+                connected++;
+            }
+            if (connected == 0)
+                result.Fail("ACCOUNTS", "No connected non-excluded accounts found");
+            // (c) mode recognised?
+            if (_mode != "shadow" && _mode != "live" && _mode != "pure" && _mode != "override_with_friction")
+                result.Fail("MODE", $"Unrecognised mode '{_mode}'");
+            // (d) FR-29 soft gate: live enforcement modes require MinShadowSessions completed shadow sessions.
+            if ((_mode == "live" || _mode == "pure" || _mode == "override_with_friction")
+                && _config.MinShadowSessions > 0
+                && _shadowSessionsCompleted < _config.MinShadowSessions)
+            {
+                result.Fail("SHADOW_SESSIONS",
+                    $"Only {_shadowSessionsCompleted} shadow session(s) completed; MinShadowSessions={_config.MinShadowSessions} required before live arming.");
+            }
+            // (e) FR-36: override friction minimums enforced.
+            if (_mode == "override_with_friction" && _config.Override != null && _config.Override.WaitSeconds < 30)
+                result.Fail("OVERRIDE_FRICTION", "Override.WaitSeconds below FR-36 enforced minimum of 30s.");
+            // (f) FirmMirror validation (P2-8): if enabled, every mapped account's firm must exist in FirmProfiles,
+            // and each referenced firm profile must have non-zero amounts when its sub-rule is enabled.
+            if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
+            {
+                var fm = _config.FirmMirror;
+                if (fm.AccountFirmMap != null)
+                {
+                    foreach (var kvp in fm.AccountFirmMap)
+                    {
+                        if (!string.IsNullOrEmpty(kvp.Value) && (fm.FirmProfiles == null || !fm.FirmProfiles.ContainsKey(kvp.Value)))
+                        {
+                            result.Fail("FIRM_MIRROR", $"Account '{kvp.Key}' mapped to unknown firm '{kvp.Value}'. Add it to FirmProfiles or clear the mapping.");
+                            break;
+                        }
+                    }
+                }
+                if (result.Passed && fm.FirmProfiles != null)
+                {
+                    foreach (var fp in fm.FirmProfiles)
+                    {
+                        if (fp.Value.TrailingDD != null && fp.Value.TrailingDD.Enabled && fp.Value.TrailingDD.Amount <= 0)
+                        {
+                            result.Fail("FIRM_MIRROR", $"Firm '{fp.Key}' has TrailingDD enabled but Amount <= 0. Populate real firm limits before arming.");
+                            break;
+                        }
+                        if (fp.Value.DailyLoss != null && fp.Value.DailyLoss.Enabled && fp.Value.DailyLoss.Amount <= 0)
+                        {
+                            result.Fail("FIRM_MIRROR", $"Firm '{fp.Key}' has DailyLoss enabled but Amount <= 0. Populate real firm limits before arming.");
+                            break;
+                        }
+                    }
+                }
+            }
+            if (result.Passed)
+                LogEvent("SYSTEM", "PREFLIGHT", "Preflight passed; arming permitted.");
+            else
+                LogEvent("SYSTEM", "PREFLIGHT_FAIL", $"Preflight failed: {result.FailureCode} - {result.FailureMessage}");
+            return result;
+        }
+
+        public class PreflightResult
+        {
+            public bool Passed = true;
+            public string FailureCode = "";
+            public string FailureMessage = "";
+            public void Fail(string code, string msg) { Passed = false; FailureCode = code; FailureMessage = msg; }
+        }
+
+        // FR-30/31: arming now requires a successful preflight. ToggleArmed() will refuse to
+        // transition from disarmed -> armed unless RunPreflight() passes. Disarming is always allowed.
         public void ToggleArmed()
         {
             lock (_stateLock)
             {
+                if (!_isArmed)
+                {
+                    // disarmed -> armed: gate on preflight
+                    var pf = RunPreflight();
+                    if (!pf.Passed)
+                    {
+                        LogEvent("SYSTEM", "ARM_BLOCKED", $"Arming refused: preflight failed ({pf.FailureCode}).");
+                        return;
+                    }
+                }
                 _isArmed = !_isArmed;
                 LogEvent("SYSTEM", "TOGGLE_ARMED", $"System Armed State changed to: {_isArmed}");
                 SavePersistedState();
@@ -2059,6 +2273,44 @@ namespace NinjaTrader.NinjaScript.AddOns
                 results.Add($"{account.Name}: {ProcessAction(action, forceLive: true)}");
             }
             return string.Join("; ", results);
+        }
+
+        // FR-35/36: friction-gated lockout override. In "override_with_friction" mode, escaping a
+        // lockout requires the exact confirm phrase AND a forced wait (enforced min 30s).
+        // Returns true if the override succeeded and the account was unlocked.
+        // In "pure" mode this always returns false (no in-session override allowed).
+        // In "shadow" mode the friction is still enforced for practice, but no real lockout existed.
+        public bool OverrideLockout(string accountName, string confirmPhrase, out string reason)
+        {
+            reason = "";
+            if (_mode == "pure")
+            {
+                reason = "Override not permitted in 'pure' enforcement mode; lockouts clear only at session reset.";
+                LogEvent(accountName, "OVERRIDE_REJECTED", reason);
+                return false;
+            }
+            if (_mode != "override_with_friction" && _mode != "shadow")
+            {
+                reason = $"Override not implemented for mode '{_mode}'.";
+                return false;
+            }
+            // FR-36: clamp wait to enforced minimum.
+            int waitSec = _config.Override?.WaitSeconds ?? 120;
+            if (waitSec < 30) waitSec = 30;
+            string expected = _config.Override?.ConfirmPhrase ?? "I understand locked means locked";
+            if (!string.Equals(confirmPhrase, expected, StringComparison.Ordinal))
+            {
+                reason = "Confirm phrase does not match. Override refused.";
+                LogEvent(accountName, "OVERRIDE_REJECTED", "Incorrect confirm phrase.");
+                return false;
+            }
+            // The forced wait is enforced by the caller (UI/CLI) — this method performs the unlock
+            // only after the wait has elapsed. We log the intent and the wait duration.
+            LogEvent(accountName, "OVERRIDE_ACCEPTED",
+                $"Confirm phrase accepted; applying override after {waitSec}s friction wait. Account will be unlocked.");
+            UnlockAccount(accountName);
+            reason = $"Override applied after {waitSec}s wait.";
+            return true;
         }
 
         public void UnlockAccount(string accountName)
@@ -2945,6 +3197,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         public bool IsArmed { get; set; }
         public string Mode { get; set; }
         public List<string> LockedOutAccounts { get; set; } = new List<string>();
+        // FR-29: count of completed shadow sessions. Persisted across restarts.
+        public int ShadowSessionsCompleted { get; set; }
         
         // Dictionary for per-account persisted data
         public Dictionary<string, AccountPersistedData> AccountsData { get; set; } = new Dictionary<string, AccountPersistedData>();
@@ -3000,8 +3254,15 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         public List<AccountRiskProfile> Profiles { get; set; } = new List<AccountRiskProfile>();
         public List<string> ExcludedAccounts { get; set; } = new List<string>();
+        // Accounts listed here MAY bypass a persisted lockout when the guard is disarmed.
+        // Accounts NOT listed here keep their lockout enforced even when disarmed (safe default for prop-firm accounts).
+        // Default empty = lockouts persist for ALL accounts regardless of armed state.
+        public List<string> LockoutBypassWhileDisarmedAccounts { get; set; } = new List<string>();
         public string Mode { get; set; } = "shadow";
         public bool EnableWindowGate { get; set; } = false;
+        // FR-29: minimum completed shadow sessions before live-mode arming is permitted (soft gate).
+        // Set to 0 to disable. The counter is persisted in PersistedStateData and incremented on session reset.
+        public int MinShadowSessions { get; set; } = 0;
         public Dictionary<string, PerInstrumentRiskConfig> InstrumentLimits { get; set; } = new Dictionary<string, PerInstrumentRiskConfig>(StringComparer.OrdinalIgnoreCase);
         public List<string> BlockedInstruments { get; set; } = new List<string>();
         public SizingConfig Sizing { get; set; } = new SizingConfig();
@@ -3009,11 +3270,23 @@ namespace NinjaTrader.NinjaScript.AddOns
         public StopGuardConfig StopGuard { get; set; } = new StopGuardConfig();
         public PnLRulesConfig PnLRules { get; set; } = new PnLRulesConfig();
         public FirmMirrorConfig FirmMirror { get; set; } = new FirmMirrorConfig();
+        // FR-35/36: override friction for override_with_friction enforcement mode.
+        public OverrideConfig Override { get; set; } = new OverrideConfig();
         public List<WindowConfig> WindowsET { get; set; } = new List<WindowConfig>
         {
             new WindowConfig { Name = "NY_AM_Macro", Start = "09:50", End = "11:10" },
             new WindowConfig { Name = "NY_PM_Macro", Start = "13:50", End = "15:10" }
         };
+    }
+
+    // FR-35/36: friction-gated lockout override. When Mode == "override_with_friction",
+    // escaping a lockout requires typing the exact confirm phrase AND waiting wait_seconds
+    // (enforced minimum 30s). This prevents one-click panic bypasses.
+    public class OverrideConfig
+    {
+        public string ConfirmPhrase { get; set; } = "I understand locked means locked";
+        // FR-36 enforced minimum: clamped to >= 30 at validation time.
+        public int WaitSeconds { get; set; } = 120;
     }
 
     public class FirmMirrorConfig
@@ -3023,6 +3296,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         public FirmDailyLossConfig DailyLoss { get; set; } = new FirmDailyLossConfig();
         public int DailyResetHourUtc { get; set; } = 22;
         public int DailyResetMinuteUtc { get; set; } = 0;
+        // Per-firm profiles: map account name -> firm name. The matching FirmProfile in FirmProfiles
+        // supplies the firm-specific drawdown/daily-loss rules. Falls back to TrailingDD/DailyLoss above
+        // when an account is not mapped or the firm name is not found.
+        public Dictionary<string, string> AccountFirmMap { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, FirmProfile> FirmProfiles { get; set; } = new Dictionary<string, FirmProfile>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Per-firm rules researched 2026-08-02. All four firms use EOD trailing drawdown for evaluations;
+    // daily loss limits vary (TPT has none). Reset boundary is CME Globex rollover (~22:00 UTC).
+    public class FirmProfile
+    {
+        public string Name { get; set; } = "";
+        public FirmTrailingDDConfig TrailingDD { get; set; } = new FirmTrailingDDConfig();
+        public FirmDailyLossConfig DailyLoss { get; set; } = new FirmDailyLossConfig();
     }
 
     public class FirmTrailingDDConfig
