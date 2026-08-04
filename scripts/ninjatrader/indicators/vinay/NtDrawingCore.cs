@@ -17,7 +17,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Windows.Media;
 using SharpDX;
 using SharpDX.Direct2D1;
 using SharpDX.DirectWrite;
