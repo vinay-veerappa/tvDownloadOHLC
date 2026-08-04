@@ -89,6 +89,7 @@ tradingview-selenium-data/
 !docs/nqstats/**/*.png
 *.html
 bin/
+obj/
 *.exe
 *.dll
 args.json
