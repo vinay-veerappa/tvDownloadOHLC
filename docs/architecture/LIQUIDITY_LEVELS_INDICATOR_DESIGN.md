@@ -370,6 +370,50 @@ The 1-day difference on GlobexOpen/Settlement (TV=76 vs NT8=75) is likely the fi
 
 ---
 
+## L. Phase 2 Statistics — Remaining TODO
+
+Hit-rate tracking (§K) is implemented and validated. The following items remain for Phase 2 statistics, referencing features in the TV ProbabilityMap indicator (`scripts/indicators-pine/ProbabilityMap/ProbabilityMap.pine`).
+
+### L.1 High Priority
+
+| # | Item | Description |
+|---|---|---|
+| 1 | Display hit-rate % on chart labels | TV shows probability on the line label (e.g. "PDH 52.1% (↑3)"), not just in the debug table. NT8 currently only shows in hover tooltip + debug table. |
+| 2 | Today's hit indicator | Show green check / red X on chart when today's level is hit/missed within the hit-check window. TV shows "Today PDH hit? YES/NO". |
+
+### L.2 Medium Priority
+
+| # | Item | Description |
+|---|---|---|
+| 3 | Conditional probabilities | Pattern + NY position conditioned hit-rate (TV `getCondProb*` functions, e.g. `getCondProbLonH(pattern, nyPos)`). Probability of a level being hit given the current session pattern and NY position. |
+| 4 | Leverage TV limitations | Identify what NT8 can do that TV can't: more levels (no 500 label limit), real-time hit alerts (no repaint lag), per-level custom hit windows (PDH in 09:30-16:00 but AsiaH in 19:30-02:30), multi-timeframe hit tracking, unlimited historical depth, no Pine compilation limits. |
+| 5 | Fix 1-day offset on GlobexOpen/Settlement | TV has 76 days, NT8 has 75. Likely the first session date where the daily series doesn't have a prior day yet. |
+| 6 | NT MCP tooltip reading | Expose tooltip text as a public property on level objects so the NT MCP can read hit-rate stats programmatically. Requires standardizing tooltip format. |
+
+### L.3 Low Priority
+
+| # | Item | Description |
+|---|---|---|
+| 7 | Global probability lookup tables | Static research values per instrument (NQ/ES/RTY/YM/CL/GC). TV `getGlobalProb()` uses hardcoded lookup arrays for ~12 levels. |
+| 8 | Sigma probabilities | ±1σ/±2σ move probability conditioned on bias (bullish/bearish/neutral). TV `getSigmaProb()`. |
+| 9 | 72-scenario probabilities | Base bias probability from pattern + NY position + session size. TV `get72ScenarioProb()`. |
+| 10 | DOW adjustment factor | Day-of-week probability adjustment. TV `getDOWAdj()`. |
+| 11 | UI standardization | Refactor LiquidityLevels to use NtDrawingLib per `VISUAL_SYSTEM.md` spec (separate session). Includes LevelLine class with line + label + tooltip as a single unit, theme resolver, display profiles. |
+
+### L.4 TV Limitations to Leverage
+
+| Limitation | TV | NT8 Advantage |
+|---|---|---|
+| Label/line count | ~500 max | No hard limit |
+| Real-time alerts | Indicator repaint lag | Instant on bar close |
+| Hit windows | One global window | Per-level custom windows |
+| Historical depth | ~20000 bars | Unlimited via data provider |
+| Script size | Pine compilation limits | No C# constraint |
+| Multi-timeframe | Limited via `request.security` | Native multi-series support |
+| Custom levels | Must hardcode in script | Dynamic from catalog |
+
+---
+
 ## J. Implementation Notes (2026-08-03)
 
 ### J.1 End-of-Bar Timestamp Convention
