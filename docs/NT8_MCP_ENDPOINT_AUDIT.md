@@ -10,6 +10,8 @@ All order tests were placed on **Sim101** unless otherwise noted.
 
 > **Update (2026-08-02)**: `/api/order/atm` is now a **full server-side bracket engine** — the old stub that directed callers to `/api/order/oco` is replaced by `DynamicAtmManager.cs` implementing 8 ATM strategies (FixedTicks, AtrAdaptive, SwingPoint, DrawdownShield, ScaledRunner, VolatilityScaled, SessionAdaptive, KellyOptimal), 13 instrument profiles, OCO-wired entry/stop/target, and a 5s background monitor for breakeven/trailing on DrawdownShield & ScaledRunner. Response normalized to **camelCase** (`status`, `bracketId`, `ocoId`, `stopPrice`, `targetPrice`, `strategyName`, order ids) to match every other endpoint. Bracket status queryable via `GET /api/order/atm/status?bracketId=` (omit for all-active listing). Covered by 20 C# unit tests + 10 Python integration tests (see Test Harness section below).
 
+> **Planned (2026-08-04)**: `GET /api/indicator/levels` — a **data-model** endpoint that reads the live indicator's `NtLevelRecord` snapshot (semantic level data: key, label, price, category, scheme_color, state, date) instead of scraping the canvas. This is a tracked follow-up; see `docs/architecture/MCP_DATA_MODEL_ENDPOINT.md` for the full design and acceptance criteria.
+
 ## Legend
 
 | Status | Meaning |
