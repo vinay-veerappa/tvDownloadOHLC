@@ -148,13 +148,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             return openBarIndices.TryGetValue(name, out var idx) ? idx : -1;
         }
 
-        public double MidnightOpen => GetOpen("MidnightOpen");
-        public double LondonOpen   => GetOpen("LondonOpen");
-        public double NyOpen       => GetOpen("RTHOpen");
+        public double MidnightOpen => GetOpen("MNO");
+        public double LondonOpen   => GetOpen("LonO");
+        public double NyOpen       => GetOpen("NYO");
 
         public double Get4HOpen(int hour)
         {
-            return GetOpen($"Open_{hour:D2}H");
+            return GetOpen($"{hour:D4}");
         }
 
         public Dictionary<string, double> GetAllOpens()

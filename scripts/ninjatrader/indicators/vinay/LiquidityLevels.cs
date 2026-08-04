@@ -45,6 +45,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private TimeZoneInfo etZone;
         private List<SweepEvent> sweepEvents;
         private List<SweepEvent> todaySweeps;
+        private NtTagRenderer levelRenderer = new NtTagRenderer();
+
 
         // Open & Settlement Tracking Fields
         private double currentMonthOpen, prevMonthOpen;
@@ -368,6 +370,28 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Display(Name = "Font Size", Description = "Font size for chart label badges and hover tooltips (default: 11)", Order = 6, GroupName = "7. Visuals & Layout")]
         public int FontSize { get; set; } = 11;
 
+        [Display(Name = "Data Model Retention (Days)", Description = "Number of historical days to retain in the MCP data model", Order = 11, GroupName = "7. Visuals & Layout")]
+        public int DataModelRetentionDays { get; set; } = 5;
+
+        #endregion
+
+        #region Public API for MCP
+        /// <summary>
+        /// Returns a snapshot of the current semantic level records for the MCP data-model endpoint.
+        /// </summary>
+        public List<NtLevelRecord> GetLevelRecords()
+        {
+            var records = levelRenderer.Snapshot();
+            
+            // Prune based on RetentionDays
+            if (DataModelRetentionDays > 0)
+            {
+                DateTime cutoff = DateTime.Now.AddDays(-DataModelRetentionDays);
+                records = records.Where(r => r.Date >= cutoff).ToList();
+            }
+            
+            return records;
+        }
         #endregion
 
         #region NinjaScript Properties — Voice Alerts
@@ -628,7 +652,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             hrProviders["PDH"] = (sd) => GetPriorDailyBar(sd, "High");
             hrProviders["PDL"] = (sd) => GetPriorDailyBar(sd, "Low");
             hrProviders["PDC"] = (sd) => GetPriorDailyBar(sd, "Close");
-            hrProviders["PDO"] = (sd) => GetPriorDailyBar(sd, "Open");
             hrProviders["PDM"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? (h + l) / 2.0 : 0; };
             hrProviders["Settlement"] = (sd) => GetPriorDailyBar(sd, "Close");
 
@@ -638,10 +661,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             hrProviders["PWM"] = (sd) => { double h = ReconstructWeekHighLow(sd, true), l = ReconstructWeekHighLow(sd, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
             hrProviders["PWC"] = (sd) => ReconstructWeekClose(sd);
             hrProviders["PWO"] = (sd) => ReconstructWeekOpen(sd);
-            hrProviders["MH"] = (sd) => ReconstructDayOfWeek(sd, DayOfWeek.Monday, true);
-            hrProviders["ML"] = (sd) => ReconstructDayOfWeek(sd, DayOfWeek.Monday, false);
-            hrProviders["GH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true);  // Globex 18:00→09:30
-            hrProviders["GL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false);
+            hrProviders["MonH"] = (sd) => ReconstructDayOfWeek(sd, DayOfWeek.Monday, true);
+            hrProviders["MonL"] = (sd) => ReconstructDayOfWeek(sd, DayOfWeek.Monday, false);
+            hrProviders["GlbH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true);  // Globex 18:00→09:30
+            hrProviders["GlbL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false);
 
             // ═══ Prior Month (daily series) ═══
             hrProviders["PMH"] = (sd) => GetPriorMonthHighLow(sd, true);
@@ -650,58 +673,58 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             hrProviders["PMO"] = (sd) => GetPriorMonthOpen(sd);
 
             // ═══ Session Opens (intraday reconstruction) ═══
-            hrProviders["MidnightOpen"] = (sd) => ReconstructSessionOpen(sd, 0, 0);
-            hrProviders["LondonOpen"] = (sd) => ReconstructSessionOpen(sd, 2, 0);
-            hrProviders["GlobexOpen"] = (sd) => ReconstructSessionOpen(sd, 18, 0);
-            hrProviders["RTHOpen"] = (sd) => ReconstructSessionOpen(sd, 9, 30);
-            hrProviders["TueOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Tuesday);
-            hrProviders["WedOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Wednesday);
-            hrProviders["ThuOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Thursday);
-            hrProviders["FriOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Friday);
-            hrProviders["Open_04H"] = (sd) => ReconstructSessionOpen(sd, 4, 0);
-            hrProviders["Open_08H"] = (sd) => ReconstructSessionOpen(sd, 8, 0);
-            hrProviders["Open_12H"] = (sd) => ReconstructSessionOpen(sd, 12, 0);
-            hrProviders["Open_16H"] = (sd) => ReconstructSessionOpen(sd, 16, 0);
-            hrProviders["Open_20H"] = (sd) => ReconstructSessionOpen(sd, 20, 0);
+            hrProviders["MNO"] = (sd) => ReconstructSessionOpen(sd, 0, 0);
+            hrProviders["LonO"] = (sd) => ReconstructSessionOpen(sd, 2, 0);
+            hrProviders["DOpen"] = (sd) => ReconstructSessionOpen(sd, 18, 0);
+            hrProviders["NYO"] = (sd) => ReconstructSessionOpen(sd, 9, 30);
+            hrProviders["TueO"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Tuesday);
+            hrProviders["WedO"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Wednesday);
+            hrProviders["ThuO"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Thursday);
+            hrProviders["FriO"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Friday);
+            hrProviders["0400"] = (sd) => ReconstructSessionOpen(sd, 4, 0);
+            hrProviders["0800"] = (sd) => ReconstructSessionOpen(sd, 8, 0);
+            hrProviders["1200"] = (sd) => ReconstructSessionOpen(sd, 12, 0);
+            hrProviders["1600"] = (sd) => ReconstructSessionOpen(sd, 16, 0);
+            hrProviders["2000"] = (sd) => ReconstructSessionOpen(sd, 20, 0);
 
             // ═══ Session Ranges (intraday reconstruction) ═══
             // TV: inAsia = hhmm >= 1930 or hhmm < 230
             hrProviders["AsiaH"] = (sd) => ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, true);
             hrProviders["AsiaL"] = (sd) => ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, false);
-            hrProviders["AsiaMid"] = (sd) => { double h = ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, true), l = ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["AsiaM"] = (sd) => { double h = ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, true), l = ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // TV: inLondon = hhmm >= 230 and hhmm < 800
             hrProviders["LonH"] = (sd) => ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, true);
             hrProviders["LonL"] = (sd) => ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, false);
-            hrProviders["LonMid"] = (sd) => { double h = ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, true), l = ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["LonM"] = (sd) => { double h = ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, true), l = ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // London OR (02:00-05:00 ET for the OR sub-range)
-            hrProviders["LonOrMid"] = (sd) => { double h = ReconstructSessionRange(sd, 2 * 60, 5 * 60, false, true), l = ReconstructSessionRange(sd, 2 * 60, 5 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["LonORM"] = (sd) => { double h = ReconstructSessionRange(sd, 2 * 60, 5 * 60, false, true), l = ReconstructSessionRange(sd, 2 * 60, 5 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // Globex range (18:00→09:30 ET)
             hrProviders["GlbH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true);
             hrProviders["GlbL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false);
-            hrProviders["GlbMid"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true), l = ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["GlbM"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true), l = ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // IB (09:30-10:00 ET)
             hrProviders["IBH"] = (sd) => ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, true);
             hrProviders["IBL"] = (sd) => ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, false);
-            hrProviders["IBMid"] = (sd) => { double h = ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, true), l = ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["IBM"] = (sd) => { double h = ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, true), l = ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // P12 (18:00-06:00 ET overnight)
-            hrProviders["P12High"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
-            hrProviders["P12Low"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
-            hrProviders["P12Mid"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true), l = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["P12H"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
+            hrProviders["P12L"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
+            hrProviders["P12M"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true), l = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // NY P12 (06:00-17:00 ET)
-            hrProviders["NYP12High"] = (sd) => ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, true);
-            hrProviders["NYP12Low"] = (sd) => ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, false);
-            hrProviders["NYP12Mid"] = (sd) => { double h = ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, true), l = ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["NYP12H"] = (sd) => ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, true);
+            hrProviders["NYP12L"] = (sd) => ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, false);
+            hrProviders["NYP12M"] = (sd) => { double h = ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, true), l = ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // Prev NY P12 (prior session date)
-            hrProviders["PrevNYP12High"] = (sd) => ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, true);
-            hrProviders["PrevNYP12Low"] = (sd) => ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, false);
-            hrProviders["PrevNYP12Mid"] = (sd) => { double h = ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, true), l = ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["PrevNYP12H"] = (sd) => ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, true);
+            hrProviders["PrevNYP12L"] = (sd) => ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, false);
+            hrProviders["PrevNYP12M"] = (sd) => { double h = ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, true), l = ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
             // ═══ Pivots (computed from PDH/PDL/PDC) ═══
             hrProviders["PP"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); return (h > 0 && l > 0 && c > 0) ? (h + l + c) / 3.0 : 0; };
@@ -713,7 +736,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             hrProviders["S3"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); if (h <= 0 || l <= 0) return 0; double pp = (h + l + c) / 3.0; return l - 2.0 * (h - pp); };
 
             // ═══ Fibs (computed from PDH/PDL range) ═══
-            string[] fibNames = { "Fib 23.6%", "Fib 38.2%", "Fib 50.0%", "Fib 61.8%", "Fib 78.6%", "Fib 100%", "Fib 127.2%", "Fib 161.8%", "Fib -27.2%", "Fib -61.8%" };
+            string[] fibNames = { "0.236", "0.382", "0.500", "0.618", "0.786", "1.000", "1.272", "1.618", "-0.272", "-0.618" };
             double[] fibRatios = { 0.236, 0.382, 0.500, 0.618, 0.786, 1.0, 1.272, 1.618, -0.272, -0.618 };
             for (int fi = 0; fi < fibNames.Length; fi++)
             {
@@ -723,14 +746,14 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
 
             // ═══ Volume Profile fallbacks (computed from PDH/PDL) ═══
-            hrProviders["PrevDayPOC"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); return (h > 0 && l > 0 && c > 0) ? (h + l + c) / 3.0 : 0; };
-            hrProviders["PrevDayVAH"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? h - (h - l) * 0.15 : 0; };
-            hrProviders["PrevDayVAL"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? l + (h - l) * 0.15 : 0; };
-            hrProviders["OvernightPOC"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true), l = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
-            hrProviders["OvernightVAH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
-            hrProviders["OvernightVAL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
-            hrProviders["OvernightHigh"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
-            hrProviders["OvernightLow"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
+            hrProviders["PPOC"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); return (h > 0 && l > 0 && c > 0) ? (h + l + c) / 3.0 : 0; };
+            hrProviders["PVAH"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? h - (h - l) * 0.15 : 0; };
+            hrProviders["PVAL"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? l + (h - l) * 0.15 : 0; };
+            hrProviders["ovnPOC"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true), l = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["ovnVAH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
+            hrProviders["ovnVAL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
+            hrProviders["ovnH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
+            hrProviders["ovnL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
 
             // Add all to tracked levels list (iterate catalog to get proper order)
             foreach (var def in LiquidityLevelsCatalog.GetAllLevels())
@@ -1215,7 +1238,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             if (name == "PDH" && !ShowPDH) return false;
             if (name == "PDL" && !ShowPDL) return false;
             if (name == "PDC" && !ShowPDC) return false;
-            if (name == "PDO" && !ShowPDO) return false;
             if (name == "Settlement" && !ShowSettlement) return false;
 
             if (name == "PWH" && !ShowPWH) return false;
@@ -1229,29 +1251,30 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             if (name == "PMO" && !ShowPMO) return false;
 
             // 2. Session Opens
-            if (name == "MidnightOpen" && !ShowMidnightOpen) return false;
-            if (name == "LondonOpen" && !ShowLondonOpen) return false;
-            if ((name == "RTHOpen" || name == "NYOpen") && !ShowRTHOpen) return false;
-            if (name == "GlobexOpen" && !ShowGlobexOpen) return false;
+            if (name == "MNO" && !ShowMidnightOpen) return false;
+            if (name == "LonO" && !ShowLondonOpen) return false;
+            if (name == "NYO" && !ShowRTHOpen) return false;
+            if (name == "DOpen" && !ShowGlobexOpen) return false;
 
-            if (name == "Open_04H" && !ShowOpen04H) return false;
-            if (name == "Open_08H" && !ShowOpen08H) return false;
-            if (name == "Open_12H" && !ShowOpen12H) return false;
-            if (name == "Open_16H" && !ShowOpen16H) return false;
-            if (name == "Open_20H" && !ShowOpen20H) return false;
+            if (name == "0400" && !ShowOpen04H) return false;
+            if (name == "0800" && !ShowOpen08H) return false;
+            if (name == "1200" && !ShowOpen12H) return false;
+            if (name == "1600" && !ShowOpen16H) return false;
+            if (name == "2000" && !ShowOpen20H) return false;
 
-            if (name == "TueOpen" && !ShowTueOpen) return false;
-            if (name == "WedOpen" && !ShowWedOpen) return false;
-            if (name == "ThuOpen" && !ShowThuOpen) return false;
-            if (name == "FriOpen" && !ShowFriOpen) return false;
+            if (name == "TueO" && !ShowTueOpen) return false;
+            if (name == "WedO" && !ShowWedOpen) return false;
+            if (name == "ThuO" && !ShowThuOpen) return false;
+            if (name == "FriO" && !ShowFriOpen) return false;
 
             // 3. Session Ranges
-            if ((name == "AsiaH" || name == "AsiaL" || name == "AsiaMid") && !ShowAsiaRange) return false;
-            if ((name == "LonH" || name == "LonL" || name == "LonMid" || name == "LonOrMid") && !ShowLondonRange) return false;
-            if ((name == "GlbH" || name == "GlbL" || name == "GlbMid") && !ShowGlobexRange) return false;
-            if ((name == "IBH" || name == "IBL" || name == "IBMid") && !ShowIB) return false;
-            if (name.StartsWith("P12") && !ShowP12) return false;
-            if (name.Contains("NYP12") && !ShowNYP12) return false;
+            if ((name == "AsiaH" || name == "AsiaL" || name == "AsiaM") && !ShowAsiaRange) return false;
+            if ((name == "LonH" || name == "LonL" || name == "LonM" || name == "LonORM") && !ShowLondonRange) return false;
+            if ((name == "GlbH" || name == "GlbL" || name == "GlbM") && !ShowGlobexRange) return false;
+            if ((name == "IBH" || name == "IBL" || name == "IBM") && !ShowIB) return false;
+            if (name == "P12H" || name == "P12L" || name == "P12M") { if (!ShowP12) return false; }
+            if ((name == "NYP12H" || name == "NYP12L" || name == "NYP12M") && !ShowNYP12) return false;
+            if ((name == "PrevNYP12H" || name == "PrevNYP12L" || name == "PrevNYP12M") && !ShowNYP12) return false;
 
             // 4. Pivots & Fibs
             if (name == "PP" && !ShowPivotPP) return false;
@@ -1259,23 +1282,23 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             if ((name == "R2" || name == "S2") && !ShowPivotR2S2) return false;
             if ((name == "R3" || name == "S3") && !ShowPivotR3S3) return false;
 
-            if (name == "Fib 23.6%" && !ShowFib236) return false;
-            if (name == "Fib 38.2%" && !ShowFib382) return false;
-            if (name == "Fib 50.0%" && !ShowFib500) return false;
-            if (name == "Fib 61.8%" && !ShowFib618) return false;
-            if (name == "Fib 78.6%" && !ShowFib786) return false;
-            if (name == "Fib 100%" && !ShowFib100) return false;
-            if ((name == "Fib 127.2%" || name == "Fib 161.8%" || name == "Fib -27.2%" || name == "Fib -61.8%") && !ShowFibExt) return false;
+            if (name == "0.236" && !ShowFib236) return false;
+            if (name == "0.382" && !ShowFib382) return false;
+            if (name == "0.500" && !ShowFib500) return false;
+            if (name == "0.618" && !ShowFib618) return false;
+            if (name == "0.786" && !ShowFib786) return false;
+            if (name == "1.000" && !ShowFib100) return false;
+            if ((name == "1.272" || name == "1.618" || name == "-0.272" || name == "-0.618") && !ShowFibExt) return false;
 
             // 5. Volume Profile & Intraday
             if (name == "HOD" && !ShowHOD) return false;
             if (name == "LOD" && !ShowLOD) return false;
 
-            if (name.Contains("CurrentPOC") && !ShowCurrentPOC) return false;
-            if ((name.Contains("CurrentVAH") || name.Contains("CurrentVAL")) && !ShowCurrentVA) return false;
-            if (name.Contains("PrevDayPOC") && !ShowPrevDayPOC) return false;
-            if ((name.Contains("PrevDayVAH") || name.Contains("PrevDayVAL")) && !ShowPrevDayVA) return false;
-            if (name.Contains("Overnight") && !ShowOvernightPOC) return false;
+            if (name == "POC" && !ShowCurrentPOC) return false;
+            if ((name == "VAH" || name == "VAL") && !ShowCurrentVA) return false;
+            if (name == "PPOC" && !ShowPrevDayPOC) return false;
+            if ((name == "PVAH" || name == "PVAL") && !ShowPrevDayVA) return false;
+            if ((name == "ovnPOC" || name == "ovnVAH" || name == "ovnVAL" || name == "ovnH" || name == "ovnL") && !ShowOvernightPOC) return false;
 
             return true;
         }
@@ -1629,6 +1652,37 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                         }
                         break;
                 }
+
+                // Sync to NtTagRenderer data model (VISUAL_SYSTEM.md §8)
+                if (level.IsActive)
+                {
+                    string key = NtTagRenderer.InstanceKey(level.Def.Name, ToEt(Time[0]).Date);
+                    
+                    // Diff-guarded upsert to avoid GC pressure
+                    var snapshot = levelRenderer.Snapshot();
+                    bool existsAndSame = false;
+                    foreach(var r in snapshot)
+                    {
+                        if (r.Key == key && Math.Abs(r.Price - level.Price) < TickSize / 2.0)
+                        {
+                            existsAndSame = true;
+                            break;
+                        }
+                    }
+
+                    if (!existsAndSame)
+                    {
+                        levelRenderer.Upsert(new NtLevelRecord
+                        {
+                            Key = key,
+                            Label = level.Def.Name, // Use name as code for now
+                            Price = level.Price,
+                            Category = "price_level",
+                            Date = ToEt(Time[0]).Date,
+                            State = "active"
+                        });
+                    }
+                }
             }
         }
 
@@ -1773,22 +1827,22 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 case "PriorMonthOpen":
                     return prevMonthOpen;
 
-                case "TueOpen": return tueOpen;
-                case "WedOpen": return wedOpen;
-                case "ThuOpen": return thuOpen;
-                case "FriOpen": return friOpen;
+                case "TueO": return tueOpen;
+                case "WedO": return wedOpen;
+                case "ThuO": return thuOpen;
+                case "FriO": return friOpen;
 
-                case "P12High": return p12High;
-                case "P12Low": return p12Low;
-                case "P12Mid": return (p12High > 0 && p12Low > 0) ? (p12High + p12Low) / 2.0 : 0;
+                case "P12H": return p12High;
+                case "P12L": return p12Low;
+                case "P12M": return (p12High > 0 && p12Low > 0) ? (p12High + p12Low) / 2.0 : 0;
 
-                case "NYP12High": return nyP12High;
-                case "NYP12Low": return nyP12Low;
-                case "NYP12Mid": return (nyP12High > 0 && nyP12Low > 0) ? (nyP12High + nyP12Low) / 2.0 : 0;
+                case "NYP12H": return nyP12High;
+                case "NYP12L": return nyP12Low;
+                case "NYP12M": return (nyP12High > 0 && nyP12Low > 0) ? (nyP12High + nyP12Low) / 2.0 : 0;
 
-                case "PrevNYP12High": return prevNyP12High;
-                case "PrevNYP12Low": return prevNyP12Low;
-                case "PrevNYP12Mid": return prevNyP12Mid;
+                case "PrevNYP12H": return prevNyP12High;
+                case "PrevNYP12L": return prevNyP12Low;
+                case "PrevNYP12M": return prevNyP12Mid;
 
                 default:
                     return 0;
@@ -2410,79 +2464,47 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 var sortedLabels = labelItems.OrderBy(l => l.Y).ToList();
                 float minSpacing = 16f;
 
-                // 1. Render Right Margin Labels (Y-Staggered)
+                // 1. Render Right Margin Labels (Y-Staggered) — v5 NtBadge pills
                 if (LabelPlacement == LabelPlacement.RightMargin || LabelPlacement == LabelPlacement.Both)
                 {
                     float prevY = -1000f;
                     foreach (var item in sortedLabels)
                     {
-                        var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue);
-                        float textW = (float)textLayout.Metrics.Width;
-                        float textH = (float)textLayout.Metrics.Height;
+                        float textH;
+                        using (var measureLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue))
+                        {
+                            textH = (float)measureLayout.Metrics.Height;
+                        }
                         float labelY = item.Y - textH / 2f;
 
                         if (labelY < prevY + minSpacing)
                             labelY = prevY + minSpacing;
                         prevY = labelY;
 
-                        var bgBrush = isDark
-                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
-                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.98f, 0.98f, 1.0f, 0.95f));
-
-                        var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(item.Color.R / 255f, item.Color.G / 255f, item.Color.B / 255f, 0.9f));
-
-                        var labelBrush = isDark
-                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
-                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
-
-                        float rightLabelX = chartRightX + 4;
-                        var rightBgRect = new RectangleF(rightLabelX - 2, labelY - 1, textW + 4, textH + 2);
-                        RenderTarget.FillRectangle(rightBgRect, bgBrush);
-                        RenderTarget.DrawRectangle(rightBgRect, borderBrush, 1.0f);
-                        RenderTarget.DrawTextLayout(new SharpDX.Vector2(rightLabelX, labelY), textLayout, labelBrush);
-
-                        bgBrush.Dispose();
-                        borderBrush.Dispose();
-                        labelBrush.Dispose();
-                        textLayout.Dispose();
+                        var textColor = new Color4(item.Color.R / 255f, item.Color.G / 255f, item.Color.B / 255f, 1.0f);
+                        NtBadge.Draw(RenderTarget, textFormat, item.Text, textColor, chartRightX + 4, labelY);
                     }
                 }
 
-                // 2. Render Origin Labels (Y-Staggered)
+                // 2. Render Origin Labels (Y-Staggered) — v5 NtBadge pills
                 if (LabelPlacement == LabelPlacement.Origin || LabelPlacement == LabelPlacement.Both)
                 {
                     float prevY = -1000f;
                     foreach (var item in sortedLabels)
                     {
-                        var textLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue);
-                        float textW = (float)textLayout.Metrics.Width;
-                        float textH = (float)textLayout.Metrics.Height;
+                        float textH;
+                        using (var measureLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue))
+                        {
+                            textH = (float)measureLayout.Metrics.Height;
+                        }
                         float labelY = item.Y - textH / 2f;
 
                         if (labelY < prevY + minSpacing)
                             labelY = prevY + minSpacing;
                         prevY = labelY;
 
-                        var bgBrush = isDark
-                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.08f, 0.90f))
-                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.98f, 0.98f, 1.0f, 0.95f));
-
-                        var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(item.Color.R / 255f, item.Color.G / 255f, item.Color.B / 255f, 0.9f));
-
-                        var labelBrush = isDark
-                            ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
-                            : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
-
-                        float originLabelX = item.XStart + 4;
-                        var originBgRect = new RectangleF(originLabelX - 2, labelY - 1, textW + 4, textH + 2);
-                        RenderTarget.FillRectangle(originBgRect, bgBrush);
-                        RenderTarget.DrawRectangle(originBgRect, borderBrush, 1.0f);
-                        RenderTarget.DrawTextLayout(new SharpDX.Vector2(originLabelX, labelY), textLayout, labelBrush);
-
-                        bgBrush.Dispose();
-                        borderBrush.Dispose();
-                        labelBrush.Dispose();
-                        textLayout.Dispose();
+                        var textColor = new Color4(item.Color.R / 255f, item.Color.G / 255f, item.Color.B / 255f, 1.0f);
+                        NtBadge.Draw(RenderTarget, textFormat, item.Text, textColor, item.XStart + 4, labelY);
                     }
                 }
             }
@@ -2497,9 +2519,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     float sy = chartScale.GetYByValue(sweep.LevelPrice);
                     float markerSize = 6f;
 
-                    var markerColor = sweep.IsBullSweep
-                        ? (isDark ? new SharpDX.Color(0x00, 0xE6, 0x76, 255) : new SharpDX.Color(0x00, 0x89, 0x7B, 255))
-                        : (isDark ? new SharpDX.Color(0xFF, 0x17, 0x44, 255) : new SharpDX.Color(0xC6, 0x28, 0x28, 255));
+                    // v5: Route sweep marker colors through NtPalette (scheme-aware, no isDark branching)
+                    var markerColor = NtPalette.Resolve(sweep.IsBullSweep ? NtPalette.Bull : NtPalette.Bear, scheme);
 
                     var markerBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget,
                         new Color4(markerColor.R / 255f, markerColor.G / 255f, markerColor.B / 255f, 0.9f));
@@ -2582,8 +2603,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private void RenderHoverTooltip(ChartControl chartControl, ChartScale chartScale, LevelState level, float mouseX, float mouseY, double currentPrice)
         {
-            bool isDark = IsDarkChart(chartControl);
-
             string title = level.Def.FullName ?? level.Def.Name;
             string priceText = $"Price: {level.Price:N2}";
             string catText = $"Category: {level.Def.Category} | Source: {level.Def.Source}";
@@ -2648,23 +2667,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             var bgRect = new RectangleF(boxX, boxY, width, height);
 
-            var bgBrush = isDark
-                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.06f, 0.08f, 0.12f, 0.95f))
-                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.96f, 0.97f, 0.99f, 0.96f));
-
-            var borderBrush = isDark
-                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.0f, 0.7f, 1.0f, 0.9f))
-                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.1f, 0.4f, 0.8f, 0.9f));
-
-            var titleBrush = isDark
-                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 1.0f, 1.0f, 1.0f))
-                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.04f, 0.06f, 0.10f, 1.0f));
-
-            var textBrush = isDark
-                ? new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.85f, 0.88f, 0.92f, 1.0f))
-                : new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(0.12f, 0.15f, 0.20f, 1.0f));
-
-            var sweptBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new Color4(1.0f, 0.3f, 0.3f, 1.0f));
+            // v5: Route tooltip brushes through NtStyleResolver (scheme-aware, no isDark branching)
+            NtScheme scheme = NtPalette.DetectScheme(chartControl.Properties.ChartBackground as System.Windows.Media.SolidColorBrush);
+            var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, NtStyleResolver.ResolveColor(NtPalette.BgSecondary, scheme, 5, NtDisplayProfile.Normal));
+            var borderBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, NtStyleResolver.ResolveColor(NtPalette.BgBorder, scheme, 10, NtDisplayProfile.Normal));
+            var titleBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, NtStyleResolver.ResolveColor(NtPalette.TextPrimary, scheme));
+            var textBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, NtStyleResolver.ResolveColor(NtPalette.TextSecondary, scheme));
+            var sweptBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, NtStyleResolver.ResolveColor(NtPalette.Bear, scheme));
 
             RenderTarget.FillRectangle(bgRect, bgBrush);
             RenderTarget.DrawRectangle(bgRect, borderBrush, 1.5f);

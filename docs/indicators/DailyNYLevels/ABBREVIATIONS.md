@@ -41,7 +41,7 @@
 | `PML` | Prior Month Low | Low of the previous trading month. | PM L | active |
 | `PMM` | Prior Month Mid | Midpoint of prior month high and low. | PM M | active |
 | `PMO` | Prior Month Open | Open of the previous trading month. | PM O | active |
-| `Settle` | Prior Settlement | Prior day futures settlement price. | Settlement | active |
+| `Settlement` | Daily Settlement | Prior day futures settlement price. No abbreviation — use full form. | Settle | active |
 | `HOD` | High of Day | Highest price of the current trading day. | — | active |
 | `LOD` | Low of Day | Lowest price of the current trading day. | — | active |
 | `NYH` | NY Session High | High of the NY session. | NY H | active |
@@ -70,6 +70,53 @@
 | `VAH` | Value Area High | Upper boundary of the value area (volume profile). | — | active |
 | `VAL` | Value Area Low | Lower boundary of the value area (volume profile). | — | active |
 | `POC` | Point of Control | Price level with the highest traded volume (volume profile). | — | active |
+| `MNO` | Midnight Open | Open price at 00:00 ET (midnight session open). | MidnightOpen | active |
+| `LonO` | London Open | Open price at 03:00 ET (London session open). | LondonOpen | active |
+| `DOpen` | Daily Open (Globex) | Open price at 18:00 ET (Globex session open = daily open for futures). | GlobexOpen | active |
+| `NYO` | NY / RTH Open | Open price at 09:30 ET (NY / RTH session open). | RTHOpen, NYOpen | active |
+| `TueO` | Tuesday Open | Open price for Tuesday's session (18:00 ET Monday). | TueOpen | active |
+| `WedO` | Wednesday Open | Open price for Wednesday's session (18:00 ET Tuesday). | WedOpen | active |
+| `ThuO` | Thursday Open | Open price for Thursday's session (18:00 ET Wednesday). | ThuOpen | active |
+| `FriO` | Friday Open | Open price for Friday's session (18:00 ET Thursday). | FriOpen | active |
+| `0400` | Open 04:00 ET | Open price at 04:00 ET. | Open_04H | active |
+| `0800` | Open 08:00 ET | Open price at 08:00 ET. | Open_08H | active |
+| `1200` | Open 12:00 ET | Open price at 12:00 ET. | Open_12H | active |
+| `1600` | Open 16:00 ET | Open price at 16:00 ET. | Open_16H | active |
+| `2000` | Open 20:00 ET | Open price at 20:00 ET. | Open_20H | active |
+| `LonORM` | London OR Mid | Midpoint of the London Opening Range (02:00-05:00 ET). | LonOrMid | active |
+| `NYP12H` | NY P12 High | High of the NY P12 window (06:00-17:00 ET). | NYP12High | active |
+| `NYP12L` | NY P12 Low | Low of the NY P12 window (06:00-17:00 ET). | NYP12Low | active |
+| `NYP12M` | NY P12 Mid | Midpoint of NY P12 high and low. | NYP12Mid | active |
+| `PrevNYP12H` | Prev NY P12 High | High of the previous NY P12 window. | PrevNYP12High | active |
+| `PrevNYP12L` | Prev NY P12 Low | Low of the previous NY P12 window. | PrevNYP12Low | active |
+| `PrevNYP12M` | Prev NY P12 Mid | Midpoint of previous NY P12 high and low. | PrevNYP12Mid | active |
+| `PPOC` | Prev Day POC | Point of control from the previous trading day. | PrevDayPOC | active |
+| `PVAH` | Prev Day VAH | Value area high from the previous trading day. | PrevDayVAH | active |
+| `PVAL` | Prev Day VAL | Value area low from the previous trading day. | PrevDayVAL | active |
+| `ovnPOC` | Overnight POC | Point of control for the overnight session. | OvernightPOC | active |
+| `ovnVAH` | Overnight VAH | Value area high for the overnight session. | OvernightVAH | active |
+| `ovnVAL` | Overnight VAL | Value area low for the overnight session. | OvernightVAL | active |
+| `ovnH` | Overnight High | High of the overnight session. | OvernightHigh | active |
+| `ovnL` | Overnight Low | Low of the overnight session. | OvernightLow | active |
+| `PP` | Pivot Point | Floor trader pivot point: (H + L + C) / 3. | — | active |
+| `R1` | Resistance 1 | Floor pivot resistance 1: 2×PP − L. | — | active |
+| `R2` | Resistance 2 | Floor pivot resistance 2: PP + (H − L). | — | active |
+| `R3` | Resistance 3 | Floor pivot resistance 3: H + 2×(PP − L). | — | active |
+| `S1` | Support 1 | Floor pivot support 1: 2×PP − H. | — | active |
+| `S2` | Support 2 | Floor pivot support 2: PP − (H − L). | — | active |
+| `S3` | Support 3 | Floor pivot support 3: L − 2×(H − PP). | — | active |
+| `0.236` | Fib 23.6% | Fibonacci retracement 23.6% of prior day range. | Fib 23.6% | active |
+| `0.382` | Fib 38.2% | Fibonacci retracement 38.2% of prior day range. | Fib 38.2% | active |
+| `0.500` | Fib 50.0% | Fibonacci retracement 50.0% of prior day range. | Fib 50.0% | active |
+| `0.618` | Fib 61.8% | Fibonacci retracement 61.8% of prior day range. | Fib 61.8% | active |
+| `0.786` | Fib 78.6% | Fibonacci retracement 78.6% of prior day range. | Fib 78.6% | active |
+| `1.000` | Fib 100% | Fibonacci retracement 100% of prior day range. | Fib 100% | active |
+| `1.272` | Fib 127.2% | Fibonacci extension 127.2% of prior day range. | Fib 127.2% | active |
+| `1.618` | Fib 161.8% | Fibonacci extension 161.8% of prior day range. | Fib 161.8% | active |
+| `-0.272` | Fib -27.2% | Fibonacci extension -27.2% of prior day range. | Fib -27.2% | active |
+| `-0.618` | Fib -61.8% | Fibonacci extension -61.8% of prior day range. | Fib -61.8% | active |
+| `MonH` | Monday High | High of Monday's session (hidden, hrProviders only). | MH | hidden |
+| `MonL` | Monday Low | Low of Monday's session (hidden, hrProviders only). | ML | hidden |
 
 ## session
 
@@ -240,3 +287,4 @@ Reserved slots for concepts to be added step by step as indicators are built.
 | Version | Date | Note |
 |---|---|---|
 | 1.0 | 2026-08-04 | Initial registry. Full 8-category set from Pine inventory. MSS/CISD reserved as planned. |
+| 1.1 | 2026-08-04 | Added 38 missing entries: session opens (MNO, LonO, DOpen, NYO, TueO-FriO, 0400-2000), vol profile (PPOC, PVAH, PVAL, ovnPOC, ovnVAH, ovnVAL, ovnH, ovnL), pivots (PP, R1-R3, S1-S3), fibs (0.236-1.618, -0.272, -0.618), NY P12 (NYP12H/L/M, PrevNYP12H/L/M), LonORM, MonH/MonL. Fixed Settlement (no abbrev). Removed PDO (duplicate of session opens). |

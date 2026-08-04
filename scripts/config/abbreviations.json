@@ -30,7 +30,7 @@
     { "id": "lvl_pml", "abbrev": "PML", "full": "Prior Month Low", "definition": "Low of the previous trading month.", "category": "price_level", "status": "active", "legacy": ["PM L"], "source": "LiquidityLevelsCatalog.cs" },
     { "id": "lvl_pmm", "abbrev": "PMM", "full": "Prior Month Mid", "definition": "Midpoint of prior month high and low.", "category": "price_level", "status": "active", "legacy": ["PM M"], "source": "LiquidityLevelsCatalog.cs" },
     { "id": "lvl_pmo", "abbrev": "PMO", "full": "Prior Month Open", "definition": "Open of the previous trading month.", "category": "price_level", "status": "active", "legacy": ["PM O"], "source": "LiquidityLevelsCatalog.cs" },
-    { "id": "lvl_settle", "abbrev": "Settle", "full": "Prior Settlement", "definition": "Prior day futures settlement price.", "category": "price_level", "status": "active", "legacy": ["Settlement"], "source": "PineDrawingHorizontalLevels.pine" },
+    { "id": "lvl_settlement", "abbrev": "Settlement", "full": "Daily Settlement", "definition": "Prior day futures settlement price. No abbreviation — use full form.", "category": "price_level", "status": "active", "legacy": ["Settle"], "source": "LiquidityLevelsCatalog.cs" },
     { "id": "lvl_hod", "abbrev": "HOD", "full": "High of Day", "definition": "Highest price of the current trading day.", "category": "price_level", "status": "active", "legacy": [], "source": "ProfilerIndicator.pine" },
     { "id": "lvl_lod", "abbrev": "LOD", "full": "Low of Day", "definition": "Lowest price of the current trading day.", "category": "price_level", "status": "active", "legacy": [], "source": "ProfilerIndicator.pine" },
     { "id": "lvl_nyh", "abbrev": "NYH", "full": "NY Session High", "definition": "High of the NY session.", "category": "price_level", "status": "active", "legacy": ["NY H"], "source": "LiquidityLevelsCatalog.cs" },
@@ -59,6 +59,59 @@
     { "id": "lvl_vah", "abbrev": "VAH", "full": "Value Area High", "definition": "Upper boundary of the value area (volume profile).", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
     { "id": "lvl_val", "abbrev": "VAL", "full": "Value Area Low", "definition": "Lower boundary of the value area (volume profile).", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
     { "id": "lvl_poc", "abbrev": "POC", "full": "Point of Control", "definition": "Price level with the highest traded volume (volume profile).", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+
+    { "id": "lvl_mno", "abbrev": "MNO", "full": "Midnight Open", "definition": "Open price at 00:00 ET (midnight session open).", "category": "price_level", "status": "active", "legacy": ["MidnightOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_lono", "abbrev": "LonO", "full": "London Open", "definition": "Open price at 03:00 ET (London session open).", "category": "price_level", "status": "active", "legacy": ["LondonOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_dopen", "abbrev": "DOpen", "full": "Daily Open (Globex)", "definition": "Open price at 18:00 ET (Globex session open = daily open for futures).", "category": "price_level", "status": "active", "legacy": ["GlobexOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_nyo", "abbrev": "NYO", "full": "NY / RTH Open", "definition": "Open price at 09:30 ET (NY / RTH session open).", "category": "price_level", "status": "active", "legacy": ["RTHOpen", "NYOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_tueo", "abbrev": "TueO", "full": "Tuesday Open", "definition": "Open price for Tuesday's session (18:00 ET Monday).", "category": "price_level", "status": "active", "legacy": ["TueOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_wedo", "abbrev": "WedO", "full": "Wednesday Open", "definition": "Open price for Wednesday's session (18:00 ET Tuesday).", "category": "price_level", "status": "active", "legacy": ["WedOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_thuo", "abbrev": "ThuO", "full": "Thursday Open", "definition": "Open price for Thursday's session (18:00 ET Wednesday).", "category": "price_level", "status": "active", "legacy": ["ThuOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_frio", "abbrev": "FriO", "full": "Friday Open", "definition": "Open price for Friday's session (18:00 ET Thursday).", "category": "price_level", "status": "active", "legacy": ["FriOpen"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_o0400", "abbrev": "0400", "full": "Open 04:00 ET", "definition": "Open price at 04:00 ET.", "category": "price_level", "status": "active", "legacy": ["Open_04H"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_o0800", "abbrev": "0800", "full": "Open 08:00 ET", "definition": "Open price at 08:00 ET.", "category": "price_level", "status": "active", "legacy": ["Open_08H"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_o1200", "abbrev": "1200", "full": "Open 12:00 ET", "definition": "Open price at 12:00 ET.", "category": "price_level", "status": "active", "legacy": ["Open_12H"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_o1600", "abbrev": "1600", "full": "Open 16:00 ET", "definition": "Open price at 16:00 ET.", "category": "price_level", "status": "active", "legacy": ["Open_16H"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_o2000", "abbrev": "2000", "full": "Open 20:00 ET", "definition": "Open price at 20:00 ET.", "category": "price_level", "status": "active", "legacy": ["Open_20H"], "source": "LiquidityLevelsCatalog.cs" },
+
+    { "id": "lvl_lonorm", "abbrev": "LonORM", "full": "London OR Mid", "definition": "Midpoint of the London Opening Range (02:00-05:00 ET).", "category": "price_level", "status": "active", "legacy": ["LonOrMid"], "source": "LiquidityLevels.cs" },
+    { "id": "lvl_nyp12h", "abbrev": "NYP12H", "full": "NY P12 High", "definition": "High of the NY P12 window (06:00-17:00 ET).", "category": "price_level", "status": "active", "legacy": ["NYP12High"], "source": "LiquidityLevels.cs" },
+    { "id": "lvl_nyp12l", "abbrev": "NYP12L", "full": "NY P12 Low", "definition": "Low of the NY P12 window (06:00-17:00 ET).", "category": "price_level", "status": "active", "legacy": ["NYP12Low"], "source": "LiquidityLevels.cs" },
+    { "id": "lvl_nyp12m", "abbrev": "NYP12M", "full": "NY P12 Mid", "definition": "Midpoint of NY P12 high and low.", "category": "price_level", "status": "active", "legacy": ["NYP12Mid"], "source": "LiquidityLevels.cs" },
+    { "id": "lvl_prevnyp12h", "abbrev": "PrevNYP12H", "full": "Prev NY P12 High", "definition": "High of the previous NY P12 window.", "category": "price_level", "status": "active", "legacy": ["PrevNYP12High"], "source": "LiquidityLevels.cs" },
+    { "id": "lvl_prevnyp12l", "abbrev": "PrevNYP12L", "full": "Prev NY P12 Low", "definition": "Low of the previous NY P12 window.", "category": "price_level", "status": "active", "legacy": ["PrevNYP12Low"], "source": "LiquidityLevels.cs" },
+    { "id": "lvl_prevnyp12m", "abbrev": "PrevNYP12M", "full": "Prev NY P12 Mid", "definition": "Midpoint of previous NY P12 high and low.", "category": "price_level", "status": "active", "legacy": ["PrevNYP12Mid"], "source": "LiquidityLevels.cs" },
+
+    { "id": "lvl_ppoc", "abbrev": "PPOC", "full": "Prev Day POC", "definition": "Point of control from the previous trading day.", "category": "price_level", "status": "active", "legacy": ["PrevDayPOC"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_pvah", "abbrev": "PVAH", "full": "Prev Day VAH", "definition": "Value area high from the previous trading day.", "category": "price_level", "status": "active", "legacy": ["PrevDayVAH"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_pval", "abbrev": "PVAL", "full": "Prev Day VAL", "definition": "Value area low from the previous trading day.", "category": "price_level", "status": "active", "legacy": ["PrevDayVAL"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_ovnpoc", "abbrev": "ovnPOC", "full": "Overnight POC", "definition": "Point of control for the overnight session.", "category": "price_level", "status": "active", "legacy": ["OvernightPOC"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_ovnvah", "abbrev": "ovnVAH", "full": "Overnight VAH", "definition": "Value area high for the overnight session.", "category": "price_level", "status": "active", "legacy": ["OvernightVAH"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_ovnval", "abbrev": "ovnVAL", "full": "Overnight VAL", "definition": "Value area low for the overnight session.", "category": "price_level", "status": "active", "legacy": ["OvernightVAL"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_ovnh", "abbrev": "ovnH", "full": "Overnight High", "definition": "High of the overnight session.", "category": "price_level", "status": "active", "legacy": ["OvernightHigh"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_ovnl", "abbrev": "ovnL", "full": "Overnight Low", "definition": "Low of the overnight session.", "category": "price_level", "status": "active", "legacy": ["OvernightLow"], "source": "LiquidityLevelsCatalog.cs" },
+
+    { "id": "lvl_pp", "abbrev": "PP", "full": "Pivot Point", "definition": "Floor trader pivot point: (H + L + C) / 3.", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_r1", "abbrev": "R1", "full": "Resistance 1", "definition": "Floor pivot resistance 1: 2×PP − L.", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_r2", "abbrev": "R2", "full": "Resistance 2", "definition": "Floor pivot resistance 2: PP + (H − L).", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_r3", "abbrev": "R3", "full": "Resistance 3", "definition": "Floor pivot resistance 3: H + 2×(PP − L).", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_s1", "abbrev": "S1", "full": "Support 1", "definition": "Floor pivot support 1: 2×PP − H.", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_s2", "abbrev": "S2", "full": "Support 2", "definition": "Floor pivot support 2: PP − (H − L).", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_s3", "abbrev": "S3", "full": "Support 3", "definition": "Floor pivot support 3: L − 2×(H − PP).", "category": "price_level", "status": "active", "legacy": [], "source": "LiquidityLevelsCatalog.cs" },
+
+    { "id": "lvl_fib236", "abbrev": "0.236", "full": "Fib 23.6%", "definition": "Fibonacci retracement 23.6% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 23.6%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fib382", "abbrev": "0.382", "full": "Fib 38.2%", "definition": "Fibonacci retracement 38.2% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 38.2%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fib500", "abbrev": "0.500", "full": "Fib 50.0%", "definition": "Fibonacci retracement 50.0% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 50.0%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fib618", "abbrev": "0.618", "full": "Fib 61.8%", "definition": "Fibonacci retracement 61.8% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 61.8%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fib786", "abbrev": "0.786", "full": "Fib 78.6%", "definition": "Fibonacci retracement 78.6% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 78.6%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fib100", "abbrev": "1.000", "full": "Fib 100%", "definition": "Fibonacci retracement 100% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 100%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fib1272", "abbrev": "1.272", "full": "Fib 127.2%", "definition": "Fibonacci extension 127.2% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 127.2%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fib1618", "abbrev": "1.618", "full": "Fib 161.8%", "definition": "Fibonacci extension 161.8% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib 161.8%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fibn272", "abbrev": "-0.272", "full": "Fib -27.2%", "definition": "Fibonacci extension -27.2% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib -27.2%"], "source": "LiquidityLevelsCatalog.cs" },
+    { "id": "lvl_fibn618", "abbrev": "-0.618", "full": "Fib -61.8%", "definition": "Fibonacci extension -61.8% of prior day range.", "category": "price_level", "status": "active", "legacy": ["Fib -61.8%"], "source": "LiquidityLevelsCatalog.cs" },
+
+    { "id": "lvl_monh", "abbrev": "MonH", "full": "Monday High", "definition": "High of Monday's session (hidden, hrProviders only).", "category": "price_level", "status": "hidden", "legacy": ["MH"], "source": "LiquidityLevels.cs" },
+    { "id": "lvl_monl", "abbrev": "MonL", "full": "Monday Low", "definition": "Low of Monday's session (hidden, hrProviders only).", "category": "price_level", "status": "hidden", "legacy": ["ML"], "source": "LiquidityLevels.cs" },
 
     { "id": "ses_ib", "abbrev": "IB", "full": "Initial Balance", "definition": "The opening range window used to define the initial balance.", "category": "session", "status": "active", "legacy": [], "source": "IB_Stats_Extensions.pine" },
     { "id": "ses_or", "abbrev": "OR", "full": "Opening Range", "definition": "The opening range window (default 09:30-10:30 ET).", "category": "session", "status": "active", "legacy": [], "source": "daily_classification_v2.pine" },
@@ -185,6 +238,7 @@
     { "abbrev": "BOS", "meanings": ["Break of Structure (canonical)", "MSS (Market Structure Shift, planned)"], "resolution": "BOS is canonical; MSS is a planned distinct term, not an alias.", "owner": "vveerappa" }
   ],
   "changelog": [
-    { "version": "1.0", "date": "2026-08-04", "note": "Initial registry. Full 8-category set from Pine inventory. MSS/CISD reserved as planned." }
+    { "version": "1.0", "date": "2026-08-04", "note": "Initial registry. Full 8-category set from Pine inventory. MSS/CISD reserved as planned." },
+    { "version": "1.1", "date": "2026-08-04", "note": "Added 38 missing entries: session opens (MNO, LonO, DOpen, NYO, TueO-FriO, 0400-2000), vol profile (PPOC, PVAH, PVAL, ovnPOC, ovnVAH, ovnVAL, ovnH, ovnL), pivots (PP, R1-R3, S1-S3), fibs (0.236-1.618, -0.272, -0.618), NY P12 (NYP12H/L/M, PrevNYP12H/L/M), LonORM, MonH/MonL. Fixed Settlement (no abbrev). Removed PDO (duplicate of session opens)." }
   ]
 }
