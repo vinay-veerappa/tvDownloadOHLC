@@ -47,6 +47,17 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private List<SweepEvent> todaySweeps;
         private NtTagRenderer levelRenderer = new NtTagRenderer();
 
+        // Performance caches
+        private HashSet<string> enabledLevelNames;
+        private bool enabledCacheDirty = true;
+        private List<LevelState> cachedActiveLevels;
+        private bool activeLevelsDirty = true;
+        private Dictionary<LevelCategory, SharpDX.Color> cachedCategoryColors;
+        private NtScheme cachedScheme = NtScheme.Midnight;
+        private bool categoryColorsDirty = true;
+        private List<RenderLabelItem> reusableLabelItems = new List<RenderLabelItem>();
+        private float cachedBadgeHeight = 0f;
+
 
         // Open & Settlement Tracking Fields
         private double currentMonthOpen, prevMonthOpen;
@@ -1230,6 +1241,30 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private bool IsLevelEnabled(LevelState level)
         {
+            // Fast path: use cached HashSet if available
+            if (!enabledCacheDirty && enabledLevelNames != null)
+                return enabledLevelNames.Contains(level.Def.Name);
+
+            return IsLevelEnabledSlow(level);
+        }
+
+        private void RebuildEnabledCache()
+        {
+            if (enabledLevelNames == null)
+                enabledLevelNames = new HashSet<string>();
+            else
+                enabledLevelNames.Clear();
+
+            foreach (var level in activeLevels)
+            {
+                if (IsLevelEnabledSlow(level))
+                    enabledLevelNames.Add(level.Def.Name);
+            }
+            enabledCacheDirty = false;
+        }
+
+        private bool IsLevelEnabledSlow(LevelState level)
+        {
             if (!IsCategoryEnabled(level.Def.Category)) return false;
 
             string name = level.Def.Name;
@@ -1345,6 +1380,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 lastDate = globexDate;
                 dayStartBar = CurrentBar;
                 todaySweeps.Clear();
+                enabledCacheDirty = true;
+                activeLevelsDirty = true;
 
                 foreach (var level in activeLevels)
                     level.Swept = false;
@@ -1595,6 +1632,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private void UpdateLevelPrices()
         {
+            if (enabledCacheDirty)
+                RebuildEnabledCache();
+
+            DateTime currentEtDate = ToEt(Time[0]).Date;
+
             foreach (var level in activeLevels)
             {
                 if (!IsLevelEnabled(level))
@@ -1653,32 +1695,27 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                         break;
                 }
 
-                // Sync to NtTagRenderer data model (VISUAL_SYSTEM.md §8)
+                // Sync to NtTagRenderer data model — diff-guarded, zero-alloc on no-change
                 if (level.IsActive)
                 {
-                    string key = NtTagRenderer.InstanceKey(level.Def.Name, ToEt(Time[0]).Date);
-                    
-                    // Diff-guarded upsert to avoid GC pressure
-                    var snapshot = levelRenderer.Snapshot();
-                    bool existsAndSame = false;
-                    foreach(var r in snapshot)
-                    {
-                        if (r.Key == key && Math.Abs(r.Price - level.Price) < TickSize / 2.0)
-                        {
-                            existsAndSame = true;
-                            break;
-                        }
-                    }
+                    string key = NtTagRenderer.InstanceKey(level.Def.Name, currentEtDate);
 
-                    if (!existsAndSame)
+                    if (levelRenderer.TryGetRecord(key, out var existing))
                     {
+                        // Mutate in-place if price changed (avoids NtLevelRecord allocation)
+                        if (Math.Abs(existing.Price - level.Price) >= TickSize / 2.0)
+                            existing.Price = level.Price;
+                    }
+                    else
+                    {
+                        // First time seeing this key — allocate
                         levelRenderer.Upsert(new NtLevelRecord
                         {
                             Key = key,
-                            Label = level.Def.Name, // Use name as code for now
+                            Label = level.Def.Name,
                             Price = level.Price,
                             Category = "price_level",
-                            Date = ToEt(Time[0]).Date,
+                            Date = currentEtDate,
                             State = "active"
                         });
                     }
@@ -2264,6 +2301,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     }
                 }
             }
+            activeLevelsDirty = true;
         }
 
         #endregion
@@ -2272,7 +2310,18 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         public List<LevelState> GetActiveLevels()
         {
-            return activeLevels.Where(l => IsLevelEnabled(l) && l.IsActive && l.Price > 0).OrderBy(l => l.Price).ToList();
+            if (activeLevelsDirty || cachedActiveLevels == null)
+            {
+                if (enabledCacheDirty)
+                    RebuildEnabledCache();
+
+                cachedActiveLevels = activeLevels
+                    .Where(l => enabledLevelNames.Contains(l.Def.Name) && l.IsActive && l.Price > 0)
+                    .OrderBy(l => l.Price)
+                    .ToList();
+                activeLevelsDirty = false;
+            }
+            return cachedActiveLevels;
         }
 
         public List<LevelState> GetLevelsByCategory(LevelCategory cat)
@@ -2378,34 +2427,41 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 tooltipFormat = new TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI",
                     SharpDX.DirectWrite.FontWeight.Normal, SharpDX.DirectWrite.FontStyle.Normal, fontSize);
                 resourcesCreated = true;
+                cachedBadgeHeight = 0f; // invalidate height cache on font change
             }
 
             var activeLevelsToDraw = GetActiveLevels();
 
             // v5: resolve category colors through the canonical scheme system
-            // (NtPalette) instead of a hardcoded dual isDark dictionary.
+            // (NtPalette) — cached, only rebuilt when scheme changes
             NtScheme scheme = NtPalette.DetectScheme(chartControl.Properties.ChartBackground as System.Windows.Media.SolidColorBrush);
             bool isDark = scheme == NtScheme.Midnight;
 
-            var categoryColors = new Dictionary<LevelCategory, SharpDX.Color>
+            if (categoryColorsDirty || cachedScheme != scheme || cachedCategoryColors == null)
             {
-                { LevelCategory.PriorDay,     NtPalette.Resolve(NtPalette.Bull, scheme) },
-                { LevelCategory.PriorWeek,    NtPalette.Resolve(NtPalette.Average, scheme) },
-                { LevelCategory.PriorMonth,   NtPalette.Resolve(NtPalette.Pivot, scheme) },
-                { LevelCategory.SessionOpen,  NtPalette.Resolve(NtPalette.Caution, scheme) },
-                { LevelCategory.SessionRange, NtPalette.Resolve(NtPalette.Pivot, scheme) },
-                { LevelCategory.Intraday,     NtPalette.Resolve(NtPalette.Bull, scheme) },
-                { LevelCategory.VolumeProfile,NtPalette.Resolve(NtPalette.Stretch, scheme) },
-                { LevelCategory.Structure,    NtPalette.Resolve(NtPalette.Ny2, scheme) },
-                { LevelCategory.Pivot,        NtPalette.Resolve(NtPalette.MaxReversal, scheme) },
-                { LevelCategory.Fib,          NtPalette.Resolve(NtPalette.Median, scheme) },
-            };
+                cachedScheme = scheme;
+                cachedCategoryColors = new Dictionary<LevelCategory, SharpDX.Color>
+                {
+                    { LevelCategory.PriorDay,     NtPalette.Resolve(NtPalette.Bull, scheme) },
+                    { LevelCategory.PriorWeek,    NtPalette.Resolve(NtPalette.Average, scheme) },
+                    { LevelCategory.PriorMonth,   NtPalette.Resolve(NtPalette.Pivot, scheme) },
+                    { LevelCategory.SessionOpen,  NtPalette.Resolve(NtPalette.Caution, scheme) },
+                    { LevelCategory.SessionRange, NtPalette.Resolve(NtPalette.Pivot, scheme) },
+                    { LevelCategory.Intraday,     NtPalette.Resolve(NtPalette.Bull, scheme) },
+                    { LevelCategory.VolumeProfile,NtPalette.Resolve(NtPalette.Stretch, scheme) },
+                    { LevelCategory.Structure,    NtPalette.Resolve(NtPalette.Ny2, scheme) },
+                    { LevelCategory.Pivot,        NtPalette.Resolve(NtPalette.MaxReversal, scheme) },
+                    { LevelCategory.Fib,          NtPalette.Resolve(NtPalette.Median, scheme) },
+                };
+                categoryColorsDirty = false;
+            }
+            var categoryColors = cachedCategoryColors;
 
             float chartLeftX = chartControl.GetXByBarIndex(ChartBars, ChartBars.FromIndex);
             float chartRightX = chartControl.GetXByBarIndex(ChartBars, ChartBars.ToIndex) + (float)chartControl.Properties.BarDistance;
 
             double currentPrice = Close[0];
-            var labelItems = new List<RenderLabelItem>();
+            reusableLabelItems.Clear();
 
             foreach (var level in activeLevelsToDraw)
             {
@@ -2447,7 +2503,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                     string label = $"{nameStr} {priceStr}";
                     if (level.Swept) label += " ✗";
 
-                    labelItems.Add(new RenderLabelItem
+                    reusableLabelItems.Add(new RenderLabelItem
                     {
                         Level = level,
                         Y = y,
@@ -2459,22 +2515,27 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
 
             // ── Smart Label Harmonization (Y-Staggering) ──
-            if (labelItems.Count > 0)
+            if (reusableLabelItems.Count > 0)
             {
-                var sortedLabels = labelItems.OrderBy(l => l.Y).ToList();
+                var sortedLabels = reusableLabelItems.OrderBy(l => l.Y).ToList();
                 float minSpacing = 16f;
 
                 // 1. Render Right Margin Labels (Y-Staggered) — v5 NtBadge pills
                 if (LabelPlacement == LabelPlacement.RightMargin || LabelPlacement == LabelPlacement.Both)
                 {
+                    // Cache text height once (all labels use same font/format)
+                    if (cachedBadgeHeight == 0f && textFormat != null)
+                    {
+                        using (var measureLayout = new TextLayout(Core.Globals.DirectWriteFactory, "Ay", textFormat, float.MaxValue, float.MaxValue))
+                        {
+                            cachedBadgeHeight = (float)measureLayout.Metrics.Height;
+                        }
+                    }
+                    float textH = cachedBadgeHeight;
+
                     float prevY = -1000f;
                     foreach (var item in sortedLabels)
                     {
-                        float textH;
-                        using (var measureLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue))
-                        {
-                            textH = (float)measureLayout.Metrics.Height;
-                        }
                         float labelY = item.Y - textH / 2f;
 
                         if (labelY < prevY + minSpacing)
@@ -2489,14 +2550,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 // 2. Render Origin Labels (Y-Staggered) — v5 NtBadge pills
                 if (LabelPlacement == LabelPlacement.Origin || LabelPlacement == LabelPlacement.Both)
                 {
+                    float textH = cachedBadgeHeight;
                     float prevY = -1000f;
                     foreach (var item in sortedLabels)
                     {
-                        float textH;
-                        using (var measureLayout = new TextLayout(Core.Globals.DirectWriteFactory, item.Text, textFormat, float.MaxValue, float.MaxValue))
-                        {
-                            textH = (float)measureLayout.Metrics.Height;
-                        }
                         float labelY = item.Y - textH / 2f;
 
                         if (labelY < prevY + minSpacing)

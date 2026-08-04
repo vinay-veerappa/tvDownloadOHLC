@@ -296,6 +296,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             return new List<NtLevelRecord>(_records.Values);
         }
 
+        /// <summary>Direct lookup by key — avoids Snapshot() allocation in hot paths.</summary>
+        public bool TryGetRecord(string key, out NtLevelRecord record)
+        {
+            return _records.TryGetValue(key, out record);
+        }
+
         /// <summary>Build a stable instance key from a level code + date.</summary>
         public static string InstanceKey(string levelCode, DateTime date)
         {
