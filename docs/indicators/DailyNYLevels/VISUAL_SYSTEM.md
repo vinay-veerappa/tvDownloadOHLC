@@ -551,6 +551,7 @@ Documented exceptions require justification in the indicator profile's Overrides
 - **State** — runtime element state (`active`, `inactive`, `suppressed`, `merged`, `debug`, `historical_Nd`, `expired`).
 - **Profile** — display profile (`Tiny` / `Small` / `Normal` / `Large` / `Huge`), scales sizes globally.
 - **Theme** — color theme (`Dark` / `Light` / `Custom`), selects palette values.
+- **Abbreviation** — the canonical compact code for a concept (e.g., `PDH`, `NYH`, `P12L`). All label text resolves through the canonical registry. See `ABBREVIATIONS.md` (generated from `scripts/config/abbreviations.json`).
 
 ---
 

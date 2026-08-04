@@ -70,6 +70,8 @@ Format strings support static text, data slots, and conditional sections:
 - `{if:slot_name}...{endif}` — rendered only if the slot has a non-empty value
 - Literal curly braces: `{{` and `}}`
 
+**Abbreviation resolution:** any `base_text` or slot that names a concept (e.g., `PDH`, `NYH`, `P12L`) must use the canonical compact code from the registry. See `ABBREVIATIONS.md` (generated from `scripts/config/abbreviations.json`).
+
 **Note:**
 > As of 2026-04-19, all Pine Script v6 implementations use `{value_str}` instead of `{value}` for all value slots in label and tooltip format strings. This is a codebase-wide convention for compatibility and clarity. All template definitions and indicator profiles should use `{value_str}` in place of `{value}`.
 
