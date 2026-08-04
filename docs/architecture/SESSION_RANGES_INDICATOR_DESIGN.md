@@ -203,7 +203,7 @@ Adds Pre-London (00:00-02:00), NY AM (07:00-10:00), NY PM (13:00-16:00) to ICT C
 
 00:00, 01:00, 02:00, 06:00, 07:00, 08:00, 23:00 magic hour ranges.
 
-#### Custom — from `config/ib_custom_ranges.yaml` or NT8 properties
+#### Custom — from `scripts/config/ib_custom_ranges.yaml` or NT8 properties
 
 ### B.5 Public API Surface
 

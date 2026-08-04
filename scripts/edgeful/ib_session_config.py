@@ -7,7 +7,7 @@ Usage
 -----
     from scripts.edgeful.ib_session_config import load_custom_ranges
 
-    load_custom_ranges("config/ib_custom_ranges.yaml")
+    load_custom_ranges("scripts/config/ib_custom_ranges.yaml")
     # Now SESSION_CONFIGS_V5 has the custom ranges registered
     # and calculate_ib_statistics_v5 / ib_derived_fields will process them
 """
@@ -101,7 +101,7 @@ def load_custom_ranges(yaml_path: str | Path | None = None) -> List[str]:
     ----------
     yaml_path : str | Path, optional
         Path to YAML config. If None, uses default
-        ``config/ib_custom_ranges.yaml``.
+        ``scripts/config/ib_custom_ranges.yaml``.
 
     Returns
     -------
@@ -109,7 +109,7 @@ def load_custom_ranges(yaml_path: str | Path | None = None) -> List[str]:
         List of registered session_slot names.
     """
     if yaml_path is None:
-        default = Path("config/ib_custom_ranges.yaml")
+        default = _root / "scripts" / "config" / "ib_custom_ranges.yaml"
         if not default.exists():
             return []
         yaml_path = default

@@ -5,7 +5,7 @@
 # the full Phase 1-6 pipeline automatically.
 #
 # Usage:
-#   python -m scripts.edgeful.ib_derived_fields --custom-ranges config/ib_custom_ranges.yaml
+#   python -m scripts.edgeful.ib_derived_fields --custom-ranges scripts/config/ib_custom_ranges.yaml
 #
 # Fields:
 #   name:      Human-readable label (becomes the session_slot in parquet files)

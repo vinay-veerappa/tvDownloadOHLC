@@ -1,7 +1,7 @@
 # IB Time-Range Strategy Compendium
 
 Each strategy is listed as: **name**, **preconditions**, **IF/THEN/ELSE algorithm**.
-All time ranges are configurable via `config/ib_custom_ranges.yaml`.
+All time ranges are configurable via `scripts/config/ib_custom_ranges.yaml`.
 
 **Label convention** (from `docs/plans/2026-07-24-ib-data-gathering-plan.md §10.15–10.17`):
 

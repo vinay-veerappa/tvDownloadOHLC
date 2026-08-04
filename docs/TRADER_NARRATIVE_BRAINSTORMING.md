@@ -113,10 +113,10 @@ At the start of each week, the Python engine will scan the news calendar and det
 ---
 
 ### B. Injecting Macro Sentiment & Consensus Themes
-To ensure the LLM understands *why* a specific news event matters without hallucinating recent news, we will support a weekly configuration file (`config/weekly_macro_sentiment.yaml`) loaded by the Python engine:
+To ensure the LLM understands *why* a specific news event matters without hallucinating recent news, we will support a weekly configuration file (`scripts/config/weekly_macro_sentiment.yaml`) loaded by the Python engine:
 
 ```yaml
-# config/weekly_macro_sentiment.yaml
+# scripts/config/weekly_macro_sentiment.yaml
 macro_theme: "Market focus is entirely on the upcoming CPI print to confirm Fed rate cut path. Fed speakers have maintained a data-dependent stance."
 event_sentiment:
   CPI: "Consensus is 0.2% MoM. Cooler CPI is bullish (aim for Upside Ceiling at 30,250), hot CPI will trigger downside expansion (aim for Downside Floor at 30,010)."

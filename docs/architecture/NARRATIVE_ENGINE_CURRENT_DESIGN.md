@@ -84,7 +84,7 @@ Weekly briefing:
 | `econ_calendar.py` | `scripts/trader/signals/` | Economic event retrieval + US-only filter |
 | `day_type.py` | `scripts/trader/signals/` | Day type classifier (clean/CPI/NFP/FOMC/Jackson Hole/special) |
 | `narrative_stats.yaml` | `scripts/trader/config/` | Static config: day types, killzones, dead zones, no-trade rules |
-| `weekly_macro_sentiment.yaml` | `config/` | Weekly curated macro theme + event sentiment (ISO week-keyed) |
+| `weekly_macro_sentiment.yaml` | `scripts/config/` | Weekly curated macro theme + event sentiment (ISO week-keyed) |
 
 ### LLM configuration
 
@@ -247,7 +247,7 @@ Mode-filtered: premarket (full day), open (AM 09:30-11:30), intraday (PM 12:00-1
 - "Require M5 candle close above 50% of order block before taking a trade" (conf 0.90)
 - "Recovery: 80% of setups occur 20-60 min post-release" (ICT_CONCEPTS_KB §14)
 
-### Weekly macro sentiment (`config/weekly_macro_sentiment.yaml`)
+### Weekly macro sentiment (`scripts/config/weekly_macro_sentiment.yaml`)
 
 Curated current-week context that the KB cannot supply (KB = historical methodology, not current market narrative). ISO week-keyed (`YYYY-Www`). Provides:
 - `macro_theme` — one-paragraph current-week narrative

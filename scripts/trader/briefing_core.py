@@ -756,7 +756,7 @@ def load_unified_levels_txt(txt_path: Path) -> dict[str, dict]:
 def load_weekly_macro_sentiment(target_date: date | None = None) -> dict | None:
     """Load the weekly macro sentiment config for the given date's ISO week.
 
-    Reads ``config/weekly_macro_sentiment.yaml`` and returns the week's
+    Reads ``scripts/config/weekly_macro_sentiment.yaml`` and returns the week's
     config dict, or ``None`` if the file is missing or the week key doesn't match.
 
     The week key format is ISO: ``YYYY-Www`` (e.g. ``2026-W30``).
@@ -767,7 +767,7 @@ def load_weekly_macro_sentiment(target_date: date | None = None) -> dict | None:
     if target_date is None:
         target_date = _date.today()
 
-    config_path = REPO_ROOT / "config" / "weekly_macro_sentiment.yaml"
+    config_path = REPO_ROOT / "scripts" / "config" / "weekly_macro_sentiment.yaml"
     if not config_path.exists():
         return None
 
@@ -3886,7 +3886,7 @@ def build_premarket_context(
         log.warning("[premarket] Weekly timeline / time map failed: %s", e)
 
     # ── Weekly macro sentiment (curated config) ──
-    # Loads config/weekly_macro_sentiment.yaml for the current ISO week.
+    # Loads scripts/config/weekly_macro_sentiment.yaml for the current ISO week.
     # Provides macro_theme + event_sentiment that the KB cannot (current-week
     # narrative). Skipped gracefully if file is missing or week not configured.
     try:
