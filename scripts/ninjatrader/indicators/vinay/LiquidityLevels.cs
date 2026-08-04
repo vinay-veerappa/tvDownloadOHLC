@@ -2328,35 +2328,24 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             var activeLevelsToDraw = GetActiveLevels();
 
-            bool isDark = IsDarkChart(chartControl);
+            // v5: resolve category colors through the canonical scheme system
+            // (NtPalette) instead of a hardcoded dual isDark dictionary.
+            NtScheme scheme = NtPalette.DetectScheme(chartControl.Properties.ChartBackground as System.Windows.Media.SolidColorBrush);
+            bool isDark = scheme == NtScheme.Midnight;
 
-            var categoryColors = isDark
-                ? new Dictionary<LevelCategory, SharpDX.Color>
-                {
-                    { LevelCategory.PriorDay,     new SharpDX.Color(0x00, 0xE6, 0x76, 255) }, // Neon Green
-                    { LevelCategory.PriorWeek,    new SharpDX.Color(0x00, 0xE5, 0xFF, 255) }, // Electric Cyan
-                    { LevelCategory.PriorMonth,   new SharpDX.Color(0x00, 0xB0, 0xFF, 255) }, // Sky Blue
-                    { LevelCategory.SessionOpen,  new SharpDX.Color(0xFF, 0xEA, 0x00, 255) }, // Bright Yellow
-                    { LevelCategory.SessionRange, new SharpDX.Color(0x29, 0x79, 0xFF, 255) }, // Vivid Blue
-                    { LevelCategory.Intraday,     new SharpDX.Color(0x76, 0xFF, 0x03, 255) }, // Lime
-                    { LevelCategory.VolumeProfile,new SharpDX.Color(0xFF, 0x91, 0x00, 255) }, // Vivid Orange
-                    { LevelCategory.Structure,    new SharpDX.Color(0xD5, 0x00, 0xF9, 255) }, // Bright Purple
-                    { LevelCategory.Pivot,        new SharpDX.Color(0xFF, 0x40, 0x81, 255) }, // Pink/Magenta
-                    { LevelCategory.Fib,          new SharpDX.Color(0xFF, 0xAB, 0x00, 255) }, // Gold
-                }
-                : new Dictionary<LevelCategory, SharpDX.Color>
-                {
-                    { LevelCategory.PriorDay,     new SharpDX.Color(0x00, 0x7E, 0x33, 255) }, // Dark Green
-                    { LevelCategory.PriorWeek,    new SharpDX.Color(0x00, 0x83, 0x8F, 255) }, // Deep Cyan
-                    { LevelCategory.PriorMonth,   new SharpDX.Color(0x02, 0x77, 0xBD, 255) }, // Deep Ocean Blue
-                    { LevelCategory.SessionOpen,  new SharpDX.Color(0xD8, 0x43, 0x15, 255) }, // Burnt Orange
-                    { LevelCategory.SessionRange, new SharpDX.Color(0x15, 0x65, 0xC0, 255) }, // Royal Blue
-                    { LevelCategory.Intraday,     new SharpDX.Color(0x2E, 0x7D, 0x32, 255) }, // Dark Lime/Forest
-                    { LevelCategory.VolumeProfile,new SharpDX.Color(0xEF, 0x6C, 0x00, 255) }, // Dark Orange
-                    { LevelCategory.Structure,    new SharpDX.Color(0x6A, 0x1B, 0x9A, 255) }, // Deep Purple
-                    { LevelCategory.Pivot,        new SharpDX.Color(0xC2, 0x18, 0x5B, 255) }, // Deep Crimson
-                    { LevelCategory.Fib,          new SharpDX.Color(0xF5, 0x7F, 0x17, 255) }, // Dark Amber
-                };
+            var categoryColors = new Dictionary<LevelCategory, SharpDX.Color>
+            {
+                { LevelCategory.PriorDay,     NtPalette.Resolve(NtPalette.Bull, scheme) },
+                { LevelCategory.PriorWeek,    NtPalette.Resolve(NtPalette.Average, scheme) },
+                { LevelCategory.PriorMonth,   NtPalette.Resolve(NtPalette.Pivot, scheme) },
+                { LevelCategory.SessionOpen,  NtPalette.Resolve(NtPalette.Caution, scheme) },
+                { LevelCategory.SessionRange, NtPalette.Resolve(NtPalette.Pivot, scheme) },
+                { LevelCategory.Intraday,     NtPalette.Resolve(NtPalette.Bull, scheme) },
+                { LevelCategory.VolumeProfile,NtPalette.Resolve(NtPalette.Stretch, scheme) },
+                { LevelCategory.Structure,    NtPalette.Resolve(NtPalette.Ny2, scheme) },
+                { LevelCategory.Pivot,        NtPalette.Resolve(NtPalette.MaxReversal, scheme) },
+                { LevelCategory.Fib,          NtPalette.Resolve(NtPalette.Median, scheme) },
+            };
 
             float chartLeftX = chartControl.GetXByBarIndex(ChartBars, ChartBars.FromIndex);
             float chartRightX = chartControl.GetXByBarIndex(ChartBars, ChartBars.ToIndex) + (float)chartControl.Properties.BarDistance;
