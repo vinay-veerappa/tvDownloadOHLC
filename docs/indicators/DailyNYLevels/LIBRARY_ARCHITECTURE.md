@@ -61,24 +61,24 @@ Every drawing operation passes through five logical layers. Each layer has a cle
                             │
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Layer A — Lifecycle manager                                   │
-│ (draw registry, tag convention, state tracking, cleanup)      │
+│ Layer A — Tag-based renderer                                   │
+│ (draw registry, tag convention, create/update/delete, cleanup) │
 │ Lives in: PineDrawingCore                                     │
 └──────────────────────────────────────────────────────────────┘
                             │
                             ▼
                   Platform drawing API
                   (Pine line.new, box.new, etc. or
-                   NT8 Draw.Line, Draw.Rectangle, etc.)
+                   NT8 SharpDX OnRender primitives)
 ```
 
 ### 2.1 Layer responsibilities
 
-**Layer A — Lifecycle manager.** Owns the draw registry. Every drawn object gets a stable tag. When the indicator re-renders, the manager reconciles: create new, update changed, delete removed, transition between lifecycle states (forming → finalized → historical → expired). On NT8, mutates in place when possible to avoid flicker. On Pine, reconciles through delete-and-recreate since Pine objects are immutable once created beyond their basic setters.
+**Layer A — Tag-based renderer.** Owns the draw registry. Every drawn object gets a stable tag. When the indicator re-renders, the renderer reconciles: create new, update changed, delete removed. There are **no lifecycle state transitions** (see `VISUAL_SYSTEM.md §8`). On NT8, mutates in place when possible to avoid flicker. On Pine, reconciles through delete-and-recreate since Pine objects are immutable once created beyond their basic setters.
 
-**Layer B — Style resolver.** Takes abstract tokens (`bull`, `median`, `transparency_zone`, `P-tier width`) and resolves them to concrete values under the current theme and display profile. Cached per render cycle.
+**Layer B — Style resolver.** Takes abstract tokens (`bull`, `median`, `transparency_zone`, `P-tier width`) and resolves them to concrete values under the current color scheme and display profile. Cached per render cycle.
 
-**Layer C — Primitives.** Thin wrappers around the platform's drawing API. Every drawing call goes through these; no indicator code invokes `line.new` or `Draw.Line` directly. Primitives are: `line`, `box`, `label`, `table`, `polyline`, `linefill`, `vline`. Each primitive accepts already-resolved values (concrete colors, widths, sizes) and a tag from the lifecycle manager.
+**Layer C — Primitives.** Thin wrappers around the platform's drawing API. Every drawing call goes through these; no indicator code invokes `line.new` or `Draw.Line` directly. Primitives are: `line`, `box`, `label`, `table`, `polyline`, `linefill`, `vline`. Each primitive accepts already-resolved values (concrete colors, widths, sizes) and a tag from the tag-based renderer.
 
 **Layer D — Label registry.** Handles label collision. Indicators call `f_register_label(tag, x, y, format_string, runtime_data)`. The registry:
 - Parses the format string and substitutes runtime data
@@ -154,13 +154,13 @@ The system splits into three tiers.
 
 Contents:
 
-- Layer A: lifecycle manager, draw registry, tag convention, state tracking, cleanup routines, historical state transitions, retention policy enforcement
+- Layer A: tag-based renderer, draw registry, tag convention, cleanup routines, retention policy enforcement
 - Layer B: style resolver (`f_resolve_color`, `f_display_profile_scale`, `f_merge_threshold_for_symbol`)
 - Layer C: primitives — `f_draw_line`, `f_draw_box`, `f_draw_label`, `f_draw_table_cell`, `f_draw_polyline`, `f_draw_linefill`, `f_draw_vline`
 - Layer D: label registry (`f_label_registry_push`, `f_label_registry_render`, `f_label_registry_render_merged`), format-string interpreter
 - Hand-optimized drawing: `f_draw_box_ex` (added for advanced zone rendering)
 - Helpers: `f_near_any`, `f_unicode_bar`, `f_unicode_sparkline`, `f_unicode_progress`
-- Utility types: `PineDrawingState`, `LabelEntry`, `LabelRegistry`, `DisplayProfile` enum, `Theme` enum
+- Utility types: `PineDrawingState`, `LabelEntry`, `LabelRegistry`, `DisplayProfile` enum, `Scheme` enum
 
 ### 3.2 Family tier
 
@@ -300,7 +300,7 @@ Old indicators continue to work against the monolithic `PineDrawingLib` path unt
 
 ## 5. NT8 / NinjaScript architecture
 
-**Status caveat:** the NT8 side is design target, not yet validated. You don't have existing NinjaScript drawing code to validate against. This section describes the target architecture; it will likely need adjustment when actually implemented.
+**Status (v5):** validated against the shipped SharpDX `OnRender` code in `scripts/ninjatrader/indicators/vinay/` (`LiquidityLevels.cs`, `SessionRanges.cs`). The NT8 rendering path is **custom SharpDX `OnRender`** (premium chrome), not the `Draw.*` static API. The MCP reads the indicator **data model**, not the canvas.
 
 ### 5.1 Namespace structure
 
@@ -309,14 +309,16 @@ Pine's multi-library split translates to C# namespaces within a single assembly:
 ```
 NtDrawingLib
 ├── Core/
-│   ├── LifecycleManager.cs
+│   ├── TagRenderer.cs        # tag-based create/update/delete (no lifecycle states)
 │   ├── DrawRegistry.cs
-│   ├── StyleResolver.cs
+│   ├── StyleResolver.cs      # color scheme + display profile
+│   ├── Scheme.cs             # named schemes (Midnight/Paper/Custom) + auto-detect
 │   ├── LabelRegistry.cs
 │   ├── FormatStringInterpreter.cs
 │   ├── Primitives.cs
 │   ├── Palette.cs
 │   ├── DisplayProfile.cs
+│   ├── Badge.cs              # fixed-contrast pill label renderer
 │   └── UnicodeHelpers.cs
 ├── HorizontalLevels/
 │   ├── SessionLevels.cs
@@ -362,22 +364,24 @@ Indicators and strategies reference the assembly and use only the namespaces the
 
 ### 5.2 Platform primitive mapping
 
-NinjaScript uses `Draw.*` static methods for chart annotations.
+The NT8 rendering path is **custom SharpDX `OnRender`** (premium chrome: badges, rounded corners, shadows, HUD tables). This matches the shipped code in `scripts/ninjatrader/indicators/vinay/`. The `Draw.*` static API is used only where a separate indicator needs user-editable chart objects (e.g., a future risk/reward indicator) — unrelated to this system.
 
 | Primitive | NT8 implementation |
 |-----------|---------------------|
-| line | `Draw.Line(this, tag, ...)` with `DashStyleHelper` |
-| box | `Draw.Rectangle(this, tag, ...)` |
-| label | `Draw.Text(this, tag, ...)` with `SimpleFont` |
-| vline | `Draw.VerticalLine(this, tag, ...)` |
-| arrow marker | `Draw.ArrowUp/ArrowDown(...)` |
-| dot marker | `Draw.Dot(...)` |
-| diamond marker | `Draw.Diamond(...)` |
-| triangle marker | `Draw.TriangleUp/TriangleDown(...)` |
-| x marker | `Draw.Text(...)` with "✗" glyph or custom `OnRender` |
-| polyline | Compose from multiple `Draw.Line(...)` OR custom `OnRender` + SharpDX `PathGeometry` |
-| linefill | `Draw.Region(...)` OR stacked `Draw.Rectangle` OR custom `OnRender` with SharpDX |
-| table | Custom `OnRender(...)` with SharpDX `TextFormat` and `RectangleLayoutF` |
+| line | `RenderTarget.DrawLine` with `SolidColorBrush` + `StrokeStyle` |
+| box | `RenderTarget.FillRectangle` / `DrawRectangle` |
+| label | `RenderTarget.DrawTextLayout` with `TextFormat` (badge pill) |
+| vline | `RenderTarget.DrawLine` (vertical) |
+| arrow marker | `RenderTarget.FillEllipse` / custom geometry |
+| dot marker | `RenderTarget.FillEllipse` |
+| diamond marker | `RenderTarget.FillGeometry` (custom path) |
+| triangle marker | `RenderTarget.FillGeometry` (custom path) |
+| x marker | `RenderTarget.DrawTextLayout` with "✗" glyph |
+| polyline | `RenderTarget.DrawLine` segments or `PathGeometry` |
+| linefill | `RenderTarget.FillGeometry` |
+| table | `RenderTarget.FillRectangle` + `DrawTextLayout` (HUD) |
+
+**Resource note:** every `SolidColorBrush`, `TextFormat`, and `TextLayout` must be disposed each frame to avoid leaks in the tag-based render loop.
 
 ### 5.3 Known NT8 limitations
 
@@ -387,11 +391,11 @@ The following are genuine platform limitations that the NT8 implementation must 
 1. Compose from a series of `Draw.Line` calls (simple, but each segment is a separate draw object with its own tag)
 2. Custom `OnRender` with SharpDX `PathGeometry` (faster, better visual quality, but requires SharpDX knowledge and doesn't produce chart-editable objects)
 
-Proposed: use option 1 for Layer E, letting the lifecycle manager batch-tag the segments.
+Proposed: use option 2 (SharpDX `PathGeometry`) since the system already renders via SharpDX.
 
 **No native linefill.** Pine's `linefill.new` fills between two lines cleanly. NT8's closest equivalent is `Draw.Region` (if the underlying lines are indicator plots) or stacked `Draw.Rectangle`. For arbitrary linefill between two `Draw.Line` objects, a custom `OnRender` with SharpDX `FillGeometry` is required.
 
-Proposed: use stacked rectangles for simple fills, fall back to custom render for complex cases.
+Proposed: use SharpDX `FillGeometry` for fills.
 
 **No native table.** NT8 has no chart-overlay table primitive. Every table is rendered via `OnRender(ChartControl, ChartScale)` using SharpDX:
 - `TextFormat` for text styling
@@ -399,7 +403,7 @@ Proposed: use stacked rectangles for simple fills, fall back to custom render fo
 - `RectangleF` for cell geometry
 - Careful `OnRender` performance: tables render every frame
 
-Proposed: `PineDrawingTables` Core helpers provide a `RenderTable` utility that takes a table schema + data and handles all the SharpDX calls. Indicators just declare the table; the library handles rendering.
+Proposed: `NtDrawingLib.Tables` Core helpers provide a `RenderTable` utility that takes a table schema + data and handles all the SharpDX calls. Indicators just declare the table; the library handles rendering.
 
 **No true hover tooltip in chart drawing API.** Pine's `label.new(..., tooltip=...)` shows platform-native tooltip on hover. NT8's `Draw.Text` has no tooltip parameter. Workarounds:
 1. Multi-line text with the tooltip content inline (always visible, defeats the purpose)
@@ -414,10 +418,22 @@ Proposed: the template's `label_mode_default` is respected on NT8 as follows:
 
 This is not ideal but is realistic for the platform. Tooltip-heavy indicators will look different on Pine vs NT8 and that's documented.
 
+### 5.5 MCP data-model access
+
+The MCP does **not** read the canvas. It reads the indicator's **data model** (§8 of `VISUAL_SYSTEM.md`) — the in-memory level structure. A new endpoint (separate MCP task) queries live indicator instances and returns semantic level data:
+
+```json
+[{ "key": "PDH_2026_08_03", "label": "PDH", "price": 4200.5,
+   "category": "price_level", "scheme_color": "#38BD8A",
+   "state": "active", "date": "2026-08-03" }]
+```
+
+This is richer and cleaner than scraping geometry. Viewing the actual picture uses the chart snapshot. The tag grammar (§6) and data-model structure are designed now so the endpoint is trivial later.
+
 ### 5.4 NT8 implementation priority
 
 Migration order when NT8 work begins:
-1. Core primitives and lifecycle (`NtDrawingLib.Core`)
+1. Core primitives and tag-based renderer (`NtDrawingLib.Core`)
 2. `HorizontalLevels` family (covers most indicators)
 3. `Tables` family (dashboards and stats)
 4. `Zones` family
@@ -431,7 +447,7 @@ First NT8 indicator: most likely the simplest one that has existing Pine equival
 
 ## 6. Tag convention
 
-Every drawn object carries a stable tag used for lifecycle tracking.
+Every drawn object carries a stable tag used for **tag-based create/update/delete** (not lifecycle state transitions).
 
 ### 6.1 Tag structure
 
@@ -449,15 +465,19 @@ Examples:
 - `projected_candle_forecast:projected_candle:lower_wick`
 - `projected_candle_forecast:projected_candle:label`
 
-Composite templates produce multiple tagged objects under one instance key. The lifecycle manager treats them as a unit: deleting the instance deletes all sub-tagged objects.
+Composite templates produce multiple tagged objects under one instance key. The tag-based renderer treats them as a unit: deleting the instance deletes all sub-tagged objects.
 
 ### 6.2 Tag uniqueness
 
-`instance_key` is the indicator's responsibility. Instance keys must be stable across render cycles — the lifecycle manager reconciles by comparing tags. If an indicator recomputes a London high at bar N with the same instance key, the manager finds the existing tagged objects and updates them in place (on NT8) or deletes and recreates (on Pine).
+`instance_key` is the indicator's responsibility. Instance keys must be stable across render cycles — the renderer reconciles by comparing tags. If an indicator recomputes a London high at bar N with the same instance key, the renderer finds the existing tagged objects and updates them in place (on NT8) or deletes and recreates (on Pine).
 
 ### 6.3 Cleanup
 
-At render start, the lifecycle manager marks all existing objects as "pending reconcile." Each draw call removes the pending mark from the matched tag. At render end, objects still marked pending are deleted.
+At render start, the tag-based renderer marks all existing objects as "pending reconcile." Each draw call removes the pending mark from the matched tag. At render end, objects still marked pending are deleted.
+
+### 6.4 MCP lookup
+
+The `instance_key` is also the lookup key for the MCP data-model endpoint (§5.5). The data-model record's `key` matches the tag's `instance_key`, so the MCP can correlate a rendered object to its semantic record.
 
 ---
 
@@ -571,3 +591,4 @@ Deprecated functions carry `@deprecated` annotation with migration note. Trackin
 | 1.0 | 2026-04-18 | Initial architecture (Daily NY Levels focus) |
 | 2.0 | 2026-04-18 | Multi-indicator, cross-platform, five-layer model |
 | 3.0 | 2026-04-18 | Library split into Core + family + Specialized tiers. NT8 namespace plan. Known platform limitations documented. Migration plan for Daily NY Levels. |
+| 4.0 | 2026-08-04 | Validated NT8 architecture against shipped SharpDX OnRender code. Layer A renamed to tag-based renderer (no lifecycle states). NT8 rendering path = SharpDX; MCP reads the data model. Added §5.5 MCP data-model access. |

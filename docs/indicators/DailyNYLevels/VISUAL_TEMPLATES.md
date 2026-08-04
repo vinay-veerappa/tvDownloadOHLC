@@ -23,7 +23,7 @@ Every template in this catalog specifies:
 - **Variants** — sub-types (if any)
 - **Directional variants** — bull/bear, call/put, up/down, or none
 - **Label policy** — format string, tooltip format, font, anchor, collision strategy, label mode (Label/Tooltip/Both/None)
-- **Lifecycle defaults** — historical retention, state transitions
+- **Lifecycle defaults** — historical retention, state styling
 - **Library** — which drawing library contains its renderer
 
 ### 1.1 How to read template entries
@@ -52,7 +52,7 @@ template_name:
     label_mode_default: Label | Tooltip | Both | None
     collision_strategy: merge | stagger | hide | off
   lifecycle:
-    supported_states: [forming, finalized, historical, expired]
+    supported_states: [active, inactive, historical]
     historical_retention: <integer or "unlimited">
     historical_styling: { transparency_delta, width_delta, label_suffix }
   color_binding:
@@ -2464,7 +2464,7 @@ A generalization: any canonical level template where the label format includes a
 
 ### 11.1 Template immutability
 
-Canonical templates are API surface. Once a template is published in a family library version, changing its styling, label format, or lifecycle behavior is a breaking change. Follow the versioning rules in `VISUAL_SYSTEM.md §10`.
+Canonical templates are API surface. Once a template is published in a family library version, changing its styling, label format, or retention behavior is a breaking change. Follow the versioning rules in `VISUAL_SYSTEM.md §10`.
 
 ### 11.2 Adding a new canonical template
 

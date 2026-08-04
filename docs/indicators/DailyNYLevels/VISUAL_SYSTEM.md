@@ -1,9 +1,9 @@
 # Visual System
 
-**Version:** 4.0
+**Version:** 5.0
 **Scope:** Base visual layer for chart indicators and strategies (Pine Script v6 + NinjaScript).
 **Out of scope:** Next.js dashboard and web surfaces (separate paradigm).
-**Parent for:** `VISUAL_TEMPLATES.md`, `LIBRARY_ARCHITECTURE.md`, `INDICATORS/*.md`, `STRATEGIES/*.md`.
+**Parent for:** `VISUAL_TEMPLATES.md`, `LIBRARY_ARCHITECTURE.md`, `INDICATORS/*.md`, `STRATEGIES/*.md`, `ABBREVIATIONS.md`.
 
 ---
 
@@ -14,11 +14,11 @@ This document defines the **base visual layer** — everything that indicators a
 - **Palette** — the complete set of named colors available to the system
 - **Typography** — text sizing, fonts, anchor rules
 - **Geometry** — line widths, transparencies, padding, gaps
-- **Theme resolver** — how a color token resolves to a concrete color under Dark / Light / Custom themes
+- **Color scheme** — how a color token resolves to a concrete color under a named scheme (Midnight / Paper / Custom)
 - **Display profile** — how sizes scale for different physical display setups (Tiny through Huge)
 - **State modifiers** — how element state (active, inactive, suppressed, etc.) affects rendering
 - **Render pipeline** — the canonical sequence of steps every indicator follows
-- **Lifecycle state machine** — how elements transition from forming through expired
+- **Data model & history** — how past level values are retained and exposed (replaces the former lifecycle state machine)
 - **Governance** — versioning and deprecation rules
 
 What's **not** in this document:
@@ -34,9 +34,9 @@ The system follows five principles:
 
 - **Single source of truth.** Every visual value has exactly one definition. If it's wrong, it's wrong in one place, fix it in one place.
 - **Templates own styling, indicators own semantics.** Indicators describe what they're drawing; templates describe how it's drawn.
-- **Profile-scaled, theme-aware.** A display profile and theme are chart-wide inputs. Every sizing and color token responds to them automatically.
+- **Profile-scaled, scheme-aware.** A display profile and color scheme are chart-wide inputs. Every sizing and color token responds to them automatically.
 - **Canonical first.** Templates in the canonical catalog are stable contracts. Indicator-specific templates are the escape hatch, not the norm.
-- **Contrast-validated.** Every (color, theme) pair is verified for adequate contrast on its intended background. No guessing.
+- **Contrast-validated.** Every (color, scheme) pair is verified for adequate contrast on its intended background. No guessing.
 
 ---
 
@@ -105,19 +105,26 @@ Used by session-based templates (session ranges, session-anchored levels, sessio
 
 **Contrast validation:** all session colors pass WCAG AA against their respective theme backgrounds.
 
-### 2.4 Theme resolver
+### 2.4 Color schemes (replaces "theme resolver")
 
-Color resolution follows this function, available through `PineDrawingCore`:
+Themes exist only to address light and dark charts. Because color is a user preference, the system uses **named color schemes** rather than a rigid Dark/Light/Custom resolver. A scheme is a user-selectable preset that maps every palette token to a concrete color.
+
+**Named presets:**
+- `Midnight` — dark-slate chrome (default for dark charts)
+- `Paper` — light neutral chrome (default for light charts)
+- `Custom` — user-supplied overrides pass through unchanged
+
+**Selection:** each indicator exposes a single `Scheme` input. Default is **auto-detect** from the chart background luminance (`IsDarkChart` — luminance < 0.5 → `Midnight`, else `Paper`), with a manual override. Adding a new theme is simply adding a named preset to the scheme registry.
+
+**Resolution:** happens once per render cycle. All drawing calls in that cycle consume the resolved color, not the token.
 
 ```pine
-f_resolve_color(string token, string theme_mode) =>
-    // theme_mode: "Dark" | "Light" | "Custom"
-    // returns the concrete color for this token under the active theme
+f_resolve_color(string token, string scheme) =>
+    // scheme: "Midnight" | "Paper" | "Custom"
+    // returns the concrete color for this token under the active scheme
 ```
 
-When `theme_mode == "Custom"`, the user's input color passes through unchanged. When `"Dark"` or `"Light"`, the palette value for that theme is used.
-
-Resolution happens once per render cycle in the indicator. All drawing calls in that cycle consume the resolved color, not the token.
+**Platform note:** luminance auto-detection is trivial in Pine; on NT8 it reads `ChartControl.Properties.ChartBackground` (see `LIBRARY_ARCHITECTURE.md §5`).
 
 ---
 
@@ -159,9 +166,15 @@ Labels anchor to their element with a convention based on position:
 
 Rule of thumb: **when density is low, use arrows; when density is high, use `style_none`.** Canonical templates declare their intended label style.
 
-### 3.4 Text color
+### 3.4 Text color — hybrid label model
 
-Label text color defaults to the element's own color (a green bull line gets a green label). Exception: in narrative dashboards and status tables, label text uses `text_primary` or `text_dim` per the cell's semantic meaning.
+Labels use a **fixed-contrast badge** (theme-agnostic pill): the label background is a constant dark pill (`#1E222D`), so the text color only needs to contrast with the pill, not the variable chart background. This is the modern pattern (TradingView, Apple) and is orthogonal to the line-theme question.
+
+- **Line/geometry colors** resolve per scheme (§2.4).
+- **Label text color** defaults to the element's own color (a green bull line gets a green label) rendered on the fixed pill.
+- **Exception:** in narrative dashboards and status tables, label text uses `text_primary` or `text_dim` per the cell's semantic meaning.
+
+Because the pill is constant, labels stay readable on any chart regardless of scheme.
 
 ### 3.5 Profile-scaled typography
 
@@ -281,6 +294,8 @@ The library provides `f_display_profile_scale(token, profile) → value` to reso
 
 Every rendered element carries a **state** that modulates its visual emphasis. The library applies state modifiers automatically when the indicator declares state on a binding.
 
+> **Note (v5):** the former lifecycle states (`historical_1d/2d/Nd`, `expired`) are **removed**. Historical retention is handled by the **data-model history list** (§8), not by render-state transitions. The states below are purely visual-emphasis modifiers.
+
 ### 6.1 State vocabulary
 
 | State | Meaning | Default visual treatment |
@@ -290,10 +305,7 @@ Every rendered element carries a **state** that modulates its visual emphasis. T
 | `suppressed` | Hidden due to collision or priority | Not drawn |
 | `merged` | Represented by a combined label/aggregate | Line drawn, label suppressed (handled by merge logic) |
 | `debug` | Debug-only element | Drawn but with `transparency_background`; never competes with production elements |
-| `historical_1d` | One session back | +30 transparency; label gets `[-1d]` suffix |
-| `historical_2d` | Two sessions back | +45 transparency; label gets `[-2d]` suffix |
-| `historical_Nd` | N sessions back | +45 transparency (cap); label gets `[-Nd]` suffix |
-| `expired` | Retention exceeded | Not drawn; registry entry cleared |
+| `historical` | Retained past value (from history list) | +30 transparency; label gets `[-Nd]` suffix per retention depth |
 
 ### 6.2 Adaptive states
 
@@ -350,15 +362,15 @@ Every indicator follows this canonical sequence per render cycle:
 
 5. Draw
    Invoke semantic renderer for each element. The library issues primitive
-   calls through the lifecycle manager, which tags each draw object.
+   calls through the tag-based renderer, which tags each draw object.
 
 6. Flush registry
    Render the final label set from the registry after merge/stagger
    decisions are complete.
 
 7. Reconcile (NT8)
-   On NT8, the lifecycle manager mutates in-place when style and geometry
-   match existing tags, avoiding flicker.
+   On NT8, the tag-based renderer creates/updates/deletes draw objects by
+   tag each cycle, avoiding flicker. No lifecycle state transitions.
    On Pine, reconcile degenerates to delete-and-recreate; the registry
    still tracks tags for selective clearing.
 ```
@@ -373,48 +385,46 @@ The indicator now uses a library-owned unified label registry flow in Pine:
 
 This preserves existing merge-threshold semantics while moving ownership from indicator code into the shared drawing layer.
 
+### 7.2 NT8 rendering path (v5)
+
+On NT8, rendering uses **custom SharpDX `OnRender`** for premium chrome (badges, rounded corners, shadows, HUD tables). Levels/zones/labels are drawn in the render pass and reconciled by tag. There is **no drag/delete/edit** interaction for these indicators (a separate risk/reward indicator may use `Draw.*` objects, but that is unrelated).
+
+**MCP readability:** the MCP does **not** read the canvas. It reads the indicator's **data model** (§8) — the in-memory level structure — so SharpDX rendering does not affect MCP-readability. Viewing the actual picture uses the chart snapshot.
+
+**Resource note:** SharpDX `OnRender` requires strict disposal of `SolidColorBrush`/`TextFormat`/`TextLayout` objects each frame to avoid memory leaks in the tag-based render loop.
+
 ---
 
-## 8. Lifecycle state machine
+## 8. Data model & history (replaces "lifecycle state machine")
 
-Every element has a lifecycle governed by a four-state machine.
+The former four-state lifecycle machine (forming → finalized → historical → expired) is **removed**. It was over-engineered and did not deliver on TradingView. It is replaced by two minimal pieces:
 
-### 8.1 State diagram
+1. **Data-model history list** — the indicator retains past level *values* (price, label, category, date, state) in its own history structure. This is the real goal: keeping historical values for validation and MCP reads.
+2. **Tag-based renderer** — draws the current visible slice and creates/updates/deletes by tag each cycle. No state transitions.
 
+### 8.1 Data-model structure
+
+Every level the indicator computes is stored as a semantic record:
+
+```json
+{
+  "key": "PDH_2026_08_03",
+  "label": "PDH",
+  "price": 4200.5,
+  "category": "price_level",
+  "scheme_color": "#38BD8A",
+  "state": "active",
+  "date": "2026-08-03"
+}
 ```
-         element created
-              │
-              ▼
-         ┌────────┐
-         │ forming│  ── element evolving during its active window
-         └────┬───┘     (session in progress, range still expanding,
-              │          threshold not yet met)
-              │
-              │  completion event
-              │  (session close, window end, threshold hit)
-              ▼
-         ┌─────────┐
-         │finalized│  ── current session's completed element;
-         └────┬────┘     primary focus
-              │
-              │  next session produces its own finalized
-              ▼
-         ┌──────────┐
-         │historical│  ── prior session's element, kept for context
-         └────┬─────┘     per template's historical_retention setting
-              │
-              │  retention count exceeded
-              ▼
-         ┌────────┐
-         │ expired│  ── removed from display; registry cleared
-         └────────┘
-```
+
+- `key` — stable instance key (tag grammar, see `LIBRARY_ARCHITECTURE.md §6`).
+- `label` — canonical compact code from `ABBREVIATIONS.md`.
+- `state` — a simple category tag (`active` / `historical`), **not** a lifecycle phase.
 
 ### 8.2 Historical retention
 
-Every template declares its default historical retention. Indicators can override per-binding.
-
-Default retention values by family:
+Retention depth is **configurable per template** and **not infinite**. For basic levels (PDH/PDL, session boundaries) the user can configure "show last X days" to scroll and validate. Defaults by family:
 
 | Template family | Default retention |
 |-----------------|-------------------|
@@ -428,21 +438,21 @@ Default retention values by family:
 
 ### 8.3 Historical styling
 
-When an element transitions to `historical_1d`, `historical_2d`, etc., the library applies:
+When a retained value is rendered as `historical`, the library applies:
 
-- Transparency delta per state (see §6.1)
-- Label suffix: `[-1d]`, `[-2d]`, `[-Nd]`
+- Transparency delta (see §6.1)
+- Label suffix: `[-Nd]`
 - Optional width reduction (template-specific)
 
-The indicator author never manually manages historical rendering. The indicator just creates new instances; the library handles state transitions based on retention policy and age.
+The indicator author never manually manages historical rendering. The indicator just appends to the history list; the renderer styles retained entries by age.
 
 ### 8.4 Pine implementation note
 
-Pine re-runs the script from bar 1 on every bar. State is computed at render time by comparing instance age (in sessions or bars) to the current bar. This means replay and backtesting work naturally: at any historical bar, the indicator reflects what it knew at that bar, and state machine transitions happen in their natural order.
+Pine re-runs the script from bar 1 on every bar. The history list is recomputed at render time by comparing instance age to the current bar. Replay and backtesting work naturally: at any historical bar, the indicator reflects what it knew at that bar.
 
 ### 8.5 NT8 implementation note
 
-NT8 is event-driven. State transitions fire on bar close events or session close events. The lifecycle manager tracks element age in sessions; when a new session's finalized element appears, prior elements transition to historical with the registry updating in place.
+NT8 is event-driven. The history list is a C# collection persisted across bars. On bar/session close, new finalized values are appended; the renderer draws the current slice and styles retained entries by age. The history list is the source the MCP endpoint reads.
 
 ---
 
@@ -456,11 +466,11 @@ The drawing system is split into tiers:
 
 Required by every indicator. Contains:
 
-- Lifecycle manager (draw registry, tag convention, cleanup)
-- Style resolver (theme + display profile)
+- Tag-based renderer (draw registry, tag convention, create/update/delete)
+- Style resolver (color scheme + display profile)
 - Primitives (line, box, label, table, polyline, linefill, vline)
 - Label registry (merge, stagger, collision resolution)
-- Helpers (`f_theme_color`, `f_near_any`, `f_display_profile_scale`, `f_merge_threshold_for_symbol`, format-string interpreter with `{if:slot}...{endif}` support)
+- Helpers (`f_scheme_color`, `f_near_any`, `f_display_profile_scale`, `f_merge_threshold_for_symbol`, format-string interpreter with `{if:slot}...{endif}` support)
 
 Estimated size: 2,000-3,000 lines.
 
@@ -548,9 +558,9 @@ Documented exceptions require justification in the indicator profile's Overrides
 - **Variant** — optional template sub-type (e.g., `line_wall` has variants `standard`, `whale`, `macro`, `golden_sweep`).
 - **Direction** — for directional templates: `bull` / `bear`, `call` / `put`, `up` / `down`, or `neutral`.
 - **Instance key** — a stable identifier for a specific element occurrence (e.g., `"london_high_2026_04_18"`). Indicators define these.
-- **State** — runtime element state (`active`, `inactive`, `suppressed`, `merged`, `debug`, `historical_Nd`, `expired`).
+- **State** — runtime visual-emphasis state (`active`, `inactive`, `suppressed`, `merged`, `debug`, `historical`). Not a lifecycle phase.
 - **Profile** — display profile (`Tiny` / `Small` / `Normal` / `Large` / `Huge`), scales sizes globally.
-- **Theme** — color theme (`Dark` / `Light` / `Custom`), selects palette values.
+- **Scheme** — named color scheme (`Midnight` / `Paper` / `Custom`), selects palette values. Replaces the former "theme" concept.
 - **Abbreviation** — the canonical compact code for a concept (e.g., `PDH`, `NYH`, `P12L`). All label text resolves through the canonical registry. See `ABBREVIATIONS.md` (generated from `scripts/config/abbreviations.json`).
 
 ---
@@ -564,3 +574,4 @@ Documented exceptions require justification in the indicator profile's Overrides
 | 3.0 | 2026-04-18 | Full rewrite. Base-layer only. Adds three-tier palette, display profile, four-state lifecycle, library splits, contrast validation. Template catalog moved to VISUAL_TEMPLATES.md. |
 | 3.1 | 2026-04-18 | Phase 2 label-registry extraction in Pine (`f_label_registry_push`, `f_label_registry_draw_merged`). |
 | 4.0 | 2026-04-20 | Unified Architecture: Removed "Phase" nomenclature. Unified Phase 1 & Phase 2 into a singular viewpoint with shared drawing ownership. |
+| 5.0 | 2026-08-04 | Design review: dropped the four-state lifecycle machine (replaced by data-model history list + tag-based renderer); themes became named color schemes (Midnight/Paper/Custom, auto-detect + override); NT8 rendering path = SharpDX OnRender with MCP reading the data model; hybrid label model (fixed-contrast badge); added abbreviations registry cross-link. |

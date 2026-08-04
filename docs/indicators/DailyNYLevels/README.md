@@ -24,11 +24,12 @@ New to this repo? Read in order:
 ui-system/
 ├── README.md                   ← you are here
 ├── HANDOFF.md                  ← IDE entry point, 5-min orientation
-├── VISUAL_SYSTEM.md            ← palette, typography, geometry, theme,
+├── VISUAL_SYSTEM.md            ← palette, typography, geometry, scheme,
 │                                  display profile, state modifiers,
-│                                  render pipeline, lifecycle, library splits
+│                                  render pipeline, data model, library splits
 ├── VISUAL_TEMPLATES.md         ← THE CATALOG — every canonical template
 │                                  (longest doc; consulted most often)
+├── ABBREVIATIONS.md            ← canonical abbreviation registry (generated)
 ├── LIBRARY_ARCHITECTURE.md     ← physical library structure, tier split,
 │                                  Pine vs NT8 mapping, migration plan
 ├── INDICATORS/
@@ -47,7 +48,7 @@ ui-system/
 
 **Approach:** strict centralization of visual decisions.
 
-- **Palette** is defined once, contrast-validated against both dark and light charts, and resolved by the library based on a theme input.
+- **Palette** is defined once, contrast-validated against both dark and light charts, and resolved by the library based on a color scheme input (Midnight/Paper/Custom).
 - **Sizes, widths, transparencies** are defined once, scaled by a single chart-wide display profile input (Tiny/Small/Normal/Large/Huge).
 - **Templates** are canonical, pre-styled presets. Every visual concept an indicator wants to render — session levels, expected moves, FVGs, walls, projected candles, distribution tables — binds to a named template in the catalog.
 - **Indicators** describe what they draw using template bindings; they never invoke drawing APIs directly.
