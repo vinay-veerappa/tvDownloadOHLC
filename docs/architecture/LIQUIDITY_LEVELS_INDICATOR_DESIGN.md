@@ -275,17 +275,39 @@ NT8 uses **close-timestamped** bars (bar stamped 08:05 opens at 08:00):
 - Sessions with 0 window bars (weekends/holidays) are **excluded** from the history — only trading days count.
 - `HrCommitDay` and `HrAdvanceToday` fire **only on the live bar** (`CurrentBar == BarsArray[0].Count - 1`), not during historical replay.
 
-### K.7 Tracked Levels (v1)
+### K.7 Tracked Levels (79 levels — all catalog entries)
 
-| Level | Price Source | Provider |
+All levels from `LiquidityLevelsCatalog.GetAllLevels()` are tracked. Each has a price provider that reconstructs the level price for a given historical session date.
+
+| Category | Levels | Price Source |
 |---|---|---|
-| PDH | Daily series (BarsArray[1]) prior high | `request.security("D", high[1])` parity |
-| PDL | Daily series prior low | Same |
-| PDC | Daily series prior close | Same |
-| P12High | Reconstructed from intraday 18:00-06:00 ET overnight window | Back-scan BarsArray[0] |
-| P12Low | Same | Same |
+| **Prior Day** (6) | PDH, PDL, PDC, PDO, PDM, Settlement | Daily series (BarsArray[1]) prior bar OHLC |
+| **Prior Week** (9) | PWH, PWL, PWM, PWC, PWO, MH, ML, GH, GL | Intraday reconstruction (week H/L scan) or daily series (day-of-week) |
+| **Prior Month** (4) | PMH, PML, PMM, PMO | Daily series — prior month H/L/Open scan |
+| **Session Opens** (13) | MidnightOpen, LondonOpen, GlobexOpen, RTHOpen, TueOpen–FriOpen, Open_04H–Open_20H | Intraday reconstruction — first bar at/after target time |
+| **Session Ranges** (9) | AsiaH, AsiaL, AsiaMid, LonH, LonL, LonMid, GlbH, GlbL, GlbMid | Intraday reconstruction — window H/L scan |
+| **London OR** (1) | LonOrMid | Intraday reconstruction — 02:00-05:00 ET window |
+| **IB** (3) | IBH, IBL, IBMid | Intraday reconstruction — 09:30-10:00 ET window |
+| **P12/NY P12** (9) | P12High, P12Low, P12Mid, NYP12High, NYP12Low, NYP12Mid, PrevNYP12High, PrevNYP12Low, PrevNYP12Mid | Intraday reconstruction — 18:00-06:00 / 06:00-17:00 ET windows |
+| **Pivots** (7) | PP, R1, R2, R3, S1, S2, S3 | Computed from PDH/PDL/PDC |
+| **Fibs** (10) | Fib 23.6%–Fib -61.8% | Computed from PDH/PDL range |
+| **Volume Profile** (8) | PrevDayPOC/VAH/VAL, OvernightPOC/VAH/VAL/High/Low | Computed from PDH/PDL or P12 reconstruction |
 
-Session-range levels (Asia/London/Globex/IB H/L) require historical per-date reconstruction — deferred.
+Array levels (StrongLevels, OBZones, NakedPOC/VAH/VAL) are not tracked — they require runtime sub-indicator data not available during DataLoaded reconstruction.
+
+### K.8 Level Price Reconstruction Methods
+
+| Method | Used By | Description |
+|---|---|---|
+| `GetPriorDailyBar(sessDate, field)` | PDH, PDL, PDC, PDO, Settlement | Scans BarsArray[1] backward for first bar with session date < target |
+| `ReconstructSessionRange(sessDate, startMin, endMin, crossesMidnight, isHigh)` | AsiaH/L, LonH/L, IBH/L, P12H/L, NYP12H/L, GlbH/L, GH, GL | Scans BarsArray[0] for bars in the time window, returns H or L |
+| `ReconstructSessionOpen(sessDate, hour, minute)` | All session opens | First bar at/after target time on session date |
+| `ReconstructWeekHighLow(sessDate, isHigh)` | PWH, PWL | Scans intraday bars for the prior week (Mon–Fri) |
+| `ReconstructDayOfWeek(sessDate, dayOfWeek, isHigh)` | MH, ML | Daily series bar for the specific day-of-week in current week |
+| `ReconstructDayOfWeekOpen(sessDate, dayOfWeek)` | TueOpen–FriOpen | Daily series open for specific day-of-week |
+| `GetPriorMonthHighLow(sessDate, isHigh)` | PMH, PML | Daily series — prior calendar month H/L |
+| `GetPriorMonthOpen(sessDate)` | PMO | Daily series — first bar of prior month |
+| `ReconstructWeekClose/Open(sessDate)` | PWC, PWO | Daily series — last/first trading day of prior week |
 
 ### K.8 Config Properties (Group "9. Hit Rate Tracking")
 
@@ -293,7 +315,7 @@ Session-range levels (Asia/London/Globex/IB H/L) require historical per-date rec
 |---|---|---|
 | EnableHitRate | true | Enable hit-rate tracking |
 | HitRateLookbackDays | 500 | Max historical trading days |
-| HitRateWindowStart | "09:30" | Hit-check window start (ET HH:mm) |
+| HitRateWindowStart | "09:30" | Hit-check window start (ET HH:mm) — set to "08:00" for TV parity |
 | HitRateWindowEnd | "16:00" | Hit-check window end |
 | HitRateDebugLevel | "PDH" | Level shown in debug table |
 | ShowHitRateDebugTable | true | Display top-right debug table |
@@ -313,9 +335,38 @@ public Dictionary<string, LevelHitStats> GetAllHitRateStats();
 public List<string> GetHitRateTrackedLevels();
 ```
 
-### K.11 Validation
+### K.11 Validation Against TradingView
 
-PDH hit rate validated against TradingView ProbabilityMap indicator (MNQ, 74-day lookback, 08:00-16:00 ET window). NT8 matches TV within ~1% (50.0% vs 51.1%). The small residual gap is attributable to one day where the daily bar boundary shifts the PDH price by one session.
+Validated against TradingView ProbabilityMap indicator (`scripts/indicators-pine/ProbabilityMap/ProbabilityMap.pine`).
+
+**Hit test parity**: TV `checkHit(price) => low <= price and price <= high` (line 226) — identical to NT8 `bar.High >= level && bar.Low <= level`.
+
+**Session boundary parity**: TV `isNewDay` at `hhmm >= 1700` (line 404) — matches NT8 `HrSessionDateFromBarEt` at 17:00 ET.
+
+**Hit-check window parity**: TV checks during `inPreMkt or inNYAM or inLunch or inNYPM` (line 1041) = 08:00-16:00 ET.
+
+**Results (NQ1!, 75-day lookback, 08:00-16:00 ET):**
+
+| Level | NT8 Hit% | NT8 Days | NT8 Streak | NT8 Max H/M | TV Hit% | TV Days | TV Streak | TV Max H/M | Match |
+|---|---|---|---|---|---|---|---|---|---|
+| PDH | 52.0% | 75 | 3 | 5/6 | 52.1% | 75 | 3 | 5/6 | ✅ |
+| PDL | 28.0% | 75 | -3 | 5/12 | 28.1% | 75 | -3 | 5/12 | ✅ |
+| PDM | 42.7% | 75 | 1 | 4/6 | 43.1% | 75 | 1 | 4/6 | ✅ |
+| GlobexOpen | 56.0% | 75 | 2 | 8/4 | 57.1% | 76 | 2 | 8/4 | ≈ (1-day offset) |
+| Settlement | 56.0% | 75 | 2 | 7/3 | 55.1% | 76 | 2 | 6/3 | ≈ (1-day offset) |
+
+The 1-day difference on GlobexOpen/Settlement (TV=76 vs NT8=75) is likely the first session date where the daily series doesn't have a prior day yet.
+
+### K.12 Bugs Found and Fixed During Validation
+
+| Bug | Root Cause | Fix |
+|---|---|---|
+| 0 days in history | `Time[0]` during DataLoaded returns oldest bar, not latest | Use `BarsArray[0].GetTime(Count-1)` for today's session date |
+| 29.7% instead of 50% | `HrCommitDay` fired on every historical bar-rollover, corrupting history | Gate to live bar only (`CurrentBar == BarsArray[0].Count - 1`) |
+| Weekends counted as misses | Sessions with 0 window bars included as `Hit=false` | Skip sessions with `WindowBars.Count == 0` in `BuildHistory` |
+| TodayPrice = 0.00 | Sub-indicators not ready during DataLoaded | Refresh TodayPrice on first live `OnBarUpdate` via `hrTodayPriceRefreshed` flag |
+| 18:00 ET boundary mismatch | NT8 used Globex 18:00; TV uses CME settlement 17:00 | Changed `HrSessionDateFromBarEt` to 17:00 ET |
+| Window fence-post wrong | Initial `>=` included pre-window bars; NT8 uses close-timestamped bars | Reverted to `> StartMin` (first bar whose open is at/after start) |
 
 ---
 
