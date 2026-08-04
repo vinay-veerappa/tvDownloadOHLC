@@ -119,6 +119,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private DateTime hrLastSessionDate;                               // last committed session date
         private RectangleF hrDebugTableRect;                              // hit-test rect for click-to-cycle
         private bool hrEngineReady;                                      // set true after DataLoaded build
+        private bool hrTodayPriceRefreshed;                               // set true after first OnBarUpdate refreshes TodayPrice
 
         // Voice Alerts — pre-generated WAV files (edge-tts neural voices)
         private Dictionary<string, string> voiceAlertPaths = new Dictionary<string, string>();
@@ -575,8 +576,13 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 .Where(s => s.SessionDate < todaySessionDate)
                 .ToList();
 
-            // Register level price providers for sweep-target levels
+            // Register level price providers for all levels
             RegisterLevelProviders();
+
+            // Force a level price update so today's prices are available
+            // (UpdateLevelPrices normally runs in OnBarUpdate, but we need
+            // the prices during DataLoaded for the hit-rate stats snapshot)
+            UpdateLevelPrices();
 
             // Build history + stats for each tracked level
             foreach (var levelName in hrTrackedLevels)
@@ -605,118 +611,351 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             hrLastSessionDate = todaySessionDate;
             hrEngineReady = true;
+            hrTodayPriceRefreshed = false;
             Print($"LiquidityLevels: Hit rate engine ready — {hrTrackedLevels.Count} levels, {hrNewDaysDetected} sessions detected");
         }
 
-        // ── Register level price providers for tracked sweep-target levels ───
+        // ── Register level price providers for ALL levels ───────────────────
         // Each provider takes a session date D and returns the level price
-        // that was active FOR that session (e.g., PDH = high of the day BEFORE D).
+        // that was active FOR that session. Reconstructed from intraday bars
+        // matching TV ProbabilityMap session windows.
         private void RegisterLevelProviders()
         {
             hrTrackedLevels.Clear();
             hrProviders.Clear();
 
-            // Only track PriorDay levels + P12 levels for v1.
-            // Session-range levels (Asia/London/etc.) require historical
-            // reconstruction of those ranges — deferred to a follow-up.
+            // ═══ Prior Day (daily series) ═══
+            hrProviders["PDH"] = (sd) => GetPriorDailyBar(sd, "High");
+            hrProviders["PDL"] = (sd) => GetPriorDailyBar(sd, "Low");
+            hrProviders["PDC"] = (sd) => GetPriorDailyBar(sd, "Close");
+            hrProviders["PDO"] = (sd) => GetPriorDailyBar(sd, "Open");
+            hrProviders["PDM"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? (h + l) / 2.0 : 0; };
+            hrProviders["Settlement"] = (sd) => GetPriorDailyBar(sd, "Close");
 
-            // PDH — prior day high from daily series (BarsArray[1])
-            hrProviders["PDH"] = (sessDate) =>
-            {
-                for (int i = BarsArray[1].Count - 1; i >= 0; i--)
-                {
-                    DateTime dTime = BarsArray[1].GetTime(i);
-                    DateTime dEt = ToEt(dTime);
-                    DateTime dSessDate = HrSessionDateFromBarEt(dEt);
-                    if (dSessDate < sessDate)
-                        return BarsArray[1].GetHigh(i);
-                }
-                return 0;
-            };
-            hrTrackedLevels.Add("PDH");
+            // ═══ Prior Week (intraday reconstruction) ═══
+            hrProviders["PWH"] = (sd) => ReconstructWeekHighLow(sd, true);
+            hrProviders["PWL"] = (sd) => ReconstructWeekHighLow(sd, false);
+            hrProviders["PWM"] = (sd) => { double h = ReconstructWeekHighLow(sd, true), l = ReconstructWeekHighLow(sd, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["PWC"] = (sd) => ReconstructWeekClose(sd);
+            hrProviders["PWO"] = (sd) => ReconstructWeekOpen(sd);
+            hrProviders["MH"] = (sd) => ReconstructDayOfWeek(sd, DayOfWeek.Monday, true);
+            hrProviders["ML"] = (sd) => ReconstructDayOfWeek(sd, DayOfWeek.Monday, false);
+            hrProviders["GH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true);  // Globex 18:00→09:30
+            hrProviders["GL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false);
 
-            // PDL — prior day low
-            hrProviders["PDL"] = (sessDate) =>
-            {
-                for (int i = BarsArray[1].Count - 1; i >= 0; i--)
-                {
-                    DateTime dTime = BarsArray[1].GetTime(i);
-                    DateTime dEt = ToEt(dTime);
-                    DateTime dSessDate = HrSessionDateFromBarEt(dEt);
-                    if (dSessDate < sessDate)
-                        return BarsArray[1].GetLow(i);
-                }
-                return 0;
-            };
-            hrTrackedLevels.Add("PDL");
+            // ═══ Prior Month (daily series) ═══
+            hrProviders["PMH"] = (sd) => GetPriorMonthHighLow(sd, true);
+            hrProviders["PML"] = (sd) => GetPriorMonthHighLow(sd, false);
+            hrProviders["PMM"] = (sd) => { double h = GetPriorMonthHighLow(sd, true), l = GetPriorMonthHighLow(sd, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["PMO"] = (sd) => GetPriorMonthOpen(sd);
 
-            // PDC — prior day close
-            hrProviders["PDC"] = (sessDate) =>
-            {
-                for (int i = BarsArray[1].Count - 1; i >= 0; i--)
-                {
-                    DateTime dTime = BarsArray[1].GetTime(i);
-                    DateTime dEt = ToEt(dTime);
-                    DateTime dSessDate = HrSessionDateFromBarEt(dEt);
-                    if (dSessDate < sessDate)
-                        return BarsArray[1].GetClose(i);
-                }
-                return 0;
-            };
-            hrTrackedLevels.Add("PDC");
+            // ═══ Session Opens (intraday reconstruction) ═══
+            hrProviders["MidnightOpen"] = (sd) => ReconstructSessionOpen(sd, 0, 0);
+            hrProviders["LondonOpen"] = (sd) => ReconstructSessionOpen(sd, 2, 0);
+            hrProviders["GlobexOpen"] = (sd) => ReconstructSessionOpen(sd, 18, 0);
+            hrProviders["RTHOpen"] = (sd) => ReconstructSessionOpen(sd, 9, 30);
+            hrProviders["TueOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Tuesday);
+            hrProviders["WedOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Wednesday);
+            hrProviders["ThuOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Thursday);
+            hrProviders["FriOpen"] = (sd) => ReconstructDayOfWeekOpen(sd, DayOfWeek.Friday);
+            hrProviders["Open_04H"] = (sd) => ReconstructSessionOpen(sd, 4, 0);
+            hrProviders["Open_08H"] = (sd) => ReconstructSessionOpen(sd, 8, 0);
+            hrProviders["Open_12H"] = (sd) => ReconstructSessionOpen(sd, 12, 0);
+            hrProviders["Open_16H"] = (sd) => ReconstructSessionOpen(sd, 16, 0);
+            hrProviders["Open_20H"] = (sd) => ReconstructSessionOpen(sd, 20, 0);
 
-            // P12High — overnight P12 high (18:00 ET → 06:00 ET) reconstructed
-            // from intraday bars for the session date.
-            hrProviders["P12High"] = (sessDate) =>
-            {
-                return ReconstructP12High(sessDate);
-            };
-            hrTrackedLevels.Add("P12High");
+            // ═══ Session Ranges (intraday reconstruction) ═══
+            // TV: inAsia = hhmm >= 1930 or hhmm < 230
+            hrProviders["AsiaH"] = (sd) => ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, true);
+            hrProviders["AsiaL"] = (sd) => ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, false);
+            hrProviders["AsiaMid"] = (sd) => { double h = ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, true), l = ReconstructSessionRange(sd, 19 * 60 + 30, 2 * 60 + 30, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
 
-            // P12Low — overnight P12 low
-            hrProviders["P12Low"] = (sessDate) =>
+            // TV: inLondon = hhmm >= 230 and hhmm < 800
+            hrProviders["LonH"] = (sd) => ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, true);
+            hrProviders["LonL"] = (sd) => ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, false);
+            hrProviders["LonMid"] = (sd) => { double h = ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, true), l = ReconstructSessionRange(sd, 2 * 60 + 30, 8 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+
+            // London OR (02:00-05:00 ET for the OR sub-range)
+            hrProviders["LonOrMid"] = (sd) => { double h = ReconstructSessionRange(sd, 2 * 60, 5 * 60, false, true), l = ReconstructSessionRange(sd, 2 * 60, 5 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+
+            // Globex range (18:00→09:30 ET)
+            hrProviders["GlbH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true);
+            hrProviders["GlbL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false);
+            hrProviders["GlbMid"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, true), l = ReconstructSessionRange(sd, 18 * 60, 9 * 60 + 30, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+
+            // IB (09:30-10:00 ET)
+            hrProviders["IBH"] = (sd) => ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, true);
+            hrProviders["IBL"] = (sd) => ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, false);
+            hrProviders["IBMid"] = (sd) => { double h = ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, true), l = ReconstructSessionRange(sd, 9 * 60 + 30, 10 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+
+            // P12 (18:00-06:00 ET overnight)
+            hrProviders["P12High"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
+            hrProviders["P12Low"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
+            hrProviders["P12Mid"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true), l = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+
+            // NY P12 (06:00-17:00 ET)
+            hrProviders["NYP12High"] = (sd) => ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, true);
+            hrProviders["NYP12Low"] = (sd) => ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, false);
+            hrProviders["NYP12Mid"] = (sd) => { double h = ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, true), l = ReconstructSessionRange(sd, 6 * 60, 17 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+
+            // Prev NY P12 (prior session date)
+            hrProviders["PrevNYP12High"] = (sd) => ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, true);
+            hrProviders["PrevNYP12Low"] = (sd) => ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, false);
+            hrProviders["PrevNYP12Mid"] = (sd) => { double h = ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, true), l = ReconstructSessionRange(sd.AddDays(-1), 6 * 60, 17 * 60, false, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+
+            // ═══ Pivots (computed from PDH/PDL/PDC) ═══
+            hrProviders["PP"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); return (h > 0 && l > 0 && c > 0) ? (h + l + c) / 3.0 : 0; };
+            hrProviders["R1"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); if (h <= 0 || l <= 0) return 0; double pp = (h + l + c) / 3.0; return 2.0 * pp - l; };
+            hrProviders["R2"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); if (h <= 0 || l <= 0) return 0; double pp = (h + l + c) / 3.0; return pp + (h - l); };
+            hrProviders["R3"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); if (h <= 0 || l <= 0) return 0; double pp = (h + l + c) / 3.0; return h + 2.0 * (pp - l); };
+            hrProviders["S1"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); if (h <= 0 || l <= 0) return 0; double pp = (h + l + c) / 3.0; return 2.0 * pp - h; };
+            hrProviders["S2"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); if (h <= 0 || l <= 0) return 0; double pp = (h + l + c) / 3.0; return pp - (h - l); };
+            hrProviders["S3"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); if (h <= 0 || l <= 0) return 0; double pp = (h + l + c) / 3.0; return l - 2.0 * (h - pp); };
+
+            // ═══ Fibs (computed from PDH/PDL range) ═══
+            string[] fibNames = { "Fib 23.6%", "Fib 38.2%", "Fib 50.0%", "Fib 61.8%", "Fib 78.6%", "Fib 100%", "Fib 127.2%", "Fib 161.8%", "Fib -27.2%", "Fib -61.8%" };
+            double[] fibRatios = { 0.236, 0.382, 0.500, 0.618, 0.786, 1.0, 1.272, 1.618, -0.272, -0.618 };
+            for (int fi = 0; fi < fibNames.Length; fi++)
             {
-                return ReconstructP12Low(sessDate);
-            };
-            hrTrackedLevels.Add("P12Low");
+                string fn = fibNames[fi];
+                double fr = fibRatios[fi];
+                hrProviders[fn] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? l + fr * (h - l) : 0; };
+            }
+
+            // ═══ Volume Profile fallbacks (computed from PDH/PDL) ═══
+            hrProviders["PrevDayPOC"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"), c = GetPriorDailyBar(sd, "Close"); return (h > 0 && l > 0 && c > 0) ? (h + l + c) / 3.0 : 0; };
+            hrProviders["PrevDayVAH"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? h - (h - l) * 0.15 : 0; };
+            hrProviders["PrevDayVAL"] = (sd) => { double h = GetPriorDailyBar(sd, "High"), l = GetPriorDailyBar(sd, "Low"); return (h > 0 && l > 0) ? l + (h - l) * 0.15 : 0; };
+            hrProviders["OvernightPOC"] = (sd) => { double h = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true), l = ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false); return (h > 0 && l > 0 && l < double.MaxValue) ? (h + l) / 2.0 : 0; };
+            hrProviders["OvernightVAH"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
+            hrProviders["OvernightVAL"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
+            hrProviders["OvernightHigh"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, true);
+            hrProviders["OvernightLow"] = (sd) => ReconstructSessionRange(sd, 18 * 60, 6 * 60, true, false);
+
+            // Add all to tracked levels list (iterate catalog to get proper order)
+            foreach (var def in LiquidityLevelsCatalog.GetAllLevels())
+            {
+                if (hrProviders.ContainsKey(def.Name))
+                    hrTrackedLevels.Add(def.Name);
+            }
         }
 
-        // ── Reconstruct P12 High for a historical session date ───────────────
-        // P12 = 18:00 ET to 06:00 ET overnight range. For session date D:
-        // scan bars from 18:00 ET of (D-1) to 06:00 ET of D, return the high.
-        private double ReconstructP12High(DateTime sessDate)
+        // ── Reconstruct prior week close (last trading day's close) ──────────
+        private double ReconstructWeekClose(DateTime sessDate)
         {
-            double hi = 0;
-            DateTime windowStart = sessDate.AddDays(-1).Date.AddHours(18);  // 18:00 ET prev day
-            DateTime windowEnd = sessDate.Date.AddHours(6);                 // 06:00 ET session day
+            int dow = (int)sessDate.DayOfWeek;
+            DateTime weekStart = sessDate.AddDays(-(dow == 0 ? 6 : dow - 1));
+            DateTime prevWeekEnd = weekStart.AddDays(-1);
+            double result = 0;
+            for (int i = 0; i < BarsArray[1].Count; i++)
+            {
+                DateTime dEt = ToEt(BarsArray[1].GetTime(i));
+                DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                if (dSessDate > prevWeekEnd) break;
+                if (dSessDate >= weekStart.AddDays(-7) && dSessDate <= prevWeekEnd)
+                    result = BarsArray[1].GetClose(i);
+            }
+            return result;
+        }
+
+        // ── Reconstruct prior week open (first trading day's open) ───────────
+        private double ReconstructWeekOpen(DateTime sessDate)
+        {
+            int dow = (int)sessDate.DayOfWeek;
+            DateTime weekStart = sessDate.AddDays(-(dow == 0 ? 6 : dow - 1));
+            DateTime prevWeekStart = weekStart.AddDays(-7);
+            for (int i = 0; i < BarsArray[1].Count; i++)
+            {
+                DateTime dEt = ToEt(BarsArray[1].GetTime(i));
+                DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                if (dSessDate >= prevWeekStart)
+                    return BarsArray[1].GetOpen(i);
+            }
+            return 0;
+        }
+
+        // ── Reconstruct a specific day-of-week's high/low for the current week ─
+        private double ReconstructDayOfWeek(DateTime sessDate, DayOfWeek targetDay, bool isHigh)
+        {
+            int dow = (int)sessDate.DayOfWeek;
+            DateTime weekStart = sessDate.AddDays(-(dow == 0 ? 6 : dow - 1));
+            DateTime targetDate = weekStart.AddDays((int)targetDay - 1);
+            double result = isHigh ? 0 : double.MaxValue;
+            for (int i = 0; i < BarsArray[1].Count; i++)
+            {
+                DateTime dEt = ToEt(BarsArray[1].GetTime(i));
+                DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                if (dSessDate != targetDate) continue;
+                if (isHigh) { if (BarsArray[1].GetHigh(i) > result) result = BarsArray[1].GetHigh(i); }
+                else { if (BarsArray[1].GetLow(i) < result) result = BarsArray[1].GetLow(i); }
+            }
+            return isHigh ? result : (result == double.MaxValue ? 0 : result);
+        }
+
+        // ── Reconstruct a specific day-of-week's open for the current week ────
+        private double ReconstructDayOfWeekOpen(DateTime sessDate, DayOfWeek targetDay)
+        {
+            int dow = (int)sessDate.DayOfWeek;
+            DateTime weekStart = sessDate.AddDays(-(dow == 0 ? 6 : dow - 1));
+            DateTime targetDate = weekStart.AddDays((int)targetDay - 1);
+            for (int i = 0; i < BarsArray[1].Count; i++)
+            {
+                DateTime dEt = ToEt(BarsArray[1].GetTime(i));
+                DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                if (dSessDate == targetDate)
+                    return BarsArray[1].GetOpen(i);
+            }
+            return 0;
+        }
+
+        // ── Reconstruct prior month open ─────────────────────────────────────
+        private double GetPriorMonthOpen(DateTime sessDate)
+        {
+            DateTime prevMonth = sessDate.AddMonths(-1);
+            for (int i = 0; i < BarsArray[1].Count; i++)
+            {
+                DateTime dEt = ToEt(BarsArray[1].GetTime(i));
+                if (dEt.Year == prevMonth.Year && dEt.Month == prevMonth.Month)
+                    return BarsArray[1].GetOpen(i);
+            }
+            return 0;
+        }
+
+        // ── Get prior day OHLC from daily series ──────────────────────────────
+        private double GetPriorDailyBar(DateTime sessDate, string field)
+        {
+            for (int i = BarsArray[1].Count - 1; i >= 0; i--)
+            {
+                DateTime dEt = ToEt(BarsArray[1].GetTime(i));
+                DateTime dSessDate = HrSessionDateFromBarEt(dEt);
+                if (dSessDate < sessDate)
+                {
+                    switch (field)
+                    {
+                        case "High": return BarsArray[1].GetHigh(i);
+                        case "Low": return BarsArray[1].GetLow(i);
+                        case "Close": return BarsArray[1].GetClose(i);
+                        case "Open": return BarsArray[1].GetOpen(i);
+                    }
+                }
+            }
+            return 0;
+        }
+
+        // ── Reconstruct session open price at a specific ET hour:minute ───────
+        private double ReconstructSessionOpen(DateTime sessDate, int hour, int minute)
+        {
+            int targetMins = hour * 60 + minute;
+            // Session opens are set on the session date itself
+            for (int i = 0; i < BarsArray[0].Count; i++)
+            {
+                DateTime bt = ToEt(BarsArray[0].GetTime(i));
+                DateTime bSessDate = HrSessionDateFromBarEt(bt);
+                if (bSessDate < sessDate) continue;
+                if (bSessDate > sessDate) break;
+                int barMins = bt.Hour * 60 + bt.Minute;
+                // First bar at or after the target time on the session date
+                if (barMins >= targetMins)
+                    return BarsArray[0].GetOpen(i);
+            }
+            return 0;
+        }
+
+        // ── Reconstruct session range high/low for a given window ─────────────
+        // crossesMidnight: window spans midnight ET (e.g., Asia 19:30→02:30)
+        // isHigh: true = return high, false = return low
+        private double ReconstructSessionRange(DateTime sessDate, int startMin, int endMin,
+            bool crossesMidnight, bool isHigh)
+        {
+            double result = isHigh ? 0 : double.MaxValue;
+
+            if (crossesMidnight)
+            {
+                // Window: startMin on (sessDate-1) → endMin on sessDate
+                // e.g., P12: 18:00 prev day → 06:00 session day
+                // e.g., Asia: 19:30 prev day → 02:30 session day
+                DateTime windowStart = sessDate.AddDays(-1).Date;
+                DateTime windowEnd = sessDate.Date;
+                for (int i = 0; i < BarsArray[0].Count; i++)
+                {
+                    DateTime bt = ToEt(BarsArray[0].GetTime(i));
+                    if (bt.Date < windowStart) continue;
+                    if (bt.Date > windowEnd) break;
+                    int barMins = bt.Hour * 60 + bt.Minute;
+                    // On prev day: barMins >= startMin; On session day: barMins <= endMin
+                    bool inWindow = (bt.Date == windowStart && barMins >= startMin) ||
+                                    (bt.Date == windowEnd && barMins <= endMin);
+                    if (!inWindow) continue;
+                    double val = isHigh ? BarsArray[0].GetHigh(i) : BarsArray[0].GetLow(i);
+                    if (isHigh && val > result) result = val;
+                    if (!isHigh && val < result) result = val;
+                }
+            }
+            else
+            {
+                // Same-day window: startMin → endMin on sessDate
+                DateTime windowDate = sessDate.Date;
+                for (int i = 0; i < BarsArray[0].Count; i++)
+                {
+                    DateTime bt = ToEt(BarsArray[0].GetTime(i));
+                    DateTime bSessDate = HrSessionDateFromBarEt(bt);
+                    if (bSessDate < sessDate) continue;
+                    if (bSessDate > sessDate) break;
+                    int barMins = bt.Hour * 60 + bt.Minute;
+                    if (barMins < startMin || barMins > endMin) continue;
+                    double val = isHigh ? BarsArray[0].GetHigh(i) : BarsArray[0].GetLow(i);
+                    if (isHigh && val > result) result = val;
+                    if (!isHigh && val < result) result = val;
+                }
+            }
+            return isHigh ? result : (result == double.MaxValue ? 0 : result);
+        }
+
+        // ── Reconstruct prior week high/low ───────────────────────────────────
+        // Week = 5 trading days prior to sessDate (not including sessDate's session)
+        private double ReconstructWeekHighLow(DateTime sessDate, bool isHigh)
+        {
+            double result = isHigh ? 0 : double.MaxValue;
+            // Find the start of the current week (Monday) and go back one week
+            // For futures, the week starts at Globex open Sunday/Monday 18:00 ET
+            int dow = (int)sessDate.DayOfWeek;  // 0=Sun, 1=Mon, ... 6=Sat
+            DateTime weekStart = sessDate.AddDays(-(dow == 0 ? 6 : dow - 1));  // Monday of sessDate's week
+            DateTime prevWeekStart = weekStart.AddDays(-7);
+            DateTime prevWeekEnd = weekStart.AddDays(-1);
 
             for (int i = 0; i < BarsArray[0].Count; i++)
             {
                 DateTime bt = ToEt(BarsArray[0].GetTime(i));
-                if (bt < windowStart) continue;
-                if (bt > windowEnd) break;
+                DateTime bSessDate = HrSessionDateFromBarEt(bt);
+                if (bSessDate < prevWeekStart) continue;
+                if (bSessDate > prevWeekEnd) break;
                 double h = BarsArray[0].GetHigh(i);
-                if (h > hi) hi = h;
+                double l = BarsArray[0].GetLow(i);
+                if (isHigh && h > result) result = h;
+                if (!isHigh && l < result) result = l;
             }
-            return hi;
+            return isHigh ? result : (result == double.MaxValue ? 0 : result);
         }
 
-        // ── Reconstruct P12 Low for a historical session date ────────────────
-        private double ReconstructP12Low(DateTime sessDate)
+        // ── Reconstruct prior month high/low ──────────────────────────────────
+        private double GetPriorMonthHighLow(DateTime sessDate, bool isHigh)
         {
-            double lo = double.MaxValue;
-            DateTime windowStart = sessDate.AddDays(-1).Date.AddHours(18);
-            DateTime windowEnd = sessDate.Date.AddHours(6);
+            double result = isHigh ? 0 : double.MaxValue;
+            int targetMonth = sessDate.AddMonths(-1).Month;
+            int targetYear = sessDate.AddMonths(-1).Year;
 
-            for (int i = 0; i < BarsArray[0].Count; i++)
+            for (int i = 0; i < BarsArray[1].Count; i++)
             {
-                DateTime bt = ToEt(BarsArray[0].GetTime(i));
-                if (bt < windowStart) continue;
-                if (bt > windowEnd) break;
-                double l = BarsArray[0].GetLow(i);
-                if (l < lo) lo = l;
+                DateTime dEt = ToEt(BarsArray[1].GetTime(i));
+                if (dEt.Year == targetYear && dEt.Month == targetMonth)
+                {
+                    double h = BarsArray[1].GetHigh(i);
+                    double l = BarsArray[1].GetLow(i);
+                    if (isHigh && h > result) result = h;
+                    if (!isHigh && l < result) result = l;
+                }
             }
-            return lo == double.MaxValue ? 0 : lo;
+            return isHigh ? result : (result == double.MaxValue ? 0 : result);
         }
 
         // ── Get today's live level price (from the indicator's current state) ──
@@ -890,8 +1129,9 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             float boxW = maxW + padX * 2;
             float boxH = lines.Count * lineHeight + padY * 2;
 
-            // Top-right corner with a small margin
-            float boxX = (float)chartControl.ActualWidth - boxW - 10;
+            // Top-right corner — moved further left (margin 60) so long level names
+            // like "PrevNYP12High" don't get clipped by the right price axis
+            float boxX = (float)chartControl.ActualWidth - boxW - 60;
             float boxY = 10;
 
             hrDebugTableRect = new RectangleF(boxX, boxY, boxW, boxH);
@@ -1112,6 +1352,22 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             // Run sweep detection
             if (EnableSweepDetection)
                 RunSweepDetection(highP, lowP, openP, closeP, barTimeEt, CurrentBar);
+
+            // Hit rate: refresh TodayPrice on first live bar (sub-indicators not ready during DataLoaded)
+            if (hrEngineReady && EnableHitRate && !hrTodayPriceRefreshed && CurrentBar == BarsArray[0].Count - 1)
+            {
+                foreach (var levelName in hrTrackedLevels)
+                {
+                    double tp = GetTodayLevelPrice(levelName);
+                    if (tp > 0)
+                    {
+                        hrTodayLevel[levelName] = tp;
+                        if (hrStats.ContainsKey(levelName))
+                            hrStats[levelName].TodayPrice = tp;
+                    }
+                }
+                hrTodayPriceRefreshed = true;
+            }
 
             // Hit rate: live update within today's window (first-hit only, live bar only)
             if (hrEngineReady && EnableHitRate && CurrentBar == BarsArray[0].Count - 1)
