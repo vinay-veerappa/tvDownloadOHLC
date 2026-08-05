@@ -223,9 +223,9 @@ def get_available_models() -> dict:
     except Exception:
         ollama_models = []
 
-    # Reasoners (text-only, for verdict generation)
+    # Reasoners (cloud models only — local models too slow on 8GB GPU)
     reasoner_candidates = [
-        "gemma4:latest", "gemma4:31b-cloud", "glm-5.2:cloud",
+        "gemma4:31b-cloud", "glm-5.2:cloud",
         "deepseek-v4-flash:cloud", "deepseek-v4-pro:cloud",
     ]
     for m in reasoner_candidates:
