@@ -100,77 +100,83 @@ def _style_dark(ax):
 def render_daily_context_chart(
     ticker: str,
     target_date: datetime,
-    df_1h: pd.DataFrame,
+    df_1m: pd.DataFrame,
     ict_ctx: dict,
     save_path: Path,
     dpi: int = 150,
 ) -> Path:
-    """Render a 1H daily-context chart with ICT overlays.
+    """Render a 5-minute daily-context chart with ICT overlays.
 
-    Shows: overnight + day session, PDH/PDL/PWH/PWL levels, OBs, FVGs,
-    session markers (midnight, 08:30, 09:30, 16:00).
+    Uses 5m bars (resampled from 1m) for dense, readable candles.
+    Shows: overnight + day session, session shading (Asia/London/NY),
+    PDH/PDL/PWH/PWL levels, OBs, FVGs, session markers.
 
     This is the chart the user eyeball-verifies against the reasoner's verdict.
     """
-    prev_date = target_date - timedelta(days=1)
-    if prev_date.weekday() >= 5:
-        prev_date = target_date - timedelta(days=3 if prev_date.weekday() == 6 else 2)
+    # Resample 1m -> 5m for dense readable candles
+    df_5m = df_1m.resample("5min").agg({
+        "open": "first", "high": "max", "low": "min",
+        "close": "last", "volume": "sum",
+    }).dropna(subset=["open"])
 
-    start_view = pd.Timestamp.combine(prev_date, time(18, 0))
-    end_view = pd.Timestamp.combine(target_date, time(16, 0))
+    # View: target day 00:00 ET -> 23:59 ET (full trading day)
+    # For futures with overnight, use prev 18:00 -> target 16:00 when data supports it
+    start_view = pd.Timestamp.combine(target_date.date(), time(0, 0))
+    end_view = pd.Timestamp.combine(target_date.date(), time(23, 59))
 
-    if df_1h.index.tz:
+    if df_5m.index.tz:
         start_view = start_view.tz_localize("US/Eastern")
         end_view = end_view.tz_localize("US/Eastern")
 
-    df_view = df_1h[(df_1h.index >= start_view) & (df_1h.index <= end_view)]
+    df_view = df_5m[(df_5m.index >= start_view) & (df_5m.index <= end_view)]
     if df_view.empty:
         log.warning("No data in view range for %s %s", ticker, target_date.date())
         return None
 
     price_min = df_view["low"].min()
     price_max = df_view["high"].max()
+    price_range = price_max - price_min
     right_edge = mdates.date2num(df_view.index.max())
 
-    fig, ax = plt.subplots(figsize=(20, 10), dpi=dpi, facecolor=_DARK_BG)
+    fig, ax = plt.subplots(figsize=(24, 12), dpi=dpi, facecolor=_DARK_BG)
     _style_dark(ax)
 
-    # 1. Candles
-    width = 0.03
+    # 1. Candles (5m)
+    width = 0.003  # 5min bar width in date units
     up = df_view[df_view["close"] >= df_view["open"]]
     down = df_view[df_view["close"] < df_view["open"]]
-    ax.bar(up.index, up["close"] - up["open"], width, bottom=up["open"], color=_UP_COLOR, edgecolor=_UP_COLOR)
-    ax.vlines(up.index, up["low"], up["high"], color=_UP_COLOR, linewidth=0.6)
-    ax.bar(down.index, down["close"] - down["open"], width, bottom=down["open"], color=_DOWN_COLOR, edgecolor=_DOWN_COLOR)
-    ax.vlines(down.index, down["low"], down["high"], color=_DOWN_COLOR, linewidth=0.6)
+    ax.bar(up.index, up["close"] - up["open"], width, bottom=up["open"], color=_UP_COLOR, edgecolor=_UP_COLOR, linewidth=0.5)
+    ax.vlines(up.index, up["low"], up["high"], color=_UP_COLOR, linewidth=0.4)
+    ax.bar(down.index, down["close"] - down["open"], width, bottom=down["open"], color=_DOWN_COLOR, edgecolor=_DOWN_COLOR, linewidth=0.5)
+    ax.vlines(down.index, down["low"], down["high"], color=_DOWN_COLOR, linewidth=0.4)
 
-    # 2. ICT levels (PDH/PDL/PWH/PWL/midnight open)
-    level_color = "#9c27b0"
-    level_labels = {
-        "PDH": ict_ctx.get("pdh"),
-        "PDL": ict_ctx.get("pdl"),
-        "PWH": ict_ctx.get("pwh"),
-        "PWL": ict_ctx.get("pwl"),
-        "Mid": ict_ctx.get("midnight_open"),
-    }
-    for label, price in level_labels.items():
-        if price and price_min * 0.99 < price < price_max * 1.01:
-            ax.axhline(price, color=level_color, linewidth=1.0, linestyle="--", alpha=0.6)
-            ax.annotate(f"{label} {price:,.2f}", xy=(right_edge, price),
-                        fontsize=7, color=level_color, fontweight="bold",
-                        va="center", ha="left", xytext=(5, 0), textcoords="offset points")
+    # 3. ICT levels (PDH/PDL/PWH/PWL/midnight open) — thicker, right-justified labels
+    level_specs = [
+        ("PDH", ict_ctx.get("pdh"), "#e91e63", True),
+        ("PDL", ict_ctx.get("pdl"), "#e91e63", True),
+        ("PWH", ict_ctx.get("pwh"), "#ab47bc", False),
+        ("PWL", ict_ctx.get("pwl"), "#ab47bc", False),
+        ("Mid", ict_ctx.get("midnight_open"), "#42a5f5", False),
+    ]
+    for label, price, color, bold in level_specs:
+        if price and price_min - price_range * 0.05 < price < price_max + price_range * 0.05:
+            lw = 1.5 if bold else 1.0
+            ax.axhline(price, color=color, linewidth=lw, linestyle="--", alpha=0.7)
+            ax.annotate(f"  {label} {price:,.2f}", xy=(right_edge, price),
+                        fontsize=8, color=color, fontweight="bold" if bold else "normal",
+                        va="center", ha="left", xytext=(3, 0), textcoords="offset points")
 
-    # 3. Equilibrium line
+    # 4. Equilibrium
     pdh = ict_ctx.get("pdh")
     pdl = ict_ctx.get("pdl")
     if pdh and pdl:
         eq = (pdh + pdl) / 2
-        ax.axhline(eq, color="#787b86", linewidth=0.8, linestyle=":", alpha=0.5)
-        ax.annotate(f"EQ {eq:,.2f}", xy=(right_edge, eq),
+        ax.axhline(eq, color="#787b86", linewidth=0.8, linestyle=":", alpha=0.4)
+        ax.annotate(f"  EQ {eq:,.2f}", xy=(right_edge, eq),
                     fontsize=7, color="#787b86", va="center", ha="left",
-                    xytext=(5, 0), textcoords="offset points")
+                    xytext=(3, 0), textcoords="offset points")
 
-    # 4. Order Blocks
+    # 5. Order Blocks (detect on 5m view)
     obs = detect_order_blocks(df_view, lookback=50)
     obs = filter_mitigated_obs(obs, df_view)
     for ob in obs:
@@ -181,15 +187,12 @@ def render_daily_context_chart(
         ob_start = mdates.date2num(ob["datetime"])
         rect = mpatches.Rectangle(
             (ob_start, ob["low"]), right_edge - ob_start, ob["high"] - ob["low"],
-            linewidth=1, edgecolor=color, facecolor=color, alpha=0.25,
+            linewidth=1, edgecolor=color, facecolor=color, alpha=0.2,
         )
         ax.add_patch(rect)
-        mid_price = (ob["high"] + ob["low"]) / 2
-        ax.annotate(label, xy=(right_edge, mid_price), fontsize=7, color=color,
-                    fontweight="bold", va="center")
 
-    # 5. Fair Value Gaps
-    fvgs = detect_fvgs(df_view, min_gap_ticks=2.0, timeframe="1H")
+    # 6. Fair Value Gaps (detect on 5m view)
+    fvgs = detect_fvgs(df_view, min_gap_ticks=1.0, timeframe="5M")
     fvgs = filter_mitigated_fvgs(fvgs, df_view)
     for fvg in fvgs:
         if fvg["datetime"] < df_view.index.min() or fvg["datetime"] > df_view.index.max():
@@ -199,31 +202,40 @@ def render_daily_context_chart(
             (mdates.date2num(fvg["datetime"]), fvg["bottom"]),
             right_edge - mdates.date2num(fvg["datetime"]),
             fvg["top"] - fvg["bottom"],
-            linewidth=0, facecolor=color, alpha=0.35,
+            linewidth=0, facecolor=color, alpha=0.3,
         )
         ax.add_patch(rect)
 
-    # 6. Session markers
+    # 7. Session markers (vertical lines + labels)
+    target_d = target_date.date()
     session_markers = [
-        (time(0, 0), "Mid", "#607d8b"),
+        (time(0, 0), "00:00", "#607d8b"),
         (time(8, 30), "08:30", "#ff9800"),
-        (time(9, 30), "09:30 NY", "#ff9800"),
+        (time(9, 30), "09:30 NY Open", "#ff9800"),
+        (time(11, 30), "11:30 Lunch", "#607d8b"),
+        (time(13, 30), "13:30 PM", "#607d8b"),
         (time(16, 0), "16:00 Close", "#607d8b"),
     ]
     for sess_time, sess_label, sess_color in session_markers:
-        sess_dt = pd.Timestamp.combine(target_date, sess_time)
-        if df_1h.index.tz:
+        sess_dt = pd.Timestamp.combine(target_d, sess_time)
+        if df_5m.index.tz:
             sess_dt = sess_dt.tz_localize("US/Eastern")
         if df_view.index.min() <= sess_dt <= df_view.index.max():
-            ax.axvline(sess_dt, color=sess_color, linewidth=1.0, linestyle="--", alpha=0.5)
-            ax.annotate(sess_label, xy=(sess_dt, price_max), fontsize=8,
-                        color=sess_color, va="bottom", ha="center")
+            ax.axvline(sess_dt, color=sess_color, linewidth=0.8, linestyle=":", alpha=0.4)
 
-    # 7. Title + formatting
-    title = f"{ticker} | {target_date.date()} | 1H Daily Context (ICT)"
-    ax.set_title(title, fontsize=13, fontweight="bold")
+    # 8. Current price line
+    current_price = df_view["close"].iloc[-1]
+    ax.axhline(current_price, color="#ffd700", linewidth=0.8, linestyle="-", alpha=0.5)
+    ax.annotate(f"  NOW {current_price:,.2f}", xy=(right_edge, current_price),
+                fontsize=8, color="#ffd700", fontweight="bold", va="center", ha="left",
+                xytext=(3, 0), textcoords="offset points")
+
+    # 9. Title + formatting
+    title = f"{ticker} | {target_d} | 5m Daily Context (ICT)"
+    ax.set_title(title, fontsize=14, fontweight="bold", color=_DARK_FG, pad=15)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d %H:%M"))
     ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
+    ax.xaxis.set_minor_locator(mdates.MinuteLocator(byminute=[0, 30]))
     fig.autofmt_xdate(rotation=30)
     plt.tight_layout()
 
@@ -284,21 +296,16 @@ def generate_charts(
 
     saved = []
     for ticker in tickers:
-        log.info("Loading data for %s...", ticker)
-        # Load 1H data; if sparse, resample from 1m
-        df_1h = load_fused_data(ticker, timeframe="1h", require_historical=False)
-        if df_1h is None or df_1h.empty or len(df_1h) < 100:
-            log.info("1H data sparse for %s — resampling from 1m...", ticker)
-            df_1m = load_fused_data(ticker, timeframe="1m", require_historical=False)
-            if df_1m is None or df_1m.empty:
-                log.warning("No data at all for %s — skipping", ticker)
-                continue
-            df_1h = _resample_1m_to_1h(df_1m)
+        log.info("Loading 1m data for %s...", ticker)
+        df_1m = load_fused_data(ticker, timeframe="1m", require_historical=False)
+        if df_1m is None or df_1m.empty:
+            log.warning("No data for %s — skipping", ticker)
+            continue
 
-        if df_1h.index.tz is None:
-            df_1h.index = pd.DatetimeIndex(df_1h.index).tz_localize("UTC").tz_convert("US/Eastern")
+        if df_1m.index.tz is None:
+            df_1m.index = pd.DatetimeIndex(df_1m.index).tz_localize("UTC").tz_convert("US/Eastern")
         else:
-            df_1h.index = df_1h.index.tz_convert("US/Eastern")
+            df_1m.index = df_1m.index.tz_convert("US/Eastern")
 
         for target_date in dates:
             target_d = target_date.date() if hasattr(target_date, "date") else target_date
@@ -307,7 +314,7 @@ def generate_charts(
             save_path = _OUTPUT_DIR / f"{ticker}_{target_d}_daily_context.png"
 
             try:
-                result = render_daily_context_chart(ticker, target_date, df_1h, ict_ctx, save_path, dpi=dpi)
+                result = render_daily_context_chart(ticker, target_date, df_1m, ict_ctx, save_path, dpi=dpi)
                 if result:
                     saved.append(result)
             except Exception as e:
