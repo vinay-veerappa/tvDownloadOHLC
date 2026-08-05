@@ -47,6 +47,7 @@ VERDICT_DIR = _REPO / "data" / "vision" / "verdicts"
 COMPARISON_DIR = _REPO / "data" / "vision" / "comparisons"
 COMPARISON_DIR.mkdir(parents=True, exist_ok=True)
 
+AGY_BIN = os.path.join(os.path.expanduser("~"), "AppData", "Local", "agy", "bin", "agy.exe")
 ANTIGRAVITY_API = os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "bin", "agentapi.bat")
 
 
@@ -110,8 +111,48 @@ def _antigravity_available() -> bool:
         return False
 
 
+def _agy_available() -> bool:
+    """Check if agy CLI is available."""
+    if not os.path.exists(AGY_BIN):
+        return False
+    # Quick test
+    try:
+        env = os.environ.copy()
+        env["PATH"] = os.path.join(os.path.expanduser("~"), "AppData", "Local", "agy", "bin") + os.pathsep + env.get("PATH", "")
+        result = subprocess.run(
+            [AGY_BIN, "-p", "Reply with just: OK"],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        return "OK" in result.stdout or result.returncode == 0
+    except Exception:
+        return False
+
+
+def _agy_call(prompt: str, model: str = None, timeout: int = 300, workspace: str = None) -> str:
+    """Call agy CLI (Antigravity/Gemini) with a prompt.
+
+    Uses -p (print mode) for non-interactive execution.
+    Model selection is via --model flag (must come before -p).
+    """
+    env = os.environ.copy()
+    env["PATH"] = os.path.join(os.path.expanduser("~"), "AppData", "Local", "agy", "bin") + os.pathsep + env.get("PATH", "")
+    if workspace:
+        env["AGY_DIR"] = workspace
+
+    cmd = [AGY_BIN, "--dangerously-skip-permissions"]
+    if model:
+        cmd.append(f"--model={model}")
+    cmd.append(f"--print-timeout={timeout}s")
+    cmd.extend(["-p", prompt])
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 30, env=env, cwd=workspace or None)
+    if result.returncode != 0 and not result.stdout:
+        raise RuntimeError(f"agy error: {result.stderr[:300]}")
+    return result.stdout.strip()
+
+
 def _antigravity_call(prompt: str, model: str = "flash", timeout: int = 120) -> str:
-    """Call Antigravity agentapi for Gemini models.
+    """Call Antigravity agentapi for Gemini models (legacy fallback).
 
     Uses a temp file to avoid Windows command-line length limits (~8KB).
     """
@@ -179,15 +220,21 @@ def get_available_models() -> dict:
             log.info("  Local vision model %s available but skipping (too slow on 8GB GPU). Use cloud models for vision.", m)
             # models["vision"].append({"name": m, "provider": "ollama", "type": "vision"})  # disabled
 
-    # Antigravity/Gemini
-    if _antigravity_available():
+    # Antigravity/Gemini via agy CLI
+    if _agy_available():
+        models["reasoners"].append({"name": "gemini-3.6-flash", "provider": "agy", "type": "text", "model": "gemini-3.6-flash-high"})
+        models["reasoners"].append({"name": "gemini-3.1-pro", "provider": "agy", "type": "text", "model": "gemini-3.1-pro-high"})
+        models["vision"].append({"name": "gemini-3.6-flash", "provider": "agy", "type": "vision", "model": "gemini-3.6-flash-high"})
+        models["vision"].append({"name": "gemini-3.1-pro", "provider": "agy", "type": "vision", "model": "gemini-3.1-pro-high"})
+        log.info("agy/Gemini available — added to comparison")
+    elif _antigravity_available():
         models["reasoners"].append({"name": "gemini-flash", "provider": "antigravity", "type": "text"})
         models["reasoners"].append({"name": "gemini-pro", "provider": "antigravity", "type": "text"})
         models["vision"].append({"name": "gemini-flash", "provider": "antigravity", "type": "vision"})
         models["vision"].append({"name": "gemini-pro", "provider": "antigravity", "type": "vision"})
-        log.info("Antigravity/Gemini available — added to comparison")
+        log.info("Antigravity agentapi available (legacy) — added to comparison")
     else:
-        log.info("Antigravity not running — skipping Gemini (start Antigravity app to enable)")
+        log.info("agy not on PATH and Antigravity not running — skipping Gemini")
 
     return models
 
@@ -212,6 +259,9 @@ def run_reasoner(ticker: str, model_info: dict) -> str:
 
     if provider == "ollama":
         verdict = _ollama_text(prompt, name)
+    elif provider == "agy":
+        agy_model = model_info.get("model")
+        verdict = _agy_call(prompt, model=agy_model, timeout=300, workspace=str(_REPO))
     elif provider == "antigravity":
         verdict = _antigravity_call(prompt, model="flash" if "flash" in name else "pro")
     else:
@@ -254,9 +304,13 @@ def run_vision_verifier(chart_path: Path, verdict: str, model_info: dict) -> str
 
     if provider == "ollama":
         result = _ollama_vision(chart_path, prompt, name)
+    elif provider == "agy":
+        agy_model = model_info.get("model")
+        # agy can read files from the workspace
+        rel_chart = f"data/vision/charts/{chart_path.name}"
+        full_prompt = f"{prompt}\n\nChart image: {rel_chart}"
+        result = _agy_call(full_prompt, model=agy_model, timeout=300, workspace=str(_REPO))
     elif provider == "antigravity":
-        # Antigravity/Gemini can handle images via conversation
-        # For now, describe the chart path — Gemini may need the image uploaded
         full_prompt = f"{prompt}\n\nChart image: {chart_path}\n(Please analyze the chart image at this path if you can access it, otherwise describe what you'd expect to see.)"
         result = _antigravity_call(full_prompt, model="flash" if "flash" in name else "pro")
     else:
