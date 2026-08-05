@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,17 @@ log = logging.getLogger(__name__)
 
 _REPO = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO))
+
+# Load .env file if it exists
+_env_file = _REPO / ".env"
+if _env_file.exists():
+    with open(_env_file, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                if _k not in os.environ:
+                    os.environ[_k] = _v
 
 from scripts.trader import _path_setup  # noqa: F401 — side-effect sys.path
 from scripts.trader.config_loader import get_llm_config

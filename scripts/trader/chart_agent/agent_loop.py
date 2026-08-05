@@ -7,11 +7,11 @@ Runs the full pipeline through multiple models and compares:
 Both roles run through multiple models so we can compare which does each job best.
 
 Available models (auto-detected):
-  Local Ollama:
-    - qwen3-vl:8b (vision — can read chart images)
-    - gemma4:latest, gemma4:31b-cloud, glm-5.2:cloud, deepseek-v4-flash:cloud (reasoners)
-  Antigravity/Gemini (if app is running):
-    - gemini flash / pro via agentapi (vision + reasoner)
+  Ollama cloud:
+    - gemma4:latest, gemma4:31b-cloud, glm-5.2:cloud, deepseek-v4-flash:cloud, deepseek-v4-pro:cloud (reasoners)
+  Antigravity/Gemini (via agy CLI + google-antigravity SDK):
+    - gemini-3.6-flash, gemini-3.1-pro (reasoner via agy, vision via SDK)
+    - Requires GEMINI_API_KEY in .env or environment
 
 Usage:
     python -m scripts.trader.chart_agent.agent_loop --ticker ES1 --date 2026-08-04
@@ -20,7 +20,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import logging
 import os
@@ -37,7 +36,18 @@ log = logging.getLogger(__name__)
 _REPO = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_REPO))
 
-from scripts.trader import _path_setup  # noqa: F401
+# Load .env file if it exists (for GEMINI_API_KEY etc.)
+_env_file = _REPO / ".env"
+if _env_file.exists():
+    with open(_env_file, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                if _k not in os.environ:
+                    os.environ[_k] = _v
+
+from scripts.trader import _path_setup  # noqa: F401, E402
 from scripts.trader.chart_agent.reasoner import assemble_features, retrieve_kb_context, call_llm
 from scripts.trader.chart_agent.gen_charts import generate_charts, _trading_days_from_data
 from scripts.utils.fused_data_loader import load_fused_data
@@ -54,27 +64,6 @@ ANTIGRAVITY_API = os.path.join(os.path.expanduser("~"), ".gemini", "antigravity"
 # ═══════════════════════════════════════════════════════════════════════
 #  Model providers
 # ═══════════════════════════════════════════════════════════════════════
-
-def _ollama_vision(image_path: Path, prompt: str, model: str, timeout: int = 120) -> str:
-    """Call an Ollama vision model with an image + prompt."""
-    with open(image_path, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode()
-
-    resp = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": model,
-            "prompt": prompt,
-            "images": [img_b64],
-            "stream": False,
-            "options": {"temperature": 0.2, "num_ctx": 32768, "num_predict": 4096},
-        },
-        timeout=timeout,
-    )
-    if resp.status_code == 200:
-        return resp.json().get("response", "")
-    raise RuntimeError(f"Ollama vision HTTP {resp.status_code}: {resp.text[:200]}")
-
 
 def _ollama_text(prompt: str, model: str, timeout: int = 300) -> str:
     """Call an Ollama text model."""
@@ -243,14 +232,8 @@ def get_available_models() -> dict:
         if m in ollama_models:
             models["reasoners"].append({"name": m, "provider": "ollama", "type": "text"})
 
-    # Vision models (for chart verification)
-    # Skip local vision models on 8GB GPU — too slow (qwen3-vl:8b timed out at 120s)
-    # Cloud/Antigravity vision models are fast enough
-    vision_candidates = ["qwen3-vl:8b"]
-    for m in vision_candidates:
-        if m in ollama_models:
-            log.info("  Local vision model %s available but skipping (too slow on 8GB GPU). Use cloud models for vision.", m)
-            # models["vision"].append({"name": m, "provider": "ollama", "type": "vision"})  # disabled
+    # Vision models (cloud only — local vision too slow on 8GB GPU)
+    # Gemini via google-antigravity SDK handles vision verification
 
     # Antigravity/Gemini via agy CLI
     if _agy_available():
@@ -334,9 +317,7 @@ def run_vision_verifier(chart_path: Path, verdict: str, model_info: dict) -> str
 
     prompt = VISION_VERIFY_PROMPT.replace("{VERDICT}", verdict)
 
-    if provider == "ollama":
-        result = _ollama_vision(chart_path, prompt, name)
-    elif provider == "agy":
+    if provider == "agy":
         result = _gemini_vision_sdk(chart_path, prompt, timeout=180)
     elif provider == "antigravity":
         full_prompt = f"{prompt}\n\nChart image: {chart_path}\n(Please analyze the chart image at this path if you can access it, otherwise describe what you'd expect to see.)"
