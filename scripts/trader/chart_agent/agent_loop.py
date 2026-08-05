@@ -129,7 +129,7 @@ def _agy_available() -> bool:
 
 
 def _agy_call(prompt: str, model: str = None, timeout: int = 300, workspace: str = None) -> str:
-    """Call agy CLI (Antigravity/Gemini) with a prompt.
+    """Call agy CLI (Antigravity/Gemini) with a text prompt.
 
     Uses -p (print mode) for non-interactive execution.
     Model selection is via --model flag (must come before -p).
@@ -149,6 +149,38 @@ def _agy_call(prompt: str, model: str = None, timeout: int = 300, workspace: str
     if result.returncode != 0 and not result.stdout:
         raise RuntimeError(f"agy error: {result.stderr[:300]}")
     return result.stdout.strip()
+
+
+def _gemini_vision_sdk(image_path: Path, prompt: str, timeout: int = 180) -> str:
+    """Call Gemini via the google-antigravity Python SDK with an image.
+
+    Uses Image.from_file() to pass the chart image directly.
+    Requires GEMINI_API_KEY environment variable (get from Google AI Studio).
+    """
+    import asyncio
+
+    async def _run():
+        import google.antigravity as agy
+
+        config = agy.LocalAgentConfig(
+            system_instructions="You are an institutional ICT/SMC price action analyst. You understand Power of Three, draw on liquidity, premium/discount dealing ranges, FVGs, order blocks, CSD, MSS, Judas Swings, liquidity sweeps, Consequent Encroachment, Turtle Soup, and session timing (Asia/London/NY).",
+        )
+        chart = agy.Image.from_file(str(image_path))
+
+        result_chunks = []
+        async with agy.Agent(config) as agent:
+            response = await agent.chat([chart, prompt])
+            async for token in response:
+                result_chunks.append(token)
+            return "".join(result_chunks)
+
+    # Run in a new event loop
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(asyncio.wait_for(_run(), timeout=timeout))
+        return result
+    finally:
+        loop.close()
 
 
 def _antigravity_call(prompt: str, model: str = "flash", timeout: int = 120) -> str:
@@ -305,11 +337,7 @@ def run_vision_verifier(chart_path: Path, verdict: str, model_info: dict) -> str
     if provider == "ollama":
         result = _ollama_vision(chart_path, prompt, name)
     elif provider == "agy":
-        agy_model = model_info.get("model")
-        # agy can read files from the workspace
-        rel_chart = f"data/vision/charts/{chart_path.name}"
-        full_prompt = f"{prompt}\n\nChart image: {rel_chart}"
-        result = _agy_call(full_prompt, model=agy_model, timeout=300, workspace=str(_REPO))
+        result = _gemini_vision_sdk(chart_path, prompt, timeout=180)
     elif provider == "antigravity":
         full_prompt = f"{prompt}\n\nChart image: {chart_path}\n(Please analyze the chart image at this path if you can access it, otherwise describe what you'd expect to see.)"
         result = _antigravity_call(full_prompt, model="flash" if "flash" in name else "pro")
