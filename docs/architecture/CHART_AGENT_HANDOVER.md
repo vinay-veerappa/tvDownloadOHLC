@@ -36,8 +36,8 @@
 ### 4. Model integration
 - **Ollama cloud models** (gemma4, glm-5.2, deepseek-v4) — working, 20-130s per verdict
 - **agy CLI** (Gemini 3.6 Flash, Gemini 3.1 Pro) — working for text, found at `C:\Users\vinay\AppData\Local\agy\bin\agy.exe` (must be on PATH, not just full path)
-- **google-antigravity Python SDK** — installed but needs `GEMINI_API_KEY` env var (agy uses internal OAuth)
-- **Local vision (qwen3-vl:8b)** — too slow on 8GB GPU (120s+ timeout), disabled in agent loop
+- **Gemini Vision via google-antigravity Python SDK** — ✅ WORKING. Uses `Image.from_file()` to pass chart images directly. Requires `GEMINI_API_KEY` in `.env` file. Vision verifier returns MATCH/PARTIAL/MISMATCH in ~20s.
+- **Local vision (qwen3-vl:8b)** — REMOVED. Too slow on 8GB GPU (120s+ timeout), removed from agent loop.
 
 ### 5. Benchmarks (ES1 Aug 4)
 | Model | Time | Chars | Bias |
@@ -118,7 +118,6 @@ e474bd47 fix(chart_agent): agy CLI integration — correct arg order + PATH setu
 
 ## Open issues flagged for user
 
-1. **agy image reading** — agy CLI errors on image files in headless mode. Text prompts work. May need permissions config in `~/.gemini/antigravity-cli/settings.json` or a different approach.
-2. **google-antigravity SDK** — installed (`pip install google-antigravity`) but needs `GEMINI_API_KEY`. The agy CLI uses internal OAuth; the SDK doesn't. May need to extract the key from agy's auth or get a free Gemini API key from Google AI Studio.
-3. **Local vision model** — `qwen3-vl:8b` times out on 8GB GPU for chart images. Disabled in agent loop. Cloud vision (Gemini) is the path forward once agy image reading is sorted.
-4. **Data gap** — live storage had a 47-day gap (Jun 19 - Aug 4) that user fixed in parallel. Only March 20-24 (4-day) gap remains. Consider adding gap-detection alerting to streaming pipeline.
+1. **GEMINI_API_KEY is in .env** — gitignored, not committed. The `.env` file is loaded automatically by `agent_loop.py`, `reasoner.py`, and `test_vision.py`.
+2. **Full agent loop with --compare-all takes >10min** — 7 reasoners × 2 vision models = 14 LLM calls. Use without `--compare-all` (2 reasoners + 1 vision) for quick runs (~2min).
+3. **Data gap** — live storage had a 47-day gap (Jun 19 - Aug 4) that user fixed in parallel. Only March 20-24 (4-day) gap remains. Consider adding gap-detection alerting to streaming pipeline.
