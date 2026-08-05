@@ -64,28 +64,31 @@ class VerdictSchema:
 
 DAILY_BIAS_MTF = VerdictSchema(
     kind="daily_bias_mtf",
-    version="0.4",
+    version="0.5",
     description=(
         "Verdict for 'what is today's directional bias and why', derived from "
         "HTF narrative via PD-array confluence. Frames which side to trade and "
-        "where to seek liquidity — NOT an entry schema."
+        "where to seek liquidity — NOT an entry schema. Presents BOTH scenarios "
+        "(primary bias + alternate) when price is in premium/discount after a sweep."
     ),
     verdict_fields={
         "horizon": "session | swing | positional — dynamic, NOT fixed by instrument",
         "timeframes_used": "configurable list; chosen because arrays are in play (e.g. [Q,M,W,D,1H,15m,5m])",
-        "per_tf": "list of per-TF reads (HTF->LTF): target_pd_array, array_state, draw_on_liquidity, market_structure, premium_discount, key_levels, notes",
-        "pd_arrays": "confluence map: list of {tf, array, level, state, alignment, role} — multiple arrays held in play",
+        "per_tf": "list of per-TF reads (HTF->LTF): target_pd_array, array_state, draw_on_liquidity, market_structure, premium_discount, key_levels (with status), notes",
+        "pd_arrays": "confluence map: list of {tf, array, level, state, alignment, role} — multiple arrays held in play. Be specific with levels and status (swept/cleared, reclaimed, unmitigated/protected)",
         "primary_pd_array": "DERIVED — the array price is currently seeking; emerges as price approaches",
         "primary_array_tf": "DERIVED — which TF revealed the primary array",
         "htf_story": "the dominant HTF narrative / draw on liquidity — the 'what'",
+        "price_delivery_narrative": "CHRONOLOGICAL price delivery — trace through the session(s) in order. What did Asia do? What did London do? Where is price now? What just happened?",
         "readiness": "ready | not_ready | forming — distinct from bias; 'not_ready' = LTF hasn't confirmed, bias holds",
         "readiness_reason": "why readiness is what it is (e.g. 'LTF hasn't retraced into discount')",
-        "bias": "bullish | bearish | neutral | range",
+        "bias": "bullish | bearish | neutral | range — your PRIMARY call",
         "dealing_range": "{high, low, equilibrium}",
         "premium_discount_position": "premium | discount | equilibrium — where price sits now",
-        "liquidity_pools": "{buy_side: [SSL targets above], sell_side: [BSL targets below]}",
-        "invalidation": "level OR condition that breaks this bias — a real HTF break, not LTF noise",
-        "rationale": "narrative tying arrays together — including why pending arrays are timing, not wrong",
+        "liquidity_pools": "{buy_side: [BSL targets above with status], sell_side: [SSL targets below with status]}",
+        "alternate_scenario": "THE VALID COUNTER-NARRATIVE. If bearish, what's the bullish case? If bullish, what's the bearish case? Include specific levels and logic. NOT invalidation — it's the scenario that becomes primary if your call is wrong.",
+        "invalidation": "level OR condition that breaks the primary bias — a real HTF break, not LTF noise",
+        "rationale": "narrative tying arrays together — why is primary case stronger than alternate? Why are pending arrays timing, not wrong?",
     },
     verification_criteria=[
         "Does bias align with the HTF DOL across the TFs used?",
@@ -120,6 +123,7 @@ DAILY_BIAS_MTF = VerdictSchema(
         "v0.2: Made TF set configurable; introduced PD-array-driven structure",
         "v0.3: Added confluence map (pd_arrays with alignment/role); added readiness separate from bias; KB confirmed 'conflict = not ready, not invalidated'; changed alignment 'contradicting' to 'pending'",
         "v0.4: Removed confidence (probability comes in Phase 3). Made primary_pd_array derived (not declared). horizon/timeframes_used fully dynamic. Multiple arrays held in play simultaneously.",
+        "v0.5: Added alternate_scenario (both cases must be presented). Added price_delivery_narrative (chronological session trace). More specific level status (swept/cleared, reclaimed, unmitigated/protected). Prompt now requires naming ICT concepts in context (CISD, MSS, CE, Turtle Soup, Judas Swing).",
     ],
 )
 
