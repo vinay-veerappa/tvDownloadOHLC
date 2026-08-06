@@ -31,11 +31,31 @@ namespace NinjaTrader.Cbi
         public string FullName { get; set; }
         public MasterInstrument MasterInstrument { get; set; }
         public MarketData MarketData { get; set; }
-        public Instrument(string name) 
-        { 
-            FullName = name; 
+        public Instrument(string name)
+        {
+            FullName = name;
             MasterInstrument = new MasterInstrument { Name = name, TickSize = 0.25 };
             MarketData = new MarketData { Last = new Last { Price = 0.0 } };
+        }
+
+        /// <summary>
+        /// Stub of NT8's instrument lookup. Its absence was the ONLY thing forcing
+        /// TradeCopierEngine.OnExecution (the entire trade-copy path, and the riskiest code in
+        /// the addon) to sit inside `#if !TESTING`, i.e. compiled out of the test build with
+        /// zero coverage. Registered instruments can be seeded by tests; unknown names resolve
+        /// to a fresh instrument so symbol translation still works.
+        /// </summary>
+        public static Dictionary<string, Instrument> Registry =
+            new Dictionary<string, Instrument>(StringComparer.OrdinalIgnoreCase);
+
+        public static Instrument GetInstrument(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            Instrument found;
+            if (Registry.TryGetValue(name, out found)) return found;
+            var created = new Instrument(name);
+            Registry[name] = created;
+            return created;
         }
     }
 
@@ -82,6 +102,8 @@ namespace NinjaTrader.Cbi
         public OrderAction OrderAction { get; set; }
         public double LimitPrice { get; set; }
         public double StopPrice { get; set; }
+        // Required by TradeCopierEngine.OnExecution when mirroring the leader's TIF.
+        public TimeInForce TimeInForce { get; set; } = TimeInForce.Day;
     }
 
     public class Position
@@ -100,6 +122,10 @@ namespace NinjaTrader.Cbi
         public Order Order { get; set; }
         public int Quantity { get; set; }
         public double Price { get; set; }
+        // Required by TradeCopierEngine.OnExecution (recursion guard + dedupe).
+        public Account Account { get; set; }
+        public string ExecutionId { get; set; }
+        public string Name { get; set; }
     }
 
     public class Account
@@ -281,6 +307,24 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         private static int _testsPassed = 0;
         private static int _testsFailed = 0;
+        private static readonly HashSet<string> _invokedTests = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Deterministic clock for firm-mirror tests: a fixed mid-session UTC timestamp, safely
+        /// before the default 22:00 UTC daily-reset boundary. Tests must never read the wall clock.
+        /// </summary>
+        private static readonly DateTime FirmTestClockUtc =
+            new DateTime(2026, 7, 15, 14, 30, 0, DateTimeKind.Utc);
+
+        /// <summary>
+        /// Mirrors the production firm daily-boundary rule so tests seed FirmDailyDate the way
+        /// ComputeFirmMirror will compute it, instead of assuming it equals the calendar date.
+        /// </summary>
+        private static DateTime FirmDailyDateFor(DateTime nowUtc, FirmMirrorConfig fm)
+        {
+            var boundary = new TimeSpan(fm.DailyResetHourUtc, fm.DailyResetMinuteUtc, 0);
+            return nowUtc.TimeOfDay >= boundary ? nowUtc.Date.AddDays(1) : nowUtc.Date;
+        }
 
         public static void Main(string[] args)
         {
@@ -434,6 +478,35 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestAtm_CalculateBreakevenStopPrice();
             TestAtm_ActiveBracketStatus();
 
+            // -- TDD COPIER, INSTRUMENT CAPS, ATM & PROP-FIRM TESTS --
+            // These were previously reachable only from inside the corrupted body of
+            // TestExecuteOrderUpdateProcessesActionsOutsideLock. Invoked explicitly here so
+            // they are owned by the runner rather than by another test.
+            TestPerInstrumentSizing_MNQVsMES();
+            TestInstrumentBlacklist_BlocksMiniNQ();
+            TestPropFirmProfile_AllowedInstruments();
+            TestTradeCopier_RatioScaling();
+            TestTradeCopier_SymbolMapping();
+            TestAtmStrategy_DrawdownShieldBreakeven();
+            TestNewsShield_FlattensBeforeCPI();
+            TestStrategyApi_CanTradeReturnsFalseWhenLockedOut();
+            TestEvaluationProfitTargetLock_LocksAccount();
+            TestPeakEquityProtection_ClosesOnGiveback();
+            TestOptionC_TradeCopierSingletonIntegration();
+            TestOptionC_MultiPartialFillPositionClamping();
+            TestOptionC_PropProtectionSingletonIntegration();
+
+            // Previously declared but never invoked from anywhere.
+            TestOrderNotCancelledInFilledStateWhenLocked();
+
+            // -- COPY-PATH TESTS (previously impossible: OnExecution was #if !TESTING) --
+            TestCopyPath_ExitDoesNotFlipFollowerShort();
+            TestCopyPath_MicroToMiniDoesNotInflateNotional();
+            TestCopyPath_LockedFollowerReceivesNoCopy();
+
+            // Structural self-check: fails if the runner silently stops covering declared tests.
+            TestHarness_AllDeclaredTestsAreInvoked();
+
             Console.WriteLine("\n====================================================");
             Console.WriteLine(string.Format("RESULTS: Passed = {0}, Failed = {1}", _testsPassed, _testsFailed));
             Console.WriteLine("====================================================");
@@ -444,8 +517,236 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        private static void Assert(bool condition, string message)
+
+        // ------------------------------------------------------------------
+        // COPY-PATH TESTS (TradeCopierEngine.OnExecution)
+        //
+        // These exercise the actual order-submitting copy path, which until now was compiled
+        // out of the test build by `#if !TESTING` and had ZERO coverage - despite being the
+        // riskiest code in the addon. Each test below encodes a P0 defect from
+        // docs/architecture/RISKGUARD_COPIER_HARDENING_PLAN.md and is expected to FAIL until
+        // the corresponding fix lands.
+        // ------------------------------------------------------------------
+
+        /// <summary>Resets copier + account global state so copy-path tests are independent.</summary>
+        private static Account SetupCopyPath(
+            string leaderName, string followerName, CopierRelationship rel, int followerQty,
+            Instrument followerInstrument, MarketPosition followerSide)
         {
+            Account.All.Clear();
+            Instrument.Registry.Clear();
+
+            var leader = new Account { Name = leaderName };
+            var follower = new Account { Name = followerName };
+            Account.All.Add(leader);
+            Account.All.Add(follower);
+
+            if (followerQty > 0 && followerInstrument != null)
+            {
+                follower.Positions.Add(new Position
+                {
+                    Instrument = followerInstrument,
+                    MarketPosition = followerSide,
+                    Quantity = followerQty,
+                    AveragePrice = 18000
+                });
+            }
+
+            TradeCopierEngine.Instance.RemoveRelationship(leaderName);
+            TradeCopierEngine.Instance.UpsertRelationship(rel);
+            return follower;
+        }
+
+        private static Execution LeaderExec(
+            Account leader, Instrument inst, OrderAction action, int qty, string execId)
+        {
+            var order = new Order
+            {
+                Instrument = inst,
+                OrderAction = action,
+                OrderState = OrderState.Filled,
+                OrderType = OrderType.Market,
+                Quantity = qty,
+                TimeInForce = TimeInForce.Day,
+                Name = "LEADER_ENTRY"
+            };
+            return new Execution
+            {
+                Account = leader,
+                Instrument = inst,
+                Order = order,
+                Quantity = qty,
+                Price = 18000,
+                ExecutionId = execId,
+                Name = "LEADER_FILL"
+            };
+        }
+
+        // P0-5: exit copies are sized from the LEADER's quantity and never clamped to what the
+        // follower actually holds, so a follower holding less than the leader is flipped to the
+        // opposite side by the exit copy.
+        private static void TestCopyPath_ExitDoesNotFlipFollowerShort()
+        {
+            Console.WriteLine("\n[TEST] COPY PATH: leader exit must not flip a smaller follower short (P0-5)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "SimFollower",
+                IsEnabled = true,
+                FixedLotMode = true,
+                FixedLotSize = 1,
+                AutoSymbolConversion = false,
+                MaxPositionSize = 100
+            };
+
+            // Follower is LONG 1 (fixed-lot) while the leader is long 5.
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 1, mnq, MarketPosition.Long);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            // Leader exits all 5.
+            var exec = LeaderExec(leader, mnq, OrderAction.Sell, 5, "EXIT-1");
+            TradeCopierEngine.Instance.OnExecution(exec);
+
+            var submitted = follower.Orders.Where(o => o.Name == "COPIER_FOLLOW").ToList();
+            int copiedQty = submitted.Sum(o => o.Quantity);
+
+            Assert(copiedQty <= 1,
+                string.Format(
+                    "Exit copy is clamped to the follower's actual position (expected <= 1, got {0}). "
+                    + "Copying the leader's raw exit quantity leaves the follower SHORT the difference.",
+                    copiedQty));
+        }
+
+        // P0-6: Math.Max(1, ...) floors sub-1 conversions to a whole contract, so a micro->mini
+        // conversion multiplies notional by up to 10x.
+        private static void TestCopyPath_MicroToMiniDoesNotInflateNotional()
+        {
+            Console.WriteLine("\n[TEST] COPY PATH: micro->mini must not floor to 1 contract (P0-6)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "SimFollower",
+                IsEnabled = true,
+                AutoSymbolConversion = true,   // MNQ -> NQ, multiplier 0.1
+                QuantityRatio = 1.0,
+                MaxPositionSize = 100
+            };
+
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            // Leader buys 1 MNQ. 1 * 0.1 = 0.1 -> rounds to 0 -> must be SKIPPED, not floored to 1 NQ
+            // (1 NQ == 10 MNQ of notional).
+            var exec = LeaderExec(leader, mnq, OrderAction.Buy, 1, "MICRO-1");
+            TradeCopierEngine.Instance.OnExecution(exec);
+
+            var submitted = follower.Orders.Where(o => o.Name == "COPIER_FOLLOW").ToList();
+            int copiedQty = submitted.Sum(o => o.Quantity);
+
+            Assert(copiedQty == 0,
+                string.Format(
+                    "Sub-one-contract micro->mini conversion is skipped rather than floored to 1 "
+                    + "(expected 0, got {0}). 1 NQ carries 10x the notional of 1 MNQ.",
+                    copiedQty));
+        }
+
+        // P0-8: the copier is the only order-submitting path that does not consult RiskGuard,
+        // so a locked-out follower keeps receiving copied entries.
+        private static void TestCopyPath_LockedFollowerReceivesNoCopy()
+        {
+            Console.WriteLine("\n[TEST] COPY PATH: locked-out follower must not receive copies (P0-8)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "SimFollower",
+                IsEnabled = true,
+                AutoSymbolConversion = false,
+                QuantityRatio = 1.0,
+                MaxPositionSize = 100
+            };
+
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            // Lock the follower out through RiskGuard, exactly as a daily-loss breach would.
+            var guard = new RiskGuardAddOn();
+            guard.SetConfigForTest(new RiskConfig());
+            guard.SetSubscribedAccountForTest("SimFollower");
+            var lockedState = new AccountState("SimFollower");
+            lockedState.IsLockedOut = true;
+            guard.SetAccountStateForTest("SimFollower", lockedState);
+
+            Assert(!guard.CanTrade("SimFollower", mnq.FullName, "TradeCopier"),
+                "Precondition: RiskGuard reports the follower as not tradable");
+
+            var exec = LeaderExec(leader, mnq, OrderAction.Buy, 2, "LOCKED-1");
+            TradeCopierEngine.Instance.OnExecution(exec);
+
+            var submitted = follower.Orders.Where(o => o.Name == "COPIER_FOLLOW").ToList();
+            Assert(submitted.Count == 0,
+                string.Format(
+                    "No copy is submitted to a RiskGuard-locked follower (got {0} order(s)). "
+                    + "Every other order path checks IsAccountLocked; the copier must too.",
+                    submitted.Count));
+        }
+
+        /// <summary>
+        /// Guards the defect that motivated this harness repair: a test body was overwritten by a
+        /// bad merge, which orphaned ten tests and left a stray Environment.Exit that aborted the
+        /// run at test 92 of 117. Nothing detected that for as long as the suite was green.
+        ///
+        /// Uses reflection to compare every declared Test* method against a registry of methods
+        /// the runner actually reached, so a future merge that drops an invocation fails loudly
+        /// instead of quietly reducing coverage.
+        /// </summary>
+        private static void TestHarness_AllDeclaredTestsAreInvoked()
+        {
+            Console.WriteLine("\n[TEST] HARNESS: every declared test method is invoked by the runner");
+
+            // Self-register before computing, since this method's own Assert runs afterwards.
+            _invokedTests.Add("TestHarness_AllDeclaredTestsAreInvoked");
+
+            var declared = typeof(Program)
+                .GetMethods(System.Reflection.BindingFlags.NonPublic
+                            | System.Reflection.BindingFlags.Public
+                            | System.Reflection.BindingFlags.Static)
+                .Where(m => m.Name.StartsWith("Test", StringComparison.Ordinal)
+                            && m.GetParameters().Length == 0
+                            && m.ReturnType == typeof(void))
+                .Select(m => m.Name)
+                .ToList();
+
+            var missing = declared.Where(n => !_invokedTests.Contains(n)).OrderBy(n => n).ToList();
+
+            Assert(missing.Count == 0,
+                missing.Count == 0
+                    ? string.Format("All {0} declared test methods were invoked by the runner", declared.Count)
+                    : string.Format("{0} declared test method(s) never invoked: {1}",
+                        missing.Count, string.Join(", ", missing)));
+        }
+
+        /// <summary>
+        /// Records which test method the assertion came from, so
+        /// TestHarness_AllDeclaredTestsAreInvoked can prove the runner still reaches every
+        /// declared test. [CallerMemberName] means no call site has to change, and a test that
+        /// asserts nothing never registers - which is itself the failure we want surfaced.
+        /// </summary>
+        private static void Assert(
+            bool condition,
+            string message,
+            [System.Runtime.CompilerServices.CallerMemberName] string caller = null)
+        {
+            if (!string.IsNullOrEmpty(caller))
+            {
+                _invokedTests.Add(caller);
+            }
+
             if (condition)
             {
                 Console.WriteLine("  [PASS] " + message);
@@ -2303,7 +2604,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             account.Values[AccountItem.UnrealizedProfitLoss] = 0.0;
             account.Values[AccountItem.RealizedProfitLoss] = -3000.0;
 
-            var actions = addon.EvaluateFirmMirror(account, state, DateTime.UtcNow);
+            // Fixed clock. DateTime.UtcNow made this test time-of-day dependent: past the
+            // FirmMirror daily-reset boundary (DailyResetHourUtc, default 22:00 UTC) the firm
+            // session rolls over and rebases the P&L, so the breach no longer fires.
+            var nowUtc = FirmTestClockUtc;
+            state.FirmDailyDate = FirmDailyDateFor(nowUtc, fmConfig);
+
+            var actions = addon.EvaluateFirmMirror(account, state, nowUtc);
             
             Assert(actions.Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"), "Firm trailing DD breach action generated");
             Assert(state.IsLockedOut == true, "Firm mirror breach locks out account");
@@ -2327,14 +2634,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             addon.SetConfigForTest(config);
             
             var state = new AccountState("FirmAcc");
-            state.FirmDailyDate = DateTime.UtcNow.Date;
+            // Fixed clock, and FirmDailyDate derived with the SAME boundary rule the production
+            // code uses. Previously this set UtcNow.Date, which stops matching after 22:00 UTC
+            // and silently rebased FirmDailyStartRealized, so the breach never fired.
+            var nowUtc = FirmTestClockUtc;
+            state.FirmDailyDate = FirmDailyDateFor(nowUtc, fmConfig);
             state.FirmDailyStartRealized = 0.0;
             
             account.Values[AccountItem.RealizedProfitLoss] = -1400.0; // Less than limit -1300
             account.Values[AccountItem.UnrealizedProfitLoss] = 0.0;
             account.Values[AccountItem.CashValue] = 98600.0; 
 
-            var actions = addon.EvaluateFirmMirror(account, state, DateTime.UtcNow);
+            var actions = addon.EvaluateFirmMirror(account, state, nowUtc);
             
             Assert(actions.Any(a => a.RuleId == "FIRM_DAILY_LOSS_BREACH"), "Firm daily loss breach action generated");
             Assert(state.IsLockedOut == true, "Firm mirror breach locks out account");
@@ -3267,27 +3578,52 @@ namespace NinjaTrader.NinjaScript.AddOns
         private static void TestExecuteOrderUpdateProcessesActionsOutsideLock()
         {
             Console.WriteLine("\n[TEST] AUDIT: ExecuteOrderUpdate processes lockout actions safely");
-            var config = new RiskConfig();
-            // - New TDD Copier, Instrument Caps, ATM & Prop-Firm Tests -
-            TestPerInstrumentSizing_MNQVsMES();
-            TestInstrumentBlacklist_BlocksMiniNQ();
-            TestPropFirmProfile_AllowedInstruments();
-            TestTradeCopier_RatioScaling();
-            TestTradeCopier_SymbolMapping();
-            TestAtmStrategy_DrawdownShieldBreakeven();
-            TestNewsShield_FlattensBeforeCPI();
-            TestStrategyApi_CanTradeReturnsFalseWhenLockedOut();
-            TestEvaluationProfitTargetLock_LocksAccount();
-            TestPeakEquityProtection_ClosesOnGiveback();
 
-            // Printed Summary
-            Console.WriteLine("\n====================================================");
-            Console.WriteLine($"TEST SUMMARY: Passed {_testsPassed} / {_testsPassed + _testsFailed} tests.");
-            Console.WriteLine("====================================================");
-            if (_testsFailed > 0)
+            // NOTE: this test body was previously destroyed by a bad merge - it declared a
+            // RiskConfig, then contained the TAIL OF Main() (ten test invocations, a summary
+            // print and Environment.Exit(1)). It therefore asserted nothing, and its stray
+            // Environment.Exit aborted the process at call #92 of 117 whenever any earlier
+            // test had failed, silently skipping the last 25 tests. Restored below.
+            var config = new RiskConfig();
+            config.Sizing.MaxContractsPerAccount = 10;
+
+            var account = new Account { Name = "LockAcc" };
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetSubscribedAccountForTest("LockAcc");
+
+            var state = new AccountState("LockAcc");
+            state.IsLockedOut = true;
+            addon.SetAccountStateForTest("LockAcc", state);
+
+            var mnq = new Instrument("MNQ");
+            // A working BUY order on a locked-out account: risk-increasing, must be cancelled.
+            var working = new Order
             {
-                Environment.Exit(1);
+                Instrument = mnq,
+                OrderState = OrderState.Working,
+                OrderType = OrderType.Limit,
+                OrderAction = OrderAction.Buy,
+                Quantity = 2
+            };
+            account.Orders.Add(working);
+
+            // The real assertion of this test's name: ExecuteOrderUpdate must complete without
+            // throwing or deadlocking, i.e. it must not invoke broker calls while holding
+            // _stateLock re-entrantly from inside its own event handler.
+            bool threw = false;
+            try
+            {
+                addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = working });
             }
+            catch (Exception)
+            {
+                threw = true;
+            }
+
+            Assert(!threw, "ExecuteOrderUpdate completes without throwing for a locked-out account");
+            Assert(addon.IsAccountLocked("LockAcc"),
+                "Account remains locked out after ExecuteOrderUpdate processes the order");
         }
 
         private static void TestPerInstrumentSizing_MNQVsMES()

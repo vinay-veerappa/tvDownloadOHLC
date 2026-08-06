@@ -6,6 +6,11 @@ using System.Linq;
 #if TESTING
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
+// OnExecution now compiles in the test build, so it needs the Cbi types (Account, Order,
+// Execution, Instrument, OrderAction, ...) which are provided by the stubs in
+// RiskGuardAddOnTests.cs under the same namespace.
+using NinjaTrader.Cbi;
+using NinjaTrader.Code;
 #else
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -610,7 +615,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-#if !TESTING
+        // OnExecution is deliberately NOT behind `#if !TESTING`. It is the trade-copy
+        // path - the riskiest code in this file - and excluding it left it with zero
+        // test coverage. It compiles against the NinjaTrader stubs in
+        // RiskGuardAddOnTests.cs (Account.All/CreateOrder/Submit, Instrument.GetInstrument,
+        // NinjaTrader.Code.Output).
         public void OnExecution(Execution exec)
         {
             if (exec == null || exec.Account == null || exec.Quantity <= 0) return;
@@ -743,6 +752,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
         }
-#endif
+
     }
 }

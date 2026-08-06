@@ -1040,7 +1040,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
                         {
                             DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
-                            var firmActions = EvaluateFirmMirror(account, state, nowEt);
+                            // FirmMirror's daily boundary is expressed in UTC
+                            // (FirmMirror.DailyResetHourUtc), so pass UTC. This previously passed
+                            // nowEt, which the method silently ignored in favour of DateTime.UtcNow.
+                            var firmActions = EvaluateFirmMirror(account, state, DateTime.UtcNow);
                             if (firmActions != null && firmActions.Count > 0)
                             {
                                 if (actions == null) actions = new List<GuardAction>();
@@ -2837,13 +2840,24 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         // - Firm-mirror logic and unit test diagnostics (FR-24/25/26) -
-        internal List<GuardAction> EvaluateFirmMirror(Account account, AccountState st, DateTime nowEt)
+        /// <summary>
+        /// Evaluates the firm-mirror trailing-drawdown and daily-loss rules.
+        /// </summary>
+        /// <param name="nowUtc">
+        /// UTC timestamp to evaluate against. This parameter was previously named nowEt and was
+        /// IGNORED - the method read DateTime.UtcNow internally, so the firm daily-reset boundary
+        /// (FirmMirror.DailyResetHourUtc, default 22:00 UTC) could roll over mid-test and zero the
+        /// P&amp;L basis. That made TestFirmMirrorDailyLossBreachEmitsAction fail every day after
+        /// 22:00 UTC, and because a corrupted test called Environment.Exit on failure, it silently
+        /// skipped the last 25 tests in the suite. Callers must now pass the clock explicitly.
+        /// </param>
+        internal List<GuardAction> EvaluateFirmMirror(Account account, AccountState st, DateTime nowUtc)
         {
             double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
             double realized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
             double unrealized = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
 
-            var res = ComputeFirmMirror(balance, realized, unrealized, _config.FirmMirror, st, DateTime.UtcNow);
+            var res = ComputeFirmMirror(balance, realized, unrealized, _config.FirmMirror, st, nowUtc);
             
             if (res.StateChanged)
             {
