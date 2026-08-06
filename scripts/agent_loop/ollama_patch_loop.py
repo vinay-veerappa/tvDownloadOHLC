@@ -333,6 +333,70 @@ def parse_blocks(text: str) -> Tuple[Dict[str, str], str]:
     return blocks, notes
 
 
+def review_panel(
+    reviewers: List[str],
+    ticket: Dict[str, Any],
+    regions: List[Dict[str, Any]],
+    blocks: Dict[str, str],
+    notes: str,
+    orchestrator_note: str,
+    art: Path,
+    rnd: int,
+) -> Dict[str, Any]:
+    """Run several reviewers concurrently and merge their verdicts.
+
+    Different model families miss different things, so a panel finds strictly more than any
+    single reviewer. Verdict is the WORST returned (REJECT > REVISE > APPROVE): any reviewer
+    may block, none may unblock on another's behalf. Findings are attributed so the
+    implementer - and the arbiter - can tell whether two models agree or one is an outlier.
+    """
+    import concurrent.futures
+
+    prompt = build_review_prompt(ticket, regions, blocks, notes, orchestrator_note)
+
+    def one(model: str) -> Tuple[str, str, float]:
+        t0 = time.time()
+        try:
+            out = chat(
+                model, [{"role": "system", "content": REVIEWER_SYSTEM}, {"role": "user", "content": prompt}]
+            )
+        except Exception as exc:  # noqa: BLE001 - a dead reviewer must not kill the panel
+            out = f"<<<VERDICT>>>\nREVISE\n<<<END VERDICT>>>\n<<<FINDINGS>>>\n- [MINOR] reviewer {model} failed: {exc}\n<<<END FINDINGS>>>\n<<<REQUIRED>>>\n- NONE\n<<<END REQUIRED>>>"
+        return model, out, round(time.time() - t0, 1)
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(reviewers)) as pool:
+        for model, out, secs in pool.map(one, reviewers):
+            safe = re.sub(r"[^A-Za-z0-9_.-]", "_", model)
+            (art / f"r{rnd}_review_{safe}.txt").write_text(out, encoding="utf-8")
+            parsed = parse_review(out)
+            parsed["model"] = model
+            parsed["secs"] = secs
+            results.append(parsed)
+
+    rank = {"APPROVE": 0, "REVISE": 1, "REJECT": 2}
+    worst = max(results, key=lambda r: rank.get(r["verdict"], 1))
+
+    merged_findings, merged_required = [], []
+    for r in results:
+        if r["findings"] and r["findings"].strip() not in ("- NONE", "NONE"):
+            merged_findings.append(f"### From reviewer {r['model']} (verdict {r['verdict']})\n{r['findings']}")
+        if r["required"] and r["required"].strip() not in ("- NONE", "NONE"):
+            merged_required.append(f"### Required by {r['model']}\n{r['required']}")
+
+    return {
+        "verdict": worst["verdict"],
+        "findings": "\n\n".join(merged_findings) or "- NONE",
+        "required": "\n\n".join(merged_required) or "- NONE",
+        "blocker_count": sum(r["blocker_count"] for r in results),
+        "per_model": [
+            {"model": r["model"], "verdict": r["verdict"], "blockers": r["blocker_count"], "secs": r["secs"]}
+            for r in results
+        ],
+        "unanimous_approve": all(r["verdict"] == "APPROVE" for r in results),
+    }
+
+
 def parse_review(text: str) -> Dict[str, Any]:
     def section(name: str) -> str:
         m = re.search(rf"<<<{name}>>>\r?\n(.*?)<<<END {name}>>>", text, re.DOTALL)
@@ -482,7 +546,7 @@ def apply_blocks(regions: List[Dict[str, Any]], blocks: Dict[str, str]) -> List[
 def run_ticket(
     ticket: Dict[str, Any],
     implementer: str,
-    reviewer: str,
+    reviewers: List[str],
     max_rounds: int,
     apply: bool,
     build_cmd: str = "",
@@ -589,25 +653,14 @@ def run_ticket(
                 continue
 
         t0 = time.time()
-        review_raw = chat(
-            reviewer,
-            [
-                {"role": "system", "content": REVIEWER_SYSTEM},
-                {
-                    "role": "user",
-                    "content": build_review_prompt(
-                        ticket, regions, blocks, notes, orchestrator_note
-                    ),
-                },
-            ],
+        review = review_panel(
+            reviewers, ticket, regions, blocks, notes, orchestrator_note, art, rnd
         )
         rev_secs = round(time.time() - t0, 1)
-        (art / f"r{rnd}_review_raw.txt").write_text(review_raw, encoding="utf-8")
-        review = parse_review(review_raw)
-        print(
-            f"           review {rev_secs}s -> {review['verdict']} "
-            f"({review['blocker_count']} blocker/major)"
+        panel_desc = ", ".join(
+            f"{m['model'].split(':')[0]}={m['verdict']}({m['blockers']})" for m in review["per_model"]
         )
+        print(f"           panel {rev_secs}s -> {review['verdict']}  [{panel_desc}]")
 
         result["rounds"].append(
             {
@@ -615,6 +668,7 @@ def run_ticket(
                 "stage": "review",
                 "verdict": review["verdict"],
                 "blocker_count": review["blocker_count"],
+                "per_model": review["per_model"],
                 "findings": review["findings"],
                 "required": review["required"],
                 "lock_flags": lock_flags,
@@ -624,7 +678,7 @@ def run_ticket(
             }
         )
 
-        if review["verdict"] == "APPROVE" and not lock_flags:
+        if review["unanimous_approve"] and not lock_flags:
             result["final_verdict"] = "APPROVE"
             break
 
@@ -644,7 +698,7 @@ def run_ticket(
             {
                 "role": "user",
                 "content": (
-                    f"An independent reviewer returned {review['verdict']}.\n\n"
+                    f"A review panel returned {review['verdict']}.\n\n"
                     f"FINDINGS:\n{review['findings']}\n\nREQUIRED CHANGES:\n{review['required']}"
                     f"{extra}{note_block}\n\nApply every required change and re-emit ALL blocks in full."
                 ),
@@ -684,8 +738,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tickets", required=True)
     ap.add_argument("--ticket", action="append", help="ticket id (repeatable); default all")
-    ap.add_argument("--implementer", default="deepseek-v4-pro:cloud")
-    ap.add_argument("--reviewer", default="kimi-k2.7-code:cloud")
+    # Role assignment. Kimi is the strongest pure coder of the set, so it implements;
+    # review is a panel of two different families so their blind spots do not overlap.
+    ap.add_argument("--implementer", default="kimi-k2.7-code:cloud")
+    ap.add_argument(
+        "--reviewers",
+        default="glm-5.2:cloud,deepseek-v4-pro:cloud",
+        help="comma-separated review panel; verdict is the worst returned, APPROVE must be unanimous",
+    )
     ap.add_argument("--max-rounds", type=int, default=3)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument(
@@ -737,7 +797,7 @@ def main() -> int:
             res = run_ticket(
                 t,
                 args.implementer,
-                args.reviewer,
+                [m.strip() for m in args.reviewers.split(",") if m.strip()],
                 args.max_rounds,
                 args.apply,
                 build_cmd=args.build_cmd,
