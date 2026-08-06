@@ -318,6 +318,29 @@ def _enforce_narrative_contract(summary: str, mode: str) -> str:
             "- Alternate: if the primary validation fails, switch to the alternate scenario using structural invalidation levels from the cheat sheet."
         )
 
+    if mode == "premarket":
+        if "execution card" not in summary.lower():
+            additions.append(
+                "### Execution Card\n"
+                "- Active Probability Source: sequential (single-source mode for this note).\n"
+                "- Primary Setup (rank #1): wait for M5 confirmation at the named trigger level; invalidate on opposite-side reclaim.\n"
+                "- Alternate Setup (rank #2): only if primary fails and a fresh MSS forms.\n"
+                "- Time Invalidation: if unresolved by 10:10 ET, downgrade conviction; if still unresolved by 10:30 ET, stand down.\n"
+                "- Attempt Budget: max 2 attempts per setup; no third probe in same direction.\n"
+                "- Re-entry Rule: re-entry only after fresh MSS + M5 close at/through a named level.\n"
+                "- Stand-Down Rule: no-trade / wait for confirmation when neither trigger validates by cutoff."
+            )
+
+        if "checkpoint table" not in summary.lower():
+            additions.append(
+                "### Checkpoint Table\n"
+                "| Time | What Must Be True | If Not True |\n"
+                "|---|---|---|\n"
+                "| 08:35 ET | Initial post-news direction has a clear M5 close anchor | Treat as noise; wait for 09:50 macro window |\n"
+                "| 09:50 ET | Primary trigger or clear invalidation is visible at named levels | Switch to alternate setup criteria; do not force entry |\n"
+                "| 10:10 ET | One setup is validated with structure follow-through | Stand down and preserve attempts for later session |"
+            )
+
     # Accept either explicit "no-trade / wait" wording or a native
     # no-trade-condition/stand-down clause.
     has_no_trade_clause = re.search(

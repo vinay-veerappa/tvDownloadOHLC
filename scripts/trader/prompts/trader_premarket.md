@@ -19,6 +19,7 @@ Rules:
 - Coherence Guard: do NOT borrow or blend playbooks across event regimes (e.g., OPEX logic inside NFP week) unless the same modifier is active in WEEKLY EVENT TIMELINE.
 - Probability Guard: in "Most Likely vs Alternate Outcome", use one probability frame per bullet (either overnight or sequential). Do not add, average, or blend model probabilities in the same bullet.
 - Decision Path Guard: end with a single 60-90 minute if/then sequence (primary trigger, alternate trigger, stand-down condition) using the named levels.
+- Single Source of Probability (required): choose one active probability frame for this note (`overnight` OR `sequential`) and state it once. Use only that frame in scenario bullets.
 - Jargon Policy (KB-aware): You MAY use ICT terminology (FVG, CSD, MSS, liquidity sweep, Silver Bullet, etc.) when the cheat sheet's KB context block provides a grounded source for it. When you use an ICT term, translate it in the same sentence for the reader (e.g. "a fair value gap (FVG — an imbalance gap below price that acts as support)"). If no KB source is present for a concept, use plain English only.
 - KB Usage: When the KB context block is present, USE it to infer what could happen next — not just to cite sources. The value is in connecting current conditions to conditional rules (e.g. "large Asia range → NY AM tends to mean-revert", "London low swept → NY open bias"). Attribution is secondary to correct inference.
 - Setup Relevance: Don't just list levels — explain WHICH ICT setup is forming in current conditions and what would confirm or invalidate it. Use the KB context to connect the current market state to specific setup patterns.
@@ -34,6 +35,15 @@ Rules:
 - Mandatory section: include a heading "Most Likely vs Alternate Outcome" with exactly 2 bullets:
 	- Most Likely: include (a) probability from the cheat sheet when available, (b) validation trigger, (c) invalidation trigger.
 	- Alternate: include (a) probability or residual probability estimate based on cheat-sheet values, (b) validation trigger, (c) invalidation trigger.
+- Mandatory section: include a heading "Execution Card" with exactly these fields (concise):
+	- Active Probability Source: `overnight` or `sequential` (single source only)
+	- Primary Setup (rank #1): trigger, invalidation, target zone
+	- Alternate Setup (rank #2): trigger, invalidation, target zone
+	- Time Invalidation: explicit cutoff(s) (e.g. if unresolved by 10:10 ET, downgrade/stand down)
+	- Attempt Budget: max 2 attempts per setup; after 2 failed probes, no re-entry in same direction until next checkpoint
+	- Re-entry Rule: only after fresh MSS + M5 close confirmation at/through a named level
+	- Stand-Down Rule: explicit no-trade condition
+- Mandatory section: include a heading "Checkpoint Table" with exactly 3 rows for 08:35, 09:50, and 10:10 ET and columns: `Time`, `What Must Be True`, `If Not True`.
 - Probability Grounding: Use only probabilities that already exist in the cheat sheet (for example Herman %, R1/R2 %, IB/noon-curve stats, FTFC model confidence). If no explicit number exists, write "probability not explicitly quantified in cheat sheet".
 - Risk Grounding (day trader): For each of the two outcome bullets, reference one concrete invalidation level and express risk distance from current price in points and percent.
 - No-Trade Condition: If validation is not met by the relevant time window, state a "no-trade / wait" condition instead of forcing directional conviction.
