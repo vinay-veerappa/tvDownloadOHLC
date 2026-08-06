@@ -3948,6 +3948,73 @@ def build_premarket_context(
     except Exception as e:
         log.warning("[premarket] ICT feature blocks failed: %s", e)
 
+    # ALN/session pattern block (same signal family as ticker cheat sheet path)
+    # Keep this in premarket so Herman/Classification are not the only structured biases.
+    try:
+        from scripts.utils.fused_data_loader import load_fused_data
+        from scripts.libs_py.nqstats.engine import NQStatsEngine
+        from scripts.libs_py.nqstats.classifiers import compute_aln_bias
+
+        _aln_data: dict = {}
+        _df_aln = load_fused_data(nq_ticker, timeframe="1m", require_historical=False)
+        if _df_aln is not None and not _df_aln.empty:
+            if _df_aln.index.tz is None:
+                _df_aln.index = pd.DatetimeIndex(_df_aln.index).tz_localize("UTC").tz_convert(ET)
+            elif _df_aln.index.tz != ET:
+                _df_aln.index = _df_aln.index.tz_convert(ET)
+
+            _cutoff = pd.Timestamp.now(ET) - timedelta(days=10)
+            _df_recent = _df_aln[_df_aln.index >= _cutoff]
+            if _df_recent.empty:
+                _df_recent = _df_aln
+
+            _engine = NQStatsEngine(_df_recent, ticker=nq_ticker)
+            _engine.process()
+            _latest = _engine.get_latest_status()
+
+            _lh = _latest.get("london_high")
+            _ll = _latest.get("london_low")
+            _lh_val = float(_lh) if _lh is not None and pd.notna(_lh) and not math.isnan(float(_lh)) else None
+            _ll_val = float(_ll) if _ll is not None and pd.notna(_ll) and not math.isnan(float(_ll)) else None
+            _mid_val = (_lh_val + _ll_val) / 2 if _lh_val is not None and _ll_val is not None else None
+
+            _aln_data = {
+                "aln": _latest.get("aln", "N/A"),
+                "broken": _latest.get("broken", "N/A"),
+                "asia_status": _latest.get("asiabox_status", "N/A"),
+                "london_status": _latest.get("londonbox_status", "N/A"),
+                "ib_bias": _latest.get("ib_bias", "N/A"),
+                "ib_conviction": _latest.get("ib_conviction", 0),
+                "noon_curve": _latest.get("noon_curve", "N/A"),
+                "p12": _latest.get("p12"),
+                "levels": {
+                    "lh": _lh_val,
+                    "ll": _ll_val,
+                    "mid": _mid_val,
+                },
+            }
+
+            _aln_bias = compute_aln_bias(
+                _aln_data["aln"],
+                _aln_data["broken"],
+                spot=nq_spot,
+                london_high=_aln_data["levels"]["lh"],
+                london_low=_aln_data["levels"]["ll"],
+            )
+            _aln_data["bias"] = _aln_bias["bias"]
+            _aln_data["conviction"] = _aln_bias["conviction"]
+            _aln_data["reasoning"] = _aln_bias["reasoning"]
+            _aln_data["primary_target"] = _aln_bias["primary_target"]
+            _aln_data["primary_target_pct"] = _aln_bias["primary_target_pct"]
+            _aln_data["break_high_pct"] = _aln_bias["break_high_pct"]
+            _aln_data["break_low_pct"] = _aln_bias["break_low_pct"]
+            _aln_data["edge_spent"] = _aln_bias["edge_spent"]
+            _aln_data["edge_spent_note"] = _aln_bias["edge_spent_note"]
+
+        sections.append(_format_aln_block("NQ", _aln_data, nq_spot))
+    except Exception as e:
+        log.warning("[premarket] ALN block failed: %s", e)
+
     # FTFC bias + SMA stance
     try:
         from scripts.trader.signals.intraday_blocks import _format_ftfc_block

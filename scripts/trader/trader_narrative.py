@@ -298,6 +298,24 @@ def write_cheatsheet_to_disk(cheat_sheet: str, mode: str, ticker: str) -> Path:
     return latest_path
 
 
+def _infer_probability_source(summary: str) -> str:
+    """Infer single probability source from the existing narrative text."""
+    lower = summary.lower()
+
+    explicit = re.search(r"active\s+probability\s+source\s*:\s*(overnight|sequential)", lower)
+    if explicit:
+        return explicit.group(1)
+
+    overnight_hits = len(re.findall(r"\bovernight\b|\bglobex\b|trajectory", lower))
+    sequential_hits = len(re.findall(r"\br1\b|\br2\b|\bsequential\b|classification", lower))
+
+    if overnight_hits > sequential_hits:
+        return "overnight"
+    if sequential_hits > overnight_hits:
+        return "sequential"
+    return "not explicitly quantified in cheat sheet"
+
+
 def _enforce_narrative_contract(summary: str, mode: str) -> str:
     """Apply a minimal deterministic contract guard to LLM output.
 
@@ -319,10 +337,12 @@ def _enforce_narrative_contract(summary: str, mode: str) -> str:
         )
 
     if mode == "premarket":
+        inferred_source = _infer_probability_source(summary)
         if "execution card" not in summary.lower():
             additions.append(
                 "### Execution Card\n"
-                "- Active Probability Source: sequential (single-source mode for this note).\n"
+                f"- Active Probability Source: {inferred_source}.\n"
+                "- Bias Inputs Used: Herman, ALN, SMA stance, Classification/Weekly context, GEX (FTFC optional).\n"
                 "- Primary Setup (rank #1): wait for M5 confirmation at the named trigger level; invalidate on opposite-side reclaim.\n"
                 "- Alternate Setup (rank #2): only if primary fails and a fresh MSS forms.\n"
                 "- Time Invalidation: if unresolved by 10:10 ET, downgrade conviction; if still unresolved by 10:30 ET, stand down.\n"
@@ -330,6 +350,17 @@ def _enforce_narrative_contract(summary: str, mode: str) -> str:
                 "- Re-entry Rule: re-entry only after fresh MSS + M5 close at/through a named level.\n"
                 "- Stand-Down Rule: no-trade / wait for confirmation when neither trigger validates by cutoff."
             )
+        else:
+            if "bias inputs used" not in summary.lower():
+                additions.append(
+                    "- Bias Inputs Used: explicitly state Herman, ALN, SMA stance, Classification/Weekly context, and GEX before final directional language (FTFC optional)."
+                )
+
+            has_dominance = re.search(r"herman.*dominant|dominant.*herman", summary, flags=re.IGNORECASE)
+            if has_dominance is None:
+                additions.append(
+                    "- Dominance Rule: if Herman is marked DOMINANT in the cheat sheet, treat it as the lead directional prior unless invalidated at named levels."
+                )
 
         if "checkpoint table" not in summary.lower():
             additions.append(

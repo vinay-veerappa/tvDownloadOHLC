@@ -32,11 +32,14 @@ Rules:
 - Spatial & Mathematical Precision: Put Walls are downside support/floors (below or near price floor); Call Walls are overhead resistance/ceilings. Double-check level distances and spatial positions relative to current price.
 - Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.
 - Directional Commitment Gate: Only present a single dominant directional read if the core components are aligned in the same direction (at minimum: GEX regime + Herman/ALN or FTFC + Classification/Weekly context). If they are not aligned, keep the read explicitly conditional.
+- Bias Inputs Transparency (required): explicitly list what Herman, ALN, SMA stance, Classification/Weekly context, and GEX are signaling before final directional language. FTFC may be included when available but is optional.
+- Dominance Rule (required): if Herman is marked DOMINANT in the cheat sheet, treat it as the lead directional prior unless explicitly invalidated by price action at named levels.
 - Mandatory section: include a heading "Most Likely vs Alternate Outcome" with exactly 2 bullets:
 	- Most Likely: include (a) probability from the cheat sheet when available, (b) validation trigger, (c) invalidation trigger.
 	- Alternate: include (a) probability or residual probability estimate based on cheat-sheet values, (b) validation trigger, (c) invalidation trigger.
 - Mandatory section: include a heading "Execution Card" with exactly these fields (concise):
 	- Active Probability Source: `overnight` or `sequential` (single source only)
+	- Bias Inputs Used: Herman, ALN, SMA stance, Classification/Weekly context, GEX (FTFC optional)
 	- Primary Setup (rank #1): trigger, invalidation, target zone
 	- Alternate Setup (rank #2): trigger, invalidation, target zone
 	- Time Invalidation: explicit cutoff(s) (e.g. if unresolved by 10:10 ET, downgrade/stand down)
