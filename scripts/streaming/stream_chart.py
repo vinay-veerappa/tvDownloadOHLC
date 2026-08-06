@@ -1087,12 +1087,21 @@ def save_candles_to_parquet(symbol, candles, parquet_path):
                 new_df = new_df[~bad_mask].reset_index(drop=True)
                 if new_df.empty: return
 
+        # Drop any string-typed timestamp from existing file (legacy files stored it
+        # as a mixed str column). We regenerate it uniformly below to avoid pyarrow
+        # cast errors ("Expected bytes, got a 'Timestamp' object") when concatenating
+        # a datetime64 column with a str column.
+        if 'timestamp' in new_df.columns:
+            new_df = new_df.drop(columns=['timestamp'])
+
         combined = new_df
 
         if os.path.exists(parquet_path):
             try:
                 existing_df = pd.read_parquet(parquet_path)
-                combined = pd.concat([existing_df, new_df]).drop_duplicates(subset=['time'], keep='last').sort_values('time')
+                if 'timestamp' in existing_df.columns:
+                    existing_df = existing_df.drop(columns=['timestamp'])
+                combined = pd.concat([existing_df, new_df], ignore_index=True).drop_duplicates(subset=['time'], keep='last').sort_values('time').reset_index(drop=True)
             except Exception as read_err:
                 print(f"⚠️ [{symbol}] Existing parquet corrupt/unreadable ({read_err}). Overwriting with new data only.")
                 # Optionally back up the corrupt file for forensics
@@ -1108,7 +1117,11 @@ def save_candles_to_parquet(symbol, candles, parquet_path):
                         os.remove(parquet_path)
                     except Exception:
                         pass
-                combined = new_df.sort_values('time')
+                combined = new_df.sort_values('time').reset_index(drop=True)
+
+        # Regenerate timestamp column uniformly as UTC ISO strings for downstream readers.
+        if 'time' in combined.columns and 'timestamp' not in combined.columns:
+            combined['timestamp'] = pd.to_datetime(combined['time'], unit='ms', utc=True).dt.strftime('%Y-%m-%d %H:%M:%S+00:00')
 
         # Atomic write: temp file → os.replace (atomic on same filesystem)
         tmp_path = parquet_path + '.tmp'
