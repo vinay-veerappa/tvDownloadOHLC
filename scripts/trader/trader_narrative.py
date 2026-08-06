@@ -318,8 +318,14 @@ def _enforce_narrative_contract(summary: str, mode: str) -> str:
             "- Alternate: if the primary validation fails, switch to the alternate scenario using structural invalidation levels from the cheat sheet."
         )
 
-    # Match variants like "no trade / wait" or "no-trade/wait".
-    if re.search(r"no\s*-?\s*trade\s*/\s*wait", summary, flags=re.IGNORECASE) is None:
+    # Accept either explicit "no-trade / wait" wording or a native
+    # no-trade-condition/stand-down clause.
+    has_no_trade_clause = re.search(
+        r"no\s*-?\s*trade\s*/\s*wait|no\s*-?\s*trade\s*condition|stand\s*-?\s*down\s*condition",
+        summary,
+        flags=re.IGNORECASE,
+    )
+    if has_no_trade_clause is None:
         additions.append(
             "- No-Trade Condition: no-trade / wait for confirmation if neither scenario validation trigger is met in the relevant window."
         )
@@ -353,6 +359,93 @@ def _append_contradiction_check(summary: str) -> str:
         )
 
     return summary
+
+
+def _sanitize_trader_facing_output(summary: str) -> str:
+    """Remove debug/provenance artifacts from trader-facing narratives.
+
+    KB source metadata is useful for logs/tests but noisy in execution notes.
+    """
+    sanitized = summary
+
+    # Remove explicit KB-availability disclaimers from user-facing notes.
+    sanitized = re.sub(
+        r"(?im)^\s*KB context unavailable;[^\n]*\n?",
+        "",
+        sanitized,
+    )
+
+    # Strip KB citation tokens like [KB:source_file|conf=0.85].
+    sanitized = re.sub(r"\s*\[KB:[^\]]+\]", "", sanitized)
+
+    # Remove citation-only bullets left after token stripping.
+    sanitized = re.sub(r"(?im)^\s*[-*]\s*\*\*Citation:\*\*[^\n]*\n?", "", sanitized)
+
+    # Rename KB-labeled section to a trader-usable neutral heading.
+    sanitized = re.sub(
+        r"(?im)^\s{0,3}(#{1,6})\s*KB-Evidenced Drivers\s*$",
+        r"\1 Session Drivers",
+        sanitized,
+    )
+
+    # Remove GitHub links that occasionally leak from mixed KB context.
+    sanitized = re.sub(r"https?://github\.com/\S+", "", sanitized, flags=re.IGNORECASE)
+
+    # Replace residual KB wording with neutral language.
+    sanitized = re.sub(r"\bKB context\b", "historical context", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bKB tip\b", "historical note", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bKB\b", "", sanitized)
+
+    # Normalize spacing after removals.
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip() + "\n"
+
+    if sanitized != summary:
+        log.warning("Trader-facing sanitizer removed KB/debug artifacts from narrative output")
+
+    return sanitized
+
+
+def _extract_week_modifiers_from_cheatsheet(cheat_sheet: str) -> set[str]:
+    """Parse week modifiers from cheat sheet text for consistency guards."""
+    m = re.search(r"(?im)^\s*Week Modifiers:\s*(.+)$", cheat_sheet)
+    if not m:
+        return set()
+    parts = [p.strip().upper() for p in m.group(1).split("|") if p.strip()]
+    return set(parts)
+
+
+def _enforce_week_regime_consistency(summary: str, cheat_sheet: str) -> str:
+    """Remove obvious cross-regime contamination based on active week modifiers."""
+    active_mods = _extract_week_modifiers_from_cheatsheet(cheat_sheet)
+    text = summary
+
+    has_fomc = "FOMC WEEK" in active_mods
+    has_nfp = "NFP WEEK" in active_mods
+    has_opex = "OPEX" in active_mods or "TRIPLE WITCHING" in active_mods
+
+    if not has_fomc:
+        text = re.sub(r"(?im)\bFOMC week\b", "Fed-speaker week context", text)
+
+    if not has_opex:
+        # Remove direct OPEX analogies when OPEX modifier is not active.
+        text = re.sub(
+            r"(?im)^.*\bOPEX\b.*(?:similar|rhythm|pattern).*$\n?",
+            "",
+            text,
+        )
+
+    if has_nfp and not has_fomc:
+        # Remove mixed phrase that can mislead sequence timing.
+        text = re.sub(
+            r"(?im)^.*\bFOMC/NFP\b.*$\n?",
+            "",
+            text,
+        )
+
+    text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+    if text != summary:
+        log.warning("Week-regime consistency guard adjusted narrative wording")
+    return text
 
 
 def run_narrative(
@@ -483,6 +576,8 @@ def run_narrative(
             summary = call_ollama(prompt, model)
             summary = _enforce_narrative_contract(summary, mode)
             summary = _append_contradiction_check(summary)
+            summary = _enforce_week_regime_consistency(summary, cheat_sheet)
+            summary = _sanitize_trader_facing_output(summary)
             write_narrative_to_disk(summary, mode, ticker)
             
             if send_discord:

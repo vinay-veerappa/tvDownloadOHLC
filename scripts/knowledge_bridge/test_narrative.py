@@ -26,6 +26,13 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from scripts.trader.trader_narrative import (
+    _append_contradiction_check,
+    _enforce_narrative_contract,
+    _enforce_week_regime_consistency,
+    _sanitize_trader_facing_output,
+)
+
 
 def _strip_kb_context_block(text: str) -> str:
     """Remove appended KB context block from a cheat sheet.
@@ -239,6 +246,10 @@ def main():
         prompt_no_kb = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", cheat_sheet_no_kb)
         print("\nGenerating narrative WITHOUT KB context...")
         narrative_no_kb = call_ollama(prompt_no_kb, args.model)
+        narrative_no_kb = _enforce_narrative_contract(narrative_no_kb, args.mode)
+        narrative_no_kb = _append_contradiction_check(narrative_no_kb)
+        narrative_no_kb = _enforce_week_regime_consistency(narrative_no_kb, cheat_sheet_no_kb)
+        narrative_no_kb = _sanitize_trader_facing_output(narrative_no_kb)
         print(f"✓ Narrative (no KB): {len(narrative_no_kb):,} chars")
 
         # With KB: ensure exactly one KB block in the prompt.
@@ -246,6 +257,10 @@ def main():
         prompt_with_kb = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", augmented_cs)
         print("Generating narrative WITH KB context...")
         narrative_with_kb = call_ollama(prompt_with_kb, args.model)
+        narrative_with_kb = _enforce_narrative_contract(narrative_with_kb, args.mode)
+        narrative_with_kb = _append_contradiction_check(narrative_with_kb)
+        narrative_with_kb = _enforce_week_regime_consistency(narrative_with_kb, augmented_cs)
+        narrative_with_kb = _sanitize_trader_facing_output(narrative_with_kb)
         print(f"✓ Narrative (with KB): {len(narrative_with_kb):,} chars")
 
         # Save both
