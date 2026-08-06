@@ -169,7 +169,7 @@ def _process_stats_endpoint(
     return res
 
 
-def get_candle_science_read(ticker: str = "NQ1", mode: str = "open") -> dict:
+def get_candle_science_read(ticker: str = "NQ1", mode: str = "open", target_date: str | None = None) -> dict:
     """Get Candle Science C1→C2→C3 pattern match.
 
     Returns:
@@ -207,6 +207,10 @@ def get_candle_science_read(ticker: str = "NQ1", mode: str = "open") -> dict:
             df_1d.index = df_1d.index.tz_convert("US/Eastern")
         else:
             df_1d.index = df_1d.index.tz_localize("UTC").tz_convert("US/Eastern")
+
+        if target_date:
+            t_dt = pd.to_datetime(target_date).date()
+            df_1d = df_1d[df_1d.index.date <= t_dt]
 
         if len(df_1d) < 4:
             log.warning("[cs] Not enough daily bars")
