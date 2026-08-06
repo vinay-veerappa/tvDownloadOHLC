@@ -26,7 +26,10 @@ The $C_2$ Open Price is the ultimate structural pivot that validates continuatio
 - **The Reversal Confirmation Signature**: The MOMENT $C_3$ breaches below the $C_2$ Open:
   - Probability of $C_3$ reaching $C_2$ High **COMPLETELY DROPS**.
   - Probabilities shift heavily toward taking out $C_2$ Low instead ($66\% - 68\%$).
-  - Losing $C_2$ Open is the **definitive confirmation of an intraday reversal**.
+- **Intraday Reclaim Rule (Whipsaw Filter)**:
+  - A single-bar wick breach of $C_2$ Open is an initial **Reversal Warning**.
+  - **Confirmed Reversal**: Requires a 5-minute candle close below $C_2$ Open.
+  - **Reclaim Restoration**: If $C_3$ breaches $C_2$ Open on a wick but reclaims and closes back above $C_2$ Open, the original bullish continuation probabilities are restored (with a 5-10% probability decay).
 - **Bearish Momentum Active**: As long as $C_3$ stays below $C_2$ Open, bearish momentum holds. Reclaiming above $C_2$ Open drops $C_2$ Low odds and shifts targets to $C_2$ High.
 
 ### Nuance 2: The $C_1$ Red vs. $C_1$ Green "Probability Magnifier"

@@ -32,17 +32,21 @@ Each hourly candle is evaluated in **Quarters**:
 
 ---
 
-## 3. The 4-Step Reversal Counter (Apex Verification)
+## 3. The 5-Stage Reversal Counter & Scoring System (Apex Verification)
 
-To verify whether a 3-Hour Apex reversal has locked in a major 3-to-7 hour pivot:
+To eliminate binary assumptions and measure reversal conviction, the 4-step counter is expanded into a **Weighted 5-Stage Scoring System**:
 
-1. **Step 1**: Price breaches & accepts outside the 09:30 RTH open range.
-2. **Step 2**: Price accepts past the 09:00 hour's 50% midpoint line.
-3. **Step 3**: The 10:00 AM hourly candle takes out the 09:00 AM high or low.
-4. **Step 4**: The 10:00 AM hourly candle creates an "Instant High" or "Instant Low" in Q1.
+- **Step 0 (Daily Candle Science Trigger)**: Does price breach the $C_2$ Open price ("Line in the Sand") in the direction of the reversal?
+- **Step 1**: Does price breach & accept outside the 09:30 RTH open range?
+- **Step 2**: Does price accept past the 09:00 hour's 50% midpoint line?
+- **Step 3**: Does the 10:00 AM hourly candle take out the 09:00 AM high or low?
+- **Step 4 (Instant Extreme Rule)**: The 10:00 AM candle's $Q_1$ (0-15m) range **fails to breach its 0-5 box by $\ge 10$ bps** (or ticker-specific `momentum_threshold_ticks`) and reverses, establishing an **Instant High/Low**.
 
-- **0 Steps Met**: 3-Hour Line (Trend Continuation) is locked in.
-- **All 4 Steps Met**: 3-Hour Apex (Major Reversal) is confirmed.
+### Scoring & Regime Classification:
+- **Score 0**: **Trend Locked (Line)** — Pure 1-sided momentum. Buy dips / sell rips.
+- **Score 1 – 2**: **Reversal Watch / Alert** — Early warning. Tighten stops; do not enter breakout trades.
+- **Score 3**: **Probable Apex** — High likelihood of major pivot. Prepare counter-trend setups.
+- **Score 4 – 5**: **Confirmed Apex Reversal** — Reversal locked in. Target opposite session extremes or Goalpost sweeps.
 
 ---
 
