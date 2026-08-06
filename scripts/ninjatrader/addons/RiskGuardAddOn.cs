@@ -471,7 +471,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                         EntryTime = DateTime.UtcNow,
                         State = GuardFsmState.Unprotected
                     };
-                    fsm.GraceDeadline = fsm.EntryTime.AddSeconds(_config.StopGuard.StopAttachSeconds);
 
                     // Scan existing working orders for a protective stop on the opposite side.
                     // If found, seed the FSM as Protected (or ProtectedPending) so the grace
@@ -483,6 +482,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (!IsStopType(o) || !IsProtectiveSide(o, pos.MarketPosition)) continue;
                         if (IsTerminal(o.OrderState)) continue;
                         fsm.RecognizedStopOrder = o;
+                        fsm.CoveredQuantity = o.Quantity;
                         fsm.State = o.OrderState == OrderState.Working
                             ? GuardFsmState.Protected
                             : GuardFsmState.ProtectedPending;
@@ -492,21 +492,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // Arm a one-shot grace timer only if still Unprotected (no existing stop found).
                     if (fsm.State == GuardFsmState.Unprotected && _config.StopGuard.StopAttachSeconds > 0)
                     {
-                        int graceMs = _config.StopGuard.StopAttachSeconds * 1000;
-                        var capturedAccount = account;
-                        var capturedInstrument = instrument;
-                        fsm.GraceTimer = new Timer(_ =>
+                        ArmGraceTimer(fsm, account, instrument, _config.StopGuard.StopAttachSeconds * 1000);
+                    }
+                    else if (fsm.State != GuardFsmState.Unprotected && fsm.CoveredQuantity < fsm.PositionQuantity)
+                    {
+                        // Existing stop is under-sized; arm the grace timer for the uncovered delta.
+                        fsm.GraceEmitted = false;
+                        if (!fsm.GracePending)
                         {
-#if TESTING
-                            OnGraceExpired(capturedAccount, capturedInstrument);
-#else
-                            var dispatcher = Application.Current?.Dispatcher;
-                            if (dispatcher != null)
-                                dispatcher.InvokeAsync(() => OnGraceExpired(capturedAccount, capturedInstrument));
-                            else
-                                OnGraceExpired(capturedAccount, capturedInstrument);
-#endif
-                        }, null, graceMs, Timeout.Infinite);
+                            ArmGraceTimer(fsm, account, instrument, _config.StopGuard.StopAttachSeconds * 1000);
+                        }
                     }
 
                     _guardFsms[key] = fsm;
@@ -1551,67 +1546,88 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (isNonFlat)
             {
-                // Check if an FSM already exists for this (account, instrument).
-                if (_guardFsms.TryGetValue(key, out var existingFsm) && existingFsm.PositionSide == newPos)
+                lock (_stateLock)
                 {
-                    // Same-side qty-only update (partial fill, scale-out/in):
-                    // update qty in place, preserving Protected/ProtectedPending state
-                    // and the recognized stop order. Do NOT recreate the FSM.
-                    existingFsm.PositionQuantity = qty;
-                    LogEvent(account.Name, "FSM_UPDATE",
-                        $"{key}: qty updated to {qty} (state stays {existingFsm.State})");
-                    return;
-                }
-
-                // flat->nonflat or flip: (re)create FSM, arm grace, consume pending stop
-                var fsm = new PositionGuardFsm(account.Name, instrument)
-                {
-                    PositionSide = newPos,
-                    PositionQuantity = qty,
-                    EntryTime = DateTime.UtcNow,
-                    State = GuardFsmState.Unprotected
-                };
-                fsm.GraceDeadline = fsm.EntryTime.AddSeconds(_config.StopGuard.StopAttachSeconds);
-
-                // Consume a buffered stop that arrived before the position event
-                if (_pendingStops.TryGetValue(key, out var pending) && pending != null)
-                {
-                    if (IsProtectiveSide(pending, newPos) && IsStopType(pending) && !IsTerminal(pending.OrderState))
+                    // Check if an FSM already exists for this (account, instrument).
+                    if (_guardFsms.TryGetValue(key, out var existingFsm) && existingFsm.PositionSide == newPos)
                     {
-                        fsm.RecognizedStopOrder = pending;
-                        fsm.State = pending.OrderState == OrderState.Working
-                            ? GuardFsmState.Protected
-                            : GuardFsmState.ProtectedPending;
+                        // Same-side qty-only update (partial fill, scale-out/in):
+                        // update qty in place, preserving Protected/ProtectedPending state
+                        // and the recognized stop order. Do NOT recreate the FSM.
+                        existingFsm.PositionQuantity = qty;
+
+                        // Under-coverage detection: if we are protected but the stop
+                        // does not cover the full position, arm the grace timer.
+                        if ((existingFsm.State == GuardFsmState.Protected ||
+                             existingFsm.State == GuardFsmState.ProtectedPending) &&
+                            existingFsm.CoveredQuantity < existingFsm.PositionQuantity)
+                        {
+                            LogEvent(account.Name, "FSM_UNDERCOVERED",
+                                $"{key}: covered {existingFsm.CoveredQuantity} < pos {existingFsm.PositionQuantity}");
+                            existingFsm.GraceEmitted = false;
+                            if (!existingFsm.GracePending)
+                            {
+                                ArmGraceTimer(existingFsm, account, instrument,
+                                    _config.StopGuard.StopAttachSeconds * 1000);
+                            }
+                        }
+
+                        LogEvent(account.Name, "FSM_UPDATE",
+                            $"{key}: qty updated to {qty} (state stays {existingFsm.State})");
+                        return;
                     }
-                    _pendingStops.Remove(key);
-                }
 
-                // Arm a one-shot grace timer that fires at the exact grace deadline.
-                // This replaces the sweep polling of GraceDeadline with an instant trigger.
-                if (fsm.State == GuardFsmState.Unprotected && _config.StopGuard.StopAttachSeconds > 0)
-                {
-                    int graceMs = _config.StopGuard.StopAttachSeconds * 1000;
-                    fsm.GraceTimer = new Timer(_ =>
+                    // flat->nonflat or flip: dispose the outgoing FSM's timer before overwriting.
+                    if (_guardFsms.TryGetValue(key, out var oldFsm))
                     {
-#if TESTING
-                        OnGraceExpired(account, instrument);
-#else
-                        var dispatcher = Application.Current?.Dispatcher;
-                        if (dispatcher != null)
-                            dispatcher.InvokeAsync(() => OnGraceExpired(account, instrument));
-                        else
-                            OnGraceExpired(account, instrument);
-#endif
-                    }, null, graceMs, Timeout.Infinite);
-                }
+                        oldFsm.GraceTimer?.Dispose();
+                    }
 
-                _guardFsms[key] = fsm;
-                LogEvent(account.Name, "FSM_TRANSITION",
-                    $"Created FSM {key} -> {fsm.State} (grace deadline {fsm.GraceDeadline:HH:mm:ss})");
+                    // (re)create FSM, arm grace, consume pending stop
+                    var fsm = new PositionGuardFsm(account.Name, instrument)
+                    {
+                        PositionSide = newPos,
+                        PositionQuantity = qty,
+                        EntryTime = DateTime.UtcNow,
+                        State = GuardFsmState.Unprotected
+                    };
+
+                    // Consume a buffered stop that arrived before the position event
+                    if (_pendingStops.TryGetValue(key, out var pending) && pending != null)
+                    {
+                        if (IsProtectiveSide(pending, newPos) && IsStopType(pending) && !IsTerminal(pending.OrderState))
+                        {
+                            fsm.RecognizedStopOrder = pending;
+                            fsm.CoveredQuantity = pending.Quantity;
+                            fsm.State = pending.OrderState == OrderState.Working
+                                ? GuardFsmState.Protected
+                                : GuardFsmState.ProtectedPending;
+                        }
+                        _pendingStops.Remove(key);
+                    }
+
+                    // Arm a one-shot grace timer that fires at the exact grace deadline.
+                    // This replaces the sweep polling of GraceDeadline with an instant trigger.
+                    if (fsm.State == GuardFsmState.Unprotected && _config.StopGuard.StopAttachSeconds > 0)
+                    {
+                        ArmGraceTimer(fsm, account, instrument, _config.StopGuard.StopAttachSeconds * 1000);
+                    }
+
+                    _guardFsms[key] = fsm;
+                    LogEvent(account.Name, "FSM_TRANSITION",
+                        $"Created FSM {key} -> {fsm.State} (grace deadline {fsm.GraceDeadline:HH:mm:ss})");
+                }
             }
             else
             {
-                // nonflat->flat: tear down, cancel grace timer, cancel orphan auto-stop
+                // nonflat->flat: tear down, cancel grace timer, cancel orphan auto-stop.
+                // NOTE (P1-30): this account.Cancel runs with _stateLock held - every caller of
+                // UpdateFsmOnPosition already holds it (ExecutePositionUpdateDetails). Do NOT add a
+                // nested lock(_stateLock) here and claim the cancel happens "outside the lock": the
+                // nested lock is re-entrant and the outer lock is still held, so it buys nothing and
+                // hides the violation. The real fix is to queue orphan cancellations and drain them
+                // in ExecutePositionUpdateDetails after it releases the lock, which is tracked as
+                // P1-30 in RISKGUARD_COPIER_HARDENING_PLAN.md and is out of scope for this ticket.
                 if (_guardFsms.TryGetValue(key, out var fsm))
                 {
                     fsm.GraceTimer?.Dispose();
@@ -1625,6 +1641,49 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 _pendingStops.Remove(key);
             }
+        }
+
+        // Arms a one-shot grace timer. MUST be called with _stateLock already held.
+        private void ArmGraceTimer(PositionGuardFsm fsm, Account account, string instrument, int delayMs)
+        {
+            fsm.GraceTimer?.Dispose();
+            fsm.GraceDeadline = DateTime.UtcNow.AddMilliseconds(delayMs);
+            fsm.GracePending = true;
+            long generation = ++fsm.GraceGeneration;
+            var capturedAccount = account;
+            var capturedInstrument = instrument;
+            fsm.GraceTimer = new Timer(_ =>
+            {
+                OnGraceTimerCallback(capturedAccount, capturedInstrument, generation);
+            }, null, delayMs, Timeout.Infinite);
+        }
+
+        // Timer callback that validates the generation before invoking OnGraceExpired.
+        private void OnGraceTimerCallback(Account account, string instrument, long generation)
+        {
+            string key = FsmKey(account.Name, instrument);
+            lock (_stateLock)
+            {
+                if (_guardFsms.TryGetValue(key, out var fsm) && fsm.GraceGeneration == generation)
+                {
+                    // Valid generation; proceed to evaluate grace expiry.
+                    // OnGraceExpired will call EvaluateGraceExpiry which takes _stateLock again,
+                    // but that's safe because the lock is reentrant.
+                }
+                else
+                {
+                    return; // Stale callback, ignore.
+                }
+            }
+#if TESTING
+            OnGraceExpired(account, instrument);
+#else
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher != null)
+                dispatcher.InvokeAsync(() => OnGraceExpired(account, instrument));
+            else
+                OnGraceExpired(account, instrument);
+#endif
         }
 
         // One-shot grace expiry callback - called by the per-FSM Timer or the sweep.
@@ -1647,60 +1706,113 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             string key = FsmKey(account.Name, instrument);
 
-            // If no FSM yet, buffer protective-side stops pending the position event.
-            if (!_guardFsms.ContainsKey(key))
+            lock (_stateLock)
             {
-                if (IsStopType(order) && !IsTerminal(order.OrderState))
+                // If no FSM yet, buffer protective-side stops pending the position event.
+                if (!_guardFsms.ContainsKey(key))
                 {
-                    // We don't know the position side yet; buffer and classify on consumption.
-                    _pendingStops[key] = order;
-                }
-                return;
-            }
-
-            var fsm = _guardFsms[key];
-            var prev = fsm.State;
-
-            // Recognise a protective stop for the current position side.
-            if (IsProtectiveSide(order, fsm.PositionSide) && IsStopType(order))
-            {
-                if (IsTerminal(order.OrderState))
-                {
-                    // The recognised stop filled/cancelled while position still open
-                    if (fsm.PositionQuantity > 0)
+                    if (IsStopType(order) && !IsTerminal(order.OrderState))
                     {
-                        fsm.State = GuardFsmState.Unprotected;
-                        fsm.RecognizedStopOrder = null;
-                        fsm.AutoStopOrder = null;
-                        LogEvent(account.Name, "FSM_TRANSITION",
-                            $"{key}: stop {order.Name} terminal ({order.OrderState}) -> Unprotected");
+                        // We don't know the position side yet; buffer and classify on consumption.
+                        _pendingStops[key] = order;
+                    }
+                    return;
+                }
+
+                var fsm = _guardFsms[key];
+                var prev = fsm.State;
+
+                // Recognise a protective stop for the current position side.
+                if (IsProtectiveSide(order, fsm.PositionSide) && IsStopType(order))
+                {
+                    if (IsTerminal(order.OrderState))
+                    {
+                        // Only treat a terminal order as losing coverage when it is the
+                        // currently recognised stop. Unrelated stops going terminal are ignored.
+                        if (object.ReferenceEquals(order, fsm.RecognizedStopOrder))
+                        {
+                            if (fsm.PositionQuantity > 0)
+                            {
+                                fsm.State = GuardFsmState.Unprotected;
+                                fsm.RecognizedStopOrder = null;
+                                fsm.AutoStopOrder = null;
+                                fsm.CoveredQuantity = 0;
+                                fsm.GraceEmitted = false;
+                                if (!fsm.GracePending)
+                                {
+                                    ArmGraceTimer(fsm, account, instrument,
+                                        _config.StopGuard.StopAttachSeconds * 1000);
+                                }
+                                LogEvent(account.Name, "FSM_TRANSITION",
+                                    $"{key}: stop {order.Name} terminal ({order.OrderState}) -> Unprotected");
+                            }
+                        }
+                        else if (object.ReferenceEquals(order, fsm.AutoStopOrder))
+                        {
+                            // The auto-stop went terminal but it's not the recognised stop;
+                            // just clear the auto-stop reference.
+                            fsm.AutoStopOrder = null;
+                        }
+                    }
+                    else // Non-terminal order update
+                    {
+                        // Determine if this order should replace the current recognised stop.
+                        bool replace = fsm.RecognizedStopOrder == null
+                                    || object.ReferenceEquals(order, fsm.RecognizedStopOrder)
+                                    || IsTerminal(fsm.RecognizedStopOrder.OrderState)
+                                    || order.Quantity >= fsm.CoveredQuantity;
+
+                        if (replace)
+                        {
+                            fsm.RecognizedStopOrder = order;
+                            fsm.CoveredQuantity = order.Quantity;
+                            fsm.GraceEmitted = false;
+                            if (order.OrderState == OrderState.Working)
+                            {
+                                fsm.State = GuardFsmState.Protected;
+                                if (order.Name == "RiskGuardAutoStop") fsm.AutoStopOrder = order;
+                                LogEvent(account.Name, "FSM_TRANSITION",
+                                    $"{key}: stop {order.Name} Working -> Protected");
+                            }
+                            else // Submitted/Accepted/Initialized/PartFilled
+                            {
+                                fsm.State = GuardFsmState.ProtectedPending;
+                                LogEvent(account.Name, "FSM_TRANSITION",
+                                    $"{key}: stop {order.Name} {order.OrderState} -> ProtectedPending");
+                            }
+
+                            // If full coverage achieved, cancel any pending grace timer.
+                            if (fsm.CoveredQuantity >= fsm.PositionQuantity)
+                            {
+                                fsm.GraceTimer?.Dispose();
+                                fsm.GraceTimer = null;
+                                fsm.GracePending = false;
+                            }
+                            else
+                            {
+                                // Under-covered: ensure a grace timer is armed for the delta.
+                                if (!fsm.GracePending)
+                                {
+                                    ArmGraceTimer(fsm, account, instrument,
+                                        _config.StopGuard.StopAttachSeconds * 1000);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // A smaller stop arrived while a larger one is already tracked; ignore.
+                            LogEvent(account.Name, "FSM_IGNORE",
+                                $"{key}: ignoring smaller stop {order.Name} qty {order.Quantity} " +
+                                $"(current covered {fsm.CoveredQuantity})");
+                        }
                     }
                 }
-                else if (order.OrderState == OrderState.Working)
-                {
-                    fsm.RecognizedStopOrder = order;
-                    fsm.State = GuardFsmState.Protected;
-                    if (order.Name == "RiskGuardAutoStop") fsm.AutoStopOrder = order;
-                    LogEvent(account.Name, "FSM_TRANSITION",
-                        $"{key}: stop {order.Name} Working -> Protected");
-                }
-                else // Submitted/Accepted/Initialized/PartFilled
-                {
-                    fsm.RecognizedStopOrder = order;
-                    fsm.State = GuardFsmState.ProtectedPending;
-                    LogEvent(account.Name, "FSM_TRANSITION",
-                        $"{key}: stop {order.Name} {order.OrderState} -> ProtectedPending");
-                }
-            }
 
-            if (prev != fsm.State)
-            {
-                fsm.LastTransitionTime = DateTime.UtcNow;
-                // Cancel the grace timer when the FSM leaves Unprotected
-                if (fsm.State != GuardFsmState.Unprotected)
+                if (prev != fsm.State)
                 {
-                    fsm.GraceTimer?.Dispose();
-                    fsm.GraceTimer = null;
+                    fsm.LastTransitionTime = DateTime.UtcNow;
+                    // Do NOT dispose the grace timer here; full-coverage disposal is handled
+                    // in the recognition branches, and partial coverage must keep the timer alive.
                 }
             }
         }
@@ -1718,12 +1830,28 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 string key = FsmKey(account.Name, instrument);
                 if (!_guardFsms.TryGetValue(key, out var fsm)) return actions;
-                if (fsm.State != GuardFsmState.Unprotected) return actions;
+
+                // The timer that woke us has fired; clear the pending flag.
+                fsm.GracePending = false;
+
+                // Anti-duplicate latch: if a grace action was already emitted and
+                // its outcome is still pending, do not emit another.
+                if (fsm.GraceEmitted) return actions;
+
+                // Position must still be open and the deadline must have passed.
                 if (DateTime.UtcNow < fsm.GraceDeadline) return actions;
 
-                // Position still open and still unprotected past the deadline.
                 var pos = account.Positions.FirstOrDefault(p => p.Instrument.FullName == instrument);
                 if (pos == null || pos.MarketPosition == MarketPosition.Flat) return actions;
+
+                // Proceed when unprotected OR under-covered (stop quantity < position).
+                bool isUnprotected = fsm.State == GuardFsmState.Unprotected;
+                bool isUnderCovered = fsm.CoveredQuantity < pos.Quantity;
+                if (!isUnprotected && !isUnderCovered) return actions;
+
+                // Size the action to the uncovered delta only.
+                int uncovered = pos.Quantity - Math.Max(0, fsm.CoveredQuantity);
+                if (uncovered <= 0) return actions;
 
                 if (_config.StopGuard.OnMissing == "AutoStop")
                 {
@@ -1733,11 +1861,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                         ActionType = GuardActionType.PlaceStopOrder,
                         Instrument = instrument,
                         InstrumentObj = pos.Instrument,
-                        Quantity = pos.Quantity,
+                        Quantity = uncovered,
                         RuleId = "MISSING_STOP_ATTACH"
                     });
-                    // Mark as pending-protection so a duplicate event/sweep does not re-emit.
-                    fsm.State = GuardFsmState.ProtectedPending;
+                    // For the Unprotected case, transition to a pending state so a
+                    // duplicate call does not re-emit. For the under-covered case
+                    // the FSM is already Protected/ProtectedPending; do not downgrade.
+                    if (isUnprotected)
+                    {
+                        fsm.State = GuardFsmState.ProtectedPending;
+                    }
                 }
                 else if (_config.StopGuard.OnMissing == "Flatten")
                 {
@@ -1747,14 +1880,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                         ActionType = GuardActionType.FlattenPosition,
                         Instrument = instrument,
                         InstrumentObj = pos.Instrument,
-                        Quantity = pos.Quantity,
+                        Quantity = uncovered,
                         RuleId = "MISSING_STOP_FLATTEN"
                     });
-                    // Transition to a non-Unprotected state so a duplicate call
-                    // does not re-emit. We use a new transitional state
-                    // FlattenPending to distinguish from ProtectedPending.
-                    fsm.State = GuardFsmState.FlattenPending;
+                    if (isUnprotected)
+                    {
+                        fsm.State = GuardFsmState.FlattenPending;
+                    }
                 }
+
+                // Mark that a grace action has been emitted for this episode.
+                fsm.GraceEmitted = true;
             }
             return actions;
         }
@@ -1765,12 +1901,28 @@ namespace NinjaTrader.NinjaScript.AddOns
             foreach (var kv in _guardFsms)
             {
                 var fsm = kv.Value;
-                if (fsm.State == GuardFsmState.Unprotected &&
-                    DateTime.UtcNow > fsm.GraceDeadline.AddSeconds(2))
+                bool isNaked = fsm.State == GuardFsmState.Unprotected ||
+                               fsm.CoveredQuantity < fsm.PositionQuantity;
+                if (isNaked &&
+                    DateTime.UtcNow > fsm.GraceDeadline.AddSeconds(2) &&
+                    !fsm.GracePending &&
+                    !fsm.GraceEmitted)
                 {
-                    LogEvent(fsm.AccountName, "FSM_WATCHDOG",
-                        $"{fsm.Instrument}: Unprotected past grace deadline by " +
-                        $"{(DateTime.UtcNow - fsm.GraceDeadline).TotalSeconds:F1}s");
+                    // Keep the existing log line for the Unprotected case unchanged.
+                    if (fsm.State == GuardFsmState.Unprotected)
+                    {
+                        LogEvent(fsm.AccountName, "FSM_WATCHDOG",
+                            $"{fsm.Instrument}: Unprotected past grace deadline by " +
+                            $"{(DateTime.UtcNow - fsm.GraceDeadline).TotalSeconds:F1}s");
+                    }
+
+                    Account account = Account.All.FirstOrDefault(a => a.Name == fsm.AccountName);
+                    if (account != null)
+                    {
+                        // Arm a short grace timer; the sweep releases _stateLock
+                        // before the callback needs it.
+                        ArmGraceTimer(fsm, account, fsm.Instrument, 250);
+                    }
                 }
             }
         }
@@ -3184,6 +3336,15 @@ namespace NinjaTrader.NinjaScript.AddOns
         // Cancelled when the FSM reaches Protected or Flat. This replaces the sweep
         // polling of GraceDeadline with an instant event-driven trigger.
         public Timer GraceTimer { get; set; }
+
+        // Quantity covered by the single RecognizedStopOrder.
+        public int CoveredQuantity { get; set; }
+        // True while a one-shot grace timer is armed.
+        public bool GracePending { get; set; }
+        // True once a grace action has been emitted and its outcome is still pending.
+        public bool GraceEmitted { get; set; }
+        // Monotonically increasing generation counter to invalidate stale timer callbacks.
+        public long GraceGeneration { get; set; }
 
         public PositionGuardFsm(string accountName, string instrument)
         {

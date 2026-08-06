@@ -2066,12 +2066,18 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 4, AveragePrice = 18000 });
 
-            // With the FSM, a working stop (even partial qty) transitions to Protected,
-            // so grace expiry does NOT fire. The partial gap is not tracked by the FSM
-            // the way the legacy sweep did; the FSM just checks stop presence, not qty coverage.
+            // P0-4 (RISKGUARD_COPIER_HARDENING_PLAN.md): this test previously asserted the
+            // DEFECT - that a working stop of ANY quantity marked the position fully protected,
+            // so a 2-lot stop under a 4-lot position suppressed MISSING_STOP_ATTACH and left
+            // 2 contracts naked for the rest of the session. The FSM now tracks CoveredQuantity,
+            // so grace expiry fires for the uncovered delta only.
             var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
-            Assert(!actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
-                "No MISSING_STOP_ATTACH from FSM when a working stop is present (even partial qty).");
+            var attach = actions.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
+            Assert(attach != null,
+                "MISSING_STOP_ATTACH IS emitted when the working stop only partially covers the position.");
+            Assert(attach != null && attach.Quantity == 2,
+                "MISSING_STOP_ATTACH is sized to the uncovered delta (4 position - 2 covered = 2), "
+                + "never the full position, which would over-cover and flip the position.");
         }
 
         // 4. StopGuard OnMissing = "WarnOnly"

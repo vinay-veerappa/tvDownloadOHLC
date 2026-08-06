@@ -1,0 +1,153 @@
+{
+  "plan": "docs/architecture/RISKGUARD_COPIER_HARDENING_PLAN.md",
+  "note": "P0 defects only. Region anchors are located by C# signature + brace matching at run time, so tickets may be run in any order without line drift.",
+  "tickets": [
+    {
+      "id": "T1",
+      "title": "P0-1 + P0-4: re-arm grace on every loss of full coverage; make the auto-stop delta-sized",
+      "defect": "Two related naked-position defects in the stop-guard FSM.\n\nP0-1: When the recognised protective stop goes terminal (Cancelled / Rejected / Filled) while the position is still open, UpdateFsmOnOrder sets State back to Unprotected but does NOT arm a new GraceTimer. The original one-shot timer was already disposed when the FSM first left Unprotected. EvaluateGraceExpiry is only reachable from OnGraceExpired, which is only called from a GraceTimer callback. FsmWatchdog merely logs. Net effect: cancel a stop under an open position and it stays unprotected for the rest of the session while FSM_WATCHDOG logs every sweep, forever.\n\nP0-4: A same-side quantity update (scale-in) updates PositionQuantity in place and preserves Protected / ProtectedPending. Nothing compares the recognised stop's Quantity to PositionQuantity, so scaling 1 -> 5 contracts behind a 1-lot stop still reports fully protected.",
+      "spec": "This ticket introduces an explicit coverage model. Implement it exactly as specified - the state machine semantics below are decided, not open for redesign.\n\nA. NEW FIELDS on PositionGuardFsm. Do NOT add new GuardFsmState values - the enum already has Unprotected/ProtectedPending/Protected/FlattenPending/Flat and existing tests assert on them:\n   public int CoveredQuantity  - quantity of the single RecognizedStopOrder. This tracker follows ONE stop order; do NOT invent multi-stop aggregation.\n   public bool GracePending    - a one-shot grace timer is currently armed.\n   public bool GraceEmitted    - a grace action has been emitted and its outcome is still pending. This is the anti-duplicate latch.\n\nB. NEW HELPER, exactly this signature:\n     private void ArmGraceTimer(PositionGuardFsm fsm, Account account, string instrument, int delayMs)\n   - MUST only be called with _stateLock already held; state that in a comment.\n   - Disposes any existing fsm.GraceTimer, then assigns the new one.\n   - Sets fsm.GraceDeadline = DateTime.UtcNow.AddMilliseconds(delayMs) and fsm.GracePending = true.\n   - Reproduces the existing dispatcher-marshalling shape currently inlined in UpdateFsmOnPosition and SeedFsmsForExistingPositions (the '#if TESTING / dispatcher.InvokeAsync / else' block), one-shot (Timeout.Infinite period).\n   - The callback MUST NOT null or dispose fsm.GraceTimer and MUST NOT touch FSM fields. Ownership of GracePending belongs to EvaluateGraceExpiry, which already takes _stateLock. Nulling the field from the callback races with a concurrent re-arm and orphans a live timer.\n   - Replace BOTH existing inline timer-arming sites with calls to this helper.\n\nC. UpdateFsmOnOrder:\n   - When a protective stop is recognised (Working, or Submitted/Accepted/Initialized/PartFilled): set CoveredQuantity = order.Quantity and clear GraceEmitted (a real stop arrived, so a later grace cycle is allowed). If CoveredQuantity >= fsm.PositionQuantity, dispose the grace timer and clear GracePending - full coverage, nothing pending.\n   - When the recognised stop goes terminal while fsm.PositionQuantity > 0: State = Unprotected, RecognizedStopOrder = null, AutoStopOrder = null, CoveredQuantity = 0, GraceEmitted = false, and re-arm via ArmGraceTimer(..., _config.StopGuard.StopAttachSeconds * 1000) but ONLY when !fsm.GracePending, so repeated identical OrderUpdates cannot stack timers.\n\nD. UpdateFsmOnPosition:\n   - Flip or flat->nonflat recreation: BEFORE overwriting _guardFsms[key], dispose the OUTGOING fsm.GraceTimer. Leaving it running lets a stale callback attach a stop using the old side/quantity.\n   - Same-side quantity update (scale-in/out): after updating PositionQuantity, if the FSM is Protected or ProtectedPending and CoveredQuantity < PositionQuantity, log FSM_UNDERCOVERED with both quantities, clear GraceEmitted, and arm the grace timer when !GracePending. Do NOT change State and do NOT emit orders here.\n\nE. EvaluateGraceExpiry - make it coverage-aware and delta-sized. It already holds _stateLock:\n   - Set fsm.GracePending = false at the top (the timer that woke us has fired).\n   - Return no actions if fsm.GraceEmitted is already true.\n   - Proceed when the position is non-flat AND now >= GraceDeadline AND either State == Unprotected OR CoveredQuantity < pos.Quantity. Today it returns early unless State == Unprotected, which would make the scale-in fix in D dead code.\n   - CRITICAL: size the emitted action to the UNCOVERED DELTA. int uncovered = pos.Quantity - Math.Max(0, fsm.CoveredQuantity); return no actions if uncovered <= 0; set Quantity = uncovered on the GuardAction. Emitting pos.Quantity while a partial stop is already working would over-cover the position and flip it to the opposite side when the stops trigger.\n   - Set fsm.GraceEmitted = true when an action is emitted.\n   - Keep the existing OnMissing 'AutoStop' / 'Flatten' branches, the RuleIds MISSING_STOP_ATTACH / MISSING_STOP_FLATTEN, and the existing state transitions for the Unprotected case. For the under-covered case where State is already Protected/ProtectedPending, do NOT downgrade State - GraceEmitted is the latch there.\n\nF. FsmWatchdog - promote from log-only to remediation, but it is called from INSIDE lock (_stateLock) in ExecuteSafetySweep, so it may ONLY inspect FSM state, log, and arm timers. It must NOT call ProcessAction, EvaluateGraceExpiry, or any Account API other than resolving an Account reference from Account.All:\n   - For any FSM that is (Unprotected OR CoveredQuantity < PositionQuantity), is past GraceDeadline plus a 2 second margin, and has !GracePending: arm the grace timer with a small positive delay of 250 ms - NOT 0 - so the sweep releases _stateLock before the callback needs it.\n   - Dedupe to once per naked episode with a new private ConcurrentDictionary<string, DateTime> _watchdogFired keyed by FsmKey. Remove the key whenever the FSM regains full coverage or is torn down.\n   - Keep the existing FSM_WATCHDOG log line unchanged.",
+      "context": "HARD REQUIREMENT: the patch must COMPILE. You may only reference members that already exist in the file or that you define inside the regions you are given. Do not assume a helper, field, queue, or changed method signature exists elsewhere - if you need it, define it inside one of your returned regions. Do not change the signature of any method whose callers are outside your regions: EvaluateGraceExpiry is called from OnGraceExpired, and FsmWatchdog is called from ExecuteSafetySweep with no arguments.\n\nPositionGuardFsm currently has: State, AccountName, Instrument, PositionSide, PositionQuantity, RecognizedStopOrder, AutoStopOrder, EntryOcoId, EntryTime, GraceDeadline, LastTransitionTime, GraceTimer. Existing helpers you may call: FsmKey(accountName, instrument), IsStopType(order), IsTerminal(orderState), IsProtectiveSide(order, positionSide), LogEvent(account, eventType, message). _config.StopGuard.StopAttachSeconds is an int in seconds; _config.StopGuard.OnMissing is a string. The file already has 'using System.Collections.Concurrent;' and 'using System.Linq;' - do not add or remove usings. You may add private fields inside any region you return.",
+      "regions": [
+        {
+          "id": "PositionGuardFsm",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "public class PositionGuardFsm",
+          "note": "add CoveredQuantity, GracePending, GraceEmitted"
+        },
+        {
+          "id": "SeedFsms",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "private void SeedFsmsForExistingPositions(",
+          "note": "use the new arming helper; behaviour unchanged"
+        },
+        {
+          "id": "UpdateFsmOnPosition",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "private void UpdateFsmOnPosition(",
+          "note": "dispose outgoing timer on flip; under-coverage detection; define ArmGraceTimer here"
+        },
+        {
+          "id": "UpdateFsmOnOrder",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "private void UpdateFsmOnOrder(",
+          "note": "re-arm on every Unprotected transition; maintain CoveredQuantity"
+        },
+        {
+          "id": "EvaluateGraceExpiry",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "internal List<GuardAction> EvaluateGraceExpiry(",
+          "note": "coverage-aware entry condition, delta-sized action, GraceEmitted latch"
+        },
+        {
+          "id": "FsmWatchdog",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "private void FsmWatchdog(",
+          "note": "lock-safe remediation via timer arming + once-per-episode dedupe"
+        }
+      ]
+    },
+    {
+      "id": "T2",
+      "title": "P0-2 + P0-3: reserve-before-submit with rollback for the auto-stop, and size it from the live position",
+      "defect": "P0-2: In ExecuteAction's PlaceStopOrder branch the FSM is mutated AFTER account.Submit:\n    if (stopOrder != null) { account.Submit(new[] { stopOrder }); lock (_stateLock) { ... fsm.State = GuardFsmState.ProtectedPending; } }\nThree defects: (a) the OrderUpdate for the new stop can be processed before that lock is taken, so a stop already Working is regressed to ProtectedPending and - worse - a stop that was REJECTED (correctly reset to Unprotected by UpdateFsmOnOrder) is overwritten to ProtectedPending, after which nothing ever re-arms grace and the position is naked permanently; (b) stopOrder == null is a completely silent no-op - no log, no retry, no flatten fallback; (c) if Submit throws, the FSM is left in whatever state the pre-submit code left it.\n\nP0-3: The stop is sized from action.Quantity, a snapshot taken when the action was emitted, even though the live position is already re-read on the line above. If the position scaled DOWN in between, the auto-stop is LARGER than the position and opens a new opposite-side position when it triggers. If it scaled UP, part of the position is silently uncovered. ValidateInvariant for PlaceStopOrder only checks 'InstrumentObj != null && Quantity > 0' - it never confirms a position exists, its side, or its size, despite being described as an arbiter that only permits risk-reducing actions.",
+      "spec": "1. In the PlaceStopOrder branch of ExecuteAction, size the order from the LIVE position: use position.Quantity (clamped to a positive int) rather than action.Quantity. If the live position is flat or its MarketPosition no longer matches the side the action was built for, abort the action, log a distinct event, and do not submit anything.\n\n2. Adopt reserve-before-submit: BEFORE calling account.Submit, take lock (_stateLock) and set fsm.AutoStopOrder / fsm.RecognizedStopOrder / fsm.State = ProtectedPending / fsm.CoveredQuantity for the created order, then RELEASE the lock and submit. Do not hold _stateLock across CreateOrder or Submit.\n\n3. Add rollback: if CreateOrder returns null, or Submit throws, re-acquire lock (_stateLock) and roll the FSM back to Unprotected, clear AutoStopOrder / RecognizedStopOrder / CoveredQuantity, log an explicit failure event (e.g. AUTO_STOP_SUBMIT_FAILED with the reason), and re-throw so ProcessAction records EXECUTION_ERROR. Never leave the FSM claiming protection that does not exist.\n\n4. Remove the post-submit FSM write entirely. After a successful submit, UpdateFsmOnOrder owns all further FSM state for that order.\n\n5. Track attempts so a repeatedly failing auto-stop escalates instead of looping: add an int AutoStopAttempts to PositionGuardFsm (increment on each attempt for that FSM, reset when the FSM leaves Unprotected or is torn down). Read the ceiling from _config.StopGuard.MaxAutoStopAttempts, adding that int property to StopGuardConfig with a default of 2 and defensive handling when it is 0 or negative (treat <= 0 as 2). When attempts exceed the ceiling, do not submit another stop; instead flatten that single instrument (account.Flatten(new[] { instrument })) and log the escalation.\n\n6. Tighten ValidateInvariant's PlaceStopOrder case into a real arbiter: resolve the live Account and its Position for action.Instrument, and return false unless a non-flat position exists, action.Quantity > 0, and the action's implied order side is genuinely the closing side for that position. Keep the existing FlattenPosition / CancelAllOrders / CancelOrder cases unchanged. ValidateInvariant is called from inside lock (_stateLock) in ProcessAction, so it may read Account collections but must not call Flatten / Cancel / Submit / CreateOrder.",
+      "context": "ExecuteAction is called from ProcessAction AFTER the lock is released, so ExecuteAction may take _stateLock itself for short state updates. Existing behaviour that must be preserved: the STOP_SIDE_FLATTEN paths when market price is unavailable or the computed stop is already through the market; RoundToTickSize on the stop price; the offsetTicks resolution from _config.StopGuard.Offsets with the 'default' fallback and 30-tick final default; the AUTO_STOP_DIAGNOSTIC order dump; the order name string 'RiskGuardAutoStop' (UpdateFsmOnOrder matches on it). PositionGuardFsm gains CoveredQuantity in ticket T1 - assume that field exists. StopGuardConfig is a plain settings class deserialised from config.json.",
+      "regions": [
+        {
+          "id": "ValidateInvariant",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "private bool ValidateInvariant(",
+          "note": "real risk-reducing arbiter for PlaceStopOrder"
+        },
+        {
+          "id": "ExecuteAction",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "private void ExecuteAction(",
+          "note": "live sizing, reserve-before-submit, rollback, attempt ceiling"
+        },
+        {
+          "id": "StopGuardConfig",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "public class StopGuardConfig",
+          "note": "add MaxAutoStopAttempts (default 2)"
+        }
+      ]
+    },
+    {
+      "id": "T3",
+      "title": "P0-7: peak-giveback rule compares a total-PnL peak against unrealized-only PnL",
+      "defect": "EvaluatePnLRules calls propSuite.EvaluatePeakEquityGiveback(stateModel.PeakEquity, stateModel.UnrealizedPnL, ...). The predicate's parameters are (double peakOpenGain, double currentUnrealized), but PeakEquity is the running peak of Realized + Unrealized while the second argument is Unrealized only. An account that banked +2000 and is now flat yields giveback = 2000 - 0 = 2000 and givebackPct = 1.0 >= 0.30, so PEAK_GIVEBACK_BREACH fires on EVERY AccountItemUpdate. It is inert while flat because there is nothing to flatten, and this branch deliberately never sets IsLockedOut so it never latches - but it will instantly flatten the first position taken after any profitable session.",
+      "spec": "1. Give AccountState a dedicated peak for this rule: double PeakOpenGain, meaning the running peak of UNREALIZED PnL for the current open position. It must reset to 0 whenever the account becomes flat (no open position) and must only rise while a position is open. Reset it alongside the other per-session fields where PeakEquity is reset. Leave the existing PeakEquity field and the trailing-drawdown rule that uses it untouched.\n\n2. In EvaluatePnLRules, maintain PeakOpenGain from stateModel.UnrealizedPnL and pass the consistent pair to the predicate: (stateModel.PeakOpenGain, stateModel.UnrealizedPnL).\n\n3. Add the missing preconditions so the rule cannot fire spuriously: only evaluate the giveback rule when the account actually has a non-flat position, and when PeakOpenGain is greater than zero. Determine flatness from state already available on AccountState (its per-instrument position map) rather than by calling into Account.\n\n4. Latch the rule so it fires once per episode instead of on every account update: add a bool PeakGivebackTriggered to AccountState, set it when the action is emitted, and clear it when the account returns to flat (alongside the PeakOpenGain reset). Do not set IsLockedOut - that behaviour change is out of scope for this ticket.\n\n5. In PropFirmProtectionSuite.EvaluatePeakEquityGiveback, keep the signature and semantics but harden it: rename nothing, and return false when peakOpenGain <= 0 (already present) or when currentUnrealized >= peakOpenGain. Add a short comment stating the required basis - both arguments must be unrealized-only, in dollars - so the mis-wiring cannot recur.",
+      "context": "AccountState already tracks per-instrument PositionState objects in a dictionary and exposes RealizedPnL, UnrealizedPnL, PeakEquity, TradesToday, ConsecutiveLosses, IsLockedOut, LockoutUntil, CurrentLockoutPhase. EvaluatePnLRules is called from ExecuteAccountItemUpdate while _stateLock is held, and its returned actions are processed after the lock is released - preserve that. Session reset in ExecuteSafetySweep resets PeakEquity to 0.0 and must also reset the new fields; that reset lives outside the regions you are given, so instead make the new fields safe to leave stale by resetting them on the flat transition, and mention in your notes that the session-reset block should also clear them.",
+      "regions": [
+        {
+          "id": "AccountState",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "re:^\\s*public class AccountState\\s*$",
+          "note": "add PeakOpenGain + PeakGivebackTriggered; reset on flat"
+        },
+        {
+          "id": "EvaluatePnLRules",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "internal List<GuardAction> EvaluatePnLRules(",
+          "note": "consistent basis, preconditions, latch"
+        },
+        {
+          "id": "EvaluatePeakEquityGiveback",
+          "file": "scripts/ninjatrader/addons/PropFirmProtectionSuite.cs",
+          "anchor": "public bool EvaluatePeakEquityGiveback(",
+          "note": "document + harden the predicate"
+        }
+      ]
+    },
+    {
+      "id": "T4",
+      "title": "P0-5 + P0-6: clamp copier exits to the follower's real position; stop flooring sub-1 conversions to 1 contract",
+      "defect": "P0-5: Exit copies are sized from the leader's execution quantity and returned unclamped. CalculateFollowerQuantity returns 'isExit ? leaderQty : rel.FixedLotSize' in fixed-lot mode - so on an exit it ignores FixedLotSize entirely and uses the LEADER's raw quantity - and in ratio mode returns rawCopyQty before the position clamp. Concrete failure with FixedLotSize = 1: leader buys 5, follower buys 1; leader sells 5, follower submits Sell 5 while holding 1, and ends up SHORT 4 on a market order with no stop. The same reversal happens after any MaxPositionSize clamp, any failed entry copy, or any rounding difference. CalculateSafeFollowerDelta already implements the correct clamp and is never called from anywhere.\n\nP0-6: rawCopyQty uses Math.Max(1, Math.Round(leaderQty * absRatio * symbolMultiplier)). With the micro-to-mini multiplier of 0.1, a leader trading 1 MNQ produces 1 NQ - ten times the intended notional - and any QuantityRatio below 1 hits the same floor.",
+      "spec": "1. Remove the Math.Max(1, ...) floor. Compute the scaled quantity, round it, and if the result is less than 1 return 0 so the caller skips the copy. Set the isClamped out-parameter to false in that case and make the reason visible to the caller - either via a new out parameter or by returning 0 and letting the caller log SUB_MINIMUM_SKIPPED - your choice, but the caller must be able to distinguish 'clamped by MaxPositionSize' from 'below one contract'.\n\n2. Make exits position-mirroring rather than quantity-replaying. For exits, the returned quantity must never exceed Math.Abs(currentFollowerPosition). Route the decision through the existing CalculateSafeFollowerDelta helper rather than duplicating its logic, or - if its signature does not fit cleanly - clamp explicitly to Math.Abs(currentFollowerPosition) and state in your notes why the helper could not be reused. If the follower has no position, an exit must return 0.\n\n3. Fixed-lot mode must respect the same rule: an exit in fixed-lot mode is still clamped to the follower's actual position, never the leader's quantity.\n\n4. In OnExecution, handle the new zero-quantity outcomes: skip the copy, log a clear reason via NinjaTrader.Code.Output.Process with the existing '[CopierEngine] ' prefix, and continue to the next relationship. Keep the existing CLAMPED TO ZERO and POSITION CLAMP WARNING messages working.\n\n5. Do not change the two-argument CalculateFollowerQuantity convenience overload's signature - other callers and tests use it. If you add an out parameter to the six-argument overload, keep a compatible path for existing callers.",
+      "context": "currentFollowerPosition is read from followerAcc.Positions and is a NON-NEGATIVE quantity in NT8 (Position.Quantity is the absolute size; direction lives in Position.MarketPosition), so do NOT infer direction from its sign. OnExecution already computes 'isExit' from the leader's OrderAction and separately aligns the follower's OrderAction to the follower's current direction. Existing tests call both CalculateFollowerQuantity overloads and CalculateScaledQuantity and CalculateSafeFollowerDelta directly - preserve their existing behaviour for entry sizing, the PerTickerRatios override, and the mini/micro symbol multiplier. OnExecution is inside '#if !TESTING' - preserve that structure exactly.",
+      "regions": [
+        {
+          "id": "CalculateFollowerQuantity",
+          "file": "scripts/ninjatrader/addons/TradeCopierEngine.cs",
+          "anchor": "public int CalculateFollowerQuantity(CopierRelationship rel, int leaderQty, string rawSymbol, int currentFollowerPosition",
+          "note": "no sub-1 floor; exits clamped to follower position"
+        },
+        {
+          "id": "CalculateFollowerQuantityShim",
+          "file": "scripts/ninjatrader/addons/TradeCopierEngine.cs",
+          "anchor": "public int CalculateFollowerQuantity(CopierRelationship rel, int leaderQty, string rawSymbol, bool isExit = false)",
+          "note": "keep the existing signature working"
+        },
+        {
+          "id": "OnExecution",
+          "file": "scripts/ninjatrader/addons/TradeCopierEngine.cs",
+          "anchor": "public void OnExecution(Execution exec)",
+          "note": "handle zero-quantity outcomes and log reasons"
+        }
+      ]
+    },
+    {
+      "id": "T5",
+      "title": "P0-8 + P0-9(fail-closed): make the copier respect the RiskGuard lockout and refuse to copy into an unguarded account",
+      "defect": "P0-8: Every order-submitting path in McpBridgeAddOn checks RiskGuardAddOn.Instance.IsAccountLocked(...) before submitting. TradeCopierEngine.OnExecution does not. A follower that RiskGuard locked out for a daily-loss breach still receives fresh copied entries, and RiskGuard's lockout sweep then fights the copier - cancel and flatten every sweep against new entries arriving on every leader fill.\n\nP0-9: The copier submits bare market orders and never replicates protective legs. A follower's only protection is RiskGuard's grace-period auto-stop, which does not exist if RiskGuard is disarmed, in shadow mode, or the follower sits in ExcludedAccounts. Full bracket replication is a separate feature; this ticket implements only the fail-closed precondition.",
+      "spec": "1. Add a public read-only query to RiskGuardAddOn that answers whether the guard would actually protect a given account right now. Suggested shape:\n     public bool IsGuardProtecting(string accountName)\n   Return true only when: _isArmed is true, the resolved mode is live (GetMode() equals \"live\"), the account is present in _subscribedAccounts, the account is NOT in _config.ExcludedAccounts, and StopGuard is configured to act (its enable flag, if any, is on and StopAttachSeconds >= 0). Read all of it under lock (_stateLock). Do not change any existing public method.\n\n2. In OnExecution's per-relationship loop, before creating any follower order, consult RiskGuard when the instance exists:\n   a. If RiskGuardAddOn.Instance.CanTrade(followerName, targetInstrument.FullName, \"TradeCopier\") returns false, skip that follower, log '[CopierEngine] BLOCKED ...' with the reason, and continue.\n   b. Also skip when the LEADER account is locked - a locked leader's fills must not be propagated. Use the same CanTrade query for the leader account.\n   c. Fail closed on unguarded live followers: for a follower that is NOT a simulated account, require IsGuardProtecting(followerName) to be true; if it is false, skip the copy and log COPY_BLOCKED_NO_GUARD. Simulated followers are exempt from this requirement only.\n   d. If RiskGuardAddOn.Instance is null, treat that as unguarded: allow simulated followers, block non-simulated ones.\n\n3. Do not call CanTrade or IsGuardProtecting while holding the copier's own lock (_lock) - both take RiskGuard's _stateLock and the copier must not introduce a lock-ordering dependency. The existing recursion-guard block near the top of OnExecution is the only part that needs _lock.\n\n4. Leave the existing ArmedForLive safety gate in place; the new checks are additional, not a replacement.",
+      "context": "RiskGuardAddOn is in the same namespace and assembly (NinjaTrader.NinjaScript.AddOns) and exposes a static Instance property. Its existing signatures: public bool CanTrade(string accountName, string instrument, string strategyName = \"DefaultStrategy\"), public bool IsAccountLocked(string accountName), public string GetMode(). Private fields available inside RiskGuardAddOn: _isArmed (bool), _mode (string), _subscribedAccounts (HashSet<string>), _config (RiskConfig with ExcludedAccounts and StopGuard), _stateLock. OnExecution and the surrounding code are inside '#if !TESTING' in TradeCopierEngine.cs, but RiskGuardAddOn.cs compiles in BOTH configurations - so the new IsGuardProtecting method must compile under TESTING too and must not reference WPF or NinjaTrader.Gui types. The current simulated-account test in OnExecution is 'followerAcc.Name.StartsWith(\"Sim\", ...)'; keep using it for now (replacing it is tracked separately as P1-20) but centralise it in a single local variable.",
+      "regions": [
+        {
+          "id": "IsAccountLocked",
+          "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
+          "anchor": "public bool IsAccountLocked(string accountName)",
+          "note": "append the new public IsGuardProtecting query after this method"
+        },
+        {
+          "id": "OnExecution",
+          "file": "scripts/ninjatrader/addons/TradeCopierEngine.cs",
+          "anchor": "public void OnExecution(Execution exec)",
+          "note": "risk gate + fail-closed on unguarded live followers"
+        }
+      ]
+    }
+  ]
+}
