@@ -11,9 +11,16 @@ Three independent reads with different prompts:
 The reasoner's verdict is NOT shown to any vision analysis.
 Disagreements are fed back to the reasoner for re-evaluation.
 
+Provider fallback chain (for rate limits):
+  1. agy CLI (Gemini via Antigravity app — best limits, OAuth)
+  2. google-antigravity SDK (Gemini — needs API key)
+  3. Ollama gemma4:31b-cloud (cloud, supports images)
+  4. Ollama qwen3-vl:8b (local, slow on 8GB)
+
 Usage:
     python -m scripts.trader.chart_agent.blind_vision --ticker ES1
     python -m scripts.trader.chart_agent.blind_vision --image data/vision/charts/ES1_2026-08-04_small.png
+    python -m scripts.trader.chart_agent.blind_vision --provider ollama
 """
 from __future__ import annotations
 
@@ -45,6 +52,12 @@ import google.antigravity as agy
 
 BLIND_VISION_DIR = _REPO / "data" / "vision" / "blind_analyses"
 BLIND_VISION_DIR.mkdir(parents=True, exist_ok=True)
+
+import base64
+import requests as req_lib
+
+AGY_BIN = os.path.join(os.path.expanduser("~"), "AppData", "Local", "agy", "bin", "agy.exe")
+
 
 # Three blind prompts — NO verdict context, NO anchoring
 PROMPTS = {
@@ -81,8 +94,53 @@ Be specific with price levels. Do NOT make a directional call.""",
 }
 
 
+async def _vision_via_sdk(image_path: str, prompt: str) -> str:
+    """Vision via google-antigravity Python SDK (Gemini)."""
+    import google.antigravity as agy
+    config = agy.LocalAgentConfig(
+        system_instructions="You are an institutional ICT/SMC price action analyst. You understand Power of Three, draw on liquidity, premium/discount dealing ranges, FVGs, order blocks, CSD, MSS, liquidity sweeps, Consequent Encroachment, Turtle Soup, and session timing."
+    )
+    chart = agy.Image.from_file(image_path)
+    async with agy.Agent(config) as agent:
+        response = await agent.chat([chart, prompt])
+        chunks = []
+        async for token in response:
+            chunks.append(token)
+        return "".join(chunks)
+
+
+def _vision_via_ollama(image_path: str, prompt: str, model: str = "gemma4:31b-cloud") -> str:
+    """Vision via Ollama cloud model that supports images."""
+    with open(image_path, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode()
+    resp = req_lib.post("http://localhost:11434/api/generate", json={
+        "model": model,
+        "prompt": prompt,
+        "images": [img_b64],
+        "stream": False,
+        "options": {"temperature": 0.2, "num_ctx": 32768, "num_predict": 4096},
+    }, timeout=120)
+    if resp.status_code == 200:
+        return resp.json().get("response", "")
+    raise RuntimeError(f"Ollama vision HTTP {resp.status_code}")
+
+
+# Ollama cloud vision models (no quota limits, tested working)
+OLLAMA_VISION_MODELS = [
+    "gemma4:31b-cloud",
+    "qwen3.5:cloud",
+    "mistral-large-3:675b-cloud",
+    "minimax-m3:cloud",
+]
+
+
 async def blind_vision_read(image_path: str, prompt_key: str) -> str:
-    """Run a single blind vision analysis with Gemini.
+    """Run a single blind vision analysis with the best available provider.
+
+    Tries providers in order:
+      1. google-antigravity SDK (Gemini — if API key available, best quality)
+      2. Ollama cloud vision models (gemma4:31b-cloud, qwen3.5, mistral-large, minimax)
+      3. Ollama qwen3-vl:8b (local, slow on 8GB, last resort)
 
     Args:
         image_path: Path to the chart PNG.
@@ -91,17 +149,34 @@ async def blind_vision_read(image_path: str, prompt_key: str) -> str:
     Returns:
         The vision analysis text.
     """
-    config = agy.LocalAgentConfig(
-        system_instructions="You are an institutional ICT/SMC price action analyst. You understand Power of Three, draw on liquidity, premium/discount dealing ranges, FVGs, order blocks, CSD, MSS, liquidity sweeps, Consequent Encroachment, Turtle Soup, and session timing."
-    )
-    chart = agy.Image.from_file(image_path)
+    prompt = PROMPTS[prompt_key]
+    errors = []
 
-    async with agy.Agent(config) as agent:
-        response = await agent.chat([chart, PROMPTS[prompt_key]])
-        chunks = []
-        async for token in response:
-            chunks.append(token)
-        return "".join(chunks)
+    # Try SDK first (if API key available)
+    if os.environ.get("GEMINI_API_KEY"):
+        try:
+            return await _vision_via_sdk(image_path, prompt)
+        except Exception as e:
+            errors.append(f"SDK: {str(e)[:80]}")
+            log.warning("  [BLIND VISION] SDK failed: %s", errors[-1])
+
+    # Fallback: Ollama cloud vision models (no quota, fast)
+    for model in OLLAMA_VISION_MODELS:
+        try:
+            log.info("  [BLIND VISION] Trying Ollama %s...", model)
+            return _vision_via_ollama(image_path, prompt, model)
+        except Exception as e:
+            errors.append(f"{model}: {str(e)[:80]}")
+            log.warning("  [BLIND VISION] %s failed: %s", model, errors[-1])
+
+    # Last resort: Ollama qwen3-vl:8b (local, slow)
+    try:
+        log.info("  [BLIND VISION] Falling back to local qwen3-vl:8b (slow)...")
+        return _vision_via_ollama(image_path, prompt, "qwen3-vl:8b")
+    except Exception as e:
+        errors.append(f"qwen3-vl:8b: {str(e)[:80]}")
+
+    raise RuntimeError(f"All vision providers failed: {'; '.join(errors)}")
 
 
 async def run_blind_vision(image_path: str) -> dict:
