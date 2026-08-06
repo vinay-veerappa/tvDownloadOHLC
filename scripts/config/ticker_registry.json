@@ -1,0 +1,68 @@
+{
+  "NQ1": {
+    "name": "Nasdaq 100 E-mini Futures",
+    "tick_size": 0.25,
+    "tick_value": 5.0,
+    "point_value": 20.0,
+    "rth_open_time": "09:30",
+    "rth_close_time": "16:00",
+    "momentum_threshold_points": 20.0,
+    "morning_pivot_exit_minute": 44,
+    "weekly_settlement_hour": 16
+  },
+  "ES1": {
+    "name": "S&P 500 E-mini Futures",
+    "tick_size": 0.25,
+    "tick_value": 12.5,
+    "point_value": 50.0,
+    "rth_open_time": "09:30",
+    "rth_close_time": "16:00",
+    "momentum_threshold_points": 6.0,
+    "morning_pivot_exit_minute": 55,
+    "weekly_settlement_hour": 16
+  },
+  "CL1": {
+    "name": "Crude Oil Futures",
+    "tick_size": 0.01,
+    "tick_value": 10.0,
+    "point_value": 1000.0,
+    "rth_open_time": "09:00",
+    "rth_close_time": "14:30",
+    "momentum_threshold_points": 0.15,
+    "morning_pivot_exit_minute": 55,
+    "weekly_settlement_hour": 14
+  },
+  "GC1": {
+    "name": "Gold Futures",
+    "tick_size": 0.10,
+    "tick_value": 10.0,
+    "point_value": 100.0,
+    "rth_open_time": "08:20",
+    "rth_close_time": "13:30",
+    "momentum_threshold_points": 2.5,
+    "morning_pivot_exit_minute": 45,
+    "weekly_settlement_hour": 13
+  },
+  "YM1": {
+    "name": "Dow Jones E-mini Futures",
+    "tick_size": 1.0,
+    "tick_value": 5.0,
+    "point_value": 5.0,
+    "rth_open_time": "09:30",
+    "rth_close_time": "16:00",
+    "momentum_threshold_points": 40.0,
+    "morning_pivot_exit_minute": 55,
+    "weekly_settlement_hour": 16
+  },
+  "RTY1": {
+    "name": "Russell 2000 E-mini Futures",
+    "tick_size": 0.10,
+    "tick_value": 5.0,
+    "point_value": 50.0,
+    "rth_open_time": "09:30",
+    "rth_close_time": "16:00",
+    "momentum_threshold_points": 2.0,
+    "morning_pivot_exit_minute": 44,
+    "weekly_settlement_hour": 16
+  }
+}
