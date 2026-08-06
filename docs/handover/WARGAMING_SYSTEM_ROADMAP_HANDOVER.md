@@ -30,6 +30,16 @@ Key Principles:
 | **Phase 0.6** | **30-Day Mini-Batch & Signal Confluence Test** | `v_06_minibatch_confluence.py` | ✅ COMPLETED (NQ1: 76.7% / ES1: 93.3%) |
 | **Phase 0.7** | **Single-Day Pilot Wargame & Reengineering** | `pilot_single_day.py` | ✅ COMPLETED (PASSED NQ1 & ES1) |
 
+| Tool / Skill / Indicator | Location / Path | Purpose & Description |
+| :--- | :--- | :--- |
+| **Candle Science Engine & Blueprint** | `scripts/trader/signals/candle_science.py`, `BLUEPRINT.md` | Directional probability & wick/body footprint analysis. |
+| **HTF Weekly EMA Excursion Engine** | `scripts/wargaming/htf_ema_analysis.py`, `BLUEPRINT.md` | Weekly 5 EMA excursion & 2-3% magnet zone detection. |
+| **3-Hour Line vs Apex PA Verifier** | `v_04_line_vs_apex_pa.py`, `line_vs_apex_blueprint.md` | 5-stage weighted counter & instant extreme detection. |
+| **P12 Directional & Profiler Engine** | `v_05_p12_pa.py`, `p12_directional_blueprint.md` | P12 range, 06:00-07:00 early rejection, & 99.26% sweep rule. |
+| **Multi-Ticker Position Sizing Engine** | `scripts/risk/position_sizer.py`, `ticker_registry.json` | Account equity risk management for NQ, ES, CL, GC, YM, RTY. |
+| **Single-Day Pilot Wargame Engine** | `scripts/wargaming/pilot_single_day.py` | 08:30 AM EST pre-market briefing & 16:00 PM EST post-mortem. |
+| **TradingView Wargame Verifier Skill** | `.agents/skills/tradingview-wargame-verifier/SKILL.md`, `batch_tv_replay_wargamer.py` | Automated TradingView Bar Replay navigation & 1-to-1 ground-truth level verifier. |
+
 ### Phase 1: NotebookLM Knowledge Base Mining & Automated Fine-Tuning Pipeline
 
 | Phase | Milestone | Primary Deliverable | Status |
