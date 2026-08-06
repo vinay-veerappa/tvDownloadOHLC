@@ -119,22 +119,22 @@ def run_pilot_wargame_and_reengineering(
         p12_bias = "NEUTRAL"
         pre_handshake = "UNKNOWN"
 
-    # 4. Instant High / Low Lock Check (06:00-07:00 ET P12 Rejection)
+    # 4. InStat High / Low Lock Check (06:00-07:00 ET P12 Rejection - Within Statistical Expectation)
     h6_start = et_timestamp(t_dt, 6, 0)
     h6_end = et_timestamp(t_dt, 7, 0)
     h6_bars = df_pre[(df_pre.index >= h6_start) & (df_pre.index < h6_end)]
 
-    instant_high_locked = False
-    instant_low_locked = False
+    instat_high_locked = False
+    instat_low_locked = False
     if not h6_bars.empty and p12_high is not None and p12_low is not None:
         h6_hi = float(h6_bars["high"].max())
         h6_lo = float(h6_bars["low"].min())
-        # If 06:00-07:00 touched P12 High and rejected -> 84.52% HOD locked
+        # If 06:00-07:00 touched P12 High and rejected -> 84.52% HOD locked (InStat)
         if abs(h6_hi - p12_high) <= 5.0 and float(h6_bars.iloc[-1]["close"]) < h6_hi:
-            instant_high_locked = True
-        # If 06:00-07:00 touched P12 Low and rejected -> 81.85% LOD locked
+            instat_high_locked = True
+        # If 06:00-07:00 touched P12 Low and rejected -> 81.85% LOD locked (InStat)
         if abs(h6_lo - p12_low) <= 5.0 and float(h6_bars.iloc[-1]["close"]) > h6_lo:
-            instant_low_locked = True
+            instat_low_locked = True
 
     # 5. Precalculated Daily Profiler & Day-Type Classification Probabilities
     try:
@@ -269,8 +269,8 @@ def run_pilot_wargame_and_reengineering(
                 "DWP%": dwp_pct,
                 "DNP%": dnp_pct,
             },
-            "instant_high_locked": instant_high_locked,
-            "instant_low_locked": instant_low_locked,
+            "instat_high_locked": instat_high_locked,
+            "instat_low_locked": instat_low_locked,
             "confluence_status": confluence_status,
             "position_sizing": sizing,
             "scenarios": scenarios,

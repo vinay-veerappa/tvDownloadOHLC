@@ -102,14 +102,14 @@ To verify if a major trend reversal has locked in a 3-to-7 hour pivot:
 - **Step 1**: Price breaches & accepts outside 09:30 open range.
 - **Step 2**: Price accepts past 09:00 hour's 50% midpoint.
 - **Step 3**: 10:00 AM candle takes out 09:00 AM high or low.
-- **Step 4**: 10:00 AM candle creates an "Instant High/Low" in its first 15 mins (Q1).
+- **Step 4**: 10:00 AM candle creates an "InStat (instantaneous statistical) High/Low" in its first 15 mins (Q1).
 - *Rule*: **All 4 steps met** = Major Reversal confirmed. **0 steps met** = Trend Continuation locked in.
 
 ### 3. 0-5 Box Breakout Thresholds
 - **0-5 Box**: The high-to-low range of the first 5 minutes of an hourly candle.
 - **RTH Momentum Threshold**: Price must breach the 0-5 box by **10 basis points (0.10%)** in Quarter 1 (Q1) to confirm true, sustainable momentum.
 - **Overnight Threshold**: Requires **5 basis points (0.05%)**.
-- *False Breakout Rule*: Failing to reach the basis-point threshold and returning inside the 0-5 box flags a false breakout, establishing a temporary "Instant High/Low".
+- *False Breakout Rule*: Failing to reach the basis-point threshold and returning inside the 0-5 box flags a false breakout, establishing a temporary "InStat (instantaneous statistical) High/Low".
 
 ---
 *Last Updated: 2026-08-05. Additional rules and live case studies will be appended here.*
