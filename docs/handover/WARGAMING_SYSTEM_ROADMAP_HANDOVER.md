@@ -25,9 +25,10 @@ Key Principles:
 | :--- | :--- | :--- | :--- |
 | **Phase 0.2** | **Candle Science Blueprint & PA Verification** | `v_02_candle_science_pa.py` & `CandleScience/BLUEPRINT.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
 | **Phase 0.3** | **HTF EMA & NFP Blueprint & PA Verification** | `v_03_htf_ema_pa.py` & `htf_ema_analysis/BLUEPRINT.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
-| **Phase 0.4** | **3-Hour Line vs Apex & 0-5 Box PA Verification** | `v_04_line_vs_apex_pa.py` & `line_vs_apex_blueprint.md` | ⏳ NEXT UP |
-| **Phase 0.5** | **Profiler Feature Extractor PA Verification** | `v_05_profiler_features_pa.py` | 📅 PLANNED |
-| **Phase 0.6** | **Single-Day Pilot Wargame & Reengineering** | `pilot_single_day.py` (Single date pilot walkthrough) | 📅 PLANNED |
+| **Phase 0.4** | **3-Hour Line vs Apex & 0-5 Box PA Verification** | `v_04_line_vs_apex_pa.py` & `line_vs_apex_blueprint.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
+| **Phase 0.5** | **P12 Directional & Profiler Feature Extractor** | `v_05_p12_pa.py` & `p12_directional_blueprint.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
+| **Phase 0.6** | **30-Day Mini-Batch & Signal Confluence Test** | `v_06_minibatch_confluence.py` | ⏳ NEXT UP |
+| **Phase 0.7** | **Single-Day Pilot Wargame & Reengineering** | `pilot_single_day.py` (Single date pilot walkthrough) | 📅 PLANNED |
 
 ---
 
@@ -57,9 +58,15 @@ Key Principles:
   - Verified Mickey's $C_2$ Open breach timestamp rule on 1m OHLCV bars: when $C_2$ Open is breached (e.g. 2026-07-27 at 10:22 AM ET), high target odds collapse and low target odds hit 100%. When $C_2$ Open holds (e.g. 2026-07-29), bullish expansion targets hit cleanly.
 - **2026-08-05**: Built `scripts/wargaming/htf_ema_analysis.py` and executed `v_03_htf_ema.py` and `v_03_htf_ema_pa.py` (HTF EMA & NFP PA Verifier).
   - **Passed 100%** on `NQ1` and `ES1`.
-  - Verified 2%–3% magnet zone detection (e.g. NQ1 at +2.68% on 2026-08-03) and NFP Friday pre-market 08:30 AM release candle High/Low range extraction & Goalpost sweep tracking (e.g. NQ1 & ES1 NFP release range on 2025-09-05 swept both High & Low).
-- **2026-08-05**: Committed changes in `7a1cb926` and `09c423c8`.
-- **Next Immediate Action**: Execute Phase 0.4: **3-Hour Line vs Apex & 0-5 Box 10 bps Intraday PA Verification**.
+  - Verified 2%–3% magnet zone detection (e.g. NQ1 at +2.68% on 2026-08-03) and NFP Friday pre-market 08:30 AM release candle High/Low range extraction & Goalpost sweep tracking.
+- **2026-08-05**: Conducted 3-LLM Critical Audit (`deepseek-v4-pro:cloud`, `glm-5.2:cloud`, `qwen3.5:397b-cloud`).
+  - Added [`scripts/config/ticker_registry.json`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/config/ticker_registry.json) with per-ticker momentum thresholds & session hours.
+  - Built [`scripts/risk/position_sizer.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/risk/position_sizer.py) implementing dynamic contract sizing.
+- **2026-08-05**: Extracted P12 secret sauce & built `docs/profiler/p12_directional_blueprint.md` and `scripts/validation/v_05_p12_pa.py` (P12 & Handshake Vector Verifier).
+  - **Passed 100%** on `NQ1` and `ES1`.
+- **2026-08-05**: Built `scripts/validation/v_04_line_vs_apex_pa.py` (3-Hour Line vs Apex PA Verifier).
+  - **Passed 100%** on `NQ1` and `ES1` across 5-stage weighted counter (0-4 score), level acceptance validation bars, and `ticker_registry.json` momentum thresholds.
+- **Next Immediate Action**: Execute Phase 0.6: **30-Day Mini-Batch & Signal Confluence Stress Test** (`scripts/validation/v_06_minibatch_confluence.py`).
 
 ---
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*
