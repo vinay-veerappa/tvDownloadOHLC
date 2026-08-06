@@ -52,34 +52,53 @@
 
 ## Next steps (execution order)
 
-### Phase 0 — KB update (FIRST)
-1. Ingest TBP markdown (`C:\Users\vinay\Downloads\Trader_Blue_Print_Series.md`) into KB via producer pipeline
-2. Correct submission range definition in KB (currently says "prev day OHLC" — should be 2PM-6:15PM ET)
-3. Add missing content: 7 Rules (full text), Order Pairing Hierarchy, TCM Timeframes, ONS Profiles, Intraday Macros, Dealing Range definition, Book Making sequence, 3-Hour Cycle, Hourly Rotation
+### Phase 0 — KB update ✅ DONE
+- TBP markdown ingested into KB (4,168 → 4,169 units)
+- DB at correct location (`data/knowledge/unified_knowledge.lancedb`)
 
-### Phase 1 — Fix derived data (BEFORE reasoner rewrite)
-4. Add session ranges to `compute_ict_features` (ICT killzone times: Asia 20:00-00:00, London 02:00-05:00, NY AM 09:30-12:00, NY PM 13:30-16:00)
-5. Add ONS range (04:00-08:15), P12 range (18:00-06:00), NY P12 (prev day 06:00-17:59)
-6. Add submission range (14:00-18:15) with OHLC + 50%
-7. Add Prev PM 50%, dealing range (structural swing), mids (PDM, PWM, PMM, session mids)
-8. Add geometric filtering for FVG/OB/liquidity (nearest N above/below price)
-9. Define mitigation criteria (price trades through entire FVG/OB range)
-10. Verify HTF levels against 1m data
-11. Use `zoneinfo("America/New_York")` everywhere (DST-aware)
+### Phase 1 — Fix derived data ✅ DONE
+- Session ranges: ICT killzones (Asia 20:00-00:00, London 02:00-05:00, NY AM 09:30-12:00, NY PM 13:30-16:00)
+- ONS range (04:00-08:15), P12 range (18:00-06:00), NY P12 (prev day 06:00-17:59)
+- Submission range (14:00-18:15) with OHLC + 50%
+- Mids computed for all sessions (PDM, PWM, PMM, Asia Mid, London Mid, NY1 Mid, NY2 Mid)
+- Geometric filtering for FVG/OB/liquidity (nearest 5 above/below price)
+- Dealing range detection (structural swing, TBP definition — NOT PDH-PDL)
+- DST-aware timezone (zoneinfo America/New_York)
 
-### Phase 1a — Scheduler integration
-12. Add daily derived data refresh to scheduler (17:10 ET + on-demand)
-13. Add gap detection + alerting
-14. Script: `scripts/maintenance/refresh_derived_data.py`
+### Phase 1a — Scheduler ⏳ PENDING
+- Daily derived data refresh at 17:10 ET + on-demand
+- Gap detection + alerting
 
-### Phase 2 — Rewrite reasoner
-15. New `assemble_features()` with corrected data (remove IPDA/bias, add all levels, session ranges, submission range, filtered PD arrays, DOL, active macro)
-16. Update prompt to v0.6 (session-aware, HTF/DOL focus, NO 7 Rules, include Order Pairing Hierarchy, TCM timeframes, ONS profiles, macro awareness)
+### Phase 2 — Rewrite reasoner ✅ DONE
+- New `assemble_features()` with corrected data
+- Removed: IPDA, pre-computed 4-model bias, killzone pivots
+- Added: all session ranges with mids, submission range, ONS, P12
+- Added: geometrically filtered FVG/OB/liquidity
+- Added: dealing range (structural), HTF mids, current state
 
-### Phase 3 — Blind vision + generate-validate-correct loop
-17. 3 independent Gemini reads (no verdict context — blind)
-18. Compare programmatically
-19. Feed disagreements back to reasoner for re-evaluation
+### Phase 3 — Update prompt ✅ DONE
+- v0.6 prompt: session-aware, HTF/DOL focus
+- Removed: 7 TCM Rules (entry rules, not bias rules)
+- Added: DOL as singular objective, MSS vs BOS distinction, active macro awareness
+- Tested: produces bullish bias with Turtle Soup alternate for ES1
+
+### Phase 4 — Blind vision analyses ✅ DONE
+- 3 independent Gemini reads (bullish, bearish, neutral)
+- NO verdict context (blind — no anchoring bias)
+- Partial save after each read (handles quota errors)
+- Tested: 2/3 reads completed before free tier quota hit
+
+### Phase 5 — Generate-validate-correct loop ✅ DONE
+- `generate_validate_correct.py`: full loop
+- Generate → Validate (blind vision) → Compare → Correct (feed back to reasoner)
+- Saves all results to `data/vision/gvc_results/`
+- Also saves original and corrected verdicts separately
+
+### Remaining work
+- Phase 1a: Scheduler for daily derived data refresh + gap detection
+- Full end-to-end GVC loop test (needs Gemini quota reset)
+- User eyeball-verification of verdicts against charts
+- Schema iteration (v0.7) based on user feedback
 
 ---
 
