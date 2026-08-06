@@ -231,7 +231,7 @@ Session-specific ICT concepts injected based on current/next session.
 |---|---|---|
 | **0 — KB update** | Ingest TBP markdown into KB. Correct submission range definition. Add 7 Rules, ONS Profiles, macros, Order Pairing Hierarchy. | KB has complete TBP content |
 | **1 — Fix derived data** | Fix session ranges (ICT killzones), add ONS/P12/submission range/prev PM 50%/dealing range. Add geometric filtering for FVG/OB/liquidity. Verify HTF levels against 1m. Use DST-aware tz everywhere. | Features compute correctly from 1m |
-| **1a — Scheduler** | Add daily derived data refresh to scheduler. Bridge gaps on demand. | Runs daily + on-demand |
+| **1a — Scheduler** | Add daily derived data refresh to scheduler. Bridge gaps on demand. | ✅ DONE — runs at 17:10 ET Mon-Fri |
 | **2 — Rewrite reasoner** | New `assemble_features()` with corrected data. Remove IPDA/bias. Add all levels, session ranges, submission range, filtered PD arrays, DOL, active macro. | Features block is clean and correct |
 | **3 — Update prompt v0.6** | Session-aware, HTF/DOL focus. NO 7 Rules (those go in execution prompt later). Include Order Pairing Hierarchy, TCM timeframes, ONS profiles, macro awareness. | Prompt produces good bias verdicts |
 | **4 — Blind vision analyses** | 3 independent Gemini reads of chart (no verdict context). Compare programmatically. | Vision reads match chart reality |

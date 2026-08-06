@@ -1968,6 +1968,18 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
     )
     log.info("Scheduled Narrative: %s ET (Weekly, Friday)", WEEKLY_NARRATIVE_TIME)
 
+    # 5. Daily Derived Data Refresh (17:10 ET, after market close)
+    scheduler.add_job(
+        lambda: _run_subprocess(
+            ["python", "-m", "scripts.maintenance.refresh_derived_data"],
+            "Derived Data Refresh"
+        ) if _is_trading_day() else None,
+        trigger=CronTrigger(day_of_week='mon-fri', hour=17, minute=10, timezone=tz),
+        id="derived_data_refresh",
+        replace_existing=True,
+    )
+    log.info("Scheduled Derived Data Refresh: 17:10 ET (Mon-Fri, after close)")
+
     log.info("APScheduler started (timezone=%s). Press Ctrl-C to stop.", SCHEDULE_TIMEZONE)
     try:
         scheduler.start()

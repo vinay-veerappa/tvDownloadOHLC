@@ -65,9 +65,14 @@
 - Dealing range detection (structural swing, TBP definition — NOT PDH-PDL)
 - DST-aware timezone (zoneinfo America/New_York)
 
-### Phase 1a — Scheduler ⏳ PENDING
-- Daily derived data refresh at 17:10 ET + on-demand
-- Gap detection + alerting
+### Phase 1a — Scheduler ✅ DONE
+- `scripts/maintenance/refresh_derived_data.py`: daily derived data refresh
+- Checks data freshness (last bar timestamp, staleness thresholds)
+- Runs `compute_ict_features` incremental for all symbols
+- Gap detection + alerts on stale symbols
+- Wired into APScheduler: runs at 17:10 ET Mon-Fri (after market close)
+- Can be run on-demand: `python -m scripts.maintenance.refresh_derived_data`
+- Tested: all symbols FRESH, compute pipeline SUCCESS
 
 ### Phase 2 — Rewrite reasoner ✅ DONE
 - New `assemble_features()` with corrected data
