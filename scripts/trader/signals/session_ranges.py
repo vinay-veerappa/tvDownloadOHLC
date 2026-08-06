@@ -125,79 +125,146 @@ def compute_session_range(
 
 
 def compute_all_session_ranges(df_1m: pd.DataFrame, target_date: Any, et_tz: Any) -> dict[str, dict]:
-    """Compute ranges for all sessions on the given date.
+    """Compute ranges for ALL sessions on the given date.
 
-    Returns a dict keyed by session name: ASIA, PL, LONDON, PRE_NY, NY_AM, NY_LUNCH, NY_PM, RTH.
-    Each value is the output of compute_session_range().
+    Returns a dict keyed by session name. Each value is a dict with:
+        open, high, low, close, range, mid, high_time, low_time
+
+    Session definitions (all ET, DST-aware via zoneinfo):
+        ASIA:       20:00 prev day → 00:00 (ICT Asia killzone)
+        LONDON:     02:00 → 05:00 (ICT London killzone)
+        ONS:        04:00 → 08:15 (Overnight Session — Price Discovery Macro)
+        P12:        18:00 prev day → 06:00 (Full overnight range)
+        NY_AM:      09:30 → 12:00 (ICT NY AM killzone)
+        NY_LUNCH:   12:00 → 13:30 (Low volume / manipulation zone)
+        NY_PM:      13:30 → 16:00 (RTH afternoon)
+        SUBMISSION: 14:00 → 18:15 (TBP submission range — OHLC + 50%)
+        NY_P12:     prev day 06:00 → 17:59 (Previous day RTH range)
+        RTH:        09:30 → 16:00 (Full RTH day)
     """
-    # Session definitions for range computation
-    # Note: Asia wraps midnight (starts prior evening)
-    sessions = {
-        # Asia: 18:00 previous day to 00:00 (we use target_date - 1 day for the start)
-        # For simplicity, we compute Asia as 18:00 of target_date to 00:00 of target_date+1
-        # But since target_date is the RTH trading day, Asia before it started at 18:00 the day before.
-        # We handle this by looking at the prior evening + early morning.
-        # Actually, for intraday use, we want TODAY's Asia which starts at 18:00 today.
-        # But if it's NY session, Asia already happened (last night). We need the Asia that precedes today's RTH.
-        # So Asia = 18:00 of (target_date - 1) to 00:00 of target_date.
-    }
+    from zoneinfo import ZoneInfo
 
-    # Asia (prior evening 18:00 to midnight)
-    asia = compute_session_range(
-        df_1m, 18, 0, 0, 0, target_date, et_tz
-    )
-    # Adjust: Asia start should be prior day's 18:00
-    # compute_session_range uses target_date for start, so we need special handling
-    if df_1m is not None and not df_1m.empty:
-        asia_start = pd.Timestamp(target_date).tz_localize(et_tz) - pd.Timedelta(days=1)
-        asia_start = asia_start.replace(hour=18, minute=0, second=0, microsecond=0)
-        asia_end = pd.Timestamp(target_date).tz_localize(et_tz).replace(hour=0, minute=0, second=0, microsecond=0)
-        # If target_date is today, the Asia that preceded today's RTH started yesterday at 18:00
-        asia_mask = (df_1m.index >= asia_start) & (df_1m.index <= asia_end)
-        asia_df = df_1m[asia_mask]
-        if not asia_df.empty:
-            asia = {
-                "open": float(asia_df["open"].iloc[0]),
-                "high": float(asia_df["high"].max()),
-                "low": float(asia_df["low"].min()),
-                "close": float(asia_df["close"].iloc[-1]),
-                "range": float(asia_df["high"].max() - asia_df["low"].min()),
-                "high_time": asia_df["high"].idxmax(),
-                "low_time": asia_df["low"].idxmin(),
-            }
-        else:
-            asia = {}
+    if et_tz is None:
+        et_tz = ZoneInfo("America/New_York")
 
-    # Pre-London (00:00 - 02:00)
-    pl = compute_session_range(df_1m, 0, 0, 2, 0, target_date, et_tz)
+    if df_1m is None or df_1m.empty:
+        return {}
 
-    # London (02:00 - 05:00)
-    london = compute_session_range(df_1m, 2, 0, 5, 0, target_date, et_tz)
+    td = pd.Timestamp(target_date).tz_localize(et_tz) if not isinstance(target_date, pd.Timestamp) else target_date
 
-    # Pre-NY (05:00 - 08:30)
-    pre_ny = compute_session_range(df_1m, 5, 0, 8, 30, target_date, et_tz)
+    # ── ICT killzone sessions ──────────────────────────────────────────
+    # Asia: 20:00 prev day → 00:00 (ICT standard)
+    asia_start = td - pd.Timedelta(days=1)
+    asia_start = asia_start.replace(hour=20, minute=0, second=0, microsecond=0)
+    asia_end = td.replace(hour=0, minute=0, second=0, microsecond=0)
+    asia = _compute_range(df_1m, asia_start, asia_end)
 
-    # NY AM (09:30 - 11:30)
-    ny_am = compute_session_range(df_1m, 9, 30, 11, 30, target_date, et_tz)
+    # London: 02:00 → 05:00 (ICT killzone)
+    london = _compute_range(df_1m,
+                            td.replace(hour=2, minute=0, second=0, microsecond=0),
+                            td.replace(hour=5, minute=0, second=0, microsecond=0))
 
-    # NY Lunch (12:00 - 13:00) — Herman lunch range trigger
-    ny_lunch = compute_session_range(df_1m, 12, 0, 13, 0, target_date, et_tz)
+    # ONS: 04:00 → 08:15 (Overnight Session — Price Discovery Macro)
+    ons = _compute_range(df_1m,
+                         td.replace(hour=4, minute=0, second=0, microsecond=0),
+                         td.replace(hour=8, minute=15, second=0, microsecond=0))
 
-    # NY PM (13:30 - 16:00)
-    ny_pm = compute_session_range(df_1m, 13, 30, 16, 0, target_date, et_tz)
+    # P12: 18:00 prev day → 06:00 (full overnight range)
+    p12_start = td - pd.Timedelta(days=1)
+    p12_start = p12_start.replace(hour=18, minute=0, second=0, microsecond=0)
+    p12_end = td.replace(hour=6, minute=0, second=0, microsecond=0)
+    p12 = _compute_range(df_1m, p12_start, p12_end)
 
-    # Full RTH (09:30 - 16:00)
-    rth = compute_session_range(df_1m, 9, 30, 16, 0, target_date, et_tz)
+    # NY P12: previous day 06:00 → 17:59
+    ny_p12_start = td - pd.Timedelta(days=1)
+    ny_p12_start = ny_p12_start.replace(hour=6, minute=0, second=0, microsecond=0)
+    ny_p12_end = td - pd.Timedelta(days=1)
+    ny_p12_end = ny_p12_end.replace(hour=17, minute=59, second=0, microsecond=0)
+    ny_p12 = _compute_range(df_1m, ny_p12_start, ny_p12_end)
+
+    # Pre-London (00:00 → 02:00)
+    pl = _compute_range(df_1m,
+                        td.replace(hour=0, minute=0, second=0, microsecond=0),
+                        td.replace(hour=2, minute=0, second=0, microsecond=0))
+
+    # Pre-NY (05:00 → 08:30)
+    pre_ny = _compute_range(df_1m,
+                            td.replace(hour=5, minute=0, second=0, microsecond=0),
+                            td.replace(hour=8, minute=30, second=0, microsecond=0))
+
+    # NY AM (09:30 → 12:00) — ICT killzone
+    ny_am = _compute_range(df_1m,
+                           td.replace(hour=9, minute=30, second=0, microsecond=0),
+                           td.replace(hour=12, minute=0, second=0, microsecond=0))
+
+    # NY Lunch (12:00 → 13:30)
+    ny_lunch = _compute_range(df_1m,
+                              td.replace(hour=12, minute=0, second=0, microsecond=0),
+                              td.replace(hour=13, minute=30, second=0, microsecond=0))
+
+    # NY PM (13:30 → 16:00)
+    ny_pm = _compute_range(df_1m,
+                           td.replace(hour=13, minute=30, second=0, microsecond=0),
+                           td.replace(hour=16, minute=0, second=0, microsecond=0))
+
+    # Submission range (14:00 → 18:15) — TBP submission range
+    submission = _compute_range(df_1m,
+                                td.replace(hour=14, minute=0, second=0, microsecond=0),
+                                td.replace(hour=18, minute=15, second=0, microsecond=0))
+
+    # Full RTH (09:30 → 16:00)
+    rth = _compute_range(df_1m,
+                        td.replace(hour=9, minute=30, second=0, microsecond=0),
+                        td.replace(hour=16, minute=0, second=0, microsecond=0))
 
     return {
         "ASIA": asia,
         "PL": pl,
         "LONDON": london,
+        "ONS": ons,
+        "P12": p12,
+        "NY_P12": ny_p12,
         "PRE_NY": pre_ny,
         "NY_AM": ny_am,
         "NY_LUNCH": ny_lunch,
         "NY_PM": ny_pm,
+        "SUBMISSION": submission,
         "RTH": rth,
+    }
+
+
+def _compute_range(df_1m: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict:
+    """Compute OHLC + mid for a time window.
+
+    Args:
+        df_1m: 1-minute DataFrame with tz-aware index.
+        start: Window start (tz-aware).
+        end: Window end (tz-aware).
+
+    Returns:
+        dict with open, high, low, close, range, mid, high_time, low_time.
+        Empty dict if no data in window.
+    """
+    if df_1m is None or df_1m.empty:
+        return {}
+
+    mask = (df_1m.index >= start) & (df_1m.index <= end)
+    window = df_1m[mask]
+    if window.empty:
+        return {}
+
+    high = float(window["high"].max())
+    low = float(window["low"].min())
+
+    return {
+        "open": float(window["open"].iloc[0]),
+        "high": high,
+        "low": low,
+        "close": float(window["close"].iloc[-1]),
+        "range": high - low,
+        "mid": (high + low) / 2,
+        "high_time": window["high"].idxmax(),
+        "low_time": window["low"].idxmin(),
     }
 
 

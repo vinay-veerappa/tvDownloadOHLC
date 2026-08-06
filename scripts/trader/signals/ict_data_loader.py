@@ -322,6 +322,136 @@ def load_smt(symbol: str = "NQ1", auto_refresh: bool = True,
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  Geometric Filtering (Phase 1.2 — Critical Review Fix)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _filter_by_price(df: pd.DataFrame, current_price: float, n_above: int = 5,
+                     n_below: int = 5, level_col: str = "liq_level") -> pd.DataFrame:
+    """Geometric filter: keep only the N nearest levels above and below price.
+
+    This prevents context degradation from feeding hundreds of rows to the LLM.
+    """
+    if df.empty or current_price <= 0:
+        return df
+    col = level_col if level_col in df.columns else df.columns[0]
+    above = df[df[col] > current_price].nsmallest(n_above, col)
+    below = df[df[col] < current_price].nlargest(n_below, col)
+    return pd.concat([above, below]).sort_values(col)
+
+
+def load_imbalances_filtered(symbol: str, current_price: float,
+                             timeframe: str = "5m",
+                             session_date: date | None = None,
+                             n_above: int = 5, n_below: int = 5) -> pd.DataFrame:
+    """Load FVGs, geometrically filtered to nearest N above/below price."""
+    df = load_imbalances(symbol, timeframe=timeframe, session_date=session_date)
+    if df.empty:
+        return df
+    # Use fvg_top as the reference level
+    if "fvg_top" in df.columns:
+        df = df.dropna(subset=["fvg_top"])
+        return _filter_by_price(df, current_price, n_above, n_below, "fvg_top")
+    return df
+
+
+def load_orderblocks_filtered(symbol: str, current_price: float,
+                              timeframe: str = "5m",
+                              session_date: date | None = None,
+                              n_above: int = 5, n_below: int = 5) -> pd.DataFrame:
+    """Load OBs, geometrically filtered to nearest N above/below price."""
+    df = load_orderblocks(symbol, timeframe=timeframe, session_date=session_date)
+    if df.empty:
+        return df
+    if "ob_top" in df.columns:
+        df = df.dropna(subset=["ob_top"])
+        return _filter_by_price(df, current_price, n_above, n_below, "ob_top")
+    return df
+
+
+def load_liquidity_filtered(symbol: str, current_price: float,
+                           timeframe: str = "5m",
+                           session_date: date | None = None,
+                           n_above: int = 5, n_below: int = 5) -> pd.DataFrame:
+    """Load liquidity levels, geometrically filtered to nearest N above/below price."""
+    df = load_liquidity(symbol, timeframe=timeframe, session_date=session_date)
+    if df.empty:
+        return df
+    if "liq_level" in df.columns:
+        df = df.dropna(subset=["liq_level"])
+        return _filter_by_price(df, current_price, n_above, n_below, "liq_level")
+    return df
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Dealing Range Detection (Phase 1.3 — Structural, NOT PDH-PDL)
+# ═══════════════════════════════════════════════════════════════════════
+
+def compute_dealing_range(df_1h: pd.DataFrame, lookback: int = 20) -> dict:
+    """Detect the most recent structural dealing range.
+
+    TBP definition: "Any price swing that takes liquidity from both sides of the market."
+    This is a structural swing, not yesterday's PDH-PDL.
+
+    Algorithm:
+        1. Find the most recent significant swing high and swing low on 1H.
+        2. Verify both sides were swept (liquidity taken).
+        3. Return dealing range high, low, 50%, and whether it's valid.
+
+    Args:
+        df_1h: 1-hour DataFrame with OHLC.
+        lookback: Number of 1H bars to look back for swing detection.
+
+    Returns:
+        dict with: dr_high, dr_low, dr_mid, valid, sweep_high, sweep_low
+    """
+    if df_1h is None or df_1h.empty or len(df_1h) < 10:
+        return {"dr_high": None, "dr_low": None, "dr_mid": None, "valid": False}
+
+    df = df_1h.tail(lookback).copy()
+    if len(df) < 5:
+        return {"dr_high": None, "dr_low": None, "dr_mid": None, "valid": False}
+
+    # Find swing high: a bar whose high is higher than N bars before and after
+    n = 3  # swing detection window
+    highs = df["high"].values
+    lows = df["low"].values
+
+    swing_high_idx = None
+    swing_low_idx = None
+
+    for i in range(n, len(highs) - n):
+        # Swing high: high[i] is the highest in the window
+        if highs[i] == max(highs[i-n:i+n+1]):
+            if swing_high_idx is None or highs[i] > highs[swing_high_idx]:
+                swing_high_idx = i
+        # Swing low: low[i] is the lowest in the window
+        if lows[i] == min(lows[i-n:i+n+1]):
+            if swing_low_idx is None or lows[i] < lows[swing_low_idx]:
+                swing_low_idx = i
+
+    if swing_high_idx is None or swing_low_idx is None:
+        return {"dr_high": None, "dr_low": None, "dr_mid": None, "valid": False}
+
+    dr_high = float(highs[swing_high_idx])
+    dr_low = float(lows[swing_low_idx])
+
+    # Check if both sides were swept (price traded beyond both)
+    sweep_high = any(h > dr_high for h in highs[swing_high_idx+1:])
+    sweep_low = any(l < dr_low for l in lows[swing_low_idx+1:])
+
+    valid = sweep_high and sweep_low
+
+    return {
+        "dr_high": dr_high,
+        "dr_low": dr_low,
+        "dr_mid": (dr_high + dr_low) / 2,
+        "valid": valid,
+        "sweep_high": sweep_high,
+        "sweep_low": sweep_low,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  Time-Based Lookups (Silver Bullets + Macros)
 # ═══════════════════════════════════════════════════════════════════════
 
