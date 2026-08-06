@@ -1,110 +1,109 @@
-# Chart Agent — Session Handover
+# Chart Agent — Session Handover (v2)
 
-**Session date:** 2026-08-05
-**Status:** Phase 0a in progress — schema refinement + thin-slice testing
-**Plan doc:** `docs/architecture/CHART_AGENT_PLAN.md`
+**Session date:** 2026-08-05 (continued)
+**Status:** Phase 0 (KB update) → Phase 1 (fix derived data) — ready to implement
+**Plan doc:** `docs/architecture/CHART_AGENT_PLAN.md` (v2.0)
 
 ---
 
 ## What was accomplished this session
 
-### 1. Architecture decided and documented
-- **Reasoner = primary agent** (features + KB context → LLM with ICT knowledge → structured verdict)
-- **Vision = verifier** (reads chart image, checks verdict against what's visible)
-- **Single knowledge root** (`data/knowledge/`, raw external, one merged DB)
-- **Verdict Schema Registry** — one schema per analytical perspective
-- Master plan committed at `docs/architecture/CHART_AGENT_PLAN.md` (12 locked decisions)
+### Planning + critical review
+- Built and tested the full chart agent pipeline: chart generation, reasoner, vision verifier, agent loop
+- Ran 7-model reasoner comparison (all said bearish; Gemini vision said bullish — both valid)
+- Evolved schema from v0.1 → v0.5 (added alternate_scenario, price_delivery_narrative)
+- Extracted TBP (Trader Blue Print Series) content — all 7 Rules, ONS Profiles, macros, Order Pairing Hierarchy
+- Corrected submission range definition (2PM-6:15PM ET OHLC + 50%, NOT prev day OHLC)
+- Ran 3-model critical review (GLM, Gemma4, DeepSeek) — 8 consensus issues found
+- Updated plan to v2.0 with all corrections
 
-### 2. Schema `daily_bias_mtf` evolved v0.1 → v0.5
-- v0.1: Fixed TF ladder, single bias label, confidence
-- v0.2: PD-array-driven structure (TFs configurable, arrays lead)
-- v0.3: Confluence map + readiness + `pending` alignment
-- v0.4: Removed confidence, derived primary array, dynamic horizon
-- **v0.5 (current):** Added `alternate_scenario` (both cases required) + `price_delivery_narrative` (chronological session trace) + specific level status (swept/cleared, reclaimed)
+### Key findings from critical review
+1. **7 Rules are entry rules, not bias rules** — must separate bias prompt from execution prompt
+2. **Dealing range ≠ PDH-PDL** — it's a structural swing that takes liquidity from both sides
+3. **FVG/OB data dump causes context degradation** — need geometric filter (nearest N above/below price)
+4. **Vision verification has anchoring bias** — must run blind (no verdict context)
+5. **Derived data must be fixed FIRST** — before reasoner rewrite
+6. **DST timezone risk** — use zoneinfo everywhere
+7. **Submission range was missing from implementation** — now added (14:00-18:15 ET)
+8. **Missing DOL as singular objective** — reasoner needs "where is price going?" not just level lists
 
-### 3. Code built and tested
+### Code built and tested
 | File | Purpose | Status |
 |---|---|---|
 | `scripts/trader/chart_agent/__init__.py` | Package init | ✅ |
-| `scripts/trader/chart_agent/schemas.py` | VerdictSchema registry with `daily_bias_mtf` v0.5 | ✅ |
-| `scripts/trader/chart_agent/gen_charts.py` | Batch chart renderer (5m candles, ICT overlays, dark theme) | ✅ |
-| `scripts/trader/chart_agent/reasoner.py` | Verdict emitter (features + KB + LLM) | ✅ |
-| `scripts/trader/chart_agent/agent_loop.py` | Multi-model comparison loop | ✅ |
-| `scripts/trader/chart_agent/compare_reasoners.py` | Quick reasoner benchmark | ✅ |
-| `scripts/trader/chart_agent/prompts/daily_bias_reasoner.md` | v0.5 prompt | ✅ |
+| `scripts/trader/chart_agent/schemas.py` | VerdictSchema v0.5 | ✅ |
+| `scripts/trader/chart_agent/gen_charts.py` | 5m chart renderer | ✅ |
+| `scripts/trader/chart_agent/reasoner.py` | Verdict emitter (needs rewrite) | ✅ works, needs Phase 2 rewrite |
+| `scripts/trader/chart_agent/agent_loop.py` | Multi-model loop + Gemini SDK vision | ✅ |
+| `scripts/trader/chart_agent/compare_reasoners.py` | Quick benchmark | ✅ |
+| `scripts/trader/chart_agent/prompts/daily_bias_reasoner.md` | v0.5 prompt (needs v0.6) | ✅ works, needs Phase 3 update |
+| `scripts/trader/chart_agent/audit_features.py` | Feature audit script | ✅ |
+| `scripts/trader/chart_agent/extract_tbp.py` | TBP PDF extraction (quota limited) | ⚠️ partial |
+| `scripts/trader/chart_agent/test_vision.py` | Vision verifier test | ✅ |
+| `.env` | GEMINI_API_KEY (gitignored) | ✅ |
 
-### 4. Model integration
-- **Ollama cloud models** (gemma4, glm-5.2, deepseek-v4) — working, 20-130s per verdict
-- **agy CLI** (Gemini 3.6 Flash, Gemini 3.1 Pro) — working for text, found at `C:\Users\vinay\AppData\Local\agy\bin\agy.exe` (must be on PATH, not just full path)
-- **Gemini Vision via google-antigravity Python SDK** — ✅ WORKING. Uses `Image.from_file()` to pass chart images directly. Requires `GEMINI_API_KEY` in `.env` file. Vision verifier returns MATCH/PARTIAL/MISMATCH in ~20s.
-- **Local vision (qwen3-vl:8b)** — REMOVED. Too slow on 8GB GPU (120s+ timeout), removed from agent loop.
-
-### 5. Benchmarks (ES1 Aug 4)
-| Model | Time | Chars | Bias |
-|---|---|---|---|
-| gemma4:latest | 130s | 2946 | bearish |
-| gemma4:31b-cloud | 27s | 3204 | bearish |
-| glm-5.2:cloud | 21s | 3931 | bearish |
-| deepseek-v4-flash:cloud | 36s | 4354 | bearish |
-| deepseek-v4-pro:cloud | 41s | 3894 | bearish |
-| gemini-3.6-flash (agy) | 28s | 3986 | bearish |
-| gemini-3.1-pro (agy) | 23s | 4379 | bearish |
-| **Gemini vision (manual)** | — | — | **bullish** |
-
-All 7 text reasoners said bearish. User's manual Gemini vision analysis said bullish. Both are valid ICT interpretations of the same data (PDH swept — rejection vs continuation).
-
-### 6. v0.5 prompt tested — alternate scenarios present
-Re-ran top 3 reasoners with v0.5 prompt. All now produce:
-- `alternate_scenario` (bullish counter-case with specific levels)
-- `price_delivery_narrative` (chronological Asia → London → current)
-- Specific level status (swept/cleared, reclaimed, unmitigated/protected)
-
-Markdown comparison saved at `data/vision/comparisons/ES1_2026-08-04_comparison.md`.
+### Model integration status
+- **Ollama cloud** (gemma4:31b, glm-5.2, deepseek-v4) — ✅ working, 20-41s per verdict
+- **agy CLI** (Gemini 3.6 Flash, 3.1 Pro) — ✅ working for text prompts
+- **google-antigravity SDK** — ✅ working for vision (Image.from_file), needs GEMINI_API_KEY in .env
+- **Local vision (qwen3-vl:8b)** — ❌ removed (too slow on 8GB GPU)
 
 ---
 
-## What needs review (user)
+## Next steps (execution order)
 
-1. **Read the comparison** at `data/vision/comparisons/ES1_2026-08-04_comparison.md` — which model's reasoning do you agree with?
-2. **Schema v0.5** — is `alternate_scenario` + `price_delivery_narrative` the right level of detail? What's missing?
-3. **The bearish/bullish disagreement** — all reasoners say bearish (Judas Swing → distribution), Gemini vision says bullish (expansion continuation). You said both cases should be presented — v0.5 now does this. Is the format right?
+### Phase 0 — KB update (FIRST)
+1. Ingest TBP markdown (`C:\Users\vinay\Downloads\Trader_Blue_Print_Series.md`) into KB via producer pipeline
+2. Correct submission range definition in KB (currently says "prev day OHLC" — should be 2PM-6:15PM ET)
+3. Add missing content: 7 Rules (full text), Order Pairing Hierarchy, TCM Timeframes, ONS Profiles, Intraday Macros, Dealing Range definition, Book Making sequence, 3-Hour Cycle, Hourly Rotation
+
+### Phase 1 — Fix derived data (BEFORE reasoner rewrite)
+4. Add session ranges to `compute_ict_features` (ICT killzone times: Asia 20:00-00:00, London 02:00-05:00, NY AM 09:30-12:00, NY PM 13:30-16:00)
+5. Add ONS range (04:00-08:15), P12 range (18:00-06:00), NY P12 (prev day 06:00-17:59)
+6. Add submission range (14:00-18:15) with OHLC + 50%
+7. Add Prev PM 50%, dealing range (structural swing), mids (PDM, PWM, PMM, session mids)
+8. Add geometric filtering for FVG/OB/liquidity (nearest N above/below price)
+9. Define mitigation criteria (price trades through entire FVG/OB range)
+10. Verify HTF levels against 1m data
+11. Use `zoneinfo("America/New_York")` everywhere (DST-aware)
+
+### Phase 1a — Scheduler integration
+12. Add daily derived data refresh to scheduler (17:10 ET + on-demand)
+13. Add gap detection + alerting
+14. Script: `scripts/maintenance/refresh_derived_data.py`
+
+### Phase 2 — Rewrite reasoner
+15. New `assemble_features()` with corrected data (remove IPDA/bias, add all levels, session ranges, submission range, filtered PD arrays, DOL, active macro)
+16. Update prompt to v0.6 (session-aware, HTF/DOL focus, NO 7 Rules, include Order Pairing Hierarchy, TCM timeframes, ONS profiles, macro awareness)
+
+### Phase 3 — Blind vision + generate-validate-correct loop
+17. 3 independent Gemini reads (no verdict context — blind)
+18. Compare programmatically
+19. Feed disagreements back to reasoner for re-evaluation
 
 ---
 
-## Next steps (after review)
-
-### High priority
-1. **Feature gap: FVG/OB cluster levels** — the reasoners don't get specific FVG/OB price levels in the features block. Gemini vision identified clusters at 7765-7775 and 7735-7755. The data layer (`load_imbalances`, `load_orderblocks`) has these — they need to be added to `assemble_features()` in `reasoner.py`.
-2. **More test dates** — run the agent loop on 10-20 ES/NQ charts to validate the schema against diverse setups (range days, trend days, news days).
-3. **User eyeball-verification** — user reviews verdicts against charts, provides corrections/counter-examples.
-
-### Medium priority
-4. **agy vision integration** — agy errors on image files in headless `-p` mode ("Agent execution terminated"). Need to investigate permissions config or use interactive mode. The `google-antigravity` Python SDK needs a `GEMINI_API_KEY`.
-5. **Narrative pipeline integration** — wire the verdict into `trader_narrative.py` as a new section in the premarket/open briefs.
-6. **NQ1 testing** — only ES1 tested so far; run NQ1 to check instrument-agnostic.
-
-### Low priority
-7. **KB root consolidation** (Phase 1) — migrate produced DB to `data/knowledge/`, add unit kinds.
-8. **Gap detection** in streaming pipeline — prevent silent data loss (47-day gap was found).
-9. **Probability computation** (Phase 3) — add probability field using profiler/NQStats hit-rates.
-
----
-
-## Key files to read in the morning
+## Key files to read
 
 | File | Why |
 |---|---|
-| `docs/architecture/CHART_AGENT_PLAN.md` | Master plan, 12 locked decisions, phases |
-| `data/vision/comparisons/ES1_2026-08-04_comparison.md` | Side-by-side model comparison (read this first) |
-| `scripts/trader/chart_agent/prompts/daily_bias_reasoner.md` | v0.5 prompt — the heart of the reasoner |
-| `scripts/trader/chart_agent/schemas.py` | Schema registry (v0.5) |
-| `data/vision/verdicts/ES1_2026-08-04_v5_*.yaml` | Individual v0.5 verdicts |
+| `docs/architecture/CHART_AGENT_PLAN.md` | Master plan v2.0 — 14 decisions, phases, all levels |
+| `C:\Users\vinay\Downloads\Trader_Blue_Print_Series.md` | TBP reference — 7 Rules, macros, ONS profiles |
+| `docs/architecture/CHART_AGENT_FEATURE_AUDIT.md` | Feature audit — what's wrong, missing, redundant |
+| `data/vision/critical_review_glm.txt` | GLM-5.2 critical review |
+| `data/vision/critical_review_gemma4.txt` | Gemma4 critical review |
+| `data/vision/critical_review_deepseek.txt` | DeepSeek critical review |
+| `docs/architecture/CHART_AGENT_HANDOVER.md` | This handover (previous version) |
 
 ---
 
 ## Commits this session
 
 ```
+f084086c docs: update handover — Gemini vision SDK working, .env setup, local vision removed
+1516d28b fix(chart_agent): remove gemma4:latest local model from reasoners
+059060af feat(chart_agent): .env loader + remove local vision LLM
+efe0c94b feat(chart_agent): Gemini vision SDK integration working
 2bf576f3 fix(chart_agent): remove session shading, use 5m candles, fix target_d reference
 d9aaab31 feat(chart_agent): v0.5 schema — alternate_scenario + price_delivery_narrative
 52e4311e feat(chart_agent): agy CLI integration + reasoner benchmark
@@ -112,12 +111,16 @@ e474bd47 fix(chart_agent): agy CLI integration — correct arg order + PATH setu
 01d47152 feat(chart_agent): multi-model agent loop for chart analysis comparison
 1c8008e2 feat(chart_agent): Phase 0a — schema registry, chart generator, bias reasoner
 06138012 docs: add Chart Agent master plan (reasoner-primary, vision-verifier, daily_bias_mtf v0.4 schema)
+b368943a docs: feature audit — what's wrong, missing, redundant in reasoner data
 ```
 
 ---
 
-## Open issues flagged for user
+## Open issues
 
-1. **GEMINI_API_KEY is in .env** — gitignored, not committed. The `.env` file is loaded automatically by `agent_loop.py`, `reasoner.py`, and `test_vision.py`.
-2. **Full agent loop with --compare-all takes >10min** — 7 reasoners × 2 vision models = 14 LLM calls. Use without `--compare-all` (2 reasoners + 1 vision) for quick runs (~2min).
-3. **Data gap** — live storage had a 47-day gap (Jun 19 - Aug 4) that user fixed in parallel. Only March 20-24 (4-day) gap remains. Consider adding gap-detection alerting to streaming pipeline.
+1. **Gemini free tier quota** — 20 requests/day for gemini-3.6-flash. Vision verification + PDF extraction can hit this. Consider paid tier or spreading requests across models.
+2. **TBP PDF is image-based** — text extraction only gets annotations. The markdown file (`C:\Users\vinay\Downloads\Trader_Blue_Print_Series.md`) has the full content — use that for KB ingestion.
+3. **Dealing range detection algorithm** — need to programmatically detect "a swing that took liquidity from both sides." Requires swing detection + liquidity sweep check. Not yet designed.
+4. **Mitigation criteria** — exact definition of when FVG/OB is "mitigated" needs to be specified.
+5. **Geometric filter N** — how many nearest arrays to feed the LLM (3? 5? 10?).
+6. **Midnight open for futures** — keep or replace with Globex open? User to decide.
