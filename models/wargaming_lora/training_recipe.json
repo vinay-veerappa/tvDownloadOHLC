@@ -1,0 +1,12 @@
+{
+  "base_model": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+  "sft_dataset": "C:\\Users\\vinay\\tvDownloadOHLC\\data\\wargaming_sft.jsonl",
+  "eval_dataset": "C:\\Users\\vinay\\tvDownloadOHLC\\data\\wargaming_postmortem.jsonl",
+  "lora_r": 16,
+  "lora_alpha": 16,
+  "max_seq_length": 4096,
+  "epochs": 3,
+  "learning_rate": 0.0002,
+  "output_dir": "C:\\Users\\vinay\\tvDownloadOHLC\\models\\wargaming_lora",
+  "target_gguf": "C:\\Users\\vinay\\tvDownloadOHLC\\data\\wargaming-expert-q4_k_m.gguf"
+}
