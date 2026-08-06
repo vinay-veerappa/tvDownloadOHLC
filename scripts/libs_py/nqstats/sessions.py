@@ -130,7 +130,7 @@ def extract_all_sessions(df_et: pd.DataFrame,
     Automatically handles pre-calculation for performance.
     """
     times = df_et.index.time
-    dates = df_et.index.date
+    dates = get_logical_trading_date(df_et.index)
     results = []
     
     # 1. Standard Killzones
