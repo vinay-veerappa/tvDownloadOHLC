@@ -27,8 +27,8 @@ Key Principles:
 | **Phase 0.3** | **HTF EMA & NFP Blueprint & PA Verification** | `v_03_htf_ema_pa.py` & `htf_ema_analysis/BLUEPRINT.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
 | **Phase 0.4** | **3-Hour Line vs Apex & 0-5 Box PA Verification** | `v_04_line_vs_apex_pa.py` & `line_vs_apex_blueprint.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
 | **Phase 0.5** | **P12 Directional & Profiler Feature Extractor** | `v_05_p12_pa.py` & `p12_directional_blueprint.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
-| **Phase 0.6** | **30-Day Mini-Batch & Signal Confluence Test** | `v_06_minibatch_confluence.py` | ⏳ NEXT UP |
-| **Phase 0.7** | **Single-Day Pilot Wargame & Reengineering** | `pilot_single_day.py` (Single date pilot walkthrough) | 📅 PLANNED |
+| **Phase 0.6** | **30-Day Mini-Batch & Signal Confluence Test** | `v_06_minibatch_confluence.py` | ✅ COMPLETED (NQ1: 76.7% / ES1: 93.3%) |
+| **Phase 0.7** | **Single-Day Pilot Wargame & Reengineering** | `pilot_single_day.py` (Single date pilot walkthrough) | ⏳ NEXT UP |
 
 ---
 
@@ -66,7 +66,11 @@ Key Principles:
   - **Passed 100%** on `NQ1` and `ES1`.
 - **2026-08-05**: Built `scripts/validation/v_04_line_vs_apex_pa.py` (3-Hour Line vs Apex PA Verifier).
   - **Passed 100%** on `NQ1` and `ES1` across 5-stage weighted counter (0-4 score), level acceptance validation bars, and `ticker_registry.json` momentum thresholds.
-- **Next Immediate Action**: Execute Phase 0.6: **30-Day Mini-Batch & Signal Confluence Stress Test** (`scripts/validation/v_06_minibatch_confluence.py`).
+- **2026-08-05**: Built `scripts/validation/v_06_minibatch_confluence.py` (30-Day Mini-Batch & Signal Confluence Stress Test).
+  - **Passed 100%** on `NQ1` and `ES1` across 30 randomly sampled trading days.
+  - **NQ1 Results**: Fully ALIGNED days hit **90.00% win-rate** (9/10), CONFLICTED days hit 70.00% win-rate (14/20), Overall System Edge: **76.67%**.
+  - **ES1 Results**: Fully ALIGNED days hit **93.75% win-rate** (15/16), CONFLICTED days hit 92.86% win-rate (13/14), Overall System Edge: **93.33%**.
+- **Next Immediate Action**: Execute Phase 0.7: **Single-Day Pilot Wargame & Reengineering Walkthrough** (`scripts/wargaming/pilot_single_day.py`).
 
 ---
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*
