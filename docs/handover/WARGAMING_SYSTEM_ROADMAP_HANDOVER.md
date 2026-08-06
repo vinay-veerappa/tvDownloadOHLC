@@ -30,6 +30,15 @@ Key Principles:
 | **Phase 0.6** | **30-Day Mini-Batch & Signal Confluence Test** | `v_06_minibatch_confluence.py` | ✅ COMPLETED (NQ1: 76.7% / ES1: 93.3%) |
 | **Phase 0.7** | **Single-Day Pilot Wargame & Reengineering** | `pilot_single_day.py` | ✅ COMPLETED (PASSED NQ1 & ES1) |
 
+### Phase 1: NotebookLM Knowledge Base Mining & Automated Fine-Tuning Pipeline
+
+| Phase | Milestone | Primary Deliverable | Status |
+| :--- | :--- | :--- | :--- |
+| **Phase 1.1** | **Master Rule Catalog Indexer** | `docs/profiler/master_rule_catalog.json` | ✅ COMPLETED |
+| **Phase 1.2** | **ChatML Fine-Tuning Dataset Generator** | `build_wargaming_dataset.py`, `wargaming_sft.jsonl` & `wargaming_postmortem.jsonl` | ✅ COMPLETED |
+| **Phase 1.3** | **Unsloth QLoRA Fine-Tuning Script & Ollama Modelfile** | `train_wargaming_lora.py` & `Modelfile` | ⏳ NEXT UP |
+| **Phase 1.4** | **Fine-Tuned LLM Wargame Evaluator & Backtester** | `evaluate_wargaming_llm.py` | 📅 PLANNED |
+
 ---
 
 ## 3. Tool & Indicator Documentation Inventory
@@ -66,11 +75,12 @@ Key Principles:
   - **Passed 100%** on `NQ1` and `ES1`.
 - **2026-08-05**: Built `scripts/validation/v_04_line_vs_apex_pa.py` (3-Hour Line vs Apex PA Verifier).
   - **Passed 100%** on `NQ1` and `ES1` across 5-stage weighted counter (0-4 score), level acceptance validation bars, and `ticker_registry.json` momentum thresholds.
-- **2026-08-05**: Built `scripts/wargaming/pilot_single_day.py` (Single-Day Pilot Wargame & EOD Reengineering Engine).
-  - Conducted Multi-LLM Peer Code Review with **`kimi-k2.7-code:cloud`** (`scratch/pilot_review_kimi.md`) and **`deepseek-v4-pro:cloud`** (`scratch/pilot_review_deepseek.md`).
-  - Refactored `pilot_single_day.py` to enforce an explicit **`df_pre` Data Cutoff Barrier**, eliminating 08:30 AM look-ahead bias, adding timezone-safe `et_timestamp` helper, and vectorizing 3-Hour Line vs Apex calculations.
-  - Executed end-to-end pilot wargames for **`NQ1`** and **`ES1`** on `2026-08-03` (08:30 AM pre-market briefing + 16:00 PM EOD post-mortem). Passed 100%!
-- **Next Immediate Action**: Begin **Phase 1: NotebookLM Knowledge Base Mining & Automated Fine-Tuning Pipeline**.
+- **2026-08-05**: Built `docs/profiler/master_rule_catalog.json` (Master Rule Catalog Indexer).
+  - Extracted verbatim R1 (38.98%), DNP (15.63%), DWP (32.87%), R2 (12.52%) conditions, overnight profiles (LT, LF, ST, SF), 3-day True streak limit, 7-day False streak limit, 06:00-07:00 P12 rejection probabilities (HOD 84.52% / LOD 81.85%), and 99.26% both-sides sweep rule from NotebookLM.
+- **2026-08-05**: Built `scripts/wargaming/build_wargaming_dataset.py` (ChatML Fine-Tuning Dataset Generator).
+  - Conducted Multi-LLM Audit with **`kimi-k2.7-code:cloud`** (`scratch/dataset_review_kimi.md`) and **`deepseek-v4-pro:cloud`** (`scratch/dataset_review_deepseek.md`).
+  - Generated two clean datasets: `data/wargaming_sft.jsonl` (60 pure causal pre-market 08:30 AM EST instruction-tuning pairs in ChatML format) and `data/wargaming_postmortem.jsonl` (60 EOD 16:00 PM EST post-mortem pairs).
+- **Next Immediate Action**: Execute Phase 1.3: **Unsloth QLoRA Fine-Tuning Script & Ollama Modelfile Setup**.
 
 ---
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*
