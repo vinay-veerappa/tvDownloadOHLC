@@ -3347,8 +3347,38 @@ def _format_scheduled_risk_block(econ_releases: list[dict]) -> str:
         return "== SCHEDULED RISK ==\nNo economic releases scheduled today."
     
     lines = ["== SCHEDULED RISK =="]
-    # Sort conflicts first
-    sorted_releases = sorted(econ_releases, key=lambda x: x.get("macro_window_conflict", False), reverse=True)
+    impact_rank = {"HIGH": 2, "MEDIUM": 1, "LOW": 0}
+    deduped: dict[tuple[str, str], dict] = {}
+
+    for release in econ_releases:
+        key = (str(release.get("time_et", "")), str(release.get("name", "")))
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = release
+            continue
+
+        # Prefer the version that has a conflict flag, then higher impact.
+        existing_score = (
+            1 if existing.get("macro_window_conflict", False) else 0,
+            impact_rank.get(str(existing.get("impact", "")).upper(), -1),
+        )
+        new_score = (
+            1 if release.get("macro_window_conflict", False) else 0,
+            impact_rank.get(str(release.get("impact", "")).upper(), -1),
+        )
+        if new_score > existing_score:
+            deduped[key] = release
+
+    # Sort conflicts first, then high impact, then time.
+    sorted_releases = sorted(
+        deduped.values(),
+        key=lambda x: (
+            0 if x.get("macro_window_conflict", False) else 1,
+            -impact_rank.get(str(x.get("impact", "")).upper(), -1),
+            str(x.get("time_et", "")),
+            str(x.get("name", "")),
+        ),
+    )
     for r in sorted_releases:
         name = r["name"]
         impact = r["impact"]
@@ -4374,6 +4404,24 @@ def build_weekly_event_timeline(
     mod_str = _format_modifiers_short(weekly_modifiers)
     lines = [f"== WEEKLY EVENT TIMELINE ({mod_str}) =="]
 
+    active_modifiers: list[str] = []
+    if weekly_modifiers.get("is_triple_witching_week"):
+        active_modifiers.append("TRIPLE WITCHING")
+    if weekly_modifiers.get("is_opex_week"):
+        active_modifiers.append("OPEX")
+    if weekly_modifiers.get("is_fomc_week"):
+        active_modifiers.append("FOMC")
+    if weekly_modifiers.get("is_cpi_week"):
+        active_modifiers.append("CPI")
+    if weekly_modifiers.get("is_nfp_week"):
+        active_modifiers.append("NFP")
+    if weekly_modifiers.get("is_jackson_hole_week"):
+        active_modifiers.append("JACKSON HOLE")
+    if weekly_modifiers.get("has_treasury_auction"):
+        active_modifiers.append("TREASURY AUCTION")
+    if len(active_modifiers) > 1:
+        lines.append(f"Active Modifiers: {' + '.join(active_modifiers)}")
+
     if archetype_info:
         arch = archetype_info.get("archetype", "")
         if arch:
@@ -4494,7 +4542,7 @@ def _format_modifiers_short(modifiers: dict) -> str:
     parts: list[str] = []
     if modifiers.get("is_triple_witching_week"):
         parts.append("TRIPLE WITCHING")
-    elif modifiers.get("is_opex_week"):
+    if modifiers.get("is_opex_week"):
         parts.append("OPEX")
     if modifiers.get("is_fomc_week"):
         parts.append("FOMC")

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -297,6 +298,63 @@ def write_cheatsheet_to_disk(cheat_sheet: str, mode: str, ticker: str) -> Path:
     return latest_path
 
 
+def _enforce_narrative_contract(summary: str, mode: str) -> str:
+    """Apply a minimal deterministic contract guard to LLM output.
+
+    Prompts already require these items. This guard ensures output remains
+    actionable when the model omits them.
+    """
+    required_heading = (
+        "Tomorrow Most Likely vs Alternate"
+        if mode == "close"
+        else "Most Likely vs Alternate Outcome"
+    )
+    additions: list[str] = []
+
+    if required_heading.lower() not in summary.lower():
+        additions.append(
+            f"### {required_heading}\n"
+            "- Most Likely: missing from model output; keep directional read conditional until validation trigger is met.\n"
+            "- Alternate: if the primary validation fails, switch to the alternate scenario using structural invalidation levels from the cheat sheet."
+        )
+
+    # Match variants like "no trade / wait" or "no-trade/wait".
+    if re.search(r"no\s*-?\s*trade\s*/\s*wait", summary, flags=re.IGNORECASE) is None:
+        additions.append(
+            "- No-Trade Condition: no-trade / wait for confirmation if neither scenario validation trigger is met in the relevant window."
+        )
+
+    if not additions:
+        return summary
+
+    log.warning("Narrative contract guard applied for mode=%s", mode)
+    return summary.rstrip() + "\n\n## Contract Compliance Addendum\n\n" + "\n\n".join(additions) + "\n"
+
+
+def _append_contradiction_check(summary: str) -> str:
+    """Flag obvious directional contradictions after generation.
+
+    This is intentionally lightweight: it catches mixed bullish/bearish
+    language when the narrative does not clearly frame the read as conditional.
+    """
+    lower = summary.lower()
+    bullish_hits = len(re.findall(r"\bbullish\b", lower))
+    bearish_hits = len(re.findall(r"\bbearish\b", lower))
+
+    if bullish_hits and bearish_hits and not re.search(
+        r"\b(conditional|mixed|conditionality|no-trade|wait for confirmation|alternate)\b",
+        lower,
+    ):
+        log.warning("Narrative contradiction check flagged mixed directional language")
+        return (
+            summary.rstrip()
+            + "\n\n## Consistency Check\n\n"
+            + "Mixed directional language detected. Treat the read as conditional and wait for the validation trigger rather than forcing conviction.\n"
+        )
+
+    return summary
+
+
 def run_narrative(
     mode: str,
     model: str,
@@ -423,6 +481,8 @@ def run_narrative(
             prompt = insert_risk_params(prompt, instruments=micro_instruments)
             
             summary = call_ollama(prompt, model)
+            summary = _enforce_narrative_contract(summary, mode)
+            summary = _append_contradiction_check(summary)
             write_narrative_to_disk(summary, mode, ticker)
             
             if send_discord:

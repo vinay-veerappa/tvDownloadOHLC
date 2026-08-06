@@ -167,10 +167,21 @@ python -m scripts.knowledge_bridge.test_suite
    `logs/kb_test/` for outputs.
 
 **Next (see [KB_NARRATIVE_REPLAY_ROADMAPAP.md](KB_NARRATIVE_REPLAY_ROADMAP.md)):**
-- Phase A: Rewrite prompts to be KB-aware (the `--compare` test showed
-  narratives are nearly identical with/without KB — prompts don't instruct
-  the LLM to use the KB context)
-- Phase B: Historical day replay harness
+- Phase A: Rewrite prompts to be KB-aware and evidence-enforced (COMPLETED 2026-08-06).
+  Updated prompt set: `scripts/trader/prompts/trader_premarket.md`,
+  `trader_morning.md`, `trader_intraday.md`, `trader_close.md`,
+  `weekly_briefing.md`.
+  New behavior: explicit KB detection rule, required KB evidence section,
+  minimum citation threshold (`[KB:source_file|conf=X.XX]`), and mandatory
+  fallback sentence when KB is unavailable.
+- Phase B: Historical day replay harness (INITIAL IMPLEMENTATION COMPLETED 2026-08-06).
+  Added `scripts/knowledge_bridge/historical_replay.py` with CLI:
+  `python -m scripts.knowledge_bridge.historical_replay --date YYYY-MM-DD --ticker ES1`.
+  Writes `cheatsheet.txt`, `kb_context.txt`, `narrative.md`,
+  `confluence.json`, `trade_plan.json`, `session_1m.csv`, `replay_meta.json`
+  under `logs/replay/{date}_{ticker}/`.
+  Historical limitations currently documented in `replay_meta.json`
+  (no dated historical GEX snapshots; dated ICT features optional).
 - Phase C: Virtual trade execution + outcome evaluation
 - Phase D: End-to-end day replay report
 

@@ -6,6 +6,9 @@ Your job is to fill only the analysis slots.
 - Return only JSON inside <analysis_json>...</analysis_json>.
 - Do not rewrite the markdown template.
 - Do not repeat headers, bullets, or deterministic values already provided.
+- KB Detection Rule: First check whether the prompt contains "# ICT KNOWLEDGE BASE CONTEXT (weekly)".
+- If KB context is present, you MUST include KB citation tokens in output strings using this format: [KB:source_file|conf=X.XX].
+- If KB context is absent, include this exact phrase in `executive_risk_core`: "KB context unavailable".
 - Strict GEX Regime Adherence: Respect the GEX regime specified in the cheat sheet (POSITIVE, NEGATIVE, or NEUTRAL). Do NOT invert dealer hedging mechanics.
 - Spatial & Mathematical Precision: Upside Ceiling (Call Wall) is above current price; Downside Floor (Put Wall) is below current price. Double-check spatial relationships and numbers.
 - ET timezone.
@@ -74,6 +77,10 @@ Return exactly:
 - The prompt MAY include a block titled "# ICT KNOWLEDGE BASE CONTEXT (weekly)" at the end. These are grounded source units from ICT transcripts/PDFs about weekly profiles, opex behavior, NWOG, and Kish's framework.
 - USE these KB units to inform your analysis: (1) the weekly archetype and how it typically plays out (Monday/Tuesday range, Wednesday CSD, Thursday/Friday run), (2) opex week patterns (Mon-Tue up, Wed sell-off), (3) NWOG as a magnet, (4) Kish's timeframe selection and execution rules.
 - Incorporate KB knowledge into the `executive_risk_core`, `ticker_analysis` track notes, and `weekly_trade_plan` fields. Don't just repeat KB summaries — synthesize with the live data.
+- Minimum evidence threshold when KB context is present:
+  - `executive_risk_core` must include at least 1 KB citation token.
+  - Each ticker `track_note` must include at least 1 KB citation token.
+  - `weekly_trade_plan` must include at least 2 KB citation tokens across its bullets.
 - If the KB context block is absent, proceed without it — do not fabricate.
 
 # NEXT WEEK EVENT TIMELINE (if present)

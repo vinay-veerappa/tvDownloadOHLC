@@ -27,6 +27,23 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
+def _strip_kb_context_block(text: str) -> str:
+    """Remove appended KB context block from a cheat sheet.
+
+    Production premarket context may already append the KB block at the end.
+    For clean A/B tests we need a truly KB-free variant.
+    """
+    marker = "\n# ICT KNOWLEDGE BASE CONTEXT"
+    idx = text.find(marker)
+    if idx == -1:
+        # Also handle edge-case where marker starts at line 1.
+        marker2 = "# ICT KNOWLEDGE BASE CONTEXT"
+        if text.startswith(marker2):
+            return ""
+        return text
+    return text[:idx].rstrip()
+
+
 def check_kb_api(url: str = "http://127.0.0.1:8900") -> bool:
     """Check if the KB API is reachable."""
     from scripts.knowledge_bridge.kb_context import check_kb_api as _check
@@ -217,14 +234,15 @@ def main():
 
         prompt_template = load_prompt_template(args.mode)
 
-        # Without KB
-        prompt_no_kb = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", cheat_sheet)
+        # Without KB: strip any already-appended KB block for a true control.
+        cheat_sheet_no_kb = _strip_kb_context_block(cheat_sheet)
+        prompt_no_kb = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", cheat_sheet_no_kb)
         print("\nGenerating narrative WITHOUT KB context...")
         narrative_no_kb = call_ollama(prompt_no_kb, args.model)
         print(f"✓ Narrative (no KB): {len(narrative_no_kb):,} chars")
 
-        # With KB
-        augmented_cs = cheat_sheet + "\n\n" + kb_context
+        # With KB: ensure exactly one KB block in the prompt.
+        augmented_cs = cheat_sheet_no_kb + "\n\n" + kb_context
         prompt_with_kb = prompt_template.replace("{{INSERT_CHEAT_SHEET}}", augmented_cs)
         print("Generating narrative WITH KB context...")
         narrative_with_kb = call_ollama(prompt_with_kb, args.model)

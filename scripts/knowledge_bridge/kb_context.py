@@ -187,6 +187,29 @@ def _search_kb(query: str, k: int, kb_api_url: str, timeout: float = 10.0) -> li
     return []
 
 
+def _round_robin_units(unit_groups: list[list[dict]]) -> list[dict]:
+    """Interleave KB units across groups to preserve evidence diversity.
+
+    This prevents a single high-volume concept/query from consuming the entire
+    char budget before other relevant or disconfirming units can be included.
+    """
+    ordered: list[dict] = []
+    positions = [0 for _ in unit_groups]
+
+    while True:
+        advanced = False
+        for idx, group in enumerate(unit_groups):
+            pos = positions[idx]
+            if pos < len(group):
+                ordered.append(group[pos])
+                positions[idx] += 1
+                advanced = True
+        if not advanced:
+            break
+
+    return ordered
+
+
 def fetch_kb_context(
     cheat_sheet: str,
     kb_api_url: str = DEFAULT_KB_API_URL,
@@ -239,7 +262,7 @@ def fetch_kb_context(
     }
     ordered = sorted(found.items(), key=lambda kv: (0 if kv[0] in _SESSION_PRIORITY else 1, kv[0]))
 
-    all_units: list[dict] = []
+    grouped_units: list[list[dict]] = []
     seen_ids: set[str] = set()
     if exclude_ids:
         seen_ids.update(exclude_ids)
@@ -250,14 +273,19 @@ def fetch_kb_context(
         except Exception as e:
             log.debug("[kb_context] search failed for %r: %s", concept, e)
             continue
+        concept_units: list[dict] = []
         for u in units:
             uid = u.get("unit_id", str(id(u)))
             if uid not in seen_ids:
-                all_units.append(u)
+                concept_units.append(u)
                 seen_ids.add(uid)
+        if concept_units:
+            grouped_units.append(concept_units)
 
-    if not all_units:
+    if not grouped_units:
         return ""
+
+    all_units = _round_robin_units(grouped_units)
 
     # Format as context block
     lines: list[str] = []
@@ -346,7 +374,7 @@ def fetch_kb_context_for_queries(
         log.debug("[kb_context] KB API unreachable — returning empty")
         return "", set()
 
-    all_units: list[dict] = []
+    grouped_units: list[list[dict]] = []
     seen_ids: set[str] = set()
     query_labels: list[str] = []
 
@@ -356,18 +384,20 @@ def fetch_kb_context_for_queries(
         except Exception as e:
             log.debug("[kb_context] targeted search failed for %r: %s", label, e)
             continue
-        added = 0
+        query_units: list[dict] = []
         for u in units:
             uid = u.get("unit_id", str(id(u)))
             if uid not in seen_ids:
-                all_units.append(u)
+                query_units.append(u)
                 seen_ids.add(uid)
-                added += 1
-        if added:
+        if query_units:
+            grouped_units.append(query_units)
             query_labels.append(label)
 
-    if not all_units:
+    if not grouped_units:
         return "", seen_ids
+
+    all_units = _round_robin_units(grouped_units)
 
     lines: list[str] = []
     total = 0

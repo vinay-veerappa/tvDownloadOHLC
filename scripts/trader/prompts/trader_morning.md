@@ -15,10 +15,20 @@ Write a thorough narrative (no artificial word limit — cover everything that m
 
 # RULES (STRICTLY ENFORCED)
 - **No Hallucination**: Do NOT invent prices, bias, or data. If it is not explicitly in the cheat sheet, do not mention it.
+- **KB Detection Rule**: First check whether the cheat sheet contains a block titled "# ICT KNOWLEDGE BASE CONTEXT".
+- **If KB Present**: You MUST include a section titled "KB-Evidenced Drivers" with exactly 3 bullets. Each bullet must include: (1) the conditional rule, (2) the matching evidence from today's cheat sheet, (3) one citation token [KB:source_file|conf=X.XX].
+- **If KB Absent**: Include one sentence near the top: "KB context unavailable; inference uses quantitative cheat-sheet data only."
 - **Strict GEX Regime Adherence**: Strictly respect the GEX regime specified in the cheat sheet (e.g. POSITIVE, NEGATIVE, or NEUTRAL). Do NOT invert dealer hedging mechanics or claim negative gamma when the cheat sheet states NEUTRAL or POSITIVE.
 - **Spatial & Mathematical Precision**: Put Walls are downside support/floors (below or near price floor); Call Walls are overhead resistance/ceilings. Double-check whether a level is ABOVE or BELOW current price, and compute distances accurately.
 - **Trust the Python Output**: All quantitative signals (ALN patterns, Profiler edges, Candle Science, VIX) have already been evaluated by the backend. Simply report their conclusions as presented in the cheat sheet.
 - **Bias Consensus**: If the Bias Consensus Matrix shows conflicting signals, explicitly state that the read is mixed/low-conviction. Do not force a single directional narrative if the data disagrees.
+- **Directional Commitment Gate**: Only present a single dominant directional read if core components are aligned in the same direction (at minimum: FTFC session bias + GEX regime + ALN/Herman or classification). Otherwise keep the read explicitly conditional.
+- **Mandatory section**: include a heading "Most Likely vs Alternate Outcome" with exactly 2 bullets:
+	- Most Likely: include (a) probability from cheat-sheet stats when available, (b) validation trigger, (c) invalidation trigger.
+	- Alternate: include (a) probability or residual probability estimate derived from cheat-sheet stats, (b) validation trigger, (c) invalidation trigger.
+- **Probability Grounding**: Use only numbers already present in the cheat sheet (Herman %, R1/R2 %, IB/noon-curve probabilities, FTFC confidence). If a probability is not present, write "probability not explicitly quantified in cheat sheet".
+- **Risk Grounding (day trader)**: For each outcome bullet, reference one concrete invalidation level and state risk distance from current price in points and percent.
+- **No-Trade Condition**: If neither validation trigger confirms during the relevant AM window, explicitly state "no-trade / wait for confirmation".
 - **Jargon Policy (KB-aware)**: You MAY use ICT terminology (FVG, CSD, MSS, liquidity sweep, Silver Bullet, etc.) when the cheat sheet's KB context block provides a grounded source for it. When you use an ICT term, translate it in the same sentence for the reader (e.g. "a fair value gap (FVG — an imbalance gap that price returns to fill)"). If no KB source is present, use plain English only.
 - **KB Usage**: When the KB context block is present, USE it to infer what could happen — not just to cite sources. The value is connecting current conditions to conditional rules (e.g. "large Asia range → NY AM mean reversion", "both sides of overnight swept → leave the market"). Attribution is secondary to correct inference.
 - **Setup Relevance**: Don't just list levels — explain WHICH ICT setup is forming and what would confirm or invalidate it.
@@ -31,6 +41,8 @@ KB CONTEXT USAGE (if present):
 - The cheat sheet MAY include a block titled "# ICT KNOWLEDGE BASE CONTEXT" at the end. These are grounded source units from ICT transcripts/PDFs, each with a confidence score (conf=X.XX), concepts, summary, and verbatim anchor.
 - USE these KB units to: (1) explain WHY a setup is relevant in current conditions, (2) cite the source when referencing a methodology, (3) add depth that pure data cannot.
 - Do NOT just repeat the KB summaries verbatim. Synthesize them with the live data.
+- Minimum evidence threshold when KB is present: cite at least 3 distinct KB units using [KB:source_file|conf=X.XX].
+- One KB-Evidenced Drivers bullet must be a disconfirming condition (what would invalidate the leading setup).
 - Timeframe Annotation (STRICT): Whenever you mention a setup or structural level (FVG, CSD, order block, MSS, imbalance, etc.), ALWAYS state the timeframe it applies to. Sources: (1) the cheat sheet block that contains the level usually states the timeframe; (2) the KB unit's Context line shows timeframes (e.g. "TFs: M5, M1"). If no timeframe is available, write "(timeframe not specified)". This is critical for multi-timeframe analysis.
 - If the KB context block is absent (KB API not running), write the narrative using only the cheat sheet data — no KB citations.
 
