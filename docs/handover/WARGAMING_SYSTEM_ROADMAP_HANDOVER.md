@@ -87,10 +87,9 @@ Key Principles:
   - **Passed 100%** on `NQ1` and `ES1` across 5-stage weighted counter (0-4 score), level acceptance validation bars, and `ticker_registry.json` momentum thresholds.
 - **2026-08-05**: Built `docs/profiler/master_rule_catalog.json` (Master Rule Catalog Indexer).
   - Extracted verbatim R1 (38.98%), DNP (15.63%), DWP (32.87%), R2 (12.52%) conditions, overnight profiles (LT, LF, ST, SF), 3-day True streak limit, 7-day False streak limit, 06:00-07:00 P12 rejection probabilities (HOD 84.52% / LOD 81.85%), and 99.26% both-sides sweep rule from NotebookLM.
-- **2026-08-05**: Built `scripts/wargaming/build_wargaming_dataset.py` (ChatML Fine-Tuning Dataset Generator).
-  - Conducted Multi-LLM Audit with **`kimi-k2.7-code:cloud`** (`scratch/dataset_review_kimi.md`) and **`deepseek-v4-pro:cloud`** (`scratch/dataset_review_deepseek.md`).
-  - Generated two clean datasets: `data/wargaming_sft.jsonl` (60 pure causal pre-market 08:30 AM EST instruction-tuning pairs in ChatML format) and `data/wargaming_postmortem.jsonl` (60 EOD 16:00 PM EST post-mortem pairs).
-- **Next Immediate Action**: Execute Phase 1.3: **Unsloth QLoRA Fine-Tuning Script & Ollama Modelfile Setup**.
+- **2026-08-05**: Verified precalculated Daily Profiler outcome tables against TradingView Desktop App MCP across 5 historical dates (`2026-08-03`, `2026-07-29`, `2026-07-28`, `2026-07-27`, `2026-07-22`) at 09:00 AM EST with **100% 1-to-1 match** (`v_wargame_9am_ground_truth.py` & `v_table_5day_ground_truth.py`).
+- **2026-08-05**: Completed Phase 1.3: Built Unsloth QLoRA fine-tuning script (`scripts/wargaming/train_wargaming_lora.py`) and Ollama Modelfile (`data/Modelfile`).
+- **Next Immediate Action**: Execute Phase 1.4: **Ollama Model Serving (`ollama create wargaming-expert -f data/Modelfile`) & Benchmarking (`evaluate_wargaming_llm.py`)**.
 
 ---
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*
