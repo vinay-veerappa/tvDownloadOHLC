@@ -1,0 +1,72 @@
+{
+  "version": "1.0.0",
+  "source": "NotebookLM Pack Oct Bootcamp, Pack Live Wargaming, & Pack Reengineering Q2 2026",
+  "daily_classifications": {
+    "R1": {
+      "name": "Range 1 (Volatility Consolidation)",
+      "frequency_pct": 38.98,
+      "is_mode": true,
+      "conditions": "Price touches/tests 09:30 AM open print for 4 or more hourly blocks during RTH (09:30-16:00 ET). Both bullish & bearish breakouts fail.",
+      "tactical_rule": "Turn ON mean-reversion cash-flow scalps; target 10 basis points."
+    },
+    "DNP": {
+      "name": "Directional No Pullback (Pure Trend Continuation)",
+      "frequency_pct": 15.63,
+      "conditions": "Price moves away from 09:30 AM open for 5 or more hourly blocks without breaking preceding hourly highs (downtrend) or lows (uptrend). Hourly 50% midpoints respected.",
+      "tactical_rule": "Turn ON trend continuation models (buy dips / sell rips). Counter-trend stops get plumbered."
+    },
+    "DWP": {
+      "name": "Directional With Pullback (Trend-to-Range Transition)",
+      "frequency_pct": 32.87,
+      "conditions": "Explosive move away from 09:30 AM open in morning (first 45-90 mins), never returns to open print, then transitions into afternoon consolidation (11:00-14:00 ET) taking out hourly highs/lows.",
+      "tactical_rule": "Trade early momentum, then switch to range-bound strategies after 11:00 AM."
+    },
+    "R2": {
+      "name": "Range 2 / Reversion (Trend Failure)",
+      "frequency_pct": 12.52,
+      "conditions": "Starts as explosive trend away from 09:30 AM open, but collapses after 11:30 AM and reverts completely back to 09:30 AM open price. Visual 'thigh gap'.",
+      "tactical_rule": "Fade extreme boundaries back to open price."
+    }
+  },
+  "overnight_profiles": {
+    "LT": {
+      "name": "Long True",
+      "conditions": "Variable phase expands above Fixed Constant High and does not breach Fixed Constant Low. Hourly closes stay above 50% midpoints."
+    },
+    "LF": {
+      "name": "Long False",
+      "conditions": "Variable phase sweeps above Fixed Constant High, then undergoes structural failure and closes below morning prints."
+    },
+    "ST": {
+      "name": "Short True",
+      "conditions": "Variable phase expands below Fixed Constant Low and does not breach Fixed Constant High. Hourly closes stay below 50% midpoints."
+    },
+    "SF": {
+      "name": "Short False",
+      "conditions": "Variable phase sweeps below Fixed Constant Low, then reverses and closes back above morning prints."
+    }
+  },
+  "sequential_streaks": {
+    "true_streak_max": 3,
+    "true_streak_rule": "2 or 3 True days in a row -> 90% probability of False Day on Day 3 or Day 4 (expect early sweep/reversal).",
+    "false_streak_max": 7,
+    "false_streak_rule": "6 False days in a row -> High-probability True Day on Day 7.",
+    "daily_close_matrix": {
+      "Up_to_Up": 0.70,
+      "Up_to_Down": 0.30,
+      "Down_to_Up": 0.80,
+      "Down_to_Down": 0.20
+    },
+    "weekly_ema_excursion_hitrate": 0.91,
+    "weekly_ema_miss_multiplier": "If Week 1 misses Weekly EMA excursion target, Week 2 hit rate multiplies to >98% (misses 2 weeks in a row only 1 in 56 weeks)."
+  },
+  "p12_and_premarket": {
+    "early_rejection_window_0600_0700": {
+      "p12_high_rejection": "84.52% probability HOD is ALREADY LOCKED IN overnight.",
+      "p12_low_rejection": "81.85% probability LOD is ALREADY LOCKED IN overnight.",
+      "p12_mid_rejection": "49.52% probability one daily extreme is set."
+    },
+    "both_sides_sweep_0600_0830": "99.26% probability BOTH HOD and LOD form AFTER 08:30 AM (Goalpost chop day).",
+    "asia_broken_0600_0830": "94.70% probability both HOD and LOD form after 09:00 AM."
+  }
+}
