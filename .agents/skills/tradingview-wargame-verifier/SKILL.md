@@ -15,7 +15,9 @@ This skill provides an automated workflow to jump TradingView charts to specific
 
 ## Workflow & MCP Tools
 1. **Health Check**: Call `tradingview/tv_health_check` to confirm CDP connection.
-2. **Chart Navigation**: Call `tradingview/chart_scroll_to_date` or `tradingview/replay_start` to set the chart date.
+2. **Chart Navigation & Replay Jump**:
+   - Call `tradingview/replay_start` using **exact Unix Epoch seconds** (`timestamp` parameter, e.g. `1785158100` for 09:15 ET) to prevent timezone misalignments.
+   - Immediately follow with `tradingview/chart_scroll_to_date` to scroll the visual chart window directly to the target date.
 3. **Indicator Extraction**: Call `tradingview/data_get_pine_labels`, `data_get_pine_lines`, and `data_get_pine_boxes`.
-4. **Python Comparison**: Execute `python scripts/wargaming/automated_tv_wargame_verifier.py NQ1 <YYYY-MM-DD>`.
+4. **Python Comparison**: Execute `SessionBoxEngine.from_live("NQ1", cutoff_time=...)` ensuring `extract_all_sessions()` groups by `get_logical_trading_date()`.
 5. **Screenshot Audit**: Call `tradingview/capture_screenshot` to save visual verification artifacts.
