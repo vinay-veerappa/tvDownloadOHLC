@@ -51,15 +51,23 @@ Key Principles:
 
 ---
 
-## 3. Tool & Indicator Documentation Inventory
+## 3. Master Tool & Indicator Documentation Inventory
 
-| Topic | Documentation Path | Description |
+| Topic / Category | Documentation Path | Purpose & Description |
 | :--- | :--- | :--- |
-| **Master Tool Inventory** | [`docs/profiler/mickey_austin_tool_inventory.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/mickey_austin_tool_inventory.md) | Exhaustive inventory of Mickey & Austin's indicators, models, and checklists from NotebookLM. |
+| **Master Tool Inventory** | [`docs/profiler/mickey_austin_tool_inventory.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/mickey_austin_tool_inventory.md) | Exhaustive inventory of Mickey & Austin's indicators, models, and checklists mined from NotebookLM. |
 | **Daily Profiler & Wargaming** | [`docs/profiler/daily_profiler_wargaming.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/daily_profiler_wargaming.md) | 4-step daily profiler workflow, session profiles ($P_{session}$), P12 levels, and 4-step counter. |
 | **Wargaming & Reengineering SOP** | [`docs/profiler/mickey_austin_wargaming_reengineering.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/mickey_austin_wargaming_reengineering.md) | Morning wargaming SOP (08:30 EST) and 7-step EOD reengineering SOP (16:00 EST). |
-| **HTF EMA Analysis** | [`docs/features/htf-ema-analysis/REQUIREMENTS.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/features/htf-ema-analysis/REQUIREMENTS.md) | TradingView indicator spec: Weekly EMA(5) % excursions ($dUp$, $dDn$), 52-week statistics, 2-3% zones. |
-| **Candle Science Signal Engine** | [`scripts/trader/signals/candle_science.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trader/signals/candle_science.py) | Python implementation for C1 $\rightarrow$ C2 $\rightarrow$ C3 probabilities, C2 Open line in the sand, MFE/MAE percentiles. |
+| **YouTube Wargaming Tactics** | [`docs/profiler/youtube_wargaming_tactics.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/youtube_wargaming_tactics.md) | Live stream wargaming tactics, level hit rates, and inside bar sequence rules. |
+| **Candle Science Blueprint** | [`docs/features/CandleScience/BLUEPRINT.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/features/CandleScience/BLUEPRINT.md) | $C_1$ Red/Green magnifiers, $C_2$ Open breach timestamp rules, MFE/MAE percentiles, 3-tier TP scaling. |
+| **HTF EMA Analysis Spec & Blueprint** | [`docs/features/htf_ema_analysis/BLUEPRINT.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/features/htf_ema_analysis/BLUEPRINT.md) | Weekly EMA(5) % excursions ($dUp$, $dDn$), 52-week statistics, 2-3% magnet zones. |
+| **3-Hour Line vs. Apex PA Blueprint** | [`docs/profiler/line_vs_apex_blueprint.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/line_vs_apex_blueprint.md) | 5-stage weighted counter (0–4 score), level acceptance validation bars, instant extreme detection. |
+| **P12 Directional Vector Blueprint** | [`docs/profiler/p12_directional_blueprint.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/p12_directional_blueprint.md) | P12 range, 06:00–07:00 early rejection (84.52% HOD / 81.85% LOD), and 99.26% sweep rule. |
+| **Master Rule Catalog JSON** | [`docs/profiler/master_rule_catalog.json`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/master_rule_catalog.json) | Machine-readable JSON catalog of all verbatim probabilities, streak limits, and conditional rules. |
+| **3-Engine Verification Handover** | [`docs/architecture/PROFILER_VERIFICATION_HANDOVER.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/PROFILER_VERIFICATION_HANDOVER.md) | Logical date bug fix, 09:15 ET target timestamp rule, UTC epoch jump protocol, 4-day parity audit matrix. |
+| **LLM Benchmark Report** | [`scratch/wargaming_llm_benchmark_report_NQ1.md`](file:///c:/Users/vinay/tvDownloadOHLC/scratch/wargaming_llm_benchmark_report_NQ1.md) | Benchmark report logging 100% zero look-ahead causality and 7/7 SOP rule compliance. |
+| **TradingView Replay Skill** | [`TradingView Replay & Indicator Extractor`](file:///c:/Users/vinay/tvDownloadOHLC/.agents/skills/tradingview-wargame-verifier/SKILL.md) | Automated TradingView Bar Replay navigation, UTC epoch timestamps, and hidden study extraction. |
+| **Multi-Ticker Registry** | [`scripts/config/ticker_registry.json`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/config/ticker_registry.json) | Central parameters for `NQ1`, `ES1`, `CL1`, `GC1`, `YM1`, `RTY1` defining tick sizes, points, and sessions. |
 | **Master Implementation Plan** | [`implementation_plan.md`](file:///C:/Users/vinay/.gemini/antigravity/brain/30eda112-25a1-420f-a08a-b544e235c6fd/implementation_plan.md) | Active execution plan with Phase 0 validation checkpoints. |
 
 ---
