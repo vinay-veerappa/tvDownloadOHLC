@@ -102,12 +102,12 @@ This corresponds to: **November 9, 2025 at 6:40 PM Chicago time** = **November 1
 
 ## NinjaTrader Export
 
-**Source**: NinjaTrader 8 "Export Data" feature
+**Source**: NinjaTrader 8 "Export Data" feature / MCP Bridge Export (`nt_export_bars`)
 
 **File Format**:
 - Delimiter: Comma (,) or Semicolon (;)
 - Header: Optional (Auto-detected)
-- Timestamp: Local Time of the export machine
+- Timestamp: **PST / Pacific Time (`America/Los_Angeles`)** (Local workstation time) or configured NT8 display timezone
 
 **Key Caveats**:
 
@@ -117,8 +117,8 @@ This corresponds to: **November 9, 2025 at 6:40 PM Chicago time** = **November 1
     - **Logic**: The import script automatically **shifts timestamps BACKWARDS** by the bar duration (e.g., -1 minute for 1m bars) to align with TradingView/standard conventions.
 
 2.  **Timezone Conversion**:
-    - Exports usually carry the local timezone of the user's PC (e.g., `America/Los_Angeles`).
-    - **Logic**: The script converts this source timezone to `America/New_York` (EST/EDT) to ensure consistency with our database.
+    - NinjaTrader exports carry **PST (`America/Los_Angeles`)** workstation local time by default.
+    - **Logic**: The script converts PST timestamps to UTC / EST to ensure consistency with our database.
 
 **Import Command**:
 ```bash

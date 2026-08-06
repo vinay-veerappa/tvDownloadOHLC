@@ -6,9 +6,10 @@ import sys
 import io
 
 # Force standard output and error to use utf-8 on Windows to prevent emoji encoding crashes
+# line_buffering=True ensures prints appear immediately (not block-buffered)
 if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', write_through=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', write_through=True)
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', write_through=True, line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', write_through=True, line_buffering=True)
 
 import time
 import sqlite3
@@ -124,8 +125,18 @@ def get_watchlist_symbols():
             return defaults
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT symbol FROM Watchlist ORDER BY createdAt DESC")
+        # Schema migrated from flat `Watchlist` table to `WatchlistGroup`/`WatchlistItem`.
+        # Prefer items in the default group; fall back to all items across groups.
+        cursor.execute(
+            """SELECT wi.symbol FROM WatchlistItem wi
+               JOIN WatchlistGroup wg ON wi.groupId = wg.id
+               WHERE wg.isDefault = 1
+               ORDER BY wi.createdAt DESC"""
+        )
         rows = cursor.fetchall()
+        if not rows:
+            cursor.execute("SELECT symbol FROM WatchlistItem ORDER BY createdAt DESC")
+            rows = cursor.fetchall()
         conn.close()
         symbols = [r[0] for r in rows]
         return symbols if symbols else defaults
@@ -845,7 +856,7 @@ async def update_historical_files(symbol):
         if htf_source == "yfinance" and symbol.startswith("/"):
             source_daily = fetch_yfinance_daily_history(symbol, start_dt, end_dt, now_utc)
             combined_daily = canonicalize_daily_bars(source_daily, symbol)
-            combined_daily.to_parquet(daily_path)
+            _atomic_to_parquet(combined_daily, daily_path)
             print(f"   ✅ Rebuilt 1d from yfinance: {len(combined_daily)} rows")
         else:
             new_df = await fetch_schwab_daily_history(symbol, start_dt, end_dt, now_utc)
@@ -858,7 +869,7 @@ async def update_historical_files(symbol):
 
                 combined_daily = canonicalize_daily_bars(combined_daily, symbol)
                 combined_daily = await apply_daily_settlement_override(combined_daily, symbol, now_utc)
-                combined_daily.to_parquet(daily_path)
+                _atomic_to_parquet(combined_daily, daily_path)
                 print(f"   ✅ Updated 1d: {len(combined_daily)} rows (Fetched {len(new_df)})")
             else:
                 combined_daily = existing_daily
@@ -868,7 +879,7 @@ async def update_historical_files(symbol):
             return
 
         weekly_df = build_weekly_from_daily(combined_daily, symbol, now_utc)
-        weekly_df.to_parquet(weekly_path)
+        _atomic_to_parquet(weekly_df, weekly_path)
         print(f"   ✅ Rebuilt 1W from 1d: {len(weekly_df)} rows")
 
         # --- EXPORT TO JSON FOR FRONTEND LIVE CHARTS ---
@@ -1049,22 +1060,60 @@ async def level_one_handler(msg):
         # Batch write sub-minute JSONs (Decommissioned - sub-minute state kept in memory)
         pass
 
+def _atomic_to_parquet(df, path, **kwargs):
+    """Write DataFrame to parquet atomically: temp file → os.replace().
+    Prevents corruption if process is killed mid-write."""
+    tmp = path + '.tmp'
+    df.to_parquet(tmp, **kwargs)
+    os.replace(tmp, path)
+
 def save_candles_to_parquet(symbol, candles, parquet_path):
-    """Saves a list of candles to the live storage parquet, ensuring no duplicates."""
+    """Saves a list of candles to the live storage parquet, ensuring no duplicates.
+
+    Corruption-safe:
+      - Atomic write: writes to .tmp then os.replace() (atomic on same filesystem)
+      - Corruption recovery: if existing file is unreadable, logs and overwrites
+      - Bad-epoch guard: drops any row with time < year 2000
+    """
     if not candles: return
     try:
         new_df = pd.DataFrame(candles)
-        # Ensure timestamp column for consistency (though we primarily use 'time' ms)
         if 'time' in new_df.columns:
             new_df['timestamp'] = pd.to_datetime(new_df['time'], unit='ms')
-            
-        if not os.path.exists(parquet_path):
-            new_df.to_parquet(parquet_path, index=False)
-        else:
-            existing_df = pd.read_parquet(parquet_path)
-            # Combine, deduplicate on 'time', keeping the new/latest data, and save
-            pd.concat([existing_df, new_df]).drop_duplicates(subset=['time'], keep='last').sort_values('time').to_parquet(parquet_path, index=False)
-        # print(f"📁 [{symbol}] Archived {len(candles)} bars to {os.path.basename(parquet_path)}")
+            # Guard against bad-epoch rows (1970 timestamps from historical merge bugs)
+            bad_mask = new_df['time'] < 946684800000  # 2000-01-01 in ms
+            if bad_mask.any():
+                print(f"⚠️ [{symbol}] Dropping {bad_mask.sum()} bad-epoch row(s) from save batch")
+                new_df = new_df[~bad_mask].reset_index(drop=True)
+                if new_df.empty: return
+
+        combined = new_df
+
+        if os.path.exists(parquet_path):
+            try:
+                existing_df = pd.read_parquet(parquet_path)
+                combined = pd.concat([existing_df, new_df]).drop_duplicates(subset=['time'], keep='last').sort_values('time')
+            except Exception as read_err:
+                print(f"⚠️ [{symbol}] Existing parquet corrupt/unreadable ({read_err}). Overwriting with new data only.")
+                # Optionally back up the corrupt file for forensics
+                corrupt_bak = parquet_path + '.corrupt_bak'
+                if not os.path.exists(corrupt_bak):
+                    try:
+                        os.replace(parquet_path, corrupt_bak)
+                        print(f"   Backed up corrupt file -> {os.path.basename(corrupt_bak)}")
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        os.remove(parquet_path)
+                    except Exception:
+                        pass
+                combined = new_df.sort_values('time')
+
+        # Atomic write: temp file → os.replace (atomic on same filesystem)
+        tmp_path = parquet_path + '.tmp'
+        combined.to_parquet(tmp_path, index=False)
+        os.replace(tmp_path, parquet_path)
     except Exception as e:
         print(f"❌ Error saving parquet for {symbol}: {e}")
 
