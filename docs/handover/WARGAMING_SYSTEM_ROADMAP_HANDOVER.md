@@ -23,10 +23,10 @@ Key Principles:
 
 | Phase | Milestone | Primary Deliverable | Status |
 | :--- | :--- | :--- | :--- |
-| **Phase 0.2** | **Candle Science Blueprint & Validation** | `v_02_candle_science.py` & `CandleScience/BLUEPRINT.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
-| **Phase 0.3** | **HTF EMA Excursion Blueprint & Validation** | `v_03_htf_ema.py` & `htf_ema_analysis/BLUEPRINT.md` | ⏳ NEXT UP |
-| **Phase 0.4** | **NFP Macro Detector Blueprint & Validation** | `v_04_nfp_macro.py` | 📅 PLANNED |
-| **Phase 0.5** | **Profiler Feature Extractor Validation** | `v_05_profiler_features.py` | 📅 PLANNED |
+| **Phase 0.2** | **Candle Science Blueprint & PA Verification** | `v_02_candle_science_pa.py` & `CandleScience/BLUEPRINT.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
+| **Phase 0.3** | **HTF EMA & NFP Blueprint & PA Verification** | `v_03_htf_ema_pa.py` & `htf_ema_analysis/BLUEPRINT.md` | ✅ COMPLETED (PASSED NQ1 & ES1) |
+| **Phase 0.4** | **3-Hour Line vs Apex & 0-5 Box PA Verification** | `v_04_line_vs_apex_pa.py` & `line_vs_apex_blueprint.md` | ⏳ NEXT UP |
+| **Phase 0.5** | **Profiler Feature Extractor PA Verification** | `v_05_profiler_features_pa.py` | 📅 PLANNED |
 | **Phase 0.6** | **Single-Day Pilot Wargame & Reengineering** | `pilot_single_day.py` (Single date pilot walkthrough) | 📅 PLANNED |
 
 ---
@@ -55,7 +55,11 @@ Key Principles:
 - **2026-08-05**: Built and executed `scripts/validation/v_02_candle_science.py` and `scripts/validation/v_02_candle_science_pa.py` (Intraday Price Action Verifier).
   - **Passed 100%** on `NQ1` and `ES1` across Open and Close modes.
   - Verified Mickey's $C_2$ Open breach timestamp rule on 1m OHLCV bars: when $C_2$ Open is breached (e.g. 2026-07-27 at 10:22 AM ET), high target odds collapse and low target odds hit 100%. When $C_2$ Open holds (e.g. 2026-07-29), bullish expansion targets hit cleanly.
-- **Next Immediate Action**: Follow the same "Document Blueprint -> Intraday PA Verification" workflow for **HTF EMA Analysis (Phase 0.3)** and **NFP Macro Detector (Phase 0.4)**.
+- **2026-08-05**: Built `scripts/wargaming/htf_ema_analysis.py` and executed `v_03_htf_ema.py` and `v_03_htf_ema_pa.py` (HTF EMA & NFP PA Verifier).
+  - **Passed 100%** on `NQ1` and `ES1`.
+  - Verified 2%–3% magnet zone detection (e.g. NQ1 at +2.68% on 2026-08-03) and NFP Friday pre-market 08:30 AM release candle High/Low range extraction & Goalpost sweep tracking (e.g. NQ1 & ES1 NFP release range on 2025-09-05 swept both High & Low).
+- **2026-08-05**: Committed changes in `7a1cb926` and `09c423c8`.
+- **Next Immediate Action**: Execute Phase 0.4: **3-Hour Line vs Apex & 0-5 Box 10 bps Intraday PA Verification**.
 
 ---
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*
