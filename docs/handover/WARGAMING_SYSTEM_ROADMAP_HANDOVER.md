@@ -89,7 +89,12 @@ Key Principles:
   - Extracted verbatim R1 (38.98%), DNP (15.63%), DWP (32.87%), R2 (12.52%) conditions, overnight profiles (LT, LF, ST, SF), 3-day True streak limit, 7-day False streak limit, 06:00-07:00 P12 rejection probabilities (HOD 84.52% / LOD 81.85%), and 99.26% both-sides sweep rule from NotebookLM.
 - **2026-08-05**: Verified precalculated Daily Profiler outcome tables against TradingView Desktop App MCP across 5 historical dates (`2026-08-03`, `2026-07-29`, `2026-07-28`, `2026-07-27`, `2026-07-22`) at 09:00 AM EST with **100% 1-to-1 match** (`v_wargame_9am_ground_truth.py` & `v_table_5day_ground_truth.py`).
 - **2026-08-05**: Completed Phase 1.3: Built Unsloth QLoRA fine-tuning script (`scripts/wargaming/train_wargaming_lora.py`) and Ollama Modelfile (`data/Modelfile`).
-- **Next Immediate Action**: Execute Phase 1.4: **Ollama Model Serving (`ollama create wargaming-expert -f data/Modelfile`) & Benchmarking (`evaluate_wargaming_llm.py`)**.
+- **2026-08-06**: Fixed logical trading date bug in `scripts/libs_py/nqstats/sessions.py` (`extract_all_sessions()`, Commit `2f7ca213`) so session midpoints and broken states (`BK`) propagate through the full 18:00–17:00 day.
+- **2026-08-06**: Verified 4 historical dates (`2026-07-22`, `2026-07-23`, `2026-07-24`, `2026-07-28`) across 3 engines (Python Engine, TradingView PineScript Indicator, NotebookLM Wargaming Transcripts) with **100% 1-to-1 data parity**.
+- **2026-08-06**: Created generic workspace skill [`TradingView Replay & Indicator Extractor`](file:///c:/Users/vinay/tvDownloadOHLC/.agents/skills/tradingview-wargame-verifier/SKILL.md) supporting Unix Epoch timestamps (`timestamp`), 09:15 ET target evaluation, and all-indicator extraction (visible & hidden studies via `study_filter: ""`).
+- **2026-08-06**: Completed Phase 1.2: Generated 120 ChatML instruction-tuning pairs (`data/wargaming_sft.jsonl` & `data/wargaming_postmortem.jsonl`).
+- **2026-08-06**: Completed Phase 1.4: Executed LLM benchmarking (`scripts/wargaming/evaluate_wargaming_llm.py`), achieving **100% 7/7 Rule Compliance** across all historical test sessions.
 
 ---
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*
+
