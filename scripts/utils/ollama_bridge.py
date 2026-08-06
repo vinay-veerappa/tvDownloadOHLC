@@ -92,8 +92,16 @@ if __name__ == "__main__":
             size_mb = round(m.get("size", 0) / (1024 * 1024), 1)
             print(f" - {name:35s} (Size: {size_mb} MB)")
     elif args.prompt:
+        prompt_text = args.prompt
+        if prompt_text.startswith("@"):
+            file_path = prompt_text[1:]
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as pf:
+                    prompt_text = pf.read()
+                print(f"[ollama_bridge] Loaded prompt ({len(prompt_text)} chars) from: {file_path}")
+
         print(f"Querying Ollama model [{args.model}]...")
-        ans = query_ollama(args.prompt, model=args.model, system_prompt=args.system)
+        ans = query_ollama(prompt_text, model=args.model, system_prompt=args.system)
         if ans:
             sys.stdout.reconfigure(encoding='utf-8')
             if args.output:

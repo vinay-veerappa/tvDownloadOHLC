@@ -17,16 +17,14 @@ from scripts.utils.fused_data_loader import load_fused_data
 ET = pytz.timezone("America/New_York")
 
 tv_values = {
-    "PDH": 30074.00,
-    "PDL": 29530.75,
-    "PDM": 29802.50,
-    "Globex_Open": 29569.50,
-    "ASN_High": 29679.50,
-    "ASN_Low": 29454.25,
-    "ASN_OR_H": 29679.50,
-    "ASN_OR_L": 29563.50,
-    "ASN_OU": 29621.50,
-    "Settlement": 29615.00,
+    "PDH": 28725.75,
+    "PDL": 28079.75,
+    "PDM": 28402.75,
+    "Globex_Open": 28565.00,
+    "ASN_High": 28641.25,
+    "ASN_Low": 28545.00,
+    "ASN_OU": 28593.25,
+    "Settlement": 28404.25,
 }
 
 print("\n==========================================================================")
