@@ -119,6 +119,48 @@ def run_pilot_wargame_and_reengineering(
         p12_bias = "NEUTRAL"
         pre_handshake = "UNKNOWN"
 
+    # 4. Instant High / Low Lock Check (06:00-07:00 ET P12 Rejection)
+    h6_start = et_timestamp(t_dt, 6, 0)
+    h6_end = et_timestamp(t_dt, 7, 0)
+    h6_bars = df_pre[(df_pre.index >= h6_start) & (df_pre.index < h6_end)]
+
+    instant_high_locked = False
+    instant_low_locked = False
+    if not h6_bars.empty and p12_high is not None and p12_low is not None:
+        h6_hi = float(h6_bars["high"].max())
+        h6_lo = float(h6_bars["low"].min())
+        # If 06:00-07:00 touched P12 High and rejected -> 84.52% HOD locked
+        if abs(h6_hi - p12_high) <= 5.0 and float(h6_bars.iloc[-1]["close"]) < h6_hi:
+            instant_high_locked = True
+        # If 06:00-07:00 touched P12 Low and rejected -> 81.85% LOD locked
+        if abs(h6_lo - p12_low) <= 5.0 and float(h6_bars.iloc[-1]["close"]) > h6_lo:
+            instant_low_locked = True
+
+    # 5. Precalculated Daily Profiler & Day-Type Classification Probabilities
+    try:
+        from scripts.analysis.analyze_daily_classification_bias import (
+            get_prior_classification,
+            get_current_overnight_scenario,
+            load_matrices,
+        )
+        prior_type = get_prior_classification(ticker, t_dt)
+        overnight_key = get_current_overnight_scenario(ticker, t_dt)
+        over_df, seq_df = load_matrices(ticker)
+
+        if over_df is not None and overnight_key in over_df.index:
+            row = over_df.loc[overnight_key]
+            profiler_most_likely = str(row.get("most_likely", "R1"))
+            profiler_n = int(row.get("n", 0))
+            r1_pct = float(row.get("R1%", 0.0))
+            r2_pct = float(row.get("R2%", 0.0))
+            dwp_pct = float(row.get("DWP%", 0.0))
+            dnp_pct = float(row.get("DNP%", 0.0))
+        else:
+            profiler_most_likely, profiler_n, r1_pct, r2_pct, dwp_pct, dnp_pct = "R1", 0, 50.0, 15.0, 25.0, 10.0
+    except Exception as e:
+        log.warning("Daily profiler matrix query failed: %s", e)
+        prior_type, overnight_key, profiler_most_likely, profiler_n, r1_pct, r2_pct, dwp_pct, dnp_pct = "R1", "Unknown", "R1", 0, 50.0, 15.0, 25.0, 10.0
+
     # Confluence Matrix (Pre-Market 08:30 Cutoff)
     is_2to3 = bool(ema_res.get("is_2to3_zone", False))
     is_aligned = bool((cs_bias == p12_bias) and (pre_handshake == "AGREEMENT") and not is_2to3)
@@ -129,11 +171,11 @@ def run_pilot_wargame_and_reengineering(
     stop_dist = max(default_stop, abs(last_pre_close - p12_mid)) if (last_pre_close is not None and p12_mid is not None) else default_stop
     sizing = calculate_position_size(account_equity, risk_pct, stop_dist, ticker=ticker)
 
-    # Pre-Market Scenario Formulations
+    # Pre-Market Scenario Formulations (Mickey & Austin 4-Step Counter Style)
     scenarios = {
-        "Scenario A (Bullish Continuation)": f"If price stays above P12 Mid ({p12_mid or 0:.2f}) and C2 Open, target P12 High ({p12_high or 0:.2f}).",
-        "Scenario B (Bearish Reversion)": f"If price breaches below P12 Mid ({p12_mid or 0:.2f}), target P12 Low ({p12_low or 0:.2f}).",
-        "Scenario C (Goalpost Chop / R1)": f"If price swipes across P12 Mid ({p12_mid or 0:.2f}), expect both P12 High and Low to be swept.",
+        "Scenario A (Bullish Continuation)": f"If price stays above P12 Mid ({p12_mid or 0:.2f}) and C2 Open, target P12 High ({p12_high or 0:.2f}). Probability = {dwp_pct + dnp_pct:.1f}%.",
+        "Scenario B (Bearish Reversion)": f"If price breaches below P12 Mid ({p12_mid or 0:.2f}), target P12 Low ({p12_low or 0:.2f}). Probability = {r2_pct:.1f}%.",
+        "Scenario C (Goalpost Chop / R1)": f"If price swipes across P12 Mid ({p12_mid or 0:.2f}), expect both P12 High and Low to be swept. Probability = {r1_pct:.1f}%.",
     }
 
     # -------------------------------------------------------------------------
@@ -217,6 +259,18 @@ def run_pilot_wargame_and_reengineering(
             "p12_midline": round(p12_mid, 2) if p12_mid else None,
             "p12_premarket_bias": p12_bias,
             "premarket_handshake": pre_handshake,
+            "prior_day_type": prior_type,
+            "overnight_key": overnight_key,
+            "profiler_most_likely": profiler_most_likely,
+            "profiler_n_samples": profiler_n,
+            "day_type_probabilities": {
+                "R1%": r1_pct,
+                "R2%": r2_pct,
+                "DWP%": dwp_pct,
+                "DNP%": dnp_pct,
+            },
+            "instant_high_locked": instant_high_locked,
+            "instant_low_locked": instant_low_locked,
             "confluence_status": confluence_status,
             "position_sizing": sizing,
             "scenarios": scenarios,

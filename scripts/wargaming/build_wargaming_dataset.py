@@ -82,8 +82,12 @@ def build_dataset_for_ticker(ticker: str = "NQ1", max_days: int = 50) -> tuple[l
             pre = res["premarket_0830"]
             eod = res["eod_reengineering_1600"]
 
+            dt_probs = pre.get("day_type_probabilities", {})
             user_input = (
                 f"PRE-MARKET PROFILER INPUTS ({ticker} | {date_str}):\n"
+                f"- Daily Profiler Overnight Key: {pre.get('overnight_key', 'N/A')} (Prior Day Type: {pre.get('prior_day_type', 'N/A')})\n"
+                f"- Profiler Classification Matrix: Most Likely = {pre.get('profiler_most_likely', 'R1')} (n={pre.get('profiler_n_samples', 0)}) | R1={dt_probs.get('R1%', 0):.1f}%, R2={dt_probs.get('R2%', 0):.1f}%, DWP={dt_probs.get('DWP%', 0):.1f}%, DNP={dt_probs.get('DNP%', 0):.1f}%\n"
+                f"- Instant High / Low Lock (06:00-07:00 ET): Instant High = {'YES (84.52% HOD Locked)' if pre.get('instant_high_locked') else 'NO'} | Instant Low = {'YES (81.85% LOD Locked)' if pre.get('instant_low_locked') else 'NO'}\n"
                 f"- Candle Science Bias: {pre['candle_science_bias']} (P_bull={pre['candle_science_p_bull']:.1f}%)\n"
                 f"- HTF Weekly EMA(5) Excursion: {pre['htf_ema_dist_pct']:+.2f}% (2-3% Magnet Zone: {'YES' if pre['is_2to3_magnet_zone'] else 'NO'})\n"
                 f"- P12 Range (18:00-06:00 ET): {pre['p12_range']} | Midline: {pre['p12_midline']}\n"
@@ -94,13 +98,24 @@ def build_dataset_for_ticker(ticker: str = "NQ1", max_days: int = 50) -> tuple[l
 
             # Task A: Pure Causal SFT Briefing (ZERO Future RTH Data)
             sft_assistant_response = (
-                f"=== PRE-MARKET WARGAME BRIEFING (08:30 AM EST) ===\n"
-                f"Confluence Assessment: {pre['confluence_status']}\n"
-                f"Recommended Sizing: {pre['position_sizing']['contract_count']} contracts (${pre['position_sizing']['dollars_at_risk']} risk limit, {pre['position_sizing']['stop_distance_points']} pt stop)\n\n"
-                f"SCENARIOS FOR TODAY'S SESSION:\n"
-                f"  ➤ Scenario A (Bullish Continuation): {pre['scenarios']['Scenario A (Bullish Continuation)']}\n"
-                f"  ➤ Scenario B (Bearish Reversion): {pre['scenarios']['Scenario B (Bearish Reversion)']}\n"
-                f"  ➤ Scenario C (Goalpost Chop / R1): {pre['scenarios']['Scenario C (Goalpost Chop / R1)']}\n"
+                f"=== PRE-MARKET WARGAME BRIEFING & TRADING PLAN (08:30 AM EST) ===\n\n"
+                f"1. DAILY PROFILER & OUTCOME PROBABILITIES:\n"
+                f"   - Overnight Scenario: {pre.get('overnight_key', 'N/A')} (n={pre.get('profiler_n_samples', 0)} days)\n"
+                f"   - Predicted Day Type: {pre.get('profiler_most_likely', 'R1')}\n"
+                f"   - Outcome Matrix: R1 (Chop) = {dt_probs.get('R1%', 0):.1f}% | DWP (Trend Pullback) = {dt_probs.get('DWP%', 0):.1f}% | R2 (Reversal) = {dt_probs.get('R2%', 0):.1f}% | DNP (Power Trend) = {dt_probs.get('DNP%', 0):.1f}%\n"
+                f"   - Early Rejection Locks: Instant High = {'LOCKED (84.52%)' if pre.get('instant_high_locked') else 'NO'} | Instant Low = {'LOCKED (81.85%)' if pre.get('instant_low_locked') else 'NO'}\n\n"
+                f"2. MICKEY & AUSTIN 4-STEP COUNTER PLAN:\n"
+                f"   - Step 1 (08:30 Handshake): {pre['premarket_handshake']} ({pre['p12_premarket_bias']} 06:00-08:30 vector vs P12 Midline {pre['p12_midline']}).\n"
+                f"   - Step 2 (09:30 RTH Open): Monitor 09:30 open print relative to P12 Midline ({pre['p12_midline']}) and C2 Open line in the sand.\n"
+                f"   - Step 3 (10:00 AM Expansion): If price expands past P12 Midline with momentum, confirm DWP/DNP trend continuation.\n"
+                f"   - Step 4 (10:30-11:00 AM Reversal Check): If 10:00 AM expansion fails at key wall/level and returns to 09:30 open, switch to R2 Reversal.\n\n"
+                f"3. CONFLUENCE & POSITION SIZING:\n"
+                f"   - Confluence Status: {pre['confluence_status']}\n"
+                f"   - Risk Limit: {pre['position_sizing']['contract_count']} contracts (${pre['position_sizing']['dollars_at_risk']} fixed risk limit, {pre['position_sizing']['stop_distance_points']} pt stop)\n\n"
+                f"4. ACTIONABLE SCENARIO MAP:\n"
+                f"   ➤ Scenario A (Bullish Continuation): {pre['scenarios']['Scenario A (Bullish Continuation)']}\n"
+                f"   ➤ Scenario B (Bearish Reversion): {pre['scenarios']['Scenario B (Bearish Reversion)']}\n"
+                f"   ➤ Scenario C (Goalpost Chop / R1): {pre['scenarios']['Scenario C (Goalpost Chop / R1)']}\n"
             )
 
             sft_record = {

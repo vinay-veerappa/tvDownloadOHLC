@@ -90,17 +90,19 @@ def evaluate_wargaming_models(
             causal_violations = [t for t in future_terms if t in response.lower()]
             causality_pass = len(causal_violations) == 0
 
-            # Check Rule Compliance
+            # Check Rule Compliance (5 Core SOP Rules)
+            has_profiler = "profiler" in response.lower() or "overnight" in response.lower() or "matrix" in response.lower() or "r1" in response.lower()
+            has_instant_lock = "instant" in response.lower() or "84.52" in response or "81.85" in response or "99.26" in response or "locked" in response.lower()
+            has_4step_plan = "step 1" in response.lower() or "step 2" in response.lower() or "4-step" in response.lower() or "handshake" in response.lower()
             has_p12 = "p12" in response.lower() or "midline" in response.lower()
-            has_rejection = "rejection" in response.lower() or "06:00" in response.lower() or "84.52" in response or "81.85" in response
             has_risk = "$225" in response or "risk" in response.lower() or "contract" in response.lower()
-            rule_score = sum([has_p12, has_rejection, has_risk])
+            rule_score = sum([has_profiler, has_instant_lock, has_4step_plan, has_p12, has_risk])
 
             results.append({
                 "date": d_str,
                 "model": model_name,
                 "causality_pass": causality_pass,
-                "rule_score": f"{rule_score}/3",
+                "rule_score": f"{rule_score}/5",
                 "response_len": len(response),
                 "snippet": response[:200].replace("\n", " "),
             })
@@ -111,7 +113,7 @@ def evaluate_wargaming_models(
 
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(f"# Wargaming LLM Evaluation Benchmark Report ({ticker})\n\n")
-        f.write("| Date | Model | Causality Pass | Rule Score (P12/Rejection/Risk) | Response Length | Snippet |\n")
+        f.write("| Date | Model | Causality Pass | Rule Score (Profiler/Instant Lock/4-Step/P12/Risk) | Response Length | Snippet |\n")
         f.write("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
         for r in results:
             causal_str = "✅ PASS" if r["causality_pass"] else "❌ VIOLATION"
