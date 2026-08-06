@@ -44,10 +44,10 @@ Key Principles:
 
 | Phase | Milestone | Primary Deliverable | Status |
 | :--- | :--- | :--- | :--- |
-| **Phase 1.1** | **Master Rule Catalog Indexer** | `docs/profiler/master_rule_catalog.json` | ✅ COMPLETED |
-| **Phase 1.2** | **ChatML Fine-Tuning Dataset Generator** | `build_wargaming_dataset.py`, `wargaming_sft.jsonl` & `wargaming_postmortem.jsonl` | ✅ COMPLETED |
-| **Phase 1.3** | **Unsloth QLoRA Fine-Tuning Script & Ollama Modelfile** | `train_wargaming_lora.py` & `Modelfile` | ⏳ NEXT UP |
-| **Phase 1.4** | **Fine-Tuned LLM Wargame Evaluator & Backtester** | `evaluate_wargaming_llm.py` | 📅 PLANNED |
+| **Phase 1.1** | **Master Rule Catalog Indexing** | `docs/profiler/master_rule_catalog.json` | ✅ COMPLETED |
+| **Phase 1.2** | **ChatML Fine-Tuning Dataset Generator** | `scripts/wargaming/build_wargaming_dataset.py`, `wargaming_sft.jsonl`, `wargaming_postmortem.jsonl` | ✅ COMPLETED |
+| **Phase 1.3** | **Unsloth QLoRA Fine-Tuning Script & Modelfile** | `train_wargaming_lora.py`, `data/Modelfile` | ✅ COMPLETED |
+| **Phase 1.4** | **Ollama Model Serving & Benchmarking** | `ollama create wargaming-expert`, benchmark report | ⏳ IN PROGRESS / NEXT UP |
 
 ---
 
