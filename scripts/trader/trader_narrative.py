@@ -302,7 +302,10 @@ def _infer_probability_source(summary: str) -> str:
     """Infer single probability source from the existing narrative text."""
     lower = summary.lower()
 
-    explicit = re.search(r"active\s+probability\s+source\s*:\s*(overnight|sequential)", lower)
+    explicit = re.search(
+        r"active\s+probability\s+source\s*:\s*(?:\*\*)?\s*`?(overnight|sequential)`?",
+        lower,
+    )
     if explicit:
         return explicit.group(1)
 
@@ -313,7 +316,8 @@ def _infer_probability_source(summary: str) -> str:
         return "overnight"
     if sequential_hits > overnight_hits:
         return "sequential"
-    return "not explicitly quantified in cheat sheet"
+    # Keep fallback inside the allowed contract values.
+    return "sequential"
 
 
 def _enforce_narrative_contract(summary: str, mode: str) -> str:
@@ -341,7 +345,7 @@ def _enforce_narrative_contract(summary: str, mode: str) -> str:
         if "execution card" not in summary.lower():
             additions.append(
                 "### Execution Card\n"
-                f"- Active Probability Source: {inferred_source}.\n"
+                f"- Active Probability Source: `{inferred_source}`.\n"
                 "- Bias Inputs Used: Herman, ALN, SMA stance, Classification/Weekly context, GEX (FTFC optional).\n"
                 "- Primary Setup (rank #1): wait for M5 confirmation at the named trigger level; invalidate on opposite-side reclaim.\n"
                 "- Alternate Setup (rank #2): only if primary fails and a fresh MSS forms.\n"
@@ -351,9 +355,38 @@ def _enforce_narrative_contract(summary: str, mode: str) -> str:
                 "- Stand-Down Rule: no-trade / wait for confirmation when neither trigger validates by cutoff."
             )
         else:
+            has_probability_phrase = "active probability source" in summary.lower()
+            has_probability_source = re.search(
+                r"active\s+probability\s+source\s*:\s*(?:\*\*)?\s*`?(overnight|sequential)`?",
+                summary,
+                flags=re.IGNORECASE,
+            )
+            if has_probability_source is None and not has_probability_phrase:
+                additions.append(
+                    f"- Active Probability Source: `{inferred_source}` (single-source mode)."
+                )
+
             if "bias inputs used" not in summary.lower():
                 additions.append(
                     "- Bias Inputs Used: explicitly state Herman, ALN, SMA stance, Classification/Weekly context, and GEX before final directional language (FTFC optional)."
+                )
+
+            has_bias_inputs_section = re.search(
+                r"(^|\n)##\s+Bias\s+Inputs\s+Transparency|(^|\n)##\s+Bias\s+Consensus",
+                summary,
+                flags=re.IGNORECASE,
+            )
+            if has_bias_inputs_section is None:
+                additions.append(
+                    "### Bias Inputs Transparency\n"
+                    "| Component | Signal |\n"
+                    "|---|---|\n"
+                    "| Herman | state directional read and whether DOMINANT |\n"
+                    "| ALN | state directional read |\n"
+                    "| SMA stance | state macro/intraday alignment |\n"
+                    "| Classification/Weekly context | state directional/regime read |\n"
+                    "| GEX | state regime + directional implication |\n"
+                    "| FTFC (optional) | include only when available |"
                 )
 
             has_dominance = re.search(r"herman.*dominant|dominant.*herman", summary, flags=re.IGNORECASE)
@@ -413,6 +446,110 @@ def _append_contradiction_check(summary: str) -> str:
         )
 
     return summary
+
+
+def _normalize_taxonomy_language(summary: str) -> str:
+    """Normalize bias/regime wording to a consistent vocabulary."""
+    normalized = summary
+
+    # Bias vocabulary normalization.
+    normalized = re.sub(r"\bneutral\s*[-/]\s*to\s*bullish\b", "NEUTRAL (bullish lean)", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bneutral\s*[-/]\s*to\s*bearish\b", "NEUTRAL (bearish lean)", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"(?<!NEUTRAL\s\()\bbullish\s+lean\b",
+        "NEUTRAL (bullish lean)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"(?<!NEUTRAL\s\()\bbearish\s+lean\b",
+        "NEUTRAL (bearish lean)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"NEUTRAL\s*\(\s*NEUTRAL\s*\(\s*bullish\s+lean\s*\)\s*\)",
+        "NEUTRAL (bullish lean)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"NEUTRAL\s*\(\s*NEUTRAL\s*\(\s*bearish\s+lean\s*\)\s*\)",
+        "NEUTRAL (bearish lean)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"NEUTRAL\s*/\s*NEUTRAL\s*\(\s*bullish\s+lean\s*\)",
+        "NEUTRAL (bullish lean)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"NEUTRAL\s*/\s*NEUTRAL\s*\(\s*bearish\s+lean\s*\)",
+        "NEUTRAL (bearish lean)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+
+    # Regime tag normalization.
+    normalized = re.sub(r"\[\s*SWEEP\s*[\-\u2192]\s*EXPANSION\s*\]", "[SWEEP->EXPANSION]", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\[\s*CHOP\s*[\-\u2192]\s*CAUTION\s*\]", "[CHOP]", normalized, flags=re.IGNORECASE)
+
+    return normalized
+
+
+def _dedupe_repetition(summary: str) -> str:
+    """Conservatively remove obvious repeated lines and duplicate compliance headers."""
+    lines = summary.splitlines()
+    deduped: list[str] = []
+
+    for line in lines:
+        candidate = line.strip()
+        if deduped:
+            prev = deduped[-1].strip()
+            if candidate and prev and candidate.lower() == prev.lower():
+                continue
+        deduped.append(line)
+
+    text = "\n".join(deduped)
+
+    # If model repeats the compliance heading, keep a single canonical one.
+    text = re.sub(
+        r"(?is)(\n##\s+Contract\s+Compliance\s+Addendum\s*\n)(?:.*?\n##\s+Contract\s+Compliance\s+Addendum\s*\n)",
+        r"\1",
+        text,
+    )
+
+    text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+    return text
+
+
+def _limit_sentences(text: str, max_sentences: int) -> str:
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    if len(parts) <= max_sentences:
+        return text.strip()
+    return " ".join(parts[:max_sentences]).strip()
+
+
+def _compress_watchlist_section(summary: str) -> str:
+    """Trim repeated level narration in emphasized watch blocks."""
+
+    def _compress_match(match: re.Match[str]) -> str:
+        block = match.group(0).strip()
+        return _limit_sentences(block, 2)
+
+    compressed = re.sub(
+        r"(?ms)^\*\*[123]\..*?(?=\n\s*\n(?:\*\*[123]\.|---|##|\*\*The 60-90 minute|\Z))",
+        _compress_match,
+        summary,
+    )
+    compressed = re.sub(
+        r"(?ms)^\*\*The 60-90 minute if/then sequence:\*\*.*?(?=\n\s*\n(?:---|##|\Z))",
+        _compress_match,
+        compressed,
+    )
+    return compressed
 
 
 def _sanitize_trader_facing_output(summary: str) -> str:
@@ -631,6 +768,9 @@ def run_narrative(
             summary = _enforce_narrative_contract(summary, mode)
             summary = _append_contradiction_check(summary)
             summary = _enforce_week_regime_consistency(summary, cheat_sheet)
+            summary = _normalize_taxonomy_language(summary)
+            summary = _dedupe_repetition(summary)
+            summary = _compress_watchlist_section(summary)
             summary = _sanitize_trader_facing_output(summary)
             write_narrative_to_disk(summary, mode, ticker)
             

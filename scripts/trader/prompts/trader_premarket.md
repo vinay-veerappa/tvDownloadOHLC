@@ -34,6 +34,9 @@ Rules:
 - Directional Commitment Gate: Only present a single dominant directional read if the core components are aligned in the same direction (at minimum: GEX regime + Herman/ALN or FTFC + Classification/Weekly context). If they are not aligned, keep the read explicitly conditional.
 - Bias Inputs Transparency (required): explicitly list what Herman, ALN, SMA stance, Classification/Weekly context, and GEX are signaling before final directional language. FTFC may be included when available but is optional.
 - Dominance Rule (required): if Herman is marked DOMINANT in the cheat sheet, treat it as the lead directional prior unless explicitly invalidated by price action at named levels.
+- Language Consistency (required): use one canonical bias taxonomy everywhere: `BULLISH`, `BEARISH`, `NEUTRAL`.
+- Language Consistency (required): when bias is mixed, write `NEUTRAL (bullish lean)` or `NEUTRAL (bearish lean)` instead of introducing alternate labels.
+- Language Consistency (required): use canonical regime tags in brackets when naming session behavior: `[CHOP]`, `[EXPANSION]`, `[SWEEP->EXPANSION]`, `[RANGE]`.
 - Mandatory section: include a heading "Most Likely vs Alternate Outcome" with exactly 2 bullets:
 	- Most Likely: include (a) probability from the cheat sheet when available, (b) validation trigger, (c) invalidation trigger.
 	- Alternate: include (a) probability or residual probability estimate based on cheat-sheet values, (b) validation trigger, (c) invalidation trigger.
