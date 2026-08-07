@@ -510,6 +510,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
             TestP1_40_NoiseSizedPeakDoesNotTripGiveback();
             TestP1_39_ConfigLoadDoesNotAppendDefaultCollections();
+            TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
@@ -3881,6 +3882,79 @@ namespace NinjaTrader.NinjaScript.AddOns
         // bumped the counter again. Found by deploying: four minutes of ordinary recompile
         // churn took a live install from 0 to 3 and satisfied MinShadowSessions=3 outright,
         // on one day, with no feed connected and not one position taken.
+        // P1-17: EvaluationTargetProfit is a CUMULATIVE prop-firm evaluation target ($3,000),
+        // but the rule was fed stateModel.RealizedPnL, which is session-scoped
+        // (raw - SessionStartRealizedPnL) and zeroed at every session reset. So the target only
+        // fired if the whole $3,000 was made in a single day, which is precisely not what a
+        // multi-day evaluation is. The rule silently never fired for its actual purpose.
+        private static void TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL()
+        {
+            Console.WriteLine("\n[TEST] P1-17: the evaluation profit target must be cumulative across sessions");
+
+            Func<double, double, List<GuardAction>> evaluate = (cumulative, session) =>
+            {
+                var account = new Account { Name = "EvalAcc" };
+                var addon = new RiskGuardAddOn();
+                addon.SetConfigForTest(new RiskConfig());
+
+                var state = new AccountState("EvalAcc");
+                state.CumulativeRealizedPnL = cumulative;   // banked in prior sessions
+                state.RealizedPnL = session;                // this session so far
+                account.Values[AccountItem.CashValue] = 100000.0 + cumulative + session;
+                account.Values[AccountItem.RealizedProfitLoss] = session;
+                account.Values[AccountItem.UnrealizedProfitLoss] = 0.0;
+                return addon.EvaluatePnLRules(account, state);
+            };
+
+            // $1,500 banked over previous days plus $1,600 today = $3,100 >= $3,000 target.
+            // Today's session alone is only $1,600, which is why this never fired before.
+            Assert(evaluate(1500.0, 1600.0).Any(a => a.RuleId == "EVALUATION_TARGET_REACHED"),
+                "a cumulative $3,100 across sessions must reach the $3,000 evaluation target");
+
+            // Below target in total must still not fire.
+            Assert(!evaluate(500.0, 400.0).Any(a => a.RuleId == "EVALUATION_TARGET_REACHED"),
+                "a cumulative $900 must not reach the $3,000 target");
+
+            // The single-session case must keep working -- this is what used to be the only
+            // way the rule could fire, and it must not regress.
+            Assert(evaluate(0.0, 3200.0).Any(a => a.RuleId == "EVALUATION_TARGET_REACHED"),
+                "a single session of $3,200 must still reach the target");
+
+            // A losing history must offset, not be ignored.
+            Assert(!evaluate(-1000.0, 2500.0).Any(a => a.RuleId == "EVALUATION_TARGET_REACHED"),
+                "prior losses must offset: -$1,000 plus $2,500 is $1,500, not a $2,500 target hit");
+
+            // Cumulative PnL is worthless if a recompile resets it -- the whole point is that it
+            // outlives sessions and restarts. Round-trip it through the persisted state file.
+            string stateFile = Path.Combine(
+                Path.GetTempPath(), "rg_cumpnl_" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                var first = new RiskGuardAddOn();
+                first.SetConfigForTest(new RiskConfig());
+                first.SetStateFileForTest(stateFile);
+                var st = new AccountState("EvalAcc");
+                st.CumulativeRealizedPnL = 2750.0;
+                st.LastSessionDate = DateTime.UtcNow.Date;
+                first.SetAccountStateForTest("EvalAcc", st);
+                first.SavePersistedStateForTest();
+
+                var second = new RiskGuardAddOn();
+                second.SetConfigForTest(new RiskConfig());
+                second.SetStateFileForTest(stateFile);
+                second.LoadPersistedStateForTest();
+
+                var restored = second.GetAccountStateForTest("EvalAcc");
+                Assert(restored != null && Math.Abs(restored.CumulativeRealizedPnL - 2750.0) < 0.001,
+                    string.Format("CumulativeRealizedPnL must survive a restart (got {0})",
+                                  restored == null ? "no state" : restored.CumulativeRealizedPnL.ToString()));
+            }
+            finally
+            {
+                try { if (File.Exists(stateFile)) File.Delete(stateFile); } catch { }
+            }
+        }
+
         private static void TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting()
         {
             Console.WriteLine("\n[TEST] P1-37: the shadow-session counter counts days, not addon restarts");

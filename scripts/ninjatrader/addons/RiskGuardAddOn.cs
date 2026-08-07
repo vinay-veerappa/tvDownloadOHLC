@@ -362,6 +362,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             _accountStates[accountName] = state;
         }
 
+        internal AccountState GetAccountStateForTest(string accountName)
+        {
+            AccountState state;
+            return _accountStates.TryGetValue(accountName, out state) ? state : null;
+        }
+
         internal void SetSubscribedAccountForTest(string accountName)
         {
             _subscribedAccounts.Add(accountName);
@@ -691,6 +697,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     state.PeakEquity = kvp.Value.PeakEquity;
                                     state.LastRealizedPnL = kvp.Value.LastRealizedPnL;
                                     state.SessionStartRealizedPnL = kvp.Value.SessionStartRealizedPnL;
+                                    state.CumulativeRealizedPnL = kvp.Value.CumulativeRealizedPnL;
                                     state.FirmTrailingPeak = kvp.Value.FirmTrailingPeak;
                                     state.FirmFloorLocked = kvp.Value.FirmFloorLocked;
                                     state.FirmDailyDate = kvp.Value.FirmDailyDate;
@@ -727,6 +734,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             LastRealizedPnL = state.LastRealizedPnL,
                             SessionStartRealizedPnL = state.SessionStartRealizedPnL,
                             FirmTrailingPeak = state.FirmTrailingPeak,
+                            CumulativeRealizedPnL = state.CumulativeRealizedPnL,
                             FirmFloorLocked = state.FirmFloorLocked,
                             FirmDailyDate = state.FirmDailyDate,
                             FirmDailyStartRealized = state.FirmDailyStartRealized,
@@ -1305,7 +1313,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
-                if (propSuite.EvaluateProfitTargetLock(stateModel.RealizedPnL, propSuite.Config))
+                // P1-17: EvaluationTargetProfit is a cumulative, multi-day evaluation target.
+                // Feeding it the session-scoped RealizedPnL meant it only fired if the whole
+                // target was cleared in a single day. TotalRealizedPnL = banked + this session.
+                if (propSuite.EvaluateProfitTargetLock(stateModel.TotalRealizedPnL, propSuite.Config))
                 {
                     actions.Add(new GuardAction
                     {
@@ -1568,6 +1579,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                         stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.None;
                         stateModel.SessionStartRealizedPnL = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
                         stateModel.LastRealizedPnL = stateModel.SessionStartRealizedPnL;
+                        // P1-17: bank the session that just ended before zeroing it, so the
+                        // cumulative evaluation total survives the daily reset.
+                        stateModel.CumulativeRealizedPnL += stateModel.RealizedPnL;
                         stateModel.RealizedPnL = 0.0;
                         LogEvent(accName, "SESSION_RESET", $"Session reset for {currentSessionDate:yyyy-MM-dd}");
                         _stateDirty = true;
@@ -3923,6 +3937,16 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string AccountName { get; }
         public Dictionary<string, PositionState> Positions { get; } = new Dictionary<string, PositionState>();
         public double RealizedPnL { get; set; } = 0.0;
+        // P1-17: realized PnL banked in *completed* sessions. RealizedPnL above is
+        // session-scoped and zeroed at every reset, which is right for the daily-loss rule and
+        // wrong for EvaluationTargetProfit -- a cumulative, multi-day prop evaluation target.
+        // The total to evaluate a cumulative target against is TotalRealizedPnL below.
+        // Accumulated once per session reset rather than per realized-PnL delta: a delta-based
+        // total would be permanently corrupted by a single spurious tick (e.g. the broker
+        // rebasing its own counter before our session reset runs), whereas a session total is
+        // rebased every day and cannot drift.
+        public double CumulativeRealizedPnL { get; set; } = 0.0;
+        public double TotalRealizedPnL { get { return CumulativeRealizedPnL + RealizedPnL; } }
         public double UnrealizedPnL { get; set; } = 0.0;
         public double PeakEquity { get; set; } = 0.0;
         public double PeakOpenGain { get; set; } = 0.0;
@@ -4232,6 +4256,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double PeakEquity { get; set; }
         public double LastRealizedPnL { get; set; }
         public double SessionStartRealizedPnL { get; set; }
+        // P1-17: must persist -- a cumulative evaluation target that resets on recompile is
+        // not cumulative.
+        public double CumulativeRealizedPnL { get; set; }
         public double FirmTrailingPeak { get; set; }
         public bool FirmFloorLocked { get; set; }
         public DateTime FirmDailyDate { get; set; }
