@@ -5,6 +5,14 @@
 three during T2 (§4.6, §4.7, the panel-validity bug in §4.1) and four during T3–T5 (§7), all fixed.
 **Predecessor**: `scripts/agent_loop/ollama_patch_loop.py` — superseded, retained only so
 in-flight artifacts stay readable. Three of its gates were defective (§4); do not use it.
+
+> **The loop was not used for Phases B and C** (2026-08-07, defects `P2-28`, `P1-20`, `P1-37`,
+> `P1-10`, `P1-35`, `P1-11`, `P1-15`). Those were written by hand, test-first. Two reasons, both
+> worth knowing before reaching for the loop again: under test-first development the *test* is the
+> hard part and `*Tests.cs` is a protected path the implementer cannot reach by construction; and
+> each fix was a handful of lines whose difficulty was entirely in deciding what to change, not in
+> writing it. The loop earns its cost on tickets with substantial mechanical edits behind a
+> settled decision — not on small, high-judgement changes.
 **Driving work**: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 **If something is broken, start at §8** (symptom → cause → fix).
 
@@ -591,7 +599,7 @@ T4's exit rounding and T3's out-of-region session reset.
 ### 10.1 Testing a change
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.agent_loop.selftest   # 9/9, ~2 min, free
+.\.venv\Scripts\python.exe -m scripts.agent_loop.selftest   # 11/11, ~2 min, free
 .\.venv\Scripts\python.exe -m scripts.agent_loop --list     # all 18 regions still resolve
 ```
 
@@ -619,6 +627,26 @@ refusing a ticket aimed at the verifier.
   csproj, or `scripts/agent_loop/*`.
 - **A reviewer that did not answer has not voted.** Empty and `ProviderError` are not dissent.
 - **The live tree is never written to** except by the explicit final apply step.
+
+### 10.2b Maintaining `settled` — retire entries, don't just add them
+
+`profiles.py`'s `settled` tuple is injected verbatim into **every review round**. It exists because
+the panel re-raises the same false positives indefinitely. That makes it powerful and therefore
+dangerous: an entry that has since been settled the *other* way does not merely go stale, it
+actively instructs reviewers to approve reintroducing a closed defect.
+
+This happened. `settled` carried *"Orphan-cancel under `_stateLock` STAYS (tracked as P1-35)"* for
+as long as P1-35 was deferred — correct at the time. When P1-35 was **fixed** on 2026-08-07, that
+line would have told the panel to wave through a patch putting the broker call back under the lock.
+
+**So: when you close a defect that appears in `settled`, rewrite that entry in the same commit.**
+Usually it inverts — from "this is out of scope, don't raise it" to "this is now done *this* way,
+don't propose undoing it". Mirror every change in the handover's §5, which is the human-readable
+copy of the same list.
+
+A related habit worth keeping: prefer settled entries that state the *invariant and its reason*
+over ones that state a *scope decision*. "Simulated accounts are identified by `Provider`, never by
+name, because names are user-chosen" stays true after the fix lands. "X is out of scope" does not.
 
 ### 10.3 Adding a ticket
 

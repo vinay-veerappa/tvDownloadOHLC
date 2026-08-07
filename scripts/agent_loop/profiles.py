@@ -139,11 +139,17 @@ COVER are still fair game and are what item 5 is for.""",
     settled=(
         "Multi-stop coverage aggregation is OUT OF SCOPE (tracked as P1-36). CoveredQuantity "
         "deliberately follows a single stop order. Do not raise it.",
-        "Orphan-cancel under _stateLock STAYS (tracked as P1-35). Do not propose fixing it by "
-        "adding a nested lock (_stateLock) -- every caller already holds the lock, so the nested "
-        "lock is re-entrant and buys nothing.",
-        "SeedFsmsForExistingPositions does NOT need its own lock: both SubscribeToAccount call "
-        "sites already hold _stateLock. Reviewers repeatedly flag this as a false positive.",
+        # P1-35 was CLOSED on 2026-08-07. This entry used to read "orphan-cancel under
+        # _stateLock STAYS", which would now tell a reviewer to approve reintroducing the
+        # defect. A settled decision that has gone stale is worse than none.
+        "Orphan auto-stop cancels are QUEUED on _pendingCancels under _stateLock and sent by "
+        "DrainPendingCancels() after the lock is released (P1-35, closed). Do not propose "
+        "moving the Cancel back inline, and do not propose calling the drain from inside the "
+        "lock: the lock is re-entrant, so that reads as correct and changes nothing. The "
+        "TESTING build throws if the drain is called with the lock held.",
+        "SeedFsmsForExistingPositions does NOT need its own lock: its call sites "
+        "(SubscribeToAccount, and ToggleArmed since P1-15) all already hold _stateLock. It "
+        "makes no broker call. Reviewers repeatedly flag this as a false positive.",
         "Do not propose new GuardFsmState enum values; existing tests assert on them.",
         # Settled while landing T2. The first is the important one: it looks like a
         # missing safety check, and re-adding it reintroduces a PERMANENT naked position.
@@ -161,6 +167,23 @@ COVER are still fair game and are what item 5 is for.""",
         "A TOCTOU window between the live position read and account.Submit cannot be closed "
         "without holding a lock across a broker call, which is forbidden. Sizing from the "
         "most recent live read satisfies the requirement. Do not raise it as unfixed.",
+        # Settled while landing Phase C (2026-08-07).
+        "Simulation accounts are identified by account.Provider == Provider.Simulator, never "
+        "by a name prefix (P1-20, closed). Do not propose restoring a Name.StartsWith(\"Sim\") "
+        "check or OR-ing one in: account names are user-chosen, and 'SimpsonFund' is a funded "
+        "account. Playback is deliberately NOT treated as simulated -- that is fail-closed.",
+        "The lockout sweep deliberately cancels risk-INCREASING orders first, flattens, and "
+        "only then cancels position-reducing orders for instruments confirmed flat (P1-11, "
+        "closed). Do not propose cancelling all non-terminal orders up front: if the flatten "
+        "then fails, that cancels the protective stop and leaves the position naked, which is "
+        "the defect this ordering exists to prevent.",
+        "_lastShadowSessionDate is persisted alongside _shadowSessionsCompleted and must stay "
+        "that way (P1-37, closed). They are one fact. Persisting the counter without the date "
+        "made every addon restart look like a new day, so the MinShadowSessions arming gate "
+        "could be satisfied by recompiling.",
+        "ExecuteSafetySweep uses collect-then-execute: the lock block only DECIDES, and every "
+        "Cancel/Flatten/CreateOrder/Submit/ProcessAction runs after it (P1-10, closed). Do not "
+        "propose moving any of them back inside the lock for atomicity.",
     ),
 )
 

@@ -1,7 +1,9 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status**: **P0 complete** (2026-08-06, branch `harden/riskguard-copier-p0`, suite 356/0).
-P1–P3 not started. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
+**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **413/0**): **17 of 38 closed** —
+all P0, Phase B (test foundation + `P2-28`) and Phase C (`P1-20`, `P1-37`, `P1-10`, `P1-35`,
+`P1-11`, `P1-15`) except `P1-36`. Deployed to shadow but **not validated on a live feed**.
+Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 **Created**: 2026-08-06
 
 ## Defect inventory — the count of record
@@ -489,7 +491,7 @@ to emit a JSON feed from it into the path the suite reads, not to build a second
 | §5, §6.5, §6.8: "1-second sweep" / "1-second `DispatcherTimer`" | `new Timer(OnSafetySweep, null, 5000, 5000)` — 5 s, `System.Threading.Timer` (`:303`) |
 | §3 data-flow diagram: sweep → `EvaluateRules` | sweep no longer calls `EvaluateRules` (`:1448-1453`) |
 | §6.5: sweep keeps aggregate sizing, firm-mirror, grace-expiry polling | all three moved to event handlers (`:889`, `:1048`) / per-FSM timers; sweep keeps only heartbeat, log flush, session reset, persist, lockout watchdog, FSM watchdog |
-| §5, §6.7: "lock released before `Flatten`/`Cancel`" | violated by the sweep (P1-10) |
+| §5, §6.7: "lock released before `Flatten`/`Cancel`" | ~~violated by the sweep (P1-10)~~ — **true again since 2026-08-07**; P1-10/P1-35 closed and the invariant is now machine-checked by `TestP1_10_...`/`TestP1_35_...` |
 | §6.7: `EvaluateGraceExpiry` "called from a per-FSM Timer or the sweep" (code comment `:1708-1710`) | sweep never calls it — the "defensive" path does not exist |
 | §9.1: "Automatic relationship quarantine on execution error or risk limit breach" | not implemented (P2-24) |
 | §9.3: news / target / giveback "auto-lockout, auto-flatten" | news unreachable (P2-25); giveback mis-wired (P0-7); target semantics wrong (P1-17) |
@@ -497,6 +499,14 @@ to emit a JSON feed from it into the path the suite reads, not to build a second
 **Fix**: the doc is the artifact most likely to cause a wrong decision under pressure. Update it
 in the same commit as each code change, and add a doc-drift check to the test harness (assert the
 sweep interval constant matches the documented value).
+
+**The drift got wider on 2026-08-07, not narrower.** Phases B and C changed real behaviour that
+`RiskGuardAddOn.md` still does not describe: the pending-cancel queue and `DrainPendingCancels`
+(P1-35), the sweep's three-phase lockout ordering (P1-11), provider-based simulation detection
+(P1-20), FSM re-seeding on arm (P1-15), and `LastShadowSessionDate` in the persisted state
+(P1-37). Anyone reading the design doc to understand the current lockout or copier gate will be
+wrong about all five. Closing P2-26 means a rewrite against the code as it now stands, not a patch
+of the table above.
 
 ### P2-27. The riskiest code has zero test coverage
 `TradeCopierEngine.OnExecution` (`:613-745`) and `ReconcileFollowerPosition` (`:193-228`) are

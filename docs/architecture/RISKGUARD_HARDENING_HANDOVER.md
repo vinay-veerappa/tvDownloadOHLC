@@ -9,34 +9,42 @@
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**All five P0 tickets have landed (T1–T5). The suite is fully green: 356 passed, 0 failed.**
-Every one of the nine live-risk P0 defects is closed, including all three that had deliberate
-failing acceptance tests waiting.
+**17 of 38 defects are closed. Suite: 413 passed, 0 failed.** All nine P0, all of Phase B, and
+all of Phase C bar `P1-36`. The addon is deployed and running in `shadow`, compiling clean in NT8.
 
-**Phase A is done: the P0 addon is deployed and running in shadow** (§4f is the deployment
-record). It compiled clean in NT8 and initialised in `shadow` with `isArmed: false`. The one
-thing Phase A has *not* produced is a session with market activity — the machine is connected to
-**Kinetick End Of Day (Free)**, which serves daily bars but no real-time quotes, so the NT8
-simulator cannot fill and no position can be opened. **Phase A's acceptance criteria are
-therefore still unmet**; they need a session on a real-time feed.
+| Phase | State |
+|---|---|
+| **A** — deploy P0 to shadow | Deployed, **acceptance criteria NOT met** (see below) |
+| **B** — test foundation | ✅ T1–T3 tests backfilled and proven falsifiable; `P2-28` |
+| **C** — P1 safety-critical | ✅ `P1-20`, `P1-37`, `P1-10`, `P1-35`, `P1-11`, `P1-15`; **`P1-36` left** |
+| **D–G** | Not started — §4a |
 
-The deployment immediately paid for itself by surfacing **P1-37**: the `MinShadowSessions` arming
-gate counts addon restarts rather than sessions, and went 0 → 3 in four minutes of ordinary
-recompile churn. Fix it before any live arming, and treat the current
-`ShadowSessionsCompleted = 3` in `state.json` as meaningless.
+### Three things to know before you touch anything
 
-**Phases B and C (gates) also landed on 2026-08-07.** The T1–T3 acceptance tests were
-backfilled and each *verified to fail when its fix is reverted*; P2-28 collapsed the duplicate
-source copies and made the deploy-drift check trustworthy; P1-20 and P1-37 closed two safety
-gates that were not actually gating. Suite 356 → 399, 0 failed.
+**1. Deployed is not validated.** Phase A put the code in front of NinjaTrader but never in front
+of a market. The machine is on **Kinetick End Of Day (Free)** — daily bars, no real-time quotes —
+so the NT8 simulator cannot fill, no position can open, and **not one guard path has ever
+executed live**. A test order sat at `Submitted` and was rejected. The §4e acceptance criteria
+(`PEAK_GIVEBACK_BREACH` on a profitable flat account; a wrong `COPY_BLOCKED_NO_GUARD`) are still
+unmet and need a session on a real-time feed. Read "compiles clean, suite green, deployed" as
+exactly that and no more.
 
-**One manual step is outstanding**: the live `state.json` still reads
-`ShadowSessionsCompleted = 5`, inflated by pre-fix restarts. It no longer climbs, but it must be
-reset **with NinjaTrader closed** before any live arming — the exact commands are in the plan
-under P1-37. It was deliberately not edited during the session, because shutdown flushes
-in-memory state over the file and a torn write would lose persisted lockouts.
+**2. One manual step is outstanding.** The live `state.json` reads `ShadowSessionsCompleted = 5`,
+inflated by restarts before `P1-37` was fixed. It no longer climbs, but the value is wrong and
+`MinShadowSessions=3` currently reads as satisfied, so the arming gate is not trustworthy on this
+box. **Reset it with NinjaTrader closed** — commands are in the plan under P1-37. It was
+deliberately not edited live: shutdown flushes in-memory state over the file, and a torn write
+loses persisted lockouts.
 
-The roadmap for the remaining 25 defects is §4a; the deployment runbook is §4e.
+**3. The branch is still unmerged.** `harden/riskguard-copier-p0`, fast-forward available. It also
+carries unrelated narrative/wargaming commits from other background agents.
+
+Deployment happened to be the thing that found `P1-37` — a safety gate that counted addon restarts
+instead of sessions, which no amount of review had noticed. That is the argument for finishing
+Phase A properly on a real feed.
+
+The roadmap for the remaining 21 defects is §4a; the deployment runbook is §4e and the record of
+the one run so far is §4f.
 
 
 ```powershell
@@ -578,12 +586,24 @@ and does not exist at the merge-base.
   deliberately follows a single stop order. Reviewers will raise this repeatedly; the bounded
   mitigation already in place is the `ReferenceEquals` guard plus "coverage may only be replaced
   by an equal-or-larger stop".
-- **Orphan-cancel under `_stateLock` stays** (tracked as **P1-35**). Do **not** "fix" it by adding
-  a nested `lock (_stateLock)` and claiming the cancel happens outside — every caller already
-  holds the lock, so the nested lock is re-entrant and buys nothing. The real fix queues the
-  cancel and drains it in `ExecutePositionUpdateDetails` after it releases the lock.
-- **`SeedFsmsForExistingPositions` does not need its own lock** — both `SubscribeToAccount` call
-  sites already hold `_stateLock`. Reviewers flag this as a false positive.
+- **Orphan cancels are queued, not inline** (**P1-35**, closed 2026-08-07). `UpdateFsmOnPosition`
+  adds to `_pendingCancels` under the lock; `DrainPendingCancels()` sends them after it is
+  released. Do **not** move the `Cancel` back inline, and do **not** call the drain from inside
+  the lock — the lock is re-entrant, so that reads as correct and changes nothing. The TESTING
+  build throws on it.
+  > This bullet previously read *"orphan-cancel under `_stateLock` stays"*. Left unedited it
+  > would now be instructing reviewers to approve reintroducing the defect. Settled decisions
+  > have to be retired when they are settled the other way.
+- **`SeedFsmsForExistingPositions` does not need its own lock** — its call sites
+  (`SubscribeToAccount`, and `ToggleArmed` since P1-15) all already hold `_stateLock`, and it
+  makes no broker call. Reviewers flag this as a false positive.
+- **Simulated accounts are identified by `Provider`, never by name** (**P1-20**, closed). Do not
+  reintroduce a `Name.StartsWith("Sim")` test or OR one in. Playback is deliberately not exempt.
+- **The lockout sweep's three-phase order is deliberate** (**P1-11**, closed): cancel
+  risk-increasing orders, flatten, then cancel reducing orders only for instruments confirmed
+  flat. Cancelling everything up front and then failing to flatten is the naked-position bug.
+- **`_lastShadowSessionDate` travels with `_shadowSessionsCompleted`** (**P1-37**, closed). They
+  are one fact; splitting them let a restart re-count a session.
 - **No new `GuardFsmState` enum values** — existing tests assert on them.
 - **`ValidateInvariant` must not reject `PlaceStopOrder` on `action.Quantity > liveQuantity`**
   (settled landing T2). It looks like a missing safety check and it leaves the position
@@ -595,19 +615,37 @@ and does not exist at the merge-base.
 - **The TOCTOU window between the live position read and `account.Submit` cannot be closed**
   without holding a lock across a broker call, which is forbidden.
 
-These four are also encoded in `scripts/agent_loop/profiles.py` under `settled`, which injects
-them into every review round. Add to both places, not one.
+Every one of these is also encoded in `scripts/agent_loop/profiles.py` under `settled`, which
+injects them into every review round. **Add to both places, and retire from both places.**
+A settled decision that has since been settled the other way does not merely go stale — it
+actively instructs the panel to approve reintroducing a closed defect. The P1-35 entry above
+was exactly that until 2026-08-07.
 
 ---
 
 ## 6. Known traps
 
-- **Two unrelated background processes commit to this repo.** An unrelated `feat(narrative)`
-  commit landed between the two commits above. Stage explicit paths, never `git commit -a`.
+- **Two unrelated background processes commit to this repo.** Stage explicit paths, never
+  `git commit -a` and never `git add <dir>` — a `git add docs/architecture/` swept in an
+  unrelated agent's file during this work.
 - **The test runner still exits non-zero on any failure**, which is correct, but it means a red
   suite masks nothing now that the mid-run exit is gone — read `RESULTS:` at the very end.
-- **`interventions.jsonl` is 110 MB** in the live NT8 RiskGuard folder. Unrelated to this work but
-  worth rotating.
+- **Never diff the NT8 tree without normalising line endings.** The repo is LF, the NT8 tree is
+  CRLF. A plain `diff` reported 8216 changed lines on a 4108-line file that was byte-identical,
+  and that false alarm was written into this handover as fact. Use `diff --strip-trailing-cr`;
+  the sync script's hash now normalises.
+- **Never put backups inside `bin/Custom/`.** NT8 compiles that tree *recursively*, so a folder
+  of `.cs` backups produces duplicate-type errors. Use
+  `Documents/NinjaTrader 8/_riskguard_backups/`.
+- **Never sync to NT8 unscoped.** `sync_nt8_strategies.py` without `--only addons` also pushes
+  strategies and indicators; during the shadow deployment that would have installed 21 unrelated
+  indicator files into a live NT8 mid-session.
+- **`nt_compile` and `nt_script_execute` both reload every AddOn.** Expect a few minutes of
+  `SHUTDOWN`/`INITIALIZE` churn after compiling; it settles on its own. That churn is what
+  exposed P1-37. `nt_script_execute` is also unreliable (`NT8 timeout`, `ECONNRESET`) — prefer
+  `GET /api/riskguard/config` for live state.
+- **`interventions.jsonl` grows without bound** — it reached 110 MB and was rotated on
+  2026-08-07. Rotate it before a shadow session so the output is readable.
 - 844 lines of WPF UI in `RiskGuardAddOn.cs` remain outside the test build (acceptable), as does
   `ReconcileFollowerPosition` (needs `Application.Current.Dispatcher`). If P2-24 wires that method
   up, it needs a dispatcher seam to stay testable.
