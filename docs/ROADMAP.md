@@ -97,6 +97,18 @@ This document consolidates all planned features, requirements, and known technic
 
 - [x] **Date Parsing**: Ensure consistent handling of "YYYY-MM-DD" vs Unix Timestamps across Python/JS.
 - [ ] **Data Gaps**: `DATA_GAPS_REPORT.md` highlights missing chunks in historical data.
+- [ ] **Purge historical parquet from git history** (0.28 GB still on GitHub). The
+  2026-08-07 cleanup untracked `data/` and purged parquet from the then-unpushed
+  range, but **50 parquet objects remain in the older published history** — including
+  two 96.8 MB copies of `data/NQ1_1m.parquet`. Only 6 commits touch them, but they
+  predate the rewrite boundary, so clearing them means a full-history rewrite of all
+  1493 commits plus a force-push. Nothing is broken today; this is pure clone bloat.
+  Note that the RiskGuard handover docs already reference commit SHAs orphaned by the
+  first rewrite (`51892d54`, `0b6caafa`, `456d3d78`, `c6168033`, and others) — worth
+  fixing those references in the same pass.
+- [ ] **Enable the pre-commit hook on every clone**: `git config core.hooksPath .githooks`.
+  It blocks parquet/audio/video and anything over 50 MB. It is *not* automatic — a
+  fresh clone has it disabled until that command is run.
 
 ## ✅ Completed (Recent)
 - [x] **Scheduled Expected Move**: Database persistence with Read-First strategy + 09:30/16:15 Cron Job.
