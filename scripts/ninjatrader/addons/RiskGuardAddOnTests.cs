@@ -508,6 +508,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT3_ProfitableFlatAccountEmitsNoGiveback();
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
             TestP1_40_NoiseSizedPeakDoesNotTripGiveback();
+            TestP1_39_ConfigLoadDoesNotAppendDefaultCollections();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
@@ -4621,6 +4622,65 @@ namespace NinjaTrader.NinjaScript.AddOns
             };
             Assert(suite.EvaluatePeakEquityGiveback(0.50, 0.00, noFloor) == true,
                 "with MinPeakGainDollars=0 the rule is purely proportional again");
+        }
+
+        // P1-39: RiskConfig's collection properties are pre-populated by initializers, and
+        // Json.NET's default ObjectCreationHandling.Auto REUSES a populated collection and
+        // appends to it. So every config load re-added the two default WindowsET entries and
+        // five more Days per window. Live on 2026-08-07 one POST took the config 6 -> 10
+        // windows (that path deserializes twice) and the dashboard's Save button did it again.
+        // The half that matters for safety: a default window could never be deleted, so the
+        // window gate silently widened and the operator could not narrow it.
+        private static void TestP1_39_ConfigLoadDoesNotAppendDefaultCollections()
+        {
+            Console.WriteLine("\n[TEST] P1-39: deserializing a config must replace its collections, not append to them");
+
+            // Exactly the two windows the initializer already contains.
+            string bothDefaults = @"{
+                ""WindowsET"": [
+                    { ""Name"": ""NY_AM_Macro"", ""Start"": ""09:50"", ""End"": ""11:10"", ""Days"": [""Monday""] },
+                    { ""Name"": ""NY_PM_Macro"", ""Start"": ""13:50"", ""End"": ""15:10"", ""Days"": [""Monday""] }
+                ]
+            }";
+
+            var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<RiskConfig>(bothDefaults);
+            Assert(cfg.WindowsET.Count == 2,
+                $"a config holding the two default windows must deserialize to 2, not {cfg.WindowsET.Count}");
+            Assert(cfg.WindowsET[0].Days.Count == 1,
+                $"a window declaring one day must deserialize to 1 day, not {cfg.WindowsET[0].Days.Count}");
+
+            // Round-tripping must be stable -- this is what compounds across restarts.
+            string once = Newtonsoft.Json.JsonConvert.SerializeObject(cfg);
+            var twice = Newtonsoft.Json.JsonConvert.DeserializeObject<RiskConfig>(once);
+            string thrice = Newtonsoft.Json.JsonConvert.SerializeObject(twice);
+            var final = Newtonsoft.Json.JsonConvert.DeserializeObject<RiskConfig>(thrice);
+            Assert(final.WindowsET.Count == 2,
+                $"window count must be stable across round-trips, got {final.WindowsET.Count}");
+            Assert(final.WindowsET[0].Days.Count == 1,
+                $"Days must be stable across round-trips, got {final.WindowsET[0].Days.Count}");
+
+            // The safety-relevant case: a default the operator deliberately removed must stay
+            // removed. If NY_AM_Macro comes back, the permitted-trading set silently widens.
+            string onlyPm = @"{
+                ""WindowsET"": [
+                    { ""Name"": ""NY_PM_Macro"", ""Start"": ""13:50"", ""End"": ""15:10"", ""Days"": [""Monday""] }
+                ]
+            }";
+            var pruned = Newtonsoft.Json.JsonConvert.DeserializeObject<RiskConfig>(onlyPm);
+            Assert(pruned.WindowsET.Count == 1,
+                $"a config declaring one window must yield one window, not {pruned.WindowsET.Count}");
+            Assert(!pruned.WindowsET.Any(w => w.Name == "NY_AM_Macro"),
+                "a default window removed from the file must NOT be reinstated by the loader");
+
+            // Guard against the tempting over-broad fix. Setting ObjectCreationHandling.Replace
+            // at the serializer level also replaces the dictionaries -- and InstrumentLimits,
+            // AccountFirmMap and FirmProfiles are built with StringComparer.OrdinalIgnoreCase.
+            // Json.NET would hand back a fresh Dictionary with the DEFAULT comparer, silently
+            // turning case-insensitive instrument lookups case-sensitive. Fix per-property.
+            string withLimits = @"{ ""InstrumentLimits"": { ""MNQ"": { ""MaxContracts"": 3 } } }";
+            var limited = Newtonsoft.Json.JsonConvert.DeserializeObject<RiskConfig>(withLimits);
+            Assert(limited.InstrumentLimits.ContainsKey("mnq"),
+                "InstrumentLimits must stay case-insensitive after deserialization (do not fix P1-39 at the serializer level)");
         }
 
         private static void TestOptionC_TradeCopierSingletonIntegration()

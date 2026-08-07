@@ -4226,13 +4226,27 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double StopOffsetTicks { get; set; } = 40;
     }
 
+    // P1-39: every List property below carries ObjectCreationHandling.Replace. Json.NET's
+    // default (Auto) REUSES a collection that a property initializer already populated and
+    // *appends* the deserialized items to it, so each load re-added the initializer's contents.
+    // Only WindowsET/Days had non-empty initializers and therefore actually corrupted, but any
+    // default added to the others later would silently become the same bug.
+    //
+    // This is deliberately per-property and NOT set on the serializer. The dictionaries here
+    // (InstrumentLimits, and FirmMirrorConfig's AccountFirmMap/FirmProfiles) are constructed
+    // with StringComparer.OrdinalIgnoreCase; Replace would discard that instance and hand back
+    // a fresh Dictionary using the default comparer, quietly making instrument and firm lookups
+    // case-sensitive. They are empty-initialized, so appending to them is already correct.
     public class RiskConfig
     {
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<AccountRiskProfile> Profiles { get; set; } = new List<AccountRiskProfile>();
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> ExcludedAccounts { get; set; } = new List<string>();
         // Accounts listed here MAY bypass a persisted lockout when the guard is disarmed.
         // Accounts NOT listed here keep their lockout enforced even when disarmed (safe default for prop-firm accounts).
         // Default empty = lockouts persist for ALL accounts regardless of armed state.
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> LockoutBypassWhileDisarmedAccounts { get; set; } = new List<string>();
         public string Mode { get; set; } = "shadow";
         public bool EnableWindowGate { get; set; } = false;
@@ -4240,6 +4254,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         // Set to 0 to disable. The counter is persisted in PersistedStateData and incremented on session reset.
         public int MinShadowSessions { get; set; } = 0;
         public Dictionary<string, PerInstrumentRiskConfig> InstrumentLimits { get; set; } = new Dictionary<string, PerInstrumentRiskConfig>(StringComparer.OrdinalIgnoreCase);
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> BlockedInstruments { get; set; } = new List<string>();
         public SizingConfig Sizing { get; set; } = new SizingConfig();
         public OvertradingConfig Overtrading { get; set; } = new OvertradingConfig();
@@ -4248,6 +4263,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public FirmMirrorConfig FirmMirror { get; set; } = new FirmMirrorConfig();
         // FR-35/36: override friction for override_with_friction enforcement mode.
         public OverrideConfig Override { get; set; } = new OverrideConfig();
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<WindowConfig> WindowsET { get; set; } = new List<WindowConfig>
         {
             new WindowConfig { Name = "NY_AM_Macro", Start = "09:50", End = "11:10" },
@@ -4348,6 +4364,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string Name { get; set; }
         public string Start { get; set; }
         public string End { get; set; }
+        // P1-39: non-empty initializer + Json.NET's default Auto handling meant every load
+        // appended another Mon-Fri to whatever the file declared. Live Days lists had reached
+        // 20-25 entries. Harmless to the gate itself (Days parses into a HashSet) but it is
+        // what made the corruption visible and unbounded.
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> Days { get; set; } = new List<string> { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday" };
     }
 
