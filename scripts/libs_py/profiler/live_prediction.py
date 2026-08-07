@@ -84,7 +84,7 @@ def compute_live_prediction(
 
     # 1. Get live session box statuses
     try:
-        engine = SessionBoxEngine.from_live(ticker)
+        engine = SessionBoxEngine.from_live(ticker, cutoff_time=now_et)
         live_sessions = engine.get_live_sessions()
         prev_context = engine.get_prev_context()
     except Exception as e:

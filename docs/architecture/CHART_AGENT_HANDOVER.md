@@ -100,10 +100,97 @@
 - Also saves original and corrected verdicts separately
 
 ### Remaining work
-- Phase 1a: Scheduler for daily derived data refresh + gap detection
-- Full end-to-end GVC loop test (needs Gemini quota reset)
-- User eyeball-verification of verdicts against charts
-- Schema iteration (v0.7) based on user feedback
+- ~~Phase 1a: Scheduler for daily derived data refresh + gap detection~~ ✅ DONE
+- ~~Full end-to-end GVC loop test~~ ✅ DONE (2026-08-06, ES1 + NQ1)
+- ~~User eyeball-verification of verdicts against charts~~ ✅ Reports generated (see §"GVC E2E verification run" below)
+- Schema iteration (v0.7) based on user feedback — pending
+
+---
+
+## GVC E2E verification run (2026-08-06)
+
+First full end-to-end run of the Generate-Validate-Correct loop. Two tickers
+(ES1, NQ1), real market data, KB API live on port 8900, all 5 stages executed
+cleanly (generate → 3 blind vision reads → compare → correct → save).
+
+### Results
+
+| Ticker | Orig bias | Corrected bias | Verdict changed? | Key correction |
+|---|---|---|---|---|
+| ES1 | bullish | bullish | NO — vision confirmed reasoner | — |
+| NQ1 | bullish | bullish | YES — fields flipped | Primary PD array PDH→EQ; P/D position discount→premium |
+
+ES1: clean pass — vision confirmed reasoner, corrected verdict byte-identical
+to original. Turtle Soup setup (PDL sweep at 7739.75 → rally to BSL at 7767.75)
+correctly identified as bullish manipulation in uptrend, targeting PDH 7820.25.
+
+NQ1: **correction fired** — reasoner originally said "discount, targeting PDH"
+but vision showed price had already rallied to the NY_AM high (29686) near the
+top of the session range. Corrected verdict realigned to "premium, EQ target"
+— same bullish bias, but more honest about where price actually sits. This is
+exactly the kind of internal inconsistency the GVC loop is designed to catch.
+
+### Verification reports (markdown)
+
+Built `scripts/trader/chart_agent/gvc_report.py` — renders a GVC result JSON as
+a markdown verification report for eyeball-verification. Each report contains:
+summary table → HTF story → invalidation/alternate → vision agreement matrix →
+correction assessment → eyeball-verification checklist (with chart path) →
+full blind vision analyses (collapsible <details>) → full verdicts (YAML).
+
+Reports at:
+```
+data/vision/gvc_reports/
+  ES1_2026-08-06_verification.md   (15.5 KB)
+  NQ1_2026-08-06_verification.md   (18.6 KB)
+```
+
+Charts to open alongside (for the checklist):
+```
+data/vision/charts/ES1_2026-08-06_daily_context.png
+data/vision/charts/NQ1_2026-08-06_daily_context.png
+```
+
+Re-run anytime:
+```powershell
+python -m scripts.trader.chart_agent.gvc_report --ticker ES1 --ticker NQ1
+python -m scripts.trader.chart_agent.gvc_report --file data/vision/gvc_results/<name>.json
+```
+
+### Key files this run
+
+| File | Purpose |
+|---|---|
+| `scripts/trader/chart_agent/generate_validate_correct.py` | Full GVC loop entry point |
+| `scripts/trader/chart_agent/gvc_report.py` | NEW — markdown verification report renderer |
+| `data/vision/gvc_results/{ticker}_{date}_gvc.json` | Full GVC result (verdict + 3 vision + comparison + corrected) |
+| `data/vision/verdicts/{ticker}_{date}_gvc_{original,corrected}.yaml` | Verdicts saved separately |
+| `data/vision/gvc_reports/{ticker}_{date}_verification.md` | NEW — markdown verification report |
+| `data/vision/charts/{ticker}_{date}_daily_context.png` | Chart image for eyeball-verification |
+
+### Findings
+
+1. **The GVC loop works end-to-end** — both tickers ran cleanly through all 5
+   stages, no quota errors (multi-provider fallback chain from Phase 4 held).
+2. **The correction step is not a no-op** — NQ1's correction actually fired and
+   flipped two fields (PD array + P/D position) based on vision observations.
+   This validates the loop's design: blind vision can catch reasoner errors.
+3. **Same-bias corrections matter** — even when bias doesn't flip, field-level
+   corrections (PD array, P/D position) change the trading narrative
+   materially. "Bullish in discount targeting PDH" ≠ "Bullish in premium
+   targeting EQ" — very different execution plans.
+4. **Reports are the verification artifact** — the markdown reports are
+   designed for human review: summary up top, checklist to walk through
+   against the chart, full vision text in collapsible sections.
+
+### Next steps
+
+- User to eyeball-verify ES1 + NQ1 reports against their charts (the checklist
+  in each report walks through each claim)
+- Schema iteration (v0.7) based on feedback from this verification
+- Consider running GVC daily as part of the scheduler (after
+  `refresh_derived_data.py` at 17:10 ET) so each day has a verification report
+  ready for review
 
 ---
 
