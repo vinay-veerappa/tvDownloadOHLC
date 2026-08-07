@@ -1,7 +1,9 @@
 # Agent Patch Loop — formalised implement → gate → review → apply cycle
 
-**Status**: runnable. All modules landed; `python -m scripts.agent_loop.selftest` passes 5/5
-offline. Not yet exercised against live models.
+**Status**: runnable; `python -m scripts.agent_loop.selftest` passes **8/8** offline. Exercised
+against live models on T2, which surfaced three structural defects in the loop itself (§4.6, §4.7,
+and the panel-validity bug in §4.1). **It has not yet closed a ticket end to end** — treat it as
+unproven until it does.
 **Predecessor**: `scripts/agent_loop/ollama_patch_loop.py` — superseded, retained only so
 in-flight artifacts stay readable. Three of its gates were defective (§4); do not use it.
 **Driving work**: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
@@ -57,6 +59,7 @@ model verdicts, unanimous-approve-to-apply, and an orchestrator directive that o
 scripts/agent_loop/
   cli.py         entry point: python -m scripts.agent_loop
   loop.py        round driver, review panel, arbitration
+  arbiter.py     rules on reviewer findings; non-convergence detector
   gates.py       the mechanical gate ladder
   workspace.py   git-worktree isolation, run lock, baseline freeze
   regions.py     locate + splice source regions
@@ -154,8 +157,9 @@ Cost-ascending, so a patch that leaked a marker or invented a symbol never reach
 | 2 | **compile** | every invented symbol, wrong C# version, `#if` damage | yes |
 | 3 | **test** | behavioural regressions, against a frozen baseline | yes |
 | 4 | **lock-scope** | `Flatten`/`Cancel`/`Submit`/`CreateOrder` reachable under `lock (_stateLock)` | yes |
-| 5 | panel | two reviewers of different families; verdict is the worst returned | — |
-| 6 | arbiter | human | — |
+| 5 | panel | two reviewers of different families — **detection only** | — |
+| 6 | **arbiter** | rules on the panel's findings; only upheld ones block | — |
+| 7 | human | ships | — |
 
 ### Gate 0 — protected paths (anti reward-hacking)
 
@@ -201,6 +205,45 @@ lock is how this addon deadlocks with real money on the line, and reviewers have
 
 Implemented as an **ordered event scan** (lock keyword / open / close / risky call), not per-line
 depth arithmetic — see §4 for why that distinction cost the project a working gate.
+
+### Gates 5–7 — detection, adjudication, and shipping are three different jobs
+
+The original design conflated the first two, and it does not work. Reviewers are told to *"assume
+the implementer is confident and wrong"*, which makes them good at **detection** and structurally
+incapable of **adjudication**: an adversarial reviewer has no stopping rule, so it always produces
+something. Requiring unanimous APPROVE from two of them is not a high bar — on a region large
+enough to keep offering new surface it is an unreachable one. §4.7 has the evidence.
+
+**The arbiter** (`arbiter.py`) sees what neither reviewer does — the ticket, the patch, the
+mechanical gate results, and *both* reviewers' findings together — and rules on each:
+
+| Ruling | Meaning |
+|---|---|
+| `UPHELD` | Real, caused by this patch, blocks. Must state the concrete sequence that loses money or leaves a position unprotected. "Could be clearer" does not qualify. |
+| `REJECTED` | The claimed mechanism does not hold, contradicts a gate, is already handled, or restates a settled decision. |
+| `OUT_OF_SCOPE` | Real but pre-existing or another ticket's problem. This patch must fix its own defect without adding new ones — not everything wrong with the file. |
+
+Then it recommends `SHIP`, `REVISE`, or `ESCALATE`. **Only upheld findings are fed back**, with an
+explicit instruction not to make unrelated edits — feeding all of them is what drove the rewrite
+churn that manufactured the next round's findings.
+
+Its authority is bounded three ways, and deliberately:
+
+- **It cannot overturn a mechanical gate.** Compile errors, test regressions and lock-scope
+  violations are facts, not opinions.
+- **It cannot ship.** `ARBITER_SHIP` writes the patch and a rationale, then stops. Promotion needs
+  a human running `--allow-unapproved --apply`. On an addon that moves real money, a model does not
+  get the last word on naked-position risk.
+- **It cannot fake it.** A `SHIP` that skipped findings, or that contradicts its own `UPHELD`
+  rulings, is downgraded to `ESCALATE` rather than trusted.
+
+It also nominates recurring rejections for `Profile.settled`, so that list starts generating itself
+instead of being hand-maintained.
+
+**`arbiter.thrashing()`** stops a run that cannot converge: consecutive rounds with zero finding
+overlap *and* no fall in blocking count means the implementer is complying, the reviewers are not
+repeating themselves, and more rounds will not help. Verified against T2's real numbers
+(13 → 14 → 13, zero overlap) with no false positive on a converging run (13 → 8 → 3).
 
 ---
 
@@ -284,7 +327,46 @@ addon inside the worktree leaves `git status` on the live repo empty.
 
 The "commit between tickets" rule in the handover no longer applies to the new tool.
 
-### 4.6 Reviewers reviewed blind, and re-litigated settled decisions
+### 4.6 A reasoning reviewer looked exactly like a dead one
+
+`deepseek-v4-pro` returned an empty review on every T2 round in *both* loops. It is not flaky: it
+is a reasoning model that returns chain of thought in `message.thinking` and the answer in
+`message.content`, and it was spending its entire output budget on the former — 34k chars of
+thinking, zero content. Two bugs made this undiagnosable: `_call_ollama` accepted `max_tokens` and
+never sent it (so the budget was whatever the server defaulted to), and only `content` was read.
+
+Raising the budget only moved the wall — reasoning grew with candidate size (55k chars on the
+round-1 candidate, 98k on round 2, hitting a 24k-token ceiling exactly). Measured on the round-2
+review prompt:
+
+| | time | content | thinking | tokens | result |
+|---|---|---|---|---|---|
+| think on | 159s | 0 | 90,421c | 24,000 (capped) | no verdict |
+| think off | **21s** | 10,655c | 0 | 2,721 | REVISE, 10 findings |
+
+**Fixed**: `num_predict` is now sent; reviewers default to `think=False` (their output contract is
+a structured verdict, so deliberation is spent and discarded); empty content with non-empty
+thinking raises a `ProviderError` naming the sizes and the budget to raise. `think: "low"` is not
+honoured — it reasons at full length.
+
+### 4.7 Unanimous APPROVE from adversarial reviewers is unreachable
+
+T2, three rounds against the 168-line `ExecuteAction`, both reviewers voting:
+
+```
+round 1: 11 distinct findings
+round 3: 13 distinct findings
+overlap:  0
+```
+
+Every round-1 finding was fixed. All 13 in round 3 were new. The implementer was complying and the
+reviewers were not repeating themselves — each rewrite simply exposed different ground, and the
+prompt said *"Apply every required change"*, so false positives drove rewrites that generated the
+next round's findings. The loop was manufacturing its own work.
+
+**Fixed** by separating detection from adjudication — the arbiter rung above.
+
+### 4.8 Reviewers reviewed blind, and re-litigated settled decisions
 
 Reviewers saw only BEFORE/AFTER of each region — not whether the patch compiled, not whether tests
 passed, and not the decisions the arbiter had already made. §5 of the handover exists purely as a

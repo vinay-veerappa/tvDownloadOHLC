@@ -1,9 +1,37 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Session date**: 2026-08-06
+**Last updated**: 2026-08-06 (session 2)
 **Branch**: `harden/riskguard-copier-p0`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (31 defects, P0→P3)
 **Nothing is deployed.** NinjaTrader is running live with the *unmodified* addon.
+
+---
+
+## 0. Start here (read this first, then §2 and §4)
+
+**One ticket has landed (T1). Session 2 landed no addon code at all** — it went into rebuilding the
+tool that lands tickets, because the old one could not approve anything. That was the right call
+but it means the hardening itself has not moved since `5fd26995`.
+
+State in one paragraph: the addon is untouched at `ddba3433`-equivalent; the suite is 353 passed /
+3 failed (those 3 are the deliberate T4/T5 acceptance tests); the patch loop was rebuilt from
+scratch with a working test gate, worktree isolation, and an arbiter rung, and passes 8/8 offline —
+but **has never closed a ticket end to end**. T2 is parked with a live candidate on disk.
+
+```powershell
+# free, ~2 min, no models: is the tool sound?
+.\.venv\Scripts\python.exe -m scripts.agent_loop.selftest
+
+# free: do all 18 ticket regions still resolve?
+.\.venv\Scripts\python.exe -m scripts.agent_loop --list
+
+# the next real action (see §4b)
+.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T2 `
+    --resume-raw logs/agent_loop/T2/r3_impl_raw.txt --arbiter glm-5.2:cloud
+```
+
+**Do not run `scripts/agent_loop/ollama_patch_loop.py`.** Three of its gates were defective; it is
+kept only so the older `logs/ollama_loop/` artifacts stay readable.
 
 ---
 
@@ -65,7 +93,7 @@ failure is a regression.
 | Ticket | Defects | Status |
 |---|---|---|
 | T1 | P0-1, P0-4 | ✅ committed `5fd26995` |
-| T2 | P0-2, P0-3 | ❌ `MAX_ROUNDS_EXHAUSTED`, not applied — **the panel could not have approved it**, see §4 |
+| T2 | P0-2, P0-3 | ⏸ parked with a live candidate that passes every gate but has 13 un-adjudicated findings — see §4b |
 | T3 | P0-7 | queued |
 | T4 | P0-5, P0-6 | queued — has failing tests waiting |
 | T5 | P0-8, P0-9 | queued — has a failing test waiting |
@@ -166,15 +194,45 @@ Full analysis and the rebuild design: **[AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.m
 Protected`, so the counter never reset and the guard would escalate straight to flatten after two
 *successful* auto-stops. Resume from that artifact rather than starting T2 over.
 
+## 4b. What the live T2 runs taught us (session 2)
+
+Running T2 on the new loop found three more structural defects — in the *loop*, not the addon.
+All are fixed; recording them so they are not rediscovered.
+
+1. **A reasoning reviewer looked exactly like a dead one.** `deepseek-v4-pro` returns chain of
+   thought in `message.thinking` and the answer in `message.content`, and was spending its whole
+   output budget on the former. `_call_ollama` also accepted `max_tokens` and never sent it.
+   Reviewers now run with `think=False` — 21s and ten findings, versus 159s and no verdict.
+   (`7364c22c`, `dce023b2`)
+2. **Unanimous APPROVE from adversarial reviewers is unreachable.** Three rounds against the
+   168-line `ExecuteAction`: 11 findings in round 1, 13 in round 3, **zero overlap**. Every
+   finding was fixed; each rewrite exposed new ground. The prompt said "apply every required
+   change", so false positives drove the rewrites that generated the next round's findings.
+3. **There was no arbiter.** Rung 6 was "a human reads artifacts", which is not a rung. Added
+   `arbiter.py`: rules each finding UPHELD / REJECTED / OUT_OF_SCOPE, feeds back only upheld ones,
+   and stops the run when rounds stop converging. It cannot overturn a mechanical gate and it
+   cannot ship — `ARBITER_SHIP` writes a patch and a rationale and waits for a human. (`e0cd3c54`)
+
+**Where T2 actually stands.** Its round-3 candidate is on disk at
+`logs/agent_loop/T2/r3_impl_raw.txt` and **passes every mechanical gate** — compiles, 353 passed /
+3 failed with no regressions, no broker call under `_stateLock`. What it has never had is an
+adjudication of its 13 findings. That is exactly what the arbiter was built for, and T2 is its
+natural first case.
+
+Note the gates only prove no *regression*: the suite has no coverage for the P0-2/P0-3 paths, which
+is why those defects exist. Passing gates is necessary, not sufficient.
+
 ## 4a. Immediate next steps
 
-1. ~~Finish the loop rebuild~~ — **done**, `7154f94c`. Runnable, `selftest` 5/5 offline. Not yet
-   exercised against live models, so expect the first real run to surface prompt-level friction
-   rather than structural bugs.
-2. **Re-run T2** on the new tool:
-   `python -m scripts.agent_loop --ticket T2 --resume-raw logs/ollama_loop/T2/r4_impl_raw.txt --apply`
-   Its candidate already carries the `AutoStopAttempts` blocker fix requirement; the panel is now
-   capable of approving it.
+1. **Run T2 with the arbiter** (command in §0). Read `logs/agent_loop/T2/rN_arbiter.txt` before
+   trusting the outcome — this is the arbiter's first live use and its rulings are unvalidated.
+   Promote only after reading `final.patch`:
+   `--resume-raw <candidate> --allow-unapproved --apply`, then stage explicit paths and commit.
+2. **If it escalates or still will not converge, split T2** into P0-2 and P0-3 as separate tickets
+   with tighter region sets. `ExecuteAction` at 168 lines is very likely too much surface for one
+   patch, and that hypothesis is untested.
+3. **T3, T4, T5** in order, committing each. T4 and T5's acceptance criterion is the three baseline
+   failures going green — now checked mechanically by the test gate rather than by eye.
 3. **T3, T4, T5** in order, committing each. T4 and T5 should turn the three failing copy-path
    tests green — that is their acceptance criterion, and it is now checked mechanically by the
    test gate rather than by eye.
