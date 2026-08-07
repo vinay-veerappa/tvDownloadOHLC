@@ -1,7 +1,32 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status**: PLAN ONLY — nothing in this document has been executed.
+**Status**: **P0 complete** (2026-08-06, branch `harden/riskguard-copier-p0`, suite 356/0).
+P1–P3 not started. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 **Created**: 2026-08-06
+
+## Defect inventory — the count of record
+
+**36 defects.** Numbered once, never renumbered, never reused.
+
+| Band | IDs | Count | Status |
+|---|---|---|---|
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36` | 16 | open |
+| P2 — structural | `P2-24` … `P2-29` | 6 | open (`P2-27` half-done) |
+| P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
+
+> **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
+> doc.** `P1-30` and `P1-31` were appended during the P0 work and collided with the pre-existing
+> `P3-30` (reconciler) and `P3-31` (expected-position ledger) — four distinct defects sharing two
+> numbers. The two newcomers were renumbered; `P3-30`/`P3-31` are unchanged.
+>
+> | Old | New | Defect |
+> |---|---|---|
+> | `P1-30` | **`P1-35`** | FSM teardown cancels the orphan auto-stop under `_stateLock` |
+> | `P1-31` | **`P1-36`** | Coverage tracks a single stop; two partial stops read as under-covered |
+>
+> Commits from the P0 phase (`5fd26995` … `29b6c66a`) still say `P1-30`/`P1-31`. Map them here.
+> **When adding a defect, take the next free number — do not extend a band in place.**
 **Scope**: `scripts/ninjatrader/addons/{RiskGuardAddOn,TradeCopierEngine,TradeCopierWindow,PropFirmProtectionSuite,DynamicAtmManager}.cs`
 **Comparison baseline**: `github.com/mkalhitti-cloud/universal-or-strategy` (V12 Photon Kernel — SIMA fleet dispatch, REAPER defense, Symmetry Guard)
 **Related**: [RiskGuardAddOn.md](RiskGuardAddOn.md) (current design doc — contains drift, see §6), [NT8_FILE_ORGANIZATION.md](NT8_FILE_ORGANIZATION.md)
@@ -261,7 +286,7 @@ protection until the position changes side.
 when transitioning to armed. Same on `SaveAndReloadConfig`/`ReloadConfig` if
 `ExcludedAccounts` shrank.
 
-### P1-30. FSM teardown cancels the orphan auto-stop while the caller holds `_stateLock`
+### P1-35. FSM teardown cancels the orphan auto-stop while the caller holds `_stateLock`
 *(found during T1 implementation, 2026-08-06 — a P1-10 site this review originally missed)*
 **Where**: `RiskGuardAddOn.cs:1620` inside `UpdateFsmOnPosition`'s nonflat→flat branch:
 `try { account.Cancel(new[] { fsm.AutoStopOrder }); }`
@@ -274,7 +299,7 @@ independent site on the hot event path.
 pending-cancel list and drain it in `ExecutePositionUpdateDetails` after the lock is released,
 alongside the existing `ProcessAction` loop. Do not add a separate drain mechanism.
 
-### P1-31. Coverage tracking follows a single stop order, so two partial stops read as under-covered
+### P1-36. Coverage tracking follows a single stop order, so two partial stops read as under-covered
 *(found during T1 review, 2026-08-06)*
 **Where**: `PositionGuardFsm.RecognizedStopOrder` / the new `CoveredQuantity` (T1)
 **What happens**: the FSM tracks exactly one protective stop. A trader covering a 6-lot position
@@ -504,7 +529,7 @@ Phases are ordered so that nothing depends on later work, and so live-risk defec
 | **1. RiskGuard naked-risk** | P0-1, P0-2, P0-3, P0-4 | New tests: stop-cancelled-mid-position re-arms; submit failure rolls back; auto-stop sized from live qty; scale-in flagged partially covered |
 | **2. Copier sizing/gating** | P0-5, P0-6, P0-8, P0-9 (option 3 minimum) | Notional-parity test; exit-clamp test (leader 5 / follower 1 → follower flat, never short); locked-follower copy blocked |
 | **3. Rule semantics** | P0-7, P1-16, P1-17, P1-18, P1-19 | Profitable-flat-account emits no giveback action; 3-partial loss counts as 1; instrument-scoped flatten does not touch other instruments |
-| **4. Concurrency** | P1-10, P1-11, P1-12, P1-13, P1-14, P1-15, **P1-30**, **P1-31** | No `Account.*` call inside any `lock (_stateLock)` (grep gate, mirroring V12's lock audit); sweep runs off the dispatcher; coverage aggregates across all protective stops |
+| **4. Concurrency** | P1-10, P1-11, P1-12, P1-13, P1-14, P1-15, **P1-35**, **P1-36** | No `Account.*` call inside any `lock (_stateLock)` (grep gate, mirroring V12's lock audit); sweep runs off the dispatcher; coverage aggregates across all protective stops |
 | **5. Reconciler** | P3-30, plus wiring P2-24 (`ReconcileFollowerPosition`, auto-quarantine, `DailyLossLimit`) | Sim stress: manual stop cancel, manual naked position, follower desync — each repaired within one grace window |
 | **6. Copier fidelity** | P0-9 (options 1-2), P1-20, P1-21, P1-22, P1-23, P3-32 | Follower brackets present on every copy; latency/slippage populated from real fills |
 | **7. Cleanup** | P2-25 (calendar feed), P2-26 (doc reconciliation), P2-29 (file split), P3-31, P3-33, P3-34 | Design doc matches code; drift assertion in tests |
@@ -549,8 +574,8 @@ Phases are ordered so that nothing depends on later work, and so live-risk defec
 | P1-13 | latency | RiskGuardAddOn.cs:1317 | guard evaluation on the WPF dispatcher; skipped if null |
 | P1-14 | correctness | RiskGuardAddOn.cs:1651 | `_pendingStops` single-slot, no TTL, side-blind |
 | P1-15 | coverage gap | RiskGuardAddOn.cs:2231 | re-arm does not seed FSMs for open positions |
-| P1-30 | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
-| P1-31 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
+| P1-35 | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
+| P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
 | P1-18 | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |

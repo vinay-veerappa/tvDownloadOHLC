@@ -119,9 +119,9 @@ The patch has already passed a compiler and the project's test suite; a claim th
 compile, or that it breaks a test, is therefore almost certainly wrong -- say so only with a
 concrete mechanism.""",
     settled=(
-        "Multi-stop coverage aggregation is OUT OF SCOPE (tracked as P1-31). CoveredQuantity "
+        "Multi-stop coverage aggregation is OUT OF SCOPE (tracked as P1-36). CoveredQuantity "
         "deliberately follows a single stop order. Do not raise it.",
-        "Orphan-cancel under _stateLock STAYS (tracked as P1-30). Do not propose fixing it by "
+        "Orphan-cancel under _stateLock STAYS (tracked as P1-35). Do not propose fixing it by "
         "adding a nested lock (_stateLock) -- every caller already holds the lock, so the nested "
         "lock is re-entrant and buys nothing.",
         "SeedFsmsForExistingPositions does NOT need its own lock: both SubscribeToAccount call "

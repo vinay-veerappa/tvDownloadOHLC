@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-08-06 (session 3)
 **Branch**: `harden/riskguard-copier-p0`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (31 defects, P0→P3)
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (36 defects, P0→P3; P0 all closed)
 **Nothing is deployed.** NinjaTrader is running live with the *unmodified* addon. All five P0 tickets are committed on this branch; the suite is 356 passed, 0 failed.
 
 ---
@@ -18,7 +18,7 @@ State in one paragraph: session 3 landed T2, T3, T4 and T5, fixed four defects i
 `RiskGuardAddOn.Instance` and so could not observe its own subject. **Nothing is deployed** —
 NinjaTrader is still running the unmodified addon, and that is now the single most important open
 item. The next work is P1, starting with the two deferred items this work created:
-**P1-30** (orphan-cancel under `_stateLock`) and **P1-31** (multi-stop coverage aggregation).
+**P1-35** (orphan-cancel under `_stateLock`) and **P1-36** (multi-stop coverage aggregation).
 
 ```powershell
 # free, ~2 min, no models: is the tool sound?
@@ -357,18 +357,18 @@ The P0 phase is done. In priority order:
    flip does not carry `PeakOpenGain` into the new leg.
 3. **Add an `expect_green` field to tickets** so the test gate can require a named test to flip,
    not merely require no regression. T5 shipped past a red acceptance test (§0).
-4. **P1 work**, starting with **P1-30** (orphan-cancel under `_stateLock`) and **P1-31**
+4. **P1 work**, starting with **P1-35** (orphan-cancel under `_stateLock`) and **P1-36**
    (multi-stop coverage aggregation), both deferred out of this phase by decision (§5).
 
 ---
 
 ## 5. Decisions already made — do not re-litigate
 
-- **Multi-stop coverage aggregation is out of scope** (tracked as **P1-31**). `CoveredQuantity`
+- **Multi-stop coverage aggregation is out of scope** (tracked as **P1-36**). `CoveredQuantity`
   deliberately follows a single stop order. Reviewers will raise this repeatedly; the bounded
   mitigation already in place is the `ReferenceEquals` guard plus "coverage may only be replaced
   by an equal-or-larger stop".
-- **Orphan-cancel under `_stateLock` stays** (tracked as **P1-30**). Do **not** "fix" it by adding
+- **Orphan-cancel under `_stateLock` stays** (tracked as **P1-35**). Do **not** "fix" it by adding
   a nested `lock (_stateLock)` and claiming the cancel happens outside — every caller already
   holds the lock, so the nested lock is re-entrant and buys nothing. The real fix queues the
   cancel and drains it in `ExecutePositionUpdateDetails` after it releases the lock.
