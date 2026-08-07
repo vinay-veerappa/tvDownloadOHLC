@@ -1042,7 +1042,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (actions != null)
                 {
-                    foreach (var action in actions)
+                    foreach (var action in CoalesceActions(actions))   // P1-19
                     {
                         ProcessAction(action);
                     }
@@ -1193,7 +1193,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (actions != null)
                 {
-                    foreach (var action in actions)
+                    foreach (var action in CoalesceActions(actions))   // P1-19
                         ProcessAction(action);
                 }
             }
@@ -1761,7 +1761,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
-                foreach (var action in sweepActions)
+                foreach (var action in CoalesceActions(sweepActions))   // P1-19
                 {
                     ProcessAction(action);
                 }
@@ -2053,7 +2053,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             var actions = EvaluateGraceExpiry(account, instrument);
             if (actions != null)
             {
-                foreach (var action in actions)
+                foreach (var action in CoalesceActions(actions))   // P1-19
                     ProcessAction(action);
             }
         }
@@ -2926,7 +2926,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 isLive = _mode == "live" || forceLive;
                 if (!isLive)
                 {
-                    LogEvent(action.AccountName, "SHADOW_ACTION", $"[SHADOW] Would execute action {action.ActionType} triggered by {action.RuleId}");
+                    string alsoShadow = (action.MergedRuleIds != null && action.MergedRuleIds.Count > 0)
+                        ? $" (also: {string.Join(", ", action.MergedRuleIds)})" : "";
+                    LogEvent(action.AccountName, "SHADOW_ACTION", $"[SHADOW] Would execute action {action.ActionType} triggered by {action.RuleId}{alsoShadow}");
                     return "SHADOW (SKIPPED)";
                 }
             }
@@ -2998,6 +3000,62 @@ namespace NinjaTrader.NinjaScript.AddOns
             return false;
         }
 
+        // P1-19: one EvaluatePnLRules pass can append five FlattenPosition actions -- daily loss,
+        // trailing DD, news shield, evaluation target and peak giveback -- each of which
+        // independently walks the account and calls Flatten. Coalesce by
+        // (AccountName, ActionType, Instrument) before processing.
+        internal static List<GuardAction> CoalesceActions(List<GuardAction> actions)
+        {
+            if (actions == null || actions.Count <= 1) return actions;
+
+            // An account-wide flatten supersedes every scoped flatten for the same account: the
+            // wide call closes those instruments anyway, so keeping both re-issues a broker call
+            // against an account that is already flat.
+            var accountWideFlatten = new HashSet<string>();
+            foreach (var a in actions)
+            {
+                if (a != null && a.ActionType == GuardActionType.FlattenPosition
+                    && string.IsNullOrEmpty(a.Instrument))
+                {
+                    accountWideFlatten.Add(a.AccountName ?? "");
+                }
+            }
+
+            var survivors = new Dictionary<string, GuardAction>();
+            var ordered = new List<GuardAction>();
+            foreach (var a in actions)
+            {
+                if (a == null) continue;
+
+                if (a.ActionType == GuardActionType.FlattenPosition
+                    && !string.IsNullOrEmpty(a.Instrument)
+                    && accountWideFlatten.Contains(a.AccountName ?? ""))
+                {
+                    continue;
+                }
+
+                string key = (a.AccountName ?? "") + "|" + a.ActionType + "|" + (a.Instrument ?? "");
+                GuardAction survivor;
+                if (survivors.TryGetValue(key, out survivor))
+                {
+                    // Merging must not erase WHY the other rules fired. The surviving action
+                    // keeps its own RuleId (callers and tests match on it) and carries the rest
+                    // so the audit line can name every rule that demanded this action.
+                    if (survivor.MergedRuleIds == null) survivor.MergedRuleIds = new List<string>();
+                    if (!string.IsNullOrEmpty(a.RuleId) && a.RuleId != survivor.RuleId
+                        && !survivor.MergedRuleIds.Contains(a.RuleId))
+                    {
+                        survivor.MergedRuleIds.Add(a.RuleId);
+                    }
+                    continue;
+                }
+
+                survivors[key] = a;
+                ordered.Add(a);
+            }
+            return ordered;
+        }
+
         private void ExecuteAction(GuardAction action)
         {
             var account = Account.All.FirstOrDefault(a => a.Name == action.AccountName);
@@ -3005,11 +3063,19 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (action.ActionType == GuardActionType.FlattenPosition)
             {
+                // P1-19: honour action.Instrument. Without this a stop-guard flatten scoped to
+                // MES closed every instrument on the account, so a missing stop on one contract
+                // liquidated an unrelated, correctly-protected position. Account-level rules
+                // (daily loss, trailing DD, lockout) leave Instrument unset and stay account-wide.
+                bool scoped = !string.IsNullOrEmpty(action.Instrument);
+
                 var instrumentsToFlatten = new List<Instrument>();
                 foreach (Position p in account.Positions)
                 {
                     if (p.MarketPosition != MarketPosition.Flat && p.Instrument != null)
                     {
+                        if (scoped && !string.Equals(p.Instrument.FullName, action.Instrument, StringComparison.OrdinalIgnoreCase))
+                            continue;
                         instrumentsToFlatten.Add(p.Instrument);
                     }
                 }
@@ -3017,6 +3083,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if ((o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted) && o.Instrument != null)
                     {
+                        if (scoped && !string.Equals(o.Instrument.FullName, action.Instrument, StringComparison.OrdinalIgnoreCase))
+                            continue;
                         if (!instrumentsToFlatten.Contains(o.Instrument))
                         {
                             instrumentsToFlatten.Add(o.Instrument);
@@ -3947,6 +4015,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string OrderId { get; set; }
         public int Quantity { get; set; }
         public string RuleId { get; set; }
+        // P1-19: other rules that demanded this same action and were coalesced into it.
+        // Kept so merging does not erase why the action was taken.
+        public List<string> MergedRuleIds { get; set; }
     }
 
     public class AccountState

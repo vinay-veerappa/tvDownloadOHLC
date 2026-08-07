@@ -205,9 +205,17 @@ namespace NinjaTrader.Cbi
             }
         }
 
+        // P1-19: records exactly which instruments each Flatten call was asked to close.
+        // The defect is in what ExecuteAction *requests* -- it ignored action.Instrument and
+        // passed every instrument on the account -- so the request is the thing to assert on.
+        public List<string> LastFlattenRequest = new List<string>();
+
         public void Flatten(Instrument[] instruments)
         {
             ObserveBrokerCall("Flatten");
+            LastFlattenRequest = instruments == null
+                ? new List<string>()
+                : instruments.Where(i => i != null).Select(i => i.FullName).ToList();
             FlattenCallCount++;
             if (SimulateFlattenFailure)
                 throw new Exception("Simulated broker rejection at Flatten.");
@@ -510,6 +518,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
             TestP1_40_NoiseSizedPeakDoesNotTripGiveback();
             TestP1_39_ConfigLoadDoesNotAppendDefaultCollections();
+            TestP1_19_FlattenIsInstrumentScopedAndActionsCoalesce();
             TestP1_18_ProfileTrailingDDYieldsOnlyToAnEffectiveFirmRule();
             TestP1_16_ConsecutiveLossesCountTradesNotPartialExits();
             TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL();
@@ -3904,6 +3913,95 @@ namespace NinjaTrader.NinjaScript.AddOns
         // false and no account is mapped. That would skip the profile rule while the firm rule
         // evaluates nothing, leaving no trailing-drawdown cover at all. Precedence must key on
         // whether a firm trailing rule is actually IN EFFECT for that account.
+        // P1-19: two separate problems in one defect.
+        //  (a) ExecuteAction's FlattenPosition ignored action.Instrument and flattened every
+        //      instrument holding a position OR merely a working order. A missing stop on MES
+        //      therefore closed an unrelated, correctly-protected MNQ position too.
+        //  (b) One EvaluatePnLRules pass can append five FlattenPosition actions, each of which
+        //      independently walks the account and calls Flatten.
+        private static void TestP1_19_FlattenIsInstrumentScopedAndActionsCoalesce()
+        {
+            Console.WriteLine("\n[TEST] P1-19: flatten honours instrument scope, and duplicate actions coalesce");
+
+            var mnq = new Instrument("MNQ");
+            var mes = new Instrument("MES");
+
+            Func<string, List<string>> flattenRequestFor = instrumentScope =>
+            {
+                var account = new Account { Name = "ScopeAcc" };
+                account.Positions.Add(new Position { Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2 });
+                account.Positions.Add(new Position { Instrument = mes, MarketPosition = MarketPosition.Long, Quantity = 1 });
+                Account.All.Clear();
+                Account.All.Add(account);
+
+                var addon = new RiskGuardAddOn();
+                addon.SetConfigForTest(new RiskConfig());
+                addon.SetModeForTest("live");   // shadow would skip execution entirely
+                addon.ProcessAction(new GuardAction
+                {
+                    AccountName = "ScopeAcc",
+                    ActionType = GuardActionType.FlattenPosition,
+                    Instrument = instrumentScope,
+                    RuleId = "MISSING_STOP_FLATTEN"
+                });
+                return account.LastFlattenRequest;
+            };
+
+            // Scoped to MES: MNQ must be left alone.
+            var scoped = flattenRequestFor(mes.FullName);
+            Assert(scoped.Count == 1 && scoped[0] == mes.FullName,
+                string.Format("a flatten scoped to MES must request MES only (got [{0}])", string.Join(",", scoped)));
+
+            // No scope set -> account-wide, which is correct for account-level risk rules.
+            var unscoped = flattenRequestFor(null);
+            Assert(unscoped.Count == 2,
+                string.Format("an unscoped flatten must still close the whole account (got {0})", unscoped.Count));
+
+            // (b) Coalescing: five account-wide flattens from one evaluation pass are one action.
+            var five = new List<GuardAction>
+            {
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, RuleId = "DAILY_LOSS_BREACH" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, RuleId = "TRAILING_DD_BREACH" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, RuleId = "NEWS_SHIELD_LOCKOUT" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, RuleId = "EVALUATION_TARGET_REACHED" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, RuleId = "PEAK_GIVEBACK_BREACH" },
+            };
+            var coalesced = RiskGuardAddOn.CoalesceActions(five);
+            Assert(coalesced.Count == 1,
+                string.Format("five account-wide flattens coalesce to one (got {0})", coalesced.Count));
+
+            // Different instruments are different actions and must all survive.
+            var perInstrument = new List<GuardAction>
+            {
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, Instrument = "MNQ SEP26", RuleId = "MISSING_STOP_FLATTEN" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, Instrument = "MES SEP26", RuleId = "MISSING_STOP_FLATTEN" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, Instrument = "MNQ SEP26", RuleId = "MISSING_STOP_FLATTEN" },
+            };
+            Assert(RiskGuardAddOn.CoalesceActions(perInstrument).Count == 2,
+                "two distinct instruments survive coalescing; the duplicate does not");
+
+            // Different accounts and different action types must never be merged.
+            var mixed = new List<GuardAction>
+            {
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, RuleId = "DAILY_LOSS_BREACH" },
+                new GuardAction { AccountName = "B", ActionType = GuardActionType.FlattenPosition, RuleId = "DAILY_LOSS_BREACH" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.CancelAllOrders, RuleId = "DAILY_LOSS_BREACH" },
+            };
+            Assert(RiskGuardAddOn.CoalesceActions(mixed).Count == 3,
+                "different accounts and action types are never merged");
+
+            // An account-wide flatten supersedes per-instrument ones for the same account:
+            // keeping both would close the account and then re-issue a redundant scoped call.
+            var widePlusScoped = new List<GuardAction>
+            {
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, Instrument = "MNQ SEP26", RuleId = "MISSING_STOP_FLATTEN" },
+                new GuardAction { AccountName = "A", ActionType = GuardActionType.FlattenPosition, RuleId = "DAILY_LOSS_BREACH" },
+            };
+            var superseded = RiskGuardAddOn.CoalesceActions(widePlusScoped);
+            Assert(superseded.Count == 1 && string.IsNullOrEmpty(superseded[0].Instrument),
+                string.Format("an account-wide flatten supersedes scoped ones for that account (got {0})", superseded.Count));
+        }
+
         private static void TestP1_18_ProfileTrailingDDYieldsOnlyToAnEffectiveFirmRule()
         {
             Console.WriteLine("\n[TEST] P1-18: the profile trailing-DD yields only to a firm rule that is actually in effect");
