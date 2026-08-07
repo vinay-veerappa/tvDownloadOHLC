@@ -487,6 +487,26 @@ Sequencing constraints:
 P1-16 … P1-19. Self-contained, low blast radius, good loop tickets. P1-17 (eval target fed
 session-scoped PnL, so it never fires) is the most consequential.
 
+### Phase D2 — stress backlog: S5–S9 (OPEN, not optional)
+
+`S1`–`S4` landed 2026-08-07 and closed four defects on their first run (`P1-43`, `P1-44`,
+`P1-45`, `P2-46`). **`S5`–`S9` remain open**, and they are the only planned coverage for failure
+modes no unit test reaches. Full specs in the plan's §8.
+
+| | Stress test | Relates to |
+|---|---|---|
+| `S5` | Partial-fill storm, both event orderings | `P1-16`'s late-fill revision is currently proven by unit tests only |
+| `S6` | Rapid flip loop | `P1-36`, T1's `CoveredQuantity` model |
+| `S7` | Copier fan-out under burst | `P0-5`, `P0-6`, `P1-22` — **run with Phase E, not after it** |
+| `S8` | Config reload while armed and in position | `P1-39`, `P1-42` |
+| `S9` | Restart mid-trade | `P1-15`, and `P1-16`'s documented restart limit |
+
+Two rules carried from §8: every stress test is **written red first**, and concurrency tests must
+assert an observed invariant rather than "no exception thrown" — the pre-existing
+`TestCopierGroup_GroupStressAndConcurrency` only asserts the latter, which is why it has never
+caught anything. And confirm each one fails *for the reason intended*: the first draft of S1–S4
+passed three assertions against code that never executed.
+
 ### Phase E — copier fidelity
 
 P1-21, P1-22, P1-23, then the real half of **P0-9**. Only P0-9's fail-closed *precondition*
