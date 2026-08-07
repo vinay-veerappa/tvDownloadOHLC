@@ -1,9 +1,9 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-06 (session 3)
+**Last updated**: 2026-08-07 (session 4)
 **Branch**: `harden/riskguard-copier-p0`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (36 defects, P0→P3; P0 all closed)
-**Nothing is deployed.** NinjaTrader is running live with the *unmodified* addon. All five P0 tickets are committed on this branch; the suite is 356 passed, 0 failed.
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (37 defects, P0→P3; P0 all closed)
+**DEPLOYED to shadow 2026-08-07.** NinjaTrader is running the P0 addon in `shadow` mode. The branch is *not* yet merged to `main`. Suite 356 passed, 0 failed.
 
 ---
 
@@ -13,11 +13,19 @@
 Every one of the nine live-risk P0 defects is closed, including all three that had deliberate
 failing acceptance tests waiting.
 
-State in one paragraph: session 3 landed T2, T3, T4 and T5, fixed four defects in the loop itself
-(§4d), and repaired the P0-8 test, which could never have gone green because it never wired
-`RiskGuardAddOn.Instance` and so could not observe its own subject. **Nothing is deployed** —
-NinjaTrader is still running the unmodified addon, and that is now the single most important open
-item. The roadmap for the remaining 27 defects is §4a; the deployment runbook is §4e.
+**Phase A is done: the P0 addon is deployed and running in shadow** (§4f is the deployment
+record). It compiled clean in NT8 and initialised in `shadow` with `isArmed: false`. The one
+thing Phase A has *not* produced is a session with market activity — the machine is connected to
+**Kinetick End Of Day (Free)**, which serves daily bars but no real-time quotes, so the NT8
+simulator cannot fill and no position can be opened. **Phase A's acceptance criteria are
+therefore still unmet**; they need a session on a real-time feed.
+
+The deployment immediately paid for itself by surfacing **P1-37**: the `MinShadowSessions` arming
+gate counts addon restarts rather than sessions, and went 0 → 3 in four minutes of ordinary
+recompile churn. Fix it before any live arming, and treat the current
+`ShadowSessionsCompleted = 3` in `state.json` as meaningless.
+
+The roadmap for the remaining 28 defects is §4a; the deployment runbook is §4e.
 
 
 ```powershell
@@ -344,12 +352,14 @@ The general lesson for this loop: when a gate says a model got the format wrong,
 *content* is there before spending another round. Marker punctuation is not what the gates exist
 to check.
 
-## 4a. Roadmap for the remaining 27 defects
+## 4a. Roadmap for the remaining 28 defects
 
-**36 defects total, 9 closed (all P0), 27 open**: 16 P1, 6 P2, 5 P3. Band membership and the
-P1-30/31 → P1-35/36 renumbering are in the plan's inventory table.
+**37 defects total, 9 closed (all P0), 28 open**: 17 P1, 6 P2, 5 P3. Band membership and the
+P1-30/31 → P1-35/36 renumbering are in the plan's inventory table. `P1-37` was found by the
+Phase A shadow deployment on 2026-08-07 (§4f).
 
-Decided 2026-08-07: **deploy P0 to shadow before writing more code.**
+Decided 2026-08-07: **deploy P0 to shadow before writing more code.** Done — but shadow ran on a
+feed with no real-time data, so Phase A's acceptance criteria are still unmet (§4f).
 
 ### Phase A — deploy P0 (no new code) ← current
 
@@ -425,35 +435,103 @@ P3-34.
 
 ## 4e. Deployment runbook (Phase A)
 
-**Do not copy code first.** Two things must be true before the new addon runs.
+> **Ran once on 2026-08-07 — see §4f for what actually happened, including two claims below
+> that turned out to be wrong.** Steps are kept in their corrected form; re-read §4f before
+> re-running.
 
-1. **The live config is not in shadow.** `~/Documents/NinjaTrader 8/RiskGuard/config.json` has
-   `"Mode": "override_with_friction"`, which is an *acting* mode (`RiskGuardAddOn.cs:2455`).
+**Do not copy code first.** Set the mode before the new addon runs.
+
+1. **Check the live config is not in an acting mode.** `~/Documents/NinjaTrader 8/RiskGuard/config.json`
+   is the file the addon reads (`Path.Combine(Globals.UserDataDir, "RiskGuard", "config.json")`).
+   It was `"Mode": "override_with_friction"`, an *acting* mode (`RiskGuardAddOn.cs:2455`).
    Deploying new code without changing this puts freshly-written flatten logic straight in front
-   of a funded account. Set `"Mode": "shadow"` **and confirm the addon reloaded it** before
-   copying any `.cs`.
-   - There is a second `config.json` at `bin/Custom/AddOns/config.json` with `"Mode": "live"`.
-     The addon reads `Path.Combine(_logDir, "config.json")`, so the `RiskGuard/` one is the live
-     one — but confirm which is actually loaded before trusting either.
-2. **The deployed sources differ from canonical.** `RiskGuardAddOn.cs`, `TradeCopierEngine.cs` and
-   `PropFirmProtectionSuite.cs` in `bin/Custom/AddOns/` all differ from
-   `scripts/ninjatrader/addons/`. Diff them before overwriting — do not assume the only delta is
-   this branch's work.
+   of a funded account. Set `"Mode": "shadow"` **and confirm the running addon actually reloaded
+   it** — the config has no file watcher, so it is only re-read on construction or an explicit
+   reload. Verify via `GET /api/riskguard/config`, not by reading the file back.
+   - ~~There is a second `config.json` at `bin/Custom/AddOns/config.json`~~ — **resolved**: it
+     was dead, nothing reads it, and it has been renamed `config.json.UNUSED_not_read_by_addon`.
+2. **Diff deployed vs canonical — with line endings normalised.** Deployed files are CRLF and
+   the repo's are LF, so a plain `diff` reports *every* line as different and looks like massive
+   drift. Use `diff --strip-trailing-cr`. On 2026-08-07 there was **no** pre-existing drift.
 
 Then:
 
-3. Rotate `interventions.jsonl` (110 MB) so shadow output is readable.
-4. Merge `harden/riskguard-copier-p0` → `main` (33 commits; nothing else on the branch).
-5. Copy the five canonical addon sources into `bin/Custom/AddOns/`, compile in NT8 (F5), confirm
-   zero errors — the test build is net8.0 with stubs, NT8 is net48, and only NT8 proves the real
-   build.
-6. Run a full session in shadow. Then diff `interventions.jsonl` against what actually happened
-   and ask specifically: did `PEAK_GIVEBACK_BREACH` fire on a profitable flat account (T3), and
-   did any `COPY_BLOCKED_NO_GUARD` line name an account that should have been allowed (T5)?
-7. Only then consider restoring an acting mode.
+3. Rotate `interventions.jsonl` so shadow output is readable. Safe while running —
+   `File.AppendAllLines` never holds the file open.
+4. Merge `harden/riskguard-copier-p0` → `main`. **Do this after shadow validation, not before**;
+   deployment copies from the working tree, so the merge buys nothing up front. Note the branch
+   also carries ~7 unrelated narrative/wargaming commits from other background agents.
+5. Copy the **four** changed addon sources into `bin/Custom/AddOns/` (`RiskGuardAddOn.cs`,
+   `TradeCopierEngine.cs`, `PropFirmProtectionSuite.cs`, `RiskGuardAddOnTests.cs` —
+   `TestingStubs.cs` is unchanged), then compile via `nt_compile` or F5 and confirm zero errors.
+   The test build is net8.0 with stubs, NT8 is net48, and only NT8 proves the real build.
+   **Put backups outside `bin/Custom/`** — NT8 compiles that tree recursively and a backup folder
+   of `.cs` files causes duplicate-type errors.
+6. Run a full session in shadow **on a real-time feed**. Kinetick End Of Day gives no Level 1, so
+   the simulator cannot fill and no guard path will execute — a session on that feed proves
+   nothing. Then read `interventions.jsonl` and ask specifically: did `PEAK_GIVEBACK_BREACH` fire
+   on a profitable flat account (T3), and did any `COPY_BLOCKED_NO_GUARD` line name an account
+   that should have been allowed (T5)?
+7. **Fix P1-37 and reset `ShadowSessionsCompleted` to `0`** (addon stopped) before considering an
+   acting mode — the counter is currently inflated by restarts and the arming gate is not
+   trustworthy.
+8. Only then consider restoring an acting mode.
 
 **Roll back** by restoring the previous `.cs` files and recompiling; nothing here migrates state.
 Config is separate from code, so a mode change alone is instant and reversible.
+
+---
+
+## 4f. Deployment record — 2026-08-07, shadow
+
+Executed against a running NT8 (92 accounts, no open positions, no working orders).
+
+| Step | Result |
+|---|---|
+| Live config → `shadow` | Done. Backup `RiskGuard/config.json.bak_20260806_224830`. Verified **in memory**, not just on disk, via `GET /api/riskguard/config`. |
+| Stray `bin/Custom/AddOns/config.json` (`"Mode": "live"`) | Confirmed **dead** — nothing reads it; the addon uses `Globals.UserDataDir/RiskGuard/config.json`. Renamed `config.json.UNUSED_not_read_by_addon`. |
+| Rotate `interventions.jsonl` | Done → `interventions.jsonl.20260806_224904` (110 MB). Safe: written with `File.AppendAllLines`, never held open. |
+| Merge to `main` | **Deliberately deferred** until shadow validation. Fast-forward confirmed available (`main` is strictly behind, 0 divergent commits). |
+| Deploy sources | 4 files, not 5 — `TestingStubs.cs` is unchanged by the branch. Backup at `Documents/NinjaTrader 8/_riskguard_backups/_backup_20260806_224954`. |
+| `nt_compile` | **0 errors.** All warnings pre-existing and in unrelated files (`McpBridgeAddOn`, indicators); none in the three addons. |
+| Verify | `RiskGuard Add-On v1.1.0 initialized in shadow mode`, `mode: shadow`, `isArmed: false` on every event. |
+
+**Two traps in §4e above were wrong, and both wasted time. Corrected here:**
+
+- **"The deployed sources differ from canonical" was a false alarm.** The deployed files are
+  CRLF, the repo's are LF, so a plain `diff` reports every line as changed. Normalised with
+  `diff --strip-trailing-cr`, the deployed files were **byte-identical** to canonical at the
+  merge-base — there was no pre-existing drift at all. Always normalise line endings before
+  concluding anything from a diff against `bin/Custom/AddOns/`.
+- **Never put a backup directory inside `bin/Custom/`.** NT8 compiles that tree recursively, so
+  a folder of `.cs` backups produces duplicate-type errors. Caught before compiling; backups now
+  live in `Documents/NinjaTrader 8/_riskguard_backups/`.
+
+**What shadow could not prove.** The data connection is **Kinetick – End Of Day (Free)**: daily
+bars arrive (today's forming bar included) but every real-time quote is `0`, and the NT8
+simulator needs Level 1 to fill. A test market order on `Sim101` sat at `Submitted` and was
+ultimately **Rejected** without filling. RiskGuard did observe it — `ORDER_UPDATE` events for
+`Submitted` → `CancelPending` → `Rejected` — so event monitoring is live on the new build, but
+**no position was ever opened, so not one guard path executed.** The §4e acceptance criteria
+(`PEAK_GIVEBACK_BREACH` on a profitable flat account; a wrong `COPY_BLOCKED_NO_GUARD`) remain
+**unverified**. They need a session on a real-time feed. Do not read "deployed and green" as
+"validated".
+
+**Restart churn is expected, and it is not a fault.** The addon cycled `SHUTDOWN`/`INITIALIZE`
+roughly every 10 s for about four minutes (24 lifecycle events) and then went quiet. It was
+`nt_compile` and `nt_script_execute` recompiling NinjaScript — each recompile reloads every
+AddOn. It settled by itself and the heartbeat has been steady since. Pre-deploy the addon
+initialised 3 times in 3 days, so if you see this cadence *without* having compiled, that is a
+real problem.
+
+That churn is what exposed **P1-37** — see the plan. `nt_script_execute` is also unreliable here
+(one `NT8 timeout`, one `ECONNRESET`); don't count on it for runtime probing. The bridge's
+`GET /api/riskguard/config` is the dependable way to read live in-memory state, using the token
+at `Documents/NinjaTrader 8/mcp_token.txt`.
+
+**How to tell the new code is actually loaded**, given `Version` is still `1.1.0` and so proves
+nothing: look for `MaxAutoStopAttempts` in the live config response. That field arrived with T2
+and does not exist at the merge-base.
 
 ---
 

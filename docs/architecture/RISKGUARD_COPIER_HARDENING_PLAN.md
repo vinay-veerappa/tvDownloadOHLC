@@ -6,12 +6,12 @@ P1–P3 not started. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_
 
 ## Defect inventory — the count of record
 
-**36 defects.** Numbered once, never renumbered, never reused.
+**37 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36` | 16 | open |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37` | 17 | open |
 | P2 — structural | `P2-24` … `P2-29` | 6 | open (`P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -312,6 +312,40 @@ action to the uncovered delta computed from one stop), so the defect is narrowed
 `RecognizedStopOrder` with a small list, and compute `CoveredQuantity` as the sum. This is the
 same computation the P3-30 reconciler needs, so build it once and share it.
 
+### P1-37. The `MinShadowSessions` arming gate counts addon restarts, not sessions
+*(found during the Phase A shadow deployment, 2026-08-07 — observed live, then confirmed in code)*
+**Where**: `RiskGuardAddOn.cs:1510` (the increment) against `RiskGuardAddOn.cs:211` (the date
+marker) and `RiskGuardAddOn.cs:609` (the rehydrate).
+**What happens**: the counter `_shadowSessionsCompleted` **is** persisted and rehydrated across
+restarts, but the date marker that debounces it, `_lastShadowSessionDate`, is **not** — it is a
+plain field initialised to `DateTime.MinValue.Date` on every construction, and there is no
+`LastShadowSessionDate` key in `PersistedStateData`. So the guard `_lastShadowSessionDate !=
+currentSessionDate` is true after *every* addon reload, and the counter increments again on the
+same calendar day.
+
+This is not theoretical. During the Phase A deployment the addon reloaded repeatedly (ordinary
+NinjaScript recompile churn from `nt_compile` and `nt_script_execute`), and
+`ShadowSessionsCompleted` went **0 → 3 in about four minutes**, on a single day, with no market
+data connected and not one position taken. `MinShadowSessions=3` was satisfied outright. The
+FR-29 soft gate at `RiskGuardAddOn.cs:2454-2460` — the check that is supposed to stand between
+shadow mode and live arming — will now pass on this machine.
+
+Severity is P1 rather than P0 because it cannot itself place or miss an order; it removes a
+safety interlock. Note the asymmetry with FR-30/31 directly above it at line 604: that code is
+careful never to rehydrate `_isArmed`, precisely so a restart cannot silently re-arm. The same
+reasoning was not applied to the gate that authorises arming.
+
+**Fix**: persist `_lastShadowSessionDate` in `PersistedStateData` alongside
+`ShadowSessionsCompleted` and rehydrate it in the same block, so the pair moves together. A
+restart then re-reads today's date and does not re-count. Consider also requiring a session to
+have *seen activity* before it counts at all — a shadow day with no connected feed teaches
+nothing, and counting it is the same error in a milder form.
+**Test**: two constructions on the same simulated date increment the counter exactly once;
+constructions on two different dates increment it twice.
+**Operational note**: the live `state.json` on this machine currently reads
+`ShadowSessionsCompleted = 3` and that value is *not* trustworthy. Reset it to `0` before any
+live arming, while the addon is stopped (it rewrites the file on flush).
+
 ---
 
 ## 3. P1 — Rule semantics
@@ -560,7 +594,7 @@ Two lessons paid for during P0 apply directly:
 |---|---|---|---|
 | **A. Deploy P0** | no new code | — | A full session in `shadow`; `interventions.jsonl` shows no `PEAK_GIVEBACK_BREACH` on a profitable flat account and no wrong `COPY_BLOCKED_NO_GUARD` |
 | **B. Foundation** | `expect_green` ✅, backfill T1–T3 tests, P2-28 | submit-failure rolls back and clears `GraceEmitted`; auto-stop sized from live qty; scaled-down position still gets a stop; stop cancelled mid-position re-arms; profitable-flat emits no giveback; flip does not carry `PeakOpenGain` | Every P0 behaviour has a test that fails when reverted |
-| **C. Copier gate integrity** | **P1-20** first | live-named account is NOT treated as simulated; unguarded live follower is refused | T5's fail-closed gate no longer keys off a name prefix |
+| **C. Gate integrity** | **P1-20** first, then **P1-37** | live-named account is NOT treated as simulated; unguarded live follower is refused; two restarts on one date count as one shadow session | T5's fail-closed gate no longer keys off a name prefix; `MinShadowSessions` cannot be satisfied by restarting |
 | **D. Concurrency** | P1-35 + P1-10 (one ticket), P1-11, P1-12, P1-13, P1-14, P1-15, P1-36 | no `Account.*` reachable under `lock (_stateLock)`; sweep does not cancel protective stops; coverage aggregates across two partial stops | Lock-scope gate clean; sweep off the dispatcher |
 | **E. Rule semantics** | P1-16, P1-17, P1-18, P1-19 | 3-partial loss counts as 1; eval target fed cumulative PnL; one trailing-DD implementation; instrument-scoped flatten leaves other instruments alone | Each rule has a test pinning its boundary |
 | **F. Copier fidelity** | P0-9 (real bracket replication), P1-21, P1-22, P1-23, P3-32 | follower brackets present on every copy; re-subscribe on late connect; symbol translation table-driven | Brackets on every copy; latency/slippage from real fills |
@@ -612,6 +646,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-15 | coverage gap | RiskGuardAddOn.cs:2231 | re-arm does not seed FSMs for open positions |
 | P1-35 | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
+| P1-37 | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counts addon restarts; 0→3 in 4 min during Phase A |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
 | P1-18 | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |
