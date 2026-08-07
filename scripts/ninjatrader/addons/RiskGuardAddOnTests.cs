@@ -137,6 +137,14 @@ namespace NinjaTrader.Cbi
         public static List<Account> All { get; set; } = new List<Account>();
         public bool SimulateExitRejection { get; set; }
 
+        // Broker rejection of the auto-stop at Submit time. This is the failure T2's
+        // rollback exists for: the FSM has already been moved to ProtectedPending
+        // (reserve-before-submit), so if the submit throws and nothing rolls it back,
+        // the position is unprotected while the FSM claims otherwise.
+        public bool SimulateSubmitFailure { get; set; }
+        // Counts Flatten calls so a test can prove the fail-closed fallback ran.
+        public int FlattenCallCount { get; private set; }
+
         public event EventHandler<PositionEventArgs> PositionUpdate;
         public event EventHandler<OrderEventArgs> OrderUpdate;
         public event EventHandler<ExecutionEventArgs> ExecutionUpdate;
@@ -165,6 +173,7 @@ namespace NinjaTrader.Cbi
 
         public void Flatten(Instrument[] instruments)
         {
+            FlattenCallCount++;
             Positions.Clear();
             Orders.Clear();
         }
@@ -190,6 +199,9 @@ namespace NinjaTrader.Cbi
 
         public void Submit(Order[] orders)
         {
+            if (SimulateSubmitFailure)
+                throw new Exception("Simulated broker rejection at Submit.");
+
             foreach (var o in orders)
             {
                 o.OrderState = OrderState.Submitted;
@@ -447,6 +459,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestFsm_PositionQuantityUpdatedOnQtyChange();
             TestPnLRulesNotDuplicatedInEvaluateRules();
             TestExecuteOrderUpdateProcessesActionsOutsideLock();
+
+            // -- PHASE B BACKFILL: acceptance tests for the T1/T2/T3 P0 fixes.
+            // Each verified to fail with its fix reverted; see the handover.
+            TestT2_AutoStopSizedFromLivePositionNotSnapshot();
+            TestT2_ScaledDownPositionStillGetsAStop();
+            TestT2_SubmitFailureRollsBackFsmAndClearsGraceEmitted();
+            TestT1_CancelledStopMidPositionReArmsGrace();
+            TestT3_ProfitableFlatAccountEmitsNoGiveback();
+            TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
 
             // -- COPIER GROUPS & STRESS TESTS --
             TestCopierGroup_GroupManagement();
@@ -3170,6 +3191,325 @@ namespace NinjaTrader.NinjaScript.AddOns
             var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
             Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
                 "Cancelled stop -> Unprotected (position still open)");
+        }
+
+        // =================================================================
+        // PHASE B BACKFILL - acceptance tests for T1/T2/T3.
+        //
+        // The nine P0 defects were closed on the strength of review plus a
+        // non-regressing suite. That proves the fixes broke nothing; it does
+        // not prove they work, and it would not notice if one were reverted.
+        // These six tests pin the behaviours directly, and each was checked
+        // to FAIL with its fix reverted -- an acceptance test nobody has seen
+        // fail is an assertion of faith, not a test.
+        // =================================================================
+
+        /// <summary>
+        /// Builds an account holding one live position, with a last-traded price
+        /// so ExecuteAction can price a stop instead of falling through to its
+        /// "no market data -> flatten" branch.
+        /// </summary>
+        private static Account AutoStopTestAccount(
+            Instrument instrument, MarketPosition side, int qty, double avgPrice, double lastPrice)
+        {
+            Account.All.Clear();
+            var a = new Account { Name = "TestAcc" };
+            instrument.MarketData.Last.Price = lastPrice;
+            a.Positions.Add(new Position
+            {
+                Instrument = instrument,
+                MarketPosition = side,
+                Quantity = qty,
+                AveragePrice = avgPrice
+            });
+            Account.All.Add(a);
+            return a;
+        }
+
+        private static GuardAction AutoStopAction(Account account, Instrument instrument, int snapshotQty)
+        {
+            return new GuardAction
+            {
+                AccountName = account.Name,
+                ActionType = GuardActionType.PlaceStopOrder,
+                Instrument = instrument.FullName,
+                InstrumentObj = instrument,
+                Quantity = snapshotQty,
+                RuleId = "MISSING_STOP_ATTACH"
+            };
+        }
+
+        // T2 / P0-2: the emitted action carries a quantity snapshot taken when grace
+        // expired. By the time it executes the trader may have scaled out. Sizing the
+        // stop from the snapshot over-covers and flips the position when it triggers.
+        private static void TestT2_AutoStopSizedFromLivePositionNotSnapshot()
+        {
+            Console.WriteLine("\n[TEST] T2: auto-stop is sized from the live position, not the action snapshot");
+            var config = FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop");
+            var mnq = new Instrument("MNQ");
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 2, 18000, 18000);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            // Snapshot says 5; the trader has since scaled down to 2.
+            addon.TestExecuteAction(AutoStopAction(account, mnq, snapshotQty: 5));
+
+            var stop = account.Orders.FirstOrDefault(o => o.Name == "RiskGuardAutoStop");
+            Assert(stop != null, "An auto-stop reached the broker");
+            Assert(stop != null && stop.Quantity == 2,
+                string.Format("Auto-stop sized {0} from the live position, not 5 from the stale snapshot "
+                            + "(a 5-lot stop on a 2-lot position reverses it on trigger)",
+                              stop == null ? -1 : stop.Quantity));
+            Assert(stop != null && stop.OrderAction == OrderAction.Sell,
+                "Auto-stop on a long position is a Sell");
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 2,
+                "Recorded coverage matches the live position, so the grace path sees full cover");
+        }
+
+        // T2 / settled decision: ValidateInvariant must NOT reject a PlaceStopOrder
+        // whose snapshot quantity exceeds the live position. Rejecting it looks like a
+        // safety check and is the opposite -- the action is dropped and the position is
+        // left permanently naked. ExecuteAction re-sizes from the live position instead.
+        private static void TestT2_ScaledDownPositionStillGetsAStop()
+        {
+            Console.WriteLine("\n[TEST] T2: a scaled-down position is still admitted for protection");
+            var config = FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop");
+            var mnq = new Instrument("MNQ");
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 2, 18000, 18000);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            Assert(addon.TestValidateInvariant(AutoStopAction(account, mnq, snapshotQty: 5)),
+                "Snapshot qty 5 > live qty 2 is ADMITTED - dropping it would leave the position naked");
+            Assert(addon.TestValidateInvariant(AutoStopAction(account, mnq, snapshotQty: 1)),
+                "Snapshot qty below the live position is admitted too (partial cover beats none)");
+
+            // The invariant must still have teeth: these are genuinely unsafe and must be refused.
+            var noInstrument = AutoStopAction(account, mnq, snapshotQty: 2);
+            noInstrument.InstrumentObj = null;
+            Assert(!addon.TestValidateInvariant(noInstrument),
+                "An action with no instrument is still refused");
+
+            var zeroQty = AutoStopAction(account, mnq, snapshotQty: 0);
+            Assert(!addon.TestValidateInvariant(zeroQty),
+                "A zero-quantity action is still refused");
+
+            account.Positions.Clear();
+            Assert(!addon.TestValidateInvariant(AutoStopAction(account, mnq, snapshotQty: 2)),
+                "A stop against a flat position is still refused (it would open new risk, not reduce it)");
+        }
+
+        // T2 / P0-3: reserve-before-submit moves the FSM to ProtectedPending BEFORE the
+        // broker call. If Submit then throws and nothing rolls that back, the FSM claims
+        // protection that does not exist and the GraceEmitted latch suppresses every
+        // future attempt -- the position stays naked for the life of the trade.
+        private static void TestT2_SubmitFailureRollsBackFsmAndClearsGraceEmitted()
+        {
+            Console.WriteLine("\n[TEST] T2: a failed auto-stop submit rolls the FSM back and clears the grace latch");
+            var config = FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop");
+            var mnq = new Instrument("MNQ");
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 2, 18000, 18000);
+            account.SimulateSubmitFailure = true;
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            // State as it stands after grace expiry emitted the action.
+            var armed = addon.TestGetFsm(account.Name, mnq.FullName);
+            armed.GraceEmitted = true;
+
+            bool threw = false;
+            try
+            {
+                addon.TestExecuteAction(AutoStopAction(account, mnq, snapshotQty: 2));
+            }
+            catch (Exception)
+            {
+                threw = true;
+            }
+
+            Assert(threw, "The submit failure propagates rather than being swallowed");
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
+                string.Format("FSM rolled back to Unprotected (was {0}) - reserve-before-submit had moved it to ProtectedPending",
+                              fsm == null ? "<null>" : fsm.State.ToString()));
+            Assert(fsm != null && !fsm.GraceEmitted,
+                "GraceEmitted cleared, so grace can re-arm; left set, the latch silently blocks every retry");
+            Assert(fsm != null && fsm.AutoStopOrder == null && fsm.RecognizedStopOrder == null,
+                "No reference kept to a stop that never reached the broker");
+            Assert(fsm != null && fsm.CoveredQuantity == 0,
+                "No phantom coverage recorded, so the position reads as fully uncovered");
+        }
+
+        // T1+T2 / P0-1: the trader cancels the protective stop mid-position. The FSM must
+        // return to Unprotected AND clear the anti-duplicate latch, or grace never fires
+        // again and the position runs naked to the close.
+        private static void TestT1_CancelledStopMidPositionReArmsGrace()
+        {
+            Console.WriteLine("\n[TEST] T1: a stop cancelled mid-position re-arms grace and is replaced");
+            var config = FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop");
+            var mnq = new Instrument("MNQ");
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 2, 18000, 18000);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.TestClearFsms();
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            // Drive grace expiry deterministically rather than waiting on the timer.
+            var fsm0 = addon.TestGetFsm(account.Name, mnq.FullName);
+            fsm0.GraceDeadline = DateTime.UtcNow.AddSeconds(-1);
+
+            var first = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            var firstAction = first.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
+            Assert(firstAction != null, "Grace expiry emits the auto-stop action");
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName).GraceEmitted,
+                "Anti-duplicate latch is set once the action has been emitted");
+
+            addon.TestExecuteAction(firstAction);
+            var stop = account.Orders.FirstOrDefault(o => o.Name == "RiskGuardAutoStop");
+            Assert(stop != null, "Auto-stop reached the broker and is the recognised stop");
+
+            // The trader cancels it by hand while the position is still open.
+            stop.OrderState = OrderState.Cancelled;
+            addon.TestFsmOnOrder(account, mnq.FullName, stop);
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
+                "Cancelled stop returns the FSM to Unprotected");
+            Assert(fsm != null && fsm.CoveredQuantity == 0,
+                "Coverage drops to zero when the only stop is cancelled");
+            Assert(fsm != null && !fsm.GraceEmitted,
+                "The grace latch is cleared - this is the bit that lets protection be re-attempted at all");
+
+            fsm.GraceDeadline = DateTime.UtcNow.AddSeconds(-1);
+            var second = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(second.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
+                "Grace genuinely re-armed: a fresh auto-stop is emitted for the now-naked position");
+        }
+
+        /// <summary>
+        /// Swaps in a peak-giveback config and returns the previous one so the shared
+        /// PropFirmProtectionSuite singleton is left as it was found.
+        /// </summary>
+        private static PropFirmProtectionConfig UsePeakGivebackConfig(double maxGivebackPct)
+        {
+            var previous = PropFirmProtectionSuite.Instance.Config;
+            PropFirmProtectionSuite.Instance.UpdateConfig(new PropFirmProtectionConfig
+            {
+                EnablePeakEquityProtection = true,
+                MaxPeakGivebackPct = maxGivebackPct
+            });
+            return previous;
+        }
+
+        // T3 / P0-5: the peak fed to the giveback rule must be unrealized-only. Fed a
+        // total-equity peak, a flat account that banked a profitable session reads as
+        // having given back 100% of its peak, and the rule tries to flatten a position
+        // that no longer exists -- on every single evaluation.
+        private static void TestT3_ProfitableFlatAccountEmitsNoGiveback()
+        {
+            Console.WriteLine("\n[TEST] T3: a flat, profitable account emits no peak-giveback breach");
+            var previous = UsePeakGivebackConfig(0.30);
+            try
+            {
+                var config = new RiskConfig();
+                var account = new Account { Name = "TestAcc" };
+                var addon = new RiskGuardAddOn();
+                addon.SetConfigForTest(config);
+
+                var state = new AccountState("TestAcc");
+                var mnq = new Instrument("MNQ");
+
+                // Open and in profit: the peak tracks unrealized gain.
+                state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 1000.0, config);
+                state.RealizedPnL = 0.0;
+                state.UnrealizedPnL = 1000.0;
+                addon.EvaluatePnLRules(account, state);
+                Assert(state.PeakOpenGain == 1000.0,
+                    string.Format("Peak tracks unrealized gain while open (got {0})", state.PeakOpenGain));
+
+                // Close at a profit: 1000 moves from unrealized to realized.
+                state.UpdatePosition(account, mnq, MarketPosition.Flat, 0, 0.0, 0.0, config);
+                state.RealizedPnL = 1000.0;
+                state.UnrealizedPnL = 0.0;
+                var actions = addon.EvaluatePnLRules(account, state);
+
+                Assert(state.PeakOpenGain == 0.0,
+                    string.Format("Peak resets to zero when the account is flat (got {0})", state.PeakOpenGain));
+                Assert(!actions.Any(a => a.RuleId == "PEAK_GIVEBACK_BREACH"),
+                    "No PEAK_GIVEBACK_BREACH on a flat account that simply banked its profit");
+                Assert(!state.PeakGivebackTriggered,
+                    "The giveback latch is not left set by a profitable close");
+
+                // The flat reset lives in two places -- UpdatePosition and EvaluatePnLRules --
+                // so the assertions above pass even if the rule-evaluation one is removed.
+                // Plant a stale peak directly to pin that second site on its own; without it a
+                // peak surviving from any path is measured against a flat account's zero
+                // unrealized PnL, which is a 100% giveback on every evaluation.
+                state.PeakOpenGain = 750.0;
+                state.PeakGivebackTriggered = false;
+                state.PeakGivebackLastTriggerUnrealized = double.NaN;
+                var staleActions = addon.EvaluatePnLRules(account, state);
+                Assert(state.PeakOpenGain == 0.0,
+                    string.Format("EvaluatePnLRules itself clears a stale peak on a flat account (got {0})",
+                                  state.PeakOpenGain));
+                Assert(!staleActions.Any(a => a.RuleId == "PEAK_GIVEBACK_BREACH"),
+                    "A stale peak on a flat account still produces no breach");
+            }
+            finally
+            {
+                PropFirmProtectionSuite.Instance.UpdateConfig(previous);
+            }
+        }
+
+        // T3 / P0-5: NinjaTrader collapses a close+reverse into a single position update.
+        // If the peak is not reset on the flip, the brand-new opposite leg is measured
+        // against the peak of the leg that just closed and is flattened immediately.
+        private static void TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg()
+        {
+            Console.WriteLine("\n[TEST] T3: a close+reverse flip does not carry the old leg's peak");
+            var previous = UsePeakGivebackConfig(0.30);
+            try
+            {
+                var config = new RiskConfig();
+                var account = new Account { Name = "TestAcc" };
+                var addon = new RiskGuardAddOn();
+                addon.SetConfigForTest(config);
+
+                var state = new AccountState("TestAcc");
+                var mnq = new Instrument("MNQ");
+
+                state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 1000.0, config);
+                state.UnrealizedPnL = 1000.0;
+                addon.EvaluatePnLRules(account, state);
+                Assert(state.PeakOpenGain == 1000.0, "The long leg establishes a peak of 1000");
+
+                // Long 2 -> Short 2 in one update: a flip.
+                state.UpdatePosition(account, mnq, MarketPosition.Short, 2, 18010, 0.0, config);
+
+                Assert(state.PeakOpenGain == 0.0,
+                    string.Format("Flip resets the peak (got {0}) - the new leg has its own episode",
+                                  state.PeakOpenGain));
+                Assert(!state.PeakGivebackTriggered, "Flip clears the giveback latch");
+
+                state.UnrealizedPnL = 0.0;
+                var actions = addon.EvaluatePnLRules(account, state);
+                Assert(!actions.Any(a => a.RuleId == "PEAK_GIVEBACK_BREACH"),
+                    "The fresh short leg is not flattened for the closed long leg's giveback");
+            }
+            finally
+            {
+                PropFirmProtectionSuite.Instance.UpdateConfig(previous);
+            }
         }
 
         // 15. Grace expiry with OnMissing=Flatten emits MISSING_STOP_FLATTEN.

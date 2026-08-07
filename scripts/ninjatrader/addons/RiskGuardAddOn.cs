@@ -396,6 +396,24 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             lock (_stateLock) { _guardFsms.Clear(); _pendingStops.Clear(); }
         }
+
+        // ExecuteAction and ValidateInvariant are the two halves of the auto-stop
+        // path that T2 rewrote (reserve-before-submit, rollback, live-position
+        // sizing). Both are private, so before these seams existed the only
+        // coverage they could have was indirect. Exposed read-through only -- the
+        // seams add no behaviour of their own, so a test that passes through them
+        // is testing production code, not a test-only variant of it.
+        internal void TestExecuteAction(GuardAction action)
+        {
+            ExecuteAction(action);
+        }
+
+        internal bool TestValidateInvariant(GuardAction action)
+        {
+            // Production reaches ValidateInvariant from ProcessAction, which already
+            // holds _stateLock; match that so the _guardFsms read is not racy.
+            lock (_stateLock) { return ValidateInvariant(action); }
+        }
 #endif
 
         public void ResetStateForDev()
