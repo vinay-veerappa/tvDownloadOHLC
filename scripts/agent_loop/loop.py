@@ -196,11 +196,8 @@ def review_panel(
     art: Path,
     rnd: int,
     deadline_secs: int = 1800,
-    # Generous because reviewers may be reasoning models, which bill their
-    # chain of thought against this budget. deepseek-v4-pro spends ~10k tokens
-    # on a T2-sized review, ~40k chars of it thinking; at 8k it returned empty
-    # content and looked like a dead model.
     max_tokens: int = 24000,
+    think: Optional[bool] = False,
 ) -> PanelResult:
     """Run reviewers concurrently. Different families miss different things, so
     a panel finds strictly more than any single reviewer. The verdict is the
@@ -209,6 +206,13 @@ def review_panel(
 
     If any reviewer is unreachable the panel is INVALID -- the round cannot be
     decided and must be retried rather than counted as a rejection.
+
+    Thinking is OFF by default. The reviewer's output contract is a structured
+    verdict plus findings, so chain-of-thought is spent and then discarded --
+    and on a reasoning model it crowds out the answer entirely. Measured on a
+    T2-sized review with deepseek-v4-pro: thinking on took 159s, burned the
+    full 24k-token budget on 90k chars of reasoning and returned NO verdict;
+    thinking off took 21s, 2.7k tokens, and returned ten findings.
     """
 
     def one(model: str) -> Vote:
@@ -218,6 +222,7 @@ def review_panel(
                 model,
                 [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
+                think=think,
             )
         except ProviderError as exc:
             return Vote(model, UNREACHABLE, secs=round(time.time() - t0, 1), error=str(exc))
@@ -347,7 +352,10 @@ def run_ticket(
                 print(f"  round {rnd}: resumed from {Path(resume_raw).name}")
             else:
                 try:
-                    out = chat(implementer, history, max_tokens=32000)
+                    # Implementer keeps thinking (it is planning a patch, not
+                    # filling a template) but needs headroom: kimi spent 104k
+                    # chars reasoning and still emitted 27.9k output tokens.
+                    out = chat(implementer, history, max_tokens=48000)
                 except ProviderError as exc:
                     print(f"  round {rnd}: implementer unreachable -- {exc}")
                     result["rounds"].append(RoundRecord(rnd, "implement", False, str(exc)).__dict__)

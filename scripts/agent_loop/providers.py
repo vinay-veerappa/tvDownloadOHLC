@@ -129,7 +129,7 @@ def _ollama_host() -> str:
     return host
 
 
-def _call_ollama(model, messages, temperature, max_tokens, timeout, num_ctx):
+def _call_ollama(model, messages, temperature, max_tokens, timeout, num_ctx, think=None):
     payload = {
         "model": model,
         "messages": messages,
@@ -138,6 +138,13 @@ def _call_ollama(model, messages, temperature, max_tokens, timeout, num_ctx):
         # and the budget was whatever the server defaulted to.
         "options": {"temperature": temperature, "num_ctx": num_ctx, "num_predict": max_tokens},
     }
+    # think=False disables chain-of-thought on reasoning models. Worth doing
+    # wherever the caller wants a structured answer rather than deliberation:
+    # on a T2-sized review deepseek-v4-pro spends ~90k chars thinking and then
+    # has no budget left to answer, versus 21s and a full set of findings with
+    # thinking off. `think="low"` is not honoured -- it reasons at full length.
+    if think is not None:
+        payload["think"] = think
     data = _post(
         f"{_ollama_host()}/api/chat", payload, {"Content-Type": "application/json"}, timeout
     )
@@ -169,7 +176,7 @@ def _call_ollama(model, messages, temperature, max_tokens, timeout, num_ctx):
     )
 
 
-def _call_anthropic(model, messages, temperature, max_tokens, timeout, num_ctx):
+def _call_anthropic(model, messages, temperature, max_tokens, timeout, num_ctx, think=None):
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise ProviderError(
@@ -215,7 +222,7 @@ def _call_anthropic(model, messages, temperature, max_tokens, timeout, num_ctx):
     )
 
 
-def _call_openai(model, messages, temperature, max_tokens, timeout, num_ctx):
+def _call_openai(model, messages, temperature, max_tokens, timeout, num_ctx, think=None):
     base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     key = os.getenv("OPENAI_API_KEY", "")
     payload = {
@@ -251,6 +258,7 @@ def chat(
     timeout: int = 900,
     num_ctx: int = 32768,
     max_retries: int = 3,
+    think: Optional[bool] = None,
 ) -> Completion:
     """Single completion, retried on transport failure with jittered backoff.
 
@@ -264,7 +272,7 @@ def chat(
     t0 = time.time()
     for attempt in range(max_retries):
         try:
-            out = fn(model, messages, temperature, max_tokens, timeout, num_ctx)
+            out = fn(model, messages, temperature, max_tokens, timeout, num_ctx, think)
             out.secs = round(time.time() - t0, 1)
             return out
         except ProviderError:
