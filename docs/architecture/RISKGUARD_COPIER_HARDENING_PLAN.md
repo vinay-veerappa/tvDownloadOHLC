@@ -15,9 +15,9 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` | 10 | `P0-1`…`P0-9` closed (`P0-9`'s bracket half open); **`P0-48` closed and verified live** |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 19 closed — `P1-12`, `P1-13`, `P1-14`, `P1-36` remain |
-| P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | open (`P2-28`, `P2-46` closed; `P2-27` half-done) |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` | 10 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned 2026-08-07 session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | **23 closed** — `P1-12`, `P1-14`, `P1-36` closed 2026-08-07 (session 8); `P1-13`'s fail-open half closed, its threading half open |
+| P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | `P2-28`, `P2-46`, **`P2-38`, `P2-41`** closed; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
 > **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
@@ -353,7 +353,7 @@ flatten, (c) cancel the remainder after confirming flat. Reuse `RiskGuardOrderUt
 and `IsProtectiveSide`. Add an attempt counter with escalation to a loud alert after N cycles
 instead of silent infinite retry (REAPER's `_reaperFlattenInFlight` + grace pattern).
 
-### P1-12. Blocking file I/O under the global lock
+### P1-12. Blocking file I/O under the global lock — CLOSED 2026-08-07
 **Where**: heartbeat `File.WriteAllText` (`1342`), log `File.AppendAllLines` (`1351`),
 `SavePersistedState()` (`1395`) — all inside `lock (_stateLock)`; plus
 `SavePersistedState()` called **synchronously on every position change** at `865`.
@@ -363,7 +363,26 @@ the sweep — line 865 bypasses it.
 **Fix**: replace line 865 with `_stateDirty = true`. Move all file writes outside the lock;
 consider a dedicated writer thread draining `_logQueue`.
 
-### P1-13. Guard evaluation runs on the WPF dispatcher
+**Fixed 2026-08-07 (session 8).** `SavePersistedState` was split into `CapturePersistedState`
+(builds the payload under the lock, no I/O) and `WritePersistedState` (serialise + write, lock
+released) — the old method took the lock *itself*, so no caller could opt out. The sweep captures
+its heartbeat stamp, log batch and state payload under the lock and writes all three in a
+`finally` at the bottom, **after** the broker work: nothing about a heartbeat file is worth
+delaying a flatten for, and a `finally` means log lines already drained out of the queue are not
+lost if a rule throws. The position-change site sets `_stateDirty`. `ToggleArmed` and
+`UnlockAccount` capture inside, write outside — neither was a latency problem alone, but both had
+to move before the invariant could be enforced for anyone, because `_stateLock` is re-entrant.
+
+Machine-checked by `FileWriteObserver` + `TestIsStateLockHeld()`, the same probe `P1-10` got. A
+second test pins the batching itself, because a "fix" that merely deleted the write would pass the
+lock-scope check while silently dropping persistence.
+
+> **Scoped out deliberately**: `SaveAndReloadConfig`/`LoadConfig` still do their I/O under the
+> lock. The write-then-read-back has to stay atomic with the `_config` swap, so moving it is a
+> separate change with its own failure mode, and it is a rare user-initiated path rather than an
+> event path.
+
+### P1-13. Guard evaluation runs on the WPF dispatcher — HALF CLOSED 2026-08-07
 **Where**: `OnSafetySweep:1317-1323`, `UpdateFsmOnPosition:1599-1604`, `SeedFsms…:501-507`
 **Why it matters**: safety-critical latency is coupled to UI responsiveness. V12 does the
 inverse — REAPER audits on a background thread and marshals *only* the order-submitting calls to
@@ -372,7 +391,28 @@ the strategy thread via `TriggerCustomEvent`.
 dispatcher. This also removes the "no dispatcher → silently return" failure mode at `1318`,
 where the entire sweep is skipped if `Application.Current` is null.
 
-### P1-14. `_pendingStops` is single-slot, unbounded in lifetime, and side-blind
+**The fail-open half is CLOSED (2026-08-07, session 8), and it was the worse half.** Five handlers
+plus the entire sweep opened with `if (dispatcher == null) return;`, so with `Application.Current`
+null — early startup, or a headless NT8 — the guard received every position, order, execution and
+account-item event and **discarded all of them**: no FSM, no grace timer, no rule evaluation, no
+heartbeat, no session reset, no lockout enforcement, no watchdog, no log line, and
+`/api/riskguard/version` still reporting armed and guarding. All six now route through one
+`RunGuardWork` seam that runs the work **inline** when there is no dispatcher.
+`OnGraceTimerCallback` already had exactly that fallback and was the only one of the six that did.
+
+Asserted against source text, because the branch lives under `#if !TESTING` and cannot be executed
+by the suite at all — the `P1-47` shape. Comments are stripped first so the seam can quote the
+defective pattern in its own documentation.
+
+**STILL OPEN — the threading inversion.** Evaluating on the caller's thread and marshalling only
+broker calls is the latency fix. The evidence says it is safe (the copier has been submitting real
+follower orders straight off NT8's account-event thread, with no marshalling, in production). But
+it turns six handlers the dispatcher was implicitly serialising into genuinely concurrent ones, and
+**the S-series does not cover that**: `S4` is lock-scope, `S7` is copier fan-out, and
+`S5`/`S6`/`S8`/`S9` are sequential scenario tests. A genuine concurrent-guard-event stress test is
+a prerequisite, not an optional extra.
+
+### P1-14. `_pendingStops` is single-slot, unbounded in lifetime, and side-blind — CLOSED 2026-08-07
 **Where**: `UpdateFsmOnOrder:1651-1658`, consumed at `UpdateFsmOnPosition:1577-1587`
 - `_pendingStops[key] = order` keeps **one** order per (account, instrument) — a bracket with
   multiple stop legs, or a second stop arriving first, overwrites the first.
@@ -383,6 +423,23 @@ where the entire sweep is skipped if `Application.Current` is null.
   breakout entry, exactly what V12's OR mode submits) is buffered as a candidate protective stop.
 **Fix**: `Dictionary<string, List<Order>>` with a TTL (e.g. `StopAttachSeconds × 2`), swept in the
 watchdog; classify by side on consumption only, and require `order.Quantity <= positionQuantity`.
+
+**Fixed 2026-08-07 (session 8)**, exactly as prescribed. `List<BufferedStop>` with a UTC stamp;
+re-buffering the same `Order` object refreshes the stamp rather than duplicating (NT8 raises
+`OrderUpdate` repeatedly for one order). Expired in the watchdog after **two** grace periods, not
+one — one grace period is the longest a legitimate stop can lag its position event and still be the
+thing protecting it, so expiring at one would break the race the buffer exists for. The test
+asserts both edges. Terminal orders are dropped at any age.
+
+The side-blind half is the one with teeth: a 10-lot sell-stop **breakout entry** buffered while
+flat, followed by a 1-lot long opened by hand, produced `State = Protected` with
+`CoveredQuantity = 10` on a 1-lot position — grace cancelled, auto-stop suppressed, and the account
+left **9 lots short** if that order ever triggered. A sell-stop entry passes the side test by pure
+coincidence. Consumption now also requires `Quantity <= positionQuantity`.
+
+> Not changed: the live (non-buffered) recognition path still accepts an oversized stop as full
+> coverage. That is the trader's own working order against a live position rather than an unrelated
+> resting one.
 
 ### P1-15. Re-arming does not seed FSMs for open positions — CLOSED 2026-08-07
 **Where**: `ToggleArmed:2231-2249`; `SeedFsmsForExistingPositions` is only called from
@@ -407,7 +464,7 @@ independent site on the hot event path.
 pending-cancel list and drain it in `ExecutePositionUpdateDetails` after the lock is released,
 alongside the existing `ProcessAction` loop. Do not add a separate drain mechanism.
 
-### P1-36. Coverage tracking follows a single stop order, so two partial stops read as under-covered
+### P1-36. Coverage tracking follows a single stop order, so two partial stops read as under-covered — CLOSED 2026-08-07
 *(found during T1 review, 2026-08-06)*
 **Where**: `PositionGuardFsm.RecognizedStopOrder` / the new `CoveredQuantity` (T1)
 **What happens**: the FSM tracks exactly one protective stop. A trader covering a 6-lot position
@@ -419,6 +476,28 @@ action to the uncovered delta computed from one stop), so the defect is narrowed
 `(account, instrument)` pair rather than tracking a single `Order` reference — i.e. replace
 `RecognizedStopOrder` with a small list, and compute `CoveredQuantity` as the sum. This is the
 same computation the P3-30 reconciler needs, so build it once and share it.
+
+**Fixed 2026-08-07 (session 8).** `CoveredQuantity` and `RecognizedStopOrder` are now **derived**
+from a list on the FSM and are **read-only**. That is deliberate: the old pair had to be assigned
+together at nine separate sites and nothing stopped them drifting apart. Making them read-only
+turned "find every writer" into a compile error — which is how the second half below was found.
+`AddRecognizedStop` is idempotent by object reference; reads prune terminal orders first; losing
+one leg of two drops that leg and re-arms grace for the delta only; seeding no longer `break`s on
+the first stop it finds.
+
+> **The defect lived in a second place, and closing only the first would have changed nothing.**
+> `ExecuteAction` re-sized the auto-stop from the **live position**, ignoring existing cover. T2
+> established that sizing must come from the live position rather than the emission snapshot and
+> that is still right — but "the live position" is the wrong figure when the trader already has
+> stops working. `EvaluateGraceExpiry` sized its *action* to the uncovered delta and
+> `ExecuteAction` re-sized it back up to the full position, undoing it. Now
+> `liveQuantity - alreadyCovered`. When that delta is `<= 0` the action aborts **and clears
+> `GraceEmitted`** — dropping an action without clearing it is the T1/T2 trap that leaves a
+> position permanently naked.
+
+**The settled decision was retired in both places** (handover §5 and
+`scripts/agent_loop/profiles.py`), per the rule in §5: left standing it would instruct the review
+panel to approve reintroducing this.
 
 ### P1-37. The `MinShadowSessions` arming gate counts addon restarts, not sessions — CLOSED 2026-08-07
 *(found during the Phase A shadow deployment, 2026-08-07 — observed live, then confirmed in code)*
@@ -1168,7 +1247,7 @@ explicit deploy step is the feature.
 Use `--verify --only addons` to check drift and `--only addons` to deploy. Never copy by hand
 (this session did, and it is what left canonical two files ahead of deployed).
 
-### P2-38. The strategy-deploy guard has P1-20's name-prefix hole too
+### P2-38. The strategy-deploy guard has P1-20's name-prefix hole too — CLOSED 2026-08-07
 *(found while fixing P1-20, 2026-08-07)*
 **Where**: `McpBridgeAddOn.cs:1710`, `:2243`, `:2307` —
 `account.Name.StartsWith("Sim") || account.Provider.ToString().Contains("imulat")`.
@@ -1181,7 +1260,14 @@ without `confirmLive=true`. Same root cause as P1-20, different file and differe
 **Test**: an account named `SimpsonFund` on a live provider is refused without `confirmLive`.
 P2 rather than P1 because it requires an explicit deploy call to reach, not an automatic path.
 
-### P2-41. `POST /api/riskguard/config` overwrites the whole config with defaults
+**Fixed 2026-08-07 (session 8) — and there were FOUR sites, not three.** The fourth
+(`McpBridgeAddOn.cs:3992`, an order-placement path) used the name prefix **alone**, with no
+provider test at all to fall back on. All four now call `TradeCopierEngine.IsSimulationAccount`.
+Checked partly against source text: `McpBridgeAddOn.cs` is excluded from the test build by
+construction, so its gates cannot be executed by the suite. The behavioural half — that the shared
+classifier gets `SimpsonFund` right — is executed properly.
+
+### P2-41. `POST /api/riskguard/config` overwrites the whole config with defaults — CLOSED 2026-08-07, verified live
 *(split out of P1-39 on 2026-08-07 — the append half is closed, this half is not)*
 **Where**: `McpBridgeAddOn.cs:5126` — `req.ToObject<RiskConfig>()`, then
 `SaveAndReloadConfig(cfg)`.
@@ -1201,6 +1287,24 @@ resulting live config rather than the request.
 **Test**: POST `{"ExcludedAccounts":["X"]}` against a config with `MinShadowSessions=3` and
 `Mode="shadow"`; assert both survive and only `ExcludedAccounts` changed.
 P2 rather than P1 because reaching it requires an explicit API call, not an automatic path.
+
+**Fixed 2026-08-07 (session 8).** The incoming `JObject` is merged onto the live config
+(`RiskConfigMerge`), with arrays **replaced** rather than concatenated — union semantics would make
+`ExcludedAccounts` append-only with no way to remove an entry through the API, and concatenation is
+the exact mechanism behind `P1-39`. The response now echoes the **resulting** live config as
+`config` and the request as `requested`; the old reply looked identical whether the merge happened
+or not.
+
+The merge lives in `RiskGuardAddOn.cs`, not the bridge, because the bridge is excluded from the
+test build — it is pure JSON manipulation with nothing NinjaTrader about it, and putting it there
+is what makes it testable at all.
+
+> **Verified live, by accident, immediately after deploying.** `nt_riskguard_config` with no
+> arguments POSTs an **empty body**. Under the old code that single call would have flattened the
+> live risk configuration to defaults: `Mode` shadow, `MinShadowSessions` 0, `EnableWindowGate`
+> false, all six `WindowsET` gone, all four `FirmProfiles` gone. The post-fix response returned
+> `"requested": {}` alongside the complete, unchanged live config. **The MCP tool most likely to be
+> reached for as a read was itself a destructive write.**
 
 ### P2-29. Single-file size / complexity
 `RiskGuardAddOn.cs` is 4,108 lines including a ~700-line WPF window (`RiskGuardWindow`,
@@ -1410,11 +1514,11 @@ as the paths driven through it. Stress tests exist to drive the paths nobody tho
 | S2 ✅ | **Burst whose tripping order is a protective stop** | the stop stays working; only risk-increasing orders are cancelled | `P1-44` |
 | S3 ✅ | **Flood lockout lifetime** | the lockout lapses after its configured duration and is not resurrected by a restart | `P1-45` |
 | S4 ✅ | **Lock-scope sweep over every entry point** — drive `ExecuteOrderUpdate`, `ExecuteAccountItemUpdate`, position updates, grace expiry, watchdog and the sweep with the broker observer armed | **zero** broker calls while `TestIsStateLockHeld()` is true, on every path, not a hand-picked two | `P1-43` |
-| S5 | **Partial-fill storm** — one trade exited in many small fills, both event orderings | exactly one consecutive-loss judgement; late fills revise rather than accumulate | `P1-16` |
-| S6 | **Rapid flip loop** — long↔short repeatedly | FSM coverage never outlives its position; no stale `CoveredQuantity`; grace re-arms each leg | `P1-36`, T1 |
+| S5 ✅ | **Partial-fill storm** — one trade exited in many small fills, both event orderings | exactly one consecutive-loss judgement; late fills revise rather than accumulate | `P1-16` |
+| S6 ✅ | **Rapid flip loop** — long↔short repeatedly | FSM coverage never outlives its position; no stale `CoveredQuantity`; grace re-arms each leg | `P1-36`, T1 |
 | S7 ✅ | **Copier fan-out under burst** — one leader, many followers, rapid entries and exits | no duplicate copies, no follower left inverted, sizing correct under concurrency | `P0-5`, `P0-6`, `P1-22` |
-| S8 | **Config reload while armed and in position** | live reload does not drop FSMs, coverage or lockouts, and does not corrupt the config | `P1-39` |
-| S9 | **Restart mid-trade** — kill and reload with a position open | seeded FSM matches the broker; no double-count of trades or losses; lockouts survive | `P1-15`, `P1-16` limit |
+| S8 ✅ | **Config reload while armed and in position** | live reload does not drop FSMs, coverage or lockouts, and does not corrupt the config | `P1-39` |
+| S9 ✅ | **Restart mid-trade** — kill and reload with a position open | seeded FSM matches the broker; no double-count of trades or losses; lockouts survive | `P1-15`, `P1-16` limit |
 
 > **S1–S4 landed 2026-08-07** as `TestStress_S1toS4_OrderFloodGovernor`, and immediately caught
 > all four defects (461 passed / 4 failed at baseline, 465 / 0 after). S4 currently drives

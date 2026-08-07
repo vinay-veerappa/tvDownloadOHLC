@@ -1,34 +1,40 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 7 — closed clean; NT8 up, deployed, armed · **merged and pushed**, see §0.0)
-**Branch**: `harden/riskguard-copier-p0` — **merged into `main` and pushed**; `origin/main` at `aaecbe8b`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 33 closed + `P0-9`'s naked-follower half
-**Live state**: deployed, `shadow`, **armed and guarding**. NT8 compiles clean (0 errors).
-Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11**.
+**Last updated**: 2026-08-07 (session 8 — the P1 band closes; NT8 up, deployed, compiled clean)
+**Branch**: `harden/riskguard-copier-p0` (session-8 work committed here, **not yet merged or pushed**)
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, **36 closed, 12 open** (`P0-9` and `P1-13` are part-closed and counted as open; the other ten are `P2-24`, `P2-25`, `P2-26`, `P2-27`, `P2-29` and the five P3s)
+**Live state**: deployed, `shadow`. NT8 compiles clean (0 errors), all 9 addon files in sync.
+Suite **616 passed, 0 failed**. Loop selftest **11/11**.
 
-> ✅ **Session 7 closed clean. Nothing is in flight and nothing is blocked.**
+> ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
 >
 > | | |
 > |---|---|
-> | Repo | Merged to `main` and pushed; `origin/main` at `aaecbe8b`. All session work committed |
-> | NT8 | Running, logged in, **all 9 addon files in sync**, `nt_compile` 0 errors |
-> | Guard | `mode: shadow`, `isArmed: true`, `guarding: true` |
-> | Suite | 524 passed / 0 failed · verifier 22/22 · loop selftest 11/11 |
-> | Operational | **Nothing outstanding except `P2-41`** (config POST does not merge) |
+> | Repo | 7 commits on `harden/riskguard-copier-p0`. **Not merged, not pushed** |
+> | NT8 | Running, **all 9 addon files in sync**, `nt_compile` 0 errors, feed connected, no open positions |
+> | Suite | 616 passed / 0 failed (was 524) · loop selftest 11/11 |
+> | Operational | **Nothing outstanding.** `P2-41` is closed and verified live |
 >
-> **One caveat that matters more than any of the above: the mirrored stop (`P0-9`) has never been
-> seen on a live fill.** It is proven by nine falsifiable tests and a clean net48 compile — which
-> is exactly the standard `P1-40` slipped through, because a proportional rule looked correct at
-> every scale the tests used. **Watch for `BRACKET_MIRRORED` in the output tab on the next copied
-> trade and check the price against where the follower actually filled.**
+> **Closed this session**: `P1-12`, `P1-14`, `P1-36`, `P2-38`, `P2-41`; `P1-13`'s fail-open half;
+> `P0-9` items (3) and (4); stress tests `S5`, `S6`, `S8`, `S9`. **The P1 band is done apart from
+> `P1-13`'s threading inversion.**
+>
+> **The caveat from session 7 has not moved: the mirrored stop (`P0-9`) has still never been seen
+> on a live fill.** Nothing this session changed that, and no amount of unit testing can — it is
+> exactly the standard `P1-40` slipped through. **Watch for `BRACKET_MIRRORED` in the output tab on
+> the next copied trade and check the price against where the follower actually filled.**
 >
 > Note the copier **acts regardless of guard mode** — `shadow` restrains RiskGuard, not the
 > copier. Both relationships are enabled and `Sim101 → Sim-ORB` is `ArmedForLive: true`, so the
 > next Sim101 fill will place a real stop order on the follower.
 >
-> **Next work: `P0-9`'s remaining items** (targets/OCO, `StopLimit` offsets, leader-cancels-stop),
-> then `P1-12`/`P1-13`/`P1-14`, `P1-36`, stress `S5`/`S6`/`S8`/`S9`, and the P2 band. Roadmap in
-> §4a; the loop's own backlog is [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §12.
+> **`nt_riskguard_config` with no arguments used to be a destructive write** — see §4k. It is safe
+> now, but any older transcript showing that call also shows the live config being flattened.
+>
+> **Next work**: `P0-9`'s last item (profit targets + OCO — needs an operator decision, see §4k),
+> `P1-13`'s threading half (needs a concurrent-guard-event stress test first), then `P2-24`,
+> `P2-25`, `P2-26`, `P2-27`'s CI half, `P2-29`, and the P3 band. Roadmap in §4a; the loop's own
+> backlog is [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §12.
 
 ---
 
@@ -70,9 +76,9 @@ been verified on the live box** (see the banner).
 |---|---|
 | **A** — deploy P0 to shadow | Deployed and armed. **T3 validated live (§4g). T5 has never been exercised** — it needs an acting mode |
 | **B** — test foundation | ✅ done |
-| **C** — P1 safety-critical | ✅ done except `P1-36` |
+| **C** — P1 safety-critical | ✅ done — `P1-36` closed session 8 |
 | **D** — P1 rule semantics | ✅ done — `P1-16`, `P1-17`, `P1-18`, `P1-19` |
-| **D2** — stress backlog | `S1`–`S4` closed four defects; **`S7` landed with `P0-9`**; `S5`, `S6`, `S8`, `S9` open |
+| **D2** — stress backlog | ✅ done — `S1`–`S4`, `S7`, and **`S5`/`S6`/`S8`/`S9` (session 8)** |
 | **E** — copier fidelity | ✅ `P1-21`, `P1-22`, `P1-23`, and **`P0-9`'s naked-follower half** closed. Targets/ATM remain (see plan `P0-9`) |
 | **F–G** | Not started |
 
@@ -126,13 +132,20 @@ touching code near the test hooks**, and read `RESULTS:` from a *fresh* build �
   > `localhost:7890` is the reliable check — the listener starts at `State.Configure`. NT8 can sit
   > at its login dialog with the process running and no AddOn loaded, which is when this reset was
   > actually performed.
-- **`POST /api/riskguard/config` does not merge (`P2-41`, open).** Every field a partial POST omits
-  returns as its default and is written to disk, while the response echoes your *request* and says
-  `"applied"`. Always GET the full document, mutate one key, POST it back, then GET again and
-  **diff every key**. That discipline is the only reason `P1-39` was found.
+- ✅ **`POST /api/riskguard/config` now merges (`P2-41`, closed 2026-08-07, verified live).** It
+  used to deserialize a partial body into a complete `RiskConfig`, so every omitted field became
+  its default and was written to disk while the response echoed your *request* and said
+  `"applied"`. The response now returns the **resulting** live config as `config` and your body as
+  `requested`.
+  > **`nt_riskguard_config` with no arguments POSTs an empty body.** Under the old code that one
+  > call flattened the entire live risk configuration. The GET-mutate-POST-GET-diff discipline
+  > recorded here is what stood between this box and that happening — and it is still the right
+  > habit, but it is no longer load-bearing.
 
-**5. `P0-9`'s real half is the largest remaining live exposure.** Followers still receive bare
-market orders with **no protective legs**. Everything else in the copier is secondary to this.
+**5. `P0-9`'s naked-follower half is closed; what remains is fidelity, not exposure.** Followers
+get a mirrored stop anchored to their own fill. Items (3) `StopLimit` and (4) leader-cancels-stop
+are pinned by test as of session 8. Only profit targets + OCO remain, and that wants an operator
+decision — see §4k. **The mirrored stop has still never been seen on a live fill.**
 
 ### What the guard actually does right now
 
@@ -483,9 +496,9 @@ to check.
 (Phase C). `P2-38` was opened on 2026-08-07 — the same name-prefix hole as P1-20, in
 `McpBridgeAddOn`'s strategy-deploy guard.
 
-**Still open in P1**: `P1-12`, `P1-13`, `P1-14` (latency / dispatcher / `_pendingStops`),
-`P1-16` … `P1-19` (rule semantics), `P1-21` … `P1-23` (copier fidelity), `P1-36`
-(multi-stop coverage aggregation — re-read §1 on T1 before touching it). Band membership and the
+**Still open in P1 — as of session 8, only `P1-13`'s threading inversion.** `P1-12`, `P1-14` and
+`P1-36` closed 2026-08-07; `P1-13`'s fail-open half closed with them. `P1-16` … `P1-19`,
+`P1-21` … `P1-23` were already closed. Band membership and the
 P1-30/31 → P1-35/36 renumbering are in the plan's inventory table. `P1-37` was found by the
 Phase A shadow deployment on 2026-08-07 (§4f).
 
@@ -1033,6 +1046,87 @@ with the same tick size and only the dollar multiplier differs, which quantity s
 - **The test stub can be more forgiving than NT8, and the suite cannot tell you.** `P1-22`'s
   pending-copy map was keyed on `Order.OrderId` and every test passed; NT8's `OrderId` is neither
   unique nor stable. Check how the existing addon uses an API, and why, before relying on it.
+
+---
+
+## 4k. Session 8 record — 2026-08-07: the P1 band closes
+
+Seven commits. `P0-9` items 3/4 → `P1-12` → `P1-14` → `P1-36` → `P1-13` (half) → `S5`–`S9` →
+`P2-38`/`P2-41`. Suite 524 → **616**, all green, NT8 `nt_compile` 0 errors, all 9 files in sync.
+
+| Commit | What |
+|---|---|
+| `c2f54e9b` | `P0-9` items (3) `StopLimit` and (4) leader-cancels-stop, pinned by test |
+| `12e0ca12` | `P1-12` — the disk comes off `_stateLock` |
+| `35052e86` | `P1-14` — the pending-stop buffer: one order, forever, unchecked |
+| `c6c4e02b` | `P1-36` — coverage is the sum of the stops, not one of them |
+| `830cfa55` | `P1-13` fail-open half — the guard stopped guarding when the UI was absent |
+| `0e21ad3c` | `S5`, `S6`, `S8`, `S9` — the stress backlog closes |
+| `6077de0a` | `P2-41` config merge, `P2-38` sim/live gates |
+
+### The through-line: three defects were found by making something a compile error, or by a test
+
+**1. `P1-36` lived in a second place.** Making `CoveredQuantity`/`RecognizedStopOrder` read-only
+turned "find every writer" into a compile error, which surfaced nine sites — and the ninth was
+`ExecuteAction` re-sizing the auto-stop from the **whole live position**, ignoring existing cover.
+`EvaluateGraceExpiry` had always sized its *action* to the uncovered delta; `ExecuteAction` sized
+it straight back up. Closing only the FSM half would have left the 9-lots-behind-6 outcome exactly
+as it was. **A fix verified only where the defect was reported is a fix that may not have landed.**
+
+**2. `P1-13`'s machine check found a site I had already missed** on my own pass through the file.
+
+**3. `S6`'s first draft was unfalsifiable and looked fine.** It cancelled each stop before flipping
+— tidy, realistic-looking, and completely inert: a terminal order cannot contribute coverage to
+anything, so the revert probe found nothing and the test reported safety. It now leaves the
+previous leg's stop **working** as the flip lands, which is the real shape. This is the second time
+a stress test in this programme has been vacuous on the first attempt (see §8 of the plan). **Every
+stress test here must be shown red against the defect it names before it is worth anything.**
+
+### `P2-41` was verified live, by accident, one minute after deploying
+
+`nt_riskguard_config` with no arguments POSTs an **empty body**. Under the old code that single
+call — the one you would reach for to *read* the config — would have deserialized `{}` into a
+complete `RiskConfig` and written it: `Mode` → shadow, `MinShadowSessions` → 0, `EnableWindowGate`
+→ false, all six `WindowsET` gone, all four `FirmProfiles` gone, `StopGuard.OnMissing` → `Flatten`.
+It would have replied `"applied"` and echoed the request.
+
+The post-fix call returned `"requested": {}` next to the complete, unchanged live config. **The
+tool most likely to be reached for as a read was itself a destructive write, and the workaround
+recorded in §0 item 4 — GET, mutate, POST, GET, diff — was the only thing standing between this
+box and a wiped risk configuration.**
+
+### Two things deliberately NOT done, with reasons
+
+**`P0-9` item (1): profit targets and OCO.** This is the last piece of `P0-9` and it wants an
+operator decision rather than a unilateral one. The case against building it: a mirrored target is
+*upside*, not risk — the follower already exits when the leader's target fill is copied, so the gap
+is fill quality, not exposure. Building it doubles the copier's order-placement surface on a
+component whose **first** half has never been observed on a live fill. The case for: it is option 1
+of the plan's own preferred fix, and the latency gap is real in a fast market. If it is built, it
+must use a real broker-side OCO id — a mirrored target without OCO leaves the stop working after
+the target fills, which flips the follower into a fresh position. **Recommendation: validate the
+mirrored stop on a live feed first, then decide.**
+
+**`P1-13`'s threading inversion.** The evidence says it is safe — the copier has been submitting
+real follower orders straight off NT8's account-event thread, with no marshalling, in production.
+But it converts six handlers the dispatcher was implicitly serialising into genuinely concurrent
+ones, and **the S-series does not cover that**: `S4` is lock-scope, `S7` is copier fan-out, and
+`S5`/`S6`/`S8`/`S9` are sequential scenario tests. I said mid-session that the stress backlog would
+be the prerequisite; having written it, it is not. A genuine concurrent-guard-event stress test is.
+Doing the risky half before its coverage exists is how `P1-40` shipped.
+
+### Method notes
+
+- **`McpBridgeAddOn.cs` is excluded from the test build**, so the `P2-38`/`P2-41` changes were
+  unverifiable until `nt_compile`. That is the `P1-47` shape and it is structural, not incidental.
+  The mitigation used here: put the *logic* somewhere compiled (`RiskConfigMerge` lives in
+  `RiskGuardAddOn.cs`) and check the bridge's own wiring against **source text**. A source
+  assertion proves less than an execution; it proves the exact thing that regressed.
+- **A machine check on source text needs its comments stripped**, or it forbids documenting the bug
+  it prevents — and then the comment gets deleted instead of the check getting fixed.
+- **The TTL in `P1-14` is two grace periods, not one.** One grace period is the longest a
+  legitimate stop can lag its position event and still be the thing protecting it. The test asserts
+  both edges, because an over-eager TTL breaks the race the buffer exists for.
 
 ---
 
