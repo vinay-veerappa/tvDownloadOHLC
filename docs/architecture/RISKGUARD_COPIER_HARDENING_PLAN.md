@@ -1,12 +1,12 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **499/0**): **32 of 48 closed**.
-Deployed, `shadow`, armed. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
+**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **499/0**): **33 of 48 closed**.
+Deployed, `shadow`, armed and guarding; NT8 compiles clean.
+Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 
-> ⚠️ **Open operational item: `P0-48` needs an NT8 restart.** 57 orphaned copier execution
-> handlers from earlier AddOn reloads are attached to every account on this box. The fix stops
-> new ones accruing; only a restart clears the existing ones. **Do not trust the copier until
-> then.**
+> ✅ **`P0-48` is closed and verified live.** The restart cleared all 57 orphans, and a subsequent
+> recompile — the exact event that used to add one every time — left `TradeCopierEngine` at
+> exactly **1** handler. No operational items outstanding except `P2-41`.
 **Created**: 2026-08-06
 
 ## Defect inventory — the count of record
@@ -15,7 +15,7 @@ Deployed, `shadow`, armed. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISK
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` | 10 | `P0-1`…`P0-9` closed (`P0-9`'s bracket half open); `P0-48` fixed forward, **needs an NT8 restart** |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` | 10 | `P0-1`…`P0-9` closed (`P0-9`'s bracket half open); **`P0-48` closed and verified live** |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 19 closed — `P1-12`, `P1-13`, `P1-14`, `P1-36` remain |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | open (`P2-28`, `P2-46` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
@@ -780,7 +780,7 @@ endpoint reporting `isArmed: true` — the first reload of the day that did not 
 > comment saying why — and this is the standing reason `nt_compile` is not optional after a
 > change near the test hooks.
 
-### P0-48. Every AddOn reload leaks a copier execution handler — 57 were live on the box
+### P0-48. Every AddOn reload leaks a copier execution handler — CLOSED 2026-08-07, verified live
 *(found 2026-08-07 while validating `P1-21`'s deployment, by reflecting on the live event list —
 not by any test, review or log line)*
 **Where**: `McpBridgeAddOn.cs`, `State.Configure` attached `OnAccountExecutionUpdate` to every
@@ -826,11 +826,28 @@ listed after `P1-47` because IDs are assigned in discovery order and never renum
 
 **Not fixed by it**: the 57 orphans already attached. They belong to assemblies that are no longer
 referenced by any live code, so no in-process call can enumerate or detach them by name — only an
-**NT8 restart** clears them. Treat a restart as required before trusting the copier on this box.
+**NT8 restart** clears them.
+
+**✅ Both halves verified live, 2026-08-07.** NT8 was restarted and re-censused:
+
+| | Before | After restart | After a further recompile |
+|---|---|---|---|
+| `McpBridgeAddOn` (orphans) | **57** | 0 | 0 |
+| `TradeCopierEngine` | 1 | 1 | **1** |
+| `RiskGuardAddOn` / `RiskManagerAddOn` | 1 / 1 | 1 / 1 | 1 / 1 |
+| total | 67 | 8 | 10 |
+
+The third column is the proof. A recompile reloads every AddOn and is precisely the event that used
+to add an orphan; `TradeCopierEngine` holding at exactly 1 across it is the leak fixed, observed
+rather than argued. (Totals rose 8→10 only from NT8's own `ChartBars`/`ExecutionGrid` re-registering.)
+
+> **Note the post-fix shape**: `McpBridgeAddOn` is now **0**, not 1 — `P1-21` moved ownership of the
+> subscription to `TradeCopierEngine`. An earlier draft of the runbook said to expect
+> `McpBridgeAddOn == 1`; that is wrong. Expect `TradeCopierEngine == 1` and `McpBridgeAddOn == 0`.
 
 **Open follow-ups**:
-- Verify the count returns to 1 after a restart plus a recompile, and add that check to the
-  deployment runbook (§4e) — a handler census is cheap and nothing else detects this class of bug.
+- Add the handler census to the deployment runbook (§4e) — it is cheap, and nothing else detects
+  this class of bug.
 - `RiskManagerAddOn.cs:150/289` has the same shape (subscribe at `Configure`, unsubscribe at
   `Terminated`) and currently reads 1, so it appears correct; confirm rather than assume.
 - Consider whether `TradeCopierWindow.cs:1090` and `DynamicAtmManager.cs:507` hold any comparable

@@ -3,88 +3,48 @@
 **Last updated**: 2026-08-07 (session 7 — ends with NT8 down; see the resume block below)
 **Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 32 closed
-**Live state**: **NinjaTrader is DOWN** — see below. Suite **499 passed, 0 failed**.
+**Live state**: deployed, `shadow`, **armed and guarding**. NT8 compiles clean (0 errors).
+Suite **499 passed, 0 failed**.
 
-> 🔴 **RESUME HERE. NinjaTrader is DOWN and there is no risk guard running.**
-> Nothing is in flight, everything is committed, and a laptop restart is safe and expected.
+> ✅ **Everything the previous revision of this block was waiting on is DONE and verified live
+> (2026-08-07, session 7 close).**
 >
-> **State as of 2026-08-07, end of session 7**
->
-> | | |
+> | Item | Result |
 > |---|---|
-> | NT8 | **Not running.** Clean `Session End` at 12:14:43 ET — not a crash, not this branch |
-> | Restart attempt | Failed at login: `Too many incorrect login attempts. Please wait.` (`penaltyTime='40' captcha='True'`) |
-> | Repo | Clean. `441c11e2` on `harden/riskguard-copier-p0`. Suite 499/0 |
-> | NT8 `bin/Custom/AddOns` | **Deliberately parked one commit behind, at `3de5947f`** |
-> | Guard | Not running. Was `shadow` + armed before shutdown |
+> | NT8 login lockout | Cleared. New process, AddOns loaded, bridge answering |
+> | `P0-48` — 57 orphaned copier handlers | **Cleared by the restart**, then **proven not to recur** — see below |
+> | `P1-22` net48 build | **0 errors.** The NT8 tree is no longer parked; repo and `bin/Custom/AddOns` match |
+> | `ShadowSessionsCompleted` | Reset 5 → 0, then counted **1** genuine session and **held at 1 across a recompile** |
+> | Guard | `mode: shadow`, `isArmed: true`, `guarding: true` — self-armed through both reloads (`P1-47`) |
 >
-> **Why the NT8 tree is parked.** `P1-22` is committed but has **never been compiled against
-> net48** — the `nt_compile` landed on an already-shutting-down NT8. An unverified file in
-> `bin/Custom/AddOns/` makes **every** AddOn fail to compile on startup, RiskGuard included, on a
-> box with funded accounts. So `TradeCopierEngine.cs` and `RiskGuardAddOnTests.cs` there are
-> pinned to `3de5947f`, the last build NT8 accepted with 0 errors. **`sync --verify` reporting
-> drift on exactly those two files is correct, not a problem to fix.**
+> **`P0-48` is closed, and the fix is proven in production rather than argued.** Handler census on
+> `Sim101.ExecutionUpdate`:
 >
-> ### Recovery runbook — do these in order, do not skip (2)
+> | | Before (session 7 open) | After restart | After a further recompile |
+> |---|---|---|---|
+> | `McpBridgeAddOn` (orphans) | **57** | 0 | 0 |
+> | `TradeCopierEngine` | 1 | 1 | **1** |
+> | `RiskGuardAddOn` / `RiskManagerAddOn` | 1 / 1 | 1 / 1 | 1 / 1 |
+> | total | 67 | 8 | 10 |
 >
-> **(1) Get NT8 running.** A laptop restart is the expected fix; the login penalty is time-based
-> and clears on its own. Do not retry the login repeatedly — that is what caused the lockout.
+> The last column is the load-bearing one: a recompile reloads every AddOn, and **before `P1-21`
+> that added an orphan every time**. `TradeCopierEngine` staying at exactly 1 across it is the
+> leak being fixed, observed. (Totals rose 8→10 only because NT8's own `ChartBars` and
+> `ExecutionGrid` re-registered — not ours.)
 >
-> **(2) Confirm the restart cleared `P0-48`.** A full NT8 process restart is the *only* thing that
-> can detach the 57 orphaned copier handlers. Census — expect `McpBridgeAddOn` to read **1**, not
-> 57 (and `TradeCopierEngine` 1, `RiskGuardAddOn` 1):
-> ```bash
-> TOKEN=$(cat "$HOME/Documents/NinjaTrader 8/mcp_token.txt" | tr -d '\r\n')
-> python -c "
-> import json
-> ops=[{'op':'getStatic','type':'NinjaTrader.Cbi.Account','member':'All'},
->      {'op':'invoke','target':{'result':0},'method':'get_Item','args':[{'type':'System.Int32','value':2}]},
->      {'op':'getProp','target':{'result':1},'member':'ExecutionUpdate'},
->      {'op':'invoke','target':{'result':2},'method':'GetInvocationList','args':[]}]
-> for i in range(80):
->     b=len(ops)
->     ops.append({'op':'invoke','target':{'result':3},'method':'GetValue','args':[{'type':'System.Int32','value':i}]})
->     ops.append({'op':'getProp','target':{'result':b},'member':'Target'})
-> print(json.dumps({'ops':ops}))" > /tmp/census.json
-> curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
->   http://localhost:7890/api/dev/reflect -d @/tmp/census.json | python -c "
-> import json,sys,collections
-> d=json.load(sys.stdin)['results']; c=collections.Counter()
-> for i in range(4,len(d)-1,2):
->     t=d[i+1].get('type')
->     if t: c[t.split('.')[-1]]+=1
-> [print(' %-24s %d'%(k,v)) for k,v in c.most_common()]"
-> ```
-> Index `2` is `Sim101` in `Account.All`; the loop over-runs the real length and the parser skips
-> the resulting error entries. **Until this reads 1, do not trade the copier** — each orphan copies
-> every Sim101 fill independently, and both relationships are enabled with `Sim101 → Sim-ORB` at
-> `ArmedForLive: true`.
+> **`P1-37`'s debounce is likewise proven from a clean baseline**: the counter went 0 → 1 on the
+> first genuine shadow session and **stayed at 1** through the recompile. Pre-fix it went 0 → 3 in
+> four minutes of exactly this churn. `MinShadowSessions=3` is now correctly unsatisfied, so the
+> live arming gate is trustworthy on this box for the first time.
 >
-> **(3) Deploy `P1-22` and prove the net48 build.**
-> ```powershell
-> .\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py --verify --only addons  # expect the 2 known drifts
-> .\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py --only addons
-> # then nt_compile -- REQUIRE errorCount 0. If it fails, P1-22 is the only suspect:
-> #   git show 3de5947f:scripts/ninjatrader/addons/TradeCopierEngine.cs > "<NT8>/AddOns/TradeCopierEngine.cs"
-> #   (same for RiskGuardAddOnTests.cs) to get straight back to a compiling tree.
-> ```
->
-> **(4) Confirm the guard is actually guarding.** It self-arms in shadow since `P1-47`, but verify
-> rather than assume:
-> ```bash
-> curl -s -H "Authorization: Bearer $TOKEN" http://localhost:7890/api/riskguard/version
-> # want: "mode":"shadow","isArmed":true,"guarding":true
-> ```
-> Also confirm the new code is the loaded code — `Version` is still `1.1.0` and proves nothing.
-> Look for `MaxSlippageTicks` in `GET /api/riskguard/config`'s copier section, or
-> `MaxAutoStopAttempts`, neither of which exists at the merge-base.
+> **Next work is `P0-9`** — see Phase E in §4a. Nothing operational is outstanding except `P2-41`.
 
 ---
 
 ## 0. Start here (read this, then §4a for the roadmap)
 
-**32 of 48 defects closed. Suite 499/0.** NT8 compiled clean as of `3de5947f`; `P1-22` is
-unverified against net48 (NT8 is down — see the banner).
+**33 of 48 defects closed. Suite 499/0. NT8 compiles clean, and every fix in this session has
+been verified on the live box** (see the banner).
 
 | Phase | State |
 |---|---|
