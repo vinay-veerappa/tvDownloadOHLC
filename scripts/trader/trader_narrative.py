@@ -552,6 +552,27 @@ def _compress_watchlist_section(summary: str) -> str:
     return compressed
 
 
+def _sanitize_recommendation_language(summary: str) -> str:
+    """Keep narratives analytical rather than imperative trade instructions."""
+    sanitized = summary
+    replacements = [
+        (r"\bthe direction of that MSS is the trade\b", "that MSS determines the directional read"),
+        (r"\blongs toward\b", "bullish continuation toward"),
+        (r"\bshorts toward\b", "bearish continuation toward"),
+        (r"\blook for longs toward\b", "watch for bullish continuation toward"),
+        (r"\blook for shorts toward\b", "watch for bearish continuation toward"),
+        (r"\bbuy the dip\b", "fade the pullback constructively"),
+        (r"\bsell the rip\b", "fade strength at resistance"),
+        (r"\bthe play is patience\b", "the read favors patience"),
+        (r"\bi'm looking for bullish continuation toward\b", "the bullish continuation path points toward"),
+        (r"\bi'm looking for bearish continuation toward\b", "the bearish continuation path points toward"),
+        (r"\bi'm looking for\b", "the watch is for"),
+    ]
+    for pattern, replacement in replacements:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    return sanitized
+
+
 def _sanitize_trader_facing_output(summary: str) -> str:
     """Remove debug/provenance artifacts from trader-facing narratives.
 
@@ -771,6 +792,7 @@ def run_narrative(
             summary = _normalize_taxonomy_language(summary)
             summary = _dedupe_repetition(summary)
             summary = _compress_watchlist_section(summary)
+            summary = _sanitize_recommendation_language(summary)
             summary = _sanitize_trader_facing_output(summary)
             write_narrative_to_disk(summary, mode, ticker)
             

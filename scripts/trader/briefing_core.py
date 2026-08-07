@@ -3711,7 +3711,13 @@ def _format_day_type_block(dt: dict) -> str:
     lines = ["== DAY TYPE =="]
     lines.append(f"Type: {dt.get('day_type','clean').upper()} | Sizing: {dt.get('sizing_multiplier',1.0):.0%}")
     if dt.get("events_today"):
-        lines.append("Events: " + ", ".join(f"{e.get('time_et','?')} {e.get('name','?')}" for e in dt["events_today"]))
+        event_labels = []
+        for event in dt["events_today"]:
+            if isinstance(event, dict):
+                event_labels.append(f"{event.get('time_et','?')} {event.get('name','?')}")
+            else:
+                event_labels.append(str(event))
+        lines.append("Events: " + ", ".join(event_labels))
     if dt.get("guidance"):
         lines.append(f"Guidance: {dt['guidance']}")
     return "\n".join(lines)
@@ -4252,7 +4258,8 @@ def build_calendar_context_block(
 
     # Events today
     if day_type_data.get("events_today"):
-        lines.append(f"Events: {', '.join(day_type_data['events_today'])}")
+        event_names = [e.get("name", "Unknown") if isinstance(e, dict) else str(e) for e in day_type_data["events_today"]]
+        lines.append(f"Events: {', '.join(event_names)}")
         if day_type_data.get("event_time"):
             lines.append(f"Event time: {day_type_data['event_time']} | "
                          f"Pre-buffer: {day_type_data.get('pre_event_buffer', 0)}min | "
@@ -5122,12 +5129,13 @@ def build_ticker_cheat_sheet(
     # GEX × EM Confluence Verdict
     try:
         from scripts.trader.signals.gex_em_confluence import compute_gex_em_verdict, format_confluence_block
+        gex_unified_entry = ticker_unified if isinstance(ticker_unified, dict) else {}
         # Get GEX regime from META_ fields
-        meta = parse_meta_fields(unified_entry) if unified_entry else {}
+        meta = parse_meta_fields(gex_unified_entry) if gex_unified_entry else {}
         gex_regime = "NEGATIVE" if meta.get("GEX_TOTAL", 0) < 0 else "POSITIVE" if meta.get("GEX_TOTAL", 0) > 0 else "NEUTRAL"
         regime_label = meta.get("REGIME", "NEUTRAL")
         # Get levels from tokens
-        tokens = unified_entry.get("tokens", []) if unified_entry else []
+        tokens = gex_unified_entry.get("tokens", []) if gex_unified_entry else []
         cw = next((t["strike"] for t in tokens if t.get("label") == "CW"), None)
         pw = next((t["strike"] for t in tokens if t.get("label") == "PW"), None)
         gm = next((t["strike"] for t in tokens if "MAGNET" in t.get("label", "")), None)

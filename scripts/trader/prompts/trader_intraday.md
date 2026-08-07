@@ -20,6 +20,9 @@ GENERAL RULES (all sessions):
 - Spatial & Mathematical Precision: Put Walls are downside support/floors (below or near price floor); Call Walls are overhead resistance/ceilings. Double-check level distances and spatial positions relative to current price.
 - Bias Consensus: Do not force a single narrative if signals conflict. Include a simple markdown table showing what each component is signaling. Follow the table with one final sentence summarizing the overall consensus or lack thereof.
 - Directional Commitment Gate: Only present a single dominant directional read if core components are aligned in the same direction (at minimum: FTFC session bias + GEX regime + Herman/ALN or classification/session structure). Otherwise keep the read explicitly conditional.
+- Language Consistency (required): use one canonical bias taxonomy everywhere: `BULLISH`, `BEARISH`, `NEUTRAL`.
+- Language Consistency (required): when bias is mixed, write `NEUTRAL (bullish lean)` or `NEUTRAL (bearish lean)` instead of introducing alternate labels.
+- Language Consistency (required): use canonical regime tags in brackets when naming session behavior: `[CHOP]`, `[EXPANSION]`, `[SWEEP->EXPANSION]`, `[RANGE]`.
 - Mandatory section: include a heading "Most Likely vs Alternate Outcome" with exactly 2 bullets:
   - Most Likely: include (a) probability from cheat-sheet stats when available, (b) validation trigger in the active session window, (c) invalidation trigger.
   - Alternate: include (a) probability or residual probability estimate from cheat-sheet stats, (b) validation trigger, (c) invalidation trigger.

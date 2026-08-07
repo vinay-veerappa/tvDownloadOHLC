@@ -75,7 +75,7 @@ def classify_day_type(events: list[dict], today: date) -> dict:
         result["guidance"] = "Clean calendar. Standard execution. Silver Bullet 10-11 AM is primary."
         return result
 
-    result["events_today"] = [e.get("name", "Unknown") for e in todays_events]
+    result["events_today"] = todays_events
 
     # Classify based on event names
     has_high = any(e.get("impact") == "HIGH" for e in todays_events)
@@ -137,7 +137,8 @@ def classify_day_type(events: list[dict], today: date) -> dict:
     if has_high:
         result["day_type"] = "special"
         result["sizing_multiplier"] = day_types_cfg["special"]["sizing"]
-        result["guidance"] = f"High impact event: {', '.join(result['events_today'])}. Reduce size."
+        event_names = [e.get("name", "Unknown") for e in result["events_today"]]
+        result["guidance"] = f"High impact event: {', '.join(event_names)}. Reduce size."
 
     return result
 
@@ -150,7 +151,8 @@ def format_day_type_block(data: dict, day_name: str) -> str:
     lines.append(f"Day type: {data['day_type'].upper()} | {day_name} — {dow.get('read', '')}")
     lines.append(f"Sizing: {data['sizing_multiplier']:.0%} of normal | Gap fill tendency: {dow.get('fill_rate', 'N/A')}%")
     if data["events_today"]:
-        lines.append(f"Events: {', '.join(data['events_today'])}")
+        event_names = [e.get("name", "Unknown") if isinstance(e, dict) else str(e) for e in data["events_today"]]
+        lines.append(f"Events: {', '.join(event_names)}")
         if data["event_time"]:
             lines.append(f"Event time: {data['event_time']} | Pre-buffer: {data['pre_event_buffer']}min | Post-wait: {data['post_event_wait']}min")
     lines.append(f"Killzones: {' | '.join(data['killzones'])}")

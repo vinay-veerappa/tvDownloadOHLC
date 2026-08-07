@@ -22,6 +22,9 @@ Write a thorough narrative (no artificial word limit — cover everything that m
 - **Trust the Python Output**: All quantitative signals (ALN patterns, Profiler edges, Candle Science, VIX) have already been evaluated by the backend. Simply report their conclusions as presented in the cheat sheet.
 - **Bias Consensus**: If the Bias Consensus Matrix shows conflicting signals, explicitly state that the read is mixed/low-conviction. Do not force a single directional narrative if the data disagrees.
 - **Directional Commitment Gate**: Only present a single dominant directional read if core components are aligned in the same direction (at minimum: FTFC session bias + GEX regime + ALN/Herman or classification). Otherwise keep the read explicitly conditional.
+- **Language Consistency (required)**: use one canonical bias taxonomy everywhere: `BULLISH`, `BEARISH`, `NEUTRAL`.
+- **Language Consistency (required)**: when bias is mixed, write `NEUTRAL (bullish lean)` or `NEUTRAL (bearish lean)` instead of introducing alternate labels.
+- **Language Consistency (required)**: use canonical regime tags in brackets when naming session behavior: `[CHOP]`, `[EXPANSION]`, `[SWEEP->EXPANSION]`, `[RANGE]`.
 - **Mandatory section**: include a heading "Most Likely vs Alternate Outcome" with exactly 2 bullets:
 	- Most Likely: include (a) probability from cheat-sheet stats when available, (b) validation trigger, (c) invalidation trigger.
 	- Alternate: include (a) probability or residual probability estimate derived from cheat-sheet stats, (b) validation trigger, (c) invalidation trigger.
