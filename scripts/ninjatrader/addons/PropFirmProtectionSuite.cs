@@ -38,6 +38,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double EvaluationTargetProfit { get; set; } = 3000.0;
         public bool EnablePeakEquityProtection { get; set; } = true;
         public double MaxPeakGivebackPct { get; set; } = 0.30;
+        // P1-40: absolute floor, in dollars, below which an open gain is not treated as an
+        // established peak. The giveback rule is proportional, so without this a one-tick peak
+        // ($0.50 on MNQ) makes any retrace a >=100% giveback and flattens the position seconds
+        // after entry. Set to 0 for the old, purely proportional behaviour.
+        public double MinPeakGainDollars { get; set; } = 50.0;
         public bool EnableConsistencyCap { get; set; } = true;
         public double MaxDailyProfitPctOfTarget { get; set; } = 0.35;
         public bool EnableAutoDayFiller { get; set; } = false;
@@ -108,6 +113,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             // giveback breaches when the account is flat after a profitable session.
             var cfg = config ?? Config;
             if (cfg == null || !cfg.EnablePeakEquityProtection || peakOpenGain <= 0 || currentUnrealized >= peakOpenGain) return false;
+            // P1-40: the test below is proportional, so without an absolute floor a peak of one
+            // tick ($0.50 on MNQ) turns any retrace into a >=100% giveback. Live on 2026-08-07
+            // that fired six times in 36 seconds, first 2.4s after entry with the position down
+            // $1.00; in an acting mode it would flatten nearly every trade on entry. Below the
+            // floor there is no meaningful profit to protect, and the daily-loss and stop-guard
+            // rules already cover the downside.
+            if (peakOpenGain < cfg.MinPeakGainDollars) return false;
             double giveback = peakOpenGain - currentUnrealized;
             double givebackPct = giveback / peakOpenGain;
             return givebackPct >= cfg.MaxPeakGivebackPct;
@@ -162,6 +174,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 EvaluationTargetProfit = jObj["EvaluationTargetProfit"] != null ? (double)jObj["EvaluationTargetProfit"] : (jObj["evaluationTargetProfit"] != null ? (double)jObj["evaluationTargetProfit"] : (jObj["profitTarget"] != null ? (double)jObj["profitTarget"] : 3000.0)),
                 EnablePeakEquityProtection = jObj["EnablePeakEquityProtection"] != null ? (bool)jObj["EnablePeakEquityProtection"] : (jObj["enablePeakEquityProtection"] != null ? (bool)jObj["enablePeakEquityProtection"] : (jObj["peakEquityProtection"] != null ? (bool)jObj["peakEquityProtection"] : true)),
                 MaxPeakGivebackPct = jObj["MaxPeakGivebackPct"] != null ? (double)jObj["MaxPeakGivebackPct"] : (jObj["maxPeakGivebackPct"] != null ? (double)jObj["maxPeakGivebackPct"] : (jObj["givebackPct"] != null ? (double)jObj["givebackPct"] : 0.30)),
+                MinPeakGainDollars = jObj["MinPeakGainDollars"] != null ? (double)jObj["MinPeakGainDollars"] : (jObj["minPeakGainDollars"] != null ? (double)jObj["minPeakGainDollars"] : 50.0),
                 EnableConsistencyCap = jObj["EnableConsistencyCap"] != null ? (bool)jObj["EnableConsistencyCap"] : (jObj["enableConsistencyCap"] != null ? (bool)jObj["enableConsistencyCap"] : true),
                 MaxDailyProfitPctOfTarget = jObj["MaxDailyProfitPctOfTarget"] != null ? (double)jObj["MaxDailyProfitPctOfTarget"] : (jObj["maxDailyProfitPctOfTarget"] != null ? (double)jObj["maxDailyProfitPctOfTarget"] : 0.35),
                 EnableAutoDayFiller = jObj["EnableAutoDayFiller"] != null ? (bool)jObj["EnableAutoDayFiller"] : (jObj["enableAutoDayFiller"] != null ? (bool)jObj["enableAutoDayFiller"] : false)

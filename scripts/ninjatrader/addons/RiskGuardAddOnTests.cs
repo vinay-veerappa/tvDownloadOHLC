@@ -507,6 +507,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT1_CancelledStopMidPositionReArmsGrace();
             TestT3_ProfitableFlatAccountEmitsNoGiveback();
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
+            TestP1_40_NoiseSizedPeakDoesNotTripGiveback();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
@@ -4570,6 +4571,56 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             TestOptionC_TradeCopierSingletonIntegration();
             TestOptionC_PropProtectionSingletonIntegration();
+        }
+
+        // P1-40: the giveback rule was proportional-only, with `peakOpenGain > 0` as its only
+        // floor. One MNQ tick is $0.50, so a position that ticked one tick into profit and gave
+        // it back scored a 100% giveback and tripped a flatten. Observed live on 2026-08-07:
+        // six PEAK_GIVEBACK_BREACH firings in 36 seconds, the first 2.4s after entry with the
+        // position DOWN $1.00. The pre-existing tests missed it because they all use
+        // $500-$1000 peaks, where proportional-only logic looks correct.
+        private static void TestP1_40_NoiseSizedPeakDoesNotTripGiveback()
+        {
+            Console.WriteLine("\n[TEST] P1-40: a noise-sized peak must not trip the giveback rule");
+            var suite = new PropFirmProtectionSuite();
+            var config = new PropFirmProtectionConfig
+            {
+                EnablePeakEquityProtection = true,
+                MaxPeakGivebackPct = 0.30
+            };
+
+            // One MNQ tick of open profit, fully given back. Proportional-only this is 100%.
+            Assert(suite.EvaluatePeakEquityGiveback(0.50, 0.00, config) == false,
+                "a $0.50 peak fully given back must NOT breach: it is one tick of noise, not a peak");
+
+            // The exact live case: peak one tick, position now down a dollar.
+            Assert(suite.EvaluatePeakEquityGiveback(0.50, -1.00, config) == false,
+                "a $0.50 peak against -$1.00 must NOT breach (the 2026-08-07 live false positive)");
+
+            // Just under the floor, a total loss of the peak.
+            Assert(suite.EvaluatePeakEquityGiveback(config.MinPeakGainDollars - 0.01, 0.00, config) == false,
+                "a peak just below MinPeakGainDollars must NOT breach however far it retraces");
+
+            // At the floor the rule engages again: the peak is established.
+            Assert(suite.EvaluatePeakEquityGiveback(config.MinPeakGainDollars, 0.00, config) == true,
+                "a peak exactly at MinPeakGainDollars, fully given back, MUST breach");
+
+            // Regression guard: the meaningful-peak behaviour must be untouched.
+            Assert(suite.EvaluatePeakEquityGiveback(1000.0, 600.0, config) == true,
+                "40% giveback from a $1000 peak must still breach");
+            Assert(suite.EvaluatePeakEquityGiveback(1000.0, 900.0, config) == false,
+                "10% giveback from a $1000 peak must still not breach");
+
+            // The floor must be configurable, and setting it to zero restores the old behaviour
+            // for anyone who deliberately wants a purely proportional rule.
+            var noFloor = new PropFirmProtectionConfig
+            {
+                EnablePeakEquityProtection = true,
+                MaxPeakGivebackPct = 0.30,
+                MinPeakGainDollars = 0.0
+            };
+            Assert(suite.EvaluatePeakEquityGiveback(0.50, 0.00, noFloor) == true,
+                "with MinPeakGainDollars=0 the rule is purely proportional again");
         }
 
         private static void TestOptionC_TradeCopierSingletonIntegration()
