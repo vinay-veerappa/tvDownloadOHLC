@@ -310,6 +310,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _safetyTimer = new Timer(OnSafetySweep, null, 5000, 5000);
 
                 LogEvent("SYSTEM", "INITIALIZE", $"RiskGuard Add-On v{Version} initialized in {_mode} mode. Event monitoring started.");
+                // P1-47: the mode is resolved by now, so the arm default can follow it.
+                ApplyInitialArmState();
                 NinjaTrader.Code.Output.Process($"[RiskGuard v{Version}] RESOLVED MODE = {_mode} (armed={_isArmed})", PrintTo.OutputTab1);
             }
             catch (Exception ex)
@@ -381,6 +383,56 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal static void SetInstanceForTest(RiskGuardAddOn guard) { Instance = guard; }
 
         internal void SetArmedForTest(bool armed) { _isArmed = armed; }
+        internal void ApplyInitialArmStateForTest() { ApplyInitialArmState(); }
+
+// The two methods below are PRODUCTION code and must exist in the NT8 (net48) build too, so the
+// TESTING guard is closed around them. Leaving them inside it compiled cleanly under net8.0 and
+// failed only in NT8 with "ApplyInitialArmState does not exist" -- the test build proves nothing
+// about the real one.
+#endif
+
+        // P1-47: the arm default follows the resolved mode.
+        //
+        // Arming controls whether the guard EVALUATES; the mode controls whether it ACTS
+        // (ProcessAction returns "SHADOW (SKIPPED)" before touching the broker unless the mode is
+        // "live"). Defaulting to disarmed therefore protected against the wrong thing: it could
+        // not prevent enforcement, because shadow cannot enforce, but it did mean every recompile
+        // silently stopped the guard observing anything -- four times in one session on
+        // 2026-08-07, each needing the operator to notice and re-arm by hand.
+        //
+        // FR-30's intent -- no enforcement until a deliberate arming ritual -- is preserved:
+        // acting modes still come up disarmed and still require preflight plus TOGGLE ARMED.
+        // An unrecognised mode is treated as non-acting because ProcessAction requires exactly
+        // "live", so observing is the safe reading of a config we do not understand.
+        internal static bool DefaultArmedForMode(string mode)
+        {
+            return !(string.Equals(mode, "live", StringComparison.OrdinalIgnoreCase)
+                  || string.Equals(mode, "pure", StringComparison.OrdinalIgnoreCase)
+                  || string.Equals(mode, "override_with_friction", StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Applied once at initialise, after LoadConfig has resolved the mode. NOT applied on a
+        // config reload: that would override an operator who deliberately disarmed.
+        private void ApplyInitialArmState()
+        {
+            _isArmed = DefaultArmedForMode(_mode);
+
+            if (_isArmed)
+            {
+                LogEvent("SYSTEM", "ARMED_ON_START",
+                    $"Guard armed on start in '{_mode}' mode. It observes and logs; it cannot act outside 'live'.");
+            }
+            else
+            {
+                // Loud on purpose. The real failure in P1-47 was not the default -- it was that
+                // being unprotected looked identical to being protected.
+                LogEvent("SYSTEM", "UNPROTECTED_ON_START",
+                    $"GUARD IS NOT ARMED. Mode '{_mode}' is an acting mode, so arming requires a deliberate "
+                    + "preflight and TOGGLE ARMED. Until then no rule evaluates and CanTrade allows everything.");
+            }
+        }
+
+#if TESTING
         internal void SetModeForTest(string mode)  { _mode = mode; }
         internal void SetParsedWindowsForTest(List<ParsedWindow> windows) { _parsedWindows = windows; }
         internal bool GetIsArmed() => _isArmed;

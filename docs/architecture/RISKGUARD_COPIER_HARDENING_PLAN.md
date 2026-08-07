@@ -13,7 +13,7 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 16 closed — `P1-12`, `P1-13`, `P1-14`, `P1-21`, `P1-22`, `P1-23`, `P1-36`, `P1-47` remain |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 17 closed — `P1-12`, `P1-13`, `P1-14`, `P1-21`, `P1-22`, `P1-23`, `P1-36` remain |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | open (`P2-28`, `P2-46` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -714,7 +714,7 @@ threshold is also **hardcoded** (`> 5`) with no config knob, unlike every other 
 **Test**: ten distinct orders in a second trips a threshold of 5; one order passing through
 Submitted→Accepted→Working counts once, not three times.
 
-### P1-47. The guard defaults to disarmed, so every recompile silently removes all protection
+### P1-47. The guard defaults to disarmed, so every recompile silently removes all protection — CLOSED 2026-08-07
 *(raised by the operator 2026-08-07 after four consecutive silent disarms in one session)*
 **Where**: `RiskGuardAddOn.cs:206` (`private bool _isArmed = false;` in the non-TESTING build) and
 `:655-656`, which deliberately does not rehydrate `IsArmed` from persisted state.
@@ -745,7 +745,21 @@ could not silently *re-arm* into an acting mode; restoring it would reintroduce 
 **Test**: constructing in `shadow` yields armed; constructing in `live`/`pure`/
 `override_with_friction` yields disarmed; a persisted `IsArmed=true` never re-arms an acting mode
 across a restart.
-**Risk-posture call for the operator** — the recommendation above is not settled.
+**Fixed by**: `DefaultArmedForMode` + `ApplyInitialArmState`, applied once at initialise after
+`LoadConfig` resolves the mode (deliberately **not** on a config reload, which would override an
+operator who disarmed on purpose). An unrecognised mode is treated as non-acting, because
+`ProcessAction` requires exactly `"live"`. Coming up disarmed now logs `UNPROTECTED_ON_START`
+naming the consequence, and `/api/riskguard/version` reports `mode`, `isArmed` and `guarding` so
+the state is visible without opening the dashboard.
+
+**Verified in production**: the next recompile came up `ARMED_ON_START` in shadow with the
+endpoint reporting `isArmed: true` — the first reload of the day that did not silently disarm.
+
+> **This one only failed in NT8.** Both methods were first written inside the `#if TESTING`
+> region, which compiled cleanly under net8.0 and failed in net48 with "ApplyInitialArmState does
+> not exist". The suite was green throughout. The `TESTING` guard now closes around them with a
+> comment saying why — and this is the standing reason `nt_compile` is not optional after a
+> change near the test hooks.
 
 ### P1-20. Weak simulated-account detection gates the live safety switch — CLOSED 2026-08-07
 **Where**: `TradeCopierEngine.cs:650` — `followerAcc.Name.StartsWith("Sim", …)`
@@ -1079,7 +1093,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
 | P1-39 CLOSED | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
-| P1-47 | fails open | RiskGuardAddOn.cs:206, 655 | guard defaults to disarmed, so every recompile silently removes all protection |
+| P1-47 CLOSED | fails open | RiskGuardAddOn.cs:206, 655 | guard defaults to disarmed, so every recompile silently removes all protection |
 | P1-43 CLOSED | invariant | RiskGuardAddOn.cs:1400, 1422, 1436 | broker `Cancel` under `_stateLock` on the order-update path; the machine check never drove this path |
 | P1-44 CLOSED | naked position | RiskGuardAddOn.cs:1420 | flood cancel has no `IsPositionReducingOrder` guard and can cancel a protective stop |
 | P1-45 CLOSED | permanent lockout | RiskGuardAddOn.cs:1419, 1485 | flood lockout sets no `LockoutUntil`, so it never lapses, and it is persisted |
@@ -1128,7 +1142,7 @@ as the paths driven through it. Stress tests exist to drive the paths nobody tho
 | S1 ✅ | **Order burst** — N distinct orders/sec against the rate governor | fires on *distinct order ids* at the configured threshold; one order passing Submitted→Accepted→Working counts once | `P2-46` |
 | S2 ✅ | **Burst whose tripping order is a protective stop** | the stop stays working; only risk-increasing orders are cancelled | `P1-44` |
 | S3 ✅ | **Flood lockout lifetime** | the lockout lapses after its configured duration and is not resurrected by a restart | `P1-45` |
-| S4 ◐ | **Lock-scope sweep over every entry point** — drive `ExecuteOrderUpdate`, `ExecuteAccountItemUpdate`, position updates, grace expiry, watchdog and the sweep with the broker observer armed | **zero** broker calls while `TestIsStateLockHeld()` is true, on every path, not a hand-picked two | `P1-43` |
+| S4 ✅ | **Lock-scope sweep over every entry point** — drive `ExecuteOrderUpdate`, `ExecuteAccountItemUpdate`, position updates, grace expiry, watchdog and the sweep with the broker observer armed | **zero** broker calls while `TestIsStateLockHeld()` is true, on every path, not a hand-picked two | `P1-43` |
 | S5 | **Partial-fill storm** — one trade exited in many small fills, both event orderings | exactly one consecutive-loss judgement; late fills revise rather than accumulate | `P1-16` |
 | S6 | **Rapid flip loop** — long↔short repeatedly | FSM coverage never outlives its position; no stale `CoveredQuantity`; grace re-arms each leg | `P1-36`, T1 |
 | S7 | **Copier fan-out under burst** — one leader, many followers, rapid entries and exits | no duplicate copies, no follower left inverted, sizing correct under concurrency | `P0-5`, `P0-6`, `P1-22` |

@@ -523,6 +523,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_16_ConsecutiveLossesCountTradesNotPartialExits();
             TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
+            TestP1_47_ArmDefaultFollowsTheResolvedMode();
             TestStress_S1toS4_OrderFloodGovernor();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
@@ -3671,6 +3672,46 @@ namespace NinjaTrader.NinjaScript.AddOns
         // yielded before calling into NinjaTrader; the event handlers honour that, the sweep
         // did not. Because the sweep runs on the WPF dispatcher, any NT8 path that blocks on a
         // background thread needing _stateLock deadlocks the UI thread -- and with it the guard.
+        // P1-47: the guard defaulted to disarmed, so every recompile silently removed all
+        // protection -- four times in one session on 2026-08-07. Arming controls whether the
+        // guard EVALUATES; the mode controls whether it ACTS. Shadow cannot act at all
+        // (ProcessAction returns "SHADOW (SKIPPED)" before touching the broker), so coming up
+        // disarmed there buys no safety and costs total observability. Acting modes still
+        // require a deliberate arm after preflight, which is FR-30's actual intent.
+        private static void TestP1_47_ArmDefaultFollowsTheResolvedMode()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] P1-47: the guard comes up armed in shadow and disarmed in acting modes");
+
+            Assert(RiskGuardAddOn.DefaultArmedForMode("shadow"),
+                "shadow must come up ARMED -- it cannot act, and disarmed means observing nothing");
+            Assert(!RiskGuardAddOn.DefaultArmedForMode("live"),
+                "live must come up disarmed; arming an acting mode stays a deliberate act");
+            Assert(!RiskGuardAddOn.DefaultArmedForMode("pure"),
+                "pure must come up disarmed");
+            Assert(!RiskGuardAddOn.DefaultArmedForMode("override_with_friction"),
+                "override_with_friction must come up disarmed");
+            Assert(RiskGuardAddOn.DefaultArmedForMode("nonsense-unrecognised"),
+                "an unrecognised mode cannot act (ProcessAction requires live), so it is safe to observe");
+
+            // Wired, not merely declared: initialising must actually apply it.
+            var shadowGuard = new RiskGuardAddOn();
+            shadowGuard.SetConfigForTest(new RiskConfig());
+            shadowGuard.SetModeForTest("shadow");
+            shadowGuard.SetArmedForTest(false);
+            shadowGuard.ApplyInitialArmStateForTest();
+            Assert(shadowGuard.GetIsArmed(), "initialising in shadow leaves the guard armed");
+
+            var liveGuard = new RiskGuardAddOn();
+            liveGuard.SetConfigForTest(new RiskConfig());
+            liveGuard.SetModeForTest("live");
+            liveGuard.SetArmedForTest(true);
+            liveGuard.ApplyInitialArmStateForTest();
+            Assert(!liveGuard.GetIsArmed(),
+                "initialising in an acting mode must disarm, even if the field was already true -- "
+                + "a restart must never come up armed AND acting");
+        }
+
         // Stress programme S1-S4 (plan §8). These exist because the operator's order-flood
         // stress test found four defects in one afternoon that a green suite had not. They are
         // driven through the real entry point, ExecuteOrderUpdate, so they catch wiring and not
@@ -3770,6 +3811,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             // teardown. ExecuteOrderUpdate has four Cancel sites inside the lock.
             var s4 = build(new RiskConfig());
             s4.Item3.IsLockedOut = true;
+            s4.Item2.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+            s4.Item2.Orders.Add(new Order
+            {
+                Instrument = mnq, OrderState = OrderState.Working, OrderType = OrderType.Limit,
+                OrderAction = OrderAction.Buy, Quantity = 1, Id = "S4-RESTING", Name = "RESTING_ENTRY"
+            });
+
+            // Every entry point that can reach a broker call, not a hand-picked one. P1-43
+            // existed precisely because the original check only drove the sweep and FSM teardown.
             var violations = RecordBrokerCallsUnderLock(s4.Item1, () =>
             {
                 for (int i = 0; i < 8; i++)
@@ -3777,9 +3830,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                     var o = mkOrder(mnq, "S4-" + i, OrderAction.Buy, OrderType.Limit);
                     s4.Item1.ExecuteOrderUpdate(s4.Item2, new OrderEventArgs { Order = o });
                 }
+                s4.Item3.IsLockedOut = true;
+                s4.Item1.ExecuteAccountItemUpdate(s4.Item2,
+                    new AccountItemEventArgs { AccountItem = AccountItem.RealizedProfitLoss, Value = -5000.0 });
+                s4.Item1.ExecutePositionUpdateDetails(s4.Item2, s4.Item2.Positions[0]);
+                s4.Item3.IsLockedOut = true;
+                s4.Item1.ExecuteSafetySweep();
             });
             Assert(violations.Count == 0,
-                string.Format("ExecuteOrderUpdate made {0} broker call(s) under _stateLock{1}",
+                string.Format("the order-update, account-item, position and sweep paths made {0} broker call(s) under _stateLock{1}",
                     violations.Count,
                     violations.Count == 0 ? "" : ": " + string.Join(", ", violations.Distinct())));
         }
