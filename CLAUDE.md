@@ -40,6 +40,9 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **ICT Daily Bias Models**: [ICT_DAILY_BIAS_MODELS.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/ict/ICT_DAILY_BIAS_MODELS.md) (7 models implemented, 5 planned for Phase 2)
 * **Quarters Theory**: [QUARTERS_THEORY.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/QUARTERS_THEORY.md) (Overnight direction combinations, hourly candle quarter structure, Doji detection, instat extremes)
 * **Profiler Knowledge Base**: [PROFILER_KNOWLEDGE_BASE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/PROFILER_KNOWLEDGE_BASE.md) (Session boxes, status logic, broken logic, auto-filter engine, reference levels, P12 scenarios, HOD/LOD timing, overnight combinations, data architecture)
+* **RiskGuard/Copier Hardening Plan**: [RISKGUARD_COPIER_HARDENING_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_COPIER_HARDENING_PLAN.md) (31 NT8 addon defects P0→P3, defect index keyed to file:line, phase-ordered execution plan)
+* **RiskGuard Hardening Progress**: [RISKGUARD_HARDENING_HANDOVER.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_HARDENING_HANDOVER.md) (live state of the P0 work on branch `harden/riskguard-copier-p0`; read before touching either addon)
+* **Agent Patch Loop**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (implement→gate→review→apply loop; gate ladder, provider shim, anti-reward-hacking guard, known-defective predecessor gates)
 
 ## Data Architecture — Two Parquet Systems
 
