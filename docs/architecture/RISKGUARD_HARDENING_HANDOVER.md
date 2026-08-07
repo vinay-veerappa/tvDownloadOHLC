@@ -1,81 +1,81 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 5)
-**Branch**: `harden/riskguard-copier-p0`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (42 defects; P0, Phase B and Phase C all closed, plus `P1-39` and `P1-40`)
-**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 481 passed, 0 failed.
+**Last updated**: 2026-08-07 (session 6)
+**Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 47 defects, 30 closed
+**Live state**: deployed, `shadow` mode, **armed** (it self-arms since `P1-47`). Suite **481 passed, 0 failed**.
 
 ---
 
-## 0. Start here (read this first, then §2 and §4)
+## 0. Start here (read this, then §4a for the roadmap)
 
-**30 of 47 defects are closed. Suite: 481 passed, 0 failed.** The guard now comes up **armed in shadow** (`P1-47`), so a recompile no longer silently removes all protection. Five defects were opened on 2026-08-07 by reading the operator's order-flood stress-test output — see the plan's §8 stress programme. All nine P0, all of Phase B, all of
-Phase C bar `P1-36`, plus `P1-40` and `P1-39` — both found by the first armed session. The addon
-is deployed and running in `shadow`, compiling clean in NT8.
+**30 of 47 defects closed. Suite 481/0. NT8 compiles clean.**
 
 | Phase | State |
 |---|---|
-| **A** — deploy P0 to shadow | Deployed; **T3 validated live 2026-08-07 (§4g); T5 needs an acting mode** |
-| **B** — test foundation | ✅ T1–T3 tests backfilled and proven falsifiable; `P2-28` |
-| **C** — P1 safety-critical | ✅ `P1-20`, `P1-37`, `P1-10`, `P1-35`, `P1-11`, `P1-15`, `P1-40`; **`P1-36` left** |
+| **A** — deploy P0 to shadow | Deployed and armed. **T3 validated live (§4g). T5 has never been exercised** — it needs an acting mode |
+| **B** — test foundation | ✅ done |
+| **C** — P1 safety-critical | ✅ done except `P1-36` |
 | **D** — P1 rule semantics | ✅ done — `P1-16`, `P1-17`, `P1-18`, `P1-19` |
-| **E–G** | Not started — §4a |
+| **D2** — stress backlog | `S1`–`S4` landed and closed four defects; **`S5`–`S9` open** |
+| **E** — copier fidelity | Started — `P1-23` closed. `P1-21`, `P1-22`, **`P0-9`'s real half** open |
+| **F–G** | Not started |
 
-### Three things to know before you touch anything
+### Five things to know before you touch anything
 
-**1. Deployed is not validated, and the feed was never the whole story.** Phase A put the code in
-front of NinjaTrader but never in front of a market.
+**1. The plan's older `**Fix**:` notes are hypotheses, not instructions.** Three "settled"
+recommendations were retired this session because following them would have made things *worse*:
 
-*Resolved 2026-08-07 (session 5)*: the box is now on a **real-time feed** (Kinetick EOD →
-**TPT**), quotes are live and fills work — a real `MNQ SEP26` fill was observed end to end. That
-half of the blocker is gone.
+- `P1-39` said prefer a serializer-level `ObjectCreationHandling.Replace`. That discards the
+  `StringComparer.OrdinalIgnoreCase` dictionaries and silently makes instrument and firm lookups
+  case-sensitive. Fixed per-property instead; a test pins the comparer.
+- `P1-18` said skip the profile trailing-DD rule whenever `FirmMirror.Enabled`. On the live config
+  `FirmMirror.Enabled` is `true` while its `TrailingDD` is `false` and nothing is mapped, so that
+  would have left **no trailing-drawdown cover at all**.
+- `P1-16`'s obvious fix (judge the trade at the flat transition) silently **drops losses** whenever
+  realized PnL lags the position update — an ordering nothing guarantees.
 
-**The other half is `isArmed: false`, and it is the reason nothing validated.** Every evaluation
-path returns early while disarmed: FSM creation (`RiskGuardAddOn.cs:1837`), order FSM updates
-(`:2034`), rule evaluation (`:1205`, `:2159`, `:2392`), firm mirror (`:2450`), and `CanTrade`
-(`:124`, which returns **true** — allow). Observed directly: an open position with
-`nt_riskguard_state` reporting **zero FSMs**. In shadow-and-disarmed, RiskGuard is a pure event
-logger. No feed quality fixes that.
+Verify the mechanism against the code before acting on any entry, including ones marked settled.
 
-**One of the two §4e acceptance criteria is not reachable in shadow at all.** `IsGuardProtecting`
-(`:875`) requires `_isArmed && GetMode() == "live"`, so in shadow it returns false for every
-account and *every* live follower is blocked by design — a `COPY_BLOCKED_NO_GUARD` log would show
-100% blocks and prove nothing. **T3 (giveback) is validatable armed + shadow; T5 (fail-closed
-copy) requires an acting mode.** §4e treats both as achievable in one shadow session; that is
-wrong.
+**2. A machine check is only as good as the paths driven through it.** The lock-scope invariant
+was already machine-enforced (`Account.BrokerCallObserver` + `TestIsStateLockHeld()`) and still
+missed `P1-43` — four `account.Cancel` calls under `_stateLock` on the order-update path — because
+the check only ever drove the sweep and FSM teardown. `S4` now drives every entry point.
 
-**The inflated shadow counter is not a deadlock.** Preflight check (d) (`:2652`) applies the
-`MinShadowSessions` gate only to `live`/`pure`/`override_with_friction`. Arming in **shadow**
-bypasses it, so resetting `ShadowSessionsCompleted` 5 → 0 is safe and blocks only the eventual
-live arming, which is its job.
+**3. Only NT8 proves the build.** `P1-47` compiled clean under net8.0 with the suite green and
+failed in net48, because the methods sat inside `#if TESTING`. **Always `nt_compile` after
+touching code near the test hooks**, and read `RESULTS:` from a *fresh* build — a `dotnet run
+--no-build` after a failed build silently reports the previous assembly's result.
 
-**Arming is UI-only.** `ToggleArmed()` (`:2713`) has no bridge route; the only caller is the
-dashboard's `TOGGLE ARMED` button (`:4434`). Do not reach for `nt_script_execute` — it is
-unreliable here *and* it recompiles, which reloads every AddOn and re-triggers `P1-39`.
+**4. Two operational items are still outstanding.**
+- `state.json` reads `ShadowSessionsCompleted = 5`, inflated before `P1-37` was fixed. It no longer
+  climbs, but `MinShadowSessions=3` reads as satisfied, so the *live* arming gate is not
+  trustworthy on this box. **Reset it with NinjaTrader closed** (commands in the plan under
+  `P1-37`). It does not block shadow work — preflight applies that gate only to acting modes.
+- **`POST /api/riskguard/config` does not merge (`P2-41`, open).** Every field a partial POST omits
+  returns as its default and is written to disk, while the response echoes your *request* and says
+  `"applied"`. Always GET the full document, mutate one key, POST it back, then GET again and
+  **diff every key**. That discipline is the only reason `P1-39` was found.
 
-**2. One manual step is outstanding.** The live `state.json` reads `ShadowSessionsCompleted = 5`,
-inflated by restarts before `P1-37` was fixed. It no longer climbs, but the value is wrong and
-`MinShadowSessions=3` currently reads as satisfied, so the arming gate is not trustworthy on this
-box. **Reset it with NinjaTrader closed** — commands are in the plan under P1-37. It was
-deliberately not edited live: shutdown flushes in-memory state over the file, and a torn write
-loses persisted lockouts.
+**5. `P0-9`'s real half is the largest remaining live exposure.** Followers still receive bare
+market orders with **no protective legs**. Everything else in the copier is secondary to this.
 
-**3. The branch is still unmerged.** `harden/riskguard-copier-p0`, fast-forward available. It also
-carries unrelated narrative/wargaming commits from other background agents.
+### What the guard actually does right now
 
-**4. `POST /api/riskguard/config` still does not merge (`P2-41`).** `P1-39`'s append half is
-fixed — the live config now loads 6 windows from a 6-window file, where it previously loaded 8 —
-but the endpoint still does `req.ToObject<RiskConfig>()` on the whole body, so **every field a
-partial POST omits comes back as its default and is written to disk**. Always GET the full
-document, mutate one key, POST it back, then GET again and **diff every key**. That discipline is
-the only reason P1-39 was found at all.
+Armed, `shadow`. It evaluates every rule and logs would-be actions; `ProcessAction` returns
+`SHADOW (SKIPPED)` before any broker call (`:2895`), so it cannot touch an account. Arming and
+acting are **separate switches** — `_isArmed` enables evaluation, `_mode == "live"` enables action.
+Since `P1-47` the guard comes up armed in shadow by itself and disarmed in acting modes;
+`/api/riskguard/version` reports `mode`, `isArmed` and `guarding`, and coming up disarmed logs
+`UNPROTECTED_ON_START`. Arming manually is still UI-only (`TOGGLE ARMED`); `nt_script_execute` does
+not work on this box.
 
-Deployment happened to be the thing that found `P1-37` — a safety gate that counted addon restarts
-instead of sessions, which no amount of review had noticed. That is the argument for finishing
-Phase A properly on a real feed.
+**Firm mirror is live but unmapped.** `P1-42` made `AccountFirmMap`/`FirmProfiles` actually load,
+but no account is mapped and the top-level sub-rules are disabled, so no firm rule fires. Mapping
+`TAKEPROFITPRO524207503` → `TakeProfitTrader` turns on real enforcement with real numbers — do it
+deliberately, and run a shadow session on it first.
 
-The roadmap for the remaining 21 defects is §4a; the deployment runbook is §4e and the record of
-the one run so far is §4f.
+
 
 
 ```powershell
@@ -697,6 +697,63 @@ clean firm-mirror log as evidence of firm-mirror protection.
 ATM entries attach their stop in ~0.35 s and are fine; a manual entry that takes longer than 3 s
 to get a stop will log a would-be flatten. Learn whether 3 s matches real trading habits before
 that ever becomes an acting rule.
+
+---
+
+## 4h. Session 6 record — 2026-08-07
+
+Twelve defects closed in one session, on a live feed with the guard armed in shadow throughout.
+Suite 427 → **481**, closed 24 → **30 of 47** (five of the new ones were *opened* this session).
+
+| Closed | What it was |
+|---|---|
+| `P1-40` | Giveback rule was proportional-only; a one-tick peak made any retrace a ≥100% breach. Fired **6× in 36 s** live, first at 2.4 s after entry with the position *down* $1.00 |
+| `P1-39` | Json.NET appended the default `WindowsET` on every load; a default window could never be deleted, so the window gate silently widened |
+| `P1-16` | One trade exited in three partials counted as three consecutive losses |
+| `P1-17` | Cumulative $3,000 evaluation target was fed session-scoped PnL, so it only fired if cleared in a single day |
+| `P1-18` | Two trailing-drawdown implementations with undefined precedence |
+| `P1-19` | A flatten scoped to MES closed MNQ too; one evaluation pass issued five account-wide flattens |
+| `P1-42` | `AccountFirmMap`/`FirmProfiles` were read by no evaluation path — the funded account had no firm protection, and mapping it would not have changed that |
+| `P1-43` | Four `account.Cancel` calls under `_stateLock` on the order-update path |
+| `P1-44` | Flood cancel had no reducing-order guard and could cancel a protective stop |
+| `P1-45` | Flood lockout set no `LockoutUntil`, so it never lapsed, and it was persisted |
+| `P2-46` | Flood detector counted `Submitted` and `Accepted` as two orders — the nominal 5/sec limit fired near 3/sec |
+| `P1-47` | Guard defaulted to disarmed, so every recompile silently removed all protection |
+| `P1-23` | Symbol translation was case-sensitive and used a global `Replace`; two sizing modes silently degraded to 1:1 |
+
+### How they were found — worth repeating
+
+**The operator's order-flood stress test produced four of them in an afternoon** (`P1-43`–`P2-46`)
+by reading `interventions.jsonl` back. A green suite and months of review had not. That is why
+`S1`–`S9` now exist as a standing programme (plan §8) rather than an ad-hoc exercise.
+
+**Reading the live log answered a real trading complaint.** The operator reported being locked out
+after a single losing trade. The archive showed `CONSECUTIVE_LOSS_BREACH` flattens on **funded**
+accounts (`TAKEPROFIT273495429` 66, `TAKEPROFIT619225465` 27, `TAKEPROFIT648470602` 18). Cause:
+scale out at profit, runner comes back to the stop → the last realized delta is negative → the
+whole trade recorded as a **loss despite netting a profit**. Three such trades hit
+`MaxConsecutiveLosses`. `P1-16` fixes it — the trade is now judged on its net.
+*(The runner itself was ordinary price action, not the guard. Only one `MISSING_STOP_FLATTEN` ever
+touched a funded account.)*
+
+### Two mistakes made and caught, recorded so they are not repeated
+
+**The first draft of S1–S4 was vacuous.** Passing `null` as `sender` made `ExecuteOrderUpdate`
+throw on `(Account)sender` inside its own `try/catch`, so every call was swallowed and **three
+assertions passed against code that never ran** — including the lock-scope one. Only the
+assertions expecting a *positive* effect failed and gave it away. Once fixed, the same test found
+8 violations. **A stress test that drives nothing reports safety.**
+
+**A `dotnet run --no-build` after a failed build reports the previous assembly.** This produced a
+false green twice. Read `RESULTS:` only from a build that compiled.
+
+### State left on the box
+
+Deployed and compiling clean. `shadow`, **armed** (self-armed since `P1-47`).
+`TAKEPROFITPRO524207503` is covered — it was excluded during T3 validation and restored
+afterwards. `config.json` is clean at 6 windows and the live config now matches it exactly.
+All accounts flat.
+
 
 ---
 
