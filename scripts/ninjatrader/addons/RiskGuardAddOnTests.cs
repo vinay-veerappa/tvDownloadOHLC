@@ -556,6 +556,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_23_SymbolTranslationAndSizingModesDoNotLie();
             TestP1_47_ArmDefaultFollowsTheResolvedMode();
             TestStress_S1toS4_OrderFloodGovernor();
+            TestP2_41_PartialConfigPostMergesInsteadOfReplacing();
+            TestP2_38_DeployGateClassifiesByProviderNotName();
             TestStress_S5_PartialFillStorm();
             TestStress_S6_RapidFlipLoop();
             TestStress_S8_ConfigReloadWhileArmedAndInPosition();
@@ -5168,6 +5170,129 @@ namespace NinjaTrader.NinjaScript.AddOns
         // but its correctness depends entirely on event ORDER, and NT8 guarantees none. Both
         // orderings are driven here, through the real entry points.
         // ==================================================================
+        // P2-41. POST /api/riskguard/config deserialized the request body straight into a
+        // complete RiskConfig, so every field the caller OMITTED silently became its default --
+        // and SaveAndReloadConfig then wrote those defaults to disk and reloaded them live. The
+        // reply said "applied" and echoed the request, so nothing about it revealed that the rest
+        // of the risk configuration had just been reset.
+        private static void TestP2_41_PartialConfigPostMergesInsteadOfReplacing()
+        {
+            Console.WriteLine("\n[TEST] P2-41: a partial config POST merges onto the live config instead of flattening it");
+
+            var live = new RiskConfig();
+            live.Mode = "live";
+            live.MinShadowSessions = 3;
+            live.EnableWindowGate = true;
+            live.StopGuard.StopAttachSeconds = 45;
+            live.StopGuard.OnMissing = "AutoStop";
+            live.Overtrading.MaxConsecutiveLosses = 4;
+            live.ExcludedAccounts = new List<string> { "OldExclusion" };
+
+            // The exact body from the plan's acceptance test: one key, nothing else.
+            var patch = Newtonsoft.Json.Linq.JObject.Parse("{\"ExcludedAccounts\":[\"X\"]}");
+
+            Newtonsoft.Json.Linq.JObject mergedJson;
+            var result = RiskConfigMerge.Apply(live, patch, out mergedJson);
+
+            Assert(result != null, "The merged document still deserializes to a RiskConfig.");
+
+            Assert(result.ExcludedAccounts != null
+                   && result.ExcludedAccounts.Count == 1
+                   && result.ExcludedAccounts[0] == "X",
+                string.Format(
+                    "The key the caller sent is applied, and arrays REPLACE rather than append "
+                    + "(got [{0}]). Union semantics would make ExcludedAccounts append-only with "
+                    + "no way to remove an entry through the API -- and concatenation is the exact "
+                    + "mechanism behind P1-39.",
+                    result.ExcludedAccounts == null ? "null" : string.Join(",", result.ExcludedAccounts)));
+
+            Assert(result.Mode == "live",
+                string.Format("Mode survives (got '{0}', expected 'live'). Resetting it to shadow "
+                    + "silently disarms enforcement on a guard the operator believes is acting.", result.Mode));
+            Assert(result.MinShadowSessions == 3,
+                string.Format("MinShadowSessions survives (got {0}). Zeroing it removes the live-arming gate.",
+                    result.MinShadowSessions));
+            Assert(result.EnableWindowGate,
+                "EnableWindowGate survives -- defaulting it to false opens every trading window.");
+            Assert(result.StopGuard.StopAttachSeconds == 45,
+                string.Format("StopGuard.StopAttachSeconds survives (got {0}, expected 45).",
+                    result.StopGuard.StopAttachSeconds));
+            Assert(result.StopGuard.OnMissing == "AutoStop",
+                string.Format("StopGuard.OnMissing survives (got '{0}').", result.StopGuard.OnMissing));
+            Assert(result.Overtrading.MaxConsecutiveLosses == 4,
+                string.Format("Nested values the caller never mentioned survive (got {0}, expected 4).",
+                    result.Overtrading.MaxConsecutiveLosses));
+
+            // A nested partial must merge into its object, not replace the whole object.
+            var nested = Newtonsoft.Json.Linq.JObject.Parse("{\"StopGuard\":{\"StopAttachSeconds\":90}}");
+            Newtonsoft.Json.Linq.JObject nestedMerged;
+            var afterNested = RiskConfigMerge.Apply(live, nested, out nestedMerged);
+            Assert(afterNested.StopGuard.StopAttachSeconds == 90,
+                string.Format("A nested edit applies (got {0}).", afterNested.StopGuard.StopAttachSeconds));
+            Assert(afterNested.StopGuard.OnMissing == "AutoStop",
+                string.Format(
+                    "...and its SIBLINGS survive (OnMissing '{0}'). Replacing the whole StopGuard "
+                    + "object would set OnMissing back to its default, which is how the guard "
+                    + "stops attaching stops without anyone changing that setting.",
+                    afterNested.StopGuard.OnMissing));
+
+            // An empty body must be a no-op, not a factory reset.
+            Newtonsoft.Json.Linq.JObject emptyMerged;
+            var afterEmpty = RiskConfigMerge.Apply(live, new Newtonsoft.Json.Linq.JObject(), out emptyMerged);
+            Assert(afterEmpty.Mode == "live" && afterEmpty.MinShadowSessions == 3
+                   && afterEmpty.StopGuard.StopAttachSeconds == 45,
+                "An empty body changes nothing at all.");
+        }
+
+        // P2-38. Three deploy/order gates classified an account as simulated with
+        // `Name.StartsWith("Sim") || Provider.Contains("imulat")`, and a fourth used the name
+        // alone. The provider test is correct; OR-ing a name prefix in front of it means a funded
+        // account called "SimpsonFund" is treated as simulated and can be deployed to, and traded
+        // on, without confirmLive=true. Same root cause as P1-20.
+        //
+        // Asserted partly against source text because McpBridgeAddOn.cs is excluded from this
+        // test build by construction (WPF dependencies), so its gates cannot be executed here at
+        // all. The behavioural half -- that the shared classifier gets "SimpsonFund" right -- is
+        // executed properly.
+        private static void TestP2_38_DeployGateClassifiesByProviderNotName()
+        {
+            Console.WriteLine("\n[TEST] P2-38: the bridge's deploy/order gates classify by provider, never by name prefix");
+
+            var simpson = new Account { Name = "SimpsonFund", Provider = Provider.NinjaTrader };
+            Assert(!TradeCopierEngine.IsSimulationAccount(simpson),
+                "A LIVE account named 'SimpsonFund' is not simulated. The name-prefix test said it was, "
+                + "and that is the whole defect: it gates strategy deployment and order placement.");
+
+            var sim101 = new Account { Name = "Sim101", Provider = Provider.Simulator };
+            Assert(TradeCopierEngine.IsSimulationAccount(sim101),
+                "A genuine Simulator account still classifies as simulated.");
+
+            var oddlyNamed = new Account { Name = "PlaybackDesk", Provider = Provider.Simulator };
+            Assert(TradeCopierEngine.IsSimulationAccount(oddlyNamed),
+                "A simulated account that does not start with 'Sim' still classifies as simulated -- "
+                + "the name was never the signal in either direction.");
+
+            var bridgePath = Path.Combine(Path.GetDirectoryName(AddonSourcePath()), "McpBridgeAddOn.cs");
+            Assert(File.Exists(bridgePath), string.Format("The bridge source is readable at {0}", bridgePath));
+
+            var code = string.Join("\n", File.ReadAllText(bridgePath)
+                .Split('\n')
+                .Select(l => { int i = l.IndexOf("//"); return i >= 0 ? l.Substring(0, i) : l; }));
+
+            var nameGate = new System.Text.RegularExpressions.Regex(
+                @"isSim\s*=\s*[^;]*Name\s*\.\s*StartsWith", System.Text.RegularExpressions.RegexOptions.Singleline);
+            Assert(!nameGate.IsMatch(code),
+                "No sim/live gate in the bridge classifies by account name any more.");
+
+            int shared = System.Text.RegularExpressions.Regex.Matches(
+                code, @"IsSimulationAccount\(").Count;
+            Assert(shared >= 4,
+                string.Format(
+                    "All four gates use the shared classifier (found {0}). Two definitions of "
+                    + "'simulated' drift, and the one that drifts is the one nobody is testing.",
+                    shared));
+        }
+
         private static void TestStress_S5_PartialFillStorm()
         {
             Console.WriteLine("\n[STRESS S5] partial-fill storm, both event orderings (P1-16)");

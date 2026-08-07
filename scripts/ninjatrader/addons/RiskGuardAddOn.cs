@@ -4898,6 +4898,62 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
     }
 
+    /// <summary>
+    /// P2-41. `POST /api/riskguard/config` did `req.ToObject&lt;RiskConfig&gt;()` and handed the
+    /// result straight to `SaveAndReloadConfig`. Deserialising a partial body into a complete
+    /// `RiskConfig` gives every OMITTED field its default -- and that default was then written to
+    /// `RiskGuard/config.json` and reloaded live. A caller posting `{"ExcludedAccounts":["X"]}` to
+    /// add one exclusion also reset `Mode` to shadow, `MinShadowSessions` to 0, `EnableWindowGate`
+    /// to false, and every StopGuard/PnLRules/FirmMirror value to its default -- destroying the
+    /// live risk configuration. The response then said `"applied"` and echoed the REQUEST, so
+    /// nothing about the reply revealed it.
+    ///
+    /// This lives here, not in `McpBridgeAddOn.cs`, because that file is excluded from the test
+    /// build (WPF dependencies). The merge is pure JSON manipulation with nothing NinjaTrader
+    /// about it, so keeping it here is what makes it testable at all.
+    /// </summary>
+    public static class RiskConfigMerge
+    {
+        /// <summary>
+        /// Returns <paramref name="live"/> with only the keys present in <paramref name="patch"/>
+        /// replaced. Nested objects merge recursively; arrays are REPLACED, not concatenated.
+        ///
+        /// Arrays replace deliberately. Union semantics would make `ExcludedAccounts` an
+        /// append-only list with no way to remove an entry through the API, and concatenation is
+        /// the exact mechanism behind P1-39 -- a list that grew on every write until a default
+        /// could never be deleted. Replace is also what a caller means by sending an array.
+        /// </summary>
+        public static JObject Merge(JObject live, JObject patch)
+        {
+            if (live == null) return patch == null ? new JObject() : (JObject)patch.DeepClone();
+            var merged = (JObject)live.DeepClone();
+            if (patch == null) return merged;
+
+            merged.Merge(patch, new JsonMergeSettings
+            {
+                MergeArrayHandling = MergeArrayHandling.Replace,
+                // A caller who explicitly sends null means "clear this", which is a different
+                // instruction from omitting the key. Omitted keys never appear in `patch` at all,
+                // so they are untouched either way.
+                MergeNullValueHandling = MergeNullValueHandling.Merge
+            });
+            return merged;
+        }
+
+        /// <summary>
+        /// Convenience for the bridge: merge a partial body onto the live config and hand back a
+        /// typed config plus the merged document to echo. Echoing the RESULT rather than the
+        /// request is half the fix -- the old reply looked identical whether the merge happened
+        /// or not.
+        /// </summary>
+        public static RiskConfig Apply(RiskConfig liveConfig, JObject patch, out JObject mergedJson)
+        {
+            var live = liveConfig == null ? new JObject() : JObject.FromObject(liveConfig);
+            mergedJson = Merge(live, patch);
+            return mergedJson.ToObject<RiskConfig>();
+        }
+    }
+
     public class PersistedStateData
     {
         public bool IsArmed { get; set; }
