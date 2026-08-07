@@ -1,16 +1,17 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 8 — the P1 band closes; NT8 up, deployed, compiled clean)
+**Last updated**: 2026-08-07 (session 8 — the P1 band closes and **`P0-9`'s mirrored stop is validated live**)
 **Branch**: `harden/riskguard-copier-p0` (session-8 work committed here, **not yet merged or pushed**)
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **50 defects, 38 closed, 12 open** (`P0-9` and `P1-13` are part-closed and counted as open; the other ten are `P2-24`, `P2-25`, `P2-26`, `P2-27`, `P2-29` and the five P3s). `P0-49`/`P0-50` were opened and closed on 2026-08-07 — see §4l
-**Live state**: deployed, `shadow`. NT8 compiles clean (0 errors), all 9 addon files in sync.
+**Live state**: deployed, `shadow`, feed connected, no open positions. NT8 compiles clean (0 errors),
+all 9 addon files in sync. **The deployed build is the tip of this branch.**
 Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 
 > ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
 >
 > | | |
 > |---|---|
-> | Repo | 11 commits on `harden/riskguard-copier-p0`. **Not merged, not pushed** |
+> | Repo | 13 commits ahead of `main` (11 are this work, 2 from other agents). **Not merged, not pushed** |
 > | NT8 | Running, **all 9 addon files in sync**, `nt_compile` 0 errors, feed connected, no open positions |
 > | Suite | 622 passed / 0 failed (was 524) · loop selftest 11/11 |
 > | Operational | **Nothing outstanding.** `P2-41` is closed and verified live |
@@ -40,9 +41,9 @@ Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 > now, but any older transcript showing that call also shows the live config being flattened.
 >
 > **What is pending is now §4a**, rewritten as a prioritised backlog rather than a phase list.
-> Short version: **validate the mirrored stop on a live feed before writing any more code**; then
-> `P0-9`'s targets/OCO item needs *your* decision, not a code change; then `P3-30` (the
-> reconciler) is the highest-value thing left. `P1-13`'s threading half needs a
+> Short version, now that the live validation is done: **`P0-9`'s targets/OCO item needs *your*
+> decision, not a code change** (and the operator hit the missing target within one trade); then
+> `P3-30` (the reconciler) is the highest-value thing left. `P1-13`'s threading half needs a
 > concurrent-guard-event stress test written first — **the S-series does not cover that**, despite
 > being finished. The loop's own backlog is [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §12.
 
@@ -50,13 +51,17 @@ Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 
 ## 0. Start here (read this, then §4a for what is pending)
 
-### 0.0 The branch is merged and pushed — and every SHA below this line is stale
+### 0.0 Session 7 was merged and pushed. **Session 8 is NOT** — and every SHA below is stale
 
-On **2026-08-07** the branch was fast-forwarded into `main` and pushed to GitHub.
-`origin/main` is `aaecbe8b`. This was done **before shadow validation**, which is the
-opposite of what §6 item 4 recommended — the merge was a deliberate call to get 282
-unpushed commits off one machine, not a signal that `P0-9` is validated. **The live-feed
-shadow session in §6 item 6 is still outstanding and still gates any acting mode.**
+> ⚠️ **Read both halves of this.** Session 7's work was fast-forwarded into `main` and pushed
+> (`origin/main` at `aaecbe8b`). **Session 8's 11 commits are not merged and not pushed** — they
+> sit on `harden/riskguard-copier-p0`, and the NT8 box is running that tip. Merging is the first
+> repo action the next session should consider.
+
+The session-7 push happened **before shadow validation**, which is the opposite of what §6 item 4
+recommended — it was a deliberate call to get 282 unpushed commits off one machine, not a signal
+that `P0-9` was validated. `P0-9` **has since been validated live** (§4l), so that particular
+concern is now discharged; the merge ordering lesson still stands.
 
 > ⚠️ **Commit SHAs cited throughout this document no longer resolve.** Getting the push
 > through required rewriting history twice — once to purge `data/` (a 126 MB
@@ -79,8 +84,9 @@ Also landed in that push, and relevant if you commit here:
 - **0.28 GB of older parquet remains in published history** (the purges only covered the
   then-unpushed range). Logged in `docs/ROADMAP.md` under Known Issues / Tech Debt.
 
-**33 of 48 defects closed, plus `P0-9`'s naked-follower exposure. Suite 524/0. NT8 compiles clean, and every fix in this session has
-been verified on the live box** (see the banner).
+**38 of 50 defects closed. Suite 622/0. NT8 compiles clean, and `P0-9`'s mirrored stop is
+validated on real fills** (see the banner and §4l). *(This line read "33 of 48 / suite 524" at the
+end of session 7.)*
 
 | Phase | State |
 |---|---|
@@ -107,6 +113,9 @@ recommendations were retired this session because following them would have made
   realized PnL lags the position update — an ordering nothing guarantees.
 
 Verify the mechanism against the code before acting on any entry, including ones marked settled.
+**Two more settled entries were retired in session 8** — `P1-36`'s "coverage follows a single stop"
+and `P1-13`'s deferral reasoning — in this file *and* in `scripts/agent_loop/profiles.py`. Retire
+from both places or the review panel keeps arguing for the closed defect.
 
 **2. A machine check is only as good as the paths driven through it.** The lock-scope invariant
 was already machine-enforced (`Account.BrokerCallObserver` + `TestIsStateLockHeld()`) and still
@@ -118,7 +127,7 @@ failed in net48, because the methods sat inside `#if TESTING`. **Always `nt_comp
 touching code near the test hooks**, and read `RESULTS:` from a *fresh* build — a `dotnet run
 --no-build` after a failed build silently reports the previous assembly's result.
 
-**4. One operational item remains (`P2-41`). The shadow-counter reset is DONE.**
+**4. No operational items remain. Both of the ones recorded here are DONE.**
 
 - ✅ **`ShadowSessionsCompleted` reset — done 2026-08-07, session 7.** It read `5`, inflated by
   restarts before `P1-37` was fixed, which made `MinShadowSessions=3` read as satisfied and the
@@ -501,12 +510,12 @@ to check.
 
 ## 4a. What is pending — the current backlog
 
-**48 defects, 36 closed, 12 open** as of session 8 (2026-08-07). The phase structure below
+**50 defects, 38 closed, 12 open** as of session 8 (2026-08-07). The phase structure below
 (A–G) is kept as historical record; **A, B, C, D, D2 and E are all done.** This section is the
 live list. Band membership and the P1-30/31 → P1-35/36 renumbering are in the plan's inventory
 table.
 
-### The one that outranks everything else
+### Done — the item that used to outrank everything else
 
 ✅ **The mirrored stop is VALIDATED LIVE (2026-08-07, §4l).** Two ATM trades: the first exposed
 `P0-49`/`P0-50`, the second — after the fix — mirrored the stop **1 ms** after the follower's fill,
@@ -518,7 +527,7 @@ at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FS
 unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
 copier.
 
-### Needs an operator decision, not a code change
+### START HERE — needs an operator decision, not a code change
 
 **`P0-9` item (1) — profit targets and OCO.** The last piece of `P0-9`, and **the operator hit it
 immediately**: on the validated trade, Sim101 carried `Target1` (Limit Sell 29851.5) and Sim-ORB
