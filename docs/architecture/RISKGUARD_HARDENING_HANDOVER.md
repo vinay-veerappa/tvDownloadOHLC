@@ -1,7 +1,7 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 7 — closed clean; NT8 up, deployed, armed)
-**Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
+**Last updated**: 2026-08-07 (session 7 — closed clean; NT8 up, deployed, armed · **merged and pushed**, see §0.0)
+**Branch**: `harden/riskguard-copier-p0` — **merged into `main` and pushed**; `origin/main` at `62a9f787`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 33 closed + `P0-9`'s naked-follower half
 **Live state**: deployed, `shadow`, **armed and guarding**. NT8 compiles clean (0 errors).
 Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11**.
@@ -10,7 +10,7 @@ Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11
 >
 > | | |
 > |---|---|
-> | Repo | `c6168033` on `harden/riskguard-copier-p0`, **unmerged**. All session work committed |
+> | Repo | Merged to `main` and pushed; `origin/main` at `62a9f787`. All session work committed |
 > | NT8 | Running, logged in, **all 9 addon files in sync**, `nt_compile` 0 errors |
 > | Guard | `mode: shadow`, `isArmed: true`, `guarding: true` |
 > | Suite | 524 passed / 0 failed · verifier 22/22 · loop selftest 11/11 |
@@ -33,6 +33,35 @@ Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11
 ---
 
 ## 0. Start here (read this, then §4a for the roadmap)
+
+### 0.0 The branch is merged and pushed — and every SHA below this line is stale
+
+On **2026-08-07** the branch was fast-forwarded into `main` and pushed to GitHub.
+`origin/main` is `62a9f787`. This was done **before shadow validation**, which is the
+opposite of what §6 item 4 recommended — the merge was a deliberate call to get 282
+unpushed commits off one machine, not a signal that `P0-9` is validated. **The live-feed
+shadow session in §6 item 6 is still outstanding and still gates any acting mode.**
+
+> ⚠️ **Commit SHAs cited throughout this document no longer resolve.** Getting the push
+> through required rewriting history twice — once to purge `data/` (a 126 MB
+> `NQ1_1m.parquet` exceeded GitHub's 100 MB limit and had been silently rejecting every
+> push for 202 commits), and once to purge 88 MB of `.m4a`. Both rewrites changed every
+> commit SHA in the range. `c6168033`, `51892d54`, `0b6caafa`, `456d3d78`, `c4ab4c48`,
+> `404b8053`, `4667f794`, `56f32317` and the rest are **orphaned** — the *work* is all
+> present in `main`, only the identifiers are dead. Do not cite these SHAs onward, and
+> check `git cat-file -t <sha>` before trusting any of them.
+
+Also landed in that push, and relevant if you commit here:
+
+- **`.githooks/pre-commit`** now blocks parquet, audio, video, and anything over 50 MB —
+  including via `git add -f`, which is how the 126 MB parquet got in past `.gitignore`.
+  It is **not automatic**: run `git config core.hooksPath .githooks` in each clone or it
+  silently does nothing. Override a deliberate exception with `ALLOW_BIG_FILES=1 git commit`.
+- **A live Gemini API key** was found by GitHub's secret scanning in
+  `scripts/trader/chart_agent/test_vision.py:3` and scrubbed from history. It never
+  reached GitHub, but **it still needs rotating**.
+- **0.28 GB of older parquet remains in published history** (the purges only covered the
+  then-unpushed range). Logged in `docs/ROADMAP.md` under Known Issues / Tech Debt.
 
 **33 of 48 defects closed, plus `P0-9`'s naked-follower exposure. Suite 524/0. NT8 compiles clean, and every fix in this session has
 been verified on the live box** (see the banner).
@@ -614,9 +643,15 @@ Then:
 
 3. Rotate `interventions.jsonl` so shadow output is readable. Safe while running —
    `File.AppendAllLines` never holds the file open.
-4. Merge `harden/riskguard-copier-p0` → `main`. **Do this after shadow validation, not before**;
-   deployment copies from the working tree, so the merge buys nothing up front. Note the branch
-   also carries ~7 unrelated narrative/wargaming commits from other background agents.
+4. ~~Merge `harden/riskguard-copier-p0` → `main`.~~ ✅ **Done 2026-08-07 — but done *before*
+   shadow validation, against the advice this item originally gave.** The trigger was
+   operational, not technical: 282 commits had never been pushed, so the work existed on one
+   machine only. `main` was fast-forwarded (the branch was a strict ancestor, 0 behind) and
+   pushed; `origin/main` is `62a9f787`. See §0.0 — the history was rewritten in the process and
+   the SHAs in this document are orphaned. The branch did also carry the ~7 unrelated
+   narrative/wargaming commits noted here, plus five more committed that day.
+   **This changes nothing about validation state**: deployment still copies from the working
+   tree, and item 6 below is still the gate on an acting mode.
 5. Copy the **four** changed addon sources into `bin/Custom/AddOns/` (`RiskGuardAddOn.cs`,
    `TradeCopierEngine.cs`, `PropFirmProtectionSuite.cs`, `RiskGuardAddOnTests.cs` —
    `TestingStubs.cs` is unchanged), then compile via `nt_compile` or F5 and confirm zero errors.
