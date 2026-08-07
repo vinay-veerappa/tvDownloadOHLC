@@ -403,33 +403,58 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             isClamped = false;
             if (leaderQty <= 0) return 0;
-            if (rel.FixedLotMode || rel.SizingMode == CopierSizingMode.FixedLot) return isExit ? leaderQty : rel.FixedLotSize;
 
-            double absRatio = Math.Abs(rel.QuantityRatio);
-            string symbol = rawSymbol.Split(' ')[0].ToUpper();
+            int rawCopyQty;
 
-            // 1. Check Per-Ticker Ratio Overrides
-            if (rel.PerTickerRatios != null && rel.PerTickerRatios.TryGetValue(symbol, out double tickerRatio))
+            if (rel.FixedLotMode || rel.SizingMode == CopierSizingMode.FixedLot)
             {
-                absRatio = Math.Abs(tickerRatio);
+                // Fixed-lot: entries use the configured lot size; exits mirror the leader's exit quantity.
+                rawCopyQty = isExit ? leaderQty : rel.FixedLotSize;
+            }
+            else
+            {
+                double absRatio = Math.Abs(rel.QuantityRatio);
+                string symbol = rawSymbol.Split(' ')[0].ToUpper();
+
+                // 1. Check Per-Ticker Ratio Overrides
+                if (rel.PerTickerRatios != null && rel.PerTickerRatios.TryGetValue(symbol, out double tickerRatio))
+                {
+                    absRatio = Math.Abs(tickerRatio);
+                }
+
+                // 2. Bidirectional Symbol Multiplier (Mini -> Micro 10x, Micro -> Mini 0.1x)
+                double symbolMultiplier = 1.0;
+                if (rel.AutoSymbolConversion)
+                {
+                    if (symbol == "NQ" || symbol == "ES" || symbol == "YM" || symbol == "CL" || symbol == "GC" || symbol == "RTY")
+                    {
+                        symbolMultiplier = 10.0; // Mini -> Micro
+                    }
+                    else if (symbol == "MNQ" || symbol == "MES" || symbol == "MYM" || symbol == "MCL" || symbol == "MGC" || symbol == "M2K")
+                    {
+                        symbolMultiplier = 0.1; // Micro -> Mini
+                    }
+                }
+
+                rawCopyQty = (int)Math.Round(leaderQty * absRatio * symbolMultiplier);
             }
 
-            // 2. Bidirectional Symbol Multiplier (Mini -> Micro 10x, Micro -> Mini 0.1x)
-            double symbolMultiplier = 1.0;
-            if (rel.AutoSymbolConversion)
+            if (rawCopyQty < 1)
             {
-                if (symbol == "NQ" || symbol == "ES" || symbol == "YM" || symbol == "CL" || symbol == "GC" || symbol == "RTY")
-                {
-                    symbolMultiplier = 10.0; // Mini -> Micro
-                }
-                else if (symbol == "MNQ" || symbol == "MES" || symbol == "MYM" || symbol == "MCL" || symbol == "MGC" || symbol == "M2K")
-                {
-                    symbolMultiplier = 0.1; // Micro -> Mini
-                }
+                isClamped = false;
+                return 0;
             }
 
-            int rawCopyQty = (int)Math.Max(1, Math.Round(leaderQty * absRatio * symbolMultiplier));
-            if (isExit) return rawCopyQty;
+            if (isExit)
+            {
+                int positionSize = Math.Abs(currentFollowerPosition);
+                if (rawCopyQty > positionSize)
+                {
+                    isClamped = positionSize > 0;
+                    rawCopyQty = positionSize;
+                }
+                return Math.Max(0, rawCopyQty);
+            }
 
             // Position-level Clamping: Cap against follower's resulting total position size
             int availableCapacity = Math.Max(0, rel.MaxPositionSize - Math.Abs(currentFollowerPosition));
@@ -694,9 +719,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                 int targetQty = CalculateFollowerQuantity(rel, exec.Quantity, exec.Instrument.FullName, currentFollowerPos, isExit, out isClamped);
                 if (targetQty <= 0)
                 {
-                    if (isClamped)
+                    if (isExit && currentFollowerPos == 0)
+                    {
+                        NinjaTrader.Code.Output.Process($"[CopierEngine] NO POSITION TO EXIT: Follower has no position in {targetInstrument.FullName} on account {followerAcc.Name}. Copy order skipped.", PrintTo.OutputTab1);
+                    }
+                    else if (isClamped)
                     {
                         NinjaTrader.Code.Output.Process($"[CopierEngine] CLAMPED TO ZERO: Follower position on {followerAcc.Name} at MaxPositionSize {rel.MaxPositionSize}. Copy order skipped.", PrintTo.OutputTab1);
+                    }
+                    else
+                    {
+                        NinjaTrader.Code.Output.Process($"[CopierEngine] SUB_MINIMUM_SKIPPED: Scaled copy quantity for {targetInstrument.FullName} is below 1 contract on account {followerAcc.Name}. Copy order skipped.", PrintTo.OutputTab1);
                     }
                     continue;
                 }
