@@ -640,21 +640,29 @@ namespace NinjaTrader.NinjaScript.AddOns
                         State = GuardFsmState.Unprotected
                     };
 
-                    // Scan existing working orders for a protective stop on the opposite side.
+                    // Scan existing working orders for protective stops on the opposite side.
                     // If found, seed the FSM as Protected (or ProtectedPending) so the grace
                     // timer does not place a duplicate auto-stop on an already-covered position.
+                    //
+                    // P1-36: every matching stop counts, not just the first one found. This loop
+                    // used to `break` on the first hit, so seeding a 6-lot position covered by two
+                    // 3-lot stops -- exactly what a re-arm or a restart mid-trade walks into --
+                    // recorded 3 of 6 and immediately attached a third stop for the phantom delta.
+                    bool anyPending = false;
                     foreach (Order o in account.Orders)
                     {
                         if (o == null || o.Instrument == null) continue;
                         if (!string.Equals(o.Instrument.FullName, instrument, StringComparison.OrdinalIgnoreCase)) continue;
                         if (!IsStopType(o) || !IsProtectiveSide(o, pos.MarketPosition)) continue;
                         if (IsTerminal(o.OrderState)) continue;
-                        fsm.RecognizedStopOrder = o;
-                        fsm.CoveredQuantity = o.Quantity;
-                        fsm.State = o.OrderState == OrderState.Working
-                            ? GuardFsmState.Protected
-                            : GuardFsmState.ProtectedPending;
-                        break;
+                        fsm.AddRecognizedStop(o);
+                        if (o.OrderState != OrderState.Working) anyPending = true;
+                    }
+                    if (fsm.CoveredQuantity > 0)
+                    {
+                        // Pending drags the whole position down to ProtectedPending: a stop that
+                        // is not yet Working is not yet cover.
+                        fsm.State = anyPending ? GuardFsmState.ProtectedPending : GuardFsmState.Protected;
                     }
 
                     // Arm a one-shot grace timer only if still Unprotected (no existing stop found).
@@ -2078,7 +2086,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             s == OrderState.Initialized  || s == OrderState.Working ||
             s == OrderState.PartFilled;
 
-        private static bool IsTerminal(OrderState s) =>
+        internal static bool IsTerminal(OrderState s) =>
             s == OrderState.Cancelled || s == OrderState.Rejected || s == OrderState.Filled;
 
         // Called from ExecutePositionUpdate. Handles flat<->nonflat transitions.
@@ -2153,25 +2161,37 @@ namespace NinjaTrader.NinjaScript.AddOns
                         //                     position does not have and, if it triggers, flips the
                         //                     account by the difference. A genuine protective stop
                         //                     is never larger than what it protects.
-                        var adopted = pending
+                        // P1-36: adopt every valid candidate, largest first, while the running
+                        // total still fits the position. A bracket whose two stop legs both
+                        // arrive before the position event is the ordinary case this has to get
+                        // right; taking one of them reports the position half naked.
+                        var candidates = pending
                             .Where(b => b.Order != null
                                      && IsStopType(b.Order)
                                      && !IsTerminal(b.Order.OrderState)
                                      && IsProtectiveSide(b.Order, newPos)
                                      && b.Order.Quantity <= qty)
                             .OrderByDescending(b => b.Order.Quantity)
-                            .FirstOrDefault();
+                            .ToList();
 
-                        if (adopted != null)
+                        int adoptedCount = 0;
+                        bool anyPendingLeg = false;
+                        foreach (var candidate in candidates)
                         {
-                            fsm.RecognizedStopOrder = adopted.Order;
-                            fsm.CoveredQuantity = adopted.Order.Quantity;
-                            fsm.State = adopted.Order.OrderState == OrderState.Working
-                                ? GuardFsmState.Protected
-                                : GuardFsmState.ProtectedPending;
+                            if (fsm.CoveredQuantity + candidate.Order.Quantity > qty) continue;
+                            fsm.AddRecognizedStop(candidate.Order);
+                            adoptedCount++;
+                            if (candidate.Order.OrderState != OrderState.Working) anyPendingLeg = true;
                         }
 
-                        int rejected = pending.Count - (adopted != null ? 1 : 0);
+                        if (adoptedCount > 0)
+                        {
+                            fsm.State = anyPendingLeg
+                                ? GuardFsmState.ProtectedPending
+                                : GuardFsmState.Protected;
+                        }
+
+                        int rejected = pending.Count - adoptedCount;
                         if (rejected > 0)
                         {
                             LogEvent(account.Name, "FSM_PENDING_STOP_REJECTED",
@@ -2351,83 +2371,97 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (IsTerminal(order.OrderState))
                     {
-                        // Only treat a terminal order as losing coverage when it is the
-                        // currently recognised stop. Unrelated stops going terminal are ignored.
-                        if (object.ReferenceEquals(order, fsm.RecognizedStopOrder))
+                        // P1-36: losing ONE stop of several is not the same as being naked. Drop
+                        // it from the cover and re-derive; the position drops to Unprotected only
+                        // when nothing is left holding it. Under the single-stop model this branch
+                        // zeroed coverage outright, so a 6-lot position covered by two 3-lot stops
+                        // read as fully naked the moment either leg was cancelled -- and the
+                        // auto-stop that followed was sized for the whole 6.
+                        if (fsm.IsRecognizedStop(order))
                         {
+                            fsm.RemoveRecognizedStop(order);
+                            if (object.ReferenceEquals(order, fsm.AutoStopOrder)) fsm.AutoStopOrder = null;
+
                             if (fsm.PositionQuantity > 0)
                             {
-                                fsm.State = GuardFsmState.Unprotected;
-                                fsm.RecognizedStopOrder = null;
-                                fsm.AutoStopOrder = null;
-                                fsm.CoveredQuantity = 0;
                                 fsm.GraceEmitted = false;
-                                if (!fsm.GracePending)
+                                if (fsm.CoveredQuantity <= 0)
+                                {
+                                    fsm.State = GuardFsmState.Unprotected;
+                                    LogEvent(account.Name, "FSM_TRANSITION",
+                                        $"{key}: stop {order.Name} terminal ({order.OrderState}) -> Unprotected");
+                                }
+                                else
+                                {
+                                    LogEvent(account.Name, "FSM_UNDERCOVERED",
+                                        $"{key}: stop {order.Name} terminal ({order.OrderState}); "
+                                        + $"{fsm.CoveredQuantity} of {fsm.PositionQuantity} still covered by "
+                                        + $"{fsm.RecognizedStops.Count} remaining stop(s)");
+                                }
+
+                                if (fsm.CoveredQuantity < fsm.PositionQuantity && !fsm.GracePending)
                                 {
                                     ArmGraceTimer(fsm, account, instrument,
                                         _config.StopGuard.StopAttachSeconds * 1000);
                                 }
-                                LogEvent(account.Name, "FSM_TRANSITION",
-                                    $"{key}: stop {order.Name} terminal ({order.OrderState}) -> Unprotected");
                             }
                         }
                         else if (object.ReferenceEquals(order, fsm.AutoStopOrder))
                         {
-                            // The auto-stop went terminal but it's not the recognised stop;
+                            // The auto-stop went terminal but it's not part of the cover;
                             // just clear the auto-stop reference.
                             fsm.AutoStopOrder = null;
                         }
                     }
                     else // Non-terminal order update
                     {
-                        // Determine if this order should replace the current recognised stop.
-                        bool replace = fsm.RecognizedStopOrder == null
-                                    || object.ReferenceEquals(order, fsm.RecognizedStopOrder)
-                                    || IsTerminal(fsm.RecognizedStopOrder.OrderState)
-                                    || order.Quantity >= fsm.CoveredQuantity;
+                        // P1-36: every protective-side stop adds to the cover. The old code kept
+                        // one slot and so needed a rule for which order won -- "replace only with
+                        // an equal-or-larger stop" -- which meant a genuine second leg was
+                        // discarded with an FSM_IGNORE line and the position read under-covered
+                        // while being fully protected. Adding is idempotent by object reference,
+                        // and a quantity change on an order already tracked is picked up
+                        // automatically because the sum reads Quantity off the live object.
+                        bool isNew = !fsm.IsRecognizedStop(order);
+                        fsm.AddRecognizedStop(order);
+                        fsm.GraceEmitted = false;
 
-                        if (replace)
+                        if (order.OrderState == OrderState.Working)
                         {
-                            fsm.RecognizedStopOrder = order;
-                            fsm.CoveredQuantity = order.Quantity;
-                            fsm.GraceEmitted = false;
-                            if (order.OrderState == OrderState.Working)
-                            {
-                                fsm.State = GuardFsmState.Protected;
-                                if (order.Name == "RiskGuardAutoStop") fsm.AutoStopOrder = order;
+                            if (order.Name == "RiskGuardAutoStop") fsm.AutoStopOrder = order;
+                            // ProtectedPending only survives while some leg is still not Working.
+                            fsm.State = fsm.RecognizedStops.Any(o => o.OrderState != OrderState.Working)
+                                ? GuardFsmState.ProtectedPending
+                                : GuardFsmState.Protected;
+                            if (isNew)
                                 LogEvent(account.Name, "FSM_TRANSITION",
-                                    $"{key}: stop {order.Name} Working -> Protected");
-                            }
-                            else // Submitted/Accepted/Initialized/PartFilled
-                            {
-                                fsm.State = GuardFsmState.ProtectedPending;
+                                    $"{key}: stop {order.Name} Working -> {fsm.State} "
+                                    + $"(covered {fsm.CoveredQuantity}/{fsm.PositionQuantity})");
+                        }
+                        else // Submitted/Accepted/Initialized/PartFilled
+                        {
+                            fsm.State = GuardFsmState.ProtectedPending;
+                            if (isNew)
                                 LogEvent(account.Name, "FSM_TRANSITION",
-                                    $"{key}: stop {order.Name} {order.OrderState} -> ProtectedPending");
-                            }
+                                    $"{key}: stop {order.Name} {order.OrderState} -> ProtectedPending "
+                                    + $"(covered {fsm.CoveredQuantity}/{fsm.PositionQuantity})");
+                        }
 
-                            // If full coverage achieved, cancel any pending grace timer.
-                            if (fsm.CoveredQuantity >= fsm.PositionQuantity)
-                            {
-                                fsm.GraceTimer?.Dispose();
-                                fsm.GraceTimer = null;
-                                fsm.GracePending = false;
-                            }
-                            else
-                            {
-                                // Under-covered: ensure a grace timer is armed for the delta.
-                                if (!fsm.GracePending)
-                                {
-                                    ArmGraceTimer(fsm, account, instrument,
-                                        _config.StopGuard.StopAttachSeconds * 1000);
-                                }
-                            }
+                        // If full coverage achieved, cancel any pending grace timer.
+                        if (fsm.CoveredQuantity >= fsm.PositionQuantity)
+                        {
+                            fsm.GraceTimer?.Dispose();
+                            fsm.GraceTimer = null;
+                            fsm.GracePending = false;
                         }
                         else
                         {
-                            // A smaller stop arrived while a larger one is already tracked; ignore.
-                            LogEvent(account.Name, "FSM_IGNORE",
-                                $"{key}: ignoring smaller stop {order.Name} qty {order.Quantity} " +
-                                $"(current covered {fsm.CoveredQuantity})");
+                            // Under-covered: ensure a grace timer is armed for the delta.
+                            if (!fsm.GracePending)
+                            {
+                                ArmGraceTimer(fsm, account, instrument,
+                                    _config.StopGuard.StopAttachSeconds * 1000);
+                            }
                         }
                     }
                 }
@@ -3498,8 +3532,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             else
                             {
                                 localFsm.AutoStopOrder = null;
-                                localFsm.RecognizedStopOrder = null;
-                                localFsm.CoveredQuantity = 0;
+                                localFsm.ClearRecognizedStops();
                                 localFsm.GraceEmitted = false;
                                 if (localFsm.State != GuardFsmState.Flat)
                                     localFsm.State = GuardFsmState.Unprotected;
@@ -3523,8 +3556,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
                         {
                             localFsm.AutoStopOrder = null;
-                            localFsm.RecognizedStopOrder = null;
-                            localFsm.CoveredQuantity = 0;
+                            localFsm.ClearRecognizedStops();
                             localFsm.GraceEmitted = false;
                             if (localFsm.State != GuardFsmState.Flat)
                                 localFsm.State = GuardFsmState.Unprotected;
@@ -3558,8 +3590,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (localFsm != null)
                         {
                             localFsm.AutoStopOrder = null;
-                            localFsm.RecognizedStopOrder = null;
-                            localFsm.CoveredQuantity = 0;
+                            localFsm.ClearRecognizedStops();
                             localFsm.GraceEmitted = false;
                             localFsm.AutoStopAttempts = 0;
                             if (localFsm.State != GuardFsmState.Flat)
@@ -3768,11 +3799,49 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return;
                 }
 
-                int stopQuantity = (int)positionForQuantity.Quantity;
-                if (stopQuantity <= 0)
+                int liveQuantity = (int)positionForQuantity.Quantity;
+                if (liveQuantity <= 0)
                 {
                     ReArmGraceIfUnprotected();
-                    LogEvent(account.Name, "AUTO_STOP_ABORT_NO_QUANTITY", $"Live position quantity {stopQuantity} for {action.Instrument}; aborting auto-stop.");
+                    LogEvent(account.Name, "AUTO_STOP_ABORT_NO_QUANTITY", $"Live position quantity {liveQuantity} for {action.Instrument}; aborting auto-stop.");
+                    return;
+                }
+
+                // P1-36: size to the UNCOVERED DELTA, re-read live, not to the whole position.
+                //
+                // T2 established that the quantity must come from the live position rather than
+                // the emission snapshot, and that is still true -- but "the live position" is the
+                // wrong figure whenever the trader already has stops of his own working. Sizing
+                // the auto-stop at 6 on a 6-lot position that is already half covered by a 3-lot
+                // stop puts NINE lots of protection behind six, and flips the account three lots
+                // short when they trigger. EvaluateGraceExpiry has always sized its ACTION to the
+                // delta; ExecuteAction then re-sized it back up to the full position and undid it.
+                int alreadyCovered;
+                lock (_stateLock)
+                {
+                    alreadyCovered = _guardFsms.TryGetValue(key, out PositionGuardFsm coverFsm)
+                        ? Math.Max(0, coverFsm.CoveredQuantity) : 0;
+                }
+
+                int stopQuantity = liveQuantity - alreadyCovered;
+                if (stopQuantity <= 0)
+                {
+                    // Cover appeared between emission and execution -- the trader attached his own
+                    // stop while the action was in flight. Placing anything now would over-cover.
+                    //
+                    // GraceEmitted is cleared deliberately. Dropping an action without clearing it
+                    // is the T1/T2 trap: EvaluateGraceExpiry and FsmWatchdog are both gated on
+                    // !GraceEmitted, so leaving it set would suppress every future attempt and
+                    // leave the position permanently naked the moment that cover went away.
+                    ReArmGraceIfUnprotected();
+                    lock (_stateLock)
+                    {
+                        if (_guardFsms.TryGetValue(key, out PositionGuardFsm coveredFsm))
+                            coveredFsm.GraceEmitted = false;
+                    }
+                    LogEvent(account.Name, "AUTO_STOP_ABORT_ALREADY_COVERED",
+                        $"{action.Instrument} is covered {alreadyCovered}/{liveQuantity} by existing stops; "
+                        + "no auto-stop needed. Grace re-armed in case that cover is withdrawn.");
                     return;
                 }
 
@@ -3844,8 +3913,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
                     {
                         localFsm.AutoStopOrder = stopOrder;
-                        localFsm.RecognizedStopOrder = stopOrder;
-                        localFsm.CoveredQuantity = stopQuantity;
+                        // P1-36: ADD, do not replace. The auto-stop is sized to the UNCOVERED
+                        // DELTA, so on a partially covered position replacing would discard the
+                        // trader's own stop from the tally, leave the FSM under-covered again,
+                        // and emit a second auto-stop for a delta that is already protected.
+                        // That escalation on a 6-lot position with two 3-lot stops is P1-36.
+                        localFsm.AddRecognizedStop(stopOrder);
                         localFsm.State = GuardFsmState.ProtectedPending;
                         reserved = true;
                     }
@@ -4702,10 +4775,90 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
         public MarketPosition PositionSide { get; set; } = MarketPosition.Flat;
         public int PositionQuantity { get; set; }
+        // P1-36. Coverage used to follow ONE Order. A trader covering a 6-lot position with two
+        // working 3-lot stops therefore read as CoveredQuantity 3, the under-coverage rule fired,
+        // and the guard attached a 3-lot auto-stop on top -- 9 lots of protection on a 6-lot
+        // position, which flips it 3 lots the wrong way when the stops trigger. The guard
+        // manufactured the reversal it exists to prevent.
+        //
+        // Coverage is now the SUM over every non-terminal protective stop working against this
+        // position, and both `CoveredQuantity` and `RecognizedStopOrder` are DERIVED from that
+        // list. They are read-only on purpose: the old pair had to be assigned together at nine
+        // separate sites, and nothing stopped them drifting apart.
+        //
         // NOTE: NT8 Order.OrderId is NOT unique and can change over the order's
         // lifetime (historical->live transition). Track recognised stops by the
         // Order object reference, not by id string. See RiskGuardAddOn.md -6.6.
-        public Order RecognizedStopOrder { get; set; }
+        private readonly List<Order> _recognizedStops = new List<Order>();
+
+        /// <summary>
+        /// Drops stops that have gone terminal. Called on every read, so a cancelled or filled
+        /// stop stops counting toward coverage the instant it is observed -- there is no window
+        /// in which the FSM believes a dead order is protecting the position.
+        /// </summary>
+        private void PruneRecognizedStops()
+        {
+            _recognizedStops.RemoveAll(o => o == null || RiskGuardAddOn.IsTerminal(o.OrderState));
+        }
+
+        /// <summary>
+        /// Adds a stop to the position's cover. Idempotent by object reference: NT8 raises
+        /// OrderUpdate repeatedly for the same order, and counting one order twice would report
+        /// cover that does not exist -- the same class of error as P1-36 itself, inverted.
+        /// </summary>
+        public void AddRecognizedStop(Order stop)
+        {
+            if (stop == null || RiskGuardAddOn.IsTerminal(stop.OrderState)) return;
+            PruneRecognizedStops();
+            if (_recognizedStops.Any(o => ReferenceEquals(o, stop))) return;
+            _recognizedStops.Add(stop);
+        }
+
+        /// <summary>Removes one stop from the cover. Returns true if it was actually tracked.</summary>
+        public bool RemoveRecognizedStop(Order stop)
+        {
+            if (stop == null) return false;
+            int removed = _recognizedStops.RemoveAll(o => ReferenceEquals(o, stop));
+            PruneRecognizedStops();
+            return removed > 0;
+        }
+
+        /// <summary>True if this exact order is one of the stops currently covering the position.</summary>
+        public bool IsRecognizedStop(Order stop)
+        {
+            if (stop == null) return false;
+            return _recognizedStops.Any(o => ReferenceEquals(o, stop));
+        }
+
+        public void ClearRecognizedStops()
+        {
+            _recognizedStops.Clear();
+        }
+
+        /// <summary>Every live stop covering this position. Snapshot; safe to enumerate.</summary>
+        public List<Order> RecognizedStops
+        {
+            get { PruneRecognizedStops(); return new List<Order>(_recognizedStops); }
+        }
+
+        /// <summary>
+        /// The largest live stop covering the position, or null. Retained because the diagnostics
+        /// surface and the qty-only-update path both want "the" stop, and because a single-stop
+        /// position -- overwhelmingly the common case -- still has an unambiguous answer.
+        /// It is NOT the coverage figure: use <see cref="CoveredQuantity"/> for that.
+        /// </summary>
+        public Order RecognizedStopOrder
+        {
+            get
+            {
+                PruneRecognizedStops();
+                Order best = null;
+                foreach (var o in _recognizedStops)
+                    if (best == null || o.Quantity > best.Quantity) best = o;
+                return best;
+            }
+        }
+
         public Order AutoStopOrder { get; set; }
         public string EntryOcoId { get; set; }   // best-effort join key; may be empty for external brackets
         public DateTime EntryTime { get; set; } = DateTime.MinValue;
@@ -4716,8 +4869,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         // polling of GraceDeadline with an instant event-driven trigger.
         public Timer GraceTimer { get; set; }
 
-        // Quantity covered by the single RecognizedStopOrder.
-        public int CoveredQuantity { get; set; }
+        /// <summary>
+        /// Total quantity covered by every live protective stop on this position (P1-36).
+        /// Derived, never assigned -- there is no way to record coverage that no order backs.
+        /// </summary>
+        public int CoveredQuantity
+        {
+            get
+            {
+                PruneRecognizedStops();
+                int total = 0;
+                foreach (var o in _recognizedStops) total += o.Quantity;
+                return total;
+            }
+        }
         // True while a one-shot grace timer is armed.
         public bool GracePending { get; set; }
         // True once a grace action has been emitted and its outcome is still pending.

@@ -1059,10 +1059,15 @@ with the same tick size and only the dollar multiplier differs, which quantity s
 - **The copier places no default bracket of its own** (`P0-9`). RiskGuard's auto-stop owns
   "position with no stop"; two independent stop sources over-cover and flip the position when both
   fire. `EnableFollowerAtm` was deleted, not implemented.
-- **Multi-stop coverage aggregation is out of scope** (tracked as **P1-36**). `CoveredQuantity`
-  deliberately follows a single stop order. Reviewers will raise this repeatedly; the bounded
-  mitigation already in place is the `ReferenceEquals` guard plus "coverage may only be replaced
-  by an equal-or-larger stop".
+- **Coverage is the SUM over every live protective stop** (**P1-36**, closed 2026-08-07).
+  `CoveredQuantity` and `RecognizedStopOrder` are both **derived** from `PositionGuardFsm`'s stop
+  list and neither is assignable — the old pair had to be written together at nine sites and
+  nothing stopped them drifting. The auto-stop is sized to `liveQuantity - alreadyCovered`, not to
+  the whole position. Do **not** propose restoring a single `RecognizedStopOrder` slot or the
+  "replace only with an equal-or-larger stop" rule.
+  > This bullet previously read *"multi-stop coverage aggregation is out of scope; `CoveredQuantity`
+  > deliberately follows a single stop order"*. Same retirement as the P1-35 entry below: left
+  > unedited it would instruct reviewers to approve reintroducing a closed defect.
 - **Orphan cancels are queued, not inline** (**P1-35**, closed 2026-08-07). `UpdateFsmOnPosition`
   adds to `_pendingCancels` under the lock; `DrainPendingCancels()` sends them after it is
   released. Do **not** move the `Cancel` back inline, and do **not** call the drain from inside

@@ -562,6 +562,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_14_SecondBufferedStopDoesNotOverwriteTheFirst();
             TestP1_14_ABufferedBreakoutEntryIsNotAdoptedAsProtection();
             TestP1_14_AnUnclaimedBufferedStopExpiresInsteadOfArmingALaterPosition();
+            TestP1_36_TwoPartialStopsCoverThePositionInFull();
+            TestP1_36_LosingOneOfTwoStopsIsPartialCoverNotNakedness();
+            TestP1_36_AutoStopAddsToExistingCoverRatherThanReplacingIt();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
             TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening();
             TestP1_15_ReArmingSeedsFsmsForPositionsOpenedWhileDisarmed();
@@ -4696,6 +4699,169 @@ namespace NinjaTrader.NinjaScript.AddOns
                 Quantity = snapshotQty,
                 RuleId = "MISSING_STOP_ATTACH"
             };
+        }
+
+        // ------------------------------------------------------------------
+        // P1-36 — coverage is the SUM over every live protective stop
+        //
+        // The FSM tracked exactly one stop order. A trader covering a 6-lot position with two
+        // working 3-lot stops -- a scale-out plan, or simply a bracket with two legs -- therefore
+        // read as CoveredQuantity 3. The under-coverage rule T1 introduced then fired and attached
+        // a 3-lot auto-stop, making 9 lots of protection on a 6-lot position. When the stops
+        // trigger, the account is flipped 3 lots the wrong way: the guard manufactures the
+        // reversal it exists to prevent.
+        // ------------------------------------------------------------------
+
+        private static Order PartialStop(Instrument inst, int qty, double stopPrice, string name)
+        {
+            return new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderId = Guid.NewGuid().ToString(),
+                Name = name,
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                Quantity = qty,
+                Instrument = inst,
+                OrderAction = OrderAction.Sell,
+                StopPrice = stopPrice
+            };
+        }
+
+        private static void TestP1_36_TwoPartialStopsCoverThePositionInFull()
+        {
+            Console.WriteLine("\n[TEST] P1-36: two partial stops together cover the position, and no auto-stop is attached");
+
+            var mnq = new Instrument("MNQ");
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 6, 18000, 18000);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60));
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 6);
+            addon.TestFsmOnOrder(account, mnq.FullName, PartialStop(mnq, 3, 17990, "Stop_Half1"));
+            addon.TestFsmOnOrder(account, mnq.FullName, PartialStop(mnq, 3, 17985, "Stop_Half2"));
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 6,
+                string.Format(
+                    "Coverage is 3 + 3 = 6 (got {0}). Tracking one stop reports 3 of 6, and the "
+                    + "under-coverage rule then adds a third stop for a delta that is already "
+                    + "protected -- 9 lots of stops on a 6-lot position.",
+                    fsm == null ? -1 : fsm.CoveredQuantity));
+
+            Assert(fsm != null && fsm.State == GuardFsmState.Protected,
+                string.Format("The position is Protected, not under-covered (state {0}).",
+                    fsm == null ? "none" : fsm.State.ToString()));
+
+            Assert(fsm != null && !fsm.GracePending,
+                "No grace timer is left armed -- a fully covered position is not owed another stop.");
+
+            // The rule that would have fired must now emit nothing at all.
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(actions == null || !actions.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
+                string.Format(
+                    "Grace expiry emits no auto-stop for a fully covered position (emitted {0}). "
+                    + "This is the order that flips the account when all three stops trigger.",
+                    actions == null ? 0 : actions.Count(a => a.RuleId == "MISSING_STOP_ATTACH")));
+        }
+
+        private static void TestP1_36_LosingOneOfTwoStopsIsPartialCoverNotNakedness()
+        {
+            Console.WriteLine("\n[TEST] P1-36: cancelling one of two stops leaves partial cover, not a naked position");
+
+            var mnq = new Instrument("MNQ");
+            // Needs a real broker position: EvaluateGraceExpiry sizes off account.Positions.
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 6, 18000, 18000);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60));
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 6);
+            var legA = PartialStop(mnq, 3, 17990, "Stop_Half1");
+            var legB = PartialStop(mnq, 3, 17985, "Stop_Half2");
+            addon.TestFsmOnOrder(account, mnq.FullName, legA);
+            addon.TestFsmOnOrder(account, mnq.FullName, legB);
+
+            // The trader pulls one leg. Three lots are still covered by the other.
+            legA.OrderState = OrderState.Cancelled;
+            addon.TestFsmOnOrder(account, mnq.FullName, legA);
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 3,
+                string.Format(
+                    "Three lots remain covered by the surviving leg (got {0}). Zeroing coverage "
+                    + "because 'the' stop went terminal reports a fully naked position and sizes "
+                    + "the replacement for all 6 -- 9 lots of protection again, from the other side.",
+                    fsm == null ? -1 : fsm.CoveredQuantity));
+
+            Assert(fsm != null && fsm.State != GuardFsmState.Unprotected,
+                string.Format("The position is not declared Unprotected while a live stop still covers half of it (state {0}).",
+                    fsm == null ? "none" : fsm.State.ToString()));
+
+            Assert(fsm != null && fsm.GracePending,
+                "Grace is armed for the uncovered delta -- partial cover is still owed the rest.");
+
+            // And the action, when it comes, is sized to the DELTA.
+            fsm.GraceDeadline = DateTime.UtcNow.AddSeconds(-1);
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            var attach = actions == null ? null : actions.FirstOrDefault(a => a.RuleId == "MISSING_STOP_ATTACH");
+            Assert(attach != null && attach.Quantity == 3,
+                string.Format(
+                    "The replacement stop is sized to the 3 uncovered lots (got {0}), not the whole position.",
+                    attach == null ? -1 : attach.Quantity));
+        }
+
+        private static void TestP1_36_AutoStopAddsToExistingCoverRatherThanReplacingIt()
+        {
+            Console.WriteLine("\n[TEST] P1-36: the auto-stop adds to existing cover instead of replacing it");
+
+            var mnq = new Instrument("MNQ");
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 6, 18000, 18000);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop"));
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 6);
+
+            // The trader has covered half the position himself.
+            var traderStop = PartialStop(mnq, 3, 17990, "Stop_Trader");
+            account.Orders.Add(traderStop);
+            addon.TestFsmOnOrder(account, mnq.FullName, traderStop);
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 3, "Precondition: 3 of 6 covered by the trader's own stop.");
+
+            // Grace expires: the guard is owed the 3-lot delta, and no more.
+            fsm.GraceDeadline = DateTime.UtcNow.AddSeconds(-1);
+            var actions = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            var attach = actions.First(a => a.RuleId == "MISSING_STOP_ATTACH");
+            Assert(attach.Quantity == 3, string.Format("The emitted action covers the 3-lot delta (got {0}).", attach.Quantity));
+
+            addon.TestExecuteAction(attach);
+
+            var autoStop = account.Orders.FirstOrDefault(o => o.Name == "RiskGuardAutoStop");
+            Assert(autoStop != null && autoStop.Quantity == 3,
+                string.Format("A 3-lot auto-stop was placed (got {0}).", autoStop == null ? -1 : autoStop.Quantity));
+
+            Assert(fsm.CoveredQuantity == 6,
+                string.Format(
+                    "Total cover is now 3 + 3 = 6 (got {0}). Overwriting coverage with the auto-stop's "
+                    + "own 3 leaves the FSM reading 3 of 6 with SIX lots of stops already working -- "
+                    + "so it asks for another 3, and keeps asking.",
+                    fsm.CoveredQuantity));
+
+            Assert(fsm.RecognizedStops.Any(o => ReferenceEquals(o, traderStop)),
+                "The trader's own stop is still part of the recorded cover, not displaced by ours.");
+
+            // The escalation loop must be closed: nothing further is owed.
+            fsm.GraceDeadline = DateTime.UtcNow.AddSeconds(-1);
+            fsm.GraceEmitted = false;
+            var again = addon.EvaluateGraceExpiry(account, mnq.FullName);
+            Assert(again == null || !again.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
+                string.Format(
+                    "No further auto-stop is requested once the position is fully covered (got {0}).",
+                    again == null ? 0 : again.Count(a => a.RuleId == "MISSING_STOP_ATTACH")));
         }
 
         // T2 / P0-2: the emitted action carries a quantity snapshot taken when grace

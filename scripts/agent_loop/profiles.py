@@ -137,8 +137,16 @@ test listed for this ticket; a claim that it does not compile, or that it fails 
 therefore almost certainly wrong -- say so only with a concrete mechanism. Gaps in what the tests
 COVER are still fair game and are what item 5 is for.""",
     settled=(
-        "Multi-stop coverage aggregation is OUT OF SCOPE (tracked as P1-36). CoveredQuantity "
-        "deliberately follows a single stop order. Do not raise it.",
+        # RETIRED 2026-08-07 (P1-36 closed). This used to read "multi-stop coverage aggregation
+        # is OUT OF SCOPE; CoveredQuantity deliberately follows a single stop order". Left in
+        # place it would now instruct the panel to approve reintroducing a closed defect.
+        "CoveredQuantity is the SUM over every live protective stop on the position, and both it "
+        "and RecognizedStopOrder are DERIVED from PositionGuardFsm's stop list -- neither is "
+        "assignable (P1-36, closed 2026-08-07). Do not propose restoring a single "
+        "RecognizedStopOrder slot or a 'replace only with an equal-or-larger stop' rule: on a "
+        "6-lot position covered by two 3-lot stops that reports 3 of 6, and the auto-stop that "
+        "follows makes 9 lots of protection behind 6. The auto-stop is likewise sized to "
+        "liveQuantity MINUS existing cover, not to the whole position.",
         # --- copier decisions, settled 2026-08-07 (session 7) -------------------
         "The copier FAILS CLOSED ON ENTRIES, NEVER ON EXITS. A quarantined relationship still "
         "copies exits (P1-22), unimplemented sizing modes block entries only (P1-23), and an "
