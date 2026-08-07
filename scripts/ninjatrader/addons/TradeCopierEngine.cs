@@ -721,6 +721,37 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
+                // RiskGuard tradeability and protection checks (outside _lock to avoid lock-ordering with RiskGuard)
+                var riskGuard = RiskGuardAddOn.Instance;
+                if (riskGuard != null)
+                {
+                    if (!riskGuard.CanTrade(acctName, exec.Instrument.FullName, "TradeCopier"))
+                    {
+                        NinjaTrader.Code.Output.Process($"[CopierEngine] BLOCKED execution copy: leader account {acctName} is locked for {exec.Instrument.FullName}", PrintTo.OutputTab1);
+                        continue;
+                    }
+
+                    if (!riskGuard.CanTrade(followerAcc.Name, targetInstrument.FullName, "TradeCopier"))
+                    {
+                        NinjaTrader.Code.Output.Process($"[CopierEngine] BLOCKED execution copy: follower account {followerAcc.Name} is locked for {targetInstrument.FullName}", PrintTo.OutputTab1);
+                        continue;
+                    }
+
+                    if (!isSimFollower && !riskGuard.IsGuardProtecting(followerAcc.Name))
+                    {
+                        NinjaTrader.Code.Output.Process($"[CopierEngine] COPY_BLOCKED_NO_GUARD: follower account {followerAcc.Name} is live but not protected by RiskGuard; skipping copy for {targetInstrument.FullName}", PrintTo.OutputTab1);
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (!isSimFollower)
+                    {
+                        NinjaTrader.Code.Output.Process($"[CopierEngine] COPY_BLOCKED_NO_GUARD: RiskGuard is unavailable and follower account {followerAcc.Name} is live; skipping copy for {targetInstrument.FullName}", PrintTo.OutputTab1);
+                        continue;
+                    }
+                }
+
                 OrderAction leadOrderAction = exec.Order.OrderAction;
                 bool isExit = leadOrderAction == OrderAction.Sell || leadOrderAction == OrderAction.BuyToCover;
 

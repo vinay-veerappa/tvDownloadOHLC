@@ -535,6 +535,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             Account.All.Clear();
             Instrument.Registry.Clear();
+            // RiskGuardAddOn.Instance is static, so a guard wired up by one copy-path
+            // test would otherwise leak into every test that runs after it. Start each
+            // one with no guard; the tests that need one install it explicitly.
+            RiskGuardAddOn.SetInstanceForTest(null);
 
             var leader = new Account { Name = leaderName };
             var follower = new Account { Name = followerName };
@@ -681,6 +685,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             var lockedState = new AccountState("SimFollower");
             lockedState.IsLockedOut = true;
             guard.SetAccountStateForTest("SimFollower", lockedState);
+            // The copier consults RiskGuard through the static Instance, which
+            // production assigns in State.Configure. Without this the guard built
+            // above is invisible to OnExecution and the test cannot observe its
+            // own subject.
+            RiskGuardAddOn.SetInstanceForTest(guard);
 
             Assert(!guard.CanTrade("SimFollower", mnq.FullName, "TradeCopier"),
                 "Precondition: RiskGuard reports the follower as not tradable");

@@ -360,6 +360,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             _subscribedAccounts.Add(accountName);
         }
 
+        // The copier reaches RiskGuard through the static Instance, which production
+        // assigns in State.Configure. A test constructing `new RiskGuardAddOn()` never
+        // reaches Configure, so Instance stays null and the copier sees no guard at
+        // all -- which silently made the P0-8 lockout test unable to observe its own
+        // subject. Tests must wire the instance explicitly.
+        internal static void SetInstanceForTest(RiskGuardAddOn guard) { Instance = guard; }
+
         internal void SetArmedForTest(bool armed) { _isArmed = armed; }
         internal void SetModeForTest(string mode)  { _mode = mode; }
         internal void SetParsedWindowsForTest(List<ParsedWindow> windows) { _parsedWindows = windows; }
@@ -805,6 +812,70 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 return false;
             }
+        }
+
+        public bool IsGuardProtecting(string accountName)
+        {
+            lock (_stateLock)
+            {
+                if (!_isArmed)
+                    return false;
+
+                if (!string.Equals(GetMode(), "live", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                if (_subscribedAccounts == null || !_subscribedAccounts.Contains(accountName))
+                    return false;
+
+                if (_config == null)
+                    return false;
+
+                if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accountName))
+                    return false;
+
+                StopGuardConfig stopGuard = _config.StopGuard;
+                if (stopGuard == null)
+                    return false;
+
+                bool? enabled = GetStopGuardEnabled(stopGuard);
+                if (enabled.HasValue && !enabled.Value)
+                    return false;
+
+                if (stopGuard.StopAttachSeconds < 0)
+                    return false;
+
+                return true;
+            }
+        }
+
+        private static bool? GetStopGuardEnabled(StopGuardConfig stopGuard)
+        {
+            if (stopGuard == null)
+                return null;
+
+            System.Type type = typeof(StopGuardConfig);
+            string[] candidateNames = { "Enabled", "IsEnabled", "Active", "IsActive" };
+
+            foreach (string name in candidateNames)
+            {
+                System.Reflection.PropertyInfo prop = type.GetProperty(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (prop != null && prop.PropertyType == typeof(bool))
+                {
+                    object value = prop.GetValue(stopGuard);
+                    if (value is bool b)
+                        return b;
+                }
+
+                System.Reflection.FieldInfo field = type.GetField(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (field != null && field.FieldType == typeof(bool))
+                {
+                    object value = field.GetValue(stopGuard);
+                    if (value is bool b)
+                        return b;
+                }
+            }
+
+            return null;
         }
 
         private void OnPositionUpdate(object sender, PositionEventArgs e)
