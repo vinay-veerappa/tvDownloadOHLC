@@ -85,11 +85,15 @@ SHIP | REVISE | ESCALATE
 <<<END SETTLED>>>
 """
 
-# A stray bracket before the verdict must not drop a ruling. glm-5.2 emitted
-# "- [ [REJECTED] #11: ..." on T2 round 1; the finding parsed as unruled and
-# was silently discarded.
+# Bracket punctuation around the verdict is decoration, not signal: the ruling
+# is identified by the leading "-", the verdict keyword and the "#n". Requiring
+# exact brackets cost two real adjudications -- glm-5.2 emitted
+# "- [ [REJECTED] #11: ..." on T2 round 1, and on T3 round 2 it dropped the
+# brackets entirely ("- REJECTED #1: ..."), which left all eight findings
+# unruled and turned a SHIP into a spurious ESCALATE.
 _RULING_RE = re.compile(
-    r"^-\s*\[?\s*\[(UPHELD|REJECTED|OUT_OF_SCOPE)\]\s*#(\d+)\s*:?\s*(.*)$", re.MULTILINE
+    r"^-[\s\[\]*_]*(UPHELD|REJECTED|OUT_OF_SCOPE)[\s\[\]*_]*#(\d+)\s*:?\s*(.*)$",
+    re.MULTILINE,
 )
 
 
