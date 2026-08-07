@@ -1,6 +1,6 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-06 (session 2)
+**Last updated**: 2026-08-06 (session 3)
 **Branch**: `harden/riskguard-copier-p0`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (31 defects, P0→P3)
 **Nothing is deployed.** NinjaTrader is running live with the *unmodified* addon.
@@ -9,14 +9,15 @@
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**One ticket has landed (T1). Session 2 landed no addon code at all** — it went into rebuilding the
-tool that lands tickets, because the old one could not approve anything. That was the right call
-but it means the hardening itself has not moved since `5fd26995`.
+**Two tickets have landed (T1, T2). The loop has now closed a ticket end to end** — session 3
+took T2 from a parked candidate to a commit, and the arbiter rung worked as designed on its
+first live use.
 
-State in one paragraph: the addon is untouched at `ddba3433`-equivalent; the suite is 353 passed /
-3 failed (those 3 are the deliberate T4/T5 acceptance tests); the patch loop was rebuilt from
-scratch with a working test gate, worktree isolation, and an arbiter rung, and passes 8/8 offline —
-but **has never closed a ticket end to end**. T2 is parked with a live candidate on disk.
+State in one paragraph: T2 is committed at `76d8c947`; the suite is 353 passed / 3 failed (those
+3 are the deliberate T4/T5 acceptance tests); the arbiter ruled 20 findings in round 1 and upheld
+exactly one — a **real, patch-introduced** permanent-naked-position defect — the implementer fixed
+it in a two-line change, and round 2 came back SHIP with 33 findings all rejected or out of scope.
+The loop stopped there and required human sign-off, which is correct. T3 is the next ticket.
 
 ```powershell
 # free, ~2 min, no models: is the tool sound?
@@ -25,10 +26,13 @@ but **has never closed a ticket end to end**. T2 is parked with a live candidate
 # free: do all 18 ticket regions still resolve?
 .\.venv\Scripts\python.exe -m scripts.agent_loop --list
 
-# the next real action (see §4b)
-.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T2 `
-    --resume-raw logs/agent_loop/T2/r3_impl_raw.txt --arbiter glm-5.2:cloud
+# the next real action
+.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 --arbiter glm-5.2:cloud
 ```
+
+**The arbiter recommends; it never ships.** A run that ends `ARBITER_SHIP` has *not* applied
+anything. Read `logs/agent_loop/<T>/rN_arbiter.txt` and the candidate itself, then promote with
+`--resume-raw <rN_impl_raw.txt> --allow-unapproved --apply` and commit explicit paths.
 
 **Do not run `scripts/agent_loop/ollama_patch_loop.py`.** Three of its gates were defective; it is
 kept only so the older `logs/ollama_loop/` artifacts stay readable.
@@ -41,6 +45,27 @@ kept only so the older `logs/ollama_loop/` artifacts stay readable.
 |---|---|
 | `5fd26995` | **T1 — P0-1 + P0-4**: stop-guard FSM coverage model |
 | `ddba3433` | **Test harness repair** — the suite could not previously catch defects |
+| `76d8c947` | **T2 — P0-2 + P0-3**: reserve-before-submit auto-stop, sized from the live position |
+| `fe5bb5ce` | **Arbiter parser repair** — it was silently discarding its own rulings and settled list |
+
+### T2 (P0-2 + P0-3)
+The auto-stop now **reserves before it submits**: `AutoStopOrder`, `RecognizedStopOrder`,
+`CoveredQuantity` and `State = ProtectedPending` are written under `_stateLock` *before*
+`account.Submit`, and the lock is released before `CreateOrder`/`Submit`. Both failure modes roll
+back — clearing the stop fields, `CoveredQuantity` and **`GraceEmitted`** (or T1's latch would
+suppress every future grace action and leave the position naked), re-arming grace, and rethrowing
+so `ProcessAction` records `EXECUTION_ERROR`. The post-submit FSM write is gone; `UpdateFsmOnOrder`
+owns all further state. The stop is sized from a live re-read immediately before `CreateOrder`,
+aborting if the position went flat or changed side. `StopGuardConfig.MaxAutoStopAttempts`
+(default 2, `<= 0` treated as 2) bounds retries, after which the instrument is flattened.
+
+**The one thing not to undo**: `ValidateInvariant` deliberately does *not* reject
+`PlaceStopOrder` when `action.Quantity > liveQuantity`. It reads like a missing safety check, and
+it was in the candidate — the arbiter caught it. Because the action is dropped *before*
+`ExecuteAction` runs, nothing clears `GraceEmitted`, so `EvaluateGraceExpiry` (`if
+(fsm.GraceEmitted) return`) and `FsmWatchdog` (`&& !fsm.GraceEmitted`) are both suppressed
+permanently and the position never gets another stop. `ExecuteAction` re-sizes from the live
+position, so the check bought nothing. This is now recorded in the loop's `settled` profile.
 
 ### T1 (P0-1 + P0-4)
 `PositionGuardFsm` gained `CoveredQuantity`, `GracePending`, `GraceEmitted`, `GraceGeneration`.
@@ -93,13 +118,27 @@ failure is a regression.
 | Ticket | Defects | Status |
 |---|---|---|
 | T1 | P0-1, P0-4 | ✅ committed `5fd26995` |
-| T2 | P0-2, P0-3 | ⏸ parked with a live candidate that passes every gate but has 13 un-adjudicated findings — see §4b |
-| T3 | P0-7 | queued |
+| T2 | P0-2, P0-3 | ✅ committed `76d8c947` |
+| T3 | P0-7 | ◀ next |
 | T4 | P0-5, P0-6 | queued — has failing tests waiting |
 | T5 | P0-8, P0-9 | queued — has a failing test waiting |
 
-**Nothing beyond T1 is applied. The addon is clean.** T3–T5 are blocked on the loop rebuild
-(§3), by decision — they will run on the new tool, not the old one.
+**Nothing beyond T2 is applied**, and nothing is deployed — NinjaTrader is still running the
+unmodified addon.
+
+### Known-acceptable residue in T2 (do not re-open without new evidence)
+- **A dead clause survives** in `ExecuteAction`: `stopQuantity > (int)positionForQuantity.Quantity`
+  is provably always false, since `stopQuantity` is assigned from that exact expression one line
+  above. Cosmetic — the `<= 0` guard is the real check — but every reviewer flags it, so it is
+  worth deleting in a trivial follow-up. Note glm-5.2's *proposed fix* (compare against the
+  earlier `position.Quantity`) is actively harmful: it aborts the auto-stop whenever the position
+  scaled **up**, leaving it naked.
+- **`AutoStopAttempts` is consumed by transient failures** — it increments before `CreateOrder` and
+  rollback does not decrement it, so two broker hiccups escalate to flattening a live position.
+  This is spec-conformant and fail-closed (the alternative is retrying forever while naked).
+  Reviewers split on this: glm read it correctly, deepseek claimed the counter is *always* reset
+  and is simply wrong — the setter only zeroes it when the previous state was `Protected`, and the
+  submit-failure path is `ProtectedPending → Unprotected`.
 
 ---
 
@@ -213,33 +252,60 @@ All are fixed; recording them so they are not rediscovered.
    and stops the run when rounds stop converging. It cannot overturn a mechanical gate and it
    cannot ship — `ARBITER_SHIP` writes a patch and a rationale and waits for a human. (`e0cd3c54`)
 
-**Where T2 actually stands.** Its round-3 candidate is on disk at
-`logs/agent_loop/T2/r3_impl_raw.txt` and **passes every mechanical gate** — compiles, 353 passed /
-3 failed with no regressions, no broker call under `_stateLock`. What it has never had is an
-adjudication of its 13 findings. That is exactly what the arbiter was built for, and T2 is its
-natural first case.
-
 Note the gates only prove no *regression*: the suite has no coverage for the P0-2/P0-3 paths, which
 is why those defects exist. Passing gates is necessary, not sufficient.
 
+## 4c. The arbiter's first live use, and what it proved (session 3)
+
+T2 went from parked candidate to commit in two rounds.
+
+| Round | Panel | Arbiter |
+|---|---|---|
+| 1 (resumed r3 candidate) | deepseek REJECT(10), glm REVISE(6) | **REVISE** — 1 upheld, 10 rejected, 8 out of scope |
+| 2 | deepseek REJECT(15), glm REVISE(11) | **SHIP** — 0 upheld, 29 rejected, 4 out of scope |
+
+**The single upheld finding was real, and it was introduced by the patch.** The candidate's
+new `ValidateInvariant` rejected `PlaceStopOrder` when `action.Quantity > liveQuantity`. Because
+`ProcessAction` drops a rejected action before `ExecuteAction` runs, nothing clears `GraceEmitted`,
+so the position is left permanently naked (details in §1). Round 2 fixed it in **two lines** and
+changed nothing else — `ExecuteAction`, `PositionGuardFsm` and `StopGuardConfig` came back
+byte-identical.
+
+Three things this settles:
+
+1. **The non-convergence pathology is confirmed and the arbiter neutralises it.** Round 2's panel
+   produced *33* findings against a two-line change to code it had already reviewed — more than
+   round 1's 20. Without adjudication this loops forever; the count going *up* after a minimal
+   fix is the signature.
+2. **Reviewers contradict each other on load-bearing facts, so their findings cannot be taken at
+   face value.** On `AutoStopAttempts`, glm read the state machine correctly and deepseek asserted
+   the exact opposite. Verified by hand against the code: glm was right.
+3. **The arbiter is not a rubber stamp, but it is not sufficient either.** Its one upheld finding
+   was correct and its rejections held up on spot-check — including a subtle one about a stale FSM
+   side, which is safe only because a genuine side flip passes through flat and
+   `UpdateFsmOnPosition` tears the FSM down and recreates it with grace armed. But glm's *proposed
+   fix* for the dead-clause finding would have introduced a naked position, and it rejected all 33
+   round-2 findings wholesale. Read the rulings.
+
+**The arbiter was also silently discarding its own output** (`fe5bb5ce`): a mismatched `<<<END>>>`
+tag threw away every rationale and all 11 settled nominations across both rounds, and a stray
+bracket dropped one ruling. Fixed, and the recovered decisions are now in the loop's `settled`
+profile so T3–T5 stop paying for them.
+
 ## 4a. Immediate next steps
 
-1. **Run T2 with the arbiter** (command in §0). Read `logs/agent_loop/T2/rN_arbiter.txt` before
-   trusting the outcome — this is the arbiter's first live use and its rulings are unvalidated.
-   Promote only after reading `final.patch`:
-   `--resume-raw <candidate> --allow-unapproved --apply`, then stage explicit paths and commit.
-2. **If it escalates or still will not converge, split T2** into P0-2 and P0-3 as separate tickets
-   with tighter region sets. `ExecuteAction` at 168 lines is very likely too much surface for one
-   patch, and that hypothesis is untested.
-3. **T3, T4, T5** in order, committing each. T4 and T5's acceptance criterion is the three baseline
+1. **T3, T4, T5** in order, committing each. T4 and T5's acceptance criterion is the three baseline
    failures going green — now checked mechanically by the test gate rather than by eye.
-3. **T3, T4, T5** in order, committing each. T4 and T5 should turn the three failing copy-path
-   tests green — that is their acceptance criterion, and it is now checked mechanically by the
-   test gate rather than by eye.
-4. **Add tests for T1/T2/T3 behaviour** (currently only T4/T5 have failing tests waiting). Good
-   candidates: stop cancelled mid-position re-arms grace; auto-stop submit failure rolls back and
-   clears `GraceEmitted`; auto-stop sized from live position, not the emission snapshot;
-   profitable-flat account emits no giveback action.
+2. **Delete the dead clause** left in T2 (§2). One line, needs a suite re-run, not a loop round.
+3. **Add tests for T1/T2/T3 behaviour** (currently only T4/T5 have failing tests waiting). Good
+   candidates for T2: auto-stop submit failure rolls back and clears `GraceEmitted`; auto-stop
+   sized from the live position, not the emission snapshot; a scaled-down position still gets a
+   stop rather than having its action dropped.
+4. **If a ticket escalates or will not converge, split it** into one defect per ticket with
+   tighter region sets. T2 did not need this, but it was the largest single region.
+
+   Further test candidates: stop cancelled mid-position re-arms grace (T1);
+   profitable-flat account emits no giveback action (T3).
 
 ---
 
@@ -256,6 +322,18 @@ is why those defects exist. Passing gates is necessary, not sufficient.
 - **`SeedFsmsForExistingPositions` does not need its own lock** — both `SubscribeToAccount` call
   sites already hold `_stateLock`. Reviewers flag this as a false positive.
 - **No new `GuardFsmState` enum values** — existing tests assert on them.
+- **`ValidateInvariant` must not reject `PlaceStopOrder` on `action.Quantity > liveQuantity`**
+  (settled landing T2). It looks like a missing safety check and it leaves the position
+  permanently naked — see §1. `ExecuteAction` re-sizes from the live position.
+- **`ArmGraceTimer` under `_stateLock` is correct and required** (T1). It only schedules a timer
+  callback; it makes no broker call. Reviewers raise it as a lock-scope violation every round.
+- **Reading `account.Positions` outside `_stateLock` is accepted.** A stale read yields a safe
+  abort or a harmless spurious grace timer, not naked risk.
+- **The TOCTOU window between the live position read and `account.Submit` cannot be closed**
+  without holding a lock across a broker call, which is forbidden.
+
+These four are also encoded in `scripts/agent_loop/profiles.py` under `settled`, which injects
+them into every review round. Add to both places, not one.
 
 ---
 
