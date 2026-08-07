@@ -63,6 +63,7 @@ Key Principles:
 | **HTF EMA Analysis Spec & Blueprint** | [`docs/features/htf_ema_analysis/BLUEPRINT.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/features/htf_ema_analysis/BLUEPRINT.md) | Weekly EMA(5) % excursions ($dUp$, $dDn$), 52-week statistics, 2-3% magnet zones. |
 | **3-Hour Line vs. Apex PA Blueprint** | [`docs/profiler/line_vs_apex_blueprint.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/line_vs_apex_blueprint.md) | 5-stage weighted counter (0–4 score), level acceptance validation bars, instant extreme detection. |
 | **P12 Directional Vector Blueprint** | [`docs/profiler/p12_directional_blueprint.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/p12_directional_blueprint.md) | P12 range, 06:00–07:00 early rejection (84.52% HOD / 81.85% LOD), and 99.26% sweep rule. |
+| **NQ1 Scenario Blueprint Artifact** | [`docs/profiler/WARGAMING_SCENARIO_BLUEPRINT_NQ1.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/WARGAMING_SCENARIO_BLUEPRINT_NQ1.md) | Markdown-first playbook that maps True/False branches, cutoff logic (09:30-09:45 + 10:15), risk template, and EOD reengineering checks. |
 | **Master Rule Catalog JSON** | [`docs/profiler/master_rule_catalog.json`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/master_rule_catalog.json) | Machine-readable JSON catalog of all verbatim probabilities, streak limits, and conditional rules. |
 | **3-Engine Verification Handover** | [`docs/architecture/PROFILER_VERIFICATION_HANDOVER.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/PROFILER_VERIFICATION_HANDOVER.md) | Logical date bug fix, 09:15 ET target timestamp rule, UTC epoch jump protocol, 4-day parity audit matrix. |
 | **LLM Benchmark Report** | [`scratch/wargaming_llm_benchmark_report_NQ1.md`](file:///c:/Users/vinay/tvDownloadOHLC/scratch/wargaming_llm_benchmark_report_NQ1.md) | Benchmark report logging 100% zero look-ahead causality and 7/7 SOP rule compliance. |
@@ -102,6 +103,9 @@ Key Principles:
 - **2026-08-06**: Created generic workspace skill [`TradingView Replay & Indicator Extractor`](file:///c:/Users/vinay/tvDownloadOHLC/.agents/skills/tradingview-wargame-verifier/SKILL.md) supporting Unix Epoch timestamps (`timestamp`), 09:15 ET target evaluation, and all-indicator extraction (visible & hidden studies via `study_filter: ""`).
 - **2026-08-06**: Completed Phase 1.2: Generated 120 ChatML instruction-tuning pairs (`data/wargaming_sft.jsonl` & `data/wargaming_postmortem.jsonl`).
 - **2026-08-06**: Completed Phase 1.4: Executed LLM benchmarking (`scripts/wargaming/evaluate_wargaming_llm.py`), achieving **100% 7/7 Rule Compliance** across all historical test sessions.
+- **2026-08-07**: Standardized CLI contract for core wargaming/validation scripts to support `--ticker` flags (with positional fallback for backward compatibility).
+- **2026-08-07**: Added all-dates benchmark mode in `scripts/wargaming/evaluate_wargaming_llm.py` (`--all-dates`, optional date filters, resumable mode) to evaluate across full available NQ history.
+- **2026-08-07**: Created scenario-mapped markdown artifact [`docs/profiler/WARGAMING_SCENARIO_BLUEPRINT_NQ1.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/WARGAMING_SCENARIO_BLUEPRINT_NQ1.md) for pre-market branch planning and EOD reengineering.
 
 ---
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*

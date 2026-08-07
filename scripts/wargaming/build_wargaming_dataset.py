@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 import logging
 import json
+import io
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 import pandas as pd
@@ -38,14 +40,20 @@ SYSTEM_PROMPT = (
     "Daily classifications: R1 (4+ hourly touches of 09:30 open print), DNP (5+ hours trend without pullback), "
     "DWP (morning explosion, afternoon range), R2 (thigh gap reversion to 09:30 open).\n"
     "Overnight profiles: LT (Long True), LF (Long False), ST (Short True), SF (Short False).\n"
-    "P12 early rejection 06:00-07:00: 84.52% HOD locked if P12 High rejected, 81.85% LOD locked if P12 Low rejected.\n"
+    "InStat = HOD/LOD printed within the profiler's expected 15-min mode window for the day's scenario. Compare actual overnight print time vs hod_mode/lod_mode bucket per outcome.\n"
     "Both-sides sweep 06:00-08:30: 99.26% probability both HOD and LOD form after 08:30 AM.\n"
     "Given pre-market 08:30 AM EST inputs, produce a strictly causal briefing with ranked scenarios, key pivots, and position sizing. Do NOT invent future post-market outcomes."
 )
 
 
-def build_dataset_for_ticker(ticker: str = "NQ1", max_days: int = 50) -> tuple[list[dict], list[dict]]:
-    print(f"[Dataset Generator] Generating ChatML instruction-tuning pairs for {ticker} (max {max_days} days)...")
+def build_dataset_for_ticker(
+    ticker: str = "NQ1",
+    max_days: int | None = 50,
+    verbose: bool = True,
+    progress_callback=None,
+) -> tuple[list[dict], list[dict]]:
+    day_scope = "all available days" if max_days is None else f"max {max_days} days"
+    print(f"[Dataset Generator] Generating ChatML instruction-tuning pairs for {ticker} ({day_scope})...")
 
     df_1d = pd.read_parquet(REPO_ROOT / "data" / f"{ticker}_1d.parquet")
     if df_1d.index.tz is not None:
@@ -68,15 +76,47 @@ def build_dataset_for_ticker(ticker: str = "NQ1", max_days: int = 50) -> tuple[l
     all_dates = sorted(list(set(df_1d.index.date)))
     valid_dates = [d for d in all_dates if d.weekday() < 5 and (min_date + timedelta(days=2)) <= d <= (max_date - timedelta(days=1))]
     
-    selected_dates = valid_dates[-max_days:]
+    if max_days is None:
+        selected_dates = valid_dates
+    else:
+        selected_dates = valid_dates[-max_days:]
+    if progress_callback:
+        progress_callback(
+            {
+                "stage": "dataset_init",
+                "ticker": ticker,
+                "total_dates": len(selected_dates),
+                "processed_dates": 0,
+                "successful_dates": 0,
+            }
+        )
     sft_records = []
     postmortem_records = []
 
-    for d in selected_dates:
+    total_dates = len(selected_dates)
+    successful_dates = 0
+
+    for idx, d in enumerate(selected_dates, start=1):
         date_str = d.strftime("%Y-%m-%d")
         try:
-            res = run_pilot_wargame_and_reengineering(ticker=ticker, target_date=date_str)
+            if verbose:
+                res = run_pilot_wargame_and_reengineering(ticker=ticker, target_date=date_str)
+            else:
+                with redirect_stdout(io.StringIO()):
+                    res = run_pilot_wargame_and_reengineering(ticker=ticker, target_date=date_str)
             if res.get("error") or res.get("premarket_0830", {}).get("p12_midline") is None:
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "stage": "dataset_progress",
+                            "ticker": ticker,
+                            "total_dates": total_dates,
+                            "processed_dates": idx,
+                            "successful_dates": successful_dates,
+                            "current_date": date_str,
+                            "status": "skipped",
+                        }
+                    )
                 continue
 
             pre = res["premarket_0830"]
@@ -86,36 +126,42 @@ def build_dataset_for_ticker(ticker: str = "NQ1", max_days: int = 50) -> tuple[l
             user_input = (
                 f"PRE-MARKET PROFILER INPUTS ({ticker} | {date_str}):\n"
                 f"- Daily Profiler Overnight Key: {pre.get('overnight_key', 'N/A')} (Prior Day Type: {pre.get('prior_day_type', 'N/A')})\n"
-                f"- Profiler Classification Matrix: Most Likely = {pre.get('profiler_most_likely', 'R1')} (n={pre.get('profiler_n_samples', 0)}) | R1={dt_probs.get('R1%', 0):.1f}%, R2={dt_probs.get('R2%', 0):.1f}%, DWP={dt_probs.get('DWP%', 0):.1f}%, DNP={dt_probs.get('DNP%', 0):.1f}%\n"
-                f"- InStat High / Low Lock (06:00-07:00 ET - Within Statistical Expectation): InStat High = {'YES (84.52% HOD Locked)' if pre.get('instat_high_locked') else 'NO'} | InStat Low = {'YES (81.85% LOD Locked)' if pre.get('instat_low_locked') else 'NO'}\n"
-                f"- Candle Science Bias: {pre['candle_science_bias']} (P_bull={pre['candle_science_p_bull']:.1f}%)\n"
-                f"- HTF Weekly EMA(5) Excursion: {pre['htf_ema_dist_pct']:+.2f}% (2-3% Magnet Zone: {'YES' if pre['is_2to3_magnet_zone'] else 'NO'})\n"
-                f"- P12 Range (18:00-06:00 ET): {pre['p12_range']} | Midline: {pre['p12_midline']}\n"
-                f"- 06:00-08:30 Pre-Market Bias: {pre['p12_premarket_bias']} | 08:30 Pre-Market Handshake: {pre['premarket_handshake']}\n"
-                f"- Signal Confluence Status: {pre['confluence_status']}\n"
-                f"- Risk Management Position Sizing: {pre['position_sizing']['contract_count']} contracts (${pre['position_sizing']['dollars_at_risk']} at risk, {pre['position_sizing']['stop_distance_points']} pt stop)\n"
+                f"- Overnight Context: {pre.get('overnight_context')}\n"
+                f"- Profiler Classification Matrix: NY1 Probabilities = {pre.get('profiler_ny1_probabilities', {})} (n={pre.get('profiler_ny1_samples', 0)})\n"
+                f"- InStat HOD/LOD Timing: {pre.get('instat_timing', 'N/A')}\n"
+                f"- InStat Per Outcome Details: {pre.get('instat_per_outcome', {})}\n"
+                f"- HTF Weekly EMA(5) Excursion: {pre.get('htf_ema_dist_pct', 0):+.2f}% (2-3% Magnet Zone: {'YES' if pre.get('is_2to3_magnet_zone') else 'NO'})\n"
+                f"- P12 Range (18:00-06:00 ET): {pre.get('p12_range')} | Midline: {pre.get('p12_midline')}\n"
+                f"- 06:00-08:30 Pre-Market Bias: {pre.get('p12_premarket_bias')} | 08:30 Pre-Market Handshake: {pre.get('premarket_handshake')}\n"
+                f"- Signal Confluence Status: {pre.get('confluence_status')}\n"
+                f"- Risk Management Position Sizing: {pre.get('position_sizing', {}).get('contract_count', 0)} contracts (${pre.get('position_sizing', {}).get('dollars_at_risk', 0)} at risk, {pre.get('position_sizing', {}).get('stop_distance_points', 0)} pt stop)\n"
+                f"- Candle Science Target Boxes: {pre.get('candle_science_target_boxes')}\n"
+                f"- False Scenario (Reversion): {pre.get('false_scenario')}\n"
+                f"- True Scenario (Continuation): {pre.get('true_scenario')}\n"
             )
 
             # Task A: Pure Causal SFT Briefing (ZERO Future RTH Data)
             sft_assistant_response = (
                 f"=== PRE-MARKET WARGAME BRIEFING & TRADING PLAN (08:30 AM EST) ===\n\n"
                 f"1. DAILY PROFILER & OUTCOME PROBABILITIES:\n"
-                f"   - Overnight Scenario: {pre.get('overnight_key', 'N/A')} (n={pre.get('profiler_n_samples', 0)} days)\n"
-                f"   - Predicted Day Type: {pre.get('profiler_most_likely', 'R1')}\n"
-                f"   - Outcome Matrix: R1 (Chop) = {dt_probs.get('R1%', 0):.1f}% | DWP (Trend Pullback) = {dt_probs.get('DWP%', 0):.1f}% | R2 (Reversal) = {dt_probs.get('R2%', 0):.1f}% | DNP (Power Trend) = {dt_probs.get('DNP%', 0):.1f}%\n"
-                f"   - Early Rejection Locks (InStat): InStat High = {'LOCKED (84.52%)' if pre.get('instat_high_locked') else 'NO'} | InStat Low = {'LOCKED (81.85%)' if pre.get('instat_low_locked') else 'NO'}\n\n"
-                f"2. MICKEY & AUSTIN 4-STEP COUNTER PLAN:\n"
-                f"   - Step 1 (08:30 Handshake): {pre['premarket_handshake']} ({pre['p12_premarket_bias']} 06:00-08:30 vector vs P12 Midline {pre['p12_midline']}).\n"
-                f"   - Step 2 (09:30 RTH Open): Monitor 09:30 open print relative to P12 Midline ({pre['p12_midline']}) and C2 Open line in the sand.\n"
-                f"   - Step 3 (10:00 AM Expansion): If price expands past P12 Midline with momentum, confirm DWP/DNP trend continuation.\n"
-                f"   - Step 4 (10:30-11:00 AM Reversal Check): If 10:00 AM expansion fails at key wall/level and returns to 09:30 open, switch to R2 Reversal.\n\n"
-                f"3. CONFLUENCE & POSITION SIZING:\n"
-                f"   - Confluence Status: {pre['confluence_status']}\n"
-                f"   - Risk Limit: {pre['position_sizing']['contract_count']} contracts (${pre['position_sizing']['dollars_at_risk']} fixed risk limit, {pre['position_sizing']['stop_distance_points']} pt stop)\n\n"
-                f"4. ACTIONABLE SCENARIO MAP:\n"
-                f"   ➤ Scenario A (Bullish Continuation): {pre['scenarios']['Scenario A (Bullish Continuation)']}\n"
-                f"   ➤ Scenario B (Bearish Reversion): {pre['scenarios']['Scenario B (Bearish Reversion)']}\n"
-                f"   ➤ Scenario C (Goalpost Chop / R1): {pre['scenarios']['Scenario C (Goalpost Chop / R1)']}\n"
+                f"   - Overnight Scenario: {pre.get('overnight_key', 'N/A')} (n={pre.get('profiler_ny1_samples', 0)} days)\n"
+                f"   - Overnight Context: {pre.get('overnight_context', 'N/A')}\n"
+                f"   - Outcome Matrix: {pre.get('profiler_ny1_probabilities', {})}\n\n"
+                f"2. INSTAT HOD/LOD TIMING & CONTEXT:\n"
+                f"   - Timing Overview: {pre.get('instat_timing', 'N/A')}\n"
+                f"   - Mode Breakdowns: {pre.get('instat_per_outcome', {})}\n\n"
+                f"3. ACTIONABLE SCENARIO MAP:\n"
+                f"   ➤ FALSE SCENARIO (Reversion): {pre.get('false_scenario', {})}\n"
+                f"   ➤ TRUE SCENARIO (Continuation): {pre.get('true_scenario', {})}\n"
+                f"   ➤ CANDLE SCIENCE TARGETS: {pre.get('candle_science_target_boxes', 'N/A')}\n\n"
+                f"4. MICKEY & AUSTIN 4-STEP COUNTER PLAN:\n"
+                f"   - Step 1 (08:30 Handshake): {pre.get('premarket_handshake')} ({pre.get('p12_premarket_bias')} 06:00-08:30 vector vs P12 Midline {pre.get('p12_midline')}).\n"
+                f"   - Step 2 (09:30 RTH Open): Monitor 09:30 open print relative to P12 Midline ({pre.get('p12_midline')}).\n"
+                f"   - Step 3 (10:00 AM Expansion): If price expands past P12 Midline with momentum, confirm trend continuation.\n"
+                f"   - Step 4 (10:30-11:00 AM Reversal Check): If 10:00 AM expansion fails at key wall/level and returns to 09:30 open, switch to Reversal.\n\n"
+                f"5. CONFLUENCE & POSITION SIZING:\n"
+                f"   - Confluence Status: {pre.get('confluence_status')}\n"
+                f"   - Risk Limit: {pre.get('position_sizing', {}).get('contract_count', 0)} contracts (${pre.get('position_sizing', {}).get('dollars_at_risk', 0)} fixed risk limit, {pre.get('position_sizing', {}).get('stop_distance_points', 0)} pt stop)\n"
             )
 
             sft_record = {
@@ -137,18 +183,19 @@ def build_dataset_for_ticker(ticker: str = "NQ1", max_days: int = 50) -> tuple[l
             postmortem_user = (
                 f"{user_input}\n"
                 f"ACTUAL RTH SESSION SUMMARY (16:00 PM EST):\n"
-                f"- Open: {eod['rth_open']} (Actual Handshake: {eod['actual_rth_handshake']})\n"
-                f"- High: {eod['rth_high']} ({eod['hod_timestamp']}) | Low: {eod['rth_low']} ({eod['lod_timestamp']})\n"
-                f"- Close: {eod['rth_close']}\n"
-                f"- 3-Hour Line vs Apex Score: {eod['line_vs_apex']}\n"
+                f"- Open: {eod.get('rth_open')} (Actual Handshake: {eod.get('actual_rth_handshake')})\n"
+                f"- High: {eod.get('rth_high')} ({eod.get('hod_timestamp')}) | Low: {eod.get('rth_low')} ({eod.get('lod_timestamp')})\n"
+                f"- Close: {eod.get('rth_close')}\n"
+                f"- 3-Hour Line vs Apex Score: {eod.get('line_vs_apex')}\n"
+                f"- 4-Step Counter Score: {eod.get('4step_score')} (Step 4 Q1 InStat: {eod.get('step4_q1_instat')})\n"
             )
 
             postmortem_assistant = (
                 f"=== EOD REENGINEERING POST-MORTEM (16:00 PM EST) ===\n"
-                f"RTH Session Summary: Open={eod['rth_open']} | High={eod['rth_high']} ({eod['hod_timestamp']}) | Low={eod['rth_low']} ({eod['lod_timestamp']}) | Close={eod['rth_close']}\n"
-                f"Actual NY Handshake Vector: {eod['actual_rth_handshake']}\n"
-                f"3-Hour Line vs Apex Score: {eod['line_vs_apex']}\n"
-                f"🏆 WINNING SCENARIO: {eod['winning_scenario']}\n"
+                f"RTH Session Summary: Open={eod.get('rth_open')} | High={eod.get('rth_high')} ({eod.get('hod_timestamp')}) | Low={eod.get('rth_low')} ({eod.get('lod_timestamp')}) | Close={eod.get('rth_close')}\n"
+                f"Actual NY Handshake Vector: {eod.get('actual_rth_handshake')}\n"
+                f"3-Hour Line vs Apex Score: {eod.get('line_vs_apex')} | 4-Step Counter Score: {eod.get('4step_score')} (Step 4 Q1 InStat: {eod.get('step4_q1_instat')})\n"
+                f"🏆 WINNING SCENARIO: {eod.get('winning_scenario')}\n"
             )
 
             postmortem_record = {
@@ -165,9 +212,47 @@ def build_dataset_for_ticker(ticker: str = "NQ1", max_days: int = 50) -> tuple[l
                 }
             }
             postmortem_records.append(postmortem_record)
+            successful_dates += 1
+
+            if progress_callback and (idx == 1 or idx == total_dates or idx % 10 == 0):
+                progress_callback(
+                    {
+                        "stage": "dataset_progress",
+                        "ticker": ticker,
+                        "total_dates": total_dates,
+                        "processed_dates": idx,
+                        "successful_dates": successful_dates,
+                        "current_date": date_str,
+                        "status": "ok",
+                    }
+                )
 
         except Exception as e:
             log.warning("Failed dataset generation for %s %s: %s", ticker, date_str, e)
+            if progress_callback:
+                progress_callback(
+                    {
+                        "stage": "dataset_progress",
+                        "ticker": ticker,
+                        "total_dates": total_dates,
+                        "processed_dates": idx,
+                        "successful_dates": successful_dates,
+                        "current_date": date_str,
+                        "status": "error",
+                        "error": str(e),
+                    }
+                )
+
+    if progress_callback:
+        progress_callback(
+            {
+                "stage": "dataset_complete",
+                "ticker": ticker,
+                "total_dates": total_dates,
+                "processed_dates": total_dates,
+                "successful_dates": successful_dates,
+            }
+        )
 
     return sft_records, postmortem_records
 

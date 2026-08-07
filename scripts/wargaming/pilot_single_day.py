@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import logging
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -412,6 +413,13 @@ def run_pilot_wargame_and_reengineering(
 
 
 if __name__ == "__main__":
-    ticker_arg = sys.argv[1] if len(sys.argv) > 1 else "NQ1"
-    date_arg = sys.argv[2] if len(sys.argv) > 2 else "2026-08-03"
+    parser = argparse.ArgumentParser(description="Run single-day pilot wargame and EOD reengineering")
+    parser.add_argument("positional_ticker", nargs="?", default=None, help="Optional positional ticker")
+    parser.add_argument("positional_date", nargs="?", default=None, help="Optional positional date YYYY-MM-DD")
+    parser.add_argument("--ticker", dest="ticker", default=None, help="Ticker symbol (e.g., NQ1, ES1)")
+    parser.add_argument("--date", dest="target_date", default=None, help="Target date YYYY-MM-DD")
+    args = parser.parse_args()
+
+    ticker_arg = args.ticker or args.positional_ticker or "NQ1"
+    date_arg = args.target_date or args.positional_date or "2026-08-03"
     run_pilot_wargame_and_reengineering(ticker_arg, date_arg)
