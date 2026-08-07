@@ -77,10 +77,17 @@ failure is a regression.
 
 ## 3. The loop (how the work gets done)
 
-> ⚠️ **Being rebuilt — see [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md).** The description below is
-> the *old* loop, which is still the only runnable entry point until `loop.py` lands. Three of its
-> gates were found defective (§4); do not treat a green run from it as evidence. In particular the
-> panel and lock-scope gates described here did not work as documented.
+> ⚠️ **Superseded. Use `python -m scripts.agent_loop` — see
+> [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md).** Everything below describes the *old*
+> `ollama_patch_loop.py`, three of whose gates were defective (§4). It is retained only so the
+> in-flight T2 artifacts stay readable. **Do not run it, and do not treat a green run from it as
+> evidence** — its panel could not approve, and its lock-scope gate almost never fired.
+>
+> ```powershell
+> .\.venv\Scripts\python.exe -m scripts.agent_loop --list        # free: do regions still resolve?
+> .\.venv\Scripts\python.exe -m scripts.agent_loop.selftest      # free: is the loop itself sound?
+> .\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 --apply
+> ```
 
 `scripts/agent_loop/ollama_patch_loop.py` + `scripts/agent_loop/tickets_p0.json`.
 
@@ -115,7 +122,8 @@ restarts from a saved candidate without re-paying for the implementer rounds;
 `--allow-unapproved` is an explicit override. Artifacts per round land in `logs/ollama_loop/<T>/`.
 
 **Between tickets you must commit.** The build gate reverts with `git checkout --`, so uncommitted
-work in the same file would be destroyed by the next ticket.
+work in the same file would be destroyed by the next ticket. *(Old loop only — the new loop runs
+in a worktree and never writes to the live tree, so this rule no longer applies.)*
 
 ---
 
@@ -160,9 +168,13 @@ Protected`, so the counter never reset and the guard would escalate straight to 
 
 ## 4a. Immediate next steps
 
-1. **Finish the loop rebuild** — `workspace.py`, `loop.py`, profiles, cassettes, CLI. Landed and
-   tested so far: `providers.py`, `regions.py`, `gates.py`.
-2. **Re-run T2** on the new tool with `--resume-raw logs/ollama_loop/T2/r4_impl_raw.txt`.
+1. ~~Finish the loop rebuild~~ — **done**, `7154f94c`. Runnable, `selftest` 5/5 offline. Not yet
+   exercised against live models, so expect the first real run to surface prompt-level friction
+   rather than structural bugs.
+2. **Re-run T2** on the new tool:
+   `python -m scripts.agent_loop --ticket T2 --resume-raw logs/ollama_loop/T2/r4_impl_raw.txt --apply`
+   Its candidate already carries the `AutoStopAttempts` blocker fix requirement; the panel is now
+   capable of approving it.
 3. **T3, T4, T5** in order, committing each. T4 and T5 should turn the three failing copy-path
    tests green — that is their acceptance criterion, and it is now checked mechanically by the
    test gate rather than by eye.
