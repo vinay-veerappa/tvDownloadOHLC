@@ -825,10 +825,40 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void OnAccountOrderUpdate(object sender, OrderEventArgs e)
         {
-            if (e != null && e.Order != null)
+            if (e == null || e.Order == null) return;
+            Account acct = sender as Account;
+            OnLeaderOrderUpdate(acct, e.Order);
+            // The same event on a FOLLOWER account is how a rejected or cancelled mirrored stop
+            // becomes visible. The first implementation subscribed to it and then discarded it,
+            // because OnLeaderOrderUpdate returns early for an account with no relationships --
+            // the notification was arriving and being thrown away.
+            OnFollowerOrderUpdate(acct, e.Order);
+        }
+
+        /// <summary>
+        /// A mirrored stop went terminal while the follower still holds the position. Re-submit,
+        /// bounded by <see cref="MaxBracketStopAttempts"/>.
+        /// </summary>
+        private void OnFollowerOrderUpdate(Account followerAcc, Order order)
+        {
+            if (followerAcc == null || order == null || order.Instrument == null) return;
+            if (RiskGuardAddOn.IsPendingOrWorking(order.OrderState)) return;   // still live
+            if (order.OrderState == OrderState.Filled) return;                 // it did its job
+
+            string key = BracketKey(followerAcc.Name, order.Instrument.FullName);
+            FollowerBracket bracket;
+            lock (_lock)
             {
-                OnLeaderOrderUpdate(sender as Account, e.Order);
+                if (!_followerBrackets.TryGetValue(key, out bracket)) return;
+                if (!ReferenceEquals(bracket.WorkingStop, order)) return;      // not our stop
+                bracket.WorkingStop = null;
             }
+
+            NinjaTrader.Code.Output.Process(
+                $"[CopierEngine] BRACKET_STOP_LOST: {followerAcc.Name} {order.Instrument.FullName} mirrored stop went {order.OrderState}; re-submitting.",
+                PrintTo.OutputTab1);
+
+            SyncFollowerStop(followerAcc, order.Instrument, bracket);
         }
 
         // ------------------------------------------------------------------
@@ -867,7 +897,20 @@ namespace NinjaTrader.NinjaScript.AddOns
             // size on the follower -- turning the leader's locked-in gain into open risk.
             public double StopOffset = double.NaN;
             public Order WorkingStop;                        // the follower's live protective order
+
+            // Bounded re-submission. Raised by review of the first implementation: if Submit
+            // threw, or the broker rejected the stop moments later, WorkingStop ended up null
+            // with a perfectly valid offset and NOTHING re-triggered submission -- the follower
+            // stayed naked for the life of the position. Re-submission fixes that, and the
+            // counter is what stops a persistently-rejecting instrument turning it into an
+            // order flood (the failure mode P2-46 and the flood cluster already cost us once).
+            public int StopAttempts;
         }
+
+        // After this many failed attempts on one position the copier stops trying and says so.
+        // Escalating forever against a broker that will not accept the order is a flood; giving
+        // up silently is a naked follower. Neither is acceptable, so it gives up LOUDLY.
+        private const int MaxBracketStopAttempts = 3;
 
         // Keyed "<followerAccount>|<instrumentFullName>", ordinal-insensitive.
         private readonly Dictionary<string, FollowerBracket> _followerBrackets =
@@ -949,6 +992,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                         };
                         _followerBrackets[key] = bracket;
                     }
+                    // A leader that genuinely moves its stop is a new instruction, so it earns a
+                    // fresh re-submission budget. A repeat of the same offset does not -- that is
+                    // the path a rejecting broker would otherwise use to reset the bound forever.
+                    if (double.IsNaN(bracket.StopOffset) || Math.Abs(bracket.StopOffset - offset) > 1e-9)
+                        bracket.StopAttempts = 0;
                     bracket.StopOffset = offset;
                 }
 
@@ -1015,6 +1063,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (stillLive) toCancel = bracket.WorkingStop;
                 }
                 bracket.WorkingStop = null;
+
+                if (bracket.StopAttempts >= MaxBracketStopAttempts)
+                {
+                    // Bounded: keep retrying a broker that will not accept the order and the
+                    // copier becomes the order flood it was hardened against.
+                    return;
+                }
+                bracket.StopAttempts++;
             }
 
             try
@@ -1027,9 +1083,21 @@ namespace NinjaTrader.NinjaScript.AddOns
                     instrument, action, OrderType.StopMarket, TimeInForce.Day,
                     qty, 0, stopPrice, "", "COPIER_STOP", null);
 
-                if (stop == null) return;
+                if (stop == null)
+                {
+                    NinjaTrader.Code.Output.Process(
+                        $"[CopierEngine] BRACKET_SUBMIT_FAILED on {followerAcc.Name} {instrument.FullName}: CreateOrder returned null. The follower is UNPROTECTED.",
+                        PrintTo.OutputTab1);
+                    return;
+                }
                 followerAcc.Submit(new[] { stop });
 
+                // Deliberately does NOT reset StopAttempts. The failure this bound exists for is a
+                // broker that ACCEPTS the submit and rejects the order a moment later, so
+                // "Submit did not throw" is not evidence of protection and resetting here makes
+                // the bound unreachable. The budget is refreshed only by a genuinely new
+                // instruction from the leader, or by the bracket being released when the follower
+                // goes flat. (Caught by this test failing at 21 submissions.)
                 lock (_lock) { bracket.WorkingStop = stop; }
 
                 NinjaTrader.Code.Output.Process(
@@ -1038,8 +1106,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             catch (Exception ex)
             {
+                int attempts;
+                lock (_lock) { attempts = bracket.StopAttempts; }
+                bool exhausted = attempts >= MaxBracketStopAttempts;
                 NinjaTrader.Code.Output.Process(
-                    $"[CopierEngine] BRACKET_SUBMIT_FAILED on {followerAcc.Name} {instrument.FullName}: {ex.Message}. The follower is UNPROTECTED.",
+                    $"[CopierEngine] BRACKET_SUBMIT_FAILED on {followerAcc.Name} {instrument.FullName} "
+                    + $"(attempt {attempts}/{MaxBracketStopAttempts}): {ex.Message}. The follower is UNPROTECTED"
+                    + (exhausted
+                        ? " and the copier has GIVEN UP on this position -- RiskGuard's auto-stop is the only remaining cover, and only if it is armed and live."
+                        : "; it will retry on the next leader stop update or follower fill."),
                     PrintTo.OutputTab1);
             }
         }

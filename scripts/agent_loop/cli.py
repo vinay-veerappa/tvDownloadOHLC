@@ -44,6 +44,58 @@ def _list(tickets, profile) -> int:
     return 1 if bad else 0
 
 
+def _review(args, profile) -> int:
+    """Adversarial review of already-written code. Reports; never edits.
+
+    Exit code is 0 when the run PRODUCED A VERDICT, not when the code is
+    approved -- review mode is advisory and a non-zero exit would invite
+    wrapper scripts to treat it as a gate it is not.
+    """
+    from . import gates, review_mode
+
+    if not args.review_base:
+        print("--mode review needs --review-base (e.g. --review-base HEAD~1)")
+        return 2
+
+    intent = args.review_intent
+    if args.review_intent_file:
+        intent = Path(args.review_intent_file).read_text(encoding="utf-8")
+
+    gate_summary = ""
+    if args.review_verify:
+        # Reviewers used to waste findings asserting the code did not compile.
+        # Telling them the truth is cheaper than letting them guess.
+        print("  verifying build + tests before review ...")
+        b = gates.check_compile(profile.build_cmd, REPO)
+        t = gates.run_tests(profile.test_cmd, REPO)
+        gate_summary = (
+            f"build: {'PASS' if b.ok else 'FAIL'} ({b.summary})\n"
+            f"tests: {t.passed} passed, {len(t.failures)} failed"
+            f"{'' if t.reached_results else ' (RUNNER DID NOT REACH RESULTS - treat as unknown)'}"
+        )
+        print("  " + gate_summary.replace("\n", "\n  "))
+
+    try:
+        review_mode.run_review(
+            REPO,
+            base=args.review_base,
+            head=args.review_head,
+            paths=args.review_paths,
+            profile=profile,
+            reviewers=[m.strip() for m in args.reviewers.split(",") if m.strip()],
+            arbiter_model=args.arbiter,
+            intent=intent,
+            title=args.review_title,
+            gate_summary=gate_summary,
+            orchestrator_note=args.orchestrator_note,
+            panel_deadline=args.panel_deadline,
+        )
+    except review_mode.ReviewError as exc:
+        print(f"  REVIEW ERROR: {exc}")
+        return 2
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m scripts.agent_loop")
     ap.add_argument("--tickets", default="scripts/agent_loop/tickets_p0.json")
@@ -77,6 +129,30 @@ def main(argv=None) -> int:
     ap.add_argument("--keep-worktree", action="store_true", help="leave the worktree for post-mortem")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--prune", action="store_true", help="remove worktrees left by crashed runs")
+
+    # ---- modes -----------------------------------------------------------
+    # `patch` is the original loop: an implementer edits declared regions.
+    # `review` has no implementer at all -- it puts an already-written diff in
+    # front of the panel and arbiter. `create` (new files) is designed but not
+    # built; see AGENT_PATCH_LOOP.md 9.
+    ap.add_argument("--mode", choices=("patch", "review"), default="patch")
+    ap.add_argument("--review-base", default="", help="review mode: base ref (e.g. main, HEAD~3)")
+    ap.add_argument("--review-head", default="HEAD", help="review mode: head ref")
+    ap.add_argument(
+        "--review-paths", nargs="*", default=[],
+        help="review mode: limit the diff to these paths",
+    )
+    ap.add_argument("--review-intent", default="", help="review mode: what the change claims to do")
+    ap.add_argument(
+        "--review-intent-file", default="",
+        help="review mode: read the intent from a file (e.g. the commit message or a plan section)",
+    )
+    ap.add_argument("--review-title", default="", help="review mode: label for the artifacts")
+    ap.add_argument(
+        "--review-verify", action="store_true",
+        help="review mode: run the profile's build+test first so the panel is told the true "
+        "gate state instead of guessing at it",
+    )
     args = ap.parse_args(argv)
 
     if args.prune:
@@ -89,6 +165,10 @@ def main(argv=None) -> int:
         return 0
 
     profile = profiles.get(args.profile)
+
+    if args.mode == "review":
+        return _review(args, profile)
+
     spec = json.loads(Path(args.tickets).read_text(encoding="utf-8"))
     tickets = spec["tickets"]
 

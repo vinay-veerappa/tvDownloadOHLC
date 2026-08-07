@@ -676,3 +676,154 @@ Add a `Profile` in `profiles.py`: prompts, `build_cmd`, `test_cmd`, `lock_name`,
 `settled`. Nothing domain-specific lives in the driver. The lock-scope gate and the C# region
 stripper are the two genuinely C#-shaped pieces; `regions.py` refuses files containing verbatim
 strings or block comments rather than mis-splicing them.
+
+---
+
+## 11. Mode: `review` — adversarial review of code that is already written
+
+**Built 2026-08-07.** `--mode review` runs the panel and arbiter over a **committed diff**. No
+implementer, no regions, no worktree, no apply path. `scripts/agent_loop/review_mode.py`.
+
+```
+# smallest useful invocation
+python -m scripts.agent_loop --mode review --review-base HEAD~1
+
+# scoped, with intent, and with the true gate state fed to the panel
+python -m scripts.agent_loop --mode review \
+  --review-base 51892d54~1 --review-head HEAD \
+  --review-paths scripts/ninjatrader/addons/TradeCopierEngine.cs \
+  --review-intent "P0-9: mirror the leader's protective stop, anchored to the follower's fill" \
+  --review-verify
+```
+
+### Why it exists
+
+`patch` mode's central guarantee is that **the grader is written by a different party than the one
+being graded** — gate 0 makes `*Tests.cs` unreachable to the implementer. Hand-written work has no
+such guarantee. One author writes the change *and* its tests, so the tests encode exactly the cases
+that author already thought of, and the suite goes green for the same reason the bug got written.
+
+That is not hypothetical. `P0-9`'s bracket replication shipped in `51892d54` with `Math.Abs` where
+a **signed** offset was required, so a leader trailing its stop into profit mirrored onto the
+*losing* side of the follower's entry. It survived a green 515-test suite, a clean net48 compile
+and a 20/20 falsifiability check, because all three artifacts were authored by the party that made
+the mistake. A human question found it.
+
+### What it did on its first run
+
+Reviewing the `P0-9` diff: **24 findings, 3 upheld, 8 rejected, 13 out of scope.** Two of the three
+upheld were real defects the author's own tests did not cover, and both are now fixed:
+
+- A stop whose `Submit` threw, or which the broker rejected moments later, left `WorkingStop` null
+  with a valid offset and **nothing re-triggered submission** — the follower stayed naked for the
+  life of the position.
+- The `OrderUpdate` reporting that rejection *was being received and discarded*, because the
+  handler returned early for any account with no relationships, which every follower is.
+
+**The third upheld finding was wrong**, and the arbiter upheld it anyway: it claimed a 10-point ES
+stop becomes "10 follower-points" on MES. Every pair in the conversion matrix (NQ/MNQ, ES/MES,
+YM/MYM, CL/MCL, GC/MGC, RTY/M2K) tracks the same underlying at the same price with the same tick
+size; only the dollar multiplier differs, and quantity scaling handles that. **Read the rulings.
+The arbiter is not a rubber stamp and it is not an oracle** — same lesson as section 4.7.
+
+> **Fixing an upheld finding can introduce the defect a rejected finding warned about.** Adding
+> re-submission created exactly the reject-to-resubmit flood that finding #13 described and the
+> arbiter had rejected *on the grounds that no such loop existed*. That was true before the fix and
+> false after it. The bound (`MaxBracketStopAttempts`) is why. The first attempt at the bound was
+> also wrong — it reset the counter on `Submit` success, but the failure mode is rejection *after*
+> a successful submit, so the bound was unreachable; the test caught it at 21 submissions.
+
+### Properties worth preserving
+
+- **Advisory by construction.** It reports and never edits, the same way `ARBITER_SHIP` never
+  ships. Exit code is 0 when a verdict was *produced*, not when the code is approved — a non-zero
+  exit would invite wrapper scripts to treat it as a gate it is not.
+- **Findings come from `Vote.finding_list`**, which `parse_review` already produced with severities
+  attached. Re-parsing the text would flatten everything to one severity and silently break the
+  arbiter's BLOCKER/MINOR weighting.
+- **`MAX_DIFF_CHARS` (90k) refuses an over-large range** rather than reviewing a truncated diff. A
+  review that does not fit in context returns confident nonsense.
+- **The prompt tells the panel the tests are author-written.** That single instruction is what
+  redirects it from "restate what the tests cover" to "name a case they do not".
+
+---
+
+## 12. Backlog — one harness, several modes
+
+Recorded 2026-08-07 so it is not re-derived. **The conclusion: we do not need different loops.**
+Only two things vary by scenario; everything else is already shared and scenario-independent.
+
+| Varies | Already shared |
+|---|---|
+| **Change model** — how a candidate is expressed and applied | worktree isolation + run lock (`workspace.py`) |
+| **Gate ladder** — what "correct" means | provider shim, panel, arbiter, thrashing detection |
+| | protected paths, frozen-baseline test diffing, ledger + artifacts |
+
+The only thing blocking new-feature work is narrow: `regions.py` anchors on an **existing
+declaration** and splices a replacement over it (`SUPPORTED_SUFFIXES = (".cs",)`). New code has no
+declaration to anchor to. That is a change-model limit, not an architectural one.
+
+### 12.1 `create` mode — NOT BUILT
+
+For "add a feature", "write a new module". The change model becomes *write whole file at a declared
+path*; `regions.py` drops out entirely.
+
+- `check_protected_paths` **inverts**: from "these regions are off limits" to "you may only create
+  under these declared paths, and never `*Tests.cs`". The anti-reward-hacking guarantee has to
+  survive that inversion — it is the whole reason the mode would be safe.
+- `check_static` mostly transfers (ASCII, balanced braces, no leaked markers).
+- `check_compile` and `check_tests` are unchanged, and are what make it worth doing at all.
+- Ticket gains `creates: [paths]` in place of `regions`.
+- Open question: how a `create` ticket declares acceptance tests when the file under test does not
+  exist yet. Probably the same `expect_green` contract with the tests written first by the
+  operator — which is already the rule.
+
+The smaller of the two remaining pieces; mostly plumbing.
+
+### 12.2 Research / backtest mode — do NOT build this by extending the patch ladder
+
+**This is a genuinely different kind of task, and the existing gates would give false assurance.**
+
+`patch` works because its terminal signal is **binary and adversarially robust**: tests pass or
+they do not. A backtest's output is a **number**. The failure mode is not a compile error, it is a
+plausible-but-wrong Sharpe, and the reward-hacking surface is far larger:
+
+- look-ahead / future leakage
+- overfitting a parameter sweep (easy to do accidentally, and sweeps are ADR-022 standard here)
+- quietly shifting the date range, instrument set or cost model until the number improves
+- reporting in-sample as if it were out-of-sample
+
+Worse, **gate 0's trick does not transfer.** You can make `*Tests.cs` unreachable; you cannot make
+the *data* unreachable, and the model can always reshape the question. An implementer told
+"improve this backtest" against a gate of "it ran without error" **will** find the overfit — that
+is the optimiser working correctly.
+
+The honesty gates this needs are already written down as ADRs and would mechanise directly:
+
+| Rule | Source |
+|---|---|
+| Fully vectorised, no `for` in calculation paths | ADR-017 |
+| Only `PropFirmSimulator` for prop viability; never per-trade % as daily P&L | ADR-021 |
+| Metrics as price-percentage, not absolute points | ADR-002 |
+| Intraday positions exit by 16:00 ET | ADR-020 |
+
+Add look-ahead detection and a **holdout the loop may touch exactly once**, and there is a real
+research ladder. Until those exist, pointing an LLM loop at backtesting produces confident garbage.
+
+**So: two gate ladders, one harness.** Share `workspace` / `providers` / `arbiter`; do not reuse
+the patch ladder for research, because passing it would mean nothing there while reading as
+assurance.
+
+### 12.3 Smaller items
+
+- **`review` mode has no test of its own.** `selftest.py` covers the parsers; the new module is
+  exercised only by having been run. A fixture diff with a known planted defect would make it
+  falsifiable the same way the acceptance tests are.
+- **`--review-verify` runs build+test in the live tree**, not a worktree. Harmless today because it
+  only reads, but it is against the discipline `patch` mode follows.
+- **Findings are not deduplicated across reviewers**, so the same defect from two models reaches
+  the arbiter twice and inflates the count. Cosmetic now; it would distort the thrashing signal if
+  review mode ever becomes multi-round.
+- **`P2-38`** (`McpBridgeAddOn`'s name-prefix hole) is still unreachable by any mode, because that
+  file is excluded from the test build. The `P1-21` precedent — move the logic to a testable class
+  rather than argue about coverage — applies.

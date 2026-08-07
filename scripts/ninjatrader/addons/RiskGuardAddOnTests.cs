@@ -638,6 +638,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_FollowerGoingFlatCancelsTheMirroredStop();
             TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry();
             TestBracket_ShortStopTrailedIntoProfitStaysBelowFollowerEntry();
+            TestBracket_RejectedStopIsResubmitted();
+            TestBracket_ResubmissionIsBounded();
             TestBracket_IncomparableInstrumentsAreNotMirrored();
 
             // -- S7: copier fan-out under burst (plan §8) --
@@ -1582,6 +1584,94 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             Assert(live[0].OrderAction == OrderAction.BuyToCover,
                 "The mirrored stop covers the follower's short.");
+        }
+
+        // Found by the loop's review mode, not by me (logs/agent_loop/review-51892d54_1_HEAD).
+        // A mirrored stop that the broker rejects moments after submission left WorkingStop
+        // holding a dead order and NOTHING re-triggered submission -- the follower stayed naked
+        // for the life of the position. The OrderUpdate that reported the rejection was being
+        // received and discarded, because the handler returned early for any account with no
+        // relationships, which every follower is.
+        private static void TestBracket_RejectedStopIsResubmitted()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a rejected mirrored stop is re-submitted (P0-9, found by review mode)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-H");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            var first = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+
+            // The broker rejects it a moment later. The follower is still long 1.
+            first.OrderState = OrderState.Rejected;
+            follower.TriggerOrderUpdate(first);
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn_IsLiveForTest(o))
+                .ToList();
+
+            Assert(live.Count == 1,
+                string.Format(
+                    "A replacement stop is working after the first was rejected (got {0} live). "
+                    + "Without it the follower holds an open position with no protective order and "
+                    + "nothing left to trigger another attempt.",
+                    live.Count));
+
+            Assert(Math.Abs(live[0].StopPrice - 17990.00) < 1e-9,
+                string.Format("The replacement keeps the mirrored level (expected 17990.00, got {0}).",
+                    live[0].StopPrice));
+        }
+
+        // The same fix must not become an order flood: a broker that rejects every attempt would
+        // otherwise be answered forever. That is the P2-46 / flood-cluster failure mode.
+        private static void TestBracket_ResubmissionIsBounded()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: stop re-submission is bounded, not a flood (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-I");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            // Reject every stop the copier submits, twenty times over.
+            for (int i = 0; i < 20; i++)
+            {
+                var latest = follower.Orders.LastOrDefault(o => o.Name == "COPIER_STOP");
+                if (latest == null) break;
+                if (!RiskGuardAddOn_IsLiveForTest(latest)) break;
+                latest.OrderState = OrderState.Rejected;
+                follower.TriggerOrderUpdate(latest);
+            }
+
+            int submitted = follower.Orders.Count(o => o.Name == "COPIER_STOP");
+            Assert(submitted <= 4,
+                string.Format(
+                    "Re-submission stops after a bounded number of attempts (got {0} stop orders). "
+                    + "Answering a persistently-rejecting broker forever is the order flood the "
+                    + "P1-43..P2-46 cluster already cost us.",
+                    submitted));
+
+            Assert(submitted >= 2,
+                string.Format("It did retry at least once before giving up (got {0}).", submitted));
+        }
+
+        /// <summary>Mirrors RiskGuardAddOn.IsPendingOrWorking for assertions in this file.</summary>
+        private static bool RiskGuardAddOn_IsLiveForTest(Order o)
+        {
+            return o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted
+                || o.OrderState == OrderState.Initialized || o.OrderState == OrderState.Working
+                || o.OrderState == OrderState.PartFilled;
         }
 
         // Mirroring a points-distance onto an instrument at a different price scale fabricates a
