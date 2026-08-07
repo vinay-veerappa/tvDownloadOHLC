@@ -503,6 +503,15 @@ namespace NinjaTrader.NinjaScript.AddOns
         // observe every violation instead of hoping a reviewer spots one nested three
         // calls deep inside a lock block.
         internal bool TestIsStateLockHeld() { return Monitor.IsEntered(_stateLock); }
+
+        // --- disk-write probe (P1-12) ---
+        // Same argument as the broker-call probe above, for the other class of call that must
+        // never run under _stateLock. A stalled disk holding the lock stalls every NT8 event
+        // handler behind it, including the ones that attach protective stops. Reading the code
+        // does not settle it: _stateLock is RE-ENTRANT, so a write that looks outside the lock is
+        // still inside it whenever its caller was itself called under the lock -- which is how
+        // three of the four original sites got there.
+        internal static Action<string> FileWriteObserver;
 #endif
 
         public void ResetStateForDev()
@@ -767,7 +776,31 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        private void SavePersistedState()
+        /// <summary>
+        /// Every disk write this addon makes goes through here (P1-12). Two reasons it is a
+        /// funnel rather than a convention: the observer seam gives the suite one place to catch
+        /// a write that happened under `_stateLock`, and the swallow-and-continue policy for I/O
+        /// failures is stated once instead of in four `catch {}` blocks that had drifted apart.
+        /// Callers must have released `_stateLock` first -- see <see cref="CapturePersistedState"/>
+        /// for the capture-then-write split that makes that possible.
+        /// </summary>
+        private void WriteFileOutsideLock(string label, Action write)
+        {
+#if TESTING
+            var obs = FileWriteObserver;
+            if (obs != null) obs(label);
+#endif
+            try { write(); } catch { }
+        }
+
+        /// <summary>
+        /// Builds the persisted-state payload under `_stateLock` and returns it WITHOUT touching
+        /// the disk. The JSON encode and the write are the caller's job, after the lock is
+        /// released. Splitting it this way is the whole of P1-12's state half: the old method
+        /// took the lock and then wrote inside it, so every one of its callers -- including the
+        /// one on the position-update hot path -- serialised order processing behind a disk write.
+        /// </summary>
+        private PersistedStateData CapturePersistedState()
         {
             lock (_stateLock)
             {
@@ -793,7 +826,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             FirmStartingBalance = state.FirmStartingBalance
                         };
                     }
-                    var data = new PersistedStateData
+                    return new PersistedStateData
                     {
                         IsArmed = _isArmed,
                         ShadowSessionsCompleted = _shadowSessionsCompleted,
@@ -802,14 +835,31 @@ namespace NinjaTrader.NinjaScript.AddOns
                         AccountsData = accountsData,
                         Timestamp = DateTime.UtcNow
                     };
-                    string json = JsonConvert.SerializeObject(data, Formatting.Indented);
-                    File.WriteAllText(_stateFile, json);
                 }
                 catch (Exception ex)
                 {
-                    LogEvent("SYSTEM", "ERROR", $"Failed to save persisted state: {ex.Message}");
+                    LogEvent("SYSTEM", "ERROR", $"Failed to capture persisted state: {ex.Message}");
+                    return null;
                 }
             }
+        }
+
+        /// <summary>Serialises and writes a captured payload. Must run with `_stateLock` released.</summary>
+        private void WritePersistedState(PersistedStateData data)
+        {
+            if (data == null) return;
+            WriteFileOutsideLock("state", () =>
+                File.WriteAllText(_stateFile, JsonConvert.SerializeObject(data, Formatting.Indented)));
+        }
+
+        /// <summary>
+        /// Capture + write, for the handful of callers that are genuinely outside the lock and
+        /// genuinely need the state on disk before they return -- shutdown, arming, manual
+        /// unlock. Anything on an event path should set `_stateDirty` and let the sweep batch it.
+        /// </summary>
+        private void SavePersistedState()
+        {
+            WritePersistedState(CapturePersistedState());
         }
 
         // -
@@ -1046,7 +1096,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     if (changed)
                     {
-                        SavePersistedState();
+                        // P1-12: was a synchronous SavePersistedState() here -- a disk write under
+                        // _stateLock on the hot path, once per position change, bypassing the very
+                        // batching mechanism the sweep already uses. Mark it and let the sweep
+                        // flush it. The batching window costs at most one sweep interval of
+                        // staleness on restart, against stalling every order event behind the disk.
+                        _stateDirty = true;
                     }
 
                     LogEvent(accountName, "POSITION_UPDATE", new JObject
@@ -1647,25 +1702,30 @@ namespace NinjaTrader.NinjaScript.AddOns
             var flattenBatches = new List<KeyValuePair<Account, List<Instrument>>>();
             var sweepActions = new List<GuardAction>();
 
+            // P1-12: the sweep's three disk writes are DECIDED here and performed at the bottom,
+            // after the lock has been released and after the broker work. Nothing about a
+            // heartbeat file or a log flush is worth delaying a flatten for.
+            string heartbeatStamp = null;
+            List<string> logsToWrite = null;
+            PersistedStateData stateToWrite = null;
+
             try
             {
                 lock (_stateLock)
                 {
-                    // 1. Heartbeat (liveness)
+                    // 1. Heartbeat (liveness) - decide only.
                     if (DateTime.UtcNow - _lastHeartbeatTime >= TimeSpan.FromSeconds(5))
                     {
                         _lastHeartbeatTime = DateTime.UtcNow;
-                        try { File.WriteAllText(_heartbeatFile, DateTime.UtcNow.ToString("o")); } catch {}
+                        heartbeatStamp = DateTime.UtcNow.ToString("o");
                     }
 
-                    // 2. Log flush (async queue drain)
-                    var logsToWrite = new List<string>();
+                    // 2. Log flush: the queue is drained under the lock (it is shared state); the
+                    // append is not. A ConcurrentQueue drain is microseconds, a file append on a
+                    // stalled disk is not bounded at all.
+                    logsToWrite = new List<string>();
                     while (_logQueue.TryDequeue(out string logLine))
                         logsToWrite.Add(logLine);
-                    if (logsToWrite.Count > 0)
-                    {
-                        try { File.AppendAllLines(_logFile, logsToWrite, Encoding.UTF8); } catch {}
-                    }
 
                     // 3. Session reset (check date change - the one remaining time-based rule)
                     DateTime nowEt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _etZone);
@@ -1711,10 +1771,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                             $"Shadow session #{_shadowSessionsCompleted} counted for {currentSessionDate:yyyy-MM-dd} (MinShadowSessions={_config.MinShadowSessions})");
                     }
 
-                    // 4. State persist (batch flush)
+                    // 4. State persist (batch flush) - capture now, write below. The flag is
+                    // cleared here, not after the write: anything that dirties the state while
+                    // the write is in flight must set it again and be picked up next sweep, not
+                    // be cleared away by a flush that predates it.
                     if (_stateDirty)
                     {
-                        SavePersistedState();
+                        stateToWrite = CapturePersistedState();
                         _stateDirty = false;
                     }
 
@@ -1872,6 +1935,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch (Exception ex)
             {
                 LogEvent("SYSTEM", "ERROR", $"Error in ExecuteSafetySweep: {ex.Message}");
+            }
+            finally
+            {
+                // P1-12: last, outside the lock, and in a finally -- a rule that threw must not
+                // cost us the log lines already drained out of the queue, which exist nowhere else.
+                if (heartbeatStamp != null)
+                    WriteFileOutsideLock("heartbeat", () => File.WriteAllText(_heartbeatFile, heartbeatStamp));
+
+                if (logsToWrite != null && logsToWrite.Count > 0)
+                    WriteFileOutsideLock("log", () => File.AppendAllLines(_logFile, logsToWrite, Encoding.UTF8));
+
+                WritePersistedState(stateToWrite);
             }
         }
 
@@ -2843,6 +2918,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         // transition from disarmed -> armed unless RunPreflight() passes. Disarming is always allowed.
         public void ToggleArmed()
         {
+            // P1-12: captured inside the lock, written outside it. Arming is rare enough that the
+            // disk write was never a latency problem in itself -- but _stateLock is re-entrant, so
+            // leaving it here meant `SavePersistedState` could not enforce "never under the lock"
+            // for anybody.
+            PersistedStateData toWrite = null;
             lock (_stateLock)
             {
                 if (!_isArmed)
@@ -2873,8 +2953,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
-                SavePersistedState();
+                toWrite = CapturePersistedState();
             }
+
+            WritePersistedState(toWrite);
         }
 
         public string TriggerManualFlatten(string accountName)
@@ -2944,6 +3026,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         public void UnlockAccount(string accountName)
         {
+            PersistedStateData toWrite = null;   // P1-12: captured under the lock, written after it
             lock (_stateLock)
             {
                 if (_accountStates.TryGetValue(accountName, out var state))
@@ -2983,9 +3066,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
 
                     LogEvent(accountName, "UNLOCK", "Account manually unlocked from dashboard. Metrics reset and synchronized.");
-                    SavePersistedState();
+                    toWrite = CapturePersistedState();
                 }
             }
+
+            WritePersistedState(toWrite);
         }
 
         public void LockAccount(string accountName, int minutes)

@@ -557,6 +557,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_47_ArmDefaultFollowsTheResolvedMode();
             TestStress_S1toS4_OrderFloodGovernor();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
+            TestP1_12_NoDiskWriteHappensUnderTheStateLock();
+            TestP1_12_PositionChangeDefersThePersistToTheSweep();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
             TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening();
             TestP1_15_ReArmingSeedsFsmsForPositionsOpenedWhileDisarmed();
@@ -5006,6 +5008,140 @@ namespace NinjaTrader.NinjaScript.AddOns
             // resting entry still has to be cancelled and flattened, just outside the lock.
             Assert(account.FlattenCallCount > 0,
                 "The locked account was still flattened (the enforcement itself is preserved)");
+        }
+
+        /// <summary>
+        /// Runs <paramref name="body"/> with a disk-write observer installed, and returns the
+        /// labels of any addon file write that happened while `_stateLock` was held. Deliberately
+        /// the same shape as <see cref="RecordBrokerCallsUnderLock"/> -- P1-12 is P1-10's
+        /// invariant applied to the other kind of unbounded call.
+        /// </summary>
+        private static List<string> RecordFileWritesUnderLock(RiskGuardAddOn addon, Action body)
+        {
+            var violations = new List<string>();
+            RiskGuardAddOn.FileWriteObserver = label =>
+            {
+                if (addon.TestIsStateLockHeld()) violations.Add(label);
+            };
+            try { body(); }
+            finally { RiskGuardAddOn.FileWriteObserver = null; }
+            return violations;
+        }
+
+        /// <summary>Counts addon file writes by label, regardless of lock state.</summary>
+        private static List<string> RecordFileWrites(Action body)
+        {
+            var writes = new List<string>();
+            RiskGuardAddOn.FileWriteObserver = label => { lock (writes) writes.Add(label); };
+            try { body(); }
+            finally { RiskGuardAddOn.FileWriteObserver = null; }
+            return writes;
+        }
+
+        // P1-12a. `_stateLock` is the lock every NT8 event handler needs. The sweep wrote the
+        // heartbeat file, appended the log and serialised the whole persisted state inside it, so
+        // a slow or stalled disk stalled order-event processing -- including the handlers that
+        // attach protective stops -- for as long as the disk took.
+        //
+        // Asserted mechanically for the same reason P1-10 is: the lock is RE-ENTRANT, so a write
+        // that reads as "outside the lock" is inside it whenever its caller held the lock, and no
+        // amount of reading settles that. Monitor.IsEntered does.
+        private static void TestP1_12_NoDiskWriteHappensUnderTheStateLock()
+        {
+            Console.WriteLine("\n[TEST] P1-12: no disk write happens while _stateLock is held");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "TestAcc", Provider = Provider.Simulator };
+            account.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(new RiskConfig());
+            addon.SetSubscribedAccountForTest("TestAcc");
+            addon.SetAccountStateForTest("TestAcc", new AccountState("TestAcc"));
+
+            var violations = RecordFileWritesUnderLock(addon, () =>
+            {
+                // The hot path first: a position change is the highest-frequency event there is.
+                addon.ExecutePositionUpdateDetails(account, account.Positions[0]);
+                // Then the sweep, which owns the heartbeat, the log flush and the state flush.
+                addon.ExecuteSafetySweep();
+                // Then the two rare-but-real callers that used to persist inside the lock.
+                addon.ToggleArmed();
+                addon.UnlockAccount("TestAcc");
+            });
+
+            Assert(violations.Count == 0,
+                string.Format(
+                    "{0} disk write(s) ran while _stateLock was held{1}. Each one couples "
+                    + "order-event latency to disk latency, on the lock that every NT8 handler "
+                    + "needs to make progress.",
+                    violations.Count,
+                    violations.Count == 0 ? "" : ": " + string.Join(", ", violations.Distinct())));
+        }
+
+        // P1-12b. The batching is the fix, not a side effect of it. `_stateDirty` already existed
+        // and the sweep already drained it; the position-update path just ignored it and wrote
+        // synchronously on every single change. This asserts the two halves separately, because a
+        // "fix" that simply deleted the write would pass the lock-scope test above while quietly
+        // dropping persistence altogether -- state would then be lost on every restart.
+        private static void TestP1_12_PositionChangeDefersThePersistToTheSweep()
+        {
+            Console.WriteLine("\n[TEST] P1-12: a position change defers its persist to the sweep rather than writing inline");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "TestAcc", Provider = Provider.Simulator };
+            account.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(new RiskConfig());
+            addon.SetSubscribedAccountForTest("TestAcc");
+            addon.SetAccountStateForTest("TestAcc", new AccountState("TestAcc"));
+
+            // Settle the session reset so the first observed sweep is a steady-state one.
+            addon.ExecuteSafetySweep();
+
+            var inline = RecordFileWrites(() =>
+            {
+                for (int i = 1; i <= 5; i++)
+                {
+                    account.Positions[0].Quantity = 2 + i;
+                    addon.ExecutePositionUpdateDetails(account, account.Positions[0]);
+                }
+            });
+
+            Assert(inline.Count(l => l == "state") == 0,
+                string.Format(
+                    "Five position changes wrote the state file {0} time(s) inline; expected 0. "
+                    + "One full serialise-and-write of every tracked account per position change, "
+                    + "under the lock, was the cost being paid.",
+                    inline.Count(l => l == "state")));
+
+            var swept = RecordFileWrites(() => addon.ExecuteSafetySweep());
+
+            Assert(swept.Count(l => l == "state") == 1,
+                string.Format(
+                    "The sweep flushed the deferred state exactly once (got {0}). Deferring without "
+                    + "flushing is not batching, it is data loss: nothing else persists the "
+                    + "session's PnL baselines or the locked-out list.",
+                    swept.Count(l => l == "state")));
+
+            var clean = RecordFileWrites(() => addon.ExecuteSafetySweep());
+            Assert(clean.Count(l => l == "state") == 0,
+                string.Format(
+                    "A sweep with nothing dirty writes no state at all (got {0}) -- the dirty flag "
+                    + "is cleared by the flush, so an idle guard is not rewriting its state file "
+                    + "on every tick.",
+                    clean.Count(l => l == "state")));
         }
 
         // P1-15: UpdateFsmOnPosition and UpdateFsmOnOrder both return early while disarmed. So
