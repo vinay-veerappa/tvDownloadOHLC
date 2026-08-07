@@ -21,13 +21,35 @@ all of Phase C bar `P1-36`. The addon is deployed and running in `shadow`, compi
 
 ### Three things to know before you touch anything
 
-**1. Deployed is not validated.** Phase A put the code in front of NinjaTrader but never in front
-of a market. The machine is on **Kinetick End Of Day (Free)** — daily bars, no real-time quotes —
-so the NT8 simulator cannot fill, no position can open, and **not one guard path has ever
-executed live**. A test order sat at `Submitted` and was rejected. The §4e acceptance criteria
-(`PEAK_GIVEBACK_BREACH` on a profitable flat account; a wrong `COPY_BLOCKED_NO_GUARD`) are still
-unmet and need a session on a real-time feed. Read "compiles clean, suite green, deployed" as
-exactly that and no more.
+**1. Deployed is not validated, and the feed was never the whole story.** Phase A put the code in
+front of NinjaTrader but never in front of a market.
+
+*Resolved 2026-08-07 (session 5)*: the box is now on a **real-time feed** (Kinetick EOD →
+**TPT**), quotes are live and fills work — a real `MNQ SEP26` fill was observed end to end. That
+half of the blocker is gone.
+
+**The other half is `isArmed: false`, and it is the reason nothing validated.** Every evaluation
+path returns early while disarmed: FSM creation (`RiskGuardAddOn.cs:1837`), order FSM updates
+(`:2034`), rule evaluation (`:1205`, `:2159`, `:2392`), firm mirror (`:2450`), and `CanTrade`
+(`:124`, which returns **true** — allow). Observed directly: an open position with
+`nt_riskguard_state` reporting **zero FSMs**. In shadow-and-disarmed, RiskGuard is a pure event
+logger. No feed quality fixes that.
+
+**One of the two §4e acceptance criteria is not reachable in shadow at all.** `IsGuardProtecting`
+(`:875`) requires `_isArmed && GetMode() == "live"`, so in shadow it returns false for every
+account and *every* live follower is blocked by design — a `COPY_BLOCKED_NO_GUARD` log would show
+100% blocks and prove nothing. **T3 (giveback) is validatable armed + shadow; T5 (fail-closed
+copy) requires an acting mode.** §4e treats both as achievable in one shadow session; that is
+wrong.
+
+**The inflated shadow counter is not a deadlock.** Preflight check (d) (`:2652`) applies the
+`MinShadowSessions` gate only to `live`/`pure`/`override_with_friction`. Arming in **shadow**
+bypasses it, so resetting `ShadowSessionsCompleted` 5 → 0 is safe and blocks only the eventual
+live arming, which is its job.
+
+**Arming is UI-only.** `ToggleArmed()` (`:2713`) has no bridge route; the only caller is the
+dashboard's `TOGGLE ARMED` button (`:4434`). Do not reach for `nt_script_execute` — it is
+unreliable here *and* it recompiles, which reloads every AddOn and re-triggers `P1-39`.
 
 **2. One manual step is outstanding.** The live `state.json` reads `ShadowSessionsCompleted = 5`,
 inflated by restarts before `P1-37` was fixed. It no longer climbs, but the value is wrong and
@@ -38,6 +60,16 @@ loses persisted lockouts.
 
 **3. The branch is still unmerged.** `harden/riskguard-copier-p0`, fast-forward available. It also
 carries unrelated narrative/wargaming commits from other background agents.
+
+**4. Never POST to `/api/riskguard/config` until `P1-39` is fixed.** That endpoint does
+`req.ToObject<RiskConfig>()` with **no merge**, so a partial body silently resets every
+unspecified field to its default — always round-trip the full document from a GET. Worse, the
+path deserializes twice (`ToObject`, then `LoadConfig` inside `SaveAndReloadConfig`) and Json.NET
+*appends* to initializer-populated lists, so each POST adds two more `WindowsET` entries and five
+more `Days` per window. One POST on 2026-08-07 took the live config 6 → 10 windows. On-disk
+`config.json` has been repaired by hand (6 windows, deduplicated `Days`, backup at
+`config.json.bak_prerepair`); in-memory still reads 10 and will read 8 after the next reload
+until the code is fixed. Diff every key after any config write — that is how this was caught.
 
 Deployment happened to be the thing that found `P1-37` — a safety gate that counted addon restarts
 instead of sessions, which no amount of review had noticed. That is the argument for finishing

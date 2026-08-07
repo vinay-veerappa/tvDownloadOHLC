@@ -8,12 +8,12 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**38 defects.** Numbered once, never renumbered, never reused.
+**39 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37` | 17 | 6 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37`, `P1-39` | 18 | 6 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`) |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38` | 7 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -375,6 +375,56 @@ $j | ConvertTo-Json -Depth 20 | Out-File $p -Encoding utf8
 Do not edit it while NT8 is running: the addon rewrites the file on flush, and a torn write
 loses persisted lockouts.
 
+### P1-39. Every config load appends the default windows, so `WindowsET` grows without bound and a default can never be deleted
+*(found on 2026-08-07 while excluding an account ahead of Phase A validation — observed live,
+then confirmed in code)*
+**Where**: `RiskGuardAddOn.cs:4251` (the initializer) against `RiskGuardAddOn.cs:599`
+(`LoadConfig`) and `McpBridgeAddOn.cs:5126` (`req.ToObject<RiskConfig>()`).
+**What happens**: `WindowsET` is a `List<WindowConfig>` property pre-populated by a collection
+initializer with `NY_AM_Macro` and `NY_PM_Macro`. Json.NET's default
+`ObjectCreationHandling.Auto` **reuses** an already-populated collection and *appends* to it
+rather than replacing it. So every deserialization adds the two defaults on top of whatever the
+file holds — and `WindowConfig.Days` has the same shape, so each window's day list grows by five
+entries at the same time.
+
+Observed live. A single POST to `/api/riskguard/config` took the config from 6 windows to 10,
+because that path deserializes **twice**: once in `ToObject<RiskConfig>()` (6 → 8) and again in
+the `LoadConfig()` inside `SaveAndReloadConfig` (8 → 10). `Days` went 5 → 10 → 15 → 20 on the
+affected windows. A plain addon restart costs one round, not two — and the deployment record in
+the handover notes 24 restarts in four minutes of ordinary recompile churn.
+
+Two consequences, and the second is the safety-relevant one:
+- **Unbounded growth.** The file is rewritten each time, so the corruption is persisted and
+  compounds. The `Days` lists were already doubled before this session touched anything.
+- **A default window can never be removed.** Delete `NY_AM_Macro` from `config.json` and it is
+  back on the next load. `EnableWindowGate` is `true` on this machine, and the gate
+  (`:2560`) flattens positions opened *outside* the permitted set — so the failure direction is
+  that the permitted set silently **widens** and the operator cannot narrow it. That is the same
+  class as P1-20 and P1-37: a safety gate that quietly stops gating.
+
+Duplicate entries are otherwise behaviour-neutral, because `Days` is parsed into a
+`HashSet<DayOfWeek>` (`:619`) and the window test is a union.
+
+**Fix**: annotate the collection properties with
+`[JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]`, or pass
+`ObjectCreationHandling.Replace` in the `JsonSerializerSettings` used by both `LoadConfig` and
+the bridge's `ToObject`. Prefer the settings-level fix — `BlockedInstruments`,
+`ExcludedAccounts`, `LockoutBypassWhileDisarmedAccounts` and the `FirmProfiles` dictionary all
+have initializers and the same latent exposure; only `WindowsET` has a *non-empty* one today, so
+only it corrupts, but any future default turns the others into the same bug silently.
+**Test**: deserialize a config whose `WindowsET` holds exactly the two default windows and assert
+the result has two, not four; round-trip it twice and assert the count is stable. Assert a config
+that omits `NY_AM_Macro` still omits it after a load.
+**Not introduced by this branch** — the initializer dates to `9dbf8712`, well before the
+hardening work.
+
+**OUTSTANDING operational step.** The live in-memory config currently holds 10 windows. The
+on-disk `config.json` was repaired by hand on 2026-08-07 (deduplicated to 6 windows with
+deduplicated `Days`; backup at `config.json.bak_prerepair`). Disk and memory will not agree until
+the addon reloads — and until this defect is fixed, that reload re-appends the two defaults and
+lands on 8. **Do not "repair" it by POSTing the corrected config**: that path deserializes twice
+and makes it worse. Fix the code first, then reload.
+
 ---
 
 ## 3. P1 — Rule semantics
@@ -724,6 +774,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-35 CLOSED | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
+| P1-39 | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
 | P1-18 | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |
