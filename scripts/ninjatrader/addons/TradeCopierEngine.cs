@@ -781,6 +781,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                     acc.OrderUpdate -= OnAccountOrderUpdate;
                     acc.OrderUpdate += OnAccountOrderUpdate;
 
+                    // P0-49: and the follower's own position is the ONLY authoritative source for
+                    // the anchor the mirrored stop hangs off. ExecutionUpdate alone is not enough:
+                    // NT8 raises it BEFORE PositionUpdate, so a bracket anchored at execution time
+                    // reads a position that does not exist yet.
+                    acc.PositionUpdate -= OnAccountPositionUpdate;
+                    acc.PositionUpdate += OnAccountPositionUpdate;
+
                     if (_subscribedAccounts.Add(acc)) added++;
                 }
             }
@@ -803,6 +810,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (acc == null) continue;
                     acc.ExecutionUpdate -= OnAccountExecutionUpdate;
                     acc.OrderUpdate -= OnAccountOrderUpdate;
+                    acc.PositionUpdate -= OnAccountPositionUpdate;
                 }
                 _subscribedAccounts.Clear();
                 return count;
@@ -1033,6 +1041,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             double stopPrice;
             int qty;
             OrderAction action;
+            MarketPosition bracketSide;
 
             lock (_lock)
             {
@@ -1048,6 +1057,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (stopPrice <= 0) return;
 
                 qty = bracket.FollowerQuantity;
+                bracketSide = bracket.FollowerSide;
                 action = bracket.FollowerSide == MarketPosition.Long ? OrderAction.Sell : OrderAction.BuyToCover;
 
                 if (bracket.WorkingStop != null)
@@ -1073,15 +1083,58 @@ namespace NinjaTrader.NinjaScript.AddOns
                 bracket.StopAttempts++;
             }
 
+            // P0-50: re-read the live position immediately before touching the broker.
+            //
+            // The bracket's view of the follower can be stale by the time we get here -- and on
+            // 2026-08-07 it was: three COPIER_STOP orders were submitted against a FLAT Sim-ORB
+            // after the trade had closed, each cancelling the last. **An orphan stop on a flat
+            // account is not a leftover, it is a new position in the opposite direction the
+            // moment it triggers.** Same discipline as T2's auto-stop, which re-sizes from the
+            // live position immediately before CreateOrder for exactly this reason.
+            var livePos = followerAcc.Positions.FirstOrDefault(p =>
+                p.Instrument != null &&
+                p.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase));
+
+            if (livePos == null || livePos.MarketPosition == MarketPosition.Flat || livePos.Quantity <= 0)
+            {
+                lock (_lock) { bracket.FollowerQuantity = 0; bracket.FollowerSide = MarketPosition.Flat; }
+                if (toCancel != null)
+                {
+                    try { followerAcc.Cancel(new[] { toCancel }); } catch { }
+                }
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] BRACKET_ABORTED_FLAT: {followerAcc.Name} {instrument.FullName} went flat before the mirrored stop was submitted; no stop placed.",
+                    PrintTo.OutputTab1);
+                return;
+            }
+
+            if (livePos.MarketPosition != bracketSide)
+            {
+                lock (_lock) { bracket.FollowerQuantity = 0; bracket.FollowerSide = MarketPosition.Flat; }
+                if (toCancel != null)
+                {
+                    try { followerAcc.Cancel(new[] { toCancel }); } catch { }
+                }
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] BRACKET_ABORTED_SIDE: {followerAcc.Name} {instrument.FullName} is {livePos.MarketPosition} but the bracket was built for {bracketSide}; no stop placed.",
+                    PrintTo.OutputTab1);
+                return;
+            }
+
             try
             {
                 // Outside the lock: Cancel/CreateOrder/Submit are broker calls, and holding
                 // _lock across them is the P1-10/P1-35 violation.
                 if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
 
+                // Size from the live position, not the bracket's snapshot: a follower that
+                // scaled out between the decision and here would otherwise get a stop larger
+                // than the position, which flips it on trigger.
+                int liveQty = Math.Min(qty, livePos.Quantity);
+
                 Order stop = followerAcc.CreateOrder(
                     instrument, action, OrderType.StopMarket, TimeInForce.Day,
-                    qty, 0, stopPrice, "", "COPIER_STOP", null);
+                    liveQty, 0, stopPrice, "", "COPIER_STOP", null);
 
                 if (stop == null)
                 {
@@ -1101,7 +1154,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 lock (_lock) { bracket.WorkingStop = stop; }
 
                 NinjaTrader.Code.Output.Process(
-                    $"[CopierEngine] BRACKET_MIRRORED: {followerAcc.Name} {instrument.FullName} stop {qty}@{stopPrice} (leader offset {bracket.StopOffset:+0.##;-0.##}, follower entry {bracket.FollowerEntryPrice}).",
+                    $"[CopierEngine] BRACKET_MIRRORED: {followerAcc.Name} {instrument.FullName} stop {liveQty}@{stopPrice} (leader offset {bracket.StopOffset:+0.##;-0.##}, follower entry {bracket.FollowerEntryPrice}).",
                     PrintTo.OutputTab1);
             }
             catch (Exception ex)
@@ -1417,8 +1470,77 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (exec == null || exec.Account == null || exec.Instrument == null) return;
 
-            Account followerAcc = exec.Account;
-            string instrumentName = exec.Instrument.FullName;
+            // P0-49: a flat read on the EXECUTION path is ambiguous, and which way it resolves is
+            // the difference between a released bracket and a naked follower:
+            //
+            //   - exit fill        -> genuinely flat, release.
+            //   - entry fill       -> NT8 simply has not raised PositionUpdate yet. Releasing here
+            //                         throws away the bracket the leader's stop offset is waiting
+            //                         on, and nothing ever rebuilds it.
+            //
+            // The anchor tells them apart. If this bracket has never held a position
+            // (FollowerEntryPrice is NaN) there is nothing to exit FROM, so a flat read means the
+            // position event is still in flight -- leave it alone and let OnAccountPositionUpdate
+            // do the work. Once an anchor exists, flat means flat.
+            bool anchored;
+            lock (_lock)
+            {
+                FollowerBracket existing;
+                anchored = _followerBrackets.TryGetValue(
+                               BracketKey(exec.Account.Name, exec.Instrument.FullName), out existing)
+                           && existing != null
+                           && !double.IsNaN(existing.FollowerEntryPrice);
+            }
+
+            UpdateFollowerBracketFromPosition(exec.Account, exec.Instrument, releaseWhenFlat: anchored);
+        }
+
+        /// <summary>
+        /// A follower account's position changed. This is the authoritative anchor source for the
+        /// mirrored stop (P0-49).
+        /// </summary>
+        private void OnAccountPositionUpdate(object sender, PositionEventArgs e)
+        {
+            if (e == null || e.Position == null || e.Position.Instrument == null) return;
+            Account acct = sender as Account;
+            if (acct == null) return;
+
+            bool isFollower;
+            lock (_lock)
+            {
+                isFollower =
+                    _relationships.Any(r => r.IsEnabled
+                        && r.FollowerAccountName.Equals(acct.Name, StringComparison.OrdinalIgnoreCase))
+                    || _groups.Any(g => g.IsEnabled && g.FollowerAccounts != null
+                        && g.FollowerAccounts.Any(f => f.Equals(acct.Name, StringComparison.OrdinalIgnoreCase)));
+            }
+            if (!isFollower) return;
+
+            UpdateFollowerBracketFromPosition(acct, e.Position.Instrument, releaseWhenFlat: true);
+        }
+
+        /// <summary>
+        /// Re-derives the bracket's anchor from the follower's live position and syncs the stop.
+        ///
+        /// P0-49. This used to run ONLY from the follower's ExecutionUpdate, and it re-read
+        /// `Positions` to find the anchor. **NT8 raises ExecutionUpdate BEFORE PositionUpdate**, so
+        /// on the entry fill the position did not exist yet: the method took the flat branch,
+        /// released the bracket, and returned. The anchor was never set, and nothing re-triggered
+        /// it -- an ATM stop sits at `Accepted` and raises no further OrderUpdate, so
+        /// `OnLeaderOrderUpdate` never fired again either. **The follower stayed naked for the
+        /// entire trade**, and the stop finally appeared minutes later when the position closed
+        /// and the events happened to line up. Observed live on 2026-08-07, MNQ SEP26: entry
+        /// 15:43:21, `MISSING_STOP_FLATTEN` at 15:43:24, `COPIER_STOP` at 15:45:22.
+        ///
+        /// `releaseWhenFlat` is the crux. From a PositionUpdate, flat means **flat** and the
+        /// bracket must be released. From an ExecutionUpdate, flat is ambiguous -- it may simply
+        /// mean the position event has not landed yet -- so the execution path must NOT release,
+        /// and instead waits for the position event that is always coming.
+        /// </summary>
+        private void UpdateFollowerBracketFromPosition(Account followerAcc, Instrument instrument, bool releaseWhenFlat)
+        {
+            if (followerAcc == null || instrument == null) return;
+            string instrumentName = instrument.FullName;
 
             Position pos = followerAcc.Positions.FirstOrDefault(p =>
                 p.Instrument != null &&
@@ -1426,7 +1548,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0)
             {
-                ReleaseFollowerBracket(followerAcc, instrumentName);
+                if (releaseWhenFlat) ReleaseFollowerBracket(followerAcc, instrumentName);
                 return;
             }
 
@@ -1448,7 +1570,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 bracket.FollowerQuantity = pos.Quantity;
             }
 
-            SyncFollowerStop(followerAcc, exec.Instrument, bracket);
+            SyncFollowerStop(followerAcc, instrument, bracket);
         }
 
         // OnExecution is deliberately NOT behind `#if !TESTING`. It is the trade-copy

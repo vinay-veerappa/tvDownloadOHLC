@@ -656,6 +656,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_RejectedStopIsResubmitted();
             TestBracket_ResubmissionIsBounded();
             TestBracket_IncomparableInstrumentsAreNotMirrored();
+            TestBracket_P0_49_ExecutionBeforePositionStillGetsAStop();
+            TestBracket_P0_50_NoStopIsPlacedOnAFlatFollower();
             TestBracket_StopLimitLeaderMirrorsTriggerPriceAsStopMarket();
             TestBracket_LeaderCancellingItsStopLeavesTheFollowerProtected();
 
@@ -1723,6 +1725,125 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"),
                 "No stop is mirrored between MNQ and ES -- a 10-point MNQ distance is not 10 ES points.");
+        }
+
+        // ------------------------------------------------------------------
+        // P0-49 / P0-50 — reproduced from a live ATM trade, 2026-08-07 (MNQ SEP26)
+        //
+        // The operator placed an ATM order on Sim101. Sim-ORB copied the entry correctly, and
+        // then:
+        //   15:43:21.237  Created FSM Sim-ORB|MNQ SEP26 -> Unprotected
+        //   15:43:24.241  [SHADOW] Would execute FlattenPosition triggered by MISSING_STOP_FLATTEN
+        //   15:45:22.572  COPIER_STOP finally submitted -- as the position was CLOSING
+        //   15:45:30/31   two more COPIER_STOP orders, against a FLAT account
+        //
+        // The follower was naked for the whole trade, and then received three orphan stops.
+        //
+        // Root cause: the bracket's anchor came only from the follower's ExecutionUpdate, which
+        // re-read `Positions` -- and NT8 raises ExecutionUpdate BEFORE PositionUpdate, so the
+        // position did not exist yet. The bracket was released and nothing rebuilt it: an ATM
+        // stop sits at `Accepted` and raises no further OrderUpdate, so the leader path never
+        // fired again either.
+        //
+        // Note the ARITHMETIC was right all along -- the live stop landed at 29774.25, which is
+        // exactly followerEntry 29789.25 + (29774.5 - 29789.5). It was the trigger that was
+        // broken, not the offset.
+        // ------------------------------------------------------------------
+
+        private static void TestBracket_P0_49_ExecutionBeforePositionStillGetsAStop()
+        {
+            Console.WriteLine("\n[TEST] P0-49: a fill delivered BEFORE the position update still gets its mirrored stop");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+
+            // The leader's ATM legs go out first, exactly as NT8 delivers them.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17985.00));
+
+            // The copy is placed and FILLS -- and the execution arrives while follower.Positions
+            // is still empty. This is the ordering that broke it.
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 1, "P049");
+            lead.Price = 18000.00; lead.Time = SlipT0;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = mnq, Order = copy, Quantity = copy.Quantity,
+                Price = 18002.00, ExecutionId = "P049-F", Name = "COPIER_FOLLOW",
+                Time = SlipT0.AddMilliseconds(100)
+            });
+
+            Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"),
+                "Nothing is placed yet -- the follower's position genuinely is not known at this point.");
+
+            // NT8 now raises the PositionUpdate it always raises, ~2ms later.
+            SetPosition(follower, mnq, MarketPosition.Long, 1, 18002.00);
+            follower.TriggerPositionUpdate(follower.Positions[0]);
+
+            var stops = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(stops.Count == 1,
+                string.Format(
+                    "The mirrored stop is placed once the position event lands (got {0}). Before "
+                    + "P0-49 the execution path released the bracket on the flat read and nothing "
+                    + "rebuilt it -- an ATM stop raises no further OrderUpdate, so the follower "
+                    + "stayed naked for the ENTIRE trade.",
+                    stops.Count));
+
+            Assert(stops.Count == 1 && Math.Abs(stops[0].StopPrice - 17987.00) < 1e-9,
+                string.Format(
+                    "...and at the right price: the leader's 15-point distance on the follower's "
+                    + "18002 fill = 17987.00, got {0}.",
+                    stops.Count > 0 ? stops[0].StopPrice.ToString() : "n/a"));
+        }
+
+        private static void TestBracket_P0_50_NoStopIsPlacedOnAFlatFollower()
+        {
+            Console.WriteLine("\n[TEST] P0-50: no mirrored stop is submitted against a follower that is already flat");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "P050");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            var placed = follower.Orders.Count(o => o.Name == "COPIER_STOP");
+            Assert(placed == 1, "Precondition: the follower is in position and has its mirrored stop.");
+
+            // The follower goes flat at the broker -- but the bracket has not been told yet.
+            SetPosition(follower, mnq, MarketPosition.Flat, 0, 0);
+
+            // A late leader stop update now drives SyncFollowerStop against a flat follower.
+            // This is what produced three orphan COPIER_STOP orders on the live box.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17992.00));
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17994.00));
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17996.00));
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .ToList();
+
+            Assert(live.Count == 0,
+                string.Format(
+                    "No stop is left working against a flat follower (got {0}). An orphan stop on a "
+                    + "flat account is not a leftover -- it OPENS a position in the opposite "
+                    + "direction the moment it triggers. Three of these were placed live.",
+                    live.Count));
+
+            Assert(follower.Orders.Count(o => o.Name == "COPIER_STOP") == placed,
+                string.Format(
+                    "...and no further stops were submitted at all (total {0}, expected {1}). Each "
+                    + "one consumed a re-submission attempt against a position that no longer existed.",
+                    follower.Orders.Count(o => o.Name == "COPIER_STOP"), placed));
         }
 
         // P0-9 item (3): a StopLimit leader becomes a StopMarket follower. Assessed as a fidelity
