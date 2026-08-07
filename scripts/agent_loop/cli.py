@@ -56,6 +56,14 @@ def main(argv=None) -> int:
         help="comma-separated panel; verdict is the worst returned, APPROVE must be unanimous. "
         "Prefix a model with anthropic:/openai:/ollama: to pick a backend.",
     )
+    ap.add_argument(
+        "--arbiter",
+        default="glm-5.2:cloud",
+        help="model that rules on reviewer findings. Wants to be stronger than the panel and "
+        "from a different family -- anthropic:claude-opus-5 is the natural choice where a key "
+        "is available. Pass '' to disable arbitration (every finding then blocks, which is the "
+        "behaviour that failed to converge on T2).",
+    )
     ap.add_argument("--max-rounds", type=int, default=4)
     ap.add_argument("--apply", action="store_true", help="promote an approved patch into the live tree")
     ap.add_argument(
@@ -108,6 +116,7 @@ def main(argv=None) -> int:
                     orchestrator_note=args.orchestrator_note,
                     panel_deadline=args.panel_deadline,
                     keep_worktree=args.keep_worktree,
+                    arbiter_model=args.arbiter,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - a driver must report, not crash

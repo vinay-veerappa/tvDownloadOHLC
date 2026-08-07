@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from . import gates, profiles, regions, workspace
+from . import arbiter, gates, profiles, regions, workspace
 from .providers import Completion, ProviderError, chat
 
 BLOCK_RE = re.compile(
@@ -50,6 +50,31 @@ def parse_blocks(text: str) -> Tuple[Dict[str, str], str]:
 
 
 @dataclass
+class Finding:
+    """One reviewer finding, addressable so the arbiter can rule on it."""
+
+    model: str
+    severity: str  # BLOCKER / MAJOR / MINOR
+    text: str
+
+    @property
+    def signature(self) -> str:
+        """Stable-ish identity for cross-round comparison. Used to detect the
+        loop thrashing: if consecutive rounds share no signatures and the count
+        does not fall, the implementer is generating new surface as fast as the
+        reviewers can attack it, and more rounds will not converge."""
+        words = re.sub(r"[^a-zA-Z ]", " ", self.text).split()
+        return " ".join(w.lower() for w in words[:8])
+
+    @property
+    def blocking(self) -> bool:
+        return self.severity in ("BLOCKER", "MAJOR")
+
+
+_FINDING_RE = re.compile(r"^-\s*\[(BLOCKER|MAJOR|MINOR)\]\s*(.+?)$", re.MULTILINE)
+
+
+@dataclass
 class Vote:
     model: str
     status: str  # APPROVE / REVISE / REJECT / UNREACHABLE / UNPARSEABLE
@@ -59,6 +84,7 @@ class Vote:
     secs: float = 0.0
     error: str = ""
     usage: str = ""
+    finding_list: List[Finding] = field(default_factory=list)
 
     @property
     def counted(self) -> bool:
@@ -82,10 +108,13 @@ def parse_review(text: str, model: str) -> Vote:
     if not verdict:
         return Vote(model, UNPARSEABLE, error=f"no verdict marker in {len(text)} chars")
     findings = section("FINDINGS")
-    blockers = sum(
-        1 for ln in findings.splitlines() if "[BLOCKER]" in ln.upper() or "[MAJOR]" in ln.upper()
-    )
-    return Vote(model, verdict, findings, section("REQUIRED"), blockers)
+    items = [
+        Finding(model, m.group(1).upper(), m.group(2).strip())
+        for m in _FINDING_RE.finditer(findings)
+        if m.group(2).strip().upper() not in ("NONE", "- NONE")
+    ]
+    blockers = sum(1 for f in items if f.blocking)
+    return Vote(model, verdict, findings, section("REQUIRED"), blockers, finding_list=items)
 
 
 # --------------------------------------------------------------------------
@@ -279,6 +308,18 @@ def append_ledger(repo: Path, record: Dict[str, Any]) -> None:
 # --------------------------------------------------------------------------
 # Driver
 # --------------------------------------------------------------------------
+def _history_note(convergence: List[Tuple[int, set]]) -> str:
+    """Give the arbiter the shape of the loop so far. A flat blocking count
+    with no overlap between rounds is the signature of a patch that cannot
+    converge, and is exactly when ESCALATE is the right call."""
+    if len(convergence) < 2:
+        return ""
+    lines = [f"round {i+1}: {c} blocking finding(s)" for i, (c, _) in enumerate(convergence)]
+    overlap = len(convergence[-1][1] & convergence[-2][1])
+    lines.append(f"findings shared between the last two rounds: {overlap}")
+    return "\n".join(lines)
+
+
 @dataclass
 class RoundRecord:
     round: int
@@ -303,11 +344,13 @@ def run_ticket(
     orchestrator_note: str = "",
     panel_deadline: int = 1800,
     keep_worktree: bool = False,
+    arbiter_model: str = "",
 ) -> Dict[str, Any]:
     tid = ticket["id"]
     art = repo / "logs" / "agent_loop" / tid
     art.mkdir(parents=True, exist_ok=True)
     result: Dict[str, Any] = {"ticket": tid, "rounds": [], "applied": False, "cost_usd": 0.0}
+    convergence: List[Tuple[int, set]] = []
 
     region_files = sorted({r["file"] for r in ticket["regions"]})
     g0 = gates.check_protected_paths(region_files, profile.protected or gates.DEFAULT_PROTECTED)
@@ -451,15 +494,73 @@ def run_ticket(
                 final = "APPROVE"
                 break
 
+            # ---- arbitration: which of these findings actually block?
+            all_findings = [f for v in panel.votes if v.counted for f in v.finding_list]
+            blocking = [f for f in all_findings if f.blocking]
+            convergence.append((len(blocking), {f.signature for f in blocking}))
+
+            adj = None
+            if arbiter_model and all_findings:
+                adj = arbiter.adjudicate(
+                    arbiter_model,
+                    ticket,
+                    all_findings,
+                    gate_summary,
+                    ws.diff(),
+                    settled=profile.settled,
+                    round_history=_history_note(convergence),
+                )
+                (art / f"r{rnd}_arbiter.txt").write_text(
+                    adj.raw or adj.error, encoding="utf-8"
+                )
+                if adj.ok:
+                    print(f"           [arbiter] {adj.summary()}  {adj.usage}")
+                    if adj.settled:
+                        print(f"           [arbiter] nominates {len(adj.settled)} finding(s) as settled")
+                else:
+                    print(f"           [arbiter] could not rule: {adj.error[:90]}")
+
+            result["rounds"][-1]["arbiter"] = adj.summary() if adj and adj.ok else None
+
+            if adj and adj.ok and adj.recommendation == arbiter.ESCALATE:
+                final = "ESCALATED"
+                print(f"           ESCALATED: {adj.rationale[:200]}")
+                break
+
+            if adj and adj.ok and adj.recommendation == arbiter.SHIP:
+                # Gates pass and the arbiter upholds nothing. It recommends;
+                # it does not ship. A human runs --apply.
+                final = "ARBITER_SHIP"
+                print("           arbiter recommends SHIP - human sign-off required")
+                break
+
+            stall = arbiter.thrashing(convergence)
+            if stall:
+                final = "NOT_CONVERGING"
+                print(f"           STOPPING: {stall}")
+                break
+
+            # Only upheld findings go back. Feeding all of them is what drove
+            # the rewrite churn that generated the next round's findings.
+            if adj and adj.ok and adj.upheld_indices:
+                keep = [all_findings[i - 1] for i in adj.upheld_indices]
+                feedback = "\n".join(f"- [{f.severity}] {f.text}" for f in keep)
+                dropped = len(all_findings) - len(keep)
+                print(f"           [arbiter] {len(keep)} finding(s) upheld, {dropped} dropped")
+            else:
+                feedback = panel.findings
+
             ws.revert(touched)
             history += [
                 {"role": "assistant", "content": raw},
                 {
                     "role": "user",
                     "content": (
-                        f"A review panel returned {panel.verdict}.\n\n"
-                        f"FINDINGS:\n{panel.findings}\n\nREQUIRED CHANGES:\n{panel.required}\n\n"
-                        "Apply every required change and re-emit ALL blocks in full."
+                        f"A review panel returned {panel.verdict}. An arbiter has already "
+                        f"discarded the findings that do not block; those below are the ones "
+                        f"that do.\n\nFINDINGS:\n{feedback}\n\n"
+                        "Fix exactly these and re-emit ALL blocks in full. Do not make unrelated "
+                        "changes -- every extra edit creates new surface for the next review."
                     ),
                 },
             ]
@@ -491,13 +592,21 @@ def run_ticket(
                     print(f"  approved, not applied (no --apply). Patch: {patch}")
             else:
                 # Write a readable diff even on failure: final_blocks.json is
-                # JSON-escaped C# and unreadable, and the arbiter is the gate
-                # that has to decide what to do next.
+                # JSON-escaped C# and unreadable, and a human has to decide what
+                # happens next.
                 if not ws.dirty_files():
                     regions.apply(regs, blocks)
                 patch = ws.export_patch(art / "final.patch")
                 ws.revert(sorted({r.file for r in regs}))
-                print(f"  NOT APPLIED: verdict={final}. Patch for arbitration: {patch}")
+                if final == "ARBITER_SHIP":
+                    # Deliberately not auto-applied. The arbiter filters and
+                    # recommends; on an addon that moves real money a human
+                    # signs off. Promote with --allow-unapproved --apply.
+                    print(f"  ARBITER RECOMMENDS SHIP - awaiting human sign-off.")
+                    print(f"    review: {patch}")
+                    print(f"    promote: --resume-raw {art / f'r{rnd}_impl_raw.txt'} --allow-unapproved --apply")
+                else:
+                    print(f"  NOT APPLIED: verdict={final}. Patch for review: {patch}")
 
     (art / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     append_ledger(

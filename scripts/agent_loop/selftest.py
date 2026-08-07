@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-from . import loop, profiles, regions
+from . import arbiter, loop, profiles, regions
 from .providers import Completion, ProviderError
 
 REPO = Path(__file__).resolve().parents[2]
@@ -49,6 +49,16 @@ def _identity_patch(ticket: Dict) -> str:
     return "\n".join(parts)
 
 
+def _arbiter_body(n: int, verdict: str, rec: str) -> str:
+    rulings = "\n".join(f"- [{verdict}] #{i}: canned ruling" for i in range(1, n + 1))
+    return (
+        f"<<<RULINGS>>>\n{rulings}\n<<<END RULINGS>>>\n"
+        f"<<<RECOMMENDATION>>>\n{rec}\n<<<END RECOMMENDATION>>>\n"
+        f"<<<RATIONALE>>>\ncanned\n<<<END RATIONALE>>>\n"
+        f"<<<SETTLED>>>\n- NONE\n<<<END SETTLED>>>"
+    )
+
+
 def _stub(impl_text: str, reviewer_behaviour: Dict[str, str]):
     """Return a chat() replacement. reviewer_behaviour maps model -> canned body
     or the sentinel 'RAISE' / 'EMPTY'."""
@@ -64,10 +74,19 @@ def _stub(impl_text: str, reviewer_behaviour: Dict[str, str]):
     return fake_chat
 
 
-def scenario(name: str, ticket: Dict, reviewers: List[str], behaviour: Dict[str, str], expect: str) -> bool:
+def scenario(
+    name: str,
+    ticket: Dict,
+    reviewers: List[str],
+    behaviour: Dict[str, str],
+    expect: str,
+    arbiter_model: str = "",
+) -> bool:
     print(f"\n--- {name}")
-    original = loop.chat
-    loop.chat = _stub(_identity_patch(ticket), behaviour)
+    original_loop, original_arb = loop.chat, arbiter.chat
+    stub = _stub(_identity_patch(ticket), behaviour)
+    loop.chat = stub
+    arbiter.chat = stub
     try:
         res = loop.run_ticket(
             REPO,
@@ -77,9 +96,10 @@ def scenario(name: str, ticket: Dict, reviewers: List[str], behaviour: Dict[str,
             reviewers,
             max_rounds=2,
             apply=False,
+            arbiter_model=arbiter_model,
         )
     finally:
-        loop.chat = original
+        loop.chat, arbiter.chat = original_loop, original_arb
     got = res.get("final_verdict")
     ok = got == expect
     print(f"    expect={expect}  got={got}  {'PASS' if ok else 'FAIL'}")
@@ -121,6 +141,28 @@ def main() -> int:
             R,
             {"rev-a": "RAISE", "rev-b": "RAISE"},
             "PANEL_UNREACHABLE",
+        ),
+    ]
+
+    ARB = "stub-arbiter"
+    results += [
+        scenario(
+            "dissent + arbiter rejects every finding -> ARBITER_SHIP (human signs off)",
+            t3, R,
+            {"rev-a": APPROVE_BODY, "rev-b": REVISE_BODY, ARB: _arbiter_body(1, "REJECTED", "SHIP")},
+            "ARBITER_SHIP", arbiter_model=ARB,
+        ),
+        scenario(
+            "dissent + arbiter upholds -> keeps revising, never auto-ships",
+            t3, R,
+            {"rev-a": APPROVE_BODY, "rev-b": REVISE_BODY, ARB: _arbiter_body(1, "UPHELD", "REVISE")},
+            "MAX_ROUNDS_EXHAUSTED", arbiter_model=ARB,
+        ),
+        scenario(
+            "arbiter says ESCALATE -> stops immediately, no further spend",
+            t3, R,
+            {"rev-a": APPROVE_BODY, "rev-b": REVISE_BODY, ARB: _arbiter_body(1, "UPHELD", "ESCALATE")},
+            "ESCALATED", arbiter_model=ARB,
         ),
     ]
 
