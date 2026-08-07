@@ -4,7 +4,7 @@
 **Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 33 closed + `P0-9`'s naked-follower half
 **Live state**: deployed, `shadow`, **armed and guarding**. NT8 compiles clean (0 errors).
-Suite **515 passed, 0 failed**.
+Suite **520 passed, 0 failed**.
 
 > ✅ **Everything the previous revision of this block was waiting on is DONE and verified live
 > (2026-08-07, session 7 close).**
@@ -48,7 +48,7 @@ Suite **515 passed, 0 failed**.
 
 ## 0. Start here (read this, then §4a for the roadmap)
 
-**33 of 48 defects closed, plus `P0-9`'s naked-follower exposure. Suite 515/0. NT8 compiles clean, and every fix in this session has
+**33 of 48 defects closed, plus `P0-9`'s naked-follower exposure. Suite 520/0. NT8 compiles clean, and every fix in this session has
 been verified on the live box** (see the banner).
 
 | Phase | State |

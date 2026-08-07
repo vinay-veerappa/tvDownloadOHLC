@@ -158,14 +158,29 @@ COPIER_CASES = [
         "                // reverted: exit sized from the leader's raw quantity (P0-5)",
     ),
     (
-        "P0-9 the stop sits on the losing side of the follower's entry",
+        "P0-9 the stop is offset from the follower's entry in the right direction",
         "BRACKET: the leader's stop distance is anchored to the follower's own fill",
+        "                stopPrice = bracket.FollowerEntryPrice + bracket.StopOffset;",
+        "                stopPrice = bracket.FollowerEntryPrice - bracket.StopOffset;  // reverted: inverted",
+    ),
+    (
+        # The exact defect that shipped in 51892d54 and was found by asking what a StopLimit
+        # conversion could break. Math.Abs discards the sign, so a stop trailed into profit is
+        # mirrored onto the losing side of the follower's entry.
+        "P0-9 the leader-to-stop offset stays signed",
+        "BRACKET: a stop trailed into profit is mirrored above the follower's entry",
+        "                stopPrice = bracket.FollowerEntryPrice + bracket.StopOffset;",
         "                stopPrice = bracket.FollowerSide == MarketPosition.Long\n"
-        "                    ? bracket.FollowerEntryPrice - bracket.StopDistance\n"
-        "                    : bracket.FollowerEntryPrice + bracket.StopDistance;",
+        "                    ? bracket.FollowerEntryPrice - Math.Abs(bracket.StopOffset)\n"
+        "                    : bracket.FollowerEntryPrice + Math.Abs(bracket.StopOffset);  // reverted: unsigned",
+    ),
+    (
+        "P0-9 a short's trailed stop stays signed too",
+        "BRACKET: a short's stop trailed into profit maps below the follower's entry",
+        "                stopPrice = bracket.FollowerEntryPrice + bracket.StopOffset;",
         "                stopPrice = bracket.FollowerSide == MarketPosition.Long\n"
-        "                    ? bracket.FollowerEntryPrice + bracket.StopDistance   // reverted: wrong side\n"
-        "                    : bracket.FollowerEntryPrice - bracket.StopDistance;",
+        "                    ? bracket.FollowerEntryPrice - Math.Abs(bracket.StopOffset)\n"
+        "                    : bracket.FollowerEntryPrice + Math.Abs(bracket.StopOffset);  // reverted: unsigned",
     ),
     (
         "P0-9 a distance held before the fill is applied on the fill",

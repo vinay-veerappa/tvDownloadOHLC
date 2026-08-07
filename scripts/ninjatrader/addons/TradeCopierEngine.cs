@@ -38,8 +38,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         public bool AutoSymbolConversion { get; set; } = true;
         public Dictionary<string, double> PerTickerRatios { get; set; } = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> CustomSymbolMappings { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        public bool EnableFollowerAtm { get; set; } = false;
-        public string FollowerAtmStrategyName { get; set; } = "Standard_ATM";
+        // P0-9 / P1-23: `EnableFollowerAtm` and `FollowerAtmStrategyName` were REMOVED here.
+        // They were carried between DTOs and read by nothing -- not parsed from disk, not exposed
+        // by the bridge API, not shown in the UI -- so they could not even be set, while implying
+        // followers were getting an ATM bracket. Same "config must not lie" rule as P1-23.
+        // The leader's real stop is now mirrored (P0-9); a copier-side DEFAULT bracket is
+        // deliberately NOT reintroduced, because RiskGuard's auto-stop already owns "position with
+        // no stop", and two independent stop sources on one position over-cover and flip it.
         public bool StealthMode { get; set; } = true;
         public int MaxPositionSize { get; set; } = 100;
         public double DailyLossLimit { get; set; } = 1000.0;
@@ -73,8 +78,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         public bool AutoSymbolConversion { get; set; } = true;
         public Dictionary<string, double> PerTickerRatios { get; set; } = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> CustomSymbolMappings { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        public bool EnableFollowerAtm { get; set; } = false;
-        public string FollowerAtmStrategyName { get; set; } = "Standard_ATM";
         public bool StealthMode { get; set; } = true;
         public int MaxPositionSize { get; set; } = 100;
         public double DailyLossLimit { get; set; } = 1000.0;
@@ -103,8 +106,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                     AutoSymbolConversion = this.AutoSymbolConversion,
                     PerTickerRatios = this.PerTickerRatios != null ? new Dictionary<string, double>(this.PerTickerRatios, StringComparer.OrdinalIgnoreCase) : new Dictionary<string, double>(),
                     CustomSymbolMappings = this.CustomSymbolMappings != null ? new Dictionary<string, string>(this.CustomSymbolMappings, StringComparer.OrdinalIgnoreCase) : new Dictionary<string, string>(),
-                    EnableFollowerAtm = this.EnableFollowerAtm,
-                    FollowerAtmStrategyName = this.FollowerAtmStrategyName,
                     StealthMode = this.StealthMode,
                     MaxPositionSize = this.MaxPositionSize,
                     DailyLossLimit = this.DailyLossLimit,
@@ -859,7 +860,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             public MarketPosition FollowerSide = MarketPosition.Flat;
             public int FollowerQuantity;
             public double FollowerEntryPrice = double.NaN;   // the anchor; NaN until the follower fills
-            public double StopDistance = double.NaN;         // from the leader; NaN until its stop appears
+            // SIGNED offset from the leader's average entry to its stop, in points.
+            // Negative = stop below entry, positive = above. NaN until the leader's stop appears.
+            // It must stay signed: a leader trailing its stop INTO PROFIT puts the stop above
+            // entry on a long, and an absolute distance would mirror that as a loss of the same
+            // size on the follower -- turning the leader's locked-in gain into open risk.
+            public double StopOffset = double.NaN;
             public Order WorkingStop;                        // the follower's live protective order
         }
 
@@ -903,8 +909,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             double stopPrice = order.StopPrice;
             if (leaderAnchor <= 0 || stopPrice <= 0) return;
 
-            double distance = Math.Abs(leaderAnchor - stopPrice);
-            if (distance <= 0) return;
+            // Signed, deliberately. See FollowerBracket.StopOffset: Math.Abs here mirrors a
+            // trailed-into-profit stop onto the wrong side of the follower's entry.
+            double offset = stopPrice - leaderAnchor;
+            if (Math.Abs(offset) <= 0) return;
 
             foreach (var rel in rels)
             {
@@ -941,7 +949,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         };
                         _followerBrackets[key] = bracket;
                     }
-                    bracket.StopDistance = distance;
+                    bracket.StopOffset = offset;
                 }
 
                 // The anchor may not exist yet -- the leader can attach its stop before our copy
@@ -980,12 +988,14 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             lock (_lock)
             {
-                if (double.IsNaN(bracket.FollowerEntryPrice) || double.IsNaN(bracket.StopDistance)) return;
+                if (double.IsNaN(bracket.FollowerEntryPrice) || double.IsNaN(bracket.StopOffset)) return;
                 if (bracket.FollowerQuantity <= 0 || bracket.FollowerSide == MarketPosition.Flat) return;
 
-                stopPrice = bracket.FollowerSide == MarketPosition.Long
-                    ? bracket.FollowerEntryPrice - bracket.StopDistance
-                    : bracket.FollowerEntryPrice + bracket.StopDistance;
+                // One expression for both sides, because the offset is signed. A long's stop is
+                // normally below entry (negative offset) and a short's above (positive), but
+                // either can invert once the leader trails into profit -- and that MUST carry
+                // through, or the follower is put at risk while the leader is protected.
+                stopPrice = bracket.FollowerEntryPrice + bracket.StopOffset;
 
                 if (stopPrice <= 0) return;
 
@@ -1023,7 +1033,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 lock (_lock) { bracket.WorkingStop = stop; }
 
                 NinjaTrader.Code.Output.Process(
-                    $"[CopierEngine] BRACKET_MIRRORED: {followerAcc.Name} {instrument.FullName} stop {qty}@{stopPrice} (leader distance {bracket.StopDistance}, follower entry {bracket.FollowerEntryPrice}).",
+                    $"[CopierEngine] BRACKET_MIRRORED: {followerAcc.Name} {instrument.FullName} stop {qty}@{stopPrice} (leader offset {bracket.StopOffset:+0.##;-0.##}, follower entry {bracket.FollowerEntryPrice}).",
                     PrintTo.OutputTab1);
             }
             catch (Exception ex)

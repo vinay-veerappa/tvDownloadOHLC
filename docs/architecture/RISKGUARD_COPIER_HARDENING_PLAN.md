@@ -1,6 +1,6 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **515/0**): **33 of 48 closed**, plus `P0-9`'s naked-follower exposure and stress test `S7`.
+**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **520/0**): **33 of 48 closed**, plus `P0-9`'s naked-follower exposure and stress test `S7`.
 Deployed, `shadow`, armed and guarding; NT8 compiles clean.
 Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 
@@ -261,14 +261,53 @@ Notes that are not obvious:
 1. **Profit targets and OCO pairing.** Only stops are mirrored. A target is upside, not risk;
    adding it brings OCO and partial-fill re-pairing with it. The follower still exits via the
    copied market exit when the leader's target fills.
-2. **Option 2 (`EnableFollowerAtm` / `FollowerAtmStrategyName`) is still unread config** — the
-   "config can lie" problem `P1-23` fixed elsewhere still applies to these two fields.
+2. ~~Option 2 (`EnableFollowerAtm` / `FollowerAtmStrategyName`) is still unread config~~ —
+   **RESOLVED by deletion.** Both fields were carried between DTOs and read by nothing: not
+   parsed in `LoadFromDisk`, not exposed by the bridge API, not shown in the UI. They could not
+   be set by any means, while implying followers were getting an ATM bracket. Removed, per
+   `P1-23`'s rule that config must not lie.
+   > **A copier-side DEFAULT bracket was deliberately not built in their place.** RiskGuard's
+   > `StopAttachSeconds` → auto-stop already owns "position with no stop". Two independent stop
+   > sources on one position over-cover, and when both fire the follower is flipped — the same
+   > hazard the cancel-then-replace rule above exists to prevent, but across two components that
+   > cannot see each other. If the leader never sets a stop, RiskGuard is the answer, not a
+   > second mechanism.
 3. **`StopLimit` leaders become `StopMarket` followers.** The limit offset is not carried.
+   > **Assessed and accepted, not overlooked.** The trigger price is mirrored correctly; only the
+   > post-trigger order type differs. A `StopMarket` is *more* likely to fill than a `StopLimit`,
+   > so the divergence is toward the follower being protected, never toward a wrong or unfilled
+   > exit. It is a fidelity gap, not a safety one.
+   > **Investigating it is what found the signed-offset defect below**, which was a safety one.
 4. **A leader that CANCELS its stop but stays in the position leaves the follower's stop working.**
    Deliberate — fail-safe — but it is a divergence from the leader, and it is not tested.
 
-> Tracked as follow-on work rather than a new defect number, since `P0-9` remains open for (1)–(4).
-> The naked-follower exposure that made it P0 is closed.
+> Tracked as follow-on work rather than a new defect number, since `P0-9` remains open for (1),
+> (3) and (4). The naked-follower exposure that made it P0 is closed.
+
+#### The signed-offset defect — shipped in `51892d54`, fixed same session
+
+The first implementation computed `Math.Abs(leaderAnchor - stopPrice)` and always subtracted it
+for a long. **A leader trailing its stop into profit puts the stop ABOVE its entry on a long**, and
+the absolute distance mirrored that as a stop the same distance BELOW the follower's entry —
+converting the leader's locked-in gain into open risk of equal size, on every follower, silently
+and on the most ordinary trade management there is.
+
+The offset is now signed and one expression covers both sides:
+
+```
+followerStop = followerEntry + (leaderStopPrice - leaderPositionAvgPrice)
+```
+
+**The original trail test could never have caught it**: it moved the stop 17990 → 17995 → 17998,
+all below entry. Two tests now cover the inversion on both sides
+(`TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry`,
+`TestBracket_ShortStopTrailedIntoProfitStaysBelowFollowerEntry`), and the revert case reproduces
+the exact shipped defect.
+
+> **How it was found is the transferable part.** Not by a test, a gate, or review — by the
+> operator asking whether item (3), the `StopLimit` conversion, could trigger wrong orders.
+> Answering that honestly meant re-deriving what price the follower's stop actually lands on,
+> which is when the `Math.Abs` became visible. **A test suite confirms the cases you thought of.**
 
 ---
 

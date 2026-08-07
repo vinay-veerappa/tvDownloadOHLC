@@ -636,6 +636,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_StopBeforeFollowerFillIsAppliedOnFill();
             TestBracket_MovingLeaderStopReplacesRatherThanDuplicates();
             TestBracket_FollowerGoingFlatCancelsTheMirroredStop();
+            TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry();
+            TestBracket_ShortStopTrailedIntoProfitStaysBelowFollowerEntry();
             TestBracket_IncomparableInstrumentsAreNotMirrored();
 
             // -- S7: copier fan-out under burst (plan §8) --
@@ -1498,6 +1500,88 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             Assert(TradeCopierEngine.Instance.TrackedBracketCount == 0,
                 "The bracket is released, so it cannot resurrect on a later unrelated fill.");
+        }
+
+        // The offset from the leader's entry to its stop must stay SIGNED. A leader that trails
+        // its stop into profit puts it ABOVE entry on a long; mirrored as an absolute distance
+        // that becomes a stop BELOW the follower's entry -- converting the leader's locked-in
+        // gain into open risk of the same size, on every follower, silently.
+        //
+        // The original trail test moved the stop 17990 -> 17995 -> 17998, all below entry, so it
+        // could never have caught this. Found by asking what a StopLimit conversion could break.
+        private static void TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a stop trailed into profit is mirrored above the follower's entry (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18002.00, "BR-F");
+
+            // Leader is +12 and trails its stop to 18010 -- ten points ABOVE its own entry.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 18010.00));
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && o.OrderState != OrderState.Cancelled)
+                .ToList();
+
+            Assert(live.Count == 1, string.Format("One live mirrored stop (got {0}).", live.Count));
+
+            Assert(Math.Abs(live[0].StopPrice - 18012.00) < 1e-9,
+                string.Format(
+                    "A stop 10 points ABOVE the leader's entry maps 10 points above the follower's "
+                    + "entry: expected 18012.00, got {0}. An unsigned distance gives 17992 -- the "
+                    + "leader is locked in for a gain while the follower carries a 10-point loss.",
+                    live[0].StopPrice));
+
+            Assert(live[0].StopPrice > 18002.00,
+                "The mirrored stop is on the profitable side of the follower's own entry.");
+        }
+
+        // The same inversion on the short side: a short trailed into profit puts its stop BELOW
+        // entry, which must map below the follower's entry, not above it.
+        private static void TestBracket_ShortStopTrailedIntoProfitStaysBelowFollowerEntry()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a short's stop trailed into profit maps below the follower's entry (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Short, 1, 18000.00);
+
+            var lead = LeaderExec(leader, mnq, OrderAction.SellShort, 1, "BR-G");
+            lead.Price = 18000.00; lead.Time = SlipT0;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+            SetPosition(follower, mnq, MarketPosition.Short, copy.Quantity, 17998.00);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = mnq, Order = copy, Quantity = copy.Quantity,
+                Price = 17998.00, ExecutionId = "BR-G-F", Name = "COPIER_FOLLOW", Time = SlipT0
+            });
+
+            // Short is +10; stop trailed to 17990, ten points BELOW its entry.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.BuyToCover, 1, 17990.00));
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && o.OrderState != OrderState.Cancelled)
+                .ToList();
+
+            Assert(live.Count == 1 && Math.Abs(live[0].StopPrice - 17988.00) < 1e-9,
+                string.Format(
+                    "Expected one stop at 17988.00 (follower entry 17998 minus 10), got {0} at {1}.",
+                    live.Count, live.Count > 0 ? live[0].StopPrice.ToString() : "n/a"));
+
+            Assert(live[0].OrderAction == OrderAction.BuyToCover,
+                "The mirrored stop covers the follower's short.");
         }
 
         // Mirroring a points-distance onto an instrument at a different price scale fabricates a
