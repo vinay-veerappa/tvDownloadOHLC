@@ -155,8 +155,27 @@ namespace NinjaTrader.Cbi
         // (reserve-before-submit), so if the submit throws and nothing rolls it back,
         // the position is unprotected while the FSM claims otherwise.
         public bool SimulateSubmitFailure { get; set; }
+        // Broker refuses the flatten. This is the case P1-11 turns on: if the protective stop
+        // was already cancelled on the way in, a failed flatten leaves an open position with
+        // nothing behind it.
+        public bool SimulateFlattenFailure { get; set; }
         // Counts Flatten calls so a test can prove the fail-closed fallback ran.
         public int FlattenCallCount { get; private set; }
+
+        /// <summary>
+        /// Fires on every call that reaches the broker (Cancel/Flatten/CreateOrder/Submit).
+        /// Lets a test assert the invariant the design doc claims but the code did not keep:
+        /// none of these may run while `_stateLock` is held (P1-10, P1-35). Reviewers cannot
+        /// check this reliably by reading -- the offending sites are nested three calls deep
+        /// inside a lock block -- so it is checked mechanically instead.
+        /// </summary>
+        public static Action<string> BrokerCallObserver;
+
+        private static void ObserveBrokerCall(string method)
+        {
+            var obs = BrokerCallObserver;
+            if (obs != null) obs(method);
+        }
 
         public event EventHandler<PositionEventArgs> PositionUpdate;
         public event EventHandler<OrderEventArgs> OrderUpdate;
@@ -170,6 +189,7 @@ namespace NinjaTrader.Cbi
 
         public void Cancel(Order[] orders)
         {
+            ObserveBrokerCall("Cancel");
             foreach (var o in orders)
             {
                 o.OrderState = OrderState.Cancelled;
@@ -178,6 +198,7 @@ namespace NinjaTrader.Cbi
 
         public void Cancel(List<Order> orders)
         {
+            ObserveBrokerCall("Cancel");
             foreach (var o in orders)
             {
                 o.OrderState = OrderState.Cancelled;
@@ -186,13 +207,17 @@ namespace NinjaTrader.Cbi
 
         public void Flatten(Instrument[] instruments)
         {
+            ObserveBrokerCall("Flatten");
             FlattenCallCount++;
+            if (SimulateFlattenFailure)
+                throw new Exception("Simulated broker rejection at Flatten.");
             Positions.Clear();
             Orders.Clear();
         }
 
         public Order CreateOrder(Instrument instrument, OrderAction action, OrderType type, TimeInForce tif, int qty, double limit, double stop, string oco, string name, object custom)
         {
+            ObserveBrokerCall("CreateOrder");
             var o = new Order
             {
                 Id = Guid.NewGuid().ToString(),
@@ -212,6 +237,7 @@ namespace NinjaTrader.Cbi
 
         public void Submit(Order[] orders)
         {
+            ObserveBrokerCall("Submit");
             if (SimulateSubmitFailure)
                 throw new Exception("Simulated broker rejection at Submit.");
 
@@ -482,6 +508,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT3_ProfitableFlatAccountEmitsNoGiveback();
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
+            TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
+            TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
+            TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening();
+            TestP1_15_ReArmingSeedsFsmsForPositionsOpenedWhileDisarmed();
 
             // -- COPIER GROUPS & STRESS TESTS --
             TestCopierGroup_GroupManagement();
@@ -3495,6 +3525,245 @@ namespace NinjaTrader.NinjaScript.AddOns
             var second = addon.EvaluateGraceExpiry(account, mnq.FullName);
             Assert(second.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
                 "Grace genuinely re-armed: a fresh auto-stop is emitted for the now-naked position");
+        }
+
+        /// <summary>
+        /// Runs <paramref name="body"/> with a broker-call observer installed, and returns the
+        /// names of any Cancel/Flatten/CreateOrder/Submit calls that happened while the addon
+        /// held `_stateLock`.
+        /// </summary>
+        private static List<string> RecordBrokerCallsUnderLock(RiskGuardAddOn addon, Action body)
+        {
+            var violations = new List<string>();
+            Account.BrokerCallObserver = method =>
+            {
+                if (addon.TestIsStateLockHeld()) violations.Add(method);
+            };
+            try { body(); }
+            finally { Account.BrokerCallObserver = null; }
+            return violations;
+        }
+
+        // P1-10: the safety sweep held _stateLock across Cancel, Flatten, CreateOrder, Submit
+        // and ProcessAction. The design doc states in two places that the lock is always
+        // yielded before calling into NinjaTrader; the event handlers honour that, the sweep
+        // did not. Because the sweep runs on the WPF dispatcher, any NT8 path that blocks on a
+        // background thread needing _stateLock deadlocks the UI thread -- and with it the guard.
+        private static void TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock()
+        {
+            Console.WriteLine("\n[TEST] P1-10: the safety sweep makes no broker calls while holding _stateLock");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "TestAcc", Provider = Provider.Simulator };
+            account.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+            account.Orders.Add(new Order
+            {
+                Instrument = mnq, OrderState = OrderState.Working, OrderType = OrderType.Limit,
+                OrderAction = OrderAction.Buy, Quantity = 1, Name = "RESTING_ENTRY"
+            });
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(new RiskConfig());
+            addon.SetSubscribedAccountForTest("TestAcc");
+            var locked = new AccountState("TestAcc");
+            addon.SetAccountStateForTest("TestAcc", locked);
+
+            // Sweep once unobserved so the daily session reset happens and settles. It clears
+            // IsLockedOut, so locking the account before this call would be undone before the
+            // lockout watchdog ever ran -- the test would then pass while touching nothing.
+            addon.ExecuteSafetySweep();
+            locked.IsLockedOut = true;
+
+            var violations = RecordBrokerCallsUnderLock(addon, () => addon.ExecuteSafetySweep());
+
+            Assert(violations.Count == 0,
+                string.Format(
+                    "The sweep made {0} broker call(s) while holding _stateLock{1}. Every one is a "
+                    + "deadlock window against any NT8 path that needs the lock from another thread.",
+                    violations.Count,
+                    violations.Count == 0 ? "" : ": " + string.Join(", ", violations.Distinct())));
+
+            // The refactor must not lose the work: a locked account with an open position and a
+            // resting entry still has to be cancelled and flattened, just outside the lock.
+            Assert(account.FlattenCallCount > 0,
+                "The locked account was still flattened (the enforcement itself is preserved)");
+        }
+
+        // P1-15: UpdateFsmOnPosition and UpdateFsmOnOrder both return early while disarmed. So
+        // disarm, open a position, re-arm, and the guard tracks nothing: no FSM, no grace timer,
+        // no protection, until the position happens to change side. Seeding already exists and
+        // is good -- it was just only ever called from SubscribeToAccount.
+        private static void TestP1_15_ReArmingSeedsFsmsForPositionsOpenedWhileDisarmed()
+        {
+            Console.WriteLine("\n[TEST] P1-15: re-arming seeds FSMs for positions opened while disarmed");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "TestAcc", Provider = Provider.Simulator };
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop"));
+            addon.SetSubscribedAccountForTest("TestAcc");
+            addon.TestClearFsms();
+            addon.SetArmedForTest(false);
+
+            // A position is opened while the guard is disarmed.
+            account.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+            Assert(addon.TestGetFsm("TestAcc", mnq.FullName) == null,
+                "Precondition: while disarmed the FSM paths return early, so nothing is tracked");
+
+            addon.ToggleArmed();
+            Assert(addon.GetIsArmed(), "Precondition: arming succeeded (preflight passed in shadow mode)");
+
+            var fsm = addon.TestGetFsm("TestAcc", mnq.FullName);
+            Assert(fsm != null,
+                "Re-arming seeds an FSM for the already-open position. Without this the guard is "
+                + "armed and reports healthy while covering nothing.");
+            Assert(fsm != null && fsm.PositionQuantity == 2,
+                "The seeded FSM carries the live position quantity");
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
+                "It starts Unprotected - no covering stop exists yet");
+            Assert(fsm != null && fsm.GracePending,
+                "A grace timer is armed, so protection is actually attempted rather than merely tracked");
+        }
+
+        // P1-11: the lockout watchdog cancelled EVERY non-terminal order before flattening --
+        // including the protective stop covering the position it was about to flatten. The
+        // flatten can fail (the broker rejects it, the fallback market order also fails), and
+        // then the account holds an open position with nothing behind it, created by the very
+        // code meant to protect it. The design doc also promises position-reducing orders are
+        // preserved; that promise was honoured in OnOrderUpdate and nowhere else.
+        private static void TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening()
+        {
+            Console.WriteLine("\n[TEST] P1-11: the lockout sweep cancels entries but keeps the protective stop until flat");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "TestAcc", Provider = Provider.Simulator };
+            account.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+
+            // The stop protecting the long, and a resting entry that would add risk.
+            var protectiveStop = new Order
+            {
+                Instrument = mnq, OrderState = OrderState.Working, OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell, Quantity = 2, Name = "PROTECTIVE_STOP"
+            };
+            var restingEntry = new Order
+            {
+                Instrument = mnq, OrderState = OrderState.Working, OrderType = OrderType.Limit,
+                OrderAction = OrderAction.Buy, Quantity = 1, Name = "RESTING_ENTRY"
+            };
+            account.Orders.Add(protectiveStop);
+            account.Orders.Add(restingEntry);
+            Account.All.Add(account);
+
+            // The broker refuses the flatten, which is the whole point: protection must survive.
+            account.SimulateFlattenFailure = true;
+
+            var addon = new RiskGuardAddOn();
+            var config = new RiskConfig();
+            addon.SetConfigForTest(config);
+            addon.SetSubscribedAccountForTest("TestAcc");
+
+            var state = new AccountState("TestAcc");
+            // IsPositionReducingOrder classifies against the account's tracked position.
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0.0, config);
+            addon.SetAccountStateForTest("TestAcc", state);
+
+            // Settle the daily session reset first (it clears IsLockedOut), then lock.
+            addon.ExecuteSafetySweep();
+            state.IsLockedOut = true;
+
+            addon.ExecuteSafetySweep();
+
+            Assert(restingEntry.OrderState == OrderState.Cancelled,
+                string.Format("The risk-increasing resting entry is cancelled (state {0})",
+                              restingEntry.OrderState));
+
+            Assert(protectiveStop.OrderState != OrderState.Cancelled,
+                string.Format(
+                    "The protective stop SURVIVES a failed flatten (state {0}). Cancelling it "
+                    + "first and then failing to flatten is how the lockout path creates the "
+                    + "naked position it exists to prevent.",
+                    protectiveStop.OrderState));
+
+            Assert(account.FlattenCallCount > 0,
+                "The sweep still attempted the flatten");
+        }
+
+        // P1-35: the same violation on the hot event path. UpdateFsmOnPosition is only ever
+        // called with _stateLock held, and its nonflat->flat branch cancelled the orphan
+        // auto-stop directly. Queue it and drain after the lock releases -- without silently
+        // dropping the cancel, which is the real risk of this refactor.
+        private static void TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock()
+        {
+            Console.WriteLine("\n[TEST] P1-35: the orphan auto-stop cancel happens outside _stateLock, and still happens");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "TestAcc", Provider = Provider.Simulator };
+            mnq.MarketData.Last.Price = 18000;
+            account.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop"));
+            addon.TestClearFsms();
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+
+            // Give the FSM a live RiskGuard auto-stop, exactly as ExecuteAction would.
+            var autoStop = new Order
+            {
+                Instrument = mnq, OrderState = OrderState.Working, OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell, Quantity = 2, Name = "RiskGuardAutoStop"
+            };
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            fsm.AutoStopOrder = autoStop;
+            account.Orders.Add(autoStop);
+
+            // The position goes flat. The FSM is torn down and the now-orphaned stop must die.
+            account.Positions.Clear();
+            var flatPos = new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Flat, Quantity = 0, AveragePrice = 0
+            };
+            account.Positions.Add(flatPos);
+
+            var violations = RecordBrokerCallsUnderLock(addon,
+                () => addon.ExecutePositionUpdateDetails(account, flatPos));
+
+            Assert(violations.Count == 0,
+                string.Format(
+                    "Going flat made {0} broker call(s) under _stateLock{1}. This is the hot event "
+                    + "path, so it is the likeliest of all the sites to deadlock.",
+                    violations.Count,
+                    violations.Count == 0 ? "" : ": " + string.Join(", ", violations.Distinct())));
+
+            Assert(autoStop.OrderState == OrderState.Cancelled,
+                string.Format(
+                    "The orphaned auto-stop was still cancelled (state {0}). Deferring the cancel "
+                    + "must not drop it -- a live stop with no position behind it can open a "
+                    + "brand-new position in the opposite direction when it triggers.",
+                    autoStop.OrderState));
+
+            Assert(addon.TestGetFsm(account.Name, mnq.FullName) == null,
+                "The FSM is still torn down on flat");
         }
 
         // P1-37: MinShadowSessions is the interlock between shadow mode and live arming.

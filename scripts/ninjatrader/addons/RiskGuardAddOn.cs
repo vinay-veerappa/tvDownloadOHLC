@@ -221,6 +221,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         // when the FSM is created on the position-open event; protects against the
         // race where the stop leg is observed before the position leg.
         private readonly Dictionary<string, Order> _pendingStops = new Dictionary<string, Order>();
+
+        // P1-35/P1-10: cancellations decided while holding _stateLock, to be sent to the broker
+        // once it is released. The design doc's central concurrency invariant is that no
+        // Account trading call happens under the lock; queueing is how a decision made inside
+        // the lock reaches the broker outside it. Guarded by _stateLock.
+        private readonly List<KeyValuePair<Account, Order>> _pendingCancels =
+            new List<KeyValuePair<Account, Order>>();
 #if !TESTING
         private NTMenuItem _myMenuItem;
         private ControlCenter _controlCenter;
@@ -376,6 +383,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal void TestFsmOnPosition(Account account, string instrument, MarketPosition pos, int qty)
         {
             lock (_stateLock) { UpdateFsmOnPosition(account, instrument, pos, qty); }
+            // Mirror ExecutePositionUpdateDetails: the teardown queues orphan cancels and the
+            // caller drains them after the lock. Without this a test driving the FSM directly
+            // would leave the queue full and the orphan stop alive.
+            DrainPendingCancels();
         }
         internal void TestFsmOnOrder(Account account, string instrument, Order order)
         {
@@ -426,6 +437,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal int GetShadowSessionsCompletedForTest() { return _shadowSessionsCompleted; }
         internal DateTime GetLastShadowSessionDateForTest() { return _lastShadowSessionDate; }
         internal void SetLastShadowSessionDateForTest(DateTime d) { _lastShadowSessionDate = d; }
+
+        // --- lock-scope probe (P1-10, P1-35) ---
+        // The design doc's central concurrency invariant is that no Account trading call
+        // happens while _stateLock is held. Monitor.IsEntered answers that for the calling
+        // thread, which is precisely the thread the broker stub runs on, so a test can
+        // observe every violation instead of hoping a reviewer spots one nested three
+        // calls deep inside a lock block.
+        internal bool TestIsStateLockHeld() { return Monitor.IsEntered(_stateLock); }
 #endif
 
         public void ResetStateForDev()
@@ -1009,6 +1028,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
+                // Lock released. Send anything the FSM teardown queued (P1-35) before running
+                // the actions, so an orphaned stop dies before any new order is placed.
+                DrainPendingCancels();
+
                 if (actions != null)
                 {
                     foreach (var action in actions)
@@ -1494,6 +1517,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         internal void ExecuteSafetySweep()
         {
+            // Decisions taken under the lock, executed after it is released (P1-10).
+            var cancelBatches = new List<KeyValuePair<Account, List<Order>>>();
+            var deferredCancelBatches = new List<KeyValuePair<Account, List<Order>>>();
+            var flattenBatches = new List<KeyValuePair<Account, List<Instrument>>>();
+            var sweepActions = new List<GuardAction>();
+
             try
             {
                 lock (_stateLock)
@@ -1562,7 +1591,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                         _stateDirty = false;
                     }
 
-                    // 5. Lockout Watchdog (ensures locked accounts with open positions are continuously flattened until quantity is 0)
+                    // 5. Lockout Watchdog - DECIDE ONLY (P1-10).
+                    // This block used to call Cancel, Flatten, CreateOrder, Submit and
+                    // ProcessAction with _stateLock held, which is the exact invariant the
+                    // design doc claims is never violated. The event handlers already use
+                    // collect-then-execute; the sweep now does too. Nothing below may touch
+                    // Account until the lock is released.
                     foreach (var accName in _subscribedAccounts)
                     {
                         if (_config.ExcludedAccounts != null && _config.ExcludedAccounts.Contains(accName)) continue;
@@ -1572,43 +1606,133 @@ namespace NinjaTrader.NinjaScript.AddOns
                         var account = Account.All.FirstOrDefault(a => a.Name == accName);
                         if (account == null) continue;
 
-                        // Cancel working orders continuously for locked account
-                        var toCancel = account.Orders.Where(o => o.OrderState != OrderState.Filled && o.OrderState != OrderState.Cancelled).ToList();
-                        if (toCancel.Count > 0)
+                        // P1-11: split by intent. Risk-INCREASING orders go now; orders that
+                        // reduce the position - above all the protective stop covering it -
+                        // are held back until the flatten is confirmed. Cancelling the stop on
+                        // the way in and then failing to flatten is how this path used to
+                        // manufacture the naked position it exists to prevent.
+                        var riskIncreasing = new List<Order>();
+                        var reducing = new List<Order>();
+                        foreach (Order o in account.Orders)
                         {
-                            try { account.Cancel(toCancel); } catch {}
+                            if (IsTerminal(o.OrderState)) continue;
+                            if (RiskGuardOrderUtils.IsPositionReducingOrder(o, stateModel))
+                                reducing.Add(o);
+                            else
+                                riskIncreasing.Add(o);
                         }
+                        if (riskIncreasing.Count > 0)
+                            cancelBatches.Add(new KeyValuePair<Account, List<Order>>(account, riskIncreasing));
+                        if (reducing.Count > 0)
+                            deferredCancelBatches.Add(new KeyValuePair<Account, List<Order>>(account, reducing));
 
-                        // Flatten open positions continuously until flat
+                        var toFlatten = new List<Instrument>();
                         foreach (Position pos in account.Positions)
                         {
                             if (pos.Instrument != null && pos.MarketPosition != MarketPosition.Flat)
-                            {
-                                try
-                                {
-                                    account.Flatten(new[] { pos.Instrument });
-                                }
-                                catch
-                                {
-                                    var closeAction = pos.MarketPosition == MarketPosition.Long ? OrderAction.Sell : OrderAction.BuyToCover;
-                                    var closeOrder = account.CreateOrder(pos.Instrument, closeAction, OrderType.Market, TimeInForce.Day, pos.Quantity, 0, 0, string.Empty, "RiskGuardWatchdogFlatten", null);
-                                    try { account.Submit(new[] { closeOrder }); } catch {}
-                                }
-                            }
+                                toFlatten.Add(pos.Instrument);
                         }
+                        if (toFlatten.Count > 0)
+                            flattenBatches.Add(new KeyValuePair<Account, List<Instrument>>(account, toFlatten));
 
                         var lockoutActions = EvaluateLockoutPhase(account, stateModel);
                         if (lockoutActions != null && lockoutActions.Count > 0)
-                        {
-                            foreach (var action in lockoutActions)
-                            {
-                                ProcessAction(action);
-                            }
-                        }
+                            sweepActions.AddRange(lockoutActions);
                     }
 
-                    // 6. FSM watchdog (log-only diagnostic for stuck FSMs)
+                    // 6. FSM watchdog (log-only diagnostic for stuck FSMs; arms timers, no broker calls)
                     FsmWatchdog();
+                }
+
+                // ---- lock released: everything below may talk to the broker ----
+
+                DrainPendingCancels();
+
+                foreach (var batch in cancelBatches)
+                {
+                    try { batch.Key.Cancel(batch.Value); }
+                    catch (Exception cex)
+                    { LogEvent(batch.Key.Name, "LOCKOUT_CANCEL_FAIL", cex.Message); }
+                }
+
+                foreach (var batch in flattenBatches)
+                {
+                    var account = batch.Key;
+                    foreach (var instrument in batch.Value)
+                    {
+                        try
+                        {
+                            account.Flatten(new[] { instrument });
+                        }
+                        catch (Exception fex)
+                        {
+                            LogEvent(account.Name, "LOCKOUT_FLATTEN_FAIL",
+                                $"{instrument.FullName}: {fex.Message}; falling back to a market close.");
+
+                            // Re-read the position rather than trusting the quantity captured
+                            // under the lock - the flatten may have partially succeeded.
+                            var pos = account.Positions.FirstOrDefault(
+                                p => p.Instrument != null && p.Instrument.FullName == instrument.FullName);
+                            if (pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0)
+                                continue;
+
+                            var closeAction = pos.MarketPosition == MarketPosition.Long
+                                ? OrderAction.Sell : OrderAction.BuyToCover;
+                            try
+                            {
+                                var closeOrder = account.CreateOrder(
+                                    instrument, closeAction, OrderType.Market, TimeInForce.Day,
+                                    pos.Quantity, 0, 0, string.Empty, "RiskGuardWatchdogFlatten", null);
+                                if (closeOrder != null) account.Submit(new[] { closeOrder });
+                            }
+                            catch (Exception sex)
+                            { LogEvent(account.Name, "LOCKOUT_CLOSE_FAIL", $"{instrument.FullName}: {sex.Message}"); }
+                        }
+                    }
+                }
+
+                // P1-11 phase (c): only now, with the flatten attempted, may the reducing
+                // orders go - and only for instruments that are actually flat. If the flatten
+                // failed, the position is still open and its stop is the only thing standing
+                // between the account and an uncapped loss. Leave it working; the next sweep
+                // will try again.
+                foreach (var batch in deferredCancelBatches)
+                {
+                    var account = batch.Key;
+                    var stillCovered = new List<string>();
+                    var safeToCancel = new List<Order>();
+
+                    foreach (var order in batch.Value)
+                    {
+                        if (IsTerminal(order.OrderState)) continue;
+                        if (order.Instrument == null) continue;
+
+                        var pos = account.Positions.FirstOrDefault(
+                            p => p.Instrument != null && p.Instrument.FullName == order.Instrument.FullName);
+                        bool flat = pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0;
+
+                        if (flat) safeToCancel.Add(order);
+                        else stillCovered.Add(order.Instrument.FullName);
+                    }
+
+                    if (safeToCancel.Count > 0)
+                    {
+                        try { account.Cancel(safeToCancel); }
+                        catch (Exception cex)
+                        { LogEvent(account.Name, "LOCKOUT_CANCEL_FAIL", cex.Message); }
+                    }
+
+                    if (stillCovered.Count > 0)
+                    {
+                        LogEvent(account.Name, "LOCKOUT_STOP_RETAINED",
+                            $"Position still open after flatten for {string.Join(",", stillCovered.Distinct())}; "
+                            + "keeping its protective order working rather than leaving the position naked.");
+                    }
+                }
+
+                foreach (var action in sweepActions)
+                {
+                    ProcessAction(action);
                 }
 
                 // All rule evaluation is now event-driven:
@@ -1792,25 +1916,60 @@ namespace NinjaTrader.NinjaScript.AddOns
             else
             {
                 // nonflat->flat: tear down, cancel grace timer, cancel orphan auto-stop.
-                // NOTE (P1-30): this account.Cancel runs with _stateLock held - every caller of
-                // UpdateFsmOnPosition already holds it (ExecutePositionUpdateDetails). Do NOT add a
-                // nested lock(_stateLock) here and claim the cancel happens "outside the lock": the
-                // nested lock is re-entrant and the outer lock is still held, so it buys nothing and
-                // hides the violation. The real fix is to queue orphan cancellations and drain them
-                // in ExecutePositionUpdateDetails after it releases the lock, which is tracked as
-                // P1-30 in RISKGUARD_COPIER_HARDENING_PLAN.md and is out of scope for this ticket.
+                // P1-35 (was P1-30): this runs with _stateLock held - every caller of
+                // UpdateFsmOnPosition already holds it. So the orphan cancel is QUEUED here and
+                // sent by DrainPendingCancels() once the caller releases the lock. Do NOT
+                // "fix" a future variant of this by wrapping the Cancel in a nested
+                // lock(_stateLock) and calling it outside: the nested lock is re-entrant, the
+                // outer lock is still held, and it only hides the violation.
                 if (_guardFsms.TryGetValue(key, out var fsm))
                 {
                     fsm.GraceTimer?.Dispose();
                     if (fsm.AutoStopOrder != null && !IsTerminal(fsm.AutoStopOrder.OrderState))
                     {
-                        try { account.Cancel(new[] { fsm.AutoStopOrder }); }
-                        catch (Exception cex) { LogEvent(account.Name, "FSM_AUTOSTOP_CANCEL_FAIL", cex.Message); }
+                        _pendingCancels.Add(new KeyValuePair<Account, Order>(account, fsm.AutoStopOrder));
                     }
                     _guardFsms.Remove(key);
                     LogEvent(account.Name, "FSM_TRANSITION", $"Tore down FSM {key} -> Flat");
                 }
                 _pendingStops.Remove(key);
+            }
+        }
+
+        /// <summary>
+        /// Sends cancellations that were decided under `_stateLock`.
+        ///
+        /// **MUST be called with `_stateLock` NOT held.** Calling it from inside the lock would
+        /// defeat the entire point: the lock is re-entrant, so the queue would drain and the
+        /// broker call would happen under the lock exactly as before, while *looking* correct.
+        /// The TESTING build throws on that mistake rather than letting it pass review — this
+        /// is precisely the "nested lock buys nothing" trap recorded in the hardening plan.
+        /// </summary>
+        private void DrainPendingCancels()
+        {
+#if TESTING
+            if (Monitor.IsEntered(_stateLock))
+                throw new InvalidOperationException(
+                    "DrainPendingCancels() was called while _stateLock is held. The lock is "
+                    + "re-entrant, so this would send the cancel under the lock and reintroduce "
+                    + "P1-35. Move the call after the lock block.");
+#endif
+            List<KeyValuePair<Account, Order>> toSend;
+            lock (_stateLock)
+            {
+                if (_pendingCancels.Count == 0) return;
+                toSend = new List<KeyValuePair<Account, Order>>(_pendingCancels);
+                _pendingCancels.Clear();
+            }
+
+            foreach (var pending in toSend)
+            {
+                var account = pending.Key;
+                var order = pending.Value;
+                if (account == null || order == null) continue;
+                if (IsTerminal(order.OrderState)) continue;   // already resolved while queued
+                try { account.Cancel(new[] { order }); }
+                catch (Exception cex) { LogEvent(account.Name, "FSM_AUTOSTOP_CANCEL_FAIL", cex.Message); }
             }
         }
 
@@ -2567,6 +2726,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 _isArmed = !_isArmed;
                 LogEvent("SYSTEM", "TOGGLE_ARMED", $"System Armed State changed to: {_isArmed}");
+
+                // P1-15: UpdateFsmOnPosition/UpdateFsmOnOrder both return early while disarmed,
+                // so any position opened during that window is invisible to the guard. Re-deriving
+                // state on the way in is the only way arming means anything for those positions;
+                // otherwise the guard reports armed and healthy while covering nothing until the
+                // position next changes side. Seeding is idempotent (it skips keys already
+                // tracked) and makes no broker calls, so it is safe under _stateLock.
+                if (_isArmed)
+                {
+                    foreach (var accName in _subscribedAccounts)
+                    {
+                        var account = Account.All.FirstOrDefault(a => a.Name == accName);
+                        if (account != null) SeedFsmsForExistingPositions(account);
+                    }
+                }
+
                 SavePersistedState();
             }
         }
