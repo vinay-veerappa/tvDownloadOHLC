@@ -3136,7 +3136,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 int stopQuantity = (int)positionForQuantity.Quantity;
-                if (stopQuantity <= 0 || stopQuantity > (int)positionForQuantity.Quantity)
+                if (stopQuantity <= 0)
                 {
                     ReArmGraceIfUnprotected();
                     LogEvent(account.Name, "AUTO_STOP_ABORT_NO_QUANTITY", $"Live position quantity {stopQuantity} for {action.Instrument}; aborting auto-stop.");
