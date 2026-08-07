@@ -31,14 +31,16 @@ Suite **616 passed, 0 failed**. Loop selftest **11/11**.
 > **`nt_riskguard_config` with no arguments used to be a destructive write** — see §4k. It is safe
 > now, but any older transcript showing that call also shows the live config being flattened.
 >
-> **Next work**: `P0-9`'s last item (profit targets + OCO — needs an operator decision, see §4k),
-> `P1-13`'s threading half (needs a concurrent-guard-event stress test first), then `P2-24`,
-> `P2-25`, `P2-26`, `P2-27`'s CI half, `P2-29`, and the P3 band. Roadmap in §4a; the loop's own
-> backlog is [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §12.
+> **What is pending is now §4a**, rewritten as a prioritised backlog rather than a phase list.
+> Short version: **validate the mirrored stop on a live feed before writing any more code**; then
+> `P0-9`'s targets/OCO item needs *your* decision, not a code change; then `P3-30` (the
+> reconciler) is the highest-value thing left. `P1-13`'s threading half needs a
+> concurrent-guard-event stress test written first — **the S-series does not cover that**, despite
+> being finished. The loop's own backlog is [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §12.
 
 ---
 
-## 0. Start here (read this, then §4a for the roadmap)
+## 0. Start here (read this, then §4a for what is pending)
 
 ### 0.0 The branch is merged and pushed — and every SHA below this line is stale
 
@@ -489,27 +491,90 @@ The general lesson for this loop: when a gate says a model got the format wrong,
 *content* is there before spending another round. Marker punctuation is not what the gates exist
 to check.
 
-## 4a. Roadmap for the remaining 21 defects
+## 4a. What is pending — the current backlog
 
-**38 defects total, 17 closed, 21 open**: 11 P1, 5 P2, 5 P3. Closed since P0: `P2-28`
-(Phase B); `P1-20`, `P1-37`, then the concurrency cluster `P1-10`, `P1-35`, `P1-11`, `P1-15`
-(Phase C). `P2-38` was opened on 2026-08-07 — the same name-prefix hole as P1-20, in
-`McpBridgeAddOn`'s strategy-deploy guard.
+**48 defects, 36 closed, 12 open** as of session 8 (2026-08-07). The phase structure below
+(A–G) is kept as historical record; **A, B, C, D, D2 and E are all done.** This section is the
+live list. Band membership and the P1-30/31 → P1-35/36 renumbering are in the plan's inventory
+table.
 
-**Still open in P1 — as of session 8, only `P1-13`'s threading inversion.** `P1-12`, `P1-14` and
-`P1-36` closed 2026-08-07; `P1-13`'s fail-open half closed with them. `P1-16` … `P1-19`,
-`P1-21` … `P1-23` were already closed. Band membership and the
-P1-30/31 → P1-35/36 renumbering are in the plan's inventory table. `P1-37` was found by the
-Phase A shadow deployment on 2026-08-07 (§4f).
+### The one that outranks everything else
 
-Decided 2026-08-07: **deploy P0 to shadow before writing more code.** Done — but shadow ran on a
-feed with no real-time data, so Phase A's acceptance criteria are still unmet (§4f).
+**Validate the mirrored stop on a live feed.** `P0-9`'s bracket replication has never been seen
+on a real fill. It is proven by falsifiable tests and a clean net48 compile — *which is exactly
+the standard `P1-40` slipped through*, because a proportional rule looked correct at every scale
+the tests used. Both copier relationships are enabled and `Sim101 → Sim-ORB` is
+`ArmedForLive: true`, so the next Sim101 fill places a real stop order on the follower.
 
-### Phase A — deploy P0 (no new code) — deployed, NOT yet validated
+> **Watch for `BRACKET_MIRRORED` in the output tab and check the price against where the follower
+> actually filled.** Everything below this is secondary. Note the copier acts regardless of guard
+> mode — `shadow` restrains RiskGuard, not the copier.
+
+### Needs an operator decision, not a code change
+
+**`P0-9` item (1) — profit targets and OCO.** The last piece of `P0-9`.
+
+- *Against building it now*: a mirrored target is **upside, not risk**. The follower already exits
+  when the leader's target fill is copied, so the gap is fill quality, not exposure. Building it
+  doubles the copier's order-placement surface on a component whose **first** half has never been
+  observed live.
+- *For*: it is option 1 of the plan's own preferred fix, and the latency gap is real in a fast
+  market.
+- **If it is built it must use a real broker-side OCO id.** A mirrored target without OCO leaves
+  the stop working after the target fills, which flips the follower into a fresh position — the
+  same over-cover hazard the cancel-then-replace rule prevents *within* the copier.
+
+**Recommendation: validate the mirrored stop first, then decide.**
+
+### Ready to code, in value order
+
+| | What | Note |
+|---|---|---|
+| 1 | **`P3-30` — the independent reconciler (REAPER port)** | The plan calls this "the highest-value single addition in the whole plan". It is P3 by **effort, not by value**, and the plan already says to reconsider promoting it once P1 lands — which it now has. It catches the class of defect every review and green suite in this project has repeatedly missed. `P1-36` built the multi-stop coverage sum it needs; share that, do not rebuild it. |
+| 2 | **`P1-13` — the threading inversion** | **Two pieces of work, not one.** A concurrent-guard-event stress test has to exist first; see the warning below. |
+| 3 | **`P2-26` — design-doc drift** | Cheap, and `RiskGuardAddOn.md` is *actively misleading* right now: 8 claims contradicted by code. |
+| 4 | **`P2-24` — written-but-never-called safety machinery** | Includes `ReconcileFollowerPosition`. Needs a dispatcher seam to be testable (see §6). |
+| 5 | **`P2-25` — the news shield can never fire in production** | |
+
+### Low value or mechanical
+
+`P2-27`'s remaining CI job (the copy path itself is already covered), `P2-29` (split the two large
+files into `partial class` files), `P3-31`, `P3-33`, `P3-34`.
+
+> **`P3-32` ("follower risk anchored to the follower's own fill") looks SUPERSEDED by `P0-9`** —
+> that is precisely what the signed-offset mirror does. Read it before scheduling it as new work;
+> it may simply need closing. Flagged 2026-08-07, not yet verified.
+
+### ⚠️ The S-series is not concurrency coverage
+
+`S1`–`S9` are all in the suite as of session 8, and it is tempting to read "the stress backlog is
+done" as covering `P1-13`. **It does not.** `S4` is lock-scope, `S7` is copier fan-out, and
+`S5`/`S6`/`S8`/`S9` are **sequential scenario tests**. `P1-13`'s inversion turns six handlers the
+dispatcher was implicitly serialising into genuinely concurrent ones, and nothing tests that.
+
+Session 8 deferred `P1-13` explicitly on the grounds that the stress backlog was its prerequisite.
+Once that backlog was written it was clear the reasoning was wrong: the tests are sequential and
+the risk is concurrent. **Doing the risky half before its coverage exists is how `P1-40` shipped.**
+
+### Repo hygiene, carried from session 7 and still open
+
+- The branch **`harden/riskguard-copier-p0` is unmerged and unpushed** (session-8 work is committed
+  on it).
+- **The Gemini API key** scrubbed from history (`scripts/trader/chart_agent/test_vision.py`) still
+  needs **rotating**. It never reached GitHub; that is not the same as it being safe.
+- **0.28 GB of older parquet remains in published history** — the purges only covered the
+  then-unpushed range. Logged in `docs/ROADMAP.md` under Known Issues / Tech Debt.
+- `.githooks/pre-commit` is **not automatic**: run `git config core.hooksPath .githooks` in each
+  clone or it silently does nothing.
+
+---
+
+### Phase A — deploy P0 (no new code) — deployed; live-feed validation still outstanding
 
 Nine live-risk fixes are in a branch doing nothing. Shadow mode is also the only way to validate
 T3's giveback rule and T5's fail-closed gate against real account data; no unit test can.
 **Runbook in §4e — read it, the ordering is not obvious and the live config is not in shadow.**
+T3 was validated live (§4g); **T5 has never been exercised** — it needs an acting mode.
 
 ### Phase B — foundation: the test suite comes first ✅ DONE (2026-08-07)
 
@@ -539,7 +604,7 @@ one red; and reviewers must judge the tests' completeness and accuracy, not just
 the implementer cannot reach it by construction (gate 0, anti-reward-hacking). That is deliberate
 — the grader is written by a different party than the one being graded.
 
-### Phase C — P1 safety-critical ✅ DONE (2026-08-07), except P1-36
+### Phase C — P1 safety-critical ✅ DONE — `P1-36` closed in session 8
 
 ✅ **The whole phase is closed except P1-36**: `P1-20` and `P1-37` (`6678bbc3`), then the
 concurrency cluster `P1-10`, `P1-35`, `P1-11`, `P1-15` (`1ea33c8d`). All test-first, each
@@ -551,8 +616,9 @@ observed red before its fix.
 directly. `DrainPendingCancels()` throws in the TESTING build if called with the lock held —
 the nested-`lock` "fix" is re-entrant and would silently reintroduce P1-35.
 
-**P1-36 is deliberately left.** It modifies T1's `CoveredQuantity` model; re-read §1 and §5
-first — the single-stop behaviour is deliberate and the `ReferenceEquals` guard bounds it.
+~~**P1-36 is deliberately left.**~~ **Closed 2026-08-07 (session 8).** `CoveredQuantity` and
+`RecognizedStopOrder` are now derived from a list and read-only; the settled decision that made
+the single-stop behaviour deliberate has been **retired in both §5 and `profiles.py`**.
 
 Original reasoning follows.
 
@@ -574,11 +640,14 @@ Sequencing constraints:
 P1-16 … P1-19. Self-contained, low blast radius, good loop tickets. P1-17 (eval target fed
 session-scoped PnL, so it never fires) is the most consequential.
 
-### Phase D2 — stress backlog: S5–S9 (OPEN, not optional)
+### Phase D2 — stress backlog ✅ DONE (S1–S9 all in the suite)
 
 `S1`–`S4` landed 2026-08-07 and closed four defects on their first run (`P1-43`, `P1-44`,
-`P1-45`, `P2-46`). **`S5`–`S9` remain open**, and they are the only planned coverage for failure
-modes no unit test reaches. Full specs in the plan's §8.
+`P1-45`, `P2-46`). `S7` landed with `P0-9`. **`S5`, `S6`, `S8` and `S9` landed in session 8**,
+each verified red against the defect it names. Full specs in the plan's §8.
+
+**They are scenario coverage, not concurrency coverage — see the warning at the top of this
+section before treating them as a prerequisite for `P1-13`.**
 
 | | Stress test | Relates to |
 |---|---|---|
@@ -594,14 +663,20 @@ assert an observed invariant rather than "no exception thrown" — the pre-exist
 caught anything. And confirm each one fails *for the reason intended*: the first draft of S1–S4
 passed three assertions against code that never executed.
 
-### Phase E — copier fidelity — `P1-21`, `P1-22`, `P1-23` all closed; only `P0-9` remains
+### Phase E — copier fidelity ✅ DONE except `P0-9`'s targets/OCO item
 
-**`P0-9`'s real half is the next piece of work, and the largest remaining live exposure.** Only its
-fail-closed *precondition* landed in T5 — followers still receive bare market orders with no
-protective legs. Their sole protection today is RiskGuard's `StopAttachSeconds` grace →
-`RiskGuardAutoStop` at a fixed tick offset from *average price*, which bears no relation to the
-leader's actual stop; and if RiskGuard is disarmed, in shadow, or the follower is excluded, there
-is no stop at all.
+**The naked-follower exposure is closed** (session 7): followers get a mirrored stop carrying the
+leader's signed risk distance, anchored to their own fill. Items (3) `StopLimit` and (4)
+leader-cancels-stop were pinned by test in session 8. Only profit targets + OCO remain, and that
+wants an operator decision — see the top of this section.
+
+Original framing follows, from when this was the largest live exposure.
+
+> Only its fail-closed *precondition* landed in T5 — followers still receive bare market orders
+> with no protective legs. Their sole protection today is RiskGuard's `StopAttachSeconds` grace →
+> `RiskGuardAutoStop` at a fixed tick offset from *average price*, which bears no relation to the
+> leader's actual stop; and if RiskGuard is disarmed, in shadow, or the follower is excluded,
+> there is no stop at all.
 
 Read the plan's `P0-9` for the three options in preference order. Two things this session
 established that bear on it directly:
@@ -615,19 +690,22 @@ established that bear on it directly:
 
 Sequence it as: `S7` red first → `P0-9` → `S7` green.
 
-### Phase F — P2 structural
+### Phase F — P2 structural — `P2-28`, `P2-38`, `P2-41`, `P2-46` closed
 
-P2-28 (if not already done in B), P2-24, P2-26 (doc drift — the design doc still overstates what
-exists), P2-25, P2-27's remaining CI half, P2-29. Note **P2-27 is half-closed**: the copy path is
-in the test build with real coverage; only the CI job is outstanding. The plan text still
-describes it as fully open.
+Remaining: **`P2-26`** (doc drift — the design doc still overstates what exists, and is the
+cheapest real win left), **`P2-24`**, **`P2-25`**, `P2-27`'s remaining CI half, `P2-29`. Note
+**`P2-27` is half-closed**: the copy path is in the test build with real coverage; only the CI job
+is outstanding. The plan text still describes it as fully open.
 
 ### Phase G — P3
 
 **P3-30, the independent reconciler (REAPER port), is the highest-value single addition in the
 whole plan** — an auditor that re-derives ground truth from the broker and repairs what the FSM
-missed. It is P3 by effort, not by value; reconsider promoting it once P1 lands. Then P3-31 …
-P3-34.
+missed. It is P3 by effort, not by value; reconsider promoting it once P1 lands. **P1 has now
+landed, so that condition is met — it is item 1 of the ready-to-code list above.** `P1-36` already
+built the multi-stop coverage sum the reconciler needs; share it rather than rebuilding it.
+
+Then P3-31, P3-33, P3-34. **`P3-32` may already be closed by `P0-9`** — see the note above.
 
 ---
 
