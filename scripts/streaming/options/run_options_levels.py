@@ -79,6 +79,8 @@ if not _IS_RTD_CHILD:
         WEEKEND_T2_INTERVAL,
         EQUITY_RTH_START_TIME,
         EQUITY_RTH_END_TIME,
+        OPTIONS_RTH_START_TIME,
+        OPTIONS_RTH_END_TIME,
         FUTURES_CLOSE_FRIDAY_TIME,
         FUTURES_OPEN_SUNDAY_TIME,
         MANUAL_TRIGGER_FILENAME,
@@ -1641,6 +1643,21 @@ def run_loop(enable_discord: bool = False) -> None:
     except Exception as exc:
         log.warning("Failed to start loop RTD coordinator: %s", exc)
 
+    # --- RTD health-check / restart state ----------------------------------
+    # RTD can drop mid-session (worker process crash, TOS desktop restart,
+    # COM topic failure). Without recovery, NQ/ES silently skip for the rest
+    # of the session. We periodically probe is_rtd_active and attempt a
+    # restart when it goes False, with exponential backoff so we don't
+    # hammer a broken TOS instance.
+    import time as _time_module
+    rtd_health_last_check = 0.0          # epoch seconds of last probe
+    rtd_health_last_restart = 0.0        # epoch seconds of last restart attempt
+    rtd_restart_failures = 0             # consecutive failed restart attempts
+    RTD_HEALTH_CHECK_INTERVAL = 60.0    # probe every 60s (cheap — just reads a flag)
+    RTD_RESTART_MIN_BACKOFF = 30.0       # initial backoff between restart attempts
+    RTD_RESTART_MAX_BACKOFF = 1800.0     # cap at 30 min
+    RTD_RESTART_MAX_FAILURES = 10        # after this, stop trying until process restart
+
     # --- Pulse Scheduling ---
     # We want to force a FULL versioned run at exactly these times.
     # We now pull these from config.SCHEDULE_TIMES
@@ -1671,6 +1688,12 @@ def run_loop(enable_discord: bool = False) -> None:
 
             # Regular Trading Hours (Equity RTH)
             is_equity_rth = (EQUITY_RTH_START_TIME <= ny_now.time() <= EQUITY_RTH_END_TIME) and not is_weekend_closed
+
+            # Options RTH: 09:30–16:00 ET — the window when Schwab actually
+            # returns fresh intraday data for cash equity/ETF option chains.
+            # Outside this window, ETF/INDEX chains are stale; only futures
+            # (/ES, /NQ) stream continuously via RTD.
+            is_options_rth = (OPTIONS_RTH_START_TIME <= ny_now.time() <= OPTIONS_RTH_END_TIME) and not is_weekend_closed
 
             # --- Adaptive Intervals ---
             if is_equity_rth:
@@ -1723,21 +1746,99 @@ def run_loop(enable_discord: bool = False) -> None:
             # Decide what is due
             due_tier1 = tier1_tickers if (now - tier1_last_run) >= t1_interval else []
 
-            # Restriction logic:
-            # 1. Pulse Cycle -> ALL TICKERS (Full snapshot)
-            # 2. Manual Trigger -> TIER 1 + Manual Tickers
-            # 3. Normal Loop -> TIER 1 Only (if due)
-            is_intraday_only = False
-            if is_pulse_cycle:
-                active_this_cycle = ACTIVE_TICKERS
-                is_versioned = True
-            elif manual_tickers:
-                active_this_cycle = list(set(due_tier1 + manual_tickers))
-                is_versioned = False
+            # Off-hours ticker restriction (uses OPTIONS RTH, not equity RTH):
+            # Outside options RTH (09:30–16:00 ET), cash equity/ETF option
+            # chains from Schwab are stale or empty. Only futures (/ES, /NQ)
+            # stream continuously via RTD, so restrict regular (non-pulse)
+            # cycles to RTD-native tickers. Pulse cycles and manual triggers
+            # still run the full ticker set — pulses are the daily anchor
+            # snapshots and must capture ETF OI even if intraday data is thin.
+            is_off_hours = not is_options_rth and not is_weekend_closed
+            if is_off_hours and not is_pulse_cycle and not manual_tickers:
+                # Futures-only subset during pre/post-market hours.
+                # NQ/ES are RTD-native; if RTD is down we still emit them so the
+                # pipeline's RTD-native skip + fallback path handles it.
+                rtd_native_loop_tickers = [t for t in ACTIVE_TICKERS if t in {"NQ", "ES"}]
+                if rtd_native_loop_tickers and (now - tier1_last_run) >= t1_interval:
+                    active_this_cycle = rtd_native_loop_tickers
+                    is_versioned = False
+                    is_intraday_only = True
+                    log.info(
+                        "Off-hours (outside options RTH %s–%s ET): restricting cycle to RTD-native futures %s — "
+                        "Schwab ETF chains skipped until %s ET",
+                        OPTIONS_RTH_START_TIME.strftime("%H:%M"),
+                        OPTIONS_RTH_END_TIME.strftime("%H:%M"),
+                        rtd_native_loop_tickers,
+                        OPTIONS_RTH_START_TIME.strftime("%H:%M"),
+                    )
+                else:
+                    active_this_cycle = []
+                    is_versioned = False
+                    is_intraday_only = False
             else:
-                active_this_cycle = due_tier1
-                is_versioned = False
-                is_intraday_only = True
+                # Restriction logic:
+                # 1. Pulse Cycle -> ALL TICKERS (Full snapshot)
+                # 2. Manual Trigger -> TIER 1 + Manual Tickers
+                # 3. Normal Loop -> TIER 1 Only (if due)
+                is_intraday_only = False
+                if is_pulse_cycle:
+                    active_this_cycle = ACTIVE_TICKERS
+                    is_versioned = True
+                elif manual_tickers:
+                    active_this_cycle = list(set(due_tier1 + manual_tickers))
+                    is_versioned = False
+                else:
+                    active_this_cycle = due_tier1
+                    is_versioned = False
+                    is_intraday_only = True
+
+            # --- RTD health check / restart (cheap probe, throttled restart) ---
+            # Probes is_rtd_active every RTD_HEALTH_CHECK_INTERVAL seconds.
+            # If False and TOS is enabled, attempt a restart with backoff.
+            # This recovers from mid-session RTD drops (worker crash, TOS
+            # desktop restart, COM topic failure) without operator
+            # intervention.
+            if loop_rtd_coord is not None and (now - rtd_health_last_check) >= RTD_HEALTH_CHECK_INTERVAL:
+                rtd_health_last_check = now
+                if not loop_rtd_coord.is_rtd_active:
+                    # Determine backoff for this attempt
+                    backoff = min(
+                        RTD_RESTART_MIN_BACKOFF * (2 ** rtd_restart_failures),
+                        RTD_RESTART_MAX_BACKOFF,
+                    )
+                    if rtd_restart_failures >= RTD_RESTART_MAX_FAILURES:
+                        # Silent after max failures — only log once per backoff window
+                        pass
+                    elif (now - rtd_health_last_restart) >= backoff:
+                        log.warning(
+                            "RTD inactive (failures=%d) — attempting restart (backoff=%.0fs)...",
+                            rtd_restart_failures, backoff,
+                        )
+                        rtd_health_last_restart = now
+                        try:
+                            # If a previous error path cleared _enabled, restore it
+                            # so start() actually tries. Also stop any zombie adapter.
+                            if not loop_rtd_coord._enabled:
+                                loop_rtd_coord._enabled = True
+                            if loop_rtd_coord._adapter is not None:
+                                try:
+                                    loop_rtd_coord.stop()
+                                except Exception:
+                                    pass
+                            loop_rtd_coord.start()
+                            if loop_rtd_coord.is_rtd_active:
+                                log.info("RTD restart succeeded — real-time futures prices resumed")
+                                rtd_restart_failures = 0
+                            else:
+                                rtd_restart_failures += 1
+                                log.warning(
+                                    "RTD restart attempt %d did not activate — will retry in %.0fs",
+                                    rtd_restart_failures,
+                                    min(RTD_RESTART_MIN_BACKOFF * (2 ** rtd_restart_failures), RTD_RESTART_MAX_BACKOFF),
+                                )
+                        except Exception as exc:
+                            rtd_restart_failures += 1
+                            log.error("RTD restart attempt %d failed: %s", rtd_restart_failures, exc)
 
             if active_this_cycle:
                 run_label = ny_now.strftime("%Y-%m-%d %H:%M ET")

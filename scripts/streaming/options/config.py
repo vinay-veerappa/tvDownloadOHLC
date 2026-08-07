@@ -592,6 +592,13 @@ SCHEDULE_TIMEZONE: str = "America/New_York"
 # (RTH: 8:20 - 16:10 ET Weekdays — early start for pre-market scoop)
 EQUITY_RTH_START_TIME: time = time(8, 20)
 EQUITY_RTH_END_TIME: time = time(16, 10)
+# Equity OPTIONS data availability window: 04:00–16:15 ET. Schwab/TOS
+# streams options quotes from 4 AM pre-market through the 4:15 PM RTH close.
+# Outside this window, cash equity/ETF option chains are stale or empty —
+# only futures (/ES, /NQ) stream continuously via RTD. Use this to gate
+# ETF/INDEX chain fetches during the loop.
+OPTIONS_RTH_START_TIME: time = time(4, 0)
+OPTIONS_RTH_END_TIME: time = time(16, 15)
 RTH_T1_INTERVAL: int = 60          # Tier-1 (Priority) 1 min
 RTH_T2_INTERVAL: int = 600         # Tier-2 (All others) 10 min
 
