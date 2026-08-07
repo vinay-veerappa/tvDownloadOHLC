@@ -13,7 +13,7 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` | 20 | 8 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`, `P1-39`, `P1-40`) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` | 20 | 11 closed (`P1-10`, `P1-11`, `P1-15`, `P1-16`, `P1-17`, `P1-20`, `P1-35`, `P1-37`, `P1-39`, `P1-40`, `P1-42`) |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41` | 8 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -444,7 +444,7 @@ backups at `config.json.bak_prerepair`, `config.json.bak_prearm_20260807_061407`
 
 ## 3. P1 — Rule semantics
 
-### P1-16. `ConsecutiveLosses` over-counts on partial exits
+### P1-16. `ConsecutiveLosses` over-counts on partial exits — CLOSED 2026-08-07
 **Where**: `RiskGuardAddOn.cs:1008-1014` — every negative delta in `RealizedProfitLoss`
 increments the counter.
 One trade closed in three partials at a loss = **3 consecutive losses**. §6.9 of the design doc
@@ -452,13 +452,45 @@ introduced flat-transition debouncing for `TradesToday` but not for this counter
 disagree about what a "trade" is.
 **Fix**: attribute realized-PnL deltas to the trade lifecycle already tracked by
 `PositionState.LastFlatTransition`; evaluate win/loss once per flat transition.
+**Fixed by**: banking deltas in `AccountState.OpenTradeRealizedDelta` while a position is open
+and judging the total once in `SettleClosedTrade` at the flat transition (and on flips).
 
-### P1-17. Evaluation profit target is fed session-scoped PnL
+> **The obvious version of this fix drops losses.** It assumes the closing execution's realized
+> PnL always arrives before the position-flat update. That ordering is *not* established — the
+> live log happens to show it, but nothing guarantees it, and if PnL lags then settlement runs on
+> a zero total and the real loss lands on the next trade. So late fills **revise** the
+> settlement: the streak as it stood before the trade was judged is retained until the *next
+> entry*, and re-judging from that snapshot is exact for any number of late fills, correctly
+> flipping a settled win to a loss or back. Tested in both directions.
+>
+> A realized delta with **no tracked trade** (the guard never saw the position, or a standalone
+> adjustment) is still judged on its own. Four pre-existing tests cover this; despite their names
+> they never open a position, so they assert exactly this and not an ordering. Ignoring untracked
+> realized losses would make the lockout less sensitive than before the fix.
+
+**Test**: one trade exited in three partials is one consecutive loss, not three; three separate
+losing trades are still three; a trade that nets positive resets the streak despite a losing
+partial; a late fill that flips the net result revises the streak in either direction.
+
+### P1-17. Evaluation profit target is fed session-scoped PnL — CLOSED 2026-08-07
 **Where**: `RiskGuardAddOn.cs:1139` passes `stateModel.RealizedPnL`, which is
 `raw - SessionStartRealizedPnL` (`1006`) and reset daily (`1376`).
 `EvaluationTargetProfit` ($3,000 default) is a **cumulative** prop-firm evaluation target.
 **Fix**: track `CumulativeRealizedPnL` in `PersistedStateData` (survives restarts) and feed that;
 keep the session value for the daily-loss rule.
+**Fixed by**: `AccountState.CumulativeRealizedPnL` (banked completed sessions) plus
+`TotalRealizedPnL` (banked + current session), fed to `EvaluateProfitTargetLock`, persisted in
+`AccountPersistedData` and rehydrated on load.
+
+> Accumulated **once per session reset**, not per realized-PnL delta. A delta-based running total
+> is permanently corrupted by a single spurious tick — the broker rebasing its own realized
+> counter before our session reset runs would do it — and unlike the session value, a cumulative
+> total is never rebased, so the corruption would never wash out.
+
+**Test**: $1,500 banked plus $1,600 today reaches a $3,000 target while today alone does not; a
+single $3,200 session still fires; prior losses offset rather than being ignored; and the total
+survives a save/load round-trip, because a cumulative target that resets on recompile is not
+cumulative.
 
 ### P1-18. Two overlapping trailing-drawdown implementations
 `EvaluatePnLRules` enforces `profile.TrailingDrawdown` against a **session-reset** `PeakEquity`
@@ -537,7 +569,7 @@ code is loaded.
 > $50k account against a $1,500 trailing drawdown that is noise; for a much smaller account it
 > may not be. It is per-config, so tune it rather than removing the floor.
 
-### P1-42. Per-firm profiles are never read — `FirmMirror` silently protects nothing on a mapped account
+### P1-42. Per-firm profiles are never read — `FirmMirror` silently protects nothing on a mapped account — CLOSED 2026-08-07
 *(found 2026-08-07 while deciding what an armed shadow session would actually exercise)*
 **Where**: `RiskGuardAddOn.cs:3594` (the call site) and `:3656` (`ComputeFirmMirror`), against
 `FirmMirrorConfig.AccountFirmMap` / `FirmProfiles` (`:4294`, `:4295`).
@@ -560,6 +592,17 @@ researched profiles in `FirmProfiles` (TakeProfitTrader, Tradeify, Lucid, Apex �
 carrying the real $1,500 EOD trailing drawdown). Net effect: **no firm rule evaluates for any
 account, including the funded TakeProfit Trader account, and mapping that account would not
 change it.** The researched numbers are dead config.
+
+**Fixed by**: `ResolveEffectiveFirmConfig` — maps account → firm → profile and substitutes that
+profile's `TrailingDD`/`DailyLoss`, keeping the daily boundary (a property of the clock, not the
+firm). Falls back to the top-level pair when the account is unmapped, the firm is absent, or the
+profile omits a sub-rule. **The audit-log payloads read the effective config too**: left on the
+top-level values they would have described a rule that did not run, which is the shape of failure
+that made this defect invisible in the first place.
+**Test**: red at baseline (430 passed / 3 failed) against the exact live config shape, green after
+(433/0), red again when the resolver call is reverted.
+
+Original fix note follows.
 
 **Fix**: resolve an effective profile per account before computing. Look up
 `AccountFirmMap[st.AccountName]`, then `FirmProfiles[firmName]`, and feed that profile's
@@ -910,10 +953,10 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
 | P1-39 CLOSED | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
-| P1-42 | silent no-op | RiskGuardAddOn.cs:3594, 3656 | `AccountFirmMap`/`FirmProfiles` are never read; firm-mirror protects nothing on a mapped account, and preflight validates the unused mapping |
+| P1-42 CLOSED | silent no-op | RiskGuardAddOn.cs:3594, 3656 | `AccountFirmMap`/`FirmProfiles` are never read; firm-mirror protects nothing on a mapped account, and preflight validates the unused mapping |
 | P1-40 CLOSED | false flatten | PropFirmProtectionSuite.cs:110; RiskGuardAddOn.cs:1325 | giveback rule was proportional-only; a one-tick peak made any retrace a 100% breach — fired 6× in 36 s live |
-| P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
-| P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
+| P1-16 CLOSED | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
+| P1-17 CLOSED | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
 | P1-18 | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |
 | P1-19 | over-broad | RiskGuardAddOn.cs:1085-1162, 2450 | duplicate actions; flatten ignores instrument scope |
 | P1-20 CLOSED | gate bypass | TradeCopierEngine.cs:650 | sim detection by name prefix |

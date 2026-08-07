@@ -3,13 +3,13 @@
 **Last updated**: 2026-08-07 (session 5)
 **Branch**: `harden/riskguard-copier-p0`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (42 defects; P0, Phase B and Phase C all closed, plus `P1-39` and `P1-40`)
-**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 427 passed, 0 failed.
+**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 448 passed, 0 failed.
 
 ---
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**19 of 42 defects are closed. Suite: 427 passed, 0 failed.** All nine P0, all of Phase B, all of
+**22 of 42 defects are closed. Suite: 448 passed, 0 failed.** All nine P0, all of Phase B, all of
 Phase C bar `P1-36`, plus `P1-40` and `P1-39` — both found by the first armed session. The addon
 is deployed and running in `shadow`, compiling clean in NT8.
 
@@ -18,7 +18,8 @@ is deployed and running in `shadow`, compiling clean in NT8.
 | **A** — deploy P0 to shadow | Deployed; **T3 validated live 2026-08-07 (§4g); T5 needs an acting mode** |
 | **B** — test foundation | ✅ T1–T3 tests backfilled and proven falsifiable; `P2-28` |
 | **C** — P1 safety-critical | ✅ `P1-20`, `P1-37`, `P1-10`, `P1-35`, `P1-11`, `P1-15`, `P1-40`; **`P1-36` left** |
-| **D–G** | Not started — §4a |
+| **D** — P1 rule semantics | `P1-16`, `P1-17` closed; **`P1-18`, `P1-19` left** |
+| **E–G** | Not started — §4a |
 
 ### Three things to know before you touch anything
 
