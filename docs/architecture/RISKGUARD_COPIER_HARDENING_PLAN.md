@@ -11,11 +11,13 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**48 defects.** Numbered once, never renumbered, never reused.
+**50 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
+and closed on 2026-08-07 (session 8), both found by a live operator ATM trade rather than by any
+test — see the entries at the end of §1.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` | 10 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned 2026-08-07 session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-50` | 12 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8 — found by a live ATM trade** |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | **23 closed** — `P1-12`, `P1-14`, `P1-36` closed 2026-08-07 (session 8); `P1-13`'s fail-open half closed, its threading half open |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | `P2-28`, `P2-46`, **`P2-38`, `P2-41`** closed; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
@@ -308,6 +310,59 @@ the exact shipped defect.
 > operator asking whether item (3), the `StopLimit` conversion, could trigger wrong orders.
 > Answering that honestly meant re-deriving what price the follower's stop actually lands on,
 > which is when the `Math.Abs` became visible. **A test suite confirms the cases you thought of.**
+
+### P0-49. The mirrored stop is never placed, because the anchor is read before the position exists — CLOSED 2026-08-07
+*(found by an operator ATM trade on the live box, 2026-08-07 — not by any test)*
+**Where**: `TradeCopierEngine.UpdateFollowerBracketOnFill`, called only from the follower's
+`ExecutionUpdate`
+**What happens**: the bracket's anchor (`FollowerEntryPrice`/`Side`/`Quantity`) was derived by
+re-reading `followerAcc.Positions` at execution time. **NT8 raises `ExecutionUpdate` BEFORE
+`PositionUpdate`**, so on an entry fill there is no position row yet: the method took its flat
+branch, called `ReleaseFollowerBracket`, and returned. The anchor was never set.
+
+Nothing rebuilt it. An ATM stop sits at `Accepted` and raises no further `OrderUpdate`, so
+`OnLeaderOrderUpdate` never fired again either. **The follower was naked for the entire trade** —
+precisely the exposure `P0-9` exists to close, surviving in the trigger rather than the arithmetic.
+
+Observed live, Sim101 → Sim-ORB, MNQ SEP26:
+
+```
+15:43:21.237  Created FSM Sim-ORB|MNQ SEP26 -> Unprotected
+15:43:24.241  [SHADOW] Would execute FlattenPosition triggered by MISSING_STOP_FLATTEN
+15:45:22.572  COPIER_STOP finally submitted -- as the position was CLOSING
+```
+
+**Fixed**: the copier subscribes to `Account.PositionUpdate` for follower accounts, which is the
+authoritative anchor source. On the execution path a flat read is ambiguous, and the anchor
+disambiguates it — a bracket that has never held a position (`FollowerEntryPrice` is `NaN`) has
+nothing to exit *from*, so flat means "the position event is still in flight"; once an anchor
+exists, flat means flat and the bracket is released as before.
+
+> **The first version of this fix simply stopped releasing on the execution path, and
+> `TestBracket_FollowerGoingFlatCancelsTheMirroredStop` caught it immediately.** Releasing on flat
+> is load-bearing; the defect was never that it released, only that it could not tell the two
+> kinds of flat apart.
+
+**The arithmetic was correct throughout.** The live stop landed at 29774.25 = follower entry
+29789.25 + (29774.5 − 29789.5). `P0-9`'s signed offset is now **confirmed on real fills**.
+
+### P0-50. Orphan mirrored stops submitted against a follower that is already flat — CLOSED 2026-08-07
+*(found in the same live trade)*
+**Where**: `TradeCopierEngine.SyncFollowerStop`
+**What happens**: the method trusted the bracket's snapshot of the follower all the way to
+`Submit`. When the follower had gone flat in the meantime, it submitted a protective stop anyway —
+three of them on the live box (`34225`, `34226`, `34227` at 15:45:22 / :30 / :31), each cancelling
+the last, all against a flat account, each consuming one of `MaxBracketStopAttempts`.
+
+**An orphan stop on a flat account is not a leftover. It opens a position in the opposite
+direction the moment it triggers.** The design doc already says this under `P0-9`; the code did
+not enforce it on this path.
+
+**Fixed**: `SyncFollowerStop` re-reads the live position immediately before touching the broker
+and aborts on flat (`BRACKET_ABORTED_FLAT`) or on a side mismatch (`BRACKET_ABORTED_SIDE`),
+cancelling any stale stop on the way out. Quantity is taken from the live position too, so a
+follower that scaled out in between cannot receive a stop larger than the position it covers.
+This is the same discipline T2 already applies to `RiskGuardAutoStop`, and for the same reason.
 
 ---
 

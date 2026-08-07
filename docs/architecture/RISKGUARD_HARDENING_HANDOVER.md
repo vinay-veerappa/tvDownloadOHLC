@@ -2,27 +2,35 @@
 
 **Last updated**: 2026-08-07 (session 8 — the P1 band closes; NT8 up, deployed, compiled clean)
 **Branch**: `harden/riskguard-copier-p0` (session-8 work committed here, **not yet merged or pushed**)
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, **36 closed, 12 open** (`P0-9` and `P1-13` are part-closed and counted as open; the other ten are `P2-24`, `P2-25`, `P2-26`, `P2-27`, `P2-29` and the five P3s)
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **50 defects, 38 closed, 12 open** (`P0-9` and `P1-13` are part-closed and counted as open; the other ten are `P2-24`, `P2-25`, `P2-26`, `P2-27`, `P2-29` and the five P3s). `P0-49`/`P0-50` were opened and closed on 2026-08-07 — see §4l
 **Live state**: deployed, `shadow`. NT8 compiles clean (0 errors), all 9 addon files in sync.
-Suite **616 passed, 0 failed**. Loop selftest **11/11**.
+Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 
 > ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
 >
 > | | |
 > |---|---|
-> | Repo | 7 commits on `harden/riskguard-copier-p0`. **Not merged, not pushed** |
+> | Repo | 11 commits on `harden/riskguard-copier-p0`. **Not merged, not pushed** |
 > | NT8 | Running, **all 9 addon files in sync**, `nt_compile` 0 errors, feed connected, no open positions |
-> | Suite | 616 passed / 0 failed (was 524) · loop selftest 11/11 |
+> | Suite | 622 passed / 0 failed (was 524) · loop selftest 11/11 |
 > | Operational | **Nothing outstanding.** `P2-41` is closed and verified live |
 >
 > **Closed this session**: `P1-12`, `P1-14`, `P1-36`, `P2-38`, `P2-41`; `P1-13`'s fail-open half;
-> `P0-9` items (3) and (4); stress tests `S5`, `S6`, `S8`, `S9`. **The P1 band is done apart from
-> `P1-13`'s threading inversion.**
+> `P0-9` items (3) and (4); stress tests `S5`, `S6`, `S8`, `S9`; and **`P0-49`/`P0-50`, two new P0s
+> found by a live ATM trade** (§4l). **The P1 band is done apart from `P1-13`'s threading
+> inversion.**
 >
-> **The caveat from session 7 has not moved: the mirrored stop (`P0-9`) has still never been seen
-> on a live fill.** Nothing this session changed that, and no amount of unit testing can — it is
-> exactly the standard `P1-40` slipped through. **Watch for `BRACKET_MIRRORED` in the output tab on
-> the next copied trade and check the price against where the follower actually filled.**
+> **The session-7 caveat resolved — half well, half badly.** A live ATM trade finally exercised the
+> mirrored stop, and:
+> - ✅ **the signed-offset arithmetic is CORRECT on real fills** (29774.25 = 29789.25 − 15);
+> - ❌ **the trigger never fired.** The follower was naked for the whole trade and then collected
+>   three orphan stops on a flat account. Fixed as `P0-49`/`P0-50`, deployed, compiles clean.
+>
+> ✅ **RE-VALIDATED LIVE the same session, after the fix** (15:55:56, MNQ SEP26). Follower filled
+> 29822.25; `COPIER_STOP` at 29807.25 was submitted **1 millisecond later**, and the follower's FSM
+> was created **`ProtectedPending`** instead of `Unprotected`. Leader entry 29821.75, leader stop
+> 29806.75, offset -15.00, follower 29822.25 - 15 = 29807.25 — exact. **`P0-9`'s mirrored stop is
+> now validated end to end on real fills: arithmetic, timing and FSM state.**
 >
 > Note the copier **acts regardless of guard mode** — `shadow` restrains RiskGuard, not the
 > copier. Both relationships are enabled and `Sim101 → Sim-ORB` is `ArmedForLive: true`, so the
@@ -500,19 +508,21 @@ table.
 
 ### The one that outranks everything else
 
-**Validate the mirrored stop on a live feed.** `P0-9`'s bracket replication has never been seen
-on a real fill. It is proven by falsifiable tests and a clean net48 compile — *which is exactly
-the standard `P1-40` slipped through*, because a proportional rule looked correct at every scale
-the tests used. Both copier relationships are enabled and `Sim101 → Sim-ORB` is
-`ArmedForLive: true`, so the next Sim101 fill places a real stop order on the follower.
+✅ **The mirrored stop is VALIDATED LIVE (2026-08-07, §4l).** Two ATM trades: the first exposed
+`P0-49`/`P0-50`, the second — after the fix — mirrored the stop **1 ms** after the follower's fill,
+at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FSM created
+`ProtectedPending`. This was the longest-standing open item in this document.
 
-> **Watch for `BRACKET_MIRRORED` in the output tab and check the price against where the follower
-> actually filled.** Everything below this is secondary. Note the copier acts regardless of guard
-> mode — `shadow` restrains RiskGuard, not the copier.
+**What remains unvalidated live**: `T5`'s fail-closed gate, which needs an acting mode
+(`IsGuardProtecting` requires `mode == "live"`); and the firm-mirror rules, which are loaded but
+unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
+copier.
 
 ### Needs an operator decision, not a code change
 
-**`P0-9` item (1) — profit targets and OCO.** The last piece of `P0-9`.
+**`P0-9` item (1) — profit targets and OCO.** The last piece of `P0-9`, and **the operator hit it
+immediately**: on the validated trade, Sim101 carried `Target1` (Limit Sell 29851.5) and Sim-ORB
+received only `COPIER_STOP`. That is by design, and it is the first thing anyone notices.
 
 - *Against building it now*: a mirrored target is **upside, not risk**. The follower already exits
   when the leader's target fill is copied, so the gap is fill quality, not exposure. Building it
@@ -1208,6 +1218,82 @@ Doing the risky half before its coverage exists is how `P1-40` shipped.
 
 ---
 
+## 4l. Session 8, second half — the live ATM trade that found two P0s
+
+The operator placed an ATM order on `Sim101` with `Sim-ORB` following, and reported that the
+follower "did not follow". It had followed — the entry copy was correct. What had not happened
+was the protective stop, and chasing that produced **`P0-49` and `P0-50`**, both P0, neither
+reachable by any test in the suite.
+
+| | |
+|---|---|
+| 15:43:21.232 | `COPIER_FOLLOW` Buy 1 MNQ SEP26 filled 29789.25 on Sim-ORB — **the copy worked** |
+| 15:43:21.237 | `Created FSM Sim-ORB\|MNQ SEP26 -> Unprotected` |
+| 15:43:24.241 | `[SHADOW] Would execute FlattenPosition triggered by MISSING_STOP_FLATTEN` |
+| 15:45:22.572 | `COPIER_STOP` submitted — **~2 minutes late, as the position was closing** |
+| 15:45:30, :31 | two more `COPIER_STOP` orders, against a **flat** account |
+
+**The follower was naked for the entire trade**, then collected three orphan stops.
+
+### The NT8 fact underneath it
+
+**`ExecutionUpdate` is raised BEFORE `PositionUpdate`.** The bracket anchored itself by re-reading
+`followerAcc.Positions` from the execution handler, so on every entry fill it read a position that
+did not exist yet, released the bracket, and returned. Nothing rebuilt it, because an ATM stop
+sits at `Accepted` and raises no further `OrderUpdate` — so the leader path never fired again
+either. One event-ordering assumption, and the whole of `P0-9` silently did nothing.
+
+This is the same class as the `P1-22` lesson in §4j: **the test stub is more forgiving than NT8,
+and the suite cannot tell you.** The stub raises whatever the test raises, in whatever order the
+test chooses, and every bracket test drove position-then-execution because that is the order a
+person writes it in.
+
+### The second trade — validated, 15:55:56
+
+`P0-49`/`P0-50` were deployed and a second ATM trade run immediately:
+
+| | |
+|---|---|
+| 15:55:56.9857 | Sim-ORB `COPIER_FOLLOW` **Filled** |
+| 15:55:56.9988 | Sim-ORB execution, price **29822.25** |
+| 15:55:56.9998 | Sim-ORB `COPIER_STOP` **@ 29807.25 — one millisecond later** |
+| 15:55:57.0058 | `Created FSM Sim-ORB\|MNQ SEP26 -> ProtectedPending` |
+
+Leader entry 29821.75, leader `Stop1` 29806.75, offset **-15.00**; follower 29822.25 - 15 =
+**29807.25**. Exact. And the follower's FSM is created **`ProtectedPending`** rather than
+`Unprotected`, so no `MISSING_STOP_FLATTEN` fires at all — compare the first trade, where the FSM
+was born naked and the guard would have flattened it three seconds later.
+
+**`P0-9`'s mirrored stop is now validated end to end on real fills: arithmetic, timing, and
+resulting FSM state.** That was the longest-standing open item in this document, carried since
+session 7.
+
+Worth noting for the next reader: the stop went out at `.9998`, *before* the follower's
+`PositionUpdate` event at `1.0058`. NT8's `Account.Positions` collection had already been updated
+even though the event had not yet been raised, so the execution path found the anchor and placed
+the stop. The `PositionUpdate` subscription added by `P0-49` is the **safety net** for the case
+where the collection is not yet updated — which is exactly what happened on the first trade. Both
+paths are needed; neither alone is sufficient.
+
+### What is still NOT validated live
+
+- **Profit targets are not mirrored** — the operator noticed within one trade. Sim101 carried
+  `Target1` (Limit Sell 29851.5); Sim-ORB got only `COPIER_STOP`. Deliberate, and the last open
+  item of `P0-9`. See §4a.
+- **`T5`'s fail-closed gate** still needs an acting mode; `IsGuardProtecting` requires
+  `mode == "live"`.
+- **Firm-mirror rules** are loaded but unmapped, so none of them fire.
+
+### A note on what "it didn't follow" meant
+
+The reported symptom pointed at the wrong relationship. The `SUB_MINIMUM_SKIPPED` line in the
+output was **SimCopy2**, not Sim-ORB, and it was **correct behaviour**: SimCopy2 has
+`AutoSymbolConversion` on, so MNQ→NQ is micro→mini, 1 MNQ scales to 0.1 NQ, and the copier refuses
+rather than rounding up to a 10× notional. That is `P0-6` working as designed. Reading the whole
+log rather than the one alarming line is what separated the two.
+
+---
+
 ## 5. Decisions already made — do not re-litigate
 
 - **The copier fails closed on ENTRIES, never on EXITS** (settled across `P0-5`, `P0-6`, `P1-23`,
@@ -1279,6 +1365,13 @@ was exactly that until 2026-08-07.
 
 ## 6. Known traps
 
+- **NT8 raises `ExecutionUpdate` BEFORE `PositionUpdate`.** Any code that reads `account.Positions`
+  from an execution handler is reading a position that does not exist yet on an entry fill. This
+  cost `P0-49`: the copier's bracket anchored itself that way and therefore never anchored at all,
+  leaving followers naked for the life of every ATM trade. **The test stub raises whatever the
+  test raises, in whatever order the test chose** — and every bracket test drove
+  position-then-execution, because that is the order a person writes it in. Subscribe to
+  `PositionUpdate` for anything that needs the net position.
 - **Two unrelated background processes commit to this repo.** Stage explicit paths, never
   `git commit -a` and never `git add <dir>` — a `git add docs/architecture/` swept in an
   unrelated agent's file during this work.

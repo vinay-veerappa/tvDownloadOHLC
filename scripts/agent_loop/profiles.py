@@ -147,6 +147,18 @@ COVER are still fair game and are what item 5 is for.""",
         "6-lot position covered by two 3-lot stops that reports 3 of 6, and the auto-stop that "
         "follows makes 9 lots of protection behind 6. The auto-stop is likewise sized to "
         "liveQuantity MINUS existing cover, not to the whole position.",
+        "NT8 raises ExecutionUpdate BEFORE PositionUpdate. Code that reads account.Positions "
+        "from an execution handler reads a position that does not exist yet on an entry fill "
+        "(P0-49, closed 2026-08-07). The copier's follower bracket anchors from "
+        "Account.PositionUpdate for this reason; do not propose collapsing that back into the "
+        "execution handler. On the execution path a flat read is AMBIGUOUS and the anchor "
+        "disambiguates it: no anchor yet means the position event is still in flight, so do not "
+        "release; anchor present means genuinely flat, so do release.",
+        "SyncFollowerStop re-reads the follower's live position immediately before every broker "
+        "call and aborts on flat or side mismatch (P0-50, closed 2026-08-07). Do not propose "
+        "removing that as redundant with the bracket state -- three orphan COPIER_STOP orders "
+        "were submitted against a flat live account because the snapshot was trusted to Submit. "
+        "An orphan stop on a flat account opens a position when it triggers.",
         # --- copier decisions, settled 2026-08-07 (session 7) -------------------
         "The copier FAILS CLOSED ON ENTRIES, NEVER ON EXITS. A quarantined relationship still "
         "copies exits (P1-22), unimplemented sizing modes block entries only (P1-23), and an "
