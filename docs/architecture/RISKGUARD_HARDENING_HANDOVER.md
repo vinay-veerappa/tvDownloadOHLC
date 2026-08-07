@@ -1,54 +1,40 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 7 — ends with NT8 down; see the resume block below)
+**Last updated**: 2026-08-07 (session 7 — closed clean; NT8 up, deployed, armed)
 **Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 33 closed + `P0-9`'s naked-follower half
 **Live state**: deployed, `shadow`, **armed and guarding**. NT8 compiles clean (0 errors).
-Suite **520 passed, 0 failed**.
+Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11**.
 
-> ✅ **Everything the previous revision of this block was waiting on is DONE and verified live
-> (2026-08-07, session 7 close).**
+> ✅ **Session 7 closed clean. Nothing is in flight and nothing is blocked.**
 >
-> | Item | Result |
+> | | |
 > |---|---|
-> | NT8 login lockout | Cleared. New process, AddOns loaded, bridge answering |
-> | `P0-48` — 57 orphaned copier handlers | **Cleared by the restart**, then **proven not to recur** — see below |
-> | `P1-22` net48 build | **0 errors.** The NT8 tree is no longer parked; repo and `bin/Custom/AddOns` match |
-> | `ShadowSessionsCompleted` | Reset 5 → 0, then counted **1** genuine session and **held at 1 across a recompile** |
-> | Guard | `mode: shadow`, `isArmed: true`, `guarding: true` — self-armed through both reloads (`P1-47`) |
+> | Repo | `c6168033` on `harden/riskguard-copier-p0`, **unmerged**. All session work committed |
+> | NT8 | Running, logged in, **all 9 addon files in sync**, `nt_compile` 0 errors |
+> | Guard | `mode: shadow`, `isArmed: true`, `guarding: true` |
+> | Suite | 524 passed / 0 failed · verifier 22/22 · loop selftest 11/11 |
+> | Operational | **Nothing outstanding except `P2-41`** (config POST does not merge) |
 >
-> **`P0-48` is closed, and the fix is proven in production rather than argued.** Handler census on
-> `Sim101.ExecutionUpdate`:
+> **One caveat that matters more than any of the above: the mirrored stop (`P0-9`) has never been
+> seen on a live fill.** It is proven by nine falsifiable tests and a clean net48 compile — which
+> is exactly the standard `P1-40` slipped through, because a proportional rule looked correct at
+> every scale the tests used. **Watch for `BRACKET_MIRRORED` in the output tab on the next copied
+> trade and check the price against where the follower actually filled.**
 >
-> | | Before (session 7 open) | After restart | After a further recompile |
-> |---|---|---|---|
-> | `McpBridgeAddOn` (orphans) | **57** | 0 | 0 |
-> | `TradeCopierEngine` | 1 | 1 | **1** |
-> | `RiskGuardAddOn` / `RiskManagerAddOn` | 1 / 1 | 1 / 1 | 1 / 1 |
-> | total | 67 | 8 | 10 |
+> Note the copier **acts regardless of guard mode** — `shadow` restrains RiskGuard, not the
+> copier. Both relationships are enabled and `Sim101 → Sim-ORB` is `ArmedForLive: true`, so the
+> next Sim101 fill will place a real stop order on the follower.
 >
-> The last column is the load-bearing one: a recompile reloads every AddOn, and **before `P1-21`
-> that added an orphan every time**. `TradeCopierEngine` staying at exactly 1 across it is the
-> leak being fixed, observed. (Totals rose 8→10 only because NT8's own `ChartBars` and
-> `ExecutionGrid` re-registered — not ours.)
->
-> **`P1-37`'s debounce is likewise proven from a clean baseline**: the counter went 0 → 1 on the
-> first genuine shadow session and **stayed at 1** through the recompile. Pre-fix it went 0 → 3 in
-> four minutes of exactly this churn. `MinShadowSessions=3` is now correctly unsatisfied, so the
-> live arming gate is trustworthy on this box for the first time.
->
-> **`P0-9`'s naked-follower exposure is now closed too** (stops mirrored by distance, anchored to
-> the follower's own fill; `S7` landed with it; net48 clean). Targets/OCO, `EnableFollowerAtm`,
-> `StopLimit` offsets and leader-cancels-stop remain — see the plan's `P0-9` for the explicit list.
-> **The mirrored stop has not yet been observed on a live fill**; it is proven by 5 falsifiable
-> tests and a clean compile only. Watch for `BRACKET_MIRRORED` in the output tab on the next
-> copied trade. Nothing operational is outstanding except `P2-41`.
+> **Next work: `P0-9`'s remaining items** (targets/OCO, `StopLimit` offsets, leader-cancels-stop),
+> then `P1-12`/`P1-13`/`P1-14`, `P1-36`, stress `S5`/`S6`/`S8`/`S9`, and the P2 band. Roadmap in
+> §4a; the loop's own backlog is [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §12.
 
 ---
 
 ## 0. Start here (read this, then §4a for the roadmap)
 
-**33 of 48 defects closed, plus `P0-9`'s naked-follower exposure. Suite 520/0. NT8 compiles clean, and every fix in this session has
+**33 of 48 defects closed, plus `P0-9`'s naked-follower exposure. Suite 524/0. NT8 compiles clean, and every fix in this session has
 been verified on the live box** (see the banner).
 
 | Phase | State |
@@ -913,8 +899,131 @@ relationship on its first copy.
 
 ---
 
+## 4j. Session 7, second half — P0-9, S7, and the loop's review mode
+
+Eight commits. `P1-21` → `P1-22` → `P0-48` verified → `P0-9` → review mode. The through-line worth
+carrying: **three separate defects this session were found by asking a question, not by a gate.**
+
+| Commit | What |
+|---|---|
+| `3de5947f` | `P1-21` closed; opened `P0-48` (57 leaked handlers) |
+| `441c11e2` | `P1-22` closed — latency/slippage measured, `MaxSlippageTicks` ceiling |
+| `3ea3bb3a` | Shadow-counter reset, and corrected a destructive command in this file |
+| `0b6caafa` | `P0-48` closed and **verified live** |
+| `51892d54` | `P0-9`'s naked-follower half + stress test `S7` |
+| `9bbbe549` | Signed-offset fix — a trailed stop was being inverted |
+| `c6168033` | Loop `review` mode + the two defects it found |
+
+### P0-9 — what shipped, and what did not
+
+Followers are no longer naked. The copier subscribes to `OrderUpdate`, recognises the leader's
+protective stop, and mirrors it **by signed offset anchored to the follower's own fill**:
+
+```
+followerStop = followerEntry + (leaderStopPrice - leaderPositionAvgPrice)
+```
+
+Copying the leader's stop *price* would be wrong by exactly the slippage `P1-22` measures, and
+wrong by a whole price scale across a micro/mini conversion.
+
+**Still open under `P0-9`** — read the plan before assuming it is done: profit targets and OCO,
+`StopLimit` limit offsets (assessed as safe: `StopMarket` is *more* likely to fill, so the
+divergence runs toward the follower being protected), and a leader that cancels its stop while
+staying in position. `EnableFollowerAtm`/`FollowerAtmStrategyName` were **deleted**, not
+implemented — they were unreachable config that could not be set by any means while implying
+followers got a bracket.
+
+> **A copier-side default bracket was deliberately not built.** RiskGuard's auto-stop already owns
+> "position with no stop". Two independent stop sources on one position over-cover and flip it when
+> both fire — the same hazard the cancel-then-replace rule prevents *within* the copier, but across
+> two components that cannot see each other.
+
+### The three defects that gates did not find
+
+**1. The signed-offset inversion (`9bbbe549`).** `Math.Abs` discarded the sign, so a leader
+trailing its stop into profit — stop above entry on a long, the most ordinary trade management
+there is — mirrored onto the *losing* side of the follower's entry, converting a locked-in gain
+into open risk of equal size. It survived a green 515-test suite, a clean net48 compile and a
+20/20 falsifiability check. **The trail test moved the stop 17990 → 17995 → 17998, all below
+entry, so it could never have caught it.** Found because the operator asked whether the
+`StopLimit` conversion could trigger wrong orders; answering honestly meant re-deriving what price
+the follower's stop lands on.
+
+**2 and 3. Naked-on-failure (`c6168033`), found by review mode.** A stop whose `Submit` threw, or
+which the broker rejected moments later, left `WorkingStop` null with a valid offset and **nothing
+re-triggered submission** — naked for the life of the position. And the `OrderUpdate` reporting
+that rejection **was being received and discarded**, because the handler returned early for any
+account with no relationships, which every follower is.
+
+### Loop `review` mode — built, and it earned its keep immediately
+
+`--mode review --review-base <ref>` puts a committed diff in front of the panel and arbiter. No
+implementer, no regions, no worktree, no apply path. Full design and properties:
+[AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §11; the mode backlog is §12.
+
+It exists because **`patch` mode's guarantee does not hold for hand-written work.** Gate 0 makes
+`*Tests.cs` unreachable to the implementer precisely so the grader is independent. When one author
+writes the change *and* its tests, the tests encode the cases that author already thought of, and
+the suite goes green for the same reason the bug got written.
+
+First run, on the `P0-9` diff: **24 findings, 3 upheld, 8 rejected, 13 out of scope.** Two upheld
+were real (above). **The third was wrong and the arbiter upheld it anyway** — it claimed a 10-point
+ES stop becomes "10 follower-points" on MES, but every pair in the matrix trades at the same price
+with the same tick size and only the dollar multiplier differs, which quantity scaling handles.
+**Read the rulings. Same lesson as §4c.3.**
+
+> **Fixing an upheld finding introduced the defect a REJECTED finding described.** Re-submission
+> creates exactly the reject→resubmit flood finding #13 warned of and the arbiter dismissed *on
+> the grounds that no such loop existed* — true before the fix, false after it.
+> `MaxBracketStopAttempts` bounds it. The first bound was itself wrong: it reset the counter on
+> `Submit` success, but the failure mode is rejection *after* a successful submit, so the bound was
+> unreachable. The test caught it at 21 submissions.
+
+### Two operational facts recorded elsewhere but easy to lose
+
+- **`ShadowSessionsCompleted` was reset** (5 → 0) and has since counted **1** genuine session and
+  **held at 1 across a recompile** — `P1-37`'s debounce proven from a clean baseline. The live
+  arming gate is trustworthy on this box for the first time. Backup:
+  `RiskGuard/state.json.bak_20260807_095249`.
+- **`P0-48` is closed and verified**: 67 handlers → 8 after restart, and `TradeCopierEngine` held
+  at exactly **1** across a further recompile — the event that used to add an orphan every time.
+
+### Method notes worth repeating
+
+- **"NT8 closed" means "the AddOn is not loaded"**, which is not the same as "the process is gone".
+  The reliable check is the bridge not answering on `localhost:7890`.
+- **Deploy unverified addon code mid-session, never at startup.** A failed `nt_compile` hot-swap
+  leaves the running assembly in place and is recoverable; broken sources in `bin/Custom/AddOns/`
+  only bite at the next startup, where they stop **every** AddOn loading, RiskGuard included.
+- **The test stub can be more forgiving than NT8, and the suite cannot tell you.** `P1-22`'s
+  pending-copy map was keyed on `Order.OrderId` and every test passed; NT8's `OrderId` is neither
+  unique nor stable. Check how the existing addon uses an API, and why, before relying on it.
+
+---
+
 ## 5. Decisions already made — do not re-litigate
 
+- **The copier fails closed on ENTRIES, never on EXITS** (settled across `P0-5`, `P0-6`, `P1-23`,
+  `P1-22`). A quarantined relationship still copies exits; unimplemented sizing modes block
+  entries only; an exit is never rounded or clamped to zero while the follower holds a position.
+  Blocking an exit strands the follower in a position the leader has already left — worse than the
+  thing being guarded against. Reviewers propose "just quarantine it" every time.
+- **Orders are keyed by object reference, never by `Order.OrderId`** (`P1-22`). NT8's `OrderId` is
+  neither unique nor stable across the historical→live transition (`RiskGuardAddOn.cs:4481`). The
+  test stub assigns one stable GUID per order, so an id-keyed map passes the entire suite.
+- **The mirrored bracket stop carries the leader's SIGNED offset**, applied to the follower's own
+  fill (`P0-9`). Never `Math.Abs` — a leader trailing into profit puts the stop above entry on a
+  long, and an absolute distance mirrors it onto the losing side. Never the leader's stop *price* —
+  that is wrong by the slippage `P1-22` measures, and by a whole scale across a micro/mini
+  conversion.
+- **Bracket re-submission is bounded, and the counter does not reset on a successful `Submit`**
+  (`P0-9`). The failure mode is a broker that accepts the submit and rejects the order moments
+  later, so "Submit did not throw" is not evidence of protection.
+- **Slippage and mirrored distances are computed only between price-comparable instruments**
+  (`P1-22`, `P0-9`). A `CustomSymbolMappings` entry may legitimately point ES at NQ.
+- **The copier places no default bracket of its own** (`P0-9`). RiskGuard's auto-stop owns
+  "position with no stop"; two independent stop sources over-cover and flip the position when both
+  fire. `EnableFollowerAtm` was deleted, not implemented.
 - **Multi-stop coverage aggregation is out of scope** (tracked as **P1-36**). `CoveredQuantity`
   deliberately follows a single stop order. Reviewers will raise this repeatedly; the bounded
   mitigation already in place is the `ReferenceEquals` guard plus "coverage may only be replaced

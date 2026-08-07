@@ -139,6 +139,32 @@ COVER are still fair game and are what item 5 is for.""",
     settled=(
         "Multi-stop coverage aggregation is OUT OF SCOPE (tracked as P1-36). CoveredQuantity "
         "deliberately follows a single stop order. Do not raise it.",
+        # --- copier decisions, settled 2026-08-07 (session 7) -------------------
+        "The copier FAILS CLOSED ON ENTRIES, NEVER ON EXITS. A quarantined relationship still "
+        "copies exits (P1-22), unimplemented sizing modes block entries only (P1-23), and an "
+        "exit is never rounded or clamped to zero while the follower holds a position (P0-5, "
+        "P0-6). Blocking an exit strands the follower in a position the leader has already left, "
+        "which is worse than the thing being guarded against.",
+        "Pending copies and recognised stops are keyed by Order OBJECT REFERENCE, never by "
+        "Order.OrderId. NT8's OrderId is neither unique nor stable across the historical->live "
+        "transition (RiskGuardAddOn.cs:4481). The test stub assigns one stable GUID per order, so "
+        "an id-keyed map passes the whole suite and fails in production.",
+        "The mirrored bracket stop carries the leader's SIGNED offset "
+        "(leaderStopPrice - leaderPositionAvgPrice) applied to the FOLLOWER's own fill. Never "
+        "Math.Abs: a leader trailing its stop into profit puts it above entry on a long, and an "
+        "absolute distance mirrors that onto the losing side of the follower's entry. Never the "
+        "leader's stop PRICE either -- that is wrong by the slippage P1-22 measures.",
+        "Bracket stop re-submission is BOUNDED by MaxBracketStopAttempts, and the counter must "
+        "NOT reset when Submit returns without throwing. The failure mode is a broker that "
+        "accepts the submit and rejects the order a moment later, so 'Submit did not throw' is "
+        "not evidence of protection and resetting there makes the bound unreachable.",
+        "Slippage figures and mirrored stop distances are computed ONLY between price-comparable "
+        "instruments (same root, or either direction of the built-in mini/micro matrix). A "
+        "CustomSymbolMappings entry may legitimately point ES at NQ, whose prices are unrelated.",
+        "The copier does NOT place a default/ATM bracket of its own when the leader has no stop. "
+        "RiskGuard's StopAttachSeconds auto-stop already owns 'position with no stop', and two "
+        "independent stop sources on one position over-cover and flip it when both fire. "
+        "EnableFollowerAtm was deleted rather than implemented.",
         # P1-35 was CLOSED on 2026-08-07. This entry used to read "orphan-cancel under
         # _stateLock STAYS", which would now tell a reviewer to approve reintroducing the
         # defect. A settled decision that has gone stale is worse than none.
