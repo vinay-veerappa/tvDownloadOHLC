@@ -2,8 +2,8 @@
 
 **Last updated**: 2026-08-07 (session 4)
 **Branch**: `harden/riskguard-copier-p0`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (37 defects, P0→P3; P0 all closed)
-**DEPLOYED to shadow 2026-08-07.** NinjaTrader is running the P0 addon in `shadow` mode. The branch is *not* yet merged to `main`. Suite 356 passed, 0 failed.
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (38 defects; P0, Phase B and Phase C all closed)
+**DEPLOYED to shadow 2026-08-07.** NinjaTrader is running the current addon in `shadow` mode. The branch is *not* yet merged to `main`. Suite 399 passed, 0 failed.
 
 ---
 
@@ -25,7 +25,18 @@ gate counts addon restarts rather than sessions, and went 0 → 3 in four minute
 recompile churn. Fix it before any live arming, and treat the current
 `ShadowSessionsCompleted = 3` in `state.json` as meaningless.
 
-The roadmap for the remaining 28 defects is §4a; the deployment runbook is §4e.
+**Phases B and C (gates) also landed on 2026-08-07.** The T1–T3 acceptance tests were
+backfilled and each *verified to fail when its fix is reverted*; P2-28 collapsed the duplicate
+source copies and made the deploy-drift check trustworthy; P1-20 and P1-37 closed two safety
+gates that were not actually gating. Suite 356 → 399, 0 failed.
+
+**One manual step is outstanding**: the live `state.json` still reads
+`ShadowSessionsCompleted = 5`, inflated by pre-fix restarts. It no longer climbs, but it must be
+reset **with NinjaTrader closed** before any live arming — the exact commands are in the plan
+under P1-37. It was deliberately not edited during the session, because shutdown flushes
+in-memory state over the file and a torn write would lose persisted lockouts.
+
+The roadmap for the remaining 25 defects is §4a; the deployment runbook is §4e.
 
 
 ```powershell
@@ -352,22 +363,24 @@ The general lesson for this loop: when a gate says a model got the format wrong,
 *content* is there before spending another round. Marker punctuation is not what the gates exist
 to check.
 
-## 4a. Roadmap for the remaining 28 defects
+## 4a. Roadmap for the remaining 25 defects
 
-**37 defects total, 9 closed (all P0), 28 open**: 17 P1, 6 P2, 5 P3. Band membership and the
+**38 defects total, 13 closed, 25 open**: 15 P1, 5 P2, 5 P3. Closed since P0: `P2-28`
+(Phase B), `P1-20` and `P1-37` (Phase C). `P2-38` was opened on 2026-08-07 — the same
+name-prefix hole as P1-20, in `McpBridgeAddOn`'s strategy-deploy guard. Band membership and the
 P1-30/31 → P1-35/36 renumbering are in the plan's inventory table. `P1-37` was found by the
 Phase A shadow deployment on 2026-08-07 (§4f).
 
 Decided 2026-08-07: **deploy P0 to shadow before writing more code.** Done — but shadow ran on a
 feed with no real-time data, so Phase A's acceptance criteria are still unmet (§4f).
 
-### Phase A — deploy P0 (no new code) ← current
+### Phase A — deploy P0 (no new code) — deployed, NOT yet validated
 
 Nine live-risk fixes are in a branch doing nothing. Shadow mode is also the only way to validate
 T3's giveback rule and T5's fail-closed gate against real account data; no unit test can.
 **Runbook in §4e — read it, the ordering is not obvious and the live config is not in shadow.**
 
-### Phase B — foundation: the test suite comes first
+### Phase B — foundation: the test suite comes first ✅ DONE (2026-08-07)
 
 **From here on the work is test-first, and it is enforced, not encouraged.** See the plan's
 §6.0 for the full model. In short: a ticket declares `expect_green`; the loop **refuses** it
@@ -376,7 +389,11 @@ one red; and reviewers must judge the tests' completeness and accuracy, not just
 
 1. ✅ **`expect_green` and the test-first refusal** — landed (`eba565fa`). Reviewers also now
    receive the acceptance tests read-only.
-2. **Backfill tests for T1–T3.** T4/T5 have real coverage; T1–T3 rest on review and
+2. ✅ **Backfilled (2026-08-07, `8716a479`).** Six tests, each *verified to fail with its fix
+   reverted* by `scripts/agent_loop/verify_backfill_reverts.py`. That check caught one test
+   that was pinning defence-in-depth rather than the site it named — written without it, it
+   would have read as thorough and proven nothing. Original wording follows.
+   **Backfill tests for T1–T3.** T4/T5 have real coverage; T1–T3 rest on review and
    not-regressing. Write these before touching any P1 code, and verify each one **fails when the
    fix is reverted** — an unfalsifiable test is the thing this phase exists to prevent:
    auto-stop submit failure rolls back and clears `GraceEmitted`; auto-stop sized from the live
@@ -391,7 +408,10 @@ one red; and reviewers must judge the tests' completeness and accuracy, not just
 the implementer cannot reach it by construction (gate 0, anti-reward-hacking). That is deliberate
 — the grader is written by a different party than the one being graded.
 
-### Phase C — P1 safety-critical
+### Phase C — P1 safety-critical (gates ✅ DONE 2026-08-07; concurrency cluster remains)
+
+✅ **P1-20 and P1-37 are closed** (`53129e33`), both test-first with the tests confirmed red
+first. What remains in this phase is the concurrency cluster. Original reasoning follows.
 
 **Start with P1-20, out of band order.** T5's fail-closed gate keys off
 `followerAcc.Name.StartsWith("Sim")`, so a live account named `SimpsonFund` is exempt from the

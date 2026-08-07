@@ -6,13 +6,13 @@ P1–P3 not started. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_
 
 ## Defect inventory — the count of record
 
-**37 defects.** Numbered once, never renumbered, never reused.
+**38 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37` | 17 | open |
-| P2 — structural | `P2-24` … `P2-29` | 6 | open (`P2-28` ✅ closed; `P2-27` half-done) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37` | 17 | open (`P1-20`, `P1-37` closed) |
+| P2 — structural | `P2-24` … `P2-29`, `P2-38` | 7 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
 > **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
@@ -312,7 +312,7 @@ action to the uncovered delta computed from one stop), so the defect is narrowed
 `RecognizedStopOrder` with a small list, and compute `CoveredQuantity` as the sum. This is the
 same computation the P3-30 reconciler needs, so build it once and share it.
 
-### P1-37. The `MinShadowSessions` arming gate counts addon restarts, not sessions
+### P1-37. The `MinShadowSessions` arming gate counts addon restarts, not sessions — CLOSED 2026-08-07
 *(found during the Phase A shadow deployment, 2026-08-07 — observed live, then confirmed in code)*
 **Where**: `RiskGuardAddOn.cs:1510` (the increment) against `RiskGuardAddOn.cs:211` (the date
 marker) and `RiskGuardAddOn.cs:609` (the rehydrate).
@@ -342,9 +342,26 @@ have *seen activity* before it counts at all — a shadow day with no connected 
 nothing, and counting it is the same error in a milder form.
 **Test**: two constructions on the same simulated date increment the counter exactly once;
 constructions on two different dates increment it twice.
-**Operational note**: the live `state.json` on this machine currently reads
-`ShadowSessionsCompleted = 3` and that value is *not* trustworthy. Reset it to `0` before any
-live arming, while the addon is stopped (it rewrites the file on flush).
+**Fixed by**: persisting `LastShadowSessionDate` in `PersistedStateData` and rehydrating it in
+the same block as the counter, so the pair travels together. Verified in production — the live
+counter held steady across a recompile that would previously have bumped it.
+
+**OUTSTANDING operational step.** The live `state.json` reads `ShadowSessionsCompleted = 5`,
+inflated by restarts before the fix landed. It no longer climbs, but the historical value is
+wrong and `MinShadowSessions=3` currently reads as satisfied. **Reset it with NinjaTrader
+closed**, then restart:
+
+```powershell
+# NT8 must be CLOSED - shutdown flushes in-memory state and would overwrite the edit
+$p = Join-Path $env:USERPROFILE 'Documents/NinjaTrader 8/RiskGuard/state.json'
+$j = Get-Content $p -Raw | ConvertFrom-Json
+$j.ShadowSessionsCompleted = 0
+$j.LastShadowSessionDate = '0001-01-01T00:00:00'
+$j | ConvertTo-Json -Depth 20 | Out-File $p -Encoding utf8
+```
+
+Do not edit it while NT8 is running: the addon rewrites the file on flush, and a torn write
+loses persisted lockouts.
 
 ---
 
@@ -385,12 +402,19 @@ trailing-DD rule in that case and document the precedence in the design doc.
 **Fix**: coalesce actions by `(AccountName, ActionType, Instrument)` before processing; honour
 `action.Instrument` when set and only fall back to account-wide for lockout/panic rules.
 
-### P1-20. Weak simulated-account detection gates the live safety switch
+### P1-20. Weak simulated-account detection gates the live safety switch — CLOSED 2026-08-07
 **Where**: `TradeCopierEngine.cs:650` — `followerAcc.Name.StartsWith("Sim", …)`
 An account named e.g. `SimplyApex-01` is treated as simulated and **bypasses the
 `ArmedForLive` gate** (`653-657`).
-**Fix**: test the connection/provider (`account.Connection?.Options?.Provider == Provider.Simulator`),
-not the name. Fail closed if the provider cannot be determined.
+**Fix as landed**: `TradeCopierEngine.IsSimulationAccount(account)` tests
+`account.Provider == Provider.Simulator` and fails closed — a null account or an
+unidentifiable provider reads as live. Playback is deliberately *not* exempt. The defect cut
+both ways and the tests pin both: a live `SimpsonFund` is now refused, and a genuine Simulator
+account whose name lacks the `Sim` prefix is now served.
+
+**Same defect, different file, still open**: `McpBridgeAddOn.cs:1710, 2243, 2307` gate strategy
+deployment with `Name.StartsWith("Sim") || Provider…` — the name prefix is OR'd in, so it has
+the same hole. Tracked as **P2-38**.
 
 ### P1-21. Copier never re-subscribes to accounts that connect later
 **Where**: `McpBridgeAddOn.cs:252-258` — `Account.All` is enumerated once at `State.Configure`.
@@ -510,6 +534,19 @@ explicit deploy step is the feature.
 Use `--verify --only addons` to check drift and `--only addons` to deploy. Never copy by hand
 (this session did, and it is what left canonical two files ahead of deployed).
 
+### P2-38. The strategy-deploy guard has P1-20's name-prefix hole too
+*(found while fixing P1-20, 2026-08-07)*
+**Where**: `McpBridgeAddOn.cs:1710`, `:2243`, `:2307` —
+`account.Name.StartsWith("Sim") || account.Provider.ToString().Contains("imulat")`.
+**What happens**: the provider test is correct, but the name test is OR'd in front of it, so a
+funded account called `SimpsonFund` is still classified as simulated and can be deployed to
+without `confirmLive=true`. Same root cause as P1-20, different file and different blast radius
+— this one gates *strategy deployment*, not copying.
+**Fix**: drop the name clause at all three sites and reuse
+`TradeCopierEngine.IsSimulationAccount`, or lift that helper somewhere both addons can share.
+**Test**: an account named `SimpsonFund` on a live provider is refused without `confirmLive`.
+P2 rather than P1 because it requires an explicit deploy call to reach, not an automatic path.
+
 ### P2-29. Single-file size / complexity
 `RiskGuardAddOn.cs` is 4,108 lines including a ~700-line WPF window (`RiskGuardWindow`,
 `:3389-4096`); `McpBridgeAddOn.cs` is 5,452. V12 solved the same problem by splitting one
@@ -614,7 +651,7 @@ Two lessons paid for during P0 apply directly:
 |---|---|---|---|
 | **A. Deploy P0** | no new code | — | A full session in `shadow`; `interventions.jsonl` shows no `PEAK_GIVEBACK_BREACH` on a profitable flat account and no wrong `COPY_BLOCKED_NO_GUARD` |
 | **B. Foundation** ✅ | `expect_green` ✅, backfill T1–T3 tests ✅, P2-28 ✅ | submit-failure rolls back and clears `GraceEmitted`; auto-stop sized from live qty; scaled-down position still gets a stop; stop cancelled mid-position re-arms; profitable-flat emits no giveback; flip does not carry `PeakOpenGain` | Every P0 behaviour has a test that fails when reverted |
-| **C. Gate integrity** | **P1-20** first, then **P1-37** | live-named account is NOT treated as simulated; unguarded live follower is refused; two restarts on one date count as one shadow session | T5's fail-closed gate no longer keys off a name prefix; `MinShadowSessions` cannot be satisfied by restarting |
+| **C. Gate integrity** DONE | **P1-20** done, then **P1-37** done | live-named account is NOT treated as simulated; unguarded live follower is refused; two restarts on one date count as one shadow session | T5's fail-closed gate no longer keys off a name prefix; `MinShadowSessions` cannot be satisfied by restarting |
 | **D. Concurrency** | P1-35 + P1-10 (one ticket), P1-11, P1-12, P1-13, P1-14, P1-15, P1-36 | no `Account.*` reachable under `lock (_stateLock)`; sweep does not cancel protective stops; coverage aggregates across two partial stops | Lock-scope gate clean; sweep off the dispatcher |
 | **E. Rule semantics** | P1-16, P1-17, P1-18, P1-19 | 3-partial loss counts as 1; eval target fed cumulative PnL; one trailing-DD implementation; instrument-scoped flatten leaves other instruments alone | Each rule has a test pinning its boundary |
 | **F. Copier fidelity** | P0-9 (real bracket replication), P1-21, P1-22, P1-23, P3-32 | follower brackets present on every copy; re-subscribe on late connect; symbol translation table-driven | Brackets on every copy; latency/slippage from real fills |
@@ -666,12 +703,13 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-15 | coverage gap | RiskGuardAddOn.cs:2231 | re-arm does not seed FSMs for open positions |
 | P1-35 | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
-| P1-37 | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counts addon restarts; 0→3 in 4 min during Phase A |
+| P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
 | P1-18 | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |
 | P1-19 | over-broad | RiskGuardAddOn.cs:1085-1162, 2450 | duplicate actions; flatten ignores instrument scope |
-| P1-20 | gate bypass | TradeCopierEngine.cs:650 | sim detection by name prefix |
+| P1-20 CLOSED | gate bypass | TradeCopierEngine.cs:650 | sim detection by name prefix |
+| P2-38 | gate bypass | McpBridgeAddOn.cs:1710, 2243, 2307 | same name-prefix hole in the strategy-deploy guard |
 | P1-21 | silent no-op | McpBridgeAddOn.cs:252 | copier never re-subscribes on connect |
 | P1-22 | no control | TradeCopierEngine.cs:721 | market-only copies; latency/slippage fields fake |
 | P1-23 | silent fallback | TradeCopierEngine.cs:360, 397 | `Replace`-based symbol translation; 3 sizing modes unimplemented |
