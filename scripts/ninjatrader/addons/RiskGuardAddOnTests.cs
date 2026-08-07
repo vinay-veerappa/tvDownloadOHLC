@@ -641,6 +641,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_RejectedStopIsResubmitted();
             TestBracket_ResubmissionIsBounded();
             TestBracket_IncomparableInstrumentsAreNotMirrored();
+            TestBracket_StopLimitLeaderMirrorsTriggerPriceAsStopMarket();
+            TestBracket_LeaderCancellingItsStopLeavesTheFollowerProtected();
 
             // -- S7: copier fan-out under burst (plan §8) --
             TestStress_S7_CopierFanOutUnderBurst();
@@ -1706,6 +1708,101 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"),
                 "No stop is mirrored between MNQ and ES -- a 10-point MNQ distance is not 10 ES points.");
+        }
+
+        // P0-9 item (3): a StopLimit leader becomes a StopMarket follower. Assessed as a fidelity
+        // gap, not a safety one -- but "assessed" is not "pinned", and the assessment rests
+        // entirely on the TRIGGER price being mirrored correctly. If the mirror ever read
+        // LimitPrice instead of StopPrice, the follower's stop would sit at a price the leader
+        // never used, and nothing in the suite would notice. That is the claim under test.
+        private static void TestBracket_StopLimitLeaderMirrorsTriggerPriceAsStopMarket()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a StopLimit leader mirrors its TRIGGER price as a follower StopMarket (P0-9 item 3)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18001.00, "BR-SL");
+
+            // Trigger 10 points below entry; limit a further 3 points down. The limit is the leg
+            // that is deliberately NOT carried.
+            var stopLimit = LeaderStop(mnq, OrderAction.Sell, 1, 17990.00);
+            stopLimit.OrderType = OrderType.StopLimit;
+            stopLimit.LimitPrice = 17987.00;
+            leader.TriggerOrderUpdate(stopLimit);
+
+            var stops = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(stops.Count == 1,
+                string.Format("A StopLimit leader stop is recognised and mirrored (got {0} follower stops).", stops.Count));
+
+            Assert(Math.Abs(stops[0].StopPrice - 17991.00) < 1e-9,
+                string.Format(
+                    "The mirror uses the leader's TRIGGER price: 10 points below entry, anchored to "
+                    + "the follower's 18001 fill = 17991.00, got {0}. Reading LimitPrice (17987) "
+                    + "instead would give the follower 14 points of risk in place of 10.",
+                    stops[0].StopPrice));
+
+            Assert(stops[0].OrderType == OrderType.StopMarket,
+                string.Format(
+                    "The follower's leg is a StopMarket (got {0}). This is the accepted divergence: "
+                    + "a StopMarket is MORE likely to fill than a StopLimit, so it runs toward the "
+                    + "follower being protected, never toward an unfilled exit.",
+                    stops[0].OrderType));
+
+            Assert(Math.Abs(stops[0].LimitPrice) < 1e-9,
+                string.Format(
+                    "No limit is carried across (got {0}). Carrying it without carrying the order "
+                    + "TYPE would produce a StopMarket with a meaningless LimitPrice field.",
+                    stops[0].LimitPrice));
+        }
+
+        // P0-9 item (4): the leader cancels its protective stop but stays in the position. The
+        // follower KEEPS its mirrored stop. That is a deliberate divergence from the leader and
+        // the fail-safe direction -- the follower stays protected while the leader chooses to
+        // stand naked. It was untested, which meant a future refactor could flip it to
+        // "cancel the follower's stop too" and the suite would stay green while every follower
+        // silently went naked mid-trade.
+        private static void TestBracket_LeaderCancellingItsStopLeavesTheFollowerProtected()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a leader cancelling its own stop leaves the follower's mirrored stop working (P0-9 item 4)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-LC");
+
+            var leaderStop = LeaderStop(mnq, OrderAction.Sell, 1, 17990.00);
+            leader.TriggerOrderUpdate(leaderStop);
+
+            var mirrored = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+            Assert(RiskGuardAddOn.IsPendingOrWorking(mirrored.OrderState),
+                "Precondition: the follower has a live mirrored stop before the leader cancels.");
+
+            // The leader cancels. Its position is UNCHANGED -- it is now naked by choice.
+            leaderStop.OrderState = OrderState.Cancelled;
+            leader.TriggerOrderUpdate(leaderStop);
+
+            Assert(RiskGuardAddOn.IsPendingOrWorking(mirrored.OrderState),
+                string.Format(
+                    "The follower's mirrored stop is still live after the leader cancelled its own "
+                    + "(state {0}). Mirroring the cancellation would strip protection from every "
+                    + "follower the instant the leader decided to manage a trade by hand.",
+                    mirrored.OrderState));
+
+            Assert(follower.Orders.Count(o => o.Name == "COPIER_STOP"
+                    && RiskGuardAddOn.IsPendingOrWorking(o.OrderState)) == 1,
+                "The cancellation does not provoke a second stop either -- one live stop, still at its original level.");
+
+            Assert(Math.Abs(mirrored.StopPrice - 17990.00) < 1e-9,
+                string.Format("The surviving stop holds its level (expected 17990.00, got {0}).", mirrored.StopPrice));
         }
 
         // ------------------------------------------------------------------
