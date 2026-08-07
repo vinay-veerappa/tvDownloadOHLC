@@ -3,22 +3,22 @@
 **Last updated**: 2026-08-06 (session 3)
 **Branch**: `harden/riskguard-copier-p0`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (31 defects, P0→P3)
-**Nothing is deployed.** NinjaTrader is running live with the *unmodified* addon.
+**Nothing is deployed.** NinjaTrader is running live with the *unmodified* addon. All five P0 tickets are committed on this branch; the suite is 356 passed, 0 failed.
 
 ---
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**Three tickets have landed (T1, T2, T3).** Session 3 took T2 from a parked candidate to a
-commit, landed T3, and fixed four defects in the loop itself (§4d). All three P0 pairs on the
-RiskGuard side are now closed; **T4 and T5 are the copier tickets and both have failing
-acceptance tests already waiting.**
+**All five P0 tickets have landed (T1–T5). The suite is fully green: 356 passed, 0 failed.**
+Every one of the nine live-risk P0 defects is closed, including all three that had deliberate
+failing acceptance tests waiting.
 
-State in one paragraph: the suite is 353 passed / 3 failed, and those 3 are the deliberate T4/T5
-copy-path tests — when T4 and T5 land, the suite goes fully green, and that is their acceptance
-criterion, checked mechanically by the test gate. The arbiter has now been used live on two
-tickets and upheld three findings across them, every one real and patch-introduced. Nothing is
-deployed; NinjaTrader still runs the unmodified addon.
+State in one paragraph: session 3 landed T2, T3, T4 and T5, fixed four defects in the loop itself
+(§4d), and repaired the P0-8 test, which could never have gone green because it never wired
+`RiskGuardAddOn.Instance` and so could not observe its own subject. **Nothing is deployed** —
+NinjaTrader is still running the unmodified addon, and that is now the single most important open
+item. The next work is P1, starting with the two deferred items this work created:
+**P1-30** (orphan-cancel under `_stateLock`) and **P1-31** (multi-stop coverage aggregation).
 
 ```powershell
 # free, ~2 min, no models: is the tool sound?
@@ -27,13 +27,18 @@ deployed; NinjaTrader still runs the unmodified addon.
 # free: do all 18 ticket regions still resolve?
 .\.venv\Scripts\python.exe -m scripts.agent_loop --list
 
-# the next real action
-.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T4 --arbiter glm-5.2:cloud
+# the suite, direct
+cd ninjatrader-addon; dotnet build -v q --nologo; dotnet run --no-build -v q --nologo
 ```
 
 **The arbiter recommends; it never ships.** A run that ends `ARBITER_SHIP` has *not* applied
 anything. Read `logs/agent_loop/<T>/rN_arbiter.txt` and the candidate itself, then promote with
 `--resume-raw <rN_impl_raw.txt> --allow-unapproved --apply` and commit explicit paths.
+
+> ⚠️ **The test gate only proves no *regression*, not that the ticket's defect is closed.** T5
+> reached `ARBITER_SHIP` with its own acceptance test still red, and nothing in the ladder
+> objected. If a ticket has a failing test waiting, check by name that it went green before
+> promoting. Worth encoding as an `expect_green` field on the ticket.
 
 **Do not run `scripts/agent_loop/ollama_patch_loop.py`.** Three of its gates were defective; it is
 kept only so the older `logs/ollama_loop/` artifacts stay readable.
@@ -48,6 +53,10 @@ kept only so the older `logs/ollama_loop/` artifacts stay readable.
 | `ddba3433` | **Test harness repair** — the suite could not previously catch defects |
 | `76d8c947` | **T2 — P0-2 + P0-3**: reserve-before-submit auto-stop, sized from the live position |
 | `c4ab4c48` | **T3 — P0-7**: unrealized-only peak for the giveback rule |
+| `404b8053` | **T4 — P0-5 + P0-6**: exits clamped to the follower's position; no sub-1 flooring |
+| `56f32317` | **T4 follow-up**: an exit must not round down to zero and strand the follower |
+| `4667f794` | **T5 — P0-8 + P0-9**: copier respects the lockout; fails closed when unguarded |
+| `179769d5` | Dead half of the auto-stop quantity guard removed |
 | `fe5bb5ce`, `8f798b09`, `08cd12cb`, `5af12984` | **Four loop repairs** — see §4d |
 
 ### T2 (P0-2 + P0-3)
@@ -103,15 +112,21 @@ addon — was compiled out of the test build by `#if !TESTING` and had **zero** 
 real blocker was a missing `Instrument.GetInstrument` stub. It is now in the test build, with
 three copy-path tests that reproduce P0-5, P0-6 and P0-8 as **executable failures**:
 
-| Test | Expected | Actual today | Proves |
+| Test | Expected | Was | Proves |
 |---|---|---|---|
 | `TestCopyPath_ExitDoesNotFlipFollowerShort` | ≤ 1 | **5** | P0-5: follower left short 4 |
 | `TestCopyPath_MicroToMiniDoesNotInflateNotional` | 0 | **1** | P0-6: 1 MNQ → 1 NQ, 10× notional |
 | `TestCopyPath_LockedFollowerReceivesNoCopy` | 0 orders | **1** | P0-8: copier ignores lockout |
 
-**Suite state**: was 221 visible tests / 2 failures / 25 skipped. Now **353 assertions, 3
-expected failures** — exactly the three above, which go green when T4 and T5 land. Any *other*
-failure is a regression.
+**All three now pass.** The P0-8 one also needed a harness repair before it could ever have
+passed: it built a locked RiskGuard but never assigned `RiskGuardAddOn.Instance` (production only
+does that in `State.Configure`), so `OnExecution` saw no guard, took the unguarded branch, and
+allowed the copy because the follower is named `SimFollower`. The assertion could not observe its
+own subject. `SetInstanceForTest` now wires it, and `SetupCopyPath` clears it so the static cannot
+leak between tests; the assertion itself is unchanged.
+
+**Suite state**: was 221 visible tests / 2 failures / 25 skipped. Then 353 assertions with 3
+expected failures. Now **356 passed, 0 failed**. Any failure is now a regression.
 
 ---
 
@@ -122,19 +137,31 @@ failure is a regression.
 | T1 | P0-1, P0-4 | ✅ committed `5fd26995` |
 | T2 | P0-2, P0-3 | ✅ committed `76d8c947` |
 | T3 | P0-7 | ✅ committed `c4ab4c48` |
-| T4 | P0-5, P0-6 | queued — has failing tests waiting |
-| T5 | P0-8, P0-9 | queued — has a failing test waiting |
+| T4 | P0-5, P0-6 | ✅ committed `404b8053` (+ exit-rounding follow-up `56f32317`) |
+| T5 | P0-8, P0-9 | ✅ committed `4667f794` |
 
-**Nothing beyond T2 is applied**, and nothing is deployed — NinjaTrader is still running the
-unmodified addon.
+**All five are applied and committed on `harden/riskguard-copier-p0`. Nothing is deployed** —
+NinjaTrader is still running the unmodified addon. Deploying is the next decision, and it is a
+human one.
+
+### Two things found by review, not by the panel
+- **T4's exit rounding** (`56f32317`). Removing the `Math.Max(1, ...)` floor was right for
+  entries — that floor *was* P0-6 — but applying it to exits created the mirror defect: an exit
+  that rounds to 0 strands the follower in a position the leader has already left. Not an edge
+  case: every partial exit rounds down independently, so a leader who entered 10 MNQ (follower:
+  1 NQ) and exits in any increment below 10 produces 0 every time, and even a 5+5 exit strands it
+  because `Math.Round(0.5)` is 0 under banker's rounding. Exits now take at least one contract
+  when the follower holds one, clamped to the real position size.
+- **T3's session reset** (`c4ab4c48`). Spec item 1 asks for the new peak fields to be cleared
+  where `PeakEquity` is, but neither of those two sites was in the ticket's region set, so the
+  loop could not have done it. Added by hand.
 
 ### Known-acceptable residue in T2 (do not re-open without new evidence)
-- **A dead clause survives** in `ExecuteAction`: `stopQuantity > (int)positionForQuantity.Quantity`
-  is provably always false, since `stopQuantity` is assigned from that exact expression one line
-  above. Cosmetic — the `<= 0` guard is the real check — but every reviewer flags it, so it is
-  worth deleting in a trivial follow-up. Note glm-5.2's *proposed fix* (compare against the
-  earlier `position.Quantity`) is actively harmful: it aborts the auto-stop whenever the position
-  scaled **up**, leaving it naked.
+- ~~A dead clause survives in `ExecuteAction`~~ — removed in `179769d5`. Recorded because the
+  *proposed fix* mattered: glm-5.2 wanted the comparison made against the earlier
+  `position.Quantity` from the pricing read, which would abort the auto-stop whenever the
+  position scaled **up** between reads, leaving it naked. The dead clause was harmless; that
+  fix would not have been.
 - **`AutoStopAttempts` is consumed by transient failures** — it increments before `CreateOrder` and
   rollback does not decrement it, so two broker hiccups escalate to flattening a live position.
   This is spec-conformant and fail-closed (the alternative is retrying forever while naked).
@@ -318,18 +345,20 @@ to check.
 
 ## 4a. Immediate next steps
 
-1. **T4, then T5**, committing each. Their acceptance criterion is the three baseline failures
-   going green — now checked mechanically by the test gate rather than by eye.
-2. **Delete the dead clause** left in T2 (§2). One line, needs a suite re-run, not a loop round.
-3. **Add tests for T1/T2/T3 behaviour** (currently only T4/T5 have failing tests waiting). Good
-   candidates for T2: auto-stop submit failure rolls back and clears `GraceEmitted`; auto-stop
-   sized from the live position, not the emission snapshot; a scaled-down position still gets a
-   stop rather than having its action dropped.
-4. **If a ticket escalates or will not converge, split it** into one defect per ticket with
-   tighter region sets. T2 did not need this, but it was the largest single region.
+The P0 phase is done. In priority order:
 
-   Further test candidates: stop cancelled mid-position re-arms grace (T1);
-   profitable-flat account emits no giveback action (T3).
+1. **Decide about deploying.** All nine live-risk defects are fixed in the repo and none of it is
+   in front of NinjaTrader. Shadow mode first is the obvious path.
+2. **Add tests for T1/T2/T3 behaviour.** T4 and T5 have real coverage now; T1–T3 are verified only
+   by review and by not regressing. Good candidates: auto-stop submit failure rolls back and
+   clears `GraceEmitted`; auto-stop sized from the live position, not the emission snapshot; a
+   scaled-down position still gets a stop rather than having its action dropped; stop cancelled
+   mid-position re-arms grace; profitable-flat account emits no giveback action; a close+reverse
+   flip does not carry `PeakOpenGain` into the new leg.
+3. **Add an `expect_green` field to tickets** so the test gate can require a named test to flip,
+   not merely require no regression. T5 shipped past a red acceptance test (§0).
+4. **P1 work**, starting with **P1-30** (orphan-cancel under `_stateLock`) and **P1-31**
+   (multi-stop coverage aggregation), both deferred out of this phase by decision (§5).
 
 ---
 
