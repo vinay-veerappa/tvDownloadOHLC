@@ -14,7 +14,7 @@ all of Phase C bar `P1-36`. The addon is deployed and running in `shadow`, compi
 
 | Phase | State |
 |---|---|
-| **A** — deploy P0 to shadow | Deployed, **acceptance criteria NOT met** (see below) |
+| **A** — deploy P0 to shadow | Deployed; **T3 validated live 2026-08-07 (§4g), T5 still blocked** |
 | **B** — test foundation | ✅ T1–T3 tests backfilled and proven falsifiable; `P2-28` |
 | **C** — P1 safety-critical | ✅ `P1-20`, `P1-37`, `P1-10`, `P1-35`, `P1-11`, `P1-15`; **`P1-36` left** |
 | **D–G** | Not started — §4a |
@@ -609,6 +609,55 @@ at `Documents/NinjaTrader 8/mcp_token.txt`.
 **How to tell the new code is actually loaded**, given `Version` is still `1.1.0` and so proves
 nothing: look for `MaxAutoStopAttempts` in the live config response. That field arrived with T2
 and does not exist at the merge-base.
+
+---
+
+## 4g. Validation record — 2026-08-07, armed + shadow, real-time feed
+
+The first session in which **any guard path has ever executed**. Feed: TPT (real-time; Kinetick
+EOD was disconnected at 12:56 UTC). Mode `shadow`, `isArmed: true` from 13:21:30 UTC after
+`PREFLIGHT: passed`. `TAKEPROFITPRO524207503` (the only funded account, $50k) was added to
+`ExcludedAccounts` first and confirmed live in memory before arming.
+
+**Setup.** Test account `SimCopyTest1` — Simulator provider, and deliberately not a leader or
+follower in either copier relationship (both are `Sim101 → {Sim-ORB, SimCopy2}`), so the copy path
+could not confound the result. One MNQ, no attached stop.
+
+| Time (UTC) | Event |
+|---|---|
+| 13:24:06.036 | entry filled @ 29721.75, Long 1 |
+| 13:24:06.396 | `FSM_TRANSITION` — FSM created → `Unprotected`, grace deadline 13:24:09 |
+| 13:24:08.78 | `SHADOW_ACTION` FlattenPosition ← **`PEAK_GIVEBACK_BREACH`** (position at −$1.00) |
+| 13:24:09.41 | `SHADOW_ACTION` FlattenPosition ← `MISSING_STOP_FLATTEN` (grace expired, no stop) |
+| 13:24:10.79 … :40.08 | `PEAK_GIVEBACK_BREACH` ×5 more |
+| 13:24:42.22 | exit filled @ 29726.00 |
+| 13:24:42.428 | `FSM_TRANSITION` — FSM torn down → `Flat`; realized **+$8.50** |
+
+**What passed.**
+- **T3 acceptance criterion — MET.** The account finished **flat and profitable** (+$8.50) and
+  emitted **zero** `PEAK_GIVEBACK_BREACH` after `13:24:42.428`. Pre-fix, a peak that included
+  realized PnL against a zero unrealized read as a 100% giveback and fired on exactly this state.
+- **FSM lifecycle works live**: creation on fill, grace deadline set from
+  `StopAttachSeconds`, clean teardown to `Flat` on exit, `nt_riskguard_state` reporting it
+  throughout.
+- **`MISSING_STOP_FLATTEN` fired correctly**, once, at the grace deadline, on a genuinely
+  unprotected position — T1/T2's path behaving as designed.
+- **Shadow containment holds.** All seven actions logged `[SHADOW] Would execute …` and the
+  position stayed open until *I* closed it. `:2895` (`isLive = _mode == "live"`) is doing its job.
+
+**What failed — `P1-40`, and it is a blocker.** `PEAK_GIVEBACK_BREACH` fired **six times in 36
+seconds** on a position whose entire excursion was a few dollars, the first time 2.4 s after entry
+with the position *down* $1.00. The rule is proportional-only with no floor on the peak, so a
+one-tick peak ($0.50 on MNQ) makes any retrace a ≥100% giveback. In an acting mode this flattens
+nearly every trade seconds after entry and realises the loss doing it. See the plan's P1-40.
+
+**T5 was not testable and could not have been.** `IsGuardProtecting` (`:875`) requires
+`mode == "live"`, so in shadow it is false for every account. Both copier followers are Simulator
+accounts anyway, which skips the `COPY_BLOCKED_NO_GUARD` gate entirely. That criterion needs an
+acting mode — which `P1-40` now blocks.
+
+**Net**: Phase A is **half validated**. T3 is proven on a live feed. T5 remains open behind
+P1-40. Do not move to an acting mode until P1-40 is fixed.
 
 ---
 

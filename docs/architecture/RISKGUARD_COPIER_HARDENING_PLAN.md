@@ -8,12 +8,12 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**39 defects.** Numbered once, never renumbered, never reused.
+**40 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37`, `P1-39` | 18 | 6 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37`, `P1-39`, `P1-40` | 19 | 6 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`) |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38` | 7 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -464,6 +464,51 @@ trailing-DD rule in that case and document the precedence in the design doc.
 **Fix**: coalesce actions by `(AccountName, ActionType, Instrument)` before processing; honour
 `action.Instrument` when set and only fall back to account-wide for lockout/panic rules.
 
+### P1-40. The peak-giveback rule has no floor on the peak, so one tick of noise trips a flatten — BLOCKS ANY ACTING MODE
+*(found 2026-08-07 by the first live armed shadow session — observed, then confirmed in code)*
+**Where**: `PropFirmProtectionSuite.cs:110-113`, reached from `RiskGuardAddOn.cs:1325`.
+**What happens**: the rule is purely *proportional*. The only floor on the peak is
+`peakOpenGain <= 0`:
+
+```csharp
+if (... || peakOpenGain <= 0 || currentUnrealized >= peakOpenGain) return false;
+double givebackPct = (peakOpenGain - currentUnrealized) / peakOpenGain;
+return givebackPct >= cfg.MaxPeakGivebackPct;   // 0.30 live
+```
+
+One MNQ tick is 0.25 pt = **$0.50**. If a position ticks one tick into profit, `PeakOpenGain`
+becomes `0.50`; the next tick back to breakeven gives `0.50 / 0.50 = 100% >= 30%` and the rule
+fires. A *fraction* of a tick is enough — the breach threshold at a $0.50 peak is any value below
+$0.35. So **essentially every position breaches within seconds of entry**, and the rule re-fires
+each time the position worsens past the prior trigger (`RiskGuardAddOn.cs:1328-1335`).
+
+Observed live on `SimCopyTest1`, 2026-08-07, armed + shadow, 1 MNQ:
+entry 13:24:06.036 @ 29721.75 → **`PEAK_GIVEBACK_BREACH` at 13:24:08.78, 2.4 s later, with the
+position at −$1.00 and never meaningfully profitable**. It fired **six times** in the 36 s the
+position was open (13:24:08.78, :10.79, :18.90, :22.95, :39.08, :40.08). Total excursion of the
+whole trade was a few dollars; it closed +$8.50.
+
+**In `live` mode this flattens nearly every trade seconds after entry**, and because the action is
+`FlattenPosition` it would realise the loss each time. This is a hard blocker for leaving shadow —
+it is not a tuning issue, the rule is unusable at any percentage while the peak can be one tick.
+
+Note the unit tests do not catch it: they exercise the rule with meaningful peaks (a $500-scale
+peak against a 0.30 cap), where proportional-only logic behaves sensibly. The defect lives
+entirely in the small-peak regime, which is *every real position for its first seconds*.
+
+Note also that `PropFirmProtectionSuite`'s own `ArmedForLive: false` / `enforcing: false` does
+**not** gate this: `RiskGuardAddOn` calls `EvaluatePeakEquityGiveback` as a pure predicate and
+acts under its own arming. The suite's switch reads like an off-switch and is not one.
+
+**Fix**: gate the rule on an absolute floor before the proportional test — a configurable
+`MinPeakGainDollars` (and/or a floor expressed in ticks of the instrument), below which the peak
+is not considered established. Consider also requiring the peak to have been held for a minimum
+interval, so a single print cannot establish it. Whatever the floor, the rule must not be able to
+arm off sub-tick noise.
+**Test**: peak `$0.50`, current `$0.00`, cap `0.30` → **no** breach. Peak `$500`, current `$300`,
+cap `0.30` → breach (the existing behaviour must survive). Peak below the floor never breaches
+regardless of how far the position falls; the existing daily-loss and stop rules cover that case.
+
 ### P1-20. Weak simulated-account detection gates the live safety switch — CLOSED 2026-08-07
 **Where**: `TradeCopierEngine.cs:650` — `followerAcc.Name.StartsWith("Sim", …)`
 An account named e.g. `SimplyApex-01` is treated as simulated and **bypasses the
@@ -775,6 +820,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
 | P1-39 | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
+| P1-40 | false flatten | PropFirmProtectionSuite.cs:110; RiskGuardAddOn.cs:1325 | giveback rule is proportional-only; a one-tick peak makes any retrace a 100% breach — fired 6× in 36 s live. Blocks any acting mode |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
 | P1-18 | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |
