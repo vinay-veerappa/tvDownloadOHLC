@@ -8,13 +8,13 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**40 defects.** Numbered once, never renumbered, never reused.
+**41 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37`, `P1-39`, `P1-40` | 19 | 7 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`, `P1-40`) |
-| P2 — structural | `P2-24` … `P2-29`, `P2-38` | 7 | open (`P2-28` closed; `P2-27` half-done) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37`, `P1-39`, `P1-40` | 19 | 8 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`, `P1-39`, `P1-40`) |
+| P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41` | 8 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
 > **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
@@ -375,7 +375,7 @@ $j | ConvertTo-Json -Depth 20 | Out-File $p -Encoding utf8
 Do not edit it while NT8 is running: the addon rewrites the file on flush, and a torn write
 loses persisted lockouts.
 
-### P1-39. Every config load appends the default windows, so `WindowsET` grows without bound and a default can never be deleted
+### P1-39. Every config load appends the default windows, so `WindowsET` grows without bound and a default can never be deleted — CLOSED 2026-08-07
 *(found on 2026-08-07 while excluding an account ahead of Phase A validation — observed live,
 then confirmed in code)*
 **Where**: `RiskGuardAddOn.cs:4251` (the initializer) against `RiskGuardAddOn.cs:599`
@@ -405,25 +405,40 @@ Two consequences, and the second is the safety-relevant one:
 Duplicate entries are otherwise behaviour-neutral, because `Days` is parsed into a
 `HashSet<DayOfWeek>` (`:619`) and the window test is a union.
 
-**Fix**: annotate the collection properties with
-`[JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]`, or pass
-`ObjectCreationHandling.Replace` in the `JsonSerializerSettings` used by both `LoadConfig` and
-the bridge's `ToObject`. Prefer the settings-level fix — `BlockedInstruments`,
-`ExcludedAccounts`, `LockoutBypassWhileDisarmedAccounts` and the `FirmProfiles` dictionary all
-have initializers and the same latent exposure; only `WindowsET` has a *non-empty* one today, so
-only it corrupts, but any future default turns the others into the same bug silently.
+**Fix**: annotate each `List` property with
+`[JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]`.
+
+> **The settings-level fix this entry originally recommended is wrong — do not apply it.**
+> Setting `ObjectCreationHandling.Replace` in `JsonSerializerSettings` also replaces the
+> *dictionaries*, and `InstrumentLimits`, `AccountFirmMap` and `FirmProfiles` are constructed
+> with `StringComparer.OrdinalIgnoreCase` (`:4242`, `:4278`, `:4279`). Json.NET would discard
+> those instances and hand back fresh `Dictionary` objects using the **default** comparer,
+> silently turning case-insensitive instrument and firm lookups case-sensitive — a quiet
+> correctness regression traded for a cosmetic one. Those three are empty-initialized, so
+> appending to them is already correct and they need no fix. A test now pins this
+> (`InstrumentLimits must stay case-insensitive after deserialization`).
 **Test**: deserialize a config whose `WindowsET` holds exactly the two default windows and assert
 the result has two, not four; round-trip it twice and assert the count is stable. Assert a config
 that omits `NY_AM_Macro` still omits it after a load.
 **Not introduced by this branch** — the initializer dates to `9dbf8712`, well before the
 hardening work.
 
-**OUTSTANDING operational step.** The live in-memory config currently holds 10 windows. The
-on-disk `config.json` was repaired by hand on 2026-08-07 (deduplicated to 6 windows with
-deduplicated `Days`; backup at `config.json.bak_prerepair`). Disk and memory will not agree until
-the addon reloads — and until this defect is fixed, that reload re-appends the two defaults and
-lands on 8. **Do not "repair" it by POSTing the corrected config**: that path deserializes twice
-and makes it worse. Fix the code first, then reload.
+**Fixed by**: `ObjectCreationHandling.Replace` on `Profiles`, `ExcludedAccounts`,
+`LockoutBypassWhileDisarmedAccounts`, `BlockedInstruments`, `WindowsET` and `WindowConfig.Days`.
+The bridge's `ToObject<RiskConfig>()` is fixed by the same attributes; no bridge change was
+needed. Test-first: red at baseline (421 passed / **6 failed**, reproducing 2 → 4 on a single
+load and 8 after round-trips), green after (**427 / 0**), red again when the two attributes are
+reverted. **Verified in production**: the live config now reports 6 windows from a 6-window file,
+where the same file previously loaded as 8.
+
+The on-disk `config.json` was repaired by hand before the fix landed (deduplicated to 6 windows;
+backups at `config.json.bak_prerepair`, `config.json.bak_prearm_20260807_061407`).
+
+> **Still true, and a *separate* hazard: `POST /api/riskguard/config` does not merge.**
+> `req.ToObject<RiskConfig>()` (`McpBridgeAddOn.cs:5126`) deserializes the body into a whole
+> `RiskConfig`, so any field the body omits comes back as its **default** and is then written to
+> disk by `SaveAndReloadConfig`. Always GET the full document, mutate one key, and POST the whole
+> thing back — then diff every key. Tracked separately as `P2-41`.
 
 ---
 
@@ -675,6 +690,27 @@ without `confirmLive=true`. Same root cause as P1-20, different file and differe
 **Test**: an account named `SimpsonFund` on a live provider is refused without `confirmLive`.
 P2 rather than P1 because it requires an explicit deploy call to reach, not an automatic path.
 
+### P2-41. `POST /api/riskguard/config` overwrites the whole config with defaults
+*(split out of P1-39 on 2026-08-07 — the append half is closed, this half is not)*
+**Where**: `McpBridgeAddOn.cs:5126` — `req.ToObject<RiskConfig>()`, then
+`SaveAndReloadConfig(cfg)`.
+**What happens**: the body is deserialized into a complete `RiskConfig`, so **every field the
+caller omits silently becomes its default** — and `SaveAndReloadConfig` then writes that to
+`RiskGuard/config.json` and reloads it. A caller posting `{"ExcludedAccounts": ["X"]}` intending
+to add one exclusion would also reset `Mode` to `shadow`, `MinShadowSessions` to 0,
+`EnableWindowGate` to false, and every `StopGuard`/`PnLRules`/`FirmMirror` value to its default,
+destroying the live risk configuration. Nothing in the response indicates this happened — it
+returns `status: "applied"` and echoes the *request*, not the resulting config.
+**Workaround until fixed**: GET the full document, mutate the one key, POST the whole thing back,
+then GET again and diff every key. That discipline is what surfaced P1-39.
+**Fix**: merge the incoming `JObject` onto the live config (`JObject.Merge` with
+`MergeArrayHandling.Replace`) before deserializing, or require an explicit
+`?full=true` for whole-document replacement and reject partial bodies otherwise. Echo the
+resulting live config rather than the request.
+**Test**: POST `{"ExcludedAccounts":["X"]}` against a config with `MinShadowSessions=3` and
+`Mode="shadow"`; assert both survive and only `ExcludedAccounts` changed.
+P2 rather than P1 because reaching it requires an explicit API call, not an automatic path.
+
 ### P2-29. Single-file size / complexity
 `RiskGuardAddOn.cs` is 4,108 lines including a ~700-line WPF window (`RiskGuardWindow`,
 `:3389-4096`); `McpBridgeAddOn.cs` is 5,452. V12 solved the same problem by splitting one
@@ -832,7 +868,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-35 CLOSED | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
-| P1-39 | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
+| P1-39 CLOSED | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
 | P1-40 CLOSED | false flatten | PropFirmProtectionSuite.cs:110; RiskGuardAddOn.cs:1325 | giveback rule was proportional-only; a one-tick peak made any retrace a 100% breach — fired 6× in 36 s live |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
@@ -840,6 +876,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-19 | over-broad | RiskGuardAddOn.cs:1085-1162, 2450 | duplicate actions; flatten ignores instrument scope |
 | P1-20 CLOSED | gate bypass | TradeCopierEngine.cs:650 | sim detection by name prefix |
 | P2-38 | gate bypass | McpBridgeAddOn.cs:1710, 2243, 2307 | same name-prefix hole in the strategy-deploy guard |
+| P2-41 | silent overwrite | McpBridgeAddOn.cs:5126 | config POST does not merge; omitted fields reset to defaults and are written to disk |
 | P1-21 | silent no-op | McpBridgeAddOn.cs:252 | copier never re-subscribes on connect |
 | P1-22 | no control | TradeCopierEngine.cs:721 | market-only copies; latency/slippage fields fake |
 | P1-23 | silent fallback | TradeCopierEngine.cs:360, 397 | `Replace`-based symbol translation; 3 sizing modes unimplemented |

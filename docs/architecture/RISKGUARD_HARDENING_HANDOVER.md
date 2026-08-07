@@ -2,16 +2,16 @@
 
 **Last updated**: 2026-08-07 (session 5)
 **Branch**: `harden/riskguard-copier-p0`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (40 defects; P0, Phase B and Phase C all closed, plus `P1-40`)
-**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 420 passed, 0 failed.
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (41 defects; P0, Phase B and Phase C all closed, plus `P1-39` and `P1-40`)
+**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 427 passed, 0 failed.
 
 ---
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**18 of 40 defects are closed. Suite: 420 passed, 0 failed.** All nine P0, all of Phase B, all of
-Phase C bar `P1-36`, and `P1-40` (found and closed by the first armed session). The addon is
-deployed and running in `shadow`, compiling clean in NT8.
+**19 of 41 defects are closed. Suite: 427 passed, 0 failed.** All nine P0, all of Phase B, all of
+Phase C bar `P1-36`, plus `P1-40` and `P1-39` — both found by the first armed session. The addon
+is deployed and running in `shadow`, compiling clean in NT8.
 
 | Phase | State |
 |---|---|
@@ -62,15 +62,12 @@ loses persisted lockouts.
 **3. The branch is still unmerged.** `harden/riskguard-copier-p0`, fast-forward available. It also
 carries unrelated narrative/wargaming commits from other background agents.
 
-**4. Never POST to `/api/riskguard/config` until `P1-39` is fixed.** That endpoint does
-`req.ToObject<RiskConfig>()` with **no merge**, so a partial body silently resets every
-unspecified field to its default — always round-trip the full document from a GET. Worse, the
-path deserializes twice (`ToObject`, then `LoadConfig` inside `SaveAndReloadConfig`) and Json.NET
-*appends* to initializer-populated lists, so each POST adds two more `WindowsET` entries and five
-more `Days` per window. One POST on 2026-08-07 took the live config 6 → 10 windows. On-disk
-`config.json` has been repaired by hand (6 windows, deduplicated `Days`, backup at
-`config.json.bak_prerepair`); in-memory still reads 10 and will read 8 after the next reload
-until the code is fixed. Diff every key after any config write — that is how this was caught.
+**4. `POST /api/riskguard/config` still does not merge (`P2-41`).** `P1-39`'s append half is
+fixed — the live config now loads 6 windows from a 6-window file, where it previously loaded 8 —
+but the endpoint still does `req.ToObject<RiskConfig>()` on the whole body, so **every field a
+partial POST omits comes back as its default and is written to disk**. Always GET the full
+document, mutate one key, POST it back, then GET again and **diff every key**. That discipline is
+the only reason P1-39 was found at all.
 
 Deployment happened to be the thing that found `P1-37` — a safety gate that counted addon restarts
 instead of sessions, which no amount of review had noticed. That is the argument for finishing
@@ -661,10 +658,11 @@ acting mode.
 **Net**: Phase A is **half validated**. T3 is proven on a live feed and the one blocker the
 session found is closed. T5 still requires an acting mode and has never been exercised.
 
-**State left behind.** After the P1-40 recompile the addon **reloaded and is therefore disarmed**
-(`_isArmed` is deliberately never rehydrated — P1-37). `TAKEPROFITPRO524207503` has been removed
-from `ExcludedAccounts` and is covered again. Live config: mode `shadow`, 8 `WindowsET` entries
-(6 clean on disk + 2 appended by P1-39 on load). To resume validation, re-arm from the dashboard.
+**State left behind.** The addon **reloaded on the P1-39/P1-40 recompiles and is therefore
+disarmed** (`_isArmed` is deliberately never rehydrated — P1-37). `TAKEPROFITPRO524207503` has
+been removed from `ExcludedAccounts` and is covered again. Live config: mode `shadow`, **6**
+`WindowsET` entries matching disk exactly now that P1-39 is closed. To resume validation, re-arm
+from the dashboard.
 
 ---
 
