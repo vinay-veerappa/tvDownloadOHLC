@@ -103,8 +103,11 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         public bool EvaluatePeakEquityGiveback(double peakOpenGain, double currentUnrealized, PropFirmProtectionConfig config = null)
         {
+            // Both arguments must be unrealized-only PnL in dollars. Passing a
+            // total-equity peak combined with unrealized PnL causes spurious
+            // giveback breaches when the account is flat after a profitable session.
             var cfg = config ?? Config;
-            if (cfg == null || !cfg.EnablePeakEquityProtection || peakOpenGain <= 0) return false;
+            if (cfg == null || !cfg.EnablePeakEquityProtection || peakOpenGain <= 0 || currentUnrealized >= peakOpenGain) return false;
             double giveback = peakOpenGain - currentUnrealized;
             double givebackPct = giveback / peakOpenGain;
             return givebackPct >= cfg.MaxPeakGivebackPct;

@@ -1119,6 +1119,44 @@ namespace NinjaTrader.NinjaScript.AddOns
             var propSuite = PropFirmProtectionSuite.Instance;
             if (propSuite != null && propSuite.Config != null)
             {
+                // Peak Open Gain tracks the running peak of unrealized PnL for
+                // the current open position. It resets when the account is flat
+                // and only rises while a position is open.
+                bool accountIsFlat = true;
+                foreach (var pos in stateModel.Positions.Values)
+                {
+                    if (pos.MarketPosition != MarketPosition.Flat)
+                    {
+                        accountIsFlat = false;
+                        break;
+                    }
+                }
+
+                if (!accountIsFlat)
+                {
+                    if (stateModel.UnrealizedPnL > stateModel.PeakOpenGain)
+                    {
+                        // New peak = new episode. Re-arm the giveback latch.
+                        stateModel.PeakOpenGain = stateModel.UnrealizedPnL;
+                        stateModel.PeakGivebackTriggered = false;
+                        stateModel.PeakGivebackLastTriggerUnrealized = double.NaN;
+                        _stateDirty = true;
+                    }
+                }
+                else
+                {
+                    bool needsReset = stateModel.PeakOpenGain != 0.0
+                        || stateModel.PeakGivebackTriggered
+                        || !double.IsNaN(stateModel.PeakGivebackLastTriggerUnrealized);
+                    if (needsReset)
+                    {
+                        stateModel.PeakOpenGain = 0.0;
+                        stateModel.PeakGivebackTriggered = false;
+                        stateModel.PeakGivebackLastTriggerUnrealized = double.NaN;
+                        _stateDirty = true;
+                    }
+                }
+
                 if (propSuite.Config.EnableNewsShield && propSuite.IsInNewsWindow(DateTime.UtcNow, propSuite.Config.NewsBufferMinutesBefore, propSuite.Config.NewsBufferMinutesAfter))
                 {
                     actions.Add(new GuardAction
@@ -1149,14 +1187,31 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
-                if (propSuite.EvaluatePeakEquityGiveback(stateModel.PeakEquity, stateModel.UnrealizedPnL, propSuite.Config))
+                if (!accountIsFlat && stateModel.PeakOpenGain > 0)
                 {
-                    actions.Add(new GuardAction
+                    if (propSuite.EvaluatePeakEquityGiveback(stateModel.PeakOpenGain, stateModel.UnrealizedPnL, propSuite.Config))
                     {
-                        AccountName = stateModel.AccountName,
-                        ActionType = GuardActionType.FlattenPosition,
-                        RuleId = "PEAK_GIVEBACK_BREACH"
-                    });
+                        bool alreadyTriggered = stateModel.PeakGivebackTriggered;
+                        bool worsenedSinceTrigger = alreadyTriggered
+                            && stateModel.UnrealizedPnL < stateModel.PeakGivebackLastTriggerUnrealized;
+
+                        // Fire on the first breach of the episode, and re-fire if the
+                        // position gives back further than the prior trigger point.
+                        // This prevents a silently-failed flatten from leaving the
+                        // position unprotected as the loss continues to deepen.
+                        if (!alreadyTriggered || worsenedSinceTrigger)
+                        {
+                            actions.Add(new GuardAction
+                            {
+                                AccountName = stateModel.AccountName,
+                                ActionType = GuardActionType.FlattenPosition,
+                                RuleId = "PEAK_GIVEBACK_BREACH"
+                            });
+                            stateModel.PeakGivebackTriggered = true;
+                            stateModel.PeakGivebackLastTriggerUnrealized = stateModel.UnrealizedPnL;
+                            _stateDirty = true;
+                        }
+                    }
                 }
             }
 
@@ -1366,6 +1421,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                         stateModel.TradesToday = 0;
                         stateModel.ConsecutiveLosses = 0;
                         stateModel.PeakEquity = 0.0;
+                        stateModel.PeakOpenGain = 0.0;
+                        stateModel.PeakGivebackTriggered = false;
+                        stateModel.PeakGivebackLastTriggerUnrealized = double.NaN;
                         stateModel.IsLockedOut = false;
                         stateModel.InitialLockoutFlattened = false;
                         stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.None;
@@ -2480,6 +2538,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                     state.IsLockedOut = false;
                     state.LockoutUntil = DateTime.MinValue;
                     state.PeakEquity = 0.0;
+                    state.PeakOpenGain = 0.0;
+                    state.PeakGivebackTriggered = false;
+                    state.PeakGivebackLastTriggerUnrealized = double.NaN;
                     state.TradesToday = 0;
                     state.ConsecutiveLosses = 0;
                     state.CooldownUntil = DateTime.MinValue;
@@ -3537,6 +3598,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double RealizedPnL { get; set; } = 0.0;
         public double UnrealizedPnL { get; set; } = 0.0;
         public double PeakEquity { get; set; } = 0.0;
+        public double PeakOpenGain { get; set; } = 0.0;
+        public bool PeakGivebackTriggered { get; set; } = false;
+        public double PeakGivebackLastTriggerUnrealized { get; set; } = double.NaN;
         public bool IsLockedOut { get; set; } = false;
         public DateTime LockoutUntil { get; set; } = DateTime.MinValue;
         public bool InitialLockoutFlattened { get; set; } = false;
@@ -3612,6 +3676,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 pState.LastNonFlatTransition = DateTime.UtcNow;
 
+                // A flip closes the old position and opens a new opposite leg in one
+                // update. Reset the per-open-position peak-giveback tracking so the
+                // new leg is not judged against the prior direction's peak.
+                if (isFlip)
+                {
+                    PeakOpenGain = 0.0;
+                    PeakGivebackTriggered = false;
+                    PeakGivebackLastTriggerUnrealized = double.NaN;
+                }
+
                 // Debounce multi-contract / split-order trade count increment:
                 // Only increment TradesToday if this is a genuine new trade lifecycle
                 // (either a flip, or position was flat for > 1000ms, or initial entry).
@@ -3633,6 +3707,28 @@ namespace NinjaTrader.NinjaScript.AddOns
             pState.Quantity = quantity;
             pState.AveragePrice = avgPrice;
             pState.UnrealizedPnL = unrealizedPnL;
+
+            // When the account returns to flat, reset the per-open-position
+            // peak-giveback tracking so it cannot carry into the next trade.
+            if (position == MarketPosition.Flat && wasNonFlat)
+            {
+                bool accountNowFlat = true;
+                foreach (var pos in Positions.Values)
+                {
+                    if (pos.MarketPosition != MarketPosition.Flat)
+                    {
+                        accountNowFlat = false;
+                        break;
+                    }
+                }
+
+                if (accountNowFlat)
+                {
+                    PeakOpenGain = 0.0;
+                    PeakGivebackTriggered = false;
+                    PeakGivebackLastTriggerUnrealized = double.NaN;
+                }
+            }
 
             return stateChanged;
         }
