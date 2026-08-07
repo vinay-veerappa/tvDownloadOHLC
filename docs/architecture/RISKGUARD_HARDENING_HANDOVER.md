@@ -9,7 +9,7 @@
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**24 of 42 defects are closed. Suite: 459 passed, 0 failed.** All nine P0, all of Phase B, all of
+**24 of 47 defects are closed. Suite: 459 passed, 0 failed.** Five defects were opened on 2026-08-07 by reading the operator's order-flood stress-test output — see the plan's §8 stress programme. All nine P0, all of Phase B, all of
 Phase C bar `P1-36`, plus `P1-40` and `P1-39` — both found by the first armed session. The addon
 is deployed and running in `shadow`, compiling clean in NT8.
 

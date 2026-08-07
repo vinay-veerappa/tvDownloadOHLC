@@ -8,13 +8,13 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**42 defects.** Numbered once, never renumbered, never reused.
+**47 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` | 20 | 13 closed — only `P1-12`, `P1-13`, `P1-14`, `P1-21`, `P1-22`, `P1-23`, `P1-36` remain |
-| P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41` | 8 | open (`P2-28` closed; `P2-27` half-done) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 13 closed — `P1-12` … `P1-14`, `P1-21` … `P1-23`, `P1-36`, `P1-43` … `P1-45`, `P1-47` remain |
+| P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
 > **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
@@ -646,6 +646,107 @@ silently does nothing today.
 map the account, then run a full shadow session and read the `FIRM_*` events **before** going
 anywhere near an acting mode — the numbers involved are the ones that fail a funded evaluation.
 
+### P1-43. `ExecuteOrderUpdate` makes broker calls under `_stateLock` — a third instance of the closed P1-10/P1-35 invariant
+*(found 2026-08-07 while investigating the order-flood stress-test output)*
+**Where**: `RiskGuardAddOn.cs:1400` opens `lock (_stateLock)`; `:1422` and `:1436` call
+`account.Cancel(...)` inside it.
+**What happens**: the documented central invariant — never hold `_stateLock` across a broker call
+— is violated on the order-update path, which is the hottest path in the addon. P1-10 and P1-35
+closed the same violation in the safety sweep and FSM teardown, and the lock-scope check was made
+machine-enforced (`Account.BrokerCallObserver` + `TestIsStateLockHeld()`). **It did not catch this
+one because the check only exercises the sweep and teardown paths**, not `ExecuteOrderUpdate`.
+A machine check is only as good as the paths driven through it.
+**Fix**: queue the cancels and drain after the lock is released, exactly as P1-35 did
+(`_pendingCancels` / `DrainPendingCancels`). Do **not** wrap in a nested `lock` — it is re-entrant
+and changes nothing.
+**Test**: drive `ExecuteOrderUpdate` with the observer armed and assert zero broker calls occur
+while `TestIsStateLockHeld()` is true. Then extend the check to *every* entry point that can reach
+a broker call, so the next instance is caught by construction.
+
+### P1-44. The order-flood cancel can kill a protective stop and leave a naked position
+*(found 2026-08-07, same investigation)*
+**Where**: `RiskGuardAddOn.cs:1420-1423`.
+**What happens**: on flood detection the triggering order is cancelled unconditionally:
+
+```csharp
+if (e.Order.OrderState != OrderState.Filled && e.Order.OrderState != OrderState.Cancelled)
+    account.Cancel(new[] { e.Order });
+```
+
+There is **no `IsPositionReducingOrder` guard** — while the lockout-enforcement block immediately
+below it at `:1432` has exactly that guard. So if the order that trips the rate limit happens to
+be a stop-loss or other reducing order (very likely: an ATM submits entry, stop and target
+together, and a copier fans the same burst across followers), RiskGuard cancels the protection
+**and** locks the account out, leaving an open position with no stop. This is the P1-11 failure
+mode in a path P1-11 did not touch.
+**Fix**: reuse `IsPositionReducingOrder` before cancelling, as `:1432` does. Never cancel
+protective orders to enforce a rate limit — rate-limit the *entries*.
+**Test**: a burst in which the threshold-tripping order is a protective stop must leave that stop
+working; only risk-increasing orders may be cancelled.
+
+### P1-45. An order-flood lockout never expires, and it is persisted
+*(found 2026-08-07, same investigation)*
+**Where**: `RiskGuardAddOn.cs:1419` sets `stateModel.IsLockedOut = true` and **never sets
+`LockoutUntil`**.
+**What happens**: the lockout test at `:1485` is
+`(lockState.IsLockedOut || DateTime.UtcNow < lockState.LockoutUntil)` — an **OR**. Every other
+lockout in the addon pairs the flag with a deadline (PnL `:1231`, `:1271`; overtrading `:2539`,
+`:2558`), so it lapses. The flood path sets the flag alone, so it lapses **never** — and
+`LockedOutAccounts` is persisted, so it survives a restart. A one-second burst can therefore
+stop an account trading indefinitely with no timer and no obvious recourse.
+**Fix**: set `LockoutUntil` from a configurable flood-lockout duration, consistent with the other
+rules. Decide deliberately whether a flood should also require manual acknowledgement — but "no
+deadline at all" should not be the accident it currently is.
+**Test**: a flood lockout lapses after its configured duration; it is not resurrected by a restart
+once lapsed.
+
+### P2-46. The flood detector double-counts, so the real threshold is about half the nominal one
+*(found 2026-08-07, same investigation)*
+**Where**: `RiskGuardAddOn.cs:1413-1417`.
+**What happens**: the counter adds a timestamp for `OrderState.Submitted` **and** for
+`OrderState.Accepted`, which are two states of the **same order**, with no dedupe by order id. A
+single order commonly contributes two ticks, so the nominal "more than 5 orders/sec" fires at
+roughly **3 real orders per second** — well within normal ATM bracket submission. The live log's
+"29–32 orders/sec" readings are therefore not order counts but state-transition counts. The
+threshold is also **hardcoded** (`> 5`) with no config knob, unlike every other limit in the addon.
+**Fix**: count distinct order ids within the window, and expose the threshold and window in
+`RiskConfig` alongside the other overtrading limits.
+**Test**: ten distinct orders in a second trips a threshold of 5; one order passing through
+Submitted→Accepted→Working counts once, not three times.
+
+### P1-47. The guard defaults to disarmed, so every recompile silently removes all protection
+*(raised by the operator 2026-08-07 after four consecutive silent disarms in one session)*
+**Where**: `RiskGuardAddOn.cs:206` (`private bool _isArmed = false;` in the non-TESTING build) and
+`:655-656`, which deliberately does not rehydrate `IsArmed` from persisted state.
+**What happens**: `nt_compile`, an NT8 restart, or any NinjaScript recompile reloads every AddOn
+and the guard comes back **disarmed**. Nothing announces this beyond one `INITIALIZE` line, and
+every evaluation path then returns early (`:1837`, `:2034`, `:1205`, `:2159`, `:2392`, `:2450`)
+while `CanTrade` returns *allow* (`:124`). The dashboard is the only place the state is visible.
+Observed four times in a single session on 2026-08-07; each time the operator had to notice and
+re-arm by hand. A risk guard whose default state is "not guarding" fails open.
+
+**The conflation.** `_isArmed` controls whether the guard *evaluates*; `_mode` controls whether it
+*acts* (`:2895`, `isLive = _mode == "live"`). Armed + `shadow` observes and logs and cannot touch
+the broker. The dangerous state is `live`, not `armed` — but the default protects against the
+wrong one, and the cost is paid as unobserved gaps.
+
+**Fix (recommended)**: make the default conditional on the resolved mode — come up **armed** when
+the mode is non-acting (`shadow`), and **disarmed** in any acting mode, where arming should stay a
+deliberate act after preflight. That keeps the original intent (freshly-loaded code must not act
+on a funded account unattended) while closing the observability gap.
+
+Whatever is chosen, **the disarmed state must be loud**: surface it in `/api/riskguard/version`
+and `nt_health`, and log a distinct warning event on initialise rather than burying it in the
+`INITIALIZE` line. The present failure is not just the default — it is that being unprotected
+looks identical to being protected.
+
+**Do not simply rehydrate `IsArmed` from disk.** That was removed on purpose (`:655`) so a restart
+could not silently *re-arm* into an acting mode; restoring it would reintroduce that.
+**Test**: constructing in `shadow` yields armed; constructing in `live`/`pure`/
+`override_with_friction` yields disarmed; a persisted `IsArmed=true` never re-arms an acting mode
+across a restart.
+**Risk-posture call for the operator** — the recommendation above is not settled.
+
 ### P1-20. Weak simulated-account detection gates the live safety switch — CLOSED 2026-08-07
 **Where**: `TradeCopierEngine.cs:650` — `followerAcc.Name.StartsWith("Sim", …)`
 An account named e.g. `SimplyApex-01` is treated as simulated and **bypasses the
@@ -978,6 +1079,11 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
 | P1-39 CLOSED | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
+| P1-47 | fails open | RiskGuardAddOn.cs:206, 655 | guard defaults to disarmed, so every recompile silently removes all protection |
+| P1-43 | invariant | RiskGuardAddOn.cs:1400, 1422, 1436 | broker `Cancel` under `_stateLock` on the order-update path; the machine check never drove this path |
+| P1-44 | naked position | RiskGuardAddOn.cs:1420 | flood cancel has no `IsPositionReducingOrder` guard and can cancel a protective stop |
+| P1-45 | permanent lockout | RiskGuardAddOn.cs:1419, 1485 | flood lockout sets no `LockoutUntil`, so it never lapses, and it is persisted |
+| P2-46 | miscount | RiskGuardAddOn.cs:1413 | Submitted and Accepted both counted for one order; threshold hardcoded at 5 |
 | P1-42 CLOSED | silent no-op | RiskGuardAddOn.cs:3594, 3656 | `AccountFirmMap`/`FirmProfiles` are never read; firm-mirror protects nothing on a mapped account, and preflight validates the unused mapping |
 | P1-40 CLOSED | false flatten | PropFirmProtectionSuite.cs:110; RiskGuardAddOn.cs:1325 | giveback rule was proportional-only; a one-tick peak made any retrace a 100% breach — fired 6× in 36 s live |
 | P1-16 CLOSED | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
@@ -996,3 +1102,44 @@ broker is the single highest-value addition in this document. Consider promoting
 | P2-27 | test gap | TradeCopierEngine.cs:613 | whole copy path inside `#if !TESTING`; no CI |
 | P2-28 ✅ | hygiene | `addons_DONOTUSE` deleted; sync script fixed | CRLF-blind drift check; mcp copy is a submodule |
 | P2-29 | maintainability | RiskGuardAddOn.cs (4,108 lines) | single file incl. 700-line WPF window |
+
+---
+
+## 8. Stress and adversarial test programme
+
+The order-flood events in the live log were a deliberate operator stress test, and reading their
+output found four defects in an afternoon (`P1-43`, `P1-44`, `P1-45`, `P2-46`) that months of
+review and a green suite had not. That is the argument for making stress tests a standing part of
+the suite rather than an ad-hoc exercise.
+
+**The lesson from `P1-43` in particular**: the lock-scope invariant *is* machine-checked, and the
+check still missed a violation, because it only ever drove two code paths. A check is only as good
+as the paths driven through it. Stress tests exist to drive the paths nobody thought to drive.
+
+### Already present
+- `TestCopierGroup_GroupStressAndConcurrency` — parallel group mutation, asserts zero thread
+  exceptions.
+- `TestP1_10_...`, `TestP1_35_...` — lock-scope checks, but only over the sweep and FSM teardown.
+
+### To build
+
+| # | Stress test | Must prove | Defect it would have caught |
+|---|---|---|---|
+| S1 | **Order burst** — N distinct orders/sec against the rate governor | fires on *distinct order ids* at the configured threshold; one order passing Submitted→Accepted→Working counts once | `P2-46` |
+| S2 | **Burst whose tripping order is a protective stop** | the stop stays working; only risk-increasing orders are cancelled | `P1-44` |
+| S3 | **Flood lockout lifetime** | the lockout lapses after its configured duration and is not resurrected by a restart | `P1-45` |
+| S4 | **Lock-scope sweep over every entry point** — drive `ExecuteOrderUpdate`, `ExecuteAccountItemUpdate`, position updates, grace expiry, watchdog and the sweep with the broker observer armed | **zero** broker calls while `TestIsStateLockHeld()` is true, on every path, not a hand-picked two | `P1-43` |
+| S5 | **Partial-fill storm** — one trade exited in many small fills, both event orderings | exactly one consecutive-loss judgement; late fills revise rather than accumulate | `P1-16` |
+| S6 | **Rapid flip loop** — long↔short repeatedly | FSM coverage never outlives its position; no stale `CoveredQuantity`; grace re-arms each leg | `P1-36`, T1 |
+| S7 | **Copier fan-out under burst** — one leader, many followers, rapid entries and exits | no duplicate copies, no follower left inverted, sizing correct under concurrency | `P0-5`, `P0-6`, `P1-22` |
+| S8 | **Config reload while armed and in position** | live reload does not drop FSMs, coverage or lockouts, and does not corrupt the config | `P1-39` |
+| S9 | **Restart mid-trade** — kill and reload with a position open | seeded FSM matches the broker; no double-count of trades or losses; lockouts survive | `P1-15`, `P1-16` limit |
+
+### Rules for these tests
+- They are **acceptance tests for the defects above** — write each one red against current code,
+  and keep it in the suite afterwards. Do not commit a stress test that has never failed.
+- Drive them through the real entry points (`ExecuteOrderUpdate`, `ExecuteAccountItemUpdate`,
+  `UpdatePosition`), not by calling internals directly, or they will not catch wiring defects.
+- Concurrency tests must assert on an observed invariant, not merely on "no exception thrown" —
+  the existing group-stress test only asserts the latter, which is why it has never caught
+  anything.
