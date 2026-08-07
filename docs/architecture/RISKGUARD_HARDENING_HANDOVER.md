@@ -35,10 +35,11 @@ cd ninjatrader-addon; dotnet build -v q --nologo; dotnet run --no-build -v q --n
 anything. Read `logs/agent_loop/<T>/rN_arbiter.txt` and the candidate itself, then promote with
 `--resume-raw <rN_impl_raw.txt> --allow-unapproved --apply` and commit explicit paths.
 
-> ⚠️ **The test gate only proves no *regression*, not that the ticket's defect is closed.** T5
-> reached `ARBITER_SHIP` with its own acceptance test still red, and nothing in the ladder
-> objected. If a ticket has a failing test waiting, check by name that it went green before
-> promoting. Worth encoding as an `expect_green` field on the ticket.
+> ✅ **Work is test-first from here.** A ticket declares `expect_green`; the loop refuses it
+> unless those tests are already failing at baseline, and fails any candidate that leaves one
+> red. Reviewers judge the tests' completeness and accuracy too. This closes the hole T5 went
+> through — it reached `ARBITER_SHIP` with its own acceptance test still red. See the plan's
+> §6.0.
 
 **Do not run `scripts/agent_loop/ollama_patch_loop.py`.** Three of its gates were defective; it is
 kept only so the older `logs/ollama_loop/` artifacts stay readable.
@@ -356,19 +357,29 @@ Nine live-risk fixes are in a branch doing nothing. Shadow mode is also the only
 T3's giveback rule and T5's fail-closed gate against real account data; no unit test can.
 **Runbook in §4e — read it, the ordering is not obvious and the live config is not in shadow.**
 
-### Phase B — two cheap prerequisites
+### Phase B — foundation: the test suite comes first
 
-1. **`expect_green` on tickets.** The test gate only checks for regressions, so T5 shipped past
-   its own red acceptance test (§0). Everything after this leans on the gate being honest.
-2. **Tests for T1–T3 behaviour.** T4/T5 have real coverage; T1–T3 rest on review and
-   not-regressing. Candidates: auto-stop submit failure rolls back and clears `GraceEmitted`;
-   auto-stop sized from the live position, not the emission snapshot; a scaled-down position
-   still gets a stop rather than having its action dropped; a stop cancelled mid-position re-arms
-   grace; a profitable-flat account emits no giveback action; a close+reverse flip does not carry
-   `PeakOpenGain` into the new leg.
-3. Optionally pull **P2-28** (three divergent source copies, committed build output) forward from
-   Phase F. It is mostly deletion and it removes a live hazard — see
-   [[nt8-addon-canonical-source]]; editing the wrong copy silently does nothing.
+**From here on the work is test-first, and it is enforced, not encouraged.** See the plan's
+§6.0 for the full model. In short: a ticket declares `expect_green`; the loop **refuses** it
+unless those tests are already red at baseline; the test gate **fails** any candidate that leaves
+one red; and reviewers must judge the tests' completeness and accuracy, not just the patch.
+
+1. ✅ **`expect_green` and the test-first refusal** — landed (`eba565fa`). Reviewers also now
+   receive the acceptance tests read-only.
+2. **Backfill tests for T1–T3.** T4/T5 have real coverage; T1–T3 rest on review and
+   not-regressing. Write these before touching any P1 code, and verify each one **fails when the
+   fix is reverted** — an unfalsifiable test is the thing this phase exists to prevent:
+   auto-stop submit failure rolls back and clears `GraceEmitted`; auto-stop sized from the live
+   position, not the emission snapshot; a scaled-down position still gets a stop rather than
+   having its action dropped; a stop cancelled mid-position re-arms grace; a profitable-flat
+   account emits no giveback action; a close+reverse flip does not carry `PeakOpenGain` into the
+   new leg.
+3. Pull **P2-28** (three divergent source copies, committed build output) forward from Phase F.
+   Mostly deletion, and it removes a live hazard — editing the wrong copy silently does nothing.
+
+**Writing the tests is a human/operator job, not a loop job.** `*Tests.cs` is a protected path:
+the implementer cannot reach it by construction (gate 0, anti-reward-hacking). That is deliberate
+— the grader is written by a different party than the one being graded.
 
 ### Phase C — P1 safety-critical
 

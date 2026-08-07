@@ -521,21 +521,57 @@ connected, subscribed, not locked, and has a resolvable instrument.
 
 ## 6. Execution order
 
-Phases are ordered so that nothing depends on later work, and so live-risk defects land first.
+> **Superseded for P0, which is complete.** The original phases 1–2 were the P0 work and landed
+> as tickets T1–T5 (see [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md) §1).
+> The table below is the **remaining** work, re-ordered for what P0 changed and for test-first
+> development. The live roadmap with current status is handover §4a; this is the reference
+> version with exit gates.
 
-| Phase | Content | Gate to exit |
-|---|---|---|
-| **0. Foundation** | P2-28 (one source of truth, deploy-sync, gitignore), P2-27 steps 1-4 (extract NT8-free logic classes, recording stubs, CI job) | CI runs the harness on push; all existing tests pass |
-| **1. RiskGuard naked-risk** | P0-1, P0-2, P0-3, P0-4 | New tests: stop-cancelled-mid-position re-arms; submit failure rolls back; auto-stop sized from live qty; scale-in flagged partially covered |
-| **2. Copier sizing/gating** | P0-5, P0-6, P0-8, P0-9 (option 3 minimum) | Notional-parity test; exit-clamp test (leader 5 / follower 1 → follower flat, never short); locked-follower copy blocked |
-| **3. Rule semantics** | P0-7, P1-16, P1-17, P1-18, P1-19 | Profitable-flat-account emits no giveback action; 3-partial loss counts as 1; instrument-scoped flatten does not touch other instruments |
-| **4. Concurrency** | P1-10, P1-11, P1-12, P1-13, P1-14, P1-15, **P1-35**, **P1-36** | No `Account.*` call inside any `lock (_stateLock)` (grep gate, mirroring V12's lock audit); sweep runs off the dispatcher; coverage aggregates across all protective stops |
-| **5. Reconciler** | P3-30, plus wiring P2-24 (`ReconcileFollowerPosition`, auto-quarantine, `DailyLossLimit`) | Sim stress: manual stop cancel, manual naked position, follower desync — each repaired within one grace window |
-| **6. Copier fidelity** | P0-9 (options 1-2), P1-20, P1-21, P1-22, P1-23, P3-32 | Follower brackets present on every copy; latency/slippage populated from real fills |
-| **7. Cleanup** | P2-25 (calendar feed), P2-26 (doc reconciliation), P2-29 (file split), P3-31, P3-33, P3-34 | Design doc matches code; drift assertion in tests |
+### 6.0 Development model: test-first, suite as a first-class artifact
+
+**Every defect gets its failing test before it gets its fix.** This is enforced mechanically, not
+by convention:
+
+- A ticket declares `expect_green` — the tests it exists to make pass.
+- The loop **refuses the ticket** unless those tests are already *failing* at baseline. A name
+  that is not red is either a typo (making the gate unfalsifiable) or a test that passes without
+  the fix (so it does not test the defect).
+- The test gate then **fails the candidate** while any named test is still red. "No regression" is
+  not evidence that a defect is closed.
+- Reviewers receive the acceptance tests read-only and must judge **completeness** (which spec
+  behaviours and failure paths nothing covers) and **accuracy** (would this test fail if the
+  defect returned?). Gaps are MAJOR findings.
+
+The suite is never edited to make a patch pass: `*Tests.cs` is in the loop's protected paths, so
+the implementer cannot reach it by construction. Tests are authored *outside* the implementation
+loop, by a different party than the one being graded — which is the strongest form of this
+discipline available here, not a limitation of it.
+
+Two lessons paid for during P0 apply directly:
+- **A test that cannot observe its own subject is worse than no test**, because it reads as proof.
+  The P0-8 test built a locked RiskGuard but never wired the static the copier reads; it could
+  never have passed however correct the fix.
+- **A green suite is not a tested suite.** `ddba3433` found a test whose body had been replaced by
+  a bad merge, silently skipping 21% of the run, while the suite reported green.
+
+### 6.1 Remaining phases
+
+| Phase | Content | Tests to write FIRST | Gate to exit |
+|---|---|---|---|
+| **A. Deploy P0** | no new code | — | A full session in `shadow`; `interventions.jsonl` shows no `PEAK_GIVEBACK_BREACH` on a profitable flat account and no wrong `COPY_BLOCKED_NO_GUARD` |
+| **B. Foundation** | `expect_green` ✅, backfill T1–T3 tests, P2-28 | submit-failure rolls back and clears `GraceEmitted`; auto-stop sized from live qty; scaled-down position still gets a stop; stop cancelled mid-position re-arms; profitable-flat emits no giveback; flip does not carry `PeakOpenGain` | Every P0 behaviour has a test that fails when reverted |
+| **C. Copier gate integrity** | **P1-20** first | live-named account is NOT treated as simulated; unguarded live follower is refused | T5's fail-closed gate no longer keys off a name prefix |
+| **D. Concurrency** | P1-35 + P1-10 (one ticket), P1-11, P1-12, P1-13, P1-14, P1-15, P1-36 | no `Account.*` reachable under `lock (_stateLock)`; sweep does not cancel protective stops; coverage aggregates across two partial stops | Lock-scope gate clean; sweep off the dispatcher |
+| **E. Rule semantics** | P1-16, P1-17, P1-18, P1-19 | 3-partial loss counts as 1; eval target fed cumulative PnL; one trailing-DD implementation; instrument-scoped flatten leaves other instruments alone | Each rule has a test pinning its boundary |
+| **F. Copier fidelity** | P0-9 (real bracket replication), P1-21, P1-22, P1-23, P3-32 | follower brackets present on every copy; re-subscribe on late connect; symbol translation table-driven | Brackets on every copy; latency/slippage from real fills |
+| **G. P2 structural** | P2-24, P2-25, P2-26, P2-27 (CI half), P2-29 | drift assertion: design doc claims match code | CI runs the suite on push; doc matches code |
+| **H. P3** | **P3-30 first** (reconciler/REAPER), P3-31, P3-33, P3-34 | manual stop cancel, manual naked position, follower desync each repaired within one grace window | Sim stress scenarios pass unattended |
+
+**P3-30 is P3 by effort, not by value** — an independent auditor that re-derives truth from the
+broker is the single highest-value addition in this document. Consider promoting it once D lands.
 
 ### Validation protocol (every phase)
-1. Unit tests on the extracted NT8-free logic first — no live NT8 needed.
+1. Failing tests written and committed **before** the implementation ticket runs.
 2. `shadow` mode on Sim accounts for the whole phase; diff intended vs actual actions in
    `interventions.jsonl`.
 3. Adversarial Sim scenarios, run against the live bridge (extend
