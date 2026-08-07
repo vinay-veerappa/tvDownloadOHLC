@@ -19,6 +19,24 @@ log = logging.getLogger(__name__)
 _REPO = Path(__file__).parent.parent.parent.parent
 
 
+_FUTURES_TICKERS = {"ES1", "NQ1", "YM1", "RTY1", "CL1", "GC1"}
+
+
+def _is_futures_ticker(ticker: str) -> bool:
+    return ticker.upper() in _FUTURES_TICKERS
+
+
+def _effective_trade_date(ts_et: pd.Timestamp, ticker: str):
+    """Map a daily-bar timestamp to its trade date.
+
+    Futures daily bars are anchored at 18:00 ET on the prior calendar day.
+    Equity/ETF daily bars map directly to their calendar date.
+    """
+    if _is_futures_ticker(ticker) and ts_et.hour >= 18:
+        return (ts_et + pd.Timedelta(days=1)).date()
+    return ts_et.date()
+
+
 def _dir(o: float, c: float) -> str:
     return "bull" if c >= o else "bear"
 
@@ -208,19 +226,24 @@ def get_candle_science_read(ticker: str = "NQ1", mode: str = "open", target_date
         else:
             df_1d.index = df_1d.index.tz_localize("UTC").tz_convert("US/Eastern")
 
+        t_dt = None
         if target_date:
             t_dt = pd.to_datetime(target_date).date()
-            df_1d = df_1d[df_1d.index.date <= t_dt]
+            mask = [
+                _effective_trade_date(ts, ticker) <= t_dt
+                for ts in df_1d.index
+            ]
+            df_1d = df_1d.loc[mask]
 
         if len(df_1d) < 4:
             log.warning("[cs] Not enough daily bars")
             return result
 
-        last_bar_date = df_1d.index[-1].date()
-        today_et = datetime.now(pytz.timezone("America/New_York")).date()
+        last_trade_date = _effective_trade_date(df_1d.index[-1], ticker)
+        requested_trade_date = t_dt or datetime.now(pytz.timezone("America/New_York")).date()
 
         # Date Alignment Check
-        if last_bar_date == today_et:
+        if last_trade_date == requested_trade_date:
             if mode == "open":
                 # Today's active bar is already in the file; ignore it to predict today
                 c1 = df_1d.iloc[-3]
@@ -237,7 +260,13 @@ def get_candle_science_read(ticker: str = "NQ1", mode: str = "open", target_date
                 c2 = df_1d.iloc[-1]
             else:
                 # Close mode: but today's completed bar is not yet written to the file
-                log.warning(f"[cs] Close mode run, but today's bar ({today_et}) is missing from daily parquet. Last is {last_bar_date}.")
+                log.warning(
+                    "[cs] Close mode run, but requested trade-date bar (%s) is missing from daily parquet. "
+                    "Last trade date is %s (last index ts %s).",
+                    requested_trade_date,
+                    last_trade_date,
+                    df_1d.index[-1],
+                )
                 c1 = df_1d.iloc[-2]
                 c2 = df_1d.iloc[-1]
 

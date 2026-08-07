@@ -5519,7 +5519,11 @@ def build_eod_context(
                 
                 # Fetch Candle Science scenarios for tomorrow's open
                 try:
-                    cs = get_candle_science_read(ticker=ticker, mode="close")
+                    cs = get_candle_science_read(
+                        ticker=ticker,
+                        mode="close",
+                        target_date=target_date.isoformat(),
+                    )
                     lines.append("")  # blank line separator
                     lines.append(format_candle_science_block(cs))
                 except Exception as cs_err:

@@ -740,7 +740,10 @@ def fetch_yfinance_daily_history(symbol, start_dt, end_dt, now_utc):
     else:
         raw_dates = raw_dates.dt.tz_convert(ET_TZ)
 
-    trade_dates = raw_dates.dt.tz_localize(None).dt.normalize() - pd.Timedelta(days=1)
+    # yfinance futures daily rows are already labeled by trade date in ET.
+    # Do not shift by -1 day here; `get_daily_anchor_for_trade_date` below
+    # applies the canonical 18:00 ET anchor for futures sessions.
+    trade_dates = raw_dates.dt.tz_localize(None).dt.normalize()
     daily_df = pd.DataFrame({
         'datetime': [get_daily_anchor_for_trade_date(day_value.date(), symbol) for day_value in trade_dates],
         'open': history['Open'].astype(float),

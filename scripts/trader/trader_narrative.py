@@ -25,6 +25,8 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -97,6 +99,82 @@ OPEN_SNAPSHOT_POLL_INTERVAL = 5
 # 16:15 pipeline slips (e.g. broker latency).
 CLOSE_SNAPSHOT_TIMEOUT_SECONDS = 180
 CLOSE_SNAPSHOT_POLL_INTERVAL = 5
+
+FUTURES_TO_STREAM_SYMBOL = {
+    "ES1": "/ES",
+    "NQ1": "/NQ",
+    "YM1": "/YM",
+    "RTY1": "/RTY",
+    "CL1": "/CL",
+    "GC1": "/GC",
+}
+
+
+def _daily_parquet_trade_date(ticker: str) -> date | None:
+    """Return the latest trade date represented in data/<ticker>_1d.parquet.
+
+    Futures daily bars are anchored at 18:00 ET on the prior calendar day,
+    so effective trade date is index date + 1 when hour >= 18.
+    """
+    path = REPO_ROOT / "data" / f"{ticker}_1d.parquet"
+    if not path.exists():
+        return None
+    try:
+        df_1d = pd.read_parquet(path)
+        if df_1d is None or df_1d.empty:
+            return None
+        idx = df_1d.index
+        if idx.tz is not None:
+            idx = idx.tz_convert(ET_TZ)
+        else:
+            idx = idx.tz_localize("UTC").tz_convert(ET_TZ)
+        last_ts = idx[-1]
+        if ticker.upper() in FUTURES_TO_STREAM_SYMBOL and last_ts.hour >= 18:
+            return (last_ts + pd.Timedelta(days=1)).date()
+        return last_ts.date()
+    except Exception as e:
+        log.warning("[close-refresh] Failed reading %s_1d.parquet: %s", ticker, e)
+        return None
+
+
+def _ensure_close_daily_freshness(ticker: str, target_date: date) -> None:
+    """Ensure futures daily parquet is current for close mode.
+
+    If stale, trigger a one-shot historical updater so close mode does not depend
+    on spoke uptime timing.
+    """
+    stream_symbol = FUTURES_TO_STREAM_SYMBOL.get(ticker.upper())
+    if not stream_symbol:
+        return
+
+    last_trade_date = _daily_parquet_trade_date(ticker)
+    if last_trade_date is not None and last_trade_date >= target_date:
+        return
+
+    log.warning(
+        "[close-refresh] %s daily parquet stale/missing for target date %s (last trade date: %s). Triggering refresh...",
+        ticker,
+        target_date,
+        last_trade_date,
+    )
+    try:
+        from scripts.streaming.stream_chart import update_historical_files
+
+        asyncio.run(update_historical_files(stream_symbol))
+    except Exception as e:
+        log.warning("[close-refresh] Historical refresh failed for %s: %s", ticker, e)
+        return
+
+    refreshed_trade_date = _daily_parquet_trade_date(ticker)
+    if refreshed_trade_date is None or refreshed_trade_date < target_date:
+        log.warning(
+            "[close-refresh] %s daily parquet still behind after refresh (target=%s, last=%s)",
+            ticker,
+            target_date,
+            refreshed_trade_date,
+        )
+    else:
+        log.info("✓ [close-refresh] %s daily parquet updated through trade date %s", ticker, refreshed_trade_date)
 
 
 def _wait_for_open_snapshot(timeout: int = OPEN_SNAPSHOT_TIMEOUT_SECONDS) -> bool:
@@ -860,6 +938,9 @@ def run_narrative(
     for ticker in tickers:
         log.info("Building cheat sheet for %s (mode: %s)...", ticker, mode)
         try:
+            if mode == "close" and target_date is not None:
+                _ensure_close_daily_freshness(ticker, target_date)
+
             if mode == "intraday":
                 cheat_sheet = build_intraday_context(loader=loader, ticker=ticker, target_date=target_date, now_et=sim_dt)
             elif mode == "close":
