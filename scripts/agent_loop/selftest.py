@@ -106,6 +106,98 @@ def scenario(
     return ok
 
 
+# --------------------------------------------------------------------------
+# Parser fixtures - real malformations seen from real models
+# --------------------------------------------------------------------------
+# The canned bodies above are PERFECTLY formatted, which is exactly why they
+# proved nothing: all four parser defects found while landing T2-T5 passed this
+# selftest 8/8 while broken. A parser is only interesting on input a model
+# actually produced, so these are verbatim shapes from logs/agent_loop (the
+# artifacts themselves are gitignored, hence literals). Add one whenever a new
+# malformation shows up in the wild.
+_FIXTURES = [
+    # T3 r2/r3/r4: block closed with '>>' instead of '>>>'. Cost 3 rounds and
+    # the ticket; the static gate reported the block as "missing".
+    (
+        "block closed with >> (T3)",
+        lambda: len(loop.parse_blocks(
+            '<<<BLOCK id="A">>>\nbody a\n<<<END id="A">>\n'
+            '<<<BLOCK id="B">>>\nbody b\n<<<END id="B">>>\n'
+            "<<<NOTES>>\n- n\n<<<END NOTES>>"
+        )[0]),
+        2,
+    ),
+    (
+        "notes closed with >> (T3)",
+        lambda: len(loop.parse_blocks(
+            '<<<BLOCK id="A">>>\nbody a\n<<<END id="A">>>\n<<<NOTES>>>\n- note\n<<<END NOTES>>'
+        )[1]),
+        6,  # len("- note")
+    ),
+    # T2 r1/r2: RATIONALE closed with <<<END SETTLED>>>, and no <<<SETTLED>>>
+    # opener at all. Both sections parsed empty and 11 settled decisions were
+    # silently discarded.
+    (
+        "rationale closed with the wrong END tag (T2)",
+        lambda: arbiter._section(
+            "<<<RATIONALE>>>\nthe reason\n<<<END SETTLED>>>\n- a settled item\n<<<END SETTLED>>>",
+            "RATIONALE",
+        ),
+        "the reason",
+    ),
+    (
+        "settled section with no opener (T2)",
+        lambda: arbiter._section(
+            "<<<RATIONALE>>>\nthe reason\n<<<END SETTLED>>>\n- a settled item\n<<<END SETTLED>>>",
+            "SETTLED",
+        ),
+        "- a settled item",
+    ),
+    # T2 r1: stray bracket. T3 r2: no brackets at all -- eight valid rulings
+    # parsed as unruled and turned a SHIP into a spurious ESCALATE.
+    (
+        "ruling bracket variants (T2, T3)",
+        lambda: [
+            (m.group(1), int(m.group(2)))
+            for m in arbiter._RULING_RE.finditer(
+                "- [REJECTED] #1: normal\n"
+                "- [ [REJECTED] #2: stray bracket\n"
+                "- REJECTED #3: no brackets\n"
+                "- **[UPHELD]** #4: emphasised\n"
+                "- [OUT_OF_SCOPE] #5 no colon"
+            )
+        ],
+        [("REJECTED", 1), ("REJECTED", 2), ("REJECTED", 3), ("UPHELD", 4), ("OUT_OF_SCOPE", 5)],
+    ),
+    # Well-formed input must still parse identically -- a tolerant parser that
+    # broke the happy path would be worse than the strict one.
+    (
+        "well-formed arbiter body still parses",
+        lambda: (
+            len(list(arbiter._RULING_RE.finditer(arbiter._section(_arbiter_body(3, "UPHELD", "REVISE"), "RULINGS")))),
+            arbiter._section(_arbiter_body(3, "UPHELD", "REVISE"), "RATIONALE"),
+        ),
+        (3, "canned"),
+    ),
+]
+
+
+def parser_fixtures() -> bool:
+    print("\n--- parser fixtures: real malformed model output")
+    ok = True
+    for name, fn, expect in _FIXTURES:
+        try:
+            got = fn()
+        except Exception as exc:  # a parser must never raise on model output
+            got = f"RAISED {exc!r}"
+        good = got == expect
+        ok = ok and good
+        print(f"    {'PASS' if good else 'FAIL'}  {name}")
+        if not good:
+            print(f"          expect={expect!r}\n          got   ={got!r}")
+    return ok
+
+
 def main() -> int:
     spec = json.loads((REPO / "scripts/agent_loop/tickets_p0.json").read_text(encoding="utf-8"))
     t3 = next(t for t in spec["tickets"] if t["id"] == "T3")
@@ -175,6 +267,8 @@ def main() -> int:
     ok = res.get("final_verdict") == "TICKET_REJECTED"
     print(f"    expect=TICKET_REJECTED  got={res.get('final_verdict')}  {'PASS' if ok else 'FAIL'}")
     results.append(ok)
+
+    results.append(parser_fixtures())
 
     passed = sum(results)
     print(f"\n==== selftest: {passed}/{len(results)} passed ====")

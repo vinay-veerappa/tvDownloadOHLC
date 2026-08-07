@@ -1,12 +1,12 @@
 # Agent Patch Loop — formalised implement → gate → review → apply cycle
 
-**Status**: runnable; `python -m scripts.agent_loop.selftest` passes **8/8** offline. Exercised
-against live models on T2, which surfaced three structural defects in the loop itself (§4.6, §4.7,
-and the panel-validity bug in §4.1). **It has not yet closed a ticket end to end** — treat it as
-unproven until it does.
+**Status**: **proven.** Closed T2, T3, T4 and T5 of the RiskGuard P0 phase end to end on
+2026-08-06 (suite went 353/3-failing → 356/0). Live use surfaced seven defects in the loop itself:
+three during T2 (§4.6, §4.7, the panel-validity bug in §4.1) and four during T3–T5 (§7), all fixed.
 **Predecessor**: `scripts/agent_loop/ollama_patch_loop.py` — superseded, retained only so
 in-flight artifacts stay readable. Three of its gates were defective (§4); do not use it.
 **Driving work**: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
+**If something is broken, start at §8** (symptom → cause → fix).
 
 ```powershell
 # confirm every ticket still resolves (free; run before paying for anything)
@@ -15,15 +15,22 @@ in-flight artifacts stay readable. Three of its gates were defective (§4); do n
 # offline end-to-end check of the loop itself (free, ~2 min, no models)
 .\.venv\Scripts\python.exe -m scripts.agent_loop.selftest
 
-# run one ticket; promotes into the live tree only on unanimous APPROVE
-.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 --apply
+# run one ticket. Does NOT apply: it stops at ARBITER_SHIP for human sign-off.
+.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 --arbiter glm-5.2:cloud
 
-# resume a candidate whose panel was unreachable, without re-paying for it
-.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T2 --resume-raw logs/ollama_loop/T2/r4_impl_raw.txt
+# promote a candidate you have read and accepted (see §9 for the checklist)
+.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 `
+    --resume-raw logs/agent_loop/T3/r2_impl_raw.txt --allow-unapproved --apply
 
 # clean up worktrees left behind by a crashed run
 .\.venv\Scripts\python.exe -m scripts.agent_loop --prune
 ```
+
+> **Two rules that are not optional.**
+> 1. **`ARBITER_SHIP` is a recommendation, not an outcome.** Nothing is applied until a human runs
+>    `--apply`. Read the candidate first.
+> 2. **A green gate ladder is not a closed defect.** The test gate only proves *no regression*.
+>    T5 reached `ARBITER_SHIP` with its own acceptance test still red (§7.5).
 
 ---
 
@@ -31,11 +38,16 @@ in-flight artifacts stay readable. Three of its gates were defective (§4); do n
 
 A batch loop that applies a *ticket* — a defect description plus a set of source regions — by
 having one model rewrite those regions, gating the result mechanically, having a panel of
-different models review it adversarially, and applying only on unanimous approval.
+different models review it adversarially, and having a stronger arbiter rule on their findings.
 
 It is not an interactive pair-programmer. The unit of work is a ticket, the output is either an
-applied patch or a pile of artifacts for a human arbiter, and every decision point in between is
+approved patch or a pile of artifacts for a human arbiter, and every decision point in between is
 recorded.
+
+Unanimous APPROVE was the original bar for applying automatically. In practice it is unreachable
+(§4.7) and the arbiter replaced it, so **in normal operation the loop ends at `ARBITER_SHIP` and a
+human promotes**. Unanimous APPROVE still short-circuits to `APPROVE` when it happens; it just
+rarely does.
 
 ### Why not just use an existing tool
 
@@ -388,8 +400,11 @@ RiskGuard work itself:
   missed and a state-machine generator would find mechanically.
 - **Mutation testing** (Stryker.NET) — the mechanical answer to "does my suite have teeth", which
   is exactly what commit `ddba3433` answered by hand.
-- **Record/replay cassettes** for the loop's own model calls, so the gate ladder can be tested
-  without paying for models. A tool whose job is gating code on tests currently has no tests.
+- **Record/replay cassettes** for the loop's own model calls. `selftest.py` now covers the driver
+  with stubs and the parsers with real-world fixtures (§10.1), but a cassette of a full live run
+  would catch prompt-level regressions that neither reaches.
+- **`expect_green` on tickets**, so the test gate can require a named test to flip rather than
+  merely require no regression (§7.5). Highest-value item in this list.
 
 ---
 
@@ -399,5 +414,237 @@ RiskGuard work itself:
   this repo; unrelated commits landed between every pair of commits in this effort.
 - The tool pins to `.venv` (Python 3.12). The predecessor was being run under `C:\Python314`,
   which is a separate interpreter with a different package set.
-- Artifacts land in `logs/ollama_loop/<TICKET>/` — one file per round per stage, plus
+- Artifacts land in `logs/agent_loop/<TICKET>/` — one file per round per stage, plus
   `result.json`. Everything a human arbiter needs to second-guess a verdict is on disk.
+  (The predecessor used `logs/ollama_loop/`; those artifacts are frozen.)
+
+---
+
+## 7. Defects found in live use — and the one bug behind most of them
+
+§4 is the post-mortem that motivated the rebuild. This section is the post-mortem of the *rebuilt*
+loop, from landing T2–T5. Read it before debugging anything: four of these five were the same bug
+wearing different clothes.
+
+### The pattern: strict format parsing silently discarding valid content
+
+**A model got the punctuation wrong; the loop threw away the content and reported the wrong
+cause.** Every instance cost real rounds, and every one was invisible in the summary output.
+
+| § | What was discarded | How it presented | Cost |
+|---|---|---|---|
+| 7.1 | Arbiter `RATIONALE` + `SETTLED` | Silence — sections simply empty | 11 settled decisions lost across two T2 rounds |
+| 7.2 | An implementer block closed with `>>` | `"EvaluatePnLRules: missing from model output"` | **3 rounds and the whole T3 ticket** |
+| 7.3 | Arbiter rulings written without `[ ]` | A clean `SHIP` became `ESCALATE` | One wasted adjudication |
+| 7.4 | The resumed candidate was never persisted | A `promote:` hint naming the wrong file | Nearly promoted unreviewed code |
+
+The general rule now: **marker punctuation is not what the gates exist to check.** Parsers accept
+`>{2,}`, optional brackets, and mismatched/missing END tags. If you add a parser, make it tolerant
+in the same way, and make the *failure message name the content*, not the format.
+
+### 7.1 The arbiter silently discarded its own rationale and settled list
+
+`_section()` required an exactly-matching END tag. glm-5.2 closed `<<<RATIONALE>>>` with
+`<<<END SETTLED>>>` and omitted the `<<<SETTLED>>>` opener entirely — on **both** T2 rounds — so
+both sections parsed as empty and the loop printed nothing to say so. Fixed (`fe5bb5ce`): the
+parser tolerates a misnamed terminator (run to the next marker) and a missing opener (take the body
+before the closer).
+
+Why it mattered: `SETTLED` is the mechanism that stops reviewers re-litigating known false
+positives. It was being thrown away every single time.
+
+### 7.2 A missing angle bracket cost an entire ticket
+
+T3 round 1 passed every gate; the arbiter upheld two findings. Rounds 2, 3 and 4 then all died on
+the **static** gate with `EvaluatePnLRules: missing from model output`.
+
+The block was not missing. kimi-k2.7-code closed it with `>>` instead of `>>>` and — given
+feedback naming a block it had just emitted — reproduced the identical output twice more. **r2, r3
+and r4 were byte-identical.** Fixed (`8f798b09`): `BLOCK_RE` and the NOTES pattern accept `>{2,}`.
+
+This is the canonical example of the whole failure mode: a correct patch, rejected three times,
+with the gate pointing at the one thing that was not wrong.
+
+### 7.3 Arbiter rulings dropped over bracket style
+
+T3 round 2's arbiter ruled on all eight findings and recommended `SHIP`, but wrote
+`- REJECTED #1: ...` without the square brackets `_RULING_RE` demanded. All eight parsed as
+unruled, and the (correct, deliberate) SHIP-with-unruled guard downgraded it to `ESCALATE`.
+Fixed (`08cd12cb`): brackets and emphasis characters are skipped on both sides. A ruling is
+identified by the leading `-`, the verdict keyword and the `#n`.
+
+### 7.4 The promote hint named a file the arbiter never reviewed
+
+**The dangerous one.** On `--resume-raw` the loop read the candidate but never wrote it to
+`rN_impl_raw.txt`, while every `resume with` / `promote:` hint is built from the round number. The
+round-1 artifact therefore stayed as whatever an *earlier* run left there.
+
+On T3 the loop resumed a good candidate, arbitrated it, recommended SHIP — and printed
+`--resume-raw .../r1_impl_raw.txt`, which still held a candidate from six minutes earlier carrying
+two upheld findings, one of them a naked-position defect. Following the hint would have promoted
+unreviewed code into an addon that flattens live funded accounts. Fixed (`5af12984`).
+
+Caught only because the code being reviewed did not match the implementer's own notes. **Keep
+verifying that the file you promote is the one the arbiter saw** — `md5sum` it against the
+candidate whose `rN_arbiter.txt` you read.
+
+### 7.5 The test gate cannot tell "no regression" from "defect closed"
+
+T5 reached `ARBITER_SHIP` with its own acceptance test — the entire point of the ticket — still
+failing. The gate compares against a frozen baseline, that failure *was* in the baseline, so
+"no regressions" was true and useless.
+
+Not yet fixed. The fix is an `expect_green` list on the ticket that the test gate must observe
+flipping. Until then: **if a ticket has a failing test waiting, check it by name.**
+
+Related, and worth knowing: T5's test could never have passed. It built a locked RiskGuard but
+never assigned `RiskGuardAddOn.Instance` (production only does that in `State.Configure`), so the
+copier saw no guard at all. A test that cannot observe its own subject reads exactly like a fix
+that does not work.
+
+---
+
+## 8. Debugging playbook
+
+### 8.1 Where to look
+
+```
+logs/agent_loop/<TICKET>/
+  00_implement_prompt.md        exact prompt sent to the implementer (round 1)
+  rN_impl_raw.txt               raw implementer output for round N  <- the candidate
+  rN_build.txt                  compiler output
+  rN_tests.txt                  one-line test gate summary
+  rN_review_<model>.txt         each reviewer verbatim
+  rN_arbiter.txt                rulings, recommendation, rationale, settled
+  final.patch                   unified diff of the last gated candidate  <- read this
+  result.json                   per-round stage records; the machine-readable truth
+logs/agent_loop/ledger.jsonl    append-only, one line per run
+```
+
+**Trust order when they disagree**: `result.json` > per-round artifacts > stdout summary.
+`result.json` records the stage that actually failed and its detail string.
+
+### 8.2 First moves
+
+```powershell
+# What stage failed, and why, for every round?
+.\.venv\Scripts\python.exe -c "import json; r=json.load(open('logs/agent_loop/T3/result.json')); print(r['final_verdict']); [print(' round',d['round'],d['stage'],d['ok'],d['summary'],'|',(d.get('detail') or '')[:200]) for d in r['rounds']]"
+
+# Did the model actually emit the blocks the static gate says are missing?
+Select-String -Path logs/agent_loop/T3/r2_impl_raw.txt -Pattern '<<<'
+
+# Do the parsers agree with your eyes?
+.\.venv\Scripts\python.exe -c "from scripts.agent_loop.loop import parse_blocks; b,n=parse_blocks(open('logs/agent_loop/T3/r2_impl_raw.txt',encoding='utf-8').read()); print(sorted(b), len(n))"
+
+# Same for an arbiter artifact
+.\.venv\Scripts\python.exe -c "from scripts.agent_loop.arbiter import _section,_RULING_RE; t=open('logs/agent_loop/T3/r2_arbiter.txt',encoding='utf-8').read(); print(len(list(_RULING_RE.finditer(_section(t,'RULINGS')))),'rulings;', len(_section(t,'RATIONALE')),'c rationale')"
+```
+
+### 8.3 Symptom → cause → fix
+
+| Symptom | Most likely cause | What to do |
+|---|---|---|
+| `X: missing from model output`, but `<<<BLOCK id="X">>>` is in the raw file | Marker punctuation (§7.2) | Run the `parse_blocks` one-liner. If it parses now, the candidate is fine — resume from it. If not, loosen the pattern. |
+| Same round repeats with identical output | The model cannot act on the feedback because the feedback is wrong | Diff consecutive `rN_impl_raw.txt`. **Byte-identical rounds mean the gate is lying**, not that the model is stuck. |
+| `PANEL_UNREACHABLE` | A reviewer raised `ProviderError`, or returned empty | Check `rN_review_*.txt` size. 0 bytes on a reasoning model = budget spent on `thinking` (§4.6); the loop already sets `think=False`. Otherwise transport — retry. |
+| Arbiter `ESCALATE: recommended SHIP but did not rule on [...]` | Ruling lines did not parse (§7.3) | Read `rN_arbiter.txt`. If the rulings are visibly there, it is a parser bug, not an omission. |
+| Arbiter rationale empty in output | Mismatched END tag (§7.1) | Should be fixed; re-check `_section`. |
+| `ARBITER_SHIP` but the ticket's acceptance test is still red | The test gate only checks regressions (§7.5) | Do not promote. Check the named test. |
+| Verdict good, but promoted code looks wrong | Stale `rN_impl_raw.txt` (§7.4) | `md5sum` the file against the candidate you reviewed. |
+| `TICKET_REJECTED` | A region targets the verifier (gate 0) | Correct — the ticket is malformed. Fix the region, do not relax the gate. |
+| Worktree left behind after a crash | Normal | `--prune`. |
+| Run refuses to start, complains about a lock | Stale lock from a crashed run | The lock records a PID and self-clears when the process is gone; if not, delete it. |
+| `capture_baseline` refuses | Live tree dirty | Commit or stash. A baseline must describe unmodified code. |
+
+### 8.4 The rule that would have saved the most time
+
+**When a gate says the model got the format wrong, check whether the content is there before
+spending another round.** Three of the four §7 defects would have been caught in thirty seconds by
+one `grep '<<<'` on the raw artifact.
+
+---
+
+## 9. Promotion checklist
+
+The loop stops at `ARBITER_SHIP` on purpose. Before `--apply`:
+
+1. **Read `rN_arbiter.txt`.** Not the summary line — the rulings. Reviewers contradict each other
+   on load-bearing facts; on T2 one read a state machine correctly and the other asserted the
+   opposite. Verify the mechanism against the code.
+2. **Distrust proposed fixes especially.** Two reviewer "required changes" during this phase would
+   have created live defects: one reintroduced the exact defect the previous round upheld, another
+   would have aborted an auto-stop whenever the position scaled up, leaving it naked.
+3. **Confirm the candidate is the one that was reviewed** (§7.4).
+4. **Confirm the acceptance test flipped**, by name (§7.5).
+5. **Read `final.patch`.** The blast radius is the region set, but the consequences are not.
+6. Promote with `--resume-raw <candidate> --allow-unapproved --apply`, then **stage explicit
+   paths** and commit.
+7. Re-run the suite in the live tree afterwards. The gates ran in a worktree.
+
+Both defects that reached the live tree this phase were found at step 5, not by the panel:
+T4's exit rounding and T3's out-of-region session reset.
+
+---
+
+## 10. Changing the loop safely
+
+### 10.1 Testing a change
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.agent_loop.selftest   # 9/9, ~2 min, free
+.\.venv\Scripts\python.exe -m scripts.agent_loop --list     # all 18 regions still resolve
+```
+
+`selftest.py` runs the real driver with `chat()` stubbed, against a real worktree, a real build and
+a real test run. It covers: the worktree and baseline freeze, the gate ladder, panel validity
+(empty response and `ProviderError` are *not* votes), all three arbiter recommendations, and gate 0
+refusing a ticket aimed at the verifier.
+
+> **Know what the selftest does not prove.** Its canned model output is *perfectly formatted* —
+> `_arbiter_body()` emits exact `- [VERDICT] #n:` lines and correct END tags. **All four §7 parser
+> defects passed the selftest 8/8 while broken**, because the selftest never feeds the parsers
+> anything a real model would actually produce. Scenario 9 (`parser fixtures`) closes this by
+> replaying the real malformed artifacts under `logs/agent_loop/`. If you touch `BLOCK_RE`,
+> `_RULING_RE` or `_section`, that is the scenario that protects you — and add a fixture whenever a
+> new malformation shows up in the wild.
+
+### 10.2 Invariants not to break
+
+- **Mechanical gates outrank model opinion.** Where a gate and the panel disagree, the gate wins.
+  The arbiter may not overturn a gate.
+- **A model never ships.** `--apply` is a human action.
+- **The baseline is frozen once**, before the first candidate. Recomputing it mid-run lets a patch
+  that breaks a test widen the baseline and pass.
+- **Gate 0 is by construction, not instruction.** Never let a ticket reach the test file, the
+  csproj, or `scripts/agent_loop/*`.
+- **A reviewer that did not answer has not voted.** Empty and `ProviderError` are not dissent.
+- **The live tree is never written to** except by the explicit final apply step.
+
+### 10.3 Adding a ticket
+
+Append to `scripts/agent_loop/tickets_p0.json`: `id`, `title`, `defect`, `spec` (numbered
+imperatives), `context` (what must be preserved, and what neighbouring tickets already changed),
+and `regions` (`id`, `file`, `anchor`, `note`). Then:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.agent_loop --list   # regions must all say OK
+```
+
+Two lessons from this phase: **anchor on a declaration, never a line number**, and **make sure the
+region set can actually reach everything the spec asks for**. T3's spec item 1 required an edit at
+two sites that were not in any region, so the loop could not have complied — it flagged this in its
+notes and was ignored until review caught it.
+
+### 10.4 Adding a gate
+
+Add to `gates.py` returning a `GateResult`; wire it in `loop.py` in cost order. Set `feedback` to
+text the *implementer* can act on — it is fed into the next round verbatim, so a misleading
+`feedback` string costs a full round (§7.2). Then add a selftest scenario proving it fires *and*
+that unchanged source still passes it.
+
+### 10.5 Pointing the loop at another codebase
+
+Add a `Profile` in `profiles.py`: prompts, `build_cmd`, `test_cmd`, `lock_name`, `protected`,
+`settled`. Nothing domain-specific lives in the driver. The lock-scope gate and the C# region
+stripper are the two genuinely C#-shaped pieces; `regions.py` refuses files containing verbatim
+strings or block comments rather than mis-splicing them.
