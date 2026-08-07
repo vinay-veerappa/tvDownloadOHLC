@@ -127,6 +127,22 @@ concrete mechanism.""",
         "SeedFsmsForExistingPositions does NOT need its own lock: both SubscribeToAccount call "
         "sites already hold _stateLock. Reviewers repeatedly flag this as a false positive.",
         "Do not propose new GuardFsmState enum values; existing tests assert on them.",
+        # Settled while landing T2. The first is the important one: it looks like a
+        # missing safety check, and re-adding it reintroduces a PERMANENT naked position.
+        "ValidateInvariant must NOT reject PlaceStopOrder when action.Quantity > the live "
+        "position quantity. The action is dropped before ExecuteAction runs, so GraceEmitted "
+        "stays latched and both EvaluateGraceExpiry and FsmWatchdog are suppressed forever, "
+        "leaving the position permanently naked. ExecuteAction re-sizes from the live "
+        "position, so the check buys nothing. Do not propose adding it back.",
+        "ArmGraceTimer only schedules a timer callback and makes no broker/account call. "
+        "Calling it while holding _stateLock is correct and required (T1). Do not raise it "
+        "as a lock-scope violation.",
+        "Reading account.Positions outside _stateLock is an accepted pattern here. A stale "
+        "read produces a safe abort or a spurious grace timer that aborts harmlessly, not "
+        "naked risk. Do not raise it as a lock-scope violation.",
+        "A TOCTOU window between the live position read and account.Submit cannot be closed "
+        "without holding a lock across a broker call, which is forbidden. Sizing from the "
+        "most recent live read satisfies the requirement. Do not raise it as unfixed.",
     ),
 )
 

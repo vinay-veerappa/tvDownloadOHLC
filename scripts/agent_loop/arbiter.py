@@ -85,7 +85,12 @@ SHIP | REVISE | ESCALATE
 <<<END SETTLED>>>
 """
 
-_RULING_RE = re.compile(r"^-\s*\[(UPHELD|REJECTED|OUT_OF_SCOPE)\]\s*#(\d+)\s*:?\s*(.*)$", re.MULTILINE)
+# A stray bracket before the verdict must not drop a ruling. glm-5.2 emitted
+# "- [ [REJECTED] #11: ..." on T2 round 1; the finding parsed as unruled and
+# was silently discarded.
+_RULING_RE = re.compile(
+    r"^-\s*\[?\s*\[(UPHELD|REJECTED|OUT_OF_SCOPE)\]\s*#(\d+)\s*:?\s*(.*)$", re.MULTILINE
+)
 
 
 @dataclass
@@ -121,9 +126,39 @@ class Adjudication:
         )
 
 
+_MARKER_RE = re.compile(r"<<<(?:END )?[A-Z_ ]+>>>")
+
+
 def _section(text: str, name: str) -> str:
-    m = re.search(rf"<<<{name}>>>\r?\n(.*?)<<<END {name}>>>", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
+    """Extract a section, tolerating a mismatched or missing terminator.
+
+    A strict opener/closer match silently returns "" for a section whose END tag
+    is wrong, and there is no way to tell that from "the model said nothing".
+    glm-5.2 closed RATIONALE with `<<<END SETTLED>>>` and omitted the
+    `<<<SETTLED>>>` opener entirely on BOTH T2 arbitration rounds, so the
+    rationale and all six nominated settled decisions were discarded every time
+    -- silently defeating the mechanism that exists to stop reviewers
+    re-litigating known false positives.
+    """
+    open_m = re.search(rf"<<<{name}>>>\r?\n?", text)
+    if open_m:
+        rest = text[open_m.end():]
+        close_m = re.search(rf"<<<END {name}>>>", rest)
+        if close_m:
+            return rest[: close_m.start()].strip()
+        # Terminator missing or misnamed: run to the next marker of any kind.
+        nxt = _MARKER_RE.search(rest)
+        return (rest[: nxt.start()] if nxt else rest).strip()
+
+    # No opener at all. If a closer exists, the body is whatever sits between it
+    # and the marker before it -- recoverable, and better than dropping content.
+    closers = list(re.finditer(rf"<<<END {name}>>>", text))
+    if not closers:
+        return ""
+    last = closers[-1]
+    prior = [m for m in _MARKER_RE.finditer(text) if m.end() <= last.start()]
+    start = prior[-1].end() if prior else 0
+    return text[start: last.start()].strip()
 
 
 def build_prompt(
