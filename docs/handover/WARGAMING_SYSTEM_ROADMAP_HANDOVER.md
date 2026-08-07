@@ -47,7 +47,7 @@ Key Principles:
 | **Phase 1.1** | **Master Rule Catalog Indexing** | `docs/profiler/master_rule_catalog.json` | ✅ COMPLETED |
 | **Phase 1.2** | **ChatML Fine-Tuning Dataset Generator** | `scripts/wargaming/build_wargaming_dataset.py`, `wargaming_sft.jsonl`, `wargaming_postmortem.jsonl` | ✅ COMPLETED |
 | **Phase 1.3** | **Unsloth QLoRA Fine-Tuning Script & Modelfile** | `train_wargaming_lora.py`, `data/Modelfile` | ✅ COMPLETED |
-| **Phase 1.4** | **Ollama Model Serving & Benchmarking** | `evaluate_wargaming_llm.py`, `wargaming_llm_benchmark_report_NQ1.md` | ✅ COMPLETED |
+| **Phase 1.4** | **Ollama Model Serving & Benchmarking** | `evaluate_wargaming_llm.py`, `wargaming_llm_benchmark_report_NQ1.md` | ✅ COMPLETED (baseline) + 🔄 all-dates expansion in progress |
 
 ---
 
@@ -67,6 +67,7 @@ Key Principles:
 | **Master Rule Catalog JSON** | [`docs/profiler/master_rule_catalog.json`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/master_rule_catalog.json) | Machine-readable JSON catalog of all verbatim probabilities, streak limits, and conditional rules. |
 | **3-Engine Verification Handover** | [`docs/architecture/PROFILER_VERIFICATION_HANDOVER.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/PROFILER_VERIFICATION_HANDOVER.md) | Logical date bug fix, 09:15 ET target timestamp rule, UTC epoch jump protocol, 4-day parity audit matrix. |
 | **LLM Benchmark Report** | [`scratch/wargaming_llm_benchmark_report_NQ1.md`](file:///c:/Users/vinay/tvDownloadOHLC/scratch/wargaming_llm_benchmark_report_NQ1.md) | Benchmark report logging 100% zero look-ahead causality and 7/7 SOP rule compliance. |
+| **LLM Benchmark Checkpoint** | [`scratch/wargaming_llm_benchmark_checkpoint_NQ1.json`](file:///c:/Users/vinay/tvDownloadOHLC/scratch/wargaming_llm_benchmark_checkpoint_NQ1.json) | Live checkpoint ledger for all-dates benchmark progress (`stage`, `completed_pairs`, `last_date`, `last_rule_score`) to support interruption-safe resume. |
 | **TradingView Replay Skill** | [`TradingView Replay & Indicator Extractor`](file:///c:/Users/vinay/tvDownloadOHLC/.agents/skills/tradingview-wargame-verifier/SKILL.md) | Automated TradingView Bar Replay navigation, UTC epoch timestamps, and hidden study extraction. |
 | **Multi-Ticker Registry** | [`scripts/config/ticker_registry.json`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/config/ticker_registry.json) | Central parameters for `NQ1`, `ES1`, `CL1`, `GC1`, `YM1`, `RTY1` defining tick sizes, points, and sessions. |
 | **Master Implementation Plan** | [`implementation_plan.md`](file:///C:/Users/vinay/.gemini/antigravity/brain/30eda112-25a1-420f-a08a-b544e235c6fd/implementation_plan.md) | Active execution plan with Phase 0 validation checkpoints. |
@@ -106,7 +107,38 @@ Key Principles:
 - **2026-08-07**: Standardized CLI contract for core wargaming/validation scripts to support `--ticker` flags (with positional fallback for backward compatibility).
 - **2026-08-07**: Added all-dates benchmark mode in `scripts/wargaming/evaluate_wargaming_llm.py` (`--all-dates`, optional date filters, resumable mode) to evaluate across full available NQ history.
 - **2026-08-07**: Created scenario-mapped markdown artifact [`docs/profiler/WARGAMING_SCENARIO_BLUEPRINT_NQ1.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/WARGAMING_SCENARIO_BLUEPRINT_NQ1.md) for pre-market branch planning and EOD reengineering.
+- **2026-08-07**: Hardened long-run benchmark observability and recovery:
+  - Added dataset progress callbacks in `scripts/wargaming/build_wargaming_dataset.py`.
+  - Added checkpoint writer and incremental report appends in `scripts/wargaming/evaluate_wargaming_llm.py`.
+  - Added live checkpoint artifact [`scratch/wargaming_llm_benchmark_checkpoint_NQ1.json`](file:///c:/Users/vinay/tvDownloadOHLC/scratch/wargaming_llm_benchmark_checkpoint_NQ1.json).
+- **2026-08-07**: Relaunched NQ all-dates benchmark with resume + checkpoint logging.
+  - Dataset build completed: 323 processed, 321 valid sessions.
+  - Evaluation active; latest snapshot (at handover update time): `completed_pairs=279/321`, `last_date=2026-05-20`, `last_rule_score=7/7`.
+  - Rolling output tracked in [`scratch/wargaming_llm_benchmark_report_NQ1.md`](file:///c:/Users/vinay/tvDownloadOHLC/scratch/wargaming_llm_benchmark_report_NQ1.md).
 
 ---
+
+## 5. Open Risks / Remaining Steps
+
+### Open Risks
+- **Long-run completion risk**: The all-dates benchmark is still in progress; interruption before completion can leave report coverage partial.
+- **Cloud model runtime risk**: `deepseek-v4-flash:cloud` calls may fail or timeout intermittently over long horizons.
+- **Result drift risk**: Any mid-run code/config change can invalidate strict comparability across rows.
+
+### Remaining Steps (Closure Checklist)
+1. Let benchmark finish and verify checkpoint reaches terminal state (`stage=complete`) for all expected pairs.
+2. Confirm report row coverage equals expected evaluated pairs (no missing dates/models).
+3. Summarize final outcomes:
+  - Causality pass rate
+  - Rule-score distribution (7/7 frequency and any deviations)
+  - Error/timeout count and affected dates
+4. If any failures occurred, run targeted replay only for failed pairs and append remediation notes.
+5. Mark Phase 1.4 all-dates expansion as complete in this handover with final totals and timestamp.
+
+### Completion Criteria
+- Checkpoint indicates complete run state.
+- Report includes all expected date/model pairs.
+- Final summary is recorded in this handover with reproducible artifact links.
+
 *Document Location: `docs/handover/WARGAMING_SYSTEM_ROADMAP_HANDOVER.md`*
 
