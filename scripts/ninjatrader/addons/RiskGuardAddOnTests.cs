@@ -26,6 +26,13 @@ namespace NinjaTrader.Cbi
     public enum TimeInForce { Day, Gtc }
     public enum PerformanceUnit { Currency, Percent, Pips, Points, Ticks }
 
+    /// <summary>
+    /// Stub of NT8's broker-provider enum. Only <c>Simulator</c> is load-bearing: it is
+    /// how the copier tells a practice account from one that can lose real money, now
+    /// that the account NAME is no longer trusted for that (P1-20).
+    /// </summary>
+    public enum Provider { NinjaTrader, Simulator, Playback, Rithmic, ContinuumFix, InteractiveBrokers }
+
     public class Instrument
     {
         public string FullName { get; set; }
@@ -131,6 +138,12 @@ namespace NinjaTrader.Cbi
     public class Account
     {
         public string Name { get; set; }
+
+        // Defaults to a LIVE provider on purpose. A test that forgets to say it is
+        // simulated gets the strict treatment, which is the same fail-closed posture
+        // the production gate now takes. Defaulting to Simulator would reproduce the
+        // exact bug P1-20 fixes -- assuming safety instead of establishing it.
+        public Provider Provider { get; set; } = Provider.NinjaTrader;
         public Dictionary<AccountItem, double> Values { get; set; } = new Dictionary<AccountItem, double>();
         public List<Order> Orders { get; set; } = new List<Order>();
         public List<Position> Positions { get; set; } = new List<Position>();
@@ -468,6 +481,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT1_CancelledStopMidPositionReArmsGrace();
             TestT3_ProfitableFlatAccountEmitsNoGiveback();
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
+            TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
 
             // -- COPIER GROUPS & STRESS TESTS --
             TestCopierGroup_GroupManagement();
@@ -524,6 +538,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCopyPath_ExitDoesNotFlipFollowerShort();
             TestCopyPath_MicroToMiniDoesNotInflateNotional();
             TestCopyPath_LockedFollowerReceivesNoCopy();
+            TestCopyPath_LiveAccountNamedSimIsNotTreatedAsSimulated();
+            TestCopyPath_GenuineSimulatorAccountStillReceivesCopies();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -552,7 +568,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// <summary>Resets copier + account global state so copy-path tests are independent.</summary>
         private static Account SetupCopyPath(
             string leaderName, string followerName, CopierRelationship rel, int followerQty,
-            Instrument followerInstrument, MarketPosition followerSide)
+            Instrument followerInstrument, MarketPosition followerSide,
+            Provider followerProvider = Provider.Simulator)
         {
             Account.All.Clear();
             Instrument.Registry.Clear();
@@ -561,8 +578,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             // one with no guard; the tests that need one install it explicitly.
             RiskGuardAddOn.SetInstanceForTest(null);
 
-            var leader = new Account { Name = leaderName };
-            var follower = new Account { Name = followerName };
+            // These are practice accounts unless a test says otherwise. Stated through the
+            // provider rather than inferred from the "Sim" name prefix -- see P1-20.
+            var leader = new Account { Name = leaderName, Provider = Provider.Simulator };
+            var follower = new Account { Name = followerName, Provider = followerProvider };
             Account.All.Add(leader);
             Account.All.Add(follower);
 
@@ -723,6 +742,88 @@ namespace NinjaTrader.NinjaScript.AddOns
                 string.Format(
                     "No copy is submitted to a RiskGuard-locked follower (got {0} order(s)). "
                     + "Every other order path checks IsAccountLocked; the copier must too.",
+                    submitted.Count));
+        }
+
+        // P1-20: the copier decided whether an account could lose real money by looking at
+        // whether its NAME began with "Sim". Account names are chosen by the user, so a funded
+        // account called "SimpsonFund" -- or "Simplex", or a prop firm whose name starts those
+        // three letters -- was exempted from BOTH live-safety gates at once: the ArmedForLive
+        // check and T5's requirement that a live follower be protected by RiskGuard. The P0 work
+        // made that check load-bearing, so it has to be real.
+        private static void TestCopyPath_LiveAccountNamedSimIsNotTreatedAsSimulated()
+        {
+            Console.WriteLine("\n[TEST] COPY PATH: a LIVE account whose name starts with 'Sim' is not treated as simulated (P1-20)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "SimpsonFund",
+                IsEnabled = true,
+                ArmedForLive = false,      // NOT armed: a live follower must receive nothing
+                AutoSymbolConversion = false,
+                QuantityRatio = 1.0,
+                MaxPositionSize = 100
+            };
+
+            // Name says "Sim...", provider says a real broker. The provider is the truth.
+            var follower = SetupCopyPath("SimLeader", "SimpsonFund", rel, 0, null,
+                                         MarketPosition.Flat, Provider.Rithmic);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            Assert(follower.Name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase),
+                "Precondition: the follower's name does begin with 'Sim'");
+            Assert(follower.Provider != Provider.Simulator,
+                "Precondition: the follower is nonetheless on a live broker provider");
+
+            var exec = LeaderExec(leader, mnq, OrderAction.Buy, 2, "P1-20-LIVE");
+            TradeCopierEngine.Instance.OnExecution(exec);
+
+            var submitted = follower.Orders.Where(o => o.Name == "COPIER_FOLLOW").ToList();
+            Assert(submitted.Count == 0,
+                string.Format(
+                    "A disarmed relationship sends nothing to a LIVE follower named 'SimpsonFund' "
+                    + "(got {0} order(s)). Trusting the name prefix hands real money to an "
+                    + "unarmed, unguarded copier.",
+                    submitted.Count));
+        }
+
+        // The other half of P1-20: the fix must not break genuine simulation accounts. A real
+        // Sim account is still exempt from ArmedForLive and from the guard requirement, so
+        // practice copying keeps working without arming anything.
+        private static void TestCopyPath_GenuineSimulatorAccountStillReceivesCopies()
+        {
+            Console.WriteLine("\n[TEST] COPY PATH: a genuine Simulator follower still receives copies while disarmed (P1-20)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "PracticeAccount",   // name does NOT start with "Sim"
+                IsEnabled = true,
+                ArmedForLive = false,
+                AutoSymbolConversion = false,
+                QuantityRatio = 1.0,
+                MaxPositionSize = 100
+            };
+
+            var follower = SetupCopyPath("SimLeader", "PracticeAccount", rel, 0, null,
+                                         MarketPosition.Flat, Provider.Simulator);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            Assert(!follower.Name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase),
+                "Precondition: the follower's name does NOT begin with 'Sim'");
+
+            var exec = LeaderExec(leader, mnq, OrderAction.Buy, 2, "P1-20-SIM");
+            TradeCopierEngine.Instance.OnExecution(exec);
+
+            var submitted = follower.Orders.Where(o => o.Name == "COPIER_FOLLOW").ToList();
+            Assert(submitted.Count == 1,
+                string.Format(
+                    "A Simulator-provider follower receives the copy even though its name lacks the "
+                    + "'Sim' prefix and nothing is armed (got {0} order(s)). The old check would "
+                    + "have blocked this account for having the wrong name.",
                     submitted.Count));
         }
 
@@ -3394,6 +3495,81 @@ namespace NinjaTrader.NinjaScript.AddOns
             var second = addon.EvaluateGraceExpiry(account, mnq.FullName);
             Assert(second.Any(a => a.RuleId == "MISSING_STOP_ATTACH"),
                 "Grace genuinely re-armed: a fresh auto-stop is emitted for the now-naked position");
+        }
+
+        // P1-37: MinShadowSessions is the interlock between shadow mode and live arming.
+        // The counter was persisted but _lastShadowSessionDate -- the marker that debounces it
+        // to once a day -- was not, so every addon reload re-satisfied the "new day" test and
+        // bumped the counter again. Found by deploying: four minutes of ordinary recompile
+        // churn took a live install from 0 to 3 and satisfied MinShadowSessions=3 outright,
+        // on one day, with no feed connected and not one position taken.
+        private static void TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting()
+        {
+            Console.WriteLine("\n[TEST] P1-37: the shadow-session counter counts days, not addon restarts");
+
+            string stateFile = Path.Combine(
+                Path.GetTempPath(), "rg_shadow_" + Guid.NewGuid().ToString("N") + ".json");
+
+            try
+            {
+                // --- first run of the day ---
+                var first = new RiskGuardAddOn();
+                first.SetConfigForTest(new RiskConfig { MinShadowSessions = 3 });
+                first.SetModeForTest("shadow");
+                first.SetStateFileForTest(stateFile);
+
+                first.ExecuteSafetySweep();
+                Assert(first.GetShadowSessionsCompletedForTest() == 1,
+                    string.Format("First sweep counts session #1 (got {0})",
+                                  first.GetShadowSessionsCompletedForTest()));
+
+                // Sweeping again the same day must not count twice.
+                first.ExecuteSafetySweep();
+                first.ExecuteSafetySweep();
+                Assert(first.GetShadowSessionsCompletedForTest() == 1,
+                    string.Format("Repeated sweeps on the same day still count 1 (got {0})",
+                                  first.GetShadowSessionsCompletedForTest()));
+
+                first.SavePersistedStateForTest();
+
+                // --- the addon restarts (recompile, NT8 restart, hot-swap) ---
+                var second = new RiskGuardAddOn();
+                second.SetConfigForTest(new RiskConfig { MinShadowSessions = 3 });
+                second.SetModeForTest("shadow");
+                second.SetStateFileForTest(stateFile);
+                second.LoadPersistedStateForTest();
+
+                Assert(second.GetShadowSessionsCompletedForTest() == 1,
+                    string.Format("The restarted addon rehydrates the counter as 1 (got {0})",
+                                  second.GetShadowSessionsCompletedForTest()));
+                Assert(second.GetLastShadowSessionDateForTest() != DateTime.MinValue.Date,
+                    "The restarted addon also rehydrates WHICH day was counted - without this the "
+                    + "counter has nothing to debounce against");
+
+                second.ExecuteSafetySweep();
+                Assert(second.GetShadowSessionsCompletedForTest() == 1,
+                    string.Format(
+                        "A restart on the same calendar day does NOT count another session (got {0}). "
+                        + "Otherwise MinShadowSessions is satisfied by restarting, and the gate "
+                        + "guarding live arming means nothing.",
+                        second.GetShadowSessionsCompletedForTest()));
+
+                // --- a genuinely new day must still count ---
+                second.SetLastShadowSessionDateForTest(
+                    second.GetLastShadowSessionDateForTest().AddDays(-1));
+                second.ExecuteSafetySweep();
+                Assert(second.GetShadowSessionsCompletedForTest() == 2,
+                    string.Format("A new calendar day counts session #2 (got {0}) - the gate still advances",
+                                  second.GetShadowSessionsCompletedForTest()));
+
+                // --- and the fix must not resurrect the armed flag (FR-30/31) ---
+                Assert(!second.GetIsArmed(),
+                    "Rehydrating the session date does not rehydrate the armed flag");
+            }
+            finally
+            {
+                try { if (File.Exists(stateFile)) File.Delete(stateFile); } catch { }
+            }
         }
 
         /// <summary>

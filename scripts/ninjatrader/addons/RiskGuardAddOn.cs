@@ -414,6 +414,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             // holds _stateLock; match that so the _guardFsms read is not racy.
             lock (_stateLock) { return ValidateInvariant(action); }
         }
+
+        // --- FR-29 shadow-session gate (P1-37) ---
+        // Production wires _stateFile inside InitializeRiskGuard, which a test cannot
+        // call without also starting timers and subscribing to accounts. Point the
+        // persistence at a temp file instead, so a restart can be simulated honestly:
+        // save, construct a second instance, load, and see what it believes.
+        internal void SetStateFileForTest(string path) { _stateFile = path; }
+        internal void SavePersistedStateForTest() { SavePersistedState(); }
+        internal void LoadPersistedStateForTest() { LoadPersistedState(); }
+        internal int GetShadowSessionsCompletedForTest() { return _shadowSessionsCompleted; }
+        internal DateTime GetLastShadowSessionDateForTest() { return _lastShadowSessionDate; }
+        internal void SetLastShadowSessionDateForTest(DateTime d) { _lastShadowSessionDate = d; }
 #endif
 
         public void ResetStateForDev()
@@ -624,7 +636,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                             // Previously: _isArmed = data.IsArmed;  (could silently re-arm across restarts)
                             _isArmed = false;
                             // FR-29: shadow-session counter IS rehydrated (it accumulates across sessions).
+                            // P1-37: rehydrate the date marker in the same breath. These two are one
+                            // fact -- "N sessions counted, the most recent being D" -- and restoring
+                            // the count without the date made every restart look like a new day, so
+                            // the counter climbed on restarts rather than on sessions. Note the
+                            // contrast with _isArmed three lines up: that is deliberately NOT
+                            // restored so a restart cannot silently re-arm. The same care simply was
+                            // never applied to the gate that authorises arming.
                             _shadowSessionsCompleted = data.ShadowSessionsCompleted;
+                            _lastShadowSessionDate = data.LastShadowSessionDate;
                             if (data.LockedOutAccounts != null)
                             {
                                 foreach (var accName in data.LockedOutAccounts)
@@ -698,6 +718,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         IsArmed = _isArmed,
                         ShadowSessionsCompleted = _shadowSessionsCompleted,
+                        LastShadowSessionDate = _lastShadowSessionDate,
                         LockedOutAccounts = lockedOut,
                         AccountsData = accountsData,
                         Timestamp = DateTime.UtcNow
@@ -3974,6 +3995,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         public List<string> LockedOutAccounts { get; set; } = new List<string>();
         // FR-29: count of completed shadow sessions. Persisted across restarts.
         public int ShadowSessionsCompleted { get; set; }
+        // P1-37: the session date the counter was last incremented for. This MUST travel
+        // with the counter. Persisting one without the other is what let a restart re-count
+        // the same day -- the counter came back, the "already counted today" marker did not,
+        // and MinShadowSessions could be satisfied by recompiling three times.
+        public DateTime LastShadowSessionDate { get; set; } = DateTime.MinValue;
         
         // Dictionary for per-account persisted data
         public Dictionary<string, AccountPersistedData> AccountsData { get; set; } = new Dictionary<string, AccountPersistedData>();

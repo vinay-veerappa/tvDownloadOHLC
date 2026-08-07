@@ -656,6 +656,27 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        /// <summary>
+        /// True only when the account is demonstrably a NinjaTrader simulation account.
+        ///
+        /// This is the switch that decides whether an account can lose real money, so it
+        /// must not be inferred from the account NAME. Names are chosen by the user, and
+        /// the previous `Name.StartsWith("Sim")` test exempted a funded account called
+        /// "SimpsonFund" -- or "Simplex Capital", or any prop firm starting with those
+        /// three letters -- from BOTH live gates at once: the `ArmedForLive` check and
+        /// T5's requirement that a live follower be protected by RiskGuard (P1-20).
+        ///
+        /// Fails closed by construction: a null account, an unset provider, or anything
+        /// this cannot positively identify as the simulator is treated as live. Playback
+        /// is deliberately NOT exempt -- it costs nothing to arm a relationship for a
+        /// playback run, and guessing wrong in the other direction costs money.
+        /// </summary>
+        internal static bool IsSimulationAccount(Account account)
+        {
+            if (account == null) return false;
+            return account.Provider == Provider.Simulator;
+        }
+
         // OnExecution is deliberately NOT behind `#if !TESTING`. It is the trade-copy
         // path - the riskiest code in this file - and excluding it left it with zero
         // test coverage. It compiles against the NinjaTrader stubs in
@@ -697,7 +718,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 Account followerAcc = Account.All.FirstOrDefault(a => a.Name.Equals(rel.FollowerAccountName, StringComparison.OrdinalIgnoreCase));
                 if (followerAcc == null) continue;
 
-                bool isSimFollower = followerAcc.Name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase);
+                bool isSimFollower = IsSimulationAccount(followerAcc);
 
                 // SAFETY GATE: Disarmed copier MUST NOT place orders on non-Sim (live) accounts
                 if (!rel.ArmedForLive && !isSimFollower)
