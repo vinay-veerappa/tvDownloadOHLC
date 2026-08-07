@@ -71,12 +71,29 @@ ADDONS_DST = NT8_HOME / "AddOns"
 
 
 def file_hash(path: Path) -> str:
-    """MD5 hash of file content for drift comparison."""
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    """MD5 of file content, normalised for drift comparison.
+
+    Line endings are normalised to LF and a UTF-8 BOM is stripped before
+    hashing. Files copied into the NT8 tree by other tools (or edited in NT8's
+    own editor) come back CRLF while the repo keeps LF, and a raw byte hash
+    then reports every single file as drifted.
+
+    That is not hypothetical: it is exactly what happened on 2026-08-07, when a
+    plain diff of the deployed addons showed 8216 changed lines on a 4108-line
+    file. The files were byte-identical apart from carriage returns, but the
+    false alarm was written into the deployment runbook as "the deployed
+    sources have diverged" and cost real time to disprove. A drift check that
+    cries wolf on every file teaches you to ignore it, which is worse than
+    having no check at all.
+
+    C# is insensitive to which one it gets, so a pure line-ending difference is
+    not drift and must not trigger a redeploy.
+    """
+    data = path.read_bytes()
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    data = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.md5(data).hexdigest()
 
 
 def sync_dir(src_dir: Path, dst_dir: Path, label: str, dry_run: bool = False, verify: bool = False) -> dict:
@@ -186,7 +203,17 @@ def main():
     parser = argparse.ArgumentParser(description="Sync repo strategy .cs files to NT8 live folder.")
     parser.add_argument("--verify", action="store_true", help="Show drift status without copying.")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be copied without copying.")
+    parser.add_argument(
+        "--only",
+        choices=["strategies", "indicators", "addons"],
+        action="append",
+        help="Limit the sync to one area (repeatable). Without it, everything syncs. "
+             "Deploying the addons should not also push unrelated indicators into a "
+             "live NT8 that is mid-session, so scope deliberate deployments.",
+    )
     args = parser.parse_args()
+
+    scopes = set(args.only) if args.only else {"strategies", "indicators", "addons"}
 
     print("=" * 70)
     print("NT8 NinjaScript Sync — repo source -> NT8 live compilation folder")
@@ -210,52 +237,58 @@ def main():
     # NT8 compiles all .cs in Strategies/Vinay/ together, so base classes,
     # IB strategies, and individual bots all land in the same flat folder.
     all_strategy_src_names = set()
-    for label, src_dir in STRATEGIES_SRC_DIRS:
-        print(f"[Strategies/{label}/] {src_dir} -> {STRATEGIES_DST}")
-        r = sync_dir(src_dir, STRATEGIES_DST, label, args.dry_run, args.verify)
-        all_results.append(("Strategies/" + label, r))
-        all_strategy_src_names.update(f.name for f in src_dir.glob("*.cs"))
-        print()
+    if "strategies" in scopes:
+        for label, src_dir in STRATEGIES_SRC_DIRS:
+            print(f"[Strategies/{label}/] {src_dir} -> {STRATEGIES_DST}")
+            r = sync_dir(src_dir, STRATEGIES_DST, label, args.dry_run, args.verify)
+            all_results.append(("Strategies/" + label, r))
+            all_strategy_src_names.update(f.name for f in src_dir.glob("*.cs"))
+            print()
 
-    # ── Shared files: shared classes -> NT8 Strategies/Vinay/ (compiled with strategies) ──
-    if SHARED_SRC.exists():
-        print(f"[Shared/] {SHARED_SRC} -> {STRATEGIES_DST}")
-        r = sync_dir(SHARED_SRC, STRATEGIES_DST, "shared", args.dry_run, args.verify)
-        all_results.append(("Shared", r))
-        all_strategy_src_names.update(f.name for f in SHARED_SRC.glob("*.cs"))
-        print()
+        # ── Shared files: shared classes -> NT8 Strategies/Vinay/ (compiled with strategies) ──
+        if SHARED_SRC.exists():
+            print(f"[Shared/] {SHARED_SRC} -> {STRATEGIES_DST}")
+            r = sync_dir(SHARED_SRC, STRATEGIES_DST, "shared", args.dry_run, args.verify)
+            all_results.append(("Shared", r))
+            all_strategy_src_names.update(f.name for f in SHARED_SRC.glob("*.cs"))
+            print()
 
     # ── Indicator files: all subfolders -> NT8 Indicators/ ──
     # NT8 compiles all .cs in Indicators/ together. All indicator subfolders
     # (vinay/, redtail/, third_party/) sync to the same flat Indicators/ folder.
     all_indicator_src_names = set()
-    for label, src_dir in INDICATOR_SRC_DIRS:
-        if not src_dir.exists():
-            continue
-        print(f"[Indicators/{label}/] {src_dir} -> {INDICATORS_DST}")
-        r = sync_dir(src_dir, INDICATORS_DST, label, args.dry_run, args.verify)
-        all_results.append(("Indicators/" + label, r))
-        all_indicator_src_names.update(f.name for f in src_dir.glob("*.cs"))
-        print()
-        print()
+    if "indicators" in scopes:
+        for label, src_dir in INDICATOR_SRC_DIRS:
+            if not src_dir.exists():
+                continue
+            print(f"[Indicators/{label}/] {src_dir} -> {INDICATORS_DST}")
+            r = sync_dir(src_dir, INDICATORS_DST, label, args.dry_run, args.verify)
+            all_results.append(("Indicators/" + label, r))
+            all_indicator_src_names.update(f.name for f in src_dir.glob("*.cs"))
+            print()
+            print()
 
     # ── AddOns: copy trading + riskguard -> NT8 AddOns/ ──
-    print(f"[AddOns/] {ADDONS_SRC} -> {ADDONS_DST}")
-    addon_result = sync_addon_files(args.dry_run, args.verify)
-    all_results.append(("AddOns", addon_result))
+    addon_result = None
+    if "addons" in scopes:
+        print(f"[AddOns/] {ADDONS_SRC} -> {ADDONS_DST}")
+        addon_result = sync_addon_files(args.dry_run, args.verify)
+        all_results.append(("AddOns", addon_result))
 
     # ── Orphan detection (aggregate): files in NT8 but not in ANY source ──
+    # Only meaningful for areas actually scanned this run; a scoped-out area has
+    # an empty source set, which would report every deployed file as an orphan.
     strategy_orphans = []
-    if STRATEGIES_DST.exists():
+    if "strategies" in scopes and STRATEGIES_DST.exists():
         dst_names = set(f.name for f in STRATEGIES_DST.glob("*.cs"))
         strategy_orphans = sorted(dst_names - all_strategy_src_names)
 
     indicator_orphans = []
-    if INDICATORS_DST.exists():
+    if "indicators" in scopes and INDICATORS_DST.exists():
         ind_dst_names = set(f.name for f in INDICATORS_DST.glob("*.cs"))
         indicator_orphans = sorted(ind_dst_names - all_indicator_src_names)
 
-    addon_orphans = addon_result.get("extra_dst", [])
+    addon_orphans = addon_result.get("extra_dst", []) if addon_result else []
 
     # ── Summary ──
     print()

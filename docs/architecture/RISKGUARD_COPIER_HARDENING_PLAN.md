@@ -12,7 +12,7 @@ P1–P3 not started. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37` | 17 | open |
-| P2 — structural | `P2-24` … `P2-29` | 6 | open (`P2-27` half-done) |
+| P2 — structural | `P2-24` … `P2-29` | 6 | open (`P2-28` ✅ closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
 > **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
@@ -479,16 +479,36 @@ applies to all real order submission in `RiskGuardAddOn.ExecuteAction`. The 4,23
 4. Add a GitHub Actions job (`dotnet run --project ninjatrader-addon/RiskGuardTests.csproj`)
    with a non-zero exit on failure — the harness currently has to be run by hand.
 
-### P2-28. Three divergent copies of the addon sources + committed build output
+### P2-28. Three divergent copies of the addon sources + committed build output — ✅ **closed 2026-08-07**
 - `scripts/ninjatrader/addons/` — canonical (referenced by `ninjatrader-addon/RiskGuardTests.csproj`)
-- `scripts/strategies/nt8/addons_DONOTUSE/RiskGuardAddOn.cs` — **different md5**, still present
-- `mcp/ninjatrader-mcp/nt8-addon/` — partial copy (`RiskGuardAddOnTests.cs` is a hard link;
-  `DynamicAtmManager.cs` / `TestingStubs.cs` are separate copies)
-- `ninjatrader-addon/bin/`, `obj/`, and a committed `RiskGuardTests.exe`
-**Fix**: adopt V12's `deploy-sync.ps1` idea — one source of truth in `scripts/ninjatrader/addons/`
-hard-linked into `Documents\NinjaTrader 8\bin\Custom\AddOns\`, delete `addons_DONOTUSE`, replace
-the `mcp/` copies with links, and gitignore `bin/`/`obj/`/`*.exe`. Record the layout in
-[NT8_FILE_ORGANIZATION.md](NT8_FILE_ORGANIZATION.md).
+- ~~`scripts/strategies/nt8/addons_DONOTUSE/`~~ — **deleted**. Nine tracked files, zero code
+  references (only this plan mentioned it); recoverable from history if ever needed.
+- `mcp/ninjatrader-mcp/nt8-addon/` — **out of scope for this repo.** That path is a *git
+  submodule* (gitlink `160000`), so its copies belong to the `ninjatrader-mcp` repo and must be
+  fixed there. Deleting them from here would only dirty the submodule pointer.
+- ~~`ninjatrader-addon/bin/`, `obj/`, committed `RiskGuardTests.exe`~~ — already resolved: all
+  three are gitignored (`.gitignore:91-93`) and untracked. The plan text was stale.
+
+**Fix as landed** — not the hard-link idea. `scripts/utils/sync_nt8_strategies.py` already
+existed and does the job; it just had to be made trustworthy and safe:
+
+- **It was blind to line endings.** It compared raw byte md5s, so with the repo on LF and the
+  NT8 tree on CRLF it reported *every* file as drifted. That is where the runbook's false
+  "the deployed sources have diverged" claim came from. `file_hash` now normalises CRLF and
+  strips a BOM before hashing. A drift check that cries wolf on every file gets ignored, which
+  is worse than no check.
+- **It was all-or-nothing.** A full sync would have pushed 21 unrelated indicator files into a
+  live NT8 mid-shadow-session. New `--only {strategies,indicators,addons}` scopes a deliberate
+  deployment; orphan detection is skipped for scoped-out areas so it cannot report every
+  deployed file as an orphan.
+
+A hard link from the repo into `bin/Custom/AddOns/` was **considered and rejected**: it would
+make every editor keystroke change what the live trading system compiles next, and destroy the
+ability to run a shadow session against a known build while working on the next change. The
+explicit deploy step is the feature.
+
+Use `--verify --only addons` to check drift and `--only addons` to deploy. Never copy by hand
+(this session did, and it is what left canonical two files ahead of deployed).
 
 ### P2-29. Single-file size / complexity
 `RiskGuardAddOn.cs` is 4,108 lines including a ~700-line WPF window (`RiskGuardWindow`,
@@ -593,7 +613,7 @@ Two lessons paid for during P0 apply directly:
 | Phase | Content | Tests to write FIRST | Gate to exit |
 |---|---|---|---|
 | **A. Deploy P0** | no new code | — | A full session in `shadow`; `interventions.jsonl` shows no `PEAK_GIVEBACK_BREACH` on a profitable flat account and no wrong `COPY_BLOCKED_NO_GUARD` |
-| **B. Foundation** | `expect_green` ✅, backfill T1–T3 tests, P2-28 | submit-failure rolls back and clears `GraceEmitted`; auto-stop sized from live qty; scaled-down position still gets a stop; stop cancelled mid-position re-arms; profitable-flat emits no giveback; flip does not carry `PeakOpenGain` | Every P0 behaviour has a test that fails when reverted |
+| **B. Foundation** ✅ | `expect_green` ✅, backfill T1–T3 tests ✅, P2-28 ✅ | submit-failure rolls back and clears `GraceEmitted`; auto-stop sized from live qty; scaled-down position still gets a stop; stop cancelled mid-position re-arms; profitable-flat emits no giveback; flip does not carry `PeakOpenGain` | Every P0 behaviour has a test that fails when reverted |
 | **C. Gate integrity** | **P1-20** first, then **P1-37** | live-named account is NOT treated as simulated; unguarded live follower is refused; two restarts on one date count as one shadow session | T5's fail-closed gate no longer keys off a name prefix; `MinShadowSessions` cannot be satisfied by restarting |
 | **D. Concurrency** | P1-35 + P1-10 (one ticket), P1-11, P1-12, P1-13, P1-14, P1-15, P1-36 | no `Account.*` reachable under `lock (_stateLock)`; sweep does not cancel protective stops; coverage aggregates across two partial stops | Lock-scope gate clean; sweep off the dispatcher |
 | **E. Rule semantics** | P1-16, P1-17, P1-18, P1-19 | 3-partial loss counts as 1; eval target fed cumulative PnL; one trailing-DD implementation; instrument-scoped flatten leaves other instruments alone | Each rule has a test pinning its boundary |
@@ -659,5 +679,5 @@ broker is the single highest-value addition in this document. Consider promoting
 | P2-25 | never fires | PropFirmProtectionSuite.cs:51 | news events only injectable from tests |
 | P2-26 | doc drift | RiskGuardAddOn.md | 8 concrete claims contradicted by code |
 | P2-27 | test gap | TradeCopierEngine.cs:613 | whole copy path inside `#if !TESTING`; no CI |
-| P2-28 | hygiene | 3 source copies + committed `bin/obj/exe` | divergent `addons_DONOTUSE` copy |
+| P2-28 ✅ | hygiene | `addons_DONOTUSE` deleted; sync script fixed | CRLF-blind drift check; mcp copy is a submodule |
 | P2-29 | maintainability | RiskGuardAddOn.cs (4,108 lines) | single file incl. 700-line WPF window |

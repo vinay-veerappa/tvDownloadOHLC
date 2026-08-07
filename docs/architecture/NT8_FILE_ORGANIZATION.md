@@ -1,11 +1,57 @@
 # NinjaTrader 8 File Organization
 
-> **Date**: 2026-07-30
-> **Status**: Proposed — awaiting approval
+> **Date**: 2026-07-30, updated 2026-08-07
+> **Status**: **Adopted (Option A).** The restructure to `scripts/ninjatrader/` has happened —
+> that is where the code lives now. Everything below the "Current State" heading describes the
+> *pre-migration* layout and is kept only as the record of why the move was made. For how things
+> stand today, read this section.
 
 ---
 
-## Current State
+## Source of truth and deployment (authoritative, 2026-08-07)
+
+```
+scripts/ninjatrader/addons/*.cs          ← THE source of truth for NT8 AddOns
+        │
+        │  scripts/utils/sync_nt8_strategies.py --only addons
+        ▼
+%USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/AddOns/   ← live, untracked, compiled by NT8
+```
+
+`ninjatrader-addon/RiskGuardTests.csproj` compiles the same canonical folder
+(`..\scripts\ninjatrader\addons\*.cs`, minus `McpBridgeAddOn.cs` and `RiskManagerAddOn.cs`), so
+the tests and NT8 build from one set of files. `bin/`, `obj/` and `*.exe` under
+`ninjatrader-addon/` are gitignored build output.
+
+**Deploying:**
+
+```bash
+python scripts/utils/sync_nt8_strategies.py --verify --only addons   # what has drifted?
+python scripts/utils/sync_nt8_strategies.py --only addons            # deploy
+# then recompile in NT8 (F5, or the nt_compile MCP tool) and confirm 0 errors
+```
+
+**Rules learned the hard way (P2-28, and the 2026-08-07 deployment):**
+
+- **Never copy `.cs` into the NT8 tree by hand.** Use the script. Manual copies are how canonical
+  and deployed drift apart in the first place.
+- **Always scope with `--only`.** An unscoped sync also pushes strategies and indicators. During
+  the RiskGuard shadow deployment that would have installed 21 unrelated indicator files into a
+  live NT8 mid-session.
+- **Never put backups inside `bin/Custom/`.** NT8 compiles that tree *recursively*, so a folder of
+  `.cs` backups produces duplicate-type errors. Backups belong in
+  `Documents/NinjaTrader 8/_riskguard_backups/`.
+- **Normalise line endings before believing a diff.** The repo is LF, the NT8 tree tends to CRLF.
+  A raw `diff` reports every line of every file as changed. The sync script's hash now normalises;
+  by hand, use `diff --strip-trailing-cr`.
+- **A hard link from repo to NT8 was considered and rejected.** It would make every keystroke
+  change what the live trading system compiles next. The explicit deploy step is deliberate.
+- `mcp/ninjatrader-mcp/nt8-addon/` holds its own partial copies, but that path is a **git
+  submodule** — fix it in that repo, not this one.
+
+---
+
+## Current State *(pre-migration, historical)*
 
 ```
 scripts/strategies/nt8/           ← all NT8 code lives here
