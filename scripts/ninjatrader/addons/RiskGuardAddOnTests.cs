@@ -510,6 +510,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
             TestP1_40_NoiseSizedPeakDoesNotTripGiveback();
             TestP1_39_ConfigLoadDoesNotAppendDefaultCollections();
+            TestP1_16_ConsecutiveLossesCountTradesNotPartialExits();
             TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
@@ -3887,6 +3888,114 @@ namespace NinjaTrader.NinjaScript.AddOns
         // (raw - SessionStartRealizedPnL) and zeroed at every session reset. So the target only
         // fired if the whole $3,000 was made in a single day, which is precisely not what a
         // multi-day evaluation is. The rule silently never fired for its actual purpose.
+        // P1-16: realized PnL arrives per execution, so one trade scaled out in three partials
+        // delivers three negative deltas. Counting each as a consecutive loss meant a single
+        // losing trade could reach MaxConsecutiveLosses=3 and lock the account out, and it put
+        // this counter at odds with TradesToday, which is already debounced to the trade
+        // lifecycle (:4043). Loss/win must be judged once per trade, at the flat transition.
+        private static void TestP1_16_ConsecutiveLossesCountTradesNotPartialExits()
+        {
+            Console.WriteLine("\n[TEST] P1-16: consecutive losses must count trades, not partial fills");
+
+            var config = new RiskConfig();
+            config.Overtrading.MaxConsecutiveLosses = 3;
+            config.Overtrading.CooldownMinutes = 0; // isolate the counter from the cooldown
+            var instrument = new Instrument("MNQ");
+            var account = new Account { Name = "PartialAcc" };
+
+            Func<AccountState> openTrade = () =>
+            {
+                var st = new AccountState("PartialAcc");
+                st.UpdatePosition(account, instrument, MarketPosition.Long, 3, 100.0, 0.0, config);
+                return st;
+            };
+
+            // One losing trade, scaled out in three partials, then flat.
+            var state = openTrade();
+            state.RecordRealizedDelta(-50.0, config);
+            state.RecordRealizedDelta(-30.0, config);
+            state.RecordRealizedDelta(-20.0, config);
+            state.UpdatePosition(account, instrument, MarketPosition.Flat, 0, 0.0, 0.0, config);
+            Assert(state.ConsecutiveLosses == 1,
+                string.Format("one losing trade exited in three partials is ONE consecutive loss (got {0})",
+                              state.ConsecutiveLosses));
+
+            // Three genuinely separate losing trades still count three.
+            var separate = new AccountState("PartialAcc");
+            for (int i = 0; i < 3; i++)
+            {
+                separate.UpdatePosition(account, instrument, MarketPosition.Long, 1, 100.0, 0.0, config);
+                separate.RecordRealizedDelta(-25.0, config);
+                separate.UpdatePosition(account, instrument, MarketPosition.Flat, 0, 0.0, 0.0, config);
+            }
+            Assert(separate.ConsecutiveLosses == 3,
+                string.Format("three separate losing trades are three consecutive losses (got {0})",
+                              separate.ConsecutiveLosses));
+
+            // A winning trade resets the streak, even if it had a losing partial along the way.
+            var mixed = openTrade();
+            mixed.ConsecutiveLosses = 2;
+            mixed.RecordRealizedDelta(-20.0, config);
+            mixed.RecordRealizedDelta(120.0, config);
+            mixed.UpdatePosition(account, instrument, MarketPosition.Flat, 0, 0.0, 0.0, config);
+            Assert(mixed.ConsecutiveLosses == 0,
+                string.Format("a trade that nets positive resets the streak despite a losing partial (got {0})",
+                              mixed.ConsecutiveLosses));
+
+            // A trade that nets negative despite a winning partial is still one loss.
+            var netLoss = openTrade();
+            netLoss.RecordRealizedDelta(40.0, config);
+            netLoss.RecordRealizedDelta(-90.0, config);
+            netLoss.UpdatePosition(account, instrument, MarketPosition.Flat, 0, 0.0, 0.0, config);
+            Assert(netLoss.ConsecutiveLosses == 1,
+                string.Format("a trade netting negative is one loss even with a winning partial (got {0})",
+                              netLoss.ConsecutiveLosses));
+
+            // The order of the realized-PnL event and the position-flat event is NOT guaranteed.
+            // A fill arriving after settlement must REVISE that trade's judgement, not land on
+            // the next trade -- and it can flip the net result in either direction.
+            var lateWin = new AccountState("PartialAcc");
+            lateWin.UpdatePosition(account, instrument, MarketPosition.Long, 3, 100.0, 0.0, config);
+            lateWin.RecordRealizedDelta(-50.0, config);
+            lateWin.RecordRealizedDelta(-30.0, config);
+            lateWin.UpdatePosition(account, instrument, MarketPosition.Flat, 0, 0.0, 0.0, config);
+            Assert(lateWin.ConsecutiveLosses == 1,
+                "on the fills seen at the flat transition the trade settles as a loss");
+            lateWin.RecordRealizedDelta(200.0, config);   // late fill: the trade netted +120
+            Assert(lateWin.ConsecutiveLosses == 0,
+                string.Format("a late fill flipping the trade to a net win must revise the streak to 0 (got {0})",
+                              lateWin.ConsecutiveLosses));
+
+            var lateLoss = new AccountState("PartialAcc");
+            lateLoss.ConsecutiveLosses = 2;              // set before entry so the snapshot sees it
+            lateLoss.UpdatePosition(account, instrument, MarketPosition.Long, 2, 100.0, 0.0, config);
+            lateLoss.RecordRealizedDelta(40.0, config);
+            lateLoss.UpdatePosition(account, instrument, MarketPosition.Flat, 0, 0.0, 0.0, config);
+            Assert(lateLoss.ConsecutiveLosses == 0,
+                "on the fills seen at the flat transition the trade settles as a win and resets the streak");
+            lateLoss.RecordRealizedDelta(-90.0, config);  // late fill: the trade netted -50
+            Assert(lateLoss.ConsecutiveLosses == 3,
+                string.Format("a late fill flipping the trade to a net loss must restore the streak and increment it (got {0})",
+                              lateLoss.ConsecutiveLosses));
+
+            // A realized delta with no tracked trade at all (guard never saw the position, or a
+            // standalone adjustment) must still be judged -- ignoring it would make the lockout
+            // less sensitive than before this fix.
+            var untracked = new AccountState("PartialAcc");
+            untracked.RecordRealizedDelta(-75.0, config);
+            Assert(untracked.ConsecutiveLosses == 1,
+                string.Format("an untracked realized loss must still count (got {0})",
+                              untracked.ConsecutiveLosses));
+
+            // A scratch trade must not touch the streak in either direction.
+            var scratch = openTrade();
+            scratch.ConsecutiveLosses = 2;
+            scratch.UpdatePosition(account, instrument, MarketPosition.Flat, 0, 0.0, 0.0, config);
+            Assert(scratch.ConsecutiveLosses == 2,
+                string.Format("a scratch trade leaves the streak untouched (got {0})",
+                              scratch.ConsecutiveLosses));
+        }
+
         private static void TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL()
         {
             Console.WriteLine("\n[TEST] P1-17: the evaluation profit target must be cumulative across sessions");

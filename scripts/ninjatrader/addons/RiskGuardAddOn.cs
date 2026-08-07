@@ -1144,10 +1144,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (Math.Abs(newRealizedPnL - state.RealizedPnL) > 0.001)
                         {
                             double tradePnL = newRealizedPnL - state.RealizedPnL;
-                            if (tradePnL < -0.01)
-                                state.ConsecutiveLosses++;
-                            else if (tradePnL > 0.01)
-                                state.ConsecutiveLosses = 0;
+                            state.RecordRealizedDelta(tradePnL, _config);
 
                             state.LastRealizedPnL = rawRealized;
                             state.RealizedPnL = newRealizedPnL;
@@ -3947,6 +3944,16 @@ namespace NinjaTrader.NinjaScript.AddOns
         // rebased every day and cannot drift.
         public double CumulativeRealizedPnL { get; set; } = 0.0;
         public double TotalRealizedPnL { get { return CumulativeRealizedPnL + RealizedPnL; } }
+        // P1-16: realized PnL banked for the trade currently being closed, summed across its
+        // partial exits and judged once at the flat transition. Deliberately not persisted --
+        // a restart mid-trade settles it as a scratch rather than inventing a result.
+        public double OpenTradeRealizedDelta { get; set; } = 0.0;
+        // True from a flat transition until the next entry: the window in which a late fill
+        // for the closed trade may still arrive and must revise its settlement.
+        public bool ClosedTradeAwaitingLateFills { get; set; } = false;
+        // The streak as it stood before the current trade was judged, so re-judging on a late
+        // fill is a correction rather than a second increment.
+        public int ConsecutiveLossesBeforeSettlement { get; set; } = 0;
         public double UnrealizedPnL { get; set; } = 0.0;
         public double PeakEquity { get; set; } = 0.0;
         public double PeakOpenGain { get; set; } = 0.0;
@@ -3985,6 +3992,82 @@ namespace NinjaTrader.NinjaScript.AddOns
             AccountName = name;
         }
 
+        // P1-16: realized PnL arrives per execution, so a single trade exited in three partials
+        // delivers three negative deltas. Counting each one as a "consecutive loss" made a
+        // MaxConsecutiveLosses=3 lockout reachable from one losing trade, and put this counter
+        // at odds with TradesToday, which is already debounced to the trade lifecycle.
+        // Deltas are banked and judged once per trade. Three cases, because the relative order
+        // of the realized-PnL event and the position-flat event is NOT guaranteed:
+        //
+        //  1. A trade is open  -> bank it; SettleClosedTrade judges the total at the flat
+        //     transition. This is the fix: partial exits no longer count separately.
+        //  2. The trade just closed and a late fill arrives -> revise the settlement in place
+        //     rather than let the delta land on the next trade. This is why the running total
+        //     and the pre-settlement streak are kept until the *next entry*, not cleared at
+        //     settlement: re-judging from the snapshot is exact for any number of late fills,
+        //     including one that flips the trade's net result from win to loss.
+        //  3. No trade is tracked at all (the guard never saw the position, or this is a
+        //     standalone adjustment) -> judge the delta on its own, preserving the pre-existing
+        //     behaviour. Silently ignoring untracked realized losses would make the lockout
+        //     less sensitive than before, which is not an acceptable trade for this fix.
+        public void RecordRealizedDelta(double tradePnL, RiskConfig config)
+        {
+            OpenTradeRealizedDelta += tradePnL;
+
+            if (ClosedTradeAwaitingLateFills)
+            {
+                ApplyTradeJudgement(config);
+                return;
+            }
+
+            if (!HasOpenPosition())
+            {
+                ConsecutiveLossesBeforeSettlement = ConsecutiveLosses;
+                ApplyTradeJudgement(config);
+                OpenTradeRealizedDelta = 0.0;
+                ConsecutiveLossesBeforeSettlement = ConsecutiveLosses;
+            }
+        }
+
+        private bool HasOpenPosition()
+        {
+            foreach (var p in Positions.Values)
+            {
+                if (p.MarketPosition != MarketPosition.Flat) return true;
+            }
+            return false;
+        }
+
+        // Re-judges the current trade total from the streak as it stood before this trade was
+        // settled, so calling it repeatedly as late fills arrive is idempotent rather than
+        // cumulative. A scratch trade leaves the streak untouched in either direction.
+        private void ApplyTradeJudgement(RiskConfig config)
+        {
+            ConsecutiveLosses = ConsecutiveLossesBeforeSettlement;
+
+            if (OpenTradeRealizedDelta < -0.01)
+                ConsecutiveLosses++;
+            else if (OpenTradeRealizedDelta > 0.01)
+                ConsecutiveLosses = 0;
+
+            if (config != null && config.Overtrading != null
+                && config.Overtrading.MaxConsecutiveLosses > 0
+                && ConsecutiveLosses >= config.Overtrading.MaxConsecutiveLosses
+                && config.Overtrading.CooldownMinutes > 0)
+            {
+                CooldownUntil = DateTime.UtcNow.AddMinutes(config.Overtrading.CooldownMinutes);
+            }
+        }
+
+        // Judges the trade that just closed. Called on flat transitions and on flips (a flip is
+        // a close plus an entry in one update).
+        private void SettleClosedTrade(RiskConfig config)
+        {
+            ConsecutiveLossesBeforeSettlement = ConsecutiveLosses;
+            ApplyTradeJudgement(config);
+            ClosedTradeAwaitingLateFills = true;
+        }
+
         public bool UpdatePosition(Account account, Instrument instrument, MarketPosition position, int quantity, double avgPrice, double unrealizedPnL, RiskConfig config)
         {
             if (quantity == 0)
@@ -4010,6 +4093,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 pState.LastFlatTransition = DateTime.UtcNow;
                 stateChanged = true;
+
+                // P1-16: the trade is over -- judge it once, on its net realized result.
+                SettleClosedTrade(config);
 
                 if (isFlip)
                 {
@@ -4047,6 +4133,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     TradesToday++; // Increment trade count
                 }
+
+                // P1-16: a new trade starts with a clean slate. Until this point the previous
+                // trade's total and pre-settlement streak are deliberately retained so a late
+                // fill can revise its judgement.
+                ClosedTradeAwaitingLateFills = false;
+                OpenTradeRealizedDelta = 0.0;
+                ConsecutiveLossesBeforeSettlement = ConsecutiveLosses;
                 stateChanged = true;
             }
             else if (position == MarketPosition.Flat && wasNonFlat)
