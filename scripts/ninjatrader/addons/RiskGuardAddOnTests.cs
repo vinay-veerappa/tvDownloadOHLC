@@ -510,6 +510,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestT3_FlipDoesNotCarryPeakOpenGainIntoNewLeg();
             TestP1_40_NoiseSizedPeakDoesNotTripGiveback();
             TestP1_39_ConfigLoadDoesNotAppendDefaultCollections();
+            TestP1_18_ProfileTrailingDDYieldsOnlyToAnEffectiveFirmRule();
             TestP1_16_ConsecutiveLossesCountTradesNotPartialExits();
             TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
@@ -3893,6 +3894,83 @@ namespace NinjaTrader.NinjaScript.AddOns
         // losing trade could reach MaxConsecutiveLosses=3 and lock the account out, and it put
         // this counter at odds with TradesToday, which is already debounced to the trade
         // lifecycle (:4043). Loss/win must be judged once per trade, at the flat transition.
+        // P1-18: two trailing-drawdown implementations overlap. EvaluatePnLRules enforces
+        // profile.TrailingDrawdown against a session-reset PeakEquity, while EvaluateFirmMirror
+        // implements the firm's real (often non-resetting) model. Precedence was undefined, so
+        // both could fire on one event.
+        //
+        // The obvious fix -- "FirmMirror wins whenever FirmMirror.Enabled" -- REMOVES PROTECTION
+        // on the live config, where FirmMirror.Enabled is true but its TrailingDD.Enabled is
+        // false and no account is mapped. That would skip the profile rule while the firm rule
+        // evaluates nothing, leaving no trailing-drawdown cover at all. Precedence must key on
+        // whether a firm trailing rule is actually IN EFFECT for that account.
+        private static void TestP1_18_ProfileTrailingDDYieldsOnlyToAnEffectiveFirmRule()
+        {
+            Console.WriteLine("\n[TEST] P1-18: the profile trailing-DD yields only to a firm rule that is actually in effect");
+
+            Func<RiskConfig, string, List<GuardAction>> evaluate = (config, accountName) =>
+            {
+                var account = new Account { Name = accountName };
+                var addon = new RiskGuardAddOn();
+                addon.SetConfigForTest(config);
+
+                var state = new AccountState(accountName);
+                state.PeakEquity = 2000.0;   // drawn down from +2000 to 0, past a 1500 limit
+                state.RealizedPnL = 0.0;
+                state.UnrealizedPnL = 0.0;
+                account.Values[AccountItem.CashValue] = 100000.0;
+                account.Values[AccountItem.RealizedProfitLoss] = 0.0;
+                account.Values[AccountItem.UnrealizedProfitLoss] = 0.0;
+                return addon.EvaluatePnLRules(account, state);
+            };
+
+            // Baseline: no firm mirror at all -- the profile rule is the only cover and must fire.
+            var noFirm = new RiskConfig();
+            noFirm.FirmMirror.Enabled = false;
+            Assert(evaluate(noFirm, "Acc").Any(a => a.RuleId == "TRAILING_DD_BREACH"),
+                "with FirmMirror disabled the profile trailing-DD rule must fire");
+
+            // THE TRAP, and the live config's exact shape: FirmMirror is enabled but its
+            // trailing rule is not, and the account is unmapped. The profile rule must still
+            // fire -- skipping it here would leave the account with no trailing-DD cover.
+            var enabledButInert = new RiskConfig();
+            enabledButInert.FirmMirror.Enabled = true;
+            enabledButInert.FirmMirror.TrailingDD.Enabled = false;
+            Assert(evaluate(enabledButInert, "Acc").Any(a => a.RuleId == "TRAILING_DD_BREACH"),
+                "FirmMirror enabled with its trailing rule OFF must NOT suppress the profile rule");
+
+            // Firm trailing rule genuinely in effect at the top level -> firm owns it.
+            var firmActive = new RiskConfig();
+            firmActive.FirmMirror.Enabled = true;
+            firmActive.FirmMirror.TrailingDD.Enabled = true;
+            firmActive.FirmMirror.TrailingDD.Amount = 2000.0;
+            Assert(!evaluate(firmActive, "Acc").Any(a => a.RuleId == "TRAILING_DD_BREACH"),
+                "an effective firm trailing rule must suppress the duplicate profile rule");
+
+            // In effect via a mapped per-firm profile, with the top level off (P1-42's path).
+            var viaProfile = new RiskConfig();
+            viaProfile.FirmMirror.Enabled = true;
+            viaProfile.FirmMirror.TrailingDD.Enabled = false;
+            viaProfile.FirmMirror.FirmProfiles["Apex"] = new FirmProfile
+            {
+                Name = "Apex",
+                TrailingDD = new FirmTrailingDDConfig
+                {
+                    Enabled = true, Type = "eod", IncludesUnrealized = false,
+                    Amount = 2000.0, Buffer = 200.0
+                },
+                DailyLoss = new FirmDailyLossConfig { Enabled = false }
+            };
+            viaProfile.FirmMirror.AccountFirmMap["MappedAcc"] = "Apex";
+            Assert(!evaluate(viaProfile, "MappedAcc").Any(a => a.RuleId == "TRAILING_DD_BREACH"),
+                "a firm trailing rule reached through a mapped profile must also suppress the profile rule");
+
+            // ...but only for the mapped account. An unmapped account on the same config still
+            // falls back to the top level, which is off, so it keeps the profile rule.
+            Assert(evaluate(viaProfile, "UnmappedAcc").Any(a => a.RuleId == "TRAILING_DD_BREACH"),
+                "another account on the same config, unmapped, must keep the profile rule");
+        }
+
         private static void TestP1_16_ConsecutiveLossesCountTradesNotPartialExits()
         {
             Console.WriteLine("\n[TEST] P1-16: consecutive losses must count trades, not partial fills");

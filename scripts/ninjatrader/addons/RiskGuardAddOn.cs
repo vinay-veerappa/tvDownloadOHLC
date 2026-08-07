@@ -1234,9 +1234,29 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
 
             // Trailing Drawdown
+            //
+            // P1-18: FirmMirror implements the firm's real trailing model, whose high-water mark
+            // typically does NOT reset daily, while the rule below runs against a session-reset
+            // PeakEquity. Where the firm rule is actually in effect for this account it owns the
+            // decision and this one would double-fire on the same event.
+            //
+            // Keying on FirmMirror.Enabled alone would be a protection *removal*: on a config
+            // where FirmMirror is enabled but its TrailingDD sub-rule is off and the account is
+            // unmapped -- the shape observed live on 2026-08-07 -- that would skip the rule below
+            // while the firm rule evaluates nothing, leaving the account with no trailing-drawdown
+            // cover at all. So resolve what is actually in effect for THIS account.
+            bool firmTrailingInEffect = false;
+            if (_config.FirmMirror != null && _config.FirmMirror.Enabled)
+            {
+                var fmEff = ResolveEffectiveFirmConfig(_config.FirmMirror, stateModel.AccountName);
+                firmTrailingInEffect = fmEff != null && fmEff.TrailingDD != null && fmEff.TrailingDD.Enabled;
+            }
+
+            // Keep tracking the peak either way, so the value stays meaningful if the firm rule
+            // is later disabled and this rule resumes ownership.
             if (currentPnL > stateModel.PeakEquity)
                 stateModel.PeakEquity = currentPnL;
-            if (currentPnL < stateModel.PeakEquity - profile.TrailingDrawdown)
+            if (!firmTrailingInEffect && currentPnL < stateModel.PeakEquity - profile.TrailingDrawdown)
             {
                 actions.Add(new GuardAction
                 {
