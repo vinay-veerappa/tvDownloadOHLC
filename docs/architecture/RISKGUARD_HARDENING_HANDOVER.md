@@ -3,7 +3,7 @@
 **Last updated**: 2026-08-07 (session 4)
 **Branch**: `harden/riskguard-copier-p0`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (38 defects; P0, Phase B and Phase C all closed)
-**DEPLOYED to shadow 2026-08-07.** NinjaTrader is running the current addon in `shadow` mode. The branch is *not* yet merged to `main`. Suite 399 passed, 0 failed.
+**DEPLOYED to shadow 2026-08-07.** NinjaTrader is running the current addon in `shadow` mode. The branch is *not* yet merged to `main`. Suite 413 passed, 0 failed.
 
 ---
 
@@ -363,11 +363,16 @@ The general lesson for this loop: when a gate says a model got the format wrong,
 *content* is there before spending another round. Marker punctuation is not what the gates exist
 to check.
 
-## 4a. Roadmap for the remaining 25 defects
+## 4a. Roadmap for the remaining 21 defects
 
-**38 defects total, 13 closed, 25 open**: 15 P1, 5 P2, 5 P3. Closed since P0: `P2-28`
-(Phase B), `P1-20` and `P1-37` (Phase C). `P2-38` was opened on 2026-08-07 — the same
-name-prefix hole as P1-20, in `McpBridgeAddOn`'s strategy-deploy guard. Band membership and the
+**38 defects total, 17 closed, 21 open**: 11 P1, 5 P2, 5 P3. Closed since P0: `P2-28`
+(Phase B); `P1-20`, `P1-37`, then the concurrency cluster `P1-10`, `P1-35`, `P1-11`, `P1-15`
+(Phase C). `P2-38` was opened on 2026-08-07 — the same name-prefix hole as P1-20, in
+`McpBridgeAddOn`'s strategy-deploy guard.
+
+**Still open in P1**: `P1-12`, `P1-13`, `P1-14` (latency / dispatcher / `_pendingStops`),
+`P1-16` … `P1-19` (rule semantics), `P1-21` … `P1-23` (copier fidelity), `P1-36`
+(multi-stop coverage aggregation — re-read §1 on T1 before touching it). Band membership and the
 P1-30/31 → P1-35/36 renumbering are in the plan's inventory table. `P1-37` was found by the
 Phase A shadow deployment on 2026-08-07 (§4f).
 
@@ -408,10 +413,22 @@ one red; and reviewers must judge the tests' completeness and accuracy, not just
 the implementer cannot reach it by construction (gate 0, anti-reward-hacking). That is deliberate
 — the grader is written by a different party than the one being graded.
 
-### Phase C — P1 safety-critical (gates ✅ DONE 2026-08-07; concurrency cluster remains)
+### Phase C — P1 safety-critical ✅ DONE (2026-08-07), except P1-36
 
-✅ **P1-20 and P1-37 are closed** (`53129e33`), both test-first with the tests confirmed red
-first. What remains in this phase is the concurrency cluster. Original reasoning follows.
+✅ **The whole phase is closed except P1-36**: `P1-20` and `P1-37` (`53129e33`), then the
+concurrency cluster `P1-10`, `P1-35`, `P1-11`, `P1-15` (`e0e3bd8b`). All test-first, each
+observed red before its fix.
+
+**The lock-scope invariant is now machine-checked.** The stub account reports every
+`Cancel`/`Flatten`/`CreateOrder`/`Submit` to an observer and the addon exposes
+`TestIsStateLockHeld()`, so a test asserts the design doc's central concurrency claim
+directly. `DrainPendingCancels()` throws in the TESTING build if called with the lock held —
+the nested-`lock` "fix" is re-entrant and would silently reintroduce P1-35.
+
+**P1-36 is deliberately left.** It modifies T1's `CoveredQuantity` model; re-read §1 and §5
+first — the single-stop behaviour is deliberate and the `ReferenceEquals` guard bounds it.
+
+Original reasoning follows.
 
 **Start with P1-20, out of band order.** T5's fail-closed gate keys off
 `followerAcc.Name.StartsWith("Sim")`, so a live account named `SimpsonFund` is exempt from the

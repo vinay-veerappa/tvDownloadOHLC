@@ -11,7 +11,7 @@ P1–P3 not started. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37` | 17 | open (`P1-20`, `P1-37` closed) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37` | 17 | 6 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`) |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38` | 7 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -215,7 +215,7 @@ disarmed, in shadow mode, or the follower is in `ExcludedAccounts`, there is no 
 
 ## 2. P1 — Concurrency and invariant violations
 
-### P1-10. The safety sweep holds `_stateLock` across broker calls
+### P1-10. The safety sweep holds `_stateLock` across broker calls — CLOSED 2026-08-07
 **Where**: `RiskGuardAddOn.cs:1336-1446` — the `lock (_stateLock)` block contains
 `account.Cancel` (1413), `account.Flatten` (1423), `account.Submit` (1429) and
 `ProcessAction(...)` (1439), which itself calls `ExecuteAction` → `Flatten`/`Cancel`/`Submit`.
@@ -228,7 +228,17 @@ which in turn needs `_stateLock` deadlocks the UI thread — and with it the gua
 **Fix**: restructure the sweep to the same collect-then-execute shape as the event handlers.
 Nothing inside `lock` may call into `Account`.
 
-### P1-11. Lockout sweep cancels protective stops and reducing orders
+> **How the lock-scope invariant is enforced now (2026-08-07).** The stub account reports every
+> `Cancel`/`Flatten`/`CreateOrder`/`Submit` to `Account.BrokerCallObserver`, and the addon exposes
+> `TestIsStateLockHeld()` (`Monitor.IsEntered`). `TestP1_10_...` and `TestP1_35_...` therefore assert
+> the invariant directly instead of relying on someone spotting a broker call three frames deep
+> inside a lock block. Any new violation anywhere on those paths fails the suite.
+>
+> `DrainPendingCancels()` **throws in the TESTING build if called with `_stateLock` held.** The
+> tempting wrong fix here is a nested `lock (_stateLock)` around the cancel — it is re-entrant, so
+> it changes nothing and merely hides the violation. The guard makes that mistake loud.
+
+### P1-11. Lockout sweep cancels protective stops and reducing orders — CLOSED 2026-08-07
 **Where**: `RiskGuardAddOn.cs:1410-1414`
 ```csharp
 var toCancel = account.Orders.Where(o => o.OrderState != OrderState.Filled
@@ -276,7 +286,7 @@ where the entire sweep is skipped if `Application.Current` is null.
 **Fix**: `Dictionary<string, List<Order>>` with a TTL (e.g. `StopAttachSeconds × 2`), swept in the
 watchdog; classify by side on consumption only, and require `order.Quantity <= positionQuantity`.
 
-### P1-15. Re-arming does not seed FSMs for open positions
+### P1-15. Re-arming does not seed FSMs for open positions — CLOSED 2026-08-07
 **Where**: `ToggleArmed:2231-2249`; `SeedFsmsForExistingPositions` is only called from
 `SubscribeToAccount`
 **What happens**: `UpdateFsmOnPosition`/`UpdateFsmOnOrder` return early when `!_isArmed`
@@ -286,7 +296,7 @@ protection until the position changes side.
 when transitioning to armed. Same on `SaveAndReloadConfig`/`ReloadConfig` if
 `ExcludedAccounts` shrank.
 
-### P1-35. FSM teardown cancels the orphan auto-stop while the caller holds `_stateLock`
+### P1-35. FSM teardown cancels the orphan auto-stop while the caller holds `_stateLock` — CLOSED 2026-08-07
 *(found during T1 implementation, 2026-08-06 — a P1-10 site this review originally missed)*
 **Where**: `RiskGuardAddOn.cs:1620` inside `UpdateFsmOnPosition`'s nonflat→flat branch:
 `try { account.Cancel(new[] { fsm.AutoStopOrder }); }`
@@ -695,13 +705,13 @@ broker is the single highest-value addition in this document. Consider promoting
 | P0-7 | false trigger | RiskGuardAddOn.cs:1154 | peak-giveback compares total-PnL peak vs unrealized only |
 | P0-8 | gate bypass | TradeCopierEngine.cs:645 | copier ignores RiskGuard lockout |
 | P0-9 | naked risk | TradeCopierEngine.cs:721 | followers get bare market orders; `EnableFollowerAtm` dead |
-| P1-10 | deadlock | RiskGuardAddOn.cs:1336-1446 | broker calls under `_stateLock`, violating documented invariant |
-| P1-11 | naked window | RiskGuardAddOn.cs:1410 | lockout sweep cancels protective + reducing orders |
+| P1-10 CLOSED | deadlock | RiskGuardAddOn.cs:1336-1446 | broker calls under `_stateLock`, violating documented invariant |
+| P1-11 CLOSED | naked window | RiskGuardAddOn.cs:1410 | lockout sweep cancels protective + reducing orders |
 | P1-12 | latency | RiskGuardAddOn.cs:865, 1342 | blocking file I/O under the global lock |
 | P1-13 | latency | RiskGuardAddOn.cs:1317 | guard evaluation on the WPF dispatcher; skipped if null |
 | P1-14 | correctness | RiskGuardAddOn.cs:1651 | `_pendingStops` single-slot, no TTL, side-blind |
-| P1-15 | coverage gap | RiskGuardAddOn.cs:2231 | re-arm does not seed FSMs for open positions |
-| P1-35 | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
+| P1-15 CLOSED | coverage gap | RiskGuardAddOn.cs:2231 | re-arm does not seed FSMs for open positions |
+| P1-35 CLOSED | deadlock | RiskGuardAddOn.cs:1620 | FSM teardown cancels orphan auto-stop under `_stateLock` |
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
