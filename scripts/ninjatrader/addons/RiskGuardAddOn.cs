@@ -217,10 +217,30 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // Pending-stop buffer: stops whose OrderUpdate arrived before PositionUpdate
         // (possible per NT8 event ordering). Keyed by "accountName|instrumentFullName".
-        // Each entry is the protective-side order awaiting FSM creation. Consumed
-        // when the FSM is created on the position-open event; protects against the
+        // Consumed when the FSM is created on the position-open event; protects against the
         // race where the stop leg is observed before the position leg.
-        private readonly Dictionary<string, Order> _pendingStops = new Dictionary<string, Order>();
+        //
+        // P1-14 made this a LIST with a timestamp. It was one Order per key, which failed three
+        // ways at once:
+        //   - a bracket with two stop legs, or a second stop arriving first, silently overwrote
+        //     the first and the guard saw only the survivor;
+        //   - entries were removed only on consumption or on flat, so a stop buffered for a
+        //     position that never opened (entry rejected) lived forever and was consumed by a
+        //     LATER, UNRELATED position on the same instrument;
+        //   - nothing checked what the order actually was. The side is genuinely unknown at
+        //     buffer time -- that part is inherent -- but the consumer only checked side, so a
+        //     resting stop-market ENTRY order (a breakout entry: the most common non-protective
+        //     stop there is) was adopted as the position's protective stop. A 10-lot sell-stop
+        //     breakout entry buffered while flat, then a 1-lot long opened by hand, and the FSM
+        //     reads Protected with CoveredQuantity 10 on a 1-lot position: grace cancelled, no
+        //     auto-stop, and the account flips 9 lots short if that order ever triggers.
+        private class BufferedStop
+        {
+            public Order Order;
+            public DateTime BufferedAtUtc;
+        }
+        private readonly Dictionary<string, List<BufferedStop>> _pendingStops =
+            new Dictionary<string, List<BufferedStop>>();
 
         // P1-35/P1-10: cancellations decided while holding _stateLock, to be sent to the broker
         // once it is released. The design doc's central concurrency invariant is that no
@@ -464,6 +484,31 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal void TestClearFsms()
         {
             lock (_stateLock) { _guardFsms.Clear(); _pendingStops.Clear(); }
+        }
+
+        // --- pending-stop buffer seams (P1-14) ---
+        internal int TestPendingStopCount(string accountName, string instrument)
+        {
+            lock (_stateLock)
+            {
+                List<BufferedStop> b;
+                return _pendingStops.TryGetValue(FsmKey(accountName, instrument), out b) ? b.Count : 0;
+            }
+        }
+
+        /// <summary>
+        /// Ages every buffered stop for a key. The TTL is measured in grace periods, which are
+        /// configured in whole seconds, so a real-time test would have to sleep for them --
+        /// and a sleeping test is one that gets shortened until it stops proving anything.
+        /// </summary>
+        internal void TestBackdatePendingStops(string accountName, string instrument, TimeSpan by)
+        {
+            lock (_stateLock)
+            {
+                List<BufferedStop> b;
+                if (!_pendingStops.TryGetValue(FsmKey(accountName, instrument), out b)) return;
+                foreach (var entry in b) entry.BufferedAtUtc -= by;
+            }
         }
 
         // ExecuteAction and ValidateInvariant are the two halves of the auto-stop
@@ -2093,16 +2138,45 @@ namespace NinjaTrader.NinjaScript.AddOns
                         State = GuardFsmState.Unprotected
                     };
 
-                    // Consume a buffered stop that arrived before the position event
+                    // Consume a buffered stop that arrived before the position event (P1-14).
                     if (_pendingStops.TryGetValue(key, out var pending) && pending != null)
                     {
-                        if (IsProtectiveSide(pending, newPos) && IsStopType(pending) && !IsTerminal(pending.OrderState))
+                        // Now -- and only now -- the position side is known, so the buffered
+                        // candidates can finally be judged. Two conditions, both load-bearing:
+                        //
+                        //   IsProtectiveSide  the order reduces THIS position rather than opening
+                        //                     another one.
+                        //   Quantity <= qty   a resting breakout ENTRY passes the side test by
+                        //                     coincidence (a sell-stop entry does reduce a long)
+                        //                     while being sized for a trade that has nothing to do
+                        //                     with this position. Adopting it reports coverage the
+                        //                     position does not have and, if it triggers, flips the
+                        //                     account by the difference. A genuine protective stop
+                        //                     is never larger than what it protects.
+                        var adopted = pending
+                            .Where(b => b.Order != null
+                                     && IsStopType(b.Order)
+                                     && !IsTerminal(b.Order.OrderState)
+                                     && IsProtectiveSide(b.Order, newPos)
+                                     && b.Order.Quantity <= qty)
+                            .OrderByDescending(b => b.Order.Quantity)
+                            .FirstOrDefault();
+
+                        if (adopted != null)
                         {
-                            fsm.RecognizedStopOrder = pending;
-                            fsm.CoveredQuantity = pending.Quantity;
-                            fsm.State = pending.OrderState == OrderState.Working
+                            fsm.RecognizedStopOrder = adopted.Order;
+                            fsm.CoveredQuantity = adopted.Order.Quantity;
+                            fsm.State = adopted.Order.OrderState == OrderState.Working
                                 ? GuardFsmState.Protected
                                 : GuardFsmState.ProtectedPending;
+                        }
+
+                        int rejected = pending.Count - (adopted != null ? 1 : 0);
+                        if (rejected > 0)
+                        {
+                            LogEvent(account.Name, "FSM_PENDING_STOP_REJECTED",
+                                $"{key}: discarded {rejected} buffered stop(s) that are not protective "
+                                + $"cover for a {newPos} {qty} position.");
                         }
                         _pendingStops.Remove(key);
                     }
@@ -2250,7 +2324,21 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (IsStopType(order) && !IsTerminal(order.OrderState))
                     {
                         // We don't know the position side yet; buffer and classify on consumption.
-                        _pendingStops[key] = order;
+                        // P1-14: append rather than overwrite, and stamp it so the watchdog can
+                        // expire it. Re-buffering the same Order object (NT8 raises OrderUpdate
+                        // repeatedly for one order) refreshes the stamp instead of duplicating.
+                        List<BufferedStop> buffered;
+                        if (!_pendingStops.TryGetValue(key, out buffered))
+                        {
+                            buffered = new List<BufferedStop>();
+                            _pendingStops[key] = buffered;
+                        }
+
+                        var existing = buffered.FirstOrDefault(b => ReferenceEquals(b.Order, order));
+                        if (existing != null)
+                            existing.BufferedAtUtc = DateTime.UtcNow;
+                        else
+                            buffered.Add(new BufferedStop { Order = order, BufferedAtUtc = DateTime.UtcNow });
                     }
                     return;
                 }
@@ -2434,6 +2522,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         // Watchdog: log any FSM stuck in Unprotected past grace+buffer. Log only.
         private void FsmWatchdog()
         {
+            ExpireStalePendingStops();
+
             foreach (var kv in _guardFsms)
             {
                 var fsm = kv.Value;
@@ -2461,6 +2551,51 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// P1-14: drops buffered stops that no position ever arrived to claim. Called from the
+        /// watchdog, so it runs with `_stateLock` held and makes no broker calls.
+        ///
+        /// Without this the buffer only ever shrank on consumption or on a flat transition, so a
+        /// stop buffered against an entry that was rejected simply stayed -- and the next
+        /// position opened on that instrument, hours or days later, adopted it as its protective
+        /// cover. The FSM would read Protected against an order that is stale, cancelled outside
+        /// our view, or sized for a completely different trade.
+        ///
+        /// The window is two grace periods. One is the longest a legitimate stop can lag its
+        /// position event and still be the thing that protects it; two leaves margin for a slow
+        /// broker without letting the entry outlive the trade it belongs to. A terminal order is
+        /// dropped immediately whatever its age -- it protects nothing.
+        /// </summary>
+        private void ExpireStalePendingStops()
+        {
+            if (_pendingStops.Count == 0) return;
+
+            int graceSeconds = _config?.StopGuard != null ? _config.StopGuard.StopAttachSeconds : 0;
+            var ttl = TimeSpan.FromSeconds(Math.Max(graceSeconds, 1) * 2);
+            var now = DateTime.UtcNow;
+            List<string> emptied = null;
+
+            foreach (var kv in _pendingStops)
+            {
+                int before = kv.Value.Count;
+                kv.Value.RemoveAll(b =>
+                    b.Order == null || IsTerminal(b.Order.OrderState) || now - b.BufferedAtUtc > ttl);
+
+                if (kv.Value.Count != before)
+                {
+                    LogEvent(kv.Key.Split('|')[0], "FSM_PENDING_STOP_EXPIRED",
+                        $"{kv.Key}: expired {before - kv.Value.Count} buffered stop(s) that no position "
+                        + $"claimed within {ttl.TotalSeconds:F0}s.");
+                }
+
+                if (kv.Value.Count == 0)
+                    (emptied ?? (emptied = new List<string>())).Add(kv.Key);
+            }
+
+            if (emptied != null)
+                foreach (var key in emptied) _pendingStops.Remove(key);
         }
 
         // -- Lockout phase enforcement (event-driven) --

@@ -559,6 +559,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
             TestP1_12_NoDiskWriteHappensUnderTheStateLock();
             TestP1_12_PositionChangeDefersThePersistToTheSweep();
+            TestP1_14_SecondBufferedStopDoesNotOverwriteTheFirst();
+            TestP1_14_ABufferedBreakoutEntryIsNotAdoptedAsProtection();
+            TestP1_14_AnUnclaimedBufferedStopExpiresInsteadOfArmingALaterPosition();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
             TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening();
             TestP1_15_ReArmingSeedsFsmsForPositionsOpenedWhileDisarmed();
@@ -4105,6 +4108,153 @@ namespace NinjaTrader.NinjaScript.AddOns
             var a = new Account { Name = name };
             Account.All.Add(a);
             return a;
+        }
+
+        // ------------------------------------------------------------------
+        // P1-14 — the pending-stop buffer
+        //
+        // NT8 can deliver a stop's OrderUpdate before the PositionUpdate that opens the position
+        // it protects, so the buffer is necessary. As written it was one Order per
+        // (account, instrument), never expired, and judged only on side at consumption. Three
+        // tests, one per failure.
+        // ------------------------------------------------------------------
+
+        private static Order BufferedStopOrder(Instrument inst, OrderAction action, int qty, string name)
+        {
+            return new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderId = Guid.NewGuid().ToString(),
+                Name = name,
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                Quantity = qty,
+                Instrument = inst,
+                OrderAction = action,
+                StopPrice = 17900
+            };
+        }
+
+        // A bracket with two stop legs, or simply a second stop arriving first, used to overwrite
+        // the first: `_pendingStops[key] = order`. The guard then saw only whichever happened to
+        // land last, which is decided by broker event ordering -- i.e. not decided at all.
+        private static void TestP1_14_SecondBufferedStopDoesNotOverwriteTheFirst()
+        {
+            Console.WriteLine("\n[TEST] P1-14: a second buffered stop does not overwrite the first");
+
+            var mnq = new Instrument("MNQ");
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60));
+            addon.TestClearFsms();
+
+            // Both legs of a 6-lot bracket arrive before the position event. The 6-lot leg lands
+            // first, the 3-lot leg second -- the ordering that loses the useful one.
+            addon.TestFsmOnOrder(account, mnq.FullName, BufferedStopOrder(mnq, OrderAction.Sell, 6, "Stop_A"));
+            addon.TestFsmOnOrder(account, mnq.FullName, BufferedStopOrder(mnq, OrderAction.Sell, 3, "Stop_B"));
+
+            Assert(addon.TestPendingStopCount(account.Name, mnq.FullName) == 2,
+                string.Format("Both buffered stops are retained (got {0}). A single slot keeps whichever arrived last.",
+                    addon.TestPendingStopCount(account.Name, mnq.FullName)));
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 6);
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 6,
+                string.Format(
+                    "The 6-lot position is recognised as fully covered (CoveredQuantity {0}). "
+                    + "Keeping only the last-arrived 3-lot leg reports the position half naked and "
+                    + "attaches a duplicate auto-stop for a delta that is already covered.",
+                    fsm == null ? -1 : fsm.CoveredQuantity));
+
+            Assert(fsm != null && fsm.State == GuardFsmState.Protected,
+                string.Format("...and Protected, not under-covered (state {0}).", fsm == null ? "none" : fsm.State.ToString()));
+        }
+
+        // The side is genuinely unknown at buffer time, so classification has to happen on
+        // consumption -- but it only ever checked SIDE. A resting stop-market breakout ENTRY
+        // passes that check by coincidence: a sell-stop entry does, technically, reduce a long.
+        // Adopting it reports coverage the position does not have, cancels the grace timer, and
+        // suppresses the auto-stop -- and if the order ever triggers it flips the account by the
+        // size difference.
+        private static void TestP1_14_ABufferedBreakoutEntryIsNotAdoptedAsProtection()
+        {
+            Console.WriteLine("\n[TEST] P1-14: a resting breakout ENTRY order is not adopted as the position's protective stop");
+
+            var mnq = new Instrument("MNQ");
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60));
+            addon.TestClearFsms();
+
+            // Flat. The trader rests a 10-lot sell-stop below the market as a breakout SHORT
+            // entry. It is a stop order on this instrument, so it is buffered.
+            addon.TestFsmOnOrder(account, mnq.FullName,
+                BufferedStopOrder(mnq, OrderAction.SellShort, 10, "BreakoutEntry"));
+
+            // Then, unrelated to it, a 1-lot LONG is opened by hand.
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 1);
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 0,
+                string.Format(
+                    "The breakout entry contributes no coverage (CoveredQuantity {0}, position 1). "
+                    + "Adopting it reads as 10 lots of cover on a 1-lot position -- and firing it "
+                    + "leaves the account 9 lots SHORT.",
+                    fsm == null ? -1 : fsm.CoveredQuantity));
+
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
+                string.Format(
+                    "The position is correctly Unprotected (state {0}), so the grace timer runs and "
+                    + "the auto-stop gets its chance.",
+                    fsm == null ? "none" : fsm.State.ToString()));
+
+            Assert(fsm != null && fsm.GracePending,
+                "Grace is armed -- the whole point of refusing the adoption is that protection is still owed.");
+        }
+
+        // Entries were removed only on consumption or on a flat transition. A stop buffered for a
+        // position that never opened -- entry rejected, order pulled -- therefore lived forever,
+        // and the next position on that instrument adopted it.
+        private static void TestP1_14_AnUnclaimedBufferedStopExpiresInsteadOfArmingALaterPosition()
+        {
+            Console.WriteLine("\n[TEST] P1-14: an unclaimed buffered stop expires instead of protecting a later, unrelated position");
+
+            var mnq = new Instrument("MNQ");
+            var account = FsmTestAccount();
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 30));
+            addon.SetSubscribedAccountForTest(account.Name);
+            addon.SetAccountStateForTest(account.Name, new AccountState(account.Name));
+            addon.TestClearFsms();
+
+            // A stop is buffered against an entry that is then rejected: no position ever arrives.
+            addon.TestFsmOnOrder(account, mnq.FullName, BufferedStopOrder(mnq, OrderAction.Sell, 2, "Stop_Orphan"));
+            Assert(addon.TestPendingStopCount(account.Name, mnq.FullName) == 1, "Precondition: the stop is buffered.");
+
+            // Not yet stale: one grace period in, the TTL is two, and a genuine stop can lag its
+            // position event. Expiring here would break the race the buffer exists for.
+            addon.TestBackdatePendingStops(account.Name, mnq.FullName, TimeSpan.FromSeconds(31));
+            addon.ExecuteSafetySweep();
+            Assert(addon.TestPendingStopCount(account.Name, mnq.FullName) == 1,
+                "A stop that is merely lagging its position event is NOT expired -- that race is why the buffer exists.");
+
+            // Well past two grace periods, with no position to claim it.
+            addon.TestBackdatePendingStops(account.Name, mnq.FullName, TimeSpan.FromSeconds(60));
+            addon.ExecuteSafetySweep();
+            Assert(addon.TestPendingStopCount(account.Name, mnq.FullName) == 0,
+                string.Format("The unclaimed stop is expired (still buffered: {0}).",
+                    addon.TestPendingStopCount(account.Name, mnq.FullName)));
+
+            // The later, unrelated position must not inherit it.
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 2);
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected && fsm.CoveredQuantity == 0,
+                string.Format(
+                    "The new position starts Unprotected with no coverage (state {0}, covered {1}). "
+                    + "Inheriting a stop buffered for a trade that never happened means the guard "
+                    + "stands down for a position that has nothing behind it.",
+                    fsm == null ? "none" : fsm.State.ToString(), fsm == null ? -1 : fsm.CoveredQuantity));
         }
 
         // 1. flat -> nonflat (Unprotected) -> OCO stop leg Submitted (ProtectedPending) -> Working (Protected)
