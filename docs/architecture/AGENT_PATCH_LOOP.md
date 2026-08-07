@@ -1,10 +1,27 @@
 # Agent Patch Loop — formalised implement → gate → review → apply cycle
 
-**Status**: in-progress rebuild. `providers.py`, `regions.py`, `gates.py` are landed and tested;
-`workspace.py`, `loop.py`, profiles, cassettes and the CLI are still to come.
-**Predecessor**: `scripts/agent_loop/ollama_patch_loop.py` (still functional, still the only
-runnable entry point until `loop.py` lands).
+**Status**: runnable. All modules landed; `python -m scripts.agent_loop.selftest` passes 5/5
+offline. Not yet exercised against live models.
+**Predecessor**: `scripts/agent_loop/ollama_patch_loop.py` — superseded, retained only so
+in-flight artifacts stay readable. Three of its gates were defective (§4); do not use it.
 **Driving work**: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
+
+```powershell
+# confirm every ticket still resolves (free; run before paying for anything)
+.\.venv\Scripts\python.exe -m scripts.agent_loop --list
+
+# offline end-to-end check of the loop itself (free, ~2 min, no models)
+.\.venv\Scripts\python.exe -m scripts.agent_loop.selftest
+
+# run one ticket; promotes into the live tree only on unanimous APPROVE
+.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 --apply
+
+# resume a candidate whose panel was unreachable, without re-paying for it
+.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T2 --resume-raw logs/ollama_loop/T2/r4_impl_raw.txt
+
+# clean up worktrees left behind by a crashed run
+.\.venv\Scripts\python.exe -m scripts.agent_loop --prune
+```
 
 ---
 
@@ -38,14 +55,47 @@ model verdicts, unanimous-approve-to-apply, and an orchestrator directive that o
 
 ```
 scripts/agent_loop/
-  providers.py   multi-provider chat shim  (landed)
-  regions.py     locate + splice source regions  (landed)
-  gates.py       the mechanical gate ladder  (landed)
-  workspace.py   git-worktree isolation + run lock  (pending)
-  loop.py        round driver, review panel, arbitration  (pending)
-  profiles/      domain prompts + gate config, out of the .py  (pending)
+  cli.py         entry point: python -m scripts.agent_loop
+  loop.py        round driver, review panel, arbitration
+  gates.py       the mechanical gate ladder
+  workspace.py   git-worktree isolation, run lock, baseline freeze
+  regions.py     locate + splice source regions
+  providers.py   multi-provider chat shim
+  profiles.py    domain prompts, gate config, settled decisions
+  selftest.py    offline end-to-end exercise with model calls stubbed
   tickets_p0.json  the RiskGuard/Copier P0 tickets
+  ollama_patch_loop.py   superseded predecessor - do not use
 ```
+
+### `workspace.py`
+
+Every ticket runs in its own `git worktree`, sharing the repo's object store. The live tree is
+never written to; an approved patch is copied back in an explicit final step. This removes the
+hazard described in §4.5 rather than documenting it — and it makes `git checkout --` *safe*,
+because it is now scoped to a directory that holds nothing a human authored.
+
+- **Run lock** is hand-rolled rather than `filelock`, for one reason: it records the holder's PID
+  and treats a lock whose process is gone as stale. A crashed run must not leave a permanent lock.
+- **`capture_baseline`** refuses to run against a dirty worktree — a baseline must describe
+  unmodified code.
+- **`export_patch`** writes a readable unified diff for the arbiter. `final_blocks.json` is
+  JSON-escaped C# and unreadable; the arbiter is the last gate and deserves better.
+- `--prune` cleans up worktrees left by a crashed run.
+
+### `loop.py`
+
+The round driver. Its two behavioural differences from the predecessor are both consequences of
+the T2 post-mortem in §4.1: **a reviewer that did not answer has not voted**, and **the panel
+carries a wall-clock deadline** rather than relying on a per-request timeout.
+
+### `profiles.py`
+
+Everything domain-specific — prompts, `build_cmd`/`test_cmd`, the lock name, protected paths.
+Pointing the loop at a different codebase is a config change, not a fork.
+
+`Profile.settled` carries decisions the arbiter has already made, injected into *every* review
+round. The predecessor required a human to remember `--orchestrator-note` by hand, and the same
+three false positives were re-litigated across rounds because nobody did.
 
 ### `providers.py`
 
@@ -177,8 +227,14 @@ rounds of cloud spend on a ticket with no reachable pass state.
 There was also a **2h03m gap** between `r4_build` (16:16) and `r4_review` (18:19) despite
 `timeout=900`, so the panel needs its own wall-clock deadline, not just a per-request one.
 
-**Fixes**: `ProviderError` (landed, §2); panel must treat empty/unparseable as *did not vote*, and
-carry a deadline (pending, `loop.py`).
+**Fixed.** `parse_review` now returns `UNPARSEABLE` for an empty or marker-less response and
+`UNREACHABLE` for a transport failure; neither is a vote. A panel missing any vote is **invalid** —
+the round is not decided, the candidate is kept, and the run stops with `PANEL_UNREACHABLE` plus a
+`--resume-raw` hint, rather than being silently vetoed. `review_panel` also bounds the whole set of
+calls with `panel_deadline` (default 1800s), not just each request.
+
+Both are covered by `selftest.py`: scenario 3 replays the empty-reviewer case and scenario 4 the
+double-502 case, and both must yield `PANEL_UNREACHABLE`.
 
 ### 4.2 The lock-scope gate was inert for 88% of its targets
 
@@ -219,10 +275,23 @@ reliable; the run-level summary is not. `loop.py` will write an append-only JSON
 
 The build gate applies a candidate, builds, then reverts with `git checkout --` — destroying any
 uncommitted work in the same files. The handover has to warn "between tickets you must commit"
-purely because of this. Being replaced by [git-worktree
-isolation](http://aq.dev/guides/git-worktrees-for-ai-coding-agents/), now the standard isolation
-primitive for parallel agents: the loop runs in its own checkout, the live tree is never touched,
-and applying becomes a merge.
+purely because of this.
+
+**Fixed** by [git-worktree isolation](http://aq.dev/guides/git-worktrees-for-ai-coding-agents/),
+now the standard isolation primitive for parallel agents. The loop runs in its own checkout, the
+live tree is never written to, and promotion is an explicit final step. Verified: editing the
+addon inside the worktree leaves `git status` on the live repo empty.
+
+The "commit between tickets" rule in the handover no longer applies to the new tool.
+
+### 4.6 Reviewers reviewed blind, and re-litigated settled decisions
+
+Reviewers saw only BEFORE/AFTER of each region — not whether the patch compiled, not whether tests
+passed, and not the decisions the arbiter had already made. §5 of the handover exists purely as a
+human-maintained list of false positives reviewers kept raising.
+
+**Fixed**: the review prompt now carries a "Mechanical gates already passed" summary, and
+`Profile.settled` is injected into every round automatically.
 
 ---
 

@@ -1,0 +1,501 @@
+"""
+loop.py
+=======
+Round driver: implement -> gate ladder -> review panel -> arbitrate -> apply.
+
+The two behaviours that distinguish this from the predecessor:
+
+1. A reviewer that did not answer has NOT voted. The old panel wrapped every
+   reviewer call in a bare `except` that fabricated a REVISE verdict, and
+   `parse_review("")` also returns REVISE -- so an unreachable or silent model
+   was indistinguishable from a dissenting one. Ticket T2 burned four rounds
+   and ~2.5 hours against a gate that was closed from round 1 because one
+   reviewer returned empty every time and, in the final round, both 502'd.
+   Here an unreachable reviewer aborts the round instead of silently vetoing.
+
+2. The panel carries a wall-clock deadline. T2's round 4 hung for 2h03m under
+   a nominal 900s per-request timeout, because the timeout bounds one request
+   and nothing bounded the set.
+"""
+from __future__ import annotations
+
+import concurrent.futures
+import json
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from . import gates, profiles, regions, workspace
+from .providers import Completion, ProviderError, chat
+
+BLOCK_RE = re.compile(
+    r"<<<BLOCK\s+id=\"(?P<id>[^\"]+)\"\s*>>>\r?\n(?P<body>.*?)<<<END\s+id=\"(?P=id)\"\s*>>>",
+    re.DOTALL,
+)
+
+APPROVE, REVISE, REJECT = "APPROVE", "REVISE", "REJECT"
+UNREACHABLE, UNPARSEABLE = "UNREACHABLE", "UNPARSEABLE"
+_RANK = {APPROVE: 0, REVISE: 1, REJECT: 2}
+
+
+# --------------------------------------------------------------------------
+# Parsing
+# --------------------------------------------------------------------------
+def parse_blocks(text: str) -> Tuple[Dict[str, str], str]:
+    blocks = {m.group("id"): m.group("body").rstrip("\n") for m in BLOCK_RE.finditer(text)}
+    m = re.search(r"<<<NOTES>>>\r?\n(.*?)<<<END NOTES>>>", text, re.DOTALL)
+    return blocks, (m.group(1).strip() if m else "")
+
+
+@dataclass
+class Vote:
+    model: str
+    status: str  # APPROVE / REVISE / REJECT / UNREACHABLE / UNPARSEABLE
+    findings: str = ""
+    required: str = ""
+    blockers: int = 0
+    secs: float = 0.0
+    error: str = ""
+    usage: str = ""
+
+    @property
+    def counted(self) -> bool:
+        """Only a parsed verdict from a reachable model is a vote."""
+        return self.status in _RANK
+
+
+def parse_review(text: str, model: str) -> Vote:
+    """Parse a reviewer response. An empty or structurally missing verdict is
+    UNPARSEABLE, never a silent REVISE -- that conflation is what made the
+    panel unable to approve anything."""
+    if not text or not text.strip():
+        return Vote(model, UNPARSEABLE, error="empty response body")
+
+    def section(name: str) -> str:
+        m = re.search(rf"<<<{name}>>>\r?\n(.*?)<<<END {name}>>>", text, re.DOTALL)
+        return m.group(1).strip() if m else ""
+
+    raw = section("VERDICT").upper()
+    verdict = next((c for c in (REJECT, REVISE, APPROVE) if c in raw), "")
+    if not verdict:
+        return Vote(model, UNPARSEABLE, error=f"no verdict marker in {len(text)} chars")
+    findings = section("FINDINGS")
+    blockers = sum(
+        1 for ln in findings.splitlines() if "[BLOCKER]" in ln.upper() or "[MAJOR]" in ln.upper()
+    )
+    return Vote(model, verdict, findings, section("REQUIRED"), blockers)
+
+
+# --------------------------------------------------------------------------
+# Prompts
+# --------------------------------------------------------------------------
+def build_implement_prompt(ticket: Dict[str, Any], regs: Sequence[regions.Region]) -> str:
+    parts = [
+        f"# TICKET {ticket['id']}: {ticket['title']}",
+        "",
+        "## Defect",
+        ticket["defect"].strip(),
+        "",
+        "## Required change",
+        ticket["spec"].strip(),
+        "",
+    ]
+    if ticket.get("context"):
+        parts += ["## Additional context you must respect", ticket["context"].strip(), ""]
+    parts.append("## Regions to rewrite")
+    for r in regs:
+        parts += [
+            "",
+            f'### REGION id="{r.id}"  file={r.file}  lines {r.lines_1based}',
+            f"Purpose: {r.note}" if r.note else "",
+            "```csharp",
+            r.text,
+            "```",
+        ]
+    parts += ["", "Return one block per region id above, in the same order. No other output."]
+    return "\n".join(p for p in parts if p)
+
+
+def build_review_prompt(
+    ticket: Dict[str, Any],
+    regs: Sequence[regions.Region],
+    blocks: Dict[str, str],
+    notes: str,
+    profile: profiles.Profile,
+    orchestrator_note: str,
+    gate_summary: str,
+) -> str:
+    parts = [
+        f"# TICKET {ticket['id']}: {ticket['title']}",
+        "",
+        "## Defect the patch claims to fix",
+        ticket["defect"].strip(),
+        "",
+        "## Required change",
+        ticket["spec"].strip(),
+        "",
+    ]
+    if gate_summary:
+        # Reviewers used to review blind to whether the patch compiled or passed
+        # tests, and wasted findings asserting it did not.
+        parts += ["## Mechanical gates already passed", gate_summary, ""]
+    settled = list(profile.settled)
+    if orchestrator_note:
+        settled.append(orchestrator_note.strip())
+    if settled:
+        parts += [
+            "## SETTLED DECISIONS - AUTHORITATIVE, DO NOT RE-LITIGATE",
+            "The arbiter has already decided these. They SUPERSEDE the ticket text wherever they "
+            "conflict. Do NOT raise a finding that contradicts one, and do not report "
+            "directive-compliant code as a spec violation.",
+            "",
+        ] + [f"- {s}" for s in settled] + [""]
+    parts += ["## Implementer notes", notes.strip() or "(none)", ""]
+    for r in regs:
+        parts += [
+            "",
+            f'## REGION "{r.id}" ({r.file})',
+            "### BEFORE",
+            "```csharp",
+            r.text,
+            "```",
+            "### AFTER (proposed)",
+            "```csharp",
+            blocks.get(r.id, "(MISSING - implementer did not return this region)"),
+            "```",
+        ]
+    return "\n".join(parts)
+
+
+# --------------------------------------------------------------------------
+# Panel
+# --------------------------------------------------------------------------
+@dataclass
+class PanelResult:
+    votes: List[Vote]
+    verdict: str  # worst counted verdict, or "" when the panel is invalid
+    valid: bool  # every reviewer answered
+    findings: str = ""
+    required: str = ""
+
+    @property
+    def unanimous_approve(self) -> bool:
+        return self.valid and bool(self.votes) and all(v.status == APPROVE for v in self.votes)
+
+    @property
+    def unreachable(self) -> List[Vote]:
+        return [v for v in self.votes if not v.counted]
+
+
+def review_panel(
+    reviewers: Sequence[str],
+    prompt: str,
+    system: str,
+    art: Path,
+    rnd: int,
+    deadline_secs: int = 1800,
+    max_tokens: int = 8000,
+) -> PanelResult:
+    """Run reviewers concurrently. Different families miss different things, so
+    a panel finds strictly more than any single reviewer. The verdict is the
+    WORST returned: any reviewer may block, none may unblock on another's
+    behalf.
+
+    If any reviewer is unreachable the panel is INVALID -- the round cannot be
+    decided and must be retried rather than counted as a rejection.
+    """
+
+    def one(model: str) -> Vote:
+        t0 = time.time()
+        try:
+            out: Completion = chat(
+                model,
+                [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+            )
+        except ProviderError as exc:
+            return Vote(model, UNREACHABLE, secs=round(time.time() - t0, 1), error=str(exc))
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", model)
+        (art / f"r{rnd}_review_{safe}.txt").write_text(out.text or "", encoding="utf-8")
+        v = parse_review(out.text, model)
+        v.secs = out.secs
+        v.usage = out.usage_line()
+        return v
+
+    votes: List[Vote] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(reviewers))) as pool:
+        futures = {pool.submit(one, m): m for m in reviewers}
+        try:
+            for fut in concurrent.futures.as_completed(futures, timeout=deadline_secs):
+                votes.append(fut.result())
+        except concurrent.futures.TimeoutError:
+            # Bound the SET of calls, not just each one. T2 hung 2h03m here.
+            for fut, model in futures.items():
+                if not fut.done():
+                    fut.cancel()
+                    votes.append(Vote(model, UNREACHABLE, error=f"panel deadline {deadline_secs}s exceeded"))
+
+    valid = all(v.counted for v in votes) and len(votes) == len(reviewers)
+    counted = [v for v in votes if v.counted]
+    verdict = max(counted, key=lambda v: _RANK[v.status]).status if counted else ""
+
+    fnd = "\n\n".join(
+        f"### From {v.model} (verdict {v.status})\n{v.findings}"
+        for v in counted
+        if v.findings.strip() not in ("", "- NONE", "NONE")
+    )
+    req = "\n\n".join(
+        f"### Required by {v.model}\n{v.required}"
+        for v in counted
+        if v.required.strip() not in ("", "- NONE", "NONE")
+    )
+    return PanelResult(votes, verdict, valid, fnd or "- NONE", req or "- NONE")
+
+
+# --------------------------------------------------------------------------
+# Ledger
+# --------------------------------------------------------------------------
+def append_ledger(repo: Path, record: Dict[str, Any]) -> None:
+    """Append-only. The predecessor's summary.json was rewritten wholesale per
+    invocation and still records T1 as unapplied even though T1 is committed."""
+    p = repo / "logs" / "agent_loop" / "ledger.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **record}
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+# --------------------------------------------------------------------------
+# Driver
+# --------------------------------------------------------------------------
+@dataclass
+class RoundRecord:
+    round: int
+    stage: str
+    ok: bool
+    summary: str
+    detail: str = ""
+    cost_usd: float = 0.0
+    secs: float = 0.0
+
+
+def run_ticket(
+    repo: Path,
+    ticket: Dict[str, Any],
+    profile: profiles.Profile,
+    implementer: str,
+    reviewers: Sequence[str],
+    max_rounds: int = 4,
+    apply: bool = False,
+    allow_unapproved: bool = False,
+    resume_raw: str = "",
+    orchestrator_note: str = "",
+    panel_deadline: int = 1800,
+    keep_worktree: bool = False,
+) -> Dict[str, Any]:
+    tid = ticket["id"]
+    art = repo / "logs" / "agent_loop" / tid
+    art.mkdir(parents=True, exist_ok=True)
+    result: Dict[str, Any] = {"ticket": tid, "rounds": [], "applied": False, "cost_usd": 0.0}
+
+    region_files = sorted({r["file"] for r in ticket["regions"]})
+    g0 = gates.check_protected_paths(region_files, profile.protected or gates.DEFAULT_PROTECTED)
+    print(f"  [protected] {g0.summary}")
+    if not g0.ok:
+        result["final_verdict"] = "TICKET_REJECTED"
+        result["detail"] = g0.detail
+        print(f"  REFUSED: {g0.detail}")
+        append_ledger(repo, {"ticket": tid, "verdict": "TICKET_REJECTED", "detail": g0.detail})
+        return result
+
+    with workspace.open_workspace(repo, tid, keep=keep_worktree) as ws:
+        print(f"  [worktree] {ws.root.name} @ {ws.base_commit[:8]}")
+        if profile.test_cmd:
+            workspace.capture_baseline(ws, profile.test_cmd, gates.parse_tests)
+            print(f"  [baseline] {ws.baseline_note}; {len(ws.baseline)} expected failure(s)")
+            result["baseline"] = sorted(ws.baseline)
+
+        regs = regions.extract(ws.root, ticket["regions"])
+        for r in regs:
+            print(f"    region {r.id:<24} {r.file} lines {r.lines_1based}")
+
+        impl_prompt = build_implement_prompt(ticket, regs)
+        if orchestrator_note:
+            impl_prompt += (
+                "\n\n## ORCHESTRATOR DIRECTIVE (overrides the reviewer if they conflict)\n"
+                + orchestrator_note.strip()
+            )
+        (art / "00_implement_prompt.md").write_text(impl_prompt, encoding="utf-8")
+        history = [
+            {"role": "system", "content": profile.implementer_system},
+            {"role": "user", "content": impl_prompt},
+        ]
+
+        blocks: Dict[str, str] = {}
+        final = "MAX_ROUNDS_EXHAUSTED"
+
+        for rnd in range(1, max_rounds + 1):
+            # ---- implement
+            if rnd == 1 and resume_raw:
+                raw = Path(resume_raw).read_text(encoding="utf-8")
+                print(f"  round {rnd}: resumed from {Path(resume_raw).name}")
+            else:
+                try:
+                    out = chat(implementer, history, max_tokens=32000)
+                except ProviderError as exc:
+                    print(f"  round {rnd}: implementer unreachable -- {exc}")
+                    result["rounds"].append(RoundRecord(rnd, "implement", False, str(exc)).__dict__)
+                    final = "IMPLEMENTER_UNREACHABLE"
+                    break
+                raw = out.text
+                result["cost_usd"] += out.cost_usd
+                (art / f"r{rnd}_impl_raw.txt").write_text(raw, encoding="utf-8")
+                print(f"  round {rnd}: implement {out.usage_line()}")
+
+            blocks, notes = parse_blocks(raw)
+
+            # ---- gate ladder, cheapest first. Each rung only runs if the one
+            # below it passed, so a patch that does not compile never costs a
+            # test run, and one that fails tests never costs a reviewer.
+            gate_results: List[gates.GateResult] = [
+                gates.check_static(regs, blocks, regions.strip_code)
+            ]
+            touched: List[str] = []
+            if gate_results[-1].ok:
+                touched = regions.apply(regs, blocks)
+                if profile.build_cmd:
+                    gc = gates.check_compile(profile.build_cmd, ws.root)
+                    (art / f"r{rnd}_build.txt").write_text(gc.detail, encoding="utf-8")
+                    gate_results.append(gc)
+                if gate_results[-1].ok and profile.test_cmd:
+                    gt, _ = gates.check_tests(profile.test_cmd, ws.root, ws.baseline)
+                    (art / f"r{rnd}_tests.txt").write_text(
+                        gt.detail or gt.summary, encoding="utf-8"
+                    )
+                    gate_results.append(gt)
+                if gate_results[-1].ok:
+                    gate_results.append(
+                        gates.check_lock_scope(
+                            regs, blocks, regions.strip_code, profile.lock_name
+                        )
+                    )
+
+            for x in gate_results:
+                print(f"           [{x.name}] {'ok' if x.ok else 'FAIL'} - {x.summary}")
+
+            failed = next((x for x in gate_results if not x.ok), None)
+            if failed:
+                # The candidate is not viable; take it back out so the next
+                # round starts from clean source.
+                if touched:
+                    ws.revert(touched)
+                result["rounds"].append(
+                    RoundRecord(rnd, failed.name, False, failed.summary, failed.detail[:4000]).__dict__
+                )
+                history += [
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": failed.feedback or failed.summary},
+                ]
+                continue
+
+            # ---- panel
+            gate_summary = "; ".join(f"{x.name}: {x.summary}" for x in gate_results)
+            prompt = build_review_prompt(
+                ticket, regs, blocks, notes, profile, orchestrator_note, gate_summary
+            )
+            panel = review_panel(
+                reviewers, prompt, profile.reviewer_system, art, rnd, deadline_secs=panel_deadline
+            )
+            desc = ", ".join(f"{v.model.split(':')[0]}={v.status}({v.blockers})" for v in panel.votes)
+            print(f"           [panel] {panel.verdict or 'INVALID'}  [{desc}]")
+
+            result["rounds"].append(
+                RoundRecord(
+                    rnd,
+                    "review",
+                    panel.unanimous_approve,
+                    f"{panel.verdict or 'INVALID'} [{desc}]",
+                    panel.findings[:8000],
+                ).__dict__
+            )
+
+            if not panel.valid:
+                # A reviewer that could not be reached has not voted. This is
+                # NOT a rejection: stop cleanly, keep the candidate on disk, and
+                # let the arbiter resume from it once the provider is healthy.
+                # The predecessor silently scored this as a REVISE and burned
+                # the round -- see the module docstring.
+                who = ", ".join(f"{v.model} ({v.error})" for v in panel.unreachable)
+                print(f"           panel INVALID - NOT a rejection. Unreachable: {who}")
+                print(f"           resume with --resume-raw {art / f'r{rnd}_impl_raw.txt'}")
+                final = "PANEL_UNREACHABLE"
+                break
+
+            if panel.unanimous_approve:
+                # Candidate is already applied in the worktree and cleared every
+                # gate; leave it in place for export and promotion.
+                final = "APPROVE"
+                break
+
+            ws.revert(touched)
+            history += [
+                {"role": "assistant", "content": raw},
+                {
+                    "role": "user",
+                    "content": (
+                        f"A review panel returned {panel.verdict}.\n\n"
+                        f"FINDINGS:\n{panel.findings}\n\nREQUIRED CHANGES:\n{panel.required}\n\n"
+                        "Apply every required change and re-emit ALL blocks in full."
+                    ),
+                },
+            ]
+
+        result["final_verdict"] = final
+        result["cost_usd"] = round(result["cost_usd"], 4)
+
+        # ---- arbitration
+        if blocks and not gates.check_static(regs, blocks, regions.strip_code).ok:
+            blocks = {}
+        if blocks:
+            (art / "final_blocks.json").write_text(
+                json.dumps({r.id: blocks.get(r.id, "") for r in regs}, indent=2), encoding="utf-8"
+            )
+            if final == "APPROVE" or allow_unapproved:
+                # On an arbiter override the candidate was reverted when its
+                # round ended, so put it back before exporting.
+                if not ws.dirty_files():
+                    regions.apply(regs, blocks)
+                patch = ws.export_patch(art / "final.patch")
+                if apply:
+                    moved = ws.promote(sorted({r.file for r in regs}))
+                    result["applied"] = True
+                    result["touched"] = moved
+                    tag = "" if final == "APPROVE" else " (UNAPPROVED - arbiter override)"
+                    print(f"  APPLIED{tag} -> {', '.join(moved)}")
+                    print("  review with `git diff` and commit explicit paths; nothing is staged.")
+                else:
+                    print(f"  approved, not applied (no --apply). Patch: {patch}")
+            else:
+                # Write a readable diff even on failure: final_blocks.json is
+                # JSON-escaped C# and unreadable, and the arbiter is the gate
+                # that has to decide what to do next.
+                if not ws.dirty_files():
+                    regions.apply(regs, blocks)
+                patch = ws.export_patch(art / "final.patch")
+                ws.revert(sorted({r.file for r in regs}))
+                print(f"  NOT APPLIED: verdict={final}. Patch for arbitration: {patch}")
+
+    (art / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    append_ledger(
+        repo,
+        {
+            "ticket": tid,
+            "verdict": result["final_verdict"],
+            "applied": result["applied"],
+            "rounds": len(result["rounds"]),
+            "cost_usd": result["cost_usd"],
+        },
+    )
+    return result
