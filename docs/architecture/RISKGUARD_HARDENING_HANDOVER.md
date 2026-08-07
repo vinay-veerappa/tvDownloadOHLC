@@ -9,15 +9,16 @@
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**Two tickets have landed (T1, T2). The loop has now closed a ticket end to end** — session 3
-took T2 from a parked candidate to a commit, and the arbiter rung worked as designed on its
-first live use.
+**Three tickets have landed (T1, T2, T3).** Session 3 took T2 from a parked candidate to a
+commit, landed T3, and fixed four defects in the loop itself (§4d). All three P0 pairs on the
+RiskGuard side are now closed; **T4 and T5 are the copier tickets and both have failing
+acceptance tests already waiting.**
 
-State in one paragraph: T2 is committed at `76d8c947`; the suite is 353 passed / 3 failed (those
-3 are the deliberate T4/T5 acceptance tests); the arbiter ruled 20 findings in round 1 and upheld
-exactly one — a **real, patch-introduced** permanent-naked-position defect — the implementer fixed
-it in a two-line change, and round 2 came back SHIP with 33 findings all rejected or out of scope.
-The loop stopped there and required human sign-off, which is correct. T3 is the next ticket.
+State in one paragraph: the suite is 353 passed / 3 failed, and those 3 are the deliberate T4/T5
+copy-path tests — when T4 and T5 land, the suite goes fully green, and that is their acceptance
+criterion, checked mechanically by the test gate. The arbiter has now been used live on two
+tickets and upheld three findings across them, every one real and patch-introduced. Nothing is
+deployed; NinjaTrader still runs the unmodified addon.
 
 ```powershell
 # free, ~2 min, no models: is the tool sound?
@@ -27,7 +28,7 @@ The loop stopped there and required human sign-off, which is correct. T3 is the 
 .\.venv\Scripts\python.exe -m scripts.agent_loop --list
 
 # the next real action
-.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 --arbiter glm-5.2:cloud
+.\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T4 --arbiter glm-5.2:cloud
 ```
 
 **The arbiter recommends; it never ships.** A run that ends `ARBITER_SHIP` has *not* applied
@@ -46,7 +47,8 @@ kept only so the older `logs/ollama_loop/` artifacts stay readable.
 | `5fd26995` | **T1 — P0-1 + P0-4**: stop-guard FSM coverage model |
 | `ddba3433` | **Test harness repair** — the suite could not previously catch defects |
 | `76d8c947` | **T2 — P0-2 + P0-3**: reserve-before-submit auto-stop, sized from the live position |
-| `fe5bb5ce` | **Arbiter parser repair** — it was silently discarding its own rulings and settled list |
+| `c4ab4c48` | **T3 — P0-7**: unrealized-only peak for the giveback rule |
+| `fe5bb5ce`, `8f798b09`, `08cd12cb`, `5af12984` | **Four loop repairs** — see §4d |
 
 ### T2 (P0-2 + P0-3)
 The auto-stop now **reserves before it submits**: `AutoStopOrder`, `RecognizedStopOrder`,
@@ -119,7 +121,7 @@ failure is a regression.
 |---|---|---|
 | T1 | P0-1, P0-4 | ✅ committed `5fd26995` |
 | T2 | P0-2, P0-3 | ✅ committed `76d8c947` |
-| T3 | P0-7 | ◀ next |
+| T3 | P0-7 | ✅ committed `c4ab4c48` |
 | T4 | P0-5, P0-6 | queued — has failing tests waiting |
 | T5 | P0-8, P0-9 | queued — has a failing test waiting |
 
@@ -292,10 +294,32 @@ tag threw away every rationale and all 11 settled nominations across both rounds
 bracket dropped one ruling. Fixed, and the recovered decisions are now in the loop's `settled`
 profile so T3–T5 stop paying for them.
 
+## 4d. Four loop repairs, all one bug (session 3)
+
+T3 exposed the same failure mode four times: **strict format parsing silently discarding valid
+content, then reporting the wrong cause.** Every one cost real rounds.
+
+| Commit | What was discarded | Cost |
+|---|---|---|
+| `fe5bb5ce` | Arbiter `RATIONALE` + `SETTLED` — a mismatched `<<<END>>>` tag emptied both | 11 settled decisions lost across two T2 rounds, silently |
+| `8f798b09` | An implementer block closed with `>>` instead of `>>>` | **3 rounds and the whole T3 ticket**; r2/r3/r4 were byte-identical and correct |
+| `08cd12cb` | Arbiter rulings written `- REJECTED #1` without brackets | A clean SHIP downgraded to a spurious ESCALATE |
+| `5af12984` | The resumed candidate was never written to `rN_impl_raw.txt` | The printed `promote:` command named a **stale candidate carrying two upheld findings** |
+
+The last one is the dangerous one. On resume the loop read the candidate but never persisted it,
+while every `resume with` / `promote:` hint is built from the round number — so it recommended
+promoting a file it had never reviewed. Following that hint would have put the unfixed
+close+reverse flip defect into an addon that flattens live funded accounts. **The hint is now
+correct, but keep verifying that the file you promote is the one the arbiter actually saw.**
+
+The general lesson for this loop: when a gate says a model got the format wrong, check whether the
+*content* is there before spending another round. Marker punctuation is not what the gates exist
+to check.
+
 ## 4a. Immediate next steps
 
-1. **T3, T4, T5** in order, committing each. T4 and T5's acceptance criterion is the three baseline
-   failures going green — now checked mechanically by the test gate rather than by eye.
+1. **T4, then T5**, committing each. Their acceptance criterion is the three baseline failures
+   going green — now checked mechanically by the test gate rather than by eye.
 2. **Delete the dead clause** left in T2 (§2). One line, needs a suite re-run, not a loop round.
 3. **Add tests for T1/T2/T3 behaviour** (currently only T4/T5 have failing tests waiting). Good
    candidates for T2: auto-stop submit failure rolls back and clears `GraceEmitted`; auto-stop
