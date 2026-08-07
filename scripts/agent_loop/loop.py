@@ -30,8 +30,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from . import arbiter, gates, profiles, regions, workspace
 from .providers import Completion, ProviderError, chat
 
+# `>{2,}` rather than `>>>`: kimi-k2.7-code closed a block with `>>` on T3 and
+# then reproduced the same typo on every retry, so three implementer rounds were
+# spent and the ticket exhausted over one missing angle bracket -- while the
+# static gate reported the block as "missing from model output", which is the
+# one thing it was not. Marker punctuation is not what the gate is here to check.
 BLOCK_RE = re.compile(
-    r"<<<BLOCK\s+id=\"(?P<id>[^\"]+)\"\s*>>>\r?\n(?P<body>.*?)<<<END\s+id=\"(?P=id)\"\s*>>>",
+    r"<<<BLOCK\s+id=\"(?P<id>[^\"]+)\"\s*>{2,}\r?\n(?P<body>.*?)<<<END\s+id=\"(?P=id)\"\s*>{2,}",
     re.DOTALL,
 )
 
@@ -45,7 +50,7 @@ _RANK = {APPROVE: 0, REVISE: 1, REJECT: 2}
 # --------------------------------------------------------------------------
 def parse_blocks(text: str) -> Tuple[Dict[str, str], str]:
     blocks = {m.group("id"): m.group("body").rstrip("\n") for m in BLOCK_RE.finditer(text)}
-    m = re.search(r"<<<NOTES>>>\r?\n(.*?)<<<END NOTES>>>", text, re.DOTALL)
+    m = re.search(r"<<<NOTES\s*>{2,}\r?\n(.*?)<<<END NOTES\s*>{2,}", text, re.DOTALL)
     return blocks, (m.group(1).strip() if m else "")
 
 
