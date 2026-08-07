@@ -441,8 +441,24 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (rawCopyQty < 1)
             {
-                isClamped = false;
-                return 0;
+                // Entries: skip. Flooring a sub-one-contract conversion up to 1 is
+                // exactly the P0-6 notional blowout (1 MNQ -> 1 NQ is 10x).
+                //
+                // Exits are the opposite case and must NOT be skipped. Rounding an
+                // exit down to 0 strands the follower in a position the leader has
+                // already left, and because every partial exit rounds down
+                // independently the position may never close at all: a leader who
+                // entered 10 MNQ (follower: 1 NQ) and exits in any increment below
+                // 10 produces 0 each time -- note Math.Round(0.5) is 0 under
+                // banker's rounding, so even a 5+5 exit strands it. Exit at least
+                // one contract whenever the follower actually holds one; the clamp
+                // below caps it at the real position size, so this can only reduce.
+                if (!isExit || currentFollowerPosition == 0)
+                {
+                    isClamped = false;
+                    return 0;
+                }
+                rawCopyQty = 1;
             }
 
             if (isExit)
