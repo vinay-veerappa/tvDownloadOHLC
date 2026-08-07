@@ -631,15 +631,22 @@ class ConfluenceEngine:
         signal modules. Each section is wrapped in try/except so a single
         failing provider doesn't kill the whole engine.
         """
-        ctx = LiveContext(ticker=ticker, target_date=target_date, now_et=now_et)
+        import pytz
+
+        et = pytz.timezone("America/New_York")
+        resolved_now_et = now_et or datetime.now(et)
+        resolved_target_date = target_date or resolved_now_et.date()
+        today_et = datetime.now(et).date()
+        historical_mode = resolved_target_date != today_et
+
+        ctx = LiveContext(ticker=ticker, target_date=resolved_target_date, now_et=resolved_now_et)
+        ctx.extra["historical_mode"] = historical_mode
 
         # Spot price + overnight
         try:
             from scripts.trader.briefing_core import build_overnight_context, get_dataloader
             loader = get_dataloader(lookback_days=5)
-            if target_date is None:
-                target_date = datetime.now().date()
-            on_ctx = build_overnight_context(loader, ticker, target_date)
+            on_ctx = build_overnight_context(loader, ticker, resolved_target_date)
             ctx.overnight = on_ctx
             ctx.spot = on_ctx.get("close")
             if ticker.startswith("NQ"):
@@ -650,30 +657,34 @@ class ConfluenceEngine:
             log.debug("[confluence] overnight context failed: %s", e)
 
         # GEX
-        try:
-            from scripts.trader.briefing_core import load_macro_levels, _extract_gex_levels
-            unified = load_macro_levels(session="live")
-            ticker_key = "NQ" if ticker.startswith("NQ") else "ES" if ticker.startswith("ES") else ticker
-            proxy = unified.get(ticker_key) or unified.get("QQQ" if ticker_key == "NQ" else "SPY") or {}
-            gex = _extract_gex_levels(proxy, ticker_key)
-            ctx.gex = gex
-        except Exception as e:
-            log.debug("[confluence] GEX failed: %s", e)
+        if historical_mode:
+            # Historical replay has no dated GEX snapshots yet. Skip gracefully
+            # so the remaining providers can still produce a plan.
+            ctx.extra["gex_skipped"] = "historical_mode"
+        else:
+            try:
+                from scripts.trader.briefing_core import load_macro_levels, _extract_gex_levels
+                unified = load_macro_levels(session="live")
+                ticker_key = "NQ" if ticker.startswith("NQ") else "ES" if ticker.startswith("ES") else ticker
+                proxy = unified.get(ticker_key) or unified.get("QQQ" if ticker_key == "NQ" else "SPY") or {}
+                gex = _extract_gex_levels(proxy, ticker_key)
+                ctx.gex = gex
+            except Exception as e:
+                log.debug("[confluence] GEX failed: %s", e)
 
         # Herman Pre-NY sweep
         try:
             from scripts.libs_py.nqstats.classifiers import compute_herman_pre_ny_sweep
             from scripts.trader.signals.session_ranges import compute_all_session_ranges
             from scripts.utils.fused_data_loader import load_fused_data
-            import pytz
-            ET = pytz.timezone("America/New_York")
+            ET = et
             df = load_fused_data(ticker, timeframe="1m", require_historical=False)
             if df is not None and not df.empty:
                 if df.index.tz is None:
                     df.index = df.index.tz_localize("UTC").tz_convert(ET)
                 elif df.index.tz != ET:
                     df.index = df.index.tz_convert(ET)
-                sr = compute_all_session_ranges(df, target_date or datetime.now(ET).date(), ET)
+                sr = compute_all_session_ranges(df, resolved_target_date, ET)
                 pre_ny = sr.get("PRE_NY", {})
                 london = sr.get("LONDON", {})
                 ctx.session_ranges = sr
@@ -688,9 +699,17 @@ class ConfluenceEngine:
         try:
             import json
             from pathlib import Path
-            feats_path = Path("data/derived") / f"{ticker}_ict_features_latest.json"
+            feats_dir = Path("data/derived")
+            dated_name = f"{ticker}_ict_features_{resolved_target_date.isoformat()}.json"
+            latest_name = f"{ticker}_ict_features_latest.json"
+            feats_path = feats_dir / (dated_name if historical_mode else latest_name)
             if feats_path.exists():
                 ctx.ict_features = json.loads(feats_path.read_text(encoding="utf-8"))
+            elif historical_mode:
+                # Best-effort fallback for historical runs without dated features.
+                ctx.extra["ict_features_skipped"] = f"missing:{dated_name}"
+            elif (feats_dir / latest_name).exists():
+                ctx.ict_features = json.loads((feats_dir / latest_name).read_text(encoding="utf-8"))
         except Exception as e:
             log.debug("[confluence] ICT features failed: %s", e)
 
@@ -698,8 +717,9 @@ class ConfluenceEngine:
         try:
             import scripts.analysis.analyze_daily_classification_bias as class_module
             import sys
+            from datetime import timedelta
             orig_argv = sys.argv
-            yesterday = (target_date or datetime.now().date()) - __import__("datetime").timedelta(days=1)
+            yesterday = resolved_target_date - timedelta(days=1)
             sys.argv = ["analyze_daily_classification_bias.py", "--ticker", ticker, "--date", yesterday.isoformat()]
             _, class_data = class_module.main()
             sys.argv = orig_argv
@@ -1053,6 +1073,8 @@ def main():
     parser.add_argument("--kb-url", default=DEFAULT_KB_API_URL, help="KB API URL.")
     parser.add_argument("--json", action="store_true", help="Output as JSON.")
     parser.add_argument("--candidates", default=None, help="Path to candidates JSON file for matching.")
+    parser.add_argument("--date", default=None, help="Target date YYYY-MM-DD (historical replay mode).")
+    parser.add_argument("--time", default=None, help="ET time HH:MM (defaults to 09:30 in --date mode).")
     args = parser.parse_args()
 
     engine = ConfluenceEngine(kb_api_url=args.kb_url)
@@ -1063,7 +1085,24 @@ def main():
         from .candidate_export import load_candidates_json
         candidates = load_candidates_json(Path(args.candidates))
 
-    result = engine.run(ticker=args.ticker, candidates=candidates)
+    run_target_date: Optional[date] = None
+    run_now_et: Optional[datetime] = None
+    if args.date:
+        import pytz
+
+        run_target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        hhmm = args.time or "09:30"
+        hh, mm = [int(x) for x in hhmm.split(":", 1)]
+        run_now_et = pytz.timezone("America/New_York").localize(
+            datetime.combine(run_target_date, datetime.min.time()).replace(hour=hh, minute=mm)
+        )
+
+    result = engine.run(
+        ticker=args.ticker,
+        target_date=run_target_date,
+        now_et=run_now_et,
+        candidates=candidates,
+    )
 
     if args.json:
         print(json.dumps(result.to_dict(), indent=2, default=str))
