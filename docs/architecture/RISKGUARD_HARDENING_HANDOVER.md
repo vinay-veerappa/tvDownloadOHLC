@@ -1,7 +1,7 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
 **Last updated**: 2026-08-07 (session 7 — closed clean; NT8 up, deployed, armed · **merged and pushed**, see §0.0)
-**Branch**: `harden/riskguard-copier-p0` — **merged into `main` and pushed**; `origin/main` at `62a9f787`
+**Branch**: `harden/riskguard-copier-p0` — **merged into `main` and pushed**; `origin/main` at `aaecbe8b`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 33 closed + `P0-9`'s naked-follower half
 **Live state**: deployed, `shadow`, **armed and guarding**. NT8 compiles clean (0 errors).
 Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11**.
@@ -10,7 +10,7 @@ Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11
 >
 > | | |
 > |---|---|
-> | Repo | Merged to `main` and pushed; `origin/main` at `62a9f787`. All session work committed |
+> | Repo | Merged to `main` and pushed; `origin/main` at `aaecbe8b`. All session work committed |
 > | NT8 | Running, logged in, **all 9 addon files in sync**, `nt_compile` 0 errors |
 > | Guard | `mode: shadow`, `isArmed: true`, `guarding: true` |
 > | Suite | 524 passed / 0 failed · verifier 22/22 · loop selftest 11/11 |
@@ -37,7 +37,7 @@ Suite **524 passed, 0 failed**. Revert-verifier **22/22**. Loop selftest **11/11
 ### 0.0 The branch is merged and pushed — and every SHA below this line is stale
 
 On **2026-08-07** the branch was fast-forwarded into `main` and pushed to GitHub.
-`origin/main` is `62a9f787`. This was done **before shadow validation**, which is the
+`origin/main` is `aaecbe8b`. This was done **before shadow validation**, which is the
 opposite of what §6 item 4 recommended — the merge was a deliberate call to get 282
 unpushed commits off one machine, not a signal that `P0-9` is validated. **The live-feed
 shadow session in §6 item 6 is still outstanding and still gates any acting mode.**
@@ -46,8 +46,8 @@ shadow session in §6 item 6 is still outstanding and still gates any acting mod
 > through required rewriting history twice — once to purge `data/` (a 126 MB
 > `NQ1_1m.parquet` exceeded GitHub's 100 MB limit and had been silently rejecting every
 > push for 202 commits), and once to purge 88 MB of `.m4a`. Both rewrites changed every
-> commit SHA in the range. `c6168033`, `51892d54`, `0b6caafa`, `456d3d78`, `c4ab4c48`,
-> `404b8053`, `4667f794`, `56f32317` and the rest are **orphaned** — the *work* is all
+> commit SHA in the range. `1d9566fe`, `76137575`, `922b2c44`, `c5a4f035`, `904d44bc`,
+> `737533a3`, `a2a519fd`, `fb55d281` and the rest are **orphaned** — the *work* is all
 > present in `main`, only the identifiers are dead. Do not cite these SHAs onward, and
 > check `git cat-file -t <sha>` before trusting any of them.
 
@@ -182,15 +182,15 @@ kept only so the older `logs/ollama_loop/` artifacts stay readable.
 
 | Commit | Content |
 |---|---|
-| `5fd26995` | **T1 — P0-1 + P0-4**: stop-guard FSM coverage model |
-| `ddba3433` | **Test harness repair** — the suite could not previously catch defects |
-| `76d8c947` | **T2 — P0-2 + P0-3**: reserve-before-submit auto-stop, sized from the live position |
-| `c4ab4c48` | **T3 — P0-7**: unrealized-only peak for the giveback rule |
-| `404b8053` | **T4 — P0-5 + P0-6**: exits clamped to the follower's position; no sub-1 flooring |
-| `56f32317` | **T4 follow-up**: an exit must not round down to zero and strand the follower |
-| `4667f794` | **T5 — P0-8 + P0-9**: copier respects the lockout; fails closed when unguarded |
-| `179769d5` | Dead half of the auto-stop quantity guard removed |
-| `fe5bb5ce`, `8f798b09`, `08cd12cb`, `5af12984` | **Four loop repairs** — see §4d |
+| `d94d5521` | **T1 — P0-1 + P0-4**: stop-guard FSM coverage model |
+| `ff72e574` | **Test harness repair** — the suite could not previously catch defects |
+| `03dfdfc5` | **T2 — P0-2 + P0-3**: reserve-before-submit auto-stop, sized from the live position |
+| `904d44bc` | **T3 — P0-7**: unrealized-only peak for the giveback rule |
+| `737533a3` | **T4 — P0-5 + P0-6**: exits clamped to the follower's position; no sub-1 flooring |
+| `fb55d281` | **T4 follow-up**: an exit must not round down to zero and strand the follower |
+| `a2a519fd` | **T5 — P0-8 + P0-9**: copier respects the lockout; fails closed when unguarded |
+| `6129f15a` | Dead half of the auto-stop quantity guard removed |
+| `4d7d9557`, `3bc4dfff`, `4de6c6b5`, `10b32c5a` | **Four loop repairs** — see §4d |
 
 ### T2 (P0-2 + P0-3)
 The auto-stop now **reserves before it submits**: `AutoStopOrder`, `RecognizedStopOrder`,
@@ -267,30 +267,30 @@ expected failures. Now **356 passed, 0 failed**. Any failure is now a regression
 
 | Ticket | Defects | Status |
 |---|---|---|
-| T1 | P0-1, P0-4 | ✅ committed `5fd26995` |
-| T2 | P0-2, P0-3 | ✅ committed `76d8c947` |
-| T3 | P0-7 | ✅ committed `c4ab4c48` |
-| T4 | P0-5, P0-6 | ✅ committed `404b8053` (+ exit-rounding follow-up `56f32317`) |
-| T5 | P0-8, P0-9 | ✅ committed `4667f794` |
+| T1 | P0-1, P0-4 | ✅ committed `d94d5521` |
+| T2 | P0-2, P0-3 | ✅ committed `03dfdfc5` |
+| T3 | P0-7 | ✅ committed `904d44bc` |
+| T4 | P0-5, P0-6 | ✅ committed `737533a3` (+ exit-rounding follow-up `fb55d281`) |
+| T5 | P0-8, P0-9 | ✅ committed `a2a519fd` |
 
 **All five are applied and committed on `harden/riskguard-copier-p0`. Nothing is deployed** —
 NinjaTrader is still running the unmodified addon. Deploying is the next decision, and it is a
 human one.
 
 ### Two things found by review, not by the panel
-- **T4's exit rounding** (`56f32317`). Removing the `Math.Max(1, ...)` floor was right for
+- **T4's exit rounding** (`fb55d281`). Removing the `Math.Max(1, ...)` floor was right for
   entries — that floor *was* P0-6 — but applying it to exits created the mirror defect: an exit
   that rounds to 0 strands the follower in a position the leader has already left. Not an edge
   case: every partial exit rounds down independently, so a leader who entered 10 MNQ (follower:
   1 NQ) and exits in any increment below 10 produces 0 every time, and even a 5+5 exit strands it
   because `Math.Round(0.5)` is 0 under banker's rounding. Exits now take at least one contract
   when the follower holds one, clamped to the real position size.
-- **T3's session reset** (`c4ab4c48`). Spec item 1 asks for the new peak fields to be cleared
+- **T3's session reset** (`904d44bc`). Spec item 1 asks for the new peak fields to be cleared
   where `PeakEquity` is, but neither of those two sites was in the ticket's region set, so the
   loop could not have done it. Added by hand.
 
 ### Known-acceptable residue in T2 (do not re-open without new evidence)
-- ~~A dead clause survives in `ExecuteAction`~~ — removed in `179769d5`. Recorded because the
+- ~~A dead clause survives in `ExecuteAction`~~ — removed in `6129f15a`. Recorded because the
   *proposed fix* mattered: glm-5.2 wanted the comparison made against the earlier
   `position.Quantity` from the pricing read, which would abort the auto-stop whenever the
   position scaled **up** between reads, leaving it naked. The dead clause was harmless; that
@@ -404,7 +404,7 @@ All are fixed; recording them so they are not rediscovered.
    thought in `message.thinking` and the answer in `message.content`, and was spending its whole
    output budget on the former. `_call_ollama` also accepted `max_tokens` and never sent it.
    Reviewers now run with `think=False` — 21s and ten findings, versus 159s and no verdict.
-   (`7364c22c`, `dce023b2`)
+   (`56fab156`, `a512ef9d`)
 2. **Unanimous APPROVE from adversarial reviewers is unreachable.** Three rounds against the
    168-line `ExecuteAction`: 11 findings in round 1, 13 in round 3, **zero overlap**. Every
    finding was fixed; each rewrite exposed new ground. The prompt said "apply every required
@@ -412,7 +412,7 @@ All are fixed; recording them so they are not rediscovered.
 3. **There was no arbiter.** Rung 6 was "a human reads artifacts", which is not a rung. Added
    `arbiter.py`: rules each finding UPHELD / REJECTED / OUT_OF_SCOPE, feeds back only upheld ones,
    and stops the run when rounds stop converging. It cannot overturn a mechanical gate and it
-   cannot ship — `ARBITER_SHIP` writes a patch and a rationale and waits for a human. (`e0cd3c54`)
+   cannot ship — `ARBITER_SHIP` writes a patch and a rationale and waits for a human. (`9cce2c72`)
 
 Note the gates only prove no *regression*: the suite has no coverage for the P0-2/P0-3 paths, which
 is why those defects exist. Passing gates is necessary, not sufficient.
@@ -449,7 +449,7 @@ Three things this settles:
    fix* for the dead-clause finding would have introduced a naked position, and it rejected all 33
    round-2 findings wholesale. Read the rulings.
 
-**The arbiter was also silently discarding its own output** (`fe5bb5ce`): a mismatched `<<<END>>>`
+**The arbiter was also silently discarding its own output** (`4d7d9557`): a mismatched `<<<END>>>`
 tag threw away every rationale and all 11 settled nominations across both rounds, and a stray
 bracket dropped one ruling. Fixed, and the recovered decisions are now in the loop's `settled`
 profile so T3–T5 stop paying for them.
@@ -461,10 +461,10 @@ content, then reporting the wrong cause.** Every one cost real rounds.
 
 | Commit | What was discarded | Cost |
 |---|---|---|
-| `fe5bb5ce` | Arbiter `RATIONALE` + `SETTLED` — a mismatched `<<<END>>>` tag emptied both | 11 settled decisions lost across two T2 rounds, silently |
-| `8f798b09` | An implementer block closed with `>>` instead of `>>>` | **3 rounds and the whole T3 ticket**; r2/r3/r4 were byte-identical and correct |
-| `08cd12cb` | Arbiter rulings written `- REJECTED #1` without brackets | A clean SHIP downgraded to a spurious ESCALATE |
-| `5af12984` | The resumed candidate was never written to `rN_impl_raw.txt` | The printed `promote:` command named a **stale candidate carrying two upheld findings** |
+| `4d7d9557` | Arbiter `RATIONALE` + `SETTLED` — a mismatched `<<<END>>>` tag emptied both | 11 settled decisions lost across two T2 rounds, silently |
+| `3bc4dfff` | An implementer block closed with `>>` instead of `>>>` | **3 rounds and the whole T3 ticket**; r2/r3/r4 were byte-identical and correct |
+| `4de6c6b5` | Arbiter rulings written `- REJECTED #1` without brackets | A clean SHIP downgraded to a spurious ESCALATE |
+| `10b32c5a` | The resumed candidate was never written to `rN_impl_raw.txt` | The printed `promote:` command named a **stale candidate carrying two upheld findings** |
 
 The last one is the dangerous one. On resume the loop read the candidate but never persisted it,
 while every `resume with` / `promote:` hint is built from the round number — so it recommended
@@ -505,9 +505,9 @@ T3's giveback rule and T5's fail-closed gate against real account data; no unit 
 unless those tests are already red at baseline; the test gate **fails** any candidate that leaves
 one red; and reviewers must judge the tests' completeness and accuracy, not just the patch.
 
-1. ✅ **`expect_green` and the test-first refusal** — landed (`eba565fa`). Reviewers also now
+1. ✅ **`expect_green` and the test-first refusal** — landed (`129a77ac`). Reviewers also now
    receive the acceptance tests read-only.
-2. ✅ **Backfilled (2026-08-07, `8716a479`).** Six tests, each *verified to fail with its fix
+2. ✅ **Backfilled (2026-08-07, `14a93486`).** Six tests, each *verified to fail with its fix
    reverted* by `scripts/agent_loop/verify_backfill_reverts.py`. That check caught one test
    that was pinning defence-in-depth rather than the site it named — written without it, it
    would have read as thorough and proven nothing. Original wording follows.
@@ -528,8 +528,8 @@ the implementer cannot reach it by construction (gate 0, anti-reward-hacking). T
 
 ### Phase C — P1 safety-critical ✅ DONE (2026-08-07), except P1-36
 
-✅ **The whole phase is closed except P1-36**: `P1-20` and `P1-37` (`53129e33`), then the
-concurrency cluster `P1-10`, `P1-35`, `P1-11`, `P1-15` (`e0e3bd8b`). All test-first, each
+✅ **The whole phase is closed except P1-36**: `P1-20` and `P1-37` (`6678bbc3`), then the
+concurrency cluster `P1-10`, `P1-35`, `P1-11`, `P1-15` (`1ea33c8d`). All test-first, each
 observed red before its fix.
 
 **The lock-scope invariant is now machine-checked.** The stub account reports every
@@ -647,7 +647,7 @@ Then:
    shadow validation, against the advice this item originally gave.** The trigger was
    operational, not technical: 282 commits had never been pushed, so the work existed on one
    machine only. `main` was fast-forwarded (the branch was a strict ancestor, 0 behind) and
-   pushed; `origin/main` is `62a9f787`. See §0.0 — the history was rewritten in the process and
+   pushed; `origin/main` is `aaecbe8b`. See §0.0 — the history was rewritten in the process and
    the SHAs in this document are orphaned. The branch did also carry the ~7 unrelated
    narrative/wargaming commits noted here, plus five more committed that day.
    **This changes nothing about validation state**: deployment still copies from the working
@@ -941,13 +941,13 @@ carrying: **three separate defects this session were found by asking a question,
 
 | Commit | What |
 |---|---|
-| `3de5947f` | `P1-21` closed; opened `P0-48` (57 leaked handlers) |
-| `441c11e2` | `P1-22` closed — latency/slippage measured, `MaxSlippageTicks` ceiling |
-| `3ea3bb3a` | Shadow-counter reset, and corrected a destructive command in this file |
-| `0b6caafa` | `P0-48` closed and **verified live** |
-| `51892d54` | `P0-9`'s naked-follower half + stress test `S7` |
-| `9bbbe549` | Signed-offset fix — a trailed stop was being inverted |
-| `c6168033` | Loop `review` mode + the two defects it found |
+| `4b724fbe` | `P1-21` closed; opened `P0-48` (57 leaked handlers) |
+| `6e6d9905` | `P1-22` closed — latency/slippage measured, `MaxSlippageTicks` ceiling |
+| `d399c976` | Shadow-counter reset, and corrected a destructive command in this file |
+| `922b2c44` | `P0-48` closed and **verified live** |
+| `76137575` | `P0-9`'s naked-follower half + stress test `S7` |
+| `290ce6d1` | Signed-offset fix — a trailed stop was being inverted |
+| `1d9566fe` | Loop `review` mode + the two defects it found |
 
 ### P0-9 — what shipped, and what did not
 
@@ -975,7 +975,7 @@ followers got a bracket.
 
 ### The three defects that gates did not find
 
-**1. The signed-offset inversion (`9bbbe549`).** `Math.Abs` discarded the sign, so a leader
+**1. The signed-offset inversion (`290ce6d1`).** `Math.Abs` discarded the sign, so a leader
 trailing its stop into profit — stop above entry on a long, the most ordinary trade management
 there is — mirrored onto the *losing* side of the follower's entry, converting a locked-in gain
 into open risk of equal size. It survived a green 515-test suite, a clean net48 compile and a
@@ -984,7 +984,7 @@ entry, so it could never have caught it.** Found because the operator asked whet
 `StopLimit` conversion could trigger wrong orders; answering honestly meant re-deriving what price
 the follower's stop lands on.
 
-**2 and 3. Naked-on-failure (`c6168033`), found by review mode.** A stop whose `Submit` threw, or
+**2 and 3. Naked-on-failure (`1d9566fe`), found by review mode.** A stop whose `Submit` threw, or
 which the broker rejected moments later, left `WorkingStop` null with a valid offset and **nothing
 re-triggered submission** — naked for the life of the position. And the `OrderUpdate` reporting
 that rejection **was being received and discarded**, because the handler returned early for any

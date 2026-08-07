@@ -330,7 +330,7 @@ second language is ever targeted, or if either construct appears.
 ### 4.4 `logs/ollama_loop/summary.json` is not a ledger
 
 `main()` overwrites it wholesale per invocation. It currently records T1 as
-`applied: false / MAX_ROUNDS_EXHAUSTED` even though T1 is committed at `5fd26995` — the resumed run
+`applied: false / MAX_ROUNDS_EXHAUSTED` even though T1 is committed at `d94d5521` — the resumed run
 that actually landed it was never recorded. **Do not trust it.** Per-ticket `result.json` is
 reliable; the run-level summary is not. `loop.py` will write an append-only JSONL ledger instead.
 
@@ -407,7 +407,7 @@ RiskGuard work itself:
   window" is a *property*, not an example. P0-1 and P0-4 are both sequence bugs that example tests
   missed and a state-machine generator would find mechanically.
 - **Mutation testing** (Stryker.NET) — the mechanical answer to "does my suite have teeth", which
-  is exactly what commit `ddba3433` answered by hand.
+  is exactly what commit `ff72e574` answered by hand.
 - **Record/replay cassettes** for the loop's own model calls. `selftest.py` now covers the driver
   with stubs and the parsers with real-world fixtures (§10.1), but a cassette of a full live run
   would catch prompt-level regressions that neither reaches.
@@ -454,7 +454,7 @@ in the same way, and make the *failure message name the content*, not the format
 
 `_section()` required an exactly-matching END tag. glm-5.2 closed `<<<RATIONALE>>>` with
 `<<<END SETTLED>>>` and omitted the `<<<SETTLED>>>` opener entirely — on **both** T2 rounds — so
-both sections parsed as empty and the loop printed nothing to say so. Fixed (`fe5bb5ce`): the
+both sections parsed as empty and the loop printed nothing to say so. Fixed (`4d7d9557`): the
 parser tolerates a misnamed terminator (run to the next marker) and a missing opener (take the body
 before the closer).
 
@@ -468,7 +468,7 @@ the **static** gate with `EvaluatePnLRules: missing from model output`.
 
 The block was not missing. kimi-k2.7-code closed it with `>>` instead of `>>>` and — given
 feedback naming a block it had just emitted — reproduced the identical output twice more. **r2, r3
-and r4 were byte-identical.** Fixed (`8f798b09`): `BLOCK_RE` and the NOTES pattern accept `>{2,}`.
+and r4 were byte-identical.** Fixed (`3bc4dfff`): `BLOCK_RE` and the NOTES pattern accept `>{2,}`.
 
 This is the canonical example of the whole failure mode: a correct patch, rejected three times,
 with the gate pointing at the one thing that was not wrong.
@@ -478,7 +478,7 @@ with the gate pointing at the one thing that was not wrong.
 T3 round 2's arbiter ruled on all eight findings and recommended `SHIP`, but wrote
 `- REJECTED #1: ...` without the square brackets `_RULING_RE` demanded. All eight parsed as
 unruled, and the (correct, deliberate) SHIP-with-unruled guard downgraded it to `ESCALATE`.
-Fixed (`08cd12cb`): brackets and emphasis characters are skipped on both sides. A ruling is
+Fixed (`4de6c6b5`): brackets and emphasis characters are skipped on both sides. A ruling is
 identified by the leading `-`, the verdict keyword and the `#n`.
 
 ### 7.4 The promote hint named a file the arbiter never reviewed
@@ -490,7 +490,7 @@ round-1 artifact therefore stayed as whatever an *earlier* run left there.
 On T3 the loop resumed a good candidate, arbitrated it, recommended SHIP — and printed
 `--resume-raw .../r1_impl_raw.txt`, which still held a candidate from six minutes earlier carrying
 two upheld findings, one of them a naked-position defect. Following the hint would have promoted
-unreviewed code into an addon that flattens live funded accounts. Fixed (`5af12984`).
+unreviewed code into an addon that flattens live funded accounts. Fixed (`10b32c5a`).
 
 Caught only because the code being reviewed did not match the implementer's own notes. **Keep
 verifying that the file you promote is the one the arbiter saw** — `md5sum` it against the
@@ -690,7 +690,7 @@ python -m scripts.agent_loop --mode review --review-base HEAD~1
 
 # scoped, with intent, and with the true gate state fed to the panel
 python -m scripts.agent_loop --mode review \
-  --review-base 51892d54~1 --review-head HEAD \
+  --review-base 76137575~1 --review-head HEAD \
   --review-paths scripts/ninjatrader/addons/TradeCopierEngine.cs \
   --review-intent "P0-9: mirror the leader's protective stop, anchored to the follower's fill" \
   --review-verify
@@ -703,7 +703,7 @@ being graded** — gate 0 makes `*Tests.cs` unreachable to the implementer. Hand
 such guarantee. One author writes the change *and* its tests, so the tests encode exactly the cases
 that author already thought of, and the suite goes green for the same reason the bug got written.
 
-That is not hypothetical. `P0-9`'s bracket replication shipped in `51892d54` with `Math.Abs` where
+That is not hypothetical. `P0-9`'s bracket replication shipped in `76137575` with `Math.Abs` where
 a **signed** offset was required, so a leader trailing its stop into profit mirrored onto the
 *losing* side of the follower's entry. It survived a green 515-test suite, a clean net48 compile
 and a 20/20 falsifiability check, because all three artifacts were authored by the party that made

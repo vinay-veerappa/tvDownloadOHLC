@@ -30,7 +30,7 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 > | `P1-30` | **`P1-35`** | FSM teardown cancels the orphan auto-stop under `_stateLock` |
 > | `P1-31` | **`P1-36`** | Coverage tracks a single stop; two partial stops read as under-covered |
 >
-> Commits from the P0 phase (`5fd26995` … `29b6c66a`) still say `P1-30`/`P1-31`. Map them here.
+> Commits from the P0 phase (`d94d5521` … `f6405c7f`) still say `P1-30`/`P1-31`. Map them here.
 > **When adding a defect, take the next free number — do not extend a band in place.**
 **Scope**: `scripts/ninjatrader/addons/{RiskGuardAddOn,TradeCopierEngine,TradeCopierWindow,PropFirmProtectionSuite,DynamicAtmManager}.cs`
 **Comparison baseline**: `github.com/mkalhitti-cloud/universal-or-strategy` (V12 Photon Kernel — SIMA fleet dispatch, REAPER defense, Symmetry Guard)
@@ -284,7 +284,7 @@ Notes that are not obvious:
 > Tracked as follow-on work rather than a new defect number, since `P0-9` remains open for (1),
 > (3) and (4). The naked-follower exposure that made it P0 is closed.
 
-#### The signed-offset defect — shipped in `51892d54`, fixed same session
+#### The signed-offset defect — shipped in `76137575`, fixed same session
 
 The first implementation computed `Math.Abs(leaderAnchor - stopPrice)` and always subtracted it
 for a long. **A leader trailing its stop into profit puts the stop ABOVE its entry on a long**, and
@@ -532,7 +532,7 @@ Duplicate entries are otherwise behaviour-neutral, because `Days` is parsed into
 **Test**: deserialize a config whose `WindowsET` holds exactly the two default windows and assert
 the result has two, not four; round-trip it twice and assert the count is stable. Assert a config
 that omits `NY_AM_Macro` still omits it after a load.
-**Not introduced by this branch** — the initializer dates to `9dbf8712`, well before the
+**Not introduced by this branch** — the initializer dates to `a19c2adc`, well before the
 hardening work.
 
 **Fixed by**: `ObjectCreationHandling.Replace` on `Profiles`, `ExcludedAccounts`,
@@ -1297,7 +1297,7 @@ Two lessons paid for during P0 apply directly:
 - **A test that cannot observe its own subject is worse than no test**, because it reads as proof.
   The P0-8 test built a locked RiskGuard but never wired the static the copier reads; it could
   never have passed however correct the fix.
-- **A green suite is not a tested suite.** `ddba3433` found a test whose body had been replaced by
+- **A green suite is not a tested suite.** `ff72e574` found a test whose body had been replaced by
   a bad merge, silently skipping 21% of the run, while the suite reported green.
 
 ### 6.1 Remaining phases
