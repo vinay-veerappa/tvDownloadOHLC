@@ -454,6 +454,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestAggregateSizingExpectedCopiesScaling();
             TestFirmMirrorTrailingDDBreachEmitsAction();
             TestFirmMirrorDailyLossBreachEmitsAction();
+            TestP1_42_MappedAccountIsEvaluatedAgainstItsFirmProfile();
             TestStopGuardDefaultOffsetFallback();
 
             // - Manual Lockout Tests -
@@ -2777,6 +2778,112 @@ namespace NinjaTrader.NinjaScript.AddOns
             
             Assert(actions.Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"), "Firm trailing DD breach action generated");
             Assert(state.IsLockedOut == true, "Firm mirror breach locks out account");
+        }
+
+        // P1-42: EvaluateFirmMirror passed the TOP-LEVEL FirmMirrorConfig straight into
+        // ComputeFirmMirror, which reads only fm.TrailingDD / fm.DailyLoss. AccountFirmMap and
+        // FirmProfiles were consulted by no evaluation path at all -- the only reference to
+        // AccountFirmMap in the addon was RunPreflight's validation, which checks that mapped
+        // firms exist. So preflight validated a mapping that nothing read, and the researched
+        // per-firm numbers were dead config. This test uses the exact live shape observed on
+        // 2026-08-07: top-level sub-rules disabled, real firm profiles present, and a funded
+        // TakeProfit Trader account that consequently had no firm protection whatsoever.
+        private static void TestP1_42_MappedAccountIsEvaluatedAgainstItsFirmProfile()
+        {
+            Console.WriteLine("\n[TEST] P1-42: a mapped account must be evaluated against its firm profile");
+
+            Func<FirmMirrorConfig> liveShape = () =>
+            {
+                var fm = new FirmMirrorConfig();
+                fm.Enabled = true;
+                fm.TrailingDD.Enabled = false;   // as live: top-level sub-rules are OFF
+                fm.DailyLoss.Enabled = false;
+                fm.FirmProfiles["TakeProfitTrader"] = new FirmProfile
+                {
+                    Name = "TakeProfitTrader",
+                    TrailingDD = new FirmTrailingDDConfig
+                    {
+                        Enabled = true, Type = "eod", IncludesUnrealized = false,
+                        Amount = 1500.0, Buffer = 200.0, LockAtProfit = 0.0
+                    },
+                    DailyLoss = new FirmDailyLossConfig { Enabled = false, Basis = "realized" }
+                };
+                return fm;
+            };
+
+            Func<FirmMirrorConfig, string, List<GuardAction>> evaluate = (fm, accountName) =>
+            {
+                var account = new Account { Name = accountName };
+                var addon = new RiskGuardAddOn();
+                var config = new RiskConfig();
+                config.FirmMirror = fm;
+                addon.SetConfigForTest(config);
+
+                var state = new AccountState(accountName);
+                state.FirmStartingBalance = 50000.0;
+                state.FirmTrailingPeak = 50000.0;
+                // floor = 50000 - 1500 + 200 = 48700; equity 48000 is below it.
+                account.Values[AccountItem.CashValue] = 48000.0;
+                account.Values[AccountItem.UnrealizedProfitLoss] = 0.0;
+                account.Values[AccountItem.RealizedProfitLoss] = -2000.0;
+                state.FirmDailyDate = FirmDailyDateFor(FirmTestClockUtc, fm);
+                return addon.EvaluateFirmMirror(account, state, FirmTestClockUtc);
+            };
+
+            // The live case: mapped account, top-level disabled, profile enabled.
+            var mapped = liveShape();
+            mapped.AccountFirmMap["TAKEPROFITPRO524207503"] = "TakeProfitTrader";
+            Assert(evaluate(mapped, "TAKEPROFITPRO524207503").Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"),
+                "a mapped account must breach on its firm profile's numbers even though the top-level rule is disabled");
+
+            // An account that is NOT mapped must keep falling back to the top-level pair,
+            // which here is disabled -- it must not inherit some other firm's profile.
+            var unmappedFm = liveShape();
+            unmappedFm.AccountFirmMap["SomeOtherAccount"] = "TakeProfitTrader";
+            Assert(!evaluate(unmappedFm, "TAKEPROFITPRO524207503").Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"),
+                "an unmapped account must not pick up another account's firm profile");
+
+            // Fallback must still work in the positive direction: unmapped + top-level enabled.
+            var topLevel = liveShape();
+            topLevel.TrailingDD.Enabled = true;
+            topLevel.TrailingDD.Type = "eod";
+            topLevel.TrailingDD.Amount = 1500.0;
+            topLevel.TrailingDD.Buffer = 200.0;
+            Assert(evaluate(topLevel, "UnmappedAcc").Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"),
+                "an unmapped account must still be evaluated against the top-level rule");
+
+            // A mapping to a firm that is absent from FirmProfiles must fall back, not throw.
+            // Preflight blocks arming in that case, but the evaluator must not depend on
+            // preflight having run -- config can be reloaded while armed.
+            var danglingFm = liveShape();
+            danglingFm.TrailingDD.Enabled = true;
+            danglingFm.TrailingDD.Type = "eod";
+            danglingFm.TrailingDD.Amount = 1500.0;
+            danglingFm.TrailingDD.Buffer = 200.0;
+            danglingFm.AccountFirmMap["DanglingAcc"] = "NoSuchFirm";
+            Assert(evaluate(danglingFm, "DanglingAcc").Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"),
+                "a mapping to an unknown firm must fall back to the top-level rule rather than throw or silently disable");
+
+            // Both dictionaries are OrdinalIgnoreCase; resolution must honour that.
+            var casedFm = liveShape();
+            casedFm.AccountFirmMap["takeprofitpro524207503"] = "takeprofittrader";
+            Assert(evaluate(casedFm, "TAKEPROFITPRO524207503").Any(a => a.RuleId == "FIRM_TRAILING_DD_BREACH"),
+                "account and firm lookup must stay case-insensitive");
+
+            // The profile's DailyLoss must resolve too, not just TrailingDD.
+            var dailyFm = liveShape();
+            dailyFm.FirmProfiles["Tradeify"] = new FirmProfile
+            {
+                Name = "Tradeify",
+                TrailingDD = new FirmTrailingDDConfig { Enabled = false },
+                DailyLoss = new FirmDailyLossConfig
+                {
+                    Enabled = true, Basis = "realized", Amount = 1250.0, Buffer = 100.0
+                }
+            };
+            dailyFm.AccountFirmMap["TradeifyAcc"] = "Tradeify";
+            Assert(evaluate(dailyFm, "TradeifyAcc").Any(a => a.RuleId == "FIRM_DAILY_LOSS_BREACH"),
+                "a mapped account's firm DailyLoss rule must be evaluated (-2000 breaches a 1250/100 limit)");
         }
 
         // 3. Firm Mirror Daily Loss Integration

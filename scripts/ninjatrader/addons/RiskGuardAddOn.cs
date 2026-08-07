@@ -3585,13 +3585,55 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// 22:00 UTC, and because a corrupted test called Environment.Exit on failure, it silently
         /// skipped the last 25 tests in the suite. Callers must now pass the clock explicitly.
         /// </param>
+        // P1-42: resolve the firm profile that actually applies to this account. Before this
+        // existed, EvaluateFirmMirror handed ComputeFirmMirror the top-level FirmMirrorConfig
+        // and nothing ever read AccountFirmMap or FirmProfiles -- the researched per-firm numbers
+        // were dead config, and RunPreflight's validation of the mapping made it look otherwise.
+        //
+        // Falls back to the top-level TrailingDD/DailyLoss when the account is unmapped, when the
+        // mapped firm is absent from FirmProfiles, or when the profile omits a sub-rule. The
+        // dangling-firm case must not throw or silently disable: preflight refuses to arm on an
+        // unknown firm name, but config can be reloaded while already armed, so the evaluator
+        // cannot assume preflight has run. Both dictionaries are OrdinalIgnoreCase and the
+        // lookups rely on that.
+        internal static FirmMirrorConfig ResolveEffectiveFirmConfig(FirmMirrorConfig fm, string accountName)
+        {
+            if (fm == null || string.IsNullOrEmpty(accountName)) return fm;
+            if (fm.AccountFirmMap == null || fm.FirmProfiles == null) return fm;
+
+            string firmName;
+            if (!fm.AccountFirmMap.TryGetValue(accountName, out firmName) || string.IsNullOrEmpty(firmName))
+                return fm;
+
+            FirmProfile profile;
+            if (!fm.FirmProfiles.TryGetValue(firmName, out profile) || profile == null)
+                return fm;
+
+            return new FirmMirrorConfig
+            {
+                Enabled = fm.Enabled,
+                TrailingDD = profile.TrailingDD ?? fm.TrailingDD,
+                DailyLoss = profile.DailyLoss ?? fm.DailyLoss,
+                // The daily boundary is a property of the clock, not of the firm.
+                DailyResetHourUtc = fm.DailyResetHourUtc,
+                DailyResetMinuteUtc = fm.DailyResetMinuteUtc,
+                AccountFirmMap = fm.AccountFirmMap,
+                FirmProfiles = fm.FirmProfiles
+            };
+        }
+
         internal List<GuardAction> EvaluateFirmMirror(Account account, AccountState st, DateTime nowUtc)
         {
             double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
             double realized = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
             double unrealized = account.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
 
-            var res = ComputeFirmMirror(balance, realized, unrealized, _config.FirmMirror, st, nowUtc);
+            // Everything below -- the computation AND the audit-log payloads -- must read the
+            // effective config. Logging the top-level amounts while breaching on a profile's
+            // would make the audit trail describe a rule that did not run.
+            var fmEffective = ResolveEffectiveFirmConfig(_config.FirmMirror, st.AccountName);
+
+            var res = ComputeFirmMirror(balance, realized, unrealized, fmEffective, st, nowUtc);
             
             if (res.StateChanged)
             {
@@ -3612,8 +3654,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     { "effectiveFloor", res.EffectiveFloor },
                     { "trailingPeak", res.TrailingPeak },
                     { "floorLocked", res.FloorLocked },
-                    { "amount", _config.FirmMirror.TrailingDD.Amount },
-                    { "buffer", _config.FirmMirror.TrailingDD.Buffer }
+                    { "amount", fmEffective.TrailingDD.Amount },
+                    { "buffer", fmEffective.TrailingDD.Buffer }
                 });
 
                 actions.Add(new GuardAction
@@ -3628,7 +3670,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (res.DailyLossBreached)
             {
                 double dayRealized = realized - st.FirmDailyStartRealized;
-                double dayPnL = _config.FirmMirror.DailyLoss.Basis == "include_unrealized_peak"
+                double dayPnL = fmEffective.DailyLoss.Basis == "include_unrealized_peak"
                     ? dayRealized + unrealized
                     : dayRealized;
 
@@ -3636,9 +3678,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     { "dayPnL", dayPnL },
                     { "guardLimit", res.GuardDailyLimit },
-                    { "basis", _config.FirmMirror.DailyLoss.Basis },
-                    { "amount", _config.FirmMirror.DailyLoss.Amount },
-                    { "buffer", _config.FirmMirror.DailyLoss.Buffer }
+                    { "basis", fmEffective.DailyLoss.Basis },
+                    { "amount", fmEffective.DailyLoss.Amount },
+                    { "buffer", fmEffective.DailyLoss.Buffer }
                 });
 
                 actions.Add(new GuardAction
