@@ -557,6 +557,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_47_ArmDefaultFollowsTheResolvedMode();
             TestStress_S1toS4_OrderFloodGovernor();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
+            TestP1_13_NoGuardPathIsSkippedWhenThereIsNoDispatcher();
             TestP1_12_NoDiskWriteHappensUnderTheStateLock();
             TestP1_12_PositionChangeDefersThePersistToTheSweep();
             TestP1_14_SecondBufferedStopDoesNotOverwriteTheFirst();
@@ -5324,6 +5325,71 @@ namespace NinjaTrader.NinjaScript.AddOns
             // resting entry still has to be cancelled and flattened, just outside the lock.
             Assert(account.FlattenCallCount > 0,
                 "The locked account was still flattened (the enforcement itself is preserved)");
+        }
+
+        /// <summary>
+        /// Absolute path of the addon source, resolved at COMPILE time. The test exe runs from
+        /// bin/, and the csproj links the sources in from another directory, so any runtime path
+        /// walk would be guessing.
+        /// </summary>
+        private static string AddonSourcePath(
+            [System.Runtime.CompilerServices.CallerFilePath] string thisFile = "")
+        {
+            return Path.Combine(Path.GetDirectoryName(thisFile), "RiskGuardAddOn.cs");
+        }
+
+        // P1-13, fail-open half. This one is asserted against the SOURCE TEXT, which needs
+        // justifying: the branch it protects lives under `#if !TESTING` and therefore cannot be
+        // executed by this suite at all. That is precisely the P1-47 shape -- code the test build
+        // never sees -- and the honest options are to leave it unchecked or to check what can
+        // actually be checked. A source assertion proves less than an execution would, but it
+        // proves the exact thing that regressed here: that no guard event path returns early
+        // because there is no WPF dispatcher.
+        //
+        // What it is defending: with Application.Current null -- early startup, or a headless NT8
+        // -- all five handlers plus the entire safety sweep silently discarded every event, while
+        // the guard went on reporting itself armed and guarding. No FSM, no grace, no rules, no
+        // log line.
+        private static void TestP1_13_NoGuardPathIsSkippedWhenThereIsNoDispatcher()
+        {
+            Console.WriteLine("\n[TEST] P1-13: no guard event path is dropped when Application.Current has no Dispatcher");
+
+            var path = AddonSourcePath();
+            Assert(File.Exists(path), string.Format("The addon source is readable at {0}", path));
+            var source = File.ReadAllText(path);
+
+            // Comments are stripped first. The seam's own doc comment quotes the defective
+            // pattern verbatim -- that documentation is worth keeping, and a check that forbids
+            // describing the bug it prevents is a check that gets the comment deleted instead.
+            var code = string.Join("\n", source
+                .Split('\n')
+                .Select(l => { int i = l.IndexOf("//"); return i >= 0 ? l.Substring(0, i) : l; }));
+
+            // The exact fail-open shape, tolerant of whitespace and of `Dispatcher`/`disp` naming.
+            var failOpen = new System.Text.RegularExpressions.Regex(
+                @"if\s*\(\s*\w*[dD]ispatcher\w*\s*==\s*null\s*\)\s*return\s*;");
+            var hits = failOpen.Matches(code);
+            Assert(hits.Count == 0,
+                string.Format(
+                    "{0} guard path(s) still return early when there is no dispatcher. Each one is a "
+                    + "silent, total protection outage that reports itself as armed.",
+                    hits.Count));
+
+            // And the seam is genuinely the single funnel, not a helper nobody calls.
+            int wired = System.Text.RegularExpressions.Regex.Matches(source, @"RunGuardWork\(").Count;
+            Assert(wired >= 7,
+                string.Format(
+                    "All six guard entry points route through RunGuardWork plus its own definition "
+                    + "(found {0} references). A handler that dispatches by hand is one that can "
+                    + "quietly reacquire the early return.",
+                    wired));
+
+            foreach (var handler in new[] { "PositionUpdate", "OrderUpdate", "ExecutionUpdate",
+                                            "AccountItemUpdate", "SafetySweep", "GraceExpiry" })
+            {
+                Assert(source.Contains("RunGuardWork(\"" + handler + "\""),
+                    string.Format("{0} is routed through the seam", handler));
+            }
         }
 
         /// <summary>

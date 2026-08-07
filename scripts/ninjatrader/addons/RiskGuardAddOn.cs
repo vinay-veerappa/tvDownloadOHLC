@@ -1099,19 +1099,53 @@ namespace NinjaTrader.NinjaScript.AddOns
             return null;
         }
 
-        private void OnPositionUpdate(object sender, PositionEventArgs e)
+        // P1-13 (fail-open half). Every guard event handler used to read
+        //
+        //     var dispatcher = Application.Current?.Dispatcher;
+        //     if (dispatcher == null) return;
+        //
+        // so whenever `Application.Current` was null -- early startup before the WPF app object
+        // exists, or a headless NT8 -- the guard received every position, order, execution and
+        // account-item event and SILENTLY DISCARDED ALL OF THEM. No FSM, no grace timer, no rule
+        // evaluation, no log line, and `/api/riskguard/version` still reporting armed and
+        // guarding. A total protection outage that announces itself as healthy.
+        //
+        // Running the work inline instead is what OnGraceTimerCallback already did, and it is the
+        // only defensible answer: the guard's job does not depend on a UI being up. The threading
+        // inversion proper -- evaluate on the caller's thread, marshal only broker calls -- is the
+        // other half of P1-13 and waits on the S5/S6/S8/S9 concurrency coverage, because it turns
+        // a set of handlers the dispatcher had implicitly serialised into genuinely concurrent
+        // ones.
+        private int _noDispatcherWarned;
+
+        private void RunGuardWork(string label, Action work)
         {
 #if TESTING
-            ExecutePositionUpdate(sender, e);
+            work();
 #else
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher == null) return;
+            Dispatcher dispatcher = null;
+            try { dispatcher = Application.Current?.Dispatcher; } catch { }
 
-            dispatcher.InvokeAsync(() =>
+            if (dispatcher == null)
             {
-                ExecutePositionUpdate(sender, e);
-            });
+                if (Interlocked.Exchange(ref _noDispatcherWarned, 1) == 0)
+                {
+                    LogEvent("SYSTEM", "NO_DISPATCHER",
+                        $"Application.Current has no Dispatcher; running guard work inline ({label}). "
+                        + "This path used to drop the event, which disabled the guard entirely while "
+                        + "it continued to report itself armed.");
+                }
+                work();
+                return;
+            }
+
+            dispatcher.InvokeAsync(work);
 #endif
+        }
+
+        private void OnPositionUpdate(object sender, PositionEventArgs e)
+        {
+            RunGuardWork("PositionUpdate", () => ExecutePositionUpdate(sender, e));
         }
 
         internal void ExecutePositionUpdate(object sender, PositionEventArgs e)
@@ -1216,17 +1250,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
-#if TESTING
-            ExecuteExecutionUpdate(sender, e);
-#else
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher == null) return;
-
-            dispatcher.InvokeAsync(() =>
-            {
-                ExecuteExecutionUpdate(sender, e);
-            });
-#endif
+            RunGuardWork("ExecutionUpdate", () => ExecuteExecutionUpdate(sender, e));
         }
 
         internal void ExecuteExecutionUpdate(object sender, ExecutionEventArgs e)
@@ -1271,13 +1295,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         // This replaces the sweep's PnL polling with instant event-driven PnL rules.
         private void OnAccountItemUpdate(object sender, AccountItemEventArgs e)
         {
-#if TESTING
-            ExecuteAccountItemUpdate(sender, e);
-#else
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher == null) return;
-            dispatcher.InvokeAsync(() => ExecuteAccountItemUpdate(sender, e));
-#endif
+            RunGuardWork("AccountItemUpdate", () => ExecuteAccountItemUpdate(sender, e));
         }
 
         internal void ExecuteAccountItemUpdate(object sender, AccountItemEventArgs e)
@@ -1541,17 +1559,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void OnOrderUpdate(object sender, OrderEventArgs e)
         {
-#if TESTING
-            ExecuteOrderUpdate(sender, e);
-#else
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher == null) return;
-
-            dispatcher.InvokeAsync(() =>
-            {
-                ExecuteOrderUpdate(sender, e);
-            });
-#endif
+            RunGuardWork("OrderUpdate", () => ExecuteOrderUpdate(sender, e));
         }
 
         internal void ExecuteOrderUpdate(object sender, OrderEventArgs e)
@@ -1727,24 +1735,17 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         internal void OnSafetySweep(object state)
         {
-#if TESTING
-            ExecuteSafetySweep();
-#else
+            // The sweep was the worst of the six: with no dispatcher the ENTIRE safety sweep --
+            // heartbeat, session reset, state flush, lockout enforcement and the FSM watchdog --
+            // was skipped on every tick, forever, silently.
             try
             {
-                var dispatcher = Application.Current?.Dispatcher;
-                if (dispatcher == null) return;
-
-                dispatcher.InvokeAsync(() =>
-                {
-                    ExecuteSafetySweep();
-                });
+                RunGuardWork("SafetySweep", ExecuteSafetySweep);
             }
             catch (Exception ex)
             {
-                LogEvent("SYSTEM", "ERROR", $"Error in OnSafetySweep Dispatcher: {ex.Message}");
+                LogEvent("SYSTEM", "ERROR", $"Error in OnSafetySweep dispatch: {ex.Message}");
             }
-#endif
         }
 
         internal void ExecuteSafetySweep()
@@ -2305,15 +2306,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return; // Stale callback, ignore.
                 }
             }
-#if TESTING
-            OnGraceExpired(account, instrument);
-#else
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher != null)
-                dispatcher.InvokeAsync(() => OnGraceExpired(account, instrument));
-            else
-                OnGraceExpired(account, instrument);
-#endif
+            // Already had the inline fallback the other five lacked; now it shares the seam.
+            RunGuardWork("GraceExpiry", () => OnGraceExpired(account, instrument));
         }
 
         // One-shot grace expiry callback - called by the per-FSM Timer or the sweep.
