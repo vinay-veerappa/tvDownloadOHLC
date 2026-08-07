@@ -13,7 +13,7 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` | 20 | 11 closed (`P1-10`, `P1-11`, `P1-15`, `P1-16`, `P1-17`, `P1-20`, `P1-35`, `P1-37`, `P1-39`, `P1-40`, `P1-42`) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` | 20 | 13 closed — only `P1-12`, `P1-13`, `P1-14`, `P1-21`, `P1-22`, `P1-23`, `P1-36` remain |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41` | 8 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -492,15 +492,27 @@ single $3,200 session still fires; prior losses offset rather than being ignored
 survives a save/load round-trip, because a cumulative target that resets on recompile is not
 cumulative.
 
-### P1-18. Two overlapping trailing-drawdown implementations
+### P1-18. Two overlapping trailing-drawdown implementations — CLOSED 2026-08-07
 `EvaluatePnLRules` enforces `profile.TrailingDrawdown` against a **session-reset** `PeakEquity`
 (`1101-1118`, reset to 0 at `1370`), while `EvaluateFirmMirror` (`2688`) implements the firm's
 real trailing-DD model with `FirmTrailingDDConfig`. For Apex-style accounts the high-water mark
 does **not** reset daily, so the first rule is either redundant or wrong depending on config.
-**Fix**: make `FirmMirror` authoritative when `FirmMirror.Enabled`; skip the profile-level
-trailing-DD rule in that case and document the precedence in the design doc.
+**Fix**: make `FirmMirror` authoritative when a firm trailing rule is actually in effect for the
+account; skip the profile-level rule only then.
 
-### P1-19. Actions are neither deduplicated nor instrument-scoped
+> **The original wording of this fix — "skip whenever `FirmMirror.Enabled`" — is retired because
+> it removes protection.** On the live config `FirmMirror.Enabled` is `true` while its
+> `TrailingDD.Enabled` is `false` and no account is mapped, so it would have skipped the profile
+> rule while the firm rule evaluated nothing, leaving *no* trailing-drawdown cover at all.
+> Precedence keys on the account's **effective** firm config (P1-42's `ResolveEffectiveFirmConfig`),
+> so it follows a mapped per-firm profile while leaving unmapped accounts on the same config
+> covered. A test pins the enabled-but-inert shape.
+
+**Fixed by**: `firmTrailingInEffect` in `EvaluatePnLRules`. The peak is still tracked while
+suppressed, so the value stays meaningful if the firm rule is later disabled.
+**Test**: red at baseline (451 / 2), green after (453 / 0), red again when the guard is reverted.
+
+### P1-19. Actions are neither deduplicated nor instrument-scoped — CLOSED 2026-08-07
 - A single `EvaluatePnLRules` pass can append `DAILY_LOSS_BREACH`, `TRAILING_DD_BREACH`,
   `NEWS_SHIELD_LOCKOUT`, `EVALUATION_TARGET_REACHED` and `PEAK_GIVEBACK_BREACH` — five
   `FlattenPosition` actions, each of which independently walks all positions and calls
@@ -510,6 +522,19 @@ trailing-DD rule in that case and document the precedence in the design doc.
   A missing stop on MES therefore flattens MNQ too.
 **Fix**: coalesce actions by `(AccountName, ActionType, Instrument)` before processing; honour
 `action.Instrument` when set and only fall back to account-wide for lockout/panic rules.
+**Fixed by**: a `scoped` filter in `ExecuteAction`'s `FlattenPosition`, and `CoalesceActions`
+applied at all four processing loops. An account-wide flatten supersedes scoped ones for the same
+account, since the wide call closes those instruments anyway.
+
+> **Dedup must not erase the audit trail.** `EvaluatePnLRules` logs no breach event of its own —
+> the `GuardAction` *is* the record — so merging five actions would have silently discarded the
+> fact that four other rules fired. The survivor keeps its own `RuleId` (callers and tests match
+> on it) and carries the rest in `MergedRuleIds`, which the action's audit line now names.
+
+**Test**: red at baseline (455 / 4, the scope failure reading `got [MNQ,MES]`), green after
+(459 / 0), red again when scoping and coalescing are reverted. The stub now records which
+instruments each `Flatten` call was asked to close, because the defect is in what `ExecuteAction`
+*requests*.
 
 ### P1-40. The peak-giveback rule has no floor on the peak, so one tick of noise trips a flatten — CLOSED 2026-08-07
 *(found 2026-08-07 by the first live armed shadow session — observed, then confirmed in code)*
@@ -957,8 +982,8 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-40 CLOSED | false flatten | PropFirmProtectionSuite.cs:110; RiskGuardAddOn.cs:1325 | giveback rule was proportional-only; a one-tick peak made any retrace a 100% breach — fired 6× in 36 s live |
 | P1-16 CLOSED | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 CLOSED | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |
-| P1-18 | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |
-| P1-19 | over-broad | RiskGuardAddOn.cs:1085-1162, 2450 | duplicate actions; flatten ignores instrument scope |
+| P1-18 CLOSED | conflict | RiskGuardAddOn.cs:1101 vs 2688 | two trailing-DD implementations, undefined precedence |
+| P1-19 CLOSED | over-broad | RiskGuardAddOn.cs:1085-1162, 2450 | duplicate actions; flatten ignores instrument scope |
 | P1-20 CLOSED | gate bypass | TradeCopierEngine.cs:650 | sim detection by name prefix |
 | P2-38 | gate bypass | McpBridgeAddOn.cs:1710, 2243, 2307 | same name-prefix hole in the strategy-deploy guard |
 | P2-41 | silent overwrite | McpBridgeAddOn.cs:5126 | config POST does not merge; omitted fields reset to defaults and are written to disk |
