@@ -196,7 +196,11 @@ def review_panel(
     art: Path,
     rnd: int,
     deadline_secs: int = 1800,
-    max_tokens: int = 8000,
+    # Generous because reviewers may be reasoning models, which bill their
+    # chain of thought against this budget. deepseek-v4-pro spends ~10k tokens
+    # on a T2-sized review, ~40k chars of it thinking; at 8k it returned empty
+    # content and looked like a dead model.
+    max_tokens: int = 24000,
 ) -> PanelResult:
     """Run reviewers concurrently. Different families miss different things, so
     a panel finds strictly more than any single reviewer. The verdict is the

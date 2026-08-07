@@ -66,6 +66,9 @@ class Completion:
     cache_read_tokens: int = 0
     stop_reason: str = ""
     secs: float = 0.0
+    # Reasoning models bill their chain of thought as output tokens. Tracked so
+    # a reviewer that spends its whole budget thinking is visible in the logs.
+    thinking_chars: int = 0
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -81,9 +84,10 @@ class Completion:
 
     def usage_line(self) -> str:
         cost = f" ${self.cost_usd:.4f}" if self.cost_usd else ""
+        think = f" think={self.thinking_chars}c" if self.thinking_chars else ""
         return (
             f"{self.model} {self.secs:.1f}s "
-            f"in={self.input_tokens} out={self.output_tokens}{cost}"
+            f"in={self.input_tokens} out={self.output_tokens}{think}{cost}"
         )
 
 
@@ -130,17 +134,37 @@ def _call_ollama(model, messages, temperature, max_tokens, timeout, num_ctx):
         "model": model,
         "messages": messages,
         "stream": False,
-        "options": {"temperature": temperature, "num_ctx": num_ctx},
+        # num_predict was previously omitted, so max_tokens was silently ignored
+        # and the budget was whatever the server defaulted to.
+        "options": {"temperature": temperature, "num_ctx": num_ctx, "num_predict": max_tokens},
     }
     data = _post(
         f"{_ollama_host()}/api/chat", payload, {"Content-Type": "application/json"}, timeout
     )
+    msg = data.get("message", {}) or {}
+    text = msg.get("content", "") or ""
+    thinking = msg.get("thinking", "") or ""
+
+    # Reasoning models return their chain of thought in `thinking` and the
+    # answer in `content`. When the output budget is exhausted before the model
+    # stops reasoning, `content` comes back empty -- which reads as "the model
+    # returned nothing" and is impossible to diagnose from the artifact.
+    # deepseek-v4-pro did exactly this on every T2 review round: 40k chars of
+    # thinking, zero content. Report it as what it is.
+    if not text.strip() and thinking.strip():
+        raise ProviderError(
+            f"{model} exhausted its output budget on reasoning: "
+            f"{len(thinking)} chars of thinking, empty content "
+            f"(eval_count={data.get('eval_count')}, done_reason={data.get('done_reason')}). "
+            f"Raise max_tokens above {max_tokens}."
+        )
     return Completion(
-        text=data.get("message", {}).get("content", "") or "",
+        text=text,
         model=model,
         input_tokens=data.get("prompt_eval_count", 0) or 0,
         output_tokens=data.get("eval_count", 0) or 0,
         stop_reason=data.get("done_reason", "") or "",
+        thinking_chars=len(thinking),
         raw=data,
     )
 
