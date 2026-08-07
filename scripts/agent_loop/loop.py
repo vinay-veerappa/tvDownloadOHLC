@@ -152,6 +152,49 @@ def build_implement_prompt(ticket: Dict[str, Any], regs: Sequence[regions.Region
     return "\n".join(p for p in parts if p)
 
 
+def extract_test_sources(repo: Path, names: Sequence[str], globs: Sequence[str]) -> str:
+    """Pull the named test methods out of the (read-only) test sources.
+
+    Reviewers cannot judge whether the suite is complete without seeing it, and
+    the suite is a first-class artifact here, not an assumption. Brace-matched
+    from the signature so the whole method comes across intact.
+    """
+    if not names or not globs:
+        return ""
+    out: List[str] = []
+    for g in globs:
+        for path in sorted(repo.glob(g)):
+            src = path.read_text(encoding="utf-8", errors="replace")
+            for name in names:
+                # Must be the DECLARATION, not a call site: require at least one
+                # modifier and a return type ahead of the name. Matching bare
+                # `Name(` finds the invocation in Main() first and ships the
+                # wrong text to the reviewer.
+                m = re.search(
+                    r"^[ \t]*(?:(?:private|public|internal|protected|static|async|override|virtual)"
+                    rf"\s+)+[\w<>\[\],\.]+\s+{re.escape(name)}\s*\(",
+                    src,
+                    re.MULTILINE,
+                )
+                if not m:
+                    continue
+                start = m.start()
+                brace = src.find("{", m.end())
+                if brace < 0:
+                    continue
+                depth, i = 0, brace
+                while i < len(src):
+                    if src[i] == "{":
+                        depth += 1
+                    elif src[i] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    i += 1
+                out.append(f"// --- {path.name}: {name} ---\n{src[start:i + 1]}")
+    return "\n\n".join(out)
+
+
 def build_review_prompt(
     ticket: Dict[str, Any],
     regs: Sequence[regions.Region],
@@ -186,6 +229,22 @@ def build_review_prompt(
             "directive-compliant code as a spec violation.",
             "",
         ] + [f"- {s}" for s in settled] + [""]
+    tests_src = ticket.get("_acceptance_tests_src", "")
+    if tests_src:
+        # The reviewer is shown the acceptance tests READ-ONLY. It cannot edit them
+        # (gate 0 makes the verifier unreachable) but it must be able to judge
+        # whether they are complete and whether they would actually fail if the
+        # defect came back -- see reviewer priority 5.
+        parts += [
+            "## Acceptance tests for this ticket (READ-ONLY - you may not propose editing these)",
+            "These were written BEFORE the patch and were failing at baseline; they now pass.",
+            "Judge their completeness and accuracy, and name any behaviour they do not cover.",
+            "",
+            "```csharp",
+            tests_src,
+            "```",
+            "",
+        ]
     parts += ["## Implementer notes", notes.strip() or "(none)", ""]
     for r in regs:
         parts += [
@@ -374,6 +433,31 @@ def run_ticket(
             print(f"  [baseline] {ws.baseline_note}; {len(ws.baseline)} expected failure(s)")
             result["baseline"] = sorted(ws.baseline)
 
+            # Test-first: every acceptance test must ALREADY BE FAILING here.
+            # If it is not, one of two things is true and both are fatal -- the
+            # name is a typo (so the gate would silently never fire and prove
+            # nothing), or the test passes without the fix (so it does not
+            # actually test the defect). Refuse the ticket rather than run a
+            # vacuous gate; a gate that cannot fail is worse than no gate.
+            expect_green = list(ticket.get("expect_green", ()))
+            not_red = [
+                t for t in expect_green
+                if not any(t.lower() in f.lower() for f in ws.baseline)
+            ]
+            if not_red:
+                print(f"  REFUSED: expect_green test(s) not failing at baseline: {not_red}")
+                result["final_verdict"] = "TICKET_REJECTED"
+                result["detail"] = (
+                    f"expect_green names {not_red} are not in the baseline failure set. "
+                    "Either the name is wrong, or the test passes without the fix and so "
+                    "does not test the defect. Write the failing test first."
+                )
+                return result
+            if expect_green:
+                print(f"  [test-first] {len(expect_green)} acceptance test(s) red at baseline")
+                ticket = dict(ticket, _acceptance_tests_src=extract_test_sources(
+                    ws.root, expect_green, profile.test_sources))
+
         regs = regions.extract(ws.root, ticket["regions"])
         for r in regs:
             print(f"    region {r.id:<24} {r.file} lines {r.lines_1based}")
@@ -437,7 +521,10 @@ def run_ticket(
                     (art / f"r{rnd}_build.txt").write_text(gc.detail, encoding="utf-8")
                     gate_results.append(gc)
                 if gate_results[-1].ok and profile.test_cmd:
-                    gt, _ = gates.check_tests(profile.test_cmd, ws.root, ws.baseline)
+                    gt, _ = gates.check_tests(
+                        profile.test_cmd, ws.root, ws.baseline,
+                        expect_green=ticket.get("expect_green", ()),
+                    )
                     (art / f"r{rnd}_tests.txt").write_text(
                         gt.detail or gt.summary, encoding="utf-8"
                     )

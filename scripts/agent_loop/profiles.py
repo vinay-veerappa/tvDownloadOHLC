@@ -56,6 +56,10 @@ class Profile:
     test_cmd: str = ""
     lock_name: str = "_stateLock"
     protected: Sequence[str] = ()
+    # Globs holding the acceptance tests. Read-only: used to show reviewers the
+    # tests named in a ticket's expect_green so they can judge coverage. These
+    # files are in `protected`, so nothing in the loop can write them.
+    test_sources: Sequence[str] = ()
     # Decisions the arbiter has already made. Injected into every review round
     # so reviewers stop re-raising them -- the predecessor required the human to
     # remember to pass --orchestrator-note by hand, and three known false
@@ -77,6 +81,7 @@ NT8_RISKGUARD = Profile(
     test_cmd="dotnet run --project ninjatrader-addon/RiskGuardTests.csproj --nologo -v q",
     lock_name="_stateLock",
     protected=("*Tests.cs", "*.csproj", "scripts/agent_loop/*"),
+    test_sources=("scripts/ninjatrader/addons/*Tests.cs",),
     implementer_rules="""You are a senior C# engineer hardening a NinjaTrader 8 AddOn that manages
 real money on funded futures accounts. You make surgical, minimal, provably-correct edits.
 
@@ -109,15 +114,28 @@ Check, in priority order:
    is held; any new lock ordering.
 4. RACE CONDITIONS: state written after an async submit; event handlers that can observe a
    half-updated FSM; timers armed twice or never disposed.
-5. COMPILE BREAKS: C# 8.0 / net48 + net8.0-with-stubs compatibility, missing fields, wrong
+5. TEST ADEQUACY -- the suite is a first-class artifact, review it as such. You are shown the
+   acceptance tests for this ticket. Ask:
+   (a) COMPLETENESS: which behaviours in the spec, and which failure paths in the patch, does
+       NO test cover? Name the specific uncovered path. A patch can close the defect on the
+       happy path and leave the rollback, abort or escalation branch untested.
+   (b) ACCURACY: does each test actually assert the thing that matters, and would it FAIL if
+       the defect were reintroduced? A test that cannot observe its own subject is worse than
+       no test, because it reads as proof. This has happened here: the P0-8 test built a
+       locked RiskGuard but never wired the static Instance the copier reads, so it could
+       never have passed however correct the fix.
+   (c) Report gaps as findings with severity MAJOR, naming the missing case concretely enough
+       to write. Do NOT propose editing a test to make the patch pass.
+6. COMPILE BREAKS: C# 8.0 / net48 + net8.0-with-stubs compatibility, missing fields, wrong
    types, non-ASCII, `#if` structure damage.
-6. REGRESSIONS: existing behaviour or existing tests that this would break.
+7. REGRESSIONS: existing behaviour or existing tests that this would break.
 
 Be specific. Cite the offending line text. Do not restate the ticket. Do not praise.
 
-The patch has already passed a compiler and the project's test suite; a claim that it does not
-compile, or that it breaks a test, is therefore almost certainly wrong -- say so only with a
-concrete mechanism.""",
+The patch has already passed a compiler and the project's test suite, INCLUDING every acceptance
+test listed for this ticket; a claim that it does not compile, or that it fails a test, is
+therefore almost certainly wrong -- say so only with a concrete mechanism. Gaps in what the tests
+COVER are still fair game and are what item 5 is for.""",
     settled=(
         "Multi-stop coverage aggregation is OUT OF SCOPE (tracked as P1-36). CoveredQuantity "
         "deliberately follows a single stop order. Do not raise it.",

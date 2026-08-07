@@ -223,13 +223,24 @@ def run_tests(cmd: str, repo: Path, timeout: int = 900) -> TestOutcome:
 
 
 def check_tests(
-    cmd: str, repo: Path, baseline: Set[str], timeout: int = 900
+    cmd: str,
+    repo: Path,
+    baseline: Set[str],
+    timeout: int = 900,
+    expect_green: Sequence[str] = (),
 ) -> Tuple[GateResult, TestOutcome]:
     """Compare this run's failure set against the frozen baseline.
 
     `baseline` is captured once, before the first candidate is applied, and is
     never recomputed mid-run -- otherwise a patch that breaks a test would
     simply widen the baseline and pass.
+
+    `expect_green` names the tests this ticket exists to fix. Without it the
+    gate only proves NO REGRESSION, which is not the same as "the defect is
+    closed": T5 reached ARBITER_SHIP with its own acceptance test still red and
+    nothing in the ladder objected. Under test-first development the named
+    tests ARE the ticket's contract, so failing to flip one is a gate failure,
+    not a review opinion.
     """
     t0 = time.time()
     out = run_tests(cmd, repo, timeout)
@@ -255,6 +266,33 @@ def check_tests(
     if fixed:
         note += f", {len(fixed)} expected failure(s) now green"
 
+    # A test named in expect_green is still failing => the ticket did not do its
+    # job. Reported separately from a regression because the remedy differs: a
+    # regression means "you broke something", this means "you have not finished".
+    still_red = [
+        t for t in expect_green
+        if any(t.lower() in f.lower() for f in out.failures)
+    ]
+    if still_red and not new:
+        return (
+            GateResult(
+                "test",
+                False,
+                f"{len(still_red)} acceptance test(s) still failing; {note}",
+                "STILL FAILING (this ticket exists to make these pass):\n"
+                + "\n".join(f"  - {t}" for t in still_red),
+                secs,
+                feedback=(
+                    "Your patch does not close the defect. These tests define this "
+                    "ticket's acceptance criteria and are STILL FAILING:\n\n"
+                    + "\n".join(f"- {t}" for t in still_red)
+                    + "\n\nThey are correct and you may not change them. Re-read the "
+                    "defect and the failing assertion text, then re-emit ALL blocks in full."
+                ),
+            ),
+            out,
+        )
+
     if new:
         detail = "REGRESSIONS (not in baseline):\n" + "\n".join(f"  - {f}" for f in new)
         if fixed:
@@ -275,6 +313,8 @@ def check_tests(
             ),
             out,
         )
+    if expect_green:
+        note += f"; all {len(expect_green)} acceptance test(s) green"
     return GateResult("test", True, f"no regressions; {note}", "\n".join(fixed), secs), out
 
 

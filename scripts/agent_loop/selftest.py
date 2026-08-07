@@ -268,6 +268,27 @@ def main() -> int:
     print(f"    expect=TICKET_REJECTED  got={res.get('final_verdict')}  {'PASS' if ok else 'FAIL'}")
     results.append(ok)
 
+    # Test-first: a ticket naming an acceptance test that is NOT red at baseline
+    # is refused. Guards the vacuous-gate case -- a typo'd name would otherwise
+    # make expect_green silently unfalsifiable.
+    print("\n--- expect_green naming a test that already passes -> refused")
+    bad = dict(t3, id="SELFTEST_EXPECT", expect_green=["TestThatDoesNotExistAnywhere"])
+    res = loop.run_ticket(REPO, bad, profiles.get("nt8-riskguard"), "x", ["y"], max_rounds=1)
+    ok = res.get("final_verdict") == "TICKET_REJECTED"
+    print(f"    expect=TICKET_REJECTED  got={res.get('final_verdict')}  {'PASS' if ok else 'FAIL'}")
+    results.append(ok)
+
+    # And the extractor must return the DECLARATION, not the call site in Main().
+    print("\n--- acceptance-test extractor returns the method body")
+    src = loop.extract_test_sources(
+        REPO,
+        ["TestCopyPath_LockedFollowerReceivesNoCopy"],
+        profiles.get("nt8-riskguard").test_sources,
+    )
+    ok = "private static void TestCopyPath_LockedFollowerReceivesNoCopy" in src and "Assert(" in src
+    print(f"    {'PASS' if ok else 'FAIL'}  {len(src)} chars, {src.count('Assert(')} assertion(s)")
+    results.append(ok)
+
     results.append(parser_fixtures())
 
     passed = sum(results)
