@@ -397,6 +397,13 @@ def run_ticket(
             # ---- implement
             if rnd == 1 and resume_raw:
                 raw = Path(resume_raw).read_text(encoding="utf-8")
+                # Persist the resumed candidate under this round's name. Without
+                # this the round-1 artifact is whatever a PREVIOUS run left there,
+                # while every "resume with"/"promote:" hint below is built from the
+                # round number -- so the loop cheerfully tells you to promote a file
+                # it never reviewed. On T3 that hint pointed at a stale candidate
+                # carrying two upheld findings, one of them a naked-risk defect.
+                (art / f"r{rnd}_impl_raw.txt").write_text(raw, encoding="utf-8")
                 print(f"  round {rnd}: resumed from {Path(resume_raw).name}")
             else:
                 try:
