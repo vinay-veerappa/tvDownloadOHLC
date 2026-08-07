@@ -3,13 +3,13 @@
 **Last updated**: 2026-08-07 (session 5)
 **Branch**: `harden/riskguard-copier-p0`
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (42 defects; P0, Phase B and Phase C all closed, plus `P1-39` and `P1-40`)
-**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 472 passed, 0 failed.
+**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 481 passed, 0 failed.
 
 ---
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**29 of 47 defects are closed. Suite: 472 passed, 0 failed.** The guard now comes up **armed in shadow** (`P1-47`), so a recompile no longer silently removes all protection. Five defects were opened on 2026-08-07 by reading the operator's order-flood stress-test output — see the plan's §8 stress programme. All nine P0, all of Phase B, all of
+**30 of 47 defects are closed. Suite: 481 passed, 0 failed.** The guard now comes up **armed in shadow** (`P1-47`), so a recompile no longer silently removes all protection. Five defects were opened on 2026-08-07 by reading the operator's order-flood stress-test output — see the plan's §8 stress programme. All nine P0, all of Phase B, all of
 Phase C bar `P1-36`, plus `P1-40` and `P1-39` — both found by the first armed session. The addon
 is deployed and running in `shadow`, compiling clean in NT8.
 

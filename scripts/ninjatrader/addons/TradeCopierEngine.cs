@@ -365,35 +365,45 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string TranslateSymbol(string rawSymbol, CopierRelationship rel = null)
         {
             if (string.IsNullOrEmpty(rawSymbol)) return rawSymbol;
-            string symbol = rawSymbol.Split(' ')[0].ToUpper();
 
-            // 1. Check relationship custom symbol overrides first
-            if (rel != null && rel.CustomSymbolMappings != null && rel.CustomSymbolMappings.TryGetValue(symbol, out var customTarget))
+            // P1-23: substitute the parsed ROOT only, and match case-insensitively.
+            // The previous implementation ran rawSymbol.Replace(root, target) across the whole
+            // string, which is fragile against any later occurrence of the root, and compared an
+            // upper-cased root against the raw string -- so a lower-case instrument name matched
+            // nothing, returned untranslated, and the copy silently went to the LEADER's contract
+            // on a follower configured for the converted one.
+            int split = rawSymbol.IndexOf(' ');
+            string root = (split >= 0 ? rawSymbol.Substring(0, split) : rawSymbol).ToUpper();
+            string remainder = split >= 0 ? rawSymbol.Substring(split) : string.Empty;
+
+            // 1. Relationship custom overrides win.
+            if (rel != null && rel.CustomSymbolMappings != null
+                && rel.CustomSymbolMappings.TryGetValue(root, out var customTarget)
+                && !string.IsNullOrEmpty(customTarget))
             {
-                if (!string.IsNullOrEmpty(customTarget))
-                {
-                    return rawSymbol.Replace(symbol, customTarget.ToUpper());
-                }
+                return customTarget.ToUpper() + remainder;
             }
 
-            // 2. Bidirectional Mini <-> Micro Default Translation Matrix
+            // 2. Bidirectional Mini <-> Micro default matrix.
             if (rel == null || rel.AutoSymbolConversion)
             {
-                // Mini -> Micro
-                if (symbol == "NQ") return rawSymbol.Replace("NQ", "MNQ");
-                if (symbol == "ES") return rawSymbol.Replace("ES", "MES");
-                if (symbol == "YM") return rawSymbol.Replace("YM", "MYM");
-                if (symbol == "CL") return rawSymbol.Replace("CL", "MCL");
-                if (symbol == "GC") return rawSymbol.Replace("GC", "MGC");
-                if (symbol == "RTY") return rawSymbol.Replace("RTY", "M2K");
-
-                // Micro -> Mini
-                if (symbol == "MNQ") return rawSymbol.Replace("MNQ", "NQ");
-                if (symbol == "MES") return rawSymbol.Replace("MES", "ES");
-                if (symbol == "MYM") return rawSymbol.Replace("MYM", "YM");
-                if (symbol == "MCL") return rawSymbol.Replace("MCL", "CL");
-                if (symbol == "MGC") return rawSymbol.Replace("MGC", "GC");
-                if (symbol == "M2K") return rawSymbol.Replace("M2K", "RTY");
+                string mapped = null;
+                switch (root)
+                {
+                    case "NQ":  mapped = "MNQ"; break;
+                    case "ES":  mapped = "MES"; break;
+                    case "YM":  mapped = "MYM"; break;
+                    case "CL":  mapped = "MCL"; break;
+                    case "GC":  mapped = "MGC"; break;
+                    case "RTY": mapped = "M2K"; break;
+                    case "MNQ": mapped = "NQ";  break;
+                    case "MES": mapped = "ES";  break;
+                    case "MYM": mapped = "YM";  break;
+                    case "MCL": mapped = "CL";  break;
+                    case "MGC": mapped = "GC";  break;
+                    case "M2K": mapped = "RTY"; break;
+                }
+                if (mapped != null) return mapped + remainder;
             }
 
             return rawSymbol;
@@ -410,6 +420,28 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 // Fixed-lot: entries use the configured lot size; exits mirror the leader's exit quantity.
                 rawCopyQty = isExit ? leaderQty : rel.FixedLotSize;
+            }
+            else if (rel.SizingMode == CopierSizingMode.NetLiquidationRatio
+                  || rel.SizingMode == CopierSizingMode.AvailableCashPercent)
+            {
+                // P1-23: these are declared in CopierSizingMode but never implemented. They used
+                // to fall through to the QuantityRatio branch, so a small follower configured for
+                // equity-scaling silently received the FULL leader size -- the P0-6 over-size
+                // failure arriving through the config instead of the conversion matrix.
+                //
+                // Fail closed on ENTRIES rather than guess at a size. Never on exits: blocking an
+                // exit strands the follower in a position the leader has already left, which is
+                // the P0-5 failure and is worse than an unscaled one.
+                if (!isExit)
+                {
+                    NinjaTrader.Code.Output.Process(
+                        $"[CopierEngine] BLOCKED entry copy: sizing mode {rel.SizingMode} is declared but not implemented. "
+                        + $"Refusing to size {rel.LeaderAccountName} -> {rel.FollowerAccountName} rather than silently copying 1:1. "
+                        + "Use QuantityRatio or FixedLot.", PrintTo.OutputTab1);
+                    isClamped = true;
+                    return 0;
+                }
+                rawCopyQty = leaderQty;
             }
             else
             {

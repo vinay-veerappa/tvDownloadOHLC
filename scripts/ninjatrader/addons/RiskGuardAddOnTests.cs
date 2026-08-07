@@ -523,6 +523,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_16_ConsecutiveLossesCountTradesNotPartialExits();
             TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
+            TestP1_23_SymbolTranslationAndSizingModesDoNotLie();
             TestP1_47_ArmDefaultFollowsTheResolvedMode();
             TestStress_S1toS4_OrderFloodGovernor();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
@@ -3672,6 +3673,73 @@ namespace NinjaTrader.NinjaScript.AddOns
         // yielded before calling into NinjaTrader; the event handlers honour that, the sweep
         // did not. Because the sweep runs on the WPF dispatcher, any NT8 path that blocks on a
         // background thread needing _stateLock deadlocks the UI thread -- and with it the guard.
+        // P1-23: two ways the copier config could lie.
+        //  (a) TranslateSymbol used a global rawSymbol.Replace(root, target) instead of
+        //      substituting the parsed root, and compared an upper-cased root against the raw
+        //      string, so a lower-case instrument name translated to nothing at all -- silently
+        //      copying an ES fill to an ES follower that was configured for MES.
+        //  (b) NetLiquidationRatio and AvailableCashPercent are declared in CopierSizingMode but
+        //      never handled, so they fell through to the QuantityRatio branch. A small follower
+        //      set to equity-scaling silently received the FULL leader size, which is the P0-6
+        //      over-size failure arriving through the config instead of the conversion matrix.
+        private static void TestP1_23_SymbolTranslationAndSizingModesDoNotLie()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] P1-23: symbol translation substitutes the root, and sizing modes cannot lie");
+
+            var engine = new TradeCopierEngine();
+            var rel = new CopierRelationship { AutoSymbolConversion = true, QuantityRatio = 1.0 };
+
+            Assert(engine.TranslateSymbol("ES 12-26", rel) == "MES 12-26",
+                "ES 12-26 translates to MES 12-26");
+            Assert(engine.TranslateSymbol("MES 03-26", rel) == "ES 03-26",
+                "MES 03-26 translates back to ES 03-26");
+
+            // The root is upper-cased before lookup but Replace ran against the raw string, so a
+            // lower-case name matched nothing and was returned untranslated.
+            Assert(engine.TranslateSymbol("es 12-26", rel) == "MES 12-26",
+                string.Format("a lower-case instrument name must still translate (got '{0}')",
+                              engine.TranslateSymbol("es 12-26", rel)));
+
+            // Only the root may be substituted -- never a match inside the rest of the name.
+            var custom = new CopierRelationship { AutoSymbolConversion = false, QuantityRatio = 1.0 };
+            custom.CustomSymbolMappings["ES"] = "MES";
+            Assert(engine.TranslateSymbol("ES 12-26", custom) == "MES 12-26",
+                "a custom mapping substitutes the root");
+            Assert(engine.TranslateSymbol("XES 12-26", custom) == "XES 12-26",
+                "a root that merely CONTAINS a mapped symbol must not be rewritten");
+
+            var noConv = new CopierRelationship { AutoSymbolConversion = false, QuantityRatio = 1.0 };
+            Assert(engine.TranslateSymbol("ES 12-26", noConv) == "ES 12-26",
+                "with AutoSymbolConversion off the symbol is untouched");
+
+            // ---- sizing modes ----
+            bool clamped;
+            var equityMode = new CopierRelationship
+            {
+                AutoSymbolConversion = false, QuantityRatio = 1.0,
+                SizingMode = CopierSizingMode.NetLiquidationRatio
+            };
+            int entryQty = engine.CalculateFollowerQuantity(equityMode, 10, "ES 12-26", 0, false, out clamped);
+            Assert(entryQty == 0,
+                string.Format("an unimplemented sizing mode must NOT silently size as 1:1 -- entries fail closed (got {0})", entryQty));
+
+            // ...but an exit must never be blocked, or the follower is stranded in a position the
+            // leader has already left. Same reasoning as the P0-5/P0-6 exit clamp.
+            int exitQty = engine.CalculateFollowerQuantity(equityMode, 4, "ES 12-26", 4, true, out clamped);
+            Assert(exitQty > 0,
+                string.Format("an unimplemented sizing mode must still allow EXITS (got {0})", exitQty));
+
+            // The implemented modes must be untouched.
+            var ratio = new CopierRelationship
+            {
+                AutoSymbolConversion = false, QuantityRatio = 2.0,
+                SizingMode = CopierSizingMode.QuantityRatio
+            };
+            Assert(engine.CalculateFollowerQuantity(ratio, 3, "ES 12-26", 0, false, out clamped) == 6,
+                "QuantityRatio still sizes 3 x 2.0 = 6");
+        }
+
         // P1-47: the guard defaulted to disarmed, so every recompile silently removed all
         // protection -- four times in one session on 2026-08-07. Arming controls whether the
         // guard EVALUATES; the mode controls whether it ACTS. Shadow cannot act at all

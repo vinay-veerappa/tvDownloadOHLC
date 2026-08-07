@@ -790,7 +790,7 @@ displayed in the UI (`TradeCopierWindow.cs:799`) as if they were real.
 slippage in ticks vs the leader fill; add `MaxSlippageTicks` per relationship that quarantines
 the relationship when exceeded; consider limit-with-offset instead of pure market for entries.
 
-### P1-23. Symbol translation and sizing modes are partly cosmetic
+### P1-23. Symbol translation and sizing modes are partly cosmetic — CLOSED 2026-08-07
 - `TranslateSymbol` (`:360-395`) uses global `rawSymbol.Replace(symbol, target)` rather than a
   prefix substitution — fragile against any symbol appearing inside the expiry portion.
 - `CopierSizingMode.NetLiquidationRatio`, `AvailableCashPercent` and `PerTickerMatrix` are
@@ -798,6 +798,23 @@ the relationship when exceeded; consider limit-with-offset instead of pure marke
   to `QuantityRatio`.
 **Fix**: replace `Replace` with root-symbol substitution on the parsed root; either implement the
 three sizing modes or remove them from the enum and the UI so the config cannot lie.
+**Fixed by**: `TranslateSymbol` now substitutes the parsed root and matches case-insensitively;
+`NetLiquidationRatio` and `AvailableCashPercent` fail closed on entries with an explicit log
+instead of degrading to `QuantityRatio`. `PerTickerMatrix` needs no change — the per-ticker ratio
+override is already applied in the ratio branch regardless of mode.
+
+> **The case bug was the sharper half.** The root was upper-cased before lookup but `Replace` ran
+> against the raw string, so a lower-case instrument name matched nothing, returned untranslated,
+> and the copy went to the **leader's own contract** on a follower configured for the converted
+> one — silently, with no error.
+>
+> **Unimplemented sizing modes fail closed on entries only.** Blocking an exit would strand the
+> follower in a position the leader has already left, which is the P0-5 failure and worse than an
+> unscaled one. Same asymmetry as the P0-6 exit clamp.
+
+**Test**: `ES 12-26` ↔ `MES 03-26` both ways; a lower-case name still translates; a root that
+merely *contains* a mapped symbol (`XES`) is not rewritten; an unimplemented sizing mode returns 0
+for an entry and non-zero for an exit; `QuantityRatio` is unchanged.
 
 ---
 
@@ -1109,7 +1126,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P2-41 | silent overwrite | McpBridgeAddOn.cs:5126 | config POST does not merge; omitted fields reset to defaults and are written to disk |
 | P1-21 | silent no-op | McpBridgeAddOn.cs:252 | copier never re-subscribes on connect |
 | P1-22 | no control | TradeCopierEngine.cs:721 | market-only copies; latency/slippage fields fake |
-| P1-23 | silent fallback | TradeCopierEngine.cs:360, 397 | `Replace`-based symbol translation; 3 sizing modes unimplemented |
+| P1-23 CLOSED | silent fallback | TradeCopierEngine.cs:360, 397 | `Replace`-based symbol translation; 3 sizing modes unimplemented |
 | P2-24 | dead safety | TradeCopierEngine.cs:165, 194, 326 | reconciler, delta clamp, quarantine, daily-loss all unwired |
 | P2-25 | never fires | PropFirmProtectionSuite.cs:51 | news events only injectable from tests |
 | P2-26 | doc drift | RiskGuardAddOn.md | 8 concrete claims contradicted by code |
