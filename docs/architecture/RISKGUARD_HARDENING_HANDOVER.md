@@ -1,22 +1,23 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 4)
+**Last updated**: 2026-08-07 (session 5)
 **Branch**: `harden/riskguard-copier-p0`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (38 defects; P0, Phase B and Phase C all closed)
-**DEPLOYED to shadow 2026-08-07.** NinjaTrader is running the current addon in `shadow` mode. The branch is *not* yet merged to `main`. Suite 413 passed, 0 failed.
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (40 defects; P0, Phase B and Phase C all closed, plus `P1-40`)
+**DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 420 passed, 0 failed.
 
 ---
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**17 of 38 defects are closed. Suite: 413 passed, 0 failed.** All nine P0, all of Phase B, and
-all of Phase C bar `P1-36`. The addon is deployed and running in `shadow`, compiling clean in NT8.
+**18 of 40 defects are closed. Suite: 420 passed, 0 failed.** All nine P0, all of Phase B, all of
+Phase C bar `P1-36`, and `P1-40` (found and closed by the first armed session). The addon is
+deployed and running in `shadow`, compiling clean in NT8.
 
 | Phase | State |
 |---|---|
-| **A** — deploy P0 to shadow | Deployed; **T3 validated live 2026-08-07 (§4g), T5 still blocked** |
+| **A** — deploy P0 to shadow | Deployed; **T3 validated live 2026-08-07 (§4g); T5 needs an acting mode** |
 | **B** — test foundation | ✅ T1–T3 tests backfilled and proven falsifiable; `P2-28` |
-| **C** — P1 safety-critical | ✅ `P1-20`, `P1-37`, `P1-10`, `P1-35`, `P1-11`, `P1-15`; **`P1-36` left** |
+| **C** — P1 safety-critical | ✅ `P1-20`, `P1-37`, `P1-10`, `P1-35`, `P1-11`, `P1-15`, `P1-40`; **`P1-36` left** |
 | **D–G** | Not started — §4a |
 
 ### Three things to know before you touch anything
@@ -645,19 +646,25 @@ could not confound the result. One MNQ, no attached stop.
 - **Shadow containment holds.** All seven actions logged `[SHADOW] Would execute …` and the
   position stayed open until *I* closed it. `:2895` (`isLive = _mode == "live"`) is doing its job.
 
-**What failed — `P1-40`, and it is a blocker.** `PEAK_GIVEBACK_BREACH` fired **six times in 36
-seconds** on a position whose entire excursion was a few dollars, the first time 2.4 s after entry
-with the position *down* $1.00. The rule is proportional-only with no floor on the peak, so a
-one-tick peak ($0.50 on MNQ) makes any retrace a ≥100% giveback. In an acting mode this flattens
-nearly every trade seconds after entry and realises the loss doing it. See the plan's P1-40.
+**What failed — `P1-40`, now CLOSED the same session.** `PEAK_GIVEBACK_BREACH` fired **six times
+in 36 seconds** on a position whose entire excursion was a few dollars, the first time 2.4 s after
+entry with the position *down* $1.00. The rule was proportional-only with no floor on the peak, so
+a one-tick peak ($0.50 on MNQ) made any retrace a ≥100% giveback. In an acting mode it would have
+flattened nearly every trade seconds after entry and realised the loss doing it. Fixed test-first
+with `MinPeakGainDollars` (default 50) and redeployed; see the plan's P1-40.
 
 **T5 was not testable and could not have been.** `IsGuardProtecting` (`:875`) requires
 `mode == "live"`, so in shadow it is false for every account. Both copier followers are Simulator
 accounts anyway, which skips the `COPY_BLOCKED_NO_GUARD` gate entirely. That criterion needs an
-acting mode — which `P1-40` now blocks.
+acting mode.
 
-**Net**: Phase A is **half validated**. T3 is proven on a live feed. T5 remains open behind
-P1-40. Do not move to an acting mode until P1-40 is fixed.
+**Net**: Phase A is **half validated**. T3 is proven on a live feed and the one blocker the
+session found is closed. T5 still requires an acting mode and has never been exercised.
+
+**State left behind.** After the P1-40 recompile the addon **reloaded and is therefore disarmed**
+(`_isArmed` is deliberately never rehydrated — P1-37). `TAKEPROFITPRO524207503` has been removed
+from `ExcludedAccounts` and is covered again. Live config: mode `shadow`, 8 `WindowsET` entries
+(6 clean on disk + 2 appended by P1-39 on load). To resume validation, re-arm from the dashboard.
 
 ---
 
