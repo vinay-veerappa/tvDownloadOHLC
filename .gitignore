@@ -130,3 +130,14 @@ tos-ui-mcp/
 .tos_web_profile/
 
 .env
+
+# Media / audio (transcript source files -- keep transcripts, not the audio)
+*.m4a
+*.mp3
+*.mp4
+*.wav
+*.webm
+*.mkv
+*.mov
+*.flac
+*.ogg
