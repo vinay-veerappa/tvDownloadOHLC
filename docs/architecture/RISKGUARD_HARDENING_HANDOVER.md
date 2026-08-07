@@ -2,22 +2,40 @@
 
 **Last updated**: 2026-08-07 (session 7)
 **Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 31 closed
-**Live state**: deployed, `shadow` mode, **armed** (it self-arms since `P1-47`). Suite **486 passed, 0 failed**.
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 32 closed
+**Live state**: **NinjaTrader is DOWN** — see below. Suite **499 passed, 0 failed**.
 
-> 🔴 **Do this first: restart NinjaTrader.** `P0-48` (found session 7) left **57 orphaned copier
-> execution handlers** attached to every account on this box, one per historical AddOn reload.
-> Each forwards leader fills into its own dead-assembly `TradeCopierEngine`, so a single Sim101
-> fill is copied by all of them. The fix stops new ones accruing from the next reload; **nothing
-> in-process can detach the 57 already there.** Both copier relationships are enabled and
-> `Sim101 → Sim-ORB` is `ArmedForLive: true`. Do not trade the copier on this box until it has
-> been restarted and the census re-run (§4i).
+> 🔴 **Two coupled operational items. Read both before touching NT8.**
+>
+> **1. NinjaTrader is not running, and the restart is blocked by an auth lockout.** It shut down
+> cleanly at **12:14:43 ET** on 2026-08-07 (orderly `Session End`, not a crash). The restart at
+> 12:15:05 failed at login: `Authenticate: error on connect: Too many incorrect login attempts.
+> Please wait.` (`penaltyTime='40' captcha='True'`). Nothing in this branch caused it. **There is
+> no risk guard running until NT8 is back.**
+>
+> **2. `P1-22` is committed but its net48 build is UNVERIFIED, so the NT8 tree has been parked
+> one commit behind.** `bin/Custom/AddOns/{TradeCopierEngine,RiskGuardAddOnTests}.cs` are pinned
+> to `3de5947f` — the `P1-21` build that compiled with 0 errors. This is deliberate: an
+> unverified file in that tree would make **every** AddOn fail to compile on restart, RiskGuard
+> included. `sync --verify` reporting drift on exactly those two files is the expected state.
+>
+> **When NT8 is back, in this order:**
+> ```powershell
+> # a) the restart itself clears P0-48's 57 orphaned handlers -- confirm it did
+> #    (census recipe in §4i; expect McpBridgeAddOn == 1, not 57)
+> # b) then deploy P1-22 and prove the net48 build
+> .\.venv\Scripts\python.exe scripts/utils/sync_nt8_strategies.py --only addons
+> # c) nt_compile -- REQUIRE 0 errors before trusting anything
+> ```
+> Until (a) is confirmed, do not trade the copier: `P0-48`'s orphans copy each Sim101 fill once
+> per orphan, and both relationships are enabled with `Sim101 → Sim-ORB` at `ArmedForLive: true`.
 
 ---
 
 ## 0. Start here (read this, then §4a for the roadmap)
 
-**31 of 48 defects closed. Suite 486/0. NT8 compiles clean.**
+**32 of 48 defects closed. Suite 499/0.** NT8 compiled clean as of `3de5947f`; `P1-22` is
+unverified against net48 (NT8 is down — see the banner).
 
 | Phase | State |
 |---|---|
@@ -26,7 +44,7 @@
 | **C** — P1 safety-critical | ✅ done except `P1-36` |
 | **D** — P1 rule semantics | ✅ done — `P1-16`, `P1-17`, `P1-18`, `P1-19` |
 | **D2** — stress backlog | `S1`–`S4` landed and closed four defects; **`S5`–`S9` open** |
-| **E** — copier fidelity | `P1-23`, `P1-21` closed; `P1-21` exposed **`P0-48`**. `P1-22`, **`P0-9`'s real half** open |
+| **E** — copier fidelity | `P1-23`, `P1-21`, `P1-22` closed; `P1-21` exposed **`P0-48`**. **`P0-9`'s real half** is all that remains |
 | **F–G** | Not started |
 
 ### Five things to know before you touch anything
@@ -800,6 +818,36 @@ control is what makes the reading conclusive rather than suggestive.
 
 Full detail, measured table, and the honest limit of the claim (handlers measured, duplicate copies
 inferred) are in the plan under `P0-48`. **It requires an NT8 restart**; see the banner at the top.
+
+### P1-22 — measurement, and a defect caught by reading rather than testing
+
+`LatencyMs` and `AvgSlippageTicks` were rendered in the copier UI and written by **nothing**, so it
+reported a clean `0ms / 0.0t` however badly a copy filled. Both are now populated from the
+follower's own fill, plus a `MaxSlippageTicks` ceiling. Full detail in the plan under `P1-22`.
+
+The part worth remembering: **the pending-copy map was first keyed on `Order.OrderId`, and every
+test passed.** `RiskGuardAddOn.cs:4481` already warns that NT8's `OrderId` is neither unique nor
+stable across the historical→live transition — the addon tracks recognised stops by object
+reference for exactly that reason. The suite could not see it because the test stub assigns one
+stable GUID per order, so the stub was *more forgiving than production*. Found by grepping the
+production call sites for the API before trusting it, not by a red test. It is now keyed by object
+reference (`OrderReferenceComparer`, using `RuntimeHelpers.GetHashCode`), and
+`TestCopierSlip_FillIsMatchedWhenOrderIdChanges` makes the stub behave like NT8.
+
+Two design decisions that go against the plan's own `**Fix**:` note, both deliberate:
+
+- **Quarantine is entry-only; a quarantined relationship still copies exits.** The note says
+  simply "quarantines the relationship when exceeded". Implemented literally, `IsQuarantined`
+  blocks *every* copy — including the one that closes the follower out — stranding it in a
+  position the leader has already left. That is `P0-5` reached by another route. Fourth time an
+  older `**Fix**:` note would have made things worse if followed as written.
+- **Limit-with-offset entries are not implemented.** The note lists it as "consider". It turns a
+  guaranteed fill into a maybe-fill, and an unfilled entry diverges the follower's size from the
+  leader's with nothing to reconcile it — `P0-9`/`P3-30` territory, not this ticket.
+
+`verify_backfill_reverts.py` is at **14/14**. The price-comparability revert is the one to look
+at: with the guard removed the ES↔MNQ case records **−52,000 ticks** and quarantines a healthy
+relationship on its first copy.
 
 ### Three things worth carrying forward
 

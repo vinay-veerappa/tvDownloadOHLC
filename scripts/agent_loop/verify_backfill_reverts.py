@@ -115,6 +115,42 @@ COPIER_CASES = [
         "                    if (acc != null) acc.ExecutionUpdate -= OnAccountExecutionUpdate;",
         "                    // reverted: handler left attached across the AddOn reload",
     ),
+    (
+        "P1-22 the follower's fill is observed at all",
+        "COPIER SLIP: a follower fill populates",
+        "                ObserveFollowerFill(exec);",
+        "                // reverted: follower fill dropped unmeasured, as before P1-22",
+    ),
+    (
+        "P1-22 slippage is signed by the follower's side",
+        "COPIER SLIP: a favourable fill is negative slippage",
+        "            double ticks = pending.FollowerIsBuy ? rawTicks : -rawTicks;",
+        "            double ticks = rawTicks;  // reverted: unsigned, so a good fill reads as slippage",
+    ),
+    (
+        "P1-22 a quarantined relationship still copies exits",
+        "COPIER SLIP: a slippage quarantine blocks entries but still copies exits",
+        "                GetActiveRelationshipsForLeader(acctName, includeQuarantined: leaderIsExiting);",
+        "                GetActiveRelationshipsForLeader(acctName, includeQuarantined: false);  // reverted",
+    ),
+    (
+        "P1-22 pending copies are keyed by Order reference, not OrderId",
+        "COPIER SLIP: a fill is matched by Order reference",
+        "            public bool Equals(Order x, Order y) { return ReferenceEquals(x, y); }\n"
+        "            public int GetHashCode(Order obj) { return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj); }",
+        "            public bool Equals(Order x, Order y) { return x != null && y != null && x.OrderId == y.OrderId; }  // reverted\n"
+        "            public int GetHashCode(Order obj) { return obj == null || obj.OrderId == null ? 0 : obj.OrderId.GetHashCode(); }",
+    ),
+    (
+        "P1-22 price-incomparable instruments are excluded",
+        "COPIER SLIP: an unrelated mapped symbol records no slippage",
+        "            if (!pending.PriceComparable || pending.FollowerTickSize <= 0\n"
+        "                || pending.LeaderFillPrice <= 0 || exec.Price <= 0)\n"
+        "                return;",
+        "            if (pending.FollowerTickSize <= 0\n"
+        "                || pending.LeaderFillPrice <= 0 || exec.Price <= 0)\n"
+        "                return;  // reverted: comparability no longer checked",
+    ),
 ]
 
 

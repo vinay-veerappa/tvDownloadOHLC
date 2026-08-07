@@ -1,6 +1,6 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **486/0**): **31 of 48 closed**.
+**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **499/0**): **32 of 48 closed**.
 Deployed, `shadow`, armed. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 
 > ⚠️ **Open operational item: `P0-48` needs an NT8 restart.** 57 orphaned copier execution
@@ -16,7 +16,7 @@ Deployed, `shadow`, armed. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISK
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` | 10 | `P0-1`…`P0-9` closed (`P0-9`'s bracket half open); `P0-48` fixed forward, **needs an NT8 restart** |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 18 closed — `P1-12`, `P1-13`, `P1-14`, `P1-22`, `P1-36` remain |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 19 closed — `P1-12`, `P1-13`, `P1-14`, `P1-36` remain |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | open (`P2-28`, `P2-46` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -866,13 +866,53 @@ connection change instead of being silently dead while enabled in the config and
 > order-counting assertion would have passed while proving nothing — the vacuous-test trap that
 > the first draft of `S1`–`S4` fell into.
 
-### P1-22. No slippage/latency control on copies
+### P1-22. No slippage/latency control on copies — CLOSED 2026-08-07 (measurement + ceiling)
 Everything is `OrderType.Market` with no reference to the leader's fill price, no maximum
 acceptable slippage, and no latency measurement — while `LatencyMs` and `AvgSlippageTicks` are
 displayed in the UI (`TradeCopierWindow.cs:799`) as if they were real.
 **Fix**: record `exec.Time` → follower fill time to populate `LatencyMs`; compute realised
 slippage in ticks vs the leader fill; add `MaxSlippageTicks` per relationship that quarantines
 the relationship when exceeded; consider limit-with-offset instead of pure market for entries.
+
+**Fixed by**: `RecordPendingCopy` at submit and `ObserveFollowerFill` on the follower's fill.
+`LatencyMs` is the last observed leader-fill→follower-fill gap; `AvgSlippageTicks` is a running
+mean. `MaxSlippageTicks` (default `0` = off) quarantines on breach.
+
+The measurement hooks in at the **follower's** execution, immediately before recursion guard 1
+drops it — that event is the copier's only possible observation of what its own order cost.
+
+Four things that are not obvious, each pinned by a test:
+
+1. **Slippage is signed by the follower's side.** Positive always means *worse for the follower*:
+   a buy filled above the leader, or a sell filled below. Unsigned, a threshold quarantines
+   relationships for filling **better** than the leader.
+2. **Quarantine is entry-only, and quarantined relationships still copy exits.**
+   `GetActiveRelationshipsForLeader` gained `includeQuarantined`, passed `true` for exits.
+   `IsQuarantined` otherwise blocks *every* copy including the one that closes the follower out,
+   stranding it in a position the leader has already left — the `P0-5` failure by another route.
+   Same asymmetry as `P0-6`'s exit clamp and `P1-23`'s fail-closed sizing modes.
+3. **Slippage is only computed between price-comparable instruments** — equal roots, or either
+   direction of the built-in mini/micro matrix. A `CustomSymbolMappings` entry may legitimately
+   map ES→NQ, whose prices are unrelated; with the guard removed that test records **−52,000
+   ticks** and quarantines a healthy relationship on its first copy. Latency is still recorded,
+   since it does not depend on price.
+4. **Pending copies are keyed by `Order` *reference*, never `OrderId`.** `RiskGuardAddOn.cs:4481`
+   already records that NT8's `OrderId` is not unique and can change across the historical→live
+   transition. An id-keyed map passes every test in the suite because the stub assigns one stable
+   GUID per order; `TestCopierSlip_FillIsMatchedWhenOrderIdChanges` makes the stub behave like
+   NT8 instead. `OrderReferenceComparer` uses `RuntimeHelpers.GetHashCode` so the map is immune to
+   any future `Order.Equals` override. **This was caught by reading the existing warning comment,
+   not by a failing test — the suite was green with the defect in place.**
+
+**Deliberately not done: limit-with-offset entries.** The plan lists it as "consider". It changes
+copies from guaranteed-fill to maybe-fill, and a partial or unfilled entry leaves the follower's
+size diverged from the leader's with no reconciliation — which is `P0-9`/`P3-30` territory. It
+belongs with the bracket-replication work, not here.
+
+**Also noted while in this code, not fixed**: `LoadFromDisk` does not parse `SizingMode`, `Mode`,
+`StealthMode`, `PerTickerRatios` or `CustomSymbolMappings` for relationships, so those take their
+defaults on every load and can only be set through the API or UI. `P1-23` assumed `PerTickerRatios`
+was live config. Not yet numbered — verify before opening a defect.
 
 ### P1-23. Symbol translation and sizing modes are partly cosmetic — CLOSED 2026-08-07
 - `TranslateSymbol` (`:360-395`) uses global `rawSymbol.Replace(symbol, target)` rather than a

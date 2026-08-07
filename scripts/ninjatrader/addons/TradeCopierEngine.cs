@@ -45,8 +45,17 @@ namespace NinjaTrader.NinjaScript.AddOns
         public double DailyLossLimit { get; set; } = 1000.0;
         public bool IsQuarantined { get; set; } = false;
         public string QuarantineReason { get; set; }
+
+        // P1-22: these two were displayed in TradeCopierWindow (:799) but written by nothing --
+        // the UI reported 0ms and 0.0t however badly a copy actually filled. Both are now
+        // populated from the follower's own fill. LatencyMs is the LAST observed leader-fill ->
+        // follower-fill gap; AvgSlippageTicks is a running mean, matching what the names claim.
         public double LatencyMs { get; set; }
         public double AvgSlippageTicks { get; set; }
+
+        // P1-22: ticks of adverse slippage on an ENTRY copy that quarantine this relationship.
+        // 0 disables the check. Signed so only slippage *against* the follower counts.
+        public double MaxSlippageTicks { get; set; } = 0.0;
     }
 
     public class CopierGroup
@@ -69,6 +78,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public bool StealthMode { get; set; } = true;
         public int MaxPositionSize { get; set; } = 100;
         public double DailyLossLimit { get; set; } = 1000.0;
+        public double MaxSlippageTicks { get; set; } = 0.0;   // P1-22
         public List<string> FollowerAccounts { get; set; } = new List<string>();
 
         public List<CopierRelationship> ToRelationships()
@@ -97,7 +107,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     FollowerAtmStrategyName = this.FollowerAtmStrategyName,
                     StealthMode = this.StealthMode,
                     MaxPositionSize = this.MaxPositionSize,
-                    DailyLossLimit = this.DailyLossLimit
+                    DailyLossLimit = this.DailyLossLimit,
+                    MaxSlippageTicks = this.MaxSlippageTicks
                 });
             }
             return list;
@@ -319,16 +330,21 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        public List<CopierRelationship> GetActiveRelationshipsForLeader(string leaderAccount)
+        /// <param name="includeQuarantined">
+        /// P1-22: pass true for an EXIT copy. A quarantined relationship must still be able to
+        /// close the follower out; blocking its exits strands it in a position the leader has
+        /// already left. Defaults to false so every existing caller keeps the old behaviour.
+        /// </param>
+        public List<CopierRelationship> GetActiveRelationshipsForLeader(string leaderAccount, bool includeQuarantined = false)
         {
             var result = new List<CopierRelationship>();
             if (string.IsNullOrWhiteSpace(leaderAccount)) return result;
 
             lock (_lock)
             {
-                var direct = _relationships.Where(r => 
-                    r.IsEnabled && 
-                    !r.IsQuarantined && 
+                var direct = _relationships.Where(r =>
+                    r.IsEnabled &&
+                    (includeQuarantined || !r.IsQuarantined) &&
                     r.LeaderAccountName.Equals(leaderAccount, StringComparison.OrdinalIgnoreCase));
                 result.AddRange(direct);
 
@@ -344,7 +360,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             r.LeaderAccountName.Equals(leaderAccount, StringComparison.OrdinalIgnoreCase) &&
                             r.FollowerAccountName.Equals(rel.FollowerAccountName, StringComparison.OrdinalIgnoreCase));
                         
-                        if (directRel != null && directRel.IsQuarantined)
+                        if (!includeQuarantined && directRel != null && directRel.IsQuarantined)
                         {
                             continue; // Skip if direct relationship for this follower is quarantined
                         }
@@ -577,7 +593,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                                         AutoSymbolConversion = jObj["AutoSymbolConversion"] != null ? (bool)jObj["AutoSymbolConversion"] : (jObj["autoSymbolConversion"] != null ? (bool)jObj["autoSymbolConversion"] : true),
                                         MaxPositionSize = jObj["MaxPositionSize"] != null ? (int)jObj["MaxPositionSize"] : (jObj["maxPositionSize"] != null ? (int)jObj["maxPositionSize"] : 100),
                                         DailyLossLimit = jObj["DailyLossLimit"] != null ? (double)jObj["DailyLossLimit"] : (jObj["dailyLossLimit"] != null ? (double)jObj["dailyLossLimit"] : 1000.0),
-                                        IsQuarantined = jObj["IsQuarantined"] != null ? (bool)jObj["IsQuarantined"] : (jObj["isQuarantined"] != null ? (bool)jObj["isQuarantined"] : false)
+                                        IsQuarantined = jObj["IsQuarantined"] != null ? (bool)jObj["IsQuarantined"] : (jObj["isQuarantined"] != null ? (bool)jObj["isQuarantined"] : false),
+                                        MaxSlippageTicks = jObj["MaxSlippageTicks"] != null ? (double)jObj["MaxSlippageTicks"] : (jObj["maxSlippageTicks"] != null ? (double)jObj["maxSlippageTicks"] : 0.0)
                                     };
                                     _relationships.Add(rel);
                                 }
@@ -798,6 +815,233 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        // ------------------------------------------------------------------
+        // COPY LATENCY AND SLIPPAGE (P1-22)
+        //
+        // Every copy went out as a bare OrderType.Market with no reference to what the leader
+        // actually paid, no measurement of the gap, and no ceiling on it -- while
+        // TradeCopierWindow.cs:799 rendered `LatencyMs` and `AvgSlippageTicks` as though they
+        // were real. Nothing anywhere wrote either field, so the UI reported 0ms / 0.0t however
+        // badly a copy filled. A displayed number that is never computed is worse than no
+        // number: it reads as evidence that the copy was clean.
+        //
+        // The follower's own fill is the only place this can be observed, and it arrives as an
+        // ExecutionUpdate on the follower account -- which OnExecution drops at recursion guard
+        // 1. So the measurement hooks in immediately before that drop.
+        // ------------------------------------------------------------------
+
+        private class PendingCopy
+        {
+            public string RelationshipId;
+            public string LeaderAccountName;
+            public string FollowerAccountName;
+            public DateTime LeaderExecTime;    // raw exec.Time; never converted (see ObserveFollowerFill)
+            public DateTime SubmittedUtc;
+            public double LeaderFillPrice;
+            public double FollowerTickSize;
+            public bool PriceComparable;
+            public bool FollowerIsBuy;
+            public bool IsEntry;
+        }
+
+        /// <summary>
+        /// Reference identity for Order keys. **`Order.OrderId` must not be used as a key**: NT8
+        /// does not guarantee it is unique, and it can change over an order's lifetime across the
+        /// historical->live transition. `RiskGuardAddOn.cs:4481` already carries that warning and
+        /// tracks recognised stops by object reference for the same reason (RiskGuardAddOn.md
+        /// §6.6). Keying on the id here would mis-attribute a fill to the wrong copy and could
+        /// quarantine the wrong relationship -- and no test would catch it, because the test stub
+        /// hands out a stable GUID per order.
+        ///
+        /// `RuntimeHelpers.GetHashCode` is used rather than `order.GetHashCode()` so the map is
+        /// unaffected if Order ever overrides equality.
+        /// </summary>
+        private sealed class OrderReferenceComparer : IEqualityComparer<Order>
+        {
+            public static readonly OrderReferenceComparer Instance = new OrderReferenceComparer();
+            public bool Equals(Order x, Order y) { return ReferenceEquals(x, y); }
+            public int GetHashCode(Order obj) { return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj); }
+        }
+
+        // Keyed by the follower Order object. Bounded FIFO for the same reason
+        // `_copiedExecutionIds` is: a copy whose fill never arrives (rejected, cancelled,
+        // expired) would otherwise leak an entry per order forever, and hold the Order alive with
+        // it. P1-14 is this exact defect elsewhere in the addon.
+        private readonly Dictionary<Order, PendingCopy> _pendingCopies =
+            new Dictionary<Order, PendingCopy>(OrderReferenceComparer.Instance);
+        private readonly Queue<Order> _pendingCopyQueue = new Queue<Order>();
+        private const int MaxPendingCopies = 2000;
+
+        // Sample counts for the running slippage mean, keyed by relationship id. Held here rather
+        // than on CopierRelationship so the persisted config does not accumulate telemetry.
+        private readonly Dictionary<string, int> _slippageSampleCounts =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// True when two instrument roots track the same underlying at the same price, so a fill
+        /// price on one can be compared to a fill price on the other. Equal roots qualify, as does
+        /// either direction of the built-in mini/micro matrix (NQ/MNQ fill at the same index
+        /// level). A root pairing that only exists because of `CustomSymbolMappings` does not:
+        /// mapping ES to NQ is legitimate, but their prices are unrelated and a "slippage" figure
+        /// derived from them would be pure noise -- and could quarantine a healthy relationship.
+        /// </summary>
+        internal static bool ArePricesComparable(string leaderRoot, string followerRoot)
+        {
+            if (string.IsNullOrEmpty(leaderRoot) || string.IsNullOrEmpty(followerRoot)) return false;
+            if (leaderRoot.Equals(followerRoot, StringComparison.OrdinalIgnoreCase)) return true;
+
+            string a = leaderRoot.ToUpper();
+            string b = followerRoot.ToUpper();
+            switch (a)
+            {
+                case "NQ":  return b == "MNQ";
+                case "ES":  return b == "MES";
+                case "YM":  return b == "MYM";
+                case "CL":  return b == "MCL";
+                case "GC":  return b == "MGC";
+                case "RTY": return b == "M2K";
+                case "MNQ": return b == "NQ";
+                case "MES": return b == "ES";
+                case "MYM": return b == "YM";
+                case "MCL": return b == "CL";
+                case "MGC": return b == "GC";
+                case "M2K": return b == "RTY";
+            }
+            return false;
+        }
+
+        private static string RootOf(string fullName)
+        {
+            if (string.IsNullOrEmpty(fullName)) return null;
+            int split = fullName.IndexOf(' ');
+            return (split >= 0 ? fullName.Substring(0, split) : fullName).ToUpper();
+        }
+
+        private void RecordPendingCopy(
+            Order followerOrder, CopierRelationship rel, Execution leaderExec,
+            Instrument targetInstrument, OrderAction followerAction, bool isExit)
+        {
+            if (followerOrder == null || rel == null || leaderExec == null) return;
+
+            double tickSize = 0.0;
+            if (targetInstrument != null && targetInstrument.MasterInstrument != null)
+                tickSize = targetInstrument.MasterInstrument.TickSize;
+
+            var pending = new PendingCopy
+            {
+                RelationshipId = rel.Id,
+                LeaderAccountName = rel.LeaderAccountName,
+                FollowerAccountName = rel.FollowerAccountName,
+                LeaderExecTime = leaderExec.Time,
+                SubmittedUtc = DateTime.UtcNow,
+                LeaderFillPrice = leaderExec.Price,
+                FollowerTickSize = tickSize,
+                PriceComparable = ArePricesComparable(
+                    RootOf(leaderExec.Instrument != null ? leaderExec.Instrument.FullName : null),
+                    RootOf(targetInstrument != null ? targetInstrument.FullName : null)),
+                FollowerIsBuy = followerAction == OrderAction.Buy || followerAction == OrderAction.BuyToCover,
+                IsEntry = !isExit
+            };
+
+            lock (_lock)
+            {
+                if (!_pendingCopies.ContainsKey(followerOrder)) _pendingCopyQueue.Enqueue(followerOrder);
+                _pendingCopies[followerOrder] = pending;
+                while (_pendingCopyQueue.Count > MaxPendingCopies)
+                {
+                    Order oldest = _pendingCopyQueue.Dequeue();
+                    _pendingCopies.Remove(oldest);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Called when an execution lands on an account that is a follower somewhere. If it
+        /// matches a copy this engine submitted, records how long it took and how far it filled
+        /// from the leader, and quarantines the relationship if an ENTRY slipped past
+        /// `MaxSlippageTicks`.
+        /// </summary>
+        private void ObserveFollowerFill(Execution exec)
+        {
+            if (exec == null || exec.Order == null) return;
+
+            PendingCopy pending;
+            CopierRelationship rel;
+            lock (_lock)
+            {
+                // Matched on the Order object, never on OrderId -- see OrderReferenceComparer.
+                if (!_pendingCopies.TryGetValue(exec.Order, out pending)) return;
+                _pendingCopies.Remove(exec.Order);
+
+                // Resolve the canonical stored relationship. A group-derived relationship is a
+                // fresh object from ToRelationships(), so writing the metric onto the instance
+                // OnExecution was handed would update a copy that is discarded.
+                rel = _relationships.FirstOrDefault(r => r.Id == pending.RelationshipId)
+                      ?? _relationships.FirstOrDefault(r =>
+                            r.LeaderAccountName.Equals(pending.LeaderAccountName, StringComparison.OrdinalIgnoreCase) &&
+                            r.FollowerAccountName.Equals(pending.FollowerAccountName, StringComparison.OrdinalIgnoreCase));
+            }
+            if (rel == null) return;
+
+            // Latency. Both timestamps come from NT8 executions, so they are subtracted raw --
+            // exec.Time's DateTimeKind is not dependable and converting one side only would
+            // inject the UTC offset as latency. When the leader timestamp is absent (the field
+            // is optional and some feeds leave it default) fall back to wall-clock since submit.
+            double latencyMs;
+            if (pending.LeaderExecTime != default(DateTime) && exec.Time != default(DateTime))
+                latencyMs = (exec.Time - pending.LeaderExecTime).TotalMilliseconds;
+            else
+                latencyMs = (DateTime.UtcNow - pending.SubmittedUtc).TotalMilliseconds;
+
+            // A negative or absurd figure means the clocks disagree, not that the copy was fast.
+            // Recording it would make the UI lie in a new direction.
+            if (latencyMs >= 0 && latencyMs < 600000)
+                rel.LatencyMs = latencyMs;
+
+            if (!pending.PriceComparable || pending.FollowerTickSize <= 0
+                || pending.LeaderFillPrice <= 0 || exec.Price <= 0)
+                return;
+
+            double rawTicks = (exec.Price - pending.LeaderFillPrice) / pending.FollowerTickSize;
+            // Positive always means WORSE for the follower: a buy filled above the leader, or a
+            // sell filled below it. Without this the sign is meaningless and a threshold on it
+            // would fire on favourable fills.
+            double ticks = pending.FollowerIsBuy ? rawTicks : -rawTicks;
+
+            lock (_lock)
+            {
+                int n;
+                _slippageSampleCounts.TryGetValue(rel.Id, out n);
+                n++;
+                _slippageSampleCounts[rel.Id] = n;
+                rel.AvgSlippageTicks = rel.AvgSlippageTicks + (ticks - rel.AvgSlippageTicks) / n;
+            }
+
+            if (rel.MaxSlippageTicks <= 0 || ticks <= rel.MaxSlippageTicks) return;
+
+            // Quarantine is ENTRY-ONLY, and quarantined relationships still copy exits
+            // (see OnExecution). IsQuarantined otherwise blocks every copy including the one
+            // that closes the follower out, which would strand it in a position the leader has
+            // already left -- the P0-5 failure, reached by a different route. Same asymmetry as
+            // P0-6's exit clamp and P1-23's fail-closed sizing modes.
+            if (pending.IsEntry)
+            {
+                rel.IsQuarantined = true;
+                rel.QuarantineReason = string.Format(
+                    "Entry slipped {0:F1} ticks against the follower vs the leader fill (limit {1:F1}). Exits are still copied.",
+                    ticks, rel.MaxSlippageTicks);
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] SLIPPAGE_QUARANTINE: {rel.LeaderAccountName} -> {rel.FollowerAccountName} entry slipped {ticks:F1} ticks (limit {rel.MaxSlippageTicks:F1}). New entries blocked; exits still copied.",
+                    PrintTo.OutputTab1);
+            }
+            else
+            {
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] SLIPPAGE_ON_EXIT: {rel.LeaderAccountName} -> {rel.FollowerAccountName} exit slipped {ticks:F1} ticks (limit {rel.MaxSlippageTicks:F1}). Not quarantining -- that would strand the follower.",
+                    PrintTo.OutputTab1);
+            }
+        }
+
         // OnExecution is deliberately NOT behind `#if !TESTING`. It is the trade-copy
         // path - the riskiest code in this file - and excluding it left it with zero
         // test coverage. It compiles against the NinjaTrader stubs in
@@ -812,16 +1056,26 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             string acctName = exec.Account.Name;
 
+            // Recursion Guard 1: Followers can NEVER act as Leaders (prevents copy feedback loops)
+            bool isFollowerAccount;
             lock (_lock)
             {
-                // Recursion Guard 1: Followers can NEVER act as Leaders (prevents copy feedback loops)
                 bool isFollowerInDirect = _relationships.Any(r => r.IsEnabled && r.FollowerAccountName.Equals(acctName, StringComparison.OrdinalIgnoreCase));
                 bool isFollowerInGroups = _groups.Any(g => g.IsEnabled && g.FollowerAccounts != null && g.FollowerAccounts.Any(f => f.Equals(acctName, StringComparison.OrdinalIgnoreCase)));
-                if (isFollowerInDirect || isFollowerInGroups)
-                {
-                    return;
-                }
+                isFollowerAccount = isFollowerInDirect || isFollowerInGroups;
+            }
 
+            if (isFollowerAccount)
+            {
+                // P1-22: a copy coming back as a follower fill is the ONLY observation the copier
+                // ever gets of what its own order actually cost. Measure it before the recursion
+                // guard drops the execution.
+                ObserveFollowerFill(exec);
+                return;
+            }
+
+            lock (_lock)
+            {
                 // Recursion Guard 2: Ignore executions originated by copier placement
                 if (!string.IsNullOrEmpty(exec.Order.Name) && exec.Order.Name.Contains("COPIER")) return;
                 if (exec.Name != null && exec.Name.Contains("COPIER")) return;
@@ -830,12 +1084,26 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Redelivery Guard 3: Deduplicate exact duplicate socket redelivery of same execution ID (bounded FIFO queue)
             if (DeduplicateExecutionId(exec.ExecutionId)) return;
 
-            List<CopierRelationship> activeRels = GetActiveRelationshipsForLeader(acctName);
+            // P1-22: a quarantined relationship must still be able to CLOSE the follower. Blocking
+            // its exits strands it in a position the leader has already left -- the P0-5 failure
+            // reached by another route. Entries stay blocked.
+            OrderAction leadAction = exec.Order.OrderAction;
+            bool leaderIsExiting = leadAction == OrderAction.Sell || leadAction == OrderAction.BuyToCover;
+
+            List<CopierRelationship> activeRels =
+                GetActiveRelationshipsForLeader(acctName, includeQuarantined: leaderIsExiting);
 
             if (activeRels.Count == 0) return;
 
             foreach (var rel in activeRels)
             {
+                if (rel.IsQuarantined)
+                {
+                    NinjaTrader.Code.Output.Process(
+                        $"[CopierEngine] QUARANTINE_EXIT_ALLOWED: {rel.LeaderAccountName} -> {rel.FollowerAccountName} is quarantined ({rel.QuarantineReason}), but this is an exit, so it is copied anyway.",
+                        PrintTo.OutputTab1);
+                }
+
                 Account followerAcc = Account.All.FirstOrDefault(a => a.Name.Equals(rel.FollowerAccountName, StringComparison.OrdinalIgnoreCase));
                 if (followerAcc == null) continue;
 
@@ -894,8 +1162,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
-                OrderAction leadOrderAction = exec.Order.OrderAction;
-                bool isExit = leadOrderAction == OrderAction.Sell || leadOrderAction == OrderAction.BuyToCover;
+                OrderAction leadOrderAction = leadAction;
+                bool isExit = leaderIsExiting;   // computed once above; the quarantine gate uses it too
 
                 int currentFollowerPos = 0;
                 var followerPositionObj = followerAcc.Positions.FirstOrDefault(p => p.Instrument.FullName.Equals(targetInstrument.FullName, StringComparison.OrdinalIgnoreCase));
@@ -966,6 +1234,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (followerOrder != null)
                     {
                         followerAcc.Submit(new[] { followerOrder });
+
+                        // P1-22: remember what the leader paid so the follower's fill can be
+                        // measured against it. Recorded only after a successful Submit -- an
+                        // order that never reached the broker has no fill coming, and its entry
+                        // would sit in the pending map until evicted.
+                        RecordPendingCopy(followerOrder, rel, exec, targetInstrument, followerAction, isExit);
                     }
                 }
                 catch (Exception ex)

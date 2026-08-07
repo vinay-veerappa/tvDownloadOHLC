@@ -133,6 +133,9 @@ namespace NinjaTrader.Cbi
         public Account Account { get; set; }
         public string ExecutionId { get; set; }
         public string Name { get; set; }
+        // P1-22: the copier measures latency as leader exec.Time -> follower exec.Time. Left
+        // default here so tests that do not care still exercise the wall-clock fallback.
+        public DateTime Time { get; set; }
     }
 
     public class Account
@@ -610,6 +613,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCopierSubs_RepeatedRefreshAttachesOneHandler();
             TestCopierSubs_TeardownDetachesHandlers();
 
+            // -- COPY SLIPPAGE / LATENCY TESTS (P1-22) --
+            TestCopierSlip_FollowerFillPopulatesLatencyAndSlippage();
+            TestCopierSlip_FavourableFillIsNegativeAndDoesNotQuarantine();
+            TestCopierSlip_EntryQuarantinesButExitStillCopies();
+            TestCopierSlip_IncomparableSymbolsRecordNoSlippage();
+            TestCopierSlip_FillIsMatchedWhenOrderIdChanges();
+
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
 
@@ -1025,6 +1035,235 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(copied == 0,
                 string.Format(
                     "A fill arriving after teardown is not copied (got {0} copy/copies).", copied));
+        }
+
+        // ------------------------------------------------------------------
+        // COPY SLIPPAGE / LATENCY TESTS (P1-22)
+        //
+        // `LatencyMs` and `AvgSlippageTicks` were rendered in TradeCopierWindow (:799) and
+        // written by nothing at all, so the UI reported a clean 0ms / 0.0t however badly a copy
+        // filled. The copier's only possible observation of its own cost is the follower's fill,
+        // which arrives as an ExecutionUpdate on the follower account.
+        // ------------------------------------------------------------------
+
+        private static readonly DateTime SlipT0 = new DateTime(2026, 8, 7, 14, 30, 0, DateTimeKind.Utc);
+
+        private static CopierRelationship SlipRelationship(double maxSlippageTicks, bool autoConvert = false)
+        {
+            return new CopierRelationship
+            {
+                LeaderAccountName = "SimLeader",
+                FollowerAccountName = "SimFollower",
+                IsEnabled = true,
+                FixedLotMode = true,
+                FixedLotSize = 1,
+                AutoSymbolConversion = autoConvert,
+                MaxPositionSize = 100,
+                MaxSlippageTicks = maxSlippageTicks
+            };
+        }
+
+        /// <summary>Feeds back the fill of the copy order the engine just submitted.</summary>
+        private static void FillFollowerCopy(
+            Account follower, Instrument inst, double price, int msAfterLeader, string execId, int orderIndex = 0)
+        {
+            var copy = follower.Orders.Where(o => o.Name == "COPIER_FOLLOW").ElementAt(orderIndex);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower,
+                Instrument = inst,
+                Order = copy,
+                Quantity = copy.Quantity,
+                Price = price,
+                ExecutionId = execId,
+                Name = "COPIER_FOLLOW",
+                Time = SlipT0.AddMilliseconds(msAfterLeader)
+            });
+        }
+
+        private static void TestCopierSlip_FollowerFillPopulatesLatencyAndSlippage()
+        {
+            Console.WriteLine("\n[TEST] COPIER SLIP: a follower fill populates LatencyMs and AvgSlippageTicks (P1-22)");
+
+            var mnq = new Instrument("MNQ 03-26");   // stub tick size 0.25
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 1, "SLIP-A");
+            lead.Time = SlipT0;
+            lead.Price = 18000.00;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            // Fills 250 ms later, one point higher -- 4 ticks WORSE for a buy.
+            FillFollowerCopy(follower, mnq, 18001.00, 250, "SLIP-A-F");
+
+            Assert(Math.Abs(rel.LatencyMs - 250.0) < 1.0,
+                string.Format(
+                    "Latency is measured leader-fill to follower-fill (expected ~250ms, got {0:F0}ms). "
+                    + "It was previously never written and the UI rendered a constant 0.",
+                    rel.LatencyMs));
+
+            Assert(Math.Abs(rel.AvgSlippageTicks - 4.0) < 0.01,
+                string.Format(
+                    "Adverse slippage on a buy is recorded POSITIVE, in ticks (expected 4.0, got {0:F2}).",
+                    rel.AvgSlippageTicks));
+        }
+
+        // Sign correctness. A fill that is BETTER than the leader's must not read as slippage,
+        // or a MaxSlippageTicks threshold would quarantine relationships for filling well.
+        private static void TestCopierSlip_FavourableFillIsNegativeAndDoesNotQuarantine()
+        {
+            Console.WriteLine("\n[TEST] COPIER SLIP: a favourable fill is negative slippage and never quarantines (P1-22)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(2.0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            // Leader goes SHORT at 18000; the follower fills one point HIGHER, which is better
+            // for a short. Raw price delta is +4 ticks and must come out as -4.
+            var lead = LeaderExec(leader, mnq, OrderAction.SellShort, 1, "SLIP-B");
+            lead.Time = SlipT0;
+            lead.Price = 18000.00;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            FillFollowerCopy(follower, mnq, 18001.00, 100, "SLIP-B-F");
+
+            Assert(Math.Abs(rel.AvgSlippageTicks + 4.0) < 0.01,
+                string.Format(
+                    "A short filled above the leader is -4.0 ticks, not +4.0 (got {0:F2}). An unsigned "
+                    + "figure would quarantine this relationship for filling BETTER than the leader.",
+                    rel.AvgSlippageTicks));
+
+            Assert(!rel.IsQuarantined,
+                "A favourable fill does not trip MaxSlippageTicks=2.");
+        }
+
+        // The safety-critical half. Quarantine must stop new ENTRIES without trapping the
+        // follower in a position the leader has already left.
+        private static void TestCopierSlip_EntryQuarantinesButExitStillCopies()
+        {
+            Console.WriteLine("\n[TEST] COPIER SLIP: a slippage quarantine blocks entries but still copies exits (P1-22)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(2.0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            var entry = LeaderExec(leader, mnq, OrderAction.Buy, 1, "SLIP-C");
+            entry.Time = SlipT0;
+            entry.Price = 18000.00;
+            TradeCopierEngine.Instance.OnExecution(entry);
+
+            // Fills 4 ticks adverse against a 2-tick limit.
+            FillFollowerCopy(follower, mnq, 18001.00, 120, "SLIP-C-F");
+
+            Assert(rel.IsQuarantined,
+                string.Format("An entry slipping 4 ticks past a 2-tick limit quarantines the relationship (IsQuarantined={0}).",
+                    rel.IsQuarantined));
+
+            // The follower now actually holds the contract the copy bought.
+            follower.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1, AveragePrice = 18001
+            });
+
+            int ordersBefore = follower.Orders.Count(o => o.Name == "COPIER_FOLLOW");
+
+            // A further ENTRY must be refused.
+            var moreEntry = LeaderExec(leader, mnq, OrderAction.Buy, 1, "SLIP-C2");
+            moreEntry.Time = SlipT0.AddSeconds(1);
+            TradeCopierEngine.Instance.OnExecution(moreEntry);
+            Assert(follower.Orders.Count(o => o.Name == "COPIER_FOLLOW") == ordersBefore,
+                "A quarantined relationship refuses further entries.");
+
+            // The EXIT must still go through.
+            var exit = LeaderExec(leader, mnq, OrderAction.Sell, 1, "SLIP-C3");
+            exit.Time = SlipT0.AddSeconds(2);
+            TradeCopierEngine.Instance.OnExecution(exit);
+
+            Assert(follower.Orders.Count(o => o.Name == "COPIER_FOLLOW") == ordersBefore + 1,
+                string.Format(
+                    "A quarantined relationship still copies the EXIT (expected {0} orders, got {1}). "
+                    + "Blocking it strands the follower in a position the leader has already left -- "
+                    + "the P0-5 failure reached by another route.",
+                    ordersBefore + 1, follower.Orders.Count(o => o.Name == "COPIER_FOLLOW")));
+        }
+
+        // A custom symbol mapping can point at an instrument whose price is unrelated. Comparing
+        // those two fills produces a meaningless number, and acting on it would quarantine a
+        // perfectly healthy relationship on its first copy.
+        private static void TestCopierSlip_IncomparableSymbolsRecordNoSlippage()
+        {
+            Console.WriteLine("\n[TEST] COPIER SLIP: an unrelated mapped symbol records no slippage (P1-22)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(2.0, autoConvert: true);
+            rel.CustomSymbolMappings["MNQ"] = "ES";   // legitimate mapping, unrelated price scale
+
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 1, "SLIP-D");
+            lead.Time = SlipT0;
+            lead.Price = 18000.00;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var es = Instrument.GetInstrument("ES 03-26");
+            Assert(follower.Orders.Any(o => o.Name == "COPIER_FOLLOW"),
+                "Precondition: the mapped copy was submitted.");
+
+            // ES fills at its own price level, ~13000 points from MNQ's.
+            FillFollowerCopy(follower, es, 5000.00, 90, "SLIP-D-F");
+
+            Assert(rel.AvgSlippageTicks == 0.0,
+                string.Format(
+                    "No slippage is recorded between price-incomparable instruments (got {0:F2} ticks).",
+                    rel.AvgSlippageTicks));
+
+            Assert(!rel.IsQuarantined,
+                "A price-incomparable mapping does not quarantine the relationship on its first copy.");
+
+            Assert(rel.LatencyMs > 0,
+                string.Format("Latency is still measured -- it does not depend on price (got {0:F0}ms).", rel.LatencyMs));
+        }
+
+        // NT8's Order.OrderId is not guaranteed unique and CAN CHANGE over an order's lifetime
+        // (historical->live transition) -- RiskGuardAddOn.cs:4481 already records this and tracks
+        // recognised stops by object reference for the same reason. A pending-copy map keyed on
+        // the id string looks correct and passes every other test in this file, because the stub
+        // assigns one stable GUID per order. This test makes the stub behave like NT8.
+        private static void TestCopierSlip_FillIsMatchedWhenOrderIdChanges()
+        {
+            Console.WriteLine("\n[TEST] COPIER SLIP: a fill is matched by Order reference, not OrderId (P1-22)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 1, "SLIP-E");
+            lead.Time = SlipT0;
+            lead.Price = 18000.00;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.First(o => o.Name == "COPIER_FOLLOW");
+            string original = copy.OrderId;
+
+            // NT8 re-issues the id on the historical->live transition. Same Order object.
+            copy.OrderId = Guid.NewGuid().ToString();
+            Assert(copy.OrderId != original, "Precondition: the order's id changed after submit.");
+
+            FillFollowerCopy(follower, mnq, 18001.00, 300, "SLIP-E-F");
+
+            Assert(Math.Abs(rel.AvgSlippageTicks - 4.0) < 0.01 && rel.LatencyMs > 0,
+                string.Format(
+                    "The fill is still matched to its pending copy after the id changed "
+                    + "(slippage {0:F2} ticks, latency {1:F0}ms; both 0 means the lookup missed). "
+                    + "Keying on OrderId silently loses the measurement -- or attributes it to "
+                    + "the wrong copy, since the id is not unique either.",
+                    rel.AvgSlippageTicks, rel.LatencyMs));
         }
 
         /// <summary>
