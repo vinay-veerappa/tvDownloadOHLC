@@ -361,10 +361,11 @@ constructions on two different dates increment it twice.
 the same block as the counter, so the pair travels together. Verified in production — the live
 counter held steady across a recompile that would previously have bumped it.
 
-**OUTSTANDING operational step.** The live `state.json` reads `ShadowSessionsCompleted = 5`,
-inflated by restarts before the fix landed. It no longer climbs, but the historical value is
-wrong and `MinShadowSessions=3` currently reads as satisfied. **Reset it with NinjaTrader
-closed**, then restart:
+**Operational step — ✅ DONE 2026-08-07 (session 7).** The live `state.json` had read
+`ShadowSessionsCompleted = 5`, inflated by restarts before the fix landed. It no longer climbed,
+but the historical value was wrong and `MinShadowSessions=3` read as satisfied. Now `0`, with
+`LastShadowSessionDate` at `DateTime.MinValue`; backup `state.json.bak_20260807_095249`. All 93
+`AccountsData` entries and the empty `LockedOutAccounts` list verified unchanged after the write.
 
 ```powershell
 # NT8 must be CLOSED - shutdown flushes in-memory state and would overwrite the edit
@@ -377,6 +378,21 @@ $j | ConvertTo-Json -Depth 20 | Out-File $p -Encoding utf8
 
 Do not edit it while NT8 is running: the addon rewrites the file on flush, and a torn write
 loses persisted lockouts.
+
+> **`LastShadowSessionDate` must be `'0001-01-01T00:00:00'`, never `null`.** It is a non-nullable
+> `DateTime` (`:4525`). Json.NET throws converting `null` to it, `LoadPersistedState` catches that
+> and logs `Failed to load persisted state`, and **the whole persisted state is discarded** —
+> every account's PnL baseline and the locked-out list included. The command above is correct; a
+> `null` variant that had crept into the handover was caught by checking the field's C# type
+> before running it.
+>
+> **"NT8 closed" means "the AddOn is not loaded".** The reliable check is that the bridge does not
+> answer on `localhost:7890` — the listener starts at `State.Configure`. NT8 can sit at its login
+> dialog with the process running and no AddOn loaded; that is when this reset was performed.
+
+**Verify after the next successful login**: `GET /api/riskguard/state` (or the dashboard) should
+report `ShadowSessionsCompleted` climbing to exactly **1** after one genuine shadow session, not
+jumping on recompiles.
 
 ### P1-39. Every config load appends the default windows, so `WindowsET` grows without bound and a default can never be deleted — CLOSED 2026-08-07
 *(found on 2026-08-07 while excluding an account ahead of Phase A validation — observed live,

@@ -122,28 +122,30 @@ failed in net48, because the methods sat inside `#if TESTING`. **Always `nt_comp
 touching code near the test hooks**, and read `RESULTS:` from a *fresh* build — a `dotnet run
 --no-build` after a failed build silently reports the previous assembly's result.
 
-**4. Two operational items are still outstanding.**
-- `state.json` reads `ShadowSessionsCompleted = 5`, inflated before `P1-37` was fixed. It no longer
-  climbs, but `MinShadowSessions=3` reads as satisfied, so the *live* arming gate is not
-  trustworthy on this box. **Reset it with NinjaTrader closed** (commands in the plan under
-  `P1-37`). It does not block shadow work — preflight applies that gate only to acting modes.
+**4. One operational item remains (`P2-41`). The shadow-counter reset is DONE.**
 
-  > ⏳ **NT8 is closed right now, so this is the window.** Verified 2026-08-07 after the clean
-  > shutdown: `ShadowSessionsCompleted: 5`, `LastShadowSessionDate: 2026-08-07T00:00:00`,
-  > `IsArmed: true`, `LockedOutAccounts: []`. The two counter fields are one fact and must be
-  > reset together (`P1-37`) — resetting the count alone lets a restart re-count the same session.
-  > ```bash
-  > cd "$HOME/Documents/NinjaTrader 8/RiskGuard"
-  > cp state.json "state.json.bak_$(date +%Y%m%d_%H%M%S)"     # NT8 must be closed
-  > python -c "
-  > import json
-  > p='state.json'; d=json.load(open(p))
-  > d['ShadowSessionsCompleted']=0; d['LastShadowSessionDate']=None
-  > json.dump(d, open(p,'w'), indent=2)
-  > print('reset ->', d['ShadowSessionsCompleted'], d['LastShadowSessionDate'])"
-  > ```
-  > `IsArmed` is deliberately left alone — `P1-37` stops it being rehydrated at all, and `P1-47`
-  > decides the initial arm state from the resolved mode.
+- ✅ **`ShadowSessionsCompleted` reset — done 2026-08-07, session 7.** It read `5`, inflated by
+  restarts before `P1-37` was fixed, which made `MinShadowSessions=3` read as satisfied and the
+  *live* arming gate untrustworthy. Now `0`, with `LastShadowSessionDate` at `DateTime.MinValue`.
+  Backup: `RiskGuard/state.json.bak_20260807_095249`. All 93 `AccountsData` entries and the empty
+  `LockedOutAccounts` list were verified unchanged. The next genuine shadow session counts as 1.
+
+  > **The obvious command for this is destructive — do not write `null`.**
+  > `LastShadowSessionDate` is a **non-nullable `DateTime`** (`RiskGuardAddOn.cs:4525`, default
+  > `DateTime.MinValue`). Json.NET throws converting `null` to it, `LoadPersistedState` catches
+  > that and logs `Failed to load persisted state`, and **the entire persisted state is
+  > discarded** — every account's PnL baseline and the locked-out list with it. Write
+  > `"0001-01-01T00:00:00"` instead. An earlier revision of this handover had the `null` version;
+  > it was caught by checking the C# field type before running it, not by testing.
+  >
+  > Both fields must move together (`P1-37`) — zeroing the count alone lets a restart re-count the
+  > same session. `IsArmed` is deliberately left alone: `P1-37` stops it being rehydrated at all,
+  > and `P1-47` derives the initial arm state from the resolved mode.
+  >
+  > **"NT8 closed" really means "the AddOn is not loaded".** The bridge not answering on
+  > `localhost:7890` is the reliable check — the listener starts at `State.Configure`. NT8 can sit
+  > at its login dialog with the process running and no AddOn loaded, which is when this reset was
+  > actually performed.
 - **`POST /api/riskguard/config` does not merge (`P2-41`, open).** Every field a partial POST omits
   returns as its default and is written to disk, while the response echoes your *request* and says
   `"applied"`. Always GET the full document, mutate one key, POST it back, then GET again and
@@ -675,7 +677,8 @@ Then:
    nothing. Then read `interventions.jsonl` and ask specifically: did `PEAK_GIVEBACK_BREACH` fire
    on a profitable flat account (T3), and did any `COPY_BLOCKED_NO_GUARD` line name an account
    that should have been allowed (T5)?
-7. **Fix P1-37 and reset `ShadowSessionsCompleted` to `0`** (addon stopped) before considering an
+7. ✅ *(both done — `P1-37` fixed, counter reset 2026-08-07; see §0 item 4)*
+   **Fix P1-37 and reset `ShadowSessionsCompleted` to `0`** (addon stopped) before considering an
    acting mode — the counter is currently inflated by restarts and the arming gate is not
    trustworthy.
 8. Only then consider restoring an acting mode.
