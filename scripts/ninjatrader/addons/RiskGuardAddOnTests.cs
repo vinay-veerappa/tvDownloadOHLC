@@ -523,6 +523,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_16_ConsecutiveLossesCountTradesNotPartialExits();
             TestP1_17_EvaluationTargetUsesCumulativeNotSessionPnL();
             TestP1_37_ShadowSessionCounterSurvivesRestartWithoutRecounting();
+            TestStress_S1toS4_OrderFloodGovernor();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
             TestP1_35_OrphanAutoStopCancelHappensOutsideTheLock();
             TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening();
@@ -3670,6 +3671,119 @@ namespace NinjaTrader.NinjaScript.AddOns
         // yielded before calling into NinjaTrader; the event handlers honour that, the sweep
         // did not. Because the sweep runs on the WPF dispatcher, any NT8 path that blocks on a
         // background thread needing _stateLock deadlocks the UI thread -- and with it the guard.
+        // Stress programme S1-S4 (plan §8). These exist because the operator's order-flood
+        // stress test found four defects in one afternoon that a green suite had not. They are
+        // driven through the real entry point, ExecuteOrderUpdate, so they catch wiring and not
+        // just arithmetic.
+        private static void TestStress_S1toS4_OrderFloodGovernor()
+        {
+            Console.WriteLine("\n[STRESS S1-S4] order-flood governor");
+
+            var mnq = new Instrument("MNQ");
+
+            Func<RiskConfig, Tuple<RiskGuardAddOn, Account, AccountState>> build = cfg =>
+            {
+                Account.All.Clear();
+                var acct = new Account { Name = "FloodAcc", Provider = Provider.Simulator };
+                Account.All.Add(acct);
+                var a = new RiskGuardAddOn();
+                a.SetConfigForTest(cfg);
+                a.SetSubscribedAccountForTest("FloodAcc");
+                var st = new AccountState("FloodAcc");
+                st.LastSessionDate = DateTime.UtcNow.Date;
+                a.SetAccountStateForTest("FloodAcc", st);
+                return Tuple.Create(a, acct, st);
+            };
+
+            Func<Instrument, string, OrderAction, OrderType, Order> mkOrder = (inst, id, act, typ) =>
+                new Order
+                {
+                    Id = id, OrderId = id, Instrument = inst, OrderAction = act,
+                    OrderType = typ, Quantity = 1, OrderState = OrderState.Submitted,
+                    Name = "Entry" + id
+                };
+
+            // ---- S1: the rate governor must count DISTINCT ORDERS, not state transitions ----
+            // One order passing Submitted -> Accepted currently adds two ticks, so a nominal
+            // "more than 5 per second" fires at about three real orders per second.
+            var s1 = build(new RiskConfig());
+            for (int i = 0; i < 3; i++)
+            {
+                var o = mkOrder(mnq, "S1-" + i, OrderAction.Buy, OrderType.Limit);
+                o.OrderState = OrderState.Submitted;
+                s1.Item1.ExecuteOrderUpdate(s1.Item2, new OrderEventArgs { Order = o });
+                o.OrderState = OrderState.Accepted;
+                s1.Item1.ExecuteOrderUpdate(s1.Item2, new OrderEventArgs { Order = o });
+            }
+            Assert(!s1.Item3.IsLockedOut,
+                "three distinct orders, each seen Submitted then Accepted, must NOT trip a 5/sec governor");
+
+            // Ten genuinely distinct orders in the same second must still trip it.
+            var s1b = build(new RiskConfig());
+            for (int i = 0; i < 10; i++)
+            {
+                var o = mkOrder(mnq, "S1B-" + i, OrderAction.Buy, OrderType.Limit);
+                s1b.Item1.ExecuteOrderUpdate(s1b.Item2, new OrderEventArgs { Order = o });
+            }
+            Assert(s1b.Item3.IsLockedOut,
+                "ten distinct orders in one second must trip the governor");
+
+            // ---- S2: the order that trips the governor may be a PROTECTIVE STOP ----
+            // Cancelling it locks the account out with an open, unprotected position.
+            var s2 = build(new RiskConfig());
+            s2.Item2.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+            });
+            s2.Item3.UpdatePosition(s2.Item2, mnq, MarketPosition.Long, 2, 18000, 0, new RiskConfig());
+            for (int i = 0; i < 8; i++)
+            {
+                var o = mkOrder(mnq, "S2-" + i, OrderAction.Buy, OrderType.Limit);
+                s2.Item1.ExecuteOrderUpdate(s2.Item2, new OrderEventArgs { Order = o });
+            }
+            var protectiveStop = new Order
+            {
+                Id = "S2-STOP", OrderId = "S2-STOP", Instrument = mnq,
+                OrderAction = OrderAction.Sell, OrderType = OrderType.StopMarket,
+                Quantity = 2, OrderState = OrderState.Submitted, Name = "Stop1", StopPrice = 17900
+            };
+            s2.Item2.Orders.Add(protectiveStop);
+            s2.Item1.ExecuteOrderUpdate(s2.Item2, new OrderEventArgs { Order = protectiveStop });
+            Assert(protectiveStop.OrderState != OrderState.Cancelled,
+                "a protective stop must NEVER be cancelled by the rate governor -- doing so leaves the position naked");
+
+            // ---- S3: a flood lockout must lapse, like every other lockout ----
+            var s3cfg = new RiskConfig();
+            s3cfg.Overtrading.LockoutMinutes = 60;
+            var s3 = build(s3cfg);
+            for (int i = 0; i < 10; i++)
+            {
+                var o = mkOrder(mnq, "S3-" + i, OrderAction.Buy, OrderType.Limit);
+                s3.Item1.ExecuteOrderUpdate(s3.Item2, new OrderEventArgs { Order = o });
+            }
+            Assert(s3.Item3.IsLockedOut, "the flood lockout fires");
+            Assert(s3.Item3.LockoutUntil > DateTime.UtcNow,
+                "a flood lockout must carry a deadline; without LockoutUntil the test at :1485 is an OR and it never lapses");
+
+            // ---- S4: no broker call may happen while _stateLock is held, on THIS path ----
+            // P1-10/P1-35 machine-checked the invariant but only ever drove the sweep and FSM
+            // teardown. ExecuteOrderUpdate has four Cancel sites inside the lock.
+            var s4 = build(new RiskConfig());
+            s4.Item3.IsLockedOut = true;
+            var violations = RecordBrokerCallsUnderLock(s4.Item1, () =>
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    var o = mkOrder(mnq, "S4-" + i, OrderAction.Buy, OrderType.Limit);
+                    s4.Item1.ExecuteOrderUpdate(s4.Item2, new OrderEventArgs { Order = o });
+                }
+            });
+            Assert(violations.Count == 0,
+                string.Format("ExecuteOrderUpdate made {0} broker call(s) under _stateLock{1}",
+                    violations.Count,
+                    violations.Count == 0 ? "" : ": " + string.Join(", ", violations.Distinct())));
+        }
+
         private static void TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock()
         {
             Console.WriteLine("\n[TEST] P1-10: the safety sweep makes no broker calls while holding _stateLock");

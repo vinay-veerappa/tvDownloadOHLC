@@ -1409,19 +1409,54 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                     else if (_accountStates.TryGetValue(accountName, out var stateModel))
                     {
-                        // Order Rate Governor: detect rogue strategy order loops (>5 orders/sec)
+                        // Order Rate Governor: detect rogue strategy order loops.
+                        //
+                        // P2-46: count DISTINCT ORDER IDS, not state transitions. This previously
+                        // added a tick for Submitted and another for Accepted -- two states of the
+                        // same order -- so a nominal "more than 5 per second" actually fired at
+                        // about three real orders per second, inside normal ATM bracket
+                        // submission. The live log's "29-32 orders/sec" were transition counts.
                         if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted)
                         {
-                            stateModel.OrderTimestamps.Add(DateTime.UtcNow);
-                            stateModel.OrderTimestamps.RemoveAll(t => t < DateTime.UtcNow.AddSeconds(-1));
-                            if (stateModel.OrderTimestamps.Count > 5)
+                            string floodKey = e.Order.Id != null ? e.Order.Id.ToString() : Guid.NewGuid().ToString();
+                            DateTime floodNow = DateTime.UtcNow;
+                            if (!stateModel.RecentOrderIds.ContainsKey(floodKey))
+                                stateModel.RecentOrderIds[floodKey] = floodNow;
+
+                            DateTime floodCutoff = floodNow.AddSeconds(-1);
+                            var staleOrderIds = stateModel.RecentOrderIds
+                                .Where(kv => kv.Value < floodCutoff).Select(kv => kv.Key).ToList();
+                            foreach (var staleId in staleOrderIds) stateModel.RecentOrderIds.Remove(staleId);
+
+                            int maxPerSecond = (_config.Overtrading != null && _config.Overtrading.MaxOrdersPerSecond > 0)
+                                ? _config.Overtrading.MaxOrdersPerSecond : 5;
+
+                            if (stateModel.RecentOrderIds.Count > maxPerSecond)
                             {
                                 stateModel.IsLockedOut = true;
-                                if (e.Order.OrderState != OrderState.Filled && e.Order.OrderState != OrderState.Cancelled)
+
+                                // P1-45: pair the flag with a deadline. The lockout test is
+                                // `IsLockedOut || UtcNow < LockoutUntil` -- an OR -- and every
+                                // other rule sets a deadline, so setting the flag alone made a
+                                // one-second burst lock the account out permanently, persisted
+                                // across restarts.
+                                if (_config.Overtrading.LockoutMinutes > 0)
                                 {
-                                    account.Cancel(new[] { e.Order });
+                                    stateModel.LockoutUntil = DateTime.UtcNow.AddMinutes(_config.Overtrading.LockoutMinutes);
                                 }
-                                LogEvent(accountName, "ORDER_FLOOD_LOCKOUT", $"ORDER FLOOD DETECTED: Rogue order rate ({stateModel.OrderTimestamps.Count} orders/sec) triggered instant lockout.");
+
+                                // P1-44: never cancel a protective order to enforce a rate limit.
+                                // Without this guard, a burst whose tripping order happened to be
+                                // the stop-loss cancelled the protection AND locked the account
+                                // out, leaving an open position naked. The lockout-enforcement
+                                // block below has always had this guard; this path did not.
+                                if (!IsPositionReducingOrder(e.Order, stateModel))
+                                {
+                                    // P1-43: queued, not sent -- this block runs under _stateLock.
+                                    _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
+                                }
+
+                                LogEvent(accountName, "ORDER_FLOOD_LOCKOUT", $"ORDER FLOOD DETECTED: {stateModel.RecentOrderIds.Count} distinct orders in 1s (limit {maxPerSecond}) triggered lockout.");
                             }
                         }
 
@@ -1433,7 +1468,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 {
                                     if (e.Order.OrderType == OrderType.Limit || e.Order.OrderType == OrderType.StopMarket || e.Order.OrderType == OrderType.StopLimit || e.Order.OrderType == OrderType.Market)
                                     {
-                                        account.Cancel(new[] { e.Order });
+                                        // P1-43: queued, not sent -- this whole block runs under _stateLock.
+                                        _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
                                         LogEvent(accountName, "ENTRY_CANCEL", $"Cancelled order {e.Order.Id} because account is locked out.");
                                     }
                                 }
@@ -1447,7 +1483,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
                         {
-                            account.Cancel(new[] { e.Order });
+                            // P1-43: queued, not sent -- this whole block runs under _stateLock.
+                            _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
                             LogEvent(accountName, "BLACKLIST_CANCEL", $"Cancelled order {e.Order.Id} because instrument {instRoot} is blacklisted.");
                         }
                     }
@@ -1457,7 +1494,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                         {
                             if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
                             {
-                                account.Cancel(new[] { e.Order });
+                                // P1-43: queued, not sent -- this whole block runs under _stateLock.
+                                _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
                                 LogEvent(accountName, "PER_INSTRUMENT_CAP_CANCEL", $"Cancelled order {e.Order.Id} because quantity {e.Order.Quantity} exceeds {instRoot} cap ({perInstCap.MaxContracts}).");
                             }
                         }
@@ -1505,6 +1543,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     LogEvent("SYSTEM", "ERROR", $"Error handling OnOrderUpdate: {ex.Message}");
                 }
             }
+
+            // P1-43: send the cancels queued above now that the lock is released. Four Cancel
+            // calls sat inside the lock on this path -- the same invariant P1-10 and P1-35 closed
+            // elsewhere. The machine check missed them because it only drove the sweep and FSM
+            // teardown, never the order-update path.
+            DrainPendingCancels();
 
             // Process lockout actions OUTSIDE the lock to prevent re-entrancy.
             if (lockoutActions != null && lockoutActions.Count > 0)
@@ -4054,7 +4098,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         public DateTime LockoutUntil { get; set; } = DateTime.MinValue;
         public bool InitialLockoutFlattened { get; set; } = false;
         public DateTime LastLockoutFlattenAttempt { get; set; } = DateTime.MinValue;
-        public List<DateTime> OrderTimestamps { get; set; } = new List<DateTime>();
+        // P2-46: order id -> first time seen inside the rate window. Keyed by id so one order
+        // passing Submitted -> Accepted -> Working counts once, not three times.
+        public Dictionary<string, DateTime> RecentOrderIds { get; set; } = new Dictionary<string, DateTime>();
 
         // Lockout phase: PendingCancel -> PendingFlatten -> Confirmed.
         // Only Confirmed stops emitting actions. This prevents the infinite
@@ -4587,6 +4633,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         public int MaxTradesPerSession { get; set; } = 8;
         public int CooldownMinutes { get; set; } = 5;
         public int MaxConsecutiveLosses { get; set; } = 3;
+        // P2-46: was hardcoded at 5 in the order-rate governor, unlike every other limit here.
+        public int MaxOrdersPerSecond { get; set; } = 5;
         public int LockoutMinutes { get; set; } = 60;
     }
 
