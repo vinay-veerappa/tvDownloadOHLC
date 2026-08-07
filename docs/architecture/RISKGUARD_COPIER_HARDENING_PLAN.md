@@ -8,12 +8,12 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**41 defects.** Numbered once, never renumbered, never reused.
+**42 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35`, `P1-36`, `P1-37`, `P1-39`, `P1-40` | 19 | 8 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`, `P1-39`, `P1-40`) |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` | 20 | 8 closed (`P1-10`, `P1-11`, `P1-15`, `P1-20`, `P1-35`, `P1-37`, `P1-39`, `P1-40`) |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41` | 8 | open (`P2-28` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -537,6 +537,47 @@ code is loaded.
 > $50k account against a $1,500 trailing drawdown that is noise; for a much smaller account it
 > may not be. It is per-config, so tune it rather than removing the floor.
 
+### P1-42. Per-firm profiles are never read — `FirmMirror` silently protects nothing on a mapped account
+*(found 2026-08-07 while deciding what an armed shadow session would actually exercise)*
+**Where**: `RiskGuardAddOn.cs:3594` (the call site) and `:3656` (`ComputeFirmMirror`), against
+`FirmMirrorConfig.AccountFirmMap` / `FirmProfiles` (`:4294`, `:4295`).
+**What happens**: `EvaluateFirmMirror` calls
+`ComputeFirmMirror(balance, realized, unrealized, _config.FirmMirror, st, nowUtc)` — it passes the
+**top-level** `FirmMirrorConfig` straight through, and `ComputeFirmMirror` reads only
+`fm.TrailingDD` and `fm.DailyLoss`. **Neither `AccountFirmMap` nor `FirmProfiles` is consulted by
+any evaluation path.** The only reference to `AccountFirmMap` in the whole addon is
+`RunPreflight`'s validation at `:2668`, which checks that every mapped firm exists in
+`FirmProfiles`.
+
+That validation is what makes this dangerous rather than merely incomplete. Preflight *validates*
+the mapping and refuses to arm if a firm name is unknown (P2-8), so the mapping presents as
+load-bearing configuration that the system has checked — while no code reads it. A validated
+mapping that is never used is worse than no mapping at all, because it buys false confidence.
+
+Observed on this machine, 2026-08-07: `FirmMirror.Enabled: true`, but top-level
+`TrailingDD.Enabled: false` and `DailyLoss.Enabled: false`, `AccountFirmMap: {}`, and four fully
+researched profiles in `FirmProfiles` (TakeProfitTrader, Tradeify, Lucid, Apex — the TPT one
+carrying the real $1,500 EOD trailing drawdown). Net effect: **no firm rule evaluates for any
+account, including the funded TakeProfit Trader account, and mapping that account would not
+change it.** The researched numbers are dead config.
+
+**Fix**: resolve an effective profile per account before computing. Look up
+`AccountFirmMap[st.AccountName]`, then `FirmProfiles[firmName]`, and feed that profile's
+`TrailingDD`/`DailyLoss` into `ComputeFirmMirror`, falling back to the top-level pair when the
+account is unmapped or the firm is missing. `ComputeFirmMirror` already takes a
+`FirmMirrorConfig`, so the smallest correct change is to build an effective one at `:3594` rather
+than to thread new parameters through it. Both dictionaries are `OrdinalIgnoreCase`, so the
+lookups are already case-tolerant — do not "fix" that (see P1-39).
+**Test**: an account mapped to `TakeProfitTrader` breaches at the *profile's* trailing amount and
+not the top-level one; an unmapped account still uses the top-level pair; a mapped account whose
+firm is absent from `FirmProfiles` falls back rather than throwing (preflight blocks arming in
+that case, but the evaluator must not depend on preflight having run); and with the top-level pair
+disabled but a mapped profile enabled, the rule **does** fire — which is the exact case that
+silently does nothing today.
+**Sequencing**: closing this switches on real firm enforcement for any mapped account. Land it,
+map the account, then run a full shadow session and read the `FIRM_*` events **before** going
+anywhere near an acting mode — the numbers involved are the ones that fail a funded evaluation.
+
 ### P1-20. Weak simulated-account detection gates the live safety switch — CLOSED 2026-08-07
 **Where**: `TradeCopierEngine.cs:650` — `followerAcc.Name.StartsWith("Sim", …)`
 An account named e.g. `SimplyApex-01` is treated as simulated and **bypasses the
@@ -869,6 +910,7 @@ broker is the single highest-value addition in this document. Consider promoting
 | P1-36 | over-cover | RiskGuardAddOn.cs:3167 | coverage tracks one stop; two partial stops read as under-covered |
 | P1-37 CLOSED | gate bypass | RiskGuardAddOn.cs:1510, 211, 609 | `MinShadowSessions` counted addon restarts; 0→3 in 4 min during Phase A |
 | P1-39 CLOSED | gate widens | RiskGuardAddOn.cs:4251, 599; McpBridgeAddOn.cs:5126 | Json.NET appends to initialized lists; `WindowsET` grows every load and a default window cannot be deleted |
+| P1-42 | silent no-op | RiskGuardAddOn.cs:3594, 3656 | `AccountFirmMap`/`FirmProfiles` are never read; firm-mirror protects nothing on a mapped account, and preflight validates the unused mapping |
 | P1-40 CLOSED | false flatten | PropFirmProtectionSuite.cs:110; RiskGuardAddOn.cs:1325 | giveback rule was proportional-only; a one-tick peak made any retrace a 100% breach — fired 6× in 36 s live |
 | P1-16 | false lockout | RiskGuardAddOn.cs:1008 | consecutive losses counted per partial exit |
 | P1-17 | never fires | RiskGuardAddOn.cs:1139 | eval target fed session PnL, not cumulative |

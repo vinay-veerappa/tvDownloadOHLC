@@ -2,14 +2,14 @@
 
 **Last updated**: 2026-08-07 (session 5)
 **Branch**: `harden/riskguard-copier-p0`
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (41 defects; P0, Phase B and Phase C all closed, plus `P1-39` and `P1-40`)
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) (42 defects; P0, Phase B and Phase C all closed, plus `P1-39` and `P1-40`)
 **DEPLOYED to shadow 2026-08-07, and armed for the first time that day (§4g).** NinjaTrader is running the current addon in `shadow` mode, currently **disarmed** after the P1-40 recompile. The branch is *not* yet merged to `main`. Suite 427 passed, 0 failed.
 
 ---
 
 ## 0. Start here (read this first, then §2 and §4)
 
-**19 of 41 defects are closed. Suite: 427 passed, 0 failed.** All nine P0, all of Phase B, all of
+**19 of 42 defects are closed. Suite: 427 passed, 0 failed.** All nine P0, all of Phase B, all of
 Phase C bar `P1-36`, plus `P1-40` and `P1-39` — both found by the first armed session. The addon
 is deployed and running in `shadow`, compiling clean in NT8.
 
@@ -658,11 +658,24 @@ acting mode.
 **Net**: Phase A is **half validated**. T3 is proven on a live feed and the one blocker the
 session found is closed. T5 still requires an acting mode and has never been exercised.
 
-**State left behind.** The addon **reloaded on the P1-39/P1-40 recompiles and is therefore
-disarmed** (`_isArmed` is deliberately never rehydrated — P1-37). `TAKEPROFITPRO524207503` has
-been removed from `ExcludedAccounts` and is covered again. Live config: mode `shadow`, **6**
-`WindowsET` entries matching disk exactly now that P1-39 is closed. To resume validation, re-arm
-from the dashboard.
+**State left behind.** `TAKEPROFITPRO524207503` has been removed from `ExcludedAccounts` and is
+covered again. Live config: mode `shadow`, **6** `WindowsET` entries matching disk exactly now
+that P1-39 is closed. The addon was **re-armed at 13:55:55 UTC** after both fixes landed
+(`PREFLIGHT: passed` → `isArmed: true`) and is collecting shadow data against live trading. Note
+that any recompile reloads the addon and disarms it again — `_isArmed` is deliberately never
+rehydrated (P1-37), so check the log before assuming the guard is watching.
+
+**What that session will and will not cover.** Stop-guard and PnL/giveback paths: covered. **Firm
+mirror: not covered at all** — `P1-42`, found while scoping this session. `ComputeFirmMirror`
+reads only the top-level `TrailingDD`/`DailyLoss`, both `Enabled: false` here, and never consults
+`AccountFirmMap`/`FirmProfiles`. The four researched firm profiles, including the real TPT $1,500
+EOD trailing drawdown, are dead config. Mapping the account would not change it. Do not read a
+clean firm-mirror log as evidence of firm-mirror protection.
+
+**Worth watching in the log**: `StopGuard.OnMissing = "Flatten"` with `StopAttachSeconds = 3`.
+ATM entries attach their stop in ~0.35 s and are fine; a manual entry that takes longer than 3 s
+to get a stop will log a would-be flatten. Learn whether 3 s matches real trading habits before
+that ever becomes an acting rule.
 
 ---
 
