@@ -17,8 +17,8 @@ State in one paragraph: session 3 landed T2, T3, T4 and T5, fixed four defects i
 (§4d), and repaired the P0-8 test, which could never have gone green because it never wired
 `RiskGuardAddOn.Instance` and so could not observe its own subject. **Nothing is deployed** —
 NinjaTrader is still running the unmodified addon, and that is now the single most important open
-item. The next work is P1, starting with the two deferred items this work created:
-**P1-35** (orphan-cancel under `_stateLock`) and **P1-36** (multi-stop coverage aggregation).
+item. The roadmap for the remaining 27 defects is §4a; the deployment runbook is §4e.
+
 
 ```powershell
 # free, ~2 min, no models: is the tool sound?
@@ -343,22 +343,106 @@ The general lesson for this loop: when a gate says a model got the format wrong,
 *content* is there before spending another round. Marker punctuation is not what the gates exist
 to check.
 
-## 4a. Immediate next steps
+## 4a. Roadmap for the remaining 27 defects
 
-The P0 phase is done. In priority order:
+**36 defects total, 9 closed (all P0), 27 open**: 16 P1, 6 P2, 5 P3. Band membership and the
+P1-30/31 → P1-35/36 renumbering are in the plan's inventory table.
 
-1. **Decide about deploying.** All nine live-risk defects are fixed in the repo and none of it is
-   in front of NinjaTrader. Shadow mode first is the obvious path.
-2. **Add tests for T1/T2/T3 behaviour.** T4 and T5 have real coverage now; T1–T3 are verified only
-   by review and by not regressing. Good candidates: auto-stop submit failure rolls back and
-   clears `GraceEmitted`; auto-stop sized from the live position, not the emission snapshot; a
-   scaled-down position still gets a stop rather than having its action dropped; stop cancelled
-   mid-position re-arms grace; profitable-flat account emits no giveback action; a close+reverse
-   flip does not carry `PeakOpenGain` into the new leg.
-3. **Add an `expect_green` field to tickets** so the test gate can require a named test to flip,
-   not merely require no regression. T5 shipped past a red acceptance test (§0).
-4. **P1 work**, starting with **P1-35** (orphan-cancel under `_stateLock`) and **P1-36**
-   (multi-stop coverage aggregation), both deferred out of this phase by decision (§5).
+Decided 2026-08-07: **deploy P0 to shadow before writing more code.**
+
+### Phase A — deploy P0 (no new code) ← current
+
+Nine live-risk fixes are in a branch doing nothing. Shadow mode is also the only way to validate
+T3's giveback rule and T5's fail-closed gate against real account data; no unit test can.
+**Runbook in §4e — read it, the ordering is not obvious and the live config is not in shadow.**
+
+### Phase B — two cheap prerequisites
+
+1. **`expect_green` on tickets.** The test gate only checks for regressions, so T5 shipped past
+   its own red acceptance test (§0). Everything after this leans on the gate being honest.
+2. **Tests for T1–T3 behaviour.** T4/T5 have real coverage; T1–T3 rest on review and
+   not-regressing. Candidates: auto-stop submit failure rolls back and clears `GraceEmitted`;
+   auto-stop sized from the live position, not the emission snapshot; a scaled-down position
+   still gets a stop rather than having its action dropped; a stop cancelled mid-position re-arms
+   grace; a profitable-flat account emits no giveback action; a close+reverse flip does not carry
+   `PeakOpenGain` into the new leg.
+3. Optionally pull **P2-28** (three divergent source copies, committed build output) forward from
+   Phase F. It is mostly deletion and it removes a live hazard — see
+   [[nt8-addon-canonical-source]]; editing the wrong copy silently does nothing.
+
+### Phase C — P1 safety-critical
+
+**Start with P1-20, out of band order.** T5's fail-closed gate keys off
+`followerAcc.Name.StartsWith("Sim")`, so a live account named `SimpsonFund` is exempt from the
+protection requirement today. The P0 work made that check load-bearing; it needs to be real.
+
+Then the concurrency cluster: **P1-35**, **P1-10**, **P1-11** (the lockout sweep cancels
+*protective* stops — a naked window), **P1-15**, **P1-36**.
+
+Sequencing constraints:
+- **P1-35 and P1-10 are the same fix twice** — queue the cancel, drain it after the lock releases.
+  Do them in one ticket.
+- **P1-36 modifies T1's `CoveredQuantity` model.** Re-read §1 (T1) first; the single-stop
+  behaviour is deliberate and the `ReferenceEquals` guard exists to bound it.
+
+### Phase D — P1 rule semantics
+
+P1-16 … P1-19. Self-contained, low blast radius, good loop tickets. P1-17 (eval target fed
+session-scoped PnL, so it never fires) is the most consequential.
+
+### Phase E — copier fidelity
+
+P1-21, P1-22, P1-23, then the real half of **P0-9**. Only P0-9's fail-closed *precondition*
+landed in T5 — followers still receive bare market orders with no protective legs. This is the
+largest single piece of remaining work.
+
+### Phase F — P2 structural
+
+P2-28 (if not already done in B), P2-24, P2-26 (doc drift — the design doc still overstates what
+exists), P2-25, P2-27's remaining CI half, P2-29. Note **P2-27 is half-closed**: the copy path is
+in the test build with real coverage; only the CI job is outstanding. The plan text still
+describes it as fully open.
+
+### Phase G — P3
+
+**P3-30, the independent reconciler (REAPER port), is the highest-value single addition in the
+whole plan** — an auditor that re-derives ground truth from the broker and repairs what the FSM
+missed. It is P3 by effort, not by value; reconsider promoting it once P1 lands. Then P3-31 …
+P3-34.
+
+---
+
+## 4e. Deployment runbook (Phase A)
+
+**Do not copy code first.** Two things must be true before the new addon runs.
+
+1. **The live config is not in shadow.** `~/Documents/NinjaTrader 8/RiskGuard/config.json` has
+   `"Mode": "override_with_friction"`, which is an *acting* mode (`RiskGuardAddOn.cs:2455`).
+   Deploying new code without changing this puts freshly-written flatten logic straight in front
+   of a funded account. Set `"Mode": "shadow"` **and confirm the addon reloaded it** before
+   copying any `.cs`.
+   - There is a second `config.json` at `bin/Custom/AddOns/config.json` with `"Mode": "live"`.
+     The addon reads `Path.Combine(_logDir, "config.json")`, so the `RiskGuard/` one is the live
+     one — but confirm which is actually loaded before trusting either.
+2. **The deployed sources differ from canonical.** `RiskGuardAddOn.cs`, `TradeCopierEngine.cs` and
+   `PropFirmProtectionSuite.cs` in `bin/Custom/AddOns/` all differ from
+   `scripts/ninjatrader/addons/`. Diff them before overwriting — do not assume the only delta is
+   this branch's work.
+
+Then:
+
+3. Rotate `interventions.jsonl` (110 MB) so shadow output is readable.
+4. Merge `harden/riskguard-copier-p0` → `main` (33 commits; nothing else on the branch).
+5. Copy the five canonical addon sources into `bin/Custom/AddOns/`, compile in NT8 (F5), confirm
+   zero errors — the test build is net8.0 with stubs, NT8 is net48, and only NT8 proves the real
+   build.
+6. Run a full session in shadow. Then diff `interventions.jsonl` against what actually happened
+   and ask specifically: did `PEAK_GIVEBACK_BREACH` fire on a profitable flat account (T3), and
+   did any `COPY_BLOCKED_NO_GUARD` line name an account that should have been allowed (T5)?
+7. Only then consider restoring an acting mode.
+
+**Roll back** by restoring the previous `.cs` files and recompiling; nothing here migrates state.
+Config is separate from code, so a mode change alone is instant and reversible.
 
 ---
 
