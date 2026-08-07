@@ -775,6 +775,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                     acc.ExecutionUpdate -= OnAccountExecutionUpdate;
                     acc.ExecutionUpdate += OnAccountExecutionUpdate;
 
+                    // P0-9: the leader's protective legs are only visible as OrderUpdate events;
+                    // they never produce an execution until they fire.
+                    acc.OrderUpdate -= OnAccountOrderUpdate;
+                    acc.OrderUpdate += OnAccountOrderUpdate;
+
                     if (_subscribedAccounts.Add(acc)) added++;
                 }
             }
@@ -794,7 +799,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 int count = _subscribedAccounts.Count;
                 foreach (Account acc in _subscribedAccounts)
                 {
-                    if (acc != null) acc.ExecutionUpdate -= OnAccountExecutionUpdate;
+                    if (acc == null) continue;
+                    acc.ExecutionUpdate -= OnAccountExecutionUpdate;
+                    acc.OrderUpdate -= OnAccountOrderUpdate;
                 }
                 _subscribedAccounts.Clear();
                 return count;
@@ -812,6 +819,276 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (e != null && e.Execution != null)
             {
                 OnExecution(e.Execution);
+            }
+        }
+
+        private void OnAccountOrderUpdate(object sender, OrderEventArgs e)
+        {
+            if (e != null && e.Order != null)
+            {
+                OnLeaderOrderUpdate(sender as Account, e.Order);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // BRACKET REPLICATION (P0-9)
+        //
+        // Followers received bare market orders with no protective legs. Their only cover was
+        // RiskGuard's StopAttachSeconds grace -> RiskGuardAutoStop at a FIXED TICK OFFSET from
+        // average price, which bears no relation to the leader's actual stop; and if RiskGuard is
+        // disarmed, in shadow, or the follower is excluded, there was no stop at all.
+        //
+        // The leader's stop is mirrored by DISTANCE, not by price, and anchored to the follower's
+        // own fill. Copying the leader's stop price would be wrong the moment the follower filled
+        // anywhere else -- which is exactly what P1-22 now measures as slippage -- and wrong by an
+        // entire price scale on a micro/mini conversion.
+        //
+        //     followerStop = followerEntry -/+ |leaderPositionAvgPrice - leaderStopPrice|
+        //
+        // SCOPE, deliberately: protective STOPS only. Profit targets are upside, not risk, and
+        // adding them brings OCO pairing and partial-fill re-sizing with it. A stop is what makes
+        // the follower not-naked, so it is what ships first. See the plan's P0-9 for what is
+        // explicitly deferred.
+        // ------------------------------------------------------------------
+
+        private class FollowerBracket
+        {
+            public string RelationshipId;
+            public string FollowerAccountName;
+            public string InstrumentFullName;
+            public MarketPosition FollowerSide = MarketPosition.Flat;
+            public int FollowerQuantity;
+            public double FollowerEntryPrice = double.NaN;   // the anchor; NaN until the follower fills
+            public double StopDistance = double.NaN;         // from the leader; NaN until its stop appears
+            public Order WorkingStop;                        // the follower's live protective order
+        }
+
+        // Keyed "<followerAccount>|<instrumentFullName>", ordinal-insensitive.
+        private readonly Dictionary<string, FollowerBracket> _followerBrackets =
+            new Dictionary<string, FollowerBracket>(StringComparer.OrdinalIgnoreCase);
+
+        private static string BracketKey(string followerAccount, string instrumentFullName)
+        {
+            return (followerAccount ?? "") + "|" + (instrumentFullName ?? "");
+        }
+
+        /// <summary>
+        /// A leader order changed. If it is the protective stop for the leader's open position,
+        /// work out its distance from the leader's average entry and push that distance to every
+        /// follower of that leader.
+        /// </summary>
+        internal void OnLeaderOrderUpdate(Account leaderAccount, Order order)
+        {
+            if (leaderAccount == null || order == null || order.Instrument == null) return;
+
+            // Never react to our own protective legs, or we would mirror a mirror.
+            if (!string.IsNullOrEmpty(order.Name) && order.Name.Contains("COPIER")) return;
+
+            List<CopierRelationship> rels = GetActiveRelationshipsForLeader(leaderAccount.Name);
+            if (rels.Count == 0) return;
+
+            Position leaderPos = leaderAccount.Positions.FirstOrDefault(p =>
+                p.Instrument != null &&
+                p.Instrument.FullName.Equals(order.Instrument.FullName, StringComparison.OrdinalIgnoreCase));
+
+            // No leader position: either the stop is gone, or it is an entry order. Either way
+            // there is nothing to anchor a distance to.
+            if (leaderPos == null || leaderPos.MarketPosition == MarketPosition.Flat) return;
+
+            if (!RiskGuardAddOn.IsStopType(order)) return;
+            if (!RiskGuardAddOn.IsProtectiveSide(order, leaderPos.MarketPosition)) return;
+            if (!RiskGuardAddOn.IsPendingOrWorking(order.OrderState)) return;
+
+            double leaderAnchor = leaderPos.AveragePrice;
+            double stopPrice = order.StopPrice;
+            if (leaderAnchor <= 0 || stopPrice <= 0) return;
+
+            double distance = Math.Abs(leaderAnchor - stopPrice);
+            if (distance <= 0) return;
+
+            foreach (var rel in rels)
+            {
+                Account followerAcc = Account.All.FirstOrDefault(a =>
+                    a.Name.Equals(rel.FollowerAccountName, StringComparison.OrdinalIgnoreCase));
+                if (followerAcc == null) continue;
+
+                Instrument targetInstrument = ResolveFollowerInstrument(rel, order.Instrument);
+                if (targetInstrument == null) continue;
+
+                // A distance in the leader's points is only meaningful on the follower's
+                // instrument if the two track the same underlying at the same scale. Reuses
+                // P1-22's rule: a CustomSymbolMappings entry may legitimately point ES at NQ,
+                // where a mirrored distance would be a fabricated risk level.
+                if (!ArePricesComparable(RootOf(order.Instrument.FullName), RootOf(targetInstrument.FullName)))
+                {
+                    NinjaTrader.Code.Output.Process(
+                        $"[CopierEngine] BRACKET_SKIPPED_INCOMPARABLE: {order.Instrument.FullName} -> {targetInstrument.FullName} do not share a price scale; not mirroring the leader's stop for {followerAcc.Name}.",
+                        PrintTo.OutputTab1);
+                    continue;
+                }
+
+                string key = BracketKey(followerAcc.Name, targetInstrument.FullName);
+                FollowerBracket bracket;
+                lock (_lock)
+                {
+                    if (!_followerBrackets.TryGetValue(key, out bracket))
+                    {
+                        bracket = new FollowerBracket
+                        {
+                            RelationshipId = rel.Id,
+                            FollowerAccountName = followerAcc.Name,
+                            InstrumentFullName = targetInstrument.FullName
+                        };
+                        _followerBrackets[key] = bracket;
+                    }
+                    bracket.StopDistance = distance;
+                }
+
+                // The anchor may not exist yet -- the leader can attach its stop before our copy
+                // fills. SyncFollowerStop is a no-op until the fill lands, and ObserveFollowerFill
+                // calls it again at that point.
+                SyncFollowerStop(followerAcc, targetInstrument, bracket);
+            }
+        }
+
+        private Instrument ResolveFollowerInstrument(CopierRelationship rel, Instrument leaderInstrument)
+        {
+            if (leaderInstrument == null) return null;
+            if (!rel.AutoSymbolConversion) return leaderInstrument;
+
+            string translated = TranslateSymbol(leaderInstrument.FullName, rel);
+            if (string.Equals(translated, leaderInstrument.FullName, StringComparison.OrdinalIgnoreCase))
+                return leaderInstrument;
+
+            return Instrument.GetInstrument(translated) ?? leaderInstrument;
+        }
+
+        /// <summary>
+        /// Brings the follower's protective stop into line with the bracket. Submits one if none
+        /// exists, replaces it if the leader moved its stop or the follower's size changed, and
+        /// does nothing at all until both the anchor and the distance are known.
+        /// Broker calls are made OUTSIDE `_lock`.
+        /// </summary>
+        private void SyncFollowerStop(Account followerAcc, Instrument instrument, FollowerBracket bracket)
+        {
+            if (followerAcc == null || instrument == null || bracket == null) return;
+
+            Order toCancel = null;
+            double stopPrice;
+            int qty;
+            OrderAction action;
+
+            lock (_lock)
+            {
+                if (double.IsNaN(bracket.FollowerEntryPrice) || double.IsNaN(bracket.StopDistance)) return;
+                if (bracket.FollowerQuantity <= 0 || bracket.FollowerSide == MarketPosition.Flat) return;
+
+                stopPrice = bracket.FollowerSide == MarketPosition.Long
+                    ? bracket.FollowerEntryPrice - bracket.StopDistance
+                    : bracket.FollowerEntryPrice + bracket.StopDistance;
+
+                if (stopPrice <= 0) return;
+
+                qty = bracket.FollowerQuantity;
+                action = bracket.FollowerSide == MarketPosition.Long ? OrderAction.Sell : OrderAction.BuyToCover;
+
+                if (bracket.WorkingStop != null)
+                {
+                    bool samePrice = Math.Abs(bracket.WorkingStop.StopPrice - stopPrice) < 1e-9;
+                    bool sameQty = bracket.WorkingStop.Quantity == qty;
+                    bool stillLive = RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingStop.OrderState);
+                    if (stillLive && samePrice && sameQty) return;   // already correct
+
+                    // Cancel-then-replace rather than modify: NT8's Change path is not available
+                    // through this seam, and a stale stop left working alongside a new one would
+                    // over-cover and flip the follower when both fire.
+                    if (stillLive) toCancel = bracket.WorkingStop;
+                }
+                bracket.WorkingStop = null;
+            }
+
+            try
+            {
+                // Outside the lock: Cancel/CreateOrder/Submit are broker calls, and holding
+                // _lock across them is the P1-10/P1-35 violation.
+                if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
+
+                Order stop = followerAcc.CreateOrder(
+                    instrument, action, OrderType.StopMarket, TimeInForce.Day,
+                    qty, 0, stopPrice, "", "COPIER_STOP", null);
+
+                if (stop == null) return;
+                followerAcc.Submit(new[] { stop });
+
+                lock (_lock) { bracket.WorkingStop = stop; }
+
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] BRACKET_MIRRORED: {followerAcc.Name} {instrument.FullName} stop {qty}@{stopPrice} (leader distance {bracket.StopDistance}, follower entry {bracket.FollowerEntryPrice}).",
+                    PrintTo.OutputTab1);
+            }
+            catch (Exception ex)
+            {
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] BRACKET_SUBMIT_FAILED on {followerAcc.Name} {instrument.FullName}: {ex.Message}. The follower is UNPROTECTED.",
+                    PrintTo.OutputTab1);
+            }
+        }
+
+        /// <summary>
+        /// The follower is flat in this instrument: cancel any protective leg we placed and drop
+        /// the bracket. An orphaned stop left working would open a brand new position in the
+        /// opposite direction when it fired.
+        /// </summary>
+        private void ReleaseFollowerBracket(Account followerAcc, string instrumentFullName)
+        {
+            if (followerAcc == null) return;
+            string key = BracketKey(followerAcc.Name, instrumentFullName);
+
+            Order toCancel = null;
+            lock (_lock)
+            {
+                FollowerBracket bracket;
+                if (!_followerBrackets.TryGetValue(key, out bracket)) return;
+                if (bracket.WorkingStop != null && RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingStop.OrderState))
+                    toCancel = bracket.WorkingStop;
+                _followerBrackets.Remove(key);
+            }
+
+            if (toCancel == null) return;
+            try
+            {
+                followerAcc.Cancel(new[] { toCancel });   // outside the lock, as above
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] BRACKET_RELEASED: {followerAcc.Name} {instrumentFullName} is flat; cancelled the mirrored stop.",
+                    PrintTo.OutputTab1);
+            }
+            catch (Exception ex)
+            {
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] BRACKET_RELEASE_FAILED on {followerAcc.Name} {instrumentFullName}: {ex.Message}. A stop may still be working against a flat position.",
+                    PrintTo.OutputTab1);
+            }
+        }
+
+        /// <summary>Number of follower brackets currently tracked (test/diagnostic seam).</summary>
+        internal int TrackedBracketCount { get { lock (_lock) { return _followerBrackets.Count; } } }
+
+        /// <summary>
+        /// Drops all bracket state. The engine is a singleton, so without this one test's
+        /// brackets become the next test's starting conditions.
+        /// </summary>
+        internal void ResetBracketsForTest()
+        {
+            lock (_lock) { _followerBrackets.Clear(); }
+        }
+
+        internal double GetMirroredStopPriceForTest(string followerAccount, string instrumentFullName)
+        {
+            lock (_lock)
+            {
+                FollowerBracket b;
+                if (!_followerBrackets.TryGetValue(BracketKey(followerAccount, instrumentFullName), out b)) return double.NaN;
+                return b.WorkingStop != null ? b.WorkingStop.StopPrice : double.NaN;
             }
         }
 
@@ -1042,6 +1319,53 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        /// <summary>
+        /// P0-9: a fill landed on a follower account. Re-reads the follower's real position and
+        /// either anchors the bracket to it (and syncs the stop) or, if the position is now flat,
+        /// releases the bracket so no orphan stop is left working.
+        ///
+        /// The position is re-read from the account rather than accumulated from executions:
+        /// the fill may be our copy, the mirrored stop firing, or something the operator did by
+        /// hand, and only the broker knows the resulting net.
+        /// </summary>
+        private void UpdateFollowerBracketOnFill(Execution exec)
+        {
+            if (exec == null || exec.Account == null || exec.Instrument == null) return;
+
+            Account followerAcc = exec.Account;
+            string instrumentName = exec.Instrument.FullName;
+
+            Position pos = followerAcc.Positions.FirstOrDefault(p =>
+                p.Instrument != null &&
+                p.Instrument.FullName.Equals(instrumentName, StringComparison.OrdinalIgnoreCase));
+
+            if (pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0)
+            {
+                ReleaseFollowerBracket(followerAcc, instrumentName);
+                return;
+            }
+
+            string key = BracketKey(followerAcc.Name, instrumentName);
+            FollowerBracket bracket;
+            lock (_lock)
+            {
+                if (!_followerBrackets.TryGetValue(key, out bracket))
+                {
+                    bracket = new FollowerBracket
+                    {
+                        FollowerAccountName = followerAcc.Name,
+                        InstrumentFullName = instrumentName
+                    };
+                    _followerBrackets[key] = bracket;
+                }
+                bracket.FollowerEntryPrice = pos.AveragePrice;
+                bracket.FollowerSide = pos.MarketPosition;
+                bracket.FollowerQuantity = pos.Quantity;
+            }
+
+            SyncFollowerStop(followerAcc, exec.Instrument, bracket);
+        }
+
         // OnExecution is deliberately NOT behind `#if !TESTING`. It is the trade-copy
         // path - the riskiest code in this file - and excluding it left it with zero
         // test coverage. It compiles against the NinjaTrader stubs in
@@ -1071,6 +1395,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // ever gets of what its own order actually cost. Measure it before the recursion
                 // guard drops the execution.
                 ObserveFollowerFill(exec);
+                // P0-9: the same event is where the bracket learns its anchor, and where a
+                // follower going flat releases it.
+                UpdateFollowerBracketOnFill(exec);
                 return;
             }
 

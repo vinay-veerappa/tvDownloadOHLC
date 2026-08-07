@@ -2,9 +2,9 @@
 
 **Last updated**: 2026-08-07 (session 7 — ends with NT8 down; see the resume block below)
 **Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 32 closed
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 33 closed + `P0-9`'s naked-follower half
 **Live state**: deployed, `shadow`, **armed and guarding**. NT8 compiles clean (0 errors).
-Suite **499 passed, 0 failed**.
+Suite **515 passed, 0 failed**.
 
 > ✅ **Everything the previous revision of this block was waiting on is DONE and verified live
 > (2026-08-07, session 7 close).**
@@ -37,13 +37,18 @@ Suite **499 passed, 0 failed**.
 > four minutes of exactly this churn. `MinShadowSessions=3` is now correctly unsatisfied, so the
 > live arming gate is trustworthy on this box for the first time.
 >
-> **Next work is `P0-9`** — see Phase E in §4a. Nothing operational is outstanding except `P2-41`.
+> **`P0-9`'s naked-follower exposure is now closed too** (stops mirrored by distance, anchored to
+> the follower's own fill; `S7` landed with it; net48 clean). Targets/OCO, `EnableFollowerAtm`,
+> `StopLimit` offsets and leader-cancels-stop remain — see the plan's `P0-9` for the explicit list.
+> **The mirrored stop has not yet been observed on a live fill**; it is proven by 5 falsifiable
+> tests and a clean compile only. Watch for `BRACKET_MIRRORED` in the output tab on the next
+> copied trade. Nothing operational is outstanding except `P2-41`.
 
 ---
 
 ## 0. Start here (read this, then §4a for the roadmap)
 
-**33 of 48 defects closed. Suite 499/0. NT8 compiles clean, and every fix in this session has
+**33 of 48 defects closed, plus `P0-9`'s naked-follower exposure. Suite 515/0. NT8 compiles clean, and every fix in this session has
 been verified on the live box** (see the banner).
 
 | Phase | State |
@@ -52,8 +57,8 @@ been verified on the live box** (see the banner).
 | **B** — test foundation | ✅ done |
 | **C** — P1 safety-critical | ✅ done except `P1-36` |
 | **D** — P1 rule semantics | ✅ done — `P1-16`, `P1-17`, `P1-18`, `P1-19` |
-| **D2** — stress backlog | `S1`–`S4` landed and closed four defects; **`S5`–`S9` open** |
-| **E** — copier fidelity | `P1-23`, `P1-21`, `P1-22` closed; `P1-21` exposed **`P0-48`**. **`P0-9`'s real half** is all that remains |
+| **D2** — stress backlog | `S1`–`S4` closed four defects; **`S7` landed with `P0-9`**; `S5`, `S6`, `S8`, `S9` open |
+| **E** — copier fidelity | ✅ `P1-21`, `P1-22`, `P1-23`, and **`P0-9`'s naked-follower half** closed. Targets/ATM remain (see plan `P0-9`) |
 | **F–G** | Not started |
 
 ### Five things to know before you touch anything

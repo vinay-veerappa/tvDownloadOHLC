@@ -112,8 +112,11 @@ COPIER_CASES = [
     (
         "P1-21 teardown detaches handlers",
         "COPIER SUBS: teardown detaches every handler",
-        "                    if (acc != null) acc.ExecutionUpdate -= OnAccountExecutionUpdate;",
-        "                    // reverted: handler left attached across the AddOn reload",
+        # The ExecutionUpdate/OrderUpdate detach pair is unique to teardown; the subscribe pass
+        # follows each `-=` with a `+=`.
+        "                    acc.ExecutionUpdate -= OnAccountExecutionUpdate;\n"
+        "                    acc.OrderUpdate -= OnAccountOrderUpdate;",
+        "                    // reverted: handlers left attached across the AddOn reload",
     ),
     (
         "P1-22 the follower's fill is observed at all",
@@ -140,6 +143,54 @@ COPIER_CASES = [
         "            public int GetHashCode(Order obj) { return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj); }",
         "            public bool Equals(Order x, Order y) { return x != null && y != null && x.OrderId == y.OrderId; }  // reverted\n"
         "            public int GetHashCode(Order obj) { return obj == null || obj.OrderId == null ? 0 : obj.OrderId.GetHashCode(); }",
+    ),
+    (
+        "S7 exit copies stay clamped to the follower's position under a concurrent burst",
+        "S7 STRESS: copier fan-out under concurrent burst",
+        # P0-5's clamp. Removing it is the defect S7 exists to catch at scale: every exit in the
+        # burst is sized from the leader's raw quantity instead of what the follower holds.
+        "                int positionSize = Math.Abs(currentFollowerPosition);\n"
+        "                if (rawCopyQty > positionSize)\n"
+        "                {\n"
+        "                    isClamped = positionSize > 0;\n"
+        "                    rawCopyQty = positionSize;\n"
+        "                }",
+        "                // reverted: exit sized from the leader's raw quantity (P0-5)",
+    ),
+    (
+        "P0-9 the stop sits on the losing side of the follower's entry",
+        "BRACKET: the leader's stop distance is anchored to the follower's own fill",
+        "                stopPrice = bracket.FollowerSide == MarketPosition.Long\n"
+        "                    ? bracket.FollowerEntryPrice - bracket.StopDistance\n"
+        "                    : bracket.FollowerEntryPrice + bracket.StopDistance;",
+        "                stopPrice = bracket.FollowerSide == MarketPosition.Long\n"
+        "                    ? bracket.FollowerEntryPrice + bracket.StopDistance   // reverted: wrong side\n"
+        "                    : bracket.FollowerEntryPrice - bracket.StopDistance;",
+    ),
+    (
+        "P0-9 a distance held before the fill is applied on the fill",
+        "BRACKET: a leader stop seen before the follower fills",
+        "            SyncFollowerStop(followerAcc, exec.Instrument, bracket);",
+        "            // reverted: the anchor arrives and nothing re-syncs, so the held distance is lost",
+    ),
+    (
+        "P0-9 a moved leader stop replaces rather than duplicates",
+        "BRACKET: a leader moving its stop replaces",
+        "                    if (stillLive) toCancel = bracket.WorkingStop;",
+        "                    // reverted: old stop left working alongside the new one",
+    ),
+    (
+        "P0-9 a flat follower has its mirrored stop cancelled",
+        "BRACKET: a follower going flat has its mirrored stop cancelled",
+        "                ReleaseFollowerBracket(followerAcc, instrumentName);\n"
+        "                return;",
+        "                return;  // reverted: orphan stop left working against a flat account",
+    ),
+    (
+        "P0-9 no stop is mirrored across price-incomparable instruments",
+        "BRACKET: no stop is mirrored across price-incomparable instruments",
+        "                if (!ArePricesComparable(RootOf(order.Instrument.FullName), RootOf(targetInstrument.FullName)))",
+        "                if (false)  // reverted: comparability no longer checked",
     ),
     (
         "P1-22 price-incomparable instruments are excluded",

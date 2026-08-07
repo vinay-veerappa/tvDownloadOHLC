@@ -246,6 +246,11 @@ namespace NinjaTrader.Cbi
             return o;
         }
 
+        // S7 drives copies from several threads at once. NT8 manages Account.Orders internally;
+        // an unsynchronised List<T> here would corrupt or throw under that burst and the test
+        // would be measuring the stub, not the engine.
+        private readonly object _ordersLock = new object();
+
         public void Submit(Order[] orders)
         {
             ObserveBrokerCall("Submit");
@@ -257,8 +262,14 @@ namespace NinjaTrader.Cbi
                 o.OrderState = OrderState.Submitted;
                 if (SimulateExitRejection && (o.Name.StartsWith("Stop_") || o.Name.StartsWith("Target_")))
                     o.OrderState = OrderState.Rejected;
-                Orders.Add(o);
+                lock (_ordersLock) { Orders.Add(o); }
             }
+        }
+
+        /// <summary>Snapshot of Orders safe to enumerate while other threads are submitting.</summary>
+        public List<Order> OrdersSnapshot()
+        {
+            lock (_ordersLock) { return new List<Order>(Orders); }
         }
 
         public void Change(Order[] orders)
@@ -619,6 +630,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCopierSlip_EntryQuarantinesButExitStillCopies();
             TestCopierSlip_IncomparableSymbolsRecordNoSlippage();
             TestCopierSlip_FillIsMatchedWhenOrderIdChanges();
+
+            // -- BRACKET REPLICATION TESTS (P0-9) --
+            TestBracket_StopMirrorsLeaderDistanceFromFollowerFill();
+            TestBracket_StopBeforeFollowerFillIsAppliedOnFill();
+            TestBracket_MovingLeaderStopReplacesRatherThanDuplicates();
+            TestBracket_FollowerGoingFlatCancelsTheMirroredStop();
+            TestBracket_IncomparableInstrumentsAreNotMirrored();
+
+            // -- S7: copier fan-out under burst (plan §8) --
+            TestStress_S7_CopierFanOutUnderBurst();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -1264,6 +1285,375 @@ namespace NinjaTrader.NinjaScript.AddOns
                     + "Keying on OrderId silently loses the measurement -- or attributes it to "
                     + "the wrong copy, since the id is not unique either.",
                     rel.AvgSlippageTicks, rel.LatencyMs));
+        }
+
+        // ------------------------------------------------------------------
+        // BRACKET REPLICATION TESTS (P0-9)
+        //
+        // Followers received bare market orders with no protective legs. The mirrored stop is
+        // anchored to the FOLLOWER's own fill and carries the LEADER's risk distance -- copying
+        // the leader's stop price would be wrong by the slippage P1-22 measures, and wrong by an
+        // entire price scale across a micro/mini conversion.
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Clears bracket state and re-points the engine's subscriptions at the accounts the test
+        /// just built. SetupCopyPath replaces Account.All with fresh objects, so without the
+        /// re-subscribe the leader raises OrderUpdate into nothing and every bracket assertion
+        /// fails for the wrong reason. These tests deliberately drive the real event wiring.
+        /// </summary>
+        private static void ResetBracketState()
+        {
+            TradeCopierEngine.Instance.ResetBracketsForTest();
+            TradeCopierEngine.Instance.UnsubscribeAllAccounts();
+            TradeCopierEngine.Instance.RefreshAccountSubscriptions();
+        }
+
+        /// <summary>Puts `acct` into a position the stub broker will report, as NT8 would.</summary>
+        private static void SetPosition(Account acct, Instrument inst, MarketPosition side, int qty, double avg)
+        {
+            acct.Positions.RemoveAll(p => p.Instrument != null
+                && p.Instrument.FullName.Equals(inst.FullName, StringComparison.OrdinalIgnoreCase));
+            if (side == MarketPosition.Flat || qty <= 0) return;
+            acct.Positions.Add(new Position
+            {
+                Instrument = inst, MarketPosition = side, Quantity = qty, AveragePrice = avg
+            });
+        }
+
+        private static Order LeaderStop(Instrument inst, OrderAction action, int qty, double stopPrice)
+        {
+            return new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderId = Guid.NewGuid().ToString(),
+                Name = "Stop_Leader",
+                OrderState = OrderState.Working,
+                OrderType = OrderType.StopMarket,
+                Quantity = qty,
+                Instrument = inst,
+                OrderAction = action,
+                StopPrice = stopPrice
+            };
+        }
+
+        /// <summary>Drives an entry copy and the follower's fill, leaving the follower long `qty` at `fillPrice`.</summary>
+        private static void DriveFollowerEntry(
+            Account leader, Account follower, Instrument inst, int qty, double leaderPrice,
+            double fillPrice, string execId)
+        {
+            var lead = LeaderExec(leader, inst, OrderAction.Buy, qty, execId);
+            lead.Price = leaderPrice;
+            lead.Time = SlipT0;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+            SetPosition(follower, inst, MarketPosition.Long, copy.Quantity, fillPrice);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = inst, Order = copy, Quantity = copy.Quantity,
+                Price = fillPrice, ExecutionId = execId + "-F", Name = "COPIER_FOLLOW",
+                Time = SlipT0.AddMilliseconds(100)
+            });
+        }
+
+        // The defining property: the mirrored stop preserves the leader's RISK DISTANCE, applied
+        // to where the follower actually filled.
+        private static void TestBracket_StopMirrorsLeaderDistanceFromFollowerFill()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: the leader's stop distance is anchored to the follower's own fill (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            // Follower fills 2 points worse than the leader.
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18002.00, "BR-A");
+
+            Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"),
+                "No stop is placed before the leader has one -- there is no distance to mirror yet.");
+
+            // Leader attaches its stop 10 points below its entry.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            var stops = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(stops.Count == 1,
+                string.Format("Exactly one protective stop is placed on the follower (got {0}).", stops.Count));
+
+            Assert(Math.Abs(stops[0].StopPrice - 17992.00) < 1e-9,
+                string.Format(
+                    "The stop sits at the follower's fill minus the leader's 10-point distance: "
+                    + "expected 17992.00, got {0}. Copying the leader's stop PRICE (17990) would give "
+                    + "the follower 12 points of risk instead of 10.",
+                    stops[0].StopPrice));
+
+            Assert(stops[0].OrderAction == OrderAction.Sell && stops[0].Quantity == 1,
+                "The stop reduces the follower's long position and matches its size.");
+        }
+
+        // Ordering: the leader can attach its stop before our copy fills. The distance must be
+        // held and applied when the anchor arrives, not dropped.
+        private static void TestBracket_StopBeforeFollowerFillIsAppliedOnFill()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a leader stop seen before the follower fills is applied on the fill (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+
+            // Leader's stop arrives FIRST, while the follower is still flat.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17985.00));
+            Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"),
+                "Nothing is placed while the follower has no position to protect.");
+
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18001.00, "BR-B");
+
+            var stops = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(stops.Count == 1 && Math.Abs(stops[0].StopPrice - 17986.00) < 1e-9,
+                string.Format(
+                    "The held 15-point distance is applied once the follower fills at 18001 "
+                    + "(expected one stop at 17986.00, got {0} stop(s) at {1}). Dropping the "
+                    + "distance leaves the follower naked for the life of the trade.",
+                    stops.Count, stops.Count > 0 ? stops[0].StopPrice.ToString() : "n/a"));
+        }
+
+        // A leader trailing its stop must move the follower's, not accumulate copies of it.
+        private static void TestBracket_MovingLeaderStopReplacesRatherThanDuplicates()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a leader moving its stop replaces the follower's, not duplicates it (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-C");
+
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));   // 10 pts
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17995.00));   // trailed to 5
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17998.00));   // trailed to 2
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && o.OrderState != OrderState.Cancelled)
+                .ToList();
+
+            Assert(live.Count == 1,
+                string.Format(
+                    "Exactly one stop is live after three trail steps (got {0}). Two live stops "
+                    + "over-cover: when both fire the follower is flipped to the opposite side.",
+                    live.Count));
+
+            Assert(Math.Abs(live[0].StopPrice - 17998.00) < 1e-9,
+                string.Format("The live stop tracks the leader's latest distance (expected 17998.00, got {0}).",
+                    live[0].StopPrice));
+        }
+
+        // An orphaned stop against a flat account is not a leftover, it is a new position.
+        private static void TestBracket_FollowerGoingFlatCancelsTheMirroredStop()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a follower going flat has its mirrored stop cancelled (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-D");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            var stop = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+            Assert(stop.OrderState != OrderState.Cancelled, "Precondition: the mirrored stop is live.");
+
+            // The leader exits; the copied exit fills and the follower is flat.
+            SetPosition(leader, mnq, MarketPosition.Flat, 0, 0);
+            var exit = LeaderExec(leader, mnq, OrderAction.Sell, 1, "BR-D-X");
+            exit.Time = SlipT0.AddSeconds(1);
+            TradeCopierEngine.Instance.OnExecution(exit);
+
+            var exitCopy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+            SetPosition(follower, mnq, MarketPosition.Flat, 0, 0);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = mnq, Order = exitCopy, Quantity = exitCopy.Quantity,
+                Price = 18005.00, ExecutionId = "BR-D-XF", Name = "COPIER_FOLLOW",
+                Time = SlipT0.AddSeconds(1)
+            });
+
+            Assert(stop.OrderState == OrderState.Cancelled,
+                string.Format(
+                    "The mirrored stop is cancelled once the follower is flat (state {0}). Left "
+                    + "working, it does not protect anything -- it OPENS a short when it fires.",
+                    stop.OrderState));
+
+            Assert(TradeCopierEngine.Instance.TrackedBracketCount == 0,
+                "The bracket is released, so it cannot resurrect on a later unrelated fill.");
+        }
+
+        // Mirroring a points-distance onto an instrument at a different price scale fabricates a
+        // risk level. Same rule as P1-22's slippage guard.
+        private static void TestBracket_IncomparableInstrumentsAreNotMirrored()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: no stop is mirrored across price-incomparable instruments (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0, autoConvert: true);
+            rel.CustomSymbolMappings["MNQ"] = "ES";
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            var es = Instrument.GetInstrument("ES 03-26");
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 1, "BR-E");
+            lead.Price = 18000.00; lead.Time = SlipT0;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+            SetPosition(follower, es, MarketPosition.Long, copy.Quantity, 5000.00);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = es, Order = copy, Quantity = copy.Quantity,
+                Price = 5000.00, ExecutionId = "BR-E-F", Name = "COPIER_FOLLOW", Time = SlipT0
+            });
+
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"),
+                "No stop is mirrored between MNQ and ES -- a 10-point MNQ distance is not 10 ES points.");
+        }
+
+        // ------------------------------------------------------------------
+        // S7 — COPIER FAN-OUT UNDER BURST (plan §8)
+        //
+        // One leader, several followers, rapid entries and exits driven concurrently. Asserts
+        // OBSERVED INVARIANTS, not "no exception thrown" -- the pre-existing
+        // TestCopierGroup_GroupStressAndConcurrency only asserts the latter, which is why it has
+        // never caught anything (plan §8).
+        //
+        // Two invariants, both of which hold regardless of thread interleaving:
+        //   1. No copy order may exceed the follower's actual position on an EXIT. That is P0-5:
+        //      copying the leader's raw exit quantity flips the follower to the opposite side.
+        //   2. A redelivered execution id produces no additional copies, under concurrency.
+        //      That is the dedupe in _copiedExecutionIds, which the burst contends on.
+        // ------------------------------------------------------------------
+        private static void TestStress_S7_CopierFanOutUnderBurst()
+        {
+            Console.WriteLine("\n[TEST] S7 STRESS: copier fan-out under concurrent burst (P0-5, P0-6, P1-22)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            Account.All.Clear();
+            Instrument.Registry.Clear();
+            RiskGuardAddOn.SetInstanceForTest(null);
+            TradeCopierEngine.Instance.ResetBracketsForTest();
+            TradeCopierEngine.Instance.UnsubscribeAllAccounts();
+            TradeCopierEngine.Instance.RemoveRelationship("BurstLeader");
+
+            var leader = new Account { Name = "BurstLeader", Provider = Provider.Simulator };
+            Account.All.Add(leader);
+
+            var followers = new List<Account>();
+            for (int f = 1; f <= 3; f++)
+            {
+                var acc = new Account { Name = "BurstFollower" + f, Provider = Provider.Simulator };
+                // Each follower holds exactly ONE contract for the whole burst.
+                acc.Positions.Add(new Position
+                {
+                    Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 1, AveragePrice = 18000
+                });
+                Account.All.Add(acc);
+                followers.Add(acc);
+
+                TradeCopierEngine.Instance.UpsertRelationship(new CopierRelationship
+                {
+                    LeaderAccountName = "BurstLeader",
+                    FollowerAccountName = acc.Name,
+                    IsEnabled = true,
+                    AutoSymbolConversion = false,
+                    QuantityRatio = 1.0,
+                    MaxPositionSize = 100
+                });
+            }
+
+            const int threads = 4, perThread = 25;
+            var errors = new List<string>();
+            var errorLock = new object();
+            var workers = new List<System.Threading.Thread>();
+
+            for (int t = 0; t < threads; t++)
+            {
+                int tid = t;
+                var th = new System.Threading.Thread(() =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < perThread; i++)
+                        {
+                            // Leader exits 5 while every follower holds 1. Each copy must be
+                            // clamped to at most 1; unclamped it is 5 and inverts the follower.
+                            var ex = LeaderExec(leader, mnq, OrderAction.Sell, 5,
+                                                string.Format("S7-{0}-{1}", tid, i));
+                            TradeCopierEngine.Instance.OnExecution(ex);
+
+                            // Immediate redelivery of the SAME execution id -- the dedupe is what
+                            // must absorb it, and it is contended by every other thread.
+                            TradeCopierEngine.Instance.OnExecution(ex);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (errorLock) { errors.Add(ex.GetType().Name + ": " + ex.Message); }
+                    }
+                });
+                workers.Add(th);
+                th.Start();
+            }
+            foreach (var th in workers) th.Join();
+
+            Assert(errors.Count == 0,
+                string.Format("The burst completed without exceptions ({0}){1}",
+                    errors.Count, errors.Count > 0 ? ": " + errors[0] : ""));
+
+            int totalCopies = 0, oversized = 0, worstQty = 0;
+            foreach (var acc in followers)
+            {
+                foreach (var o in acc.OrdersSnapshot().Where(o => o.Name == "COPIER_FOLLOW"))
+                {
+                    totalCopies++;
+                    if (o.Quantity > 1) { oversized++; worstQty = Math.Max(worstQty, o.Quantity); }
+                }
+            }
+
+            // Invariant 1 -- P0-5 under concurrency.
+            Assert(oversized == 0,
+                string.Format(
+                    "No exit copy exceeds the follower's 1-lot position ({0} of {1} did, largest {2}). "
+                    + "An exit sized from the leader's raw quantity leaves the follower SHORT the "
+                    + "difference -- and under a burst it does so on every relationship at once.",
+                    oversized, totalCopies, worstQty));
+
+            // Invariant 2 -- dedupe under contention. 4*25 distinct ids, each delivered twice,
+            // fanned out to 3 followers: at most one copy per (id, follower).
+            int distinctExecs = threads * perThread;
+            Assert(totalCopies <= distinctExecs * followers.Count,
+                string.Format(
+                    "Redelivered executions produced no extra copies (got {0}, ceiling {1}). "
+                    + "Exceeding the ceiling means _copiedExecutionIds lost a race and the same "
+                    + "leader fill was copied more than once.",
+                    totalCopies, distinctExecs * followers.Count));
+
+            Assert(totalCopies > 0, "The burst actually drove the copy path (a stress test that drives nothing reports safety).");
         }
 
         /// <summary>

@@ -1,6 +1,6 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **499/0**): **33 of 48 closed**.
+**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **515/0**): **33 of 48 closed**, plus `P0-9`'s naked-follower exposure and stress test `S7`.
 Deployed, `shadow`, armed and guarding; NT8 compiles clean.
 Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 
@@ -198,7 +198,7 @@ arriving on every leader fill.
 — and auto-quarantine the relationship (P2-24) when the follower is locked. Also skip copying
 *from* a locked leader.
 
-### P0-9. Followers are left naked — no bracket replication
+### P0-9. Followers are left naked — no bracket replication — naked exposure CLOSED 2026-08-07 (stops); targets/ATM still open
 **Where**: `TradeCopierEngine.OnExecution:721-738` (always `OrderType.Market`, no protective legs);
 `EnableFollowerAtm` / `FollowerAtmStrategyName` are carried between DTOs (`:91`, `:36-37`) and
 **never read**
@@ -215,6 +215,60 @@ disarmed, in shadow mode, or the follower is in `ExcludedAccounts`, there is no 
    `SlippageCushionPoints`-style padding so follower dollar risk ≤ the configured cap.
 3. Minimum bar: refuse to copy to a follower unless RiskGuard is armed, live, and subscribed to
    that account — fail closed, log `COPY_BLOCKED_NO_GUARD`.
+
+**Fixed by (option 1, stops only) — 2026-08-07.** Followers are no longer naked. The copier now
+subscribes to `OrderUpdate` (via `P1-21`'s subscription seam), recognises the leader's protective
+stop, and mirrors it to every follower:
+
+```
+followerStop = followerEntry -/+ |leaderPositionAvgPrice - leaderStopPrice|
+```
+
+**The stop carries the leader's risk DISTANCE, anchored to the follower's own fill — not the
+leader's stop price.** Copying the price is wrong by exactly the slippage `P1-22` now measures,
+and wrong by an entire price scale across a micro/mini conversion. A follower that filled 2 points
+worse than the leader gets the same 10 points of risk, not 12.
+
+Lifecycle, each pinned by a falsifiable test:
+
+| Behaviour | Test |
+|---|---|
+| Distance anchored to the follower's fill | `TestBracket_StopMirrorsLeaderDistanceFromFollowerFill` |
+| Leader stop seen *before* the copy fills is held and applied on the fill | `TestBracket_StopBeforeFollowerFillIsAppliedOnFill` |
+| Leader trailing its stop replaces, never duplicates | `TestBracket_MovingLeaderStopReplacesRatherThanDuplicates` |
+| Follower flat → mirrored stop cancelled | `TestBracket_FollowerGoingFlatCancelsTheMirroredStop` |
+| Price-incomparable instruments are not mirrored | `TestBracket_IncomparableInstrumentsAreNotMirrored` |
+
+Notes that are not obvious:
+
+- **The classification is RiskGuard's, not a second copy.** `IsStopType`, `IsProtectiveSide` and
+  `IsPendingOrWorking` were promoted from `private` to `internal` and are reused. Two definitions
+  of "the order protecting this position" would drift, and the copier's would be the one that
+  silently stopped recognising a stop.
+- **Cancel-then-replace, not modify.** A stale stop left working beside a new one over-covers: when
+  both fire the follower is flipped to the opposite side.
+- **Every broker call is outside `_lock`** (`P1-10`/`P1-35`). `SyncFollowerStop` computes under the
+  lock, releases, then calls `Cancel`/`CreateOrder`/`Submit`.
+- **An orphan stop is not a leftover, it is a new position.** Releasing on flat is why
+  `UpdateFollowerBracketOnFill` re-reads `account.Positions` rather than accumulating from
+  executions — the fill may be our copy, the mirrored stop firing, or a manual trade, and only the
+  broker knows the net.
+- **The mirrored stop is also visible to RiskGuard**, which will seed the follower's FSM as
+  `Protected` instead of firing `MISSING_STOP_FLATTEN` at the grace deadline.
+
+**Explicitly NOT done — do not read this as P0-9 fully closed:**
+
+1. **Profit targets and OCO pairing.** Only stops are mirrored. A target is upside, not risk;
+   adding it brings OCO and partial-fill re-pairing with it. The follower still exits via the
+   copied market exit when the leader's target fills.
+2. **Option 2 (`EnableFollowerAtm` / `FollowerAtmStrategyName`) is still unread config** — the
+   "config can lie" problem `P1-23` fixed elsewhere still applies to these two fields.
+3. **`StopLimit` leaders become `StopMarket` followers.** The limit offset is not carried.
+4. **A leader that CANCELS its stop but stays in the position leaves the follower's stop working.**
+   Deliberate — fail-safe — but it is a divergence from the leader, and it is not tested.
+
+> Tracked as follow-on work rather than a new defect number, since `P0-9` remains open for (1)–(4).
+> The naked-follower exposure that made it P0 is closed.
 
 ---
 
@@ -1319,7 +1373,7 @@ as the paths driven through it. Stress tests exist to drive the paths nobody tho
 | S4 ✅ | **Lock-scope sweep over every entry point** — drive `ExecuteOrderUpdate`, `ExecuteAccountItemUpdate`, position updates, grace expiry, watchdog and the sweep with the broker observer armed | **zero** broker calls while `TestIsStateLockHeld()` is true, on every path, not a hand-picked two | `P1-43` |
 | S5 | **Partial-fill storm** — one trade exited in many small fills, both event orderings | exactly one consecutive-loss judgement; late fills revise rather than accumulate | `P1-16` |
 | S6 | **Rapid flip loop** — long↔short repeatedly | FSM coverage never outlives its position; no stale `CoveredQuantity`; grace re-arms each leg | `P1-36`, T1 |
-| S7 | **Copier fan-out under burst** — one leader, many followers, rapid entries and exits | no duplicate copies, no follower left inverted, sizing correct under concurrency | `P0-5`, `P0-6`, `P1-22` |
+| S7 ✅ | **Copier fan-out under burst** — one leader, many followers, rapid entries and exits | no duplicate copies, no follower left inverted, sizing correct under concurrency | `P0-5`, `P0-6`, `P1-22` |
 | S8 | **Config reload while armed and in position** | live reload does not drop FSMs, coverage or lockouts, and does not corrupt the config | `P1-39` |
 | S9 | **Restart mid-trade** — kill and reload with a position open | seeded FSM matches the broker; no double-count of trades or losses; lockouts survive | `P1-15`, `P1-16` limit |
 

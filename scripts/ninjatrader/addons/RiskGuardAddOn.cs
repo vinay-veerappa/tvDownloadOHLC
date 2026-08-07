@@ -1937,7 +1937,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         private static string FsmKey(string accountName, string instrument) =>
             accountName + "|" + instrument;
 
-        private static bool IsProtectiveSide(Order o, MarketPosition positionSide)
+        // internal, not private: TradeCopierEngine's bracket replication (P0-9) must classify a
+        // leader's protective legs by exactly the same rule the guard uses. Two definitions of
+        // "this order is the thing protecting the position" would drift, and the copier's copy
+        // would be the one that silently stopped recognising a stop.
+        internal static bool IsProtectiveSide(Order o, MarketPosition positionSide)
         {
             if (positionSide == MarketPosition.Long)
                 return o.OrderAction == OrderAction.Sell || o.OrderAction == OrderAction.SellShort;
@@ -1946,10 +1950,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             return false;
         }
 
-        private static bool IsStopType(Order o) =>
+        internal static bool IsStopType(Order o) =>
             o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit;
 
-        private static bool IsPendingOrWorking(OrderState s) =>
+        internal static bool IsPendingOrWorking(OrderState s) =>
             s == OrderState.Submitted || s == OrderState.Accepted ||
             s == OrderState.Initialized  || s == OrderState.Working ||
             s == OrderState.PartFilled;
