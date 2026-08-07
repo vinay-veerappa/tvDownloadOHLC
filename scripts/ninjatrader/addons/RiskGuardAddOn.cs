@@ -535,6 +535,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         // persistence at a temp file instead, so a restart can be simulated honestly:
         // save, construct a second instance, load, and see what it believes.
         internal void SetStateFileForTest(string path) { _stateFile = path; }
+        // S8 drives a genuine SaveAndReloadConfig round trip. Without a real path the write
+        // throws inside its own catch, LoadConfig finds no file and manufactures a default
+        // config -- and the test would "pass" while proving the opposite of what it claims.
+        internal void SetConfigFileForTest(string path) { _configFile = path; }
         internal void SavePersistedStateForTest() { SavePersistedState(); }
         internal void LoadPersistedStateForTest() { LoadPersistedState(); }
         internal int GetShadowSessionsCompletedForTest() { return _shadowSessionsCompleted; }

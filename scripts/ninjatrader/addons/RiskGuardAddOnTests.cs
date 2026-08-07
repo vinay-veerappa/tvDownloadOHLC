@@ -556,6 +556,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestP1_23_SymbolTranslationAndSizingModesDoNotLie();
             TestP1_47_ArmDefaultFollowsTheResolvedMode();
             TestStress_S1toS4_OrderFloodGovernor();
+            TestStress_S5_PartialFillStorm();
+            TestStress_S6_RapidFlipLoop();
+            TestStress_S8_ConfigReloadWhileArmedAndInPosition();
+            TestStress_S9_RestartMidTrade();
             TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock();
             TestP1_13_NoGuardPathIsSkippedWhenThereIsNoDispatcher();
             TestP1_12_NoDiskWriteHappensUnderTheStateLock();
@@ -5155,6 +5159,497 @@ namespace NinjaTrader.NinjaScript.AddOns
         // stress test found four defects in one afternoon that a green suite had not. They are
         // driven through the real entry point, ExecuteOrderUpdate, so they catch wiring and not
         // just arithmetic.
+        // ==================================================================
+        // S5 — PARTIAL-FILL STORM (plan §8)
+        //
+        // Realized PnL arrives PER EXECUTION, so one trade exited in eight partials delivers
+        // eight negative deltas. Counting each as a consecutive loss made a MaxConsecutiveLosses=3
+        // lockout reachable from a single losing trade. P1-16 banks the deltas and judges once --
+        // but its correctness depends entirely on event ORDER, and NT8 guarantees none. Both
+        // orderings are driven here, through the real entry points.
+        // ==================================================================
+        private static void TestStress_S5_PartialFillStorm()
+        {
+            Console.WriteLine("\n[STRESS S5] partial-fill storm, both event orderings (P1-16)");
+
+            var mnq = new Instrument("MNQ");
+
+            Func<Tuple<RiskGuardAddOn, Account, AccountState>> build = () =>
+            {
+                Account.All.Clear();
+                var acct = new Account { Name = "FillAcc", Provider = Provider.Simulator };
+                Account.All.Add(acct);
+                var a = new RiskGuardAddOn();
+                var cfg = new RiskConfig();
+                cfg.Overtrading.MaxConsecutiveLosses = 3;
+                cfg.Overtrading.CooldownMinutes = 15;
+                a.SetConfigForTest(cfg);
+                a.SetSubscribedAccountForTest("FillAcc");
+                var st = new AccountState("FillAcc");
+                st.LastSessionDate = DateTime.UtcNow.Date;
+                a.SetAccountStateForTest("FillAcc", st);
+                return Tuple.Create(a, acct, st);
+            };
+
+            // Drives a realized-PnL change through the real AccountItemUpdate handler.
+            Action<Tuple<RiskGuardAddOn, Account, AccountState>, double> realized = (t, cumulative) =>
+                t.Item1.ExecuteAccountItemUpdate(t.Item2, new AccountItemEventArgs
+                {
+                    AccountItem = AccountItem.RealizedProfitLoss,
+                    Value = cumulative,
+                    Currency = Currency.UsDollar
+                });
+
+            // ---- ordering A: every partial fill lands BEFORE the position goes flat ----
+            var a1 = build();
+            a1.Item2.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 8, AveragePrice = 18000
+            });
+            a1.Item3.UpdatePosition(a1.Item2, mnq, MarketPosition.Long, 8, 18000, 0, a1.Item1.Config);
+
+            double running = 0;
+            for (int i = 1; i <= 8; i++)
+            {
+                running -= 25.0;                        // each partial exits at a loss
+                a1.Item2.Positions[0].Quantity = 8 - i;
+                if (i < 8)
+                    a1.Item3.UpdatePosition(a1.Item2, mnq, MarketPosition.Long, 8 - i, 18000, 0, a1.Item1.Config);
+                realized(a1, running);
+            }
+            a1.Item2.Positions.Clear();
+            a1.Item3.UpdatePosition(a1.Item2, mnq, MarketPosition.Flat, 0, 0, 0, a1.Item1.Config);
+
+            Assert(a1.Item3.ConsecutiveLosses == 1,
+                string.Format(
+                    "Eight partial exits of ONE losing trade count as ONE consecutive loss (got {0}). "
+                    + "Counting each fill separately makes a 3-loss lockout reachable from a single "
+                    + "trade, and puts this counter at odds with TradesToday.",
+                    a1.Item3.ConsecutiveLosses));
+
+            Assert(!a1.Item3.IsLockedOut,
+                "One losing trade does not lock the account out at MaxConsecutiveLosses=3.");
+
+            // ---- ordering B: the position goes flat FIRST, the tail of the fills arrives after ----
+            // This is the ordering P1-16's late-fill revision exists for, and the one no unit test
+            // could pin without driving the real handler.
+            var b1 = build();
+            b1.Item2.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 8, AveragePrice = 18000
+            });
+            b1.Item3.UpdatePosition(b1.Item2, mnq, MarketPosition.Long, 8, 18000, 0, b1.Item1.Config);
+
+            realized(b1, -50.0);                          // two partials seen while still open
+            b1.Item2.Positions.Clear();
+            b1.Item3.UpdatePosition(b1.Item2, mnq, MarketPosition.Flat, 0, 0, 0, b1.Item1.Config);
+
+            for (int i = 3; i <= 8; i++)                   // six LATE fills, after flat
+                realized(b1, -25.0 * i);
+
+            Assert(b1.Item3.ConsecutiveLosses == 1,
+                string.Format(
+                    "Late fills REVISE the closed trade's judgement rather than accumulating (got {0}). "
+                    + "Each one landing as its own loss is the same defect arriving through the other "
+                    + "event ordering.",
+                    b1.Item3.ConsecutiveLosses));
+
+            // ---- and the revision must be able to change the VERDICT, not just avoid double-counting ----
+            var c1 = build();
+            c1.Item2.Positions.Add(new Position
+            {
+                Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 4, AveragePrice = 18000
+            });
+            c1.Item3.UpdatePosition(c1.Item2, mnq, MarketPosition.Long, 4, 18000, 0, c1.Item1.Config);
+            realized(c1, 120.0);                          // looks like a winner at the flat transition
+            c1.Item2.Positions.Clear();
+            c1.Item3.UpdatePosition(c1.Item2, mnq, MarketPosition.Flat, 0, 0, 0, c1.Item1.Config);
+            Assert(c1.Item3.ConsecutiveLosses == 0, "Precondition: settled as a win, streak reset.");
+
+            realized(c1, -80.0);                          // a late fill turns the trade net negative
+
+            Assert(c1.Item3.ConsecutiveLosses == 1,
+                string.Format(
+                    "A late fill that flips the trade from net win to net loss is re-judged as a loss "
+                    + "(got {0}). Judging once and never revisiting means a trade whose losing tail "
+                    + "arrives late is recorded as a win.",
+                    c1.Item3.ConsecutiveLosses));
+
+            // ---- three genuinely distinct losing trades must STILL trip the lockout ----
+            // The fix must not have bought its accuracy by desensitising the rule.
+            var d1 = build();
+            for (int trade = 1; trade <= 3; trade++)
+            {
+                d1.Item2.Positions.Clear();
+                d1.Item2.Positions.Add(new Position
+                {
+                    Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+                });
+                d1.Item3.UpdatePosition(d1.Item2, mnq, MarketPosition.Long, 2, 18000, 0, d1.Item1.Config);
+                realized(d1, -100.0 * trade);
+                d1.Item2.Positions.Clear();
+                d1.Item3.UpdatePosition(d1.Item2, mnq, MarketPosition.Flat, 0, 0, 0, d1.Item1.Config);
+            }
+            Assert(d1.Item3.ConsecutiveLosses == 3,
+                string.Format("Three separate losing trades still count as three (got {0}).",
+                    d1.Item3.ConsecutiveLosses));
+            Assert(d1.Item3.CooldownUntil > DateTime.UtcNow,
+                "...and the cooldown fires, so the rule kept its teeth.");
+        }
+
+        // ==================================================================
+        // S6 — RAPID FLIP LOOP (plan §8)
+        //
+        // long <-> short, repeatedly. Coverage must never outlive the position it covered: a
+        // CoveredQuantity carried across a flip means the new leg reads as protected by a stop
+        // that is on the wrong side of it, so grace never arms and the position stays naked.
+        // ==================================================================
+        private static void TestStress_S6_RapidFlipLoop()
+        {
+            Console.WriteLine("\n[STRESS S6] rapid long/short flip loop (P1-36, T1)");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "FlipAcc", Provider = Provider.Simulator };
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop"));
+            addon.SetSubscribedAccountForTest("FlipAcc");
+            addon.SetAccountStateForTest("FlipAcc", new AccountState("FlipAcc"));
+            addon.TestClearFsms();
+
+            var staleCoverage = new List<string>();
+            var missingGrace = new List<string>();
+            var wrongSide = new List<string>();
+            Order previousStop = null;
+
+            for (int leg = 0; leg < 12; leg++)
+            {
+                bool longLeg = leg % 2 == 0;
+                var side = longLeg ? MarketPosition.Long : MarketPosition.Short;
+                int qty = 2 + (leg % 3);
+
+                // The previous leg's stop is STILL WORKING as the flip lands. That is the real
+                // shape of this hazard: NT8 collapses close+reverse into one position update, and
+                // for a moment the old protective order is live against a position that has
+                // already reversed under it. Killing the stop before flipping -- the tidy version
+                // -- makes every assertion below unfalsifiable, because a terminal order cannot
+                // contribute coverage to anything.
+                SetPosition(account, mnq, side, qty, 18000);
+                addon.TestFsmOnPosition(account, mnq.FullName, side, qty);
+
+                var fsm = addon.TestGetFsm("FlipAcc", mnq.FullName);
+                if (fsm == null) { missingGrace.Add("leg " + leg + ": no FSM at all"); continue; }
+
+                // The instant a new leg opens it is naked: whatever covered the previous leg is
+                // on the wrong side of this one.
+                if (fsm.CoveredQuantity != 0)
+                    staleCoverage.Add(string.Format("leg {0} ({1} {2}) opened with CoveredQuantity {3}",
+                        leg, side, qty, fsm.CoveredQuantity));
+                if (!fsm.GracePending)
+                    missingGrace.Add(string.Format("leg {0} ({1} {2}) opened with no grace timer", leg, side, qty));
+                if (fsm.PositionSide != side || fsm.PositionQuantity != qty)
+                    wrongSide.Add(string.Format("leg {0}: FSM says {1} {2}, position is {3} {4}",
+                        leg, fsm.PositionSide, fsm.PositionQuantity, side, qty));
+
+                // Now the stale stop is cancelled, as the broker would once the reversal settles.
+                if (previousStop != null)
+                {
+                    previousStop.OrderState = OrderState.Cancelled;
+                    account.Orders.Remove(previousStop);
+                    addon.TestFsmOnOrder(account, mnq.FullName, previousStop);
+                }
+
+                // Cover the new leg properly, so the NEXT flip has real, live coverage to carry.
+                var stop = new Order
+                {
+                    Id = Guid.NewGuid().ToString(), OrderId = Guid.NewGuid().ToString(),
+                    Name = "Stop_Leg" + leg, OrderState = OrderState.Working,
+                    OrderType = OrderType.StopMarket, Quantity = qty, Instrument = mnq,
+                    OrderAction = longLeg ? OrderAction.Sell : OrderAction.BuyToCover,
+                    StopPrice = longLeg ? 17900 : 18100
+                };
+                account.Orders.Add(stop);
+                addon.TestFsmOnOrder(account, mnq.FullName, stop);
+
+                var covered = addon.TestGetFsm("FlipAcc", mnq.FullName);
+                if (covered == null || covered.CoveredQuantity != qty)
+                    staleCoverage.Add(string.Format("leg {0}: covering stop of {1} recorded as {2}",
+                        leg, qty, covered == null ? -1 : covered.CoveredQuantity));
+
+                previousStop = stop;
+            }
+
+            if (previousStop != null)
+            {
+                previousStop.OrderState = OrderState.Cancelled;
+                account.Orders.Remove(previousStop);
+            }
+
+            Assert(staleCoverage.Count == 0,
+                string.Format(
+                    "Coverage never outlives the position it covered ({0} violation(s)){1}. A stale "
+                    + "CoveredQuantity carried into a flipped leg means the guard believes a stop on "
+                    + "the WRONG SIDE is protecting it -- grace never arms, and the position is naked "
+                    + "for its whole life.",
+                    staleCoverage.Count,
+                    staleCoverage.Count == 0 ? "" : ": " + string.Join("; ", staleCoverage.Take(3))));
+
+            Assert(missingGrace.Count == 0,
+                string.Format("Every leg arms its own grace timer ({0} violation(s)){1}.",
+                    missingGrace.Count,
+                    missingGrace.Count == 0 ? "" : ": " + string.Join("; ", missingGrace.Take(3))));
+
+            Assert(wrongSide.Count == 0,
+                string.Format("The FSM tracks each leg's real side and size ({0} violation(s)){1}.",
+                    wrongSide.Count,
+                    wrongSide.Count == 0 ? "" : ": " + string.Join("; ", wrongSide.Take(3))));
+
+            // Finally flat: nothing may be left tracked.
+            SetPosition(account, mnq, MarketPosition.Flat, 0, 0);
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Flat, 0);
+            Assert(addon.TestGetFsm("FlipAcc", mnq.FullName) == null,
+                "Going flat after twelve flips leaves no FSM behind.");
+            Assert(addon.TestPendingStopCount("FlipAcc", mnq.FullName) == 0,
+                "...and no buffered stops either (P1-14's buffer is cleared on flat).");
+        }
+
+        // ==================================================================
+        // S8 — CONFIG RELOAD WHILE ARMED AND IN POSITION (plan §8)
+        //
+        // A live reload must not drop FSMs, coverage or lockouts, and must not corrupt the config.
+        // P1-39 is the reason for the last clause: every load appended the default windows, so
+        // WindowsET grew without bound and a deleted default came back on the next reload.
+        // ==================================================================
+        private static void TestStress_S8_ConfigReloadWhileArmedAndInPosition()
+        {
+            Console.WriteLine("\n[STRESS S8] config reload while armed and in position (P1-39, P1-42)");
+
+            var mnq = new Instrument("MNQ");
+            Account.All.Clear();
+            var account = new Account { Name = "ReloadAcc", Provider = Provider.Simulator };
+            Account.All.Add(account);
+
+            string dir = Path.Combine(Path.GetTempPath(), "riskguard_s8_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string configPath = Path.Combine(dir, "config.json");
+
+            try
+            {
+                var addon = new RiskGuardAddOn();
+                addon.SetConfigFileForTest(configPath);
+                var cfg = FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop");
+                cfg.ExcludedAccounts = new List<string>();
+                addon.SetConfigForTest(cfg);
+                addon.SetSubscribedAccountForTest("ReloadAcc");
+
+                var state = new AccountState("ReloadAcc");
+                state.LastSessionDate = DateTime.UtcNow.Date;
+                addon.SetAccountStateForTest("ReloadAcc", state);
+                addon.TestClearFsms();
+
+                // In position, covered, and locked out. All three must survive the reload.
+                SetPosition(account, mnq, MarketPosition.Long, 4, 18000);
+                addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 4);
+                var stop = PartialStop(mnq, 4, 17900, "Stop_Live");
+                account.Orders.Add(stop);
+                addon.TestFsmOnOrder(account, mnq.FullName, stop);
+                state.IsLockedOut = true;
+                state.LockoutUntil = DateTime.UtcNow.AddMinutes(30);
+
+                var before = addon.TestGetFsm("ReloadAcc", mnq.FullName);
+                Assert(before != null && before.CoveredQuantity == 4,
+                    "Precondition: a covered 4-lot position is tracked.");
+
+                int windowsBefore = addon.Config.WindowsET == null ? 0 : addon.Config.WindowsET.Count;
+
+                // Five genuine save+reload round trips through the real path, as an operator
+                // hammering Save or a script POSTing config would produce.
+                for (int i = 0; i < 5; i++)
+                {
+                    var edited = addon.Config;
+                    edited.StopGuard.StopAttachSeconds = 45 + i;
+                    addon.SaveAndReloadConfig(edited);
+                }
+
+                var after = addon.TestGetFsm("ReloadAcc", mnq.FullName);
+                Assert(after != null,
+                    "The FSM survives five live config reloads. Losing it leaves an open position "
+                    + "untracked, with the guard reporting armed.");
+                Assert(after != null && after.CoveredQuantity == 4,
+                    string.Format("Coverage survives too (got {0} of 4). Dropping it makes the guard "
+                        + "attach a duplicate stop to an already-covered position.",
+                        after == null ? -1 : after.CoveredQuantity));
+                Assert(after != null && after.PositionQuantity == 4 && after.PositionSide == MarketPosition.Long,
+                    "...and the position it describes is still the real one.");
+
+                var stateAfter = addon.GetAccountStateForTest("ReloadAcc");
+                Assert(stateAfter != null && stateAfter.IsLockedOut,
+                    "The lockout survives the reload. A reload that clears it is a free unlock for "
+                    + "anyone who can save the config.");
+
+                int windowsAfter = addon.Config.WindowsET == null ? 0 : addon.Config.WindowsET.Count;
+                Assert(windowsAfter == windowsBefore,
+                    string.Format(
+                        "WindowsET is unchanged across five reloads ({0} -> {1}). P1-39 appended the "
+                        + "defaults on every single load, so the list grew without bound and a deleted "
+                        + "default could never stay deleted.",
+                        windowsBefore, windowsAfter));
+
+                Assert(Math.Abs(addon.Config.StopGuard.StopAttachSeconds - 49) < 1,
+                    string.Format("The edit actually round-tripped through disk (StopAttachSeconds {0}, expected 49). "
+                        + "If it did not, every assertion above was measuring a config that never reloaded.",
+                        addon.Config.StopGuard.StopAttachSeconds));
+
+                var reread = Newtonsoft.Json.JsonConvert.DeserializeObject<RiskConfig>(File.ReadAllText(configPath));
+                Assert(reread != null && (reread.WindowsET == null ? 0 : reread.WindowsET.Count) == windowsBefore,
+                    "And the file on disk is not corrupted either -- the growth would otherwise be "
+                    + "invisible until the next restart read it back.");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        // ==================================================================
+        // S9 — RESTART MID-TRADE (plan §8)
+        //
+        // Kill and reload with a position open. The seeded FSM must match the broker, trades and
+        // losses must not double-count, and lockouts must survive. P1-16 has a documented restart
+        // limit -- an in-flight trade settles as a scratch rather than inventing a result -- and
+        // this pins that limit rather than pretending it is not there.
+        // ==================================================================
+        private static void TestStress_S9_RestartMidTrade()
+        {
+            Console.WriteLine("\n[STRESS S9] restart mid-trade (P1-15, P1-16's restart limit)");
+
+            var mnq = new Instrument("MNQ");
+            string dir = Path.Combine(Path.GetTempPath(), "riskguard_s9_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string statePath = Path.Combine(dir, "state.json");
+
+            try
+            {
+                // ---- session 1: two losing trades banked, then a third trade left OPEN ----
+                Account.All.Clear();
+                var account = new Account { Name = "RestartAcc", Provider = Provider.Simulator };
+                Account.All.Add(account);
+
+                var first = new RiskGuardAddOn();
+                first.SetStateFileForTest(statePath);
+                var cfg1 = FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop");
+                cfg1.Overtrading.MaxConsecutiveLosses = 3;
+                cfg1.Overtrading.CooldownMinutes = 15;
+                first.SetConfigForTest(cfg1);
+                first.SetSubscribedAccountForTest("RestartAcc");
+                var s1 = new AccountState("RestartAcc");
+                s1.LastSessionDate = DateTime.UtcNow.Date;
+                first.SetAccountStateForTest("RestartAcc", s1);
+                first.TestClearFsms();
+
+                double running = 0;
+                for (int trade = 1; trade <= 2; trade++)
+                {
+                    account.Positions.Clear();
+                    account.Positions.Add(new Position
+                    {
+                        Instrument = mnq, MarketPosition = MarketPosition.Long, Quantity = 2, AveragePrice = 18000
+                    });
+                    s1.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0, cfg1);
+                    running -= 100.0;
+                    first.ExecuteAccountItemUpdate(account, new AccountItemEventArgs
+                    {
+                        AccountItem = AccountItem.RealizedProfitLoss, Value = running, Currency = Currency.UsDollar
+                    });
+                    account.Positions.Clear();
+                    s1.UpdatePosition(account, mnq, MarketPosition.Flat, 0, 0, 0, cfg1);
+                }
+                Assert(s1.ConsecutiveLosses == 2, "Precondition: two losing trades banked.");
+
+                // A third trade is opened and left open, with a partial loss already realized.
+                SetPosition(account, mnq, MarketPosition.Long, 3, 18000);
+                s1.UpdatePosition(account, mnq, MarketPosition.Long, 3, 18000, 0, cfg1);
+                running -= 40.0;
+                first.ExecuteAccountItemUpdate(account, new AccountItemEventArgs
+                {
+                    AccountItem = AccountItem.RealizedProfitLoss, Value = running, Currency = Currency.UsDollar
+                });
+                s1.IsLockedOut = true;
+
+                first.SavePersistedStateForTest();
+                Assert(File.Exists(statePath), "Precondition: state was persisted before the restart.");
+
+                // ---- the restart. New instance, same broker state, same state file. ----
+                var second = new RiskGuardAddOn();
+                second.SetStateFileForTest(statePath);
+                var cfg2 = FsmTestConfig(graceSeconds: 60, onMissing: "AutoStop");
+                cfg2.Overtrading.MaxConsecutiveLosses = 3;
+                cfg2.Overtrading.CooldownMinutes = 15;
+                second.SetConfigForTest(cfg2);
+                second.SetSubscribedAccountForTest("RestartAcc");
+                second.SetAccountStateForTest("RestartAcc", new AccountState("RestartAcc"));
+                second.TestClearFsms();
+                second.LoadPersistedStateForTest();
+
+                var restored = second.GetAccountStateForTest("RestartAcc");
+                Assert(restored != null && restored.ConsecutiveLosses == 2,
+                    string.Format(
+                        "The two banked losses survive the restart (got {0}). Losing them hands the "
+                        + "trader a fresh streak, so the lockout that was one trade away is now three.",
+                        restored == null ? -1 : restored.ConsecutiveLosses));
+
+                Assert(restored != null && restored.IsLockedOut,
+                    "The lockout survives the restart. Restarting NT8 must not be an unlock button.");
+
+                // The open trade's partial loss is deliberately NOT persisted (P1-16): it settles
+                // as a scratch rather than inventing a result from half a trade.
+                Assert(restored != null && Math.Abs(restored.OpenTradeRealizedDelta) < 0.01,
+                    string.Format(
+                        "The in-flight trade's partial PnL is not carried across the restart (got {0}). "
+                        + "This is P1-16's documented limit, pinned rather than assumed: half a trade's "
+                        + "realized PnL is not a result, and persisting it would invent one.",
+                        restored == null ? -1 : restored.OpenTradeRealizedDelta));
+
+                // ---- and the guard must re-derive the OPEN position from the broker ----
+                second.SetArmedForTest(false);
+                second.ToggleArmed();
+                Assert(second.GetIsArmed(), "Precondition: arming succeeded after the restart.");
+
+                var fsm = second.TestGetFsm("RestartAcc", mnq.FullName);
+                Assert(fsm != null,
+                    "The open 3-lot position is seeded on arm. Without it the guard comes back armed "
+                    + "and covering nothing until the position happens to change.");
+                Assert(fsm != null && fsm.PositionQuantity == 3 && fsm.PositionSide == MarketPosition.Long,
+                    string.Format("The seeded FSM matches the BROKER, not the state file ({0} {1}).",
+                        fsm == null ? "none" : fsm.PositionSide.ToString(),
+                        fsm == null ? -1 : fsm.PositionQuantity));
+                Assert(fsm != null && fsm.CoveredQuantity == 0 && fsm.GracePending,
+                    "It is seeded uncovered with grace armed -- there is no stop on the account, and "
+                    + "assuming otherwise across a restart is exactly how a position stays naked.");
+
+                // Closing that trade must count as ONE further loss, not repeat the two banked ones.
+                account.Positions.Clear();
+                restored.UpdatePosition(account, mnq, MarketPosition.Flat, 0, 0, 0, cfg2);
+                second.ExecuteAccountItemUpdate(account, new AccountItemEventArgs
+                {
+                    AccountItem = AccountItem.RealizedProfitLoss, Value = running - 60.0, Currency = Currency.UsDollar
+                });
+
+                Assert(restored.ConsecutiveLosses == 3,
+                    string.Format(
+                        "Closing the restarted trade at a loss makes three, not five (got {0}). "
+                        + "Double-counting the banked trades on reload is how a restart manufactures "
+                        + "a lockout.",
+                        restored.ConsecutiveLosses));
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
         private static void TestStress_S1toS4_OrderFloodGovernor()
         {
             Console.WriteLine("\n[STRESS S1-S4] order-flood governor");
