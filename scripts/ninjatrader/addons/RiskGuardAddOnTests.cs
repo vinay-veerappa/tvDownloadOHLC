@@ -281,6 +281,22 @@ namespace NinjaTrader.Cbi
             ExecutionUpdate?.Invoke(this, new ExecutionEventArgs { Execution = ex });
         }
 
+        /// <summary>
+        /// How many handlers are attached to ExecutionUpdate. P1-21's subscribe pass now runs on
+        /// every connection change, so "attached exactly once" is the invariant that stops a
+        /// flapping broker from copying each fill N times. Asserted directly rather than through
+        /// order counts, because OnExecution's ExecutionId dedupe would mask a doubled handler
+        /// and the test would pass while proving nothing.
+        /// </summary>
+        public int ExecutionUpdateHandlerCount
+        {
+            get
+            {
+                var d = ExecutionUpdate;
+                return d == null ? 0 : d.GetInvocationList().Length;
+            }
+        }
+
         public void TriggerAccountItemUpdate(AccountItem item, double value)
         {
             AccountItemUpdate?.Invoke(this, new AccountItemEventArgs { AccountItem = item, Value = value, Currency = Currency.UsDollar });
@@ -589,6 +605,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCopyPath_LiveAccountNamedSimIsNotTreatedAsSimulated();
             TestCopyPath_GenuineSimulatorAccountStillReceivesCopies();
 
+            // -- COPIER SUBSCRIPTION TESTS (P1-21) --
+            TestCopierSubs_LateConnectingLeaderIsCopied();
+            TestCopierSubs_RepeatedRefreshAttachesOneHandler();
+            TestCopierSubs_TeardownDetachesHandlers();
+
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
 
@@ -873,6 +894,137 @@ namespace NinjaTrader.NinjaScript.AddOns
                     + "'Sim' prefix and nothing is armed (got {0} order(s)). The old check would "
                     + "have blocked this account for having the wrong name.",
                     submitted.Count));
+        }
+
+        // ------------------------------------------------------------------
+        // COPIER SUBSCRIPTION TESTS (P1-21)
+        //
+        // McpBridgeAddOn enumerated Account.All exactly once, at State.Configure, and attached
+        // the copier's execution handler there. Nothing ever ran that pass again, so an account
+        // whose broker connected later never raised OnExecution: the relationship stayed
+        // enabled in the config and visible in the UI while copying nothing at all. The
+        // bookkeeping now lives on TradeCopierEngine so it is reachable from the test build --
+        // McpBridgeAddOn.cs is excluded by RiskGuardTests.csproj, which is why this went
+        // unnoticed.
+        // ------------------------------------------------------------------
+
+        /// <summary>Clears copier + account state and detaches any subscription left by a prior test.</summary>
+        private static void ResetCopierSubscriptions(CopierRelationship rel)
+        {
+            Account.All.Clear();
+            Instrument.Registry.Clear();
+            RiskGuardAddOn.SetInstanceForTest(null);
+            TradeCopierEngine.Instance.UnsubscribeAllAccounts();
+            TradeCopierEngine.Instance.RemoveRelationship(rel.LeaderAccountName);
+            TradeCopierEngine.Instance.UpsertRelationship(rel);
+        }
+
+        private static CopierRelationship SubsTestRelationship(string leader, string follower)
+        {
+            return new CopierRelationship
+            {
+                LeaderAccountName = leader,
+                FollowerAccountName = follower,
+                IsEnabled = true,
+                FixedLotMode = true,
+                FixedLotSize = 1,
+                AutoSymbolConversion = false,
+                MaxPositionSize = 100
+            };
+        }
+
+        // P1-21: the leader's broker connects after State.Configure. Pre-fix there was no second
+        // subscribe pass, so this leader's fills reached nobody.
+        private static void TestCopierSubs_LateConnectingLeaderIsCopied()
+        {
+            Console.WriteLine("\n[TEST] COPIER SUBS: a leader that connects after startup is still copied (P1-21)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SubsTestRelationship("LateLeader", "SimFollower");
+            ResetCopierSubscriptions(rel);
+
+            // Startup: only the follower is online. This is the single pass McpBridgeAddOn used
+            // to run at State.Configure and never repeat.
+            var follower = new Account { Name = "SimFollower", Provider = Provider.Simulator };
+            Account.All.Add(follower);
+            TradeCopierEngine.Instance.RefreshAccountSubscriptions();
+
+            // The leader's broker connects afterwards, and NT8 raises ConnectionStatusUpdate.
+            var leader = new Account { Name = "LateLeader", Provider = Provider.Simulator };
+            Account.All.Add(leader);
+            TradeCopierEngine.Instance.RefreshAccountSubscriptions();
+
+            // Delivered through the account event, not by calling OnExecution directly -- the
+            // defect is in the wiring, so a test that bypasses the wiring cannot see it.
+            leader.TriggerExecutionUpdate(LeaderExec(leader, mnq, OrderAction.Buy, 1, "P1-21-LATE"));
+
+            int copied = follower.Orders.Count(o => o.Name == "COPIER_FOLLOW");
+            Assert(copied == 1,
+                string.Format(
+                    "A leader that connected after startup still reaches the follower (expected 1 "
+                    + "copy, got {0}). With the subscribe pass running only once, this leader "
+                    + "raises no ExecutionUpdate and the relationship is silently dead.",
+                    copied));
+        }
+
+        // P1-21 follow-on: the pass now runs on every connection change, and brokers flap. If it
+        // were not idempotent, each reconnect would add another handler and copy every fill again.
+        private static void TestCopierSubs_RepeatedRefreshAttachesOneHandler()
+        {
+            Console.WriteLine("\n[TEST] COPIER SUBS: repeated subscribe passes attach exactly one handler (P1-21)");
+
+            var rel = SubsTestRelationship("FlapLeader", "SimFollower");
+            ResetCopierSubscriptions(rel);
+
+            var leader = new Account { Name = "FlapLeader", Provider = Provider.Simulator };
+            Account.All.Add(leader);
+            Account.All.Add(new Account { Name = "SimFollower", Provider = Provider.Simulator });
+
+            for (int i = 0; i < 5; i++)
+                TradeCopierEngine.Instance.RefreshAccountSubscriptions();
+
+            Assert(leader.ExecutionUpdateHandlerCount == 1,
+                string.Format(
+                    "Five subscribe passes leave exactly one handler attached (got {0}). Each extra "
+                    + "handler copies the fill again; the ExecutionId dedupe hides that only for "
+                    + "executions that carry an id.",
+                    leader.ExecutionUpdateHandlerCount));
+
+            Assert(TradeCopierEngine.Instance.SubscribedAccountCount == 2,
+                string.Format("Both accounts are tracked for teardown (got {0}).",
+                    TradeCopierEngine.Instance.SubscribedAccountCount));
+        }
+
+        // NT8 reloads every AddOn on each recompile. A handler left attached keeps delivering
+        // executions to the dead engine instance, which the new instance cannot detach.
+        private static void TestCopierSubs_TeardownDetachesHandlers()
+        {
+            Console.WriteLine("\n[TEST] COPIER SUBS: teardown detaches every handler this engine attached (P1-21)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SubsTestRelationship("ShutdownLeader", "SimFollower");
+            ResetCopierSubscriptions(rel);
+
+            var leader = new Account { Name = "ShutdownLeader", Provider = Provider.Simulator };
+            var follower = new Account { Name = "SimFollower", Provider = Provider.Simulator };
+            Account.All.Add(leader);
+            Account.All.Add(follower);
+            TradeCopierEngine.Instance.RefreshAccountSubscriptions();
+
+            int detached = TradeCopierEngine.Instance.UnsubscribeAllAccounts();
+
+            Assert(detached == 2 && leader.ExecutionUpdateHandlerCount == 0,
+                string.Format(
+                    "Teardown reports 2 accounts and leaves 0 handlers (got {0} accounts, {1} "
+                    + "handlers on the leader).",
+                    detached, leader.ExecutionUpdateHandlerCount));
+
+            leader.TriggerExecutionUpdate(LeaderExec(leader, mnq, OrderAction.Buy, 1, "P1-21-DOWN"));
+
+            int copied = follower.Orders.Count(o => o.Name == "COPIER_FOLLOW");
+            Assert(copied == 0,
+                string.Format(
+                    "A fill arriving after teardown is not copied (got {0} copy/copies).", copied));
         }
 
         /// <summary>

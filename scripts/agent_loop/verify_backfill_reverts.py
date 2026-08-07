@@ -16,7 +16,9 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-ADDON = REPO / "scripts" / "ninjatrader" / "addons" / "RiskGuardAddOn.cs"
+ADDONS = REPO / "scripts" / "ninjatrader" / "addons"
+ADDON = ADDONS / "RiskGuardAddOn.cs"
+COPIER = ADDONS / "TradeCopierEngine.cs"
 TEST_CMD = [
     "dotnet", "run",
     "--project", str(REPO / "ninjatrader-addon" / "RiskGuardTests.csproj"),
@@ -86,6 +88,35 @@ CASES = [
     ),
 ]
 
+# Same shape, but reverted in TradeCopierEngine.cs instead. P1-21's subscribe pass is a new
+# API, so there is no "before" revision of it to run the tests against; each case below
+# reinstates one facet of the defect the pass exists to fix.
+COPIER_CASES = [
+    (
+        "P1-21 subscribe pass runs more than once",
+        "COPIER SUBS: a leader that connects after startup",
+        "            int added = 0;\n            lock (_subscriptionLock)\n            {",
+        # The defect verbatim: enumerate Account.All once and never again, so an account that
+        # connects later is never subscribed.
+        "            int added = 0;\n            lock (_subscriptionLock)\n            {\n"
+        "                if (_subscribedAccounts.Count > 0) return 0;  // reverted: one-shot pass",
+    ),
+    (
+        "P1-21 subscribe pass is idempotent",
+        "COPIER SUBS: repeated subscribe passes attach exactly one handler",
+        "                    acc.ExecutionUpdate -= OnAccountExecutionUpdate;\n"
+        "                    acc.ExecutionUpdate += OnAccountExecutionUpdate;",
+        "                    // reverted: no detach, so each pass adds another handler\n"
+        "                    acc.ExecutionUpdate += OnAccountExecutionUpdate;",
+    ),
+    (
+        "P1-21 teardown detaches handlers",
+        "COPIER SUBS: teardown detaches every handler",
+        "                    if (acc != null) acc.ExecutionUpdate -= OnAccountExecutionUpdate;",
+        "                    // reverted: handler left attached across the AddOn reload",
+    ),
+]
+
 
 def failures_in(output: str, header: str):
     """Return the [FAIL] lines belonging to the test whose header matches."""
@@ -102,17 +133,20 @@ def run_suite():
 
 
 def main():
-    original = ADDON.read_text(encoding="utf-8")
+    sources = {ADDON: ADDON.read_text(encoding="utf-8"),
+               COPIER: COPIER.read_text(encoding="utf-8")}
+    cases = ([(ADDON, *c) for c in CASES] + [(COPIER, *c) for c in COPIER_CASES])
     results = []
     try:
-        for name, header, old, new in CASES:
+        for path, name, header, old, new in cases:
+            original = sources[path]
             if original.count(old) != 1:
                 results.append((name, "SKIP", f"anchor matched {original.count(old)}x, expected 1"))
                 continue
 
-            ADDON.write_text(original.replace(old, new), encoding="utf-8")
+            path.write_text(original.replace(old, new), encoding="utf-8")
             out = run_suite()
-            ADDON.write_text(original, encoding="utf-8")
+            path.write_text(original, encoding="utf-8")
 
             fails = failures_in(out, header)
             if fails is None:
@@ -122,7 +156,8 @@ def main():
             else:
                 results.append((name, "NOT FALSIFIABLE", "test still passed with the fix reverted"))
     finally:
-        ADDON.write_text(original, encoding="utf-8")
+        for path, text in sources.items():
+            path.write_text(text, encoding="utf-8")
 
     print("\n" + "=" * 78)
     print("REVERT VERIFICATION")

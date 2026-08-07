@@ -1,19 +1,22 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **413/0**): **17 of 38 closed** —
-all P0, Phase B (test foundation + `P2-28`) and Phase C (`P1-20`, `P1-37`, `P1-10`, `P1-35`,
-`P1-11`, `P1-15`) except `P1-36`. Deployed to shadow but **not validated on a live feed**.
-Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
+**Status** (2026-08-07, branch `harden/riskguard-copier-p0`, suite **486/0**): **31 of 48 closed**.
+Deployed, `shadow`, armed. Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
+
+> ⚠️ **Open operational item: `P0-48` needs an NT8 restart.** 57 orphaned copier execution
+> handlers from earlier AddOn reloads are attached to every account on this box. The fix stops
+> new ones accruing; only a restart clears the existing ones. **Do not trust the copier until
+> then.**
 **Created**: 2026-08-06
 
 ## Defect inventory — the count of record
 
-**47 defects.** Numbered once, never renumbered, never reused.
+**48 defects.** Numbered once, never renumbered, never reused.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9` | 9 | ✅ all closed |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 17 closed — `P1-12`, `P1-13`, `P1-14`, `P1-21`, `P1-22`, `P1-23`, `P1-36` remain |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` | 10 | `P0-1`…`P0-9` closed (`P0-9`'s bracket half open); `P0-48` fixed forward, **needs an NT8 restart** |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47` | 24 | 18 closed — `P1-12`, `P1-13`, `P1-14`, `P1-22`, `P1-36` remain |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | open (`P2-28`, `P2-46` closed; `P2-27` half-done) |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
 
@@ -761,6 +764,62 @@ endpoint reporting `isArmed: true` — the first reload of the day that did not 
 > comment saying why — and this is the standing reason `nt_compile` is not optional after a
 > change near the test hooks.
 
+### P0-48. Every AddOn reload leaks a copier execution handler — 57 were live on the box
+*(found 2026-08-07 while validating `P1-21`'s deployment, by reflecting on the live event list —
+not by any test, review or log line)*
+**Where**: `McpBridgeAddOn.cs`, `State.Configure` attached `OnAccountExecutionUpdate` to every
+account and `State.Terminated` only called `StopServer()`. Nothing ever detached it.
+**What happens**: NT8 hot-swaps a **new assembly** on every recompile and reloads every AddOn, but
+the old instances are kept alive by the very event subscription that should have been removed. The
+`-=` before `+=` in the old subscribe loop cannot help: it is evaluated against the *new* instance's
+delegate, which never equals the orphan's.
+
+Each orphan carries its own assembly's `TradeCopierEngine.Instance` — a distinct singleton with its
+own `_relationships` (loaded from disk at its own `Configure`) and its own `_copiedExecutionIds`.
+The per-instance dedupe therefore does **not** suppress them: one leader fill is copied once per
+orphan.
+
+**Measured on the live box, 2026-08-07 15:5x UTC**, `Sim101.ExecutionUpdate` invocation list:
+
+| Owner | Handlers |
+|---|---|
+| `McpBridgeAddOn` (orphaned instances) | **57** |
+| `ChartBars` / `ExecutionGrid` (NT8's own) | 6 |
+| `MaxAlgoAutoTraderV3` | 1 |
+| `TradeCopierEngine`, `RiskGuardAddOn`, `RiskManagerAddOn` | 1 each |
+| | **67 total** |
+
+`RiskGuardAddOn` at exactly 1 is the control: it already unsubscribes in `State.Terminated`
+(`:331-338`), which is why it has not accumulated. The copier had no such path.
+
+**Exposure at the time of discovery**: both relationships enabled, `Sim101 → Sim-ORB` with
+`ArmedForLive: true`. A single Sim101 fill would have been copied by all 58 live engines, bounded
+only by each one's independent `MaxPositionSize` re-read of the follower position.
+
+> **Stated precisely**: the 57 live handlers and their distinct target instances are *measured*.
+> The resulting duplicate copies are *inferred from the mechanism* — no fill occurred during the
+> inspection, so the end-to-end effect has not been observed. The inference does not depend on
+> anything unverified: the handlers are attached, and each forwards into a separate engine.
+
+**Why this is P0 and not a housekeeping item**: it places unbounded unintended orders. It is
+listed after `P1-47` because IDs are assigned in discovery order and never renumbered.
+
+**Fixed by**: `P1-21`'s teardown half — `TradeCopierEngine.UnsubscribeAllAccounts()`, called from
+`State.Terminated`, detaches exactly the accounts this engine instance attached. That stops
+*recurrence* from the next reload onward.
+
+**Not fixed by it**: the 57 orphans already attached. They belong to assemblies that are no longer
+referenced by any live code, so no in-process call can enumerate or detach them by name — only an
+**NT8 restart** clears them. Treat a restart as required before trusting the copier on this box.
+
+**Open follow-ups**:
+- Verify the count returns to 1 after a restart plus a recompile, and add that check to the
+  deployment runbook (§4e) — a handler census is cheap and nothing else detects this class of bug.
+- `RiskManagerAddOn.cs:150/289` has the same shape (subscribe at `Configure`, unsubscribe at
+  `Terminated`) and currently reads 1, so it appears correct; confirm rather than assume.
+- Consider whether `TradeCopierWindow.cs:1090` and `DynamicAtmManager.cs:507` hold any comparable
+  subscription.
+
 ### P1-20. Weak simulated-account detection gates the live safety switch — CLOSED 2026-08-07
 **Where**: `TradeCopierEngine.cs:650` — `followerAcc.Name.StartsWith("Sim", …)`
 An account named e.g. `SimplyApex-01` is treated as simulated and **bypasses the
@@ -775,12 +834,37 @@ account whose name lacks the `Sim` prefix is now served.
 deployment with `Name.StartsWith("Sim") || Provider…` — the name prefix is OR'd in, so it has
 the same hole. Tracked as **P2-38**.
 
-### P1-21. Copier never re-subscribes to accounts that connect later
+### P1-21. Copier never re-subscribes to accounts that connect later — CLOSED 2026-08-07
 **Where**: `McpBridgeAddOn.cs:252-258` — `Account.All` is enumerated once at `State.Configure`.
 RiskGuard handles this correctly via `Connection.ConnectionStatusUpdate`
 (`RiskGuardAddOn.cs:296`, `OnConnectionStatusUpdate:770`).
 **Fix**: mirror RiskGuard's pattern for `ExecutionUpdate` subscription, and unsubscribe on
 disconnect to avoid duplicate handlers.
+**Fixed by**: `TradeCopierEngine.RefreshAccountSubscriptions()` / `UnsubscribeAllAccounts()`, wired
+from `McpBridgeAddOn`'s `State.Configure`, `Connection.ConnectionStatusUpdate` and
+`State.Terminated`. A leader whose broker connects after startup is now subscribed on the next
+connection change instead of being silently dead while enabled in the config and visible in the UI.
+
+> **The bookkeeping deliberately lives on `TradeCopierEngine`, not in `McpBridgeAddOn`.**
+> `RiskGuardTests.csproj` excludes `McpBridgeAddOn.cs` from the test build (its WPF dependencies
+> break it), so a subscription implemented there is unreachable by any test — which is how this
+> survived. Only the `Connection` event wiring, four lines, stays outside the test build.
+>
+> **The teardown half turned out to matter more than the re-subscribe half.** Adding
+> `UnsubscribeAllAccounts` was defensive housekeeping when written; inspecting the live event list
+> to confirm it worked found **57 orphaned handlers** from earlier reloads. That is **P0-48**.
+
+**Tests** (`RiskGuardAddOnTests.cs`, all three proven falsifiable by
+`scripts/agent_loop/verify_backfill_reverts.py`, which now reverts in `TradeCopierEngine.cs` too):
+`TestCopierSubs_LateConnectingLeaderIsCopied` (0 copies when the pass is one-shot),
+`TestCopierSubs_RepeatedRefreshAttachesOneHandler` (5 handlers when the `-=` is dropped),
+`TestCopierSubs_TeardownDetachesHandlers` (1 handler survives when the detach is dropped).
+
+> The idempotence test asserts on the **handler count**, via a new `ExecutionUpdateHandlerCount`
+> on the Account stub, rather than on the number of copy orders. `OnExecution`'s `ExecutionId`
+> dedupe would have absorbed a doubled handler within a single engine instance, so an
+> order-counting assertion would have passed while proving nothing — the vacuous-test trap that
+> the first draft of `S1`–`S4` fell into.
 
 ### P1-22. No slippage/latency control on copies
 Everything is `OrderType.Market` with no reference to the leader's fill price, no maximum

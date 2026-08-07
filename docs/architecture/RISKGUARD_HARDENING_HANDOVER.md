@@ -1,15 +1,23 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 6)
+**Last updated**: 2026-08-07 (session 7)
 **Branch**: `harden/riskguard-copier-p0` — **unmerged**, fast-forward available
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 47 defects, 30 closed
-**Live state**: deployed, `shadow` mode, **armed** (it self-arms since `P1-47`). Suite **481 passed, 0 failed**.
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — 48 defects, 31 closed
+**Live state**: deployed, `shadow` mode, **armed** (it self-arms since `P1-47`). Suite **486 passed, 0 failed**.
+
+> 🔴 **Do this first: restart NinjaTrader.** `P0-48` (found session 7) left **57 orphaned copier
+> execution handlers** attached to every account on this box, one per historical AddOn reload.
+> Each forwards leader fills into its own dead-assembly `TradeCopierEngine`, so a single Sim101
+> fill is copied by all of them. The fix stops new ones accruing from the next reload; **nothing
+> in-process can detach the 57 already there.** Both copier relationships are enabled and
+> `Sim101 → Sim-ORB` is `ArmedForLive: true`. Do not trade the copier on this box until it has
+> been restarted and the census re-run (§4i).
 
 ---
 
 ## 0. Start here (read this, then §4a for the roadmap)
 
-**30 of 47 defects closed. Suite 481/0. NT8 compiles clean.**
+**31 of 48 defects closed. Suite 486/0. NT8 compiles clean.**
 
 | Phase | State |
 |---|---|
@@ -18,7 +26,7 @@
 | **C** — P1 safety-critical | ✅ done except `P1-36` |
 | **D** — P1 rule semantics | ✅ done — `P1-16`, `P1-17`, `P1-18`, `P1-19` |
 | **D2** — stress backlog | `S1`–`S4` landed and closed four defects; **`S5`–`S9` open** |
-| **E** — copier fidelity | Started — `P1-23` closed. `P1-21`, `P1-22`, **`P0-9`'s real half** open |
+| **E** — copier fidelity | `P1-23`, `P1-21` closed; `P1-21` exposed **`P0-48`**. `P1-22`, **`P0-9`'s real half** open |
 | **F–G** | Not started |
 
 ### Five things to know before you touch anything
@@ -754,6 +762,57 @@ Deployed and compiling clean. `shadow`, **armed** (self-armed since `P1-47`).
 afterwards. `config.json` is clean at 6 windows and the live config now matches it exactly.
 All accounts flat.
 
+
+---
+
+## 4i. Session 7 record — 2026-08-07: P1-21, and the defect it uncovered
+
+**`P1-21` closed. Suite 481 → 486. NT8 compiles clean, guard self-armed through the reload.**
+
+The ticket itself was small. What it found was not.
+
+### The structural obstacle, and what was done about it
+
+`P1-21` lives in `McpBridgeAddOn.cs`, which **`RiskGuardTests.csproj` excludes from the test
+build**. So does `P2-38`. Under the test-first rule that is a dead end: no acceptance test can
+reach the code.
+
+The subscription bookkeeping was therefore moved to `TradeCopierEngine`, which *is* in the test
+build — `RefreshAccountSubscriptions()`, `UnsubscribeAllAccounts()`, `SubscribedAccountCount`.
+`McpBridgeAddOn` keeps only the four-line `Connection.ConnectionStatusUpdate` wiring. **When a
+defect sits in an untestable file, moving the logic to a testable one is usually cheaper than
+arguing about coverage** — and here it was also the better design, since the copier should own its
+own subscriptions.
+
+`verify_backfill_reverts.py` now reverts across multiple files (it was hardcoded to
+`RiskGuardAddOn.cs`). All **9/9** cases falsifiable, including the three new ones — each observed
+failing for the intended reason: 0 copies, 5 handlers, 1 surviving handler.
+
+### P0-48 — 57 orphaned handlers, found by looking rather than by testing
+
+The teardown half was written as defensive housekeeping. Checking whether it actually worked meant
+reading the live event list through `POST /api/dev/reflect`, which returned **67 handlers on
+`Sim101.ExecutionUpdate`** — **57 of them orphaned `McpBridgeAddOn` instances**, one per historical
+AddOn reload, each with its own assembly's `TradeCopierEngine` singleton and its own dedupe set.
+
+`RiskGuardAddOn` sat at exactly 1, because it already unsubscribes at `State.Terminated`. That
+control is what makes the reading conclusive rather than suggestive.
+
+Full detail, measured table, and the honest limit of the claim (handlers measured, duplicate copies
+inferred) are in the plan under `P0-48`. **It requires an NT8 restart**; see the banner at the top.
+
+### Three things worth carrying forward
+
+1. **A green suite and a clean compile said nothing about this.** The defect is in *runtime object
+   graph state accumulated across reloads* — a category no unit test in this repo can observe. The
+   only thing that found it was inspecting the live process.
+2. **`POST /api/dev/reflect` is the tool for that, and it works.** `{"result": N}` chains handles
+   between ops; integer args need `{"type":"System.Int32","value":N}` or they arrive as Int64 and
+   the invoke fails. A handler census is a two-minute read-only query — **add it to the deployment
+   runbook**, since nothing else detects this class of bug.
+3. **"It compiles and the tests pass" was true and irrelevant.** The same reload churn §4f
+   describes as benign — "it settled by itself" — was silently accruing these handlers the whole
+   time. That churn was written off twice in this document before anyone counted.
 
 ---
 

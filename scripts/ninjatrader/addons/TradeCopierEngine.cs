@@ -709,6 +709,95 @@ namespace NinjaTrader.NinjaScript.AddOns
             return account.Provider == Provider.Simulator;
         }
 
+        // ------------------------------------------------------------------
+        // ACCOUNT EVENT SUBSCRIPTIONS (P1-21)
+        //
+        // The copier's ExecutionUpdate handlers used to be attached by McpBridgeAddOn in a
+        // single pass over Account.All at State.Configure. Any account that came online after
+        // that pass -- a broker connecting late, a reconnect, an account added from the
+        // Control Center -- never raised OnExecution. A relationship whose leader arrived late
+        // was therefore silently dead: enabled in the config, listed in the UI, copying
+        // nothing. RiskGuard already solves this by re-running its subscribe pass on every
+        // Connection.ConnectionStatusUpdate (RiskGuardAddOn.OnConnectionStatusUpdate); this
+        // mirrors that.
+        //
+        // The bookkeeping lives here, not in McpBridgeAddOn, because that file is excluded
+        // from the test build by RiskGuardTests.csproj -- an untestable subscription is how
+        // this defect survived in the first place.
+        // ------------------------------------------------------------------
+
+        // Held only across event add/remove, which touch no broker call and cannot re-enter.
+        // Deliberately NOT _lock: OnExecution takes that one, and a subscribe pass must never
+        // be able to serialise behind an in-flight copy.
+        private readonly object _subscriptionLock = new object();
+
+        // The Account objects this engine instance has attached to, so teardown can detach
+        // from exactly those. Reference identity, not name: a reconnect that hands back a new
+        // Account object for the same name must be treated as a new subscription target.
+        private readonly HashSet<Account> _subscribedAccounts = new HashSet<Account>();
+
+        /// <summary>
+        /// Attaches the copier's execution handler to every account NT8 currently knows about.
+        /// Safe to call repeatedly, and meant to be: once at startup and again on every
+        /// connection-status change. Returns the number of accounts newly subscribed.
+        /// </summary>
+        public int RefreshAccountSubscriptions()
+        {
+            int added = 0;
+            lock (_subscriptionLock)
+            {
+                foreach (Account acc in Account.All.ToList())
+                {
+                    if (acc == null) continue;
+
+                    // `-=` is a no-op when the handler is not attached, so re-running the pass
+                    // cannot double-deliver an execution. Note this only dedupes handlers owned
+                    // by *this* engine instance -- it cannot detach one left behind by a
+                    // previous instance, which is why Terminated must call
+                    // UnsubscribeAllAccounts.
+                    acc.ExecutionUpdate -= OnAccountExecutionUpdate;
+                    acc.ExecutionUpdate += OnAccountExecutionUpdate;
+
+                    if (_subscribedAccounts.Add(acc)) added++;
+                }
+            }
+            return added;
+        }
+
+        /// <summary>
+        /// Detaches from every account subscribed by this engine instance. Must run at
+        /// State.Terminated: NT8 reloads every AddOn on each recompile, and a handler left
+        /// attached to a surviving Account object would keep delivering executions to the dead
+        /// engine alongside the new one -- every fill copied twice.
+        /// </summary>
+        public int UnsubscribeAllAccounts()
+        {
+            lock (_subscriptionLock)
+            {
+                int count = _subscribedAccounts.Count;
+                foreach (Account acc in _subscribedAccounts)
+                {
+                    if (acc != null) acc.ExecutionUpdate -= OnAccountExecutionUpdate;
+                }
+                _subscribedAccounts.Clear();
+                return count;
+            }
+        }
+
+        /// <summary>Number of accounts currently subscribed by this engine instance.</summary>
+        public int SubscribedAccountCount
+        {
+            get { lock (_subscriptionLock) { return _subscribedAccounts.Count; } }
+        }
+
+        private void OnAccountExecutionUpdate(object sender, ExecutionEventArgs e)
+        {
+            if (e != null && e.Execution != null)
+            {
+                OnExecution(e.Execution);
+            }
+        }
+
         // OnExecution is deliberately NOT behind `#if !TESTING`. It is the trade-copy
         // path - the riskiest code in this file - and excluding it left it with zero
         // test coverage. It compiles against the NinjaTrader stubs in
