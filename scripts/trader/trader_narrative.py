@@ -564,12 +564,135 @@ def _sanitize_recommendation_language(summary: str) -> str:
         (r"\bbuy the dip\b", "fade the pullback constructively"),
         (r"\bsell the rip\b", "fade strength at resistance"),
         (r"\bthe play is patience\b", "the read favors patience"),
+        (r"\bthe play is to\b", "the read is to"),
         (r"\bi'm looking for bullish continuation toward\b", "the bullish continuation path points toward"),
         (r"\bi'm looking for bearish continuation toward\b", "the bearish continuation path points toward"),
         (r"\bi'm looking for\b", "the watch is for"),
+        (r"\bi'm watching for\b", "the watch is for"),
+        (r"\bi'll respect\b", "the conservative choice is to respect"),
+        (r"\bhighest-probability play\b", "highest-probability read"),
+        (r"\btrading the direction of that resolution\b", "reading the direction of that resolution"),
+        (r"\bposition management matters:?\b", ""),
+        (r"\bdon't fade longs\b", "don't fade the bullish read"),
+        (r"\blong entry zone\b", "bullish response zone"),
+        (r"\bshort entry zone\b", "bearish response zone"),
+        (r"\bthe trade executes\b", "the move typically extends"),
+        (r"\btake the money and don't give it back\b", "treat the delivery as mature and expect afternoon chop"),
+        (r"\brespect that\b", "stand aside"),
+        (r"\bstrong long setup\b", "strong bullish read"),
+        (r"\bshort opportunity\b", "bearish continuation path"),
+        (r"\bsize down\b", "stay conservative"),
+        (r"\bavoid chasing\b", "avoid momentum-following"),
     ]
     for pattern, replacement in replacements:
         sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(
+        r"(?im)^\*\*Risk management context:\*\*[\s\S]*?(?=^\*\*Bottom line|^##|\Z)",
+        "",
+        sanitized,
+    )
+    sanitized = re.sub(
+        r"(?im)^.*daily stop is \$\d+[\s\S]*?max \d+ trades\.?\n?",
+        "",
+        sanitized,
+    )
+    return sanitized
+
+
+def _sanitize_open_mode_semantics(summary: str) -> str:
+    """Fix recurring open-mode semantic drift the model introduces."""
+    sanitized = summary
+    sanitized = re.sub(
+        r"The play is to",
+        "The read is to",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"I'll respect",
+        "The conservative choice is to respect",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"first 5m candle close before any consideration",
+        "first 15m candle close before any consideration",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"immediate magnet/ceiling",
+        "immediate overhead reference (price below dealer floor)",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"The Put Wall being overhead \(not below\) is unusual\s*[—-]\s*it's acting as resistance rather than support, which tells me the dealer positioning is constraining upside in the immediate term\.",
+        "The Put Wall printing above current price is unusual — price is trading below the dealer floor reference, which signals unstable structure until that floor is reclaimed.",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    return sanitized
+
+
+def _sanitize_intraday_mode_semantics(summary: str) -> str:
+    """Fix recurring intraday spatial phrasing defects."""
+    sanitized = summary
+    sanitized = re.sub(
+        r"The sell-side liquidity \(SSL\) is at \*\*([0-9,]+\.?[0-9]*)\*\* \(the prior day low\), which is (?:just )?([0-9.]+) points above current price\. That's a magnet — price often gets drawn to sweep resting sell stops below a prior low\.",
+        r"The sell-side liquidity (SSL) is at **\1** (the prior day low), which is \2 points above current price. That makes it an overhead liquidity reference that price may reclaim, not a downside sweep target below current price.",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"which is just ([0-9.]+) points above current price\. That's a magnet — price often gets drawn to sweep resting sell stops below a prior low\.",
+        r"which is \1 points above current price. That makes it an overhead liquidity reference rather than a downside sweep target below current price.",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"- \*\*Most Likely:\*\* Continued drift toward the SSL at \*\*([0-9,]+\.?[0-9]*)\*\* \([^)]+\) to sweep sell stops, then a bounce\.",
+        r"- **Most Likely:** Continued drift lower inside the Asia range, with **\1** acting as the first overhead reclaim level if buyers stabilize the session.",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"Watch whether price sweeps the SSL at ([0-9,]+\.?[0-9]*) first \(bearish continuation setup\)",
+        r"Watch whether price reclaims the overhead SSL at \1 first before London establishes direction",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    return sanitized
+
+
+def _sanitize_close_mode_semantics(summary: str) -> str:
+    """Remove remaining close-mode trade-plan phrasing and account-risk leakage."""
+    sanitized = summary
+    sanitized = re.sub(r"(?im)^\*\*Account Phase:\*\*.*(?:\n|$)", "", sanitized)
+    sanitized = re.sub(r"(?im)^\*\*Date:\*\*.*(?:\n|$)", "", sanitized)
+    sanitized = re.sub(r"(?im)^\*\*Close:\*\*.*(?:\n|$)", "", sanitized)
+    sanitized = re.sub(r"\bbuy the morning\b", "expect a bounce risk into the morning", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bconditional, not a conviction, trade\b", "conditional, not a conviction, read", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bthen trade the first clean setup\b", "then read the first clean setup", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bany long position should be evaluated for exit before the afternoon session\b", "the afternoon session should be treated cautiously if the morning bounce fully matures", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bsize down or avoid entries\b", "treat that window cautiously", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bconditional long setup\b", "conditional bullish setup", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\btrade the first clean setup\b", "read the first clean setup", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bDo NOT trade the initial spike\b", "Do not trust the initial spike", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bWait for the first 5-minute candle to close and the market to establish a direction\b", "Wait for the first 5-minute candle to close so the market can establish direction", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bdo not hold overnight \(account rule\)\b", "do not rely on late-day follow-through after 15:00", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bthe watch is for a long toward\b", "the bullish path points toward", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bthe watch is for a short toward\b", "the bearish path points toward", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bif you trade, size down\b", "treat that window conservatively", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bwait for the NFP reaction to settle before committing\b", "wait for the NFP reaction to settle before assigning conviction", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bstrong long setup\b", "strong bullish read", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bshort opportunity\b", "bearish continuation path", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\blong setup\b", "bullish setup structure", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bshort setup\b", "bearish setup structure", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bscalp day\b", "range-bound day", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bthe disciplined play is to\b", "the disciplined read is to", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bonly take trades that respect\b", "only trust moves that respect", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\bsize down and take profits at the range boundaries, not beyond them\b", "keep expectations conservative near the range boundaries", sanitized, flags=re.IGNORECASE)
     return sanitized
 
 
@@ -793,6 +916,12 @@ def run_narrative(
             summary = _dedupe_repetition(summary)
             summary = _compress_watchlist_section(summary)
             summary = _sanitize_recommendation_language(summary)
+            if mode == "open":
+                summary = _sanitize_open_mode_semantics(summary)
+            elif mode == "intraday":
+                summary = _sanitize_intraday_mode_semantics(summary)
+            elif mode == "close":
+                summary = _sanitize_close_mode_semantics(summary)
             summary = _sanitize_trader_facing_output(summary)
             write_narrative_to_disk(summary, mode, ticker)
             
