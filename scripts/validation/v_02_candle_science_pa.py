@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 import logging
+import argparse
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -168,5 +169,10 @@ def verify_candle_science_pa(ticker: str = "NQ1", sample_dates: list[str] = None
 
 
 if __name__ == "__main__":
-    ticker_arg = sys.argv[1] if len(sys.argv) > 1 else "NQ1"
+    parser = argparse.ArgumentParser(description="Validate Candle Science price action")
+    parser.add_argument("positional_ticker", nargs="?", default=None, help="Optional positional ticker")
+    parser.add_argument("--ticker", dest="ticker", default=None, help="Ticker symbol (e.g., NQ1, ES1)")
+    args = parser.parse_args()
+
+    ticker_arg = args.ticker or args.positional_ticker or "NQ1"
     verify_candle_science_pa(ticker_arg)
