@@ -65,14 +65,22 @@ failure is a regression.
 | Ticket | Defects | Status |
 |---|---|---|
 | T1 | P0-1, P0-4 | ✅ committed `5fd26995` |
-| T2 | P0-2, P0-3 | 🔄 in flight — see §4 |
+| T2 | P0-2, P0-3 | ❌ `MAX_ROUNDS_EXHAUSTED`, not applied — **the panel could not have approved it**, see §4 |
 | T3 | P0-7 | queued |
 | T4 | P0-5, P0-6 | queued — has failing tests waiting |
 | T5 | P0-8, P0-9 | queued — has a failing test waiting |
 
+**Nothing beyond T1 is applied. The addon is clean.** T3–T5 are blocked on the loop rebuild
+(§3), by decision — they will run on the new tool, not the old one.
+
 ---
 
 ## 3. The loop (how the work gets done)
+
+> ⚠️ **Being rebuilt — see [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md).** The description below is
+> the *old* loop, which is still the only runnable entry point until `loop.py` lands. Three of its
+> gates were found defective (§4); do not treat a green run from it as evidence. In particular the
+> panel and lock-scope gates described here did not work as documented.
 
 `scripts/agent_loop/ollama_patch_loop.py` + `scripts/agent_loop/tickets_p0.json`.
 
@@ -111,15 +119,54 @@ work in the same file would be destroyed by the next ticket.
 
 ---
 
-## 4. Immediate next steps
+## 4. What happened to T2, and why the loop is being rebuilt
 
-1. **Check T2** — `logs/ollama_loop/T2/` and the background task output. If it applied, run the
-   suite (expect 3 failures, no more), then commit. If it stopped at `MAX_ROUNDS_EXHAUSTED`,
-   read `r*_review_*.txt`, decide which findings are real, and re-run with `--resume-raw` plus an
-   `--orchestrator-note`.
-2. **T3, T4, T5** in order, committing each. T4 and T5 should turn the three failing copy-path
-   tests green — that is their acceptance criterion.
-3. **Add tests for T1/T2/T3 behaviour** (currently only T4/T5 have failing tests waiting). Good
+T2 ran four rounds and exhausted without applying. The candidate was not the problem —
+**the gate was closed from round 1.**
+
+`parse_review("")` returns `{'verdict': 'REVISE', 'blocker_count': 0}`: an empty reviewer response
+is scored as a dissenting vote, indistinguishable from a real one.
+
+| Round | glm-5.2 | deepseek-v4-pro |
+|---|---|---|
+| 2 | REVISE, 3 blockers (3.7 KB) | **0 bytes** |
+| 3 | REVISE, 4 blockers (6.1 KB) | **0 bytes** |
+| 4 | **HTTP 502** | **HTTP 502** |
+
+`unanimous_approve` requires every reviewer to say APPROVE, so no candidate could ever pass. In
+round 4 both reviewers 502'd and the `except` fabricated `REVISE` for each — the final candidate
+was never reviewed by anything at all. ~2.5 hours and four implementer rounds of cloud spend on a
+ticket with no reachable pass state.
+
+Two further defects were found while rebuilding, both verified against the repo:
+
+- **The lock-scope gate was inert for 88% of its targets.** After matching `lock (_stateLock)` it
+  closed the scope before the Allman-style opening brace on the next line arrived. 28 of 32
+  `lock (_stateLock)` sites in `RiskGuardAddOn.cs` are Allman-braced, so the gate the §3 ladder
+  describes as overriding APPROVE almost never fired.
+- **`logs/ollama_loop/summary.json` is not a ledger** — it is overwritten per invocation, and
+  still records T1 as `applied: false` even though T1 is committed. Trust per-ticket
+  `result.json`, not the summary.
+
+Full analysis and the rebuild design: **[AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md)**.
+
+### T2's work is not lost
+
+`logs/ollama_loop/T2/r4_impl_raw.txt` (25.9 KB) and `final_blocks.json` carry three rounds of real
+`glm-5.2` feedback, including a genuine blocker: the candidate reset `AutoStopAttempts` only on
+`Unprotected → Protected|Flat`, but the success path is `Unprotected → ProtectedPending →
+Protected`, so the counter never reset and the guard would escalate straight to flatten after two
+*successful* auto-stops. Resume from that artifact rather than starting T2 over.
+
+## 4a. Immediate next steps
+
+1. **Finish the loop rebuild** — `workspace.py`, `loop.py`, profiles, cassettes, CLI. Landed and
+   tested so far: `providers.py`, `regions.py`, `gates.py`.
+2. **Re-run T2** on the new tool with `--resume-raw logs/ollama_loop/T2/r4_impl_raw.txt`.
+3. **T3, T4, T5** in order, committing each. T4 and T5 should turn the three failing copy-path
+   tests green — that is their acceptance criterion, and it is now checked mechanically by the
+   test gate rather than by eye.
+4. **Add tests for T1/T2/T3 behaviour** (currently only T4/T5 have failing tests waiting). Good
    candidates: stop cancelled mid-position re-arms grace; auto-stop submit failure rolls back and
    clears `GraceEmitted`; auto-stop sized from live position, not the emission snapshot;
    profitable-flat account emits no giveback action.
