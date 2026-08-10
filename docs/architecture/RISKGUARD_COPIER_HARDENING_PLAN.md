@@ -1,9 +1,8 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-09, branch `harden/riskguard-p0-51`, suite **629 passed / 1 failed**): **40 of 53 closed**.
+**Status** (2026-08-09, branch `harden/riskguard-p0-51`, suite **630 passed / 0 failed**): **41 of 53 closed**.
 Deployed, `shadow`, armed and guarding; NT8 compiles clean (0 errors, net48).
-**`P0-51` and `P1-52` are CLOSED and deployed.** The one remaining red test is `P0-53`'s, which is
-red on purpose — see its entry.
+**`P0-51`, `P1-52` and `P0-53` are all CLOSED and deployed.** The suite is fully green again.
 Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 
 > ✅ **`P0-48` is closed and verified live.** The restart cleared all 57 orphans, and a subsequent
@@ -22,12 +21,13 @@ entries at the end of §1.
 > `IsActingMode()` predicate gates both the sweep and, via `DrainPendingCancels`, the deferred
 > cancel queue. `P1-52` is fixed with it.
 >
-> ⚠️ **`P0-53` is still open**, and it is the one that bites *after* shadow is switched off: in an
-> acting mode the lockout's `CancelAllOrders` still cancels the protective stop before the flatten.
+> ✅ **`P0-53` is also fixed (2026-08-09).** The lockout's `CancelAllOrders` no longer cancels a
+> protective stop while its position is open, so arming live no longer exposes a naked-flatten
+> window.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` CLOSED 2026-08-09. `P0-53` OPEN — in an acting mode the lockout cancels the protective stop before flattening (both 2026-08-09)** |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09** |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52` | 25 | **23 closed** — `P1-12`, `P1-14`, `P1-36` closed 2026-08-07 (session 8); `P1-13`'s fail-open half closed, its threading half open; **`P1-52` OPEN — flood governor counts a normal ATM bracket as a flood (2026-08-09)** |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | `P2-28`, `P2-46`, **`P2-38`, `P2-41`** closed; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
@@ -447,7 +447,7 @@ live-mode behaviour is unchanged. NT8 `nt_compile`: **0 errors** under net48.
 
 ---
 
-### P0-53. In an acting mode the lockout cancels the protective stop before flattening — OPEN 2026-08-09
+### P0-53. In an acting mode the lockout cancels the protective stop before flattening — CLOSED 2026-08-09
 *(found while fixing `P0-51`, by making an existing test state its mode honestly)*
 **Where**: `RiskGuardAddOn.cs:3461-3474` — `ExecuteAction`'s `CancelAllOrders` branch
 **What happens**: `P1-11` filtered the **sweep's** cancel batches so a protective stop is never
@@ -471,8 +471,15 @@ position-reducing orders while the position is still open; reuse `IsPositionRedu
 than writing a second definition. Either filter inside `ExecuteAction`, or have the lockout emit a
 narrower action — but the guarantee must hold on both routes, not one.
 
-**Status**: the acceptance test is **red on purpose** and labelled as such in `*Tests.cs`. Do not
-"fix" the suite by reverting that test to shadow mode; that restores the blindfold.
+**Fixed 2026-08-09.** The `CancelAllOrders` branch now reuses `IsPositionReducingOrder` and skips
+any order that is reducing a still-open position, logging the retention as `LOCKOUT_STOP_RETAINED`.
+Because "reducing" is only true while a position is actually open, a flat account still has every
+order cancelled and the lockout still reaches `Confirmed`. The retained stop is cleared by the
+sweep's existing deferred batch once the flatten is confirmed and the instrument is flat — that
+machinery is `P1-11`'s and did not need rebuilding.
+
+Pinned by `TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening`, which now covers
+**both** routes. Its `SetModeForTest("live")` is load-bearing: in shadow the test proves nothing.
 
 ---
 

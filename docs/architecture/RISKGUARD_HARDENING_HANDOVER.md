@@ -12,11 +12,11 @@ Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 > passed / 1 failed**; `nt_compile` **0 errors** under net48; the addon is hot-swapped on the NT8
 > box. Analysis in §4m, what shipped in the plan's `P0-51` and `P1-52` entries.
 >
-> ⚠️ **`P0-53` is OPEN and its acceptance test is RED ON PURPOSE.** In an *acting* mode the
-> lockout's `CancelAllOrders` still cancels the protective stop before the flatten, so a failed
-> flatten leaves the position naked. It does not bite in shadow — it bites the moment you switch
-> to `live`. **Do not "fix" the suite by reverting that test to shadow mode; that restores the
-> blindfold.** This is the highest-priority open item.
+> ✅ **`P0-53` is fixed too.** The lockout's `CancelAllOrders` no longer cancels a protective stop
+> while its position is open. Suite **630 passed / 0 failed** — fully green.
+>
+> **All three defects from the 2026-08-09 incident are closed, deployed and compiling clean under
+> net48.** None has been validated on a live feed; see §4m for what that would take.
 
 > ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
 > *(Superseded by the banner above — session 9 opened two defects. The rest of this box still
@@ -541,25 +541,21 @@ at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FS
 unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
 copier.
 
-### START HERE — `P0-53`, and it outranks everything below
+### START HERE — validate the three fixes on a live feed
 
-✅ `P0-51` and `P1-52` are closed and deployed (2026-08-09).
+✅ `P0-51`, `P1-52` and `P0-53` are closed, deployed and compiling clean (2026-08-09). Suite 630/0.
 
-**`P0-53` is now the top item, and it is the one that bites when you leave shadow.** In an acting
-mode the lockout's `PendingCancel` phase emits a `CancelAllOrders` action, and `ExecuteAction`'s
-implementation (`RiskGuardAddOn.cs`, the `CancelAllOrders` branch) cancels **every** working order
-with no `IsPositionReducingOrder` filter. The protective stop dies before the flatten is attempted;
-a flatten that then fails leaves the position naked. `P1-11` fixed exactly this hazard on the
-*sweep's* route and the action pipeline's route was never looked at.
+**None of the three has been seen working on a real feed.** All the evidence is unit-level plus a
+clean `nt_compile`. The cheapest validation is the incident itself, replayed: place a 2-lot ATM
+entry on `Sim101` in shadow and confirm (a) **no** `ORDER_FLOOD_LOCKOUT`, and (b) if you force a
+lockout by other means, `LOCKOUT_SWEEP_SHADOW` / `SHADOW_PENDING_CANCEL` appear and **nothing is
+cancelled or flattened**. That is a five-minute test and it exercises all three fixes.
 
-The fix is small — apply the same intent split the sweep already uses, reusing
-`IsPositionReducingOrder` rather than writing a second definition of "protective leg". The
-acceptance test already exists and is **red on purpose**:
-`TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening`.
+> **`T5`'s fail-closed gate remains unvalidated and still needs an acting mode.** It is now safe to
+> attempt: `P0-53` was the reason arming live was hazardous, and it is closed. Do the shadow replay
+> above first.
 
-> **`T5`'s fail-closed gate is still unvalidated live and still needs an acting mode.** That is now
-> a more attractive experiment than it was, because shadow finally means what it says — but do not
-> arm live until `P0-53` is closed, since arming is exactly what exposes it.
+Then `P0-9`'s targets/OCO decision (below) and `P3-30`, the reconciler.
 
 ### THEN — needs an operator decision, not a code change
 
