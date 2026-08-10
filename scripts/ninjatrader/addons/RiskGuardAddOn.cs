@@ -1752,7 +1752,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                         { "orderName", e.Order.Name ?? "" },
                         { "quantity", quantity },
                         { "limitPrice", limitPrice },
-                        { "stopPrice", stopPrice }
+                        { "stopPrice", stopPrice },
+                        // The OCO group id, and the reason this log is the only place it can be
+                        // read as a TIMELINE: /api/orders is a snapshot that also skips Filled and
+                        // Cancelled orders, so it cannot show the moment one leg fills and its
+                        // sibling is pulled -- which is exactly how OCO behaviour is identified.
+                        // Empty string means the order carries no OCO group.
+                        { "oco", e.Order.Oco ?? "" }
                     });
                 }
                 catch (Exception ex)

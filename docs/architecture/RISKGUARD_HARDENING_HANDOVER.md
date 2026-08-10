@@ -1517,12 +1517,13 @@ Reflected on NT8's `NinjaTrader.Core.dll` (in the NinjaTrader 8 `bin` folder):
 |---|---|
 | `Order.Oco` has a **public setter** | The old "create-time only, cannot be joined" claim is false |
 | There is **no `OcoChanged`** field (only `LimitPriceChanged`, `StopPriceChanged`, `QuantityChanged`) | `Account.Change()` moves price/qty but **cannot** move a working order between groups |
-| **An OCO id cannot be REUSED** — NT8 rejects a new order carrying a used id | The id belongs to a **generation** of the bracket. Re-creating one leg means re-creating **both** under a fresh id. Holding one id for the bracket's lifetime — the obvious implementation, and the one written — does not work |
+| ~~**An OCO id cannot be REUSED** — NT8 rejects a new order carrying a used id~~ **CORRECTED 2026-08-10, see §4p** | The rule is about the GROUP'S LIFE, not the id's history: an id can be **joined** while its group still has a live member, and is only rejected once every leg has gone terminal. Re-creating one leg beside a live sibling may keep the same id |
 | `Account.CancelOrdersByOcoID(orders, ocoId)` exists | A real group-cancel primitive; the copier currently hand-rolls this |
 | `Connection.Features` returns `Feature[]` at runtime | Capability is answerable, not guessable |
 
 **The id-reuse rule was found by the operator hitting the error, not by us.** It is the single
-fact that most shapes the design, and nothing in the suite would have surfaced it.
+fact that most shapes the design, and nothing in the suite would have surfaced it. **It was also
+stated too strongly, and §4p corrects it with a controlled test.**
 
 ### What this connection actually supports
 
@@ -1602,6 +1603,71 @@ and unrelated.
 - **Two overlapping leader brackets look exactly like a copier bug.** A manual bracket placed
   during a test produced multiple mirrored legs and a qty-4 order; the tell is the leader's order
   *names* (`Stop1`/`Target1` vs `Stop_<bracketId>`). Check names before concluding regression.
+
+---
+
+## 4p. 2026-08-10 — the OCO id rule, pinned by a controlled live test
+
+§4o's headline OCO fact was **too strong**, and it was the fact "that most shapes the design". It
+is now pinned properly, by changing exactly one variable.
+
+### The experiment
+
+A 2-lot bracketed entry on `Sim_All_Day_ORB` (MNQ SEP26, 01:44 ET) via `/api/order/atm`: entry
+filled 2 @ 29906.75, and `Stop_5c903ad3` (StopMarket 2 @ 29897.5) plus `Target_5c903ad3`
+(Limit 2 @ 29921.75) went working, **both carrying one shared id `4980107b-…`**. Then the same
+order — same id, account, side, quantity and price (Sell Limit 1 @ 30200, far from market so it
+could not fill) — was submitted twice:
+
+| # | State of the group `4980107b-…` | Result |
+|---|---|---|
+| 1 | stop + target still **working** | **`Working`** — accepted, it JOINED the group |
+| 2 | group retired by `nt_close_position` (3 orders cancelled) | **`Rejected`** |
+
+Nothing else differed between the two submissions. So:
+
+> **An OCO id can be JOINED while its group still has a live member. It cannot be RESURRECTED once
+> every leg has gone terminal.**
+
+### Why this matters to the parked mirrored target
+
+The parked implementation was believed dead because it "mints one id per bracket and reuses it,
+which NT8 rejects on any re-create". That is only true when the re-create happens after the whole
+group has died. **Re-creating ONE leg while its sibling is still working may keep the same id**, so
+per-generation ids are needed only for the fully-terminal case. `P0-9`'s remaining item is
+materially cheaper than §4o concluded — and note the `Order.Oco` public setter and this result agree:
+group membership is assignable at create time, for a group that still exists.
+
+### Two other things this trade exposed
+
+- ⚠️ **`EDGE_WINDOW_BREACH` fires on an ordinary overnight entry.** The moment the position opened,
+  the guard logged `[SHADOW] Would execute action FlattenPosition triggered by EDGE_WINDOW_BREACH`.
+  Shadow only logged it (`P0-51` working), but **armed live this trade would have been flattened
+  within a second of filling.** Any live validation booked outside the permitted edge window will be
+  destroyed by the guard rather than by the defect under test. Schedule live work accordingly.
+- **An ATM leg's price cannot be trailed from outside.** `nt_change_order` on `Stop_5c903ad3`
+  returned `"modified"` and the order's timestamp moved, but the stop price did **not** change
+  (29897.5 held) — our `DynamicAtmManager` owns that leg and re-asserted it. The copier's own
+  `COPIER_STOP` is not ATM-managed, so `P0-9`'s `Change()` trail is unaffected; but do not use an
+  ATM-managed order to test it.
+
+### Suspected, not concluded
+
+The two `Rejected` `COPIER_TARGET` leftovers from the 01:01/01:03 parked-target run carried
+**distinct** ids, so id reuse cannot be why they were rejected. Their tells point elsewhere: one is
+qty **4** against a 2-lot position, and the other sits at **29905.625**, which is not a multiple of
+MNQ's 0.25 tick. Note that the ATM path's own off-tick prices (29897.419…, 29921.633…) were silently
+**rounded by NT8 at `Submitted`**, so off-tick is not always fatal — worth establishing which paths
+round and which reject before blaming OCO for anything.
+
+### Replikanto did nothing
+
+With its leader account set to `Sim_All_Day_ORB` and a real 2-lot entry filled on it, **Replikanto
+produced no order, no position and no event on either `SimCopyTest1` or `SimCopy2`.** Our copier
+correctly stood aside for the whole trade (`COPIER_NO_ACTIVE_RELATIONSHIPS: no enabled relationship
+has 'Sim_All_Day_ORB' as leader`), so nothing of ours was in its way. This is the second time
+Replikanto has been looked for and not found (§4o); it appears not to be enabled, and that is a
+question for its own UI, not for this codebase.
 
 ---
 

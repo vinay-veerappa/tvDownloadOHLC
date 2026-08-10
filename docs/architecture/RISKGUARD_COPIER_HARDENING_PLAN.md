@@ -277,11 +277,14 @@ Notes that are not obvious:
 > actually constrains the design, was established by reflecting on `NinjaTrader.Core.dll` and by
 > two live runs:
 >
-> 1. **An OCO id cannot be REUSED.** NT8 rejects a new order carrying an id that has already been
->    used (observed live: a `COPIER_TARGET` came back `Rejected`). So the id belongs to a
->    *generation* of the bracket: any time a leg must be re-created rather than modified, BOTH legs
->    must be re-created under a FRESH id. Holding one id on the bracket for its lifetime — the
->    obvious implementation — does not work.
+> 1. ~~**An OCO id cannot be REUSED.**~~ **CORRECTED 2026-08-10 by controlled live test — handover
+>    §4p.** The rule is about the GROUP'S LIFE, not the id's history: **an id can be JOINED while its
+>    group still has a live member, and is rejected only once every leg has gone terminal.** Proved
+>    by submitting one identical order twice under the same id — `Working` while the bracket was
+>    alive, `Rejected` after the group was retired. So re-creating ONE leg beside a still-working
+>    sibling may keep the same id, and per-generation ids are needed only for the fully-dead-group
+>    case. The original wording was inferred from a single `Rejected` `COPIER_TARGET`, which carried
+>    a *distinct* id and so cannot have been rejected for reuse at all.
 > 2. **There is no `OcoChanged` field.** `Order` has `LimitPriceChanged`, `StopPriceChanged` and
 >    `QuantityChanged`, which is what `Account.Change()` carries, so an already-working order
 >    cannot be moved between groups. Modifying price/qty in place is fine and preserves the group.
