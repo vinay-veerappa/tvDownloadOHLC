@@ -33,7 +33,7 @@ could have been: they are both about what *another* program's orders look like t
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09** |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09** |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52` | 25 | **23 closed** — `P1-12`, `P1-14`, `P1-36` closed 2026-08-07 (session 8); `P1-13`'s fail-open half closed, its threading half open; **`P1-52` OPEN — flood governor counts a normal ATM bracket as a flood (2026-08-09)** |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | `P2-28`, `P2-46`, **`P2-38`, `P2-41`** closed; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
@@ -305,15 +305,51 @@ Notes that are not obvious:
 > `NativeOcoOrders` — so OCO here is NT8-simulated, not broker-native. Probe it with
 > `GET /api/connections`.
 >
-> **Status: parked on branch `wip/p09-oco-target`, NOT deployed.** The mirror works — correct
-> distances, shared id, modify-in-place on both legs — but it surfaced a duplicate-leg race
-> (`P1-56`).
+> ~~**Status: parked on branch `wip/p09-oco-target`, NOT deployed.**~~ **CLOSED and deployed
+> 2026-08-10 (`86c6376f`).** See "Item (1) shipped" below. The parked branch is superseded — it was
+> rebased onto the `SyncFollowerStopOnce`/holder split and gained five things it did not have.
+
+#### Item (1) shipped — 2026-08-10, `86c6376f`. Suite 653/0 → 686/0, `nt_compile` 0 errors, deployed
+
+The follower receives the leader's target as well as its stop, anchored to its own fill by the
+same signed distance, with both legs in one OCO group. **The asymmetry between the legs is the
+design and must not be tidied away**: the stop is risk and may re-mint the OCO id and tear the
+target down to rebuild the pair; the target is upside and never cancels or re-creates the stop.
+
+Five things the parked branch did not have, four of which are live-risk:
+
+| | What | Why it matters |
+|---|---|---|
+| 1 | **The dead-group id conditional** | Re-using the id on the cancel-then-create path has the broker reject the new **stop**. A naked follower produced by the target feature, on the leg it is not about |
+| 2 | **`P1-56`'s reservation on the target leg** | The parked target sync had none and carried the duplicate-leg defect verbatim. Its own flags, not the stop's — sharing would let an in-flight target sync make the risk leg wait |
+| 3 | **A bounded target budget** (`MaxBracketTargetAttempts`) | The parked target could be re-submitted forever against a rejecting broker. Kept separate from `StopAttempts` so target churn cannot spend the stop's budget |
+| 4 | **The OCO-retirement guard** | When the target fills NT8 cancels the stop; the copier read that as a *lost* stop and re-submitted it against a position that had just closed. `P0-50`'s orphan, by a route that did not exist until targets were mirrored. **A leg whose sibling FILLED was retired, not lost** |
+| 5 | **Tick rounding on both legs** | The anchor is an average fill price and averages land between ticks. This is the likely cause of the `COPIER_TARGET` Rejected at **29905.625** on a 0.25-tick instrument — §4p's "suspected, not concluded", now fixed either way |
+
+**A multi-target leader is not mirrored at all.** A scale-out bracket has several targets and the
+follower has one mirrored leg, so there is no honest answer: last-seen makes the follower's exit an
+artefact of NT8's event ordering, and nearest exits the follower's *whole* position at the leader's
+*first* partial. It withdraws the target, logs `BRACKET_TARGET_AMBIGUOUS`, and keeps the stop — the
+follower still exits on the copied leader fills, which is the behaviour that shipped before targets
+existed. Deliberately **not** applied to stops: several working stops is a reconciliation problem
+(`P1-36`, `P3-30`) and dropping the risk leg over it is the wrong trade.
+
+Nine tests, hand-written first, every guard verified falsifiable by mutation rather than by
+argument. What each mutation produced: retirement guard off → the orphan stop is submitted (2 vs 1);
+id re-used → the retired group's id is carried onto the new stop; reservation off → 2 live targets;
+re-drive removed → a 1-lot target behind 2 lots; rounding off → both legs at `.125` on a 0.25 tick.
+
+> ⚠️ **Deployed but NOT live-validated**, like `P0-53`/`P1-54`/`P0-55`/`P1-56`. Two things now differ
+> on the *stop* path and neither has been seen on a real fill: the stop carries an **OCO id** where
+> it used to carry `""`, and its price is **rounded to tick**. The id is what lets a later target
+> join rather than forcing the protective stop to be re-created — but a single-member OCO group is
+> inferred to be harmless, not proven. Watch the first live `COPIER_STOP` for a rejection.
 
 **Explicitly NOT done — do not read this as P0-9 fully closed:**
 
-1. **Profit targets and OCO pairing.** Only stops are mirrored. A target is upside, not risk;
-   adding it brings OCO and partial-fill re-pairing with it. The follower still exits via the
-   copied market exit when the leader's target fills.
+1. ~~**Profit targets and OCO pairing.**~~ **CLOSED 2026-08-10, `86c6376f`** — see above. What is
+   still not done inside it: a **multi-target (scale-out) leader is refused rather than mirrored**,
+   and partial-fill **re-pairing** across a scaled leader position is untested.
 2. ~~Option 2 (`EnableFollowerAtm` / `FollowerAtmStrategyName`) is still unread config~~ —
    **RESOLVED by deletion.** Both fields were carried between DTOs and read by nothing: not
    parsed in `LoadFromDisk`, not exposed by the bridge API, not shown in the UI. They could not

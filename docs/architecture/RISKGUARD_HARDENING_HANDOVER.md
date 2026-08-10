@@ -1,17 +1,27 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-10 (session 10 — **`P1-56` closed and deployed**; the OCO id rule corrected by live test; `P1-57`/`P2-58` opened. Record in §4q)
+**Last updated**: 2026-08-10 (session 11 — **`P0-9` item (1), the mirrored target, closed and deployed**. Record in §4r)
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
-A second branch **`wip/p09-oco-target`** holds the mirrored-target work, **deliberately NOT deployed** (see §4o)
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 44 closed**
+**`wip/p09-oco-target` is SUPERSEDED** — its work was rebased and shipped as `86c6376f`; do not
+deploy or rebase that branch, it predates the holder split and lacks five fixes (§4r).
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 45 closed**
 (`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
-**The deployed build now includes `P1-56`'s fix** (suite 653/0, `nt_compile` 0 errors, hot-swapped
-2026-08-10 06:19).
 NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
-**The deployed build is `c9459121`** — `P1-56`'s fix, on `harden/riskguard-p0-51`. (`995f6402` was
-the deployed build for sessions 9–10 up to 2026-08-10 06:19.)
-Suite **653 passed, 0 failed**.
+**The deployed build is `86c6376f`** — the mirrored target, on `harden/riskguard-p0-51`.
+(`c9459121` was the deployed build from 2026-08-10 06:19 to 13:12; `995f6402` before that.)
+Suite **686 passed, 0 failed**.
+
+> ✅ **`P0-9`'s mirrored target is CLOSED and deployed (2026-08-10, `86c6376f`).** Followers now get
+> the leader's target as well as its stop, in one OCO group, anchored to their own fill. The
+> longest-standing "explicitly not done" item in the plan.
+>
+> ⚠️ **It is NOT live-validated, and two things changed on the STOP path.** The mirrored stop now
+> carries an **OCO id** where it used to carry `""`, and its price is **rounded to tick**. The id is
+> what lets a later target *join* rather than forcing the protective stop to be re-created; a
+> single-member OCO group is inferred to be harmless, **not proven**. **Watch the first live
+> `COPIER_STOP` for a rejection** — that is the one thing that would make this worse than what it
+> replaced. Details and the whole design in §4r.
 
 > ✅ **`P0-51` and `P1-52` are FIXED, deployed and compiling clean (2026-08-09).** Shadow no
 > longer cancels or flattens, and one bracketed trade is no longer an order flood. Suite **629
@@ -573,53 +583,35 @@ at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FS
 unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
 copier.
 
-### START HERE — `P0-9`'s mirrored target, now that its blockers are mostly gone
+### START HERE — live-validate the mirrored target
 
-✅ `P0-51`, `P1-52`, `P0-53`, `P1-54`, `P0-55` **and `P1-56`** are closed and deployed. Suite 653/0.
+✅ `P0-51`, `P1-52`, `P0-53`, `P1-54`, `P0-55`, `P1-56` **and `P0-9` item (1)** are closed and
+deployed. Suite 686/0.
 
-**`P1-56` was the top item and is done** — one reservation held across a bounded re-drive loop, three
-concurrent tests, deployed 2026-08-10 06:19. Details in the plan.
+**`P0-9`'s mirrored target shipped 2026-08-10 (`86c6376f`, §4r) and is the top item precisely
+because it is deployed and unvalidated.** It is not a code task any more; it is one Sim trade.
 
-**The mirrored target (`P0-9` item 1) is now the highest-value open work, and BOTH of its blockers
-have moved:**
+What to watch on that trade, in priority order:
 
-- `P1-56`, which it was waiting on, is closed.
-- **The OCO-id rule is much weaker than §4o claimed** (§4p). An id can be *joined* while its group
-  still has a live member, and a trail *modifies in place and keeps the group* — confirmed live, and
-  corroborated by a third-party copier doing exactly the same. So the "per-generation ids" redesign
-  shrinks to one conditional: keep the id while a sibling is live, mint a fresh one only when the
-  whole group is dead. The parked branch is closer to correct than it was credited for.
+1. **The first live `COPIER_STOP` must not be rejected.** It now carries an OCO id where it used to
+   carry `""`. A single-member OCO group is inferred harmless, not proven, and a rejected stop is a
+   naked follower — this is the only way the change is *worse* than what it replaced.
+2. Both legs present on the follower, sharing one `oco`, at `followerFill ± leaderDistance`,
+   both on a tick boundary.
+3. The target filling must **not** produce a re-submitted stop. `BRACKET_LEG_RETIRED_BY_OCO` in
+   the log is the success case; a second `COPIER_STOP` against a closing position is the failure.
 
-Its remaining work is therefore: the dead-group conditional, and re-basing
-`wip/p09-oco-target` onto the new `SyncFollowerStopOnce`/holder split (**it predates that split and
-will conflict**). Note a third-party copier mirrors both legs and does it in ~12 ms, so this is
-catching up, not gold-plating.
+> ⚠️ **Booking that trade: `EDGE_WINDOW_BREACH` fires on an ordinary overnight entry** and, armed
+> live, would flatten it about a second after it fills (§4p). And `P1-57` means a `Sim101` trade
+> fans out to **three** follower accounts. Shadow restrains RiskGuard, not the copier, so the
+> copier's legs are placed for real regardless of mode.
 
 Then `P1-57` (we would mirror another copier's mirror — a live chain exists on this box), then
 `P3-30`, the reconciler.
 
 > **`T5`'s fail-closed gate remains unvalidated and still needs an acting mode.** `P0-53` and
 > `P1-56`, the two reasons arming live was hazardous, are both closed now — but see the
-> `EDGE_WINDOW_BREACH` warning in the banner before booking any live session, and remember `P1-57`
-> means a `Sim101` trade fans out to three follower accounts.
-
-### THEN — needs an operator decision, not a code change
-
-**`P0-9` item (1) — profit targets and OCO.** The last piece of `P0-9`, and **the operator hit it
-immediately**: on the validated trade, Sim101 carried `Target1` (Limit Sell 29851.5) and Sim-ORB
-received only `COPIER_STOP`. That is by design, and it is the first thing anyone notices.
-
-- *Against building it now*: a mirrored target is **upside, not risk**. The follower already exits
-  when the leader's target fill is copied, so the gap is fill quality, not exposure. Building it
-  doubles the copier's order-placement surface on a component whose **first** half has never been
-  observed live.
-- *For*: it is option 1 of the plan's own preferred fix, and the latency gap is real in a fast
-  market.
-- **If it is built it must use a real broker-side OCO id.** A mirrored target without OCO leaves
-  the stop working after the target fills, which flips the follower into a fresh position — the
-  same over-cover hazard the cancel-then-replace rule prevents *within* the copier.
-
-**Recommendation: validate the mirrored stop first, then decide.**
+> `EDGE_WINDOW_BREACH` warning above before booking any live session.
 
 ### Ready to code, in value order
 
@@ -655,10 +647,10 @@ the risk is concurrent. **Doing the risky half before its coverage exists is how
 
 - ~~The branch `harden/riskguard-copier-p0` is unmerged and unpushed~~ — **done. Merged and
   pushed; `main` and `origin/main` are level (confirmed 2026-08-09).**
-- **Two branches are unmerged and unpushed.** `harden/riskguard-p0-51` carries all of session 9
-  (the deployed build is its tip, `995f6402`); `wip/p09-oco-target` carries the mirrored-target
-  work and must **not** be deployed until `P1-56` and the OCO-id-reuse rule are handled. `main` is
-  untouched.
+- **`harden/riskguard-p0-51` is unmerged and unpushed**; the deployed build is its tip, `86c6376f`.
+  `main` is untouched. **`wip/p09-oco-target` is superseded and should be deleted** — its work was
+  rebased and shipped, and the branch as it stands lacks five fixes (§4r). Rebasing *it* now would
+  be re-introducing them.
 - **The Gemini API key** scrubbed from history (`scripts/trader/chart_agent/test_vision.py`) still
   needs **rotating**. It never reached GitHub; that is not the same as it being safe.
 - **0.28 GB of older parquet remains in published history** — the purges only covered the
@@ -1854,7 +1846,109 @@ first genuinely concurrent test in the suite; the `S`-series is still sequential
 
 ---
 
+## 4r. Session 11 record — 2026-08-10: the mirrored target ships, and what the parked branch was missing
+
+**Closed**: `P0-9` item (1). Suite 653/0 → **686/0**. Deployed build `c9459121` → **`86c6376f`**,
+hot-swapped 13:12, `nt_compile` 0 errors under net48. One commit on `harden/riskguard-p0-51`;
+nothing merged, nothing pushed. **`wip/p09-oco-target` is superseded — delete it.**
+
+### The asymmetry between the legs is the design
+
+The stop is **risk**; the target is **upside**. Every place they differ, they differ for that
+reason, and tidying them into symmetry would break something:
+
+- The stop's re-create path may **re-mint the OCO id and cancel the target** to rebuild the pair.
+  The target's re-create path **joins** whatever live group the stop is in and never touches it.
+  Cancelling a working protective stop to tidy up a group is not a trade worth making.
+- Each leg has **its own** in-flight reservation, owed-flag and attempt budget. Sharing the stop's
+  would let an in-flight *target* sync make the risk leg wait its turn, and would let target churn
+  spend the budget that keeps the follower protected.
+- The target's flat/side-abort path deliberately does **not** clear `FollowerQuantity`/
+  `FollowerSide` as the stop's does — that would let a target sync switch the stop sync off.
+- `SyncFollowerBracket` drives **stop first, always**, and every call site goes through it. A site
+  that syncs one leg leaves the pair half-rebuilt, and that is a mistake that reads as correct.
+
+### What the parked branch did not have — four of the five are live-risk
+
+`wip/p09-oco-target` "worked" live and was credited as nearly done. Rebasing it onto the holder
+split was the small part. These were the rest:
+
+1. **The dead-group id conditional.** It minted one id per bracket and re-used it forever. On the
+   cancel-then-create path the broker rejects a re-used id whose group has gone terminal — and that
+   path belongs to the **stop**. The feature would have produced a naked follower on the leg it is
+   not even about. *(Whether cancelling one leg retires the group is still unverified; the fix is
+   written to be correct either way, which is why it does not need the answer.)*
+2. **No reservation on the target sync.** It predated `P1-56` and carried that defect verbatim.
+3. **No attempt bound on the target.** A rejecting broker would have been answered forever — the
+   flood mode the `P1-43`…`P2-46` cluster already cost us.
+4. **No OCO-retirement guard.** *This one is created by the pairing itself.* When the target fills,
+   NT8 cancels the stop; `OnFollowerOrderUpdate` read that as a **lost** stop and re-submitted it —
+   and because NT8 raises ExecutionUpdate before PositionUpdate (`P0-49`'s ordering) the follower
+   still read as open, so `P0-50`'s live re-read let it through. An orphan stop on an account that
+   has just closed. **A leg whose sibling FILLED was retired, not lost.**
+5. **No tick rounding.** Both legs are computed from the follower's *average* fill price, and an
+   average across partials lands between ticks. §4p listed the `COPIER_TARGET` Rejected at
+   **29905.625** on a 0.25-tick instrument as "suspected, not concluded" — this is almost certainly
+   it, and it is now moot on both legs.
+
+### A multi-target leader is refused, not guessed at
+
+A scale-out bracket has several targets; the follower has one mirrored leg. Last-seen makes the
+follower's exit an artefact of NT8's event ordering; nearest exits the follower's **whole** position
+at the leader's **first** partial. So it withdraws the target, logs `BRACKET_TARGET_AMBIGUOUS`, and
+keeps the stop — falling back to the known-good pre-target behaviour. `Target1`/`Target2` is
+ordinary ATM usage on this box, not an exotic case.
+
+Deliberately **not** applied to stops: several working stops is a reconciliation problem
+(`P1-36`, `P3-30`), and dropping the risk leg over it is the wrong trade in the wrong direction.
+
+### Every guard was verified by mutation, not by argument
+
+Nine tests, hand-written before the code (`*Tests.cs` is a protected path). Six were red at
+baseline. The two that were not — the retirement guard and the tick rounding — **cannot** be red at
+baseline, because neither situation can arise until targets exist. That is the exact shape of the
+"settled fact nothing tests" that shipped `P1-40`, so each guard was instead mutated and the test
+observed to fail:
+
+| Mutation | What the suite reported |
+|---|---|
+| Retirement guard disabled | the orphan stop **is** submitted — 2 `COPIER_STOP` where 1 was expected |
+| Id re-used on re-create | the retired group's id carried onto the new stop |
+| Target reservation disabled | **2 live targets** against one position |
+| Re-drive removed (back off, never re-apply) | a **1-lot** target behind a 2-lot position — under-cover |
+| Multi-target refusal disabled | a target mirrored from a scale-out leader |
+| Tick rounding disabled | both legs at `.125` on a 0.25 tick |
+
+The stub gained `SimulateChangeFailure` (nothing could reach the cancel-then-create fallback before)
+and `FillOrderAndRetireOcoGroup`. The stub models **fill-retires-the-group**, which is what OCO
+means; it deliberately does **not** model cancel-retiring-the-group, because that is a guess and
+encoding a guess in the double would have made the copier agree with it.
+
+### Still open on this item
+
+- **Not live-validated.** See §4a for exactly what to watch on the first Sim trade.
+- **Partial-fill re-pairing across a scaled leader position is untested.**
+- The two stop-path changes (OCO id, tick rounding) have not been seen on a real fill.
+
+---
+
 ## 5. Decisions already made — do not re-litigate
+
+> **`P0-9` item (1)'s five invariants (closed 2026-08-10).** Mirrored verbatim into `profiles.py`'s
+> `settled`, per §10.2b of the loop doc. Retire from **both** places or the panel keeps arguing.
+>
+> 1. **The two legs are deliberately asymmetric.** Do not propose unifying the syncs, sharing
+>    `StopInFlight`/`StopAttempts` with the target, or making the target symmetric. Sharing lets an
+>    in-flight *target* sync delay the risk leg, and lets target churn spend the stop's budget.
+> 2. **The OCO id rule is about the group's life, not the id's history.** A fresh id is minted only
+>    on the cancel-then-create path. Not per-generation on every sync; and not never — re-using an
+>    id whose group may be retired has the broker reject the new **stop**.
+> 3. **A leg terminal while its sibling FILLED was retired, not lost.** `P0-50`'s live re-read does
+>    not catch this, because ExecutionUpdate precedes PositionUpdate.
+> 4. **A multi-target leader is not mirrored at all.** Not nearest, not last-seen. Not applied to
+>    stops.
+> 5. **Leg prices are rounded to tick before the already-correct comparison**, not after — after
+>    would never match and would re-drive the leg forever.
 
 > **`P1-56`'s two invariants (closed 2026-08-10).** Mirrored verbatim into `profiles.py`'s `settled`,
 > per §10.2b of the loop doc.
