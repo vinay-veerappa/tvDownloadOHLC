@@ -246,8 +246,36 @@ namespace NinjaTrader.NinjaScript.AddOns
         // once it is released. The design doc's central concurrency invariant is that no
         // Account trading call happens under the lock; queueing is how a decision made inside
         // the lock reaches the broker outside it. Guarded by _stateLock.
-        private readonly List<KeyValuePair<Account, Order>> _pendingCancels =
-            new List<KeyValuePair<Account, Order>>();
+        // Deferred cancel queue. Entries carry intent so the drain can distinguish
+        // trader-order interventions (withheld in shadow mode) from RiskGuard's own
+        // cleanup cancels (sent in every mode). See T6/P0-51.
+        private enum PendingCancelIntent
+        {
+            Intervention,
+            Cleanup
+        }
+
+        private readonly struct PendingCancelEntry
+        {
+            public readonly Account Account;
+            public readonly Order Order;
+            public readonly PendingCancelIntent Intent;
+
+            public PendingCancelEntry(Account account, Order order, PendingCancelIntent intent)
+            {
+                Account = account;
+                Order = order;
+                Intent = intent;
+            }
+        }
+
+        private readonly List<PendingCancelEntry> _pendingCancels =
+            new List<PendingCancelEntry>();
+
+        // Tracks which accounts have already logged a shadow lockout-sweep skip this lockout,
+        // so the informative shadow log is emitted at most once per account per lockout.
+        private readonly Dictionary<string, bool> _lockoutSweepShadowLogged =
+            new Dictionary<string, bool>();
 #if !TESTING
         private NTMenuItem _myMenuItem;
         private ControlCenter _controlCenter;
@@ -1625,7 +1653,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 if (!IsPositionReducingOrder(e.Order, stateModel))
                                 {
                                     // P1-43: queued, not sent -- this block runs under _stateLock.
-                                    _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
+                                    _pendingCancels.Add(new PendingCancelEntry(account, e.Order, PendingCancelIntent.Intervention));
                                 }
 
                                 LogEvent(accountName, "ORDER_FLOOD_LOCKOUT", $"ORDER FLOOD DETECTED: {stateModel.RecentOrderIds.Count} distinct orders in 1s (limit {maxPerSecond}) triggered lockout.");
@@ -1641,7 +1669,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     if (e.Order.OrderType == OrderType.Limit || e.Order.OrderType == OrderType.StopMarket || e.Order.OrderType == OrderType.StopLimit || e.Order.OrderType == OrderType.Market)
                                     {
                                         // P1-43: queued, not sent -- this whole block runs under _stateLock.
-                                        _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
+                                        _pendingCancels.Add(new PendingCancelEntry(account, e.Order, PendingCancelIntent.Intervention));
                                         LogEvent(accountName, "ENTRY_CANCEL", $"Cancelled order {e.Order.Id} because account is locked out.");
                                     }
                                 }
@@ -1656,7 +1684,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
                         {
                             // P1-43: queued, not sent -- this whole block runs under _stateLock.
-                            _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
+                            _pendingCancels.Add(new PendingCancelEntry(account, e.Order, PendingCancelIntent.Intervention));
                             LogEvent(accountName, "BLACKLIST_CANCEL", $"Cancelled order {e.Order.Id} because instrument {instRoot} is blacklisted.");
                         }
                     }
@@ -1667,7 +1695,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted || e.Order.OrderState == OrderState.Working)
                             {
                                 // P1-43: queued, not sent -- this whole block runs under _stateLock.
-                                _pendingCancels.Add(new KeyValuePair<Account, Order>(account, e.Order));
+                                _pendingCancels.Add(new PendingCancelEntry(account, e.Order, PendingCancelIntent.Intervention));
                                 LogEvent(accountName, "PER_INSTRUMENT_CAP_CANCEL", $"Cancelled order {e.Order.Id} because quantity {e.Order.Quantity} exceeds {instRoot} cap ({perInstCap.MaxContracts}).");
                             }
                         }
@@ -1829,6 +1857,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                             $"Shadow session #{_shadowSessionsCompleted} counted for {currentSessionDate:yyyy-MM-dd} (MinShadowSessions={_config.MinShadowSessions})");
                     }
 
+                    // T6/P0-51: clear the per-account shadow-sweep log flag when the account is
+                    // no longer locked out, so the next lockout logs the skip again.
+                    foreach (var accName in _subscribedAccounts)
+                    {
+                        if (_accountStates.TryGetValue(accName, out var stateModel) && !stateModel.IsLockedOut)
+                            _lockoutSweepShadowLogged.Remove(accName);
+                    }
+
                     // 4. State persist (batch flush) - capture now, write below. The flag is
                     // cleared here, not after the write: anything that dirties the state while
                     // the write is in flight must set it again and be picked up next sweep, not
@@ -1896,85 +1932,145 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 DrainPendingCancels();
 
-                foreach (var batch in cancelBatches)
-                {
-                    try { batch.Key.Cancel(batch.Value); }
-                    catch (Exception cex)
-                    { LogEvent(batch.Key.Name, "LOCKOUT_CANCEL_FAIL", cex.Message); }
-                }
+                bool acting = IsActingMode();
 
-                foreach (var batch in flattenBatches)
+                if (acting)
                 {
-                    var account = batch.Key;
-                    foreach (var instrument in batch.Value)
+                    foreach (var batch in cancelBatches)
                     {
-                        try
-                        {
-                            account.Flatten(new[] { instrument });
-                        }
-                        catch (Exception fex)
-                        {
-                            LogEvent(account.Name, "LOCKOUT_FLATTEN_FAIL",
-                                $"{instrument.FullName}: {fex.Message}; falling back to a market close.");
+                        try { batch.Key.Cancel(batch.Value); }
+                        catch (Exception cex)
+                        { LogEvent(batch.Key.Name, "LOCKOUT_CANCEL_FAIL", cex.Message); }
+                    }
 
-                            // Re-read the position rather than trusting the quantity captured
-                            // under the lock - the flatten may have partially succeeded.
-                            var pos = account.Positions.FirstOrDefault(
-                                p => p.Instrument != null && p.Instrument.FullName == instrument.FullName);
-                            if (pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0)
-                                continue;
-
-                            var closeAction = pos.MarketPosition == MarketPosition.Long
-                                ? OrderAction.Sell : OrderAction.BuyToCover;
+                    foreach (var batch in flattenBatches)
+                    {
+                        var account = batch.Key;
+                        foreach (var instrument in batch.Value)
+                        {
                             try
                             {
-                                var closeOrder = account.CreateOrder(
-                                    instrument, closeAction, OrderType.Market, TimeInForce.Day,
-                                    pos.Quantity, 0, 0, string.Empty, "RiskGuardWatchdogFlatten", null);
-                                if (closeOrder != null) account.Submit(new[] { closeOrder });
+                                account.Flatten(new[] { instrument });
                             }
-                            catch (Exception sex)
-                            { LogEvent(account.Name, "LOCKOUT_CLOSE_FAIL", $"{instrument.FullName}: {sex.Message}"); }
+                            catch (Exception fex)
+                            {
+                                LogEvent(account.Name, "LOCKOUT_FLATTEN_FAIL",
+                                    $"{instrument.FullName}: {fex.Message}; falling back to a market close.");
+
+                                // Re-read the position rather than trusting the quantity captured
+                                // under the lock - the flatten may have partially succeeded.
+                                var pos = account.Positions.FirstOrDefault(
+                                    p => p.Instrument != null && p.Instrument.FullName == instrument.FullName);
+                                if (pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0)
+                                    continue;
+
+                                var closeAction = pos.MarketPosition == MarketPosition.Long
+                                    ? OrderAction.Sell : OrderAction.BuyToCover;
+                                try
+                                {
+                                    var closeOrder = account.CreateOrder(
+                                        instrument, closeAction, OrderType.Market, TimeInForce.Day,
+                                        pos.Quantity, 0, 0, string.Empty, "RiskGuardWatchdogFlatten", null);
+                                    if (closeOrder != null) account.Submit(new[] { closeOrder });
+                                }
+                                catch (Exception sex)
+                                { LogEvent(account.Name, "LOCKOUT_CLOSE_FAIL", $"{instrument.FullName}: {sex.Message}"); }
+                            }
+                        }
+                    }
+
+                    // P1-11 phase (c): only now, with the flatten attempted, may the reducing
+                    // orders go - and only for instruments that are actually flat. If the flatten
+                    // failed, the position is still open and its stop is the only thing standing
+                    // between the account and an uncapped loss. Leave it working; the next sweep
+                    // will try again.
+                    foreach (var batch in deferredCancelBatches)
+                    {
+                        var account = batch.Key;
+                        var stillCovered = new List<string>();
+                        var safeToCancel = new List<Order>();
+
+                        foreach (var order in batch.Value)
+                        {
+                            if (IsTerminal(order.OrderState)) continue;
+                            if (order.Instrument == null) continue;
+
+                            var pos = account.Positions.FirstOrDefault(
+                                p => p.Instrument != null && p.Instrument.FullName == order.Instrument.FullName);
+                            bool flat = pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0;
+
+                            if (flat) safeToCancel.Add(order);
+                            else stillCovered.Add(order.Instrument.FullName);
+                        }
+
+                        if (safeToCancel.Count > 0)
+                        {
+                            try { account.Cancel(safeToCancel); }
+                            catch (Exception cex)
+                            { LogEvent(account.Name, "LOCKOUT_CANCEL_FAIL", cex.Message); }
+                        }
+
+                        if (stillCovered.Count > 0)
+                        {
+                            LogEvent(account.Name, "LOCKOUT_STOP_RETAINED",
+                                $"Position still open after flatten for {string.Join(",", stillCovered.Distinct())}; "
+                                + "keeping its protective order working rather than leaving the position naked.");
                         }
                     }
                 }
-
-                // P1-11 phase (c): only now, with the flatten attempted, may the reducing
-                // orders go - and only for instruments that are actually flat. If the flatten
-                // failed, the position is still open and its stop is the only thing standing
-                // between the account and an uncapped loss. Leave it working; the next sweep
-                // will try again.
-                foreach (var batch in deferredCancelBatches)
+                else
                 {
-                    var account = batch.Key;
-                    var stillCovered = new List<string>();
-                    var safeToCancel = new List<Order>();
+                    // T6/P0-51: shadow mode observes and logs, but does not touch the broker.
+                    // Summarize what the sweep would have done, once per account per lockout.
+                    var shadowInstruments = new Dictionary<string, List<string>>();
+                    var shadowCancelCounts = new Dictionary<string, int>();
 
-                    foreach (var order in batch.Value)
+                    foreach (var batch in flattenBatches)
                     {
-                        if (IsTerminal(order.OrderState)) continue;
-                        if (order.Instrument == null) continue;
-
-                        var pos = account.Positions.FirstOrDefault(
-                            p => p.Instrument != null && p.Instrument.FullName == order.Instrument.FullName);
-                        bool flat = pos == null || pos.MarketPosition == MarketPosition.Flat || pos.Quantity <= 0;
-
-                        if (flat) safeToCancel.Add(order);
-                        else stillCovered.Add(order.Instrument.FullName);
+                        string name = batch.Key.Name;
+                        if (!shadowInstruments.ContainsKey(name))
+                            shadowInstruments[name] = new List<string>();
+                        foreach (var instrument in batch.Value)
+                            if (instrument != null) shadowInstruments[name].Add(instrument.FullName);
                     }
 
-                    if (safeToCancel.Count > 0)
+                    foreach (var batch in cancelBatches)
                     {
-                        try { account.Cancel(safeToCancel); }
-                        catch (Exception cex)
-                        { LogEvent(account.Name, "LOCKOUT_CANCEL_FAIL", cex.Message); }
+                        string name = batch.Key.Name;
+                        if (!shadowInstruments.ContainsKey(name))
+                            shadowInstruments[name] = new List<string>();
+                        shadowCancelCounts[name] = shadowCancelCounts.TryGetValue(name, out int c)
+                            ? c + batch.Value.Count
+                            : batch.Value.Count;
                     }
 
-                    if (stillCovered.Count > 0)
+                    foreach (var batch in deferredCancelBatches)
                     {
-                        LogEvent(account.Name, "LOCKOUT_STOP_RETAINED",
-                            $"Position still open after flatten for {string.Join(",", stillCovered.Distinct())}; "
-                            + "keeping its protective order working rather than leaving the position naked.");
+                        string name = batch.Key.Name;
+                        if (!shadowInstruments.ContainsKey(name))
+                            shadowInstruments[name] = new List<string>();
+                        shadowCancelCounts[name] = shadowCancelCounts.TryGetValue(name, out int c)
+                            ? c + batch.Value.Count
+                            : batch.Value.Count;
+                    }
+
+                    lock (_stateLock)
+                    {
+                        foreach (var kvp in shadowInstruments)
+                        {
+                            string accName = kvp.Key;
+                            if (_lockoutSweepShadowLogged.ContainsKey(accName)) continue;
+
+                            int cancelCount = shadowCancelCounts.TryGetValue(accName, out int cc) ? cc : 0;
+                            string instruments = kvp.Value.Count > 0
+                                ? string.Join(", ", kvp.Value.Distinct().ToArray())
+                                : "none";
+
+                            LogEvent(accName, "LOCKOUT_SWEEP_SHADOW",
+                                $"[SHADOW] Would execute lockout sweep for account {accName}: flatten [{instruments}], cancel {cancelCount} order(s).");
+
+                            _lockoutSweepShadowLogged[accName] = true;
+                        }
                     }
                 }
 
@@ -2232,7 +2328,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     fsm.GraceTimer?.Dispose();
                     if (fsm.AutoStopOrder != null && !IsTerminal(fsm.AutoStopOrder.OrderState))
                     {
-                        _pendingCancels.Add(new KeyValuePair<Account, Order>(account, fsm.AutoStopOrder));
+                        _pendingCancels.Add(new PendingCancelEntry(account, fsm.AutoStopOrder, PendingCancelIntent.Cleanup));
                     }
                     _guardFsms.Remove(key);
                     LogEvent(account.Name, "FSM_TRANSITION", $"Tore down FSM {key} -> Flat");
@@ -2259,22 +2355,56 @@ namespace NinjaTrader.NinjaScript.AddOns
                     + "re-entrant, so this would send the cancel under the lock and reintroduce "
                     + "P1-35. Move the call after the lock block.");
 #endif
-            List<KeyValuePair<Account, Order>> toSend;
+            List<PendingCancelEntry> toDrain;
             lock (_stateLock)
             {
                 if (_pendingCancels.Count == 0) return;
-                toSend = new List<KeyValuePair<Account, Order>>(_pendingCancels);
+                toDrain = new List<PendingCancelEntry>(_pendingCancels);
                 _pendingCancels.Clear();
             }
 
-            foreach (var pending in toSend)
+            var cleanup = new List<PendingCancelEntry>();
+            var intervention = new List<PendingCancelEntry>();
+            foreach (var entry in toDrain)
             {
-                var account = pending.Key;
-                var order = pending.Value;
-                if (account == null || order == null) continue;
-                if (IsTerminal(order.OrderState)) continue;   // already resolved while queued
-                try { account.Cancel(new[] { order }); }
-                catch (Exception cex) { LogEvent(account.Name, "FSM_AUTOSTOP_CANCEL_FAIL", cex.Message); }
+                if (entry.Account == null || entry.Order == null) continue;
+                if (IsTerminal(entry.Order.OrderState)) continue;   // already resolved while queued
+                if (entry.Intent == PendingCancelIntent.Cleanup)
+                    cleanup.Add(entry);
+                else
+                    intervention.Add(entry);
+            }
+
+            // Cleanup cancels remove RiskGuard's own footprint and are sent in every mode.
+            foreach (var entry in cleanup)
+            {
+                try { entry.Account.Cancel(new[] { entry.Order }); }
+                catch (Exception cex) { LogEvent(entry.Account.Name, "FSM_AUTOSTOP_CANCEL_FAIL", cex.Message); }
+            }
+
+            // Intervention cancels act on the trader's orders and are gated by mode.
+            if (IsActingMode())
+            {
+                foreach (var entry in intervention)
+                {
+                    try { entry.Account.Cancel(new[] { entry.Order }); }
+                    catch (Exception cex) { LogEvent(entry.Account.Name, "INTERVENTION_CANCEL_FAIL", cex.Message); }
+                }
+            }
+            else
+            {
+                var withheld = new Dictionary<string, int>();
+                foreach (var entry in intervention)
+                {
+                    string name = entry.Account.Name;
+                    withheld[name] = withheld.TryGetValue(name, out int c) ? c + 1 : 1;
+                }
+
+                foreach (var kvp in withheld)
+                {
+                    LogEvent(kvp.Key, "SHADOW_PENDING_CANCEL",
+                        $"[SHADOW] Withheld {kvp.Value} intervention cancel(s) in shadow mode.");
+                }
             }
         }
 
@@ -3262,6 +3392,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        internal bool IsActingMode(bool forceLive = false)
+        {
+            lock (_stateLock)
+            {
+                return _mode == "live" || forceLive;
+            }
+        }
+
         internal string ProcessAction(GuardAction action, bool forceLive = false)
         {
             bool isLive = false;
@@ -3275,7 +3413,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 // 2. Mode Check (Shadow Mode Gate)
-                isLive = _mode == "live" || forceLive;
+                isLive = IsActingMode(forceLive);
                 if (!isLive)
                 {
                     string alsoShadow = (action.MergedRuleIds != null && action.MergedRuleIds.Count > 0)
