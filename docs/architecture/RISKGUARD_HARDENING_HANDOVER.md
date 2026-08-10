@@ -1,13 +1,26 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-07 (session 8 — the P1 band closes and **`P0-9`'s mirrored stop is validated live**)
-**Branch**: `harden/riskguard-copier-p0` (session-8 work committed here, **not yet merged or pushed**)
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **50 defects, 38 closed, 12 open** (`P0-9` and `P1-13` are part-closed and counted as open; the other ten are `P2-24`, `P2-25`, `P2-26`, `P2-27`, `P2-29` and the five P3s). `P0-49`/`P0-50` were opened and closed on 2026-08-07 — see §4l
+**Last updated**: 2026-08-09 (session 9 — a live trade exposed **`P0-51`: shadow mode does not restrain the lockout**)
+**Branch**: `main` (session-8 work was merged and pushed; `main` and `origin/main` are level)
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **52 defects, 38 closed, 14 open** (`P0-9` and `P1-13` are part-closed and counted as open; then `P2-24`, `P2-25`, `P2-26`, `P2-27`, `P2-29`, the five P3s, and **the two new ones, `P0-51` and `P1-52`**). `P0-49`/`P0-50` were opened and closed on 2026-08-07 — see §4l
 **Live state**: deployed, `shadow`, feed connected, no open positions. NT8 compiles clean (0 errors),
-all 9 addon files in sync. **The deployed build is the tip of this branch.**
+all 9 addon files in sync.
 Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 
+> 🚨 **STOP — `P0-51`, opened 2026-08-09. `shadow` is NOT an observe-only mode for lockouts.**
+>
+> The lockout watchdog sweep calls `Account.Cancel()` and `Account.Flatten()` **with no mode
+> check**, while the action pipeline separately logs `[SHADOW] Would execute action
+> FlattenPosition`. On 2026-08-09 at 21:15:25 ET the guard really flattened three accounts while
+> claiming to be observing. **Assume any subscribed account — including a funded one — can be
+> cancelled and flattened right now.** Full analysis in §4m; plan entry `P0-51`.
+>
+> The trigger was `P1-52`: a normal 2-contract ATM entry is 6 orders against a flood limit of 5,
+> so **any 2-lot bracketed trade trips a lockout**, on every mirrored account at once.
+
 > ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
+> *(Superseded by the banner above — session 9 opened two defects. The rest of this box still
+> describes session 8 accurately.)*
 >
 > | | |
 > |---|---|
@@ -51,12 +64,13 @@ Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 
 ## 0. Start here (read this, then §4a for what is pending)
 
-### 0.0 Session 7 was merged and pushed. **Session 8 is NOT** — and every SHA below is stale
+### 0.0 Sessions 7 and 8 are both merged and pushed — and every SHA below is stale
 
-> ⚠️ **Read both halves of this.** Session 7's work was fast-forwarded into `main` and pushed
-> (`origin/main` at `aaecbe8b`). **Session 8's 11 commits are not merged and not pushed** — they
-> sit on `harden/riskguard-copier-p0`, and the NT8 box is running that tip. Merging is the first
-> repo action the next session should consider.
+> ✅ **Corrected 2026-08-09.** Session 8's work **is** merged into `main` and pushed;
+> `main` and `origin/main` are level. The text that used to sit here — "session 8's 11 commits are
+> not merged and not pushed" — was written before the merge and was stale for two days. The
+> `harden/riskguard-copier-p0` branch still exists locally and on the remote, but it is no longer
+> ahead of anything.
 
 The session-7 push happened **before shadow validation**, which is the opposite of what §6 item 4
 recommended — it was a deliberate call to get 282 unpushed commits off one machine, not a signal
@@ -527,7 +541,25 @@ at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FS
 unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
 copier.
 
-### START HERE — needs an operator decision, not a code change
+### START HERE — `P0-51`, and it outranks everything below
+
+**Fix `P0-51` before any other work in this document, and before the addon runs another session
+against an account that matters.** Shadow mode does not restrain the lockout sweep; the guard
+cancels and flattens for real while logging `[SHADOW] Would execute`. §4m has the evidence.
+
+Two things to get right while fixing it:
+
+- **Do not just wrap `:1899-1940` in a mode check.** That fixes this path and leaves the next one
+  to grow its own broker call. Route the sweep's cancel/flatten through the same arbiter + mode
+  gate every other action uses, so there is one place that answers "may I touch the broker".
+- **Pin the negative with `S4`'s `BrokerCallObserver`**: in shadow, no path issues a broker call.
+  A test of `ProcessAction`'s gate passes today and always did — that is why this shipped.
+
+`P1-52` (the flood governor counting a normal ATM bracket as a flood) is the trigger and should be
+fixed alongside it, but it is the lesser defect: it causes a false lockout, whereas `P0-51` is what
+turns a false lockout into a real flatten.
+
+### THEN — needs an operator decision, not a code change
 
 **`P0-9` item (1) — profit targets and OCO.** The last piece of `P0-9`, and **the operator hit it
 immediately**: on the validated trade, Sim101 carried `Target1` (Limit Sell 29851.5) and Sim-ORB
@@ -577,8 +609,8 @@ the risk is concurrent. **Doing the risky half before its coverage exists is how
 
 ### Repo hygiene, carried from session 7 and still open
 
-- The branch **`harden/riskguard-copier-p0` is unmerged and unpushed** (session-8 work is committed
-  on it).
+- ~~The branch `harden/riskguard-copier-p0` is unmerged and unpushed~~ — **done. Merged and
+  pushed; `main` and `origin/main` are level (confirmed 2026-08-09).**
 - **The Gemini API key** scrubbed from history (`scripts/trader/chart_agent/test_vision.py`) still
   needs **rotating**. It never reached GitHub; that is not the same as it being safe.
 - **0.28 GB of older parquet remains in published history** — the purges only covered the
@@ -1300,6 +1332,71 @@ output was **SimCopy2**, not Sim-ORB, and it was **correct behaviour**: SimCopy2
 `AutoSymbolConversion` on, so MNQ→NQ is micro→mini, 1 MNQ scales to 0.1 NQ, and the copier refuses
 rather than rounding up to a 10× notional. That is `P0-6` working as designed. Reading the whole
 log rather than the one alarming line is what separated the two.
+
+---
+
+## 4m. Session 9 — 2026-08-09: the guard flattened three accounts while claiming to be in shadow
+
+Another live operator ATM trade, another two defects, and this time one of them undermines the
+premise the whole deployment rests on. **No code was changed this session** — the incident was
+diagnosed from the live event stream and the source; `P0-51` and `P1-52` are open.
+
+### The four seconds
+
+| Time (ET) | What |
+|---|---|
+| `21:15:21.9` | Operator enters 2 MNQ SEP26 on `Sim101` with an ATM bracket. Replikanto mirrors the full bracket to `SimCopyTest1` and `SimCopy2`; our copier mirrors entry + `COPIER_STOP` to `Sim-ORB` |
+| `21:15:22.0` | `ORDER FLOOD DETECTED: 6 distinct orders in 1s (limit 5)` on **all three** bracket-carrying accounts |
+| `21:15:25.0` | `LOCKOUT_PHASE PendingFlatten` + `[SHADOW] Would execute action FlattenPosition triggered by LOCKOUT_FLATTEN` on each |
+| `21:15:25.15` | Market `Sell` 2 named **`"Close"`** on each of `Sim101` (`34256`), `SimCopyTest1` (`34257`), `SimCopy2` (`34258`) — all fill at 29848.75 |
+| `21:15:25.4` | All three flat, `LOCKOUT_CONFIRMED`. **`Sim-ORB` still long 2** |
+
+### `P0-51` — how the shadow gate was bypassed
+
+Two paths leave a lockout and only one is gated:
+
+- `EvaluateLockoutPhase` (`:2718`) → `GuardAction` → `ProcessAction`'s mode check (`:3277-3285`)
+  → `SHADOW (SKIPPED)`. **Correct.**
+- The lockout watchdog sweep (`:1848-1889`) builds `cancelBatches` / `flattenBatches` with no
+  `_mode` check, then executes them at `:1899-1940` — `Cancel` at `:1901`, `Flatten` at `:1913`.
+  **Ungated.**
+
+`Account.Flatten()` cancels the instrument's working orders and submits a market close named
+`"Close"`, which is exactly what appeared. The `[SHADOW]` line and the real flatten are the same
+lockout, taking two different routes.
+
+> **Attribution was checked, not assumed.** A manual "flatten everything" would also have closed
+> `Sim-ORB`, which was long 2 on the same instrument at the same instant. `Sim-ORB` was the only
+> account that had not tripped the lockout and the only one left untouched — the flatten tracked
+> lockout state, not the operator.
+
+**This is the third instance of §0 lesson 2.** The suite tests `ProcessAction`'s gate, and that
+gate is correct. Nothing asserts the negative — *no broker call is issued by any path while in
+shadow*. `S4`'s `BrokerCallObserver` already exists to assert exactly that and was never pointed
+at this question.
+
+### `P1-52` — why the lockout fired at all
+
+A 2-contract ATM entry is 6 orders (2 entries, 2 stops, 2 targets) against `MaxOrdersPerSecond = 5`.
+**Every 2-lot bracketed trade trips it**, and third-party copier fan-out means it trips on every
+mirrored account in the same second. Third defect on this governor after `P1-44`, `P1-45`, `P2-46`.
+
+### The leftover, and the one thing still unexplained
+
+`Sim-ORB` was left long 2 @ 29849.75 with `COPIER_STOP` working at 29835 — **protected, but
+diverged from a leader that had been flat for hours**. It was flattened by the operator's
+instruction at 2026-08-09 ~21:2x ET via `nt_close_position`; that call cancels orders itself, so
+**it did not independently exercise `P0-50`'s orphan-stop release** and must not be recorded as a
+re-validation of it.
+
+**Open question — do not assume the answer.** Why the copier never mirrored `Sim101`'s exit to
+`Sim-ORB` is *not established*. The exit path (`TradeCopierEngine.cs:1621-1748`) looks like it
+should have fired: quarantine permits exits, `Sim-ORB` is a Sim follower so `COPY_BLOCKED_NO_GUARD`
+does not apply, and `currentFollowerPos` was 2. It could not be settled from the logs because
+**the copier's `[CopierEngine]` lines go to the NT8 Output tab and land in no readable sink** —
+they are absent from the bridge's event stream, from `log/`, and from `trace/`. Giving those
+lines a file sink is a prerequisite for diagnosing anything in the copier and should come before
+the next copier change.
 
 ---
 
