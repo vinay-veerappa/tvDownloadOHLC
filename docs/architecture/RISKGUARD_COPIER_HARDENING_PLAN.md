@@ -488,7 +488,7 @@ live-mode behaviour is unchanged. NT8 `nt_compile`: **0 errors** under net48.
 
 ---
 
-### P1-56. Concurrent bracket syncs create duplicate protective legs — OPEN 2026-08-10
+### P1-56. Concurrent bracket syncs create duplicate protective legs — CLOSED 2026-08-10
 **Where**: `TradeCopierEngine.SyncFollowerStop` (and the parked `SyncFollowerTarget`)
 **What happens**: `bracket.WorkingStop` is set to `null` under `_lock` **before** the broker call
 and only reassigned **after** `Submit`. A second sync entering that window sees `null`, concludes
@@ -511,6 +511,41 @@ rather than a gap, and clear it if `CreateOrder`/`Submit` fails.
 > **The unit suite cannot see this** — 653 passed with the defect live. The tests drive the sync
 > paths sequentially; the defect only exists when two triggers interleave. Any fix needs a
 > concurrent test, and the `S`-series is sequential too (see the handover's warning about `P1-13`).
+
+**Fixed 2026-08-10.** The body became `SyncFollowerStopOnce`; `SyncFollowerStop` kept its signature
+and became the reservation **holder**. It publishes `StopInFlight` under `_lock` before any broker
+call, runs a bounded re-drive loop (`MaxBracketResyncPasses`), and clears the flag exactly once in a
+`finally` that runs **after** the loop — so there is no instant between passes at which a third sync
+sees no reservation. A sync arriving mid-flight sets `StopResyncOwed` and returns without touching
+the broker or `StopAttempts`; the holder then re-drives so the newer size/price is applied. Both
+`bracket.WorkingStop = null` clears are gone, here and in `OnFollowerOrderUpdate`: an honest
+`WorkingStop` is what makes an entering sync **modify** the existing order via the `Change()` trail
+path rather than create a second one, and it lets `ReleaseFollowerBracket` still cancel a leg an
+abort abandoned.
+
+Pinned by two hand-written concurrent tests — `…InterleavedSyncsLeaveExactlyOneProtectiveStop`
+(red at baseline: two live stops, qty 2+1 behind 2 lots) and a **three-sync** variant, because the
+arbiter recorded "there is no gap between passes" as settled on argument alone. Plus
+`…AFailedSubmitDoesNotWedgeLaterSyncs`, which guards the failure mode the fix introduces if written
+carelessly: a reservation leaked on a throwing path is permanent and worse than the defect. Suite
+**653 passed / 0 failed**; `nt_compile` 0 errors; synced and hot-swapped.
+
+> ⚠️ **Two candidates from the agent loop would have shipped live defects, and both passed every
+> gate.** Recorded because the pattern is the point, not the incident.
+>
+> 1. Round 1's reviewers correctly found a window, then all three — **arbiter included** — endorsed
+>    "leave `StopInFlight` set when a re-sync is owed and let the re-drive's own `finally` clear it".
+>    The re-drive's first act is to test `StopInFlight` and back off, so it returns without ever
+>    reaching a `finally`: **the reservation leaks forever** and that follower can never be given
+>    another stop.
+> 2. The apply run produced and applied a **third, unreviewed** candidate (`--resume-raw` reseeds
+>    round 1; a `REVISE` then triggers a fresh round 2). It set `countAttempt = (pass == 0)`, so
+>    re-drive passes reached the broker **without counting an attempt** — turning
+>    `MaxBracketStopAttempts = 3` into effectively 9 submissions, the order-flood mode `P1-40`,
+>    `P2-46` and the flood cluster have already cost us — and it restored `WorkingStop = null` on the
+>    `catch` and abort paths, losing track of a possibly-live stop and reintroducing **this very
+>    defect**. Caught by §9 step 3, reverted, and the reviewed candidate spliced in via the loop's own
+>    region machinery and verified byte-identical to the gated `final.patch`.
 
 ---
 

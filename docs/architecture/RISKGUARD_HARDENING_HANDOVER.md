@@ -3,12 +3,15 @@
 **Last updated**: 2026-08-10 (session 9 — five defects from one live trade closed; OCO research done; **`P1-56` opened and is a live hazard**)
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 A second branch **`wip/p09-oco-target`** holds the mirrored-target work, **deliberately NOT deployed** (see §4o)
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 43 closed**
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 44 closed**
 (`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
+**The deployed build now includes `P1-56`'s fix** (suite 653/0, `nt_compile` 0 errors, hot-swapped
+2026-08-10 06:19).
 NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
-**The deployed build is `995f6402`** — the last commit on `harden/riskguard-p0-51` before the target work.
-Suite **637 passed, 0 failed**.
+**The deployed build is `c9459121`** — `P1-56`'s fix, on `harden/riskguard-p0-51`. (`995f6402` was
+the deployed build for sessions 9–10 up to 2026-08-10 06:19.)
+Suite **653 passed, 0 failed**.
 
 > ✅ **`P0-51` and `P1-52` are FIXED, deployed and compiling clean (2026-08-09).** Shadow no
 > longer cancels or flattens, and one bracketed trade is no longer an order flood. Suite **629
@@ -25,17 +28,19 @@ Suite **637 passed, 0 failed**.
 > ✅ **`P0-51` and `P1-52` are VALIDATED LIVE** by replaying the incident (§4n). `P0-53`, `P1-54`
 > and `P0-55` are unit + compile only.
 >
-> 🚨 **`P1-56` is OPEN and is a live over-cover hazard on the EXISTING stop path.** Concurrent
+> ✅ **`P1-56` is CLOSED, deployed and pinned by three concurrent tests (2026-08-10).** It *was* a
+> live over-cover hazard on the existing stop path: Concurrent
 > bracket syncs can leave a follower with two protective stops — seen live as qty 1 **and** qty 2
 > against a 2-lot position. When both fire the follower is flipped. It is not caused by the parked
 > target work; that work only made it reproducible. **This is the top item** — see §4o.
 >
-> ⏳ **`P1-56`'s FIX IS WRITTEN AND GATED BUT NOT YET APPLIED** (2026-08-10). Two acceptance tests
-> were written first and are red at baseline (suite 647/2); the agent loop's `T8` candidate turns
-> that to **649 passed / 0 failed** with both green, compile clean and lock-scope clean, and reached
-> `ARBITER_SHIP`. It lives in `logs/agent_loop/T8/` and is **not in the tree** — promote per
-> [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §9. Shape: an in-flight reservation on the bracket held
-> across a bounded re-drive loop, released once in a `finally`.
+> **How it was fixed**: one in-flight reservation on the bracket, published under `_lock` before any
+> broker call and held across a bounded re-drive loop, released exactly once in a `finally` that runs
+> *after* the loop. A sync arriving mid-flight backs off and leaves a re-sync owed, so the newer
+> instruction is applied rather than dropped. **Two agent-loop candidates would have shipped live
+> defects here and both passed every gate** — one leaked the reservation forever, one turned the
+> submission bound into 9 attempts and reintroduced the defect. See the plan's `P1-56` entry; the
+> lesson is §9 step 3, not the incident.
 >
 > ⚠️ **`P1-57` (new) changes how any live validation behaves.** `Sim101 -> Sim-ORB -> {SimCopyTest1,
 > SimCopy2}` is a live chain, because `Sim-ORB` is our follower *and* another copier's leader. A
@@ -568,30 +573,35 @@ at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FS
 unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
 copier.
 
-### START HERE — `P1-56`, the duplicate protective leg
+### START HERE — `P0-9`'s mirrored target, now that its blockers are mostly gone
 
-✅ `P0-51`, `P1-52`, `P0-53`, `P1-54` and `P0-55` are closed and deployed. Suite 637/0.
+✅ `P0-51`, `P1-52`, `P0-53`, `P1-54`, `P0-55` **and `P1-56`** are closed and deployed. Suite 653/0.
 
-**`P1-56` outranks everything, because it is an over-cover hazard on the stop path that is
-deployed right now.** `SyncFollowerStop` sets `bracket.WorkingStop = null` under `_lock` *before*
-the broker call and reassigns it only *after* `Submit`. A second sync entering that window sees
-`null` and creates a second stop. Observed live 2026-08-10 01:02: `Sim-ORB` held `COPIER_STOP`
-qty 1 **and** qty 2 against a 2-lot position, both with the same creation timestamp.
+**`P1-56` was the top item and is done** — one reservation held across a bounded re-drive loop, three
+concurrent tests, deployed 2026-08-10 06:19. Details in the plan.
 
-The fix is `T2`'s **reserve-before-submit with rollback** (`P0-2`/`P0-3`), applied to the bracket:
-publish the reservation under the lock before releasing it, and clear it if `CreateOrder`/`Submit`
-fails.
+**The mirrored target (`P0-9` item 1) is now the highest-value open work, and BOTH of its blockers
+have moved:**
 
-> ⚠️ **A green suite will not tell you this is fixed.** 653 tests passed with the defect live,
-> because they drive the sync paths sequentially. The defect exists only when two triggers
-> interleave — a partial fill plus the `P0-55` re-anchor is enough. Any fix needs a concurrent
-> test, and the `S`-series is sequential too (same warning as `P1-13`).
+- `P1-56`, which it was waiting on, is closed.
+- **The OCO-id rule is much weaker than §4o claimed** (§4p). An id can be *joined* while its group
+  still has a live member, and a trail *modifies in place and keeps the group* — confirmed live, and
+  corroborated by a third-party copier doing exactly the same. So the "per-generation ids" redesign
+  shrinks to one conditional: keep the id while a sibling is live, mint a fresh one only when the
+  whole group is dead. The parked branch is closer to correct than it was credited for.
 
-Then: **`P0-9`'s mirrored target**, which is written and working on `wip/p09-oco-target` but blocked
-by `P1-56` and by the OCO-id-reuse rule (§4o). Then `P3-30`, the reconciler.
+Its remaining work is therefore: the dead-group conditional, and re-basing
+`wip/p09-oco-target` onto the new `SyncFollowerStopOnce`/holder split (**it predates that split and
+will conflict**). Note a third-party copier mirrors both legs and does it in ~12 ms, so this is
+catching up, not gold-plating.
 
-> **`T5`'s fail-closed gate remains unvalidated and still needs an acting mode.** `P0-53` was the
-> reason arming live was hazardous and it is closed — but do not arm live while `P1-56` is open.
+Then `P1-57` (we would mirror another copier's mirror — a live chain exists on this box), then
+`P3-30`, the reconciler.
+
+> **`T5`'s fail-closed gate remains unvalidated and still needs an acting mode.** `P0-53` and
+> `P1-56`, the two reasons arming live was hazardous, are both closed now — but see the
+> `EDGE_WINDOW_BREACH` warning in the banner before booking any live session, and remember `P1-57`
+> means a `Sim101` trade fans out to three follower accounts.
 
 ### THEN — needs an operator decision, not a code change
 
