@@ -439,6 +439,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestTradeCountingMultiContractScalingDebounced();
             TestLockoutWatchdogSweepFlattensOpenPosition();
             TestP0_51_ShadowModeIssuesNoBrokerCallsFromTheLockoutSweep();
+            TestP0_51_ShadowModeDoesNotDrainInterventionCancelsToTheBroker();
             TestP1_52_NormalAtmBracketIsNotAFlood();
             TestLockoutAllowsPositionReducingOrders();
             TestCooldownExpiryAllowsReEntry();
@@ -2646,6 +2647,83 @@ namespace NinjaTrader.NinjaScript.AddOns
                         && p.Instrument.FullName == mnq.FullName
                         && p.MarketPosition == MarketPosition.Long),
                 "The position is still open after a shadow-mode lockout sweep");
+
+            Account.All.Clear();
+        }
+
+        /// <summary>
+        /// P0-51, second half: the DEFERRED cancel queue must respect the mode too.
+        ///
+        /// _pendingCancels exists because P1-43 forbids sending a cancel from under _stateLock, so
+        /// the lockout/blacklist/cap paths queue the trader's orders and DrainPendingCancels()
+        /// sends them after the lock is released. Four of the five enqueue sites are interventions
+        /// against orders the TRADER placed; only the FSM-teardown site cancels an order RiskGuard
+        /// itself submitted.
+        ///
+        /// This test exists because the patch loop got this wrong twice in opposite directions and
+        /// no gate caught either. First it gated the drain entirely, which leaves the queue growing
+        /// all session and fires a stale burst the moment the mode is switched to live. Then the
+        /// arbiter's remedy was to drain unconditionally in every mode -- which reintroduces the
+        /// defect this ticket exists to fix, because it cancels the trader's working orders while
+        /// the guard claims to be observing. Both candidates passed every gate and all five of the
+        /// other acceptance tests, because none of them drove this path.
+        ///
+        /// The rule: an intervention against the trader's order is subject to the mode. Cleanup of
+        /// RiskGuard's own footprint is not.
+        /// </summary>
+        private static void TestP0_51_ShadowModeDoesNotDrainInterventionCancelsToTheBroker()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] P0-51: shadow mode does not send queued intervention cancels to the broker");
+
+            var config  = new RiskConfig();
+            var account = new Account { Name = "ShadowDrainAcc" };
+            var mnq     = new Instrument("MNQ");
+
+            Account.All.Clear();
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetSubscribedAccountForTest("ShadowDrainAcc");
+            addon.SetArmedForTest(true);
+            addon.SetModeForTest("shadow");
+
+            var state = new AccountState("ShadowDrainAcc");
+            addon.SetAccountStateForTest("ShadowDrainAcc", state);
+
+            // Sweep once unobserved so the daily session reset settles; it clears IsLockedOut, so
+            // locking before this call would be undone before the queue is ever exercised.
+            addon.ExecuteSafetySweep();
+            state.IsLockedOut = true;
+
+            // A resting entry the TRADER placed. With the account locked out, ExecuteOrderUpdate
+            // queues it for cancellation (RiskGuardAddOn.cs:1635-1649) rather than cancelling it
+            // inline, because that block runs under _stateLock.
+            var restingEntry = new Order
+            {
+                Id          = "TRADER-1",
+                Name        = "Entry1",
+                Instrument  = mnq,
+                OrderType   = OrderType.Limit,
+                OrderAction = OrderAction.Buy,
+                OrderState  = OrderState.Working,
+                Quantity    = 1,
+                LimitPrice  = 29800
+            };
+            account.Orders.Add(restingEntry);
+            addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = restingEntry });
+
+            var brokerCalls = new List<string>();
+            Account.BrokerCallObserver = method => brokerCalls.Add(method);
+            try { addon.ExecuteSafetySweep(); }
+            finally { Account.BrokerCallObserver = null; }
+
+            Assert(!brokerCalls.Contains("Cancel"),
+                "Shadow mode does not drain queued intervention cancels to the broker");
+            Assert(restingEntry.OrderState == OrderState.Working,
+                "The trader's resting entry is untouched by a shadow-mode lockout "
+                + "(state " + restingEntry.OrderState + ")");
 
             Account.All.Clear();
         }
