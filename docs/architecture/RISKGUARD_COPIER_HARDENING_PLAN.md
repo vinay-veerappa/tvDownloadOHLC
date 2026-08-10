@@ -14,10 +14,14 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**56 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
+**58 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
 and closed on 2026-08-07 (session 8); **`P0-51` and `P1-52` were opened on 2026-08-09 and are
 OPEN**. All four were found by a live operator ATM trade rather than by any test — see the
 entries at the end of §1.
+
+**`P1-57` and `P2-58` were opened 2026-08-10** by watching a third-party copier (Replikanto) fan a
+bracket out on the same box — see §4p of the handover. Neither was found by a test, and neither
+could have been: they are both about what *another* program's orders look like to us.
 
 > ✅ **`P0-51` is FIXED and deployed (2026-08-09).** Shadow no longer cancels or flattens: one
 > `IsActingMode()` predicate gates both the sweep and, via `DrainPendingCancels`, the deferred
@@ -507,6 +511,53 @@ rather than a gap, and clear it if `CreateOrder`/`Submit` fails.
 > **The unit suite cannot see this** — 653 passed with the defect live. The tests drive the sync
 > paths sequentially; the defect only exists when two triggers interleave. Any fix needs a
 > concurrent test, and the `S`-series is sequential too (see the handover's warning about `P1-13`).
+
+---
+
+### P1-57. We would mirror another copier's mirror — the "not ours" test is a name substring — OPEN 2026-08-10
+**Where**: `TradeCopierEngine.OnLeaderOrderUpdate` — `if (!string.IsNullOrEmpty(order.Name) && order.Name.Contains("COPIER")) return;`
+(and the same substring test in `ReevaluateLeaderStops`'s candidate filter)
+
+**What happens**: the only thing stopping the copier mirroring a mirrored stop is that *our own*
+legs are named `COPIER_STOP`. A third-party copier's legs are not. **Replikanto copies its leader's
+order names verbatim** — its mirrored legs on a follower are called `Stop1` and `Target1`, exactly
+like a native NT8 ATM bracket. So if an account is both another copier's follower and one of our
+leaders, we read its mirrored stop as a genuine leader stop and mirror it onward.
+
+**This path exists on the box today.** `Sim-ORB` is our follower (`Sim101 -> Sim-ORB`) *and*
+Replikanto's leader, so the live chain is `Sim101 -> Sim-ORB -> {SimCopyTest1, SimCopy2}`. Observed
+2026-08-10 01:56:56: a 1-lot bracket on `Sim-ORB` produced identical `Stop1`/`Target1` legs on both
+of Replikanto's followers within ~12 ms and ~29 ms, each under its own fresh OCO id.
+
+Two consequences, and the second is the dangerous one:
+1. A mirrored distance gets re-mirrored down a chain, so the far end's risk is anchored to an entry
+   two hops away.
+2. **Any live validation now fans out further than intended.** A `Sim101` test trade reaches three
+   follower accounts, not one — which matters for `P1-56`'s live validation specifically.
+
+**Fix**: stop identifying our own orders by name substring. Track the orders we submit by object
+reference (the same discipline `P0-9`'s settled decision already requires for pending copies and
+recognised stops, precisely because names and ids are unreliable), and refuse to anchor to an order
+we did not observe the leader place itself. A name test cannot distinguish "a bracket the trader
+placed" from "a bracket another program placed on the trader's behalf", and it never will.
+
+> **Do not fix this by adding more name patterns.** Matching `Stop1`/`Target1` would blacklist the
+> most common *legitimate* NT8 ATM names and stop mirroring real brackets — the failure mode is
+> inverted and worse.
+
+---
+
+### P2-58. The "is this a manual bracket" diagnostic in the handover is wrong — OPEN 2026-08-10
+**Where**: `RISKGUARD_HARDENING_HANDOVER.md` §4o, "Operational gotchas found the hard way"
+
+**What happens**: that note tells the next person that overlapping leader brackets are told apart by
+the leader's order *names* — `Stop1`/`Target1` for a manual/ATM bracket versus `Stop_<bracketId>`
+for ours. Since another copier reproduces its leader's names verbatim (`P1-57`), a follower carrying
+`Stop1`/`Target1` may be a *mirror*, not a manual bracket. The documented tell is not a tell.
+
+This is P2 because it costs debugging time rather than money — but it is the kind of confidently
+wrong note that sends someone down the wrong path for an hour, which is exactly what `P2-26` exists
+to catch elsewhere. Corrected in §4p; this entry tracks removing the stale claim from §4o itself.
 
 ---
 

@@ -3,7 +3,8 @@
 **Last updated**: 2026-08-10 (session 9 — five defects from one live trade closed; OCO research done; **`P1-56` opened and is a live hazard**)
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 A second branch **`wip/p09-oco-target`** holds the mirrored-target work, **deliberately NOT deployed** (see §4o)
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **56 defects, 43 closed**
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 43 closed**
+(`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
 NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
 **The deployed build is `995f6402`** — the last commit on `harden/riskguard-p0-51` before the target work.
@@ -28,6 +29,21 @@ Suite **637 passed, 0 failed**.
 > bracket syncs can leave a follower with two protective stops — seen live as qty 1 **and** qty 2
 > against a 2-lot position. When both fire the follower is flipped. It is not caused by the parked
 > target work; that work only made it reproducible. **This is the top item** — see §4o.
+>
+> ⏳ **`P1-56`'s FIX IS WRITTEN AND GATED BUT NOT YET APPLIED** (2026-08-10). Two acceptance tests
+> were written first and are red at baseline (suite 647/2); the agent loop's `T8` candidate turns
+> that to **649 passed / 0 failed** with both green, compile clean and lock-scope clean, and reached
+> `ARBITER_SHIP`. It lives in `logs/agent_loop/T8/` and is **not in the tree** — promote per
+> [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §9. Shape: an in-flight reservation on the bracket held
+> across a bounded re-drive loop, released once in a `finally`.
+>
+> ⚠️ **`P1-57` (new) changes how any live validation behaves.** `Sim101 -> Sim-ORB -> {SimCopyTest1,
+> SimCopy2}` is a live chain, because `Sim-ORB` is our follower *and* another copier's leader. A
+> `Sim101` test trade now reaches **three** follower accounts.
+>
+> ⚠️ **Do not book live validation outside the permitted edge window.** `EDGE_WINDOW_BREACH` fires on
+> an ordinary overnight entry and, armed live, would flatten the trade about a second after it fills
+> — destroying the test rather than the defect (§4p).
 
 > ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
 > *(Superseded by the banner above — session 9 opened two defects. The rest of this box still
