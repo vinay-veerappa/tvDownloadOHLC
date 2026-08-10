@@ -13,7 +13,7 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**52 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
+**53 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
 and closed on 2026-08-07 (session 8); **`P0-51` and `P1-52` were opened on 2026-08-09 and are
 OPEN**. All four were found by a live operator ATM trade rather than by any test — see the
 entries at the end of §1.
@@ -25,7 +25,7 @@ entries at the end of §1.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51` | 13 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` OPEN — shadow does not restrain the lockout sweep (2026-08-09)** |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` OPEN — shadow does not restrain the lockout sweep. `P0-53` OPEN — in an acting mode the lockout cancels the protective stop before flattening (both 2026-08-09)** |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52` | 25 | **23 closed** — `P1-12`, `P1-14`, `P1-36` closed 2026-08-07 (session 8); `P1-13`'s fail-open half closed, its threading half open; **`P1-52` OPEN — flood governor counts a normal ATM bracket as a flood (2026-08-09)** |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | `P2-28`, `P2-46`, **`P2-38`, `P2-41`** closed; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
@@ -417,6 +417,35 @@ is answered. Until then, treat shadow as an **acting** mode for lockouts.
 which is correct. Nothing asserts the *negative* — that in shadow mode, no broker call is issued
 by any path. `S4`'s `BrokerCallObserver` is the machinery to assert it with; §0's lesson 2 ("a
 machine check is only as good as the paths driven through it") applies verbatim, for the third time.
+
+---
+
+### P0-53. In an acting mode the lockout cancels the protective stop before flattening — OPEN 2026-08-09
+*(found while fixing `P0-51`, by making an existing test state its mode honestly)*
+**Where**: `RiskGuardAddOn.cs:3461-3474` — `ExecuteAction`'s `CancelAllOrders` branch
+**What happens**: `P1-11` filtered the **sweep's** cancel batches so a protective stop is never
+cancelled before the flatten is confirmed. But the lockout's `PendingCancel` phase *also* emits a
+`CancelAllOrders` `GuardAction`, and that branch cancels **every** working order — no
+`IsPositionReducingOrder` filter, no scoping. In an acting mode the protective stop is therefore
+cancelled *before* the flatten is attempted, and a flatten that then fails leaves the position
+naked with nothing covering it.
+
+This is the same hazard `P1-11` was opened for, surviving in the action pipeline rather than the
+sweep. `P1-11` fixed one of the two routes and the second was never looked at.
+
+**Why it was invisible**: `TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening`
+never set a mode, and `_mode` defaults to `"shadow"`, so `ProcessAction` skipped the
+`CancelAllOrders` action and only the (correctly filtered) sweep path ran. The test passed for a
+reason that had nothing to do with what it claimed to prove. **Two defects — this and `P0-51` —
+were both hidden by the same missing `SetModeForTest` call.**
+
+**Fix**: apply the same intent split the sweep uses. `CancelAllOrders` must not cancel
+position-reducing orders while the position is still open; reuse `IsPositionReducingOrder` rather
+than writing a second definition. Either filter inside `ExecuteAction`, or have the lockout emit a
+narrower action — but the guarantee must hold on both routes, not one.
+
+**Status**: the acceptance test is **red on purpose** and labelled as such in `*Tests.cs`. Do not
+"fix" the suite by reverting that test to shadow mode; that restores the blindfold.
 
 ---
 

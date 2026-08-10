@@ -6240,6 +6240,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             var locked = new AccountState("TestAcc");
             addon.SetAccountStateForTest("TestAcc", locked);
 
+            // P0-51: this test is about the sweep's ACTING behaviour -- whether its broker calls
+            // happen outside _stateLock -- so it has to run in an acting mode. It did not set one,
+            // and _mode defaults to "shadow", so it was asserting that a shadow-mode sweep reaches
+            // the broker. That was true only because the sweep ignored the mode entirely, which is
+            // the defect P0-51 fixes. The test's subject is unchanged; only the mode is now stated.
+            addon.SetModeForTest("live");
+
             // Sweep once unobserved so the daily session reset happens and settles. It clears
             // IsLockedOut, so locking the account before this call would be undone before the
             // lockout watchdog ever ran -- the test would then pass while touching nothing.
@@ -6548,6 +6555,24 @@ namespace NinjaTrader.NinjaScript.AddOns
             // IsPositionReducingOrder classifies against the account's tracked position.
             state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 18000, 0.0, config);
             addon.SetAccountStateForTest("TestAcc", state);
+
+            // P0-51: same correction as TestP1_10. The cancel-ordering rule this test pins --
+            // risk-increasing orders cancelled first, the protective stop held back until the
+            // flatten is confirmed -- only has meaning when the sweep is allowed to act. Without
+            // an explicit mode it ran in the "shadow" default and passed only because the sweep
+            // ignored the mode.
+            //
+            // *** THIS TEST IS EXPECTED TO FAIL until P0-53 is fixed. ***
+            //
+            // Stating the mode honestly is what exposed P0-53: P1-11 filtered the SWEEP's own
+            // cancel batches so a protective stop is never cancelled before the flatten is
+            // confirmed, but the lockout's PendingCancel phase ALSO emits a CancelAllOrders
+            // GuardAction, and ExecuteAction's CancelAllOrders branch cancels every working order
+            // with no IsPositionReducingOrder filter. In an acting mode the stop therefore dies
+            // before the flatten is attempted, and a failed flatten leaves the position naked --
+            // the exact hazard P1-11 exists to prevent, surviving in the action pipeline instead
+            // of the sweep. Shadow mode hid it, because ProcessAction skipped the cancel.
+            addon.SetModeForTest("live");
 
             // Settle the daily session reset first (it clears IsLockedOut), then lock.
             addon.ExecuteSafetySweep();
