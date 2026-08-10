@@ -661,10 +661,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_P0_55_LeaderStopAcceptedBeforeLeaderPositionIsStillMirrored();
             TestBracket_TrailingModifiesTheStopRatherThanRecreatingIt();
             TestBracket_MovingLeaderStopReplacesRatherThanDuplicates();
+            TestBracket_P1_56_InterleavedSyncsLeaveExactlyOneProtectiveStop();
             TestBracket_FollowerGoingFlatCancelsTheMirroredStop();
             TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry();
             TestBracket_ShortStopTrailedIntoProfitStaysBelowFollowerEntry();
             TestBracket_RejectedStopIsResubmitted();
+            TestBracket_P1_56_AFailedSubmitDoesNotWedgeLaterSyncs();
             TestBracket_ResubmissionIsBounded();
             TestBracket_IncomparableInstrumentsAreNotMirrored();
             TestBracket_P0_49_ExecutionBeforePositionStillGetsAStop();
@@ -1552,6 +1554,135 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
+        /// P1-56. Two bracket syncs that interleave must not leave two protective stops working
+        /// against one position.
+        ///
+        /// `SyncFollowerStop` clears `bracket.WorkingStop` under `_lock` BEFORE the broker call and
+        /// only reassigns it AFTER `Submit`. A second sync entering that window sees `null`,
+        /// concludes the follower has no stop, and creates another one. Observed live 2026-08-10
+        /// 01:02: Sim-ORB finished with `COPIER_STOP` qty 1 AND `COPIER_STOP` qty 2 against a 2-lot
+        /// position, both orders carrying the same creation timestamp. Three contracts of stop
+        /// behind two contracts of position -- when both fire the follower is flipped short.
+        ///
+        /// The whole suite passed with this defect live, because every other test drives the sync
+        /// paths sequentially. So the interleaving is reproduced deterministically rather than by
+        /// racing threads and hoping: `BrokerCallObserver` fires INSIDE the first sync's
+        /// `CreateOrder`, which is precisely the window -- the lock is released, `WorkingStop` is
+        /// null and nothing has been submitted -- and the second sync is driven from another thread
+        /// while the first is parked there.
+        ///
+        /// The two triggers are the pair that produced it live: a partial entry fill anchors the
+        /// bracket at 1 lot, and the rest of the fill arrives as a follower position update
+        /// carrying 2.
+        ///
+        /// BOTH assertions matter. Backing the second sync off closes the over-cover, but if its
+        /// instruction is DISCARDED the follower is left with a 1-lot stop behind a 2-lot position
+        /// -- under-cover, which is naked risk on the delta. The newer instruction has to be
+        /// re-applied once the in-flight submit completes.
+        /// </summary>
+        private static void TestBracket_P1_56_InterleavedSyncsLeaveExactlyOneProtectiveStop()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: two interleaved stop syncs leave ONE stop, sized to the whole position (P1-56)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            rel.FixedLotSize = 2;                      // a 2-lot copy, as the live trade was
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 2, 18000.00);
+
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 2, "BR-56");
+            lead.Price = 18000.00;
+            lead.Time = SlipT0;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+
+            // First piece of the entry fills. This anchors the bracket at ONE lot.
+            SetPosition(follower, mnq, MarketPosition.Long, 1, 18000.00);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = mnq, Order = copy, Quantity = 1,
+                Price = 18000.00, ExecutionId = "BR-56-F1", Name = "COPIER_FOLLOW",
+                Time = SlipT0.AddMilliseconds(100)
+            });
+
+            var secondSyncMayRun = new ManualResetEventSlim(false);
+            var secondSyncDone = new ManualResetEventSlim(false);
+            Exception secondSyncError = null;
+
+            // The second trigger: the rest of the entry fills, so the follower's position update
+            // carries 2 lots. It runs while the first sync is inside CreateOrder.
+            var second = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    if (!secondSyncMayRun.Wait(TimeSpan.FromSeconds(20))) return;
+                    SetPosition(follower, mnq, MarketPosition.Long, 2, 18000.00);
+                    follower.TriggerPositionUpdate(follower.Positions.First(p =>
+                        p.Instrument != null && p.Instrument.FullName == mnq.FullName));
+                }
+                catch (Exception ex) { secondSyncError = ex; }
+                finally { secondSyncDone.Set(); }
+            });
+            second.IsBackground = true;
+            second.Start();
+
+            int tripped = 0;
+            var previousObserver = Account.BrokerCallObserver;
+            Account.BrokerCallObserver = method =>
+            {
+                if (method != "CreateOrder") return;
+                if (Interlocked.CompareExchange(ref tripped, 1, 0) != 0) return;
+                secondSyncMayRun.Set();
+                // Bounded on purpose: a fix that makes the second sync BLOCK on the first would
+                // deadlock the suite here. Time out and let the assertions report instead.
+                secondSyncDone.Wait(TimeSpan.FromSeconds(10));
+            };
+
+            try
+            {
+                leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 2, 17990.00));
+            }
+            finally
+            {
+                Account.BrokerCallObserver = previousObserver;
+            }
+
+            secondSyncMayRun.Set();                    // in case CreateOrder was never reached
+            second.Join(TimeSpan.FromSeconds(20));
+
+            Assert(secondSyncError == null,
+                "The second sync completed without throwing"
+                + (secondSyncError == null ? "" : ": " + secondSyncError.Message));
+
+            Assert(Volatile.Read(ref tripped) == 1,
+                "The interleaving actually happened -- the second sync was driven from inside the "
+                + "first sync's CreateOrder. If this fails, nothing was proved.");
+
+            var live = follower.OrdersSnapshot()
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .ToList();
+
+            Assert(live.Count == 1,
+                string.Format(
+                    "Exactly one COPIER_STOP is live after two interleaved syncs (got {0}, "
+                    + "quantities {1}). Two live stops behind one position over-cover it: when both "
+                    + "fire the follower is flipped to the opposite side.",
+                    live.Count,
+                    string.Join("+", live.Select(o => o.Quantity.ToString()).ToArray())));
+
+            Assert(live.Sum(o => o.Quantity) == 2,
+                string.Format(
+                    "The surviving stop covers the whole 2-lot position (covered {0}). Backing the "
+                    + "second sync off must not DISCARD its instruction -- a 1-lot stop behind a "
+                    + "2-lot position is naked on the delta.",
+                    live.Sum(o => o.Quantity)));
+        }
+
+        /// <summary>
         /// P0-9 refinement: a leader trailing its stop MODIFIES the follower's working stop rather
         /// than cancelling and re-creating it.
         ///
@@ -1767,6 +1898,60 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(Math.Abs(live[0].StopPrice - 17990.00) < 1e-9,
                 string.Format("The replacement keeps the mirrored level (expected 17990.00, got {0}).",
                     live[0].StopPrice));
+        }
+
+        /// <summary>
+        /// P1-56's companion, and the failure mode its fix introduces if it is written carelessly.
+        ///
+        /// Once a sync publishes an in-flight reservation so a concurrent sync backs off, that
+        /// reservation MUST be released on every exit path -- including the ones where the broker
+        /// threw. A reservation leaked on the failure path is permanent: every later trigger backs
+        /// off politely and the follower never gets a stop at all, which is strictly worse than the
+        /// duplicate-leg defect it was added to fix.
+        ///
+        /// This test passes today (there is no reservation yet) and is here to fail the moment one
+        /// is added without a release on the throwing path. It is a regression guard, not an
+        /// acceptance test.
+        /// </summary>
+        private static void TestBracket_P1_56_AFailedSubmitDoesNotWedgeLaterSyncs()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a stop submit that throws still leaves later syncs able to place one (P1-56)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-56B");
+
+            // The broker throws on the mirrored stop's submit. The follower is still long 1.
+            follower.SimulateSubmitFailure = true;
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            follower.SimulateSubmitFailure = false;
+
+            Assert(!follower.OrdersSnapshot().Any(o => o.Name == "COPIER_STOP"),
+                "Precondition: the throwing submit left no stop behind.");
+
+            // The leader moves its stop, which is a genuinely new instruction and earns a fresh
+            // attempt budget. Nothing about the previous failure may block it.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17985.00));
+
+            var live = follower.OrdersSnapshot()
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .ToList();
+
+            Assert(live.Count == 1,
+                string.Format(
+                    "A later sync still places a stop after an earlier submit threw (got {0} live). "
+                    + "Zero means the failure path left an in-flight reservation set and every "
+                    + "subsequent sync now backs off forever -- a permanently naked follower.",
+                    live.Count));
+
+            Assert(live.Count == 1 && Math.Abs(live[0].StopPrice - 17985.00) < 1e-9,
+                string.Format("It carries the leader's new distance (expected 17985.00, got {0}).",
+                    live.Count == 1 ? live[0].StopPrice : double.NaN));
         }
 
         // The same fix must not become an order flood: a broker that rejects every attempt would
