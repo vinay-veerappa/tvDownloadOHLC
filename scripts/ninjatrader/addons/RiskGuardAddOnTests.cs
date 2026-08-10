@@ -272,8 +272,12 @@ namespace NinjaTrader.Cbi
             lock (_ordersLock) { return new List<Order>(Orders); }
         }
 
+        // Change() is a broker call like Cancel/Flatten/Submit and must be observed as one, or
+        // the P1-10 lock-scope check silently exempts it -- the same shape of blind spot that let
+        // P1-43's four `account.Cancel` calls sit under the lock unnoticed.
         public void Change(Order[] orders)
         {
+            ObserveBrokerCall("Change");
             foreach (var o in orders)
             {
                 o.OrderState = OrderState.Working;
@@ -655,6 +659,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_StopMirrorsLeaderDistanceFromFollowerFill();
             TestBracket_StopBeforeFollowerFillIsAppliedOnFill();
             TestBracket_P0_55_LeaderStopAcceptedBeforeLeaderPositionIsStillMirrored();
+            TestBracket_TrailingModifiesTheStopRatherThanRecreatingIt();
             TestBracket_MovingLeaderStopReplacesRatherThanDuplicates();
             TestBracket_FollowerGoingFlatCancelsTheMirroredStop();
             TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry();
@@ -1544,6 +1549,57 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(Math.Abs(live[0].StopPrice - 17998.00) < 1e-9,
                 string.Format("The live stop tracks the leader's latest distance (expected 17998.00, got {0}).",
                     live[0].StopPrice));
+        }
+
+        /// <summary>
+        /// P0-9 refinement: a leader trailing its stop MODIFIES the follower's working stop rather
+        /// than cancelling and re-creating it.
+        ///
+        /// Cancel-then-create leaves the follower unprotected between the cancel and the new
+        /// order's acceptance, on every trail step -- and trailing is the most ordinary trade
+        /// management there is. The original P0-9 note chose cancel-then-replace to avoid a stale
+        /// stop working beside a new one, which over-covers and flips the follower when both fire.
+        /// `Change()` avoids that by construction: there is only ever one order.
+        ///
+        /// This is safe to rely on here because the connection serving every account on this box
+        /// advertises the `OrderChange` feature (see /api/connections). If a future connection does
+        /// not, the implementation must fall back to cancel-then-create.
+        /// </summary>
+        private static void TestBracket_TrailingModifiesTheStopRatherThanRecreatingIt()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a leader trailing its stop MODIFIES the follower's stop, leaving no naked window (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-TRAIL");
+
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));   // 10 pts
+            var first = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+            Assert(Math.Abs(first.StopPrice - 17990.00) < 1e-9,
+                "The initial mirrored stop sits at the leader's distance");
+
+            // The leader trails into profit. This is the step that used to cancel and re-create.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17996.00));
+
+            var all = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(all.Count == 1,
+                string.Format(
+                    "The trail modifies the existing stop rather than creating a second order "
+                    + "(expected 1 COPIER_STOP, got {0}). A recreate leaves the follower naked "
+                    + "between the cancel and the new order's acceptance.",
+                    all.Count));
+            Assert(!all.Any(o => o.OrderState == OrderState.Cancelled),
+                "No COPIER_STOP was cancelled during the trail -- there is no naked window");
+            Assert(ReferenceEquals(all[0], first),
+                "It is the SAME order object, modified in place, not a replacement");
+            Assert(Math.Abs(all[0].StopPrice - 17996.00) < 1e-9,
+                string.Format("The modified stop carries the leader's new distance (expected 17996.00, got {0})",
+                    all[0].StopPrice));
         }
 
         // An orphaned stop against a flat account is not a leftover, it is a new position.

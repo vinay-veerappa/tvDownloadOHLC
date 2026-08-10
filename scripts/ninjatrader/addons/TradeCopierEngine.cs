@@ -1177,14 +1177,53 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             try
             {
-                // Outside the lock: Cancel/CreateOrder/Submit are broker calls, and holding
+                // Outside the lock: Cancel/Change/CreateOrder/Submit are broker calls, and holding
                 // _lock across them is the P1-10/P1-35 violation.
-                if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
 
                 // Size from the live position, not the bracket's snapshot: a follower that
                 // scaled out between the decision and here would otherwise get a stop larger
                 // than the position, which flips it on trigger.
                 int liveQty = Math.Min(qty, livePos.Quantity);
+
+                // A leader trailing its stop is the ordinary case, and cancel-then-create left the
+                // follower unprotected on EVERY trail step, between the cancel and the new order's
+                // acceptance. Modify the working order instead: one order, no window.
+                //
+                // The original P0-9 note said "cancel-then-replace, not modify", to stop a stale
+                // stop working beside a new one -- that over-covers and flips the follower when
+                // both fire. Change() cannot produce that state: there is only ever one order.
+                // Verified available: the connection serving every account here advertises the
+                // OrderChange feature (/api/connections). Any failure falls through to the
+                // cancel-then-create path below, so an unsupporting connection degrades rather
+                // than breaks.
+                if (toCancel != null
+                    && RiskGuardAddOn.IsPendingOrWorking(toCancel.OrderState)
+                    && toCancel.OrderType == OrderType.StopMarket
+                    && toCancel.OrderAction == action)
+                {
+                    try
+                    {
+                        toCancel.StopPrice = stopPrice;
+                        toCancel.Quantity = liveQty;
+                        followerAcc.Change(new[] { toCancel });
+
+                        lock (_lock) { bracket.WorkingStop = toCancel; }
+
+                        CopierLog(followerAcc.Name, "BRACKET_MODIFIED",
+                            $"{instrument.FullName} stop moved to {liveQty}@{stopPrice} in place "
+                            + $"(leader offset {bracket.StopOffset:+0.##;-0.##}, follower entry {bracket.FollowerEntryPrice}); "
+                            + "no cancel/replace, so no unprotected window.");
+                        return;
+                    }
+                    catch (Exception cex)
+                    {
+                        CopierLog(followerAcc.Name, "BRACKET_MODIFY_FAILED",
+                            $"{instrument.FullName}: {cex.Message}. Falling back to cancel-then-create.");
+                        // fall through
+                    }
+                }
+
+                if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
 
                 Order stop = followerAcc.CreateOrder(
                     instrument, action, OrderType.StopMarket, TimeInForce.Day,
