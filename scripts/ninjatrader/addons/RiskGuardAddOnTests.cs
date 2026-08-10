@@ -438,6 +438,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestFlipDetectionCountsAsEntry();
             TestTradeCountingMultiContractScalingDebounced();
             TestLockoutWatchdogSweepFlattensOpenPosition();
+            TestP0_51_ShadowModeIssuesNoBrokerCallsFromTheLockoutSweep();
+            TestP1_52_NormalAtmBracketIsNotAFlood();
             TestLockoutAllowsPositionReducingOrders();
             TestCooldownExpiryAllowsReEntry();
             TestOrderCancelledWhenLockedOnOrderUpdate();
@@ -2534,6 +2536,197 @@ namespace NinjaTrader.NinjaScript.AddOns
                    state.CurrentLockoutPhase == AccountState.LockoutPhase.PendingFlatten ||
                    state.CurrentLockoutPhase == AccountState.LockoutPhase.Confirmed, 
                    "Lockout phase advanced during sweep watchdog evaluation.");
+        }
+
+        /// <summary>
+        /// P0-51. Shadow mode must restrain EVERY path, not just the action pipeline.
+        ///
+        /// The lockout leaves the addon by two routes. EvaluateLockoutPhase emits a
+        /// FlattenPosition GuardAction, which ProcessAction's mode gate correctly skips with
+        /// "[SHADOW] Would execute action FlattenPosition". The lockout watchdog sweep separately
+        /// builds its own cancel/flatten batches and calls Account.Cancel / Account.Flatten
+        /// directly, with no _mode check anywhere in the block. Both fire. The guard announces it
+        /// is only observing and flattens the account anyway.
+        ///
+        /// Observed live on 2026-08-09 21:15:25 ET: Sim101, SimCopyTest1 and SimCopy2 each logged
+        /// the [SHADOW] line and were each really flattened a moment later (orders 34256/34257/
+        /// 34258, market Sell 2, named "Close" -- the name Account.Flatten() gives its close
+        /// order). Sim-ORB, the one account that had not tripped the lockout, was untouched, which
+        /// is what rules out a manual flatten.
+        ///
+        /// The existing suite asserts ProcessAction's gate and that gate has always been correct.
+        /// What was never asserted is the NEGATIVE: that in shadow mode NO path reaches the
+        /// broker. That is what this test pins, and it is why the defect shipped.
+        /// </summary>
+        private static void TestP0_51_ShadowModeIssuesNoBrokerCallsFromTheLockoutSweep()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] P0-51: shadow mode issues no broker calls from the lockout sweep");
+
+            var config  = new RiskConfig();
+            var account = new Account { Name = "ShadowAcc" };
+            var mnq     = new Instrument("MNQ");
+
+            var state = new AccountState("ShadowAcc");
+            state.IsLockedOut = true;
+            state.UpdatePosition(account, mnq, MarketPosition.Long, 2, 29849.75, 0, config);
+
+            // The sweep builds its flatten batch from account.Positions (RiskGuardAddOn.cs:1878),
+            // NOT from AccountState. Without this the flatten path is never reached and the test
+            // would silently prove only half of what it claims.
+            account.Positions.Add(new Position
+            {
+                Instrument     = mnq,
+                MarketPosition = MarketPosition.Long,
+                Quantity       = 2,
+                AveragePrice   = 29849.75
+            });
+
+            // A working protective stop and a working target, exactly as an ATM bracket leaves them.
+            account.Orders.Add(new Order
+            {
+                Name         = "Stop1",
+                Instrument   = mnq,
+                OrderType    = OrderType.StopMarket,
+                OrderAction  = OrderAction.Sell,
+                OrderState   = OrderState.Working,
+                Quantity     = 2,
+                StopPrice    = 29835
+            });
+            account.Orders.Add(new Order
+            {
+                Name         = "Target1",
+                Instrument   = mnq,
+                OrderType    = OrderType.Limit,
+                OrderAction  = OrderAction.Sell,
+                OrderState   = OrderState.Working,
+                Quantity     = 2,
+                LimitPrice   = 29879.75
+            });
+
+            var etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+            var nowEt  = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, etZone);
+            state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
+
+            Account.All.Clear();
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetAccountStateForTest("ShadowAcc", state);
+            addon.SetSubscribedAccountForTest("ShadowAcc");
+            addon.SetArmedForTest(true);
+            addon.SetModeForTest("shadow");
+
+            // Record EVERY broker call, not just the ones under _stateLock (that is P1-10's
+            // question, and it is already answered). Here the lock is irrelevant: in shadow the
+            // count must be zero however it is reached.
+            var brokerCalls = new List<string>();
+            Account.BrokerCallObserver = method => brokerCalls.Add(method);
+            try
+            {
+                addon.ExecuteSafetySweep();
+                addon.ExecuteSafetySweep();   // second sweep: PendingCancel -> PendingFlatten
+            }
+            finally { Account.BrokerCallObserver = null; }
+
+            Assert(!brokerCalls.Contains("Flatten"),
+                "Shadow mode does not flatten: the lockout sweep issued no Account.Flatten call");
+            Assert(!brokerCalls.Contains("Cancel"),
+                "Shadow mode does not cancel: the lockout sweep issued no Account.Cancel call");
+            Assert(brokerCalls.Count == 0,
+                "Shadow mode reaches the broker by no path at all during a lockout sweep "
+                + "(saw: " + (brokerCalls.Count == 0 ? "none" : string.Join(", ", brokerCalls)) + ")");
+
+            // The position and its protection must both survive untouched -- the guard is an
+            // observer here, and an observer that cancels the stop is worse than no guard at all.
+            Assert(account.Orders.Any(o => o.Name == "Stop1" && o.OrderState == OrderState.Working),
+                "The protective stop is still working after a shadow-mode lockout sweep");
+            Assert(account.Positions.Any(p => p.Instrument != null
+                        && p.Instrument.FullName == mnq.FullName
+                        && p.MarketPosition == MarketPosition.Long),
+                "The position is still open after a shadow-mode lockout sweep");
+
+            Account.All.Clear();
+        }
+
+        /// <summary>
+        /// P1-52. The order-flood governor counts distinct order IDs in a one-second window with
+        /// no notion of a bracket. A single 2-contract ATM entry is SIX orders -- two entry fills,
+        /// two protective stops, two targets -- against a default limit of five. So every 2-lot
+        /// bracketed entry trips a lockout.
+        ///
+        /// Observed live on 2026-08-09 21:15:22 ET on three accounts in the same second, because a
+        /// third-party copier mirrored the bracket: copier fan-out multiplies a false positive
+        /// across every mirrored account at once.
+        ///
+        /// This is the third defect on this governor (P1-44, P1-45, P2-46 preceded it) and the
+        /// second about it firing when it should not. P2-46 fixed double-counting one order's
+        /// state transitions; this is different -- six genuinely distinct orders that are one
+        /// trade. Raising the threshold alone is not a fix: a limit high enough to clear a 5-lot
+        /// ATM is high enough to miss a real runaway.
+        /// </summary>
+        private static void TestP1_52_NormalAtmBracketIsNotAFlood()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] P1-52: a normal 2-lot ATM bracket is not an order flood");
+
+            var config  = new RiskConfig();
+            var account = new Account { Name = "AtmAcc" };
+            var mnq     = new Instrument("MNQ");
+
+            var state = new AccountState("AtmAcc");
+            var etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+            var nowEt  = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, etZone);
+            state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
+
+            Account.All.Clear();
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetAccountStateForTest("AtmAcc", state);
+            addon.SetSubscribedAccountForTest("AtmAcc");
+            addon.SetArmedForTest(true);
+            addon.SetModeForTest("shadow");
+
+            // Exactly what NT8 emits for one 2-contract ATM entry, all inside one second:
+            // two entries, then a stop and a target per contract.
+            //
+            // The governor only counts orders in Submitted or Accepted state, keyed on Order.Id
+            // (RiskGuardAddOn.cs:1591-1596) -- that is P2-46's distinct-order-ID fix. So the
+            // states here matter: this is the moment each leg is submitted, which is exactly when
+            // the live lockout fired.
+            var bracket = new List<Order>
+            {
+                new Order { Id = "ATM-1", Name = "Entry1",  Instrument = mnq, OrderType = OrderType.Market,     OrderAction = OrderAction.Buy,  Quantity = 1 },
+                new Order { Id = "ATM-2", Name = "Entry2",  Instrument = mnq, OrderType = OrderType.Market,     OrderAction = OrderAction.Buy,  Quantity = 1 },
+                new Order { Id = "ATM-3", Name = "Stop1",   Instrument = mnq, OrderType = OrderType.StopMarket, OrderAction = OrderAction.Sell, Quantity = 1, StopPrice  = 29835,    Oco = "BRACKET-C1" },
+                new Order { Id = "ATM-4", Name = "Target1", Instrument = mnq, OrderType = OrderType.Limit,      OrderAction = OrderAction.Sell, Quantity = 1, LimitPrice = 29879.75, Oco = "BRACKET-C1" },
+                new Order { Id = "ATM-5", Name = "Stop2",   Instrument = mnq, OrderType = OrderType.StopMarket, OrderAction = OrderAction.Sell, Quantity = 1, StopPrice  = 29835,    Oco = "BRACKET-C2" },
+                new Order { Id = "ATM-6", Name = "Target2", Instrument = mnq, OrderType = OrderType.Limit,      OrderAction = OrderAction.Sell, Quantity = 1, LimitPrice = 29879.75, Oco = "BRACKET-C2" },
+            };
+
+            // The protective legs carry per-contract OCO ids, as a real NT8 ATM bracket does.
+            // This deliberately leaves BOTH plausible fixes open: keying the flood map on Oco
+            // (4 distinct keys) and excluding protective legs from the count (2) each satisfy the
+            // assertion below. The test pins the OUTCOME -- one trade is not a flood -- not the
+            // mechanism.
+
+            foreach (var o in bracket)
+            {
+                o.OrderState = OrderState.Submitted;
+                account.Orders.Add(o);
+                addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = o });
+
+                o.OrderState = OrderState.Accepted;
+                addon.ExecuteOrderUpdate(account, new OrderEventArgs { Order = o });
+            }
+
+            Assert(!state.IsLockedOut,
+                "Six orders from ONE 2-lot ATM bracket do not trip the order-flood lockout");
+
+            Account.All.Clear();
         }
 
         private static void TestLockoutAllowsPositionReducingOrders()
