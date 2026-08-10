@@ -4,8 +4,8 @@
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 **`wip/p09-oco-target` is SUPERSEDED** — its work was rebased and shipped as `86c6376f`; do not
 deploy or rebase that branch, it predates the holder split and lacks five fixes (§4r).
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 45 closed**
-(`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p)
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 46 closed**
+(`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p; `P2-58` closed same day)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
 NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
 **The deployed build is `86c6376f`** — the mirrored target, on `harden/riskguard-p0-51`.
@@ -51,7 +51,7 @@ Suite **686 passed, 0 failed**.
 
 ## 0. Start here (read this, then §4a for what is pending)
 
-**45 of 58 defects closed. Suite 686/0. NT8 compiles clean under net48, all 9 addon files in sync,
+**46 of 58 defects closed. Suite 686/0. NT8 compiles clean under net48, all 9 addon files in sync,
 and both of `P0-9`'s legs are implemented** — the stop validated on real fills (§4l), the target
 deployed and awaiting its first live trade (§4r).
 
@@ -345,7 +345,7 @@ those defects existed at all. Passing gates is necessary, never sufficient.
 
 ## 4a. What is pending — the current backlog
 
-**58 defects, 45 closed, 13 open.** Band membership and the P1-30/31 → P1-35/36 renumbering are
+**58 defects, 46 closed, 12 open.** Band membership and the P1-30/31 → P1-35/36 renumbering are
 in the plan's inventory table. *(The phase list A–G that used to close this section was retired
 2026-08-10: A–G were all done or superseded and it had drifted out of agreement with this list.)*
 

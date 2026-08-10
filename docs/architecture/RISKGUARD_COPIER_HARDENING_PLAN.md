@@ -33,10 +33,10 @@ could have been: they are both about what *another* program's orders look like t
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09** |
-| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52` | 25 | **23 closed** — `P1-12`, `P1-14`, `P1-36` closed 2026-08-07 (session 8); `P1-13`'s fail-open half closed, its threading half open; **`P1-52` OPEN — flood governor counts a normal ATM bracket as a flood (2026-08-09)** |
-| P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | `P2-28`, `P2-46`, **`P2-38`, `P2-41`** closed; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
-| P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55` | 15 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09** |
+| P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52`, `P1-54`, `P1-56`, `P1-57` | 28 | **26 closed.** Open: **`P1-57`** (we would mirror another copier's mirror) and **`P1-13`'s threading half** — its fail-open half is closed. `P1-52`, `P1-54` and `P1-56` all closed 2026-08-09/10 |
+| P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46`, `P2-58` | 10 | `P2-28`, `P2-46`, `P2-38`, `P2-41` closed, and **`P2-58` opened and closed 2026-08-10**; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
+| P3 — enhancements | `P3-30` … `P3-34` | 5 | all open. `P3-32` may be **superseded by `P0-9`** — read it before scheduling it as work |
 
 > **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
 > doc.** `P1-30` and `P1-31` were appended during the P0 work and collided with the pre-existing
@@ -618,17 +618,25 @@ placed" from "a bracket another program placed on the trader's behalf", and it n
 
 ---
 
-### P2-58. The "is this a manual bracket" diagnostic in the handover is wrong — OPEN 2026-08-10
+### P2-58. The "is this a manual bracket" diagnostic in the handover is wrong — CLOSED 2026-08-10
 **Where**: `RISKGUARD_HARDENING_HANDOVER.md` §4o, "Operational gotchas found the hard way"
 
-**What happens**: that note tells the next person that overlapping leader brackets are told apart by
+**What happened**: that note told the next person that overlapping leader brackets are told apart by
 the leader's order *names* — `Stop1`/`Target1` for a manual/ATM bracket versus `Stop_<bracketId>`
 for ours. Since another copier reproduces its leader's names verbatim (`P1-57`), a follower carrying
-`Stop1`/`Target1` may be a *mirror*, not a manual bracket. The documented tell is not a tell.
+`Stop1`/`Target1` may be a *mirror*, not a manual bracket. The documented tell was not a tell.
 
-This is P2 because it costs debugging time rather than money — but it is the kind of confidently
+This was P2 because it cost debugging time rather than money — but it is the kind of confidently
 wrong note that sends someone down the wrong path for an hour, which is exactly what `P2-26` exists
-to catch elsewhere. Corrected in §4p; this entry tracks removing the stale claim from §4o itself.
+to catch elsewhere.
+
+**Fixed 2026-08-10** (`a727d2da`). §4o now carries the correction inline rather than relying on the
+reader reaching §4p two sections later, and names a replacement tell: **order count against position
+size, and the `oco` field**. Both are properties of the orders themselves rather than of what
+someone chose to call them.
+
+> The general lesson is `P2-26`'s: a correction recorded only where it was *discovered* leaves the
+> wrong claim standing where it is *read*. Fix it at the point of use.
 
 ---
 
