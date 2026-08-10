@@ -1918,11 +1918,20 @@ cancels the other.
 
 ### Operational notes from this session
 
-- ⚠️ **`nt_place_atm_order` placed an entry on a LOCKED-OUT `Sim101`, while `nt_place_order` was
-  blocked on a locked-out `Sim-ORB`.** Two order paths through the same bridge, one gated by the
-  lockout and one not — verified by reading the lockout status before and after. **A lockout that
-  can be bypassed by choosing the ATM endpoint is not a lockout.** Not yet filed as a defect
-  because it is a bridge issue rather than an addon one; file it before relying on the gate.
+- ❌ **RETRACTED — there is no ATM lockout bypass. An earlier revision of this section claimed one;
+  it was wrong.** The observation was that `nt_place_atm_order` succeeded on `Sim101` while
+  `nt_place_order` was blocked on `Sim-ORB`, and I inferred the ATM path skipped the gate. It does
+  not: `PlaceAtmOrder`, `PlaceOrder` and `PlaceOcoOrder` all call `IsAccountLocked`
+  (`McpBridgeAddOn.cs:3382`), which consults `RiskGuardAddOn.Instance.IsAccountLocked` first.
+  **Disproved by direct test 2026-08-10**: `Sim_All_Day_ORB` was locked via
+  `nt_emergency_flatten` and *both* endpoints then returned `Order blocked: ... is locked out.`
+  > **The real explanation, and the lesson.** `Sim101` was **not** locked at 15:27:46 when the ATM
+  > order went in — that entry pushed the trade count past `MaxTradesPerSession` and tripped the
+  > lockout about five seconds later (`LOCKOUT_CANCEL` at 15:27:51). I read the status eight
+  > minutes afterwards, saw `isLockedOut: true`, and treated it as the state *before* the order.
+  > **A lockout state read after the fact is not evidence of the state at submit time**, and on
+  > these accounts an ordinary entry is itself enough to cause the transition. Read the gate
+  > before the action, or test the gate directly.
 - **Both `Sim101` and `Sim-ORB` were locked out on arrival** (`MAX_TRADES_BREACH`, as §4a warns),
   with the shadow sweep logging `[SHADOW] Would execute action CancelAllOrders` every 5 s. I
   **unlocked both** via `POST /api/lockout {"action":"unlock"}` to run the test, which **resets
