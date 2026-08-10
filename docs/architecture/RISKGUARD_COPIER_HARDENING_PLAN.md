@@ -33,7 +33,7 @@ could have been: they are both about what *another* program's orders look like t
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55` | 15 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09** |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55`, `P0-59` | 16 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09**. **`P0-59` OPEN — an order being modified reads as dead, so the copier duplicates the leg (2026-08-10, found live)** |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52`, `P1-54`, `P1-56`, `P1-57` | 28 | **26 closed.** Open: **`P1-57`** (we would mirror another copier's mirror) and **`P1-13`'s threading half** — its fail-open half is closed. `P1-52`, `P1-54` and `P1-56` all closed 2026-08-09/10 |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46`, `P2-58` | 10 | `P2-28`, `P2-46`, `P2-38`, `P2-41` closed, and **`P2-58` opened and closed 2026-08-10**; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | all open. `P3-32` may be **superseded by `P0-9`** — read it before scheduling it as work |
@@ -637,6 +637,60 @@ someone chose to call them.
 
 > The general lesson is `P2-26`'s: a correction recorded only where it was *discovered* leaves the
 > wrong claim standing where it is *read*. Fix it at the point of use.
+
+---
+
+### P0-59. An order being MODIFIED reads as dead, so the copier duplicates the leg — OPEN 2026-08-10
+*(found by the first live validation of the mirrored target — handover §4s)*
+
+**Where**: `RiskGuardAddOn.IsPendingOrWorking` (`:2208`), consumed by
+`TradeCopierEngine.OnFollowerOrderUpdate`, `SyncFollowerStopOnce` and `SyncFollowerTargetOnce`
+
+**What happens**: NT8 moves an order through **`ChangeSubmitted` / `ChangePending`** while
+`Account.Change()` is in flight. `IsPendingOrWorking` lists only
+`Submitted | Accepted | Initialized | Working | PartFilled`, so a leg that is merely being modified
+is classified as **not alive**. Two consumers then act on that:
+
+1. **`OnFollowerOrderUpdate` treats `!IsPendingOrWorking` as "went terminal"** — but the predicate's
+   complement is not `IsTerminal` (`Cancelled | Rejected | Filled`). `ChangeSubmitted` falls in the
+   gap between them, so a leg mid-modification is logged `BRACKET_STOP_LOST` / `BRACKET_TARGET_LOST`
+   and **re-submitted**.
+2. **`SyncFollower*Once` computes `stillLive = IsPendingOrWorking(existing.OrderState)`.** False
+   means `toCancel` is never set, so the create path runs **without cancelling the order it is
+   replacing**. Two live legs behind one position.
+
+**Observed live 2026-08-10 13:55:56** on `Sim-ORB` (MNQ SEP26, long 1): `COPIER_TARGET` 34367
+entered `ChangeSubmitted`, and the copier created `COPIER_TARGET` 34371 — `BRACKET_TARGET_MIRRORED`
+at .3437, before 34367's change even reached the broker at .3537. Both finished **`Working` at
+29859.75 in the same OCO group**, and the third-party copier faithfully mirrored the pair onward, so
+three accounts each carried two targets against one lot.
+
+**This is not specific to targets, and it is not caused by the target work.** The identical hole is
+on the **stop** path and predates it: our own trail calls `Account.Change()` (`BRACKET_MODIFIED`),
+which puts the mirrored stop through `ChangeSubmitted` on **every trail step**. Two protective stops
+behind one position is `P1-56`'s live symptom reached by a different route — and one the `P1-56`
+reservation cannot prevent, because no concurrency is required: a single sync misreading one state
+is enough.
+
+**Why no test caught it, and why none could**: the test stub's `OrderState` enum
+(`RiskGuardAddOnTests.cs:23`) does not declare `ChangeSubmitted` or `ChangePending` at all. The
+state does not exist in the test build, so the suite was green at 686/0 with this live. Same shape
+as `P0-49` — *"the test stub raises whatever the test raises"* (§6) — one level lower down, in the
+enum rather than the event order.
+
+**The codebase already disagrees with itself**: `McpBridgeAddOn.cs:3419`'s `activeStates` correctly
+includes `ChangePending`. Two definitions of "this order is alive", and the copier uses the wrong one.
+
+**Fix**:
+1. Add `ChangeSubmitted` and `ChangePending` to `IsPendingOrWorking`. Declare them in the stub enum
+   first, and drive a leg through them in a test — the fix is worthless if nothing can express it.
+2. **Stop inferring "terminal" from `!IsPendingOrWorking` in `OnFollowerOrderUpdate`.** Test
+   `IsTerminal` explicitly. The two predicates are not complements and must not be treated as such;
+   any future state NT8 adds lands in the same gap otherwise.
+3. Audit every other `!IsPendingOrWorking` / `IsPendingOrWorking` call site for the same inference.
+
+> ⚠️ **This is live in the deployed build (`86c6376f`).** The copier acts regardless of guard mode,
+> so a leader trailing a stop can duplicate a follower's protective leg today.
 
 ---
 

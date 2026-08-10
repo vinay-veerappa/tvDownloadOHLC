@@ -1,10 +1,10 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-10 (session 11 — **`P0-9` item (1), the mirrored target, closed and deployed**. Record in §4r)
+**Last updated**: 2026-08-10 (session 11 — the mirrored target shipped (§4r) and was live-validated (§4s), which opened **`P0-59`**)
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 **`wip/p09-oco-target` is SUPERSEDED** — its work was rebased and shipped as `86c6376f`; do not
 deploy or rebase that branch, it predates the holder split and lacks five fixes (§4r).
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 46 closed**
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **59 defects, 46 closed**
 (`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p; `P2-58` closed same day)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
 NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
@@ -16,12 +16,17 @@ Suite **686 passed, 0 failed**.
 > the leader's target as well as its stop, in one OCO group, anchored to their own fill. The
 > longest-standing "explicitly not done" item in the plan.
 >
-> ⚠️ **It is NOT live-validated, and two things changed on the STOP path.** The mirrored stop now
-> carries an **OCO id** where it used to carry `""`, and its price is **rounded to tick**. The id is
-> what lets a later target *join* rather than forcing the protective stop to be re-created; a
-> single-member OCO group is inferred to be harmless, **not proven**. **Watch the first live
-> `COPIER_STOP` for a rejection** — that is the one thing that would make this worse than what it
-> replaced. Details and the whole design in §4r.
+> ✅ **Live-validated 2026-08-10 on `Sim101 -> Sim-ORB` (§4s), 3 signals of 4.** Both legs mirrored
+> into one OCO group at the right distances, on tick, 14 ms after the follower's fill. **The
+> single-member OCO group on the stop is accepted by NT8** — that was the one way this change could
+> have been worse than what it replaced, and it is now proven rather than inferred.
+>
+> 🔴 **The fourth signal failed and opened `P0-59`, which is live in the deployed build.** An order
+> in `ChangeSubmitted` reads as dead, so the copier duplicates the leg instead of modifying it —
+> observed as two working `COPIER_TARGET`s against one lot. **The same hole is on the stop path and
+> predates the target work**: our own trail calls `Change()`, so a leader trailing its stop can
+> leave a follower with two protective stops. No concurrency needed, so `P1-56`'s reservation does
+> not cover it, and the test stub's enum cannot express the state. See §4s and the plan's `P0-59`.
 
 > ✅ **Seven defects closed since the 2026-08-09 incident**, all deployed and compiling clean:
 > `P0-51` (shadow restrained neither the lockout sweep nor the deferred cancel queue), `P1-52` (a
@@ -51,7 +56,7 @@ Suite **686 passed, 0 failed**.
 
 ## 0. Start here (read this, then §4a for what is pending)
 
-**46 of 58 defects closed. Suite 686/0. NT8 compiles clean under net48, all 9 addon files in sync,
+**46 of 59 defects closed. Suite 686/0. NT8 compiles clean under net48, all 9 addon files in sync,
 and both of `P0-9`'s legs are implemented** — the stop validated on real fills (§4l), the target
 deployed and awaiting its first live trade (§4r).
 
@@ -345,49 +350,46 @@ those defects existed at all. Passing gates is necessary, never sufficient.
 
 ## 4a. What is pending — the current backlog
 
-**58 defects, 46 closed, 12 open.** Band membership and the P1-30/31 → P1-35/36 renumbering are
+**59 defects, 46 closed, 13 open.** Band membership and the P1-30/31 → P1-35/36 renumbering are
 in the plan's inventory table. *(The phase list A–G that used to close this section was retired
 2026-08-10: A–G were all done or superseded and it had drifted out of agreement with this list.)*
 
 **What is validated live**: `P0-9`'s mirrored **stop** (§4l — 1 ms after the follower's fill, at
 exactly `followerEntry + (leaderStop - leaderAvgPrice)`, FSM created `ProtectedPending`), `P0-51`,
-`P1-52`, `P2-41`, `P0-48`, and T3's giveback rule (§4g).
+`P1-52`, `P2-41`, `P0-48`, T3's giveback rule (§4g), and **`P0-9`'s mirrored target** (§4s — 3
+signals of 4; the fourth opened `P0-59`).
 
-**What is NOT**: `P0-9`'s mirrored **target** and the two stop-path changes that shipped with it
-(§4r); `P0-53`, `P1-54`, `P0-55`, `P1-56` (unit + compile only); `T5`'s fail-closed gate, which
+**What is NOT**: `P0-53`, `P1-54`, `P0-55`, `P1-56` (unit + compile only); `T5`'s fail-closed gate, which
 needs an acting mode (`IsGuardProtecting` requires `mode == "live"`); and the firm-mirror rules,
 which are loaded but unmapped. **The copier acts regardless of guard mode** — `shadow` restrains
 RiskGuard, not the copier.
 
-### START HERE — live-validate the mirrored target
+### START HERE — `P0-59`, which is live in the deployed build
 
-✅ `P0-51`, `P1-52`, `P0-53`, `P1-54`, `P0-55`, `P1-56` **and `P0-9` item (1)** are closed and
-deployed. Suite 686/0.
+**An order being MODIFIED reads as dead, so the copier duplicates the leg.** Found by the mirrored
+target's first live trade (§4s) and confirmed in the code: `IsPendingOrWorking` omits
+`ChangeSubmitted`/`ChangePending`, and `OnFollowerOrderUpdate` infers "terminal" from
+`!IsPendingOrWorking` — the two predicates are **not complements**.
 
-**`P0-9`'s mirrored target shipped 2026-08-10 (`86c6376f`, §4r) and is the top item precisely
-because it is deployed and unvalidated.** It is not a code task any more; it is one Sim trade.
+It is a P0 because the same hole is on the **stop** path, it predates the target work, and our own
+trail calls `Account.Change()`: a leader trailing its stop can leave a follower with **two
+protective stops**, which flips the follower when both fire. `P1-56`'s reservation does not help —
+a single sync misreading a single state is enough.
 
-What to watch on that trade, in priority order:
+**Fix it test-first, and fix the stub enum first**: `RiskGuardAddOnTests.cs:23` does not declare
+`ChangeSubmitted` or `ChangePending`, so the suite cannot currently express the defect at all. Full
+write-up in the plan's `P0-59`.
 
-1. **The first live `COPIER_STOP` must not be rejected.** It now carries an OCO id where it used to
-   carry `""`. A single-member OCO group is inferred harmless, not proven, and a rejected stop is a
-   naked follower — this is the only way the change is *worse* than what it replaced.
-2. Both legs present on the follower, sharing one `oco`, at `followerFill ± leaderDistance`,
-   both on a tick boundary.
-3. The target filling must **not** produce a re-submitted stop. `BRACKET_LEG_RETIRED_BY_OCO` in
-   the log is the success case; a second `COPIER_STOP` against a closing position is the failure.
+Then `P1-57` — §4s showed its defence held only because the other copier happened to embed our name
+in its own; a native `Stop1` would have gone straight through.
 
-> ⚠️ **Booking that trade: `EDGE_WINDOW_BREACH` fires on an ordinary overnight entry** and, armed
-> live, would flatten it about a second after it fills (§4p). And `P1-57` means a `Sim101` trade
-> fans out to **three** follower accounts. Shadow restrains RiskGuard, not the copier, so the
-> copier's legs are placed for real regardless of mode.
+> ⚠️ **Anything that trades `Sim101` today can produce duplicate follower legs.** The copier acts
+> regardless of guard mode.
 
-Then `P1-57` (we would mirror another copier's mirror — a live chain exists on this box), then
-`P3-30`, the reconciler.
-
-> **`T5`'s fail-closed gate remains unvalidated and still needs an acting mode.** `P0-53` and
-> `P1-56`, the two reasons arming live was hazardous, are both closed now — but see the
-> `EDGE_WINDOW_BREACH` warning above before booking any live session.
+> **Booking a live session**: `MAX_TRADES_BREACH` now fires on entry on `Sim101`/`Sim-ORB`
+> (`MaxTradesPerSession` 8, both past it), as well as `EDGE_WINDOW_BREACH` outside the edge window.
+> Armed live either one flattens the trade and cancels its mirrored legs. And a `Sim101` trade
+> reaches **three** follower accounts (`P1-57`).
 
 ### Ready to code, in value order
 
@@ -1568,6 +1570,65 @@ encoding a guess in the double would have made the copier agree with it.
 - **Not live-validated.** See §4a for exactly what to watch on the first Sim trade.
 - **Partial-fill re-pairing across a scaled leader position is untested.**
 - The two stop-path changes (OCO id, tick rounding) have not been seen on a real fill.
+
+---
+
+## 4s. 2026-08-10 — the mirrored target's first live trade: 3 of 4 signals pass, and a P0 falls out
+
+**Setup.** `Sim101` ATM bracket, MNQ SEP26, long 1 @ 29788.25, `AtrAdaptive` (which overrode the
+requested tick distances): leader stop 29745.75, leader target 29859.75, both in oco `4ac44f1c…`.
+RiskGuard `shadow`, armed, guarding. Deployed build `86c6376f`.
+
+### What passed
+
+| | Signal | Result |
+|---|---|---|
+| 1 | **The mirrored stop is not rejected** now that it carries an OCO id | ✅ `COPIER_STOP` went `Initialized → Submitted → Accepted` under oco `a2e765fd…`. **A single-member OCO group is accepted by NT8** — that was inferred, not proven, and it was the one way this change could be worse than what it replaced |
+| 2 | **Both legs, one shared group, right prices, on tick** | ✅ `COPIER_STOP` 1@29745.75 and `COPIER_TARGET` 1@29859.75, both oco `a2e765fd…`. The target JOINED the stop's live group rather than forcing a re-create. Both on a 0.25 boundary |
+| 2b | **Distance-mirrored, not price-copied** | ✅ `BRACKET_TARGET_MIRRORED: target 1@29859.75 (leader offset +71.5, follower entry 29788.25)`. Leader and follower both filled 29788.25, so the *orders* alone cannot distinguish the two designs — the log line can, and does |
+| — | Ordering and latency | ✅ Stop created 14 ms after the follower's own fill, target 16 ms after the stop. Stop first, as `SyncFollowerBracket` requires |
+| — | FSM | ✅ `Created FSM Sim-ORB|MNQ SEP26 -> ProtectedPending` |
+
+### Signal 3 failed, and found `P0-59`
+
+To fill the target on demand its limit was moved to a marketable price. It never got there. The
+copier saw the leg enter `ChangeSubmitted`, concluded it was gone, and **created a second
+`COPIER_TARGET`** — `BRACKET_TARGET_MIRRORED` at 13:55:56.3437, *before* the modify reached the
+broker at .3537. Both ended `Working` at 29859.75 in the same OCO group; the third-party copier
+mirrored the pair onward, so three accounts each held two targets against one lot.
+
+Root cause, and the reason it is a **P0 on the stop path**, in the plan's `P0-59`:
+`IsPendingOrWorking` omits `ChangeSubmitted`/`ChangePending`, and `OnFollowerOrderUpdate` infers
+"terminal" from `!IsPendingOrWorking` — **the two predicates are not complements**. Our own trail
+calls `Change()`, so this is reachable on every trail step, on the risk leg, without any
+concurrency. `P1-56`'s reservation cannot help: one sync misreading one state is enough.
+
+**The stub enum does not declare those states**, so the suite could not have expressed this at
+686/0. That is `P0-49`'s lesson one level lower down — in the enum rather than the event order.
+
+> **The external modify is not what makes this real.** It is what made it *visible in one shot*.
+> The production trigger is `Account.Change()`, which the copier calls itself.
+
+### Two other things this trade exposed
+
+- ⚠️ **`MAX_TRADES_BREACH` fired on entry**, on both `Sim101` and `Sim-ORB`, followed by
+  `LOCKOUT_PHASE: PendingCancel` and a `LOCKOUT_SWEEP_SHADOW` every 5 s: *"would flatten
+  [MNQ SEP26], cancel 2 order(s)"*. `MaxTradesPerSession` is 8 and these accounts are past it.
+  **Armed live, this trade would have been flattened on entry and its mirrored legs cancelled** —
+  add it to `EDGE_WINDOW_BREACH` on the list of things that will destroy a live validation.
+  Shadow contained all of it, which is `P0-51` working.
+- **`P1-57` came within one naming convention of firing.** `COPIER_EXEC_SELF_ORIGINATED` shows the
+  third-party copier's copy was dropped only because it embedded *our* name
+  (`COPIER_FOLLOW-34362-…`) and so matched the `COPIER` substring. Had it named the leg `Stop1`, as
+  it does when copying a native bracket, we would have mirrored it onward. The defence held by
+  luck, not by design.
+
+### Cleanup
+
+All four accounts flat, no working orders. `nt_close_position` on the leader did **not** propagate
+an exit to the followers — each had to be closed explicitly (closing `Sim-ORB` did cascade through
+the third-party copier to its two followers). Three `Rejected` leftovers from earlier sessions
+remain and are unrelated.
 
 ---
 
