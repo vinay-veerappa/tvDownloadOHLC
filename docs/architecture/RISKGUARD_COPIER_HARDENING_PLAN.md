@@ -1,6 +1,6 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-10, branch `harden/riskguard-p0-51`, suite **637 passed / 0 failed**): **43 of 55 closed**.
+**Status** (2026-08-10, branch `harden/riskguard-p0-51`, suite **637 passed / 0 failed**): **43 of 56 closed**.
 **`P0-51`/`P1-52` are VALIDATED LIVE** (replay, 2026-08-10 — see handover §4n). That replay opened
 `P0-55` and `P1-54`, both since **closed**.
 Deployed, `shadow`, armed and guarding; NT8 compiles clean (0 errors, net48).
@@ -14,7 +14,7 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**55 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
+**56 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
 and closed on 2026-08-07 (session 8); **`P0-51` and `P1-52` were opened on 2026-08-09 and are
 OPEN**. All four were found by a live operator ATM trade rather than by any test — see the
 entries at the end of §1.
@@ -270,6 +270,32 @@ Notes that are not obvious:
 - **The mirrored stop is also visible to RiskGuard**, which will seed the follower's FSM as
   `Protected` instead of firing `MISSING_STOP_FLATTEN` at the grace deadline.
 
+> ### 2026-08-10 research: mirroring the target IS possible. Two API facts that decide the design.
+>
+> An earlier note here claimed `Order.Oco` is create-time only and a working order cannot be
+> joined to a group. **That was wrong** — `Order.Oco` has a public setter. What is true, and what
+> actually constrains the design, was established by reflecting on `NinjaTrader.Core.dll` and by
+> two live runs:
+>
+> 1. **An OCO id cannot be REUSED.** NT8 rejects a new order carrying an id that has already been
+>    used (observed live: a `COPIER_TARGET` came back `Rejected`). So the id belongs to a
+>    *generation* of the bracket: any time a leg must be re-created rather than modified, BOTH legs
+>    must be re-created under a FRESH id. Holding one id on the bracket for its lifetime — the
+>    obvious implementation — does not work.
+> 2. **There is no `OcoChanged` field.** `Order` has `LimitPriceChanged`, `StopPriceChanged` and
+>    `QuantityChanged`, which is what `Account.Change()` carries, so an already-working order
+>    cannot be moved between groups. Modifying price/qty in place is fine and preserves the group.
+>
+> Also useful: `Account.CancelOrdersByOcoID(orders, ocoId)` is a real group-cancel primitive, and
+> `Connection.Features` answers capability at runtime. On this box the TPT connection serving both
+> Sim and the funded accounts advertises `Order`, `OrderChange` and `NativeGtdOrders` but **not**
+> `NativeOcoOrders` — so OCO here is NT8-simulated, not broker-native. Probe it with
+> `GET /api/connections`.
+>
+> **Status: parked on branch `wip/p09-oco-target`, NOT deployed.** The mirror works — correct
+> distances, shared id, modify-in-place on both legs — but it surfaced a duplicate-leg race
+> (`P1-56`).
+
 **Explicitly NOT done — do not read this as P0-9 fully closed:**
 
 1. **Profit targets and OCO pairing.** Only stops are mirrored. A target is upside, not risk;
@@ -446,6 +472,32 @@ one got it right — both passing every gate:
 
 Pinned by six acceptance tests written before the fix. `P1-10`/`P1-35` and `P1-11` are preserved;
 live-mode behaviour is unchanged. NT8 `nt_compile`: **0 errors** under net48.
+
+---
+
+### P1-56. Concurrent bracket syncs create duplicate protective legs — OPEN 2026-08-10
+**Where**: `TradeCopierEngine.SyncFollowerStop` (and the parked `SyncFollowerTarget`)
+**What happens**: `bracket.WorkingStop` is set to `null` under `_lock` **before** the broker call
+and only reassigned **after** `Submit`. A second sync entering that window sees `null`, concludes
+there is no working stop, and creates another one.
+
+**Observed live 2026-08-10 01:02** on a clean 2-lot ATM: `Sim-ORB` finished with `COPIER_STOP`
+qty **1** and `COPIER_STOP` qty **2** against a 2-lot position — three contracts of stop, both
+orders carrying the same creation timestamp. Over-cover: when both fire the follower is flipped
+to the opposite side, which is the exact hazard the cancel-then-replace rule was written to avoid.
+
+The window is **pre-existing** and not caused by the target work. A partial fill plus the P0-55
+re-anchor gives two sync triggers a few milliseconds apart; the target work doubled the number of
+sync invocations and turned a rare interleaving into a reproducible one.
+
+**Fix**: reserve before submit, with rollback on failure — the pattern `T2` already established
+for RiskGuard's auto-stop (`P0-2`/`P0-3`). Publish a placeholder into `WorkingStop` (or an
+in-flight flag) under the lock *before* releasing it, so a concurrent caller sees the reservation
+rather than a gap, and clear it if `CreateOrder`/`Submit` fails.
+
+> **The unit suite cannot see this** — 653 passed with the defect live. The tests drive the sync
+> paths sequentially; the defect only exists when two triggers interleave. Any fix needs a
+> concurrent test, and the `S`-series is sequential too (see the handover's warning about `P1-13`).
 
 ---
 
