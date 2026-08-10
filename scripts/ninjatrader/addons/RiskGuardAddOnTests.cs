@@ -440,6 +440,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestLockoutWatchdogSweepFlattensOpenPosition();
             TestP0_51_ShadowModeIssuesNoBrokerCallsFromTheLockoutSweep();
             TestP0_51_ShadowModeDoesNotDrainInterventionCancelsToTheBroker();
+            TestP1_54_LockoutLapsesWhenItsDeadlinePasses();
+            TestP1_54_LockoutDeadlineSurvivesARestart();
             TestP1_52_NormalAtmBracketIsNotAFlood();
             TestLockoutAllowsPositionReducingOrders();
             TestCooldownExpiryAllowsReEntry();
@@ -652,6 +654,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // -- BRACKET REPLICATION TESTS (P0-9) --
             TestBracket_StopMirrorsLeaderDistanceFromFollowerFill();
             TestBracket_StopBeforeFollowerFillIsAppliedOnFill();
+            TestBracket_P0_55_LeaderStopAcceptedBeforeLeaderPositionIsStillMirrored();
             TestBracket_MovingLeaderStopReplacesRatherThanDuplicates();
             TestBracket_FollowerGoingFlatCancelsTheMirroredStop();
             TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry();
@@ -1448,6 +1451,66 @@ namespace NinjaTrader.NinjaScript.AddOns
                     + "(expected one stop at 17986.00, got {0} stop(s) at {1}). Dropping the "
                     + "distance leaves the follower naked for the life of the trade.",
                     stops.Count, stops.Count > 0 ? stops[0].StopPrice.ToString() : "n/a"));
+        }
+
+        /// <summary>
+        /// P0-55. The leader-side twin of P0-49, and it leaves the follower naked the same way.
+        ///
+        /// An ATM bracket's stop can reach `Accepted` BEFORE the leader's own PositionUpdate lands
+        /// -- NT8 raises ExecutionUpdate before PositionUpdate, and on a partial fill the stop for
+        /// the full size arrives while the leader still shows a smaller position or none at all.
+        /// OnLeaderOrderUpdate reads `leaderAccount.Positions` to anchor the distance, finds
+        /// nothing, and returns. **The offset is never computed, and nothing re-triggers it**: an
+        /// accepted ATM stop raises no further OrderUpdate, and the leader's PositionUpdate was
+        /// discarded outright because the account is not a follower.
+        ///
+        /// P0-49 fixed precisely this race on the FOLLOWER's anchor and its docstring names the
+        /// mechanism. The leader's own anchor has the same race and was never covered.
+        ///
+        /// Observed live 2026-08-10 00:11:31 ET: Sim101's 2-lot ATM filled 1 + 1; stop 34262 was
+        /// Accepted at .4203, the position first appeared at .4683. Sim-ORB received the copied
+        /// entry and NO COPIER_STOP, and ran the whole trade Unprotected.
+        /// </summary>
+        private static void TestBracket_P0_55_LeaderStopAcceptedBeforeLeaderPositionIsStillMirrored()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a leader stop accepted BEFORE the leader's position is still mirrored (P0-55)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            // The stop is accepted while the leader is still FLAT -- the race. There is no anchor
+            // to measure against yet, so nothing can be computed at this instant.
+            var stop = LeaderStop(mnq, OrderAction.Sell, 2, 17985.00);
+            // LeaderStop() alone only raises the event; NT8 also has the order in account.Orders,
+            // and the re-anchor pass reads it from there. Without this the test would prove the
+            // recovery cannot work rather than that it does.
+            leader.Orders.Add(stop);
+            leader.TriggerOrderUpdate(stop);
+
+            Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"),
+                "Nothing is mirrored while the leader has no position to anchor the distance to");
+
+            // Now the leader's position lands. This is the event that used to be thrown away,
+            // and it is the last one that will ever mention this stop.
+            SetPosition(leader, mnq, MarketPosition.Long, 2, 18000.00);
+            leader.TriggerPositionUpdate(leader.Positions.First(p => p.Instrument.FullName == mnq.FullName));
+
+            DriveFollowerEntry(leader, follower, mnq, 2, 18000.00, 18001.00, "BR-P055");
+
+            var stops = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(stops.Count == 1,
+                string.Format(
+                    "The leader's stop is mirrored once the leader's position appears (got {0} "
+                    + "stop(s)). Without this the follower carries the whole trade naked.",
+                    stops.Count));
+            Assert(stops.Count == 1 && Math.Abs(stops[0].StopPrice - 17986.00) < 1e-9,
+                string.Format(
+                    "The mirrored stop carries the leader's 15-point DISTANCE from the follower's "
+                    + "own fill at 18001 (expected 17986.00, got {0})",
+                    stops.Count > 0 ? stops[0].StopPrice.ToString() : "n/a"));
         }
 
         // A leader trailing its stop must move the follower's, not accumulate copies of it.
@@ -2726,6 +2789,113 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + "(state " + restingEntry.OrderState + ")");
 
             Account.All.Clear();
+        }
+
+        /// <summary>
+        /// P1-54. A lockout must end when its deadline passes.
+        ///
+        /// The lockout test is `IsLockedOut || DateTime.UtcNow &lt; LockoutUntil` -- an OR -- and
+        /// nothing ever cleared the flag when the deadline lapsed. The only clears were the daily
+        /// session reset and a manual UnlockAccount, so Overtrading.LockoutMinutes (default 60)
+        /// could only ever EXTEND a lockout, never end one.
+        ///
+        /// Observed 2026-08-10: Sim101, SimCopy2 and SimCopyTest1 were still locked out roughly
+        /// three hours after a (false) flood lockout and blocked a fresh order outright. All three
+        /// had to be cleared by hand.
+        ///
+        /// P1-45 added the deadline and is not reopened; this is the other half of making it mean
+        /// something.
+        /// </summary>
+        private static void TestP1_54_LockoutLapsesWhenItsDeadlinePasses()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] P1-54: a lockout ends when its deadline passes");
+
+            var config  = new RiskConfig();
+            var account = new Account { Name = "LapseAcc" };
+            Account.All.Clear();
+            Account.All.Add(account);
+
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(config);
+            addon.SetSubscribedAccountForTest("LapseAcc");
+            addon.SetArmedForTest(true);
+            addon.SetModeForTest("live");
+
+            var state = new AccountState("LapseAcc");
+            var etZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+            var nowEt  = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, etZone);
+            state.LastSessionDate = nowEt.TimeOfDay >= new TimeSpan(18, 0, 0) ? nowEt.Date.AddDays(1) : nowEt.Date;
+            addon.SetAccountStateForTest("LapseAcc", state);
+
+            // Locked out, with a deadline that has already passed -- i.e. the lockout served its
+            // time. Nothing is open and nothing is working, so there is no reason to hold it.
+            state.IsLockedOut = true;
+            state.LockoutUntil = DateTime.UtcNow.AddMinutes(-1);
+
+            addon.ExecuteSafetySweep();
+
+            Assert(!addon.IsAccountLocked("LapseAcc"),
+                "A lockout whose LockoutUntil has passed no longer reports the account as locked");
+
+            // Still locked while the deadline is in the FUTURE -- the lapse must not become a
+            // blanket unlock.
+            state.IsLockedOut = true;
+            state.LockoutUntil = DateTime.UtcNow.AddMinutes(30);
+            addon.ExecuteSafetySweep();
+
+            Assert(addon.IsAccountLocked("LapseAcc"),
+                "A lockout whose LockoutUntil is still in the future stays locked");
+
+            Account.All.Clear();
+        }
+
+        /// <summary>
+        /// P1-54, second half: the deadline has to survive a restart.
+        ///
+        /// state.json persisted only a top-level LockedOutAccounts NAME LIST, so a restart restored
+        /// IsLockedOut = true with LockoutUntil = DateTime.MinValue. Even with the lapse fixed, a
+        /// 60-minute lockout silently became an all-day one across any recompile -- and a recompile
+        /// is routine here.
+        /// </summary>
+        private static void TestP1_54_LockoutDeadlineSurvivesARestart()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] P1-54: the lockout deadline survives a restart");
+
+            var config = new RiskConfig();
+            Account.All.Clear();
+
+            var writer = new RiskGuardAddOn();
+            writer.SetConfigForTest(config);
+            writer.SetSubscribedAccountForTest("PersistAcc");
+
+            var deadline = DateTime.UtcNow.AddMinutes(45);
+            var state = new AccountState("PersistAcc") { IsLockedOut = true, LockoutUntil = deadline };
+            writer.SetAccountStateForTest("PersistAcc", state);
+
+            string path = Path.Combine(Path.GetTempPath(), "rg_p1_54_" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                writer.SetStateFileForTest(path);
+                writer.SavePersistedStateForTest();
+
+                var reader = new RiskGuardAddOn();
+                reader.SetConfigForTest(config);
+                reader.SetStateFileForTest(path);
+                reader.LoadPersistedStateForTest();
+
+                var restored = reader.GetAccountStateForTest("PersistAcc");
+                Assert(restored != null && restored.IsLockedOut,
+                    "The lockout itself survives the restart");
+                Assert(restored != null && Math.Abs((restored.LockoutUntil - deadline).TotalSeconds) < 2.0,
+                    "The lockout DEADLINE survives the restart, so a 60-minute lockout does not "
+                    + "become an all-day one (restored " + (restored == null ? "null" : restored.LockoutUntil.ToString("o")) + ")");
+            }
+            finally
+            {
+                try { if (File.Exists(path)) File.Delete(path); } catch { }
+            }
         }
 
         /// <summary>

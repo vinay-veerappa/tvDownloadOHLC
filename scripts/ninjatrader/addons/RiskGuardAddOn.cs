@@ -837,6 +837,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                                         state = new AccountState(kvp.Key);
                                         _accountStates[kvp.Key] = state;
                                     }
+                                    // P1-54: restore the deadline. Older state files predate this
+                                    // field and deserialize it as MinValue, which reads as "no
+                                    // deadline" -- the previous behaviour -- so an upgrade cannot
+                                    // shorten a lockout that was meant to hold.
+                                    state.LockoutUntil = kvp.Value.LockoutUntil;
                                     state.LastSessionDate = kvp.Value.LastSessionDate;
                                     state.TradesToday = kvp.Value.TradesToday;
                                     state.ConsecutiveLosses = kvp.Value.ConsecutiveLosses;
@@ -908,7 +913,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                             FirmFloorLocked = state.FirmFloorLocked,
                             FirmDailyDate = state.FirmDailyDate,
                             FirmDailyStartRealized = state.FirmDailyStartRealized,
-                            FirmStartingBalance = state.FirmStartingBalance
+                            FirmStartingBalance = state.FirmStartingBalance,
+                            LockoutUntil = state.LockoutUntil   // P1-54
                         };
                     }
                     return new PersistedStateData
@@ -2779,6 +2785,29 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal List<GuardAction> EvaluateLockoutPhase(Account account, AccountState stateModel)
         {
             var actions = new List<GuardAction>();
+
+            // P1-54: end a lockout whose deadline has passed. The lockout test elsewhere is
+            // `IsLockedOut || UtcNow < LockoutUntil` -- an OR -- so the flag outlives its own
+            // deadline unless something clears it, and nothing did. Only the daily session reset
+            // and a manual UnlockAccount ever cleared it, which made Overtrading.LockoutMinutes
+            // decorative: three accounts sat locked out for three hours on 2026-08-10 after a
+            // 60-minute lockout and had to be released by hand.
+            //
+            // MinValue means "no deadline", NOT "expired". LockAccount(name, -1) uses exactly that
+            // to express an EOD lockout, so lapsing on MinValue would silently unlock every
+            // deliberate hold-until-session-reset.
+            if (stateModel.IsLockedOut
+                && stateModel.LockoutUntil > DateTime.MinValue
+                && DateTime.UtcNow >= stateModel.LockoutUntil)
+            {
+                stateModel.IsLockedOut = false;
+                stateModel.CurrentLockoutPhase = AccountState.LockoutPhase.None;
+                stateModel.InitialLockoutFlattened = false;
+                _stateDirty = true;
+                LogEvent(stateModel.AccountName, "LOCKOUT_LAPSED",
+                    $"Lockout deadline {stateModel.LockoutUntil:o} has passed; the account is tradeable again.");
+                return actions;
+            }
 
             if (!stateModel.IsLockedOut && DateTime.UtcNow >= stateModel.LockoutUntil)
             {
@@ -5190,6 +5219,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         public DateTime FirmDailyDate { get; set; }
         public double FirmDailyStartRealized { get; set; }
         public double FirmStartingBalance { get; set; }
+        // P1-54: the lockout DEADLINE must persist, not just the fact of the lockout. The
+        // top-level LockedOutAccounts name list restored IsLockedOut = true with LockoutUntil
+        // left at MinValue, so any restart -- and a recompile is a restart here -- silently
+        // converted a 60-minute lockout into one that lasts until the session reset.
+        public DateTime LockoutUntil { get; set; }
     }
 
     // -

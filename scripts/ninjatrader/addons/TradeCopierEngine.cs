@@ -930,6 +930,46 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
+        /// P0-55. Re-drives the stop mirror for every protective stop the leader already has
+        /// working on this instrument.
+        ///
+        /// `OnLeaderOrderUpdate` can only anchor a distance if the leader's position exists when
+        /// it runs. An ATM stop routinely reaches `Accepted` BEFORE the leader's PositionUpdate --
+        /// NT8 raises ExecutionUpdate first, and a partial fill widens the gap -- and once accepted
+        /// it raises no further OrderUpdate. So the one event that used to be discarded, the
+        /// leader's own PositionUpdate, is the only remaining chance to compute the offset.
+        ///
+        /// Idempotent by construction: OnLeaderOrderUpdate only recomputes the offset and syncs,
+        /// and re-submits only when the distance actually changed.
+        /// </summary>
+        private void ReevaluateLeaderStops(Account leaderAccount, Instrument instrument)
+        {
+            if (leaderAccount == null || instrument == null) return;
+
+            List<Order> candidates;
+            try
+            {
+                candidates = leaderAccount.Orders
+                    .Where(o => o != null && o.Instrument != null
+                        && o.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase)
+                        && RiskGuardAddOn.IsStopType(o)
+                        && RiskGuardAddOn.IsPendingOrWorking(o.OrderState)
+                        && (string.IsNullOrEmpty(o.Name) || !o.Name.Contains("COPIER")))
+                    .ToList();
+            }
+            catch { return; }
+
+            if (candidates.Count == 0) return;
+
+            CopierLog(leaderAccount.Name, "BRACKET_REANCHOR",
+                $"leader position for {instrument.FullName} landed; re-evaluating {candidates.Count} "
+                + "working protective stop(s) that may have been accepted before it.");
+
+            foreach (var o in candidates)
+                OnLeaderOrderUpdate(leaderAccount, o);
+        }
+
+        /// <summary>
         /// A leader order changed. If it is the protective stop for the leader's open position,
         /// work out its distance from the leader's average entry and push that distance to every
         /// follower of that leader.
@@ -949,8 +989,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                 p.Instrument.FullName.Equals(order.Instrument.FullName, StringComparison.OrdinalIgnoreCase));
 
             // No leader position: either the stop is gone, or it is an entry order. Either way
-            // there is nothing to anchor a distance to.
-            if (leaderPos == null || leaderPos.MarketPosition == MarketPosition.Flat) return;
+            // there is nothing to anchor a distance to right now.
+            //
+            // P0-55: this abandon is recoverable and used to be silent, which is why a naked
+            // follower looked like nothing had happened. ReevaluateLeaderStops re-drives us from
+            // the leader's PositionUpdate; log it so the recovery is visible when it works, and
+            // conspicuous when it does not.
+            if (leaderPos == null || leaderPos.MarketPosition == MarketPosition.Flat)
+            {
+                if (RiskGuardAddOn.IsStopType(order) && RiskGuardAddOn.IsPendingOrWorking(order.OrderState))
+                {
+                    CopierLog(leaderAccount.Name, "BRACKET_NO_LEADER_POSITION",
+                        $"stop '{order.Name}' @{order.StopPrice} on {order.Instrument.FullName} has no leader "
+                        + "position to anchor to yet; deferred until the leader's position update.");
+                }
+                return;
+            }
 
             if (!RiskGuardAddOn.IsStopType(order)) return;
             if (!RiskGuardAddOn.IsProtectiveSide(order, leaderPos.MarketPosition)) return;
@@ -1514,6 +1568,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                     || _groups.Any(g => g.IsEnabled && g.FollowerAccounts != null
                         && g.FollowerAccounts.Any(f => f.Equals(acct.Name, StringComparison.OrdinalIgnoreCase)));
             }
+
+            // P0-55: a LEADER's position update used to be discarded here, and it is the last
+            // event that will ever mention a stop accepted before the position existed. An
+            // account can be both a leader and a follower, so these are two ifs, not a branch.
+            if (GetActiveRelationshipsForLeader(acct.Name).Count > 0)
+                ReevaluateLeaderStops(acct, e.Position.Instrument);
+
             if (!isFollower) return;
 
             UpdateFollowerBracketFromPosition(acct, e.Position.Instrument, releaseWhenFlat: true);
