@@ -3609,17 +3609,49 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             else if (action.ActionType == GuardActionType.CancelAllOrders)
             {
+                // P0-53: a lockout cancels the trader's working orders, but the protective stop
+                // covering an OPEN position is not one of them. Cancelling it here and then
+                // failing to flatten is how this path manufactures the naked position the lockout
+                // exists to prevent.
+                //
+                // This is P1-11's hazard on P1-11's blind side. P1-11 split the SWEEP's cancel
+                // batches by intent and stopped there; the lockout's PendingCancel phase also
+                // emits this action, and this branch cancelled everything. The sweep's own
+                // deferred batch is what eventually clears the retained stop, once the flatten is
+                // confirmed and the instrument is actually flat.
+                //
+                // The classification is IsPositionReducingOrder's and is reused, not restated: a
+                // second definition of "protective leg" would drift, and this file already has
+                // one authority for the question.
+                AccountState cancelState;
+                lock (_stateLock) { _accountStates.TryGetValue(action.AccountName, out cancelState); }
+
                 var orders = new List<Order>();
+                var retained = new List<string>();
                 foreach (Order o in account.Orders)
                 {
                     if (o.OrderState == OrderState.Working || o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted)
                     {
+                        // Reducing is only true while a position is actually open, so a flat
+                        // account still has every order cancelled -- which is what lets the
+                        // lockout reach Confirmed.
+                        if (IsPositionReducingOrder(o, cancelState))
+                        {
+                            retained.Add(o.Instrument != null ? o.Instrument.FullName : o.Name);
+                            continue;
+                        }
                         orders.Add(o);
                     }
                 }
                 if (orders.Count > 0)
                 {
                     account.Cancel(orders);
+                }
+                if (retained.Count > 0)
+                {
+                    LogEvent(action.AccountName, "LOCKOUT_STOP_RETAINED",
+                        $"Position still open for {string.Join(",", retained.Distinct())}; "
+                        + "keeping its protective order working rather than leaving the position naked.");
                 }
             }
             else if (action.ActionType == GuardActionType.CancelOrder)

@@ -6653,16 +6653,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             // an explicit mode it ran in the "shadow" default and passed only because the sweep
             // ignored the mode.
             //
-            // *** THIS TEST IS EXPECTED TO FAIL until P0-53 is fixed. ***
+            // Stating the mode honestly is what exposed P0-53 (CLOSED 2026-08-09): P1-11 filtered
+            // the SWEEP's own cancel batches so a protective stop is never cancelled before the
+            // flatten is confirmed, but the lockout's PendingCancel phase ALSO emits a
+            // CancelAllOrders GuardAction, and ExecuteAction's branch cancelled every working
+            // order with no IsPositionReducingOrder filter. In an acting mode the stop therefore
+            // died before the flatten was attempted, and a failed flatten left the position naked
+            // -- the exact hazard P1-11 exists to prevent, surviving in the action pipeline
+            // instead of the sweep. Shadow mode hid it, because ProcessAction skipped the cancel.
             //
-            // Stating the mode honestly is what exposed P0-53: P1-11 filtered the SWEEP's own
-            // cancel batches so a protective stop is never cancelled before the flatten is
-            // confirmed, but the lockout's PendingCancel phase ALSO emits a CancelAllOrders
-            // GuardAction, and ExecuteAction's CancelAllOrders branch cancels every working order
-            // with no IsPositionReducingOrder filter. In an acting mode the stop therefore dies
-            // before the flatten is attempted, and a failed flatten leaves the position naked --
-            // the exact hazard P1-11 exists to prevent, surviving in the action pipeline instead
-            // of the sweep. Shadow mode hid it, because ProcessAction skipped the cancel.
+            // This test now covers BOTH routes, which is why the mode must stay "live": in shadow
+            // it would prove nothing at all.
             addon.SetModeForTest("live");
 
             // Settle the daily session reset first (it clears IsLockedOut), then lock.
