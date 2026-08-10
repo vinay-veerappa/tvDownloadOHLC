@@ -1660,14 +1660,62 @@ MNQ's 0.25 tick. Note that the ATM path's own off-tick prices (29897.419…, 299
 **rounded by NT8 at `Submitted`**, so off-tick is not always fatal — worth establishing which paths
 round and which reject before blaming OCO for anything.
 
-### Replikanto did nothing
+### Replikanto did nothing — until it was fixed, and then it told us a lot
 
-With its leader account set to `Sim_All_Day_ORB` and a real 2-lot entry filled on it, **Replikanto
-produced no order, no position and no event on either `SimCopyTest1` or `SimCopy2`.** Our copier
-correctly stood aside for the whole trade (`COPIER_NO_ACTIVE_RELATIONSHIPS: no enabled relationship
-has 'Sim_All_Day_ORB' as leader`), so nothing of ours was in its way. This is the second time
-Replikanto has been looked for and not found (§4o); it appears not to be enabled, and that is a
-question for its own UI, not for this codebase.
+The first attempt produced **no order, no position and no event** on either follower while
+`Sim_All_Day_ORB` traded, with our copier correctly standing aside
+(`COPIER_NO_ACTIVE_RELATIONSHIPS`). The operator then fixed its configuration; its real leader is
+**`Sim-ORB`**, not `Sim_All_Day_ORB`. A 1-lot native ATM bracket on `Sim-ORB` at 01:56:56 then fanned
+out cleanly:
+
+| Account | Legs | OCO id |
+|---|---|---|
+| `Sim-ORB` (leader) | `Stop1` 1 @ 29913.75, `Target1` 1 @ 29958.75 | `75a1929ea45146109fd279b9185ddd4a` |
+| `SimCopyTest1` | identical | `cb776ec9359a403cba1bc78238c0de8b` |
+| `SimCopy2` | identical | `b32917cd0e9b48828e5626aee06181fc` |
+
+Fan-out latency was ~12 ms and ~29 ms after the leader's legs.
+
+**What this settles for `P0-9`'s mirrored target:**
+
+1. **A mature copier mints a FRESH OCO id per follower account** — it does not propagate the
+   leader's id. Three accounts, three unrelated ids. This corroborates the shape the parked
+   `wip/p09-oco-target` branch already has (both follower legs sharing one locally-generated id) and
+   rules out any design that tries to carry the leader's id across accounts.
+2. **It mirrors the FULL bracket, stop and target.** That is precisely the capability we deliberately
+   do not have yet, so "a follower with only a stop" is us being behind the field, not being careful.
+3. Replikanto's ids are undashed 32-hex (`75a1929e…`); ours are dashed GUIDs. NT8 accepts either, so
+   the id is an opaque string.
+
+**⚠️ Two hazards this exposed in OUR code and docs:**
+
+- **§4o's diagnostic rule is broken.** It says the tell for a manual bracket is the leader's order
+  *names* (`Stop1`/`Target1` vs `Stop_<bracketId>`). Replikanto copies the leader's names
+  **verbatim**, so its mirrors on a follower are indistinguishable by name from a native bracket.
+- **We would mirror a mirror.** `OnLeaderOrderUpdate` only refuses orders whose `Name` contains
+  `COPIER`. Replikanto's mirrored legs are named `Stop1`/`Target1`, so if an account were ever both a
+  Replikanto follower and one of our leaders, we would treat its mirrored stop as a genuine leader
+  stop and mirror it onward. **This is live today in one direction:** `Sim-ORB` is our follower
+  (`Sim101 -> Sim-ORB`) *and* Replikanto's leader, giving
+  `Sim101 -> Sim-ORB -> {SimCopyTest1, SimCopy2}`. A `Sim101` test trade now fans out to three
+  follower accounts, which any P1-56 live validation must account for.
+
+**Deliberately NOT concluded: whether Replikanto mirrors stop PRICE or DISTANCE.** All three accounts
+filled at exactly 29928.75 in Sim, so both hypotheses predict identical legs and the run cannot
+separate them. Ours mirrors distance from the follower's own fill because real fills differ.
+
+**Still unanswered — the re-pair question.** Whether Replikanto modifies a follower leg in place or
+cancels and re-creates it under a NEW id could not be tested from here, because trailing the leader's
+stop needs the ATM's own mechanism (see below). Answering it needs the stop dragged in the NT8 UI.
+
+### `nt_change_order` cannot trail an ATM-managed leg — confirmed twice
+
+Attempted on our `DynamicAtmManager` bracket (`Stop_5c903ad3`, 29897.5 -> 29900) and on a native NT8
+ATM bracket (`Stop1` on `Sim-ORB`, 29913.75 -> 29918.75). **Both returned `"modified"` and moved the
+order's timestamp, and in both cases the stop price did not change** — the ATM owns the leg and
+re-asserts it. The `"modified"` status is therefore not evidence of anything. The copier's own
+`COPIER_STOP` is not ATM-managed, so `P0-9`'s `Change()` trail is unaffected; but never use an
+ATM-managed order to test it.
 
 ---
 
