@@ -44,6 +44,25 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **RiskGuard Hardening Progress**: [RISKGUARD_HARDENING_HANDOVER.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_HARDENING_HANDOVER.md) (live state — **read §0 before touching either addon**, then §4a for what is pending. Deployed to shadow on `harden/riskguard-p0-51` (tip `86c6376f`, unmerged/unpushed); several fixes are **compile+unit only, not validated on a live feed**. SHAs from before session 9 are orphaned by a history rewrite — see §0.0)
 * **NT8 Deployment**: never hand-copy `.cs` into `Documents/NinjaTrader 8/bin/Custom/`. Use `python scripts/utils/sync_nt8_strategies.py --verify --only addons` then `--only addons`, and recompile via `nt_compile`. Rules and traps: [NT8_FILE_ORGANIZATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_FILE_ORGANIZATION.md)
 * **Agent Patch Loop**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (implement→gate→review→apply loop; gate ladder, provider shim, anti-reward-hacking guard, known-defective predecessor gates)
+* **Agent Loop v2 (package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package extracted from this repo; v0.1.0 tagged; 77/77 tests pass; install via `pip install git+https://github.com/vinay-veerappa/agent-loop.git@v0.1.0`)
+* **Agent Loop v2 Research**: [AGENT_LOOP_RESEARCH.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_RESEARCH.md) (state of the field across 13 coding agent harnesses)
+* **Agent Loop v2 Plan**: [AGENT_LOOP_V2_PLAN.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_V2_PLAN.md) (8-phase execution plan, all complete)
+* **Agent Loop Decisions**: [IMPLEMENTATION_DECISIONS.md](file:///c:/Users/vinay/agent-loop/docs/architecture/IMPLEMENTATION_DECISIONS.md) (every non-obvious decision recorded)
+* **Consumer Profiles**: `scripts/agent_loop_config/` (nt8-riskguard and python-tvdownloadohlc profiles; register via `--profile-module scripts.agent_loop_config`)
+* **Agent Loop Usage**:
+  ```powershell
+  # NT8 RiskGuard ticket (C#)
+  .\.venv\Scripts\python.exe -m agent_loop --profile nt8-riskguard --profile-module scripts.agent_loop_config.nt8_riskguard --tickets scripts/agent_loop/tickets_p0.json --ticket T1
+
+  # Python ticket
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --tickets tickets.json --ticket T1
+
+  # Plan mode (defect -> ticket JSON)
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode plan --defect "description of the defect"
+
+  # Developer mode (autonomous localization + edit)
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode developer --defect "description of the defect"
+  ```
 
 ## Data Architecture — Two Parquet Systems
 
