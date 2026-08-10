@@ -23,34 +23,21 @@ Suite **686 passed, 0 failed**.
 > `COPIER_STOP` for a rejection** — that is the one thing that would make this worse than what it
 > replaced. Details and the whole design in §4r.
 
-> ✅ **`P0-51` and `P1-52` are FIXED, deployed and compiling clean (2026-08-09).** Shadow no
-> longer cancels or flattens, and one bracketed trade is no longer an order flood. Suite **629
-> passed / 1 failed**; `nt_compile` **0 errors** under net48; the addon is hot-swapped on the NT8
-> box. Analysis in §4m, what shipped in the plan's `P0-51` and `P1-52` entries.
+> ✅ **Seven defects closed since the 2026-08-09 incident**, all deployed and compiling clean:
+> `P0-51` (shadow restrained neither the lockout sweep nor the deferred cancel queue), `P1-52` (a
+> 2-lot ATM bracket counted as an order flood), `P0-53` (the lockout cancelled a protective stop
+> while its position was open), `P1-54` (lockouts never lapsed), `P0-55` (a partial-fill entry left
+> the follower with no mirrored stop), `P1-56` (concurrent bracket syncs left **two** protective
+> stops — qty 1 *and* qty 2 behind 2 lots, which flips the follower when both fire), and `P0-9`
+> item (1) above.
 >
-> ✅ **`P0-53` is fixed too.** The lockout's `CancelAllOrders` no longer cancels a protective stop
-> while its position is open. Suite **637 passed / 0 failed** — fully green.
+> **Only `P0-51` and `P1-52` of those are validated live** (§4n). The rest are unit + compile only.
+> Analysis in §4m–§4r; what shipped is in each plan entry.
 >
-> ✅ **`P1-54` and `P0-55` are fixed too** (2026-08-10). Lockouts now lapse when their deadline
-> passes, and a follower is no longer left without a mirrored stop after a partial-fill entry.
-> **Five defects from the one 2026-08-09 trade are closed.**
->
-> ✅ **`P0-51` and `P1-52` are VALIDATED LIVE** by replaying the incident (§4n). `P0-53`, `P1-54`
-> and `P0-55` are unit + compile only.
->
-> ✅ **`P1-56` is CLOSED, deployed and pinned by three concurrent tests (2026-08-10).** It *was* a
-> live over-cover hazard on the existing stop path: Concurrent
-> bracket syncs can leave a follower with two protective stops — seen live as qty 1 **and** qty 2
-> against a 2-lot position. When both fire the follower is flipped. It is not caused by the parked
-> target work; that work only made it reproducible. **This is the top item** — see §4o.
->
-> **How it was fixed**: one in-flight reservation on the bracket, published under `_lock` before any
-> broker call and held across a bounded re-drive loop, released exactly once in a `finally` that runs
-> *after* the loop. A sync arriving mid-flight backs off and leaves a re-sync owed, so the newer
-> instruction is applied rather than dropped. **Two agent-loop candidates would have shipped live
-> defects here and both passed every gate** — one leaked the reservation forever, one turned the
-> submission bound into 9 attempts and reintroduced the defect. See the plan's `P1-56` entry; the
-> lesson is §9 step 3, not the incident.
+> ⚠️ **Two agent-loop candidates for `P1-56` would have shipped live defects, and both passed every
+> gate** — one leaked the reservation forever, one turned the submission bound into 9 attempts and
+> reintroduced the defect. The transferable lesson is in §3 and
+> [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §9, not in the defect.
 >
 > ⚠️ **`P1-57` (new) changes how any live validation behaves.** `Sim101 -> Sim-ORB -> {SimCopyTest1,
 > SimCopy2}` is a live chain, because `Sim-ORB` is our follower *and* another copier's leader. A
@@ -60,99 +47,29 @@ Suite **686 passed, 0 failed**.
 > an ordinary overnight entry and, armed live, would flatten the trade about a second after it fills
 > — destroying the test rather than the defect (§4p).
 
-> ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
-> *(Superseded by the banner above — session 9 opened two defects. The rest of this box still
-> describes session 8 accurately.)*
->
-> | | |
-> |---|---|
-> | Repo | 13 commits ahead of `main` (11 are this work, 2 from other agents). **Not merged, not pushed** |
-> | NT8 | Running, **all 9 addon files in sync**, `nt_compile` 0 errors, feed connected, no open positions |
-> | Suite | 622 passed / 0 failed (was 524) · loop selftest 11/11 |
-> | Operational | **Nothing outstanding.** `P2-41` is closed and verified live |
->
-> **Closed this session**: `P1-12`, `P1-14`, `P1-36`, `P2-38`, `P2-41`; `P1-13`'s fail-open half;
-> `P0-9` items (3) and (4); stress tests `S5`, `S6`, `S8`, `S9`; and **`P0-49`/`P0-50`, two new P0s
-> found by a live ATM trade** (§4l). **The P1 band is done apart from `P1-13`'s threading
-> inversion.**
->
-> **The session-7 caveat resolved — half well, half badly.** A live ATM trade finally exercised the
-> mirrored stop, and:
-> - ✅ **the signed-offset arithmetic is CORRECT on real fills** (29774.25 = 29789.25 − 15);
-> - ❌ **the trigger never fired.** The follower was naked for the whole trade and then collected
->   three orphan stops on a flat account. Fixed as `P0-49`/`P0-50`, deployed, compiles clean.
->
-> ✅ **RE-VALIDATED LIVE the same session, after the fix** (15:55:56, MNQ SEP26). Follower filled
-> 29822.25; `COPIER_STOP` at 29807.25 was submitted **1 millisecond later**, and the follower's FSM
-> was created **`ProtectedPending`** instead of `Unprotected`. Leader entry 29821.75, leader stop
-> 29806.75, offset -15.00, follower 29822.25 - 15 = 29807.25 — exact. **`P0-9`'s mirrored stop is
-> now validated end to end on real fills: arithmetic, timing and FSM state.**
->
-> Note the copier **acts regardless of guard mode** — `shadow` restrains RiskGuard, not the
-> copier. Both relationships are enabled and `Sim101 → Sim-ORB` is `ArmedForLive: true`, so the
-> next Sim101 fill will place a real stop order on the follower.
->
-> **`nt_riskguard_config` with no arguments used to be a destructive write** — see §4k. It is safe
-> now, but any older transcript showing that call also shows the live config being flattened.
->
-> **What is pending is now §4a**, rewritten as a prioritised backlog rather than a phase list.
-> Short version, now that the live validation is done: **`P0-9`'s targets/OCO item needs *your*
-> decision, not a code change** (and the operator hit the missing target within one trade); then
-> `P3-30` (the reconciler) is the highest-value thing left. `P1-13`'s threading half needs a
-> concurrent-guard-event stress test written first — **the S-series does not cover that**, despite
-> being finished. The loop's own backlog is [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §12.
-
 ---
 
 ## 0. Start here (read this, then §4a for what is pending)
 
-### 0.0 Sessions 7 and 8 are both merged and pushed — and every SHA below is stale
+**45 of 58 defects closed. Suite 686/0. NT8 compiles clean under net48, all 9 addon files in sync,
+and both of `P0-9`'s legs are implemented** — the stop validated on real fills (§4l), the target
+deployed and awaiting its first live trade (§4r).
 
-> ✅ **Corrected 2026-08-09.** Session 8's work **is** merged into `main` and pushed;
-> `main` and `origin/main` are level. The text that used to sit here — "session 8's 11 commits are
-> not merged and not pushed" — was written before the merge and was stale for two days. The
-> `harden/riskguard-copier-p0` branch still exists locally and on the remote, but it is no longer
-> ahead of anything.
+### 0.0 ⚠️ Commit SHAs cited in the older sections below no longer resolve
 
-The session-7 push happened **before shadow validation**, which is the opposite of what §6 item 4
-recommended — it was a deliberate call to get 282 unpushed commits off one machine, not a signal
-that `P0-9` was validated. `P0-9` **has since been validated live** (§4l), so that particular
-concern is now discharged; the merge ordering lesson still stands.
+Getting session 7's push through required rewriting history twice — once to purge `data/` (a 126 MB
+`NQ1_1m.parquet` exceeded GitHub's 100 MB limit and had been silently rejecting every push for 202
+commits), and once to purge 88 MB of `.m4a`. Both rewrites changed every commit SHA in the range.
+`1d9566fe`, `76137575`, `922b2c44`, `c5a4f035`, `904d44bc`, `737533a3`, `a2a519fd`, `fb55d281` and
+the rest are **orphaned** — the *work* is all present in `main`, only the identifiers are dead. Do
+not cite them onward, and run `git cat-file -t <sha>` before trusting any SHA quoted below.
 
-> ⚠️ **Commit SHAs cited throughout this document no longer resolve.** Getting the push
-> through required rewriting history twice — once to purge `data/` (a 126 MB
-> `NQ1_1m.parquet` exceeded GitHub's 100 MB limit and had been silently rejecting every
-> push for 202 commits), and once to purge 88 MB of `.m4a`. Both rewrites changed every
-> commit SHA in the range. `1d9566fe`, `76137575`, `922b2c44`, `c5a4f035`, `904d44bc`,
-> `737533a3`, `a2a519fd`, `fb55d281` and the rest are **orphaned** — the *work* is all
-> present in `main`, only the identifiers are dead. Do not cite these SHAs onward, and
-> check `git cat-file -t <sha>` before trusting any of them.
+SHAs from session 9 onward (`995f6402`, `c9459121`, `86c6376f`) are on `harden/riskguard-p0-51` and
+are live.
 
-Also landed in that push, and relevant if you commit here:
-
-- **`.githooks/pre-commit`** now blocks parquet, audio, video, and anything over 50 MB —
-  including via `git add -f`, which is how the 126 MB parquet got in past `.gitignore`.
-  It is **not automatic**: run `git config core.hooksPath .githooks` in each clone or it
-  silently does nothing. Override a deliberate exception with `ALLOW_BIG_FILES=1 git commit`.
-- **A live Gemini API key** was found by GitHub's secret scanning in
-  `scripts/trader/chart_agent/test_vision.py:3` and scrubbed from history. It never
-  reached GitHub, but **it still needs rotating**.
-- **0.28 GB of older parquet remains in published history** (the purges only covered the
-  then-unpushed range). Logged in `docs/ROADMAP.md` under Known Issues / Tech Debt.
-
-**38 of 50 defects closed. Suite 622/0. NT8 compiles clean, and `P0-9`'s mirrored stop is
-validated on real fills** (see the banner and §4l). *(This line read "33 of 48 / suite 524" at the
-end of session 7.)*
-
-| Phase | State |
-|---|---|
-| **A** — deploy P0 to shadow | Deployed and armed. **T3 validated live (§4g). T5 has never been exercised** — it needs an acting mode |
-| **B** — test foundation | ✅ done |
-| **C** — P1 safety-critical | ✅ done — `P1-36` closed session 8 |
-| **D** — P1 rule semantics | ✅ done — `P1-16`, `P1-17`, `P1-18`, `P1-19` |
-| **D2** — stress backlog | ✅ done — `S1`–`S4`, `S7`, and **`S5`/`S6`/`S8`/`S9` (session 8)** |
-| **E** — copier fidelity | ✅ `P1-21`, `P1-22`, `P1-23`, and **`P0-9`'s naked-follower half** closed. Targets/ATM remain (see plan `P0-9`) |
-| **F–G** | Not started |
+**The merge-ordering lesson stands**: that push happened *before* shadow validation, which is the
+opposite of what this document recommended. It was a deliberate call to get 282 unpushed commits off
+one machine, not a signal that anything was validated.
 
 ### Five things to know before you touch anything
 
@@ -169,9 +86,9 @@ recommendations were retired this session because following them would have made
   realized PnL lags the position update — an ordering nothing guarantees.
 
 Verify the mechanism against the code before acting on any entry, including ones marked settled.
-**Two more settled entries were retired in session 8** — `P1-36`'s "coverage follows a single stop"
-and `P1-13`'s deferral reasoning — in this file *and* in `scripts/agent_loop/profiles.py`. Retire
-from both places or the review panel keeps arguing for the closed defect.
+Settled entries have since been retired for `P1-36`, `P1-13`, and `P0-9`'s "cancel-then-replace, not
+modify" — always in this file *and* in `scripts/agent_loop/profiles.py`. Retire from both places or
+the review panel keeps arguing for the closed defect.
 
 **2. A machine check is only as good as the paths driven through it.** The lock-scope invariant
 was already machine-enforced (`Account.BrokerCallObserver` + `TestIsStateLockHeld()`) and still
@@ -217,10 +134,11 @@ touching code near the test hooks**, and read `RESULTS:` from a *fresh* build �
   > recorded here is what stood between this box and that happening — and it is still the right
   > habit, but it is no longer load-bearing.
 
-**5. `P0-9`'s naked-follower half is closed; what remains is fidelity, not exposure.** Followers
-get a mirrored stop anchored to their own fill. Items (3) `StopLimit` and (4) leader-cancels-stop
-are pinned by test as of session 8. Only profit targets + OCO remain, and that wants an operator
-decision — see §4k. **The mirrored stop has still never been seen on a live fill.**
+**5. `P0-9` is fully implemented; what is left is live validation, not code.** Followers get a
+mirrored **stop and target**, OCO-paired, both anchored to their own fill. Items (3) `StopLimit` and
+(4) leader-cancels-stop are pinned by test. **The stop is validated on real fills (§4l). The target
+is deployed and has never been seen on one (§4r)** — and the stop path changed with it, so watch the
+first live `COPIER_STOP` for a rejection before trusting either.
 
 ### What the guard actually does right now
 
@@ -237,23 +155,29 @@ but no account is mapped and the top-level sub-rules are disabled, so no firm ru
 `TAKEPROFITPRO524207503` → `TakeProfitTrader` turns on real enforcement with real numbers — do it
 deliberately, and run a shadow session on it first.
 
-
-
+### Commands
 
 ```powershell
-# free, ~2 min, no models: is the tool sound?
+# the suite, direct -- ALWAYS build first; --no-build after a failed build
+# silently reports the previous assembly's result
+cd ninjatrader-addon; dotnet build -v q --nologo; dotnet run --no-build -v q --nologo
+
+# deploy: verify first, then sync, then recompile in NT8 (hot-swaps)
+.\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py --verify --only addons
+.\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py --only addons
+#   then nt_compile, and read errorCount
+
+# free, ~2 min, no models: is the loop tool itself sound?
 .\.venv\Scripts\python.exe -m scripts.agent_loop.selftest
 
 # free: do all 18 ticket regions still resolve?
 .\.venv\Scripts\python.exe -m scripts.agent_loop --list
-
-# the suite, direct
-cd ninjatrader-addon; dotnet build -v q --nologo; dotnet run --no-build -v q --nologo
 ```
 
 **The arbiter recommends; it never ships.** A run that ends `ARBITER_SHIP` has *not* applied
-anything. Read `logs/agent_loop/<T>/rN_arbiter.txt` and the candidate itself, then promote with
-`--resume-raw <rN_impl_raw.txt> --allow-unapproved --apply` and commit explicit paths.
+anything — and `--resume-raw … --apply` is **not** a promote-what-I-read command, it is a fresh run
+seeded with that raw (§4q). To promote an exact candidate, splice it with the loop's `regions.apply`
+and diff the result against the `final.patch` you reviewed.
 
 > ✅ **Work is test-first from here.** A ticket declares `expect_green`; the loop refuses it
 > unless those tests are already failing at baseline, and fails any candidate that leaves one
@@ -261,24 +185,22 @@ anything. Read `logs/agent_loop/<T>/rN_arbiter.txt` and the candidate itself, th
 > through — it reached `ARBITER_SHIP` with its own acceptance test still red. See the plan's
 > §6.0.
 
-**Do not run `scripts/agent_loop/ollama_patch_loop.py`.** Three of its gates were defective; it is
-kept only so the older `logs/ollama_loop/` artifacts stay readable.
-
 ---
 
 ## 1. What landed
 
-| Commit | Content |
+The original P0 tickets, all merged into `main` long ago. **Their SHAs are orphaned (§0.0)** and
+the table that listed them was removed 2026-08-10; what each one *did* is below, and that is the
+part that still matters.
+
+| Ticket | Content |
 |---|---|
-| `d94d5521` | **T1 — P0-1 + P0-4**: stop-guard FSM coverage model |
-| `ff72e574` | **Test harness repair** — the suite could not previously catch defects |
-| `03dfdfc5` | **T2 — P0-2 + P0-3**: reserve-before-submit auto-stop, sized from the live position |
-| `904d44bc` | **T3 — P0-7**: unrealized-only peak for the giveback rule |
-| `737533a3` | **T4 — P0-5 + P0-6**: exits clamped to the follower's position; no sub-1 flooring |
-| `fb55d281` | **T4 follow-up**: an exit must not round down to zero and strand the follower |
-| `a2a519fd` | **T5 — P0-8 + P0-9**: copier respects the lockout; fails closed when unguarded |
-| `6129f15a` | Dead half of the auto-stop quantity guard removed |
-| `4d7d9557`, `3bc4dfff`, `4de6c6b5`, `10b32c5a` | **Four loop repairs** — see §4d |
+| T1 — `P0-1` + `P0-4` | stop-guard FSM coverage model |
+| T2 — `P0-2` + `P0-3` | reserve-before-submit auto-stop, sized from the live position |
+| T3 — `P0-7` | unrealized-only peak for the giveback rule |
+| T4 — `P0-5` + `P0-6` | exits clamped to the follower's position; no sub-1 flooring (+ an exit must not round down to zero and strand the follower) |
+| T5 — `P0-8` + `P0-9` | copier respects the lockout; fails closed when unguarded |
+| — | test-harness repair (the suite could not previously catch defects) |
 
 ### T2 (P0-2 + P0-3)
 The auto-stop now **reserves before it submits**: `AutoStopOrder`, `RecognizedStopOrder`,
@@ -346,39 +268,30 @@ allowed the copy because the follower is named `SimFollower`. The assertion coul
 own subject. `SetInstanceForTest` now wires it, and `SetupCopyPath` clears it so the static cannot
 leak between tests; the assertion itself is unchanged.
 
-**Suite state**: was 221 visible tests / 2 failures / 25 skipped. Then 353 assertions with 3
-expected failures. Now **356 passed, 0 failed**. Any failure is now a regression.
+**Suite state at the time**: was 221 visible tests / 2 failures / 25 skipped, then 356 passed / 0
+failed once the harness was repaired. **It is 686/0 today.** Any failure is a regression.
 
 ---
 
-## 2. Current state of play
+## 2. Two P0-era findings worth keeping
 
-| Ticket | Defects | Status |
-|---|---|---|
-| T1 | P0-1, P0-4 | ✅ committed `d94d5521` |
-| T2 | P0-2, P0-3 | ✅ committed `03dfdfc5` |
-| T3 | P0-7 | ✅ committed `904d44bc` |
-| T4 | P0-5, P0-6 | ✅ committed `737533a3` (+ exit-rounding follow-up `fb55d281`) |
-| T5 | P0-8, P0-9 | ✅ committed `a2a519fd` |
-
-**All five are applied and committed on `harden/riskguard-copier-p0`. Nothing is deployed** —
-NinjaTrader is still running the unmodified addon. Deploying is the next decision, and it is a
-human one.
+*(T1–T5 are all long since committed, merged and deployed. The per-ticket status table that used to
+sit here was stale and its SHAs are orphaned — see §0.0. Current state is the banner at the top.)*
 
 ### Two things found by review, not by the panel
-- **T4's exit rounding** (`fb55d281`). Removing the `Math.Max(1, ...)` floor was right for
+- **T4's exit rounding.** Removing the `Math.Max(1, ...)` floor was right for
   entries — that floor *was* P0-6 — but applying it to exits created the mirror defect: an exit
   that rounds to 0 strands the follower in a position the leader has already left. Not an edge
   case: every partial exit rounds down independently, so a leader who entered 10 MNQ (follower:
   1 NQ) and exits in any increment below 10 produces 0 every time, and even a 5+5 exit strands it
   because `Math.Round(0.5)` is 0 under banker's rounding. Exits now take at least one contract
   when the follower holds one, clamped to the real position size.
-- **T3's session reset** (`904d44bc`). Spec item 1 asks for the new peak fields to be cleared
+- **T3's session reset.** Spec item 1 asks for the new peak fields to be cleared
   where `PeakEquity` is, but neither of those two sites was in the ticket's region set, so the
   loop could not have done it. Added by hand.
 
 ### Known-acceptable residue in T2 (do not re-open without new evidence)
-- ~~A dead clause survives in `ExecuteAction`~~ — removed in `6129f15a`. Recorded because the
+- ~~A dead clause survives in `ExecuteAction`~~ — removed. Recorded because the
   *proposed fix* mattered: glm-5.2 wanted the comparison made against the earlier
   `position.Quantity` from the pricing read, which would abort the auto-stop whenever the
   position scaled **up** between reads, leaving it naked. The dead clause was harmless; that
@@ -392,196 +305,59 @@ human one.
 
 ---
 
-## 3. The loop (how the work gets done)
+## 3. The loop, and what its history taught us
 
-> ⚠️ **Superseded. Use `python -m scripts.agent_loop` — see
-> [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md).** Everything below describes the *old*
-> `ollama_patch_loop.py`, three of whose gates were defective (§4). It is retained only so the
-> in-flight T2 artifacts stay readable. **Do not run it, and do not treat a green run from it as
-> evidence** — its panel could not approve, and its lock-scope gate almost never fired.
->
-> ```powershell
-> .\.venv\Scripts\python.exe -m scripts.agent_loop --list        # free: do regions still resolve?
-> .\.venv\Scripts\python.exe -m scripts.agent_loop.selftest      # free: is the loop itself sound?
-> .\.venv\Scripts\python.exe -m scripts.agent_loop --ticket T3 --apply
-> ```
+**Use `python -m scripts.agent_loop`** — full documentation in
+[AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md), commands in §0. Its own backlog is that doc's §12.
 
-`scripts/agent_loop/ollama_patch_loop.py` + `scripts/agent_loop/tickets_p0.json`.
+> ⚠️ **Do not run `scripts/agent_loop/ollama_patch_loop.py`.** Three of its gates were defective:
+> an empty reviewer response scored as a dissenting vote so no candidate could ever pass; the
+> lock-scope gate closed its scope before the Allman brace and was therefore inert for 28 of 32
+> sites; and `summary.json` was overwritten per invocation and is not a ledger. It is kept only so
+> the older `logs/ollama_loop/` artifacts stay readable, and **a green run from it is not
+> evidence**.
 
-```powershell
-# see every ticket and confirm its regions still resolve
-python -m scripts.agent_loop.ollama_patch_loop --tickets scripts/agent_loop/tickets_p0.json --list
+> **§4, §4b, §4c and §4d were retired on 2026-08-10.** They were per-round post-mortems of that
+> dead tool. The lessons below are what survived; nothing else referenced them. Section letters are
+> deliberately **not** renumbered — they are stable identifiers cited from the plan, from
+> `CLAUDE.md` and from older transcripts, so a gap is cheaper than a shifted reference.
 
-# run one ticket (applies only on UNANIMOUS panel APPROVE)
-python -m scripts.agent_loop.ollama_patch_loop --tickets scripts/agent_loop/tickets_p0.json --ticket T3 --apply --max-rounds 4
-```
+**Five lessons, all paid for, none specific to the old tool:**
 
-**Roles** (all via Ollama cloud):
-- implementer `kimi-k2.7-code:cloud`
-- review panel `glm-5.2:cloud` + `deepseek-v4-pro:cloud`, run concurrently; verdict is the
-  **worst** returned and APPROVE must be **unanimous**
-- cheap high-volume work `deepseek-v4-flash:0731-cloud`
+1. **Unanimous APPROVE from adversarial reviewers is unreachable, and the finding count going *up*
+   after a minimal fix is the signature.** Three rounds against one 168-line method produced 11 then
+   13 findings with **zero overlap**; a two-line fix in the next round drew 33. That is why there is
+   an arbiter.
+2. **Reviewers contradict each other on load-bearing facts.** On `AutoStopAttempts`, glm read the
+   state machine correctly and deepseek asserted the exact opposite. Verify against the code.
+3. **A reviewer's *proposed fix* can be worse than the defect it names**, and this has now happened
+   repeatedly — see §4q, where all three of panel, panel and arbiter endorsed a fix that would have
+   leaked a reservation forever.
+4. **A 0-upheld arbiter ruling is not reassurance.** Read the patch (§4q).
+5. **Confirm the candidate you promote is the one that was reviewed.** The old loop once printed a
+   `promote:` hint naming a file it had never seen; the new loop's `--resume-raw … --apply` is a
+   *fresh run*, not a promotion. Different mechanism, same failure, twice.
 
-**Gates, in order** — a candidate must clear all of them:
-1. *static* — all blocks present, ASCII, balanced braces, balanced `#if/#endif`, unchanged
-   leading indentation, no leaked markers
-2. *compile* — `dotnet build` (~3 s). Catches every invented symbol. This gate is why round 3 of
-   T1's first run was rejected: it referenced `_ordersToCancel` and `ProcessPendingCancellations()`
-   which do not exist.
-3. *lock-scope* — walks brace depth inside `lock (_stateLock)` and flags any
-   `Flatten/Cancel/Submit/CreateOrder` reachable there; overrides APPROVE
-4. *panel* — two reviewers
-5. *arbiter* — me/you
-
-Useful flags: `--orchestrator-note "<text>"` injects an authoritative directive into **both** the
-implementer and the reviewers (it outranks reviewer findings); `--resume-raw <rN_impl_raw.txt>`
-restarts from a saved candidate without re-paying for the implementer rounds;
-`--allow-unapproved` is an explicit override. Artifacts per round land in `logs/ollama_loop/<T>/`.
-
-**Between tickets you must commit.** The build gate reverts with `git checkout --`, so uncommitted
-work in the same file would be destroyed by the next ticket. *(Old loop only — the new loop runs
-in a worktree and never writes to the live tree, so this rule no longer applies.)*
+**Gates only prove no regression.** The suite had no coverage for the P0-2/P0-3 paths, which is why
+those defects existed at all. Passing gates is necessary, never sufficient.
 
 ---
 
-## 4. What happened to T2, and why the loop is being rebuilt
-
-T2 ran four rounds and exhausted without applying. The candidate was not the problem —
-**the gate was closed from round 1.**
-
-`parse_review("")` returns `{'verdict': 'REVISE', 'blocker_count': 0}`: an empty reviewer response
-is scored as a dissenting vote, indistinguishable from a real one.
-
-| Round | glm-5.2 | deepseek-v4-pro |
-|---|---|---|
-| 2 | REVISE, 3 blockers (3.7 KB) | **0 bytes** |
-| 3 | REVISE, 4 blockers (6.1 KB) | **0 bytes** |
-| 4 | **HTTP 502** | **HTTP 502** |
-
-`unanimous_approve` requires every reviewer to say APPROVE, so no candidate could ever pass. In
-round 4 both reviewers 502'd and the `except` fabricated `REVISE` for each — the final candidate
-was never reviewed by anything at all. ~2.5 hours and four implementer rounds of cloud spend on a
-ticket with no reachable pass state.
-
-Two further defects were found while rebuilding, both verified against the repo:
-
-- **The lock-scope gate was inert for 88% of its targets.** After matching `lock (_stateLock)` it
-  closed the scope before the Allman-style opening brace on the next line arrived. 28 of 32
-  `lock (_stateLock)` sites in `RiskGuardAddOn.cs` are Allman-braced, so the gate the §3 ladder
-  describes as overriding APPROVE almost never fired.
-- **`logs/ollama_loop/summary.json` is not a ledger** — it is overwritten per invocation, and
-  still records T1 as `applied: false` even though T1 is committed. Trust per-ticket
-  `result.json`, not the summary.
-
-Full analysis and the rebuild design: **[AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md)**.
-
-### T2's work is not lost
-
-`logs/ollama_loop/T2/r4_impl_raw.txt` (25.9 KB) and `final_blocks.json` carry three rounds of real
-`glm-5.2` feedback, including a genuine blocker: the candidate reset `AutoStopAttempts` only on
-`Unprotected → Protected|Flat`, but the success path is `Unprotected → ProtectedPending →
-Protected`, so the counter never reset and the guard would escalate straight to flatten after two
-*successful* auto-stops. Resume from that artifact rather than starting T2 over.
-
-## 4b. What the live T2 runs taught us (session 2)
-
-Running T2 on the new loop found three more structural defects — in the *loop*, not the addon.
-All are fixed; recording them so they are not rediscovered.
-
-1. **A reasoning reviewer looked exactly like a dead one.** `deepseek-v4-pro` returns chain of
-   thought in `message.thinking` and the answer in `message.content`, and was spending its whole
-   output budget on the former. `_call_ollama` also accepted `max_tokens` and never sent it.
-   Reviewers now run with `think=False` — 21s and ten findings, versus 159s and no verdict.
-   (`56fab156`, `a512ef9d`)
-2. **Unanimous APPROVE from adversarial reviewers is unreachable.** Three rounds against the
-   168-line `ExecuteAction`: 11 findings in round 1, 13 in round 3, **zero overlap**. Every
-   finding was fixed; each rewrite exposed new ground. The prompt said "apply every required
-   change", so false positives drove the rewrites that generated the next round's findings.
-3. **There was no arbiter.** Rung 6 was "a human reads artifacts", which is not a rung. Added
-   `arbiter.py`: rules each finding UPHELD / REJECTED / OUT_OF_SCOPE, feeds back only upheld ones,
-   and stops the run when rounds stop converging. It cannot overturn a mechanical gate and it
-   cannot ship — `ARBITER_SHIP` writes a patch and a rationale and waits for a human. (`9cce2c72`)
-
-Note the gates only prove no *regression*: the suite has no coverage for the P0-2/P0-3 paths, which
-is why those defects exist. Passing gates is necessary, not sufficient.
-
-## 4c. The arbiter's first live use, and what it proved (session 3)
-
-T2 went from parked candidate to commit in two rounds.
-
-| Round | Panel | Arbiter |
-|---|---|---|
-| 1 (resumed r3 candidate) | deepseek REJECT(10), glm REVISE(6) | **REVISE** — 1 upheld, 10 rejected, 8 out of scope |
-| 2 | deepseek REJECT(15), glm REVISE(11) | **SHIP** — 0 upheld, 29 rejected, 4 out of scope |
-
-**The single upheld finding was real, and it was introduced by the patch.** The candidate's
-new `ValidateInvariant` rejected `PlaceStopOrder` when `action.Quantity > liveQuantity`. Because
-`ProcessAction` drops a rejected action before `ExecuteAction` runs, nothing clears `GraceEmitted`,
-so the position is left permanently naked (details in §1). Round 2 fixed it in **two lines** and
-changed nothing else — `ExecuteAction`, `PositionGuardFsm` and `StopGuardConfig` came back
-byte-identical.
-
-Three things this settles:
-
-1. **The non-convergence pathology is confirmed and the arbiter neutralises it.** Round 2's panel
-   produced *33* findings against a two-line change to code it had already reviewed — more than
-   round 1's 20. Without adjudication this loops forever; the count going *up* after a minimal
-   fix is the signature.
-2. **Reviewers contradict each other on load-bearing facts, so their findings cannot be taken at
-   face value.** On `AutoStopAttempts`, glm read the state machine correctly and deepseek asserted
-   the exact opposite. Verified by hand against the code: glm was right.
-3. **The arbiter is not a rubber stamp, but it is not sufficient either.** Its one upheld finding
-   was correct and its rejections held up on spot-check — including a subtle one about a stale FSM
-   side, which is safe only because a genuine side flip passes through flat and
-   `UpdateFsmOnPosition` tears the FSM down and recreates it with grace armed. But glm's *proposed
-   fix* for the dead-clause finding would have introduced a naked position, and it rejected all 33
-   round-2 findings wholesale. Read the rulings.
-
-**The arbiter was also silently discarding its own output** (`4d7d9557`): a mismatched `<<<END>>>`
-tag threw away every rationale and all 11 settled nominations across both rounds, and a stray
-bracket dropped one ruling. Fixed, and the recovered decisions are now in the loop's `settled`
-profile so T3–T5 stop paying for them.
-
-## 4d. Four loop repairs, all one bug (session 3)
-
-T3 exposed the same failure mode four times: **strict format parsing silently discarding valid
-content, then reporting the wrong cause.** Every one cost real rounds.
-
-| Commit | What was discarded | Cost |
-|---|---|---|
-| `4d7d9557` | Arbiter `RATIONALE` + `SETTLED` — a mismatched `<<<END>>>` tag emptied both | 11 settled decisions lost across two T2 rounds, silently |
-| `3bc4dfff` | An implementer block closed with `>>` instead of `>>>` | **3 rounds and the whole T3 ticket**; r2/r3/r4 were byte-identical and correct |
-| `4de6c6b5` | Arbiter rulings written `- REJECTED #1` without brackets | A clean SHIP downgraded to a spurious ESCALATE |
-| `10b32c5a` | The resumed candidate was never written to `rN_impl_raw.txt` | The printed `promote:` command named a **stale candidate carrying two upheld findings** |
-
-The last one is the dangerous one. On resume the loop read the candidate but never persisted it,
-while every `resume with` / `promote:` hint is built from the round number — so it recommended
-promoting a file it had never reviewed. Following that hint would have put the unfixed
-close+reverse flip defect into an addon that flattens live funded accounts. **The hint is now
-correct, but keep verifying that the file you promote is the one the arbiter actually saw.**
-
-The general lesson for this loop: when a gate says a model got the format wrong, check whether the
-*content* is there before spending another round. Marker punctuation is not what the gates exist
-to check.
-
 ## 4a. What is pending — the current backlog
 
-**50 defects, 38 closed, 12 open** as of session 8 (2026-08-07). The phase structure below
-(A–G) is kept as historical record; **A, B, C, D, D2 and E are all done.** This section is the
-live list. Band membership and the P1-30/31 → P1-35/36 renumbering are in the plan's inventory
-table.
+**58 defects, 45 closed, 13 open.** Band membership and the P1-30/31 → P1-35/36 renumbering are
+in the plan's inventory table. *(The phase list A–G that used to close this section was retired
+2026-08-10: A–G were all done or superseded and it had drifted out of agreement with this list.)*
 
-### Done — the item that used to outrank everything else
+**What is validated live**: `P0-9`'s mirrored **stop** (§4l — 1 ms after the follower's fill, at
+exactly `followerEntry + (leaderStop - leaderAvgPrice)`, FSM created `ProtectedPending`), `P0-51`,
+`P1-52`, `P2-41`, `P0-48`, and T3's giveback rule (§4g).
 
-✅ **The mirrored stop is VALIDATED LIVE (2026-08-07, §4l).** Two ATM trades: the first exposed
-`P0-49`/`P0-50`, the second — after the fix — mirrored the stop **1 ms** after the follower's fill,
-at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FSM created
-`ProtectedPending`. This was the longest-standing open item in this document.
-
-**What remains unvalidated live**: `T5`'s fail-closed gate, which needs an acting mode
-(`IsGuardProtecting` requires `mode == "live"`); and the firm-mirror rules, which are loaded but
-unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
-copier.
+**What is NOT**: `P0-9`'s mirrored **target** and the two stop-path changes that shipped with it
+(§4r); `P0-53`, `P1-54`, `P0-55`, `P1-56` (unit + compile only); `T5`'s fail-closed gate, which
+needs an acting mode (`IsGuardProtecting` requires `mode == "live"`); and the firm-mirror rules,
+which are loaded but unmapped. **The copier acts regardless of guard mode** — `shadow` restrains
+RiskGuard, not the copier.
 
 ### START HERE — live-validate the mirrored target
 
@@ -643,10 +419,8 @@ Session 8 deferred `P1-13` explicitly on the grounds that the stress backlog was
 Once that backlog was written it was clear the reasoning was wrong: the tests are sequential and
 the risk is concurrent. **Doing the risky half before its coverage exists is how `P1-40` shipped.**
 
-### Repo hygiene, carried from session 7 and still open
+### Repo hygiene — still open
 
-- ~~The branch `harden/riskguard-copier-p0` is unmerged and unpushed~~ — **done. Merged and
-  pushed; `main` and `origin/main` are level (confirmed 2026-08-09).**
 - **`harden/riskguard-p0-51` is unmerged and unpushed**; the deployed build is its tip, `86c6376f`.
   `main` is untouched. **`wip/p09-oco-target` is superseded and should be deleted** — its work was
   rebased and shipped, and the branch as it stands lacks five fixes (§4r). Rebasing *it* now would
@@ -660,147 +434,7 @@ the risk is concurrent. **Doing the risky half before its coverage exists is how
 
 ---
 
-### Phase A — deploy P0 (no new code) — deployed; live-feed validation still outstanding
-
-Nine live-risk fixes are in a branch doing nothing. Shadow mode is also the only way to validate
-T3's giveback rule and T5's fail-closed gate against real account data; no unit test can.
-**Runbook in §4e — read it, the ordering is not obvious and the live config is not in shadow.**
-T3 was validated live (§4g); **T5 has never been exercised** — it needs an acting mode.
-
-### Phase B — foundation: the test suite comes first ✅ DONE (2026-08-07)
-
-**From here on the work is test-first, and it is enforced, not encouraged.** See the plan's
-§6.0 for the full model. In short: a ticket declares `expect_green`; the loop **refuses** it
-unless those tests are already red at baseline; the test gate **fails** any candidate that leaves
-one red; and reviewers must judge the tests' completeness and accuracy, not just the patch.
-
-1. ✅ **`expect_green` and the test-first refusal** — landed (`129a77ac`). Reviewers also now
-   receive the acceptance tests read-only.
-2. ✅ **Backfilled (2026-08-07, `14a93486`).** Six tests, each *verified to fail with its fix
-   reverted* by `scripts/agent_loop/verify_backfill_reverts.py`. That check caught one test
-   that was pinning defence-in-depth rather than the site it named — written without it, it
-   would have read as thorough and proven nothing. Original wording follows.
-   **Backfill tests for T1–T3.** T4/T5 have real coverage; T1–T3 rest on review and
-   not-regressing. Write these before touching any P1 code, and verify each one **fails when the
-   fix is reverted** — an unfalsifiable test is the thing this phase exists to prevent:
-   auto-stop submit failure rolls back and clears `GraceEmitted`; auto-stop sized from the live
-   position, not the emission snapshot; a scaled-down position still gets a stop rather than
-   having its action dropped; a stop cancelled mid-position re-arms grace; a profitable-flat
-   account emits no giveback action; a close+reverse flip does not carry `PeakOpenGain` into the
-   new leg.
-3. Pull **P2-28** (three divergent source copies, committed build output) forward from Phase F.
-   Mostly deletion, and it removes a live hazard — editing the wrong copy silently does nothing.
-
-**Writing the tests is a human/operator job, not a loop job.** `*Tests.cs` is a protected path:
-the implementer cannot reach it by construction (gate 0, anti-reward-hacking). That is deliberate
-— the grader is written by a different party than the one being graded.
-
-### Phase C — P1 safety-critical ✅ DONE — `P1-36` closed in session 8
-
-✅ **The whole phase is closed except P1-36**: `P1-20` and `P1-37` (`6678bbc3`), then the
-concurrency cluster `P1-10`, `P1-35`, `P1-11`, `P1-15` (`1ea33c8d`). All test-first, each
-observed red before its fix.
-
-**The lock-scope invariant is now machine-checked.** The stub account reports every
-`Cancel`/`Flatten`/`CreateOrder`/`Submit` to an observer and the addon exposes
-`TestIsStateLockHeld()`, so a test asserts the design doc's central concurrency claim
-directly. `DrainPendingCancels()` throws in the TESTING build if called with the lock held —
-the nested-`lock` "fix" is re-entrant and would silently reintroduce P1-35.
-
-~~**P1-36 is deliberately left.**~~ **Closed 2026-08-07 (session 8).** `CoveredQuantity` and
-`RecognizedStopOrder` are now derived from a list and read-only; the settled decision that made
-the single-stop behaviour deliberate has been **retired in both §5 and `profiles.py`**.
-
-Original reasoning follows.
-
-**Start with P1-20, out of band order.** T5's fail-closed gate keys off
-`followerAcc.Name.StartsWith("Sim")`, so a live account named `SimpsonFund` is exempt from the
-protection requirement today. The P0 work made that check load-bearing; it needs to be real.
-
-Then the concurrency cluster: **P1-35**, **P1-10**, **P1-11** (the lockout sweep cancels
-*protective* stops — a naked window), **P1-15**, **P1-36**.
-
-Sequencing constraints:
-- **P1-35 and P1-10 are the same fix twice** — queue the cancel, drain it after the lock releases.
-  Do them in one ticket.
-- **P1-36 modifies T1's `CoveredQuantity` model.** Re-read §1 (T1) first; the single-stop
-  behaviour is deliberate and the `ReferenceEquals` guard exists to bound it.
-
-### Phase D — P1 rule semantics
-
-P1-16 … P1-19. Self-contained, low blast radius, good loop tickets. P1-17 (eval target fed
-session-scoped PnL, so it never fires) is the most consequential.
-
-### Phase D2 — stress backlog ✅ DONE (S1–S9 all in the suite)
-
-`S1`–`S4` landed 2026-08-07 and closed four defects on their first run (`P1-43`, `P1-44`,
-`P1-45`, `P2-46`). `S7` landed with `P0-9`. **`S5`, `S6`, `S8` and `S9` landed in session 8**,
-each verified red against the defect it names. Full specs in the plan's §8.
-
-**They are scenario coverage, not concurrency coverage — see the warning at the top of this
-section before treating them as a prerequisite for `P1-13`.**
-
-| | Stress test | Relates to |
-|---|---|---|
-| `S5` | Partial-fill storm, both event orderings | `P1-16`'s late-fill revision is currently proven by unit tests only |
-| `S6` | Rapid flip loop | `P1-36`, T1's `CoveredQuantity` model |
-| `S7` | Copier fan-out under burst | `P0-5`, `P0-6`, `P1-22` — **run with Phase E, not after it** |
-| `S8` | Config reload while armed and in position | `P1-39`, `P1-42` |
-| `S9` | Restart mid-trade | `P1-15`, and `P1-16`'s documented restart limit |
-
-Two rules carried from §8: every stress test is **written red first**, and concurrency tests must
-assert an observed invariant rather than "no exception thrown" — the pre-existing
-`TestCopierGroup_GroupStressAndConcurrency` only asserts the latter, which is why it has never
-caught anything. And confirm each one fails *for the reason intended*: the first draft of S1–S4
-passed three assertions against code that never executed.
-
-### Phase E — copier fidelity ✅ DONE except `P0-9`'s targets/OCO item
-
-**The naked-follower exposure is closed** (session 7): followers get a mirrored stop carrying the
-leader's signed risk distance, anchored to their own fill. Items (3) `StopLimit` and (4)
-leader-cancels-stop were pinned by test in session 8. Only profit targets + OCO remain, and that
-wants an operator decision — see the top of this section.
-
-Original framing follows, from when this was the largest live exposure.
-
-> Only its fail-closed *precondition* landed in T5 — followers still receive bare market orders
-> with no protective legs. Their sole protection today is RiskGuard's `StopAttachSeconds` grace →
-> `RiskGuardAutoStop` at a fixed tick offset from *average price*, which bears no relation to the
-> leader's actual stop; and if RiskGuard is disarmed, in shadow, or the follower is excluded,
-> there is no stop at all.
-
-Read the plan's `P0-9` for the three options in preference order. Two things this session
-established that bear on it directly:
-
-- **`P1-22` built the machinery `P0-9` needs.** `_pendingCopies` already links a follower order to
-  the leader execution that caused it, keyed by `Order` reference. Bracket replication needs the
-  same join, so extend that map rather than adding a second one — and keep the reference keying
-  (`OrderId` is neither unique nor stable; see `P1-22`).
-- **`S7` runs *with* this work, not after it** (plan §8). Copier fan-out under burst is the only
-  planned coverage for the ordering failures bracket replication can introduce.
-
-Sequence it as: `S7` red first → `P0-9` → `S7` green.
-
-### Phase F — P2 structural — `P2-28`, `P2-38`, `P2-41`, `P2-46` closed
-
-Remaining: **`P2-26`** (doc drift — the design doc still overstates what exists, and is the
-cheapest real win left), **`P2-24`**, **`P2-25`**, `P2-27`'s remaining CI half, `P2-29`. Note
-**`P2-27` is half-closed**: the copy path is in the test build with real coverage; only the CI job
-is outstanding. The plan text still describes it as fully open.
-
-### Phase G — P3
-
-**P3-30, the independent reconciler (REAPER port), is the highest-value single addition in the
-whole plan** — an auditor that re-derives ground truth from the broker and repairs what the FSM
-missed. It is P3 by effort, not by value; reconsider promoting it once P1 lands. **P1 has now
-landed, so that condition is met — it is item 1 of the ready-to-code list above.** `P1-36` already
-built the multi-stop coverage sum the reconciler needs; share it rather than rebuilding it.
-
-Then P3-31, P3-33, P3-34. **`P3-32` may already be closed by `P0-9`** — see the note above.
-
----
-
-## 4e. Deployment runbook (Phase A)
+## 4e. Deployment runbook
 
 > **Ran once on 2026-08-07 — see §4f for what actually happened, including two claims below
 > that turned out to be wrong.** Steps are kept in their corrected form; re-read §4f before
@@ -825,31 +459,20 @@ Then:
 
 3. Rotate `interventions.jsonl` so shadow output is readable. Safe while running —
    `File.AppendAllLines` never holds the file open.
-4. ~~Merge `harden/riskguard-copier-p0` → `main`.~~ ✅ **Done 2026-08-07 — but done *before*
-   shadow validation, against the advice this item originally gave.** The trigger was
-   operational, not technical: 282 commits had never been pushed, so the work existed on one
-   machine only. `main` was fast-forwarded (the branch was a strict ancestor, 0 behind) and
-   pushed; `origin/main` is `aaecbe8b`. See §0.0 — the history was rewritten in the process and
-   the SHAs in this document are orphaned. The branch did also carry the ~7 unrelated
-   narrative/wargaming commits noted here, plus five more committed that day.
-   **This changes nothing about validation state**: deployment still copies from the working
-   tree, and item 6 below is still the gate on an acting mode.
-5. Copy the **four** changed addon sources into `bin/Custom/AddOns/` (`RiskGuardAddOn.cs`,
-   `TradeCopierEngine.cs`, `PropFirmProtectionSuite.cs`, `RiskGuardAddOnTests.cs` —
-   `TestingStubs.cs` is unchanged), then compile via `nt_compile` or F5 and confirm zero errors.
-   The test build is net8.0 with stubs, NT8 is net48, and only NT8 proves the real build.
+4. **Sync with the script, never by hand.** `sync_nt8_strategies.py --verify --only addons` to see
+   the drift, then the same command without `--verify`. Then `nt_compile` and read `errorCount`.
+   The test build is net8.0 with stubs, NT8 is net48, and **only NT8 proves the real build**.
    **Put backups outside `bin/Custom/`** — NT8 compiles that tree recursively and a backup folder
    of `.cs` files causes duplicate-type errors.
+5. **Check the box is quiet first** — `nt_compile` hot-swaps the running addon. `nt_positions` and
+   `nt_orders` should show no open positions and no *working* orders (terminal leftovers are fine).
 6. Run a full session in shadow **on a real-time feed**. Kinetick End Of Day gives no Level 1, so
    the simulator cannot fill and no guard path will execute — a session on that feed proves
    nothing. Then read `interventions.jsonl` and ask specifically: did `PEAK_GIVEBACK_BREACH` fire
    on a profitable flat account (T3), and did any `COPY_BLOCKED_NO_GUARD` line name an account
    that should have been allowed (T5)?
-7. ✅ *(both done — `P1-37` fixed, counter reset 2026-08-07; see §0 item 4)*
-   **Fix P1-37 and reset `ShadowSessionsCompleted` to `0`** (addon stopped) before considering an
-   acting mode — the counter is currently inflated by restarts and the arming gate is not
-   trustworthy.
-8. Only then consider restoring an acting mode.
+7. Only then consider restoring an acting mode. *(The `P1-37` / `ShadowSessionsCompleted` step that
+   used to sit here is done — see §0 item 4.)*
 
 **Roll back** by restoring the previous `.cs` files and recompiling; nothing here migrates state.
 Config is separate from code, so a mode change alone is instant and reversible.
@@ -954,8 +577,8 @@ with `MinPeakGainDollars` (default 50) and redeployed; see the plan's P1-40.
 accounts anyway, which skips the `COPY_BLOCKED_NO_GUARD` gate entirely. That criterion needs an
 acting mode.
 
-**Net**: Phase A is **half validated**. T3 is proven on a live feed and the one blocker the
-session found is closed. T5 still requires an acting mode and has never been exercised.
+**Net**: half validated. T3 is proven on a live feed and the one blocker the session found is
+closed. T5 still requires an acting mode and has never been exercised.
 
 **State left behind.** `TAKEPROFITPRO524207503` has been removed from `ExcludedAccounts` and is
 covered again. Live config: mode `shadow`, **6** `WindowsET` entries matching disk exactly now
@@ -1187,7 +810,7 @@ First run, on the `P0-9` diff: **24 findings, 3 upheld, 8 rejected, 13 out of sc
 were real (above). **The third was wrong and the arbiter upheld it anyway** — it claimed a 10-point
 ES stop becomes "10 follower-points" on MES, but every pair in the matrix trades at the same price
 with the same tick size and only the dollar multiplier differs, which quantity scaling handles.
-**Read the rulings. Same lesson as §4c.3.**
+**Read the rulings** — the arbiter is not a rubber stamp, but it is not sufficient either (§3.4).
 
 > **Fixing an upheld finding introduced the defect a REJECTED finding described.** Re-submission
 > creates exactly the reject→resubmit flood finding #13 warned of and the arbiter dismissed *on
@@ -1521,7 +1144,7 @@ the next copier change.
 
 ---
 
-## 4o. 2026-08-10 — OCO research, the mirrored target, and why it is parked
+## 4o. 2026-08-10 — OCO research, and the trail fix it licensed
 
 The operator rejected "we cannot propagate the OCO" as an answer. They were right to: **the
 earlier claim in this document was wrong.** What follows is the corrected picture, the working
@@ -1576,22 +1199,25 @@ cancel-then-create. Cancel-then-create left the follower unprotected on *every* 
 Also: the test double's `Change()` was not calling `ObserveBrokerCall`, so it was **exempt from
 the `P1-10` lock-scope check** — the same blind spot that hid `P1-43`'s four cancels. Now observed.
 
-### Parked: the mirrored target — `wip/p09-oco-target`, NOT deployed
+### ~~Parked: the mirrored target~~ — SHIPPED 2026-08-10, see §4r
 
-It works. Confirmed live on `Sim101 -> Sim-ORB`:
+> **Superseded.** The mirrored target was rebased off `wip/p09-oco-target` and shipped as
+> `86c6376f`. **That branch is superseded and should be DELETED, not rebased** — it lacked five
+> fixes, four of them live-risk (§4r). The live observations below still stand.
+
+What the parked branch demonstrated live on `Sim101 -> Sim-ORB`:
 
 - the leader's **limit** leg is recognised and mirrored, anchored to the **follower's own fill**;
 - both legs carry one shared OCO id;
 - both legs **modify in place** (`BRACKET_MODIFIED` / `BRACKET_TARGET_MODIFIED`);
 - the `P0-55` re-anchor covers **both** legs (`re-evaluating 2 working protective leg(s)`).
 
-Two things stop it shipping:
+Both of the things that stopped it shipping are resolved:
 
-1. **`P1-56`** — concurrent syncs produced `COPIER_STOP` qty 1 **and** qty 2 on a 2-lot position.
-   Pre-existing; the target work doubled the sync invocations and made it reproducible.
-2. **The OCO-id-reuse rule.** The parked code mints one id per bracket and reuses it, which NT8
-   rejects on any re-create. It needs per-generation ids: on any re-create, cancel both legs and
-   re-submit the pair under a fresh id.
+1. ~~**`P1-56`**~~ — closed 2026-08-10 (§4q).
+2. ~~**The OCO-id-reuse rule.**~~ Corrected by controlled live test (§4p): an id can be joined while
+   its group still has a live member, so the per-generation redesign shrank to one conditional on
+   the cancel-then-create path. Shipped that way in §4r.
 
 > **A mistake worth not repeating**: the first cut of the `P0-55` re-anchor filtered on
 > `IsStopType`, so it silently left the *target* unanchored. The live trace said
@@ -1619,8 +1245,11 @@ and unrelated.
 - **`nt_close_position` cancels the orders itself**, so using it to clean up does **not**
   independently exercise the copier's orphan-stop release. Do not record it as validating `P0-50`.
 - **Two overlapping leader brackets look exactly like a copier bug.** A manual bracket placed
-  during a test produced multiple mirrored legs and a qty-4 order; the tell is the leader's order
-  *names* (`Stop1`/`Target1` vs `Stop_<bracketId>`). Check names before concluding regression.
+  during a test produced multiple mirrored legs and a qty-4 order. The tell *was* the leader's order
+  *names* (`Stop1`/`Target1` vs `Stop_<bracketId>`) — ⚠️ **but that diagnostic is BROKEN**: a
+  third-party copier on this box copies leader names verbatim, so its mirrors are indistinguishable
+  by name from a native bracket (§4p). Check order *count against position size* and the `oco`
+  field instead.
 
 ---
 
@@ -1647,14 +1276,17 @@ Nothing else differed between the two submissions. So:
 > **An OCO id can be JOINED while its group still has a live member. It cannot be RESURRECTED once
 > every leg has gone terminal.**
 
-### Why this matters to the parked mirrored target
+### Why this mattered, and what was built on it
 
 The parked implementation was believed dead because it "mints one id per bracket and reuses it,
 which NT8 rejects on any re-create". That is only true when the re-create happens after the whole
 group has died. **Re-creating ONE leg while its sibling is still working may keep the same id**, so
-per-generation ids are needed only for the fully-terminal case. `P0-9`'s remaining item is
-materially cheaper than §4o concluded — and note the `Order.Oco` public setter and this result agree:
-group membership is assignable at create time, for a group that still exists.
+per-generation ids are needed only for the fully-terminal case — and the `Order.Oco` public setter
+agrees: group membership is assignable at create time, for a group that still exists.
+
+**This is the fact the shipped implementation rests on** (§4r): a leg created beside a live sibling
+*joins* its group, and only the cancel-then-create path — where our own cancel may have retired the
+group — mints a fresh id.
 
 ### Two other things this trade exposed
 
@@ -1669,14 +1301,21 @@ group membership is assignable at create time, for a group that still exists.
   `COPIER_STOP` is not ATM-managed, so `P0-9`'s `Change()` trail is unaffected; but do not use an
   ATM-managed order to test it.
 
-### Suspected, not concluded
+### Suspected — one of the two is now addressed
 
 The two `Rejected` `COPIER_TARGET` leftovers from the 01:01/01:03 parked-target run carried
 **distinct** ids, so id reuse cannot be why they were rejected. Their tells point elsewhere: one is
 qty **4** against a 2-lot position, and the other sits at **29905.625**, which is not a multiple of
-MNQ's 0.25 tick. Note that the ATM path's own off-tick prices (29897.419…, 29921.633…) were silently
-**rounded by NT8 at `Submitted`**, so off-tick is not always fatal — worth establishing which paths
-round and which reject before blaming OCO for anything.
+MNQ's 0.25 tick.
+
+> ✅ **The off-tick one is now moot** (§4r): both mirrored legs are snapped to the instrument's tick
+> before submission. The cause is that the anchor is the follower's *average* fill price, and an
+> average across partial fills lands between ticks. It was never *proven* to be the rejection
+> reason — the ATM path's own off-tick prices (29897.419…, 29921.633…) were silently **rounded by
+> NT8 at `Submitted`**, so off-tick is not always fatal — but there is now no path that sends one.
+>
+> ⚠️ **The qty-4-against-a-2-lot-position one is still unexplained**, and it is the more worrying
+> of the two.
 
 ### Replikanto did nothing — until it was fixed, and then it told us a lot
 
