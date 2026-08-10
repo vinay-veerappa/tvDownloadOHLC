@@ -7,16 +7,16 @@
 all 9 addon files in sync.
 Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 
-> 🚨 **STOP — `P0-51`, opened 2026-08-09. `shadow` is NOT an observe-only mode for lockouts.**
+> ✅ **`P0-51` and `P1-52` are FIXED, deployed and compiling clean (2026-08-09).** Shadow no
+> longer cancels or flattens, and one bracketed trade is no longer an order flood. Suite **629
+> passed / 1 failed**; `nt_compile` **0 errors** under net48; the addon is hot-swapped on the NT8
+> box. Analysis in §4m, what shipped in the plan's `P0-51` and `P1-52` entries.
 >
-> The lockout watchdog sweep calls `Account.Cancel()` and `Account.Flatten()` **with no mode
-> check**, while the action pipeline separately logs `[SHADOW] Would execute action
-> FlattenPosition`. On 2026-08-09 at 21:15:25 ET the guard really flattened three accounts while
-> claiming to be observing. **Assume any subscribed account — including a funded one — can be
-> cancelled and flattened right now.** Full analysis in §4m; plan entry `P0-51`.
->
-> The trigger was `P1-52`: a normal 2-contract ATM entry is 6 orders against a flood limit of 5,
-> so **any 2-lot bracketed trade trips a lockout**, on every mirrored account at once.
+> ⚠️ **`P0-53` is OPEN and its acceptance test is RED ON PURPOSE.** In an *acting* mode the
+> lockout's `CancelAllOrders` still cancels the protective stop before the flatten, so a failed
+> flatten leaves the position naked. It does not bite in shadow — it bites the moment you switch
+> to `live`. **Do not "fix" the suite by reverting that test to shadow mode; that restores the
+> blindfold.** This is the highest-priority open item.
 
 > ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
 > *(Superseded by the banner above — session 9 opened two defects. The rest of this box still
@@ -541,23 +541,25 @@ at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FS
 unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
 copier.
 
-### START HERE — `P0-51`, and it outranks everything below
+### START HERE — `P0-53`, and it outranks everything below
 
-**Fix `P0-51` before any other work in this document, and before the addon runs another session
-against an account that matters.** Shadow mode does not restrain the lockout sweep; the guard
-cancels and flattens for real while logging `[SHADOW] Would execute`. §4m has the evidence.
+✅ `P0-51` and `P1-52` are closed and deployed (2026-08-09).
 
-Two things to get right while fixing it:
+**`P0-53` is now the top item, and it is the one that bites when you leave shadow.** In an acting
+mode the lockout's `PendingCancel` phase emits a `CancelAllOrders` action, and `ExecuteAction`'s
+implementation (`RiskGuardAddOn.cs`, the `CancelAllOrders` branch) cancels **every** working order
+with no `IsPositionReducingOrder` filter. The protective stop dies before the flatten is attempted;
+a flatten that then fails leaves the position naked. `P1-11` fixed exactly this hazard on the
+*sweep's* route and the action pipeline's route was never looked at.
 
-- **Do not just wrap `:1899-1940` in a mode check.** That fixes this path and leaves the next one
-  to grow its own broker call. Route the sweep's cancel/flatten through the same arbiter + mode
-  gate every other action uses, so there is one place that answers "may I touch the broker".
-- **Pin the negative with `S4`'s `BrokerCallObserver`**: in shadow, no path issues a broker call.
-  A test of `ProcessAction`'s gate passes today and always did — that is why this shipped.
+The fix is small — apply the same intent split the sweep already uses, reusing
+`IsPositionReducingOrder` rather than writing a second definition of "protective leg". The
+acceptance test already exists and is **red on purpose**:
+`TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening`.
 
-`P1-52` (the flood governor counting a normal ATM bracket as a flood) is the trigger and should be
-fixed alongside it, but it is the lesser defect: it causes a false lockout, whereas `P0-51` is what
-turns a false lockout into a real flatten.
+> **`T5`'s fail-closed gate is still unvalidated live and still needs an acting mode.** That is now
+> a more attractive experiment than it was, because shadow finally means what it says — but do not
+> arm live until `P0-53` is closed, since arming is exactly what exposes it.
 
 ### THEN — needs an operator decision, not a code change
 

@@ -20,8 +20,8 @@
         {
           "id": "PendingCancelsField",
           "file": "scripts/ninjatrader/addons/RiskGuardAddOn.cs",
-          "anchor": "private readonly List<KeyValuePair<Account, Order>> _pendingCancels =",
-          "note": "the deferred cancel queue; it currently carries no intent"
+          "anchor": "private readonly List<PendingCancelEntry> _pendingCancels =",
+          "note": "the deferred cancel queue; now carries PendingCancelIntent (CLOSED 2026-08-09)"
         },
         {
           "id": "ExecuteSafetySweep",

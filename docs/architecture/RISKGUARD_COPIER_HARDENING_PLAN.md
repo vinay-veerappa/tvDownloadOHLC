@@ -1,9 +1,9 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-09, merged to `main`, suite **622/0**): **38 of 52 closed**.
-Deployed, `shadow`, armed and guarding; NT8 compiles clean.
-**`P0-51` (2026-08-09) means `shadow` is not a safe observation mode for lockouts — read the
-inventory warning below before running the addon against any account you care about.**
+**Status** (2026-08-09, branch `harden/riskguard-p0-51`, suite **629 passed / 1 failed**): **40 of 53 closed**.
+Deployed, `shadow`, armed and guarding; NT8 compiles clean (0 errors, net48).
+**`P0-51` and `P1-52` are CLOSED and deployed.** The one remaining red test is `P0-53`'s, which is
+red on purpose — see its entry.
 Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
 
 > ✅ **`P0-48` is closed and verified live.** The restart cleared all 57 orphans, and a subsequent
@@ -18,14 +18,16 @@ and closed on 2026-08-07 (session 8); **`P0-51` and `P1-52` were opened on 2026-
 OPEN**. All four were found by a live operator ATM trade rather than by any test — see the
 entries at the end of §1.
 
-> ⚠️ **`P0-51` invalidates the safety premise of Phase A.** Shadow mode does not restrain the
-> lockout path: the sweep really cancels and really flattens while logging `[SHADOW] Would
-> execute`. Until it is fixed, **treat shadow as an acting mode** and assume any subscribed
-> account can be flattened.
+> ✅ **`P0-51` is FIXED and deployed (2026-08-09).** Shadow no longer cancels or flattens: one
+> `IsActingMode()` predicate gates both the sweep and, via `DrainPendingCancels`, the deferred
+> cancel queue. `P1-52` is fixed with it.
+>
+> ⚠️ **`P0-53` is still open**, and it is the one that bites *after* shadow is switched off: in an
+> acting mode the lockout's `CancelAllOrders` still cancels the protective stop before the flatten.
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` OPEN — shadow does not restrain the lockout sweep. `P0-53` OPEN — in an acting mode the lockout cancels the protective stop before flattening (both 2026-08-09)** |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53` | 14 | `P0-1`…`P0-9` closed; **`P0-9` items (3) and (4) pinned session 8; only profit-targets/OCO remains**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` CLOSED 2026-08-09. `P0-53` OPEN — in an acting mode the lockout cancels the protective stop before flattening (both 2026-08-09)** |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52` | 25 | **23 closed** — `P1-12`, `P1-14`, `P1-36` closed 2026-08-07 (session 8); `P1-13`'s fail-open half closed, its threading half open; **`P1-52` OPEN — flood governor counts a normal ATM bracket as a flood (2026-08-09)** |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46` | 9 | `P2-28`, `P2-46`, **`P2-38`, `P2-41`** closed; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | open |
@@ -374,7 +376,7 @@ This is the same discipline T2 already applies to `RiskGuardAutoStop`, and for t
 
 ---
 
-### P0-51. Shadow mode does not restrain the lockout — the sweep flattens for real — OPEN 2026-08-09
+### P0-51. Shadow mode does not restrain the lockout — the sweep flattens for real — CLOSED 2026-08-09
 *(found by a live operator ATM trade on 2026-08-09, the same way `P0-49`/`P0-50` were)*
 **Where**: `RiskGuardAddOn.cs:1848-1889` (the lockout watchdog collects `cancelBatches` and
 `flattenBatches`) and `:1899-1940` (it executes them: `batch.Key.Cancel(...)` at `:1901`,
@@ -418,6 +420,31 @@ which is correct. Nothing asserts the *negative* — that in shadow mode, no bro
 by any path. `S4`'s `BrokerCallObserver` is the machinery to assert it with; §0's lesson 2 ("a
 machine check is only as good as the paths driven through it") applies verbatim, for the third time.
 
+**Fixed 2026-08-09.** One predicate, `IsActingMode(bool forceLive = false)`, now answers "may I
+touch the broker". `ProcessAction` calls it in place of its inline expression (behaviour unchanged)
+and the lockout sweep calls it too.
+
+The half that mattered was the **deferred cancel queue**, and two candidates got it wrong before
+one got it right — both passing every gate:
+
+| Attempt | What it did | Why it was wrong |
+|---|---|---|
+| 1 | Gated `DrainPendingCancels()` at the sweep's call site | The drain has **four** call sites; `ExecuteOrderUpdate` drains it too, so shadow still cancelled the trader's orders. Also left the queue growing all session, to fire as a stale burst on a mode switch |
+| 2 | Drained unconditionally in every mode (the arbiter's own remedy) | Reintroduces the defect: four of the five enqueue sites are interventions against the trader's orders |
+| 3 ✅ | Moved the decision **inside** `DrainPendingCancels` and gave the queue an intent | Covers all four call sites by construction |
+
+`_pendingCancels` now carries `PendingCancelIntent`:
+
+- **`Intervention`** — the trader's orders (lockout entry-cancel, blacklist, per-instrument cap).
+  Withheld in a non-acting mode **and discarded**, never retained. Counts log as
+  `SHADOW_PENDING_CANCEL`.
+- **`Cleanup`** — RiskGuard's own orphaned auto-stop, from `UpdateFsmOnPosition`. Sent in **every**
+  mode. Skipping it strands an orphan stop on a flat account, which opens a new position when it
+  triggers — that is `P0-50`, and the review panel was right to catch it.
+
+Pinned by six acceptance tests written before the fix. `P1-10`/`P1-35` and `P1-11` are preserved;
+live-mode behaviour is unchanged. NT8 `nt_compile`: **0 errors** under net48.
+
 ---
 
 ### P0-53. In an acting mode the lockout cancels the protective stop before flattening — OPEN 2026-08-09
@@ -449,7 +476,7 @@ narrower action — but the guarantee must hold on both routes, not one.
 
 ---
 
-### P1-52. The order-flood governor counts a normal ATM bracket as a flood — OPEN 2026-08-09
+### P1-52. The order-flood governor counts a normal ATM bracket as a flood — CLOSED 2026-08-09
 **Where**: `RiskGuardAddOn.cs:1596-1631`; threshold `Overtrading.MaxOrdersPerSecond` (default 5,
 `:5132`)
 **What happens**: the governor counts distinct order IDs in a 1-second window with no notion of a
@@ -474,6 +501,20 @@ this is different — six genuinely distinct orders that are one trade.
 > **Do not "fix" this by raising `MaxOrdersPerSecond` alone.** The governor exists to catch a
 > runaway loop submitting orders; a bracket is not that, and a limit high enough to clear a 5-lot
 > ATM is high enough to miss a real flood.
+
+**Fixed 2026-08-09 (option 1).** The one-second window is keyed by **OCO group** where an order has
+one, falling back to `Order.Id` where it does not. A bracket's legs collapse to one key per OCO
+group instead of one per leg, so the live case counts 4 instead of 6. The threshold is untouched
+at 5.
+
+> **It keys rather than excludes, and the difference matters.** An earlier candidate treated any
+> OCO-tagged order as a protective leg and dropped it from the count entirely. That makes OCO a
+> blind spot: a runaway loop emitting OCO entry pairs — an ordinary breakout pattern — would never
+> trip the governor. Keying keeps every distinct group counted. The review panel did not catch
+> this; it was found by reading the diff.
+
+`P2-46` (one order counted once across `Submitted`/`Accepted`), `P1-45` (`LockoutUntil` paired with
+the flag) and `P1-44` (never cancel a protective order to enforce a rate limit) all still hold.
 
 ---
 
@@ -1620,8 +1661,8 @@ broker is the single highest-value addition in this document. Consider promoting
 | P0-7 | false trigger | RiskGuardAddOn.cs:1154 | peak-giveback compares total-PnL peak vs unrealized only |
 | P0-8 | gate bypass | TradeCopierEngine.cs:645 | copier ignores RiskGuard lockout |
 | P0-9 | naked risk | TradeCopierEngine.cs:721 | followers get bare market orders; `EnableFollowerAtm` dead |
-| P0-51 | gate bypass | RiskGuardAddOn.cs:1848-1889, 1899-1940 | lockout sweep calls `Cancel`/`Flatten` with no `_mode` check; shadow logs "would execute" and flattens anyway |
-| P1-52 | false lockout | RiskGuardAddOn.cs:1596-1631, 5132 | flood governor counts a 2-lot ATM bracket (6 orders) as a flood against a limit of 5 |
+| P0-51 CLOSED | gate bypass | RiskGuardAddOn.cs:1848-1889, 1899-1940 | lockout sweep calls `Cancel`/`Flatten` with no `_mode` check; shadow logs "would execute" and flattens anyway |
+| P1-52 CLOSED | false lockout | RiskGuardAddOn.cs:1596-1631, 5132 | flood governor counts a 2-lot ATM bracket (6 orders) as a flood against a limit of 5 |
 | P1-10 CLOSED | deadlock | RiskGuardAddOn.cs:1336-1446 | broker calls under `_stateLock`, violating documented invariant |
 | P1-11 CLOSED | naked window | RiskGuardAddOn.cs:1410 | lockout sweep cancels protective + reducing orders |
 | P1-12 | latency | RiskGuardAddOn.cs:865, 1342 | blocking file I/O under the global lock |
