@@ -19,24 +19,46 @@ PYTHON_TVDOWNLOADOHLC = Profile(
     block_kind="indent",
     preprocessor_directives=(),
     # Build and test
-    build_cmd="python -m py_compile scripts/shared/data_loader.py",
-    test_cmd="python -m pytest scripts/tests/ -v --tb=short 2>&1",
+    #
+    # {files} is substituted with the files the patch actually touched. Naming a
+    # fixed file here (it used to compile scripts/shared/data_loader.py) makes
+    # the compile gate pass no matter what the patch did -- a gate that cannot
+    # fail is worse than no gate.
+    build_cmd="python -m py_compile {files}",
+    # scripts/tests/ is a scratch directory, not a suite: 15 of its 47 files
+    # fail at import because they read data files at module scope, so pytest
+    # reported "15 errors during collection", no baseline could be established,
+    # and EVERY ticket on this profile ended in ERROR before reaching a model.
+    # These two suites are green (one known failure, frozen as the baseline)
+    # and run in ~6s.
+    test_cmd=(
+        "python -m pytest scripts/libs_py/ict_engine/tests scripts/trading_framework/tests "
+        "-q --tb=short -p no:cacheprovider"
+    ),
     # No lock primitive in Python
     lock_name="",
     risk_calls=(),
     # File scope (Developer mode)
     file_scope_whitelist=("scripts/",),
-    # Protected paths
+    # Protected paths. These are fnmatch patterns against the whole relative
+    # path, so a bare directory name matches nothing -- "web/" and "data/" were
+    # inert and had to become "web/*" and "data/*".
     protected=(
         "test_*.py",
         "*_test.py",
+        "conftest.py",
         "scripts/tests/*",
+        "scripts/libs_py/ict_engine/tests/*",
+        "scripts/trading_framework/tests/*",
         "scripts/agent_loop/*",
         "scripts/agent_loop_config/*",
-        "web/",
-        "data/",
+        "web/*",
+        "data/*",
     ),
-    test_sources=("scripts/tests/*.py",),
+    test_sources=(
+        "scripts/libs_py/ict_engine/tests/*.py",
+        "scripts/trading_framework/tests/*.py",
+    ),
     # Context and token budgets
     context_token_budget=3000,
     round_input_token_budget=40000,
@@ -71,6 +93,26 @@ Check, in priority order:
 6. REGRESSIONS: existing tests that would break.
 
 Be specific. Cite the offending line text.""",
+    # What "blocks" means in THIS repo. Without it the arbiter inherits a
+    # generic bar; with the NT8 one ("state the sequence of events that loses
+    # money") nothing here can ever qualify, so it rejects every finding and
+    # recommends SHIP.
+    arbiter_rules="""\
+You are the arbiter for a patch to a trading research and backtesting platform.
+Its output drives strategy decisions, so a wrong number is worse than a crash: a
+crash is noticed, a silently wrong backtest is acted on.
+
+An UPHELD finding must name a concrete, reachable failure. Any of these qualify:
+  * a wrong result: look-ahead bias, future leakage, off-by-one on a bar index,
+    a session boundary or timezone handled inconsistently with ADR-001;
+  * silent data corruption, or a metric reported in absolute points where the
+    project's standard (ADR-002) is price-percentage;
+  * a for-loop in a calculation path (ADR-017) large enough to change runtime
+    by an order of magnitude;
+  * a crash or an exception on input the function is documented to accept.
+
+These do NOT qualify: style, naming, "could be clearer", missing type hints,
+speculative future refactors, or a performance concern with no measured basis.""",
     settled=(),
 )
 

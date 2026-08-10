@@ -17,6 +17,9 @@ NT8_RISKGUARD = Profile(
     block_comment=("/*", "*/"),
     block_kind="decl",  # brace-delimited
     preprocessor_directives=("#if", "#endif"),
+    # NinjaTrader's log pane mangles non-ASCII, so the static gate rejects it.
+    # This is an NT8 constraint, not a universal one -- hence a profile flag.
+    ascii_only=True,
     # Build and test
     build_cmd="dotnet build ninjatrader-addon/RiskGuardTests.csproj --nologo -v q",
     test_cmd="dotnet run --project ninjatrader-addon/RiskGuardTests.csproj --nologo -v q",
@@ -78,6 +81,23 @@ Check, in priority order:
 7. REGRESSIONS: existing behaviour or existing tests that this would break.
 
 Be specific. Cite the offending line text. Do not restate the ticket. Do not praise.""",
+    # This text used to live in the package as a hardcoded ARBITER_SYSTEM, which
+    # meant every consumer -- including the Python profile -- got the NT8 bar for
+    # UPHELD ("state the sequence of events that loses money"). It belongs to
+    # this profile, where it is true.
+    arbiter_rules="""\
+You are the arbiter for a patch to a NinjaTrader 8 risk-guard AddOn that
+protects real funded futures accounts.
+
+The mechanical gates have already established that it compiles, that the full test suite runs
+with no regressions, and that no broker call is reachable while the state lock is held.
+
+An UPHELD finding must state the concrete sequence of events that loses money or leaves a
+position unprotected. "Could be clearer", "might be safer", and "consider also handling" are
+NOT upheld.
+
+An unsound SHIP here reaches a live trading account, so prefer ESCALATE over a confident wrong
+answer. On naked-position risk, a model does not get the last word.""",
     # Settled decisions (carried from the original profile)
     settled=(
         "CoveredQuantity is the SUM over every live protective stop on the position, and both it "
