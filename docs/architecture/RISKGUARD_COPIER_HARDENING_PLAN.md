@@ -287,7 +287,13 @@ Notes that are not obvious:
 >    a *distinct* id and so cannot have been rejected for reuse at all.
 > 2. **There is no `OcoChanged` field.** `Order` has `LimitPriceChanged`, `StopPriceChanged` and
 >    `QuantityChanged`, which is what `Account.Change()` carries, so an already-working order
->    cannot be moved between groups. Modifying price/qty in place is fine and preserves the group.
+>    cannot be moved between groups. Modifying price/qty in place is fine and preserves the group —
+>    **confirmed live 2026-08-10** (§4p): a trailed stop kept its `orderId` AND its `oco` on the
+>    leader and on both Replikanto followers, with the sibling target untouched.
+> 3. **Consequence: the trail path never re-creates a leg, so it never needs a fresh id.** With (1)
+>    corrected, the only case requiring a new id is a group that has already gone fully terminal. The
+>    per-generation redesign this entry originally demanded shrinks to one conditional: keep the id
+>    while any sibling is live, mint a fresh one only when the group is dead.
 >
 > Also useful: `Account.CancelOrdersByOcoID(orders, ocoId)` is a real group-cancel primitive, and
 > `Connection.Features` answers capability at runtime. On this box the TPT connection serving both

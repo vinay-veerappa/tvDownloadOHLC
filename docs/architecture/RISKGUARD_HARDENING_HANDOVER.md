@@ -1704,9 +1704,35 @@ Fan-out latency was ~12 ms and ~29 ms after the leader's legs.
 filled at exactly 29928.75 in Sim, so both hypotheses predict identical legs and the run cannot
 separate them. Ours mirrors distance from the follower's own fill because real fills differ.
 
-**Still unanswered — the re-pair question.** Whether Replikanto modifies a follower leg in place or
-cancels and re-creates it under a NEW id could not be tested from here, because trailing the leader's
-stop needs the ATM's own mechanism (see below). Answering it needs the stop dragged in the NT8 UI.
+### ANSWERED: Replikanto modifies the follower's leg IN PLACE, keeping the OCO group
+
+The operator dragged the leader's `Stop1` in the NT8 UI, 29913.75 -> 29902. All three stops moved,
+and everything that would betray a re-create stayed identical:
+
+| Account | `orderId` | `oco` |
+|---|---|---|
+| `Sim-ORB` (leader) | `655154f7…` unchanged | `75a1929e…` unchanged |
+| `SimCopyTest1` | `5491d1b8…` unchanged | `cb776ec9…` unchanged |
+| `SimCopy2` | `e877f5f5…` unchanged | `b32917cd…` unchanged |
+
+`Target1` was untouched on all three, and every stop carries the same modification timestamp
+(`02:00:11.5915186`), so propagation was effectively instantaneous.
+
+**Three conclusions, and they largely dissolve the blocker §4o put on the mirrored target:**
+
+1. **Modify-in-place is what a mature copier does on a trail.** That retroactively vindicates the
+   `Change()` trail fix in `995f6402` over the original `P0-9` "cancel-then-replace, not modify"
+   note — and it is the ordinary case, not an edge case.
+2. **A price modification PRESERVES OCO group membership, confirmed live.** Previously this was only
+   inferred from reflection (`LimitPriceChanged`/`StopPriceChanged`/`QuantityChanged` exist,
+   `OcoChanged` does not). Now observed.
+3. **The trail path never re-creates a leg, so it never needs a fresh id.** Combined with the
+   join-while-live result above, the ONLY case that needs a new id is one where the whole group has
+   already gone terminal. `P1-56`'s remaining OCO work is therefore a narrow conditional, not the
+   per-generation redesign §4o called for: keep the id when a sibling is still live, mint a fresh one
+   only when the group is dead. The parked branch's "one id per bracket" is much closer to correct
+   than it was credited for; its real gap is only the dead-group path (which is what its
+   `BRACKET_MODIFY_FAILED` cancel-then-create fallback can hit).
 
 ### `nt_change_order` cannot trail an ATM-managed leg — confirmed twice
 
