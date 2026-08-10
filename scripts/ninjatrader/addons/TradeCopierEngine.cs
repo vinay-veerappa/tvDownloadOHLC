@@ -859,7 +859,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 if (!_followerBrackets.TryGetValue(key, out bracket)) return;
                 if (!ReferenceEquals(bracket.WorkingStop, order)) return;      // not our stop
-                bracket.WorkingStop = null;
+                // Do NOT clear WorkingStop here. An honest WorkingStop keeps the ReferenceEquals
+                // guard meaningful during an in-flight sync, and it lets a second sync modify
+                // the existing order instead of creating a duplicate. The re-drive will replace
+                // it once the broker work resolves.
             }
 
             NinjaTrader.Code.Output.Process(
@@ -906,6 +909,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             public double StopOffset = double.NaN;
             public Order WorkingStop;                        // the follower's live protective order
 
+            // In-flight reservation for the bracket stop sync. Set under _lock before the first
+            // broker call and cleared exactly once in a finally, so a second sync arriving while
+            // one is between _lock and Submit sees the reservation and backs off.
+            public bool StopInFlight;
+
+            // Set under _lock by a sync that backed off because StopInFlight was true. The sync
+            // holding the reservation re-drives the sync after its broker work resolves, so the
+            // newer size/price is not dropped.
+            public bool StopResyncOwed;
+
             // Bounded re-submission. Raised by review of the first implementation: if Submit
             // threw, or the broker rejected the stop moments later, WorkingStop ended up null
             // with a perfectly valid offset and NOTHING re-triggered submission -- the follower
@@ -914,6 +927,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             // order flood (the failure mode P2-46 and the flood cluster already cost us once).
             public int StopAttempts;
         }
+
+        // How many EXTRA passes the reservation holder will re-drive the sync for, after a
+        // concurrent sync backed off and left a newer instruction owed. Two, so a partial fill
+        // plus one trail step is absorbed, and then it gives up loudly rather than ping-ponging.
+        // Deliberately a named constant: the loop bound and the "this was the last pass" test
+        // must be the same number, and as two literals they were one edit away from disagreeing.
+        private const int MaxBracketResyncPasses = 2;
 
         // After this many failed attempts on one position the copier stops trying and says so.
         // Escalating forever against a broker that will not accept the order is a flood; giving
@@ -1087,7 +1107,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// does nothing at all until both the anchor and the distance are known.
         /// Broker calls are made OUTSIDE `_lock`.
         /// </summary>
-        private void SyncFollowerStop(Account followerAcc, Instrument instrument, FollowerBracket bracket)
+        private void SyncFollowerStopOnce(Account followerAcc, Instrument instrument, FollowerBracket bracket)
         {
             if (followerAcc == null || instrument == null || bracket == null) return;
 
@@ -1121,12 +1141,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                     bool stillLive = RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingStop.OrderState);
                     if (stillLive && samePrice && sameQty) return;   // already correct
 
-                    // Cancel-then-replace rather than modify: NT8's Change path is not available
-                    // through this seam, and a stale stop left working alongside a new one would
-                    // over-cover and flip the follower when both fire.
+                    // The existing stop is wrong and must be replaced. `toCancel` names it; the
+                    // broker section below prefers Change() and only falls back to
+                    // cancel-then-create, so this is not "cancel-then-replace" any more.
+                    // (The comment that used to sit here said Change() was unavailable through
+                    // this seam. That stopped being true in 995f6402 and was contradicted 60
+                    // lines below -- exactly the doc drift P2-26 tracks.)
                     if (stillLive) toCancel = bracket.WorkingStop;
                 }
-                bracket.WorkingStop = null;
 
                 if (bracket.StopAttempts >= MaxBracketStopAttempts)
                 {
@@ -1262,6 +1284,53 @@ namespace NinjaTrader.NinjaScript.AddOns
                         ? " and the copier has GIVEN UP on this position -- RiskGuard's auto-stop is the only remaining cover, and only if it is armed and live."
                         : "; it will retry on the next leader stop update or follower fill."),
                     PrintTo.OutputTab1);
+            }
+        }
+
+        private void SyncFollowerStop(Account followerAcc, Instrument instrument, FollowerBracket bracket)
+        {
+            if (followerAcc == null || instrument == null || bracket == null) return;
+
+            lock (_lock)
+            {
+                if (bracket.StopInFlight)
+                {
+                    bracket.StopResyncOwed = true;
+                    return;
+                }
+                bracket.StopInFlight = true;
+            }
+
+            try
+            {
+                for (int pass = 0; pass <= MaxBracketResyncPasses; pass++)
+                {
+                    SyncFollowerStopOnce(followerAcc, instrument, bracket);
+
+                    bool owed;
+                    lock (_lock)
+                    {
+                        owed = bracket.StopResyncOwed;
+                        bracket.StopResyncOwed = false;
+                    }
+
+                    if (!owed)
+                        break;
+
+                    if (pass == MaxBracketResyncPasses)
+                    {
+                        CopierLog(followerAcc.Name, "BRACKET_RESYNC_BOUND",
+                            $"{instrument.FullName}: re-sync bound reached; stopping to avoid order flood.");
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    bracket.StopInFlight = false;
+                }
             }
         }
 

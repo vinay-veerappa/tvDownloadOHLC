@@ -662,6 +662,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_TrailingModifiesTheStopRatherThanRecreatingIt();
             TestBracket_MovingLeaderStopReplacesRatherThanDuplicates();
             TestBracket_P1_56_InterleavedSyncsLeaveExactlyOneProtectiveStop();
+            TestBracket_P1_56_AThirdSyncStillLeavesExactlyOneProtectiveStop();
             TestBracket_FollowerGoingFlatCancelsTheMirroredStop();
             TestBracket_StopTrailedIntoProfitStaysAboveFollowerEntry();
             TestBracket_ShortStopTrailedIntoProfitStaysBelowFollowerEntry();
@@ -1898,6 +1899,124 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(Math.Abs(live[0].StopPrice - 17990.00) < 1e-9,
                 string.Format("The replacement keeps the mirrored level (expected 17990.00, got {0}).",
                     live[0].StopPrice));
+        }
+
+        /// <summary>
+        /// P1-56, third sync. The fix holds ONE reservation across a bounded re-drive loop, so the
+        /// claim is that there is no instant between passes at which a newly-arriving sync sees no
+        /// reservation and walks to the broker.
+        ///
+        /// That claim is worth a test rather than an argument. Two reviewers read this window in
+        /// opposite directions -- one called it a duplicate-leg BLOCKER, the other traced every
+        /// interleaving and concluded it could not happen -- and the arbiter recorded "there is no
+        /// gap between passes" as a settled fact on the strength of the second. A settled fact that
+        /// nothing tests is exactly how P1-40 shipped.
+        ///
+        /// So: three syncs. The first is parked inside CreateOrder; the second and third are both
+        /// driven from there, at 1 lot and then 2. Whatever the ordering, the follower must end with
+        /// ONE stop covering the whole position.
+        /// </summary>
+        private static void TestBracket_P1_56_AThirdSyncStillLeavesExactlyOneProtectiveStop()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a THIRD interleaved sync still leaves one stop covering the position (P1-56)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            rel.FixedLotSize = 2;
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 2, 18000.00);
+
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 2, "BR-56C");
+            lead.Price = 18000.00;
+            lead.Time = SlipT0;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+
+            SetPosition(follower, mnq, MarketPosition.Long, 1, 18000.00);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = mnq, Order = copy, Quantity = 1,
+                Price = 18000.00, ExecutionId = "BR-56C-F1", Name = "COPIER_FOLLOW",
+                Time = SlipT0.AddMilliseconds(100)
+            });
+
+            var mayRun = new ManualResetEventSlim(false);
+            var bothDone = new ManualResetEventSlim(false);
+            Exception threadError = null;
+
+            // Two further syncs, back to back, while the first is parked in the broker. The second
+            // re-states 1 lot; the third raises it to 2. The 2-lot instruction is the newest and is
+            // the one that must survive.
+            var others = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    if (!mayRun.Wait(TimeSpan.FromSeconds(20))) return;
+
+                    follower.TriggerPositionUpdate(follower.Positions.First(p =>
+                        p.Instrument != null && p.Instrument.FullName == mnq.FullName));
+
+                    SetPosition(follower, mnq, MarketPosition.Long, 2, 18000.00);
+                    follower.TriggerPositionUpdate(follower.Positions.First(p =>
+                        p.Instrument != null && p.Instrument.FullName == mnq.FullName));
+                }
+                catch (Exception ex) { threadError = ex; }
+                finally { bothDone.Set(); }
+            });
+            others.IsBackground = true;
+            others.Start();
+
+            int tripped = 0;
+            var previousObserver = Account.BrokerCallObserver;
+            Account.BrokerCallObserver = method =>
+            {
+                if (method != "CreateOrder") return;
+                if (Interlocked.CompareExchange(ref tripped, 1, 0) != 0) return;
+                mayRun.Set();
+                bothDone.Wait(TimeSpan.FromSeconds(10));
+            };
+
+            try
+            {
+                leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 2, 17990.00));
+            }
+            finally
+            {
+                Account.BrokerCallObserver = previousObserver;
+            }
+
+            mayRun.Set();
+            others.Join(TimeSpan.FromSeconds(20));
+
+            Assert(threadError == null,
+                "The two follow-on syncs completed without throwing"
+                + (threadError == null ? "" : ": " + threadError.Message));
+
+            Assert(Volatile.Read(ref tripped) == 1,
+                "The three-way interleaving actually happened. If this fails, nothing was proved.");
+
+            var live = follower.OrdersSnapshot()
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .ToList();
+
+            Assert(live.Count == 1,
+                string.Format(
+                    "Exactly one COPIER_STOP is live after THREE interleaved syncs (got {0}, "
+                    + "quantities {1}). More than one means a sync found no reservation and walked "
+                    + "to the broker -- the gap the arbiter recorded as impossible.",
+                    live.Count,
+                    string.Join("+", live.Select(o => o.Quantity.ToString()).ToArray())));
+
+            Assert(live.Sum(o => o.Quantity) == 2,
+                string.Format(
+                    "The surviving stop still covers the whole 2-lot position after three syncs "
+                    + "(covered {0}). Under-cover means the newest instruction was dropped by the "
+                    + "re-drive rather than applied.",
+                    live.Sum(o => o.Quantity)));
         }
 
         /// <summary>
