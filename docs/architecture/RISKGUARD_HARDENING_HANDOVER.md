@@ -1375,6 +1375,30 @@ gate is correct. Nothing asserts the negative — *no broker call is issued by a
 shadow*. `S4`'s `BrokerCallObserver` already exists to assert exactly that and was never pointed
 at this question.
 
+### ⚠️ FOUR tests asserted shadow-mode broker actions. Expect more
+
+`_mode` defaults to `"shadow"` (`RiskGuardAddOn.cs:212`, deliberately, as the fail-safe). A test
+that never calls `SetModeForTest` therefore runs in shadow — and four of them asserted that the
+guard **cancels or flattens** in that state:
+
+| Test | Asserted |
+|---|---|
+| `TestP1_10_SweepMakesNoBrokerCallsUnderTheStateLock` | the sweep flattens |
+| `TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening` | the sweep flattens and cancels |
+| `TestOrderCancelledWhenLockedOnOrderUpdate` | a working order is cancelled |
+| `TestOrderCancelledWhenConsecLossesAtMaxNotLocked` | a submitted order is cancelled |
+
+All four were green, and all four were green **because of the defect**. Each has been given an
+explicit `SetModeForTest("live")`, which is what they always meant — every one of them is about
+*acting* behaviour. Baseline is unchanged by the correction (622/8), because the code acts in
+every mode today.
+
+**Two consequences worth carrying forward.** First, this is why `P0-51` survived: the suite did
+not merely fail to catch it, it *asserted* it, so any fix looked like a regression — the loop
+burned two full runs on exactly that (§4m's loop notes). Second, **`P0-53` was found only because
+one of these tests was made honest.** If you touch a test that drives the sweep or an intervention
+path, check whether it states a mode before you trust what it proves.
+
 ### `P1-52` — why the lockout fired at all
 
 A 2-contract ATM entry is 6 orders (2 entries, 2 stops, 2 targets) against `MaxOrdersPerSecond = 5`.

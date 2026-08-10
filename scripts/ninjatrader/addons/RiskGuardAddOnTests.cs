@@ -2867,6 +2867,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             var addon = new RiskGuardAddOn();
             addon.SetConfigForTest(config);
 
+            // P0-51: cancelling the trader's order is an INTERVENTION, so it only happens in an
+            // acting mode. This test never said which mode it wanted and _mode defaults to
+            // "shadow", so it was asserting that a shadow-mode guard cancels a working order --
+            // true only because the deferred cancel queue ignored the mode entirely. Fourth test
+            // in this file found doing this; see the handover note on the pattern.
+            addon.SetModeForTest("live");
+
             var state = new AccountState("TestAcc");
             state.IsLockedOut = true;
             addon.SetAccountStateForTest("TestAcc", state);
@@ -2921,6 +2928,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             var account = new Account { Name = "TestAcc" };
             var addon = new RiskGuardAddOn();
             addon.SetConfigForTest(config);
+
+            // P0-51: same correction as TestOrderCancelledWhenLockedOnOrderUpdate. The
+            // consec-loss cancel is an intervention against the trader's order, so it belongs to
+            // an acting mode; the test ran in the "shadow" default and passed only because the
+            // deferred cancel queue drained regardless of mode.
+            addon.SetModeForTest("live");
 
             var state = new AccountState("TestAcc");
             state.IsLockedOut = false;         // NOT formally locked
