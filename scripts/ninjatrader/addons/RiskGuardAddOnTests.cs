@@ -162,6 +162,11 @@ namespace NinjaTrader.Cbi
         // was already cancelled on the way in, a failed flatten leaves an open position with
         // nothing behind it.
         public bool SimulateFlattenFailure { get; set; }
+        // Broker refuses an in-place modification. The bracket sync prefers Change() and falls
+        // back to cancel-then-create; that fallback is the only path that can retire an OCO
+        // group and so the only one that needs a fresh id (P0-9 item 1). Nothing could reach it
+        // before this switch existed.
+        public bool SimulateChangeFailure { get; set; }
         // Counts Flatten calls so a test can prove the fail-closed fallback ran.
         public int FlattenCallCount { get; private set; }
 
@@ -278,10 +283,46 @@ namespace NinjaTrader.Cbi
         public void Change(Order[] orders)
         {
             ObserveBrokerCall("Change");
+            if (SimulateChangeFailure)
+                throw new Exception("Simulated broker rejection at Change.");
             foreach (var o in orders)
             {
                 o.OrderState = OrderState.Working;
             }
+        }
+
+        /// <summary>
+        /// Fills `o` and retires the rest of its OCO group, which is what "one cancels the other"
+        /// means and is the single OCO behaviour we depend on. Modelled here because the copier's
+        /// re-submission logic has to tell "my protective leg was lost" from "my protective leg
+        /// was retired because its sibling filled" -- and re-submitting in the second case places
+        /// an order against a position that has just been closed, which is P0-50's orphan
+        /// arriving by the route the pairing itself opens.
+        ///
+        /// Deliberately NOT modelled: whether cancelling one leg retires the group. That is
+        /// plausible and unverified, so the copier is written to be correct either way rather
+        /// than to match a guess encoded here.
+        /// </summary>
+        public void FillOrderAndRetireOcoGroup(Order o)
+        {
+            o.OrderState = OrderState.Filled;
+
+            List<Order> siblings;
+            lock (_ordersLock)
+            {
+                siblings = string.IsNullOrEmpty(o.Oco)
+                    ? new List<Order>()
+                    : Orders.Where(x => x != null && !ReferenceEquals(x, o)
+                        && string.Equals(x.Oco, o.Oco, StringComparison.Ordinal)
+                        && x.OrderState != OrderState.Filled
+                        && x.OrderState != OrderState.Cancelled
+                        && x.OrderState != OrderState.Rejected).ToList();
+            }
+
+            foreach (var s in siblings) s.OrderState = OrderState.Cancelled;
+
+            TriggerOrderUpdate(o);
+            foreach (var s in siblings) TriggerOrderUpdate(s);
         }
 
         public void TriggerPositionUpdate(Position p)
@@ -660,6 +701,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_StopBeforeFollowerFillIsAppliedOnFill();
             TestBracket_P0_55_LeaderStopAcceptedBeforeLeaderPositionIsStillMirrored();
             TestBracket_TrailingModifiesTheStopRatherThanRecreatingIt();
+            TestBracket_TargetIsMirroredAsAnOcoPairWithTheStop();
+            TestBracket_P0_9_ALateTargetJoinsTheLiveStopsOcoGroup();
+            TestBracket_P0_9_ARecreatedStopMintsAFreshOcoIdAndRebuildsThePair();
+            TestBracket_P0_9_InterleavedTargetSyncsLeaveExactlyOneTarget();
+            TestBracket_P0_9_TargetResubmissionIsBounded();
+            TestBracket_P0_9_ALegRetiredByItsOcoSiblingIsNotResubmitted();
+            TestBracket_P0_9_AMultiTargetLeaderIsNotMirroredAtAll();
+            TestBracket_P0_9_LegPricesAreRoundedToTheInstrumentsTick();
+            TestBracket_TargetAcceptedBeforeLeaderPositionIsStillMirrored();
+            TestBracket_FollowerGoingFlatCancelsBothLegs();
             TestBracket_MovingLeaderStopReplacesRatherThanDuplicates();
             TestBracket_P1_56_InterleavedSyncsLeaveExactlyOneProtectiveStop();
             TestBracket_P1_56_AThirdSyncStillLeavesExactlyOneProtectiveStop();
@@ -1732,6 +1783,584 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(Math.Abs(all[0].StopPrice - 17996.00) < 1e-9,
                 string.Format("The modified stop carries the leader's new distance (expected 17996.00, got {0})",
                     all[0].StopPrice));
+        }
+
+        // ------------------------------------------------------------------
+        // P0-9 item (1): the mirrored PROFIT TARGET, and the OCO pairing it brings with it.
+        // ------------------------------------------------------------------
+
+        /// <summary>Builds a leader PROFIT TARGET (the protective limit leg of a bracket).</summary>
+        private static Order LeaderTarget(Instrument inst, OrderAction action, int qty, double limitPrice)
+        {
+            return new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderId = Guid.NewGuid().ToString(),
+                Name = "Target_Leader",
+                OrderState = OrderState.Working,
+                OrderType = OrderType.Limit,
+                Quantity = qty,
+                Instrument = inst,
+                OrderAction = action,
+                LimitPrice = limitPrice
+            };
+        }
+
+        /// <summary>
+        /// P0-9 item (1): the leader's profit target is mirrored, and the two legs are a real OCO
+        /// pair.
+        ///
+        /// Mirroring a target without OCO is worse than not mirroring it: when the target fills,
+        /// the stop keeps working against a now-flat follower and opens a fresh position in the
+        /// opposite direction the moment it triggers. That is P0-50's hazard, which the copier has
+        /// already been bitten by once.
+        ///
+        /// Both legs therefore carry one shared OCO id. NT8 pairs them with the same engine that
+        /// pairs every ATM bracket on this connection -- verified via /api/connections: it
+        /// advertises Order and OrderChange but NOT NativeOcoOrders, so the pairing is NT8-local
+        /// rather than broker-native. That is the exposure the operator's own ATM brackets already
+        /// carry, not a new one.
+        /// </summary>
+        private static void TestBracket_TargetIsMirroredAsAnOcoPairWithTheStop()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: the leader's target is mirrored, OCO-paired with the stop (P0-9 item 1)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18001.00, "BR-OCO");
+
+            // Leader's bracket: stop 10 points below entry, target 30 above.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));
+
+            var stop = follower.Orders.FirstOrDefault(o => o.Name == "COPIER_STOP"
+                && o.OrderState != OrderState.Cancelled);
+            var target = follower.Orders.FirstOrDefault(o => o.Name == "COPIER_TARGET"
+                && o.OrderState != OrderState.Cancelled);
+
+            Assert(stop != null, "The follower has a mirrored stop");
+            Assert(target != null, "The follower has a mirrored TARGET");
+
+            // Distances are anchored to the FOLLOWER's own fill at 18001, not the leader's price.
+            Assert(stop != null && Math.Abs(stop.StopPrice - 17991.00) < 1e-9,
+                string.Format("The stop carries the leader's -10 distance from 18001 (expected 17991.00, got {0})",
+                    stop == null ? "none" : stop.StopPrice.ToString()));
+            Assert(target != null && Math.Abs(target.LimitPrice - 18031.00) < 1e-9,
+                string.Format("The target carries the leader's +30 distance from 18001 (expected 18031.00, got {0})",
+                    target == null ? "none" : target.LimitPrice.ToString()));
+
+            Assert(target != null && !string.IsNullOrEmpty(target.Oco),
+                "The mirrored target carries an OCO id");
+            Assert(stop != null && target != null && stop.Oco == target.Oco,
+                string.Format(
+                    "Stop and target share ONE OCO id (stop='{0}', target='{1}'). Without it the "
+                    + "stop survives the target's fill and opens a fresh position when it triggers.",
+                    stop == null ? "n/a" : stop.Oco, target == null ? "n/a" : target.Oco));
+        }
+
+        /// <summary>
+        /// A target that appears AFTER the stop must JOIN the stop's live group, not force the
+        /// stop to be re-created into a new one.
+        ///
+        /// This is the ordinary ordering -- OnLeaderOrderUpdate fires once per leg -- so if
+        /// pairing required a matching pair of creations, every bracket would cancel and replace
+        /// its own protective stop for the sake of upside. Joining is licensed by the live test in
+        /// handover 4p: an id can be joined while its group still has a live member.
+        /// </summary>
+        private static void TestBracket_P0_9_ALateTargetJoinsTheLiveStopsOcoGroup()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a target arriving after the stop JOINS its group, without disturbing the stop (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-JOIN");
+
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            var stop = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+            string groupBefore = stop.Oco;
+            Assert(!string.IsNullOrEmpty(groupBefore),
+                "The stop carries an OCO id from the start, so a later target has a live group to join");
+
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));
+
+            var stopsNow = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            var target = follower.Orders.SingleOrDefault(o => o.Name == "COPIER_TARGET");
+
+            Assert(stopsNow.Count == 1 && ReferenceEquals(stopsNow[0], stop)
+                    && stop.OrderState != OrderState.Cancelled,
+                string.Format(
+                    "The protective stop is untouched by the target's arrival (got {0} stop order(s), "
+                    + "state {1}). Re-creating it would open a naked window for the sake of upside.",
+                    stopsNow.Count, stop.OrderState));
+
+            Assert(target != null && target.Oco == groupBefore,
+                string.Format("The target joined the stop's existing group (stop='{0}', target='{1}')",
+                    groupBefore, target == null ? "n/a" : target.Oco));
+        }
+
+        /// <summary>
+        /// The dead-group rule, which is the whole of what handover 4p bought.
+        ///
+        /// An OCO id can be joined while its group still has a live member, and is REJECTED once
+        /// every leg has gone terminal. So the ONE path that needs a fresh id is the one that
+        /// re-creates a leg: cancel-then-create, reached only when Change() fails. Re-using the
+        /// bracket's id there would have the broker reject the new stop -- a NAKED FOLLOWER
+        /// produced by the target feature, on the leg the target feature is not even about.
+        ///
+        /// The stale target is taken down with it and rebuilt, because a working order cannot be
+        /// moved between groups (there is no OcoChanged field) and a target left behind in the
+        /// retired group is no longer paired with anything.
+        /// </summary>
+        private static void TestBracket_P0_9_ARecreatedStopMintsAFreshOcoIdAndRebuildsThePair()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a re-created stop mints a FRESH OCO id and rebuilds the pair (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-DEADGRP");
+
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));
+
+            string firstGroup = follower.Orders.Single(o => o.Name == "COPIER_STOP").Oco;
+            Assert(!string.IsNullOrEmpty(firstGroup), "Precondition: the first bracket has a group id");
+
+            // Force the trail down the cancel-then-create fallback.
+            follower.SimulateChangeFailure = true;
+            try
+            {
+                leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17996.00));
+            }
+            finally { follower.SimulateChangeFailure = false; }
+
+            var liveStops = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn_IsLiveForTest(o)).ToList();
+            var liveTargets = follower.Orders
+                .Where(o => o.Name == "COPIER_TARGET" && RiskGuardAddOn_IsLiveForTest(o)).ToList();
+
+            Assert(liveStops.Count == 1,
+                string.Format("Exactly one stop is live after the fallback re-create (got {0})", liveStops.Count));
+            Assert(liveTargets.Count == 1,
+                string.Format(
+                    "Exactly one target is live after the fallback re-create (got {0}). A target "
+                    + "stranded in the retired group is paired with nothing.",
+                    liveTargets.Count));
+
+            Assert(liveStops.Count == 1 && liveStops[0].Oco != firstGroup,
+                string.Format(
+                    "The re-created stop carries a FRESH id, not the retired group's '{0}' (got '{1}'). "
+                    + "NT8 rejects an id whose group has fully gone terminal, and a rejected stop is "
+                    + "a naked follower.",
+                    firstGroup, liveStops.Count == 1 ? liveStops[0].Oco : "n/a"));
+
+            Assert(liveStops.Count == 1 && liveTargets.Count == 1
+                    && liveStops[0].Oco == liveTargets[0].Oco,
+                "Both live legs are in the SAME new group -- the pairing survives the re-create");
+        }
+
+        /// <summary>
+        /// P1-56's defect, on the leg P1-56 was not about. Two target syncs that interleave must
+        /// not leave two limit orders working against one position.
+        ///
+        /// The parked implementation of this feature had no reservation at all on the target
+        /// path, so it carried the duplicate-leg defect verbatim. Two live targets over-cover
+        /// exactly as two live stops do: when both fill the follower is flipped.
+        ///
+        /// Deterministic, not raced: BrokerCallObserver fires INSIDE the target's CreateOrder,
+        /// which is the window, and the second sync runs on another thread while the first is
+        /// parked there. The stop is placed before the observer is installed, so the first
+        /// CreateOrder it sees is the target's.
+        /// </summary>
+        private static void TestBracket_P0_9_InterleavedTargetSyncsLeaveExactlyOneTarget()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: two interleaved TARGET syncs leave ONE target, sized to the whole position (P0-9/P1-56)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            rel.FixedLotSize = 2;
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 2, 18000.00);
+
+            var lead = LeaderExec(leader, mnq, OrderAction.Buy, 2, "BR-TGT56");
+            lead.Price = 18000.00;
+            lead.Time = SlipT0;
+            TradeCopierEngine.Instance.OnExecution(lead);
+
+            var copy = follower.Orders.Last(o => o.Name == "COPIER_FOLLOW");
+
+            // Only part of the entry has filled: the bracket is anchored at ONE lot.
+            SetPosition(follower, mnq, MarketPosition.Long, 1, 18000.00);
+            TradeCopierEngine.Instance.OnExecution(new Execution
+            {
+                Account = follower, Instrument = mnq, Order = copy, Quantity = 1,
+                Price = 18000.00, ExecutionId = "BR-TGT56-F1", Name = "COPIER_FOLLOW",
+                Time = SlipT0.AddMilliseconds(100)
+            });
+
+            // The stop lands first, outside the instrumented window.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 2, 17990.00));
+
+            var secondSyncMayRun = new ManualResetEventSlim(false);
+            var secondSyncDone = new ManualResetEventSlim(false);
+
+            var second = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    if (!secondSyncMayRun.Wait(TimeSpan.FromSeconds(20))) return;
+                    SetPosition(follower, mnq, MarketPosition.Long, 2, 18000.00);
+                    follower.TriggerPositionUpdate(follower.Positions.First(p =>
+                        p.Instrument != null && p.Instrument.FullName == mnq.FullName));
+                }
+                catch { /* the assertions below report */ }
+                finally { secondSyncDone.Set(); }
+            });
+            second.IsBackground = true;
+            second.Start();
+
+            int tripped = 0;
+            var previousObserver = Account.BrokerCallObserver;
+            Account.BrokerCallObserver = method =>
+            {
+                if (method != "CreateOrder") return;
+                if (Interlocked.CompareExchange(ref tripped, 1, 0) != 0) return;
+                secondSyncMayRun.Set();
+                // Bounded: a fix that makes the second sync BLOCK would otherwise hang the suite.
+                secondSyncDone.Wait(TimeSpan.FromSeconds(10));
+            };
+
+            try
+            {
+                leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 2, 18030.00));
+            }
+            finally
+            {
+                Account.BrokerCallObserver = previousObserver;
+                secondSyncMayRun.Set();
+                secondSyncDone.Wait(TimeSpan.FromSeconds(10));
+                second.Join(TimeSpan.FromSeconds(5));
+            }
+
+            var liveTargets = follower.OrdersSnapshot()
+                .Where(o => o.Name == "COPIER_TARGET" && RiskGuardAddOn_IsLiveForTest(o)).ToList();
+
+            Assert(liveTargets.Count == 1,
+                string.Format(
+                    "Exactly one target is live after the interleaved syncs (got {0}). Two live "
+                    + "targets over-cover: when both fill the follower is flipped short.",
+                    liveTargets.Count));
+
+            Assert(liveTargets.Count == 1 && liveTargets[0].Quantity == 2,
+                string.Format(
+                    "The surviving target covers the WHOLE 2-lot position (got qty {0}). Backing the "
+                    + "second sync off without re-applying its instruction under-covers instead.",
+                    liveTargets.Count == 1 ? liveTargets[0].Quantity.ToString() : "n/a"));
+        }
+
+        /// <summary>
+        /// The target leg needs its own re-submission bound. The stop's exists because answering a
+        /// persistently-rejecting broker forever is the order flood the P1-43..P2-46 cluster
+        /// already cost us; nothing about that reasoning is specific to stops, and the parked
+        /// implementation of this feature had no bound at all.
+        /// </summary>
+        private static void TestBracket_P0_9_TargetResubmissionIsBounded()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: target re-submission is bounded, not a flood (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-TGTBOUND");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));
+
+            for (int i = 0; i < 20; i++)
+            {
+                var latest = follower.Orders.LastOrDefault(o => o.Name == "COPIER_TARGET");
+                if (latest == null) break;
+                if (!RiskGuardAddOn_IsLiveForTest(latest)) break;
+                latest.OrderState = OrderState.Rejected;
+                follower.TriggerOrderUpdate(latest);
+            }
+
+            int submitted = follower.Orders.Count(o => o.Name == "COPIER_TARGET");
+            Assert(submitted <= 4,
+                string.Format("Target re-submission gives up after a bounded number of attempts (got {0}).",
+                    submitted));
+            Assert(submitted >= 2,
+                string.Format("It did retry at least once before giving up (got {0}).", submitted));
+
+            // And the risk leg is untouched by the target's failures: a churning target must not
+            // consume the stop's budget, or the bound that keeps the follower protected becomes
+            // unreachable.
+            var liveStops = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn_IsLiveForTest(o)).ToList();
+            Assert(liveStops.Count == 1,
+                string.Format("The protective stop is still live throughout (got {0})", liveStops.Count));
+        }
+
+        /// <summary>
+        /// The hazard the pairing itself creates, and the reason this test exists at all.
+        ///
+        /// When the target fills, NT8 cancels the stop -- that is what OCO means. The copier sees
+        /// a mirrored stop go Cancelled while the follower still holds the position, because
+        /// NT8 raises ExecutionUpdate BEFORE PositionUpdate (P0-49's ordering), and re-submits it.
+        /// That places a protective stop against a position that has just been closed: P0-50's
+        /// orphan, arriving by a route P0-50 did not cover and that did not exist before targets
+        /// were mirrored.
+        ///
+        /// A leg whose sibling has FILLED was not lost. It was retired, and the follower's
+        /// position update releases the bracket a moment later.
+        /// </summary>
+        private static void TestBracket_P0_9_ALegRetiredByItsOcoSiblingIsNotResubmitted()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a stop retired by its target's fill is NOT re-submitted (P0-9/P0-50)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-OCOFILL");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));
+
+            var target = follower.Orders.Single(o => o.Name == "COPIER_TARGET");
+            int stopsBefore = follower.Orders.Count(o => o.Name == "COPIER_STOP");
+            Assert(stopsBefore == 1, "Precondition: one mirrored stop is working");
+
+            // The target fills. The position update has NOT landed yet -- the follower still reads
+            // as long, which is precisely what makes the re-submission look reasonable.
+            follower.FillOrderAndRetireOcoGroup(target);
+
+            int stopsAfter = follower.Orders.Count(o => o.Name == "COPIER_STOP");
+            Assert(stopsAfter == stopsBefore,
+                string.Format(
+                    "No replacement stop is submitted when the target's fill retires the group "
+                    + "(expected {0} COPIER_STOP orders, got {1}). A stop placed here is an orphan "
+                    + "on an account that has just gone flat, and an orphan stop is a new position "
+                    + "in the opposite direction the moment it triggers.",
+                    stopsBefore, stopsAfter));
+        }
+
+        /// <summary>
+        /// Every mirrored leg price must be a multiple of the instrument's tick.
+        ///
+        /// The anchor is the follower's AVERAGE fill price, and an average across partial fills at
+        /// different prices is routinely off-tick -- so a leg computed from it is off-tick too,
+        /// even though every price the leader gave us was clean. This is not hypothetical: a live
+        /// COPIER_TARGET sat Rejected at 29905.625 on MNQ, whose tick is 0.25 (handover 4p listed
+        /// it under "suspected, not concluded"). NT8 rounds off-tick prices silently on some paths
+        /// and rejects on others, and a rejected STOP is a naked follower.
+        /// </summary>
+        private static void TestBracket_P0_9_LegPricesAreRoundedToTheInstrumentsTick()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: both mirrored legs are snapped to the instrument's tick (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            double tick = mnq.MasterInstrument.TickSize;
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            // The follower's average across two partial fills lands between ticks.
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.125, "BR-TICK");
+
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));    // -10
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));  // +30
+
+            var stop = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+            var target = follower.Orders.Single(o => o.Name == "COPIER_TARGET");
+
+            Assert(Math.Abs(stop.StopPrice / tick - Math.Round(stop.StopPrice / tick)) < 1e-9,
+                string.Format(
+                    "The mirrored STOP sits on a tick boundary (got {0}, tick {1}). An off-tick stop "
+                    + "is one a broker may reject, and a rejected stop is a naked follower.",
+                    stop.StopPrice, tick));
+
+            Assert(Math.Abs(target.LimitPrice / tick - Math.Round(target.LimitPrice / tick)) < 1e-9,
+                string.Format(
+                    "The mirrored TARGET sits on a tick boundary (got {0}, tick {1}). This is the "
+                    + "shape of the COPIER_TARGET that came back Rejected at 29905.625 on 2026-08-10.",
+                    target.LimitPrice, tick));
+
+            // Rounding must not silently move the leg somewhere else: it snaps to the nearest tick.
+            Assert(Math.Abs(stop.StopPrice - 17990.125) <= tick,
+                string.Format("The stop stayed within one tick of the exact distance (got {0})", stop.StopPrice));
+            Assert(Math.Abs(target.LimitPrice - 18030.125) <= tick,
+                string.Format("The target stayed within one tick of the exact distance (got {0})", target.LimitPrice));
+        }
+
+        /// <summary>
+        /// A scale-out leader has SEVERAL targets, and the follower has ONE mirrored leg. There is
+        /// no honest single answer to "which one", and every wrong answer is expensive: mirroring
+        /// the last one seen makes the follower's exit depend on NT8's event order, and mirroring
+        /// the nearest exits the follower's WHOLE position at the leader's FIRST partial scale-out.
+        ///
+        /// So it refuses, loudly, and keeps the stop. The follower still exits when the leader's
+        /// target fills are copied -- which is the behaviour that shipped before targets were
+        /// mirrored at all, so the fallback is the old known-good one and the loss is fill quality.
+        ///
+        /// Target1/Target2/Target3 is ordinary ATM usage on this box, not an exotic case.
+        /// </summary>
+        private static void TestBracket_P0_9_AMultiTargetLeaderIsNotMirroredAtAll()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a scale-out leader with several targets mirrors NONE of them, and keeps the stop (P0-9)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-MULTITGT");
+
+            var stopLeg = LeaderStop(mnq, OrderAction.Sell, 1, 17990.00);
+            leader.Orders.Add(stopLeg);
+            leader.TriggerOrderUpdate(stopLeg);
+
+            // One target: mirrored, as usual.
+            var t1 = LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00);
+            leader.Orders.Add(t1);
+            leader.TriggerOrderUpdate(t1);
+            Assert(follower.Orders.Any(o => o.Name == "COPIER_TARGET" && RiskGuardAddOn_IsLiveForTest(o)),
+                "Precondition: a single leader target is mirrored");
+
+            // A second target appears. The leader is scaling out.
+            var t2 = LeaderTarget(mnq, OrderAction.Sell, 1, 18060.00);
+            leader.Orders.Add(t2);
+            leader.TriggerOrderUpdate(t2);
+
+            var liveTargets = follower.Orders
+                .Where(o => o.Name == "COPIER_TARGET" && RiskGuardAddOn_IsLiveForTest(o)).ToList();
+            Assert(liveTargets.Count == 0,
+                string.Format(
+                    "The mirrored target is withdrawn once the leader has more than one (got {0} live). "
+                    + "Leaving whichever was seen last makes the follower's exit an artefact of NT8's "
+                    + "event ordering.",
+                    liveTargets.Count));
+
+            var liveStops = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn_IsLiveForTest(o)).ToList();
+            Assert(liveStops.Count == 1,
+                string.Format(
+                    "The protective stop is untouched by the refusal (got {0} live). Ambiguity about "
+                    + "upside must never cost the follower its risk leg.",
+                    liveStops.Count));
+        }
+
+        /// <summary>
+        /// A follower going flat must release BOTH legs, not just the stop. A surviving target is
+        /// an orphan working order on a flat account -- the same class of defect as P0-50, which
+        /// was about the stop.
+        /// </summary>
+        private static void TestBracket_FollowerGoingFlatCancelsBothLegs()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a follower going flat cancels the target as well as the stop");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-OCOFLAT");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));
+
+            Assert(follower.Orders.Any(o => o.Name == "COPIER_TARGET" && o.OrderState != OrderState.Cancelled),
+                "Precondition: the follower has a working mirrored target");
+
+            SetPosition(follower, mnq, MarketPosition.Flat, 0, 0);
+            follower.TriggerPositionUpdate(new Position
+            {
+                Instrument = mnq,
+                MarketPosition = MarketPosition.Flat,
+                Quantity = 0,
+                AveragePrice = 0
+            });
+
+            var liveStop = follower.Orders.Where(o => o.Name == "COPIER_STOP"
+                && o.OrderState != OrderState.Cancelled).ToList();
+            var liveTarget = follower.Orders.Where(o => o.Name == "COPIER_TARGET"
+                && o.OrderState != OrderState.Cancelled).ToList();
+
+            Assert(liveStop.Count == 0,
+                string.Format("No mirrored stop survives the follower going flat (got {0})", liveStop.Count));
+            Assert(liveTarget.Count == 0,
+                string.Format(
+                    "No mirrored TARGET survives the follower going flat (got {0}). An orphan "
+                    + "target on a flat account opens a position when it fills, exactly as an "
+                    + "orphan stop does (P0-50).",
+                    liveTarget.Count));
+        }
+
+        /// <summary>
+        /// The TARGET leg has the same accepted-before-the-leader's-position race as the stop
+        /// (P0-55), and the first implementation of the re-anchor pass missed it: the rescan
+        /// filtered on IsStopType, so a target accepted early was never re-evaluated.
+        ///
+        /// Caught live rather than by test on 2026-08-10 -- the instrumentation said
+        /// "re-evaluating 1 working protective stop(s)" on a bracket that had two legs, which is
+        /// exactly the sort of off-by-one-leg a stop-shaped test cannot see.
+        /// </summary>
+        private static void TestBracket_TargetAcceptedBeforeLeaderPositionIsStillMirrored()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a leader TARGET accepted before the leader's position is still mirrored");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            // BOTH legs accepted while the leader is still flat -- the real ATM sequence.
+            var stop = LeaderStop(mnq, OrderAction.Sell, 1, 17990.00);
+            var target = LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00);
+            leader.Orders.Add(stop);
+            leader.Orders.Add(target);
+            leader.TriggerOrderUpdate(stop);
+            leader.TriggerOrderUpdate(target);
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            leader.TriggerPositionUpdate(leader.Positions.First(p => p.Instrument.FullName == mnq.FullName));
+
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-OCORACE");
+
+            Assert(follower.Orders.Any(o => o.Name == "COPIER_STOP" && o.OrderState != OrderState.Cancelled),
+                "The stop leg is mirrored after the re-anchor");
+            Assert(follower.Orders.Any(o => o.Name == "COPIER_TARGET" && o.OrderState != OrderState.Cancelled),
+                "The TARGET leg is mirrored after the re-anchor too -- the rescan must cover both "
+                + "protective legs, not just stops");
         }
 
         // An orphaned stop against a flat account is not a leftover, it is a new position.

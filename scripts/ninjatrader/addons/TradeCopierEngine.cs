@@ -844,8 +844,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
-        /// A mirrored stop went terminal while the follower still holds the position. Re-submit,
-        /// bounded by <see cref="MaxBracketStopAttempts"/>.
+        /// A mirrored protective leg went terminal while the follower still holds the position.
+        /// Re-submit, bounded by <see cref="MaxBracketStopAttempts"/> /
+        /// <see cref="MaxBracketTargetAttempts"/>.
         /// </summary>
         private void OnFollowerOrderUpdate(Account followerAcc, Order order)
         {
@@ -855,21 +856,40 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             string key = BracketKey(followerAcc.Name, order.Instrument.FullName);
             FollowerBracket bracket;
+            bool isStopLeg;
+            Order sibling;
             lock (_lock)
             {
                 if (!_followerBrackets.TryGetValue(key, out bracket)) return;
-                if (!ReferenceEquals(bracket.WorkingStop, order)) return;      // not our stop
-                // Do NOT clear WorkingStop here. An honest WorkingStop keeps the ReferenceEquals
-                // guard meaningful during an in-flight sync, and it lets a second sync modify
-                // the existing order instead of creating a duplicate. The re-drive will replace
-                // it once the broker work resolves.
+                isStopLeg = ReferenceEquals(bracket.WorkingStop, order);
+                bool isTargetLeg = ReferenceEquals(bracket.WorkingTarget, order);
+                if (!isStopLeg && !isTargetLeg) return;                        // not one of ours
+                sibling = isStopLeg ? bracket.WorkingTarget : bracket.WorkingStop;
+                // Do NOT clear WorkingStop/WorkingTarget here. An honest reference keeps the
+                // ReferenceEquals guard meaningful during an in-flight sync, and it lets a second
+                // sync modify the existing order instead of creating a duplicate. The re-drive
+                // will replace it once the broker work resolves.
+            }
+
+            // A leg whose OCO sibling has FILLED was not lost -- it was retired, which is what
+            // "one cancels the other" means. Re-submitting here would place a protective order
+            // against a position that has just been closed, because NT8 raises ExecutionUpdate
+            // before PositionUpdate (P0-49's ordering) and the follower therefore still reads as
+            // open. That is P0-50's orphan, arriving by a route that did not exist until targets
+            // were mirrored. The follower's position update releases the bracket a beat later.
+            if (sibling != null && sibling.OrderState == OrderState.Filled)
+            {
+                CopierLog(followerAcc.Name, "BRACKET_LEG_RETIRED_BY_OCO",
+                    $"{order.Instrument.FullName} mirrored {(isStopLeg ? "stop" : "target")} went "
+                    + $"{order.OrderState} because its OCO sibling filled; not re-submitting.");
+                return;
             }
 
             NinjaTrader.Code.Output.Process(
-                $"[CopierEngine] BRACKET_STOP_LOST: {followerAcc.Name} {order.Instrument.FullName} mirrored stop went {order.OrderState}; re-submitting.",
+                $"[CopierEngine] {(isStopLeg ? "BRACKET_STOP_LOST" : "BRACKET_TARGET_LOST")}: {followerAcc.Name} {order.Instrument.FullName} mirrored {(isStopLeg ? "stop" : "target")} went {order.OrderState}; re-submitting.",
                 PrintTo.OutputTab1);
 
-            SyncFollowerStop(followerAcc, order.Instrument, bracket);
+            SyncFollowerBracket(followerAcc, order.Instrument, bracket);
         }
 
         // ------------------------------------------------------------------
@@ -887,10 +907,16 @@ namespace NinjaTrader.NinjaScript.AddOns
         //
         //     followerStop = followerEntry -/+ |leaderPositionAvgPrice - leaderStopPrice|
         //
-        // SCOPE, deliberately: protective STOPS only. Profit targets are upside, not risk, and
-        // adding them brings OCO pairing and partial-fill re-sizing with it. A stop is what makes
-        // the follower not-naked, so it is what ships first. See the plan's P0-9 for what is
-        // explicitly deferred.
+        // SCOPE: both protective legs. The stop shipped first because it is what makes the
+        // follower not-naked; the target (P0-9 item 1) followed once P1-56 closed and the OCO id
+        // rule was pinned by live test (handover 4p). The two are NOT symmetric and the asymmetry
+        // is deliberate throughout: the stop is risk and always wins, the target is upside and is
+        // never allowed to disturb the stop.
+        //
+        // The OCO rule, in one line: an id can be JOINED while its group still has a live member,
+        // and is REJECTED once every leg has gone terminal. So a leg that is modified in place
+        // keeps its id, a leg created beside a live sibling joins it, and only a leg re-created
+        // after its group may have been retired needs a fresh one.
         // ------------------------------------------------------------------
 
         private class FollowerBracket
@@ -926,6 +952,30 @@ namespace NinjaTrader.NinjaScript.AddOns
             // counter is what stops a persistently-rejecting instrument turning it into an
             // order flood (the failure mode P2-46 and the flood cluster already cost us once).
             public int StopAttempts;
+
+            // P0-9 item (1). SIGNED offset from the leader's average entry to its PROFIT TARGET,
+            // same convention and same reason as StopOffset. NaN until the leader's target
+            // appears -- a leader with no target simply leaves this NaN and the follower gets a
+            // stop only, which is exactly the behaviour that shipped before this existed.
+            public double TargetOffset = double.NaN;
+            public Order WorkingTarget;
+
+            // The target leg carries its own reservation, budget and owed-flag rather than
+            // sharing the stop's. Sharing would let an in-flight target sync make the RISK leg
+            // wait, which is the wrong way round: upside must never delay protection.
+            public bool TargetInFlight;
+            public bool TargetResyncOwed;
+            public int TargetAttempts;
+
+            // The OCO id both legs currently belong to. Assigned when the first leg is created
+            // and joined by the second, so the follower's target and stop cancel each other the
+            // way the leader's do. Re-minted only where the group may have gone terminal --
+            // see ResolveOcoIdForRecreatedLeg.
+            //
+            // The stop carries an id even when the bracket has no target. A group of one is
+            // harmless, and it is what lets a later target JOIN rather than forcing the
+            // protective stop to be cancelled and re-created into a new group.
+            public string OcoId;
         }
 
         // How many EXTRA passes the reservation holder will re-drive the sync for, after a
@@ -939,6 +989,12 @@ namespace NinjaTrader.NinjaScript.AddOns
         // Escalating forever against a broker that will not accept the order is a flood; giving
         // up silently is a naked follower. Neither is acceptable, so it gives up LOUDLY.
         private const int MaxBracketStopAttempts = 3;
+
+        // The same bound for the target leg, and a separate counter. Nothing in the reasoning
+        // above is specific to stops: a broker that keeps rejecting the limit leg would otherwise
+        // be answered forever. Kept apart from StopAttempts so a churning target cannot spend the
+        // budget that keeps the follower protected.
+        private const int MaxBracketTargetAttempts = 3;
 
         // Keyed "<followerAccount>|<instrumentFullName>", ordinal-insensitive.
         private readonly Dictionary<string, FollowerBracket> _followerBrackets =
@@ -969,10 +1025,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             List<Order> candidates;
             try
             {
+                // BOTH protective legs, not just the stop. The first cut of the target work
+                // filtered on IsStopType here and silently left the target unanchored -- the live
+                // trace read "re-evaluating 1 working protective stop(s)" on a two-legged bracket,
+                // which is exactly the off-by-one-leg a stop-shaped test cannot see.
                 candidates = leaderAccount.Orders
                     .Where(o => o != null && o.Instrument != null
                         && o.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase)
-                        && RiskGuardAddOn.IsStopType(o)
+                        && (RiskGuardAddOn.IsStopType(o) || o.OrderType == OrderType.Limit)
                         && RiskGuardAddOn.IsPendingOrWorking(o.OrderState)
                         && (string.IsNullOrEmpty(o.Name) || !o.Name.Contains("COPIER")))
                     .ToList();
@@ -983,7 +1043,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             CopierLog(leaderAccount.Name, "BRACKET_REANCHOR",
                 $"leader position for {instrument.FullName} landed; re-evaluating {candidates.Count} "
-                + "working protective stop(s) that may have been accepted before it.");
+                + "working protective leg(s) that may have been accepted before it.");
 
             foreach (var o in candidates)
                 OnLeaderOrderUpdate(leaderAccount, o);
@@ -1015,29 +1075,57 @@ namespace NinjaTrader.NinjaScript.AddOns
             // follower looked like nothing had happened. ReevaluateLeaderStops re-drives us from
             // the leader's PositionUpdate; log it so the recovery is visible when it works, and
             // conspicuous when it does not.
+            // A bracket has TWO protective legs: the stop is the risk leg, the limit is the
+            // target. Both are on the protective side of the position and both are mirrored as a
+            // signed distance from the leader's anchor. IsProtectiveSide is what keeps a leader's
+            // resting ENTRY limit out of this -- a buy limit under a long position is not a leg.
+            bool isStopLeg   = RiskGuardAddOn.IsStopType(order);
+            bool isTargetLeg = !isStopLeg && order.OrderType == OrderType.Limit;
+
             if (leaderPos == null || leaderPos.MarketPosition == MarketPosition.Flat)
             {
-                if (RiskGuardAddOn.IsStopType(order) && RiskGuardAddOn.IsPendingOrWorking(order.OrderState))
+                if ((isStopLeg || isTargetLeg) && RiskGuardAddOn.IsPendingOrWorking(order.OrderState))
                 {
+                    double pendingPx = isStopLeg ? order.StopPrice : order.LimitPrice;
                     CopierLog(leaderAccount.Name, "BRACKET_NO_LEADER_POSITION",
-                        $"stop '{order.Name}' @{order.StopPrice} on {order.Instrument.FullName} has no leader "
-                        + "position to anchor to yet; deferred until the leader's position update.");
+                        $"{(isStopLeg ? "stop" : "target")} '{order.Name}' @{pendingPx} on "
+                        + $"{order.Instrument.FullName} has no leader position to anchor to yet; "
+                        + "deferred until the leader's position update.");
                 }
                 return;
             }
 
-            if (!RiskGuardAddOn.IsStopType(order)) return;
+            if (!isStopLeg && !isTargetLeg) return;
             if (!RiskGuardAddOn.IsProtectiveSide(order, leaderPos.MarketPosition)) return;
             if (!RiskGuardAddOn.IsPendingOrWorking(order.OrderState)) return;
 
             double leaderAnchor = leaderPos.AveragePrice;
-            double stopPrice = order.StopPrice;
-            if (leaderAnchor <= 0 || stopPrice <= 0) return;
+            double legPrice = isStopLeg ? order.StopPrice : order.LimitPrice;
+            if (leaderAnchor <= 0 || legPrice <= 0) return;
 
             // Signed, deliberately. See FollowerBracket.StopOffset: Math.Abs here mirrors a
             // trailed-into-profit stop onto the wrong side of the follower's entry.
-            double offset = stopPrice - leaderAnchor;
+            double offset = legPrice - leaderAnchor;
             if (Math.Abs(offset) <= 0) return;
+
+            // A scale-out leader has several targets and the follower has one mirrored leg, so
+            // there is no honest answer to "which one". Last-seen makes the follower's exit an
+            // artefact of NT8's event ordering; nearest exits the follower's WHOLE position at the
+            // leader's first partial. Refuse instead, and say so -- the follower keeps its stop
+            // and still exits when the leader's target fills are copied, which is exactly the
+            // behaviour that shipped before targets were mirrored.
+            //
+            // Not applied to stops: several working stops on one leader position is a
+            // reconciliation problem (P1-36, P3-30), and dropping the risk leg over it would be
+            // the wrong trade in the wrong direction.
+            bool targetIsAmbiguous = isTargetLeg && CountLeaderTargetLegs(leaderAccount, order.Instrument, leaderPos) > 1;
+            if (targetIsAmbiguous)
+            {
+                CopierLog(leaderAccount.Name, "BRACKET_TARGET_AMBIGUOUS",
+                    $"{order.Instrument.FullName}: the leader has more than one working target, so no "
+                    + "single mirrored target is correct. Withdrawing any target already mirrored; the "
+                    + "follower keeps its stop and exits on the copied leader fills.");
+            }
 
             foreach (var rel in rels)
             {
@@ -1062,6 +1150,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 string key = BracketKey(followerAcc.Name, targetInstrument.FullName);
                 FollowerBracket bracket;
+                Order ambiguousTarget = null;
                 lock (_lock)
                 {
                     if (!_followerBrackets.TryGetValue(key, out bracket))
@@ -1074,19 +1163,70 @@ namespace NinjaTrader.NinjaScript.AddOns
                         };
                         _followerBrackets[key] = bracket;
                     }
-                    // A leader that genuinely moves its stop is a new instruction, so it earns a
+                    // A leader that genuinely moves a leg is a new instruction, so it earns a
                     // fresh re-submission budget. A repeat of the same offset does not -- that is
                     // the path a rejecting broker would otherwise use to reset the bound forever.
-                    if (double.IsNaN(bracket.StopOffset) || Math.Abs(bracket.StopOffset - offset) > 1e-9)
-                        bracket.StopAttempts = 0;
-                    bracket.StopOffset = offset;
+                    if (isStopLeg)
+                    {
+                        if (double.IsNaN(bracket.StopOffset) || Math.Abs(bracket.StopOffset - offset) > 1e-9)
+                            bracket.StopAttempts = 0;
+                        bracket.StopOffset = offset;
+                    }
+                    else if (targetIsAmbiguous)
+                    {
+                        // Forget the distance so no later sync re-places it, and take down the leg
+                        // we already mirrored. Cancelled outside the lock, below.
+                        bracket.TargetOffset = double.NaN;
+                        bracket.TargetAttempts = 0;
+                        ambiguousTarget = bracket.WorkingTarget;
+                        bracket.WorkingTarget = null;
+                    }
+                    else
+                    {
+                        if (double.IsNaN(bracket.TargetOffset) || Math.Abs(bracket.TargetOffset - offset) > 1e-9)
+                            bracket.TargetAttempts = 0;
+                        bracket.TargetOffset = offset;
+                    }
                 }
 
-                // The anchor may not exist yet -- the leader can attach its stop before our copy
-                // fills. SyncFollowerStop is a no-op until the fill lands, and ObserveFollowerFill
-                // calls it again at that point.
-                SyncFollowerStop(followerAcc, targetInstrument, bracket);
+                if (ambiguousTarget != null && RiskGuardAddOn.IsPendingOrWorking(ambiguousTarget.OrderState))
+                {
+                    try { followerAcc.Cancel(new[] { ambiguousTarget }); }
+                    catch (Exception aex)
+                    {
+                        CopierLog(followerAcc.Name, "BRACKET_TARGET_CANCEL_FAILED",
+                            $"{targetInstrument.FullName}: {aex.Message}. A mirrored target may still be "
+                            + "working while the leader scales out; the stop is unaffected.");
+                    }
+                }
+
+                // The anchor may not exist yet -- the leader can attach its legs before our copy
+                // fills. Both syncs are a no-op until the fill lands, and the follower's own fill
+                // drives them again at that point.
+                SyncFollowerBracket(followerAcc, targetInstrument, bracket);
             }
+        }
+
+        /// <summary>
+        /// How many working protective LIMIT legs the leader has against this position. More than
+        /// one means the leader is scaling out, and a single mirrored target cannot represent that.
+        ///
+        /// Reads `leaderAccount.Orders` directly and swallows a concurrent-modification throw, as
+        /// ReevaluateLeaderStops does: NT8 owns that collection and can mutate it under us. A throw
+        /// here reports 0, which mirrors nothing -- deliberately the same direction as the refusal.
+        /// </summary>
+        private static int CountLeaderTargetLegs(Account leaderAccount, Instrument instrument, Position leaderPos)
+        {
+            try
+            {
+                return leaderAccount.Orders.Count(o => o != null && o.Instrument != null
+                    && o.OrderType == OrderType.Limit
+                    && o.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase)
+                    && RiskGuardAddOn.IsPendingOrWorking(o.OrderState)
+                    && RiskGuardAddOn.IsProtectiveSide(o, leaderPos.MarketPosition)
+                    && (string.IsNullOrEmpty(o.Name) || !o.Name.Contains("COPIER")));
+            }
+            catch { return 0; }
         }
 
         private Instrument ResolveFollowerInstrument(CopierRelationship rel, Instrument leaderInstrument)
@@ -1126,7 +1266,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // normally below entry (negative offset) and a short's above (positive), but
                 // either can invert once the leader trails into profit -- and that MUST carry
                 // through, or the follower is put at risk while the leader is protected.
-                stopPrice = bracket.FollowerEntryPrice + bracket.StopOffset;
+                // Rounded here, before the already-correct comparison below. Rounding after it
+                // would compare a rounded working price against an unrounded desired one, never
+                // match, and re-drive the leg forever.
+                stopPrice = RoundLegToTick(instrument, bracket.FollowerEntryPrice + bracket.StopOffset);
 
                 if (stopPrice <= 0) return;
 
@@ -1247,9 +1390,54 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
 
+                // The OCO id for the order about to be created.
+                //
+                // Re-creating a leg is the ONE case that can need a fresh id: the cancel above may
+                // have retired the whole group, and NT8 rejects an id once every leg has gone
+                // terminal (handover 4p). A rejected stop is a naked follower, so this path does
+                // not gamble -- it mints a fresh id and takes the target down with it, because a
+                // working order cannot be moved between groups (there is no OcoChanged field) and
+                // a target left in the retired group is paired with nothing. The target sync that
+                // follows every stop sync rebuilds it in the new group.
+                //
+                // Whether cancelling one leg really retires the group is NOT established. This is
+                // written to be correct either way; the cost when it does not is one rebuilt
+                // target, on a path only reached when Change() has already failed.
+                string oco;
+                Order staleTarget = null;
+                lock (_lock)
+                {
+                    if (toCancel != null)
+                    {
+                        staleTarget = bracket.WorkingTarget;
+                        bracket.WorkingTarget = null;
+                        bracket.OcoId = Guid.NewGuid().ToString();
+                    }
+                    else
+                    {
+                        // First creation. If the target got there first its group is live, so
+                        // join it -- that is licensed by the live test in handover 4p.
+                        string live = LiveLegOcoId(bracket, null);
+                        if (!string.IsNullOrEmpty(live)) bracket.OcoId = live;
+                        else if (string.IsNullOrEmpty(bracket.OcoId)) bracket.OcoId = Guid.NewGuid().ToString();
+                    }
+                    oco = bracket.OcoId;
+                }
+
+                if (staleTarget != null && RiskGuardAddOn.IsPendingOrWorking(staleTarget.OrderState))
+                {
+                    try { followerAcc.Cancel(new[] { staleTarget }); }
+                    catch (Exception tex)
+                    {
+                        CopierLog(followerAcc.Name, "BRACKET_TARGET_CANCEL_FAILED",
+                            $"{instrument.FullName}: {tex.Message}. The stale target may still be working "
+                            + "in the retired OCO group; the stop below is unaffected.");
+                    }
+                }
+
                 Order stop = followerAcc.CreateOrder(
                     instrument, action, OrderType.StopMarket, TimeInForce.Day,
-                    liveQty, 0, stopPrice, "", "COPIER_STOP", null);
+                    liveQty, 0, stopPrice, oco, "COPIER_STOP", null);
 
                 if (stop == null)
                 {
@@ -1335,37 +1523,305 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
-        /// The follower is flat in this instrument: cancel any protective leg we placed and drop
-        /// the bracket. An orphaned stop left working would open a brand new position in the
-        /// opposite direction when it fired.
+        /// Snaps a mirrored leg price to the instrument's tick.
+        ///
+        /// Both legs are computed from the follower's AVERAGE fill price, and an average across
+        /// partial fills at different prices is routinely off-tick -- so the leg is off-tick even
+        /// though every price the leader gave us was clean. A live COPIER_TARGET sat Rejected at
+        /// 29905.625 on MNQ, whose tick is 0.25. NT8 rounds off-tick prices silently on some paths
+        /// (the ATM path's own 29897.419 was rounded at Submitted) and rejects on others; the
+        /// copier does not need to know which, because it has no reason to send one either way.
+        ///
+        /// RiskGuard's auto-stop already does this before submitting. Failing safe on a throw
+        /// returns the price unrounded, which is exactly what happened before this existed.
+        /// </summary>
+        private static double RoundLegToTick(Instrument instrument, double price)
+        {
+            try
+            {
+                if (instrument == null || instrument.MasterInstrument == null) return price;
+                if (instrument.MasterInstrument.TickSize <= 0) return price;
+                return instrument.MasterInstrument.RoundToTickSize(price);
+            }
+            catch { return price; }
+        }
+
+        /// <summary>
+        /// The OCO id of a leg of this bracket that is still live, or null if the group is dead.
+        /// Must be called under `_lock`.
+        ///
+        /// Reads the ORDER's id rather than `bracket.OcoId`: the cached value records what we last
+        /// intended, the order records what the broker actually has, and only the second one
+        /// answers "is there a group to join".
+        /// </summary>
+        private static string LiveLegOcoId(FollowerBracket bracket, Order exclude)
+        {
+            Order[] legs = { bracket.WorkingStop, bracket.WorkingTarget };
+            foreach (var leg in legs)
+            {
+                if (leg == null || ReferenceEquals(leg, exclude)) continue;
+                if (!RiskGuardAddOn.IsPendingOrWorking(leg.OrderState)) continue;
+                if (!string.IsNullOrEmpty(leg.Oco)) return leg.Oco;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// P0-9 item (1). Brings the follower's profit target into line with the bracket, paired
+        /// with the mirrored stop by a shared OCO id.
+        ///
+        /// A sibling of the stop sync rather than a branch inside it, and the asymmetry between
+        /// them is the design:
+        ///
+        /// - the stop is RISK. It may re-mint the OCO id and tear the target down to rebuild the
+        ///   pair, because a rejected stop is a naked follower.
+        /// - the target is UPSIDE. It joins whatever live group the stop is in and never cancels
+        ///   or re-creates the stop. If the target never places at all, the follower still exits
+        ///   when the leader's own target fill is copied -- which is what happened before this
+        ///   existed, so the worst case here is the previous behaviour.
+        /// </summary>
+        private void SyncFollowerTargetOnce(Account followerAcc, Instrument instrument, FollowerBracket bracket)
+        {
+            if (followerAcc == null || instrument == null || bracket == null) return;
+
+            Order toCancel = null;
+            double targetPrice;
+            int qty;
+            OrderAction action;
+            MarketPosition bracketSide;
+
+            lock (_lock)
+            {
+                if (double.IsNaN(bracket.FollowerEntryPrice) || double.IsNaN(bracket.TargetOffset)) return;
+                if (bracket.FollowerQuantity <= 0 || bracket.FollowerSide == MarketPosition.Flat) return;
+
+                // Signed, as the stop is. A leader may sit its target on either side of its own
+                // entry once the position has been scaled or averaged.
+                // Rounded before the already-correct comparison, for the same reason as the stop.
+                targetPrice = RoundLegToTick(instrument, bracket.FollowerEntryPrice + bracket.TargetOffset);
+                if (targetPrice <= 0) return;
+
+                qty = bracket.FollowerQuantity;
+                bracketSide = bracket.FollowerSide;
+                action = bracket.FollowerSide == MarketPosition.Long ? OrderAction.Sell : OrderAction.BuyToCover;
+
+                if (bracket.WorkingTarget != null)
+                {
+                    bool samePrice = Math.Abs(bracket.WorkingTarget.LimitPrice - targetPrice) < 1e-9;
+                    bool sameQty = bracket.WorkingTarget.Quantity == qty;
+                    bool stillLive = RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingTarget.OrderState);
+                    if (stillLive && samePrice && sameQty) return;   // already correct
+                    if (stillLive) toCancel = bracket.WorkingTarget;
+                }
+
+                if (bracket.TargetAttempts >= MaxBracketTargetAttempts) return;
+                bracket.TargetAttempts++;
+            }
+
+            // P0-50 on the target leg. An orphan LIMIT against a flat account opens a position
+            // when it fills exactly as an orphan stop does when it triggers.
+            //
+            // Note what this deliberately does NOT do: it leaves FollowerQuantity and FollowerSide
+            // alone. Zeroing them here would let a target sync switch the stop sync off.
+            var livePos = followerAcc.Positions.FirstOrDefault(p =>
+                p.Instrument != null &&
+                p.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase));
+
+            if (livePos == null || livePos.MarketPosition == MarketPosition.Flat || livePos.Quantity <= 0
+                || livePos.MarketPosition != bracketSide)
+            {
+                if (toCancel != null)
+                {
+                    try { followerAcc.Cancel(new[] { toCancel }); } catch { }
+                }
+                lock (_lock) { bracket.WorkingTarget = null; }
+                CopierLog(followerAcc.Name, "BRACKET_TARGET_ABORTED",
+                    $"{instrument.FullName} is no longer {bracketSide} as the bracket expects; "
+                    + "no target placed.");
+                return;
+            }
+
+            try
+            {
+                // Broker calls outside `_lock` (P1-10/P1-35), as the stop sync does.
+                int liveQty = Math.Min(qty, livePos.Quantity);
+
+                // Modify in place where possible: it preserves OCO group membership -- confirmed
+                // live on 2026-08-10, a trailed leg kept both its orderId and its oco -- so the
+                // pair survives without any id being re-minted.
+                if (toCancel != null
+                    && RiskGuardAddOn.IsPendingOrWorking(toCancel.OrderState)
+                    && toCancel.OrderType == OrderType.Limit
+                    && toCancel.OrderAction == action)
+                {
+                    try
+                    {
+                        toCancel.LimitPrice = targetPrice;
+                        toCancel.Quantity = liveQty;
+                        followerAcc.Change(new[] { toCancel });
+
+                        lock (_lock) { bracket.WorkingTarget = toCancel; }
+
+                        CopierLog(followerAcc.Name, "BRACKET_TARGET_MODIFIED",
+                            $"{instrument.FullName} target moved to {liveQty}@{targetPrice} in place "
+                            + $"(leader offset {bracket.TargetOffset:+0.##;-0.##}, follower entry {bracket.FollowerEntryPrice}).");
+                        return;
+                    }
+                    catch (Exception cex)
+                    {
+                        CopierLog(followerAcc.Name, "BRACKET_TARGET_MODIFY_FAILED",
+                            $"{instrument.FullName}: {cex.Message}. Falling back to cancel-then-create.");
+                        // fall through
+                    }
+                }
+
+                if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
+
+                string oco;
+                lock (_lock)
+                {
+                    // Join the stop's group if it is live -- an id can be joined while its group
+                    // still has a live member (handover 4p). Only mint a fresh one when there is
+                    // no live sibling, which is the case NT8 actually rejects.
+                    //
+                    // Unlike the stop's re-create path this never cancels the sibling to force a
+                    // rebuild. If the cancel above did retire the group, the stop's own
+                    // OrderUpdate re-submits it and the pair reforms a beat later; cancelling a
+                    // working protective stop to tidy up an OCO group is not a trade worth making.
+                    string live = LiveLegOcoId(bracket, toCancel);
+                    bracket.OcoId = !string.IsNullOrEmpty(live) ? live : Guid.NewGuid().ToString();
+                    oco = bracket.OcoId;
+                }
+
+                Order target = followerAcc.CreateOrder(
+                    instrument, action, OrderType.Limit, TimeInForce.Day,
+                    liveQty, targetPrice, 0, oco, "COPIER_TARGET", null);
+
+                if (target == null)
+                {
+                    CopierLog(followerAcc.Name, "BRACKET_TARGET_FAILED",
+                        $"{instrument.FullName}: CreateOrder returned null. The follower keeps its stop "
+                        + "and still exits when the leader's target fill is copied; only fill quality is lost.");
+                    return;
+                }
+
+                followerAcc.Submit(new[] { target });
+                lock (_lock) { bracket.WorkingTarget = target; }
+
+                CopierLog(followerAcc.Name, "BRACKET_TARGET_MIRRORED",
+                    $"{instrument.FullName} target {liveQty}@{targetPrice} "
+                    + $"(leader offset {bracket.TargetOffset:+0.##;-0.##}, follower entry {bracket.FollowerEntryPrice}, oco {oco}).");
+            }
+            catch (Exception ex)
+            {
+                int attempts;
+                lock (_lock) { attempts = bracket.TargetAttempts; }
+                CopierLog(followerAcc.Name, "BRACKET_TARGET_FAILED",
+                    $"{instrument.FullName} (attempt {attempts}/{MaxBracketTargetAttempts}): {ex.Message}. "
+                    + "The stop is unaffected and the follower still exits on the copied leader target fill"
+                    + (attempts >= MaxBracketTargetAttempts ? "; the copier has given up on mirroring this target." : "."));
+            }
+        }
+
+        /// <summary>
+        /// P1-56's reservation, applied to the target leg. Its own flags, not the stop's: sharing
+        /// one would let an in-flight target sync make the RISK leg wait its turn.
+        /// </summary>
+        private void SyncFollowerTarget(Account followerAcc, Instrument instrument, FollowerBracket bracket)
+        {
+            if (followerAcc == null || instrument == null || bracket == null) return;
+
+            lock (_lock)
+            {
+                if (bracket.TargetInFlight)
+                {
+                    bracket.TargetResyncOwed = true;
+                    return;
+                }
+                bracket.TargetInFlight = true;
+            }
+
+            try
+            {
+                for (int pass = 0; pass <= MaxBracketResyncPasses; pass++)
+                {
+                    SyncFollowerTargetOnce(followerAcc, instrument, bracket);
+
+                    bool owed;
+                    lock (_lock)
+                    {
+                        owed = bracket.TargetResyncOwed;
+                        bracket.TargetResyncOwed = false;
+                    }
+
+                    if (!owed)
+                        break;
+
+                    if (pass == MaxBracketResyncPasses)
+                    {
+                        CopierLog(followerAcc.Name, "BRACKET_TARGET_RESYNC_BOUND",
+                            $"{instrument.FullName}: re-sync bound reached; stopping to avoid order flood.");
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    bracket.TargetInFlight = false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Syncs both legs, STOP FIRST, always.
+        ///
+        /// Every call site goes through this rather than driving one leg directly. The legs share
+        /// an OCO group, so a site that syncs only one of them leaves the pair half-rebuilt -- and
+        /// that is a mistake that reads as correct at the call site. Stop first because protection
+        /// precedes upside, and because it gives the target a live group to join.
+        /// </summary>
+        private void SyncFollowerBracket(Account followerAcc, Instrument instrument, FollowerBracket bracket)
+        {
+            SyncFollowerStop(followerAcc, instrument, bracket);
+            SyncFollowerTarget(followerAcc, instrument, bracket);
+        }
+
+        /// <summary>
+        /// The follower is flat in this instrument: cancel every protective leg we placed and drop
+        /// the bracket. An orphaned leg left working would open a brand new position -- the stop
+        /// when it triggers, the target when it fills.
         /// </summary>
         private void ReleaseFollowerBracket(Account followerAcc, string instrumentFullName)
         {
             if (followerAcc == null) return;
             string key = BracketKey(followerAcc.Name, instrumentFullName);
 
-            Order toCancel = null;
+            var toCancel = new List<Order>();
             lock (_lock)
             {
                 FollowerBracket bracket;
                 if (!_followerBrackets.TryGetValue(key, out bracket)) return;
                 if (bracket.WorkingStop != null && RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingStop.OrderState))
-                    toCancel = bracket.WorkingStop;
+                    toCancel.Add(bracket.WorkingStop);
+                if (bracket.WorkingTarget != null && RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingTarget.OrderState))
+                    toCancel.Add(bracket.WorkingTarget);
                 _followerBrackets.Remove(key);
             }
 
-            if (toCancel == null) return;
+            if (toCancel.Count == 0) return;
             try
             {
-                followerAcc.Cancel(new[] { toCancel });   // outside the lock, as above
+                followerAcc.Cancel(toCancel.ToArray());   // outside the lock, as above
                 NinjaTrader.Code.Output.Process(
-                    $"[CopierEngine] BRACKET_RELEASED: {followerAcc.Name} {instrumentFullName} is flat; cancelled the mirrored stop.",
+                    $"[CopierEngine] BRACKET_RELEASED: {followerAcc.Name} {instrumentFullName} is flat; cancelled {toCancel.Count} mirrored leg(s).",
                     PrintTo.OutputTab1);
             }
             catch (Exception ex)
             {
                 NinjaTrader.Code.Output.Process(
-                    $"[CopierEngine] BRACKET_RELEASE_FAILED on {followerAcc.Name} {instrumentFullName}: {ex.Message}. A stop may still be working against a flat position.",
+                    $"[CopierEngine] BRACKET_RELEASE_FAILED on {followerAcc.Name} {instrumentFullName}: {ex.Message}. A protective leg may still be working against a flat position.",
                     PrintTo.OutputTab1);
             }
         }
@@ -1739,7 +2195,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 bracket.FollowerQuantity = pos.Quantity;
             }
 
-            SyncFollowerStop(followerAcc, instrument, bracket);
+            SyncFollowerBracket(followerAcc, instrument, bracket);
         }
 
         // OnExecution is deliberately NOT behind `#if !TESTING`. It is the trade-copy
