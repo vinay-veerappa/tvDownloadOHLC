@@ -65,6 +65,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 ### Market Data Updates (`market_data/`)
 | Script | Purpose |
 |:---|:---|
+| `extract_all_expiries_em.py` | **Multi-Expiry TOS Expected Move Extractor** — extracts EM for ALL daily expiries up to next Friday (ES, NQ, SPX, SPY, QQQ, DIA, IWM) with TOS Desktop process check & Playwright Web TOS fallback. Scheduled at 16:15 ET (4:15 PM EST) Fridays. |
 | `capture_rth_open.py` | RTH open straddle capture |
 | `dolt_em_sync.py` | Sync EM from Dolt database |
 | `update_em_history_live.py` | Update EM from Schwab API |
@@ -72,6 +73,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `fetch_vix_data.py` | Fetch VIX history |
 | `fetch_economic_calendar.py` | Fetch economic events |
 | `sync_daily_weekly_schwab.py` | Directly uses Schwab easy_client to fetch and append YTD daily and weekly candles for all symbols to historical parquets. |
+
 
 ### Streaming / Options (`streaming/options/`)
 | Script | Purpose |

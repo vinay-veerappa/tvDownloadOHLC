@@ -208,7 +208,7 @@ class TOSRTDAdapter:
 
     def _start_worker(self, subscriptions: list[tuple[QuoteType, str]]) -> None:
         """Launch the worker process and drain thread."""
-        from _rtd_worker_entry import run_rtd_worker_process
+        from .worker import run_rtd_worker_process
 
         self._process = mp.Process(
             target=run_rtd_worker_process,

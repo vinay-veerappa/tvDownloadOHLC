@@ -43,8 +43,11 @@ Main documentation for data acquisition, processing, and storage.
 - **[Data Pipeline Guide](data/DATA_PIPELINE.md)**: Master document - source locations, date ranges, quality issues, scheduled tasks.
 - **[Data Sources](data/DATA_SOURCES.md)**: Format specs for TradingView, BacktestMarket, NinjaTrader.
 - **[Derived Data](data/DERIVED_DATA.md)**: Precomputed files (profiler, HOD/LOD, VWAP) + Prisma database schema.
-- **[Options Database](data/OPTIONS_DATABASE.md)**: Dolt DB tables, SQL queries, ER diagram.
+- **[Options Inventory](OPTIONS_INVENTORY.md)**: Complete catalog of options data sources, TOS RTD COM streaming, and expected move calculation engines.
 - **[Dealer Levels Pipeline](indicators/Options/README.md)**: Schwab options GEX pipeline for SPX/NDX translated to ES/NQ.
+- **[Multi-Expiry TOS EM Script](../scripts/market_data/extract_all_expiries_em.py)**: Multi-expiry expected move extractor up to next Friday (TOS Desktop + TOS Web Playwright fallback, scheduled 16:15 ET Fridays).
+- **[TOS Expected Moves Skill](../.agent/skills/tos_expected_moves/SKILL.md)**: Mandatory skill for multi-expiry expected moves extraction.
+
 - **[Dealer Levels Requirements](indicators/Options/REQUIREMENTS.md)**: Functional + non-functional requirements for advanced level generation.
 - **[Dealer Levels Technical Design](indicators/Options/DESIGN.md)**: Module architecture, fallback flow, and output schema details.
 - **[Data Coverage Report](data/DATA_COVERAGE_REPORT.md)**: Summary of available data ranges.
