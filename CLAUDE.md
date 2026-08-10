@@ -43,12 +43,13 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **RiskGuard/Copier Hardening Plan**: [RISKGUARD_COPIER_HARDENING_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_COPIER_HARDENING_PLAN.md) (58 NT8 addon defects P0→P3, 45 closed; defect index keyed to file:line. Defect IDs are never renumbered or reused)
 * **RiskGuard Hardening Progress**: [RISKGUARD_HARDENING_HANDOVER.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_HARDENING_HANDOVER.md) (live state — **read §0 before touching either addon**, then §4a for what is pending. Deployed to shadow on `harden/riskguard-p0-51` (tip `86c6376f`, unmerged/unpushed); several fixes are **compile+unit only, not validated on a live feed**. SHAs from before session 9 are orphaned by a history rewrite — see §0.0)
 * **NT8 Deployment**: never hand-copy `.cs` into `Documents/NinjaTrader 8/bin/Custom/`. Use `python scripts/utils/sync_nt8_strategies.py --verify --only addons` then `--only addons`, and recompile via `nt_compile`. Rules and traps: [NT8_FILE_ORGANIZATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_FILE_ORGANIZATION.md)
-* **Agent Patch Loop**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (implement→gate→review→apply loop; gate ladder, provider shim, anti-reward-hacking guard, known-defective predecessor gates)
-* **Agent Loop v2 (package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package extracted from this repo; v0.1.0 tagged; 77/77 tests pass; install via `pip install git+https://github.com/vinay-veerappa/agent-loop.git@v0.1.0`)
+* **Agent Patch Loop (ARCHIVED)**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (historical doc for the predecessor loop; the code is archived in `scripts/agent_loop/_archive_predecessor/`; do not run it)
+* **Agent Loop v2 (current package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package; v0.1.0 tagged; 77/77 tests pass; 9 phases complete including learning feedback)
 * **Agent Loop v2 Research**: [AGENT_LOOP_RESEARCH.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_RESEARCH.md) (state of the field across 13 coding agent harnesses)
-* **Agent Loop v2 Plan**: [AGENT_LOOP_V2_PLAN.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_V2_PLAN.md) (8-phase execution plan, all complete)
+* **Agent Loop v2 Plan**: [AGENT_LOOP_V2_PLAN.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_V2_PLAN.md) (9-phase execution plan, all complete)
 * **Agent Loop Decisions**: [IMPLEMENTATION_DECISIONS.md](file:///c:/Users/vinay/agent-loop/docs/architecture/IMPLEMENTATION_DECISIONS.md) (every non-obvious decision recorded)
 * **Consumer Profiles**: `scripts/agent_loop_config/` (nt8-riskguard and python-tvdownloadohlc profiles; register via `--profile-module scripts.agent_loop_config`)
+* **NT8 Tickets**: `scripts/agent_loop/tickets_p0.json`, `tickets_p0_51.json`, `tickets_p1_56.json` (defect definitions consumed by the new package)
 * **Agent Loop Usage**:
   ```powershell
   # NT8 RiskGuard ticket (C#)
