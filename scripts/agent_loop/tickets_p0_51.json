@@ -14,7 +14,6 @@
         "reaches the broker by no path at all during a lockout sweep",
         "The protective stop is still working after a shadow-mode lockout sweep",
         "The position is still open after a shadow-mode lockout sweep",
-        "Shadow mode does not drain queued intervention cancels to the broker",
         "The trader's resting entry is untouched by a shadow-mode lockout"
       ],
       "regions": [
