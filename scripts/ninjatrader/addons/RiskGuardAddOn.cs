@@ -686,7 +686,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (o == null || o.Instrument == null) continue;
                         if (!string.Equals(o.Instrument.FullName, instrument, StringComparison.OrdinalIgnoreCase)) continue;
                         if (!IsStopType(o) || !IsProtectiveSide(o, pos.MarketPosition)) continue;
-                        if (IsTerminal(o.OrderState)) continue;
+                        // P0-60: coverage, so ProvidesCoverage -- a stop already being cancelled
+                        // is not cover, and seeding the FSM with one reports a naked position as
+                        // protected.
+                        if (!ProvidesCoverage(o.OrderState)) continue;
                         fsm.AddRecognizedStop(o);
                         if (o.OrderState != OrderState.Working) anyPending = true;
                     }
@@ -1922,7 +1925,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         var reducing = new List<Order>();
                         foreach (Order o in account.Orders)
                         {
-                            if (IsTerminal(o.OrderState)) continue;
+                            if (!OccupiesSlot(o.OrderState)) continue;
                             if (RiskGuardOrderUtils.IsPositionReducingOrder(o, stateModel))
                                 reducing.Add(o);
                             else
@@ -2015,7 +2018,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                         foreach (var order in batch.Value)
                         {
-                            if (IsTerminal(order.OrderState)) continue;
+                            if (!OccupiesSlot(order.OrderState)) continue;
                             if (order.Instrument == null) continue;
 
                             var pos = account.Positions.FirstOrDefault(
@@ -2205,13 +2208,139 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal static bool IsStopType(Order o) =>
             o.OrderType == OrderType.StopMarket || o.OrderType == OrderType.StopLimit;
 
-        internal static bool IsPendingOrWorking(OrderState s) =>
-            s == OrderState.Submitted || s == OrderState.Accepted ||
-            s == OrderState.Initialized  || s == OrderState.Working ||
-            s == OrderState.PartFilled;
+        // ------------------------------------------------------------------
+        // ORDER LIVENESS (P0-59, P0-60)
+        //
+        // This replaces `IsPendingOrWorking` and `IsTerminal`, which were two
+        // NON-TOTAL predicates that were not each other's complement. NT8 has
+        // SIXTEEN OrderStates; between them those two classified eight, and the
+        // two addons then picked OPPOSITE approximations for the other eight:
+        //
+        //   RiskGuard asked `!IsTerminal`  -> a stop in CancelSubmitted counted
+        //                                     as coverage, so a position read as
+        //                                     protected while its stop was being
+        //                                     cancelled.            (P0-60)
+        //   the copier asked `IsPendingOrWorking` -> a stop in ChangeSubmitted
+        //                                     counted as GONE, so it created a
+        //                                     duplicate leg.        (P0-59)
+        //
+        // Both hazards, opposite directions, one root cause. Observed live
+        // 2026-08-10: two working COPIER_TARGETs against one lot.
+        //
+        // The reason one boolean could never fix this is that callers ask TWO
+        // different questions, whose fail-safe answers point opposite ways:
+        //
+        //   "is something already here, so do not create a second?"
+        //        -> answering NO wrongly OVER-COVERS (two stops flip the position)
+        //   "does this actually protect the position?"
+        //        -> answering YES wrongly leaves it NAKED
+        //
+        // So there is one total classification and two derived predicates, and
+        // an unclassifiable state answers BOTH questions conservatively: it
+        // occupies a slot (do not duplicate it) and it does not count as cover.
+        // ------------------------------------------------------------------
 
-        internal static bool IsTerminal(OrderState s) =>
-            s == OrderState.Cancelled || s == OrderState.Rejected || s == OrderState.Filled;
+        internal enum OrderLiveness
+        {
+            /// <summary>Exists at the broker and will act on the market.</summary>
+            Working,
+            /// <summary>Exists, but a cancel is already in flight. Do not rely on it; do not cancel it again.</summary>
+            Departing,
+            /// <summary>Exists but will not act while it stays this way.</summary>
+            Inert,
+            /// <summary>Gone. The slot is free.</summary>
+            Terminal,
+            /// <summary>NT8 said Unknown, or a state this build does not classify.</summary>
+            Indeterminate
+        }
+
+        /// <summary>
+        /// Total over NT8's OrderState. Every member of the real enum is named here
+        /// explicitly -- see TestOrderLiveness_ClassifiesEveryNT8OrderState, which fails
+        /// if a state is added and left unclassified rather than letting it fall into a
+        /// silent default.
+        /// </summary>
+        internal static OrderLiveness Classify(OrderState s)
+        {
+            switch (s)
+            {
+                // Exists and will act. ChangeSubmitted/ChangePending are the states an
+                // order passes through during Account.Change() -- it is emphatically NOT
+                // gone, and reading it as gone is what duplicated a live leg (P0-59).
+                // TriggerPending is a stop waiting on its trigger: the most protective
+                // state a stop can be in.
+                case OrderState.Initialized:
+                case OrderState.Submitted:
+                case OrderState.Accepted:
+                case OrderState.AcceptedByRisk:
+                case OrderState.Working:
+                case OrderState.PartFilled:
+                case OrderState.TriggerPending:
+                case OrderState.ChangeSubmitted:
+                case OrderState.ChangePending:
+                    return OrderLiveness.Working;
+
+                // A cancel is in flight. It still occupies its slot at the broker, so
+                // cancelling again is noise -- but it must NOT be counted as coverage,
+                // which is precisely what `!IsTerminal` used to do (P0-60).
+                case OrderState.CancelSubmitted:
+                case OrderState.CancelPending:
+                    return OrderLiveness.Departing;
+
+                // Present but dormant. Not cover, and not a free slot either.
+                case OrderState.Suspended:
+                    return OrderLiveness.Inert;
+
+                case OrderState.Filled:
+                case OrderState.Cancelled:
+                case OrderState.Rejected:
+                    return OrderLiveness.Terminal;
+
+                case OrderState.Unknown:
+                    return OrderLiveness.Indeterminate;
+
+                default:
+                    // A state NT8 added that this build has never heard of. Conservative
+                    // in both directions by construction: OccupiesSlot true, ProvidesCoverage
+                    // false. The conformance test is what stops this being reached silently.
+                    return OrderLiveness.Indeterminate;
+            }
+        }
+
+        /// <summary>
+        /// "Is there already an order here, so I must not create a second one?"
+        /// True for anything the broker still holds. Answering this wrongly with NO is
+        /// what produces two protective legs behind one position.
+        /// </summary>
+        internal static bool OccupiesSlot(OrderState s)
+        {
+            var c = Classify(s);
+            return c == OrderLiveness.Working || c == OrderLiveness.Inert
+                || c == OrderLiveness.Indeterminate;
+        }
+
+        /// <summary>
+        /// "Does this order actually protect the position?"
+        /// Only a Working order does. A cancelling, suspended or unknown order must never
+        /// be counted as cover -- answering this wrongly with YES is what leaves a
+        /// position naked while something believes it is protected.
+        /// </summary>
+        internal static bool ProvidesCoverage(OrderState s)
+        {
+            return Classify(s) == OrderLiveness.Working;
+        }
+
+        /// <summary>
+        /// "Is this order gone, so its slot is free?" Terminal ONLY -- a cancelling order
+        /// is not terminal, it is Departing, and the difference is load-bearing. Callers
+        /// asking about coverage want <see cref="ProvidesCoverage"/>; callers asking
+        /// whether to place or cancel something want <see cref="OccupiesSlot"/>. Reach for
+        /// this one only when you genuinely mean "the broker is finished with it".
+        /// </summary>
+        internal static bool IsTerminal(OrderState s)
+        {
+            return Classify(s) == OrderLiveness.Terminal;
+        }
 
         // Called from ExecutePositionUpdate. Handles flat<->nonflat transitions.
         private void UpdateFsmOnPosition(Account account, string instrument, MarketPosition newPos, int qty)
@@ -2292,7 +2421,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         var candidates = pending
                             .Where(b => b.Order != null
                                      && IsStopType(b.Order)
-                                     && !IsTerminal(b.Order.OrderState)
+                                     && ProvidesCoverage(b.Order.OrderState)
                                      && IsProtectiveSide(b.Order, newPos)
                                      && b.Order.Quantity <= qty)
                             .OrderByDescending(b => b.Order.Quantity)
@@ -2349,7 +2478,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (_guardFsms.TryGetValue(key, out var fsm))
                 {
                     fsm.GraceTimer?.Dispose();
-                    if (fsm.AutoStopOrder != null && !IsTerminal(fsm.AutoStopOrder.OrderState))
+                    if (fsm.AutoStopOrder != null && OccupiesSlot(fsm.AutoStopOrder.OrderState))
                     {
                         _pendingCancels.Add(new PendingCancelEntry(account, fsm.AutoStopOrder, PendingCancelIntent.Cleanup));
                     }
@@ -2391,7 +2520,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             foreach (var entry in toDrain)
             {
                 if (entry.Account == null || entry.Order == null) continue;
-                if (IsTerminal(entry.Order.OrderState)) continue;   // already resolved while queued
+                if (!OccupiesSlot(entry.Order.OrderState)) continue;   // gone, or already going
                 if (entry.Intent == PendingCancelIntent.Cleanup)
                     cleanup.Add(entry);
                 else
@@ -2492,7 +2621,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // If no FSM yet, buffer protective-side stops pending the position event.
                 if (!_guardFsms.ContainsKey(key))
                 {
-                    if (IsStopType(order) && !IsTerminal(order.OrderState))
+                    if (IsStopType(order) && ProvidesCoverage(order.OrderState))
                     {
                         // We don't know the position side yet; buffer and classify on consumption.
                         // P1-14: append rather than overwrite, and stamp it so the watchdog can
@@ -2520,7 +2649,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Recognise a protective stop for the current position side.
                 if (IsProtectiveSide(order, fsm.PositionSide) && IsStopType(order))
                 {
-                    if (IsTerminal(order.OrderState))
+                    // P0-60: not IsTerminal. A stop entering CancelSubmitted has stopped being
+                    // cover before it is terminal, and waiting for terminal leaves a window in
+                    // which the FSM reports protection that is already being withdrawn.
+                    if (!ProvidesCoverage(order.OrderState))
                     {
                         // P1-36: losing ONE stop of several is not the same as being naked. Drop
                         // it from the cover and re-derive; the position drops to Unprotected only
@@ -2766,7 +2898,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 int before = kv.Value.Count;
                 kv.Value.RemoveAll(b =>
-                    b.Order == null || IsTerminal(b.Order.OrderState) || now - b.BufferedAtUtc > ttl);
+                    b.Order == null || !ProvidesCoverage(b.Order.OrderState) || now - b.BufferedAtUtc > ttl);
 
                 if (kv.Value.Count != before)
                 {
@@ -5032,7 +5164,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private void PruneRecognizedStops()
         {
-            _recognizedStops.RemoveAll(o => o == null || RiskGuardAddOn.IsTerminal(o.OrderState));
+            _recognizedStops.RemoveAll(o => o == null || !RiskGuardAddOn.ProvidesCoverage(o.OrderState));
         }
 
         /// <summary>
@@ -5042,7 +5174,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         public void AddRecognizedStop(Order stop)
         {
-            if (stop == null || RiskGuardAddOn.IsTerminal(stop.OrderState)) return;
+            if (stop == null || !RiskGuardAddOn.ProvidesCoverage(stop.OrderState)) return;
             PruneRecognizedStops();
             if (_recognizedStops.Any(o => ReferenceEquals(o, stop))) return;
             _recognizedStops.Add(stop);

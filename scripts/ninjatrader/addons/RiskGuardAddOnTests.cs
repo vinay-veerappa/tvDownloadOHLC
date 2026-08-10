@@ -20,7 +20,24 @@ namespace NinjaTrader.Cbi
         public double Value { get; set; }
         public Currency Currency { get; set; }
     }
-    public enum OrderState { Submitted, Accepted, Working, Cancelled, CancelPending, Filled, PartFilled, Rejected, Unknown, Initialized }
+    // ALL SIXTEEN of NT8's OrderStates, in the order NinjaTrader.Cbi.OrderState declares
+    // them. This stub used to carry ten, so six states could not be expressed by ANY test
+    // and the suite was green at 686/0 while P0-59 was live on the box.
+    //
+    // Obtained by reflection, not by memory:
+    //   [Reflection.Assembly]::LoadFrom("C:\Program Files\NinjaTrader 8\bin\NinjaTrader.Core.dll")
+    //   [Enum]::GetNames($asm.GetType("NinjaTrader.Cbi.OrderState"))
+    //
+    // TestOrderLiveness_ClassifiesEveryNT8OrderState pins this list against
+    // RiskGuardAddOn.Classify, so adding a state here without classifying it fails the
+    // suite. Keeping the stub honest about the shape of the world is the whole point:
+    // a test double we author is not evidence about NT8 unless something forces it to agree.
+    public enum OrderState
+    {
+        Accepted, Cancelled, Filled, Initialized, PartFilled, CancelSubmitted,
+        ChangeSubmitted, Submitted, TriggerPending, Rejected, Working, CancelPending,
+        ChangePending, Suspended, AcceptedByRisk, Unknown
+    }
     public enum OrderType { Limit, StopMarket, StopLimit, Market }
     public enum OrderAction { Buy, Sell, BuyToCover, SellShort }
     public enum TimeInForce { Day, Gtc }
@@ -700,6 +717,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_StopMirrorsLeaderDistanceFromFollowerFill();
             TestBracket_StopBeforeFollowerFillIsAppliedOnFill();
             TestBracket_P0_55_LeaderStopAcceptedBeforeLeaderPositionIsStillMirrored();
+            TestOrderLiveness_ClassifiesEveryNT8OrderState();
+            TestBracket_P0_59_ALegBeingModifiedIsNotDuplicated();
+            TestP0_60_AStopBeingCancelledStopsCountingAsCoverage();
             TestBracket_TrailingModifiesTheStopRatherThanRecreatingIt();
             TestBracket_TargetIsMirroredAsAnOcoPairWithTheStop();
             TestBracket_P0_9_ALateTargetJoinsTheLiveStopsOcoGroup();
@@ -1715,7 +1735,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + "first sync's CreateOrder. If this fails, nothing was proved.");
 
             var live = follower.OrdersSnapshot()
-                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.ProvidesCoverage(o.OrderState))
                 .ToList();
 
             Assert(live.Count == 1,
@@ -1788,6 +1808,208 @@ namespace NinjaTrader.NinjaScript.AddOns
         // ------------------------------------------------------------------
         // P0-9 item (1): the mirrored PROFIT TARGET, and the OCO pairing it brings with it.
         // ------------------------------------------------------------------
+
+        /// <summary>
+        /// P0-59 / P0-60. The classification must be TOTAL over NT8's OrderState, and the two
+        /// derived predicates must be conservative in OPPOSITE directions for anything it cannot
+        /// vouch for.
+        ///
+        /// This is the test that could not have existed before: six of NT8's sixteen states were
+        /// absent from the stub enum, so no test could name them. The suite was green at 686/0
+        /// with a P0 live on the box because the fiction we author was missing the states that
+        /// mattered.
+        /// </summary>
+        private static void TestOrderLiveness_ClassifiesEveryNT8OrderState()
+        {
+            Console.WriteLine("\n[TEST] ORDER LIVENESS: every NT8 OrderState is classified, and unknowns fail safe BOTH ways (P0-59/P0-60)");
+
+            // Reflected from NinjaTrader.Core.dll, not recalled. If NT8 adds a state, this list
+            // and the switch in Classify must both learn about it.
+            var expected = new[]
+            {
+                "Accepted", "Cancelled", "Filled", "Initialized", "PartFilled", "CancelSubmitted",
+                "ChangeSubmitted", "Submitted", "TriggerPending", "Rejected", "Working",
+                "CancelPending", "ChangePending", "Suspended", "AcceptedByRisk", "Unknown"
+            };
+            var declared = Enum.GetNames(typeof(OrderState));
+
+            var missing = expected.Where(e => !declared.Contains(e)).ToList();
+            var extra = declared.Where(d => !expected.Contains(d)).ToList();
+            Assert(missing.Count == 0 && extra.Count == 0,
+                string.Format(
+                    "The test stub's OrderState matches NT8's exactly (missing: [{0}], unexpected: [{1}]). "
+                    + "A state the stub cannot name is a state no test can drive.",
+                    string.Join(",", missing), string.Join(",", extra)));
+
+            // Every declared state must be classified, and nothing may fall through to
+            // Indeterminate except the state that genuinely means "unknown".
+            var unclassified = new List<string>();
+            foreach (OrderState s in Enum.GetValues(typeof(OrderState)))
+            {
+                if (RiskGuardAddOn.Classify(s) == RiskGuardAddOn.OrderLiveness.Indeterminate
+                    && s != OrderState.Unknown)
+                    unclassified.Add(s.ToString());
+            }
+            Assert(unclassified.Count == 0,
+                string.Format(
+                    "Every OrderState is explicitly classified (fell through: [{0}]). A state that "
+                    + "reaches the default arm is one the addons will guess about.",
+                    string.Join(",", unclassified)));
+
+            // The states that caused the two live defects, named individually so a regression
+            // says which hazard came back.
+            Assert(RiskGuardAddOn.ProvidesCoverage(OrderState.ChangeSubmitted)
+                    && RiskGuardAddOn.OccupiesSlot(OrderState.ChangeSubmitted),
+                "P0-59: an order mid-Change() is WORKING. Reading it as gone is what created a "
+                + "second protective leg against one position.");
+            Assert(RiskGuardAddOn.ProvidesCoverage(OrderState.ChangePending)
+                    && RiskGuardAddOn.OccupiesSlot(OrderState.ChangePending),
+                "An order mid-Change() is working in the pending state too");
+            Assert(RiskGuardAddOn.ProvidesCoverage(OrderState.TriggerPending),
+                "A stop waiting on its trigger is the most protective state a stop has; it must "
+                + "count as coverage");
+
+            Assert(!RiskGuardAddOn.ProvidesCoverage(OrderState.CancelSubmitted)
+                    && !RiskGuardAddOn.ProvidesCoverage(OrderState.CancelPending),
+                "P0-60: a stop that is being CANCELLED is not coverage. `!IsTerminal` used to say "
+                + "it was, so a position read as protected while its only stop was going away.");
+            Assert(!RiskGuardAddOn.OccupiesSlot(OrderState.CancelSubmitted),
+                "...but its slot is free, so a replacement may be placed without waiting");
+
+            Assert(!RiskGuardAddOn.ProvidesCoverage(OrderState.Suspended),
+                "A suspended order will not act, so it is not coverage");
+            Assert(RiskGuardAddOn.OccupiesSlot(OrderState.Suspended),
+                "...yet it still exists, so it must not be duplicated");
+
+            // The crux: one boolean cannot be fail-safe for both questions, which is why there
+            // are two predicates.
+            Assert(!RiskGuardAddOn.ProvidesCoverage(OrderState.Unknown),
+                "An unclassifiable order is NOT coverage -- assuming it is leaves a naked position");
+            Assert(RiskGuardAddOn.OccupiesSlot(OrderState.Unknown),
+                "...and it DOES occupy a slot -- assuming it does not creates a duplicate leg. "
+                + "Conservative in both directions at once; no single boolean can be.");
+
+            Assert(RiskGuardAddOn.IsTerminal(OrderState.Filled)
+                    && RiskGuardAddOn.IsTerminal(OrderState.Cancelled)
+                    && RiskGuardAddOn.IsTerminal(OrderState.Rejected),
+                "Terminal means terminal");
+            Assert(!RiskGuardAddOn.IsTerminal(OrderState.CancelPending),
+                "A cancelling order is NOT terminal -- it is Departing, and calling it terminal "
+                + "would hide the distinction that P0-60 turns on");
+        }
+
+        /// <summary>
+        /// P0-59, reproducing the live incident of 2026-08-10 13:55:56 exactly.
+        ///
+        /// A mirrored leg passes through `ChangeSubmitted` every time `Account.Change()` touches
+        /// it — which is what our own trail does. The old classification said that state was not
+        /// live, so `OnFollowerOrderUpdate` read the leg as LOST and re-submitted it while the
+        /// original was still working: two `COPIER_TARGET`s at 29859.75 in one OCO group against
+        /// one lot, mirrored onward to three accounts.
+        ///
+        /// No concurrency is involved. One handler misreading one state is enough, which is why
+        /// `P1-56`'s reservation could not prevent it.
+        /// </summary>
+        private static void TestBracket_P0_59_ALegBeingModifiedIsNotDuplicated()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a leg in ChangeSubmitted is NOT re-submitted as a duplicate (P0-59)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18000.00, "BR-P059");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            leader.TriggerOrderUpdate(LeaderTarget(mnq, OrderAction.Sell, 1, 18030.00));
+
+            var target = follower.Orders.Single(o => o.Name == "COPIER_TARGET");
+            var stop = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+
+            // The broker takes the leg into its change transition and tells us about it.
+            target.OrderState = OrderState.ChangeSubmitted;
+            follower.TriggerOrderUpdate(target);
+
+            var targets = follower.Orders.Where(o => o.Name == "COPIER_TARGET").ToList();
+            Assert(targets.Count == 1,
+                string.Format(
+                    "A leg mid-modification is not duplicated (got {0} COPIER_TARGET orders). Two "
+                    + "live targets against one lot over-cover: when both fill the follower is "
+                    + "flipped short. Seen live on 2026-08-10.",
+                    targets.Count));
+
+            // And the same for the RISK leg, which is where this actually costs money: our own
+            // trail calls Change(), so a leader trailing its stop reaches this every step.
+            stop.OrderState = OrderState.ChangeSubmitted;
+            follower.TriggerOrderUpdate(stop);
+
+            var stops = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(stops.Count == 1,
+                string.Format(
+                    "A STOP mid-modification is not duplicated either (got {0}). This is the one "
+                    + "that matters: every trail step passes through this state.",
+                    stops.Count));
+        }
+
+        /// <summary>
+        /// P0-60, the same root cause pointing the other way.
+        ///
+        /// RiskGuard asked `!IsTerminal` to decide whether a stop was covering a position, so a
+        /// stop in `CancelSubmitted`/`CancelPending` — one the broker has already been told to
+        /// pull — still counted as cover. The position reads as protected during exactly the
+        /// window in which its protection is being withdrawn, and no auto-stop is armed.
+        ///
+        /// Modelled on `TestP1_36_LosingOneOfTwoStopsIsPartialCoverNotNakedness`, with the one
+        /// variable changed: the leg goes to `CancelSubmitted` rather than `Cancelled`.
+        /// </summary>
+        private static void TestP0_60_AStopBeingCancelledStopsCountingAsCoverage()
+        {
+            Console.WriteLine("\n[TEST] P0-60: a stop in CancelSubmitted is NOT coverage — protection being withdrawn is not protection");
+
+            var mnq = new Instrument("MNQ");
+            var account = AutoStopTestAccount(mnq, MarketPosition.Long, 6, 18000, 18000);
+            var addon = new RiskGuardAddOn();
+            addon.SetConfigForTest(FsmTestConfig(graceSeconds: 60));
+            addon.TestClearFsms();
+
+            addon.TestFsmOnPosition(account, mnq.FullName, MarketPosition.Long, 6);
+            var legA = PartialStop(mnq, 3, 17990, "Stop_Half1");
+            var legB = PartialStop(mnq, 3, 17985, "Stop_Half2");
+            addon.TestFsmOnOrder(account, mnq.FullName, legA);
+            addon.TestFsmOnOrder(account, mnq.FullName, legB);
+
+            var fsm0 = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm0 != null && fsm0.CoveredQuantity == 6, "Precondition: both legs cover the 6 lots");
+
+            // The broker has accepted a cancel for one leg. It is not terminal yet — and under
+            // `!IsTerminal` it still counted as three lots of cover.
+            legA.OrderState = OrderState.CancelSubmitted;
+            addon.TestFsmOnOrder(account, mnq.FullName, legA);
+
+            var fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 3,
+                string.Format(
+                    "A stop with a cancel in flight stops counting as cover (CoveredQuantity {0}, "
+                    + "expected 3). Counting it leaves three lots naked while the FSM reports them "
+                    + "protected, and nothing arms a replacement.",
+                    fsm == null ? -1 : fsm.CoveredQuantity));
+
+            // CancelPending is the same situation one step further on.
+            legB.OrderState = OrderState.CancelPending;
+            addon.TestFsmOnOrder(account, mnq.FullName, legB);
+
+            fsm = addon.TestGetFsm(account.Name, mnq.FullName);
+            Assert(fsm != null && fsm.CoveredQuantity == 0,
+                string.Format(
+                    "With both cancels in flight nothing covers the position (CoveredQuantity {0}).",
+                    fsm == null ? -1 : fsm.CoveredQuantity));
+            Assert(fsm != null && fsm.State == GuardFsmState.Unprotected,
+                string.Format(
+                    "...and the FSM says so, which is what arms the replacement (state {0}).",
+                    fsm == null ? "none" : fsm.State.ToString()));
+        }
 
         /// <summary>Builds a leader PROFIT TARGET (the protective limit leg of a bracket).</summary>
         private static Order LeaderTarget(Instrument inst, OrderAction action, int qty, double limitPrice)
@@ -2629,7 +2851,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "The three-way interleaving actually happened. If this fails, nothing was proved.");
 
             var live = follower.OrdersSnapshot()
-                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.ProvidesCoverage(o.OrderState))
                 .ToList();
 
             Assert(live.Count == 1,
@@ -2687,7 +2909,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17985.00));
 
             var live = follower.OrdersSnapshot()
-                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.ProvidesCoverage(o.OrderState))
                 .ToList();
 
             Assert(live.Count == 1,
@@ -2740,12 +2962,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                 string.Format("It did retry at least once before giving up (got {0}).", submitted));
         }
 
-        /// <summary>Mirrors RiskGuardAddOn.IsPendingOrWorking for assertions in this file.</summary>
+        /// <summary>
+        /// Delegates to the production classification rather than restating it. It used to be a
+        /// hand-copied duplicate of the old liveness list -- a second definition of "alive" living
+        /// in the grader, free to drift from the one being graded. That is the same shape of
+        /// defect as P0-59 itself.
+        /// </summary>
         private static bool RiskGuardAddOn_IsLiveForTest(Order o)
         {
-            return o.OrderState == OrderState.Submitted || o.OrderState == OrderState.Accepted
-                || o.OrderState == OrderState.Initialized || o.OrderState == OrderState.Working
-                || o.OrderState == OrderState.PartFilled;
+            return RiskGuardAddOn.ProvidesCoverage(o.OrderState);
         }
 
         // Mirroring a points-distance onto an instrument at a different price scale fabricates a
@@ -2884,7 +3109,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17996.00));
 
             var live = follower.Orders
-                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.IsPendingOrWorking(o.OrderState))
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.ProvidesCoverage(o.OrderState))
                 .ToList();
 
             Assert(live.Count == 0,
@@ -2974,14 +3199,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             leader.TriggerOrderUpdate(leaderStop);
 
             var mirrored = follower.Orders.Single(o => o.Name == "COPIER_STOP");
-            Assert(RiskGuardAddOn.IsPendingOrWorking(mirrored.OrderState),
+            Assert(RiskGuardAddOn.ProvidesCoverage(mirrored.OrderState),
                 "Precondition: the follower has a live mirrored stop before the leader cancels.");
 
             // The leader cancels. Its position is UNCHANGED -- it is now naked by choice.
             leaderStop.OrderState = OrderState.Cancelled;
             leader.TriggerOrderUpdate(leaderStop);
 
-            Assert(RiskGuardAddOn.IsPendingOrWorking(mirrored.OrderState),
+            Assert(RiskGuardAddOn.ProvidesCoverage(mirrored.OrderState),
                 string.Format(
                     "The follower's mirrored stop is still live after the leader cancelled its own "
                     + "(state {0}). Mirroring the cancellation would strip protection from every "
@@ -2989,7 +3214,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     mirrored.OrderState));
 
             Assert(follower.Orders.Count(o => o.Name == "COPIER_STOP"
-                    && RiskGuardAddOn.IsPendingOrWorking(o.OrderState)) == 1,
+                    && RiskGuardAddOn.ProvidesCoverage(o.OrderState)) == 1,
                 "The cancellation does not provoke a second stop either -- one live stop, still at its original level.");
 
             Assert(Math.Abs(mirrored.StopPrice - 17990.00) < 1e-9,

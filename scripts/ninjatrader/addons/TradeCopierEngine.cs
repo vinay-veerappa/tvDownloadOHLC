@@ -851,7 +851,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void OnFollowerOrderUpdate(Account followerAcc, Order order)
         {
             if (followerAcc == null || order == null || order.Instrument == null) return;
-            if (RiskGuardAddOn.IsPendingOrWorking(order.OrderState)) return;   // still live
+            if (RiskGuardAddOn.OccupiesSlot(order.OrderState)) return;   // still there; nothing lost
             if (order.OrderState == OrderState.Filled) return;                 // it did its job
 
             string key = BracketKey(followerAcc.Name, order.Instrument.FullName);
@@ -1033,7 +1033,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     .Where(o => o != null && o.Instrument != null
                         && o.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase)
                         && (RiskGuardAddOn.IsStopType(o) || o.OrderType == OrderType.Limit)
-                        && RiskGuardAddOn.IsPendingOrWorking(o.OrderState)
+                        && RiskGuardAddOn.ProvidesCoverage(o.OrderState)
                         && (string.IsNullOrEmpty(o.Name) || !o.Name.Contains("COPIER")))
                     .ToList();
             }
@@ -1084,7 +1084,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (leaderPos == null || leaderPos.MarketPosition == MarketPosition.Flat)
             {
-                if ((isStopLeg || isTargetLeg) && RiskGuardAddOn.IsPendingOrWorking(order.OrderState))
+                if ((isStopLeg || isTargetLeg) && RiskGuardAddOn.ProvidesCoverage(order.OrderState))
                 {
                     double pendingPx = isStopLeg ? order.StopPrice : order.LimitPrice;
                     CopierLog(leaderAccount.Name, "BRACKET_NO_LEADER_POSITION",
@@ -1097,7 +1097,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (!isStopLeg && !isTargetLeg) return;
             if (!RiskGuardAddOn.IsProtectiveSide(order, leaderPos.MarketPosition)) return;
-            if (!RiskGuardAddOn.IsPendingOrWorking(order.OrderState)) return;
+            if (!RiskGuardAddOn.ProvidesCoverage(order.OrderState)) return;
 
             double leaderAnchor = leaderPos.AveragePrice;
             double legPrice = isStopLeg ? order.StopPrice : order.LimitPrice;
@@ -1189,7 +1189,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
-                if (ambiguousTarget != null && RiskGuardAddOn.IsPendingOrWorking(ambiguousTarget.OrderState))
+                if (ambiguousTarget != null && RiskGuardAddOn.OccupiesSlot(ambiguousTarget.OrderState))
                 {
                     try { followerAcc.Cancel(new[] { ambiguousTarget }); }
                     catch (Exception aex)
@@ -1222,7 +1222,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return leaderAccount.Orders.Count(o => o != null && o.Instrument != null
                     && o.OrderType == OrderType.Limit
                     && o.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase)
-                    && RiskGuardAddOn.IsPendingOrWorking(o.OrderState)
+                    && RiskGuardAddOn.ProvidesCoverage(o.OrderState)
                     && RiskGuardAddOn.IsProtectiveSide(o, leaderPos.MarketPosition)
                     && (string.IsNullOrEmpty(o.Name) || !o.Name.Contains("COPIER")));
             }
@@ -1281,7 +1281,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     bool samePrice = Math.Abs(bracket.WorkingStop.StopPrice - stopPrice) < 1e-9;
                     bool sameQty = bracket.WorkingStop.Quantity == qty;
-                    bool stillLive = RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingStop.OrderState);
+                    bool stillLive = RiskGuardAddOn.OccupiesSlot(bracket.WorkingStop.OrderState);
                     if (stillLive && samePrice && sameQty) return;   // already correct
 
                     // The existing stop is wrong and must be replaced. `toCancel` names it; the
@@ -1362,7 +1362,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // cancel-then-create path below, so an unsupporting connection degrades rather
                 // than breaks.
                 if (toCancel != null
-                    && RiskGuardAddOn.IsPendingOrWorking(toCancel.OrderState)
+                    && RiskGuardAddOn.ProvidesCoverage(toCancel.OrderState)
                     && toCancel.OrderType == OrderType.StopMarket
                     && toCancel.OrderAction == action)
                 {
@@ -1424,7 +1424,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     oco = bracket.OcoId;
                 }
 
-                if (staleTarget != null && RiskGuardAddOn.IsPendingOrWorking(staleTarget.OrderState))
+                if (staleTarget != null && RiskGuardAddOn.OccupiesSlot(staleTarget.OrderState))
                 {
                     try { followerAcc.Cancel(new[] { staleTarget }); }
                     catch (Exception tex)
@@ -1560,7 +1560,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             foreach (var leg in legs)
             {
                 if (leg == null || ReferenceEquals(leg, exclude)) continue;
-                if (!RiskGuardAddOn.IsPendingOrWorking(leg.OrderState)) continue;
+                if (!RiskGuardAddOn.OccupiesSlot(leg.OrderState)) continue;
                 if (!string.IsNullOrEmpty(leg.Oco)) return leg.Oco;
             }
             return null;
@@ -1609,7 +1609,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     bool samePrice = Math.Abs(bracket.WorkingTarget.LimitPrice - targetPrice) < 1e-9;
                     bool sameQty = bracket.WorkingTarget.Quantity == qty;
-                    bool stillLive = RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingTarget.OrderState);
+                    bool stillLive = RiskGuardAddOn.OccupiesSlot(bracket.WorkingTarget.OrderState);
                     if (stillLive && samePrice && sameQty) return;   // already correct
                     if (stillLive) toCancel = bracket.WorkingTarget;
                 }
@@ -1650,7 +1650,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // live on 2026-08-10, a trailed leg kept both its orderId and its oco -- so the
                 // pair survives without any id being re-minted.
                 if (toCancel != null
-                    && RiskGuardAddOn.IsPendingOrWorking(toCancel.OrderState)
+                    && RiskGuardAddOn.ProvidesCoverage(toCancel.OrderState)
                     && toCancel.OrderType == OrderType.Limit
                     && toCancel.OrderAction == action)
                 {
@@ -1803,9 +1803,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 FollowerBracket bracket;
                 if (!_followerBrackets.TryGetValue(key, out bracket)) return;
-                if (bracket.WorkingStop != null && RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingStop.OrderState))
+                if (bracket.WorkingStop != null && RiskGuardAddOn.OccupiesSlot(bracket.WorkingStop.OrderState))
                     toCancel.Add(bracket.WorkingStop);
-                if (bracket.WorkingTarget != null && RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingTarget.OrderState))
+                if (bracket.WorkingTarget != null && RiskGuardAddOn.OccupiesSlot(bracket.WorkingTarget.OrderState))
                     toCancel.Add(bracket.WorkingTarget);
                 _followerBrackets.Remove(key);
             }
