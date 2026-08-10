@@ -1,6 +1,6 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-10 (session 9 — five defects from one live trade closed; OCO research done; **`P1-56` opened and is a live hazard**)
+**Last updated**: 2026-08-10 (session 10 — **`P1-56` closed and deployed**; the OCO id rule corrected by live test; `P1-57`/`P2-58` opened. Record in §4q)
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 A second branch **`wip/p09-oco-target`** holds the mirrored-target work, **deliberately NOT deployed** (see §4o)
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **58 defects, 44 closed**
@@ -1771,7 +1771,105 @@ ATM-managed order to test it.
 
 ---
 
+## 4q. Session 10 record — 2026-08-10: `P1-56` closed, and the loop tried twice to ship a defect
+
+**Closed**: `P1-56`. **Opened**: `P1-57`, `P2-58`. **Corrected**: the OCO id-reuse rule (§4p).
+Suite 637/0 → **653/0**. Deployed build `995f6402` → **`c9459121`**, hot-swapped 06:19, 0 errors.
+Seven commits on `harden/riskguard-p0-51`; nothing merged, nothing pushed.
+
+### `P1-56` — what shipped
+
+Body extracted to `SyncFollowerStopOnce`; `SyncFollowerStop` keeps its signature and becomes the
+reservation **holder**: publish `StopInFlight` under `_lock` before any broker call, run a bounded
+re-drive loop (`MaxBracketResyncPasses = 2`), release exactly once in a `finally` that runs **after**
+the loop. A sync arriving mid-flight sets `StopResyncOwed`, returns without touching the broker or
+`StopAttempts`, and the holder re-drives so the newer size/price is applied. Both
+`bracket.WorkingStop = null` clears removed.
+
+**The order of the two halves is the whole design.** The reservation stops a second sync creating a
+duplicate; the *honest* `WorkingStop` is what makes that second sync **modify** the existing order
+via the `Change()` trail path instead. Neither half works alone, and the reviewers who argued about
+the reservation window never engaged with the second half — which is why they over-stated their
+finding in one direction and under-stated it in the other.
+
+### The loop produced three candidates. Two would have shipped live defects. All three passed every gate.
+
+This is the session's most transferable finding, and it is about the **process**, not this defect.
+
+1. **Round 1** put the reservation in place correctly but cleared it in the `finally` *before* the
+   recursive re-drive re-took it. Both reviewers spotted the window; the arbiter upheld it. Then all
+   three endorsed the same fix: *"do not clear `StopInFlight` when a re-sync is owed; let the
+   re-drive's own `finally` clear it."* **That fix leaks the reservation forever** — the re-drive's
+   first act is to test `StopInFlight` and back off, so it returns without ever reaching a `finally`,
+   and that follower can never be given another protective stop. Redirected with an
+   `--orchestrator-note` to hold one reservation across a bounded **loop** instead, which closes the
+   window with no leak and no recursion.
+2. **The apply run silently produced and applied a third, unreviewed candidate.** `--resume-raw`
+   reseeds round 1 *and re-reviews it*; a `REVISE` there triggers a fresh round 2, and `--apply`
+   ships **that**. It set `countAttempt = (pass == 0)`, so re-drive passes reached the broker
+   **without counting an attempt** — turning `MaxBracketStopAttempts = 3` into effectively **9
+   submissions**, the order-flood mode `P1-40`/`P2-46`/the flood cluster already cost us — and it
+   restored `WorkingStop = null` on the `catch` and abort paths, losing track of a possibly-live stop
+   and **reintroducing the very defect being fixed**. Caught by §9 step 3 (*confirm the candidate is
+   the one that was reviewed*), reverted with `git checkout --`, and the reviewed candidate spliced in
+   via the loop's own `regions.apply`, then verified **byte-identical** to the gated `final.patch`.
+
+> ⚠️ **`--resume-raw … --apply` is not a promote-what-I-read command.** It is a fresh run seeded with
+> that raw. If the panel says `REVISE`, you get a new implementation and *that* is what lands. To
+> promote an exact candidate, splice it yourself with `regions.apply` and diff the result against the
+> `final.patch` you reviewed. Mirrored into [AGENT_PATCH_LOOP.md](AGENT_PATCH_LOOP.md) §9.
+
+**The arbiter rubber-stamped the winning round**: 22 findings, 0 upheld. A 0-upheld ruling is not
+reassurance — on the round before it, the same arbiter upheld a finding and recommended a fix that
+would have been a live defect. Read the patch.
+
+### Test-first, and one test written specifically to distrust the arbiter
+
+Three concurrent tests, all hand-written before the fix, because `*Tests.cs` is a protected path the
+implementer cannot reach:
+
+- `TestBracket_P1_56_InterleavedSyncsLeaveExactlyOneProtectiveStop` — **red at baseline**, reproducing
+  the live shape exactly (two live stops, qty 2+1 behind 2 lots).
+- `TestBracket_P1_56_AThirdSyncStillLeavesExactlyOneProtectiveStop` — written because the arbiter
+  recorded *"there is no gap between passes"* as a **settled fact on argument alone**, and a settled
+  fact nothing tests is how `P1-40` shipped.
+- `TestBracket_P1_56_AFailedSubmitDoesNotWedgeLaterSyncs` — **passes at baseline**, and exists to fail
+  if the reservation is ever leaked on a throwing path. A reservation leaked on failure is permanent
+  and strictly worse than the duplicate-leg defect.
+
+**The deterministic-interleaving technique is reusable and `P1-13` needs it.** `Account.BrokerCallObserver`
+fires *inside* `CreateOrder` — the exact window — so the first sync can be parked there while another
+thread drives the second. No sleeps, no racing, no flakiness. Every wait is bounded so that a fix
+which makes one sync *block* on another reports a failure instead of hanging the suite. This is the
+first genuinely concurrent test in the suite; the `S`-series is still sequential.
+
+### Also this session
+
+- **`P1-56` is NOT validated live** — unit + compile only, like `P0-53`/`P1-54`/`P0-55`.
+- Two read-only `oco` fields added (`/api/orders`, `ORDER_UPDATE`) — they are what made §4p possible.
+- The stale *"NT8's Change path is not available through this seam"* comment corrected; it had sat 60
+  lines above the `Change()` call that contradicted it since `995f6402`.
+- `MaxBracketResyncPasses` replaced the literals `3` and `2`, which encoded one bound twice and were
+  one edit from disagreeing. The arbiter dismissed this as *"hypothetical future maintainers"*.
+
+---
+
 ## 5. Decisions already made — do not re-litigate
+
+> **`P1-56`'s two invariants (closed 2026-08-10).** Mirrored verbatim into `profiles.py`'s `settled`,
+> per §10.2b of the loop doc.
+>
+> 1. **`SyncFollowerStop` is the reservation holder; `SyncFollowerStopOnce` does the work and never
+>    touches the flags.** `StopInFlight` is published under `_lock` before any broker call and cleared
+>    exactly once in a `finally` that runs *after* the bounded re-drive loop. Do not clear it between
+>    passes (reopens the window); do not leave it set for the re-drive to clear (**leaks forever** —
+>    the re-drive backs off before reaching any `finally`); do not make the re-drive recursive again;
+>    and **do not let re-drive passes skip the `StopAttempts` increment** — they make real broker
+>    submissions, so not counting them multiplies the bound.
+> 2. **`bracket.WorkingStop` is never cleared before a broker call, nor in `OnFollowerOrderUpdate`** —
+>    not even on the `catch` or abort paths. An honest `WorkingStop` is what makes a concurrent sync
+>    *modify* the existing stop rather than create a second one. If the `Cancel` threw, the old stop
+>    may still be live, and forgetting it recreates the duplicate-leg defect.
 
 - **The copier fails closed on ENTRIES, never on EXITS** (settled across `P0-5`, `P0-6`, `P1-23`,
   `P1-22`). A quarantined relationship still copies exits; unimplemented sizing modes block
