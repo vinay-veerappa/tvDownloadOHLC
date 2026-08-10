@@ -1,7 +1,7 @@
 # Self-Learning Layer — Design & Roadmap
 
-**Last updated:** 2026-08-10 (rev 2 — consolidated critical review)
-**Status:** Phases 0-3 implemented and smoke-tested. Phase 4 optional (not built).
+**Last updated:** 2026-08-10 (rev 3 — agent-loop review fixes applied)
+**Status:** Phases 0-3 implemented, smoke-tested, and agent-loop reviewed (GLM-5.2 + DeepSeek-V4-Pro). All blocking findings fixed. Phase 4 optional (not built).
 **Supersedes:** n/a (new capability on top of the consolidated `.agent/memory.db` store).
 **Git:** this document must be committed before any implementation commit references it.
 
@@ -412,3 +412,32 @@ This rev 2 consolidates two critical reviews (2026-08-10):
 - H2 MCP config drift → §8 P1 exit (d).
 - H3 no test plan → §8 test plan row.
 - H4 doc untracked → header note: commit before implementation.
+
+**Review C (agent-loop adversarial review, 2026-08-10):**
+Run via `python -m scripts.agent_loop --mode review` with GLM-5.2 (REJECT) +
+DeepSeek-V4-Pro (REVISE) + Kimi-K3 arbiter. Findings fixed:
+- Timestamp format: `.isoformat()` → `.strftime('%Y-%m-%d %H:%M:%S')` (4 sites) —
+  was silently excluding all outcomes from time-window queries (string comparison
+  `T` > space in ISO format vs CURRENT_TIMESTAMP).
+- `updated_at` trigger: merged into the FTS `AFTER UPDATE` trigger with
+  `AND updated_at = old.updated_at` recursion guard (was a no-op under
+  `recursive_triggers=OFF`).
+- `infer_verdict`: word-boundary regex instead of bare substring (was matching
+  `"be"` in `"able"`, `"hit"` in `"this"`). Added word-stem variants (`stopped`,
+  `scratched`, `stoploss`).
+- `link_memory_to_code`: now uses `linked_file:` prefix consistent with `add_memory`.
+- `query_memory` outcome projection: handles `NULL` `win_rate_pct`.
+- `seed_profile.py`: fixed typo `"20-00"` → `"20:00"`.
+- `add_memory`: restored `print()` for CLI feedback.
+- `search_memories`: removed redundant `ensure_schema` per-query call.
+- FTS5: switched from external-content to standalone table (external-content
+  returned zero MATCH results on this sqlite build; standalone verified working).
+  §4.4 DDL updated to match implementation.
+
+**Review findings dismissed (wrong assumptions):**
+- "Existing 184 rows have old schema with `topic`/`metadata` columns" — wrong;
+  the DB was already migrated in the earlier consolidation session. The `memories`
+  table has `content`/`tags` columns (verified by smoke test).
+- "External-content FTS5 required" — external-content was tried first but returned
+  zero MATCH results on this sqlite 3.49.1 build. Standalone FTS5 with explicit
+  triggers is verified working (184 rows indexed, bm25 ranked, trigger sync tested).

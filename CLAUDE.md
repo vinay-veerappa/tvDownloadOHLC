@@ -19,6 +19,9 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **ICT Features Pipeline (full rebuild)**: `.\.venv\Scripts\python.exe -m scripts.context.compute_ict_features --full-regen`
 * **ICT Bias Signal Generation**: `.\.venv\Scripts\python.exe -m scripts.context.generate_bias_signals --symbols NQ1 --analyze --eval-time 09:30`
 * **ICT Bias Validation Analysis**: [ICT_BIAS_VALIDATION_ANALYSIS.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ICT_BIAS_VALIDATION_ANALYSIS.md) (7 ICT models negative edge, FTFC 92-99% win rate, session-adaptive bias)
+* **Seed User Profile (dry-run)**: `.\.venv\Scripts\python.exe .agent\skills\context_manager\scripts\seed_profile.py`
+* **Seed User Profile (apply)**: `.\.venv\Scripts\python.exe .agent\skills\context_manager\scripts\seed_profile.py --apply --render`
+* **Write a SKILL.md**: `.\.venv\Scripts\python.exe scripts\skill_writer.py --name <name> --source <draft.md>`
 
 ## Workspace Context Anchors (Inspect ONLY when required)
 * **Architectural Decisions**: [ADR.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md) (Timezones, normalization, vectorized models, prop-firm liquidation)
@@ -42,6 +45,7 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **Profiler Knowledge Base**: [PROFILER_KNOWLEDGE_BASE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/PROFILER_KNOWLEDGE_BASE.md) (Session boxes, status logic, broken logic, auto-filter engine, reference levels, P12 scenarios, HOD/LOD timing, overnight combinations, data architecture)
 * **RiskGuard/Copier Hardening Plan**: [RISKGUARD_COPIER_HARDENING_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_COPIER_HARDENING_PLAN.md) (58 NT8 addon defects P0→P3, 45 closed; defect index keyed to file:line. Defect IDs are never renumbered or reused)
 * **RiskGuard Hardening Progress**: [RISKGUARD_HARDENING_HANDOVER.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_HARDENING_HANDOVER.md) (live state — **read §0 before touching either addon**, then §4a for what is pending. Deployed to shadow on `harden/riskguard-p0-51` (tip `86c6376f`, unmerged/unpushed); several fixes are **compile+unit only, not validated on a live feed**. SHAs from before session 9 are orphaned by a history rewrite — see §0.0)
+* **Self-Learning Layer Design**: [SELF_LEARNING_LAYER_DESIGN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/SELF_LEARNING_LAYER_DESIGN.md) (FTS5 search, user_prefs/USER.md profile, outcomes ledger, skill-write gate — Phases 0-3 implemented)
 * **NT8 Deployment**: never hand-copy `.cs` into `Documents/NinjaTrader 8/bin/Custom/`. Use `python scripts/utils/sync_nt8_strategies.py --verify --only addons` then `--only addons`, and recompile via `nt_compile`. Rules and traps: [NT8_FILE_ORGANIZATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_FILE_ORGANIZATION.md)
 * **Agent Patch Loop (ARCHIVED)**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (historical doc for the predecessor loop; the code is archived in `scripts/agent_loop/_archive_predecessor/`; do not run it)
 * **Agent Loop v2 (current package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package; v0.1.0 tagged; 77/77 tests pass; 9 phases complete including learning feedback)
@@ -80,8 +84,32 @@ There are **two separate parquet stores** for OHLCV data:
 * **For current/live analysis** (narratives, confluence, weekly briefing): load **live storage directly** — do NOT use `DataLoader.load_price()` (which only reads historical parquet, ending 2025-12-31) or `load_fused_data()` (unnecessary overhead from loading historical).
 * **`DataLoader`** (`scripts/shared/data_loader.py`) is the legacy loader that reads historical parquet only. It should NOT be used for current data — use live storage parquet or `load_fused_data()` instead.
 
+## Memory Store — `.agent/memory.db`
+
+The canonical AI memory store, shared across all 5 agent configs (opencode, VS Code, Claude Code, Continue, Antigravity). Schema owned by `store_schema.py` (single source of truth).
+
+| Table | Purpose | Key columns |
+|---|---|---|
+| `memories` | Facts, decisions, rules | `category, content, tags` |
+| `memories_fts` | FTS5 index over `memories` (bm25 ranked search) | `content, tags` (synced via triggers) |
+| `user_prefs` | Structured user profile | `key, value, confidence, source` |
+| `outcomes` | Trade/run outcome ledger | `tag, subject, verdict, pnl_local, ticker, entry_price, exit_price` |
+| `process_queue` | Staged skill proposals | `type, payload, status` |
+
+**MCP tools** (via `nq-data-bridge`, `mcp/data_server.py`):
+`add_memory` · `query_memory` (FTS5+bm25) · `link_memory_to_code` · `render_profile` · `capture_outcome` · `recap_outcomes` · `propose_skill`
+
+**CLI scripts** (`.agent/skills/context_manager/scripts/`):
+- `recall.py` — search memories (FTS5-backed, LIKE fallback)
+- `remember.py` — add a memory
+- `seed_profile.py` — seed `user_prefs` from curated sources (`--apply` to write, `--render` for USER.md)
+- `store_schema.py` — single schema owner (all DDL + FTS5 + helpers)
+
+**Skill writer** (`scripts/skill_writer.py`): the only CLI that persists into `.agent/skills/`. Convention, not a filesystem gate.
+
+**Rendered profile**: `.agent/USER.md` — compiled from `user_prefs` + select memories. Consult it when user preferences, trading style, or conventions are relevant.
+
 ## Development Workflow & Guardrails
-* **Zero-Loop Constraint (ADR-017)**: All Python data engineering and trading strategies must use fully vectorized NumPy/Pandas models. No `for` loops in calculation paths.
 * **Parallel & GPU Sweep (ADR-022)**: Parameter sweeps with ≥32 arms MUST use joblib parallel execution (`run_fvg_cisd_sweep_parallel.py` pattern). Numba `@njit` for bounded per-element loops. CuPy GPU for cumulative ops on >1M element arrays. 24 CPU cores + RTX 4060 8GB available.
 * **Prop Firm RTH Liquidation (ADR-020)**: Strategies must restrict intraday positions to a maximum exit at 16:00 ET (close of 15:59 bar).
 * **Unified Prop Firm Simulation (ADR-021)**: Use ONLY `scripts/trading_framework/ml/prop_firm_simulator.py` (`PropFirmSimulator`) for prop firm viability evaluation. Never feed per-trade % returns directly as daily P&L to any Monte Carlo. `prop_eval_mc.py`, `06_prop_sim.py`, and `simulate_prop_pass.py` are frozen legacy — do not extend. Firm presets (Apex, TopStep, FTMO) live in `FIRM_PROFILES`. Config overrides live in `sessions.yaml` under `prop_firm:`.
