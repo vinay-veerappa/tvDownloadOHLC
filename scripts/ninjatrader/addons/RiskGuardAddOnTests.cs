@@ -764,6 +764,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestReconcile_DuplicateStopsBehindMismatchedQuantitiesLeaveOneCorrectLeg();
             TestReconcile_ChangeSubmittedLegIsNotDuplicated();
             TestReconcile_DepartingLegIsReplacedAndNotCancelledTwice();
+            TestReconcile_P0_61_ALegMidChangeIsDeferredNotChangedAgain();
+            TestOrderLiveness_P0_61_MidChangeAnswersTheThreeQuestionsDifferently();
             TestReconcile_TrailStepModifiesRatherThanReplaces();
             TestReconcile_FlatFollowerCancelsEveryOwnedLeg();
             TestReconcile_UnspecifiedLegKeepsOneAndCreatesNone();
@@ -779,6 +781,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_P3_31_ALegNotYetVisibleAtTheBrokerIsNotDuplicated();
             TestBracket_P3_30_ACachedLegAlsoInAccountOrdersCountsOnce();
             TestBracket_P0_50_AFlatFollowerStandsTheBracketDown();
+            TestBracket_P0_61_ADeferredChangeIsReappliedWhenTheLegSettles();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -10491,6 +10494,69 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "P0-60: the departing stop is not cancelled a second time");
         }
 
+        /// <summary>
+        /// P0-61, found by a live trade on 2026-08-10 and not by any gate. A leg mid-change must
+        /// not be changed again: NT8 silently drops the second Change() and REVERTS the order to
+        /// its pre-change values, so the leg ends up neither where the first change wanted it nor
+        /// where the second did. Live, that left a 2-lot follower behind a 1-lot stop and target.
+        ///
+        /// The trap is that the two P0-60 predicates both answer "yes" here -- it occupies a slot
+        /// and it provides coverage -- so the wrong answer is the natural one.
+        /// </summary>
+        private static void TestReconcile_P0_61_ALegMidChangeIsDeferredNotChangedAgain()
+        {
+            var inst = ReconInstrument();
+            foreach (var midChange in new[] { OrderState.ChangeSubmitted, OrderState.ChangePending })
+            {
+                var changing = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell,
+                    1, 19960, midChange);
+                // Desired differs in BOTH price and quantity, as it did live (1 -> 2 lots).
+                var actions = CopierBracketReconciler.Reconcile(
+                    LongTwoLot(-20, 80), new List<Order> { changing }, false, false);
+
+                Assert(CountVerb(actions, ReconcileVerb.Defer, "COPIER_STOP") == 1,
+                    "P0-61: a leg in " + midChange + " is DEFERRED, not changed a second time");
+                Assert(CountVerb(actions, ReconcileVerb.Modify, "COPIER_STOP") == 0,
+                    "P0-61: no second Change() is issued against a leg in " + midChange
+                    + " -- NT8 drops it and reverts the order");
+                Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 0,
+                    "P0-61: and it does NOT fall back to cancel-then-replace -- pulling a "
+                    + "protective leg whose change is landing opens a naked window to fix a price");
+                Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 0,
+                    "P0-61: nor is a second leg created beside it (" + midChange + ")");
+            }
+        }
+
+        /// <summary>
+        /// The three questions, on one order state, stated together. P0-60 built two predicates
+        /// whose answers point opposite ways; P0-61 added a third that neither answers. A future
+        /// session collapsing any of them back together should fail here.
+        /// </summary>
+        private static void TestOrderLiveness_P0_61_MidChangeAnswersTheThreeQuestionsDifferently()
+        {
+            foreach (var s in new[] { OrderState.ChangeSubmitted, OrderState.ChangePending })
+            {
+                Assert(RiskGuardAddOn.OccupiesSlot(s),
+                    s + " OCCUPIES a slot -- reading it as gone duplicated a live leg (P0-59)");
+                Assert(RiskGuardAddOn.ProvidesCoverage(s),
+                    s + " PROVIDES coverage -- it is protecting the position right now");
+                Assert(!RiskGuardAddOn.AcceptsModification(s),
+                    s + " does NOT accept modification -- a second Change() is dropped and the "
+                    + "order reverts (P0-61, live 2026-08-10)");
+                Assert(!RiskGuardAddOn.IsTerminal(s), s + " is not terminal");
+            }
+
+            // And the ordinary working states still accept one.
+            foreach (var s in new[] { OrderState.Working, OrderState.Accepted, OrderState.TriggerPending })
+                Assert(RiskGuardAddOn.AcceptsModification(s),
+                    s + " accepts modification, so an ordinary trail step is still one order");
+
+            // A cancelling leg accepts nothing and covers nothing (P0-60).
+            Assert(!RiskGuardAddOn.AcceptsModification(OrderState.CancelSubmitted)
+                    && !RiskGuardAddOn.ProvidesCoverage(OrderState.CancelSubmitted),
+                "CancelSubmitted neither covers nor accepts modification");
+        }
+
         private static void TestReconcile_TrailStepModifiesRatherThanReplaces()
         {
             var inst = ReconInstrument();
@@ -10863,6 +10929,79 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"
                     && RiskGuardAddOn.OccupiesSlot(o.OrderState)),
                 "No protective leg is left working against the flat position.");
+        }
+
+        /// <summary>
+        /// P0-61 end to end, and the half that matters: **declining to act is only safe if
+        /// something later acts.**
+        ///
+        /// Deferring the change while one is in flight stops NT8 dropping it and reverting the
+        /// order -- but if nothing re-drives when the leg settles, the deferred price and size are
+        /// lost for the life of the position, which is the same under-covered follower by a
+        /// quieter route. `OnFollowerOrderUpdate` returns early on `OccupiesSlot`, and a leg
+        /// settling out of `ChangeSubmitted` still occupies its slot, so this hook has to run
+        /// before that return.
+        ///
+        /// Written because two mutations that silently dropped the re-drive left the suite green.
+        /// </summary>
+        private static void TestBracket_P0_61_ADeferredChangeIsReappliedWhenTheLegSettles()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: an instruction deferred during an in-flight change is re-applied when the leg settles (P0-61)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18002.00, "BR-P061");
+
+            // ONE leader stop order, trailed in place. That is what NT8 actually does -- a trailed
+            // leg keeps its orderId and its oco (confirmed live, handover 4p) -- and it matters
+            // here: raising a SECOND leader stop object leaves the first one Working, and the
+            // engine may legitimately re-anchor from whichever it reads last, which makes the
+            // assertion below depend on iteration order rather than on the behaviour under test.
+            var leaderStop = LeaderStop(mnq, OrderAction.Sell, 1, 17990.00);
+            leader.TriggerOrderUpdate(leaderStop);
+
+            var stop = follower.Orders.Single(o => o.Name == "COPIER_STOP");
+            Assert(Math.Abs(stop.StopPrice - 17992.00) < 1e-9,
+                "Precondition: the mirrored stop is at 17992.00.");
+
+            // A change is now in flight against it -- the state NT8 was in when it dropped our
+            // second Change() and reverted the order.
+            stop.OrderState = OrderState.ChangeSubmitted;
+
+            // The leader trails its stop in place, 5 points below entry. The sync must NOT touch
+            // the broker while our leg's own change is still in flight.
+            leaderStop.StopPrice = 17995.00;
+            leader.TriggerOrderUpdate(leaderStop);
+
+            Assert(Math.Abs(stop.StopPrice - 17992.00) < 1e-9,
+                string.Format(
+                    "While the change is in flight the leg is left alone (still 17992.00, got {0}). "
+                    + "A second Change() here is dropped by NT8 AND reverts the order.",
+                    stop.StopPrice));
+            Assert(follower.Orders.Count(o => o.Name == "COPIER_STOP"
+                    && RiskGuardAddOn.OccupiesSlot(o.OrderState)) == 1,
+                "No duplicate leg is created while the change is in flight either.");
+
+            // The change lands. THIS is what must re-drive the deferred instruction.
+            stop.OrderState = OrderState.Working;
+            follower.TriggerOrderUpdate(stop);
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.OccupiesSlot(o.OrderState))
+                .ToList();
+            Assert(live.Count == 1,
+                string.Format("Exactly one stop is live after the re-drive (got {0}).", live.Count));
+            Assert(Math.Abs(live[0].StopPrice - 17997.00) < 1e-9,
+                string.Format(
+                    "The deferred trail is applied once the leg settles: expected 17997.00 "
+                    + "(follower entry 18002 - the leader's new 5-point distance), got {0}. "
+                    + "Losing it here leaves the follower on a stale stop for the life of the trade.",
+                    live[0].StopPrice));
         }
 
         private static void TestReconcile_SurvivorPrefersTheLegThatActuallyCovers()

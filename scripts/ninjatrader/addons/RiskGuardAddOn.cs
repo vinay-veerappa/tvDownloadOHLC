@@ -2244,6 +2244,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             /// <summary>Exists at the broker and will act on the market.</summary>
             Working,
+            /// <summary>
+            /// Exists, will act, and a modification of it is ALREADY IN FLIGHT.
+            /// Protective in every sense -- but a second Change() against it is
+            /// silently dropped by NT8, and the order REVERTS to its pre-change
+            /// values. See <see cref="AcceptsModification"/> for the live trace.
+            /// </summary>
+            Changing,
             /// <summary>Exists, but a cancel is already in flight. Do not rely on it; do not cancel it again.</summary>
             Departing,
             /// <summary>Exists but will not act while it stays this way.</summary>
@@ -2264,11 +2271,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             switch (s)
             {
-                // Exists and will act. ChangeSubmitted/ChangePending are the states an
-                // order passes through during Account.Change() -- it is emphatically NOT
-                // gone, and reading it as gone is what duplicated a live leg (P0-59).
-                // TriggerPending is a stop waiting on its trigger: the most protective
-                // state a stop can be in.
+                // Exists and will act. TriggerPending is a stop waiting on its trigger:
+                // the most protective state a stop can be in.
                 case OrderState.Initialized:
                 case OrderState.Submitted:
                 case OrderState.Accepted:
@@ -2276,9 +2280,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                 case OrderState.Working:
                 case OrderState.PartFilled:
                 case OrderState.TriggerPending:
+                    return OrderLiveness.Working;
+
+                // The states an order passes through during Account.Change(). It is
+                // emphatically NOT gone, and reading it as gone is what duplicated a live
+                // leg (P0-59) -- so this still occupies a slot AND provides coverage.
+                // Separated from Working only because a THIRD question has a different
+                // answer here: see AcceptsModification.
                 case OrderState.ChangeSubmitted:
                 case OrderState.ChangePending:
-                    return OrderLiveness.Working;
+                    return OrderLiveness.Changing;
 
                 // A cancel is in flight. It still occupies its slot at the broker, so
                 // cancelling again is noise -- but it must NOT be counted as coverage,
@@ -2315,8 +2326,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal static bool OccupiesSlot(OrderState s)
         {
             var c = Classify(s);
-            return c == OrderLiveness.Working || c == OrderLiveness.Inert
-                || c == OrderLiveness.Indeterminate;
+            return c == OrderLiveness.Working || c == OrderLiveness.Changing
+                || c == OrderLiveness.Inert || c == OrderLiveness.Indeterminate;
         }
 
         /// <summary>
@@ -2326,6 +2337,37 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// position naked while something believes it is protected.
         /// </summary>
         internal static bool ProvidesCoverage(OrderState s)
+        {
+            var c = Classify(s);
+            return c == OrderLiveness.Working || c == OrderLiveness.Changing;
+        }
+
+        /// <summary>
+        /// "Can I issue an Account.Change() against this order right now?"
+        ///
+        /// **The third question, added 2026-08-10 after a live trade on `Sim101 -> Sim-ORB`.**
+        /// P0-60 established two questions with opposite fail-safe answers; this is a third
+        /// that neither answers, and the shape of the defect is identical -- a caller asking
+        /// something no predicate covered, and inferring it from the closest one.
+        ///
+        /// A leg mid-change occupies a slot (yes) and provides coverage (yes) but must NOT be
+        /// changed again: **NT8 silently drops the second Change() and the order REVERTS to
+        /// its pre-change values.** The live trace, on a follower scaling 1 -> 2 lots:
+        ///
+        ///     34412 ChangeSubmitted  qty 1 @ 29822.25   (first change in flight)
+        ///     34412 ChangePending    qty 2 @ 29822.5    (our second change)
+        ///     34412 Working          qty 1 @ 29822.25   (reverted -- BOTH changes lost)
+        ///
+        /// The follower was left holding 2 lots behind a 1-lot stop and a 1-lot target.
+        /// RiskGuard saw it (`FSM_UNDERCOVERED: covered 1 &lt; pos 2`) and, in shadow, logged
+        /// `MISSING_STOP_FLATTEN` on all four accounts -- armed live it would have flattened
+        /// the lot. So the compensating control worked and the copier still under-covered.
+        ///
+        /// A caller that finds this false must NOT fall back to cancel-then-replace: cancelling
+        /// a protective leg whose change is about to land is strictly worse than waiting a beat.
+        /// Defer and re-drive once the order settles.
+        /// </summary>
+        internal static bool AcceptsModification(OrderState s)
         {
             return Classify(s) == OrderLiveness.Working;
         }

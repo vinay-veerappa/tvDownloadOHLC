@@ -33,7 +33,7 @@ could have been: they are both about what *another* program's orders look like t
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55`, `P0-59`, `P0-60` | 17 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09**. **`P0-59` and `P0-60` opened and CLOSED 2026-08-10** — two addons held opposite, non-total definitions of order liveness; replaced by one total classification |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55`, `P0-59` … `P0-62` | 19 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED, deployed and live-validated 2026-08-10**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09**. **`P0-59`/`P0-60` opened and CLOSED 2026-08-10** — two addons held opposite, non-total definitions of order liveness. **`P0-61` opened and CLOSED 2026-08-10** by a live trade — a second `Change()` against a mid-change leg is dropped AND reverts it; the third question `AcceptsModification`. **`P0-62` OPEN** — `Change()` applies the price but silently refuses a quantity increase, so a scaled-in follower stays under-sized |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52`, `P1-54`, `P1-56`, `P1-57` | 28 | **26 closed.** Open: **`P1-57`** (we would mirror another copier's mirror) and **`P1-13`'s threading half** — its fail-open half is closed. `P1-52`, `P1-54` and `P1-56` all closed 2026-08-09/10 |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46`, `P2-58` | 10 | `P2-28`, `P2-46`, `P2-38`, `P2-41` closed, and **`P2-58` opened and closed 2026-08-10**; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | all open, but **`P3-30`'s copier half shipped 2026-08-10** and `P3-31`'s seam exists (both still open — the timer and the RiskGuard-side audit remain). `P3-32` may be **superseded by `P0-9`** — read it before scheduling it as work |
@@ -747,6 +747,105 @@ records as having found three defects by making something a compile error.
 > grader is this same defect one level up.
 
 Suite 686/0 → **705/0**, `nt_compile` 0 errors under net48, deployed.
+
+---
+
+### P0-61. A second `Change()` against a leg already mid-change is dropped, and REVERTS the order — CLOSED 2026-08-10
+*(found by a live trade, one hour after `P3-30` shipped. Not by any gate, and not by 782 tests.)*
+
+**Where**: `CopierBracketReconciler.Reconcile`'s Modify branch, and the `AcceptsModification`
+predicate that did not exist.
+
+**What happens**: `P0-60` established two questions with opposite fail-safe answers. This is a
+**third** question that neither answers — *"can I issue a change against this order right now?"* —
+and the defect has exactly the same shape: a caller asking something no predicate covered, and
+inferring it from the nearest one. A leg in `ChangeSubmitted`/`ChangePending` **occupies a slot**
+(yes) and **provides coverage** (yes) but must not be changed again.
+
+Issue a second `Account.Change()` and NT8 does not merely ignore it — **it drops the change AND
+reverts the order to its pre-change values**, so the leg ends up neither where the first change
+wanted it nor where the second did. The live trace, on a follower going 1 → 2 lots:
+
+```
+34412 ChangeSubmitted  qty 1 @ 29822.25    first change in flight
+34412 ChangePending    qty 2 @ 29822.5     our second change
+34412 Working          qty 1 @ 29822.25    reverted -- BOTH changes lost
+```
+
+The follower held 2 lots behind a 1-lot stop and a 1-lot target. RiskGuard saw it
+(`FSM_UNDERCOVERED: covered 1 < pos 2`) and logged `MISSING_STOP_FLATTEN` on all four accounts —
+in shadow, so nothing happened; **armed live it would have flattened the lot.** The compensating
+control worked and the copier still under-covered.
+
+**Fixed**: `OrderLiveness.Changing`, a third derived predicate, and a fourth reconcile verb.
+
+```
+OrderLiveness { Working, Changing, Departing, Inert, Terminal, Indeterminate }
+  OccupiesSlot(s)        -> + Changing    still true: reading it as gone is P0-59
+  ProvidesCoverage(s)    -> + Changing    still true: it IS protecting the position
+  AcceptsModification(s) -> Working only  the new question
+```
+
+`Reconcile` emits `ReconcileVerb.Defer` instead of `Modify`, and **deliberately does not fall back
+to cancel-then-replace** — pulling a protective leg whose change is about to land opens a naked
+window in order to fix a price.
+
+> ⚠️ **Declining to act is only safe if something later acts.** The first cut set the existing
+> `*ResyncOwed` flag, which `SyncFollowerStop`'s own pass loop consumes *immediately* — re-driving
+> while the leg is still mid-change, deferring three times, and giving up at the pass bound. The
+> two signals cannot share storage: *"a concurrent sync had a newer instruction"* is not *"the
+> broker is busy, come back when it is not"*. So there is a dedicated per-leg
+> `StopChangeDeferred`/`TargetChangeDeferred`, and `OnFollowerOrderUpdate` re-drives when the leg
+> settles — **before** its `OccupiesSlot` early return, because a leg settling out of
+> `ChangeSubmitted` still occupies its slot and would otherwise be dropped.
+
+**Live-validated 2026-08-10** on `Sim101 -> Sim-ORB`: `BRACKET_DEFERRED` →
+`BRACKET_DEFERRED_REDRIVE` → `stop moved to 2@29742.5` and `target moved to 2@29805`. The previous
+build never got either leg past qty 1.
+
+Verified by mutation, 7 for 7, including three that silently dropped the re-drive and left the
+suite green until the end-to-end test existed. Suite 762/0 → **787/0**.
+
+---
+
+### P0-62. `Account.Change()` applies the price but silently refuses a quantity INCREASE — OPEN
+*(found live 2026-08-10 while validating `P0-61`'s fix; the fix works and this is what it revealed)*
+
+**Where**: every `followerAcc.Change(...)` call — both leg syncs — and therefore
+`Reconcile`'s decision to emit `Modify` at all when the quantity must grow.
+
+**The evidence is inside a single `Change()` call**, which is why this is not a guess. The engine
+issued one change carrying **both** a new price and a new quantity, and logged it:
+
+```
+COPIER_BRACKET_MODIFIED   stop moved to 2@29742.5 in place
+  order before:  1 @ 29743.5
+  order after:   1 @ 29742.5     <-- price APPLIED, quantity increase REVERTED
+```
+
+**Consequence**: a follower that scales in can never have its protective leg grown by
+modification. It stays permanently under-sized behind a larger position. The attempt budget
+(`MaxBracketStopAttempts = 3`) then stops the retries — so it fails **quiet** rather than
+flooding, which is the right failure but still leaves the follower under-covered with only
+RiskGuard's `MISSING_STOP_FLATTEN` noticing.
+
+**Not yet fixed, because the remedy is a real trade-off and should be chosen deliberately:**
+
+1. **Cancel-then-create** when the desired quantity *exceeds* the working leg's — correct size, at
+   the cost of a brief naked window on the risk leg, and it re-mints the OCO group.
+2. **Submit an additional leg for the delta** — no naked window, but it deliberately creates the
+   multi-leg state the whole duplicate-detection rule is built to eliminate, so `Reconcile`'s
+   "cancel extras" would have to learn that N legs summing to the position size is legitimate.
+   `P1-36` already built the multi-stop coverage sum this would need.
+
+Option 1 is the smaller change and matches the existing fallback path. Option 2 is what `P1-36`'s
+machinery points at. **Do not just widen the retry budget** — the budget is not what is failing.
+
+> ⚠️ **Caveat on the reproduction, stated so nobody over-reads it.** The scale-in was a bare market
+> order *outside* the leader's ATM bracket, so the LEADER was also 1-lot-covered behind 2 lots.
+> That part is an artifact of how the test was driven. What is **not** an artifact: the copier
+> computed qty 2 from the follower's own position, logged qty 2, issued qty 2, and the broker kept
+> qty 1.
 
 ---
 

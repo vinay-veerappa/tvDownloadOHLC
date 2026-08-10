@@ -848,9 +848,59 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// Re-submit, bounded by <see cref="MaxBracketStopAttempts"/> /
         /// <see cref="MaxBracketTargetAttempts"/>.
         /// </summary>
+        /// <summary>
+        /// P0-61. One of our legs has settled out of a change. If a sync deferred an instruction
+        /// while that change was in flight, re-drive it now and report that we did.
+        ///
+        /// A dedicated flag rather than the existing `*ResyncOwed`: that one is consumed by
+        /// `SyncFollowerStop`'s own pass loop the moment it is set, which would re-drive
+        /// immediately -- while the leg is still mid-change -- and burn the pass budget deferring
+        /// three times before giving up. The two signals mean different things and cannot share
+        /// storage: "a concurrent sync had a newer instruction" versus "the broker was busy, come
+        /// back when it is not".
+        /// </summary>
+        private bool ReDriveDeferredLeg(Account followerAcc, Order order)
+        {
+            FollowerBracket bracket;
+            string key = BracketKey(followerAcc.Name, order.Instrument.FullName);
+            lock (_lock)
+            {
+                if (!_followerBrackets.TryGetValue(key, out bracket)) return false;
+
+                bool isStop = ReferenceEquals(bracket.WorkingStop, order) && bracket.StopChangeDeferred;
+                bool isTarget = ReferenceEquals(bracket.WorkingTarget, order) && bracket.TargetChangeDeferred;
+                if (!isStop && !isTarget) return false;
+
+                // Cleared before the sync, not after: if the sync defers again -- the broker can
+                // start another change on its own account -- it sets the flag again, and a flag
+                // cleared afterwards would erase that.
+                if (isStop) bracket.StopChangeDeferred = false;
+                else bracket.TargetChangeDeferred = false;
+            }
+
+            CopierLog(followerAcc.Name, "BRACKET_DEFERRED_REDRIVE",
+                $"{order.Instrument.FullName}: the leg settled to {order.OrderState}; "
+                + "re-applying the instruction deferred while its change was in flight.");
+
+            SyncFollowerBracket(followerAcc, order.Instrument, bracket);
+            return true;
+        }
+
         private void OnFollowerOrderUpdate(Account followerAcc, Order order)
         {
             if (followerAcc == null || order == null || order.Instrument == null) return;
+
+            // P0-61's completion hook, and it must come BEFORE the OccupiesSlot return below.
+            //
+            // A leg that has just settled out of ChangeSubmitted/ChangePending still occupies a
+            // slot, so the early return would drop this event -- and the instruction we deferred
+            // while the change was in flight would be lost, leaving the leg at its old price and
+            // size for the life of the position. That is the defect P0-61 fixes, one layer down:
+            // declining to act is only safe if something later acts.
+            if (RiskGuardAddOn.AcceptsModification(order.OrderState)
+                && ReDriveDeferredLeg(followerAcc, order))
+                return;
+
             if (RiskGuardAddOn.OccupiesSlot(order.OrderState)) return;   // still there; nothing lost
             if (order.OrderState == OrderState.Filled) return;                 // it did its job
 
@@ -976,6 +1026,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             // harmless, and it is what lets a later target JOIN rather than forcing the
             // protective stop to be cancelled and re-created into a new group.
             public string OcoId;
+
+            // P0-61. A sync computed a new price/size for this leg while a change against it was
+            // already in flight, so it declined to act. Cleared and re-driven when the leg
+            // settles (ReDriveDeferredLeg). NOT the same as *ResyncOwed -- see that method.
+            public bool StopChangeDeferred;
+            public bool TargetChangeDeferred;
         }
 
         // How many EXTRA passes the reservation holder will re-drive the sync for, after a
@@ -1408,9 +1464,24 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             if (keeperActions.Count == 0) return;
 
-            // The three verbs, unpacked. `Reconcile` has already decided between them -- a
-            // Modify is its statement that this leg has the right shape AND is in a state the
-            // broker will change, so the old predicate soup at the Change() call site is gone.
+            // P0-61. A change against this leg is already in flight, so the broker must not be
+            // touched this pass -- NT8 drops the second change AND reverts the order. But the
+            // newer instruction must not be LOST either, or the leg keeps the old price and size
+            // for the life of the position, which is the same under-covered follower by a quieter
+            // route. `ReDriveDeferredLeg` re-applies it when the leg settles.
+            //
+            // Its own flag, NOT `StopResyncOwed`: that one is consumed by SyncFollowerStop's pass
+            // loop the instant it is set, which re-drives while the leg is still mid-change and
+            // burns the pass budget deferring. See ReDriveDeferredLeg.
+            foreach (var a in keeperActions)
+            {
+                if (a.Verb != ReconcileVerb.Defer) continue;
+                lock (_lock) { bracket.StopChangeDeferred = true; }
+                CopierLog(followerAcc.Name, "BRACKET_DEFERRED",
+                    $"{instrument.FullName}: {a.Reason}");
+                return;
+            }
+
             Order toModify = null;
             Order toCancel = null;
             bool wantsCreate = false;
@@ -1737,6 +1808,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
             if (keeperActions.Count == 0) return;
+
+            // As the stop leg: a change already in flight means wait, not push. Its own owed
+            // flag, not the stop's -- an in-flight target must never make the RISK leg queue.
+            foreach (var a in keeperActions)
+            {
+                if (a.Verb != ReconcileVerb.Defer) continue;
+                lock (_lock) { bracket.TargetChangeDeferred = true; }
+                CopierLog(followerAcc.Name, "BRACKET_TARGET_DEFERRED",
+                    $"{instrument.FullName}: {a.Reason}");
+                return;
+            }
 
             Order toModify = null;
             Order toCancel = null;

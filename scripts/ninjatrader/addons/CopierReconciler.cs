@@ -116,7 +116,17 @@ namespace NinjaTrader.NinjaScript.AddOns
         Modify,
 
         /// <summary>Cancel a leg that should not exist, or must be replaced.</summary>
-        Cancel
+        Cancel,
+
+        /// <summary>
+        /// This leg is wrong but must not be touched YET -- a change against it is already in
+        /// flight. Do nothing to the broker; re-drive the sync once the order settles.
+        ///
+        /// Added after a live trade: NT8 silently drops a second Change() and REVERTS the order
+        /// to its pre-change values, which left a 2-lot follower behind a 1-lot stop. See
+        /// RiskGuardAddOn.AcceptsModification for the trace.
+        /// </summary>
+        Defer
     }
 
     /// <summary>
@@ -490,10 +500,27 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (samePrice && sameQty) return;               // already correct
             }
 
+            // A change is already in flight against this leg. Issuing a second one is not a
+            // no-op: NT8 drops it AND reverts the order to its pre-change values, so the leg
+            // ends up neither where the first change wanted it nor where the second did. Live
+            // on 2026-08-10 that left a 2-lot follower behind a 1-lot stop and target.
+            //
+            // Deliberately does NOT fall through to cancel-then-replace. Cancelling a
+            // protective leg whose change is about to land is strictly worse than waiting a
+            // beat -- it opens a naked window to fix a price.
+            if (rightShape && !RiskGuardAddOn.AcceptsModification(keeper.OrderState)
+                && RiskGuardAddOn.ProvidesCoverage(keeper.OrderState))
+            {
+                actions.Add(Act(ReconcileVerb.Defer, keeper, leg,
+                    "a change is already in flight (" + keeper.OrderState
+                    + "); a second one would be dropped and revert the leg. Re-drive when it settles."));
+                return;
+            }
+
             // Modify in place where the broker can: one order, so no unprotected window
             // on an ordinary trail step, and OCO group membership survives (confirmed
             // live 2026-08-10 -- a trailed leg kept both its orderId and its oco).
-            if (rightShape && RiskGuardAddOn.ProvidesCoverage(keeper.OrderState))
+            if (rightShape && RiskGuardAddOn.AcceptsModification(keeper.OrderState))
             {
                 actions.Add(Act(ReconcileVerb.Modify, keeper, leg,
                     "leg is " + keeper.Quantity + "@" + LegPriceOf(keeper)
