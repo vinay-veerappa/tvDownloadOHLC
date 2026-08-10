@@ -13,7 +13,7 @@ Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 > box. Analysis in §4m, what shipped in the plan's `P0-51` and `P1-52` entries.
 >
 > ✅ **`P0-53` is fixed too.** The lockout's `CancelAllOrders` no longer cancels a protective stop
-> while its position is open. Suite **630 passed / 0 failed** — fully green.
+> while its position is open. Suite **637 passed / 0 failed** — fully green.
 >
 > **All three defects from the 2026-08-09 incident are closed, deployed and compiling clean under
 > net48.** None has been validated on a live feed; see §4m for what that would take.
@@ -1449,18 +1449,25 @@ was silent** — seven of them — and each now emits a reason: `COPIER_EXEC_SEE
 `EXEC_IS_FOLLOWER`, `EXEC_SELF_ORIGINATED`, `EXEC_DUPLICATE`, `NO_ACTIVE_RELATIONSHIPS`,
 `COPY_BEGIN`.
 
-**The bracket path is still dark.** `SyncFollowerStop` and its `OrderUpdate` trigger have no
-instrumentation, which is why `P0-55` below cannot be explained yet. That is the next thing to wire.
+**The bracket path is no longer dark.** `BRACKET_NO_LEADER_POSITION` and `BRACKET_REANCHOR` were
+added while closing `P0-55`, and they are what turned "the follower is naked and nobody knows why"
+into a two-line trace. `SyncFollowerStop`'s own internals remain uninstrumented — worth doing before
+the next copier change.
 
 ### Two defects the replay opened
 
-- **`P0-55`** — the leader's 2-lot stop arrived while the entry was only half filled, RiskGuard
-  discarded it (`FSM_PENDING_STOP_REJECTED`), and **`Sim-ORB` got no `COPIER_STOP` at all**. The
-  follower ran the whole trade `Unprotected`. Naked-follower, `P0-9`'s own failure class, by a route
-  `P0-9` does not cover.
-- **`P1-54`** — `Sim101`, `SimCopy2` and `SimCopyTest1` were *still locked out ~3 hours later* and
-  blocked the replay. `IsLockedOut` is sticky, `LockoutUntil` is not persisted, and the test is an
-  OR, so `LockoutMinutes` never ends a lockout. Cleared with `POST /api/lockout {"action":"unlock"}`.
+- **`P0-55`** ✅ **CLOSED same day.** `Sim-ORB` got no `COPIER_STOP` at all and ran the whole trade
+  `Unprotected`. The cause was **not** the FSM rejection it appeared to be: the leader's stop
+  reached `Accepted` at `.4203` and the leader's position only existed at `.4683`, so
+  `OnLeaderOrderUpdate` had nothing to anchor to — and an accepted ATM stop is event-silent
+  afterwards, while the leader's own `PositionUpdate` was discarded because the account is not a
+  follower. **The leader-side twin of `P0-49`**, whose docstring describes the identical race on the
+  follower's anchor. Fixed by re-driving the mirror from the leader's `PositionUpdate`.
+- **`P1-54`** ✅ **CLOSED same day.** `Sim101`, `SimCopy2` and `SimCopyTest1` were *still locked out
+  ~3 hours later* and blocked the replay. `IsLockedOut` was sticky, `LockoutUntil` was not
+  persisted, and the test is an OR, so `LockoutMinutes` never ended a lockout. Fixed by lapsing on a
+  passed deadline and persisting it — with `MinValue` still meaning "no deadline", since
+  `LockAccount(name, -1)` uses it for an EOD hold.
 
 ### Two operational gotchas worth keeping
 

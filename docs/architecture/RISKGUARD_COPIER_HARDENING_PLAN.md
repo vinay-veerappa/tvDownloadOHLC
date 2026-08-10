@@ -1,8 +1,8 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-10, branch `harden/riskguard-p0-51`, suite **630 passed / 0 failed**): **41 of 55 closed**.
+**Status** (2026-08-10, branch `harden/riskguard-p0-51`, suite **637 passed / 0 failed**): **43 of 55 closed**.
 **`P0-51`/`P1-52` are VALIDATED LIVE** (replay, 2026-08-10 — see handover §4n). That replay opened
-`P0-55` and `P1-54`.
+`P0-55` and `P1-54`, both since **closed**.
 Deployed, `shadow`, armed and guarding; NT8 compiles clean (0 errors, net48).
 **`P0-51`, `P1-52` and `P0-53` are all CLOSED and deployed.** The suite is fully green again.
 Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
@@ -485,7 +485,7 @@ Pinned by `TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening`
 
 ---
 
-### P0-55. A follower can be left with NO mirrored stop after a partial-fill entry — OPEN 2026-08-10
+### P0-55. A follower can be left with NO mirrored stop after a partial-fill entry — CLOSED 2026-08-10
 *(found by the live replay of the 2026-08-09 incident)*
 **Where**: the copier's bracket path (`TradeCopierEngine.SyncFollowerStop` and its `OrderUpdate`
 trigger); interacts with `RiskGuardAddOn`'s `FSM_PENDING_STOP_REJECTED`
@@ -503,18 +503,38 @@ Sim101  FSM_TRANSITION             Created FSM Sim101|MNQ SEP26 -> Unprotected
 the life of the trade, with RiskGuard emitting `MISSING_STOP_FLATTEN` (withheld, shadow). This is
 the naked-follower condition `P0-9` exists to prevent, reached by a route `P0-9` does not cover.
 
-> **Do not assume the mechanism.** The copier classifies the leader's stop with the *static*
-> helpers (`IsStopType`, `IsProtectiveSide`, `IsPendingOrWorking`), not with RiskGuard's FSM, so the
-> FSM rejection should not by itself suppress the mirror. Why the mirror never fired is **not
-> established** — the bracket path has no instrumentation. Instrument `SyncFollowerStop` and the
-> `OrderUpdate` bracket trigger before theorising further.
+**Mechanism, established 2026-08-10 — and it was NOT the FSM rejection.** The copier classifies
+the leader's stop with the static helpers, not RiskGuard's FSM, so the rejection was a coincidence
+of the same race rather than its cause. The real sequence, from the replay log:
+
+| Time | Event |
+|---|---|
+| `.4203` | leader stop `34262` reaches **`Accepted`** |
+| `.4683` | leader **`POSITION_UPDATE` Long 1** — the position exists only now |
+
+`OnLeaderOrderUpdate` anchors the distance on `leaderAccount.Positions`, found nothing at `.4203`,
+and returned. **An accepted ATM stop raises no further `OrderUpdate`**, and the leader's own
+`PositionUpdate` was discarded outright by `OnAccountPositionUpdate` because the account is not a
+follower. So the offset was never computed and nothing could ever recompute it.
+
+**This is the leader-side twin of `P0-49`**, whose docstring already describes the identical race on
+the *follower's* anchor — including the detail that an accepted ATM stop is event-silent afterwards.
+Only the follower half was fixed.
 
 Note the contrast with the 2026-08-09 incident, where `Sim-ORB` **did** receive a `COPIER_STOP`
 1 ms after its fill. The difference is the partial fill.
 
+**Fixed 2026-08-10.** The leader's `PositionUpdate` now re-drives the mirror for every working
+protective stop on that instrument (`ReevaluateLeaderStops`). An account can be both leader and
+follower, so the leader re-anchor and the follower anchor are two independent `if`s, not a branch.
+The recoverable abandon is no longer silent: `BRACKET_NO_LEADER_POSITION` records the deferral and
+`BRACKET_REANCHOR` records the recovery.
+
+Pinned by `TestBracket_P0_55_LeaderStopAcceptedBeforeLeaderPositionIsStillMirrored`.
+
 ---
 
-### P1-54. A lockout never lapses; `LockoutMinutes` has no effect — OPEN 2026-08-10
+### P1-54. A lockout never lapses; `LockoutMinutes` has no effect — CLOSED 2026-08-10
 **Where**: `RiskGuardAddOn.cs` — the lockout test at `:1734`, the flag clear at `:1847`,
 `EvaluateLockoutPhase` at `:2783`, and `CapturePersistedState`
 **What happens**: the lockout test is `IsLockedOut || DateTime.UtcNow < LockoutUntil` — an **OR** —
@@ -535,9 +555,18 @@ next day, ~3 hours after the false flood lockout, blocking a fresh test order wi
 > added `LockoutUntil` beside the flag, which is necessary but not sufficient: with an OR test and
 > no expiry-clear, the deadline can only ever *extend* a lockout, never end one.
 
-**Fix**: clear `IsLockedOut` when `LockoutUntil` has passed — the natural home is the top of
-`EvaluateLockoutPhase`, which already runs every sweep — and persist `LockoutUntil` alongside the
-name list so a restart cannot silently convert a 60-minute lockout into an all-day one.
+**Fixed 2026-08-10.** `EvaluateLockoutPhase` now ends a lockout whose deadline has passed
+(`LOCKOUT_LAPSED`), and `LockoutUntil` persists per account in `AccountPersistedData`.
+
+> **`MinValue` means "no deadline", not "expired".** `LockAccount(name, -1)` uses exactly that to
+> express an EOD hold, so a naive `UtcNow >= LockoutUntil` check would silently unlock every
+> deliberate hold-until-session-reset. The lapse is gated on `LockoutUntil > DateTime.MinValue`.
+> Older state files deserialize the new field as `MinValue`, which reads as the previous behaviour,
+> so an upgrade cannot shorten a lockout that was meant to hold.
+
+Pinned by `TestP1_54_LockoutLapsesWhenItsDeadlinePasses` (which also asserts a *future* deadline
+still holds — the lapse must not become a blanket unlock) and
+`TestP1_54_LockoutDeadlineSurvivesARestart`.
 
 ---
 
