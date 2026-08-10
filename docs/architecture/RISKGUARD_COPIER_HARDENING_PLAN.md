@@ -33,7 +33,7 @@ could have been: they are both about what *another* program's orders look like t
 
 | Band | IDs | Count | Status |
 |---|---|---|---|
-| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55`, `P0-59` | 16 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09**. **`P0-59` OPEN — an order being modified reads as dead, so the copier duplicates the leg (2026-08-10, found live)** |
+| P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55`, `P0-59`, `P0-60` | 17 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09**. **`P0-59` and `P0-60` opened and CLOSED 2026-08-10** — two addons held opposite, non-total definitions of order liveness; replaced by one total classification |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52`, `P1-54`, `P1-56`, `P1-57` | 28 | **26 closed.** Open: **`P1-57`** (we would mirror another copier's mirror) and **`P1-13`'s threading half** — its fail-open half is closed. `P1-52`, `P1-54` and `P1-56` all closed 2026-08-09/10 |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46`, `P2-58` | 10 | `P2-28`, `P2-46`, `P2-38`, `P2-41` closed, and **`P2-58` opened and closed 2026-08-10**; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
 | P3 — enhancements | `P3-30` … `P3-34` | 5 | all open. `P3-32` may be **superseded by `P0-9`** — read it before scheduling it as work |
@@ -640,7 +640,7 @@ someone chose to call them.
 
 ---
 
-### P0-59. An order being MODIFIED reads as dead, so the copier duplicates the leg — OPEN 2026-08-10
+### P0-59. An order being MODIFIED reads as dead, so the copier duplicates the leg — CLOSED 2026-08-10
 *(found by the first live validation of the mirrored target — handover §4s)*
 
 **Where**: `RiskGuardAddOn.IsPendingOrWorking` (`:2208`), consumed by
@@ -689,8 +689,64 @@ includes `ChangePending`. Two definitions of "this order is alive", and the copi
    any future state NT8 adds lands in the same gap otherwise.
 3. Audit every other `!IsPendingOrWorking` / `IsPendingOrWorking` call site for the same inference.
 
-> ⚠️ **This is live in the deployed build (`86c6376f`).** The copier acts regardless of guard mode,
-> so a leader trailing a stop can duplicate a follower's protective leg today.
+**Fixed 2026-08-10 (`b5c58ae0`), together with `P0-60` — they are one defect seen from two sides.**
+See `P0-60` for the model. Verified by mutation: restoring the old belief reproduces the live
+incident exactly (2 `COPIER_TARGET`s), and shows the trail path duplicating the **stop** too.
+
+---
+
+### P0-60. Two addons, two opposite, non-total definitions of "this order is alive" — CLOSED 2026-08-10
+*(the root cause behind `P0-59`; found by stepping back from it rather than by patching it)*
+
+**Where**: `RiskGuardAddOn.IsPendingOrWorking` / `IsTerminal` and all 21 call sites across both addons
+
+**What happened**: NT8 has **sixteen** `OrderState`s. `IsPendingOrWorking` classified five,
+`IsTerminal` three. **The two predicates were not each other's complement**, so eight states were
+unclassified — and each addon silently inferred the opposite thing about them:
+
+| Addon | Predicate used | Consequence |
+|---|---|---|
+| RiskGuard | `!IsTerminal` | a stop in `CancelSubmitted`/`CancelPending` **counted as coverage**, so a position read as protected during exactly the window its protection was being withdrawn, and no replacement was armed |
+| the copier | `IsPendingOrWorking` | a leg in `ChangeSubmitted`/`ChangePending`/`TriggerPending` **counted as gone**, so it created a duplicate — `P0-59` |
+
+Both are naked-risk/over-cover hazards. Both were live. One root cause.
+
+**Why one boolean could never have fixed it.** Callers ask two different questions whose fail-safe
+answers point in opposite directions:
+
+- *"Is something already here, so I must not create a second?"* — answering **no** wrongly
+  **over-covers** (two stops flip the position when both fire).
+- *"Does this actually protect the position?"* — answering **yes** wrongly leaves it **naked**.
+
+Adding the missing states to one list would have fixed the instance and left the structure that
+generates it. That is the patch this entry exists to have avoided.
+
+**Fixed**: one total classification with two derived predicates.
+
+```
+OrderLiveness { Working, Departing, Inert, Terminal, Indeterminate }
+  OccupiesSlot(s)     -> Working | Inert | Indeterminate   "something is here; do not duplicate it"
+  ProvidesCoverage(s) -> Working                            "this will actually act"
+  IsTerminal(s)       -> Terminal                           honest; now zero production callers
+```
+
+`Indeterminate` **occupies a slot and provides no coverage** — conservative in both directions
+simultaneously, which is precisely what a single boolean cannot be. Any state NT8 adds lands there
+rather than in a silent default.
+
+**`IsPendingOrWorking` was deleted, not wrapped.** That turned every ambiguous call site into a
+compile error and forced each one to declare which question it was asking — the same technique §4k
+records as having found three defects by making something a compile error.
+
+> **The test double was the reason none of this was visible.** The stub's enum carried **ten of
+> sixteen** states, so six could not be named by any test, and the suite was green at 686/0 with a
+> P0 live on the box. All sixteen are now declared — obtained by reflecting
+> `NinjaTrader.Core.dll`, not from memory — and `TestOrderLiveness_ClassifiesEveryNT8OrderState`
+> fails if the stub drifts from NT8 or if any state reaches the default arm. The test file's own
+> private copy of the liveness list is gone too: a second definition of "alive" living in the
+> grader is this same defect one level up.
+
+Suite 686/0 → **705/0**, `nt_compile` 0 errors under net48, deployed.
 
 ---
 

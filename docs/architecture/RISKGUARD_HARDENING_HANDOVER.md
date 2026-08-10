@@ -4,13 +4,13 @@
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 **`wip/p09-oco-target` is SUPERSEDED** — its work was rebased and shipped as `86c6376f`; do not
 deploy or rebase that branch, it predates the holder split and lacks five fixes (§4r).
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **59 defects, 46 closed**
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **60 defects, 48 closed**
 (`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p; `P2-58` closed same day)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
 NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
-**The deployed build is `86c6376f`** — the mirrored target, on `harden/riskguard-p0-51`.
+**The deployed build is `b5c58ae0`** — the order-liveness model, on `harden/riskguard-p0-51`.
 (`c9459121` was the deployed build from 2026-08-10 06:19 to 13:12; `995f6402` before that.)
-Suite **686 passed, 0 failed**.
+Suite **705 passed, 0 failed**.
 
 > ✅ **`P0-9`'s mirrored target is CLOSED and deployed (2026-08-10, `86c6376f`).** Followers now get
 > the leader's target as well as its stop, in one OCO group, anchored to their own fill. The
@@ -21,12 +21,13 @@ Suite **686 passed, 0 failed**.
 > single-member OCO group on the stop is accepted by NT8** — that was the one way this change could
 > have been worse than what it replaced, and it is now proven rather than inferred.
 >
-> 🔴 **The fourth signal failed and opened `P0-59`, which is live in the deployed build.** An order
-> in `ChangeSubmitted` reads as dead, so the copier duplicates the leg instead of modifying it —
-> observed as two working `COPIER_TARGET`s against one lot. **The same hole is on the stop path and
-> predates the target work**: our own trail calls `Change()`, so a leader trailing its stop can
-> leave a follower with two protective stops. No concurrency needed, so `P1-56`'s reservation does
-> not cover it, and the test stub's enum cannot express the state. See §4s and the plan's `P0-59`.
+> ✅ **The fourth signal failed, and the defect behind it (`P0-59`) turned out to be one half of a
+> larger one (`P0-60`). Both are now closed — see §4t.** NT8 has sixteen `OrderState`s; the two
+> addons classified eight between them and **inferred opposite things about the rest**. RiskGuard
+> counted a stop being cancelled as coverage (naked position reported as protected); the copier
+> counted a leg being modified as gone (duplicate protective leg). Replaced by **one total
+> classification with two derived predicates**, `OccupiesSlot` and `ProvidesCoverage`, because the
+> two questions callers ask have opposite fail-safe answers.
 
 > ✅ **Seven defects closed since the 2026-08-09 incident**, all deployed and compiling clean:
 > `P0-51` (shadow restrained neither the lockout sweep nor the deferred cancel queue), `P1-52` (a
@@ -56,7 +57,7 @@ Suite **686 passed, 0 failed**.
 
 ## 0. Start here (read this, then §4a for what is pending)
 
-**46 of 59 defects closed. Suite 686/0. NT8 compiles clean under net48, all 9 addon files in sync,
+**48 of 60 defects closed. Suite 705/0. NT8 compiles clean under net48, all 9 addon files in sync,
 and both of `P0-9`'s legs are implemented** — the stop validated on real fills (§4l), the target
 deployed and awaiting its first live trade (§4r).
 
@@ -350,7 +351,7 @@ those defects existed at all. Passing gates is necessary, never sufficient.
 
 ## 4a. What is pending — the current backlog
 
-**59 defects, 46 closed, 13 open.** Band membership and the P1-30/31 → P1-35/36 renumbering are
+**60 defects, 48 closed, 12 open.** Band membership and the P1-30/31 → P1-35/36 renumbering are
 in the plan's inventory table. *(The phase list A–G that used to close this section was retired
 2026-08-10: A–G were all done or superseded and it had drifted out of agreement with this list.)*
 
@@ -364,27 +365,39 @@ needs an acting mode (`IsGuardProtecting` requires `mode == "live"`); and the fi
 which are loaded but unmapped. **The copier acts regardless of guard mode** — `shadow` restrains
 RiskGuard, not the copier.
 
-### START HERE — `P0-59`, which is live in the deployed build
+### START HERE — finish the job `P0-60` started
 
-**An order being MODIFIED reads as dead, so the copier duplicates the leg.** Found by the mirrored
-target's first live trade (§4s) and confirmed in the code: `IsPendingOrWorking` omits
-`ChangeSubmitted`/`ChangePending`, and `OnFollowerOrderUpdate` infers "terminal" from
-`!IsPendingOrWorking` — the two predicates are **not complements**.
+`P0-59`/`P0-60` are closed (§4t), and closing them properly rather than patching the symptom is
+what this section is now about.
 
-It is a P0 because the same hole is on the **stop** path, it predates the target work, and our own
-trail calls `Account.Change()`: a leader trailing its stop can leave a follower with **two
-protective stops**, which flips the follower when both fire. `P1-56`'s reservation does not help —
-a single sync misreading a single state is enough.
+**The structural finding.** Almost every defect in this project is one shape: *the addon's model of
+broker state diverged from the broker, and nothing re-derived it.* The plan said so on page one —
+"the FSM is an optimistic fast path… **every P0 below is a case where the fast path can lose the
+position and nothing recovers it**" — and then 48 defects were closed by making the fast path handle
+one more case. `P3-30`, the item that addresses the class, has never been started, and
+`ReconcileFollowerPosition` has sat written-and-never-called the whole time.
 
-**Fix it test-first, and fix the stub enum first**: `RiskGuardAddOnTests.cs:23` does not declare
-`ChangeSubmitted` or `ChangePending`, so the suite cannot currently express the defect at all. Full
-write-up in the plan's `P0-59`.
+**So the next work is `P3-30` + `P3-31` together, built as the PRIMARY mechanism rather than as an
+auditor bolted alongside the FSM:**
 
-Then `P1-57` — §4s showed its defence held only because the other copier happened to embed our name
-in its own; a native `Stop1` would have gone straight through.
+1. `ComputeDesiredBracket(leader, follower, relationship) → DesiredBracket` — **pure**, computed
+   from broker reads with no accumulated state. Every arithmetic defect (`P0-6`, `P0-7`, the signed
+   offset, the exit rounding, off-tick prices) becomes a property test here.
+2. `Reconcile(desired, owned, inFlight) → Actions` — **pure diff**, and it cancels *extra* owned
+   legs. That single rule makes duplicate legs self-healing instead of permanent.
+3. Events **and a timer** both just call it. Idempotent, so ordering stops mattering — which
+   dissolves `P0-49`, `P0-55`, `P1-56`, `P0-59` as a class rather than one at a time.
 
-> ⚠️ **Anything that trades `Sim101` today can produce duplicate follower legs.** The copier acts
-> regardless of guard mode.
+> ⚠️ **A reconciler without the in-flight ledger reproduces the duplicate-leg family**: between
+> `Submit` and `Accepted` the order is not yet in observed state, so a naive second pass creates a
+> second one. `P3-31` is not a follow-up to `P3-30`, it is half of it.
+
+Doing this makes several things we currently maintain by hand unnecessary: `P1-56`'s reservation,
+the OCO dead-group conditional, the multi-target refusal, and the `StopInFlight`/`StopResyncOwed`/
+`TargetInFlight`/`TargetResyncOwed` flags.
+
+Then `P1-57` — §4s showed its defence held only because the third-party copier happened to embed
+our name in its own; a native `Stop1` would have gone straight through.
 
 > **Booking a live session**: `MAX_TRADES_BREACH` now fires on entry on `Sim101`/`Sim-ORB`
 > (`MaxTradesPerSession` 8, both past it), as well as `EDGE_WINDOW_BREACH` outside the edge window.
@@ -1629,6 +1642,73 @@ All four accounts flat, no working orders. `nt_close_position` on the leader did
 an exit to the followers — each had to be closed explicitly (closing `Sim-ORB` did cascade through
 the third-party copier to its two followers). Three `Rejected` leftovers from earlier sessions
 remain and are unrelated.
+
+---
+
+## 4t. 2026-08-10 — stepping back: one root cause under both the copier's and RiskGuard's order bugs
+
+`P0-59` looked like "add `ChangeSubmitted` to a list". Reflecting NT8's enum instead of trusting
+ours turned it into something much larger.
+
+### The finding
+
+**NT8 has sixteen `OrderState`s.** `IsPendingOrWorking` classified five, `IsTerminal` three. The two
+were **not each other's complement**, so eight states were unclassified — and the two addons
+independently inferred *opposite* things about them:
+
+| | asked | so an order in… | …was treated as | hazard |
+|---|---|---|---|---|
+| RiskGuard | `!IsTerminal` | `CancelSubmitted`, `CancelPending` | **coverage** | a position reads as protected while its stop is being pulled |
+| copier | `IsPendingOrWorking` | `ChangeSubmitted`, `ChangePending`, `TriggerPending` | **gone** | a duplicate protective leg is created |
+
+Both live. Both naked-risk or over-cover. One root cause, pointing in two directions at once.
+
+### Why the obvious fix was the wrong one
+
+Adding the missing states to `IsPendingOrWorking` would have made the symptom disappear and left
+the structure that generates it — the next state NT8 adds lands in the same gap. The reason a single
+boolean cannot be right is that **callers ask two questions whose fail-safe answers are opposite**:
+
+- *"is something already here, so do not create a second?"* — answering **no** wrongly over-covers
+- *"does this actually protect the position?"* — answering **yes** wrongly leaves it naked
+
+So: one total classification, two derived predicates, and `Indeterminate` **occupies a slot and
+provides no coverage** — conservative both ways at once.
+
+**`IsPendingOrWorking` was deleted rather than wrapped**, turning all 21 call sites into compile
+errors so each had to declare which question it asked. Nine were coverage questions, four were
+cancel-worthiness questions, and they had been sharing one predicate.
+
+### The test double was why none of it was visible
+
+The stub enum carried **ten of sixteen** states. Six could not be named by any test, so the suite
+was green at 686/0 with a P0 live. All sixteen are now declared — **reflected out of
+`NinjaTrader.Core.dll`, not recalled** — and a conformance test fails if the stub drifts or any
+state reaches the default arm. The test file's private copy of the liveness list is deleted too: a
+second definition of "alive" living in the grader is this defect one level up.
+
+> This is `P0-49`'s lesson again — *"the test stub raises whatever the test raises"* — one level
+> lower down, in the enum rather than the event order. **A green suite is evidence about our
+> fiction, not about NT8, unless something forces the two to agree.** That forcing function now
+> exists for `OrderState` and for nothing else.
+
+### Verified by mutation, both directions
+
+| Mutation | What the suite reported |
+|---|---|
+| `ChangeSubmitted` → Terminal (the copier's old belief) | **2 `COPIER_TARGET`s**, exactly as seen live — and **2 `COPIER_STOP`s** on the trail path |
+| `CancelSubmitted` → Working (RiskGuard's old belief) | `CoveredQuantity` **6** and state `ProtectedPending` on a position whose stops are *both* being cancelled |
+
+The second is the one worth remembering: a fully naked position, reported as protected, with
+nothing arming a replacement.
+
+### What this says about the approach, not the defect
+
+Almost every defect in this project is the same shape: **the model diverged from the broker and
+nothing re-derived it.** The plan identified that on page one and then 48 defects were closed by
+teaching the fast path one more case. That series does not terminate — the event space belongs to
+NT8, and now to a third-party copier as well. The reconciler is not an enhancement to schedule when
+convenient; it is the thing that closes the class. See §4a.
 
 ---
 
