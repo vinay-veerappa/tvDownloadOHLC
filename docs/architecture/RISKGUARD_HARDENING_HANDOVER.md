@@ -1,11 +1,13 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-09 (session 9 — a live trade exposed **`P0-51`: shadow mode does not restrain the lockout**)
-**Branch**: `main` (session-8 work was merged and pushed; `main` and `origin/main` are level)
-**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **52 defects, 38 closed, 14 open** (`P0-9` and `P1-13` are part-closed and counted as open; then `P2-24`, `P2-25`, `P2-26`, `P2-27`, `P2-29`, the five P3s, and **the two new ones, `P0-51` and `P1-52`**). `P0-49`/`P0-50` were opened and closed on 2026-08-07 — see §4l
-**Live state**: deployed, `shadow`, feed connected, no open positions. NT8 compiles clean (0 errors),
-all 9 addon files in sync.
-Suite **622 passed, 0 failed**. Loop selftest **11/11**.
+**Last updated**: 2026-08-10 (session 9 — five defects from one live trade closed; OCO research done; **`P1-56` opened and is a live hazard**)
+**Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
+A second branch **`wip/p09-oco-target`** holds the mirrored-target work, **deliberately NOT deployed** (see §4o)
+**Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **56 defects, 43 closed**
+**Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
+NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
+**The deployed build is `995f6402`** — the last commit on `harden/riskguard-p0-51` before the target work.
+Suite **637 passed, 0 failed**.
 
 > ✅ **`P0-51` and `P1-52` are FIXED, deployed and compiling clean (2026-08-09).** Shadow no
 > longer cancels or flattens, and one bracketed trade is no longer an order flood. Suite **629
@@ -15,8 +17,17 @@ Suite **622 passed, 0 failed**. Loop selftest **11/11**.
 > ✅ **`P0-53` is fixed too.** The lockout's `CancelAllOrders` no longer cancels a protective stop
 > while its position is open. Suite **637 passed / 0 failed** — fully green.
 >
-> **All three defects from the 2026-08-09 incident are closed, deployed and compiling clean under
-> net48.** None has been validated on a live feed; see §4m for what that would take.
+> ✅ **`P1-54` and `P0-55` are fixed too** (2026-08-10). Lockouts now lapse when their deadline
+> passes, and a follower is no longer left without a mirrored stop after a partial-fill entry.
+> **Five defects from the one 2026-08-09 trade are closed.**
+>
+> ✅ **`P0-51` and `P1-52` are VALIDATED LIVE** by replaying the incident (§4n). `P0-53`, `P1-54`
+> and `P0-55` are unit + compile only.
+>
+> 🚨 **`P1-56` is OPEN and is a live over-cover hazard on the EXISTING stop path.** Concurrent
+> bracket syncs can leave a follower with two protective stops — seen live as qty 1 **and** qty 2
+> against a 2-lot position. When both fire the follower is flipped. It is not caused by the parked
+> target work; that work only made it reproducible. **This is the top item** — see §4o.
 
 > ✅ **Session 8 closed clean. Nothing is in flight and nothing is blocked.**
 > *(Superseded by the banner above — session 9 opened two defects. The rest of this box still
@@ -541,21 +552,30 @@ at exactly `followerEntry + (leaderStop - leaderAvgPrice)`, with the follower FS
 unmapped. Note the copier acts regardless of guard mode — `shadow` restrains RiskGuard, not the
 copier.
 
-### START HERE — validate the three fixes on a live feed
+### START HERE — `P1-56`, the duplicate protective leg
 
-✅ `P0-51`, `P1-52` and `P0-53` are closed, deployed and compiling clean (2026-08-09). Suite 630/0.
+✅ `P0-51`, `P1-52`, `P0-53`, `P1-54` and `P0-55` are closed and deployed. Suite 637/0.
 
-**None of the three has been seen working on a real feed.** All the evidence is unit-level plus a
-clean `nt_compile`. The cheapest validation is the incident itself, replayed: place a 2-lot ATM
-entry on `Sim101` in shadow and confirm (a) **no** `ORDER_FLOOD_LOCKOUT`, and (b) if you force a
-lockout by other means, `LOCKOUT_SWEEP_SHADOW` / `SHADOW_PENDING_CANCEL` appear and **nothing is
-cancelled or flattened**. That is a five-minute test and it exercises all three fixes.
+**`P1-56` outranks everything, because it is an over-cover hazard on the stop path that is
+deployed right now.** `SyncFollowerStop` sets `bracket.WorkingStop = null` under `_lock` *before*
+the broker call and reassigns it only *after* `Submit`. A second sync entering that window sees
+`null` and creates a second stop. Observed live 2026-08-10 01:02: `Sim-ORB` held `COPIER_STOP`
+qty 1 **and** qty 2 against a 2-lot position, both with the same creation timestamp.
 
-> **`T5`'s fail-closed gate remains unvalidated and still needs an acting mode.** It is now safe to
-> attempt: `P0-53` was the reason arming live was hazardous, and it is closed. Do the shadow replay
-> above first.
+The fix is `T2`'s **reserve-before-submit with rollback** (`P0-2`/`P0-3`), applied to the bracket:
+publish the reservation under the lock before releasing it, and clear it if `CreateOrder`/`Submit`
+fails.
 
-Then `P0-9`'s targets/OCO decision (below) and `P3-30`, the reconciler.
+> ⚠️ **A green suite will not tell you this is fixed.** 653 tests passed with the defect live,
+> because they drive the sync paths sequentially. The defect exists only when two triggers
+> interleave — a partial fill plus the `P0-55` re-anchor is enough. Any fix needs a concurrent
+> test, and the `S`-series is sequential too (same warning as `P1-13`).
+
+Then: **`P0-9`'s mirrored target**, which is written and working on `wip/p09-oco-target` but blocked
+by `P1-56` and by the OCO-id-reuse rule (§4o). Then `P3-30`, the reconciler.
+
+> **`T5`'s fail-closed gate remains unvalidated and still needs an acting mode.** `P0-53` was the
+> reason arming live was hazardous and it is closed — but do not arm live while `P1-56` is open.
 
 ### THEN — needs an operator decision, not a code change
 
@@ -609,6 +629,10 @@ the risk is concurrent. **Doing the risky half before its coverage exists is how
 
 - ~~The branch `harden/riskguard-copier-p0` is unmerged and unpushed~~ — **done. Merged and
   pushed; `main` and `origin/main` are level (confirmed 2026-08-09).**
+- **Two branches are unmerged and unpushed.** `harden/riskguard-p0-51` carries all of session 9
+  (the deployed build is its tip, `995f6402`); `wip/p09-oco-target` carries the mirrored-target
+  work and must **not** be deployed until `P1-56` and the OCO-id-reuse rule are handled. `main` is
+  untouched.
 - **The Gemini API key** scrubbed from history (`scripts/trader/chart_agent/test_vision.py`) still
   needs **rotating**. It never reached GitHub; that is not the same as it being safe.
 - **0.28 GB of older parquet remains in published history** — the purges only covered the
@@ -1476,6 +1500,108 @@ the next copier change.
   the cache. Use a fresh key.
 - **`UnlockAccount` also resets that account's metrics** (peak equity, trades today, consecutive
   losses, PnL basis). Fine on a Sim rig, not something to do casually on a funded account.
+
+---
+
+## 4o. 2026-08-10 — OCO research, the mirrored target, and why it is parked
+
+The operator rejected "we cannot propagate the OCO" as an answer. They were right to: **the
+earlier claim in this document was wrong.** What follows is the corrected picture, the working
+implementation, and the two things blocking it.
+
+### The API facts, established by reflection and two live runs
+
+Reflected on NT8's `NinjaTrader.Core.dll` (in the NinjaTrader 8 `bin` folder):
+
+| Fact | Consequence |
+|---|---|
+| `Order.Oco` has a **public setter** | The old "create-time only, cannot be joined" claim is false |
+| There is **no `OcoChanged`** field (only `LimitPriceChanged`, `StopPriceChanged`, `QuantityChanged`) | `Account.Change()` moves price/qty but **cannot** move a working order between groups |
+| **An OCO id cannot be REUSED** — NT8 rejects a new order carrying a used id | The id belongs to a **generation** of the bracket. Re-creating one leg means re-creating **both** under a fresh id. Holding one id for the bracket's lifetime — the obvious implementation, and the one written — does not work |
+| `Account.CancelOrdersByOcoID(orders, ocoId)` exists | A real group-cancel primitive; the copier currently hand-rolls this |
+| `Connection.Features` returns `Feature[]` at runtime | Capability is answerable, not guessable |
+
+**The id-reuse rule was found by the operator hitting the error, not by us.** It is the single
+fact that most shapes the design, and nothing in the suite would have surfaced it.
+
+### What this connection actually supports
+
+Added a read-only probe, `GET /api/connections` (`McpBridgeAddOn.GetConnectionFeatures`). On this
+box **one connection, `TPT`, serves both Sim101 and the funded TakeProfit accounts**, and it
+advertises:
+
+```
+Bars1Minute, BarsDaily, BarsTick, BarsTickIntraday, Hotlists, MarketData, MarketDepth,
+NativeGtdOrders, News, Order, OrderChange, ProvidesMarketDataSnapshot,
+Quotes1Minute, QuotesDaily, QuotesTick
+```
+
+`NativeGtdOrders` is present, **`NativeOcoOrders` is not** — and since the `Native*Orders` family
+is demonstrably in use, that absence is meaningful. **OCO here is NT8-simulated, not
+broker-native.** It works (every ATM bracket on this box relies on it), but if NT8 dies between
+one leg filling and the sibling being pulled, the survivor is live at the broker. That is the
+exposure the operator's own manual brackets already carry — not a new one.
+
+`OrderChange` being present is what licensed the trail fix below.
+
+### Shipped: the trail no longer opens a naked window
+
+`SyncFollowerStop` now **modifies** the working stop via `Account.Change()` instead of
+cancel-then-create. Cancel-then-create left the follower unprotected on *every* trail step.
+
+> This **revises a settled `P0-9` note** ("cancel-then-replace, not modify"). The note existed to
+> stop a stale stop working beside a new one; `Change()` cannot produce that state because there
+> is only ever one order. Verified, not assumed — `OrderChange` is advertised — and any failure
+> falls through to the old path, logged `BRACKET_MODIFY_FAILED`.
+
+Also: the test double's `Change()` was not calling `ObserveBrokerCall`, so it was **exempt from
+the `P1-10` lock-scope check** — the same blind spot that hid `P1-43`'s four cancels. Now observed.
+
+### Parked: the mirrored target — `wip/p09-oco-target`, NOT deployed
+
+It works. Confirmed live on `Sim101 -> Sim-ORB`:
+
+- the leader's **limit** leg is recognised and mirrored, anchored to the **follower's own fill**;
+- both legs carry one shared OCO id;
+- both legs **modify in place** (`BRACKET_MODIFIED` / `BRACKET_TARGET_MODIFIED`);
+- the `P0-55` re-anchor covers **both** legs (`re-evaluating 2 working protective leg(s)`).
+
+Two things stop it shipping:
+
+1. **`P1-56`** — concurrent syncs produced `COPIER_STOP` qty 1 **and** qty 2 on a 2-lot position.
+   Pre-existing; the target work doubled the sync invocations and made it reproducible.
+2. **The OCO-id-reuse rule.** The parked code mints one id per bracket and reuses it, which NT8
+   rejects on any re-create. It needs per-generation ids: on any re-create, cancel both legs and
+   re-submit the pair under a fresh id.
+
+> **A mistake worth not repeating**: the first cut of the `P0-55` re-anchor filtered on
+> `IsStopType`, so it silently left the *target* unanchored. The live trace said
+> *"re-evaluating 1 working protective stop(s)"* on a two-legged bracket. A stop-shaped test
+> cannot see an off-by-one-leg; the instrumentation caught it in one line.
+
+### Replikanto is NOT being blocked by us
+
+Asked and answered with evidence: during the clean run there were **zero events of any kind** on
+`SimCopyTest1`/`SimCopy2`, and neither is locked out. If we had killed its orders you would see
+`ORDER_UPDATE` -> `Cancelled`; no order ever existed. Since `P0-51`, RiskGuard in `shadow`
+**withholds** interventions rather than executing them, so it cancels nothing.
+
+Separately and correctly: **our own copier does skip `SimCopy2`** — it has `AutoSymbolConversion`
+on, so 1 MNQ scales to 0.1 NQ and `P0-6` refuses rather than rounding to a 10x notional. Expected,
+and unrelated.
+
+### Operational gotchas found the hard way
+
+- **`nt_place_atm_order` caches by `idempotencyKey`.** Reusing a key replays the previous
+  response, *including a stale error*. An order that "stays blocked" after you fix the cause may
+  just be the cache. Use a fresh key.
+- **`UnlockAccount` also resets that account's metrics** — peak equity, trades today, consecutive
+  losses, PnL basis. Fine on a Sim rig; think twice on a funded account.
+- **`nt_close_position` cancels the orders itself**, so using it to clean up does **not**
+  independently exercise the copier's orphan-stop release. Do not record it as validating `P0-50`.
+- **Two overlapping leader brackets look exactly like a copier bug.** A manual bracket placed
+  during a test produced multiple mirrored legs and a qty-4 order; the tell is the leader's order
+  *names* (`Stop1`/`Target1` vs `Stop_<bracketId>`). Check names before concluding regression.
 
 ---
 
