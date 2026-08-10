@@ -749,6 +749,37 @@ namespace NinjaTrader.NinjaScript.AddOns
             // -- S7: copier fan-out under burst (plan §8) --
             TestStress_S7_CopierFanOutUnderBurst();
 
+            // -- P3-30/P3-31: the reconciler's pure core --
+            TestDesired_SignedOffsetsMirrorBothSidesFromTheFollowersOwnFill();
+            TestDesired_LeaderTrailingIntoProfitKeepsTheStopAboveEntry();
+            TestDesired_OffTickAverageFillIsSnappedToTheInstrumentsTick();
+            TestDesired_QuantityIsClampedToTheLivePositionNotTheBracketSnapshot();
+            TestDesired_FlatFollowerForbidsBothLegs();
+            TestDesired_SideMismatchForbidsBothLegs();
+            TestDesired_UnknownOffsetIsUnspecifiedNotForbidden();
+            TestDesired_NonPositivePriceIsRefusedWithoutCancellingCover();
+            TestReconcile_NothingOwnedCreatesBothLegsRiskLegFirst();
+            TestReconcile_CorrectLegsProduceNoActions();
+            TestReconcile_TwoOwnedLegsAreDeduplicated();
+            TestReconcile_DuplicateStopsBehindMismatchedQuantitiesLeaveOneCorrectLeg();
+            TestReconcile_ChangeSubmittedLegIsNotDuplicated();
+            TestReconcile_DepartingLegIsReplacedAndNotCancelledTwice();
+            TestReconcile_TrailStepModifiesRatherThanReplaces();
+            TestReconcile_FlatFollowerCancelsEveryOwnedLeg();
+            TestReconcile_UnspecifiedLegKeepsOneAndCreatesNone();
+            TestReconcile_InFlightSubmitSuppressesOnlyItsOwnCreate();
+            TestReconcile_InFlightNeverSuppressesACancel();
+            TestReconcile_ForeignAndManualOrdersAreNeverTouched();
+            TestReconcile_WrongTypeLegIsReplacedNotLeftInPlace();
+            TestReconcile_TerminalLegsAreIgnoredEntirely();
+            TestReconcile_TheSameOrderListedTwiceIsOneLeg();
+            TestReconcile_IsIdempotentUnderRepetition();
+            TestReconcile_SurvivorPrefersTheLegThatActuallyCovers();
+            TestBracket_P3_30_AStrayLegTheEngineNeverRecordedIsStillCancelled();
+            TestBracket_P3_31_ALegNotYetVisibleAtTheBrokerIsNotDuplicated();
+            TestBracket_P3_30_ACachedLegAlsoInAccountOrdersCountsOnce();
+            TestBracket_P0_50_AFlatFollowerStandsTheBracketDown();
+
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
 
@@ -10190,6 +10221,672 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(missing is dynamic && ((dynamic)missing).error != null, "Unknown bracketId returns error payload");
 
             DynamicAtmManager.Instance.RemoveBracket(result.BracketId);
+        }
+
+        // ==================================================================
+        // P3-30 / P3-31 -- the reconciler's two pure functions.
+        //
+        // These are deliberately written against VALUES rather than through the
+        // engine. Every duplicate-leg defect in this project (P0-49, P0-55,
+        // P1-56, P0-59) was found live or by mutation and NOT by the suite,
+        // because reaching the decision required an event ordering, an account,
+        // a lock and a broker -- so the decision itself was never tested, only
+        // the machinery around it.
+        //
+        // The load-bearing case is TestReconcile_TwoOwnedLegsAreDeduplicated:
+        // the old syncs COULD NOT have passed it at any price, because they read
+        // one Order reference per leg and never enumerated the broker's orders.
+        // ==================================================================
+
+        /// <summary>An owned leg at the broker, as the reconciler will find it.</summary>
+        private static Order OwnedLeg(
+            Instrument inst, string name, OrderType type, OrderAction action,
+            int qty, double price, OrderState state)
+        {
+            var o = new Order
+            {
+                Instrument = inst,
+                Name = name,
+                OrderType = type,
+                OrderAction = action,
+                Quantity = qty,
+                OrderState = state,
+                TimeInForce = TimeInForce.Day
+            };
+            if (type == OrderType.Limit) o.LimitPrice = price; else o.StopPrice = price;
+            return o;
+        }
+
+        private static Instrument ReconInstrument()
+        {
+            var inst = new Instrument("MNQ 09-26");
+            inst.MasterInstrument.TickSize = 0.25;
+            return inst;
+        }
+
+        /// <summary>A long 2-lot follower filled at 20000, leader stop 40 pts below, target 80 above.</summary>
+        private static DesiredBracket LongTwoLot(double stopOffset = -40, double targetOffset = 80)
+        {
+            return CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 2, MarketPosition.Long, 2,
+                20000, stopOffset, targetOffset,
+                CopierBracketReconciler.TickRounder(0.25));
+        }
+
+        private static int CountVerb(List<ReconcileAction> actions, ReconcileVerb verb, string legName)
+        {
+            int n = 0;
+            foreach (var a in actions)
+                if (a.Verb == verb && a.Leg.Name == legName) n++;
+            return n;
+        }
+
+        // ---- ComputeDesiredBracket ----
+
+        private static void TestDesired_SignedOffsetsMirrorBothSidesFromTheFollowersOwnFill()
+        {
+            var lng = LongTwoLot();
+            Assert(lng.Stop.Intent == LegIntent.Required && Math.Abs(lng.Stop.Price - 19960) < 1e-9,
+                "Long: stop sits at follower entry + signed offset (20000-40 = 19960)");
+            Assert(lng.Target.Intent == LegIntent.Required && Math.Abs(lng.Target.Price - 20080) < 1e-9,
+                "Long: target sits at follower entry + signed offset (20000+80 = 20080)");
+            Assert(lng.Stop.Action == OrderAction.Sell && lng.Target.Action == OrderAction.Sell,
+                "Long: both legs exit with Sell");
+
+            // A short leader's stop is ABOVE its entry, so the offset arrives positive.
+            var shrt = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Short, 1, MarketPosition.Short, 1,
+                20000, +40, -80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(Math.Abs(shrt.Stop.Price - 20040) < 1e-9 && Math.Abs(shrt.Target.Price - 19920) < 1e-9,
+                "Short: signed offsets carry through unflipped (stop 20040, target 19920)");
+            Assert(shrt.Stop.Action == OrderAction.BuyToCover && shrt.Target.Action == OrderAction.BuyToCover,
+                "Short: both legs exit with BuyToCover");
+        }
+
+        private static void TestDesired_LeaderTrailingIntoProfitKeepsTheStopAboveEntry()
+        {
+            // The signed-offset invariant, stated as its own test because an absolute
+            // distance here turns the leader's locked-in GAIN into open risk on the
+            // follower -- the same size loss, on the wrong side of entry.
+            var d = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 1, MarketPosition.Long, 1,
+                20000, +25, double.NaN, CopierBracketReconciler.TickRounder(0.25));
+            Assert(Math.Abs(d.Stop.Price - 20025) < 1e-9,
+                "A long whose leader trailed into profit gets a stop ABOVE its entry, not below");
+        }
+
+        private static void TestDesired_OffTickAverageFillIsSnappedToTheInstrumentsTick()
+        {
+            // The live rejection: 29905.625 on MNQ, tick 0.25.
+            var d = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 1, MarketPosition.Long, 1,
+                29945.625, -40, 40, CopierBracketReconciler.TickRounder(0.25));
+            Assert(Math.Abs(d.Stop.Price % 0.25) < 1e-9 && Math.Abs(d.Target.Price % 0.25) < 1e-9,
+                "An off-tick average fill produces on-tick legs (the 29905.625 rejection)");
+        }
+
+        private static void TestDesired_QuantityIsClampedToTheLivePositionNotTheBracketSnapshot()
+        {
+            // The follower scaled out to 1 while the bracket still says 3. A 3-lot stop
+            // behind 1 lot does not protect it, it FLIPS it to short 2 on trigger.
+            var d = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 3, MarketPosition.Long, 1,
+                20000, -40, 80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(d.Quantity == 1 && d.Stop.Quantity == 1 && d.Target.Quantity == 1,
+                "Legs are sized from the LIVE position (1), not the bracket's stale 3");
+
+            // And the reverse: a position grown by something that is not us is not adopted.
+            var grown = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 1, MarketPosition.Long, 5,
+                20000, -40, 80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(grown.Quantity == 1,
+                "A position larger than the bracket's is not silently adopted (1, not 5)");
+        }
+
+        private static void TestDesired_FlatFollowerForbidsBothLegs()
+        {
+            var d = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 2, MarketPosition.Flat, 0,
+                20000, -40, 80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(!d.HasPosition
+                && d.Stop.Intent == LegIntent.Forbidden && d.Target.Intent == LegIntent.Forbidden,
+                "P0-50: a flat follower forbids both legs -- an orphan leg is a new position on trigger");
+        }
+
+        private static void TestDesired_SideMismatchForbidsBothLegs()
+        {
+            var d = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 2, MarketPosition.Short, 2,
+                20000, -40, 80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(!d.HasPosition && d.Stop.Intent == LegIntent.Forbidden,
+                "A follower on the other side from the bracket forbids both legs");
+        }
+
+        private static void TestDesired_UnknownOffsetIsUnspecifiedNotForbidden()
+        {
+            // THE distinction the three-state intent exists for. P0-9 item (4): the leader
+            // cancelling its own stop must leave the follower's stop working. A two-state
+            // desire would read this as "no stop wanted" and cancel it -- a naked follower
+            // delivered as a refactor.
+            var d = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 2, MarketPosition.Long, 2,
+                20000, double.NaN, 80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(d.HasPosition && d.Stop.Intent == LegIntent.Unspecified,
+                "An unknown stop offset is Unspecified, NOT Forbidden (P0-9 item 4)");
+            Assert(d.Target.Intent == LegIntent.Required,
+                "One leg being unknown does not make the other unknown");
+
+            // No follower fill yet: nothing is anchored, but nothing is forbidden either.
+            var unfilled = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 2, MarketPosition.Long, 2,
+                double.NaN, -40, 80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(unfilled.Stop.Intent == LegIntent.Unspecified
+                && unfilled.Target.Intent == LegIntent.Unspecified,
+                "Before the follower fills there is no anchor, so both legs are Unspecified");
+        }
+
+        private static void TestDesired_NonPositivePriceIsRefusedWithoutCancellingCover()
+        {
+            var d = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 1, MarketPosition.Long, 1,
+                100, -500, 80, CopierBracketReconciler.TickRounder(0.25));
+            Assert(d.Stop.Intent == LegIntent.Unspecified,
+                "A non-positive computed price is refused as Unspecified, so existing cover survives it");
+        }
+
+        // ---- Reconcile ----
+
+        private static void TestReconcile_NothingOwnedCreatesBothLegsRiskLegFirst()
+        {
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), new List<Order>(), false, false);
+            Assert(actions.Count == 2
+                && actions[0].Verb == ReconcileVerb.Create
+                && actions[0].Leg.Name == CopierBracketReconciler.OwnedStopName
+                && actions[1].Leg.Name == CopierBracketReconciler.OwnedTargetName,
+                "Nothing owned: create both legs, and the RISK leg is emitted first");
+        }
+
+        private static void TestReconcile_CorrectLegsProduceNoActions()
+        {
+            var inst = ReconInstrument();
+            var owned = new List<Order>
+            {
+                OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Working),
+                OwnedLeg(inst, "COPIER_TARGET", OrderType.Limit, OrderAction.Sell, 2, 20080, OrderState.Working)
+            };
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), owned, false, false);
+            Assert(actions.Count == 0,
+                "Legs already at the right price and size produce NO actions (the reconcile is idempotent)");
+        }
+
+        private static void TestReconcile_TwoOwnedLegsAreDeduplicated()
+        {
+            // Observed live 2026-08-10: two working COPIER_TARGETs against one lot. The old
+            // syncs could not see this at any price -- they read bracket.WorkingTarget, a
+            // single Order reference, and never enumerated the account's orders. So the
+            // duplicate was not merely created, it was PERMANENT.
+            var inst = ReconInstrument();
+            var keep = OwnedLeg(inst, "COPIER_TARGET", OrderType.Limit, OrderAction.Sell, 2, 20080, OrderState.Working);
+            var dupe = OwnedLeg(inst, "COPIER_TARGET", OrderType.Limit, OrderAction.Sell, 2, 20080, OrderState.Working);
+            var owned = new List<Order> { keep, dupe };
+
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), owned, false, false);
+
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_TARGET") == 1,
+                "Two owned targets: exactly ONE is cancelled");
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_TARGET") == 0,
+                "Two owned targets: no third one is created");
+
+            // And the survivor is left correct, not cancelled along with the duplicate.
+            bool survivorTouched = false;
+            foreach (var a in actions)
+                if (a.Verb == ReconcileVerb.Cancel && ReferenceEquals(a.Subject, keep)) survivorTouched = true;
+            Assert(!survivorTouched, "The working survivor is kept, not swept up with its duplicate");
+        }
+
+        private static void TestReconcile_DuplicateStopsBehindMismatchedQuantitiesLeaveOneCorrectLeg()
+        {
+            // P1-56 as it actually appeared: qty 1 AND qty 2 behind 2 lots, which flips the
+            // follower when both fire. One pass must leave exactly one leg, correctly sized.
+            var inst = ReconInstrument();
+            var one = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 1, 19960, OrderState.Working);
+            var two = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Working);
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), new List<Order> { one, two }, false, false);
+
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 1,
+                "P1-56: one of the two stops is cancelled in a single pass");
+            int survivorQty = 0;
+            foreach (var a in actions)
+                if (a.Verb == ReconcileVerb.Cancel && a.Subject != null) survivorQty = ReferenceEquals(a.Subject, one) ? 2 : 1;
+            // Whichever is kept, the pass must end with a 2-lot stop: either it already is
+            // one, or it is modified to become one.
+            bool endsCorrect = survivorQty == 2 || CountVerb(actions, ReconcileVerb.Modify, "COPIER_STOP") == 1;
+            Assert(endsCorrect, "P1-56: after one pass exactly one stop remains, sized to the 2-lot position");
+        }
+
+        private static void TestReconcile_ChangeSubmittedLegIsNotDuplicated()
+        {
+            // P0-59, the copier's half of P0-60: an order mid-Change() is emphatically NOT
+            // gone. Reading it as gone is what put two working targets behind one lot.
+            var inst = ReconInstrument();
+            var changing = OwnedLeg(inst, "COPIER_TARGET", OrderType.Limit, OrderAction.Sell,
+                2, 20080, OrderState.ChangeSubmitted);
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), new List<Order> { changing }, false, false);
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_TARGET") == 0,
+                "P0-59: a leg in ChangeSubmitted occupies its slot, so no second one is created");
+        }
+
+        private static void TestReconcile_DepartingLegIsReplacedAndNotCancelledTwice()
+        {
+            // P0-60, RiskGuard's half, seen from the copier's side: a stop being cancelled
+            // is NOT coverage. The slot is free, so a replacement is created -- and the
+            // departing order is not cancelled a second time.
+            var inst = ReconInstrument();
+            var leaving = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell,
+                2, 19960, OrderState.CancelSubmitted);
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), new List<Order> { leaving }, false, false);
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 1,
+                "P0-60: a stop being cancelled is not coverage, so a replacement is created");
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 0,
+                "P0-60: the departing stop is not cancelled a second time");
+        }
+
+        private static void TestReconcile_TrailStepModifiesRatherThanReplaces()
+        {
+            var inst = ReconInstrument();
+            var working = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell,
+                2, 19960, OrderState.Working);
+            // Leader trailed its stop up 20 points. The target is legitimately absent from
+            // `owned` here, so it is created too -- the assertion is about the STOP leg.
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(-20, 80), new List<Order> { working }, false, false);
+            Assert(CountVerb(actions, ReconcileVerb.Modify, "COPIER_STOP") == 1
+                && CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 0
+                && CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 0,
+                "An ordinary trail step MODIFIES the working stop in place -- no unprotected window");
+            Assert(ReferenceEquals(actions[0].Subject, working)
+                && Math.Abs(actions[0].Leg.Price - 19980) < 1e-9,
+                "The trail step moves that same order to the new price (19980)");
+        }
+
+        private static void TestReconcile_FlatFollowerCancelsEveryOwnedLeg()
+        {
+            var inst = ReconInstrument();
+            var owned = new List<Order>
+            {
+                OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Working),
+                OwnedLeg(inst, "COPIER_TARGET", OrderType.Limit, OrderAction.Sell, 2, 20080, OrderState.Working)
+            };
+            var flat = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 2, MarketPosition.Flat, 0,
+                20000, -40, 80, CopierBracketReconciler.TickRounder(0.25));
+            var actions = CopierBracketReconciler.Reconcile(flat, owned, false, false);
+            Assert(actions.Count == 2
+                && CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 1
+                && CountVerb(actions, ReconcileVerb.Cancel, "COPIER_TARGET") == 1,
+                "P0-50: a flat follower has every owned leg cancelled and nothing created");
+        }
+
+        private static void TestReconcile_UnspecifiedLegKeepsOneAndCreatesNone()
+        {
+            var inst = ReconInstrument();
+            var working = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell,
+                2, 19960, OrderState.Working);
+            var d = LongTwoLot(double.NaN, 80);
+
+            var actions = CopierBracketReconciler.Reconcile(d, new List<Order> { working }, false, false);
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 0
+                && CountVerb(actions, ReconcileVerb.Modify, "COPIER_STOP") == 0,
+                "P0-9 item 4: an Unspecified stop leaves the follower's working stop untouched");
+
+            // But a DUPLICATE is still dropped -- not knowing where the leg goes is no reason
+            // to tolerate two of them.
+            var dupe = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell,
+                2, 19960, OrderState.Working);
+            var dedup = CopierBracketReconciler.Reconcile(d, new List<Order> { working, dupe }, false, false);
+            Assert(CountVerb(dedup, ReconcileVerb.Cancel, "COPIER_STOP") == 1,
+                "An Unspecified leg still de-duplicates: one survivor, no creation");
+            Assert(CountVerb(dedup, ReconcileVerb.Create, "COPIER_STOP") == 0,
+                "An Unspecified leg never creates");
+        }
+
+        private static void TestReconcile_InFlightSubmitSuppressesOnlyItsOwnCreate()
+        {
+            // P3-31. Between Submit and Accepted the order is not in `owned`, so a second
+            // pass with no reservation creates a second leg -- the duplicate family
+            // reproduced by the very mechanism meant to cure it.
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), new List<Order>(), true, false);
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 0,
+                "P3-31: a stop submit in flight suppresses the stop Create");
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_TARGET") == 1,
+                "P3-31: an in-flight STOP does not make the target wait -- upside must not delay, "
+                + "and protection must not be delayed by upside either");
+        }
+
+        private static void TestReconcile_InFlightNeverSuppressesACancel()
+        {
+            // The asymmetry that keeps the reservation safe: it may delay creating a leg,
+            // never removing one. A reservation that suppressed cancels would let an orphan
+            // leg survive on a flat account -- P0-50, resurrected through the ledger.
+            var inst = ReconInstrument();
+            var orphan = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell,
+                2, 19960, OrderState.Working);
+            var flat = CopierBracketReconciler.ComputeDesiredBracket(
+                MarketPosition.Long, 2, MarketPosition.Flat, 0,
+                20000, -40, 80, CopierBracketReconciler.TickRounder(0.25));
+            var actions = CopierBracketReconciler.Reconcile(flat, new List<Order> { orphan }, true, true);
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 1,
+                "An in-flight reservation suppresses Create only, never a Cancel");
+        }
+
+        private static void TestReconcile_ForeignAndManualOrdersAreNeverTouched()
+        {
+            // P1-57 from the dangerous direction. This function's Cancels get EXECUTED, so a
+            // false positive on ownership cancels a stranger's protective stop or the user's
+            // manual one. Exact-match naming is the whole defence; a Contains("COPIER")
+            // test -- which is what ReevaluateLeaderStops uses -- would cancel the first
+            // three of these.
+            var inst = ReconInstrument();
+            var owned = new List<Order>
+            {
+                OwnedLeg(inst, "COPIER_STOP_REPLIKANTO", OrderType.StopMarket, OrderAction.Sell, 2, 19900, OrderState.Working),
+                OwnedLeg(inst, "Replikanto_COPIER_TARGET", OrderType.Limit, OrderAction.Sell, 2, 20200, OrderState.Working),
+                OwnedLeg(inst, "COPIER_STOPX", OrderType.StopMarket, OrderAction.Sell, 2, 19900, OrderState.Working),
+                OwnedLeg(inst, "Stop1", OrderType.StopMarket, OrderAction.Sell, 2, 19900, OrderState.Working),
+                OwnedLeg(inst, "", OrderType.StopMarket, OrderAction.Sell, 2, 19900, OrderState.Working)
+            };
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), owned, false, false);
+
+            foreach (var a in actions)
+                if (a.Verb == ReconcileVerb.Cancel)
+                {
+                    Assert(false, "A foreign or manual order was cancelled: " + a.Subject.Name);
+                    return;
+                }
+            Assert(true, "P1-57: no foreign, third-party or manual order is ever cancelled (exact-match ownership)");
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 1,
+                "A stranger's stop does not count as OUR leg, so ours is still created");
+        }
+
+        private static void TestReconcile_WrongTypeLegIsReplacedNotLeftInPlace()
+        {
+            // A leg carrying our name but the wrong shape cannot be Changed into the right
+            // one. It must be cancelled AND replaced in the same pass -- emitting only the
+            // cancel is a naked follower.
+            var inst = ReconInstrument();
+            var wrong = OwnedLeg(inst, "COPIER_STOP", OrderType.Limit, OrderAction.Sell,
+                2, 19960, OrderState.Working);
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), new List<Order> { wrong }, false, false);
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 1
+                && CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 1,
+                "A leg of the wrong order type is cancelled AND replaced in one pass");
+            int cancelIdx = actions.FindIndex(a => a.Verb == ReconcileVerb.Cancel);
+            int createIdx = actions.FindIndex(a => a.Verb == ReconcileVerb.Create);
+            Assert(cancelIdx < createIdx, "The cancel is ordered before its replacement");
+        }
+
+        private static void TestReconcile_TerminalLegsAreIgnoredEntirely()
+        {
+            var inst = ReconInstrument();
+            var owned = new List<Order>
+            {
+                OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Cancelled),
+                OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Rejected),
+                OwnedLeg(inst, "COPIER_TARGET", OrderType.Limit, OrderAction.Sell, 2, 20080, OrderState.Filled)
+            };
+            var actions = CopierBracketReconciler.Reconcile(LongTwoLot(), owned, false, false);
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 0
+                && CountVerb(actions, ReconcileVerb.Cancel, "COPIER_TARGET") == 0,
+                "Terminal legs are gone: never cancelled again");
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 1
+                && CountVerb(actions, ReconcileVerb.Create, "COPIER_TARGET") == 1,
+                "Terminal legs free their slots, so both legs are created");
+        }
+
+        private static void TestReconcile_TheSameOrderListedTwiceIsOneLeg()
+        {
+            // Callers build `owned` from more than one source -- the broker's enumeration plus
+            // whatever the engine has cached -- so the same Order object arriving twice is
+            // ordinary. Reading it as two legs turns the de-duplication rule into the very
+            // defect it exists to prevent: it would cancel the engine's own working stop as its
+            // own duplicate, leaving the position naked.
+            var inst = ReconInstrument();
+            var one = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell,
+                2, 19960, OrderState.Working);
+
+            var actions = CopierBracketReconciler.Reconcile(
+                LongTwoLot(), new List<Order> { one, one, one }, false, false);
+
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 0,
+                "The same order listed three times is ONE leg -- nothing is cancelled as its own duplicate");
+            Assert(CountVerb(actions, ReconcileVerb.Create, "COPIER_STOP") == 0,
+                "...and nothing is created either: the leg is already correct");
+        }
+
+        private static void TestReconcile_IsIdempotentUnderRepetition()
+        {
+            // The property that makes event ordering stop mattering, and with it P0-49,
+            // P0-55, P1-56 and P0-59 as a class: applying the reconcile to the state it
+            // asked for must produce nothing further to do.
+            var inst = ReconInstrument();
+            var d = LongTwoLot();
+            var actions = CopierBracketReconciler.Reconcile(d, new List<Order>(), false, false);
+
+            // Apply what it asked for.
+            var owned = new List<Order>();
+            foreach (var a in actions)
+                if (a.Verb == ReconcileVerb.Create)
+                    owned.Add(OwnedLeg(inst, a.Leg.Name, a.Leg.Type, a.Leg.Action,
+                        a.Leg.Quantity, a.Leg.Price, OrderState.Working));
+
+            var second = CopierBracketReconciler.Reconcile(d, owned, false, false);
+            var third = CopierBracketReconciler.Reconcile(d, owned, false, false);
+            Assert(second.Count == 0 && third.Count == 0,
+                "Reconcile is idempotent: re-running against the state it produced asks for nothing");
+        }
+
+        /// <summary>
+        /// P3-30, END TO END through the engine -- the test the old sync path could not have
+        /// passed at any price.
+        ///
+        /// A stray COPIER_STOP is planted directly in `follower.Orders` and NOT in
+        /// `bracket.WorkingStop`, which is exactly the state the live 2026-08-10 defect left
+        /// behind: two working protective legs, one of which the engine held no reference to.
+        /// The old sync decided from `bracket.WorkingStop` alone and never enumerated the
+        /// account, so the stray was invisible -- and being invisible, permanent. Two stops
+        /// behind one position FLIP the follower when both fire.
+        ///
+        /// This is the difference between the reconciler and an extra guard on the fast path,
+        /// so it is asserted through the real engine and not against the pure functions.
+        /// </summary>
+        private static void TestBracket_P3_30_AStrayLegTheEngineNeverRecordedIsStillCancelled()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a stray protective leg the engine holds no reference to is reconciled away (P3-30)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18002.00, "BR-P330");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            var recorded = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(recorded.Count == 1, "Precondition: the engine placed its one mirrored stop.");
+
+            // The orphan. Same name, same instrument, working at the broker -- and the engine
+            // has never heard of it, precisely as on 2026-08-10.
+            var stray = new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                Instrument = mnq,
+                Name = "COPIER_STOP",
+                OrderType = OrderType.StopMarket,
+                OrderAction = OrderAction.Sell,
+                Quantity = 1,
+                StopPrice = 17985.00,
+                OrderState = OrderState.Working,
+                TimeInForce = TimeInForce.Day
+            };
+            follower.Orders.Add(stray);
+            Assert(follower.Orders.Count(o => o.Name == "COPIER_STOP"
+                    && RiskGuardAddOn.OccupiesSlot(o.OrderState)) == 2,
+                "Precondition: TWO working stops now stand behind a 1-lot position.");
+
+            // Any leader stop update drives a sync. Nothing here tells the engine about the
+            // stray -- it has to find it.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17989.00));
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.OccupiesSlot(o.OrderState))
+                .ToList();
+            Assert(live.Count == 1,
+                string.Format(
+                    "Exactly one protective stop survives the reconcile (got {0}). The old sync read "
+                    + "bracket.WorkingStop and never enumerated follower.Orders, so the stray was "
+                    + "permanent -- and two stops behind one lot flip the follower when both fire.",
+                    live.Count));
+            Assert(!RiskGuardAddOn.OccupiesSlot(stray.OrderState),
+                "The stray leg specifically is the one cancelled, not the leg the engine was managing.");
+            Assert(Math.Abs(live[0].StopPrice - 17991.00) < 1e-9,
+                string.Format(
+                    "The survivor is at the newly mirrored distance (expected 17991.00, got {0}).",
+                    live[0].StopPrice));
+        }
+
+        /// <summary>
+        /// The reconciler treats `Account.Orders` as the truth, and a leg the engine submitted a
+        /// moment ago may not be in it yet. The engine's own cached reference is folded in to
+        /// cover that window -- and if it were not, this pass would see an empty slot and submit
+        /// a SECOND stop, which is the duplicate family reproduced by the cure.
+        ///
+        /// Written because a mutation that removed the fold left the whole suite green.
+        /// </summary>
+        private static void TestBracket_P3_31_ALegNotYetVisibleAtTheBrokerIsNotDuplicated()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a submitted leg that has not appeared in Account.Orders yet is not duplicated (P3-31)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18002.00, "BR-P331");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            var placed = follower.Orders.Where(o => o.Name == "COPIER_STOP").ToList();
+            Assert(placed.Count == 1, "Precondition: the engine placed its mirrored stop.");
+
+            // The window: the order is live at the broker but not yet enumerable. Only the
+            // engine's cached reference knows it exists.
+            follower.Orders.Remove(placed[0]);
+
+            // Same leader stop, so the desired leg is unchanged. Nothing should be submitted.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+
+            int submitted = follower.Orders.Count(o => o.Name == "COPIER_STOP");
+            Assert(submitted == 0,
+                string.Format(
+                    "No second stop is submitted while the first is invisible to Account.Orders (got {0} new). "
+                    + "Trusting the broker enumeration ALONE creates a duplicate in this window.",
+                    submitted));
+        }
+
+        /// <summary>
+        /// The other side of that fold: a cached leg that IS in `Account.Orders` must count once.
+        /// Counting it twice makes the reconcile see a duplicate and cancel the engine's own
+        /// working stop -- turning the de-duplication rule into the naked-position defect it
+        /// exists to prevent. A mutation removing the reference-identity check left the suite
+        /// green, which is why this exists.
+        /// </summary>
+        private static void TestBracket_P3_30_ACachedLegAlsoInAccountOrdersCountsOnce()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a cached leg that is also in Account.Orders is one leg, not two (P3-30)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18002.00, "BR-DUP1");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            // Trail it, so the pass has real work to do and must not mistake one leg for two.
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17992.00));
+
+            var live = follower.Orders
+                .Where(o => o.Name == "COPIER_STOP" && RiskGuardAddOn.OccupiesSlot(o.OrderState))
+                .ToList();
+            Assert(live.Count == 1,
+                string.Format("Exactly one stop is live after a trail step (got {0}).", live.Count));
+            Assert(Math.Abs(live[0].StopPrice - 17994.00) < 1e-9,
+                string.Format(
+                    "The one surviving stop is at the trailed distance (expected 17994.00, got {0}). "
+                    + "If the cached leg were counted twice, the reconcile would cancel it as its own duplicate.",
+                    live[0].StopPrice));
+        }
+
+        /// <summary>
+        /// When the follower is flat, the bracket must be stood down and not merely left without
+        /// a leg. A bracket that goes on believing it protects a position is what submits a stop
+        /// against a flat account on the next event -- P0-50, whose live form was three
+        /// COPIER_STOPs against a flat Sim-ORB, each cancelling the last.
+        /// </summary>
+        private static void TestBracket_P0_50_AFlatFollowerStandsTheBracketDown()
+        {
+            Console.WriteLine("\n[TEST] BRACKET: a flat follower stands the bracket down, not just its legs (P0-50)");
+
+            var mnq = new Instrument("MNQ 03-26");
+            var rel = SlipRelationship(0);
+            var follower = SetupCopyPath("SimLeader", "SimFollower", rel, 0, null, MarketPosition.Flat);
+            var leader = Account.All.First(a => a.Name == "SimLeader");
+            ResetBracketState();
+
+            SetPosition(leader, mnq, MarketPosition.Long, 1, 18000.00);
+            DriveFollowerEntry(leader, follower, mnq, 1, 18000.00, 18002.00, "BR-FLAT1");
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17990.00));
+            Assert(TradeCopierEngine.Instance.GetBracketSideForTest("SimFollower", "MNQ 03-26")
+                    == MarketPosition.Long,
+                "Precondition: the bracket believes the follower is long.");
+
+            // The trade closes at the broker, and a leader stop update arrives after it.
+            follower.Positions.Clear();
+            leader.TriggerOrderUpdate(LeaderStop(mnq, OrderAction.Sell, 1, 17991.00));
+
+            Assert(TradeCopierEngine.Instance.GetBracketSideForTest("SimFollower", "MNQ 03-26")
+                    == MarketPosition.Flat,
+                "The bracket is stood down, so no later event can place a leg against a flat account.");
+            Assert(!follower.Orders.Any(o => o.Name == "COPIER_STOP"
+                    && RiskGuardAddOn.OccupiesSlot(o.OrderState)),
+                "No protective leg is left working against the flat position.");
+        }
+
+        private static void TestReconcile_SurvivorPrefersTheLegThatActuallyCovers()
+        {
+            // Three owned stops, only one of which is real coverage. Keeping a departing or
+            // suspended leg and cancelling the working one would leave the position naked
+            // for as long as the broker takes to act.
+            var inst = ReconInstrument();
+            var departing = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Suspended);
+            var working = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Working);
+            var unknown = OwnedLeg(inst, "COPIER_STOP", OrderType.StopMarket, OrderAction.Sell, 2, 19960, OrderState.Unknown);
+
+            var actions = CopierBracketReconciler.Reconcile(
+                LongTwoLot(), new List<Order> { departing, working, unknown }, false, false);
+
+            Assert(CountVerb(actions, ReconcileVerb.Cancel, "COPIER_STOP") == 2,
+                "Three owned stops: two are cancelled");
+            foreach (var a in actions)
+                if (a.Verb == ReconcileVerb.Cancel && ReferenceEquals(a.Subject, working))
+                {
+                    Assert(false, "The only leg providing coverage was cancelled");
+                    return;
+                }
+            Assert(true, "The survivor is the leg that actually provides coverage, not a suspended or unknown one");
         }
     }
 }

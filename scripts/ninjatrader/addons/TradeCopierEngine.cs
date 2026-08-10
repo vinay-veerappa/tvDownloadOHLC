@@ -1247,52 +1247,186 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// does nothing at all until both the anchor and the distance are known.
         /// Broker calls are made OUTSIDE `_lock`.
         /// </summary>
+        /// <summary>
+        /// P3-30. What this leg should be, and what to do about the legs the BROKER actually
+        /// holds -- as opposed to the single Order reference this engine happens to be caching.
+        ///
+        /// This is the whole point of the reconciler. Both leg syncs used to decide from
+        /// `bracket.WorkingStop` / `bracket.WorkingTarget` alone and never enumerated
+        /// `followerAcc.Orders`, so a leg that existed at the broker but was not the one we
+        /// held a reference to was invisible -- and therefore permanent. That is what "two
+        /// working COPIER_TARGETs against one lot" was on 2026-08-10 (P0-59): not a leg placed
+        /// wrongly, a leg nothing was capable of noticing afterwards.
+        ///
+        /// Returns only <paramref name="legName"/>'s actions, so the two legs keep their
+        /// deliberately asymmetric handling (§4r) while sharing one decision.
+        /// </summary>
+        /// <param name="submitInFlight">
+        /// P3-31's half, and NOT the same thing as <c>bracket.StopInFlight</c>. The bracket flags
+        /// are mutual exclusion between two SYNCS; this is "an order has been submitted and has
+        /// not appeared in `Account.Orders` yet". Passing the bracket flag here was the first
+        /// wiring of this function and it placed no stop at all: `SyncFollowerStop` sets the
+        /// reservation before calling in, so the reconcile suppressed the very Create the sync
+        /// existed to make. The event-driven callers pass false, because the reservation already
+        /// serialises them and the submitted leg is recorded in `bracket.WorkingStop` -- which is
+        /// folded into `owned` below -- before any second pass can run. A timer-driven caller
+        /// (P3-31 proper) is what needs a real ledger, and does not exist yet.
+        /// </param>
+        private List<ReconcileAction> DecideLegActions(
+            Account followerAcc, Instrument instrument, FollowerBracket bracket,
+            string legName, bool submitInFlight, out DesiredBracket desired)
+        {
+            desired = null;
+            var empty = new List<ReconcileAction>();
+            if (followerAcc == null || instrument == null || bracket == null) return empty;
+
+            MarketPosition bracketSide;
+            int bracketQty;
+            double entry, stopOffset, targetOffset;
+            lock (_lock)
+            {
+                bracketSide = bracket.FollowerSide;
+                bracketQty = bracket.FollowerQuantity;
+                entry = bracket.FollowerEntryPrice;
+                stopOffset = bracket.StopOffset;
+                targetOffset = bracket.TargetOffset;
+            }
+
+            // P0-50: the LIVE position, re-read immediately before any decision to touch the
+            // broker. On 2026-08-07 three COPIER_STOPs were submitted against a FLAT Sim-ORB
+            // after the trade had closed, each cancelling the last, because the decision was
+            // made from a stale snapshot. **An orphan stop on a flat account is not a
+            // leftover, it is a new position in the opposite direction the moment it
+            // triggers.**
+            Position livePos = null;
+            try
+            {
+                livePos = followerAcc.Positions.FirstOrDefault(p =>
+                    p.Instrument != null &&
+                    p.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase));
+            }
+            catch { }
+
+            MarketPosition liveSide = livePos == null ? MarketPosition.Flat : livePos.MarketPosition;
+            int liveQty = livePos == null ? 0 : livePos.Quantity;
+
+            desired = CopierBracketReconciler.ComputeDesiredBracket(
+                bracketSide, bracketQty, liveSide, liveQty,
+                entry, stopOffset, targetOffset,
+                // The instrument's OWN rounder, not a reimplementation: the desired price is
+                // compared against the price on the working order, and a one-tick disagreement
+                // between two rounders would fail every comparison and re-drive the leg forever.
+                delegate(double p) { return RoundLegToTick(instrument, p); });
+
+            var owned = CopierBracketReconciler.CollectCandidateOrders(followerAcc, instrument);
+
+            // The engine's own cached references, folded in. `Account.Orders` is the source of
+            // truth and finds the duplicates the cache cannot -- but a leg submitted moments ago
+            // may not have appeared there yet, and the cache is the only thing that knows about
+            // it. Feeding both makes the union of what either can see; Reconcile de-duplicates
+            // by reference, so a leg in both lists is still one leg.
+            AddCandidate(owned, bracket.WorkingStop);
+            AddCandidate(owned, bracket.WorkingTarget);
+
+            // The same flag for both legs: this call only ever consumes one of them, and the
+            // caller is asking about the leg it named.
+            var all = CopierBracketReconciler.Reconcile(desired, owned, submitInFlight, submitInFlight);
+
+            var mine = new List<ReconcileAction>();
+            foreach (var a in all)
+                if (a.Leg.Name == legName) mine.Add(a);
+            return mine;
+        }
+
+        /// <summary>
+        /// Appends a cached leg to the candidate list. Deliberately does NOT de-duplicate:
+        /// `Reconcile` does that by reference, because it is the function that has to be right
+        /// about "one order is one leg" whatever list it is handed. A second check here looked
+        /// like a safety net and was unreachable -- a mutation removing it left the whole suite
+        /// green, which is how it was found.
+        /// </summary>
+        private static void AddCandidate(List<Order> orders, Order o)
+        {
+            if (orders == null || o == null) return;
+            orders.Add(o);
+        }
+
         private void SyncFollowerStopOnce(Account followerAcc, Instrument instrument, FollowerBracket bracket)
         {
             if (followerAcc == null || instrument == null || bracket == null) return;
 
+            DesiredBracket desired;
+            var actions = DecideLegActions(
+                followerAcc, instrument, bracket, CopierBracketReconciler.OwnedStopName,
+                false, out desired);
+            if (desired == null || actions.Count == 0) return;
+
+            // ---- the position is gone, or is not the one this bracket was built for ----
+            //
+            // Every owned leg is Forbidden here, and the reconcile has already said so. The
+            // bracket is stood down as well: it must not go on believing it protects something.
+            if (!desired.HasPosition)
+            {
+                lock (_lock) { bracket.FollowerQuantity = 0; bracket.FollowerSide = MarketPosition.Flat; }
+                foreach (var a in actions)
+                {
+                    if (a.Verb != ReconcileVerb.Cancel) continue;
+                    try { followerAcc.Cancel(new[] { a.Subject }); } catch { }
+                }
+                NinjaTrader.Code.Output.Process(
+                    $"[CopierEngine] BRACKET_ABORTED_FLAT: {followerAcc.Name} {instrument.FullName}: {desired.Reason}; no stop placed.",
+                    PrintTo.OutputTab1);
+                return;
+            }
+
+            // ---- duplicates go first, whatever happens to the keeper ----
+            //
+            // This is the action the old sync could not produce at all, and the reason this
+            // path was rewritten. Cancelling a duplicate is not a submission, so it does not
+            // spend the attempt budget: refusing to clean up because a leg has been rejected
+            // three times would leave two stops behind one position (P1-56 -- qty 1 AND qty 2
+            // behind 2 lots, which FLIPS the follower when both fire).
+            var keeperActions = new List<ReconcileAction>();
+            foreach (var a in actions)
+            {
+                bool isDuplicateSweep = a.Verb == ReconcileVerb.Cancel
+                    && a.Reason != null && a.Reason.StartsWith("duplicate");
+                if (!isDuplicateSweep) { keeperActions.Add(a); continue; }
+                try
+                {
+                    followerAcc.Cancel(new[] { a.Subject });
+                    CopierLog(followerAcc.Name, "BRACKET_DUPLICATE_CANCELLED",
+                        $"{instrument.FullName}: {a.Reason}. The event-driven sync could not see this leg "
+                        + "at all -- it read one cached Order reference and never enumerated the account.");
+                }
+                catch (Exception dex)
+                {
+                    CopierLog(followerAcc.Name, "BRACKET_DUPLICATE_CANCEL_FAILED",
+                        $"{instrument.FullName}: {dex.Message}. TWO protective stops may still be working; "
+                        + "the follower will be FLIPPED if both fire.");
+                }
+            }
+            if (keeperActions.Count == 0) return;
+
+            // The three verbs, unpacked. `Reconcile` has already decided between them -- a
+            // Modify is its statement that this leg has the right shape AND is in a state the
+            // broker will change, so the old predicate soup at the Change() call site is gone.
+            Order toModify = null;
             Order toCancel = null;
-            double stopPrice;
-            int qty;
-            OrderAction action;
-            MarketPosition bracketSide;
+            bool wantsCreate = false;
+            foreach (var a in keeperActions)
+            {
+                if (a.Verb == ReconcileVerb.Modify) toModify = a.Subject;
+                else if (a.Verb == ReconcileVerb.Cancel) toCancel = a.Subject;
+                else if (a.Verb == ReconcileVerb.Create) wantsCreate = true;
+            }
+
+            double stopPrice = desired.Stop.Price;
+            int qty = desired.Stop.Quantity;
+            OrderAction action = desired.Stop.Action;
 
             lock (_lock)
             {
-                if (double.IsNaN(bracket.FollowerEntryPrice) || double.IsNaN(bracket.StopOffset)) return;
-                if (bracket.FollowerQuantity <= 0 || bracket.FollowerSide == MarketPosition.Flat) return;
-
-                // One expression for both sides, because the offset is signed. A long's stop is
-                // normally below entry (negative offset) and a short's above (positive), but
-                // either can invert once the leader trails into profit -- and that MUST carry
-                // through, or the follower is put at risk while the leader is protected.
-                // Rounded here, before the already-correct comparison below. Rounding after it
-                // would compare a rounded working price against an unrounded desired one, never
-                // match, and re-drive the leg forever.
-                stopPrice = RoundLegToTick(instrument, bracket.FollowerEntryPrice + bracket.StopOffset);
-
-                if (stopPrice <= 0) return;
-
-                qty = bracket.FollowerQuantity;
-                bracketSide = bracket.FollowerSide;
-                action = bracket.FollowerSide == MarketPosition.Long ? OrderAction.Sell : OrderAction.BuyToCover;
-
-                if (bracket.WorkingStop != null)
-                {
-                    bool samePrice = Math.Abs(bracket.WorkingStop.StopPrice - stopPrice) < 1e-9;
-                    bool sameQty = bracket.WorkingStop.Quantity == qty;
-                    bool stillLive = RiskGuardAddOn.OccupiesSlot(bracket.WorkingStop.OrderState);
-                    if (stillLive && samePrice && sameQty) return;   // already correct
-
-                    // The existing stop is wrong and must be replaced. `toCancel` names it; the
-                    // broker section below prefers Change() and only falls back to
-                    // cancel-then-create, so this is not "cancel-then-replace" any more.
-                    // (The comment that used to sit here said Change() was unavailable through
-                    // this seam. That stopped being true in 995f6402 and was contradicted 60
-                    // lines below -- exactly the doc drift P2-26 tracks.)
-                    if (stillLive) toCancel = bracket.WorkingStop;
-                }
-
                 if (bracket.StopAttempts >= MaxBracketStopAttempts)
                 {
                     // Bounded: keep retrying a broker that will not accept the order and the
@@ -1302,52 +1436,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                 bracket.StopAttempts++;
             }
 
-            // P0-50: re-read the live position immediately before touching the broker.
-            //
-            // The bracket's view of the follower can be stale by the time we get here -- and on
-            // 2026-08-07 it was: three COPIER_STOP orders were submitted against a FLAT Sim-ORB
-            // after the trade had closed, each cancelling the last. **An orphan stop on a flat
-            // account is not a leftover, it is a new position in the opposite direction the
-            // moment it triggers.** Same discipline as T2's auto-stop, which re-sizes from the
-            // live position immediately before CreateOrder for exactly this reason.
             var livePos = followerAcc.Positions.FirstOrDefault(p =>
                 p.Instrument != null &&
                 p.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase));
-
-            if (livePos == null || livePos.MarketPosition == MarketPosition.Flat || livePos.Quantity <= 0)
-            {
-                lock (_lock) { bracket.FollowerQuantity = 0; bracket.FollowerSide = MarketPosition.Flat; }
-                if (toCancel != null)
-                {
-                    try { followerAcc.Cancel(new[] { toCancel }); } catch { }
-                }
-                NinjaTrader.Code.Output.Process(
-                    $"[CopierEngine] BRACKET_ABORTED_FLAT: {followerAcc.Name} {instrument.FullName} went flat before the mirrored stop was submitted; no stop placed.",
-                    PrintTo.OutputTab1);
-                return;
-            }
-
-            if (livePos.MarketPosition != bracketSide)
-            {
-                lock (_lock) { bracket.FollowerQuantity = 0; bracket.FollowerSide = MarketPosition.Flat; }
-                if (toCancel != null)
-                {
-                    try { followerAcc.Cancel(new[] { toCancel }); } catch { }
-                }
-                NinjaTrader.Code.Output.Process(
-                    $"[CopierEngine] BRACKET_ABORTED_SIDE: {followerAcc.Name} {instrument.FullName} is {livePos.MarketPosition} but the bracket was built for {bracketSide}; no stop placed.",
-                    PrintTo.OutputTab1);
-                return;
-            }
+            if (livePos == null) return;
 
             try
             {
                 // Outside the lock: Cancel/Change/CreateOrder/Submit are broker calls, and holding
                 // _lock across them is the P1-10/P1-35 violation.
 
-                // Size from the live position, not the bracket's snapshot: a follower that
-                // scaled out between the decision and here would otherwise get a stop larger
-                // than the position, which flips it on trigger.
+                // Re-clamped to the live position one last time. `desired.Quantity` was already
+                // clamped when it was computed, but the position can move between the decision
+                // and here, and a stop larger than the position FLIPS it on trigger.
                 int liveQty = Math.Min(qty, livePos.Quantity);
 
                 // A leader trailing its stop is the ordinary case, and cancel-then-create left the
@@ -1361,18 +1462,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // OrderChange feature (/api/connections). Any failure falls through to the
                 // cancel-then-create path below, so an unsupporting connection degrades rather
                 // than breaks.
-                if (toCancel != null
-                    && RiskGuardAddOn.ProvidesCoverage(toCancel.OrderState)
-                    && toCancel.OrderType == OrderType.StopMarket
-                    && toCancel.OrderAction == action)
+                //
+                if (toModify != null)
                 {
                     try
                     {
-                        toCancel.StopPrice = stopPrice;
-                        toCancel.Quantity = liveQty;
-                        followerAcc.Change(new[] { toCancel });
+                        toModify.StopPrice = stopPrice;
+                        toModify.Quantity = liveQty;
+                        followerAcc.Change(new[] { toModify });
 
-                        lock (_lock) { bracket.WorkingStop = toCancel; }
+                        lock (_lock) { bracket.WorkingStop = toModify; }
 
                         CopierLog(followerAcc.Name, "BRACKET_MODIFIED",
                             $"{instrument.FullName} stop moved to {liveQty}@{stopPrice} in place "
@@ -1384,11 +1483,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         CopierLog(followerAcc.Name, "BRACKET_MODIFY_FAILED",
                             $"{instrument.FullName}: {cex.Message}. Falling back to cancel-then-create.");
-                        // fall through
+                        // The leg the broker refused to change becomes the leg to replace. Both
+                        // halves must be set: cancelling without creating is a naked follower,
+                        // and it is the failure this fallback exists to avoid.
+                        toCancel = toModify;
+                        wantsCreate = true;
                     }
                 }
 
                 if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
+
+                // A cancel with no create is the reservation case: a submit for this leg is
+                // already in flight, so the replacement is that one, not a second one.
+                if (!wantsCreate) return;
 
                 // The OCO id for the order about to be created.
                 //
@@ -1584,62 +1691,77 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (followerAcc == null || instrument == null || bracket == null) return;
 
-            Order toCancel = null;
-            double targetPrice;
-            int qty;
-            OrderAction action;
-            MarketPosition bracketSide;
-
-            lock (_lock)
-            {
-                if (double.IsNaN(bracket.FollowerEntryPrice) || double.IsNaN(bracket.TargetOffset)) return;
-                if (bracket.FollowerQuantity <= 0 || bracket.FollowerSide == MarketPosition.Flat) return;
-
-                // Signed, as the stop is. A leader may sit its target on either side of its own
-                // entry once the position has been scaled or averaged.
-                // Rounded before the already-correct comparison, for the same reason as the stop.
-                targetPrice = RoundLegToTick(instrument, bracket.FollowerEntryPrice + bracket.TargetOffset);
-                if (targetPrice <= 0) return;
-
-                qty = bracket.FollowerQuantity;
-                bracketSide = bracket.FollowerSide;
-                action = bracket.FollowerSide == MarketPosition.Long ? OrderAction.Sell : OrderAction.BuyToCover;
-
-                if (bracket.WorkingTarget != null)
-                {
-                    bool samePrice = Math.Abs(bracket.WorkingTarget.LimitPrice - targetPrice) < 1e-9;
-                    bool sameQty = bracket.WorkingTarget.Quantity == qty;
-                    bool stillLive = RiskGuardAddOn.OccupiesSlot(bracket.WorkingTarget.OrderState);
-                    if (stillLive && samePrice && sameQty) return;   // already correct
-                    if (stillLive) toCancel = bracket.WorkingTarget;
-                }
-
-                if (bracket.TargetAttempts >= MaxBracketTargetAttempts) return;
-                bracket.TargetAttempts++;
-            }
+            DesiredBracket desired;
+            var actions = DecideLegActions(
+                followerAcc, instrument, bracket, CopierBracketReconciler.OwnedTargetName,
+                false, out desired);
+            if (desired == null || actions.Count == 0) return;
 
             // P0-50 on the target leg. An orphan LIMIT against a flat account opens a position
             // when it fills exactly as an orphan stop does when it triggers.
             //
             // Note what this deliberately does NOT do: it leaves FollowerQuantity and FollowerSide
             // alone. Zeroing them here would let a target sync switch the stop sync off.
-            var livePos = followerAcc.Positions.FirstOrDefault(p =>
-                p.Instrument != null &&
-                p.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase));
-
-            if (livePos == null || livePos.MarketPosition == MarketPosition.Flat || livePos.Quantity <= 0
-                || livePos.MarketPosition != bracketSide)
+            if (!desired.HasPosition)
             {
-                if (toCancel != null)
+                foreach (var a in actions)
                 {
-                    try { followerAcc.Cancel(new[] { toCancel }); } catch { }
+                    if (a.Verb != ReconcileVerb.Cancel) continue;
+                    try { followerAcc.Cancel(new[] { a.Subject }); } catch { }
                 }
                 lock (_lock) { bracket.WorkingTarget = null; }
                 CopierLog(followerAcc.Name, "BRACKET_TARGET_ABORTED",
-                    $"{instrument.FullName} is no longer {bracketSide} as the bracket expects; "
-                    + "no target placed.");
+                    $"{instrument.FullName}: {desired.Reason}; no target placed.");
                 return;
             }
+
+            // Duplicates first, and outside the attempt budget -- see the stop leg for why.
+            // Two working COPIER_TARGETs behind one lot is the defect that opened P0-59, and it
+            // was permanent precisely because nothing enumerated the account's orders.
+            var keeperActions = new List<ReconcileAction>();
+            foreach (var a in actions)
+            {
+                bool isDuplicateSweep = a.Verb == ReconcileVerb.Cancel
+                    && a.Reason != null && a.Reason.StartsWith("duplicate");
+                if (!isDuplicateSweep) { keeperActions.Add(a); continue; }
+                try
+                {
+                    followerAcc.Cancel(new[] { a.Subject });
+                    CopierLog(followerAcc.Name, "BRACKET_DUPLICATE_CANCELLED",
+                        $"{instrument.FullName}: {a.Reason}.");
+                }
+                catch (Exception dex)
+                {
+                    CopierLog(followerAcc.Name, "BRACKET_DUPLICATE_CANCEL_FAILED",
+                        $"{instrument.FullName}: {dex.Message}. Two targets may still be working.");
+                }
+            }
+            if (keeperActions.Count == 0) return;
+
+            Order toModify = null;
+            Order toCancel = null;
+            bool wantsCreate = false;
+            foreach (var a in keeperActions)
+            {
+                if (a.Verb == ReconcileVerb.Modify) toModify = a.Subject;
+                else if (a.Verb == ReconcileVerb.Cancel) toCancel = a.Subject;
+                else if (a.Verb == ReconcileVerb.Create) wantsCreate = true;
+            }
+
+            double targetPrice = desired.Target.Price;
+            int qty = desired.Target.Quantity;
+            OrderAction action = desired.Target.Action;
+
+            lock (_lock)
+            {
+                if (bracket.TargetAttempts >= MaxBracketTargetAttempts) return;
+                bracket.TargetAttempts++;
+            }
+
+            var livePos = followerAcc.Positions.FirstOrDefault(p =>
+                p.Instrument != null &&
+                p.Instrument.FullName.Equals(instrument.FullName, StringComparison.OrdinalIgnoreCase));
+            if (livePos == null) return;
 
             try
             {
@@ -1649,18 +1771,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Modify in place where possible: it preserves OCO group membership -- confirmed
                 // live on 2026-08-10, a trailed leg kept both its orderId and its oco -- so the
                 // pair survives without any id being re-minted.
-                if (toCancel != null
-                    && RiskGuardAddOn.ProvidesCoverage(toCancel.OrderState)
-                    && toCancel.OrderType == OrderType.Limit
-                    && toCancel.OrderAction == action)
+                if (toModify != null)
                 {
                     try
                     {
-                        toCancel.LimitPrice = targetPrice;
-                        toCancel.Quantity = liveQty;
-                        followerAcc.Change(new[] { toCancel });
+                        toModify.LimitPrice = targetPrice;
+                        toModify.Quantity = liveQty;
+                        followerAcc.Change(new[] { toModify });
 
-                        lock (_lock) { bracket.WorkingTarget = toCancel; }
+                        lock (_lock) { bracket.WorkingTarget = toModify; }
 
                         CopierLog(followerAcc.Name, "BRACKET_TARGET_MODIFIED",
                             $"{instrument.FullName} target moved to {liveQty}@{targetPrice} in place "
@@ -1671,11 +1790,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         CopierLog(followerAcc.Name, "BRACKET_TARGET_MODIFY_FAILED",
                             $"{instrument.FullName}: {cex.Message}. Falling back to cancel-then-create.");
-                        // fall through
+                        toCancel = toModify;
+                        wantsCreate = true;
                     }
                 }
 
                 if (toCancel != null) followerAcc.Cancel(new[] { toCancel });
+
+                // A cancel with no create means a target submit is already in flight.
+                if (!wantsCreate) return;
 
                 string oco;
                 lock (_lock)
@@ -1845,6 +1968,25 @@ namespace NinjaTrader.NinjaScript.AddOns
                 FollowerBracket b;
                 if (!_followerBrackets.TryGetValue(BracketKey(followerAccount, instrumentFullName), out b)) return double.NaN;
                 return b.WorkingStop != null ? b.WorkingStop.StopPrice : double.NaN;
+            }
+        }
+
+        /// <summary>
+        /// The side the bracket believes the follower holds (test/diagnostic seam). `Flat` means
+        /// the bracket has been stood down and no leg may be placed for it.
+        ///
+        /// Alongside the hook above rather than inside `#if TESTING`, deliberately: P1-47 compiled
+        /// clean under net8.0 with the suite green and broke the net48 build, because the methods
+        /// sat inside the conditional.
+        /// </summary>
+        internal MarketPosition GetBracketSideForTest(string followerAccount, string instrumentFullName)
+        {
+            lock (_lock)
+            {
+                FollowerBracket b;
+                if (!_followerBrackets.TryGetValue(BracketKey(followerAccount, instrumentFullName), out b))
+                    return MarketPosition.Flat;
+                return b.FollowerSide;
             }
         }
 

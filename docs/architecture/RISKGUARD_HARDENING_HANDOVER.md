@@ -1,18 +1,20 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-10 (session 11 — the mirrored target shipped (§4r), was live-validated (§4s),
-and the defect that found opened out into **`P0-59`/`P0-60`**, both now closed (§4t). **Next work is
-the reconciler — §4a.**)
+**Last updated**: 2026-08-10 (session 12 — **the reconciler shipped as the primary path for the
+copier's bracket (`P3-30` copier half, §4u)**, after session 11 closed `P0-59`/`P0-60` (§4t) and
+live-validated the mirrored target (§4s). **Next work is the timer + `P3-31`'s ledger — §4a.**)
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 **`wip/p09-oco-target` is SUPERSEDED** — its work was rebased and shipped as `86c6376f`; do not
 deploy or rebase that branch, it predates the holder split and lacks five fixes (§4r).
 **Plan of record**: [RISKGUARD_COPIER_HARDENING_PLAN.md](RISKGUARD_COPIER_HARDENING_PLAN.md) — **60 defects, 48 closed**
 (`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p; `P2-58` closed same day)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
-NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
-**The deployed build is `b5c58ae0`** — the order-liveness model, on `harden/riskguard-p0-51`.
-(Earlier builds that day: `86c6376f` 13:12–14:32, `c9459121` 06:19–13:12, `995f6402` before that.)
-Suite **705 passed, 0 failed**.
+NT8 compiles clean (0 errors, net48), all **10** addon files in sync (`CopierReconciler.cs` is new).
+**The deployed code is session 12's reconciler**, on `harden/riskguard-p0-51` — uncommitted at the
+time of writing, so `git status` is the only record of it. The last committed build is `b5c58ae0`
+(the order-liveness model). (Earlier builds 2026-08-10: `86c6376f` 13:12–14:32, `c9459121`
+06:19–13:12, `995f6402` before that.)
+Suite **762 passed, 0 failed**.
 
 > ✅ **`P0-9`'s mirrored target is CLOSED and deployed (2026-08-10, `86c6376f`).** Followers now get
 > the leader's target as well as its stop, in one OCO group, anchored to their own fill. The
@@ -59,9 +61,16 @@ Suite **705 passed, 0 failed**.
 
 ## 0. Start here (read this, then §4a for what is pending)
 
-**48 of 60 defects closed. Suite 705/0. NT8 compiles clean under net48, all 9 addon files in sync,
+**48 of 60 defects closed. Suite 762/0. NT8 compiles clean under net48, all 10 addon files in sync,
 and both of `P0-9`'s legs are implemented** — the stop validated on real fills (§4l), the target
-deployed and awaiting its first live trade (§4r).
+live-validated (§4s).
+
+**The count did not move this session and that is correct**: `P3-30` and `P3-31` are both still
+open, because only the copier's bracket half of the reconciler shipped (§4u). Resist the urge to
+tick them.
+
+⚠️ **The decision path under BOTH mirrored legs changed (§4u) and has had no live trade through it.**
+Watch the first live `COPIER_STOP` and `COPIER_TARGET`.
 
 ### 0.0 ⚠️ Commit SHAs cited in the older sections below no longer resolve
 
@@ -362,12 +371,34 @@ exactly `followerEntry + (leaderStop - leaderAvgPrice)`, FSM created `ProtectedP
 `P1-52`, `P2-41`, `P0-48`, T3's giveback rule (§4g), and **`P0-9`'s mirrored target** (§4s — 3
 signals of 4; the fourth opened `P0-59`).
 
-**What is NOT**: `P0-53`, `P1-54`, `P0-55`, `P1-56` (unit + compile only); `T5`'s fail-closed gate, which
+**What is NOT**: **the reconciler (§4u) — unit + compile + mutation only, and it is now the decision
+path under both mirrored legs**; `P0-53`, `P1-54`, `P0-55`, `P1-56` (unit + compile only); `T5`'s fail-closed gate, which
 needs an acting mode (`IsGuardProtecting` requires `mode == "live"`); and the firm-mirror rules,
 which are loaded but unmapped. **The copier acts regardless of guard mode** — `shadow` restrains
 RiskGuard, not the copier.
 
-### START HERE — finish the job `P0-60` started
+### START HERE — the reconciler is the primary path now; finish it
+
+> 🔶 **`P3-30`'s copier half SHIPPED 2026-08-10 (§4u).** `CopierReconciler.cs` is new, and both leg
+> syncs decide through `ComputeDesiredBracket` + `Reconcile` instead of from one cached `Order`
+> reference. A duplicate leg is now self-healing. Suite 762/0, net48 clean, deployed.
+>
+> **The next three pieces, in order:**
+> 1. **The background timer** — events call the reconciler; nothing calls it on a clock. A
+>    divergence arriving with no subsequent event is still permanent.
+> 2. **`P3-31`'s ledger** — required *before* the timer, not after. Between `Submit` and `Accepted`
+>    the order is in neither `Account.Orders` nor the cache, so a timer without the ledger creates
+>    the second leg. The seam in `Reconcile` is built and tested; the ledger is not.
+> 3. **The RiskGuard-side audit** — naked position, orphan stop, FSM/broker divergence. `P3-30`
+>    covers both addons; only the copier's bracket is done.
+>
+> ⚠️ **Do not confuse `bracket.StopInFlight` with `Reconcile`'s in-flight parameter** when you build
+> the timer. Feeding the first into the second placed no stop at all. §4u has the mechanism.
+>
+> ⚠️ **Two guards in this code are unreachable and labelled as such** (§4u). One mutation SURVIVED
+> and is kept deliberately. Read §4u before "simplifying" either.
+
+The rest of this section is the reasoning that led here, and it still stands.
 
 `P0-59`/`P0-60` are closed (§4t), and closing them properly rather than patching the symptom is
 what this section is now about.
@@ -410,7 +441,7 @@ our name in its own; a native `Stop1` would have gone straight through.
 
 | | What | Note |
 |---|---|---|
-| 1 | **`P3-30` — the independent reconciler (REAPER port)** | The plan calls this "the highest-value single addition in the whole plan". It is P3 by **effort, not by value**, and the plan already says to reconsider promoting it once P1 lands — which it now has. It catches the class of defect every review and green suite in this project has repeatedly missed. `P1-36` built the multi-stop coverage sum it needs; share that, do not rebuild it. |
+| 1 | **`P3-30` — the reconciler: timer + RiskGuard-side audit** | 🔶 **The copier's bracket half is done (§4u).** What remains is the clock and the guard-side audit (naked position, orphan stop, FSM divergence). `P3-31`'s ledger comes *before* the timer. `P1-36` built the multi-stop coverage sum the audit needs; share that, do not rebuild it. |
 | 2 | **`P1-13` — the threading inversion** | **Two pieces of work, not one.** A concurrent-guard-event stress test has to exist first; see the warning below. |
 | 3 | **`P2-26` — design-doc drift** | Cheap, and `RiskGuardAddOn.md` is *actively misleading* right now: 8 claims contradicted by code. |
 | 4 | **`P2-24` — written-but-never-called safety machinery** | Includes `ReconcileFollowerPosition`. Needs a dispatcher seam to be testable (see §6). |
@@ -438,10 +469,10 @@ the risk is concurrent. **Doing the risky half before its coverage exists is how
 
 ### Repo hygiene — still open
 
-- **`harden/riskguard-p0-51` is unmerged and unpushed**; the deployed build is its tip, `86c6376f`.
-  `main` is untouched. **`wip/p09-oco-target` is superseded and should be deleted** — its work was
-  rebased and shipped, and the branch as it stands lacks five fixes (§4r). Rebasing *it* now would
-  be re-introducing them.
+- **`harden/riskguard-p0-51` is unmerged and unpushed**; the deployed build is `b5c58ae0`.
+  `main` is untouched. ✅ **`wip/p09-oco-target` was DELETED 2026-08-10** (its tip was `fca83e19`,
+  recoverable from reflog for the usual 90 days, but do not) — its work was rebased and shipped, and
+  the branch as it stood lacked five fixes (§4r). Rebasing it would have re-introduced them.
 - **The Gemini API key** scrubbed from history (`scripts/trader/chart_agent/test_vision.py`) still
   needs **rotating**. It never reached GitHub; that is not the same as it being safe.
 - **0.28 GB of older parquet remains in published history** — the purges only covered the
@@ -1711,6 +1742,104 @@ nothing re-derived it.** The plan identified that on page one and then 48 defect
 teaching the fast path one more case. That series does not terminate — the event space belongs to
 NT8, and now to a third-party copier as well. The reconciler is not an enhancement to schedule when
 convenient; it is the thing that closes the class. See §4a.
+
+---
+
+## 4u. 2026-08-10 — the reconciler lands as the primary path (`P3-30` copier half, `P3-31` seam)
+
+§4t argued that the 48-defect series does not terminate and the reconciler is what closes the
+class. This is that work, for the copier's bracket. **New file
+`scripts/ninjatrader/addons/CopierReconciler.cs`; both leg syncs now decide through it.**
+Suite **762 passed, 0 failed** (from 705). NT8 compiles clean, net48, 0 errors, deployed.
+
+### The structural fact, which is sharper than "the model diverged"
+
+Neither `SyncFollowerStopOnce` nor `SyncFollowerTargetOnce` had **ever** enumerated
+`followerAcc.Orders`. Each decided from ONE cached `Order` reference —
+`bracket.WorkingStop` / `bracket.WorkingTarget`. So a leg that existed at the broker but was not
+the one being held was **invisible, and therefore permanent.**
+
+That is what "two working COPIER_TARGETs against one lot" was on 2026-08-10 (`P0-59`): not a leg
+placed wrongly, **a leg nothing was capable of noticing afterwards.** No amount of additional care
+on the fast path could have repaired it, because the fast path could not see it. `Reconcile`
+enumerating the account and cancelling *extra* owned legs is the whole difference.
+
+### Three states of desire, not two — and why the obvious design is a naked follower
+
+`HasStop: bool` was the first design. It is wrong: "no stop desired" then means both *"the position
+is gone, cancel everything"* and *"the leader cancelled its own stop, so we do not know where ours
+goes"*. Those need **opposite** handling. Collapsing them reverts `P0-9` item (4) and takes the stop
+off an open position — a naked follower delivered as a refactor.
+
+So `LegIntent { Required, Unspecified, Forbidden }`, and `Unspecified` still de-duplicates but never
+creates and never cancels the last survivor. `TestDesired_UnknownOffsetIsUnspecifiedNotForbidden`
+and `TestReconcile_UnspecifiedLegKeepsOneAndCreatesNone` are the two that hold it down.
+
+### ⚠️ `bracket.StopInFlight` is NOT `Reconcile`'s in-flight parameter
+
+The bracket flags are mutual exclusion between two **syncs**. `Reconcile`'s parameter means
+"submitted, and not yet in `Account.Orders`". Feeding the first into the second was the first
+wiring and it placed **no stop at all** — `SyncFollowerStop` sets the reservation *before* calling
+in, so the reconcile suppressed the very `Create` the sync existed to make. The event-driven
+callers pass `false`; a timer is what needs the real ledger.
+
+### Verified by mutation, both layers
+
+18 mutations, each reinstating a belief that was live at some point in this project or an
+obvious-looking simplification. **17 caught by a named test.**
+
+| Layer | Mutations | Caught |
+|---|---|---|
+| the two pure functions | 10 | 10 |
+| the wiring into `TradeCopierEngine` | 8 | 7 |
+
+Two results worth more than the tally:
+
+1. **A test caught a real defect in `Reconcile` while it was being written.** The price/quantity
+   comparison ran *before* the shape check, so a leg carrying our name with `OrderType.Limit` at
+   the stop's price compared equal and was accepted **as the stop** — while a limit below the
+   market is not a stop, it fills at once. Shape before price; the order of those two checks is
+   the difference between a protective stop and an instant exit.
+2. **The mutation harness lied on its first run.** All 10 reported `DID NOT COMPILE`, because the
+   build-failure check matched `"error"` — which also matches the `0 Error(s)` summary line. A
+   harness that reports every mutation as caught for the wrong reason is worse than none. It now
+   matches `": error CS"`. *Check what your gate actually keys on before believing its verdict.*
+
+### Two guards found to be UNREACHABLE, and honestly re-labelled
+
+Mutation testing found two places where I had written something that reads as safety and cannot
+change behaviour. Both are recorded rather than quietly kept:
+
+- `AddIfMissing`'s reference-identity check (now `AddCandidate`, a plain append). `Reconcile`'s
+  keeper loop already compares by reference, so a doubled entry never produced a cancel.
+- `ContainsReference` in the slot collection. **Kept**, but the comment now says plainly that the
+  behavioural protection is the keeper loop's `ReferenceEquals` and that this line only makes
+  `slotCount` truthful for the operator-facing log. It is not defence.
+
+> The general point: *"I added a guard" is not evidence the guard does anything.* Mutating it away
+> and watching the suite stay green is. Both of these would otherwise have been read by the next
+> session as load-bearing.
+
+### The one mutation that SURVIVED, stated rather than papered over
+
+`int liveQty = Math.Min(qty, livePos.Quantity)` at the broker call — replacing it with `qty` leaves
+the suite green. It is a **second** clamp; `ComputeDesiredBracket` already clamped to the live
+position. It is only reachable if the position changes between the reconciler's read and the broker
+call, which is a concurrency window the suite cannot drive — the same gap §4a records for `P1-13`,
+where the S-series is sequential and the risk is concurrent. **Kept as defence-in-depth, and
+explicitly NOT proven.** Do not remove it on the grounds that no test covers it.
+
+### What is NOT done
+
+- **The background timer.** Events call the reconciler; nothing calls it on a clock. Until that
+  exists, a divergence that arrives with no subsequent event is still permanent — the reconcile is
+  idempotent and ready for it, but unscheduled.
+- **`P3-31`'s ledger.** The seam is tested; the ledger does not exist. The timer needs it first.
+- **The RiskGuard-side audit** (naked position, orphan stop, FSM/broker divergence). `P3-30`'s
+  plan entry covers both addons; only the copier's bracket is done.
+- **Live validation.** Everything here is unit + compile + mutation. No live trade has been through
+  it. The first live `COPIER_STOP` and `COPIER_TARGET` are the ones to watch, and note that the
+  decision path underneath *both* legs changed.
 
 ---
 

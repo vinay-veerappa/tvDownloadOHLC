@@ -36,7 +36,7 @@ could have been: they are both about what *another* program's orders look like t
 | P0 — naked-risk / wrong-size | `P0-1` … `P0-9`, `P0-48` … `P0-51`, `P0-53`, `P0-55`, `P0-59`, `P0-60` | 17 | `P0-1`…`P0-9` closed; items (3) and (4) pinned session 8, and **`P0-9` item (1) — the mirrored target + OCO — CLOSED and deployed 2026-08-10 (`86c6376f`), not yet live-validated**. `P0-48` closed and verified live. **`P0-49`, `P0-50` opened and closed session 8**. **`P0-51` and `P0-53` both CLOSED 2026-08-09**. **`P0-59` and `P0-60` opened and CLOSED 2026-08-10** — two addons held opposite, non-total definitions of order liveness; replaced by one total classification |
 | P1 — real bugs, not yet live-risk | `P1-10` … `P1-23`, `P1-35` … `P1-37`, `P1-39`, `P1-40`, `P1-42` … `P1-45`, `P1-47`, `P1-52`, `P1-54`, `P1-56`, `P1-57` | 28 | **26 closed.** Open: **`P1-57`** (we would mirror another copier's mirror) and **`P1-13`'s threading half** — its fail-open half is closed. `P1-52`, `P1-54` and `P1-56` all closed 2026-08-09/10 |
 | P2 — structural | `P2-24` … `P2-29`, `P2-38`, `P2-41`, `P2-46`, `P2-58` | 10 | `P2-28`, `P2-46`, `P2-38`, `P2-41` closed, and **`P2-58` opened and closed 2026-08-10**; `P2-27` half-done; `P2-24`, `P2-25`, `P2-26`, `P2-29` open |
-| P3 — enhancements | `P3-30` … `P3-34` | 5 | all open. `P3-32` may be **superseded by `P0-9`** — read it before scheduling it as work |
+| P3 — enhancements | `P3-30` … `P3-34` | 5 | all open, but **`P3-30`'s copier half shipped 2026-08-10** and `P3-31`'s seam exists (both still open — the timer and the RiskGuard-side audit remain). `P3-32` may be **superseded by `P0-9`** — read it before scheduling it as work |
 
 > **ID collision, resolved 2026-08-07 — read this if you are following a git commit or an old
 > doc.** `P1-30` and `P1-31` were appended during the P0 work and collided with the pre-existing
@@ -1921,6 +1921,45 @@ is what makes it testable at all.
 ## 5. P3 — Architecture upgrades worth porting from V12
 
 ### P3-30. An independent reconciler (the REAPER port) — highest-value single addition
+
+> 🔶 **PARTIALLY SHIPPED 2026-08-10 — the copier's bracket half is done and deployed. Still open:
+> the background timer, and the RiskGuard-side audit.** See handover §4u.
+>
+> What landed (`scripts/ninjatrader/addons/CopierReconciler.cs`, new):
+> - `ComputeDesiredBracket` — **pure**. Every leg price, side, and size derives from broker reads
+>   and the signed offsets, with no accumulated state. The arithmetic defects are now property
+>   tests on one function instead of scattered guards.
+> - `Reconcile(desired, owned, stopInFlight, targetInFlight)` — **pure diff**, and it cancels
+>   *extra* owned legs. That single rule is what makes a duplicate leg self-healing.
+> - Both leg syncs in `TradeCopierEngine` now decide through it (`DecideLegActions`), rather than
+>   from `bracket.WorkingStop` / `bracket.WorkingTarget`.
+>
+> **The structural finding that made this worth doing.** Neither sync had *ever* enumerated
+> `followerAcc.Orders` — each read one cached `Order` reference per leg. So a leg that existed at
+> the broker but was not the one being held was **invisible, and therefore permanent**. That is
+> what "two working COPIER_TARGETs against one lot" was on 2026-08-10 (`P0-59`): not a leg placed
+> wrongly, a leg nothing was *capable* of noticing afterwards. No amount of care on the fast path
+> could have fixed that, which is the argument for the reconciler in one sentence.
+>
+> **A leg has THREE states of desire, not two.** `HasStop: bool` is the obvious design and it is
+> wrong: "no stop desired" would mean both *"the position is gone, cancel everything"* and *"the
+> leader cancelled its own stop, so we do not know where ours goes"*. Collapsing them reverts
+> `P0-9` item (4) and takes the stop off an open position — a naked follower shipped as a
+> refactor. Hence `LegIntent { Required, Unspecified, Forbidden }`, where `Unspecified` still
+> de-duplicates but never creates and never cancels the last survivor.
+>
+> **Do not confuse `bracket.StopInFlight` with `Reconcile`'s in-flight parameter.** The first is
+> mutual exclusion between two *syncs*; the second is "submitted, not yet in `Account.Orders`".
+> Feeding the first into the second was the first wiring, and it placed **no stop at all** —
+> `SyncFollowerStop` sets the reservation before calling in, so the reconcile suppressed the very
+> Create the sync existed to make. The event-driven callers pass `false`.
+>
+> **Verified by mutation, not by argument**: 10 mutations of the pure core and 8 of the wiring,
+> each reinstating a belief that was live at some point or an obvious-looking simplification.
+> 17 of 18 were caught by a named test. The one survivor is recorded in handover §4u, along with
+> two guards found to be *unreachable* by the same method and honestly re-labelled instead of
+> being left to read as safety.
+
 Today both addons trust their own in-memory model. V12's REAPER assumes the model is wrong and
 re-derives truth from the broker every cycle. Build one auditor serving both addons:
 
@@ -1945,6 +1984,20 @@ from here. Borrow REAPER's `_repairInFlight` / `_nakedPositionFirstSeen` grace p
 normal bracket-confirmation window is not mistaken for a naked position.
 
 ### P3-31. Expected-position ledger with reserve/rollback
+
+> 🔶 **The reconciler's SEAM for this exists and is tested; the ledger itself does not.**
+> `Reconcile` takes `stopSubmitInFlight` / `targetSubmitInFlight` and suppresses `Create` — and
+> **only** `Create`, never a `Cancel`, so a reservation can delay placing a leg but never delay
+> removing one (an orphan leg surviving on a flat account would be `P0-50` resurrected through
+> the ledger). Both directions are pinned by test.
+>
+> On the event path the callers pass `false`, because the existing per-leg reservation already
+> serialises syncs and the submitted leg is recorded in `bracket.WorkingStop` — which is folded
+> into the candidate list — before a second pass can run. **A timer-driven caller is what needs
+> the real ledger, and that is the half still to build.** `P3-31` is not a follow-up to `P3-30`,
+> it is the other half of it: a timer without the ledger reproduces the duplicate-leg family,
+> because between `Submit` and `Accepted` the order is in neither `Account.Orders` nor the cache.
+
 V12 registers the master's expected position **before** submitting and rolls the reservation back
 if the submit returns null. Adopting this fixes P0-2 structurally and gives the reconciler a
 precise "expected vs actual" to compare, instead of inferring intent from order names.
