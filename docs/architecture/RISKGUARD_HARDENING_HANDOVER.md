@@ -10,7 +10,8 @@ deploy or rebase that branch, it predates the holder split and lacks five fixes 
 (`P1-57` and `P2-58` opened 2026-08-10 by watching another copier work — §4p; `P2-58` closed same day)
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
 NT8 compiles clean (0 errors, net48), all **10** addon files in sync (`CopierReconciler.cs` is new).
-**The deployed build is `06c6a484`** — session 12's reconciler, on `harden/riskguard-p0-51`.
+**The deployed build is `f174ba68`** — session 12's `P0-61` fix, on `harden/riskguard-p0-51`.
+(`06c6a484` was the reconciler itself, 15:20–15:48.)
 (Earlier builds 2026-08-10: `b5c58ae0` the order-liveness model, `86c6376f` 13:12–14:32,
 `c9459121` 06:19–13:12, `995f6402` before that.)
 Suite **787 passed, 0 failed**.
