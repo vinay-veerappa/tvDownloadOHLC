@@ -1,6 +1,8 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-10 (session 11 — the mirrored target shipped (§4r) and was live-validated (§4s), which opened **`P0-59`**)
+**Last updated**: 2026-08-10 (session 11 — the mirrored target shipped (§4r), was live-validated (§4s),
+and the defect that found opened out into **`P0-59`/`P0-60`**, both now closed (§4t). **Next work is
+the reconciler — §4a.**)
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 **`wip/p09-oco-target` is SUPERSEDED** — its work was rebased and shipped as `86c6376f`; do not
 deploy or rebase that branch, it predates the holder split and lacks five fixes (§4r).
@@ -9,7 +11,7 @@ deploy or rebase that branch, it predates the holder split and lacks five fixes 
 **Live state**: deployed, `shadow`, feed connected, **all accounts flat, no working orders**.
 NT8 compiles clean (0 errors, net48), all 9 addon files in sync.
 **The deployed build is `b5c58ae0`** — the order-liveness model, on `harden/riskguard-p0-51`.
-(`c9459121` was the deployed build from 2026-08-10 06:19 to 13:12; `995f6402` before that.)
+(Earlier builds that day: `86c6376f` 13:12–14:32, `c9459121` 06:19–13:12, `995f6402` before that.)
 Suite **705 passed, 0 failed**.
 
 > ✅ **`P0-9`'s mirrored target is CLOSED and deployed (2026-08-10, `86c6376f`).** Followers now get
