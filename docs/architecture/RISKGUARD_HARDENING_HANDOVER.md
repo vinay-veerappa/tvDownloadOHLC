@@ -1422,6 +1422,56 @@ the next copier change.
 
 ---
 
+## 4n. 2026-08-10 — the incident replayed live, with instrumentation
+
+Ran the 2026-08-09 incident again on purpose: same 2-lot MNQ ATM entry on `Sim101`, same Replikanto
+fan-out, same `shadow` mode. **`P0-51` and `P1-52` are now validated on a live feed.**
+
+### What the replay proved
+
+| Fix | Evidence |
+|---|---|
+| **`P1-52`** | **No `ORDER_FLOOD_LOCKOUT` on any account.** The identical bracket that locked out three accounts on 2026-08-09 produced none |
+| **`P0-51`** (sweep) | `LOCKOUT_SWEEP_SHADOW`: *"[SHADOW] Would execute lockout sweep for account SimCopyTest1: flatten [MNQ SEP26], cancel 2 order(s)."* — **and nothing was flattened.** `SimCopyTest1`/`SimCopy2` were still locked out from the incident and kept both position and orders |
+| **`P0-51`** (queue) | `SHADOW_PENDING_CANCEL`: *"[SHADOW] Withheld 1 intervention cancel(s) in shadow mode."* The `ENTRY_CANCEL` lines still say "Cancelled order X because account is locked out" — **but the orders stayed `Working`.** That log line describes the decision, not the outcome; the outcome is the withheld line |
+| **Exit mirroring** | Works. `COPIER_COPY_BEGIN: 2 active relationship(s), isExit=True: Sim-ORB, SimCopy2` → `COPIER_FOLLOW Sell 2` on `Sim-ORB`, filled |
+
+**The 2026-08-09 exit-mirror failure is still unexplained**, but it is no longer *unexplainable*:
+the normal exit path demonstrably works, and every abandon point now names itself. If it recurs the
+log will say which one it was.
+
+### The instrumentation
+
+`RiskGuardAddOn.LogFromComponent` lets a sibling component write into the guard's structured log, so
+copier lines now reach `interventions.jsonl` and the bridge event stream instead of dying in the NT8
+Output tab. `TradeCopierEngine.CopierLog` is the dual sink. **Every early return in `OnExecution`
+was silent** — seven of them — and each now emits a reason: `COPIER_EXEC_SEEN`, `EXEC_IGNORED`,
+`EXEC_IS_FOLLOWER`, `EXEC_SELF_ORIGINATED`, `EXEC_DUPLICATE`, `NO_ACTIVE_RELATIONSHIPS`,
+`COPY_BEGIN`.
+
+**The bracket path is still dark.** `SyncFollowerStop` and its `OrderUpdate` trigger have no
+instrumentation, which is why `P0-55` below cannot be explained yet. That is the next thing to wire.
+
+### Two defects the replay opened
+
+- **`P0-55`** — the leader's 2-lot stop arrived while the entry was only half filled, RiskGuard
+  discarded it (`FSM_PENDING_STOP_REJECTED`), and **`Sim-ORB` got no `COPIER_STOP` at all**. The
+  follower ran the whole trade `Unprotected`. Naked-follower, `P0-9`'s own failure class, by a route
+  `P0-9` does not cover.
+- **`P1-54`** — `Sim101`, `SimCopy2` and `SimCopyTest1` were *still locked out ~3 hours later* and
+  blocked the replay. `IsLockedOut` is sticky, `LockoutUntil` is not persisted, and the test is an
+  OR, so `LockoutMinutes` never ends a lockout. Cleared with `POST /api/lockout {"action":"unlock"}`.
+
+### Two operational gotchas worth keeping
+
+- **`nt_place_atm_order` caches by `idempotencyKey`.** Reusing a key replays the previous response —
+  including a stale error. A blocked order that "stays blocked" after you fix the cause may just be
+  the cache. Use a fresh key.
+- **`UnlockAccount` also resets that account's metrics** (peak equity, trades today, consecutive
+  losses, PnL basis). Fine on a Sim rig, not something to do casually on a funded account.
+
+---
+
 ## 5. Decisions already made — do not re-litigate
 
 - **The copier fails closed on ENTRIES, never on EXITS** (settled across `P0-5`, `P0-6`, `P1-23`,

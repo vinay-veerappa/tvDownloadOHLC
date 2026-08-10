@@ -4220,6 +4220,26 @@ namespace NinjaTrader.NinjaScript.AddOns
             LogEvent(account, eventType, new JObject { { "message", message } });
         }
 
+        /// <summary>
+        /// Lets a sibling component in this assembly write into the guard's structured log.
+        ///
+        /// The TradeCopier used to log only via NinjaTrader.Code.Output.Process, which reaches the
+        /// NT8 Output tab and NOTHING else -- not `interventions.jsonl`, not the bridge's event
+        /// stream, not `log/` or `trace/`. That made the copier undiagnosable after the fact: on
+        /// 2026-08-09 a leader exit failed to mirror to its follower and there was no record of
+        /// why, because every candidate path either logged to a sink nobody can read or returned
+        /// silently. Anything worth reading later belongs here.
+        ///
+        /// Static and null-tolerant on purpose: the copier must not care whether the guard exists,
+        /// and it is constructed independently in tests.
+        /// </summary>
+        internal static void LogFromComponent(string account, string eventType, string message)
+        {
+            var inst = Instance;
+            if (inst == null) return;
+            try { inst.LogEvent(account, eventType, message); } catch { }
+        }
+
         private void LogEvent(string account, string eventType, JObject data)
         {
             try

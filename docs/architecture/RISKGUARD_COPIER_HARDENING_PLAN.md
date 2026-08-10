@@ -1,6 +1,8 @@
 # RiskGuard + TradeCopier Hardening Plan
 
-**Status** (2026-08-09, branch `harden/riskguard-p0-51`, suite **630 passed / 0 failed**): **41 of 53 closed**.
+**Status** (2026-08-10, branch `harden/riskguard-p0-51`, suite **630 passed / 0 failed**): **41 of 55 closed**.
+**`P0-51`/`P1-52` are VALIDATED LIVE** (replay, 2026-08-10 — see handover §4n). That replay opened
+`P0-55` and `P1-54`.
 Deployed, `shadow`, armed and guarding; NT8 compiles clean (0 errors, net48).
 **`P0-51`, `P1-52` and `P0-53` are all CLOSED and deployed.** The suite is fully green again.
 Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md).
@@ -12,7 +14,7 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
-**53 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
+**55 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
 and closed on 2026-08-07 (session 8); **`P0-51` and `P1-52` were opened on 2026-08-09 and are
 OPEN**. All four were found by a live operator ATM trade rather than by any test — see the
 entries at the end of §1.
@@ -480,6 +482,62 @@ machinery is `P1-11`'s and did not need rebuilding.
 
 Pinned by `TestP1_11_LockoutSweepDoesNotCancelTheProtectiveStopBeforeFlattening`, which now covers
 **both** routes. Its `SetModeForTest("live")` is load-bearing: in shadow the test proves nothing.
+
+---
+
+### P0-55. A follower can be left with NO mirrored stop after a partial-fill entry — OPEN 2026-08-10
+*(found by the live replay of the 2026-08-09 incident)*
+**Where**: the copier's bracket path (`TradeCopierEngine.SyncFollowerStop` and its `OrderUpdate`
+trigger); interacts with `RiskGuardAddOn`'s `FSM_PENDING_STOP_REJECTED`
+**What happens, observed live 2026-08-10 00:11:31 ET**: a 2-lot ATM entry on `Sim101` filled in two
+parts (1 then 1). The ATM's protective stop for **2** contracts arrived while the position was still
+**Long 1**, and RiskGuard discarded it:
+
+```
+Sim101  FSM_PENDING_STOP_REJECTED  discarded 1 buffered stop(s) that are not protective
+                                   cover for a Long 1 position.
+Sim101  FSM_TRANSITION             Created FSM Sim101|MNQ SEP26 -> Unprotected
+```
+
+**`Sim-ORB` then received the copied entry but NO `COPIER_STOP` at all** and sat `Unprotected` for
+the life of the trade, with RiskGuard emitting `MISSING_STOP_FLATTEN` (withheld, shadow). This is
+the naked-follower condition `P0-9` exists to prevent, reached by a route `P0-9` does not cover.
+
+> **Do not assume the mechanism.** The copier classifies the leader's stop with the *static*
+> helpers (`IsStopType`, `IsProtectiveSide`, `IsPendingOrWorking`), not with RiskGuard's FSM, so the
+> FSM rejection should not by itself suppress the mirror. Why the mirror never fired is **not
+> established** — the bracket path has no instrumentation. Instrument `SyncFollowerStop` and the
+> `OrderUpdate` bracket trigger before theorising further.
+
+Note the contrast with the 2026-08-09 incident, where `Sim-ORB` **did** receive a `COPIER_STOP`
+1 ms after its fill. The difference is the partial fill.
+
+---
+
+### P1-54. A lockout never lapses; `LockoutMinutes` has no effect — OPEN 2026-08-10
+**Where**: `RiskGuardAddOn.cs` — the lockout test at `:1734`, the flag clear at `:1847`,
+`EvaluateLockoutPhase` at `:2783`, and `CapturePersistedState`
+**What happens**: the lockout test is `IsLockedOut || DateTime.UtcNow < LockoutUntil` — an **OR** —
+and **nothing clears `IsLockedOut` when `LockoutUntil` lapses**. The only clears are the daily
+session reset (`:1847`) and the manual `UnlockAccount`. Worse, **`LockoutUntil` is not persisted at
+all**: `state.json` carries a top-level `LockedOutAccounts` name list, so after any restart the flag
+is restored with `LockoutUntil = DateTime.MinValue`.
+
+So `Overtrading.LockoutMinutes` (default 60) is decorative. An account locked out at 21:15 is still
+locked out hours later, until the 18:00 ET session boundary.
+
+**Observed**: `Sim101`, `SimCopy2` and `SimCopyTest1` were all still locked out at 00:11 ET the
+next day, ~3 hours after the false flood lockout, blocking a fresh test order with
+*"Order blocked: Account Sim101 is locked out."* All three had to be cleared with
+`POST /api/lockout {"action":"unlock"}`.
+
+> **This is `P1-45`'s fix being ineffective, not `P1-45` reopened** (IDs are never reused). `P1-45`
+> added `LockoutUntil` beside the flag, which is necessary but not sufficient: with an OR test and
+> no expiry-clear, the deadline can only ever *extend* a lockout, never end one.
+
+**Fix**: clear `IsLockedOut` when `LockoutUntil` has passed — the natural home is the top of
+`EvaluateLockoutPhase`, which already runs every sweep — and persist `LockoutUntil` alongside the
+name list so a restart cannot silently convert a 60-minute lockout into an all-day one.
 
 ---
 

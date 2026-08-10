@@ -1578,14 +1578,43 @@ namespace NinjaTrader.NinjaScript.AddOns
         // test coverage. It compiles against the NinjaTrader stubs in
         // RiskGuardAddOnTests.cs (Account.All/CreateOrder/Submit, Instrument.GetInstrument,
         // NinjaTrader.Code.Output).
+        /// <summary>
+        /// Dual sink. Output.Process alone reaches the NT8 Output tab and nothing a human or a
+        /// tool can read afterwards, which is why the 2026-08-09 exit-mirror failure could not be
+        /// explained from the logs. Everything routed through here also lands in RiskGuard's
+        /// structured log, and so in the bridge's event stream.
+        /// </summary>
+        private static void CopierLog(string account, string eventType, string message)
+        {
+            NinjaTrader.Code.Output.Process($"[CopierEngine] {eventType}: {message}", PrintTo.OutputTab1);
+            RiskGuardAddOn.LogFromComponent(account, "COPIER_" + eventType, message);
+        }
+
         public void OnExecution(Execution exec)
         {
-            if (exec == null || exec.Account == null || exec.Quantity <= 0) return;
-            
+            // Every early return below used to be SILENT. On 2026-08-09 a leader exit did not
+            // mirror to its follower and no path could be ruled in or out, because a dropped
+            // execution left no trace at all. Each exit now says which one it was.
+            if (exec == null || exec.Account == null || exec.Quantity <= 0)
+            {
+                CopierLog(exec != null && exec.Account != null ? exec.Account.Name : "UNKNOWN",
+                    "EXEC_IGNORED", "execution was null, had no account, or had quantity <= 0.");
+                return;
+            }
+
             // Skip copy if order is null (cannot determine order direction safely)
-            if (exec.Order == null) return;
+            if (exec.Order == null)
+            {
+                CopierLog(exec.Account.Name, "EXEC_IGNORED",
+                    $"execution {exec.ExecutionId} has no Order, so its direction cannot be determined.");
+                return;
+            }
 
             string acctName = exec.Account.Name;
+
+            CopierLog(acctName, "EXEC_SEEN",
+                $"{exec.Instrument?.FullName} {exec.Order.OrderAction} {exec.Quantity}@{exec.Price} "
+                + $"order='{exec.Order.Name}' execId={exec.ExecutionId}");
 
             // Recursion Guard 1: Followers can NEVER act as Leaders (prevents copy feedback loops)
             bool isFollowerAccount;
@@ -1605,18 +1634,35 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // P0-9: the same event is where the bracket learns its anchor, and where a
                 // follower going flat releases it.
                 UpdateFollowerBracketOnFill(exec);
+                CopierLog(acctName, "EXEC_IS_FOLLOWER",
+                    "account is a follower in at least one relationship, so it can never act as a "
+                    + "leader; fill observed and bracket updated, no copy attempted.");
                 return;
             }
 
+            bool copierOriginated;
             lock (_lock)
             {
                 // Recursion Guard 2: Ignore executions originated by copier placement
-                if (!string.IsNullOrEmpty(exec.Order.Name) && exec.Order.Name.Contains("COPIER")) return;
-                if (exec.Name != null && exec.Name.Contains("COPIER")) return;
+                copierOriginated =
+                    (!string.IsNullOrEmpty(exec.Order.Name) && exec.Order.Name.Contains("COPIER"))
+                    || (exec.Name != null && exec.Name.Contains("COPIER"));
+            }
+            if (copierOriginated)
+            {
+                CopierLog(acctName, "EXEC_SELF_ORIGINATED",
+                    $"order '{exec.Order.Name}' / exec '{exec.Name}' contains COPIER, so this is our "
+                    + "own placement coming back; dropped to prevent a feedback loop.");
+                return;
             }
 
             // Redelivery Guard 3: Deduplicate exact duplicate socket redelivery of same execution ID (bounded FIFO queue)
-            if (DeduplicateExecutionId(exec.ExecutionId)) return;
+            if (DeduplicateExecutionId(exec.ExecutionId))
+            {
+                CopierLog(acctName, "EXEC_DUPLICATE",
+                    $"execution {exec.ExecutionId} was already processed; socket redelivery dropped.");
+                return;
+            }
 
             // P1-22: a quarantined relationship must still be able to CLOSE the follower. Blocking
             // its exits strands it in a position the leader has already left -- the P0-5 failure
@@ -1627,7 +1673,20 @@ namespace NinjaTrader.NinjaScript.AddOns
             List<CopierRelationship> activeRels =
                 GetActiveRelationshipsForLeader(acctName, includeQuarantined: leaderIsExiting);
 
-            if (activeRels.Count == 0) return;
+            if (activeRels.Count == 0)
+            {
+                // The single most likely explanation for a leader fill that mirrors nothing, and
+                // until now the least visible: it is indistinguishable from the copier never
+                // having seen the execution at all.
+                CopierLog(acctName, "NO_ACTIVE_RELATIONSHIPS",
+                    $"no enabled relationship has '{acctName}' as leader "
+                    + $"(isExit={leaderIsExiting}, quarantined included={leaderIsExiting}); nothing to copy to.");
+                return;
+            }
+
+            CopierLog(acctName, "COPY_BEGIN",
+                $"{activeRels.Count} active relationship(s), isExit={leaderIsExiting}: "
+                + string.Join(", ", activeRels.Select(r => r.FollowerAccountName)));
 
             foreach (var rel in activeRels)
             {
