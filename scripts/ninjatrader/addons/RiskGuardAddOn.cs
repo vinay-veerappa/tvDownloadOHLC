@@ -1611,22 +1611,33 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         // Order Rate Governor: detect rogue strategy order loops.
                         //
-                        // P2-46: count DISTINCT ORDER IDS, not state transitions. This previously
-                        // added a tick for Submitted and another for Accepted -- two states of the
-                        // same order -- so a nominal "more than 5 per second" actually fired at
-                        // about three real orders per second, inside normal ATM bracket
+                        // P1-52: count TRADING RATE, not order-object churn. Key the one-second
+                        // window by OCO group when an order has one, so a bracketed position
+                        // decision (e.g. entry + stop + target sharing an OCO id) counts as a
+                        // single burst instead of three order objects. Fall back to Order.Id
+                        // for ungrouped orders so standalone entries are still counted
+                        // individually. This keeps a runaway loop visible: each distinct OCO
+                        // group or standalone order adds to the count.
+                        //
+                        // P2-46: count DISTINCT KEYS, not state transitions. This previously
+                        // added a tick for Submitted and another for Accepted -- two states of
+                        // the same order -- so a nominal "more than 5 per second" actually fired
+                        // at about three real orders per second, inside normal ATM bracket
                         // submission. The live log's "29-32 orders/sec" were transition counts.
                         if (e.Order.OrderState == OrderState.Submitted || e.Order.OrderState == OrderState.Accepted)
                         {
-                            string floodKey = e.Order.Id != null ? e.Order.Id.ToString() : Guid.NewGuid().ToString();
                             DateTime floodNow = DateTime.UtcNow;
-                            if (!stateModel.RecentOrderIds.ContainsKey(floodKey))
-                                stateModel.RecentOrderIds[floodKey] = floodNow;
-
                             DateTime floodCutoff = floodNow.AddSeconds(-1);
                             var staleOrderIds = stateModel.RecentOrderIds
                                 .Where(kv => kv.Value < floodCutoff).Select(kv => kv.Key).ToList();
                             foreach (var staleId in staleOrderIds) stateModel.RecentOrderIds.Remove(staleId);
+
+                            string floodKey = !string.IsNullOrEmpty(e.Order.Oco)
+                                ? e.Order.Oco
+                                : (e.Order.Id != null ? e.Order.Id.ToString() : Guid.NewGuid().ToString());
+
+                            if (!stateModel.RecentOrderIds.ContainsKey(floodKey))
+                                stateModel.RecentOrderIds[floodKey] = floodNow;
 
                             int maxPerSecond = (_config.Overtrading != null && _config.Overtrading.MaxOrdersPerSecond > 0)
                                 ? _config.Overtrading.MaxOrdersPerSecond : 5;
