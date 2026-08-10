@@ -1,0 +1,562 @@
+diff --git a/scripts/ninjatrader/addons/RiskGuardAddOn.cs b/scripts/ninjatrader/addons/RiskGuardAddOn.cs
+index be44f92c..ed26d5bc 100644
+--- a/scripts/ninjatrader/addons/RiskGuardAddOn.cs
++++ b/scripts/ninjatrader/addons/RiskGuardAddOn.cs
+@@ -2568,6 +2568,7 @@ namespace NinjaTrader.NinjaScript.AddOns
+             }
+         }
+ 
++        // Precondition: caller must hold _stateLock.
+         private bool ValidateInvariant(GuardAction action)
+         {
+             var account = Account.All.FirstOrDefault(a => a.Name == action.AccountName);
+@@ -2590,8 +2591,31 @@ namespace NinjaTrader.NinjaScript.AddOns
+ 
+             if (action.ActionType == GuardActionType.PlaceStopOrder)
+             {
+-                // Placing stop order is risk-reducing only if we have an unprotected position covering it.
+-                return action.InstrumentObj != null && action.Quantity > 0;
++                // A stop order is risk-reducing only when it closes an existing,
++                // same-side live position. The actual stop quantity is sized from
++                // the live position in ExecuteAction, so the arbiter only verifies
++                // that a coverable position exists and the action side matches it.
++                // Do not mutate state or call trading methods.
++                if (action.InstrumentObj == null || action.Quantity <= 0)
++                    return false;
++
++                var position = account.Positions.FirstOrDefault(p => p.Instrument != null && p.Instrument.FullName == action.Instrument);
++                if (position == null || position.MarketPosition == MarketPosition.Flat)
++                    return false;
++
++                string key = FsmKey(action.AccountName, action.Instrument);
++                if (!_guardFsms.TryGetValue(key, out var fsm))
++                    return false;
++                if (fsm.PositionSide != position.MarketPosition)
++                    return false;
++                if (fsm.State == GuardFsmState.Protected || fsm.State == GuardFsmState.ProtectedPending)
++                    return false;
++
++                int liveQuantity = (int)position.Quantity;
++                if (liveQuantity <= 0)
++                    return false;
++
++                return true;
+             }
+ 
+             return false;
+@@ -2663,8 +2687,231 @@ namespace NinjaTrader.NinjaScript.AddOns
+             else if (action.ActionType == GuardActionType.PlaceStopOrder)
+             {
+                 var instrument = action.InstrumentObj;
+-                var position = account.Positions.FirstOrDefault(p => p.Instrument.FullName == action.Instrument);
+-                if (position == null || position.MarketPosition == MarketPosition.Flat) return;
++                if (instrument == null)
++                {
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_NO_INSTRUMENT", "PlaceStopOrder missing InstrumentObj; aborting.");
++                    return;
++                }
++
++                string key = FsmKey(account.Name, action.Instrument);
++
++                bool IsFsmProtectedOrPending()
++                {
++                    lock (_stateLock)
++                    {
++                        return _guardFsms.TryGetValue(key, out PositionGuardFsm localFsm)
++                            && (localFsm.State == GuardFsmState.Protected || localFsm.State == GuardFsmState.ProtectedPending);
++                    }
++                }
++
++                void ReArmGraceIfUnprotected()
++                {
++                    lock (_stateLock)
++                    {
++                        if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm) && localFsm.State == GuardFsmState.Unprotected)
++                        {
++                            localFsm.GraceEmitted = false;
++                            int delayMs = _config.StopGuard.StopAttachSeconds * 1000;
++                            // ArmGraceTimer only schedules a timer callback; it does not invoke account trading methods.
++                            ArmGraceTimer(localFsm, account, action.Instrument, delayMs);
++                        }
++                    }
++                }
++
++                void RollbackFsm(string reason)
++                {
++                    bool wasProtected = false;
++                    lock (_stateLock)
++                    {
++                        if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
++                        {
++                            if (localFsm.State == GuardFsmState.Protected)
++                            {
++                                wasProtected = true;
++                                localFsm.GraceEmitted = false;
++                            }
++                            else
++                            {
++                                localFsm.AutoStopOrder = null;
++                                localFsm.RecognizedStopOrder = null;
++                                localFsm.CoveredQuantity = 0;
++                                localFsm.GraceEmitted = false;
++                                if (localFsm.State != GuardFsmState.Flat)
++                                    localFsm.State = GuardFsmState.Unprotected;
++
++                                int delayMs = _config.StopGuard.StopAttachSeconds * 1000;
++                                // ArmGraceTimer only schedules a timer callback; it does not invoke account trading methods.
++                                ArmGraceTimer(localFsm, account, action.Instrument, delayMs);
++                            }
++                        }
++                    }
++                    if (wasProtected)
++                        LogEvent(account.Name, "AUTO_STOP_ROLLBACK_PROTECTED", $"Protected FSM left intact for {action.Instrument}: {reason}");
++                    else
++                        LogEvent(account.Name, "AUTO_STOP_ROLLBACK", $"FSM rolled back for {action.Instrument}: {reason}");
++                }
++
++                void ClearTrackingAndSetUnprotected()
++                {
++                    lock (_stateLock)
++                    {
++                        if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
++                        {
++                            localFsm.AutoStopOrder = null;
++                            localFsm.RecognizedStopOrder = null;
++                            localFsm.CoveredQuantity = 0;
++                            localFsm.GraceEmitted = false;
++                            if (localFsm.State != GuardFsmState.Flat)
++                                localFsm.State = GuardFsmState.Unprotected;
++                        }
++                    }
++                }
++
++                void AfterFlattenCleanup(string context)
++                {
++                    var posNow = account.Positions.FirstOrDefault(p => p.Instrument != null && p.Instrument.FullName == action.Instrument);
++                    bool positionExists = posNow != null && posNow.MarketPosition != MarketPosition.Flat;
++
++                    lock (_stateLock)
++                    {
++                        if (!_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
++                        {
++                            if (positionExists)
++                            {
++                                localFsm = new PositionGuardFsm(account.Name, action.Instrument);
++                                localFsm.PositionSide = posNow.MarketPosition;
++                                localFsm.PositionQuantity = (int)posNow.Quantity;
++                                localFsm.EntryTime = DateTime.UtcNow;
++                                localFsm.LastTransitionTime = DateTime.UtcNow;
++                                localFsm.State = GuardFsmState.Unprotected;
++                                localFsm.GraceEmitted = false;
++                                localFsm.AutoStopAttempts = 0;
++                                _guardFsms[key] = localFsm;
++                            }
++                        }
++
++                        if (localFsm != null)
++                        {
++                            localFsm.AutoStopOrder = null;
++                            localFsm.RecognizedStopOrder = null;
++                            localFsm.CoveredQuantity = 0;
++                            localFsm.GraceEmitted = false;
++                            localFsm.AutoStopAttempts = 0;
++                            if (localFsm.State != GuardFsmState.Flat)
++                                localFsm.State = GuardFsmState.Unprotected;
++
++                            if (positionExists && localFsm.State == GuardFsmState.Unprotected)
++                            {
++                                int delayMs = _config.StopGuard.StopAttachSeconds * 1000;
++                                // ArmGraceTimer only schedules a timer callback; it does not invoke account trading methods.
++                                ArmGraceTimer(localFsm, account, action.Instrument, delayMs);
++                            }
++                        }
++                    }
++
++                    LogEvent(account.Name, "AUTO_STOP_FLATTEN_CLEANUP", $"Post-flatten cleanup completed for {action.Instrument} ({context}).");
++                }
++
++                void FlattenAndClear(string reason)
++                {
++                    LogEvent(account.Name, "STOP_SIDE_FLATTEN", reason);
++                    try
++                    {
++                        account.Flatten(new[] { instrument });
++                    }
++                    catch (Exception fex)
++                    {
++                        RollbackFsm($"Flatten failed: {fex.Message}");
++                        LogEvent(account.Name, "FLATTEN_ERROR", $"Flatten failed for {instrument.FullName}: {fex.Message}");
++                        throw;
++                    }
++                    AfterFlattenCleanup("stop-side-flatten");
++                }
++
++                var position = account.Positions.FirstOrDefault(p => p.Instrument != null && p.Instrument.FullName == action.Instrument);
++                if (position == null || position.MarketPosition == MarketPosition.Flat)
++                {
++                    ReArmGraceIfUnprotected();
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_NO_POSITION", $"No live position for {action.Instrument}; aborting auto-stop.");
++                    return;
++                }
++
++                MarketPosition initialSide = position.MarketPosition;
++
++                bool sideMismatch = false;
++                lock (_stateLock)
++                {
++                    if (!_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm) || localFsm.PositionSide != initialSide)
++                        sideMismatch = true;
++                }
++                if (sideMismatch)
++                {
++                    ReArmGraceIfUnprotected();
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_SIDE_MISMATCH",
++                        $"Live position side {initialSide} does not match FSM side for {action.Instrument}; aborting auto-stop.");
++                    return;
++                }
++
++                int maxAttempts = _config.StopGuard.MaxAutoStopAttempts;
++                if (maxAttempts <= 0) maxAttempts = 2;
++
++                bool shouldEscalate = false;
++                lock (_stateLock)
++                {
++                    if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
++                    {
++                        if (localFsm.AutoStopAttempts + 1 > maxAttempts)
++                            shouldEscalate = true;
++                    }
++                    else
++                    {
++                        LogEvent(account.Name, "AUTO_STOP_ABORT_FSM_LOST", $"FSM missing for {action.Instrument} during escalation check; aborting.");
++                        return;
++                    }
++                }
++
++                if (shouldEscalate)
++                {
++                    bool stillEscalate = false;
++                    lock (_stateLock)
++                    {
++                        if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
++                            stillEscalate = localFsm.State == GuardFsmState.Unprotected;
++                    }
++
++                    if (!stillEscalate)
++                    {
++                        LogEvent(account.Name, "AUTO_STOP_ESCALATE_SKIPPED", $"Escalation skipped for {instrument.FullName}; FSM is not unprotected.");
++                        return;
++                    }
++
++                    ClearTrackingAndSetUnprotected();
++                    LogEvent(account.Name, "AUTO_STOP_ESCALATE",
++                        $"Auto-stop escalation for {instrument.FullName}: attempts exceeded ceiling {maxAttempts}; flattening position.");
++
++                    try
++                    {
++                        account.Flatten(new[] { instrument });
++                    }
++                    catch (Exception fex)
++                    {
++                        RollbackFsm($"Escalation flatten failed: {fex.Message}");
++                        LogEvent(account.Name, "AUTO_STOP_ESCALATE_FAILED", $"Escalation flatten failed for {instrument.FullName}: {fex.Message}");
++                        throw;
++                    }
++
++                    AfterFlattenCleanup("escalation");
++                    return;
++                }
++
++                // Re-read the live position before computing the stop price and side.
++                position = account.Positions.FirstOrDefault(p => p.Instrument != null && p.Instrument.FullName == action.Instrument);
++                if (position == null || position.MarketPosition == MarketPosition.Flat || position.MarketPosition != initialSide)
++                {
++                    ReArmGraceIfUnprotected();
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_NO_POSITION", $"Position changed before stop pricing for {action.Instrument}; aborting auto-stop.");
++                    return;
++                }
+ 
+                 string symbolName = instrument.MasterInstrument.Name;
+                 int offsetTicks = 30; // default
+@@ -2690,8 +2937,12 @@ namespace NinjaTrader.NinjaScript.AddOns
+ 
+                 if (currentPrice <= 0.0)
+                 {
+-                    LogEvent(account.Name, "STOP_SIDE_FLATTEN", $"Market price unavailable for {instrument.FullName}. Flattening.");
+-                    account.Flatten(new[] { instrument });
++                    if (IsFsmProtectedOrPending())
++                    {
++                        LogEvent(account.Name, "AUTO_STOP_ESCALATE_SKIPPED", $"Stop-side flatten skipped for {instrument.FullName}; FSM already protected/pending.");
++                        return;
++                    }
++                    FlattenAndClear($"Market price unavailable for {instrument.FullName}. Flattening.");
+                     return;
+                 }
+ 
+@@ -2702,8 +2953,12 @@ namespace NinjaTrader.NinjaScript.AddOns
+                     
+                     if (stopPrice >= currentPrice)
+                     {
+-                        LogEvent(account.Name, "STOP_SIDE_FLATTEN", $"Long stop {stopPrice} >= current price {currentPrice}. Flattening.");
+-                        account.Flatten(new[] { instrument });
++                        if (IsFsmProtectedOrPending())
++                        {
++                            LogEvent(account.Name, "AUTO_STOP_ESCALATE_SKIPPED", $"Stop-side flatten skipped for {instrument.FullName}; FSM already protected/pending.");
++                            return;
++                        }
++                        FlattenAndClear($"Long stop {stopPrice} >= current price {currentPrice}. Flattening.");
+                         return;
+                     }
+                 }
+@@ -2714,17 +2969,51 @@ namespace NinjaTrader.NinjaScript.AddOns
+ 
+                     if (stopPrice <= currentPrice)
+                     {
+-                        LogEvent(account.Name, "STOP_SIDE_FLATTEN", $"Short stop {stopPrice} <= current price {currentPrice}. Flattening.");
+-                        account.Flatten(new[] { instrument });
++                        if (IsFsmProtectedOrPending())
++                        {
++                            LogEvent(account.Name, "AUTO_STOP_ESCALATE_SKIPPED", $"Stop-side flatten skipped for {instrument.FullName}; FSM already protected/pending.");
++                            return;
++                        }
++                        FlattenAndClear($"Short stop {stopPrice} <= current price {currentPrice}. Flattening.");
+                         return;
+                     }
+                 }
++                else
++                {
++                    RollbackFsm("Unexpected position side");
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_UNEXPECTED_SIDE", $"Unexpected position side {position.MarketPosition} for {action.Instrument}; aborting auto-stop.");
++                    return;
++                }
+ 
+                 stopPrice = instrument.MasterInstrument.RoundToTickSize(stopPrice);
+ 
++                // Re-read the live position immediately before sizing the stop.
++                var positionForQuantity = account.Positions.FirstOrDefault(p => p.Instrument != null && p.Instrument.FullName == action.Instrument);
++                if (positionForQuantity == null || positionForQuantity.MarketPosition == MarketPosition.Flat)
++                {
++                    ReArmGraceIfUnprotected();
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_NO_POSITION", $"Position became flat before stop sizing for {action.Instrument}; aborting auto-stop.");
++                    return;
++                }
++                if (positionForQuantity.MarketPosition != position.MarketPosition)
++                {
++                    ReArmGraceIfUnprotected();
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_SIDE_MISMATCH",
++                        $"Position side changed from {position.MarketPosition} to {positionForQuantity.MarketPosition} for {action.Instrument}; aborting auto-stop.");
++                    return;
++                }
++
++                int stopQuantity = (int)positionForQuantity.Quantity;
++                if (stopQuantity <= 0 || stopQuantity > (int)positionForQuantity.Quantity)
++                {
++                    ReArmGraceIfUnprotected();
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_NO_QUANTITY", $"Live position quantity {stopQuantity} for {action.Instrument}; aborting auto-stop.");
++                    return;
++                }
++
+                 // Diagnostic logging
+                 var orderDump = new StringBuilder();
+-                orderDump.AppendLine($"RiskGuard triggering auto-stop for {action.Quantity} {symbolName}. Current Orders:");
++                orderDump.AppendLine($"RiskGuard triggering auto-stop for {stopQuantity} {symbolName}. Current Orders:");
+                 foreach (Order o in account.Orders)
+                 {
+                     if (o.Instrument?.FullName == action.Instrument)
+@@ -2734,12 +3023,40 @@ namespace NinjaTrader.NinjaScript.AddOns
+                 }
+                 LogEvent(account.Name, "AUTO_STOP_DIAGNOSTIC", orderDump.ToString().TrimEnd());
+ 
++                // Increment the attempt counter and confirm the FSM still exists
++                // immediately before CreateOrder.
++                PositionGuardFsm fsmForAttempt = null;
++                lock (_stateLock)
++                {
++                    if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
++                    {
++                        localFsm.AutoStopAttempts++;
++                        fsmForAttempt = localFsm;
++                    }
++                }
++
++                if (fsmForAttempt == null)
++                {
++                    LogEvent(account.Name, "AUTO_STOP_ABORT_FSM_LOST", $"FSM lost for {action.Instrument} before CreateOrder; flattening position.");
++                    try
++                    {
++                        account.Flatten(new[] { instrument });
++                    }
++                    catch (Exception fex)
++                    {
++                        LogEvent(account.Name, "FLATTEN_ERROR", $"Flatten failed for {instrument.FullName}: {fex.Message}");
++                        throw;
++                    }
++                    AfterFlattenCleanup("fsm-lost");
++                    return;
++                }
++
+                 Order stopOrder = account.CreateOrder(
+                     instrument,
+                     orderAction,
+                     OrderType.StopMarket,
+                     TimeInForce.Day,
+-                    action.Quantity,
++                    stopQuantity,
+                     0,
+                     stopPrice,
+                     string.Empty,
+@@ -2747,23 +3064,94 @@ namespace NinjaTrader.NinjaScript.AddOns
+                     null
+                 );
+ 
+-                if (stopOrder != null)
++                if (stopOrder == null)
+                 {
+-                    account.Submit(new[] { stopOrder });
++                    RollbackFsm("CreateOrder returned null");
++                    LogEvent(account.Name, "AUTO_STOP_SUBMIT_FAILED", $"CreateOrder returned null for {instrument.FullName}.");
++                    throw new Exception($"CreateOrder returned null for auto-stop on {instrument.FullName}");
++                }
++
++                // Reserve-before-submit: record the pending protection, then release
++                // the lock before any account call.
++                bool reserved = false;
++                lock (_stateLock)
++                {
++                    if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
++                    {
++                        localFsm.AutoStopOrder = stopOrder;
++                        localFsm.RecognizedStopOrder = stopOrder;
++                        localFsm.CoveredQuantity = stopQuantity;
++                        localFsm.State = GuardFsmState.ProtectedPending;
++                        reserved = true;
++                    }
++                }
+ 
+-                    // Record the auto-stop on the FSM so it can cancel the orphan
+-                    // if the position flattens before the stop is hit (-6.4).
+-                    string key = FsmKey(account.Name, action.Instrument);
++                if (!reserved)
++                {
++                    // FSM disappeared after CreateOrder. Cancel the untracked stop
++                    // and flatten as a fail-closed fallback.
++                    try
++                    {
++                        account.Cancel(new[] { stopOrder });
++                    }
++                    catch (Exception cex)
++                    {
++                        LogEvent(account.Name, "AUTO_STOP_CANCEL_FAILED", $"Cancel of untracked stop failed for {instrument.FullName}: {cex.Message}");
++                    }
++
++                    LogEvent(account.Name, "AUTO_STOP_SUBMIT_FAILED", $"FSM lost before submit for {instrument.FullName}; flattening position.");
++                    try
++                    {
++                        account.Flatten(new[] { instrument });
++                    }
++                    catch (Exception fex)
++                    {
++                        LogEvent(account.Name, "FLATTEN_ERROR", $"Flatten failed for {instrument.FullName}: {fex.Message}");
++                        throw;
++                    }
++                    AfterFlattenCleanup("reserve-failed");
++                    throw new Exception($"FSM lost before submit for auto-stop on {instrument.FullName}");
++                }
++
++                try
++                {
++                    account.Submit(new[] { stopOrder });
++                }
++                catch (Exception ex)
++                {
++                    bool alreadyProtected = false;
+                     lock (_stateLock)
+                     {
+-                        if (_guardFsms.TryGetValue(key, out var fsm))
++                        if (_guardFsms.TryGetValue(key, out PositionGuardFsm localFsm))
+                         {
+-                            fsm.AutoStopOrder = stopOrder;
+-                            fsm.RecognizedStopOrder = stopOrder;
+-                            fsm.State = GuardFsmState.ProtectedPending;
++                            alreadyProtected = localFsm.State == GuardFsmState.Protected;
++                            if (alreadyProtected)
++                                localFsm.GraceEmitted = false;
+                         }
+                     }
++
++                    if (alreadyProtected)
++                    {
++                        LogEvent(account.Name, "AUTO_STOP_SUBMIT_RACE",
++                            $"Stop already Working for {instrument.FullName} despite Submit exception; leaving FSM Protected.");
++                        return;
++                    }
++
++                    try
++                    {
++                        account.Cancel(new[] { stopOrder });
++                    }
++                    catch (Exception cex)
++                    {
++                        LogEvent(account.Name, "AUTO_STOP_CANCEL_FAILED", $"Cancel of failed-submit stop failed for {instrument.FullName}: {cex.Message}");
++                    }
++
++                    RollbackFsm($"Submit failed: {ex.Message}");
++                    LogEvent(account.Name, "AUTO_STOP_SUBMIT_FAILED", $"Submit failed for {instrument.FullName}: {ex.Message}");
++                    throw;
+                 }
++
++                // No post-submit FSM write: UpdateFsmOnOrder owns all further state.
+             }
+         }
+ 
+@@ -3334,7 +3722,31 @@ namespace NinjaTrader.NinjaScript.AddOns
+     {
+         public string AccountName { get; }
+         public string Instrument { get; }
+-        public GuardFsmState State { get; set; } = GuardFsmState.Unprotected;
++        private GuardFsmState _state = GuardFsmState.Unprotected;
++        public GuardFsmState State
++        {
++            get { return _state; }
++            set
++            {
++                GuardFsmState previous = _state;
++                _state = value;
++                // Reset the per-episode auto-stop attempt counter when the FSM
++                // reaches Protected (successful protection), reaches Flat (position
++                // closed), transitions from Flat back to Unprotected (new episode),
++                // or transitions from Protected back to Unprotected (protection
++                // removed). We deliberately do NOT reset on Unprotected ->
++                // ProtectedPending so that failed submit attempts continue to count
++                // toward escalation.
++                if (value == GuardFsmState.Protected && previous != value)
++                    AutoStopAttempts = 0;
++                else if (value == GuardFsmState.Flat && previous != value)
++                    AutoStopAttempts = 0;
++                else if (previous == GuardFsmState.Flat && value == GuardFsmState.Unprotected)
++                    AutoStopAttempts = 0;
++                else if (previous == GuardFsmState.Protected && value == GuardFsmState.Unprotected)
++                    AutoStopAttempts = 0;
++            }
++        }
+         public MarketPosition PositionSide { get; set; } = MarketPosition.Flat;
+         public int PositionQuantity { get; set; }
+         // NOTE: NT8 Order.OrderId is NOT unique and can change over the order's
+@@ -3359,6 +3771,9 @@ namespace NinjaTrader.NinjaScript.AddOns
+         public bool GraceEmitted { get; set; }
+         // Monotonically increasing generation counter to invalidate stale timer callbacks.
+         public long GraceGeneration { get; set; }
++        // Number of auto-stop submit attempts in the current unprotected episode.
++        // Escalation to flatten happens when this exceeds MaxAutoStopAttempts.
++        public int AutoStopAttempts { get; set; }
+ 
+         public PositionGuardFsm(string accountName, string instrument)
+         {
+@@ -3524,6 +3939,7 @@ namespace NinjaTrader.NinjaScript.AddOns
+     {
+         public string OnMissing { get; set; } = "Flatten"; // "AutoStop", "Flatten", "WarnOnly"
+         public int StopAttachSeconds { get; set; } = 3;
++        public int MaxAutoStopAttempts { get; set; } = 2;
+         public Dictionary<string, int> Offsets { get; set; } = new Dictionary<string, int>
+         {
+             { "NQ", 40 },

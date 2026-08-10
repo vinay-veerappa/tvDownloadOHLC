@@ -150,6 +150,10 @@ Key skills in this repo:
 
 ## CODE SEARCH — USE CODEBASE-MEMORY MCP FIRST (mandatory)
 
+**Consult `.agent/USER.md` when user preferences, trading style, risk rules, or
+project conventions are relevant to the task.** This file is auto-rendered from
+the `user_prefs` table — it is authoritative shorthand for what the user wants.
+
 For **any** code-exploration task — finding a function/class/route, who-calls-what,
 architecture questions, refactor-impact analysis, dead-code detection — you MUST
 use the `codebase-memory-mcp` tools **first**, not `grep_search` / `file_search`.

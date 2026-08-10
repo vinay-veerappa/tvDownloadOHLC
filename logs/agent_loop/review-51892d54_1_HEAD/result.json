@@ -1,0 +1,15 @@
+{
+  "mode": "review",
+  "range": "51892d54~1..HEAD",
+  "files": [
+    "scripts/ninjatrader/addons/TradeCopierEngine.cs"
+  ],
+  "panel_verdict": "REVISE",
+  "panel_valid": true,
+  "findings_total": 24,
+  "findings_blocking": 22,
+  "arbiter": "REVISE (upheld=3 rejected=8 out-of-scope=13)",
+  "arbiter_upheld": 3,
+  "artifacts": "C:\\Users\\vinay\\tvDownloadOHLC\\logs\\agent_loop\\review-51892d54_1_HEAD",
+  "secs": 43.0
+}

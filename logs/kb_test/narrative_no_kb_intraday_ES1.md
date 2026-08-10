@@ -1,0 +1,1 @@
+The RTH session has ended. Please run the EOD narrative for the full close review.

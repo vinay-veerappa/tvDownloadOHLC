@@ -1,0 +1,11 @@
+diff --git a/scripts/ninjatrader/addons/RiskGuardAddOn.cs b/scripts/ninjatrader/addons/RiskGuardAddOn.cs
+index be44f92c..a543b722 100644
+--- a/scripts/ninjatrader/addons/RiskGuardAddOn.cs
++++ b/scripts/ninjatrader/addons/RiskGuardAddOn.cs
+@@ -4282,3 +4282,5 @@ namespace NinjaTrader.NinjaScript.AddOns
+     }
+ #endif
+ }
++
++// scratch
+\ No newline at end of file

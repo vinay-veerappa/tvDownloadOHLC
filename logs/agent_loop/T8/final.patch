@@ -1,0 +1,202 @@
+diff --git a/scripts/ninjatrader/addons/TradeCopierEngine.cs b/scripts/ninjatrader/addons/TradeCopierEngine.cs
+index 8d6c3566..118bf4d2 100644
+--- a/scripts/ninjatrader/addons/TradeCopierEngine.cs
++++ b/scripts/ninjatrader/addons/TradeCopierEngine.cs
+@@ -859,7 +859,13 @@ namespace NinjaTrader.NinjaScript.AddOns
+             {
+                 if (!_followerBrackets.TryGetValue(key, out bracket)) return;
+                 if (!ReferenceEquals(bracket.WorkingStop, order)) return;      // not our stop
+-                bracket.WorkingStop = null;
++                // Clear the dead order only if no sync is currently in flight. When a terminal
++                // update arrives during an in-flight sync, leaving WorkingStop honest lets the
++                // re-drive see the same order and replace it; clearing it here would make the
++                // in-flight sync's ReferenceEquals guard meaningless and could send a dead order
++                // to Cancel.
++                if (!bracket.StopInFlight)
++                    bracket.WorkingStop = null;
+             }
+ 
+             NinjaTrader.Code.Output.Process(
+@@ -906,6 +912,16 @@ namespace NinjaTrader.NinjaScript.AddOns
+             public double StopOffset = double.NaN;
+             public Order WorkingStop;                        // the follower's live protective order
+ 
++            // In-flight reservation for the bracket stop sync. Set under _lock before the first
++            // broker call and cleared exactly once in a finally, so a second sync arriving while
++            // one is between _lock and Submit sees the reservation and backs off.
++            public bool StopInFlight;
++
++            // Set under _lock by a sync that backed off because StopInFlight was true. The sync
++            // holding the reservation re-drives the sync after its broker work resolves, so the
++            // newer size/price is not dropped.
++            public bool StopResyncOwed;
++
+             // Bounded re-submission. Raised by review of the first implementation: if Submit
+             // threw, or the broker rejected the stop moments later, WorkingStop ended up null
+             // with a perfectly valid offset and NOTHING re-triggered submission -- the follower
+@@ -1087,7 +1103,7 @@ namespace NinjaTrader.NinjaScript.AddOns
+         /// does nothing at all until both the anchor and the distance are known.
+         /// Broker calls are made OUTSIDE `_lock`.
+         /// </summary>
+-        private void SyncFollowerStop(Account followerAcc, Instrument instrument, FollowerBracket bracket)
++        private void SyncFollowerStopOnce(Account followerAcc, Instrument instrument, FollowerBracket bracket, bool countAttempt)
+         {
+             if (followerAcc == null || instrument == null || bracket == null) return;
+ 
+@@ -1121,20 +1137,18 @@ namespace NinjaTrader.NinjaScript.AddOns
+                     bool stillLive = RiskGuardAddOn.IsPendingOrWorking(bracket.WorkingStop.OrderState);
+                     if (stillLive && samePrice && sameQty) return;   // already correct
+ 
+-                    // Cancel-then-replace rather than modify: NT8's Change path is not available
+-                    // through this seam, and a stale stop left working alongside a new one would
+-                    // over-cover and flip the follower when both fire.
++                    // Modify the working stop in place when possible; otherwise cancel-then-create.
++                    // Change() keeps one order and avoids the unprotected cancel/replace window;
++                    // an unsupporting connection falls through to cancel-then-create below.
+                     if (stillLive) toCancel = bracket.WorkingStop;
+                 }
+-                bracket.WorkingStop = null;
+ 
+-                if (bracket.StopAttempts >= MaxBracketStopAttempts)
++                if (countAttempt)
+                 {
+-                    // Bounded: keep retrying a broker that will not accept the order and the
+-                    // copier becomes the order flood it was hardened against.
+-                    return;
++                    if (bracket.StopAttempts >= MaxBracketStopAttempts)
++                        return;
++                    bracket.StopAttempts++;
+                 }
+-                bracket.StopAttempts++;
+             }
+ 
+             // P0-50: re-read the live position immediately before touching the broker.
+@@ -1151,7 +1165,13 @@ namespace NinjaTrader.NinjaScript.AddOns
+ 
+             if (livePos == null || livePos.MarketPosition == MarketPosition.Flat || livePos.Quantity <= 0)
+             {
+-                lock (_lock) { bracket.FollowerQuantity = 0; bracket.FollowerSide = MarketPosition.Flat; }
++                lock (_lock)
++                {
++                    bracket.FollowerQuantity = 0;
++                    bracket.FollowerSide = MarketPosition.Flat;
++                    bracket.WorkingStop = null;
++                    bracket.StopResyncOwed = false;
++                }
+                 if (toCancel != null)
+                 {
+                     try { followerAcc.Cancel(new[] { toCancel }); } catch { }
+@@ -1164,7 +1184,13 @@ namespace NinjaTrader.NinjaScript.AddOns
+ 
+             if (livePos.MarketPosition != bracketSide)
+             {
+-                lock (_lock) { bracket.FollowerQuantity = 0; bracket.FollowerSide = MarketPosition.Flat; }
++                lock (_lock)
++                {
++                    bracket.FollowerQuantity = 0;
++                    bracket.FollowerSide = MarketPosition.Flat;
++                    bracket.WorkingStop = null;
++                    bracket.StopResyncOwed = false;
++                }
+                 if (toCancel != null)
+                 {
+                     try { followerAcc.Cancel(new[] { toCancel }); } catch { }
+@@ -1185,17 +1211,6 @@ namespace NinjaTrader.NinjaScript.AddOns
+                 // than the position, which flips it on trigger.
+                 int liveQty = Math.Min(qty, livePos.Quantity);
+ 
+-                // A leader trailing its stop is the ordinary case, and cancel-then-create left the
+-                // follower unprotected on EVERY trail step, between the cancel and the new order's
+-                // acceptance. Modify the working order instead: one order, no window.
+-                //
+-                // The original P0-9 note said "cancel-then-replace, not modify", to stop a stale
+-                // stop working beside a new one -- that over-covers and flips the follower when
+-                // both fire. Change() cannot produce that state: there is only ever one order.
+-                // Verified available: the connection serving every account here advertises the
+-                // OrderChange feature (/api/connections). Any failure falls through to the
+-                // cancel-then-create path below, so an unsupporting connection degrades rather
+-                // than breaks.
+                 if (toCancel != null
+                     && RiskGuardAddOn.IsPendingOrWorking(toCancel.OrderState)
+                     && toCancel.OrderType == OrderType.StopMarket
+@@ -1231,6 +1246,11 @@ namespace NinjaTrader.NinjaScript.AddOns
+ 
+                 if (stop == null)
+                 {
++                    lock (_lock)
++                    {
++                        bracket.WorkingStop = null;
++                        bracket.StopResyncOwed = false;
++                    }
+                     NinjaTrader.Code.Output.Process(
+                         $"[CopierEngine] BRACKET_SUBMIT_FAILED on {followerAcc.Name} {instrument.FullName}: CreateOrder returned null. The follower is UNPROTECTED.",
+                         PrintTo.OutputTab1);
+@@ -1253,7 +1273,11 @@ namespace NinjaTrader.NinjaScript.AddOns
+             catch (Exception ex)
+             {
+                 int attempts;
+-                lock (_lock) { attempts = bracket.StopAttempts; }
++                lock (_lock)
++                {
++                    attempts = bracket.StopAttempts;
++                    bracket.WorkingStop = null;
++                }
+                 bool exhausted = attempts >= MaxBracketStopAttempts;
+                 NinjaTrader.Code.Output.Process(
+                     $"[CopierEngine] BRACKET_SUBMIT_FAILED on {followerAcc.Name} {instrument.FullName} "
+@@ -1265,6 +1289,55 @@ namespace NinjaTrader.NinjaScript.AddOns
+             }
+         }
+ 
++        private void SyncFollowerStop(Account followerAcc, Instrument instrument, FollowerBracket bracket)
++        {
++            if (followerAcc == null || instrument == null || bracket == null) return;
++
++            lock (_lock)
++            {
++                if (bracket.StopInFlight)
++                {
++                    bracket.StopResyncOwed = true;
++                    return;
++                }
++                if (bracket.StopAttempts >= MaxBracketStopAttempts)
++                    return;
++                bracket.StopInFlight = true;
++            }
++
++            try
++            {
++                for (int pass = 0; pass < 3; pass++)
++                {
++                    SyncFollowerStopOnce(followerAcc, instrument, bracket, pass == 0);
++
++                    bool owed;
++                    lock (_lock)
++                    {
++                        owed = bracket.StopResyncOwed;
++                        bracket.StopResyncOwed = false;
++                    }
++
++                    if (!owed)
++                        break;
++
++                    if (pass == 2)
++                    {
++                        CopierLog(followerAcc.Name, "BRACKET_RESYNC_BOUND",
++                            $"{instrument.FullName}: re-sync bound reached; stopping to avoid order flood.");
++                        break;
++                    }
++                }
++            }
++            finally
++            {
++                lock (_lock)
++                {
++                    bracket.StopInFlight = false;
++                }
++            }
++        }
++
+         /// <summary>
+         /// The follower is flat in this instrument: cancel any protective leg we placed and drop
+         /// the bracket. An orphaned stop left working would open a brand new position in the

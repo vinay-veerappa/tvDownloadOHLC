@@ -71,7 +71,7 @@ def _review(args, profile) -> int:
         gate_summary = (
             f"build: {'PASS' if b.ok else 'FAIL'} ({b.summary})\n"
             f"tests: {t.passed} passed, {len(t.failures)} failed"
-            f"{'' if t.reached_results else ' (RUNNER DID NOT REACH RESULTS - treat as unknown)'}"
+            f"{'' if t.counted else ' (RUNNER DID NOT REACH RESULTS - treat as unknown)'}"
         )
         print("  " + gate_summary.replace("\n", "\n  "))
 

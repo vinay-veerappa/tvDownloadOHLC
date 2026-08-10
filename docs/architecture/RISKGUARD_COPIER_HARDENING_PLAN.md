@@ -808,8 +808,83 @@ suite green until the end-to-end test existed. Suite 762/0 → **787/0**.
 
 ---
 
-### P0-62. `Account.Change()` applies the price but silently refuses a quantity INCREASE — OPEN
-*(found live 2026-08-10 while validating `P0-61`'s fix; the fix works and this is what it revealed)*
+### P0-63. `Account.Change()` is a SILENT NO-OP on `provider: Simulator` accounts — so the mirrored stop has never trailed — OPEN
+*(found 2026-08-10 by an isolated probe designed to check `P0-62`'s premise. It disproved it, and found something larger.)*
+
+**Where**: every `followerAcc.Change(...)` call in `TradeCopierEngine` (both leg syncs), and
+`McpBridgeAddOn.ChangeOrder`. One API, one behaviour.
+
+**What happens**: nothing. The order transitions `ChangeSubmitted` → `Accepted` and **keeps its
+original price and quantity.** Not quantity-specific, not OCO-specific, not ATM-specific, not
+stop-specific. Established on `Sim_All_Day_ORB`, an account in no copier relationship, so nothing
+else could be reverting it:
+
+| Probe | Asked | Result |
+|---|---|---|
+| standalone `StopMarket`, no OCO | qty 1 → 2 | **qty 1** |
+| same order, price only | 29700 → 29695 | **29700** |
+| resting `Limit`, 300 pts from market | 29500 → 29550 | **29500** |
+
+The third is the decisive one: a resting limit far from the market has no trigger-proximity or
+margin rule to blame.
+
+**Retroactive confirmation on the copier's own path**: in the first live test of §4v, stop `34410`
+was *created* at 29753.5, logged `BRACKET_MODIFIED ... stop moved to 1@29754.5`, and ended at
+**29753.5**. The modify did nothing there either.
+
+**Why we believed otherwise.** `/api/connections` reports `OrderChange` in `allFeatures` for
+`Sim101` — but that is the **connection's** capability (`TPT`, which supplies data), while the
+account's **`provider` is `Simulator`**, i.e. NT8's internal sim engine handles the orders and
+ignores `Change()`. §4o's "Verified available: the connection advertises the OrderChange feature"
+read the wrong layer. **Advertised by the connection ≠ honoured by the provider.**
+
+**What this invalidates:**
+
+- **The entire "modify in place, so no unprotected window" trail path** (`§4o`, shipped
+  `995f6402`). Every leader trail step leaves the follower's stop at its **original** price. A
+  leader trailing a stop up to lock in profit leaves the follower carrying the original risk.
+- **`P0-62` was wrong** and is superseded by this entry — see below.
+- **§4p's "a trailed leg kept both its orderId and its oco"** is consistent with the change simply
+  never happening, so it is not evidence that `Change()` preserves OCO membership.
+- The `profiles.py` invariant asserting modify-in-place has been corrected, or the review panel
+  would defend a no-op.
+
+> ⚠️ **UNRESOLVED, and it decides the remedy: does `Change()` work on a non-`Simulator` provider?**
+> Every account validated on so far is `provider: Simulator`. The funded accounts are
+> `Provider31` and were `Disconnected` during this work. If `Change()` is honoured there, the trail
+> works in production and only our *testing* is misleading; if not, the trail is broken everywhere.
+> **Do not assume either way.** Establishing it means placing a real order on a funded account,
+> which is the user's call, not the agent's.
+
+**Remedy options, all of which subsume `P0-62`:**
+
+1. **Assume `Change()` never works: cancel-then-create every adjustment.** Correct on any provider,
+   at the cost of a naked window on the risk leg per trail step — the exact failure §4o shipped
+   modify-in-place to avoid. Going back to it knowingly is a real regression in a different axis.
+2. **Delta leg for growth, cancel-then-create for repricing.** Needs `Reconcile` to accept N legs
+   summing to the position size (`P1-36`'s coverage sum), which is the class-level fix.
+3. **Detect it at runtime**: after a `Change()`, verify the order actually took the new values, and
+   fall back to cancel-then-create when it did not. Works on both provider types without deciding
+   the question, and turns a silent no-op into an observable one. **Cheapest honest option, and it
+   composes with 1 and 2.**
+
+---
+
+### ~~P0-62. `Account.Change()` applies the price but silently refuses a quantity INCREASE~~ — SUPERSEDED by `P0-63`
+*(opened and superseded the same day. Kept, not deleted: IDs are never reused, and the reasoning error is worth keeping.)*
+
+> ❌ **This entry's premise was WRONG.** It claimed the price applied while the quantity was
+> refused, inferred from `2@29742.5` being logged and the order reading `1 @ 29742.5`. I treated
+> `29743.5` as the order's prior value; it never was one — it was only ever another *desired* value
+> that also failed to apply. The order was **created** at 29742.5 and never changed at all.
+> `P0-63` has the isolated evidence.
+>
+> **The reasoning error, which I made twice in one session** (see also the retracted ATM
+> lockout-bypass claim in handover §4v): **I read a final state and assumed a prior one.**
+> Both times the fix was the same — establish the before-value independently, or probe the
+> mechanism directly on an isolated account instead of inferring it from a busy one.
+
+The original text follows for the record.
 
 **Where**: every `followerAcc.Change(...)` call — both leg syncs — and therefore
 `Reconcile`'s decision to emit `Modify` at all when the quantity must grow.

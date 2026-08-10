@@ -1,0 +1,19 @@
+{
+  "ticket": "SELFTEST",
+  "rounds": [
+    {
+      "round": 1,
+      "stage": "review",
+      "ok": false,
+      "summary": "REVISE [rev-a=APPROVE(0), rev-b=REVISE(1)]",
+      "detail": "### From rev-b (verdict REVISE)\n- [BLOCKER] X: invented problem",
+      "cost_usd": 0.0,
+      "secs": 0.0,
+      "arbiter": "ESCALATE (upheld=1 rejected=0 out-of-scope=0)"
+    }
+  ],
+  "applied": false,
+  "cost_usd": 0.0,
+  "baseline": [],
+  "final_verdict": "ESCALATED"
+}

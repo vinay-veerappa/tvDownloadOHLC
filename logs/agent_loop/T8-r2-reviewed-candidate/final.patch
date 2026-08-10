@@ -1,0 +1,104 @@
+diff --git a/scripts/ninjatrader/addons/TradeCopierEngine.cs b/scripts/ninjatrader/addons/TradeCopierEngine.cs
+index 8d6c3566..5747c7a1 100644
+--- a/scripts/ninjatrader/addons/TradeCopierEngine.cs
++++ b/scripts/ninjatrader/addons/TradeCopierEngine.cs
+@@ -859,7 +859,10 @@ namespace NinjaTrader.NinjaScript.AddOns
+             {
+                 if (!_followerBrackets.TryGetValue(key, out bracket)) return;
+                 if (!ReferenceEquals(bracket.WorkingStop, order)) return;      // not our stop
+-                bracket.WorkingStop = null;
++                // Do NOT clear WorkingStop here. An honest WorkingStop keeps the ReferenceEquals
++                // guard meaningful during an in-flight sync, and it lets a second sync modify
++                // the existing order instead of creating a duplicate. The re-drive will replace
++                // it once the broker work resolves.
+             }
+ 
+             NinjaTrader.Code.Output.Process(
+@@ -906,6 +909,16 @@ namespace NinjaTrader.NinjaScript.AddOns
+             public double StopOffset = double.NaN;
+             public Order WorkingStop;                        // the follower's live protective order
+ 
++            // In-flight reservation for the bracket stop sync. Set under _lock before the first
++            // broker call and cleared exactly once in a finally, so a second sync arriving while
++            // one is between _lock and Submit sees the reservation and backs off.
++            public bool StopInFlight;
++
++            // Set under _lock by a sync that backed off because StopInFlight was true. The sync
++            // holding the reservation re-drives the sync after its broker work resolves, so the
++            // newer size/price is not dropped.
++            public bool StopResyncOwed;
++
+             // Bounded re-submission. Raised by review of the first implementation: if Submit
+             // threw, or the broker rejected the stop moments later, WorkingStop ended up null
+             // with a perfectly valid offset and NOTHING re-triggered submission -- the follower
+@@ -1087,7 +1100,7 @@ namespace NinjaTrader.NinjaScript.AddOns
+         /// does nothing at all until both the anchor and the distance are known.
+         /// Broker calls are made OUTSIDE `_lock`.
+         /// </summary>
+-        private void SyncFollowerStop(Account followerAcc, Instrument instrument, FollowerBracket bracket)
++        private void SyncFollowerStopOnce(Account followerAcc, Instrument instrument, FollowerBracket bracket)
+         {
+             if (followerAcc == null || instrument == null || bracket == null) return;
+ 
+@@ -1126,7 +1139,6 @@ namespace NinjaTrader.NinjaScript.AddOns
+                     // over-cover and flip the follower when both fire.
+                     if (stillLive) toCancel = bracket.WorkingStop;
+                 }
+-                bracket.WorkingStop = null;
+ 
+                 if (bracket.StopAttempts >= MaxBracketStopAttempts)
+                 {
+@@ -1265,6 +1277,53 @@ namespace NinjaTrader.NinjaScript.AddOns
+             }
+         }
+ 
++        private void SyncFollowerStop(Account followerAcc, Instrument instrument, FollowerBracket bracket)
++        {
++            if (followerAcc == null || instrument == null || bracket == null) return;
++
++            lock (_lock)
++            {
++                if (bracket.StopInFlight)
++                {
++                    bracket.StopResyncOwed = true;
++                    return;
++                }
++                bracket.StopInFlight = true;
++            }
++
++            try
++            {
++                for (int pass = 0; pass < 3; pass++)
++                {
++                    SyncFollowerStopOnce(followerAcc, instrument, bracket);
++
++                    bool owed;
++                    lock (_lock)
++                    {
++                        owed = bracket.StopResyncOwed;
++                        bracket.StopResyncOwed = false;
++                    }
++
++                    if (!owed)
++                        break;
++
++                    if (pass == 2)
++                    {
++                        CopierLog(followerAcc.Name, "BRACKET_RESYNC_BOUND",
++                            $"{instrument.FullName}: re-sync bound reached; stopping to avoid order flood.");
++                        break;
++                    }
++                }
++            }
++            finally
++            {
++                lock (_lock)
++                {
++                    bracket.StopInFlight = false;
++                }
++            }
++        }
++
+         /// <summary>
+         /// The follower is flat in this instrument: cancel any protective leg we placed and drop
+         /// the bracket. An orphaned stop left working would open a brand new position in the

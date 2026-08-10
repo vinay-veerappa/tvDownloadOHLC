@@ -30,7 +30,7 @@
 ## 🤖 AI-Native Integration (MCP)
 - **[Data Bridge Server](file:///c:/Users/vinay/tvDownloadOHLC/mcp/data_server.py)**: The central tool hub for AI assistants.
 - **[Structural Truth](mcp_brainstorming/structural_truth.md)**: The repo-wide knowledge graph (36k nodes).
-- **[Second Brain](file:///c:/Users/vinay/tvDownloadOHLC/mcp/memory.db)**: Persistent semantic memory for strategies and ADRs.
+- **[Second Brain](file:///c:/Users/vinay/tvDownloadOHLC/.agent/memory.db)**: Persistent semantic memory for strategies and ADRs (shared by nq-data-bridge MCP + context_manager). Includes FTS5 search, `user_prefs` profile → `.agent/USER.md`, `outcomes` ledger, and `process_queue` for skill proposals.
 - **[Trading Second Brain](SecondBrain_Trading.md)**: Unified rules and statistics for ALN, NQStats (RTH/6AM), and ICT concepts.
 
 

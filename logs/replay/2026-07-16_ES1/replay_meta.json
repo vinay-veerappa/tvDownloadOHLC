@@ -1,0 +1,20 @@
+{
+  "run_id": "2026-07-16_ES1",
+  "ticker": "ES1",
+  "target_date": "2026-07-16",
+  "sim_dt_et": "2026-07-16T09:30:00-04:00",
+  "model": "deepseek-v4-flash:cloud",
+  "with_llm": false,
+  "kb_api_url": "http://127.0.0.1:8900",
+  "kb_context_chars": 8651,
+  "cheat_sheet_chars": 28112,
+  "narrative_chars": 129,
+  "session_bars": 391,
+  "limitations": [
+    "Historical replay skips live GEX signal (no dated historical GEX snapshots yet).",
+    "Historical ICT features require dated files in data/derived; missing dates are skipped gracefully.",
+    "Calendar/news context may not be fully historical for all providers."
+  ],
+  "confluence_summary": "[2026-07-16T09:30:00-04:00] ES1 | direction=short | confidence=35% | signals=3 | candidates=0 | kb_units=7 | plan=short entry=7587.0 stop=7615.0 target=7548.25 RR=1.38",
+  "output_dir": "C:\\Users\\vinay\\tvDownloadOHLC\\logs\\replay\\2026-07-16_ES1"
+}
