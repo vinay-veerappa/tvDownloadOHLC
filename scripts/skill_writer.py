@@ -12,15 +12,52 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".agent", "skills")
 SKILL_NAMES_FILE = os.path.join(SKILLS_DIR, "_skill_names.txt")
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".agent", "memory.db")
 
 CM_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            ".agent", "skills", "context_manager", "scripts")
 sys.path.insert(0, CM_SCRIPTS)
+
+
+def _read_skill_names() -> set[str]:
+    """Read _skill_names.txt, tolerating a UTF-8 BOM."""
+    if not os.path.exists(SKILL_NAMES_FILE):
+        return set()
+    with open(SKILL_NAMES_FILE, "r", encoding="utf-8-sig") as f:
+        return {line.strip() for line in f if line.strip()}
+
+
+def _append_skill_name(slug: str) -> None:
+    existing = _read_skill_names()
+    if slug in existing:
+        return
+    with open(SKILL_NAMES_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{slug}\n")
+
+
+def _inject_front_matter(content: str, slug: str) -> str:
+    """Ensure the markdown has a front-matter block containing name and description."""
+    stripped = content.strip()
+    if not stripped.startswith("---"):
+        return f"---\nname: {slug}\ndescription: Procedure distilled from outcomes.\n---\n\n{content}"
+
+    # Proper front-matter extraction: ---\n...\n---
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", stripped, re.DOTALL)
+    if not match:
+        # Malformed front-matter: treat the whole content as body and prepend a new block.
+        return f"---\nname: {slug}\ndescription: Procedure distilled from outcomes.\n---\n\n{content}"
+
+    fm = match.group(1)
+    body = stripped[match.end():]
+    if "name:" not in fm:
+        fm = f"name: {slug}\n{fm}"
+    if "description:" not in fm:
+        fm = f"{fm}\ndescription: Procedure distilled from outcomes."
+    return f"---\n{fm}\n---\n\n{body}"
 
 
 def write_skill(name: str, content: str) -> str:
@@ -33,28 +70,15 @@ def write_skill(name: str, content: str) -> str:
     os.makedirs(skill_dir, exist_ok=True)
     skill_md = os.path.join(skill_dir, "SKILL.md")
 
-    # ensure front-matter has name + description
-    if not content.strip().startswith("---"):
-        content = f"---\nname: {slug}\ndescription: Procedure distilled from outcomes.\n---\n\n{content}"
-    elif "name:" not in content.split("---", 2)[1]:
-        # inject name into front-matter
-        content = content.replace("---", f"---\nname: {slug}", 1)
+    content = _inject_front_matter(content, slug)
 
     with open(skill_md, "w", encoding="utf-8") as f:
         f.write(content)
 
-    # append to _skill_names.txt if not present
-    existing = set()
-    if os.path.exists(SKILL_NAMES_FILE):
-        with open(SKILL_NAMES_FILE, "r", encoding="utf-8") as f:
-            existing = {line.strip() for line in f if line.strip()}
-    if slug not in existing:
-        with open(SKILL_NAMES_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{slug}\n")
+    _append_skill_name(slug)
 
     # mark process_queue item approved if we can find it
     try:
-        import sqlite3
         from store_schema import get_db_connection, approve_queue_item
         conn = get_db_connection()
         try:

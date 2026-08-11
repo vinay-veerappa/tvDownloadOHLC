@@ -19,6 +19,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from store_schema import (
     DB_PATH,
+    USER_MD_PATH,
     get_db_connection,
     ensure_schema,
     upsert_pref,
@@ -85,10 +86,9 @@ def main():
             print(f"Dry-run only. Use --apply to write.")
         if args.render:
             md = render_profile_md(conn)
-            user_md = os.path.join(os.path.dirname(DB_PATH), "USER.md")
-            with open(user_md, "w", encoding="utf-8") as f:
+            with open(USER_MD_PATH, "w", encoding="utf-8") as f:
                 f.write(md)
-            print(f"Rendered USER.md -> {user_md}")
+            print(f"Rendered USER.md -> {USER_MD_PATH}")
     finally:
         conn.close()
 

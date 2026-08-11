@@ -3,6 +3,7 @@ import os
 import json
 import sqlite3
 from datetime import datetime, timedelta
+from typing import List
 from fastmcp import FastMCP
 
 # Add root to sys.path for internal imports
@@ -21,23 +22,25 @@ if CM_SCRIPTS not in sys.path:
 # Paths
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(BASE_DIR, ".agent", "memory.db")
-USER_MD_PATH = os.path.join(BASE_DIR, ".agent", "USER.md")
 
 # Shared schema + helpers (stdlib + sqlite3 only — preserves startup weight)
 from store_schema import (
+    USER_MD_PATH,
     ensure_schema,
     get_db_connection,
     fts_search,
-    _build_fts_match,
     upsert_pref,
     get_prefs,
     render_profile_md,
     add_outcome,
     aggregate_outcomes,
     get_outcome_rows,
+    archive_outcome as _archive_outcome_db,
+    discard_outcome as _discard_outcome_db,
     enqueue,
     list_queue,
     approve_queue_item,
+    reject_queue_item,
     prune_queue,
     propose_skill_draft,
 )
@@ -112,13 +115,52 @@ def add_memory(topic: str, content: str, category: str = "ADR", metadata: dict =
 @mcp.tool()
 def query_memory(query: str) -> str:
     """Searches the Second Brain for relevant architectural decisions or strategy nuances."""
-    results = memory.query(query)
-    if not results:
-        return f"No memories found for '{query}'."
+    # Gather all three sources on one connection before deciding what to return.
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        # 1. Memory results (FTS5-first)
+        memory_results = memory.query(query)
 
-    formatted = []
-    for cat, content, tags, date in results:
-        # B3: strip linked_file: prefix when picking display topic
+        # 2. Profile rows for preference-keyword matches
+        profile_lines: List[str] = []
+        try:
+            prefs = get_prefs(conn)
+            pref_matches = [p for p in prefs if query.lower() in p["key"].lower() or query.lower() in p["value"].lower()]
+            if pref_matches:
+                profile_lines.append("**Profile matches:**")
+                for p in pref_matches:
+                    profile_lines.append(f"- {p['key']}: {p['value']} (confidence={p['confidence']:.1f})")
+        except Exception:
+            pass
+
+        # 3. Outcome projection (counts only, no raw PnL)
+        outcome_lines: List[str] = []
+        try:
+            agg = aggregate_outcomes(conn, tag=query, period_days=7)
+            for a in agg:
+                if a.get("total", 0) > 0:
+                    wr = a.get("win_rate_pct")
+                    wr_str = f"{wr:.1f}%" if wr is not None else "N/A"
+                    outcome_lines.append(
+                        f"Outcomes [{a['tag']}]: {a['n_wins']} wins / {a['n_losses']} losses "
+                        f"(win-rate {wr_str}) in last 7d"
+                    )
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+    # If absolutely nothing matched, say so.
+    if not memory_results and not profile_lines and not outcome_lines:
+        return f"No memories, profile entries, or outcomes found for '{query}'."
+
+    formatted: List[str] = []
+    if profile_lines:
+        formatted.append("\n".join(profile_lines))
+
+    for cat, content, tags, date in memory_results:
+        # Strip linked_file: prefix when picking display topic
         first_tag = tags.split(",")[0].strip() if tags else ""
         if first_tag.startswith("linked_file:"):
             topic = ""
@@ -131,36 +173,8 @@ def query_memory(query: str) -> str:
             topic = first_tag
         formatted.append(f"[{cat}] {topic} ({date})\n{content}")
 
-    # P1: prepend profile rows for preference-keyword matches
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        prefs = get_prefs(conn)
-        pref_matches = [p for p in prefs if query.lower() in p["key"].lower() or query.lower() in p["value"].lower()]
-        if pref_matches:
-            pref_lines = ["**Profile matches:**"]
-            for p in pref_matches:
-                pref_lines.append(f"- {p['key']}: {p['value']} (confidence={p['confidence']:.1f})")
-            formatted = ["\n".join(pref_lines)] + formatted
-    except Exception:
-        pass
-    finally:
-        conn.close()
-
-    # P2: outcome projection (counts only, no raw PnL)
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        agg = aggregate_outcomes(conn, tag=query, period_days=7)
-        if agg:
-            for a in agg:
-                if a.get("total", 0) > 0:
-                    wr = a.get("win_rate_pct")
-                    wr_str = f"{wr:.1f}%" if wr is not None else "N/A"
-                    formatted.append(f"Outcomes [{a['tag']}]: {a['n_wins']} wins / {a['n_losses']} losses (win-rate {wr_str}) in last 7d")
-    except Exception:
-        pass
-    finally:
-        conn.close()
+    if outcome_lines:
+        formatted.extend(outcome_lines)
 
     return "\n\n".join(formatted)
 
@@ -233,11 +247,13 @@ def capture_outcome(
     run_id: str = None,
     symbol: str = None,
     session: str = None,
+    verdict: str = None,
     metadata: dict = None,
 ) -> str:
     """
     Records a trade/run outcome. Consent via call (same pattern as link_memory_to_code).
     The return text is the confirmation surface. Verdict is inferred from outcome text if omitted.
+    Pass verdict explicitly (win/loss/flat/mixed) to override inference.
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -245,15 +261,20 @@ def capture_outcome(
         ensure_schema(conn)
         oid = add_outcome(
             conn, tag, subject, outcome, pnl, ticker, entry_price, exit_price,
-            run_id, symbol, session, metadata=metadata,
+            run_id, symbol, session, verdict=verdict, metadata=metadata,
         )
-        # read back the verdict
+        # read back the verdict and whether it was inferred
         row = conn.execute("SELECT verdict FROM outcomes WHERE id = ?", (oid,)).fetchone()
-        verdict = row["verdict"] if row else "?"
+        stored_verdict = row["verdict"] if row else "?"
     finally:
         conn.close()
-    return (f"Recorded outcome [{tag}] id={oid} verdict={verdict} "
-            f"subject='{subject}' pnl={pnl}. If this was not intended, tell the agent to discard id {oid}.")
+
+    inferred_note = ""
+    if verdict is None:
+        inferred_note = f" Verdict was inferred as '{stored_verdict}'; pass verdict=... to override."
+    return (f"Recorded outcome [{tag}] id={oid} verdict={stored_verdict} "
+            f"subject='{subject}' pnl={pnl}.{inferred_note} "
+            f"If this was not intended, use discard_outcome(id={oid}).")
 
 
 @mcp.tool()
@@ -277,6 +298,40 @@ def recap_outcomes(period_days: int = 7, tag: str = None, verbose: bool = False)
 
 
 # ---------------------------------------------------------------------------
+# P2: archive / discard outcomes
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def archive_outcome(outcome_id: int) -> str:
+    """Soft-deletes an outcome (sets archived=1). Use to hide bad data without removing it."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        ok = _archive_outcome_db(conn, outcome_id)
+    finally:
+        conn.close()
+    if ok:
+        return f"Outcome id={outcome_id} archived."
+    return f"Outcome id={outcome_id} not found."
+
+
+@mcp.tool()
+def discard_outcome(outcome_id: int) -> str:
+    """Hard-deletes an outcome row. Use when a capture was accidental."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        ok = _discard_outcome_db(conn, outcome_id)
+    finally:
+        conn.close()
+    if ok:
+        return f"Outcome id={outcome_id} discarded."
+    return f"Outcome id={outcome_id} not found."
+
+
+# ---------------------------------------------------------------------------
 # P3: propose_skill
 # ---------------------------------------------------------------------------
 
@@ -284,7 +339,7 @@ def recap_outcomes(period_days: int = 7, tag: str = None, verbose: bool = False)
 def propose_skill(tag: str) -> str:
     """
     Proposes a reusable SKILL.md from repeated successful outcomes on a tag.
-    Requires >=3 distinct win subjects + zero losses in 30d. Never writes a file.
+    Requires >=3 distinct win run_ids + zero losses in 30d. Never writes a file.
     Returns the draft text if eligible, or a refusal message.
     """
     conn = sqlite3.connect(DB_PATH)
@@ -299,6 +354,21 @@ def propose_skill(tag: str) -> str:
                f"  python scripts/skill_writer.py --name <name> --source <saved_draft_path>\n\n" \
                f"{msg}"
     return msg
+
+
+@mcp.tool()
+def reject_skill_proposal(queue_id: int) -> str:
+    """Marks a queued skill proposal as rejected. Rejected proposals are pruned after 30d."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        row = reject_queue_item(conn, queue_id)
+    finally:
+        conn.close()
+    if row:
+        return f"Skill proposal id={queue_id} rejected."
+    return f"Skill proposal id={queue_id} not found."
 
 
 # Paths

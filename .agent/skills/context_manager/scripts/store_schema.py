@@ -16,13 +16,14 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 # Script location: .agent/skills/context_manager/scripts/store_schema.py
 # Database location: .agent/memory.db
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DB_PATH = os.path.join(BASE_DIR, "memory.db")
+USER_MD_PATH = os.path.join(BASE_DIR, "USER.md")
 
 # ---------------------------------------------------------------------------
 # DDL
@@ -99,6 +100,10 @@ OUTCOMES_INDEX_DDL = """
 CREATE INDEX IF NOT EXISTS idx_outcomes_tag ON outcomes(tag)
 """
 
+OUTCOMES_TS_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS idx_outcomes_ts_tag ON outcomes(ts, tag)
+"""
+
 PROCESS_QUEUE_DDL = """
 CREATE TABLE IF NOT EXISTS process_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,6 +132,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     cur.execute(USER_PREFS_DDL)
     cur.execute(OUTCOMES_DDL)
     cur.execute(OUTCOMES_INDEX_DDL)
+    cur.execute(OUTCOMES_TS_INDEX_DDL)
     cur.execute(PROCESS_QUEUE_DDL)
 
     # FTS5 — guard with try/except so the store works even on sqlite without fts5
@@ -236,6 +242,17 @@ def get_prefs(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def _display_topic(tags: Optional[str]) -> str:
+    """Pick the first non-internal tag as the display topic."""
+    if not tags:
+        return ""
+    for t in tags.split(","):
+        t = t.strip()
+        if t and not t.startswith("linked_file:"):
+            return t
+    return ""
+
+
 def render_profile_md(conn: sqlite3.Connection) -> str:
     prefs = get_prefs(conn)
     mem_rows = conn.execute(
@@ -259,7 +276,7 @@ def render_profile_md(conn: sqlite3.Connection) -> str:
     if mem_rows:
         lines.append("## Recent user_profile / standard memories")
         for m in mem_rows:
-            topic = (m["tags"] or "").split(",")[0].strip() if m["tags"] else ""
+            topic = _display_topic(m["tags"])
             content_preview = m["content"][:120].replace("\n", " ")
             lines.append(f"- [{m['category']}] {topic}: {content_preview}")
         lines.append("")
@@ -271,20 +288,119 @@ def render_profile_md(conn: sqlite3.Connection) -> str:
 # outcomes helpers (P2)
 # ---------------------------------------------------------------------------
 
-_VERDICT_MAP = {
-    "win": {"win", "profit", "hit", "target", "success", "winner"},
-    "loss": {"loss", "miss", "stop", "fail", "drawdown", "stopped", "stoploss"},
-    "flat": {"flat", "scratch", "scratched", "breakeven", "be-neutral"},
-    "mixed": {"mixed", "partial", "split"},
+# Scoring table: each keyword family contributes to a verdict bucket.
+# A keyword matches if its stem appears as a whole word (or word prefix) in the text.
+# Past-tense and common variants are included explicitly. "hit" is intentionally absent
+# as a standalone win keyword because it appears in both "hit target" (win) and
+# "hit stop" (loss). Compound phrases are scored separately.
+_VERDICT_KEYWORDS = {
+    "win": {
+        "win", "won", "wins", "winning", "winner", "winners",
+        "profit", "profits", "profitable", "profitably", "profiting",
+        "target", "targets", "targeted", "success", "successful", "succeeded",
+        "gain", "gains", "made money", "in the money", "itm",
+    },
+    "loss": {
+        "loss", "losses", "lost", "lose", "losing", "loser",
+        "miss", "missed", "misses", "missing",
+        "stop", "stopped", "stops", "stoploss", "stop-loss", "stopped out",
+        "fail", "failed", "fails", "failing", "failure",
+        "drawdown", "drawdowns", "dd",
+        "unprofitable", "unprofitably",
+    },
+    "flat": {
+        "flat", "scratch", "scratched", "breakeven", "break-even", "be-neutral",
+        "no gain", "unchanged", "unchange",
+    },
+    "mixed": {
+        "mixed", "partial", "partials", "split", "splits", "scaled out", "scale out",
+        "some win some loss", "win and loss", "won and lost",
+    },
+}
+
+# Compound phrases override the raw keyword score. Each phrase is checked first
+# and gives a strong directional push.
+_VERDICT_PHRASES = {
+    "win": {
+        "hit target", "hit the target", "target hit", "target reached",
+        "took profit", "profit taken", "profit hit", "made profit",
+        "won the trade", "winning trade", "closed profitable", "closed for profit",
+    },
+    "loss": {
+        "hit stop", "hit the stop", "stop hit", "stop loss hit", "stop-loss hit",
+        "stopped out", "got stopped", "took the loss", "took a loss", "loss taken",
+        "missed the setup", "missed setup", "setup missed", "failed trade",
+        "closed for loss", "closed at a loss", "stopped out at",
+    },
+    "flat": {
+        "scratched the trade", "trade scratched", "breakeven trade", "flat trade",
+        "closed flat", "closed even", "no profit no loss",
+    },
+    "mixed": {
+        "scaled out winners", "scaled out losers", "partial profit", "partial loss",
+        "some wins some losses", "won morning lost afternoon", "lost morning won afternoon",
+    },
 }
 
 
+def _word_matches(keyword: str, text: str) -> bool:
+    """Match a keyword as a whole word, or as a whole-word prefix for short stems."""
+    # Escape keyword, but allow keyword to be a phrase; phrase matching handled separately.
+    if " " in keyword:
+        return keyword in text
+    pattern = r'\b' + re.escape(keyword) + r'\w*\b'
+    return bool(re.search(pattern, text))
+
+
+def _negate_scores(text: str, scores: Dict[str, int]) -> None:
+    """Zero-out keyword-family hits that are explicitly negated (e.g., 'no losses')."""
+    negation_pattern = re.compile(
+        r"\b(no|not|none|never|without|didn\'t|did not|doesn\'t|does not|wasn\'t|was not|isn\'t|is not)\b"
+        r"[\s\w\-]{0,15}"
+        r"\b(loss|losses|lost|miss|missed|stop|stopped|fail|failed|drawdown|profit|profits|win|wins|won|target)\b"
+    )
+    for match in negation_pattern.finditer(text):
+        word = match.group(2)
+        if word in {"loss", "losses", "lost", "miss", "missed", "stop", "stopped", "fail", "failed", "drawdown"}:
+            scores["loss"] = 0
+        elif word in {"profit", "profits", "win", "wins", "won", "target"}:
+            scores["win"] = 0
+
+
 def infer_verdict(outcome_text: str) -> str:
+    """Score outcome text into win/loss/flat/mixed/n/a.
+
+    Compound phrases are checked first and scored heavily. Remaining keyword families
+    are scored with word-boundary prefix matching so past-tense and derived forms
+    are recognized. Explicit negations ("no losses") zero out the hit. A tie or
+    conflicting strong signals default to 'mixed'.
+    """
     text = (outcome_text or "").lower()
-    for verdict, keywords in _VERDICT_MAP.items():
-        if any(re.search(r'\b' + re.escape(kw) + r'\b', text) for kw in keywords):
-            return verdict
-    return "n/a"
+    scores: Dict[str, int] = {"win": 0, "loss": 0, "flat": 0, "mixed": 0}
+
+    # Phrase hits count for more than isolated keywords.
+    for verdict, phrases in _VERDICT_PHRASES.items():
+        for phrase in phrases:
+            if phrase in text:
+                scores[verdict] += 3
+
+    # Word-family hits.
+    for verdict, keywords in _VERDICT_KEYWORDS.items():
+        for kw in keywords:
+            if _word_matches(kw, text):
+                scores[verdict] += 1
+
+    # Negation pass: "no losses", "didn't win", etc. zero the corresponding family.
+    _negate_scores(text, scores)
+
+    max_score = max(scores.values())
+    if max_score == 0:
+        return "n/a"
+
+    winners = [v for v, s in scores.items() if s == max_score]
+    if len(winners) > 1 or "mixed" in winners:
+        return "mixed"
+    return winners[0]
 
 
 def add_outcome(
@@ -322,7 +438,7 @@ def aggregate_outcomes(
     period_days: int = 7,
 ) -> List[Dict[str, Any]]:
     """Vectorized SQL GROUP BY — no Python loops over rows."""
-    since = (datetime.utcnow() - timedelta(days=period_days)).strftime('%Y-%m-%d %H:%M:%S')
+    since = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=period_days)).strftime('%Y-%m-%d %H:%M:%S')
     params: list = [since]
     tag_filter = ""
     if tag:
@@ -355,7 +471,7 @@ def get_outcome_rows(
     period_days: int = 7,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    since = (datetime.utcnow() - timedelta(days=period_days)).strftime('%Y-%m-%d %H:%M:%S')
+    since = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=period_days)).strftime('%Y-%m-%d %H:%M:%S')
     params: list = [since]
     tag_filter = ""
     if tag:
@@ -364,13 +480,27 @@ def get_outcome_rows(
     params.append(limit)
     rows = conn.execute(
         f"""SELECT id, ts, tag, subject, outcome, pnl_local, ticker,
-                  entry_price, exit_price, run_id, symbol, session, verdict
+                   entry_price, exit_price, run_id, symbol, session, verdict
             FROM outcomes
             WHERE archived = 0 AND ts >= ?{tag_filter}
             ORDER BY ts DESC LIMIT ?""",
         params,
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def archive_outcome(conn: sqlite3.Connection, outcome_id: int) -> bool:
+    """Soft-delete an outcome by setting archived=1."""
+    cur = conn.execute("UPDATE outcomes SET archived = 1 WHERE id = ?", (outcome_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def discard_outcome(conn: sqlite3.Connection, outcome_id: int) -> bool:
+    """Hard-delete an outcome row."""
+    cur = conn.execute("DELETE FROM outcomes WHERE id = ?", (outcome_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------
@@ -406,8 +536,18 @@ def approve_queue_item(conn: sqlite3.Connection, item_id: int) -> Optional[Dict[
     return dict(row) if row else None
 
 
+def reject_queue_item(conn: sqlite3.Connection, item_id: int) -> Optional[Dict[str, Any]]:
+    conn.execute(
+        "UPDATE process_queue SET status = 'rejected', approved_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (item_id,),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM process_queue WHERE id = ?", (item_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def prune_queue(conn: sqlite3.Connection, older_than_days: int = 30) -> int:
-    since = (datetime.utcnow() - timedelta(days=older_than_days)).strftime('%Y-%m-%d %H:%M:%S')
+    since = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=older_than_days)).strftime('%Y-%m-%d %H:%M:%S')
     cur = conn.execute(
         "DELETE FROM process_queue WHERE status = 'proposed' AND created_at < ?",
         (since,),
@@ -461,37 +601,123 @@ def get_skill_descriptions() -> List[Tuple[str, str]]:
     return results
 
 
+def _simple_stem(word: str) -> str:
+    """Very light stemmer for English trade/computing terms."""
+    word = word.lower()
+    for suffix in ("ing", "edly", "edly", "ed", "es", "ers", "er", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _token_set(text: str) -> set[str]:
+    """Tokenize and stem."""
+    raw = re.split(r"[\s,._\-/:()\[\]]+", (text or "").lower())
+    return {_simple_stem(t) for t in raw if t and len(t) > 2}
+
+
 def check_skill_dedupe(tag: str) -> Optional[str]:
-    """Return the name of an existing skill whose description covers the tag, or None."""
+    """Return the name of an existing skill whose name/description covers the tag.
+
+    Matching hierarchy:
+      1. Exact case-insensitive match against skill slug or front-matter name,
+         after normalizing spaces/underscores/hyphens.
+      2. The full tag phrase (>= 2 tokens) appears in name or description.
+      3. Token-stem Jaccard similarity >= 0.65 between tag and (name + description).
+    """
     tag_lower = tag.lower()
-    tag_tokens = {t for t in re.split(r"[\s_\-]+", tag_lower) if t and len(t) > 2}
+    tag_normalized = tag_lower.replace("_", " ").replace("-", " ")
+    tag_tokens = _token_set(tag)
+    multi_token = len(tag.split()) >= 2 or "_" in tag or "-" in tag
+
+    if not tag_tokens:
+        return None
+
     for name, desc in get_skill_descriptions():
+        name_lower = name.lower()
         desc_lower = (desc or "").lower()
-        if tag_lower in desc_lower:
+        haystack = f"{name_lower} {desc_lower}"
+
+        # 1. exact / normalized exact
+        if tag_lower == name_lower:
             return name
-        # token overlap: if all tag tokens appear in the description
-        if tag_tokens and tag_tokens.issubset(set(re.split(r"[\s,.\-]+", desc_lower))):
+        if tag_normalized == name_lower.replace("-", " "):
             return name
+
+        # 2. phrase contained (only for multi-token tags; single words are too noisy)
+        if multi_token:
+            if tag_lower in haystack or tag_normalized in haystack:
+                return name
+
+        # 3. token-stem overlap with a threshold
+        haystack_tokens = _token_set(haystack)
+        if not haystack_tokens:
+            continue
+        intersection = tag_tokens & haystack_tokens
+        union = tag_tokens | haystack_tokens
+        if len(union) > 0 and len(intersection) / len(union) >= 0.65:
+            return name
+
     return None
+
+
+PROPOSE_SKILL_WINDOW_DAYS = 30
 
 
 def propose_skill_draft(conn: sqlite3.Connection, tag: str) -> Tuple[bool, str, Optional[int]]:
     """Returns (eligible, message, queue_id). Never writes a skill file."""
-    # threshold: >=3 distinct win subjects, zero losses, last 30 days
-    since = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
-    wins = conn.execute(
-        "SELECT DISTINCT subject FROM outcomes WHERE tag = ? AND verdict = 'win' AND ts >= ? AND archived = 0",
+    # threshold: >=3 distinct win run_ids, zero losses, last N days.
+    # run_id is the authoritative key for distinct executions; subject is freeform
+    # and must NOT be used as the gate key.
+    since = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=PROPOSE_SKILL_WINDOW_DAYS)).strftime('%Y-%m-%d %H:%M:%S')
+
+    # Count distinct run_ids that produced wins.
+    n_run_ids = conn.execute(
+        "SELECT COUNT(DISTINCT run_id) FROM outcomes "
+        "WHERE tag = ? AND verdict = 'win' AND ts >= ? AND archived = 0 AND run_id IS NOT NULL AND run_id != ''",
         (tag, since),
-    ).fetchall()
+    ).fetchone()[0]
+
+    # Count win rows that lack run_id (informational only).
+    n_no_run = conn.execute(
+        "SELECT COUNT(*) FROM outcomes "
+        "WHERE tag = ? AND verdict = 'win' AND ts >= ? AND archived = 0 AND (run_id IS NULL OR run_id = '')",
+        (tag, since),
+    ).fetchone()[0]
+
     losses = conn.execute(
         "SELECT count(*) FROM outcomes WHERE tag = ? AND verdict = 'loss' AND ts >= ? AND archived = 0",
         (tag, since),
     ).fetchone()[0]
-    distinct_subjects = [r["subject"] for r in wins if r["subject"]]
-    if len(distinct_subjects) < 3:
-        return False, f"Not enough distinct wins for tag '{tag}': {len(distinct_subjects)} found (need >=3).", None
+
+    if n_run_ids < 3:
+        detail = f"{n_run_ids} distinct run_id(s)"
+        if n_no_run:
+            detail += f" (plus {n_no_run} win row(s) with no run_id, ignored)"
+        return False, (
+            f"Not enough distinct wins for tag '{tag}': {detail} found (need >=3 distinct run_ids). "
+            "Each successful outcome should include a unique run_id."
+        ), None
+
     if losses > 0:
-        return False, f"Tag '{tag}' has {losses} interleaved loss(es) in the last 30d — gate refuses.", None
+        return False, f"Tag '{tag}' has {losses} interleaved loss(es) in the last {PROPOSE_SKILL_WINDOW_DAYS}d — gate refuses.", None
+
+    # Build a human-readable subject list for the draft, one per run_id.
+    win_rows = conn.execute(
+        "SELECT run_id, MAX(subject) AS subject FROM outcomes "
+        "WHERE tag = ? AND verdict = 'win' AND ts >= ? AND archived = 0 AND run_id IS NOT NULL AND run_id != '' "
+        "GROUP BY run_id",
+        (tag, since),
+    ).fetchall()
+
+    distinct_run_ids = [r["run_id"] for r in win_rows]
+    distinct_subjects = []
+    seen = set()
+    for r in win_rows:
+        label = r["subject"] or r["run_id"]
+        if label not in seen:
+            seen.add(label)
+            distinct_subjects.append(label)
 
     dup = check_skill_dedupe(tag)
     if dup:
@@ -501,16 +727,16 @@ def propose_skill_draft(conn: sqlite3.Connection, tag: str) -> Tuple[bool, str, 
     draft_lines = [
         "---",
         f"name: {tag.replace(' ', '-')}",
-        f"description: Procedure distilled from {len(distinct_subjects)} successful executions of tag '{tag}'.",
-        f"based_on: outcome tag {tag} ({len(distinct_subjects)} matched)",
+        f"description: Procedure distilled from {len(distinct_run_ids)} successful executions of tag '{tag}'.",
+        f"based_on: outcome tag {tag} ({len(distinct_run_ids)} distinct run_ids matched)",
         "---",
         "",
         f"# Skill: {tag}",
         "",
-        f"This procedure was distilled from {len(distinct_subjects)} distinct successful outcomes "
-        f"tagged '{tag}' in the last 30 days, with zero interleaved failures.",
+        f"This procedure was distilled from {len(distinct_run_ids)} distinct successful run_ids "
+        f"tagged '{tag}' in the last {PROPOSE_SKILL_WINDOW_DAYS} days, with zero interleaved failures.",
         "",
-        "## Successful subjects",
+        "## Successful subjects / run_ids",
     ]
     for s in distinct_subjects:
         draft_lines.append(f"- {s}")

@@ -8,6 +8,7 @@ have always used.
 """
 import os
 import sys
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -17,8 +18,6 @@ from store_schema import (
     get_db_connection,
     fts_search,
 )
-
-import datetime
 
 
 def init_db():
@@ -39,7 +38,7 @@ def add_memory(category: str, content: str, tags: str = ""):
     """Adds a new memory to the database."""
     conn = get_db_connection()
     try:
-        now = datetime.datetime.now().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         conn.execute(
             "INSERT INTO memories (category, content, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
             (category, content, tags, now, now),
