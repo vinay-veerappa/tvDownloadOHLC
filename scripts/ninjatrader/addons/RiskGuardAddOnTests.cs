@@ -783,6 +783,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestBracket_P0_50_AFlatFollowerStandsTheBracketDown();
             TestBracket_P0_61_ADeferredChangeIsReappliedWhenTheLegSettles();
 
+            // CM1: copier ratio converter, slice 1 -- RED until the fix lands
+            TestCM1_MatrixSizesFromTheTableWithoutTheSymbolMultiplier();
+            TestCM1_MatrixFailsClosedOnEntriesAndNeverOnExits();
+            TestCM1_MatrixTreatsAnInvalidRatioAsNoRule();
+            TestCM1_MatrixKeepsTheLeadersInstrument();
+
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
 
@@ -11026,6 +11032,226 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return;
                 }
             Assert(true, "The survivor is the leg that actually provides coverage, not a suspended or unknown one");
+        }
+
+        // ------------------------------------------------------------------
+        // CM1: PerTickerMatrix sizing, same instrument, fail closed on entries
+        //
+        // Acceptance tests for the copier ratio converter, slice 1 of 3. Written
+        // BEFORE the fix, so every Assert below is expected to FAIL at baseline.
+        //
+        // They live in THIS file rather than a new one because Program is not
+        // partial and Assert is private to it: a test in a separate class cannot
+        // be reached by TestHarness_AllDeclaredTestsAreInvoked, so it would
+        // compile and silently run nothing.
+        // ------------------------------------------------------------------
+
+        private static CopierRelationship Cm1Matrix(double ratio, string root = "MES")
+        {
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "Cm1Leader",
+                FollowerAccountName = "Cm1Follower",
+                SizingMode = CopierSizingMode.PerTickerMatrix,
+                // Deliberately hostile defaults: a flat ratio that must be ignored,
+                // and auto conversion that must not apply x0.1 to a micro root.
+                QuantityRatio = 7.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100
+            };
+            rel.PerTickerRatios[root] = ratio;
+            return rel;
+        }
+
+        private static void TestCM1_MatrixSizesFromTheTableWithoutTheSymbolMultiplier()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM1: PerTickerMatrix sizes from the table, ignoring the mini/micro multiplier");
+
+            var engine = new TradeCopierEngine();
+
+            bool clampedThree;
+            int three = engine.CalculateFollowerQuantity(
+                Cm1Matrix(3.0), 1, "MES 03-26", 0, false, out clampedThree);
+            Assert(three == 3, string.Format(
+                "matrix entry sized 3 MES from the table with no symbol multiplier (got {0})", three));
+
+            bool clampedFive;
+            int five = engine.CalculateFollowerQuantity(
+                Cm1Matrix(5.0), 1, "MES 03-26", 0, false, out clampedFive);
+            Assert(five == 5, string.Format(
+                "matrix entry sized 5 MES on a second relationship from the same leader fill (got {0})", five));
+
+            // The flat QuantityRatio on the relationship is 7.0. If matrix mode fell
+            // through to the ratio branch this would be 7, or 1 once the x0.1 micro
+            // multiplier was applied.
+            Assert(three == 3 && three != 7, string.Format(
+                "matrix mode ignored the flat QuantityRatio on the relationship (got {0})", three));
+
+            // Ordering: the matrix test must be reached BEFORE the guard for the
+            // declared-but-unimplemented modes, and that guard must still refuse.
+            var netLiq = new CopierRelationship
+            {
+                SizingMode = CopierSizingMode.NetLiquidationRatio,
+                MaxPositionSize = 100
+            };
+            bool netLiqClamped;
+            int netLiqQty = engine.CalculateFollowerQuantity(
+                netLiq, 1, "MES 03-26", 0, false, out netLiqClamped);
+            Assert(three == 3 && netLiqQty == 0, string.Format(
+                "matrix branch was evaluated before the unimplemented sizing mode guard (matrix {0}, netliq {1})",
+                three, netLiqQty));
+        }
+
+        private static void TestCM1_MatrixFailsClosedOnEntriesAndNeverOnExits()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM1: PerTickerMatrix refuses an unmapped ENTRY and never blocks an EXIT");
+
+            var engine = new TradeCopierEngine();
+
+            // A rule exists, but not for the instrument the leader traded.
+            var unmapped = Cm1Matrix(3.0, "MNQ");
+            bool entryClamped;
+            int entryQty = engine.CalculateFollowerQuantity(
+                unmapped, 1, "MES 03-26", 0, false, out entryClamped);
+            Assert(entryQty == 0 && entryClamped, string.Format(
+                "matrix entry with no rule for the leader instrument was refused and flagged clamped (qty {0}, clamped {1})",
+                entryQty, entryClamped));
+
+            // The same relationship must still let the follower OUT of a position.
+            bool exitClamped;
+            int exitQty = engine.CalculateFollowerQuantity(
+                unmapped, 4, "MES 03-26", 4, true, out exitClamped);
+            Assert(exitQty == 4, string.Format(
+                "matrix exit with no rule mirrored the leader and was capped to the follower position (got {0})",
+                exitQty));
+
+            // A follower sitting on the OPPOSITE side must never be increased. The
+            // return is an unsigned magnitude, so it may not exceed the position it
+            // is reducing.
+            bool oppClamped;
+            int oppQty = engine.CalculateFollowerQuantity(
+                unmapped, 2, "MES 03-26", -3, true, out oppClamped);
+            Assert(oppQty <= 3 && oppQty == 2, string.Format(
+                "matrix exit never increased an opposite side follower position (got {0} against a position of -3)",
+                oppQty));
+
+            // Capacity, not MaxPositionSize: 4 of 5 already held leaves room for 1.
+            var capped = Cm1Matrix(3.0);
+            capped.MaxPositionSize = 5;
+            bool capClamped;
+            int capQty = engine.CalculateFollowerQuantity(
+                capped, 1, "MES 03-26", 4, false, out capClamped);
+            Assert(capQty == 1 && capClamped, string.Format(
+                "matrix entry clamped to the remaining capacity when the follower already holds contracts (qty {0}, clamped {1})",
+                capQty, capClamped));
+
+            // A null table is empty, not a crash.
+            var nullTable = Cm1Matrix(3.0);
+            nullTable.PerTickerRatios = null;
+            int nullQty = -1;
+            bool nullClamped = false;
+            bool threw = false;
+            try
+            {
+                nullQty = engine.CalculateFollowerQuantity(
+                    nullTable, 1, "MES 03-26", 0, false, out nullClamped);
+            }
+            catch (Exception)
+            {
+                threw = true;
+            }
+            Assert(!threw && nullQty == 0 && nullClamped, string.Format(
+                "matrix mode with a null ratio table refused the entry without throwing (threw {0}, qty {1})",
+                threw, nullQty));
+        }
+
+        private static void TestCM1_MatrixTreatsAnInvalidRatioAsNoRule()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM1: PerTickerMatrix treats NaN, infinities, zero and negatives as no rule");
+
+            var engine = new TradeCopierEngine();
+
+            bool c;
+            int nan = engine.CalculateFollowerQuantity(
+                Cm1Matrix(double.NaN), 1, "MES 03-26", 0, false, out c);
+            Assert(nan == 0 && c, string.Format(
+                "matrix entry with a NaN ratio was refused (qty {0}, clamped {1})", nan, c));
+
+            int zero = engine.CalculateFollowerQuantity(
+                Cm1Matrix(0.0), 1, "MES 03-26", 0, false, out c);
+            Assert(zero == 0 && c, string.Format(
+                "matrix entry with a zero ratio was refused (qty {0}, clamped {1})", zero, c));
+
+            // The existing lookup calls Math.Abs, which would turn -3.0 into 3
+            // contracts. In matrix mode a negative ratio is a refusal.
+            int negative = engine.CalculateFollowerQuantity(
+                Cm1Matrix(-3.0), 1, "MES 03-26", 0, false, out c);
+            Assert(negative == 0 && c, string.Format(
+                "matrix entry with a negative ratio was refused rather than absolute-valued (qty {0})", negative));
+
+            int posInf = engine.CalculateFollowerQuantity(
+                Cm1Matrix(double.PositiveInfinity), 1, "MES 03-26", 0, false, out c);
+            Assert(posInf == 0 && c, string.Format(
+                "matrix entry with a positive infinity ratio was refused (qty {0})", posInf));
+
+            int negInf = engine.CalculateFollowerQuantity(
+                Cm1Matrix(double.NegativeInfinity), 1, "MES 03-26", 0, false, out c);
+            Assert(negInf == 0 && c, string.Format(
+                "matrix entry with a negative infinity ratio was refused (qty {0})", negInf));
+
+            // A ratio that is valid but rounds to nothing must be a VISIBLE refusal,
+            // not the silent sub-one-contract skip.
+            int roundsToZero = engine.CalculateFollowerQuantity(
+                Cm1Matrix(0.4), 1, "MES 03-26", 0, false, out c);
+            Assert(roundsToZero == 0 && c, string.Format(
+                "matrix entry whose ratio rounds to zero was refused and flagged clamped (qty {0}, clamped {1})",
+                roundsToZero, c));
+        }
+
+        private static void TestCM1_MatrixKeepsTheLeadersInstrument()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM1: PerTickerMatrix stays in the leader instrument and refuses a cross-instrument mapping");
+
+            var engine = new TradeCopierEngine();
+
+            var rel = Cm1Matrix(3.0);
+            string translated = engine.TranslateSymbol("MES 03-26", rel);
+            Assert(translated == "MES 03-26", string.Format(
+                "matrix mode left MES untranslated instead of routing it to ES (got '{0}')", translated));
+
+            // A custom mapping naming a DIFFERENT root is slice 2, and must be
+            // refused rather than sized as if the instruments were equivalent.
+            var crossed = Cm1Matrix(3.0);
+            crossed.CustomSymbolMappings["MES"] = "ES";
+            bool crossClamped;
+            int crossQty = engine.CalculateFollowerQuantity(
+                crossed, 1, "MES 03-26", 0, false, out crossClamped);
+            Assert(crossQty == 0 && crossClamped, string.Format(
+                "matrix mode refused an entry whose custom mapping names a different root (qty {0}, clamped {1})",
+                crossQty, crossClamped));
+
+            // TranslateSymbol must never signal by returning null: two callers pass
+            // its result straight on.
+            string crossTranslated = engine.TranslateSymbol("MES 03-26", crossed);
+            Assert(crossTranslated != null, string.Format(
+                "matrix mode translate returned a string and never null for an unsupported mapping (got '{0}')",
+                crossTranslated == null ? "null" : crossTranslated));
+
+            // Every other sizing mode keeps the behaviour it has today.
+            var plain = new CopierRelationship
+            {
+                SizingMode = CopierSizingMode.QuantityRatio,
+                QuantityRatio = 1.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100
+            };
+            string autoTranslated = engine.TranslateSymbol("ES 12-26", plain);
+            Assert(autoTranslated == "MES 12-26", string.Format(
+                "non matrix sizing mode still applied the mini micro auto table (got '{0}')", autoTranslated));
         }
     }
 }

@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "Slice 1 of 3 for the copier ratio converter. Derived from the agent-loop plan",
+    "at logs/agent_loop/PLAN_slice1_run2 with FOUR human corrections, each of which",
+    "the arbiter had rejected as a finding or nobody had caught:",
+    "",
+    "1. Four regions became two. The plan's R2 (441-462) was nested inside R1",
+    "   (429-534) and its R4 (404-424) inside R3 (382-427). apply() splices",
+    "   bottom-up, so nested spans lose or duplicate an edit. Now guarded by O47.",
+    "2. expect_green entries are ASSERTION MESSAGES, not test method names. The",
+    "   gate matches them against `[FAIL] <message>` lines from the C# harness, so",
+    "   'TradeCopierMatrixTests.Foo' could never have matched anything and every",
+    "   acceptance check would have been vacuous.",
+    "3. The invalid-ratio cases are enumerated individually. One combined",
+    "   'InvalidRatio_RefusesEntry' entry let an implementation handle NaN and",
+    "   miss zero, negative, or either infinity.",
+    "4. Branch ORDERING is now stated. Appending the matrix branch after the",
+    "   NetLiquidationRatio guard leaves the original fall-through defect in place",
+    "   -- the fix would compile, pass a careless suite, and change nothing.",
+    "",
+    "5. Two assertions were REMOVED from expect_green after running the suite: '...never null for an unsupported mapping' and '...still applied the mini micro auto table'. Both already PASS at baseline, because they pin behaviour that must not REGRESS rather than behaviour that must change. expect_green means 'red now, green after', and the loop refuses a ticket whose expect_green is not red at baseline -- correctly. The two tests remain in the suite, where the no-new-failures gate protects them. Verified: 789 passed, 17 failed."
+  ],
+  "tickets": [
+    {
+      "id": "CM1",
+      "title": "Copier slice 1: PerTickerMatrix sizing, same instrument, fail-closed on entries",
+      "defect": "CopierSizingMode.PerTickerMatrix is declared at TradeCopierEngine.cs:24 and implemented nowhere: it falls through to the QuantityRatio branch at line 463. Three failures follow, all verified against the file. (1) The auto mini/micro multiplier is applied ON TOP of the matrix ratio, so PerTickerRatios[\"MES\"]=3.0 with AutoSymbolConversion=true computes round(1 * 3.0 * 0.1) = 0 for a 1-lot MES leader fill (MES is in the micro list at line 482) and the entry is then silently skipped by the sub-one-contract guard at line 491 -- the operator asked for 3 contracts and got none. (2) TranslateSymbol at line 382 independently applies the same mini<->micro table, so an MES leader fill is routed to ES on the follower while being sized in MES contracts: the instrument decision and the quantity decision are made in two places from two different keys. (3) A leader instrument with no entry in the table falls through to the relationship's flat QuantityRatio, a silent unscaled copy, which is the P0-6 over-size shape arriving through configuration. (4) The existing lookup at line 471 calls Math.Abs(tickerRatio), so a configured -3.0 silently becomes 3 contracts.",
+      "spec": "Implement CopierSizingMode.PerTickerMatrix for the SAME-INSTRUMENT case only. Cross-instrument mapping is slice 2 and must be REFUSED here, not approximated.\n\nORDERING IS PART OF THE FIX. The PerTickerMatrix test must be evaluated BEFORE the `rel.SizingMode == CopierSizingMode.NetLiquidationRatio` guard at line 441 and before the QuantityRatio else-branch at 463. Appending it after either one reproduces the fall-through defect while appearing to fix it.\n\nA. QUANTITY. On an ENTRY: look up the leader root symbol in rel.PerTickerRatios and compute round(leaderQty * ratio) with MidpointRounding.AwayFromZero, applying NO symbolMultiplier -- the ratio IS the contract count in the follower's instrument. Parse the root exactly as line 466 already does: rawSymbol.Split(' ')[0].ToUpper(). Do NOT invent a different root parser; NT8 full names are space-separated, e.g. \"MES 03-26\".\n\nB. NO RULE MEANS FAIL CLOSED ON ENTRIES. If the leader root has no usable ratio, refuse the ENTRY: return 0, set isClamped = true, and log with the same shape as the existing unimplemented-mode guard at lines 452-460. NEVER block an EXIT: an exit with no rule mirrors leaderQty and then falls into the EXISTING exit clamp at lines 513-522. Do not write a new exit clamp.\n\nC. AN INVALID RATIO IS NOT A RULE. NaN, PositiveInfinity, NegativeInfinity, zero, and any negative value are each treated as no rule, i.e. path B. A negative ratio is a REFUSAL, not an absolute value -- the existing Math.Abs at line 471 must not apply in matrix mode. Nothing may throw, and no invalid value may reach Math.Round.\n\nD. A RATIO THAT ROUNDS TO ZERO IS ALSO A REFUSAL on an entry (e.g. leaderQty 1 with ratio 0.4). The existing sub-one-contract guard at lines 491-511 must not silently swallow it: the refusal must set isClamped = true so it is visible, rather than returning 0 with isClamped = false.\n\nE. SAME INSTRUMENT, ENFORCED IN TranslateSymbol. When rel.SizingMode == PerTickerMatrix, the mini<->micro auto table must NOT be applied, so MES stays MES. An explicit rel.CustomSymbolMappings entry still wins, because that is a deliberate operator instruction. If a CustomSymbolMappings entry maps the leader root to a DIFFERENT root while in matrix mode, TranslateSymbol still returns a STRING (the untranslated symbol) -- it must never return null, because the callers at lines 1293 and 2565 pass the result straight on -- and the sizing branch refuses the ENTRY via path B, logging that cross-instrument sizing is slice 2.\n\nF. Every other sizing mode behaves EXACTLY as it does today. QuantityRatio, FixedLot, NetLiquidationRatio and AvailableCashPercent are untouched, and a non-matrix relationship still gets the mini<->micro auto table in TranslateSymbol.\n\nINVARIANTS THAT MUST NOT CHANGE:\n1. The return is an UNSIGNED quantity. Line 432 is `if (leaderQty <= 0) return 0;` and every return is a magnitude; direction is carried by OrderAction elsewhere. Do NOT introduce Math.Sign into any returned expression -- a signed return would flip a follower holding the opposite side, which is the P1-56 class this addon was hardened against.\n2. The ENTRY clamp is against AVAILABLE CAPACITY, not MaxPositionSize: lines 524-531 compute Math.Max(0, rel.MaxPositionSize - Math.Abs(currentFollowerPosition)) and Math.Min against it. Reuse it; clamping against MaxPositionSize alone ignores the position already held and over-sizes.\n3. Guard rel == null before reading rel.SizingMode, and treat a null PerTickerRatios or CustomSymbolMappings as empty. The convenience overload at line 536 passes callers straight through, so a null relationship is reachable.\n4. PerTickerRatios is declared with StringComparer.OrdinalIgnoreCase at line 39; keep case-insensitive lookup.",
+      "context": "CopierSizingMode is declared at TradeCopierEngine.cs:24 as { QuantityRatio, FixedLot, NetLiquidationRatio, AvailableCashPercent, PerTickerMatrix }. CopierRelationship (line 26) already carries: SizingMode, QuantityRatio (double), FixedLotMode/FixedLotSize, AutoSymbolConversion (bool), PerTickerRatios (Dictionary<string,double>, OrdinalIgnoreCase, line 39), CustomSymbolMappings (Dictionary<string,string>, line 40), MaxPositionSize (int, default 100), and Id. NOTHING NEW NEEDS TO BE ADDED TO THE DTO: PerTickerRatios already exists, is already deep-copied per follower by CopierGroup.ToRelationships() at line 107, and is already read by the sizing branch at line 469. Loading it from the config JSON on disk is slice 3 and out of scope. The sizing implementation is the overload ending `int currentFollowerPosition, bool isExit, out bool isClamped)` at line 429; a convenience overload ending `string rawSymbol, bool isExit = false)` at line 536 forwards to it with currentFollowerPosition 0. Existing settled behaviour to preserve: the copier FAILS CLOSED ON ENTRIES AND NEVER ON EXITS, because stranding a follower in a position the leader has left is worse than an unscaled exit.",
+      "expect_green": [
+        "matrix entry sized 3 MES from the table with no symbol multiplier",
+        "matrix entry sized 5 MES on a second relationship from the same leader fill",
+        "matrix entry with no rule for the leader instrument was refused and flagged clamped",
+        "matrix exit with no rule mirrored the leader and was capped to the follower position",
+        "matrix entry with a NaN ratio was refused",
+        "matrix entry with a zero ratio was refused",
+        "matrix entry with a negative ratio was refused rather than absolute-valued",
+        "matrix entry with a positive infinity ratio was refused",
+        "matrix entry with a negative infinity ratio was refused",
+        "matrix entry whose ratio rounds to zero was refused and flagged clamped",
+        "matrix mode left MES untranslated instead of routing it to ES",
+        "matrix mode refused an entry whose custom mapping names a different root",
+        "matrix exit never increased an opposite side follower position",
+        "matrix entry clamped to the remaining capacity when the follower already holds contracts",
+        "matrix mode ignored the flat QuantityRatio on the relationship",
+        "matrix mode with a null ratio table refused the entry without throwing",
+        "matrix branch was evaluated before the unimplemented sizing mode guard"
+      ],
+      "regions": [
+        {
+          "id": "R1",
+          "file": "scripts/ninjatrader/addons/TradeCopierEngine.cs",
+          "anchor": "int currentFollowerPosition, bool isExit, out bool isClamped)",
+          "note": "The sizing implementation, lines 429-534. Anchor on this TAIL: the leading text is shared with the convenience overload at 536 and matches both."
+        },
+        {
+          "id": "R2",
+          "file": "scripts/ninjatrader/addons/TradeCopierEngine.cs",
+          "anchor": "public string TranslateSymbol(string rawSymbol, CopierRelationship rel = null)",
+          "note": "Symbol translation, lines 382-427. Contains both the CustomSymbolMappings check and the mini<->micro auto table."
+        }
+      ]
+    }
+  ]
+}

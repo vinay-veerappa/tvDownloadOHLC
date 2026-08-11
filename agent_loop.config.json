@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Consumer overrides for tvDownloadOHLC. Only these keys override; everything",
+    "else inherits from agent_loop/config.py, which records WHY each default has",
+    "its value. Unknown keys are a hard error, not a silent no-op.",
+    "",
+    "WHY 64000 AND NOT THE PACKAGE DEFAULT OF 96000: a budget is only valid",
+    "against a specific model's output ceiling, and nothing in the config can",
+    "express that relationship. The package default of 96000 is correct for",
+    "kimi-k2.7-code, but qwen3.5's ceiling is 65536 and it rejects the request",
+    "outright:",
+    "  HTTP 400 {\"error\":\"max_tokens (96000) exceeds model's maximum output",
+    "            tokens (65536) for model qwen3.5\"}",
+    "64000 fits under qwen3.5's ceiling AND is ample for kimi, so a run does not",
+    "break when the implementer is substituted because the primary is overloaded.",
+    "It is well above the 48000 that returned 207,078 characters of reasoning and",
+    "empty content on a five-part feature brief (O42)."
+  ],
+
+  "modes": {
+    "plan": {"max_tokens": 64000, "think": true},
+    "test": {"max_tokens": 64000, "think": true}
+  }
+}

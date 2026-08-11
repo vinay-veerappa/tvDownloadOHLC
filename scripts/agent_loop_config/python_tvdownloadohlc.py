@@ -8,6 +8,8 @@ Usage:
 """
 from __future__ import annotations
 
+import sys
+
 from agent_loop.profiles import Profile, register
 
 PYTHON_TVDOWNLOADOHLC = Profile(
@@ -24,7 +26,12 @@ PYTHON_TVDOWNLOADOHLC = Profile(
     # fixed file here (it used to compile scripts/shared/data_loader.py) makes
     # the compile gate pass no matter what the patch did -- a gate that cannot
     # fail is worse than no gate.
-    build_cmd="python -m py_compile {files}",
+    # O35: `sys.executable`, not bare `python`. These commands run inside a git
+    # worktree, and a bare `python` resolves against PATH -- which on this
+    # machine is not necessarily this repo's .venv. The gate would then compile
+    # and test under an interpreter with different packages than the one the
+    # loop is running in, so a green gate would say nothing about this venv.
+    build_cmd=f'"{sys.executable}" -m py_compile {{files}}',
     # scripts/tests/ is a scratch directory, not a suite: 15 of its 47 files
     # fail at import because they read data files at module scope, so pytest
     # reported "15 errors during collection", no baseline could be established,
@@ -32,8 +39,8 @@ PYTHON_TVDOWNLOADOHLC = Profile(
     # These two suites are green (one known failure, frozen as the baseline)
     # and run in ~6s.
     test_cmd=(
-        "python -m pytest scripts/libs_py/ict_engine/tests scripts/trading_framework/tests "
-        "-q --tb=short -p no:cacheprovider"
+        f'"{sys.executable}" -m pytest scripts/libs_py/ict_engine/tests '
+        "scripts/trading_framework/tests -q --tb=short -p no:cacheprovider"
     ),
     # No lock primitive in Python
     lock_name="",
