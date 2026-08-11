@@ -557,6 +557,141 @@ def prune_queue(conn: sqlite3.Connection, older_than_days: int = 30) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4: maintenance + alerting helpers
+# ---------------------------------------------------------------------------
+
+LOSS_RATE_ALERT_THRESHOLD = 2.0  # losses > 2x wins
+LOSS_RATE_ALERT_MIN_DECISIONS = 3  # need at least 3 win/loss rows before alerting
+
+CONFIDENCE_DECAY_START_DAYS = 90
+CONFIDENCE_DECAY_STEP_DAYS = 30
+CONFIDENCE_DECAY_AMOUNT = 0.1
+CONFIDENCE_DECAY_FLOOR = 0.2
+
+
+def generate_outcome_warnings(
+    aggregates: List[Dict[str, Any]],
+    period_days: int = 7,
+) -> List[str]:
+    """Return human-readable warnings for tags whose loss-rate is elevated.
+
+    A tag is flagged when it has at least `LOSS_RATE_ALERT_MIN_DECISIONS`
+    win/loss decisions and losses are at least `LOSS_RATE_ALERT_THRESHOLD` times wins
+    (or wins are zero and losses meet the minimum).
+    """
+    warnings: List[str] = []
+    for a in aggregates:
+        n_wins = int(a.get("n_wins", 0) or 0)
+        n_losses = int(a.get("n_losses", 0) or 0)
+        total_decisions = n_wins + n_losses
+        if total_decisions < LOSS_RATE_ALERT_MIN_DECISIONS:
+            continue
+        if n_losses == 0:
+            continue
+        if n_wins == 0 or n_losses >= LOSS_RATE_ALERT_THRESHOLD * n_wins:
+            loss_pct = 100.0 * n_losses / total_decisions
+            warnings.append(
+                f"[WARNING] Tag '{a['tag']}' loss-rate is {loss_pct:.1f}% "
+                f"({n_wins} wins / {n_losses} losses in last {period_days}d) — "
+                "recommended to review procedure before executing."
+            )
+    return warnings
+
+
+def apply_confidence_decay(
+    conn: sqlite3.Connection,
+    dry_run: bool = False,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Apply recency decay to `user_prefs` confidence.
+
+    Spec (SELF_LEARNING_LAYER_DESIGN.md §4.1):
+    - Rows not written to in 90 days drop 0.1 per 30 days.
+    - Floor is 0.2.
+    - Each 30-day period beyond the 90-day window reduces confidence by 0.1.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    rows = conn.execute(
+        "SELECT key, value, confidence, updated_at FROM user_prefs"
+    ).fetchall()
+
+    affected: List[Dict[str, Any]] = []
+    for r in rows:
+        updated_at = r["updated_at"]
+        if updated_at is None:
+            continue
+        if isinstance(updated_at, str):
+            try:
+                updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                updated_at = updated_at.replace(tzinfo=None)
+            except ValueError:
+                continue
+        inactive_days = (now - updated_at).days
+        if inactive_days <= CONFIDENCE_DECAY_START_DAYS:
+            continue
+
+        steps = (inactive_days - CONFIDENCE_DECAY_START_DAYS) // CONFIDENCE_DECAY_STEP_DAYS
+        new_confidence = max(
+            CONFIDENCE_DECAY_FLOOR,
+            r["confidence"] - steps * CONFIDENCE_DECAY_AMOUNT,
+        )
+        # Round to avoid floating-point noise in stored confidence.
+        new_confidence = round(new_confidence, 2)
+        if new_confidence < r["confidence"]:
+            affected.append({
+                "key": r["key"],
+                "old_confidence": r["confidence"],
+                "new_confidence": new_confidence,
+                "inactive_days": inactive_days,
+            })
+            if not dry_run:
+                conn.execute(
+                    "UPDATE user_prefs SET confidence = ?, updated_at = ? WHERE key = ?",
+                    (new_confidence, now.strftime('%Y-%m-%d %H:%M:%S'), r["key"]),
+                )
+
+    if affected and not dry_run:
+        conn.commit()
+
+    return {
+        "rows_affected": len(affected),
+        "dry_run": dry_run,
+        "details": affected,
+    }
+
+
+def maintain_store(
+    conn: sqlite3.Connection,
+    render: bool = False,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Run periodic maintenance on the memory store.
+
+    - Apply confidence decay to stale `user_prefs` rows.
+    - Prune unapproved `process_queue` proposals older than 30 days.
+    - Optionally re-render `USER.md`.
+    """
+    decay_report = apply_confidence_decay(conn, dry_run=dry_run)
+    pruned = prune_queue(conn, older_than_days=30) if not dry_run else 0
+
+    rendered_path: Optional[str] = None
+    if render and not dry_run:
+        md = render_profile_md(conn)
+        with open(USER_MD_PATH, "w", encoding="utf-8") as f:
+            f.write(md)
+        rendered_path = USER_MD_PATH
+
+    return {
+        "decay": decay_report,
+        "pruned_proposals": pruned,
+        "rendered_user_md": rendered_path,
+        "dry_run": dry_run,
+    }
+
+
+# ---------------------------------------------------------------------------
 # propose_skill helpers (P3)
 # ---------------------------------------------------------------------------
 

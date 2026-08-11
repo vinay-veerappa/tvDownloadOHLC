@@ -35,6 +35,7 @@ from store_schema import (
     add_outcome,
     aggregate_outcomes,
     get_outcome_rows,
+    generate_outcome_warnings,
     archive_outcome as _archive_outcome_db,
     discard_outcome as _discard_outcome_db,
     enqueue,
@@ -43,6 +44,7 @@ from store_schema import (
     reject_queue_item,
     prune_queue,
     propose_skill_draft,
+    maintain_store,
 )
 
 
@@ -282,13 +284,15 @@ def recap_outcomes(period_days: int = 7, tag: str = None, verbose: bool = False)
     """
     Returns aggregate outcome stats. Default: counts only (no raw PnL).
     verbose=True adds itemized rows including pnl_local.
+    Includes Phase-4 loss-rate warnings when a tag's losses exceed 2x its wins.
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
         ensure_schema(conn)
         agg = aggregate_outcomes(conn, tag=tag, period_days=period_days)
-        out = {"period_days": period_days, "aggregates": agg}
+        warnings = generate_outcome_warnings(agg, period_days=period_days)
+        out = {"period_days": period_days, "aggregates": agg, "warnings": warnings}
         if verbose:
             rows = get_outcome_rows(conn, tag=tag, period_days=period_days, limit=50)
             out["itemized"] = rows
@@ -369,6 +373,31 @@ def reject_skill_proposal(queue_id: int) -> str:
     if row:
         return f"Skill proposal id={queue_id} rejected."
     return f"Skill proposal id={queue_id} not found."
+
+
+# ---------------------------------------------------------------------------
+# P4: maintenance
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def maintain_memory_store(dry_run: bool = False, render_profile: bool = False) -> str:
+    """
+    Periodic maintenance for the memory store.
+
+    - Applies confidence decay to stale user_prefs rows (>90d inactive, -0.1 per 30d, floor 0.2).
+    - Prunes unapproved skill proposals older than 30 days.
+    - Optionally re-renders USER.md.
+
+    Set dry_run=True to preview changes without writing.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        report = maintain_store(conn, render=render_profile, dry_run=dry_run)
+    finally:
+        conn.close()
+    return json.dumps(report, indent=2, default=str)
 
 
 # Paths
