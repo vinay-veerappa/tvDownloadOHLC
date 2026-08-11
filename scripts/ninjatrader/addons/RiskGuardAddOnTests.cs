@@ -789,6 +789,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM1_MatrixTreatsAnInvalidRatioAsNoRule();
             TestCM1_MatrixKeepsTheLeadersInstrument();
 
+            // CM2: copier ratio converter, slice 3a -- RED until the fix lands
+            TestCM2_RelationshipRoundTripKeepsSizingAndTheMatrix();
+            TestCM2_GroupRoundTripKeepsSizingAndTheMatrix();
+            TestCM2_ReloadedMatrixLookupIsStillCaseInsensitive();
+            TestCM2_ALoadedMatrixActuallySizesATrade();
+            TestCM2_LegacyAndAliasFormsStillLoad();
+
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
 
@@ -11252,6 +11259,242 @@ namespace NinjaTrader.NinjaScript.AddOns
             string autoTranslated = engine.TranslateSymbol("ES 12-26", plain);
             Assert(autoTranslated == "MES 12-26", string.Format(
                 "non matrix sizing mode still applied the mini micro auto table (got '{0}')", autoTranslated));
+        }
+
+        // ------------------------------------------------------------------
+        // CM2: the copier config round trip is lossy in one direction only
+        //
+        // SaveToDisk writes each relationship and group with
+        // JsonConvert.SerializeObject, so EVERY property reaches the file.
+        // LoadFromDisk hand-parses a remembered subset at three separate sites
+        // (structured relationships, groups, and the flat legacy dictionary) and
+        // the bridge's set_group is a fourth. None of them reads SizingMode,
+        // Mode, PerTickerRatios, CustomSymbolMappings or StealthMode, and only
+        // the relationship site reads MaxSlippageTicks.
+        //
+        // So the fields are on disk, they look set, and loading silently returns
+        // them to their defaults. That is worse than "cannot be configured": it
+        // is P2-41's shape, where the config echoes what you asked for and
+        // applies something else. SizingMode is among them, which is why
+        // slice 1's PerTickerMatrix cannot be selected at all.
+        //
+        // Written BEFORE the fix; every Assert below is expected to FAIL at
+        // baseline. In this file rather than a new one because Program is not
+        // partial and Assert is private to it (see the CM1 header).
+        // ------------------------------------------------------------------
+
+        private static string Cm2TempFile(string name)
+        {
+            return Path.Combine(Path.GetTempPath(), "test_cm2_" + name + ".json");
+        }
+
+        private static CopierRelationship Cm2Relationship()
+        {
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "Cm2Leader",
+                FollowerAccountName = "Cm2Follower",
+                SizingMode = CopierSizingMode.PerTickerMatrix,
+                Mode = CopierExecutionMode.Executions,
+                QuantityRatio = 7.0,
+                AutoSymbolConversion = true,
+                StealthMode = false,
+                MaxSlippageTicks = 2.5,
+                MaxPositionSize = 100
+            };
+            rel.PerTickerRatios["MES"] = 3.0;
+            rel.PerTickerRatios["MNQ"] = 5.0;
+            return rel;
+        }
+
+        private static void TestCM2_RelationshipRoundTripKeepsSizingAndTheMatrix()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: a saved relationship reloads with its sizing mode and ratio table intact");
+
+            string file = Cm2TempFile("relationship");
+            var writer = new TradeCopierEngine();
+            writer.UpsertRelationship(Cm2Relationship());
+            writer.SaveToDisk(file);
+
+            // The file must actually carry them -- if SaveToDisk dropped them
+            // this would be a serializer defect, not a parser one, and the
+            // remedy would be somewhere else entirely.
+            string onDisk = File.ReadAllText(file);
+            Assert(onDisk.Contains("PerTickerRatios") && onDisk.Contains("SizingMode"),
+                "SaveToDisk wrote SizingMode and PerTickerRatios to the file, so the loss is on the READ side");
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+            var rel = reader.GetRelationships().FirstOrDefault(r => r.FollowerAccountName == "Cm2Follower");
+            Assert(rel != null, "the reloaded relationship exists");
+
+            Assert(rel != null && rel.SizingMode == CopierSizingMode.PerTickerMatrix, string.Format(
+                "reloaded SizingMode is PerTickerMatrix (got {0})", rel == null ? "<null rel>" : rel.SizingMode.ToString()));
+            Assert(rel != null && rel.PerTickerRatios != null && rel.PerTickerRatios.Count == 2, string.Format(
+                "reloaded PerTickerRatios kept both entries (got {0})",
+                rel == null || rel.PerTickerRatios == null ? -1 : rel.PerTickerRatios.Count));
+
+            double mes = 0.0;
+            Assert(rel != null && rel.PerTickerRatios != null
+                   && rel.PerTickerRatios.TryGetValue("MES", out mes) && mes == 3.0, string.Format(
+                "reloaded PerTickerRatios['MES'] is 3.0 (got {0})", mes));
+            Assert(rel != null && rel.StealthMode == false,
+                "reloaded StealthMode kept its non default value of false");
+            Assert(rel != null && rel.MaxSlippageTicks == 2.5, string.Format(
+                "reloaded MaxSlippageTicks is 2.5 (got {0})", rel == null ? -1.0 : rel.MaxSlippageTicks));
+
+            try { File.Delete(file); } catch {}
+        }
+
+        private static void TestCM2_GroupRoundTripKeepsSizingAndTheMatrix()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: a saved group reloads with its sizing mode, ratio table and slippage cap");
+
+            string file = Cm2TempFile("group");
+            var writer = new TradeCopierEngine();
+            var grp = new CopierGroup
+            {
+                GroupName = "Cm2Group",
+                LeaderAccountName = "Cm2GroupLeader",
+                SizingMode = CopierSizingMode.PerTickerMatrix,
+                QuantityRatio = 7.0,
+                StealthMode = false,
+                MaxSlippageTicks = 4.0,
+                FollowerAccounts = new List<string> { "Cm2GroupFollower1", "Cm2GroupFollower2" }
+            };
+            grp.PerTickerRatios["MES"] = 3.0;
+            writer.UpsertGroup(grp, confirmLive: false);
+            writer.SaveToDisk(file);
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+            var reloaded = reader.GetGroup("Cm2Group");
+            Assert(reloaded != null, "the reloaded group exists");
+
+            Assert(reloaded != null && reloaded.SizingMode == CopierSizingMode.PerTickerMatrix, string.Format(
+                "reloaded group SizingMode is PerTickerMatrix (got {0})",
+                reloaded == null ? "<null group>" : reloaded.SizingMode.ToString()));
+
+            double mes = 0.0;
+            Assert(reloaded != null && reloaded.PerTickerRatios != null
+                   && reloaded.PerTickerRatios.TryGetValue("MES", out mes) && mes == 3.0, string.Format(
+                "reloaded group PerTickerRatios['MES'] is 3.0 (got {0})", mes));
+
+            // MaxSlippageTicks is parsed at the RELATIONSHIP site and not at the
+            // group one. Two readers of the same field disagreeing is the shape
+            // under this whole defect, so it is pinned separately.
+            Assert(reloaded != null && reloaded.MaxSlippageTicks == 4.0, string.Format(
+                "reloaded group MaxSlippageTicks is 4.0 (got {0})",
+                reloaded == null ? -1.0 : reloaded.MaxSlippageTicks));
+            Assert(reloaded != null && reloaded.FollowerAccounts != null
+                   && reloaded.FollowerAccounts.Count == 2,
+                "reloaded group still carries both followers");
+
+            try { File.Delete(file); } catch {}
+        }
+
+        private static void TestCM2_ReloadedMatrixLookupIsStillCaseInsensitive()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: the reloaded ratio table is still an OrdinalIgnoreCase dictionary");
+
+            // P1-39's lesson, carried over: the obvious deserializer fix
+            // (ObjectCreationHandling.Replace) throws the property initializer's
+            // StringComparer away and makes every instrument lookup
+            // case-sensitive. A root arriving as "mes" would then match no rule
+            // and, under slice 1, refuse the entry.
+            string file = Cm2TempFile("case");
+            var writer = new TradeCopierEngine();
+            writer.UpsertRelationship(Cm2Relationship());
+            writer.SaveToDisk(file);
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+            var rel = reader.GetRelationships().FirstOrDefault(r => r.FollowerAccountName == "Cm2Follower");
+
+            double lower = 0.0;
+            Assert(rel != null && rel.PerTickerRatios != null
+                   && rel.PerTickerRatios.TryGetValue("mes", out lower) && lower == 3.0, string.Format(
+                "reloaded PerTickerRatios still matches 'mes' against the stored 'MES' (got {0})", lower));
+
+            try { File.Delete(file); } catch {}
+        }
+
+        private static void TestCM2_ALoadedMatrixActuallySizesATrade()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: a relationship loaded from disk sizes a fill from its table");
+
+            // The end to end statement of the feature: everything else here is a
+            // field comparison, and this is the one that says the operator gets
+            // three contracts.
+            string file = Cm2TempFile("sizing");
+            var writer = new TradeCopierEngine();
+            writer.UpsertRelationship(Cm2Relationship());
+            writer.SaveToDisk(file);
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+            var rel = reader.GetRelationships().FirstOrDefault(r => r.FollowerAccountName == "Cm2Follower");
+
+            bool clamped;
+            int qty = rel == null ? -1 : reader.CalculateFollowerQuantity(rel, 1, "MES 03-26", 0, false, out clamped);
+            Assert(qty == 3, string.Format(
+                "a relationship round tripped through disk sized 1 leader MES as 3 follower MES (got {0})", qty));
+
+            try { File.Delete(file); } catch {}
+        }
+
+        private static void TestCM2_LegacyAndAliasFormsStillLoad()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: the camelCase aliases and the flat legacy file still load");
+
+            // Regression guard. Deserializing the object wholesale is the obvious
+            // fix and it does NOT understand these: Json.NET matches property
+            // names case-insensitively, but 'leaderAccount' is a different NAME
+            // from 'LeaderAccountName', not a different case of it.
+            string aliasFile = Cm2TempFile("alias");
+            File.WriteAllText(aliasFile,
+                "{\"Relationships\":{\"A_B\":{\"leaderAccount\":\"AliasLeader\"," +
+                "\"followerAccount\":\"AliasFollower\",\"quantityRatio\":2.5," +
+                "\"maxPositionSize\":42}}}");
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(aliasFile);
+            var alias = reader.GetRelationships().FirstOrDefault(r => r.FollowerAccountName == "AliasFollower");
+            Assert(alias != null && alias.LeaderAccountName == "AliasLeader",
+                "the camelCase alias 'leaderAccount' still maps to LeaderAccountName");
+            Assert(alias != null && alias.QuantityRatio == 2.5, string.Format(
+                "the camelCase alias 'quantityRatio' still maps to QuantityRatio (got {0})",
+                alias == null ? -1.0 : alias.QuantityRatio));
+            Assert(alias != null && alias.MaxPositionSize == 42, string.Format(
+                "the camelCase alias 'maxPositionSize' still maps to MaxPositionSize (got {0})",
+                alias == null ? -1 : alias.MaxPositionSize));
+
+            // The flat form has no Relationships/Groups wrapper at all.
+            string flatFile = Cm2TempFile("flat");
+            File.WriteAllText(flatFile,
+                "{\"FlatLeader\":{\"FollowerAccountName\":\"FlatFollower\"," +
+                "\"SizingMode\":\"PerTickerMatrix\",\"PerTickerRatios\":{\"MES\":3.0}}}");
+
+            var flatReader = new TradeCopierEngine();
+            flatReader.LoadFromDisk(flatFile);
+            var flat = flatReader.GetRelationships().FirstOrDefault(r => r.FollowerAccountName == "FlatFollower");
+            Assert(flat != null && flat.LeaderAccountName == "FlatLeader",
+                "the flat legacy form still loads and takes the leader from the key");
+
+            double flatMes = 0.0;
+            Assert(flat != null && flat.SizingMode == CopierSizingMode.PerTickerMatrix
+                   && flat.PerTickerRatios != null
+                   && flat.PerTickerRatios.TryGetValue("MES", out flatMes) && flatMes == 3.0, string.Format(
+                "the flat legacy form also carries SizingMode and the ratio table (mode {0}, MES {1})",
+                flat == null ? "<null>" : flat.SizingMode.ToString(), flatMes));
+
+            try { File.Delete(aliasFile); } catch {}
+            try { File.Delete(flatFile); } catch {}
         }
     }
 }
