@@ -33,14 +33,25 @@
     "one number for both means the configured model runs at the substitute's",
     "ceiling on every round. If you substitute qwen3.5, lower this to 64000 --",
     "or rely on the package clamp once agent-loop records per-model output",
-    "ceilings (O59)."
+    "ceilings (O59).",
+    "",
+    "think=false SINCE 2026-08-11, and the budget is NOT what fixed it. On the",
+    "CM2 ticket kimi-k2.7-code returned EMPTY CONTENT twice with think=true:",
+    "  64000 budget -> 282935 chars of thinking (4.42 chars/token)",
+    "  96000 budget -> 435641 chars of thinking (4.54 chars/token)",
+    "Same model, same prompt, same ticket. The reasoning expanded to fill",
+    "whatever it was given, so the budget is not a control on it -- it is only",
+    "where the model gets cut off. This is the identical failure the REVIEWER",
+    "role already has a measured answer for (think=true: 159s and no verdict;",
+    "think=false: 21s and ten findings), and the answer there was think=false.",
+    "Revert this if patch quality drops; the budget stays at 96000 either way."
   ],
 
   "roles": {
     "implementer": {
       "model": "kimi-k2.7-code:cloud",
       "max_tokens": 96000,
-      "think": true
+      "think": false
     }
   },
 
