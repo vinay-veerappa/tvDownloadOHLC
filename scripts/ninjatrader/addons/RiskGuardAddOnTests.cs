@@ -796,6 +796,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM2_ALoadedMatrixActuallySizesATrade();
             TestCM2_LegacyAndAliasFormsStillLoad();
             TestCM2_AMalformedFieldDoesNotDiscardTheWholeConfig();
+            TestCM2_AMalformedNumberNeverBecomesAZeroLimit();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -11531,6 +11532,43 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(rel != null && rel.SizingMode == CopierSizingMode.QuantityRatio, string.Format(
                 "the unreadable SizingMode fell back to the default rather than throwing (got {0})",
                 rel == null ? "<null rel>" : rel.SizingMode.ToString()));
+
+            try { File.Delete(file); } catch {}
+        }
+
+        private static void TestCM2_AMalformedNumberNeverBecomesAZeroLimit()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: a malformed number fails closed rather than silently becoming zero");
+
+            // PASSES at baseline. Added after a review panel found the defect in
+            // a candidate the whole gate ladder had passed: tolerating an
+            // unrecognised ENUM (the guard above) had been widened into a
+            // blanket Json.NET Error handler that swallowed EVERY deserialisation
+            // error. A type mismatch then leaves the field at the CLR default
+            // rather than the property initialiser's value -- MaxPositionSize 0
+            // instead of 100, QuantityRatio 0.0 instead of 1.0 -- and a zero
+            // limit or a zero ratio sizes every fill at nothing, so the leader
+            // trades and the follower does not.
+            //
+            // Fail closed either way: discarding the entry is fine, and so is
+            // keeping the intended default. Silently producing ZERO is not.
+            string file = Cm2TempFile("malformed_number");
+            File.WriteAllText(file,
+                "{\"Relationships\":{\"A_B\":{\"LeaderAccountName\":\"BadNumLeader\"," +
+                "\"FollowerAccountName\":\"BadNumFollower\"," +
+                "\"MaxPositionSize\":\"not a number\",\"QuantityRatio\":\"also not a number\"}}}");
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+            var rel = reader.GetRelationships().FirstOrDefault(r => r.FollowerAccountName == "BadNumFollower");
+
+            Assert(rel == null || rel.MaxPositionSize != 0, string.Format(
+                "a malformed MaxPositionSize did not become a zero position cap (got {0})",
+                rel == null ? "<entry refused>" : rel.MaxPositionSize.ToString()));
+            Assert(rel == null || rel.QuantityRatio != 0.0, string.Format(
+                "a malformed QuantityRatio did not become a zero sizing ratio (got {0})",
+                rel == null ? "<entry refused>" : rel.QuantityRatio.ToString()));
 
             try { File.Delete(file); } catch {}
         }
