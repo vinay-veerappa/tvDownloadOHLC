@@ -348,13 +348,20 @@ def test_recap_outcomes_includes_warnings(fresh_db) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 # Maintenance: confidence decay and proposal pruning
 # ──────────────────────────────────────────────────────────────────────────────
-def _add_pref_at_offset(conn, key, confidence, days_ago):
-    """Insert a user_prefs row with updated_at set `days_ago` days before now."""
+def _add_pref_at_offset(conn, key, confidence, days_ago, base_confidence=None):
+    """Insert a user_prefs row with updated_at set `days_ago` days before now.
+
+    `base_confidence` defaults to `confidence` when not provided, mirroring the
+    seed path where the initial confidence is the anchor for decay.
+    """
+    if base_confidence is None:
+        base_confidence = confidence
     ts = (store_schema.datetime.now(store_schema.timezone.utc).replace(tzinfo=None)
           - store_schema.timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
-        "INSERT INTO user_prefs (key, value, confidence, source, updated_at) VALUES (?, ?, ?, ?, ?)",
-        (key, "v", confidence, "test", ts),
+        "INSERT INTO user_prefs (key, value, confidence, base_confidence, source, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (key, "v", confidence, base_confidence, "test", ts),
     )
 
 
@@ -442,5 +449,74 @@ def test_maintain_store_prunes_proposals(fresh_db) -> None:
         assert report["pruned_proposals"] == 1
         remaining = conn.execute("SELECT COUNT(*) AS c FROM process_queue").fetchone()["c"]
         assert remaining == 0
+    finally:
+        conn.close()
+
+
+def test_apply_confidence_decay_idempotent(fresh_db) -> None:
+    """Running decay twice in a row should not double-decay.
+
+    With base_confidence anchoring, the second run recomputes from base_confidence
+    and produces the same result (updated_at is not modified by decay).
+    """
+    data_server, db_file, _ = fresh_db
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    try:
+        now = store_schema.datetime.now(store_schema.timezone.utc).replace(tzinfo=None)
+        _add_pref_at_offset(conn, "stale_120", 0.9, 120)
+        conn.commit()
+
+        # First run: 0.9 -> 0.8 (1 step)
+        report1 = store_schema.apply_confidence_decay(conn, dry_run=False, now=now)
+        assert report1["rows_affected"] == 1
+        row1 = conn.execute("SELECT confidence FROM user_prefs WHERE key=?", ("stale_120",)).fetchone()
+        assert row1["confidence"] == pytest.approx(0.8)
+
+        # Second run at the same time: should be a no-op (idempotent)
+        report2 = store_schema.apply_confidence_decay(conn, dry_run=False, now=now)
+        assert report2["rows_affected"] == 0
+        row2 = conn.execute("SELECT confidence FROM user_prefs WHERE key=?", ("stale_120",)).fetchone()
+        assert row2["confidence"] == pytest.approx(0.8)
+    finally:
+        conn.close()
+
+
+def test_apply_confidence_decay_uses_base_not_current(fresh_db) -> None:
+    """Decay computes from base_confidence and never increases confidence above current.
+
+    If a row was manually decayed to 0.5 but base_confidence is 1.0 and it's 120
+    days stale (1 step), the computed new value is 0.9 (1.0 - 0.1). Since 0.9 > 0.5
+    (the current confidence), decay does NOT write — it never raises confidence.
+    This documents that decay is monotonic: it only lowers, never restores.
+    """
+    data_server, db_file, _ = fresh_db
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    try:
+        now = store_schema.datetime.now(store_schema.timezone.utc).replace(tzinfo=None)
+        _add_pref_at_offset(conn, "anchored", 0.5, 120, base_confidence=1.0)
+        conn.commit()
+
+        report = store_schema.apply_confidence_decay(conn, dry_run=False, now=now)
+        assert report["rows_affected"] == 0
+        row = conn.execute("SELECT confidence FROM user_prefs WHERE key=?", ("anchored",)).fetchone()
+        assert row["confidence"] == pytest.approx(0.5)
+    finally:
+        conn.close()
+
+
+def test_upsert_pref_sets_base_confidence(fresh_db) -> None:
+    """upsert_pref should set base_confidence equal to the seeded confidence."""
+    data_server, db_file, _ = fresh_db
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    try:
+        store_schema.upsert_pref(conn, "test_key", "test_value", 0.8, "test")
+        row = conn.execute(
+            "SELECT confidence, base_confidence FROM user_prefs WHERE key=?", ("test_key",)
+        ).fetchone()
+        assert row["confidence"] == pytest.approx(0.8)
+        assert row["base_confidence"] == pytest.approx(0.8)
     finally:
         conn.close()

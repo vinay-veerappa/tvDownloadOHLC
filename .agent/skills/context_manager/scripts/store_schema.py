@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS user_prefs (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     confidence REAL NOT NULL DEFAULT 1.0,
+    base_confidence REAL NOT NULL DEFAULT 1.0,
     source TEXT DEFAULT '',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
@@ -134,6 +135,21 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     cur.execute(OUTCOMES_INDEX_DDL)
     cur.execute(OUTCOMES_TS_INDEX_DDL)
     cur.execute(PROCESS_QUEUE_DDL)
+
+    # Additive migration: add base_confidence column to pre-existing user_prefs tables.
+    # SQLite's IF NOT EXISTS doesn't cover ADD COLUMN, so we introspect and add if missing.
+    try:
+        cols = [r[1] for r in cur.execute("PRAGMA table_info(user_prefs)").fetchall()]
+        if "base_confidence" not in cols:
+            cur.execute(
+                "ALTER TABLE user_prefs ADD COLUMN base_confidence REAL NOT NULL DEFAULT 1.0"
+            )
+            # Backfill base_confidence from confidence for existing rows.
+            cur.execute(
+                "UPDATE user_prefs SET base_confidence = confidence WHERE base_confidence = 1.0"
+            )
+    except sqlite3.OperationalError:
+        pass
 
     # FTS5 — guard with try/except so the store works even on sqlite without fts5
     try:
@@ -222,22 +238,30 @@ def upsert_pref(
     confidence: float = 1.0,
     source: str = "",
 ) -> None:
+    """Insert or update a user preference row.
+
+    `confidence` is the live (possibly decayed) value; `base_confidence` records
+    the original seeded value so that periodic decay can recompute from a stable
+    anchor rather than a value that has already been decayed.
+    """
     conn.execute(
-        """INSERT INTO user_prefs (key, value, confidence, source, updated_at)
-           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """INSERT INTO user_prefs (key, value, confidence, base_confidence, source, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(key) DO UPDATE SET
              value = excluded.value,
              confidence = excluded.confidence,
+             base_confidence = excluded.base_confidence,
              source = excluded.source,
              updated_at = CURRENT_TIMESTAMP""",
-        (key, value, confidence, source),
+        (key, value, confidence, confidence, source),
     )
     conn.commit()
 
 
 def get_prefs(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     rows = conn.execute(
-        "SELECT key, value, confidence, source, updated_at FROM user_prefs ORDER BY confidence DESC, key"
+        "SELECT key, value, confidence, base_confidence, source, updated_at "
+        "FROM user_prefs ORDER BY confidence DESC, key"
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -560,7 +584,7 @@ def prune_queue(conn: sqlite3.Connection, older_than_days: int = 30) -> int:
 # Phase 4: maintenance + alerting helpers
 # ---------------------------------------------------------------------------
 
-LOSS_RATE_ALERT_THRESHOLD = 2.0  # losses > 2x wins
+LOSS_RATE_ALERT_THRESHOLD = 2.0  # losses >= 2x wins triggers a warning
 LOSS_RATE_ALERT_MIN_DECISIONS = 3  # need at least 3 win/loss rows before alerting
 
 CONFIDENCE_DECAY_START_DAYS = 90
@@ -609,12 +633,19 @@ def apply_confidence_decay(
     - Rows not written to in 90 days drop 0.1 per 30 days.
     - Floor is 0.2.
     - Each 30-day period beyond the 90-day window reduces confidence by 0.1.
+
+    Decay is computed from `base_confidence` (the seeded value), not from the
+    already-decayed `confidence`. This makes the operation idempotent: running it
+    twice in a row produces the same result, and the cadence is continuous (a
+    row 150 days stale is always decayed by 0.2 regardless of when decay last ran).
+    `updated_at` is NOT modified — it stays anchored to the last real write so
+    the inactivity calculation remains stable.
     """
     if now is None:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     rows = conn.execute(
-        "SELECT key, value, confidence, updated_at FROM user_prefs"
+        "SELECT key, value, confidence, base_confidence, updated_at FROM user_prefs"
     ).fetchall()
 
     affected: List[Dict[str, Any]] = []
@@ -633,9 +664,10 @@ def apply_confidence_decay(
             continue
 
         steps = (inactive_days - CONFIDENCE_DECAY_START_DAYS) // CONFIDENCE_DECAY_STEP_DAYS
+        base = r["base_confidence"] if r["base_confidence"] is not None else r["confidence"]
         new_confidence = max(
             CONFIDENCE_DECAY_FLOOR,
-            r["confidence"] - steps * CONFIDENCE_DECAY_AMOUNT,
+            base - steps * CONFIDENCE_DECAY_AMOUNT,
         )
         # Round to avoid floating-point noise in stored confidence.
         new_confidence = round(new_confidence, 2)
@@ -647,9 +679,10 @@ def apply_confidence_decay(
                 "inactive_days": inactive_days,
             })
             if not dry_run:
+                # Only update confidence; leave updated_at anchored to the last real write.
                 conn.execute(
-                    "UPDATE user_prefs SET confidence = ?, updated_at = ? WHERE key = ?",
-                    (new_confidence, now.strftime('%Y-%m-%d %H:%M:%S'), r["key"]),
+                    "UPDATE user_prefs SET confidence = ? WHERE key = ?",
+                    (new_confidence, r["key"]),
                 )
 
     if affected and not dry_run:
