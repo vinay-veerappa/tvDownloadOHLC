@@ -797,6 +797,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM2_LegacyAndAliasFormsStillLoad();
             TestCM2_AMalformedFieldDoesNotDiscardTheWholeConfig();
             TestCM2_AMalformedNumberNeverBecomesAZeroLimit();
+            TestCM2_AnEmptySectionIsNotAParseFailure();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -11532,6 +11533,39 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(rel != null && rel.SizingMode == CopierSizingMode.QuantityRatio, string.Format(
                 "the unreadable SizingMode fell back to the default rather than throwing (got {0})",
                 rel == null ? "<null rel>" : rel.SizingMode.ToString()));
+
+            try { File.Delete(file); } catch {}
+        }
+
+        private static void TestCM2_AnEmptySectionIsNotAParseFailure()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: an empty Relationships section is a valid file, not a parse failure");
+
+            // The one upheld review finding that survived checking, and it is
+            // narrower than it was filed as. A section written as an empty ARRAY
+            // is a legitimate way to say "no relationships", and `as JObject`
+            // yields null for it. The claim was that this routes to the flat
+            // legacy path, which deserialises the WHOLE document as
+            // Dictionary<string,JObject>, throws on the array, and has the outer
+            // catch swallow it after everything was already cleared.
+            //
+            // What it misses: `hasStructuredSections` is an OR. A file with a
+            // real Groups section never reaches the flat path at all, which is
+            // what this pins -- an empty Relationships array must not take
+            // Groups down with it. The genuinely unreachable case (BOTH sections
+            // written as arrays) discards a configuration that declared nothing,
+            // so there is nothing to lose and no test to write for it.
+            string file = Cm2TempFile("empty_section");
+            File.WriteAllText(file,
+                "{\"Relationships\":[],\"Groups\":{\"KeepMe\":{\"GroupName\":\"KeepMe\"," +
+                "\"LeaderAccountName\":\"KeepLeader\",\"FollowerAccounts\":[\"KeepFollower\"]}}}");
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+
+            Assert(reader.GetGroup("KeepMe") != null,
+                "an empty Relationships array left the Groups section loaded rather than discarding the file");
 
             try { File.Delete(file); } catch {}
         }
