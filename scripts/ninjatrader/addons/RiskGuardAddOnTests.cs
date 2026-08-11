@@ -795,6 +795,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM2_ReloadedMatrixLookupIsStillCaseInsensitive();
             TestCM2_ALoadedMatrixActuallySizesATrade();
             TestCM2_LegacyAndAliasFormsStillLoad();
+            TestCM2_AMalformedFieldDoesNotDiscardTheWholeConfig();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -11495,6 +11496,43 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             try { File.Delete(aliasFile); } catch {}
             try { File.Delete(flatFile); } catch {}
+        }
+
+        private static void TestCM2_AMalformedFieldDoesNotDiscardTheWholeConfig()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM2: one unreadable field does not take the entire copier configuration with it");
+
+            // PASSES at baseline, and is here because the FIX can break it.
+            // LoadFromDisk clears _relationships and _groups before parsing and
+            // wraps everything in one try/catch, so anything that throws leaves
+            // the engine with NO configuration at all. Today SizingMode is not
+            // read, so a garbage value is harmless. The moment it is read, an
+            // unrecognised enum name throws -- and a single typo in
+            // copier_config.json would silently disarm every relationship.
+            //
+            // Not in expect_green: it is green now and must stay green, which is
+            // what the no-new-failures gate is for.
+            string file = Cm2TempFile("malformed");
+            File.WriteAllText(file,
+                "{\"Relationships\":{\"A_B\":{\"LeaderAccountName\":\"MalformedLeader\"," +
+                "\"FollowerAccountName\":\"MalformedFollower\",\"QuantityRatio\":2.0," +
+                "\"SizingMode\":\"NotARealSizingMode\"}}}");
+
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+            var rel = reader.GetRelationships().FirstOrDefault(r => r.FollowerAccountName == "MalformedFollower");
+
+            Assert(rel != null,
+                "an unreadable SizingMode left the rest of the relationship loaded rather than discarding the file");
+            Assert(rel != null && rel.QuantityRatio == 2.0, string.Format(
+                "the fields either side of the unreadable one still loaded (got {0})",
+                rel == null ? -1.0 : rel.QuantityRatio));
+            Assert(rel != null && rel.SizingMode == CopierSizingMode.QuantityRatio, string.Format(
+                "the unreadable SizingMode fell back to the default rather than throwing (got {0})",
+                rel == null ? "<null rel>" : rel.SizingMode.ToString()));
+
+            try { File.Delete(file); } catch {}
         }
     }
 }
