@@ -1,5 +1,5 @@
 git+https://github.com/rongardF/tvdatafeed.git
-git+https://github.com/vinay-veerappa/agent-loop.git@v0.2.3
+git+https://github.com/vinay-veerappa/agent-loop.git@v0.3.0
 pandas>=3.0.0
 numpy
 talib

@@ -48,7 +48,7 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **Self-Learning Layer Design**: [SELF_LEARNING_LAYER_DESIGN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/SELF_LEARNING_LAYER_DESIGN.md) (FTS5 search, user_prefs/USER.md profile, outcomes ledger, skill-write gate — Phases 0-3 implemented)
 * **NT8 Deployment**: never hand-copy `.cs` into `Documents/NinjaTrader 8/bin/Custom/`. Use `python scripts/utils/sync_nt8_strategies.py --verify --only addons` then `--only addons`, and recompile via `nt_compile`. Rules and traps: [NT8_FILE_ORGANIZATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_FILE_ORGANIZATION.md)
 * **Agent Patch Loop (ARCHIVED)**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (historical doc for the predecessor loop; the code is archived in `scripts/agent_loop/_archive_predecessor/`; do not run it)
-* **Agent Loop v2 (current package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package; **v0.2.3** is the pin in `requirements.txt` and is installed in `.venv`; 185/185 tests pass on Python 3.12 and 3.14; 9 phases + docs mode. Do **not** pin `v0.1.0` (14 commits of known defects behind) or `v0.2.0` (raises `TypeError` on Python < 3.13, which kills every ticket at region extraction))
+* **Agent Loop v2 (current package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package; **v0.3.0** is the pin in `requirements.txt` and is installed in `.venv`; 217/217 tests pass on Python 3.12 and 3.14; 9 phases + docs mode. Do **not** pin `v0.1.0` (14 commits of known defects behind) or `v0.2.0` (raises `TypeError` on Python < 3.13, which kills every ticket at region extraction))
 * **Agent Loop v2 Research**: [AGENT_LOOP_RESEARCH.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_RESEARCH.md) (state of the field across 13 coding agent harnesses)
 * **Agent Loop v2 Plan**: [AGENT_LOOP_V2_PLAN.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_V2_PLAN.md) (9-phase execution plan, all complete)
 * **Agent Loop Decisions**: [IMPLEMENTATION_DECISIONS.md](file:///c:/Users/vinay/agent-loop/docs/architecture/IMPLEMENTATION_DECISIONS.md) (every non-obvious decision recorded)
@@ -82,6 +82,15 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
   Docs mode does **not** yet inject the doc-architect skill's conventions into its
   system prompts (the agent-loop README describes that as intended, not done), so
   generated docs will not match this repo's house format without editing.
+* **Agent Loop Configuration**: every tunable (which model does which job, token
+  budgets, whether a role thinks, round limits, panel deadlines) lives in
+  `agent_loop/config.py`, which records *why* each default has its value. Override
+  per-repo by creating `agent_loop.config.json` here (or `--config PATH` /
+  `$AGENT_LOOP_CONFIG`); see `agent_loop.config.example.json` in the package repo.
+  Unknown keys are rejected rather than ignored. **On a reasoning model,
+  chain-of-thought is spent from the same budget as the answer** — if you set
+  `think: true`, raise `max_tokens` in the same edit, or the model can burn the
+  whole budget reasoning and return empty content.
 
 ## Data Architecture — Two Parquet Systems
 
