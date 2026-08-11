@@ -1,8 +1,20 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-10 (session 12 — **the reconciler shipped as the primary path for the
-copier's bracket (`P3-30` copier half, §4u) and was LIVE-VALIDATED (§4v)**, which opened `P0-61`
-(fixed, live) and `P0-62` (open). **Next work is `P0-62`, then the timer + `P3-31`'s ledger — §4a.**)
+**Last updated**: 2026-08-11 (session 13 — **the copier RATIO CONVERTER, slice 1 of 3, is
+implemented and green but NOT deployed — §4w**. A feature, not a defect: no `P`-number, nothing
+closed. **Next work is either slice 2 (cross-instrument `1 MNQ -> 3 MES`) and slice 3 (making the
+table settable from disk and the bridge at all), or the still-open `P0-62` — §4a and §4w.**)
+
+> ⚠️ **Session 13 touched NO defect.** The 62/49 counts below are unchanged and correct. Slice 1
+> is unit-tested and compiles; it has **never run on a live feed**, and the deployed build is
+> still session 12's `f174ba68`.
+>
+> ⚠️ **Do not treat `ARBITER_SHIP` from the agent loop as a review on this addon.** Across four
+> SHIP rulings in session 13 the arbiter upheld **0 of 66 panel findings**, and on one plan the
+> panel was right about a signed exit quantity that would have **increased a follower position
+> sitting opposite the leader** — `P1-56`'s class, in a plan the arbiter shipped. Read the patch
+> against the file. §4w.
+
 **Branch**: `harden/riskguard-p0-51` — **not merged, not pushed.** `main` is untouched.
 **`wip/p09-oco-target` is SUPERSEDED** — its work was rebased and shipped as `86c6376f`; do not
 deploy or rebase that branch, it predates the holder split and lacks five fixes (§4r).
@@ -14,7 +26,7 @@ NT8 compiles clean (0 errors, net48), all **10** addon files in sync (`CopierRec
 (`06c6a484` was the reconciler itself, 15:20–15:48.)
 (Earlier builds 2026-08-10: `b5c58ae0` the order-liveness model, `86c6376f` 13:12–14:32,
 `c9459121` 06:19–13:12, `995f6402` before that.)
-Suite **787 passed, 0 failed**.
+Suite **806 passed, 0 failed** (789 + 17 new CM1 acceptance tests, §4w; it was 787 before session 13 added two more alongside them).
 
 > ✅ **`P0-9`'s mirrored target is CLOSED and deployed (2026-08-10, `86c6376f`).** Followers now get
 > the leader's target as well as its stop, in one OCO group, anchored to their own fill. The
@@ -363,6 +375,12 @@ those defects existed at all. Passing gates is necessary, never sufficient.
 ---
 
 ## 4a. What is pending — the current backlog
+
+> **Also pending, and NOT a defect:** the copier ratio converter, slices **2** (cross-instrument
+> `1 MNQ -> 3 MES`) and **3** (parsing `PerTickerRatios` from the config JSON and exposing it on
+> the bridge — today it is settable only from code, so the shipped slice 1 is **not reachable from
+> the UI**). Slice 1 is implemented, green and undeployed. See §4w for what is settled and what
+> will bite. Neither slice carries a `P`-number.
 
 **62 defects, 49 closed, 13 open.** `P0-61` (closed) and `P0-62` (open) were both opened
 2026-08-10 by the live test in §4v. Band membership and the P1-30/31 → P1-35/36 renumbering are
@@ -2093,3 +2111,112 @@ was exactly that until 2026-08-07.
 - 844 lines of WPF UI in `RiskGuardAddOn.cs` remain outside the test build (acceptable), as does
   `ReconcileFollowerPosition` (needs `Application.Current.Dispatcher`). If P2-24 wires that method
   up, it needs a dispatcher seam to stay testable.
+
+---
+
+## 4w. Session 13 record — 2026-08-11: the copier ratio converter, slice 1 of 3
+
+**This is a FEATURE, not a defect fix.** No `P`-number: the hardening plan's IDs are
+never reused, and nothing here closes one. Asked for by the user: *"a ratio
+convertor for the copy trader where I can trade for e.g. one MES in one account,
+but take 3 in a different account and 5 in another."*
+
+### State
+
+Two commits on `harden/riskguard-p0-51`, **unpushed**, on top of `86c6376f`:
+
+* `36bd59f6` — CM1 acceptance tests, RED at baseline: 789 passed, **17 failed**
+* `37cb5193` — the implementation: **806 passed, 0 failed**, build clean under net48
+  + net8.0-with-stubs
+
+**Not deployed. Not compiled in NT8. Not live-validated.** Unit + `dotnet build`
+only. Before deploying, follow the NT8 sync rules in CLAUDE.md
+(`sync_nt8_strategies.py --verify --only addons`, then `--only addons`, then
+`nt_compile`) — do not hand-copy.
+
+### What slice 1 changed
+
+`CopierSizingMode.PerTickerMatrix` was declared at `TradeCopierEngine.cs:24` and
+implemented **nowhere** — it fell through to the `QuantityRatio` branch. Four
+defects followed, each now covered by a test that was red beforehand:
+
+1. **The mini/micro multiplier was applied ON TOP of the table ratio.**
+   `PerTickerRatios["MES"] = 3.0` with `AutoSymbolConversion = true` computed
+   `round(1 * 3.0 * 0.1) = 0` — MES is in the micro list — and the sub-one-contract
+   guard then silently skipped the entry. **The operator asked for 3 contracts and
+   got none.**
+2. **`TranslateSymbol` applied the same table independently**, routing an MES
+   leader fill to **ES** on the follower while sizing it in MES contracts. The
+   instrument decision and the quantity decision were made in two places from two
+   different keys. That is the root defect, and it is the same shape as `P0-60`:
+   two callers inferring different things from one fact.
+3. **An unmapped instrument fell through to the flat `QuantityRatio`** — a silent
+   unscaled copy. Observed: 1 contract from a configured ratio of 7.0.
+4. **The lookup called `Math.Abs(tickerRatio)`**, so a configured **-3.0 would have
+   become 3 live contracts.**
+
+Now, inside matrix mode only: the branch is evaluated **first**; the ratio is the
+literal contract count with no symbol multiplier; `NaN`, both infinities, zero,
+negative, and anything rounding to zero are each treated as **no rule**; no rule
+**fails closed on ENTRIES and never on exits**; and the leader's instrument is
+preserved, with a cross-instrument `CustomSymbolMappings` entry **refused** rather
+than approximated. Every other sizing mode is untouched.
+
+### Settled here — do not re-litigate
+
+* **The ratio is a contract COUNT in the follower's instrument, not a notional
+  scaling.** `1 MNQ -> 3 MES` means three MES. The user chose this explicitly.
+* **One rule is `(leader root -> follower root, ratio)`** — the instrument and the
+  count are one decision, because deciding them separately is defect 2 above.
+* **An unmapped instrument fails closed on entries, mirroring the existing
+  `NetLiquidationRatio` guard.** The user chose this over falling back to auto
+  conversion.
+* **A no-rule EXIT mirrors `leaderQty` and lets the existing clamp cap it at the
+  live position.** A reviewer raised twice that a partial leader exit can therefore
+  flatten the follower completely. Accepted and documented in the code: on that path
+  there is no ratio BY DEFINITION, and flat is safer than stranded.
+* **`PerTickerRatios` needed no DTO work.** It already existed, was already
+  deep-copied per follower by `CopierGroup.ToRelationships()`, and was already read
+  by the sizing branch. A four-part plan that proposed re-creating all of that was
+  discarded once the file was actually read.
+
+### Still open — slices 2 and 3
+
+* **Slice 2, cross-instrument** (`1 MNQ -> 3 MES`, `1 ES -> 2 MES`). Needs a rule
+  type carrying the follower root, and must **replace** slice 1's deliberate
+  refusal. Note `P1-22`'s rule survives: a cross-instrument mapping records **no
+  slippage**, because the two price scales are incomparable.
+* **Slice 3, reachability.** `PerTickerRatios` and `CustomSymbolMappings` are
+  parsed by **nothing** and exposed by **nothing** — not by `LoadFromDisk`, not by
+  the `McpBridgeAddOn` copier-config endpoint. So the table can still only be set
+  from code or a test. This is the same "config that cannot be set" family as the
+  fields `P1-23`/`P0-9` deleted. **Until slice 3 lands, the feature is not usable
+  from the UI or the bridge.**
+
+### Two constraints that will bite the next session
+
+* **`McpBridgeAddOn.cs` and `RiskGuardAddOnTests.cs` cannot be edited by the agent
+  loop at all.** Both contain C-style block comments, and `regions.py` refuses such
+  files rather than risk its brace matcher. That makes slice 3's bridge half a
+  hand-edit, and it is why slice 1's tests were hand-written.
+* **`class Program` in the test harness is not `partial`, and `Assert` is private to
+  it.** `TestHarness_AllDeclaredTestsAreInvoked` reflects only over
+  `typeof(Program)`, so a test in a NEW file compiles and **runs nothing**. New
+  tests must go into `RiskGuardAddOnTests.cs` and be registered in `Main`. The
+  CM1 tests are at the end of that file, registered just before the self-check.
+
+### The loop found thirteen of its own defects doing this
+
+Slice 1 was produced by the agent loop (qwen3.5 implementer, glm-5.2 + minimax-m3
+panel, deepseek-v4-pro arbiter) over three rounds — the gate ladder caught a
+regression in round 1 that round 2 fixed. Getting there required fixing **O37-O50**
+in the agent-loop package, now pinned at **v0.6.2**. The full account is
+[agent-loop HANDOVER §13](file:///c:/Users/vinay/agent-loop/docs/architecture/HANDOVER.md).
+
+**The one to carry into any future loop run on this addon:** the arbiter upheld
+**0 of 66 findings** across four SHIP rulings, and on one plan the panel was right
+about a signed exit quantity that would have **increased a follower position sitting
+opposite the leader** — `P1-56`'s class, in a plan the arbiter shipped. Three of the
+five human corrections to the CM1 ticket came from findings the arbiter had
+dismissed. **Do not treat `ARBITER_SHIP` on this profile as a review.** Read the
+patch against the file.
