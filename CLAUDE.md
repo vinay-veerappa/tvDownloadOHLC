@@ -48,7 +48,7 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **Self-Learning Layer Design**: [SELF_LEARNING_LAYER_DESIGN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/SELF_LEARNING_LAYER_DESIGN.md) (FTS5 search, user_prefs/USER.md profile, outcomes ledger, skill-write gate — Phases 0-3 implemented)
 * **NT8 Deployment**: never hand-copy `.cs` into `Documents/NinjaTrader 8/bin/Custom/`. Use `python scripts/utils/sync_nt8_strategies.py --verify --only addons` then `--only addons`, and recompile via `nt_compile`. Rules and traps: [NT8_FILE_ORGANIZATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_FILE_ORGANIZATION.md)
 * **Agent Patch Loop (ARCHIVED)**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (historical doc for the predecessor loop; the code is archived in `scripts/agent_loop/_archive_predecessor/`; do not run it)
-* **Agent Loop v2 (current package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package; v0.1.0 tagged; 77/77 tests pass; 9 phases complete including learning feedback)
+* **Agent Loop v2 (current package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package; **v0.2.2** is the pin in `requirements.txt` and is installed in `.venv`; 173/173 tests pass on Python 3.12 and 3.14; 9 phases + docs mode. Do **not** pin `v0.1.0` (14 commits of known defects behind) or `v0.2.0` (raises `TypeError` on Python < 3.13, which kills every ticket at region extraction))
 * **Agent Loop v2 Research**: [AGENT_LOOP_RESEARCH.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_RESEARCH.md) (state of the field across 13 coding agent harnesses)
 * **Agent Loop v2 Plan**: [AGENT_LOOP_V2_PLAN.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_V2_PLAN.md) (9-phase execution plan, all complete)
 * **Agent Loop Decisions**: [IMPLEMENTATION_DECISIONS.md](file:///c:/Users/vinay/agent-loop/docs/architecture/IMPLEMENTATION_DECISIONS.md) (every non-obvious decision recorded)
@@ -67,7 +67,21 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 
   # Developer mode (autonomous localization + edit)
   .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode developer --defect "description of the defect"
+
+  # Docs mode — 4 sub-modes. changelog reads a diff; the other three read the
+  # codebase (+ the graph, since both profiles set graph_project).
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type changelog --review-base HEAD~1
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type handover
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type design --defect "feature to design"
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type prd --defect "defect or feature"
+
+  # Validate a ticket file without spending a model call. READ THE LINE RANGES:
+  # a degenerate one-line region also prints OK.
+  .\.venv\Scripts\python.exe -m agent_loop --profile nt8-riskguard --profile-module scripts.agent_loop_config.nt8_riskguard --tickets scripts/agent_loop/tickets_p1_56.json --list
   ```
+  Docs mode does **not** yet inject the doc-architect skill's conventions into its
+  system prompts (the agent-loop README describes that as intended, not done), so
+  generated docs will not match this repo's house format without editing.
 
 ## Data Architecture — Two Parquet Systems
 

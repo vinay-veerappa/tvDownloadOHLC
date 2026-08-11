@@ -13,6 +13,14 @@ logs/*.log
 web/logs/
 **/tsbuildinfo
 
+# agent-loop --mode docs output. Model artifacts, regenerated on demand; not
+# source, and not to be reviewed as if a human wrote them.
+docs/generated/
+
+# agent-loop run artifacts: raw model output, patches, worktrees left by a
+# crashed run. `logs/*.log` does not cover these per-ticket directories.
+logs/agent_loop/
+
 # Data
 downloads_es_futures/
 data/
