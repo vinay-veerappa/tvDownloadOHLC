@@ -1,11 +1,16 @@
 ---
 name: sync-trading-brain
 description: Mandatory startup skill to synchronize with the Trading Second Brain and institutional rules.
+applyTo: "**/*.py"
 ---
 
 # Sync Trading Brain Protocol
 
 This skill MUST be invoked at the start of every session to ensure alignment with the "Source of Truth" for trading logic, session probabilities, and data protocols.
+
+## When to use
+
+Use as a mandatory startup skill — synchronizes with the Trading Second Brain and institutional rules before any trading work.
 
 ## Startup Checklist
 

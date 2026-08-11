@@ -1,9 +1,14 @@
 ---
 name: Documentation Architect
 description: Automatically creates and updates design/architecture documentation when entering new code areas.
+applyTo: "**"
 ---
 
 # Documentation Architect
+
+## When to use
+
+Use when entering a new codebase or completing a major feature — automatically creates and updates design/architecture documentation following the project's established format.
 
 ## Purpose
 Ensures that every major component of the codebase has a corresponding design document in `docs/architecture/` or relevant subfolders. It prevents "knowledge rot" by mandating updates whenever significant changes occur.

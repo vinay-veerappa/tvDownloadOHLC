@@ -1,11 +1,16 @@
 ---
 name: Data Management
 description: Handles the regeneration and maintenance of derived data files (Profiler, Classifications, HOD/LOD).
+applyTo: "**/*.py"
 ---
 
 # Data Management Skill
 
 This skill is used to maintain the derived datasets that empower the Daily Bias reports. These should be run periodically or when significant data gaps are bridged.
+
+## When to use
+
+Use when the user needs to regenerate or maintain derived data files (Profiler, Classification, Indicators) — handles the full data pipeline.
 
 ## 🔄 Regeneration Workflows
 

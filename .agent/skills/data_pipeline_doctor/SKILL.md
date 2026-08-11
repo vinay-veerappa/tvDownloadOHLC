@@ -1,9 +1,14 @@
 ---
 name: Data Pipeline Doctor
 description: Diagnoses data gaps, timestamp inconsistencies, and integrity issues in Parquet and JSON files.
+applyTo: "**/*.py"
 ---
 
 # Data Pipeline Doctor
+
+## When to use
+
+Use when diagnosing data gaps, timestamp inconsistencies, or integrity issues in Parquet files — systematic data quality debugging.
 
 ## Purpose
 Ensures the reliability of the "Live Trading System". Detects silence (gaps) and noise (corruption) in the data feed.

@@ -1,9 +1,14 @@
 ---
 name: Backtest Commander
 description: Automates the execution, validation, and reporting of trading strategy backtests.
+applyTo: "**/*.py"
 ---
 
 # Backtest Commander
+
+## When to use
+
+Use when the user asks to run, validate, or report on trading strategy backtests. Also use when the user mentions 'backtest', 'prop firm simulation', or 'strategy validation'.
 
 ## Purpose
 Streamlines the process of running backtests, ensuring consistent configuration and easy-to-read reports.

@@ -1,11 +1,16 @@
 ---
 name: ICT Trader
 description: Provides key price levels (PDH, PDL, Midnight Open) and bias context based on Inner Circle Trader concepts.
+applyTo: "**/*.py"
 ---
 
 # ICT Trader
 
 This skill assists with "Inner Circle Trader" style analysis, focusing on Liquidity, Time, and Price.
+
+## When to use
+
+Use when the user needs key price levels (PDH, PDL, Midnight Open) and bias context for intraday trading decisions.
 
 ## Workflow
 

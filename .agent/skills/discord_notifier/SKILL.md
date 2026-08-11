@@ -1,11 +1,16 @@
 ---
 name: Discord Notifier
 description: Upload files and send messages to Discord channels via webhooks.
+applyTo: "**"
 ---
 
 # Discord Notifier Skill
 
 This skill provides utilities to send messages and upload files to Discord channels using named webhooks.
+
+## When to use
+
+Use when the user wants to upload files or send messages to Discord channels via webhooks.
 
 ## Prerequisites
 

@@ -1,9 +1,14 @@
 ---
 name: writing-plans
 description: Use when you have a spec or requirements for a multi-step task, before touching code
+applyTo: "**"
 ---
 
 # Writing Plans
+
+## When to use
+
+Use when you have a spec or requirements for a multi-step task — generates a structured plan with clear breakdowns, dependencies, and verification criteria before touching code.
 
 ## Overview
 

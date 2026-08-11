@@ -1,11 +1,16 @@
 ---
 name: Daily Classification
 description: Automates the generation of daily bias reports based on R1, R2, DWP, and DNP classifications, combining sequential and overnight probabilities.
+applyTo: "**/*.py"
 ---
 
 # Daily Classification Skill
 
 This skill allows you to analyze and predict the "Day Type" (R1, R2, DWP, DNP) based on historical sequence patterns and current overnight session action.
+
+## When to use
+
+Use when the user asks for daily bias classification — generates R1/R2/DWP/DNP classification reports.
 
 ## Classifications
 

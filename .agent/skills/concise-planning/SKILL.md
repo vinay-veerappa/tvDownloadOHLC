@@ -1,9 +1,14 @@
 ---
 name: concise-planning
 description: Use when a user asks for a plan for a coding task, to generate a clear, actionable, and atomic checklist.
+applyTo: "**"
 ---
 
 # Concise Planning
+
+## When to use
+
+Use when the user asks for a plan for a coding task — generates a clear, actionable plan with steps, dependencies, and verification criteria.
 
 ## Goal
 

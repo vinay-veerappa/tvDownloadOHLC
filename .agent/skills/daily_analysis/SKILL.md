@@ -1,11 +1,16 @@
 ---
 name: Daily Analysis
 description: Runs a comprehensive daily market analysis including data sync, classification updates, ICT context, and wargame scenario generation.
+applyTo: "**/*.py"
 ---
 
 # Daily Market Analysis (Master Skill)
 
 This is your primary "Start of Day" routine. It automates the data pipeline and generates a strategic briefing.
+
+## When to use
+
+Use when the user asks for daily market analysis — runs data sync, classification, and bias generation for the current trading day.
 
 ## Workflow
 

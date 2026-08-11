@@ -1,9 +1,14 @@
 ---
 name: UI Engineer
 description: Specialized skill for building modern, high-performance web UIs using Next.js, Tailwind, and Shadcn/UI.
+applyTo: "**/*.{ts,tsx,js,jsx}"
 ---
 
 # UI Engineer
+
+## When to use
+
+Use when building modern, high-performance web UIs — Next.js, TypeScript, Tailwind CSS patterns and conventions.
 
 ## Purpose
 This skill embodies the role of a Frontend Specialist. Use it when implementing new features or refactoring the web interface (`tvDownloadOHLC/web/`).

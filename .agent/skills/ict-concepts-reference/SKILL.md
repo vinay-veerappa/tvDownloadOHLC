@@ -1,6 +1,7 @@
 ﻿---
 name: ICT Concepts Reference
 description: Domain knowledge reference for ICT/SMC concepts, market structure, liquidity, sessions, and algorithmic detection rules used by trading indicator workflows.
+applyTo: "**"
 ---
 
 # ICT Concepts Skill — Domain Knowledge Reference
@@ -16,6 +17,10 @@ description: Domain knowledge reference for ICT/SMC concepts, market structure, 
 > All times are Eastern Time (ET / America/New_York) unless noted.
 
 ---
+
+## When to use
+
+Use when the user asks about ICT/SMC concepts — market structure, liquidity, sessions, killzones, FVGs, order blocks, PD arrays, bias models. Reference skill, not a workflow.
 
 ## 1. FOUNDATIONAL FRAMEWORK
 

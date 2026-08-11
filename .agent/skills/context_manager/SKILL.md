@@ -1,11 +1,16 @@
 ---
 name: Context Manager
 description: Persistent memory system for the agent to store and retrieve context, preferences, and architectural decisions across sessions.
+applyTo: "**"
 ---
 
 # Context Manager Skill
 
 This skill allows the agent to store and retrieve information from a persistent SQLite database. This "memory" is useful for keeping track of user preferences, architectural patterns, decision logs, and active task states across different chats and days.
+
+## When to use
+
+Use when the agent needs to store and retrieve context, preferences, or decisions across sessions — persistent memory system.
 
 ## Capabilities
 
