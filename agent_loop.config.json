@@ -17,6 +17,24 @@
     "empty content on a five-part feature brief (O42)."
   ],
 
+  "_roles_comment": [
+    "The implementer ROLE budget is what patch mode spends -- capping only the",
+    "plan/test MODES left it at the package default of 96000, and the first loop",
+    "run died on the same 400. The two are separate knobs and both have to fit the",
+    "model actually in use.",
+    "",
+    "`model` is required alongside max_tokens and think, so the package default is",
+    "restated here; --implementer overrides it per run."
+  ],
+
+  "roles": {
+    "implementer": {
+      "model": "kimi-k2.7-code:cloud",
+      "max_tokens": 64000,
+      "think": true
+    }
+  },
+
   "modes": {
     "plan": {"max_tokens": 64000, "think": true},
     "test": {"max_tokens": 64000, "think": true}
