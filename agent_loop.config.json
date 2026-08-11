@@ -24,13 +24,22 @@
     "model actually in use.",
     "",
     "`model` is required alongside max_tokens and think, so the package default is",
-    "restated here; --implementer overrides it per run."
+    "restated here; --implementer overrides it per run.",
+    "",
+    "RAISED BACK TO 96000 on 2026-08-11. 64000 was chosen for the WEAKEST model",
+    "that might be substituted in, not for the one actually configured, and CM2",
+    "round 1 then died on it: kimi-k2.7-code emitted 282935 chars of thinking and",
+    "empty content at eval_count=64000. kimi has room; qwen3.5 does not. Setting",
+    "one number for both means the configured model runs at the substitute's",
+    "ceiling on every round. If you substitute qwen3.5, lower this to 64000 --",
+    "or rely on the package clamp once agent-loop records per-model output",
+    "ceilings (O59)."
   ],
 
   "roles": {
     "implementer": {
       "model": "kimi-k2.7-code:cloud",
-      "max_tokens": 64000,
+      "max_tokens": 96000,
       "think": true
     }
   },
