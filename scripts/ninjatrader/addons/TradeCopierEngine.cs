@@ -393,22 +393,23 @@ namespace NinjaTrader.NinjaScript.AddOns
             string root = (split >= 0 ? rawSymbol.Substring(0, split) : rawSymbol).ToUpper();
             string remainder = split >= 0 ? rawSymbol.Substring(split) : string.Empty;
 
-            // 1. Relationship custom overrides - but in PerTickerMatrix mode, cross-instrument
-            // mappings are REFUSED (slice 2). Same-instrument mappings are allowed.
+            // 1. Relationship custom overrides. An explicit mapping is honoured in
+            // every sizing mode, INCLUDING PerTickerMatrix -- that is slice 2.
+            //
+            // Slice 1 returned the symbol untranslated here when a matrix-mode
+            // mapping named a different root, so the sizing branch could refuse
+            // the entry. Both halves of that refusal are gone together: leaving
+            // one would route the copy to one instrument and size it in another,
+            // which is the defect slice 1 was fixing.
+            //
+            // Note this is deliberately NOT gated on AutoSymbolConversion. That
+            // flag governs the automatic mini/micro table below, not an override
+            // the operator wrote out by hand.
             if (rel != null && rel.CustomSymbolMappings != null
                 && rel.CustomSymbolMappings.TryGetValue(root, out var customTarget)
                 && !string.IsNullOrEmpty(customTarget))
             {
-                string mappedRoot = customTarget.ToUpper();
-                if (rel.SizingMode == CopierSizingMode.PerTickerMatrix && mappedRoot != root)
-                {
-                    // Cross-instrument mapping in matrix mode: return UNTRANSLATED symbol
-                    // The sizing branch will refuse the entry (path B), logging cross-instrument refusal
-                    // This ensures TranslateSymbol never returns null (callers at 1293/2565 depend on this)
-                    return root + remainder;
-                }
-                // Same-instrument mapping or non-matrix mode: apply the mapping
-                return mappedRoot + remainder;
+                return customTarget.ToUpper() + remainder;
             }
 
             // 2. Bidirectional Mini <-> Micro default matrix.
@@ -459,39 +460,63 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (rel.SizingMode == CopierSizingMode.PerTickerMatrix)
             {
                 string symbol = rawSymbol.Split(' ')[0].ToUpper();
-                bool isCrossInstrument = false;
 
-                // A CustomSymbolMappings entry naming a DIFFERENT root is a
-                // cross-instrument request, which is slice 2 and is refused below.
-                // An entry naming the SAME root is a no-op: the ratio is keyed by the
-                // leader root either way. A `lookupSymbol` variable was carried here
-                // to hold the mapped root, and a reviewer read it as sizing off the
-                // mapped symbol -- it could only ever be assigned the value it
-                // already had, so the variable is gone rather than explained.
-                if (rel.CustomSymbolMappings != null
-                    && rel.CustomSymbolMappings.TryGetValue(symbol, out var customTarget)
-                    && !string.IsNullOrEmpty(customTarget)
-                    && customTarget.ToUpper() != symbol)
+                // SLICE 2. One rule is (leader root -> follower root, ratio), and
+                // BOTH halves are keyed by the LEADER root:
+                //
+                //     CustomSymbolMappings["MNQ"] = "MES"   <- where it goes
+                //     PerTickerRatios["MNQ"]      = 3.0     <- how many
+                //
+                // So there is no cross-instrument BRANCH any more, and that is the
+                // design rather than a simplification: a separate branch is how the
+                // instrument and the quantity came to be decided from two different
+                // keys in the first place (slice 1's defect 2, which routed an MES
+                // leader fill to ES while sizing it in MES contracts). The lookup
+                // below is the same lookup for same- and cross-instrument rules.
+                //
+                // A ratio keyed by the FOLLOWER root is therefore NOT a rule. It
+                // fails closed like any other missing rule -- looking it up under
+                // the mapped root as a fallback would rebuild defect 2 as a feature.
+                double ratio = 0.0;
+                bool hasRatio = false;
+
+                if (rel.PerTickerRatios != null && rel.PerTickerRatios.TryGetValue(symbol, out ratio))
                 {
-                    isCrossInstrument = true;
+                    // Validate ratio: NaN, Infinity, zero, and negative are all treated as no rule
+                    // A negative ratio is a REFUSAL, not an absolute value - Math.Abs must not apply
+                    if (!double.IsNaN(ratio) && !double.IsInfinity(ratio) && ratio > 0.0)
+                    {
+                        hasRatio = true;
+                    }
                 }
 
-                if (isCrossInstrument)
+                if (!hasRatio)
                 {
-                    // Cross-instrument sizing is slice 2 - refuse entry, allow exit
+                    // No usable ratio: fail closed on entries, never on exits
                     if (!isExit)
                     {
+                        string mappedTo = null;
+                        if (rel.CustomSymbolMappings != null
+                            && rel.CustomSymbolMappings.TryGetValue(symbol, out var mappedRoot)
+                            && !string.IsNullOrEmpty(mappedRoot)
+                            && mappedRoot.ToUpper() != symbol)
+                        {
+                            mappedTo = mappedRoot.ToUpper();
+                        }
+
                         NinjaTrader.Code.Output.Process(
-                            "[CopierEngine] BLOCKED entry copy: PerTickerMatrix does not support cross-instrument sizing. "
-                            + "CustomSymbolMappings maps " + symbol + " to a different root. "
+                            "[CopierEngine] BLOCKED entry copy: PerTickerMatrix has no rule for " + symbol + ". "
                             + "Refusing to size " + rel.LeaderAccountName + " -> " + rel.FollowerAccountName
-                            + " - cross-instrument sizing is slice 2. Use QuantityRatio/FixedLot for cross-instrument.",
+                            + " rather than silently copying unscaled. Add a PerTickerRatios entry or use QuantityRatio/FixedLot."
+                            + (mappedTo == null
+                                ? string.Empty
+                                : " NOTE: " + symbol + " is mapped to " + mappedTo + ", so the ratio must be keyed by "
+                                  + symbol + " (the LEADER root), not " + mappedTo + "."),
                             PrintTo.OutputTab1);
                         isClamped = true;
                         return 0;
                     }
-                    // Exit with cross-instrument mapping: mirror leaderQty and let the
-                    // existing exit clamp cap it at the live follower position.
+                    // Exit with no rule: mirror leaderQty, let existing exit clamp handle it.
                     //
                     // Reviewed and kept deliberately. A PARTIAL leader exit can
                     // therefore flatten the follower completely -- leader out of 5 of
@@ -504,61 +529,28 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 else
                 {
-                    // Same-instrument: look up ratio for the (possibly same-instrument mapped) symbol
-                    double ratio = 0.0;
-                    bool hasRatio = false;
+                    // Compute quantity: round(leaderQty * ratio) with AwayFromZero, NO symbolMultiplier
+                    // The ratio IS the contract count in the follower's instrument
+                    rawCopyQty = (int)Math.Round(leaderQty * ratio, MidpointRounding.AwayFromZero);
 
-                    if (rel.PerTickerRatios != null && rel.PerTickerRatios.TryGetValue(symbol, out ratio))
+                    // A ratio that rounds to zero is also a refusal on entry
+                    if (rawCopyQty < 1 && !isExit)
                     {
-                        // Validate ratio: NaN, Infinity, zero, and negative are all treated as no rule
-                        // A negative ratio is a REFUSAL, not an absolute value - Math.Abs must not apply
-                        if (!double.IsNaN(ratio) && !double.IsInfinity(ratio) && ratio > 0.0)
-                        {
-                            hasRatio = true;
-                        }
+                        NinjaTrader.Code.Output.Process(
+                            "[CopierEngine] BLOCKED entry copy: PerTickerMatrix ratio " + ratio + " for " + symbol
+                            + " rounds to 0 with leaderQty " + leaderQty + ". Refusing rather than silently skipping. "
+                            + "Adjust ratio or use QuantityRatio/FixedLot.",
+                            PrintTo.OutputTab1);
+                        isClamped = true;
+                        return 0;
                     }
 
-                    if (!hasRatio)
-                    {
-                        // No usable ratio: fail closed on entries, never on exits
-                        if (!isExit)
-                        {
-                            NinjaTrader.Code.Output.Process(
-                                "[CopierEngine] BLOCKED entry copy: PerTickerMatrix has no rule for " + symbol + ". "
-                                + "Refusing to size " + rel.LeaderAccountName + " -> " + rel.FollowerAccountName
-                                + " rather than silently copying unscaled. Add a PerTickerRatios entry or use QuantityRatio/FixedLot.",
-                                PrintTo.OutputTab1);
-                            isClamped = true;
-                            return 0;
-                        }
-                        // Exit with no rule: mirror leaderQty, let existing exit clamp handle it
-                        rawCopyQty = leaderQty;
-                    }
-                    else
-                    {
-                        // Compute quantity: round(leaderQty * ratio) with AwayFromZero, NO symbolMultiplier
-                        // The ratio IS the contract count in the follower's instrument
-                        rawCopyQty = (int)Math.Round(leaderQty * ratio, MidpointRounding.AwayFromZero);
-
-                        // A ratio that rounds to zero is also a refusal on entry
-                        if (rawCopyQty < 1 && !isExit)
-                        {
-                            NinjaTrader.Code.Output.Process(
-                                "[CopierEngine] BLOCKED entry copy: PerTickerMatrix ratio " + ratio + " for " + symbol
-                                + " rounds to 0 with leaderQty " + leaderQty + ". Refusing rather than silently skipping. "
-                                + "Adjust ratio or use QuantityRatio/FixedLot.",
-                                PrintTo.OutputTab1);
-                            isClamped = true;
-                            return 0;
-                        }
-
-                        // An exit that rounds below one contract is deliberately NOT
-                        // special-cased here. The shared sub-one-contract guard below
-                        // already floors an exit to 1 when the follower holds a
-                        // position, and returns 0 when it holds none -- and a local
-                        // copy of that rule reached the same answer by both paths,
-                        // which is how a redundant guard hides a later divergence.
-                    }
+                    // An exit that rounds below one contract is deliberately NOT
+                    // special-cased here. The shared sub-one-contract guard below
+                    // already floors an exit to 1 when the follower holds a
+                    // position, and returns 0 when it holds none -- and a local
+                    // copy of that rule reached the same answer by both paths,
+                    // which is how a redundant guard hides a later divergence.
                 }
             }
             else if (rel.FixedLotMode || rel.SizingMode == CopierSizingMode.FixedLot)
@@ -1697,8 +1689,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         internal Instrument ResolveFollowerInstrument(CopierRelationship rel, Instrument leaderInstrument)
         {
             if (leaderInstrument == null) return null;
-            if (!rel.AutoSymbolConversion) return leaderInstrument;
 
+            // Deliberately NOT short-circuiting on AutoSymbolConversion. That test
+            // used to sit here, ahead of the mapping, while TranslateSymbol -- which
+            // the actual copy path uses -- honours an explicit CustomSymbolMappings
+            // entry regardless of the flag. With the flag off and a cross mapping
+            // set, the copy went to MES while the bracket was computed against MNQ,
+            // and ArePricesComparable(MNQ, MNQ) is true, so a leader stop distance
+            // in MNQ points would be mirrored onto an MES position as a FABRICATED
+            // risk level -- the hazard P1-22's guard exists to prevent, reached by
+            // making one decision in two places.
+            //
+            // TranslateSymbol already applies the flag correctly (explicit mappings
+            // always, the automatic mini/micro table only when enabled), so there is
+            // exactly one answer to "which instrument does this follower trade?".
             string translated = TranslateSymbol(leaderInstrument.FullName, rel);
             if (string.Equals(translated, leaderInstrument.FullName, StringComparison.OrdinalIgnoreCase))
                 return leaderInstrument;
