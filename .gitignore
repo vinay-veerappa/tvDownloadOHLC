@@ -19,7 +19,14 @@ docs/generated/
 
 # agent-loop run artifacts: raw model output, patches, worktrees left by a
 # crashed run. `logs/*.log` does not cover these per-ticket directories.
-logs/agent_loop/
+# NOTE the `/*` rather than `/`: git never descends into an excluded DIRECTORY,
+# so a negation under `logs/agent_loop/` is silently impossible. `/*` excludes
+# the contents while still allowing the exception below.
+logs/agent_loop/*
+# The outcomes ledger IS tracked, deliberately: it is the cross-machine run
+# history, not an artifact. Before this it sat tracked INSIDE an ignored
+# directory, so every run left it dirty and `git add` refused it without -f.
+!logs/agent_loop/ledger.jsonl
 
 # Data
 downloads_es_futures/
