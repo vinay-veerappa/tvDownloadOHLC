@@ -2692,6 +2692,28 @@ Take the next free numbers from `P0-64` onward; **do not extend a band in place*
 | **MCP wrapper gap** | `nt_copier_config` accepts only `leaderAccount`/`followerAccount`/`quantityRatio`/`autoConversion`. It cannot express `sizingMode`, `perTickerRatios`, `customSymbolMappings`, `maxSlippageTicks`, or any group action. Session 15 had to drive raw HTTP to `localhost:7890`, which `.agent/USER.md` asks agents not to do. **The preference is unfollowable until the wrapper is extended.** |
 | **Doc consolidation** | This section exists because the plan's inventory table and §4a contradict each other and themselves. The inventory should be regenerated from the entries, once. |
 
+## 5.3a ⚠️ Deploy trap — `sync_nt8_strategies.py` silently dirties another repo
+
+`mcp/ninjatrader-mcp/nt8-addon/McpBridgeAddOn.cs` is a **hardlink to the deployed NT8
+file** (`Documents/NinjaTrader 8/bin/Custom/AddOns/McpBridgeAddOn.cs` — same inode, link
+count 2). It is the **only** linked file in that directory; `DynamicAtmManager.cs`,
+`RiskGuardAddOnTests.cs` and `TestingStubs.cs` are ordinary copies with 1 link.
+
+**So every `sync_nt8_strategies.py --only addons` run dirties the `ninjatrader-mcp`
+repo without anyone editing it**, and the change then looks like a hand-edit there. Found
+2026-08-12 after session 15's deploy; the mirrored copy turned out to be **15 hunks
+behind** the deployed file, only 2 of which were that session's work.
+
+Two consequences worth holding onto:
+
+* That repo's `nt8-addon/` tracks whatever is **deployed**, not what is canonical in
+  `scripts/ninjatrader/addons/`. It is a fourth copy of the addon, and
+  [[nt8-addon-canonical-source]]'s rule — only `scripts/ninjatrader/addons/` is real —
+  applies to it. **Never edit it; never treat it as a source.**
+* `mcp/ninjatrader-mcp` is a **gitlink with no `.gitmodules` entry**, so
+  `git submodule status` errors on it and a fresh clone cannot initialise it. Pre-existing;
+  recorded, not fixed.
+
 ## 5.4 ⚠️ Blocked on the operator, not on engineering
 
 **`P0-63` cannot be finished without a decision only the account holder can make.** Every account
