@@ -52,6 +52,27 @@ MUTANTS = [
     ("unknown-enum stripping dropped (a bad sizingMode should not wipe the config)",
      "            return RemoveUnknownEnums(normalized, targetType);",
      "            return normalized;"),
+
+    # --- CM5: a collection named in the request replaces the stored one ---
+    ("group collections are no longer replaced (matrix becomes append-only)",
+     "            ClearCollectionsNamedIn(normalized, grp);\n",
+     ""),
+
+    ("relationship collections are no longer replaced",
+     "            ClearCollectionsNamedIn(normalized, rel);\n",
+     ""),
+
+    # Tried and deliberately NOT kept: replacing dict.Clear() with a reassignment
+    # to a fresh Dictionary<string,T> (default comparer). It is an EQUIVALENT
+    # mutant -- the EnsureOrdinalIgnoreCase calls after PopulateObject restore the
+    # comparer either way -- so it survives by design, not by missing coverage.
+    # Clear() is kept for simplicity, not for P1-39.
+
+    ("list-valued fields are not replaced",
+     "                var list = current as System.Collections.IList;\n"
+     "                if (list != null) list.Clear();",
+     "                var list = current as System.Collections.IList;\n"
+     "                if (false) list.Clear();"),
 ]
 
 

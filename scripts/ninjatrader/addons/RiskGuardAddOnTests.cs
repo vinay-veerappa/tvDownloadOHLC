@@ -821,6 +821,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM4_TheInstrumentDecisionIsMadeInExactlyOnePlace();
             TestCM4_IncomparableRootsRecordNoSlippageAndNoBracket();
             TestCM4_MatrixStillNeverAutoConverts();
+
+            // CM5: a collection named in the request replaces the stored one -- RED until the fix
+            TestCM5_AnEmptyCollectionInTheRequestClearsTheStoredOne();
+            TestCM5_APresentCollectionReplacesRatherThanAccumulates();
+            TestCM5_ReplacingAMatrixKeepsItCaseInsensitive();
+            TestCM5_AnAbsentOrNullCollectionIsStillUnchanged();
+            TestCM5_TheFollowerListIsReplaceableToo();
+            TestCM5_ReplacementAppliesToRelationshipsAsWell();
             TestCM3_AnUnknownEnumFallsBackRatherThanRefusingTheRequest();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
@@ -12299,6 +12307,164 @@ namespace NinjaTrader.NinjaScript.AddOns
             int qty = engine.CalculateFollowerQuantity(rel, 1, "MNQ 03-26", 0, false, out clamped);
             Assert(qty == 3 && !clamped, string.Format(
                 "and it still sized the same-instrument rule from the table (got {0})", qty));
+        }
+
+        // ------------------------------------------------------------------
+        // CM5: a collection named in the request REPLACES the stored one
+        //
+        // Found on the sim accounts, not in the suite. Slice 3b's merge fixed
+        // "a partial update destroys everything", and introduced the opposite
+        // defect: JsonConvert.PopulateObject reuses the EXISTING dictionary
+        // instance (that is what preserves the OrdinalIgnoreCase comparer, and
+        // why P1-39 forbids ObjectCreationHandling.Replace) and merges keys INTO
+        // it. It never removes one.
+        //
+        // So the matrix became append-only. Live:
+        //
+        //     PerTickerRatios = {"MNQ": 3.0}
+        //     set perTickerRatios = {}        -> still {"MNQ": 3.0}
+        //
+        // An operator could not remove a ticker rule, could not fix a typo'd
+        // mapping, and could not empty the table -- the only way out was to
+        // delete the whole relationship and rebuild it. A ratio table you can
+        // only add to is not a usable config surface.
+        //
+        // The rule: ABSENT or null means "unchanged" (slice 3b, unchanged here).
+        // PRESENT means "this is now the value", including when it is empty.
+        // The collection object itself is kept and cleared rather than replaced,
+        // so the comparer survives.
+        //
+        // Written BEFORE the fix; every Assert below is expected to FAIL at
+        // baseline. In this file rather than a new one because Program is not
+        // partial and Assert is private to it (see the CM1 header).
+        // ------------------------------------------------------------------
+
+        private static void TestCM5_AnEmptyCollectionInTheRequestClearsTheStoredOne()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM5: sending an empty matrix clears it instead of being a no-op");
+
+            var engine = Cm3EngineWithAStoredGroup();
+            var merged = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""perTickerRatios"":{}}"), false);
+
+            Assert(merged != null && merged.PerTickerRatios != null && merged.PerTickerRatios.Count == 0,
+                string.Format("an explicitly empty matrix emptied the stored one (got {0} entries)",
+                    merged == null || merged.PerTickerRatios == null ? -1 : merged.PerTickerRatios.Count));
+
+            // Only what was NAMED is replaced. Slice 3b's guarantee still holds
+            // for everything else in the same request.
+            Assert(merged != null && merged.CustomSymbolMappings != null && merged.CustomSymbolMappings.Count == 1,
+                "the mappings, which the request never mentioned, were left alone");
+            Assert(merged != null && merged.MaxPositionSize == 42,
+                "and so was every other unmentioned field");
+        }
+
+        private static void TestCM5_APresentCollectionReplacesRatherThanAccumulates()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM5: a matrix in the request is the whole matrix, not an addition to it");
+
+            var engine = Cm3EngineWithAStoredGroup();   // MES=3.0, MNQ=5.0
+            var merged = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""perTickerRatios"":{""MES"":9.0}}"), false);
+
+            Assert(merged != null && merged.PerTickerRatios != null && merged.PerTickerRatios.Count == 1,
+                string.Format("the table is exactly what was sent, not the union (got {0} entries)",
+                    merged == null || merged.PerTickerRatios == null ? -1 : merged.PerTickerRatios.Count));
+            double mes = 0.0;
+            Assert(merged != null && merged.PerTickerRatios != null
+                   && merged.PerTickerRatios.TryGetValue("MES", out mes) && mes == 9.0,
+                "the value sent was applied");
+            Assert(merged != null && merged.PerTickerRatios != null
+                   && !merged.PerTickerRatios.ContainsKey("MNQ"),
+                "the rule that was NOT resent is gone -- this is how a ticker gets removed");
+        }
+
+        private static void TestCM5_ReplacingAMatrixKeepsItCaseInsensitive()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM5: the replaced matrix is still an OrdinalIgnoreCase dictionary");
+
+            // The reason the collection is CLEARED rather than reassigned. A new
+            // Dictionary<string,double> would default to the ordinal comparer and
+            // a fill on "mes" would miss the "MES" rule just configured -- P1-39's
+            // trap, reached from the write path.
+            var engine = Cm3EngineWithAStoredGroup();
+            var merged = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""perTickerRatios"":{""MES"":9.0},""customSymbolMappings"":{""NQ"":""MNQ""}}"),
+                false);
+
+            double v = 0.0;
+            Assert(merged != null && merged.PerTickerRatios != null
+                   && merged.PerTickerRatios.TryGetValue("mes", out v) && v == 9.0,
+                "the replaced ratio table is OrdinalIgnoreCase");
+            string mapped = null;
+            Assert(merged != null && merged.CustomSymbolMappings != null
+                   && merged.CustomSymbolMappings.TryGetValue("nq", out mapped) && mapped == "MNQ",
+                "the replaced mapping table is OrdinalIgnoreCase");
+        }
+
+        private static void TestCM5_AnAbsentOrNullCollectionIsStillUnchanged()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM5: absent and null still mean \"unchanged\" -- slice 3b is not undone");
+
+            var engine = Cm3EngineWithAStoredGroup();
+
+            var absent = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""quantityRatio"":2.0}"), false);
+            Assert(absent != null && absent.PerTickerRatios != null && absent.PerTickerRatios.Count == 2,
+                "an ABSENT matrix left the stored one alone");
+
+            var nulled = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""perTickerRatios"":null}"), false);
+            Assert(nulled != null && nulled.PerTickerRatios != null && nulled.PerTickerRatios.Count == 2,
+                "a NULL matrix left the stored one alone");
+        }
+
+        private static void TestCM5_TheFollowerListIsReplaceableToo()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM5: the same rule applies to list-valued fields, not just dictionaries");
+
+            var engine = Cm3EngineWithAStoredGroup();   // FollowerAccounts = [Cm3Follower]
+
+            var replaced = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""followers"":[""A"",""B""]}"), false);
+            Assert(replaced != null && replaced.FollowerAccounts != null && replaced.FollowerAccounts.Count == 2,
+                string.Format("the follower list is exactly what was sent (got {0})",
+                    replaced == null || replaced.FollowerAccounts == null ? -1 : replaced.FollowerAccounts.Count));
+            Assert(replaced != null && replaced.FollowerAccounts != null
+                   && !replaced.FollowerAccounts.Contains("Cm3Follower"),
+                "the follower that was not resent is gone -- this is how one is removed");
+
+            var emptied = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""followerAccounts"":[]}"), false);
+            Assert(emptied != null && emptied.FollowerAccounts != null && emptied.FollowerAccounts.Count == 0,
+                "an explicitly empty follower list empties it");
+        }
+
+        private static void TestCM5_ReplacementAppliesToRelationshipsAsWell()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM5: the relationship half replaces collections too");
+
+            var engine = new TradeCopierEngine();
+            engine.UpsertRelationship(Cm2Relationship());   // MES=3.0, MNQ=5.0
+
+            var merged = engine.ApplyRelationshipRequest(JObject.Parse(
+                @"{""leaderAccount"":""Cm2Leader"",""followerAccount"":""Cm2Follower"",""perTickerRatios"":{""MES"":9.0}}"),
+                false);
+
+            Assert(merged != null && merged.PerTickerRatios != null && merged.PerTickerRatios.Count == 1,
+                "the relationship's table is exactly what was sent");
+            double v = 0.0;
+            Assert(merged != null && merged.PerTickerRatios != null
+                   && merged.PerTickerRatios.TryGetValue("mes", out v) && v == 9.0,
+                "and is still OrdinalIgnoreCase");
+            Assert(merged != null && merged.MaxSlippageTicks == 2.5,
+                "while unmentioned scalar fields are still preserved");
         }
     }
 }

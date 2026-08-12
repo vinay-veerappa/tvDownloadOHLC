@@ -945,6 +945,41 @@ namespace NinjaTrader.NinjaScript.AddOns
             return tok == null || tok.Type == JTokenType.Null ? null : tok.ToString();
         }
 
+        // A collection NAMED in the request is replaced by it; an absent or null one
+        // is left alone. Found on the sim accounts after slice 3b shipped: merge
+        // semantics had made every collection append-only, because PopulateObject
+        // reuses the existing dictionary instance and merges keys INTO it, never
+        // removing one. So `perTickerRatios: {}` was a no-op and an operator could
+        // not remove a ticker rule, fix a typo'd mapping, or drop a follower without
+        // deleting the whole relationship.
+        //
+        // The instance is cleared rather than reassigned because that is simpler --
+        // NOT, as first written here, to protect the OrdinalIgnoreCase comparer.
+        // A mutant that reassigned a fresh Dictionary<string,T> (default comparer)
+        // survived the whole suite: the EnsureOrdinalIgnoreCase calls after
+        // PopulateObject restore the comparer either way. Recorded because the
+        // plausible-sounding version of that claim is false, and the next reader
+        // would otherwise treat this line as load-bearing for P1-39. It is not.
+        private static void ClearCollectionsNamedIn(JObject normalized, object target)
+        {
+            if (normalized == null || target == null) return;
+
+            foreach (var prop in normalized.Properties())
+            {
+                var pi = target.GetType().GetProperty(prop.Name);
+                if (pi == null) continue;
+
+                object current = pi.GetValue(target, null);
+                if (current == null || current is string) continue;
+
+                var dict = current as System.Collections.IDictionary;
+                if (dict != null) { dict.Clear(); continue; }
+
+                var list = current as System.Collections.IList;
+                if (list != null) list.Clear();
+            }
+        }
+
         private static T CloneConfig<T>(T source)
         {
             // Deep clone so a malformed request cannot half-apply to the stored
@@ -999,6 +1034,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Only the keys present in `normalized` are written; everything else on
             // `grp` is whatever was stored. This throws on a malformed value, which
             // is deliberate -- the clone above means the stored object is untouched.
+            ClearCollectionsNamedIn(normalized, grp);
             JsonConvert.PopulateObject(normalized.ToString(), grp);
 
             // No need to re-assert GroupName: the lookup key and the initialiser
@@ -1038,6 +1074,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             var normalized = NormalizeRequest(req, typeof(CopierRelationship));
             bool armingWasRequested = normalized["ArmedForLive"] != null;
 
+            ClearCollectionsNamedIn(normalized, rel);
             JsonConvert.PopulateObject(normalized.ToString(), rel);
 
             // As in ApplyGroupRequest: the key re-assertions were inert (the
