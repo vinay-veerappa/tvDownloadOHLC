@@ -926,16 +926,25 @@ namespace NinjaTrader.NinjaScript.AddOns
             return new Dictionary<string, T>(source, StringComparer.OrdinalIgnoreCase);
         }
 
-        // ---- the MCP bridge's request -> object mapping, moved here in slice 3b ----
+        // ---- the MCP bridge's request -> object mapping (slice 3b) ----
         //
-        // Moved VERBATIM from McpBridgeAddOn.CopierConfig, so this commit changes
-        // no behaviour and the CM3 tests fail for the right reason: the mapping
-        // rebuilds the object from a remembered field list, so everything it does
-        // not name reverts to an initialiser default and SaveToDisk then writes
-        // that over the stored config. The next commit replaces the body.
+        // MERGE, not rebuild. The previous version constructed a brand new object
+        // from a hand-written field list and handed it to Upsert*, which removes
+        // the existing object and adds the new one wholesale; the bridge's next
+        // line is SaveToDisk. So every field the caller did not mention reverted
+        // to an initialiser default and was written over the stored config -- a
+        // set_group carrying {groupName, quantityRatio} destroyed the ratio
+        // matrix, the sizing mode, the symbol mappings and the follower list.
         //
-        // It has to live here rather than in the bridge because McpBridgeAddOn.cs
-        // is <Compile Remove>d from RiskGuardTests.csproj for its WPF deps -- left
+        // Completing the field list would not have fixed that; the next omitted
+        // field is destroyed just the same. The fix has to be a merge: start from
+        // what is stored and apply only the keys actually PRESENT in the request.
+        // PopulateObject does exactly that, and reusing slice 3a's normalisation
+        // means there is no longer a second remembered subset to drift from the
+        // loader's.
+        //
+        // Lives here and not in the bridge because McpBridgeAddOn.cs is
+        // <Compile Remove>d from RiskGuardTests.csproj for its WPF deps -- left
         // there, this could only be pinned by source-text regex.
 
         private static string ReqStr(JObject req, string key)
@@ -944,39 +953,76 @@ namespace NinjaTrader.NinjaScript.AddOns
             return tok == null || tok.Type == JTokenType.Null ? null : tok.ToString();
         }
 
+        private static T CloneConfig<T>(T source)
+        {
+            // Deep clone so a malformed request cannot half-apply to the stored
+            // object on its way to throwing. Session 14's rule holds on the write
+            // path too: a malformed NUMBER fails closed rather than landing a zero
+            // limit, and here it must also leave what is already stored alone.
+            return JsonConvert.DeserializeObject<T>(JsonConvert.SerializeObject(source));
+        }
+
+        // `followers` is the bridge's own spelling and is not a field on either
+        // type, so the alias map does not carry it. PopulateObject would silently
+        // ignore it and the caller's follower list would vanish.
+        private static JObject NormalizeRequest(JObject req, Type targetType)
+        {
+            var normalized = NormalizeConfigObject(req);
+            if (normalized["FollowerAccounts"] == null && req["followers"] is JArray followers)
+                normalized["FollowerAccounts"] = followers;
+
+            // An explicit null means "not specified", not "wipe it". Json.NET's
+            // default NullValueHandling would set the property to null, so
+            // {"perTickerRatios": null} -- which is what a JS client sends for an
+            // untouched field -- would null out the ratio matrix and hand a
+            // NullReferenceException to whatever sizes the next fill. Under merge
+            // semantics an absent field and a null field mean the same thing.
+            foreach (var prop in normalized.Properties().ToList())
+            {
+                if (prop.Value == null || prop.Value.Type == JTokenType.Null)
+                    normalized.Remove(prop.Name);
+            }
+
+            return RemoveUnknownEnums(normalized, targetType);
+        }
+
         public CopierGroup ApplyGroupRequest(JObject req, bool confirmLive)
         {
             if (req == null) return null;
-            string leader = ReqStr(req, "leaderAccount") ?? ReqStr(req, "LeaderAccountName") ?? "Sim101";
-            string groupName = ReqStr(req, "groupName") ?? ReqStr(req, "GroupName");
-            bool requestedArmed = req["armedForLive"] != null ? (bool)req["armedForLive"] : (req["ArmedForLive"] != null ? (bool)req["ArmedForLive"] : false);
+            string groupName = ReqStr(req, "groupName") ?? ReqStr(req, "GroupName") ?? "DefaultGroup";
 
-            var followerList = new List<string>();
-            if (req["followers"] is JArray arr)
+            CopierGroup grp;
+            lock (_lock)
             {
-                foreach (var tok in arr) followerList.Add(tok.ToString());
-            }
-            else if (req["followerAccounts"] is JArray arr2)
-            {
-                foreach (var tok in arr2) followerList.Add(tok.ToString());
+                var existing = _groups.FirstOrDefault(g =>
+                    g.GroupName.Equals(groupName, StringComparison.OrdinalIgnoreCase));
+                grp = existing != null
+                    ? CloneConfig(existing)
+                    : new CopierGroup { GroupName = groupName, LeaderAccountName = "Sim101" };
             }
 
-            var grp = new CopierGroup
-            {
-                GroupName = groupName ?? "DefaultGroup",
-                LeaderAccountName = leader,
-                IsEnabled = req["isEnabled"] != null ? (bool)req["isEnabled"] : (req["IsEnabled"] != null ? (bool)req["IsEnabled"] : true),
-                ArmedForLive = requestedArmed && confirmLive,
-                QuantityRatio = req["quantityRatio"] != null ? (double)req["quantityRatio"] : (req["QuantityRatio"] != null ? (double)req["QuantityRatio"] : 1.0),
-                FixedLotMode = req["fixedLotMode"] != null ? (bool)req["fixedLotMode"] : (req["FixedLotMode"] != null ? (bool)req["FixedLotMode"] : false),
-                FixedLotSize = req["fixedLotSize"] != null ? (int)req["fixedLotSize"] : (req["FixedLotSize"] != null ? (int)req["FixedLotSize"] : 1),
-                AutoSymbolConversion = req["autoSymbolConversion"] != null ? (bool)req["autoSymbolConversion"] : (req["AutoSymbolConversion"] != null ? (bool)req["AutoSymbolConversion"] : true),
-                MaxPositionSize = req["maxPositionSize"] != null ? (int)req["maxPositionSize"] : (req["MaxPositionSize"] != null ? (int)req["MaxPositionSize"] : 100),
-                DailyLossLimit = req["dailyLossLimit"] != null ? (double)req["dailyLossLimit"] : (req["DailyLossLimit"] != null ? (double)req["DailyLossLimit"] : 1000.0),
-                FollowerAccounts = followerList
-            };
+            var normalized = NormalizeRequest(req, typeof(CopierGroup));
+            bool armingWasRequested = normalized["ArmedForLive"] != null;
 
-            UpsertGroup(grp, confirmLive);
+            // Only the keys present in `normalized` are written; everything else on
+            // `grp` is whatever was stored. This throws on a malformed value, which
+            // is deliberate -- the clone above means the stored object is untouched.
+            JsonConvert.PopulateObject(normalized.ToString(), grp);
+
+            // No need to re-assert GroupName: the lookup key and the initialiser
+            // default are the same string, so an assignment here is inert.
+            // (A mutation removing it survived the whole suite -- so it goes.)
+            //
+            // The comparer re-application is NOT inert, though it looks it:
+            // PopulateObject reuses the initialiser's dictionary instance, so the
+            // request path keeps OrdinalIgnoreCase on its own. What this catches
+            // is a STORED object whose dictionary is null -- Upsert* accepts one,
+            // and without this the next lookup throws.
+            grp.PerTickerRatios = EnsureOrdinalIgnoreCase(grp.PerTickerRatios);
+            grp.CustomSymbolMappings = EnsureOrdinalIgnoreCase(grp.CustomSymbolMappings);
+
+            ApplyArmingGate(grp.ArmedForLive, armingWasRequested, confirmLive, v => grp.ArmedForLive = v);
+            UpsertGroup(grp, true);
             return grp;
         }
 
@@ -984,25 +1030,51 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (req == null) return null;
             string leader = ReqStr(req, "leaderAccount") ?? ReqStr(req, "LeaderAccountName") ?? "Sim101";
-            bool requestedArmed = req["armedForLive"] != null ? (bool)req["armedForLive"] : (req["ArmedForLive"] != null ? (bool)req["ArmedForLive"] : false);
+            string follower = ReqStr(req, "followerAccount") ?? ReqStr(req, "FollowerAccountName") ?? "SimCopy2";
 
-            var rel = new CopierRelationship
+            CopierRelationship rel;
+            lock (_lock)
             {
-                LeaderAccountName = leader,
-                FollowerAccountName = ReqStr(req, "followerAccount") ?? ReqStr(req, "FollowerAccountName") ?? "SimCopy2",
-                IsEnabled = req["isEnabled"] != null ? (bool)req["isEnabled"] : (req["IsEnabled"] != null ? (bool)req["IsEnabled"] : true),
-                ArmedForLive = requestedArmed && confirmLive,
-                QuantityRatio = req["quantityRatio"] != null ? (double)req["quantityRatio"] : (req["QuantityRatio"] != null ? (double)req["QuantityRatio"] : 1.0),
-                FixedLotMode = req["fixedLotMode"] != null ? (bool)req["fixedLotMode"] : (req["FixedLotMode"] != null ? (bool)req["FixedLotMode"] : false),
-                FixedLotSize = req["fixedLotSize"] != null ? (int)req["fixedLotSize"] : (req["FixedLotSize"] != null ? (int)req["FixedLotSize"] : 1),
-                AutoSymbolConversion = req["autoSymbolConversion"] != null ? (bool)req["autoSymbolConversion"] : (req["AutoSymbolConversion"] != null ? (bool)req["AutoSymbolConversion"] : true),
-                MaxPositionSize = req["maxPositionSize"] != null ? (int)req["maxPositionSize"] : (req["MaxPositionSize"] != null ? (int)req["MaxPositionSize"] : 100),
-                DailyLossLimit = req["dailyLossLimit"] != null ? (double)req["dailyLossLimit"] : (req["DailyLossLimit"] != null ? (double)req["DailyLossLimit"] : 1000.0),
-                IsQuarantined = req["isQuarantined"] != null ? (bool)req["isQuarantined"] : (req["IsQuarantined"] != null ? (bool)req["IsQuarantined"] : false)
-            };
+                var existing = _relationships.FirstOrDefault(r =>
+                    r.LeaderAccountName.Equals(leader, StringComparison.OrdinalIgnoreCase) &&
+                    r.FollowerAccountName.Equals(follower, StringComparison.OrdinalIgnoreCase));
+                rel = existing != null
+                    ? CloneConfig(existing)
+                    : new CopierRelationship();
+            }
 
-            UpsertRelationship(rel, confirmLive);
+            var normalized = NormalizeRequest(req, typeof(CopierRelationship));
+            bool armingWasRequested = normalized["ArmedForLive"] != null;
+
+            JsonConvert.PopulateObject(normalized.ToString(), rel);
+
+            // As in ApplyGroupRequest: the key re-assertions were inert (the
+            // fallbacks are byte-identical to the initialiser defaults), the
+            // comparer guard is not.
+            rel.PerTickerRatios = EnsureOrdinalIgnoreCase(rel.PerTickerRatios);
+            rel.CustomSymbolMappings = EnsureOrdinalIgnoreCase(rel.CustomSymbolMappings);
+
+            ApplyArmingGate(rel.ArmedForLive, armingWasRequested, confirmLive, v => rel.ArmedForLive = v);
+            UpsertRelationship(rel, true);
             return rel;
+        }
+
+        // The safety gate, stated once for both halves.
+        //
+        // Arming still requires confirmLive, exactly as before. What merge
+        // semantics ADD is the other direction: a request that never mentions
+        // armedForLive leaves the stored value alone. It has to, or nudging a
+        // ratio on a live group would silently stop it copying -- the leader
+        // trades and the follower does not, which is P0-9's failure shape reached
+        // from a new direction. An explicit armedForLive:false still disarms
+        // without confirmation; refusing to disarm is not a safe default.
+        //
+        // Because the gate is decided here, Upsert* is called with confirmLive:true
+        // so it does not re-apply its own gate and undo the preserved value.
+        private static void ApplyArmingGate(bool armed, bool armingWasRequested, bool confirmLive, Action<bool> set)
+        {
+            if (armed && armingWasRequested && !confirmLive)
+                set(false);
         }
 
         public void SaveToDisk(string filePath)

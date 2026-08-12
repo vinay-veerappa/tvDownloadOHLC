@@ -805,10 +805,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM3_APartialUpdateIsWhatGetsStoredAndSaved();
             TestCM3_APartialRelationshipUpdateKeepsEveryUnmentionedField();
             TestCM3_TheMatrixIsSettableThroughTheBridgeAtAll();
+            TestCM3_BothFollowerListSpellingsStillArrive();
+            TestCM3_AnExplicitNullDoesNotWipeStoredConfig();
+            TestCM3_AStoredNullMatrixIsRepairedRatherThanPropagated();
             TestCM3_AnUnknownGroupIsStillCreated();
             TestCM3_APartialUpdateCannotArmForLive();
             TestCM3_AnUnrelatedEditDoesNotSilentlyDisarm();
             TestCM3_AMalformedRequestDoesNotDestroyTheStoredGroup();
+            TestCM3_AnUnknownEnumFallsBackRatherThanRefusingTheRequest();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -11796,6 +11800,119 @@ namespace NinjaTrader.NinjaScript.AddOns
                 "a matrix set through the bridge is OrdinalIgnoreCase");
         }
 
+        private static void TestCM3_BothFollowerListSpellingsStillArrive()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: the bridge accepted two spellings of the follower list; both still work");
+
+            // `followers` is the bridge's own spelling and is NOT a field on
+            // CopierGroup, so the alias map cannot carry it and PopulateObject
+            // would drop it in silence -- the caller would send a follower list,
+            // get success:true back, and have copied nothing.
+            var engine = new TradeCopierEngine();
+            var a = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Ga"",""followers"":[""F1"",""F2""]}"), false);
+            Assert(a != null && a.FollowerAccounts != null && a.FollowerAccounts.Count == 2, string.Format(
+                "the `followers` spelling arrived (got {0})",
+                a == null || a.FollowerAccounts == null ? -1 : a.FollowerAccounts.Count));
+
+            var b = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Gb"",""followerAccounts"":[""F3""]}"), false);
+            Assert(b != null && b.FollowerAccounts != null && b.FollowerAccounts.Count == 1,
+                "the `followerAccounts` spelling arrived");
+
+            // And an update that mentions neither must not empty the list.
+            var c = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Ga"",""quantityRatio"":2.0}"), false);
+            Assert(c != null && c.FollowerAccounts != null && c.FollowerAccounts.Count == 2,
+                "an update naming neither spelling left the follower list alone");
+        }
+
+        private static void TestCM3_AnExplicitNullDoesNotWipeStoredConfig()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: a null in the request means \"not specified\", not \"wipe it\"");
+
+            // This is the null-section-wipes-config shape. Json.NET's default
+            // NullValueHandling SETS the property to null, so a client that
+            // serialises untouched fields as null -- which is what a JS UI does
+            // by default -- would null the ratio matrix outright, and the next
+            // fill would take a NullReferenceException instead of a size.
+            var engine = Cm3EngineWithAStoredGroup();
+            var merged = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""perTickerRatios"":null,""customSymbolMappings"":null,""followerAccounts"":null,""quantityRatio"":2.0}"),
+                false);
+
+            Assert(merged != null && merged.PerTickerRatios != null, "the matrix is not null");
+            Assert(merged != null && merged.PerTickerRatios != null && merged.PerTickerRatios.Count == 2, string.Format(
+                "an explicit null left the stored matrix intact (got {0})",
+                merged == null || merged.PerTickerRatios == null ? -1 : merged.PerTickerRatios.Count));
+            Assert(merged != null && merged.CustomSymbolMappings != null && merged.CustomSymbolMappings.Count == 1,
+                "an explicit null left the stored symbol mappings intact");
+            Assert(merged != null && merged.FollowerAccounts != null && merged.FollowerAccounts.Count == 1,
+                "an explicit null left the stored follower list intact");
+            Assert(merged != null && merged.QuantityRatio == 2.0,
+                "and the non null field in the same request still applied");
+        }
+
+        private static void TestCM3_AStoredNullMatrixIsRepairedRatherThanPropagated()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: merging onto a group with a null matrix yields a usable dictionary");
+
+            // Upsert* validates nothing, so a null dictionary is a reachable
+            // stored state. If the merge propagated it, the first per ticker
+            // lookup after a config edit would throw rather than size a fill.
+            var engine = new TradeCopierEngine();
+            engine.UpsertGroup(new CopierGroup
+            {
+                GroupName = "NullMatrix",
+                PerTickerRatios = null,
+                CustomSymbolMappings = null
+            });
+
+            var merged = engine.ApplyGroupRequest(
+                JObject.Parse(@"{""groupName"":""NullMatrix"",""quantityRatio"":2.0}"), false);
+
+            Assert(merged != null && merged.PerTickerRatios != null,
+                "the null matrix became an empty dictionary rather than staying null");
+            Assert(merged != null && merged.CustomSymbolMappings != null,
+                "the null symbol mappings became an empty dictionary");
+
+            // And it must be the OrdinalIgnoreCase kind, or a later "mes" misses "MES".
+            if (merged != null && merged.PerTickerRatios != null)
+            {
+                merged.PerTickerRatios["MES"] = 3.0;
+                double v = 0.0;
+                Assert(merged.PerTickerRatios.TryGetValue("mes", out v) && v == 3.0,
+                    "the repaired matrix is OrdinalIgnoreCase, not the default comparer");
+            }
+
+            // The relationship half has its own copy of this guard, and a mutation
+            // that removed only that one survived a suite which tested only groups.
+            engine.UpsertRelationship(new CopierRelationship
+            {
+                LeaderAccountName = "NullL",
+                FollowerAccountName = "NullF",
+                PerTickerRatios = null,
+                CustomSymbolMappings = null
+            });
+            var mergedRel = engine.ApplyRelationshipRequest(JObject.Parse(
+                @"{""leaderAccount"":""NullL"",""followerAccount"":""NullF"",""quantityRatio"":2.0}"), false);
+
+            Assert(mergedRel != null && mergedRel.PerTickerRatios != null,
+                "the relationship's null matrix became an empty dictionary too");
+            Assert(mergedRel != null && mergedRel.CustomSymbolMappings != null,
+                "the relationship's null symbol mappings became an empty dictionary too");
+            if (mergedRel != null && mergedRel.PerTickerRatios != null)
+            {
+                mergedRel.PerTickerRatios["MES"] = 3.0;
+                double v2 = 0.0;
+                Assert(mergedRel.PerTickerRatios.TryGetValue("mes", out v2) && v2 == 3.0,
+                    "the relationship's repaired matrix is OrdinalIgnoreCase");
+            }
+        }
+
         private static void TestCM3_AnUnknownGroupIsStillCreated()
         {
             Console.WriteLine();
@@ -11870,8 +11987,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             CopierGroup merged = null;
             try
             {
+                // The VALID field first, then the malformed one. That ordering is
+                // the whole test: merging populates in document order, so if the
+                // merge writes onto the stored object instead of a copy, the
+                // ratio lands, the cap throws, and the group is left in a state
+                // the caller never asked for and no longer knows about.
+                // A mutation removing the defensive clone survives without this.
                 merged = engine.ApplyGroupRequest(JObject.Parse(
-                    @"{""groupName"":""Cm3Group"",""maxPositionSize"":""not-a-number""}"), false);
+                    @"{""groupName"":""Cm3Group"",""quantityRatio"":9.0,""maxPositionSize"":""not-a-number""}"), false);
             }
             catch (Exception) { merged = null; }
 
@@ -11880,10 +12003,44 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(stored == null || stored.MaxPositionSize == 42, string.Format(
                 "the malformed number neither applied nor became a zero cap (got {0})",
                 stored == null ? -1 : stored.MaxPositionSize));
+            Assert(stored == null || stored.QuantityRatio == 1.0, string.Format(
+                "the request applied ALL OR NOTHING -- the valid field did not land on its own (got {0})",
+                stored == null ? -1.0 : stored.QuantityRatio));
             Assert(stored == null || (stored.PerTickerRatios != null && stored.PerTickerRatios.Count == 2),
                 "the stored matrix survived the malformed request");
             Assert(merged == null || merged.MaxPositionSize != 0,
                 "no zero position cap was returned");
+        }
+
+        private static void TestCM3_AnUnknownEnumFallsBackRatherThanRefusingTheRequest()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: an unrecognised sizingMode leaves the stored one and does not sink the request");
+
+            // Session 14's settled rule, on the write path: a malformed ENUM falls
+            // back rather than failing, while a malformed NUMBER fails closed.
+            // Tolerating an unknown enum name is not tolerating every error.
+            // Here "falls back" means "keeps what was stored", and the rest of the
+            // request must still apply -- otherwise one stale UI dropdown value
+            // would silently refuse every edit the caller makes alongside it.
+            var engine = Cm3EngineWithAStoredGroup();
+            CopierGroup merged = null;
+            try
+            {
+                merged = engine.ApplyGroupRequest(JObject.Parse(
+                    @"{""groupName"":""Cm3Group"",""sizingMode"":""NotARealMode"",""quantityRatio"":6.0}"), false);
+            }
+            catch (Exception ex)
+            {
+                Assert(false, "an unknown enum name did not throw (got " + ex.GetType().Name + ")");
+            }
+
+            Assert(merged != null && merged.SizingMode == CopierSizingMode.PerTickerMatrix, string.Format(
+                "the stored SizingMode survived an unrecognised one (got {0})",
+                merged == null ? "<refused>" : merged.SizingMode.ToString()));
+            Assert(merged != null && merged.QuantityRatio == 6.0, string.Format(
+                "the rest of the request still applied (got {0})",
+                merged == null ? -1.0 : merged.QuantityRatio));
         }
     }
 }
