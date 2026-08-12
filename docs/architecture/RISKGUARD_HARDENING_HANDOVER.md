@@ -5,7 +5,7 @@ slices 1, 2, 3a, 3b, suite **929/0**, `nt_compile` 0 errors, and validated on th
 §4w, §4x, §4y, **§4z**. A feature, not a defect: no `P`-number, nothing closed.
 **Next work is the open `P1-22` metrics question in §4z, then the still-open `P0-62` — §4a.**)
 
-> ⚠️ **NEW SESSION? GO STRAIGHT TO [§5, THE OPEN BACKLOG](#5-the-open-backlog--authoritative-as-of-2026-08-12).**
+> ⚠️ **NEW SESSION? GO STRAIGHT TO §5 — start with §5.5 (DECIDED) then §5.6 (order). [§5, THE OPEN BACKLOG](#5-the-open-backlog--authoritative-as-of-2026-08-12).**
 > It is the authoritative answer to "what is left?" and it **supersedes §4a's START HERE and the
 > plan's inventory table**, both of which had drifted out of agreement with themselves. Read §5
 > first and the session records only when you need the reasoning behind an entry.
@@ -2705,10 +2705,29 @@ to cancel-then-create when it did not* — **works on both provider types withou
 question**, turns a silent no-op into an observable one, and composes with the other two. That is
 the recommended path if the funded-account test is not wanted.
 
-## 5.5 Suggested order, and why
+## 5.5 DECIDED by the operator, 2026-08-12 — do not re-litigate
 
-1. **`P0-63` via remedy 3.** Naked-risk-adjacent, live, and it does not need the funded test.
-2. **`P?-66`** (one log line) — until it is answered, no slippage number in the UI means anything.
+| Question | Decision |
+|---|---|
+| Where the redesigned UI lives | **Rewrite `TradeCopierWindow.cs` properly, in NT8.** Not the web app. The window stays offline-capable and no new surface is added. |
+| `P0-63` remedy | **Remedy 3 only** — after every `Change()`, read the order back and fall back to cancel-then-create when it did not take. **No funded-account order.** The `Provider31` question stays open on purpose; remedy 3 is correct either way. |
+| What the next session opens with | **`P0-63` + the `P?-66` log line.** Safety first: the trail has never worked and no slippage number currently means anything. |
+
+⚠️ **Consequence of the WPF decision, and it is the same trap as slice 3b:**
+`TradeCopierWindow.cs` is **excluded from `RiskGuardTests.csproj`** (as are
+`McpBridgeAddOn.cs` and `RiskManagerAddOn.cs`). So the rewrite must **not** put
+request→object mapping in the window. Move it onto `TradeCopierEngine` — the window
+should call `ApplyGroupRequest`/`ApplyRelationshipRequest` and the single
+`CopierConfigFile`, exactly as the bridge now does. Anything left in the window can only
+be pinned by source-text regex, which is not evidence. That single move closes `P?-64`
+and `P?-65` together and makes the redesign testable.
+
+## 5.6 Suggested order, and why
+
+1. **`P0-63` via remedy 3** ← **DECIDED, and the next session starts here.** Naked-risk-adjacent,
+   live, and it does not need the funded test.
+2. **`P?-66`** (one log line) ← **also next session.** Until it is answered, no slippage number in
+   the UI means anything.
 3. **`P?-64` + `P?-65` together.** Same fix, same shape as slice 3b: point the window at
    `ApplyRelationshipRequest`/`ApplyGroupRequest` and the single `CopierConfigFile`. Doing 64
    without 65 leaves a UI that persists correctly and destroys the payload on the way.
