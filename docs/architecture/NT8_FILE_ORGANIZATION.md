@@ -8,28 +8,47 @@
 
 ---
 
-## Source of truth and deployment (authoritative, 2026-08-07)
+## ⚠️ The addons left this repo on 2026-08-12
+
+Everything this document says about `scripts/ninjatrader/addons/`, `ninjatrader-addon/` and
+`--only addons` **describes a layout that no longer exists here**. The addon half of the
+split was executed; see [NT8_REPO_SPLIT_PLAN.md](NT8_REPO_SPLIT_PLAN.md).
+
+| What | Where it lives now | Deploy with |
+|---|---|---|
+| RiskGuard, TradeCopier, reconciler, ATM manager, PropFirm suite | [nt8-riskguard](https://github.com/vinay-veerappa/nt8-riskguard) `addons/` | `python tools/sync_nt8.py` |
+| `McpBridgeAddOn.cs` | [nt8-mcp-bridge](https://github.com/vinay-veerappa/nt8-mcp-bridge) `addons/` | `python tools/deploy.py` (deploys the bridge **and** its vendored core) |
+
+Deploying either addon repo without the other fails the whole NT8 Custom assembly, which
+stops **every** addon loading, the risk guard included. `nt8-mcp-bridge/tools/deploy.py`
+refuses rather than half-deploying.
+
+**This repo still owns strategies, indicators and shared classes**, and the rest of this
+document remains authoritative for those.
+
+## Source of truth and deployment — strategies and indicators (this repo)
 
 ```
-scripts/ninjatrader/addons/*.cs          ← THE source of truth for NT8 AddOns
+scripts/ninjatrader/strategies/**/*.cs   ← source of truth for NT8 Strategies
+scripts/ninjatrader/indicators/**/*.cs   ← source of truth for NT8 Indicators
+scripts/ninjatrader/shared/*.cs          ← compiled with the strategies
         │
-        │  scripts/utils/sync_nt8_strategies.py --only addons
+        │  scripts/utils/sync_nt8_strategies.py
         ▼
-%USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/AddOns/   ← live, untracked, compiled by NT8
+%USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/{Strategies/Vinay,Indicators}/
+        ← live, untracked, compiled by NT8
 ```
-
-`ninjatrader-addon/RiskGuardTests.csproj` compiles the same canonical folder
-(`..\scripts\ninjatrader\addons\*.cs`, minus `McpBridgeAddOn.cs` and `RiskManagerAddOn.cs`), so
-the tests and NT8 build from one set of files. `bin/`, `obj/` and `*.exe` under
-`ninjatrader-addon/` are gitignored build output.
 
 **Deploying:**
 
 ```bash
-python scripts/utils/sync_nt8_strategies.py --verify --only addons   # what has drifted?
-python scripts/utils/sync_nt8_strategies.py --only addons            # deploy
+python scripts/utils/sync_nt8_strategies.py --verify   # what has drifted?
+python scripts/utils/sync_nt8_strategies.py            # deploy
 # then recompile in NT8 (F5, or the nt_compile MCP tool) and confirm 0 errors
 ```
+
+`--only addons` now exits 2 with a pointer to the two repos, rather than reporting success
+having deployed nothing.
 
 **Rules learned the hard way (P2-28, and the 2026-08-07 deployment):**
 

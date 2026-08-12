@@ -43,22 +43,24 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
 * **ICT Daily Bias Models**: [ICT_DAILY_BIAS_MODELS.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/ict/ICT_DAILY_BIAS_MODELS.md) (7 models implemented, 5 planned for Phase 2)
 * **Quarters Theory**: [QUARTERS_THEORY.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/QUARTERS_THEORY.md) (Overnight direction combinations, hourly candle quarter structure, Doji detection, instat extremes)
 * **Profiler Knowledge Base**: [PROFILER_KNOWLEDGE_BASE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/library/PROFILER_KNOWLEDGE_BASE.md) (Session boxes, status logic, broken logic, auto-filter engine, reference levels, P12 scenarios, HOD/LOD timing, overnight combinations, data architecture)
-* **RiskGuard/Copier Hardening Plan**: [RISKGUARD_COPIER_HARDENING_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_COPIER_HARDENING_PLAN.md) (58 NT8 addon defects P0→P3, 45 closed; defect index keyed to file:line. Defect IDs are never renumbered or reused)
-* **NT8 Repo Split Plan**: [NT8_REPO_SPLIT_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_REPO_SPLIT_PLAN.md) (PLANNED not executed — the addons move OUT of this repo into `nt8-riskguard` + `nt8-mcp-bridge`; read before touching addon paths, csproj, tickets or the sync tool)
-* **RiskGuard Hardening Progress**: [RISKGUARD_HARDENING_HANDOVER.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/RISKGUARD_HARDENING_HANDOVER.md) (live state — **read §0 before touching either addon**, then §4a for what is pending. Deployed to shadow on `harden/riskguard-p0-51` (tip `86c6376f`, unmerged/unpushed); several fixes are **compile+unit only, not validated on a live feed**. SHAs from before session 9 are orphaned by a history rewrite — see §0.0)
+* **⚠️ THE NT8 ADDONS ARE NOT IN THIS REPO ANY MORE** (split executed 2026-08-12). RiskGuard, the trade copier and the MCP bridge live in two repos of their own, with their full history:
+  * **[nt8-riskguard](https://github.com/vinay-veerappa/nt8-riskguard)** (`C:\Users\vinay\nt8-riskguard`) — guard + copier + the test suite, mutation batteries, deploy tool, agent-loop profile and tickets, and **the hardening plan and session handover** (`docs/RISKGUARD_COPIER_HARDENING_PLAN.md`, `docs/RISKGUARD_HARDENING_HANDOVER.md`). Read the handover's §0 before touching either addon. Highest open defect: **`P0-63`** — `Account.Change()` is a silent no-op on `provider: Simulator`, so the mirrored stop has never trailed.
+  * **[nt8-mcp-bridge](https://github.com/vinay-veerappa/nt8-mcp-bridge)** (`C:\Users\vinay\nt8-mcp-bridge`) — `McpBridgeAddOn.cs`; consumes nt8-riskguard as a submodule pinned to a tag. **Not tested** (`P2-27`); `tests/README.md` measures the gap.
+  * Do **not** re-add addon `.cs`, the csproj, the tickets or an addons sync path here. The split record is [NT8_REPO_SPLIT_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_REPO_SPLIT_PLAN.md).
 * **Self-Learning Layer Design**: [SELF_LEARNING_LAYER_DESIGN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/SELF_LEARNING_LAYER_DESIGN.md) (FTS5 search, user_prefs/USER.md profile, outcomes ledger, skill-write gate — Phases 0-3 implemented)
-* **NT8 Deployment**: never hand-copy `.cs` into `Documents/NinjaTrader 8/bin/Custom/`. Use `python scripts/utils/sync_nt8_strategies.py --verify --only addons` then `--only addons`, and recompile via `nt_compile`. Rules and traps: [NT8_FILE_ORGANIZATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_FILE_ORGANIZATION.md)
+* **NT8 Deployment**: never hand-copy `.cs` into `Documents/NinjaTrader 8/bin/Custom/`. Rules and traps: [NT8_FILE_ORGANIZATION.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_FILE_ORGANIZATION.md). Recompile via `nt_compile` after any of these.
+  * **Strategies / indicators (this repo)**: `python scripts/utils/sync_nt8_strategies.py --verify` then without `--verify`. `--only addons` now exits 2 — there are no addon sources here.
+  * **Addons (other repos)**: `nt8-riskguard` → `python tools/sync_nt8.py`; `nt8-mcp-bridge` → `python tools/deploy.py`, which deploys the bridge **and** its vendored core. Deploying either addon repo alone fails the whole NT8 Custom assembly, which stops **every** addon loading — the risk guard included.
 * **Agent Patch Loop (ARCHIVED)**: [AGENT_PATCH_LOOP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/AGENT_PATCH_LOOP.md) (historical doc for the predecessor loop; the code is archived in `scripts/agent_loop/_archive_predecessor/`; do not run it)
 * **Agent Loop v2 (current package)**: [agent-loop repo](https://github.com/vinay-veerappa/agent-loop) (language-agnostic package; **v0.6.6** is the pin in `requirements.txt` and is installed in `.venv`; 633/633 tests pass on Python 3.12 and 3.14 (34 skipped), `selftest` 13/13; 9 phases + docs mode. Since v0.6.6 the review panel is **glm-5.2 + deepseek-v4-flash** (minimax-m3 was measured to file 0 findings on six occasions at ~197s a call, and could never change a verdict anyway since APPROVE is the best rank under worst-wins), and an **uncorroborated REJECT is downgraded to REVISE** — one reviewer's fixed disposition can no longer order a rewrite of working code. Since v0.6.3 the arbiter **cannot recommend SHIP while any reviewer's BLOCKER stands dismissed** — that run ends `ESCALATED`, which is not promotable, so `--apply` will not land it. Do **not** pin below `v0.3.0`: `v0.1.0` is 14 commits of known defects behind and `v0.2.0` raises `TypeError` on Python < 3.13, which kills every ticket at region extraction)
 * **Agent Loop v2 Research**: [AGENT_LOOP_RESEARCH.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_RESEARCH.md) (state of the field across 13 coding agent harnesses)
 * **Agent Loop v2 Plan**: [AGENT_LOOP_V2_PLAN.md](file:///c:/Users/vinay/agent-loop/docs/architecture/AGENT_LOOP_V2_PLAN.md) (9-phase execution plan, all complete)
 * **Agent Loop Decisions**: [IMPLEMENTATION_DECISIONS.md](file:///c:/Users/vinay/agent-loop/docs/architecture/IMPLEMENTATION_DECISIONS.md) (every non-obvious decision recorded)
-* **Consumer Profiles**: `scripts/agent_loop_config/` (nt8-riskguard and python-tvdownloadohlc profiles; register via `--profile-module scripts.agent_loop_config`)
-* **NT8 Tickets**: `scripts/agent_loop/tickets_p0.json`, `tickets_p0_51.json`, `tickets_p1_56.json` (defect definitions consumed by the new package)
+* **Consumer Profiles**: `scripts/agent_loop_config/` (python-tvdownloadohlc only; register via `--profile-module scripts.agent_loop_config`). The **nt8-riskguard profile and its tickets moved** to the `nt8-riskguard` repo as `agent/nt8_riskguard.py` + `agent/tickets_*.json` — run the loop from there, not here.
 * **Agent Loop Usage**:
   ```powershell
-  # NT8 RiskGuard ticket (C#)
-  .\.venv\Scripts\python.exe -m agent_loop --profile nt8-riskguard --profile-module scripts.agent_loop_config.nt8_riskguard --tickets scripts/agent_loop/tickets_p0.json --ticket T1
+  # NT8 RiskGuard ticket (C#) — run from C:\Users\vinay\nt8-riskguard, NOT here
+  #   agent-loop --profile nt8-riskguard --profile-module agent.nt8_riskguard --tickets agent/tickets_p0.json --ticket T1
 
   # Python ticket
   .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --tickets tickets.json --ticket T1
@@ -70,15 +72,16 @@ See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness 
   .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode developer --defect "description of the defect"
 
   # Docs mode — 4 sub-modes. changelog reads a diff; the other three read the
-  # codebase (+ the graph, since both profiles set graph_project).
+  # codebase (+ the graph, since this profile sets graph_project).
   .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type changelog --review-base HEAD~1
   .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type handover
   .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type design --defect "feature to design"
   .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --mode docs --docs-type prd --defect "defect or feature"
 
   # Validate a ticket file without spending a model call. READ THE LINE RANGES:
-  # a degenerate one-line region also prints OK.
-  .\.venv\Scripts\python.exe -m agent_loop --profile nt8-riskguard --profile-module scripts.agent_loop_config.nt8_riskguard --tickets scripts/agent_loop/tickets_p1_56.json --list
+  # a degenerate one-line region also prints OK. (NT8 tickets now live in the
+  # nt8-riskguard repo; run this from there.)
+  .\.venv\Scripts\python.exe -m agent_loop --profile python-tvdownloadohlc --profile-module scripts.agent_loop_config.python_tvdownloadohlc --tickets tickets.json --list
   ```
   Docs mode does **not** yet inject the doc-architect skill's conventions into its
   system prompts (the agent-loop README describes that as intended, not done), so

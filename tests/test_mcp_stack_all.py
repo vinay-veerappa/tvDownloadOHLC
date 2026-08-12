@@ -7,15 +7,21 @@ import datetime as dt
 # ─── 1. Version Alignment Verification ───────────────────────────────────
 
 def test_version_alignment():
-    """Verify 1.5.0 version consistency across all project files."""
+    """Verify 1.5.0 version consistency across all project files.
+
+    The C# half of this check is gone. It read
+    `ninjatrader-addon/McpBridgeAddOn.cs`, which stopped existing at `671d8a18`
+    (2026-07-27) when the addons were consolidated into
+    `scripts/ninjatrader/addons/` -- so this test has been raising
+    FileNotFoundError ever since, not asserting anything. The file has now left
+    the repo entirely (2026-08-12 split; it lives in nt8-mcp-bridge).
+
+    Version alignment ACROSS the two repos is therefore no longer checkable from
+    here, and pretending otherwise is what the stale path was already doing. The
+    bridge's own harness owns assertions about its source; if cross-repo version
+    pinning matters, it belongs there, against the vendored submodule.
+    """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    # McpBridgeAddOn.cs
-    addon_cs = os.path.join(repo_root, "ninjatrader-addon", "McpBridgeAddOn.cs")
-    with open(addon_cs, "r", encoding="utf-8") as f:
-        content = f.read()
-        assert 'private const string Version = "1.5.0";' in content
-        assert 'ctx.Response.Headers.Add("X-NT8-MCP-Version", Version);' in content
 
     # nt-mcp-server.js
     server_js = os.path.join(repo_root, "mcp", "ninjatrader-mcp", "nt-mcp-server.js")

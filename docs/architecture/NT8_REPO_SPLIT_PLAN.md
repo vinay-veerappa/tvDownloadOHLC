@@ -1,7 +1,74 @@
-# NT8 Addon Repo Split — migration plan
+# NT8 Addon Repo Split — migration plan (EXECUTED)
 
-**Status**: PLANNED, not executed. Written 2026-08-12 (session 15). Execute in a fresh session.
+**Status**: ✅ **EXECUTED 2026-08-12.** Written earlier the same day (session 15).
 **Decided by the operator**: **two repos** — the MCP bridge separate, RiskGuard + copier together.
+Both are **public**.
+
+| Repo | Local | Commits | Gates at handover |
+|---|---|---|---|
+| [nt8-riskguard](https://github.com/vinay-veerappa/nt8-riskguard) | `C:\Users\vinay\nt8-riskguard` | 162 | 926 tests / 0 failed; cm3 14 killed; cm4 10 killed; both structural checks green |
+| [nt8-mcp-bridge](https://github.com/vinay-veerappa/nt8-mcp-bridge) | `C:\Users\vinay\nt8-mcp-bridge` | 34 | harness 9 / 0 failed; **bridge itself still not executed — see below** |
+
+Core tagged **`v1.0.0`**; the bridge pins it at `vendor/nt8-riskguard` with a `.gitmodules`
+entry, verified by a fresh `--recurse-submodules` clone.
+
+> ## What the plan got wrong, and what was done instead
+>
+> **1. `git subtree split` was the wrong tool** (§0, §4). It follows one path and does not
+> follow renames, but the addon lineage has **three** historical paths —
+> `ninjatrader-addon/` → `scripts/strategies/nt8/addons/` (`671d8a18`) →
+> `scripts/ninjatrader/addons/` (`a19c2adc`). A single subtree split yields 80 commits
+> starting at the Jul-30 restructure; `RiskGuardAddOn.cs` alone loses 18 commits including
+> its creation, and the csproj/tools/tickets/docs histories cannot come along at all.
+> **Used `git-filter-repo` instead**, one pass per repo with a `--commit-callback` that maps
+> all three prefixes onto the new layout. Result: **162 commits reaching the true origin**.
+>
+> **2. Collapsing three paths onto one silently deletes files.** `a19c2adc` *copied* the
+> addons to the new path without removing the old ones, and the stale duplicates were tidied
+> up later by unrelated commits (`671d8a18`, `b8f410f4`). Mapped naively, those cleanups
+> delete the *live* file. It cost `RiskManagerAddOn.cs` and `TradeCopierWindow.cs` — the only
+> two files no later commit happened to rewrite, so nothing resurrected them. Nothing warns
+> you; the extraction reports success. The fix is to drop deletes on superseded prefixes,
+> justified by measurement: `scripts/ninjatrader/addons/` has never had a single deletion.
+> **A blob-level diff of every migrated path against the source is the only check that
+> catches this** — run one.
+>
+> **3. `DynamicAtmManager.cs` belongs to the core, not the bridge** (§2). §2 counted 4
+> references from `McpBridgeAddOn` and missed **32 from `RiskGuardAddOnTests.cs`**. Moving it
+> produced 71 compile errors and would have dropped its coverage, since the bridge has no
+> harness. It stays in the core; the bridge reaches it through `vendor/`.
+>
+> **4. The core's test suite depended on the bridge.** `TestP2_38` regex-asserted on
+> `McpBridgeAddOn.cs`'s *source text* — the exact dependency direction §1 forbids. Its three
+> source assertions moved to the bridge's harness; the behavioural half stayed. **That is why
+> the core reports 926, not 929.**
+>
+> **5. WPF was never the blocker** (§5). `net8.0-windows` + `UseWPF` supplies every WPF type
+> the bridge touches, so the WPF/HTTP separation §5 proposed is unnecessary. The real blocker
+> is that 16 of the 19 NT8 types the bridge needs are stubbed *inside* the core's 663 KB test
+> file, which owns a `Main()` and so cannot be imported. Measured: **330 compile errors, 23
+> distinct missing types**. Ordered remedy in `nt8-mcp-bridge/tests/README.md`.
+>
+> **6. §2's "tvDownloadOHLC keeps **Nothing**" could not hold literally.** `scripts/ninjatrader/`
+> still holds strategies, indicators and shared classes, so this repo keeps
+> `sync_nt8_strategies.py` (addon half removed, `--only addons` now exits 2) and
+> `NT8_FILE_ORGANIZATION.md`. §2's doc list was also short two docs that are *about* the
+> migrated code: `RiskGuardAddOn.md` (subject of open defect `P2-26`) and
+> `TRADE_COPIER_PRD.md`. Both moved.
+>
+> **7. The mutation batteries were a lying gate.** They printed `SURVIVORS: [...]` and exited
+> 0 regardless, so the CI step §6 asks for would have been green with survivors. They now
+> exit 1, an unappliable ANCHOR included.
+>
+> Also, unrelated to the plan but found on the way: `test_version_alignment` in
+> `tests/test_mcp_stack_all.py` had been raising `FileNotFoundError` since `671d8a18`, so it
+> asserted nothing for two weeks.
+>
+> **Still open:** CI workflows are parked at `ci/github-workflow-ci.yml` in both repos —
+> activating them needs `gh auth refresh -s workflow`. And two stale files
+> (`RiskGuardAddOnTests.cs`, `TestingStubs.cs`) remain in the live NT8 `AddOns/` folder: the
+> old flat layout deployed the test suite into the trading assembly, and the new tools
+> correctly no longer do.
 
 > **Why this exists.** The NT8 addons were never meant to live inside `tvDownloadOHLC`. Nothing on
 > the Python side compiles, imports or tests them; they are C# that NinjaTrader builds. The result
