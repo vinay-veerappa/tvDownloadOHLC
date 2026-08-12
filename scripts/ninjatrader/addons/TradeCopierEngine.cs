@@ -1692,7 +1692,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch { return 0; }
         }
 
-        private Instrument ResolveFollowerInstrument(CopierRelationship rel, Instrument leaderInstrument)
+        // `internal` so the harness can execute it: this and TranslateSymbol must
+        // name the same follower instrument, and nothing was checking that.
+        internal Instrument ResolveFollowerInstrument(CopierRelationship rel, Instrument leaderInstrument)
         {
             if (leaderInstrument == null) return null;
             if (!rel.AutoSymbolConversion) return leaderInstrument;

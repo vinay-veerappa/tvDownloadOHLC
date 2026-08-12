@@ -812,6 +812,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM3_APartialUpdateCannotArmForLive();
             TestCM3_AnUnrelatedEditDoesNotSilentlyDisarm();
             TestCM3_AMalformedRequestDoesNotDestroyTheStoredGroup();
+
+            // CM4: cross-instrument ratio rules, slice 2 -- RED until the fix lands
+            TestCM4_OneRuleDecidesBothTheInstrumentAndTheCount();
+            TestCM4_TheRatioIsKeyedByTheLeaderRootNotTheFollower();
+            TestCM4_ACrossMappingWithNoRatioAtAllFailsClosed();
+            TestCM4_AnInvalidCrossInstrumentRatioIsStillNoRule();
+            TestCM4_TheInstrumentDecisionIsMadeInExactlyOnePlace();
+            TestCM4_IncomparableRootsRecordNoSlippageAndNoBracket();
+            TestCM4_MatrixStillNeverAutoConverts();
             TestCM3_AnUnknownEnumFallsBackRatherThanRefusingTheRequest();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
@@ -11239,7 +11248,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private static void TestCM1_MatrixKeepsTheLeadersInstrument()
         {
             Console.WriteLine();
-            Console.WriteLine("[TEST] CM1: PerTickerMatrix stays in the leader instrument and refuses a cross-instrument mapping");
+            Console.WriteLine("[TEST] CM1: PerTickerMatrix never AUTO converts; an explicit mapping crosses instruments (slice 2)");
 
             var engine = new TradeCopierEngine();
 
@@ -11248,22 +11257,26 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(translated == "MES 03-26", string.Format(
                 "matrix mode left MES untranslated instead of routing it to ES (got '{0}')", translated));
 
-            // A custom mapping naming a DIFFERENT root is slice 2, and must be
-            // refused rather than sized as if the instruments were equivalent.
+            // SUPERSEDED BY SLICE 2 (CM4). This used to assert that a custom
+            // mapping naming a DIFFERENT root was refused. Slice 2 implements
+            // that case, so the refusal is gone and the assertions that pinned
+            // it now live in CM4 with the opposite expectation. What survives
+            // here is the part slice 2 did NOT change: matrix mode still never
+            // auto-converts, so crossing instruments takes an EXPLICIT mapping.
             var crossed = Cm1Matrix(3.0);
             crossed.CustomSymbolMappings["MES"] = "ES";
             bool crossClamped;
             int crossQty = engine.CalculateFollowerQuantity(
                 crossed, 1, "MES 03-26", 0, false, out crossClamped);
-            Assert(crossQty == 0 && crossClamped, string.Format(
-                "matrix mode refused an entry whose custom mapping names a different root (qty {0}, clamped {1})",
+            Assert(crossQty == 3 && !crossClamped, string.Format(
+                "slice 2: an explicit cross-instrument mapping now sizes from the table (qty {0}, clamped {1})",
                 crossQty, crossClamped));
 
             // TranslateSymbol must never signal by returning null: two callers pass
             // its result straight on.
             string crossTranslated = engine.TranslateSymbol("MES 03-26", crossed);
-            Assert(crossTranslated != null, string.Format(
-                "matrix mode translate returned a string and never null for an unsupported mapping (got '{0}')",
+            Assert(crossTranslated == "ES 03-26", string.Format(
+                "slice 2: the explicit mapping routes the copy to the follower root (got '{0}')",
                 crossTranslated == null ? "null" : crossTranslated));
 
             // Every other sizing mode keeps the behaviour it has today.
@@ -12041,6 +12054,251 @@ namespace NinjaTrader.NinjaScript.AddOns
             Assert(merged != null && merged.QuantityRatio == 6.0, string.Format(
                 "the rest of the request still applied (got {0})",
                 merged == null ? -1.0 : merged.QuantityRatio));
+        }
+
+        // ------------------------------------------------------------------
+        // CM4: slice 2 -- cross-instrument ratio rules (1 MNQ -> 3 MES)
+        //
+        // Slice 1 shipped PerTickerMatrix as SAME-INSTRUMENT ONLY and refused a
+        // CustomSymbolMappings entry naming a different root. Slice 2 implements
+        // that case, so the refusal is REPLACED, not supplemented -- the CM1 test
+        // that pinned it has been rewritten to the opposite expectation.
+        //
+        // ONE RULE IS (leader root -> follower root, ratio), and BOTH halves are
+        // keyed by the LEADER root:
+        //
+        //     CustomSymbolMappings["MNQ"] = "MES"   <- where it goes
+        //     PerTickerRatios["MNQ"]      = 3.0     <- how many
+        //
+        // Keying them the same way is the whole point. Slice 1's defect 2 was the
+        // instrument decision and the quantity decision being made in two places
+        // from two different keys, which routed an MES leader fill to ES while
+        // sizing it in MES contracts. A rule keyed by the follower root on one
+        // side and the leader root on the other would reintroduce exactly that.
+        //
+        // P1-22's rule survives and is asserted here: MNQ and MES do not share a
+        // price scale, so a cross-instrument copy records NO slippage and mirrors
+        // NO bracket. ES -> MES is a different case -- same underlying, same
+        // scale -- and stays comparable.
+        //
+        // Written BEFORE the fix; every Assert below is expected to FAIL at
+        // baseline. In this file rather than a new one because Program is not
+        // partial and Assert is private to it (see the CM1 header).
+        // ------------------------------------------------------------------
+
+        private static CopierRelationship Cm4Cross(double ratio, string leaderRoot = "MNQ", string followerRoot = "MES")
+        {
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "Cm4Leader",
+                FollowerAccountName = "Cm4Follower",
+                SizingMode = CopierSizingMode.PerTickerMatrix,
+                QuantityRatio = 7.0,          // must be ignored
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100
+            };
+            rel.CustomSymbolMappings[leaderRoot] = followerRoot;
+            rel.PerTickerRatios[leaderRoot] = ratio;
+            return rel;
+        }
+
+        private static void TestCM4_OneRuleDecidesBothTheInstrumentAndTheCount()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM4: 1 MNQ -> 3 MES sizes AND routes from a single rule");
+
+            var engine = new TradeCopierEngine();
+            var rel = Cm4Cross(3.0);
+
+            bool clamped;
+            int qty = engine.CalculateFollowerQuantity(rel, 1, "MNQ 03-26", 0, false, out clamped);
+            Assert(qty == 3 && !clamped, string.Format(
+                "one MNQ lot sized three MES contracts (got {0}, clamped {1})", qty, clamped));
+
+            string translated = engine.TranslateSymbol("MNQ 03-26", rel);
+            Assert(translated == "MES 03-26", string.Format(
+                "the same rule routed the copy to MES (got '{0}')", translated));
+
+            // The count is a literal contract count in the FOLLOWER's instrument,
+            // with no mini/micro multiplier -- the rule settled in slice 1. If the
+            // symbol multiplier leaked back in, 3 would become 0 or 30.
+            bool clampedFive;
+            int five = engine.CalculateFollowerQuantity(Cm4Cross(5.0), 2, "MNQ 03-26", 0, false, out clampedFive);
+            Assert(five == 10, string.Format(
+                "two lots at a ratio of 5 sized ten, with no symbol multiplier (got {0})", five));
+
+            // And the flat QuantityRatio of 7.0 on the relationship stays ignored.
+            Assert(qty != 7, "matrix mode still ignored the flat QuantityRatio");
+        }
+
+        private static void TestCM4_TheRatioIsKeyedByTheLeaderRootNotTheFollower()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM4: a ratio keyed by the FOLLOWER root is not a rule, and fails closed");
+
+            // The trap this pins: an operator writes the mapping MNQ -> MES and
+            // then keys the ratio by MES, because that is the contract they are
+            // buying. There is then no rule for MNQ. Guessing -- looking the ratio
+            // up under the mapped root as a fallback -- is exactly slice 1's
+            // defect 2, two keys for one decision. Refuse instead.
+            var engine = new TradeCopierEngine();
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "Cm4Leader",
+                FollowerAccountName = "Cm4Follower",
+                SizingMode = CopierSizingMode.PerTickerMatrix,
+                QuantityRatio = 7.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100
+            };
+            rel.CustomSymbolMappings["MNQ"] = "MES";
+            rel.PerTickerRatios["MES"] = 3.0;      // WRONG key: the follower root
+
+            bool clamped;
+            int qty = engine.CalculateFollowerQuantity(rel, 1, "MNQ 03-26", 0, false, out clamped);
+            Assert(qty == 0 && clamped, string.Format(
+                "an entry with no rule for the LEADER root was refused, not sized off the follower key (got {0}, clamped {1})",
+                qty, clamped));
+
+            // Exits are never refused -- the copier fails closed on entries only.
+            bool exitClamped;
+            int exitQty = engine.CalculateFollowerQuantity(rel, 1, "MNQ 03-26", 5, true, out exitClamped);
+            Assert(exitQty > 0, string.Format(
+                "the matching exit still copied rather than stranding the follower (got {0})", exitQty));
+        }
+
+        private static void TestCM4_ACrossMappingWithNoRatioAtAllFailsClosed()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM4: a mapping without a ratio is half a rule, and is refused on entry");
+
+            var engine = new TradeCopierEngine();
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = "Cm4Leader",
+                FollowerAccountName = "Cm4Follower",
+                SizingMode = CopierSizingMode.PerTickerMatrix,
+                QuantityRatio = 7.0,
+                AutoSymbolConversion = true,
+                MaxPositionSize = 100
+            };
+            rel.CustomSymbolMappings["MNQ"] = "MES";   // no PerTickerRatios entry
+
+            bool clamped;
+            int qty = engine.CalculateFollowerQuantity(rel, 1, "MNQ 03-26", 0, false, out clamped);
+            Assert(qty == 0 && clamped, string.Format(
+                "a cross mapping with no ratio was refused rather than copied unscaled (got {0}, clamped {1})",
+                qty, clamped));
+
+            bool exitClamped;
+            int exitQty = engine.CalculateFollowerQuantity(rel, 1, "MNQ 03-26", 5, true, out exitClamped);
+            Assert(exitQty > 0, string.Format(
+                "the exit still copied (got {0})", exitQty));
+        }
+
+        private static void TestCM4_AnInvalidCrossInstrumentRatioIsStillNoRule()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM4: slice 1's ratio validation still applies across instruments");
+
+            // A negative ratio is a REFUSAL, not an absolute value. Slice 1 pinned
+            // this for same-instrument rules; crossing instruments must not have
+            // opened a second, laxer path to the same lookup.
+            var engine = new TradeCopierEngine();
+
+            foreach (double bad in new[] { -3.0, 0.0, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+            {
+                bool clamped;
+                int qty = engine.CalculateFollowerQuantity(
+                    Cm4Cross(bad), 1, "MNQ 03-26", 0, false, out clamped);
+                Assert(qty == 0 && clamped, string.Format(
+                    "a cross-instrument ratio of {0} was treated as no rule (got {1}, clamped {2})",
+                    bad, qty, clamped));
+            }
+
+            // And one that rounds to zero is still a refusal rather than a silent skip.
+            bool roundClamped;
+            int roundQty = engine.CalculateFollowerQuantity(
+                Cm4Cross(0.4), 1, "MNQ 03-26", 0, false, out roundClamped);
+            Assert(roundQty == 0 && roundClamped,
+                "a cross-instrument ratio rounding to zero was refused, not silently skipped");
+        }
+
+        private static void TestCM4_TheInstrumentDecisionIsMadeInExactlyOnePlace()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM4: bracket mirroring resolves the follower instrument the same way the copy does");
+
+            // ResolveFollowerInstrument short-circuited on AutoSymbolConversion
+            // BEFORE consulting the mapping, while TranslateSymbol -- which the
+            // actual copy uses -- honours an explicit mapping regardless. With
+            // AutoSymbolConversion off and a cross mapping set, the copy went to
+            // MES while the bracket was computed against MNQ, and
+            // ArePricesComparable(MNQ, MNQ) is true, so a leader stop distance in
+            // MNQ points would have been mirrored onto an MES position as a
+            // FABRICATED risk level. That is the exact hazard P1-22's guard exists
+            // to prevent, reached by making the two decisions in two places.
+            var engine = new TradeCopierEngine();
+            var rel = Cm4Cross(3.0);
+            rel.AutoSymbolConversion = false;
+
+            var leaderInstrument = new Instrument("MNQ 03-26");
+            var resolved = engine.ResolveFollowerInstrument(rel, leaderInstrument);
+            string translated = engine.TranslateSymbol("MNQ 03-26", rel);
+
+            Assert(resolved != null, "the follower instrument resolved");
+            Assert(resolved != null && resolved.FullName == translated, string.Format(
+                "both paths named the same follower instrument (bracket '{0}' vs copy '{1}')",
+                resolved == null ? "null" : resolved.FullName, translated));
+            Assert(resolved != null && resolved.FullName == "MES 03-26", string.Format(
+                "an explicit mapping is honoured even with AutoSymbolConversion off (got '{0}')",
+                resolved == null ? "null" : resolved.FullName));
+        }
+
+        private static void TestCM4_IncomparableRootsRecordNoSlippageAndNoBracket()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM4: P1-22 survives -- MNQ and MES do not share a price scale");
+
+            // The whole reason cross-instrument copies are special. A fill price
+            // difference between MNQ and MES is not slippage, it is two different
+            // products; recording it would quarantine a healthy relationship, and
+            // mirroring a stop distance across it would invent a risk level.
+            Assert(!TradeCopierEngine.ArePricesComparable("MNQ", "MES"),
+                "MNQ -> MES is NOT price comparable, so it records no slippage and mirrors no bracket");
+            Assert(!TradeCopierEngine.ArePricesComparable("MES", "MNQ"),
+                "and the same holds in the other direction");
+
+            // ES -> MES is a different case: same underlying, same price scale.
+            // Slice 2 must not have made every cross-instrument pair incomparable.
+            Assert(TradeCopierEngine.ArePricesComparable("ES", "MES"),
+                "ES -> MES stays comparable: same underlying at the same scale");
+            Assert(TradeCopierEngine.ArePricesComparable("MNQ", "MNQ"),
+                "a same-root copy stays comparable");
+            Assert(!TradeCopierEngine.ArePricesComparable("CL", "MES"),
+                "two unrelated roots are not comparable");
+        }
+
+        private static void TestCM4_MatrixStillNeverAutoConverts()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM4: crossing instruments still takes an EXPLICIT mapping, never the auto table");
+
+            // Slice 1's rule, and the reason slice 2 is safe: matrix mode does not
+            // consult the mini/micro auto table at all. If it did, every MNQ copy
+            // would silently become NQ and the operator's table would be sizing
+            // one instrument while the order went to another.
+            var engine = new TradeCopierEngine();
+            var rel = Cm1Matrix(3.0, "MNQ");   // ratio only, no CustomSymbolMappings
+
+            string translated = engine.TranslateSymbol("MNQ 03-26", rel);
+            Assert(translated == "MNQ 03-26", string.Format(
+                "matrix mode left MNQ alone instead of auto converting it to NQ (got '{0}')", translated));
+
+            bool clamped;
+            int qty = engine.CalculateFollowerQuantity(rel, 1, "MNQ 03-26", 0, false, out clamped);
+            Assert(qty == 3 && !clamped, string.Format(
+                "and it still sized the same-instrument rule from the table (got {0})", qty));
         }
     }
 }
