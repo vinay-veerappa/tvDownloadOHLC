@@ -2470,3 +2470,120 @@ Pre-existing, and reloading before every write has its own failure mode
   records no slippage. This is now the last slice of the ratio converter.
 * **Deploy and live-validate slices 3a and 3b together.** Neither has run in
   NT8. The bridge edits in particular have not been compiled.
+
+---
+
+## 4z. Session 15 record — 2026-08-12: slice 2, and the first LIVE validation
+
+**The copier ratio converter is COMPLETE** — slices 1, 2, 3a, 3b. Still a
+FEATURE, no `P`-number. **And for the first time it has been deployed,
+compiled in NT8, and validated on the sim accounts.** Read §4y first.
+
+### State
+
+`harden/riskguard-p0-51`, **unpushed**:
+
+| commit | what | suite |
+|---|---|---|
+| `894e27f7` | CM4 acceptance tests, RED | 907 / **6 FAILED** |
+| `c8436062` | **slice 2**: cross-instrument matrix rules | 913 / 0 |
+| (this) | **CM5 fix**: a named collection replaces the stored one | **929 / 0** |
+
+**DEPLOYED.** `sync_nt8_strategies.py --only addons` then `nt_compile`:
+**0 errors** (the CS0108 `Log` warning is pre-existing). The deployed build is
+no longer session 12's `f174ba68`.
+
+### What slice 2 changed
+
+One rule is `(leader root -> follower root, ratio)`, **both halves keyed by the
+LEADER root**:
+
+```
+CustomSymbolMappings["MNQ"] = "MES"   <- where it goes
+PerTickerRatios["MNQ"]      = 3.0     <- how many
+```
+
+There is **no cross-instrument branch**. That is the design, not a tidy-up: a
+separate branch is how the instrument and the quantity came to be decided from
+two different keys in slice 1's defect 2. Three sites changed together, because
+changing one alone is worse than changing neither — `TranslateSymbol` (stop
+returning untranslated), the sizing branch (drop the refusal), and
+`ResolveFollowerInstrument`.
+
+**`ResolveFollowerInstrument` was a real defect, found by writing the test.** It
+tested `AutoSymbolConversion` *before* consulting the mapping, while
+`TranslateSymbol` — the actual copy path — honours an explicit mapping
+regardless. With the flag off and a cross mapping set, the copy went to MES
+while the bracket was computed against MNQ, and `ArePricesComparable(MNQ, MNQ)`
+is true, so a leader stop distance in MNQ points would have been mirrored onto
+an MES position as a **fabricated risk level** — exactly what `P1-22`'s guard
+exists to prevent, reached by making one decision in two places.
+
+### ⚠️ CM5 — slice 3b shipped a defect that only the sim run found
+
+Merge semantics made every collection **append-only**. `PopulateObject` reuses
+the existing dictionary *instance* (that is what preserves the comparer, and why
+`P1-39` forbids `ObjectCreationHandling.Replace`) and merges keys **into** it.
+Reproduced live through the bridge:
+
+```
+PerTickerRatios = {"MNQ": 3.0}
+set perTickerRatios = {}        -> still {"MNQ": 3.0}
+```
+
+An operator could not remove a ticker rule, fix a typo'd mapping, or drop a
+follower without deleting the whole relationship. **A ratio table you can only
+add to is not a usable config surface** — the same "config that cannot be set"
+family slice 3 existed to close, reintroduced by its own fix.
+
+Rule now: **absent or null = unchanged; present = this IS the value, including
+empty.** Resending the table without a ticker is how that ticker is removed.
+
+### The live run — 2026-08-12 03:17 UTC, RiskGuard in `shadow`
+
+Config set **entirely through the bridge** (`/api/copier/config`), which is
+slice 3a+3b working: before them, every one of these fields was silently
+dropped.
+
+| step | result |
+|---|---|
+| set matrix + mapping via bridge | `SizingMode=4`, `{"MNQ":3.0}`, `{"MNQ":"MES"}` ✅ |
+| partial update (`quantityRatio` only) | ratio applied, **everything else preserved** ✅ |
+| `armedForLive:true` without `confirmLive` | refused ✅ |
+| `armedForLive:true` with `confirmLive` | armed ✅ |
+| unrelated edit afterwards | **did not disarm** ✅ |
+| **buy 1 MNQ on Sim101** | Sim-ORB **1 MNQ**, SimCopy2 **3 MES** ✅ |
+| sell 1 MNQ (exit) | SimCopy2 sold **3 MES**, all flat ✅ |
+| `perTickerRatios:{}` after the CM5 fix | **cleared**, mappings untouched ✅ |
+
+Leader fill `03:17:29.7587786` → follower order submitted `03:17:29.7952809`,
+≈37 ms. Config was restored to its exact pre-test state afterwards.
+
+### ⚠️ OPEN — P1-22's metrics did NOT produce a reading, and I could not prove why
+
+`LatencyMs = 0` and `AvgSlippageTicks = 0` on **both** relationships after two
+round trips, and no `SLIPPAGE_ON_EXIT` fired on the cross-instrument exit even
+with `MaxSlippageTicks = 0.1` against a nominal ~87,778-tick price gap.
+
+`ObserveFollowerFill` **is** reached (the `COPIER_EXEC_IS_FOLLOWER` log fires).
+Two candidate causes, and the live evidence does not separate them:
+
+* **(a)** `_pendingCopies.TryGetValue(exec.Order, ...)` misses, because it is
+  keyed on the **Order reference** we cached — so no metrics run at all. This is
+  the `P0-59`/`P3-30` shape *again*: one cached `Order` reference rather than
+  enumerating what the broker holds.
+* **(b)** It matches, but latency is rejected by the `>= 0 && < 600000` sanity
+  bound because `exec.Time`'s `DateTimeKind` differs — which the code comment at
+  the latency block explicitly warns about.
+
+Under (b) `P1-22` is fine and slippage was correctly suppressed as incomparable.
+Under (a) nothing measured anything and **`P1-22` is unverified on the live
+path**. So: **slice 2 and slice 3b are live-validated; `P1-22` is NOT.** Do not
+record it as validated on the strength of a zero. Next step is to log inside
+`ObserveFollowerFill` on both the hit and the miss.
+
+### Still open
+
+* The `P1-22` question above — **do this before trusting any slippage number**.
+* `P0-62`, still open (§4a).
+* Nothing pushed. `main` untouched.
