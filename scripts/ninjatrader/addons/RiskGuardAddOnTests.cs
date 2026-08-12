@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 
 // --- MOCK DEFINITIONS TO AVOID NINJATRADER ASSEMBLY DEPENDENCY IN TEST ENVIRONMENT ---
 namespace NinjaTrader.Cbi
@@ -798,6 +799,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             TestCM2_AMalformedFieldDoesNotDiscardTheWholeConfig();
             TestCM2_AMalformedNumberNeverBecomesAZeroLimit();
             TestCM2_AnEmptySectionIsNotAParseFailure();
+
+            // CM3: copier bridge merge semantics, slice 3b -- RED until the fix lands
+            TestCM3_APartialGroupUpdateKeepsEveryUnmentionedField();
+            TestCM3_APartialUpdateIsWhatGetsStoredAndSaved();
+            TestCM3_APartialRelationshipUpdateKeepsEveryUnmentionedField();
+            TestCM3_TheMatrixIsSettableThroughTheBridgeAtAll();
+            TestCM3_AnUnknownGroupIsStillCreated();
+            TestCM3_APartialUpdateCannotArmForLive();
+            TestCM3_AnUnrelatedEditDoesNotSilentlyDisarm();
+            TestCM3_AMalformedRequestDoesNotDestroyTheStoredGroup();
 
             // Structural self-check: fails if the runner silently stops covering declared tests.
             TestHarness_AllDeclaredTestsAreInvoked();
@@ -11605,6 +11616,274 @@ namespace NinjaTrader.NinjaScript.AddOns
                 rel == null ? "<entry refused>" : rel.QuantityRatio.ToString()));
 
             try { File.Delete(file); } catch {}
+        }
+
+        // ------------------------------------------------------------------
+        // CM3: slice 3b -- a partial bridge update must not destroy stored config
+        //
+        // McpBridgeAddOn's CopierConfig("set_group"/"set") builds a BRAND NEW
+        // CopierGroup/CopierRelationship from a hand-written field list and hands
+        // it to UpsertGroup/UpsertRelationship, which REMOVE the existing object
+        // and add the new one wholesale (TradeCopierEngine.cs:256 and :139). The
+        // very next line calls SaveToDisk.
+        //
+        // So every field the caller does not mention reverts to its initialiser
+        // default and is then written to disk. A set_group carrying only
+        // {groupName, quantityRatio} DESTROYS PerTickerRatios, SizingMode,
+        // CustomSymbolMappings, StealthMode and MaxSlippageTicks. That is data
+        // loss, and completing the field list does not fix it -- the next omitted
+        // field is destroyed just the same. Only merge semantics fix it: apply
+        // the fields actually PRESENT in the request, and leave the rest alone.
+        //
+        // These drive ApplyGroupRequest/ApplyRelationshipRequest on the engine
+        // rather than the bridge, because McpBridgeAddOn.cs is <Compile Remove>d
+        // from RiskGuardTests.csproj for its WPF deps -- anything left in that
+        // file can only be pinned by source-text regex, which is not evidence.
+        // Slice 3b moves the mapping here so the harness EXECUTES it.
+        //
+        // Written BEFORE the fix; every Assert below is expected to FAIL at
+        // baseline. In this file rather than a new one because Program is not
+        // partial and Assert is private to it (see the CM1 header).
+        // ------------------------------------------------------------------
+
+        private static TradeCopierEngine Cm3EngineWithAStoredGroup()
+        {
+            var engine = new TradeCopierEngine();
+            var grp = new CopierGroup
+            {
+                GroupName = "Cm3Group",
+                LeaderAccountName = "Cm3Leader",
+                SizingMode = CopierSizingMode.PerTickerMatrix,
+                QuantityRatio = 1.0,
+                StealthMode = false,
+                MaxSlippageTicks = 2.5,
+                MaxPositionSize = 42
+            };
+            grp.PerTickerRatios["MES"] = 3.0;
+            grp.PerTickerRatios["MNQ"] = 5.0;
+            grp.CustomSymbolMappings["NQ"] = "MNQ";
+            grp.FollowerAccounts.Add("Cm3Follower");
+            engine.UpsertGroup(grp);
+            return engine;
+        }
+
+        private static void TestCM3_APartialGroupUpdateKeepsEveryUnmentionedField()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: a set_group naming only the ratio leaves the stored matrix alone");
+
+            var engine = Cm3EngineWithAStoredGroup();
+
+            // Exactly what the MCP bridge receives from `nt_copier_config` when a
+            // caller nudges one number: the group key, and the field they changed.
+            var merged = engine.ApplyGroupRequest(
+                JObject.Parse(@"{""groupName"":""Cm3Group"",""quantityRatio"":2.0}"), false);
+
+            Assert(merged != null, "the update returned a group");
+            Assert(merged != null && merged.QuantityRatio == 2.0, string.Format(
+                "the field that WAS named got applied (got {0})",
+                merged == null ? -1.0 : merged.QuantityRatio));
+
+            Assert(merged != null && merged.SizingMode == CopierSizingMode.PerTickerMatrix, string.Format(
+                "SizingMode survived an update that never mentioned it (got {0})",
+                merged == null ? "<null>" : merged.SizingMode.ToString()));
+            Assert(merged != null && merged.PerTickerRatios != null && merged.PerTickerRatios.Count == 2, string.Format(
+                "PerTickerRatios kept both entries (got {0})",
+                merged == null || merged.PerTickerRatios == null ? -1 : merged.PerTickerRatios.Count));
+            Assert(merged != null && merged.CustomSymbolMappings != null && merged.CustomSymbolMappings.Count == 1,
+                "CustomSymbolMappings survived");
+            Assert(merged != null && merged.StealthMode == false,
+                "StealthMode kept its non default value of false");
+            Assert(merged != null && merged.MaxSlippageTicks == 2.5, string.Format(
+                "MaxSlippageTicks survived (got {0})", merged == null ? -1.0 : merged.MaxSlippageTicks));
+            Assert(merged != null && merged.MaxPositionSize == 42, string.Format(
+                "MaxPositionSize kept 42 rather than reverting to the initialiser's 100 (got {0})",
+                merged == null ? -1 : merged.MaxPositionSize));
+            Assert(merged != null && merged.LeaderAccountName == "Cm3Leader",
+                "the leader was not replaced by the bridge's Sim101 default");
+            Assert(merged != null && merged.FollowerAccounts != null && merged.FollowerAccounts.Count == 1,
+                "the follower list was not emptied");
+        }
+
+        private static void TestCM3_APartialUpdateIsWhatGetsStoredAndSaved()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: the merged group -- not a stub -- is what reaches the engine and the disk");
+
+            var engine = Cm3EngineWithAStoredGroup();
+            engine.ApplyGroupRequest(
+                JObject.Parse(@"{""groupName"":""Cm3Group"",""quantityRatio"":2.0}"), false);
+
+            // The in-memory list is what the copier actually sizes fills from.
+            var stored = engine.GetGroups().FirstOrDefault(g => g.GroupName == "Cm3Group");
+            Assert(stored != null && stored.PerTickerRatios != null && stored.PerTickerRatios.Count == 2,
+                "the ENGINE's copy kept the matrix, not just the returned object");
+            Assert(engine.GetGroups().Count(g => g.GroupName == "Cm3Group") == 1,
+                "the merge upserted rather than appending a duplicate group");
+
+            string file = Path.Combine(Path.GetTempPath(), "test_cm3_group.json");
+            engine.SaveToDisk(file);
+            var reader = new TradeCopierEngine();
+            reader.LoadFromDisk(file);
+            var reloaded = reader.GetGroups().FirstOrDefault(g => g.GroupName == "Cm3Group");
+
+            Assert(reloaded != null && reloaded.SizingMode == CopierSizingMode.PerTickerMatrix,
+                "SizingMode survived the update AND the disk round trip");
+            double mes = 0.0;
+            Assert(reloaded != null && reloaded.PerTickerRatios != null
+                   && reloaded.PerTickerRatios.TryGetValue("mes", out mes) && mes == 3.0, string.Format(
+                "the reloaded matrix is still OrdinalIgnoreCase after a partial update (got {0})", mes));
+            Assert(reloaded != null && reloaded.QuantityRatio == 2.0,
+                "the reloaded group carries the value the partial update set");
+
+            try { File.Delete(file); } catch {}
+        }
+
+        private static void TestCM3_APartialRelationshipUpdateKeepsEveryUnmentionedField()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: the relationship half of the bridge merges too");
+
+            var engine = new TradeCopierEngine();
+            engine.UpsertRelationship(Cm2Relationship());
+
+            var merged = engine.ApplyRelationshipRequest(JObject.Parse(
+                @"{""leaderAccount"":""Cm2Leader"",""followerAccount"":""Cm2Follower"",""maxPositionSize"":7}"), false);
+
+            Assert(merged != null && merged.MaxPositionSize == 7, "the named field was applied");
+            Assert(merged != null && merged.SizingMode == CopierSizingMode.PerTickerMatrix,
+                "SizingMode survived");
+            Assert(merged != null && merged.PerTickerRatios != null && merged.PerTickerRatios.Count == 2,
+                "PerTickerRatios kept both entries");
+            Assert(merged != null && merged.QuantityRatio == 7.0, string.Format(
+                "QuantityRatio kept 7.0 rather than reverting to the bridge default of 1.0 (got {0})",
+                merged == null ? -1.0 : merged.QuantityRatio));
+            Assert(merged != null && merged.MaxSlippageTicks == 2.5, "MaxSlippageTicks survived");
+            Assert(engine.GetRelationships().Count(r => r.FollowerAccountName == "Cm2Follower") == 1,
+                "the merge upserted rather than appending a duplicate relationship");
+        }
+
+        private static void TestCM3_TheMatrixIsSettableThroughTheBridgeAtAll()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: PerTickerRatios and SizingMode can be SET through the request path");
+
+            // This is slice 3's actual goal. Until now the bridge's hand-written
+            // field list had no entry for either, so PerTickerMatrix could not be
+            // selected by any means except editing C# and recompiling.
+            var engine = new TradeCopierEngine();
+            var merged = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3New"",""leaderAccount"":""L1"",""sizingMode"":""PerTickerMatrix"",""perTickerRatios"":{""MES"":3.0},""maxSlippageTicks"":1.5,""stealthMode"":false}"),
+                false);
+
+            Assert(merged != null && merged.SizingMode == CopierSizingMode.PerTickerMatrix, string.Format(
+                "sizingMode arrived as PerTickerMatrix (got {0})",
+                merged == null ? "<null>" : merged.SizingMode.ToString()));
+            double mes = 0.0;
+            Assert(merged != null && merged.PerTickerRatios != null
+                   && merged.PerTickerRatios.TryGetValue("MES", out mes) && mes == 3.0, string.Format(
+                "perTickerRatios arrived (got {0})", mes));
+            Assert(merged != null && merged.MaxSlippageTicks == 1.5, "maxSlippageTicks arrived");
+            Assert(merged != null && merged.StealthMode == false, "stealthMode arrived");
+            Assert(merged != null && merged.LeaderAccountName == "L1",
+                "the camelCase leaderAccount alias still maps to LeaderAccountName");
+
+            // A matrix set through the bridge must be case insensitive like every
+            // other one, or a fill on "mes" misses the ratio it just configured.
+            double lower = 0.0;
+            Assert(merged != null && merged.PerTickerRatios != null
+                   && merged.PerTickerRatios.TryGetValue("mes", out lower) && lower == 3.0,
+                "a matrix set through the bridge is OrdinalIgnoreCase");
+        }
+
+        private static void TestCM3_AnUnknownGroupIsStillCreated()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: merging onto nothing still creates the group, with defaults");
+
+            var engine = new TradeCopierEngine();
+            var merged = engine.ApplyGroupRequest(
+                JObject.Parse(@"{""groupName"":""Fresh"",""quantityRatio"":4.0}"), false);
+
+            Assert(merged != null && merged.GroupName == "Fresh", "the new group was created");
+            Assert(merged != null && merged.QuantityRatio == 4.0, "its named field was applied");
+            Assert(merged != null && merged.MaxPositionSize == 100,
+                "its unnamed fields took the initialiser defaults, not zero");
+            Assert(merged != null && merged.PerTickerRatios != null,
+                "its matrix is an empty dictionary rather than null");
+            Assert(engine.GetGroups().Any(g => g.GroupName == "Fresh"), "it reached the engine");
+        }
+
+        private static void TestCM3_APartialUpdateCannotArmForLive()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: merge semantics did not open a way to arm live without confirmation");
+
+            var engine = Cm3EngineWithAStoredGroup();
+            var merged = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""armedForLive"":true}"), false);
+            Assert(merged != null && merged.ArmedForLive == false,
+                "armedForLive:true WITHOUT confirmLive left the group disarmed");
+
+            var armed = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""armedForLive"":true}"), true);
+            Assert(armed != null && armed.ArmedForLive == true,
+                "armedForLive:true WITH confirmLive armed it");
+        }
+
+        private static void TestCM3_AnUnrelatedEditDoesNotSilentlyDisarm()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: an edit that never mentions arming leaves the armed state as it was");
+
+            // The counterpart to the test above, and the reason merge semantics
+            // need saying out loud here: if an omitted armedForLive fell back to
+            // the initialiser's false, then nudging a ratio would silently stop a
+            // live group from copying -- the leader trades and the follower does
+            // not, which is P0-9's failure shape arrived at from a new direction.
+            var engine = Cm3EngineWithAStoredGroup();
+            engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""armedForLive"":true}"), true);
+
+            var merged = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""quantityRatio"":3.0}"), false);
+
+            Assert(merged != null && merged.ArmedForLive == true,
+                "a partial edit that never mentions armedForLive left it armed");
+            Assert(merged != null && merged.QuantityRatio == 3.0, "and still applied the edit");
+
+            var disarmed = engine.ApplyGroupRequest(JObject.Parse(
+                @"{""groupName"":""Cm3Group"",""armedForLive"":false}"), false);
+            Assert(disarmed != null && disarmed.ArmedForLive == false,
+                "an EXPLICIT armedForLive:false disarms without needing confirmLive");
+        }
+
+        private static void TestCM3_AMalformedRequestDoesNotDestroyTheStoredGroup()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[TEST] CM3: an unreadable request field leaves the stored config untouched");
+
+            // Session 14's rule, applied to the write path: a malformed NUMBER
+            // fails closed. It must not land a zero cap, and it must not take the
+            // stored matrix with it on the way out.
+            var engine = Cm3EngineWithAStoredGroup();
+            CopierGroup merged = null;
+            try
+            {
+                merged = engine.ApplyGroupRequest(JObject.Parse(
+                    @"{""groupName"":""Cm3Group"",""maxPositionSize"":""not-a-number""}"), false);
+            }
+            catch (Exception) { merged = null; }
+
+            var stored = engine.GetGroups().FirstOrDefault(g => g.GroupName == "Cm3Group");
+            Assert(stored != null, "the stored group still exists after a malformed request");
+            Assert(stored == null || stored.MaxPositionSize == 42, string.Format(
+                "the malformed number neither applied nor became a zero cap (got {0})",
+                stored == null ? -1 : stored.MaxPositionSize));
+            Assert(stored == null || (stored.PerTickerRatios != null && stored.PerTickerRatios.Count == 2),
+                "the stored matrix survived the malformed request");
+            Assert(merged == null || merged.MaxPositionSize != 0,
+                "no zero position cap was returned");
         }
     }
 }

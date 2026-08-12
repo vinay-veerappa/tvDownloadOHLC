@@ -926,6 +926,85 @@ namespace NinjaTrader.NinjaScript.AddOns
             return new Dictionary<string, T>(source, StringComparer.OrdinalIgnoreCase);
         }
 
+        // ---- the MCP bridge's request -> object mapping, moved here in slice 3b ----
+        //
+        // Moved VERBATIM from McpBridgeAddOn.CopierConfig, so this commit changes
+        // no behaviour and the CM3 tests fail for the right reason: the mapping
+        // rebuilds the object from a remembered field list, so everything it does
+        // not name reverts to an initialiser default and SaveToDisk then writes
+        // that over the stored config. The next commit replaces the body.
+        //
+        // It has to live here rather than in the bridge because McpBridgeAddOn.cs
+        // is <Compile Remove>d from RiskGuardTests.csproj for its WPF deps -- left
+        // there, this could only be pinned by source-text regex.
+
+        private static string ReqStr(JObject req, string key)
+        {
+            JToken tok = req == null ? null : req[key];
+            return tok == null || tok.Type == JTokenType.Null ? null : tok.ToString();
+        }
+
+        public CopierGroup ApplyGroupRequest(JObject req, bool confirmLive)
+        {
+            if (req == null) return null;
+            string leader = ReqStr(req, "leaderAccount") ?? ReqStr(req, "LeaderAccountName") ?? "Sim101";
+            string groupName = ReqStr(req, "groupName") ?? ReqStr(req, "GroupName");
+            bool requestedArmed = req["armedForLive"] != null ? (bool)req["armedForLive"] : (req["ArmedForLive"] != null ? (bool)req["ArmedForLive"] : false);
+
+            var followerList = new List<string>();
+            if (req["followers"] is JArray arr)
+            {
+                foreach (var tok in arr) followerList.Add(tok.ToString());
+            }
+            else if (req["followerAccounts"] is JArray arr2)
+            {
+                foreach (var tok in arr2) followerList.Add(tok.ToString());
+            }
+
+            var grp = new CopierGroup
+            {
+                GroupName = groupName ?? "DefaultGroup",
+                LeaderAccountName = leader,
+                IsEnabled = req["isEnabled"] != null ? (bool)req["isEnabled"] : (req["IsEnabled"] != null ? (bool)req["IsEnabled"] : true),
+                ArmedForLive = requestedArmed && confirmLive,
+                QuantityRatio = req["quantityRatio"] != null ? (double)req["quantityRatio"] : (req["QuantityRatio"] != null ? (double)req["QuantityRatio"] : 1.0),
+                FixedLotMode = req["fixedLotMode"] != null ? (bool)req["fixedLotMode"] : (req["FixedLotMode"] != null ? (bool)req["FixedLotMode"] : false),
+                FixedLotSize = req["fixedLotSize"] != null ? (int)req["fixedLotSize"] : (req["FixedLotSize"] != null ? (int)req["FixedLotSize"] : 1),
+                AutoSymbolConversion = req["autoSymbolConversion"] != null ? (bool)req["autoSymbolConversion"] : (req["AutoSymbolConversion"] != null ? (bool)req["AutoSymbolConversion"] : true),
+                MaxPositionSize = req["maxPositionSize"] != null ? (int)req["maxPositionSize"] : (req["MaxPositionSize"] != null ? (int)req["MaxPositionSize"] : 100),
+                DailyLossLimit = req["dailyLossLimit"] != null ? (double)req["dailyLossLimit"] : (req["DailyLossLimit"] != null ? (double)req["DailyLossLimit"] : 1000.0),
+                FollowerAccounts = followerList
+            };
+
+            UpsertGroup(grp, confirmLive);
+            return grp;
+        }
+
+        public CopierRelationship ApplyRelationshipRequest(JObject req, bool confirmLive)
+        {
+            if (req == null) return null;
+            string leader = ReqStr(req, "leaderAccount") ?? ReqStr(req, "LeaderAccountName") ?? "Sim101";
+            bool requestedArmed = req["armedForLive"] != null ? (bool)req["armedForLive"] : (req["ArmedForLive"] != null ? (bool)req["ArmedForLive"] : false);
+
+            var rel = new CopierRelationship
+            {
+                LeaderAccountName = leader,
+                FollowerAccountName = ReqStr(req, "followerAccount") ?? ReqStr(req, "FollowerAccountName") ?? "SimCopy2",
+                IsEnabled = req["isEnabled"] != null ? (bool)req["isEnabled"] : (req["IsEnabled"] != null ? (bool)req["IsEnabled"] : true),
+                ArmedForLive = requestedArmed && confirmLive,
+                QuantityRatio = req["quantityRatio"] != null ? (double)req["quantityRatio"] : (req["QuantityRatio"] != null ? (double)req["QuantityRatio"] : 1.0),
+                FixedLotMode = req["fixedLotMode"] != null ? (bool)req["fixedLotMode"] : (req["FixedLotMode"] != null ? (bool)req["FixedLotMode"] : false),
+                FixedLotSize = req["fixedLotSize"] != null ? (int)req["fixedLotSize"] : (req["FixedLotSize"] != null ? (int)req["FixedLotSize"] : 1),
+                AutoSymbolConversion = req["autoSymbolConversion"] != null ? (bool)req["autoSymbolConversion"] : (req["AutoSymbolConversion"] != null ? (bool)req["AutoSymbolConversion"] : true),
+                MaxPositionSize = req["maxPositionSize"] != null ? (int)req["maxPositionSize"] : (req["MaxPositionSize"] != null ? (int)req["MaxPositionSize"] : 100),
+                DailyLossLimit = req["dailyLossLimit"] != null ? (double)req["dailyLossLimit"] : (req["DailyLossLimit"] != null ? (double)req["DailyLossLimit"] : 1000.0),
+                IsQuarantined = req["isQuarantined"] != null ? (bool)req["isQuarantined"] : (req["IsQuarantined"] != null ? (bool)req["IsQuarantined"] : false)
+            };
+
+            UpsertRelationship(rel, confirmLive);
+            return rel;
+        }
+
         public void SaveToDisk(string filePath)
         {
             if (string.IsNullOrEmpty(filePath)) return;
