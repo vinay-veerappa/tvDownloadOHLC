@@ -2586,8 +2586,54 @@ path**. So: **slice 2 and slice 3b are live-validated; `P1-22` is NOT.** Do not
 record it as validated on the strength of a zero. Next step is to log inside
 `ObserveFollowerFill` on both the hit and the miss.
 
+### ⚠️ There is NO UI for any of this, and the UI that exists is actively harmful
+
+Asked at the end of session 15. `TradeCopierWindow.cs` (1,118 lines) is the WPF
+window, and four separate problems sit in it. **None was introduced by slices
+1–3b; all are pre-existing and all are still live.**
+
+1. **`PerTickerMatrix` is not selectable.** Both sizing-mode combos
+   (`:367`, `:459`) offer exactly `QuantityRatio` and `FixedLot`.
+   `NetLiquidationRatio` and `AvailableCashPercent` are missing too.
+2. **`PerTickerRatios`, `CustomSymbolMappings` and `MaxSlippageTicks` have no
+   editor at all.** They appear only inside a read-only status string (`:799`,
+   `:916`), and that string prints `SizingMode` and `AvgSlippageTicks` but never
+   the table itself.
+3. **The UI's save sites are a FIFTH and SIXTH remembered subset**
+   (`:997`–`:1013` and `:1055`–`:1073`): build a fresh
+   `CopierRelationship`/`CopierGroup` from a hand-written field list →
+   `UpsertRelationship` (remove-and-replace) → `SaveToDisk`. **This is exactly
+   the destructive pattern slice 3b deleted from the bridge.** Clicking
+   Add/Update in the window would wipe `PerTickerRatios`,
+   `CustomSymbolMappings`, `MaxSlippageTicks`, `Mode`, `DailyLossLimit` and
+   `IsQuarantined` — including a matrix the bridge had just set.
+4. **The UI persists to a DIFFERENT FILE than everything else reads.**
+
+   | | path |
+   |---|---|
+   | UI (7 call sites) | `UserDataDir/CopierConfig.json` |
+   | bridge + `State.Configure` startup load | `UserDataDir/RiskGuard/copier_config.json` |
+
+   Both exist on this box with different timestamps and contents. And
+   `TradeCopierWindow` **never calls `LoadFromDisk` at all** — it only saves. So
+   the window edits shared in-memory singleton state, writes it somewhere
+   nothing loads, and **every UI change is silently lost on the next NT8
+   restart**, while the bridge's file wins.
+
+Fixing 3 and 4 is the same move slice 3b already made: the window should call
+`ApplyRelationshipRequest`/`ApplyGroupRequest` and the single `CopierConfigFile`
+path, not hand-roll its own. Note `TradeCopierWindow.cs` is compiled into NT8
+but, like `McpBridgeAddOn.cs`, is **not** in `RiskGuardTests.csproj` — so the
+mapping must move onto the engine to be testable, exactly as in slice 3b.
+
+**Until that is done, the ratio converter is reachable ONLY through the bridge**
+(`/api/copier/config`), which is how it was validated. That is a real
+limitation, not a documentation gap.
+
 ### Still open
 
+* **The UI, above** — items 3 and 4 are defects, not missing features, and
+  item 4 loses operator config on every restart. These deserve `P`-numbers.
 * The `P1-22` question above — **do this before trusting any slippage number**.
 * `P0-62`, still open (§4a).
-* Nothing pushed. `main` untouched.
+* `main` untouched.
