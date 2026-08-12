@@ -2690,6 +2690,7 @@ Take the next free numbers from `P0-64` onward; **do not extend a band in place*
 |---|---|
 | **UI redesign** | The operator's own assessment: *"not very usable or professional enough"*. On top of `P?-64`/`P?-65`, `PerTickerMatrix` is not in either sizing-mode combo (`:367`, `:459`) and `PerTickerRatios`/`CustomSymbolMappings`/`MaxSlippageTicks` have **no editor at all** — they appear only in a read-only status string. **The ratio converter is reachable ONLY through the bridge today.** |
 | **MCP wrapper gap** | `nt_copier_config` accepts only `leaderAccount`/`followerAccount`/`quantityRatio`/`autoConversion`. It cannot express `sizingMode`, `perTickerRatios`, `customSymbolMappings`, `maxSlippageTicks`, or any group action. Session 15 had to drive raw HTTP to `localhost:7890`, which `.agent/USER.md` asks agents not to do. **The preference is unfollowable until the wrapper is extended.** |
+| **Repo split** | The NT8 addons were never meant to live in `tvDownloadOHLC` — nothing there compiles, imports or tests them. **Decided 2026-08-12: TWO repos** (`nt8-mcp-bridge` separate, `nt8-riskguard` = guard + copier). Planned, not executed: **[NT8_REPO_SPLIT_PLAN.md](NT8_REPO_SPLIT_PLAN.md)**. The seam was measured, not guessed — two singleton facades, ~26 members. |
 | **Doc consolidation** | This section exists because the plan's inventory table and §4a contradict each other and themselves. The inventory should be regenerated from the entries, once. |
 
 ## 5.3a ⚠️ Deploy trap — `sync_nt8_strategies.py` silently dirties another repo
