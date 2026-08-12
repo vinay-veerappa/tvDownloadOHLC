@@ -685,10 +685,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        public void LoadFromDisk(string filePath)
-        {
-            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+        // The canonical field name for each accepted alias. `leaderAccount` is a
+        // different NAME from `LeaderAccountName`, not a different case of it, so
+        // Json.NET will not map it on its own (settled in session 14, §4x).
+        //
+        // This lived inside LoadFromDisk until session 15. It is static now because
+        // the MCP bridge needs exactly the same normalisation, and while it was a
+        // captured local the bridge could not reach it -- so the bridge hand-wrote a
+        // field list instead, which is the whole of slice 3b's defect.
+        private static readonly Dictionary<string, string> ConfigAliasMap = BuildConfigAliasMap();
 
+        private static Dictionary<string, string> BuildConfigAliasMap()
+        {
             var aliasMap = new Dictionary<string, string>
             {
                 { "leaderAccount", "LeaderAccountName" },
@@ -709,6 +717,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!aliasMap.ContainsKey(alias))
                     aliasMap.Add(alias, canonical);
             }
+            return aliasMap;
+        }
+
+        public void LoadFromDisk(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
 
             try
             {
@@ -762,147 +776,154 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 Console.WriteLine($"[LoadFromDisk EXCEPTION] {ex}");
             }
+        }
 
-            bool TryParseRelationship(JObject source, string key, bool isFlatLegacy, out CopierRelationship rel)
+        // ---- slice 3a's config normalisation, lifted to statics in slice 3b ----
+        // These were local functions inside LoadFromDisk. They are unchanged in
+        // behaviour; the only difference is that they are now reachable from the
+        // MCP bridge, which is the point. `internal` and not `public`: the addons
+        // and the test harness compile into one assembly, so the tests can EXECUTE
+        // these rather than assert on source text, without widening the API.
+
+        internal static bool TryParseRelationship(JObject source, string key, bool isFlatLegacy, out CopierRelationship rel)
+        {
+            rel = new CopierRelationship();
+            try
             {
-                rel = new CopierRelationship();
-                try
-                {
-                    var normalized = NormalizeConfigObject(source);
-                    normalized = RemoveUnknownEnums(normalized, typeof(CopierRelationship));
+                var normalized = NormalizeConfigObject(source);
+                normalized = RemoveUnknownEnums(normalized, typeof(CopierRelationship));
 
-                    if (!normalized.ContainsKey("LeaderAccountName"))
-                        normalized["LeaderAccountName"] = isFlatLegacy ? key : (key.Contains("_") ? key.Split('_')[0] : key);
-                    if (!normalized.ContainsKey("FollowerAccountName"))
-                        normalized["FollowerAccountName"] = isFlatLegacy ? "SimCopy2" : (key.Contains("_") ? key.Split('_')[1] : "SimCopy2");
+                if (!normalized.ContainsKey("LeaderAccountName"))
+                    normalized["LeaderAccountName"] = isFlatLegacy ? key : (key.Contains("_") ? key.Split('_')[0] : key);
+                if (!normalized.ContainsKey("FollowerAccountName"))
+                    normalized["FollowerAccountName"] = isFlatLegacy ? "SimCopy2" : (key.Contains("_") ? key.Split('_')[1] : "SimCopy2");
 
-                    JsonConvert.PopulateObject(normalized.ToString(), rel);
-                    rel.PerTickerRatios = EnsureOrdinalIgnoreCase(rel.PerTickerRatios);
-                    rel.CustomSymbolMappings = EnsureOrdinalIgnoreCase(rel.CustomSymbolMappings);
+                JsonConvert.PopulateObject(normalized.ToString(), rel);
+                rel.PerTickerRatios = EnsureOrdinalIgnoreCase(rel.PerTickerRatios);
+                rel.CustomSymbolMappings = EnsureOrdinalIgnoreCase(rel.CustomSymbolMappings);
 
-                    if (string.IsNullOrEmpty(rel.Id))
-                        rel.Id = Guid.NewGuid().ToString();
+                if (string.IsNullOrEmpty(rel.Id))
+                    rel.Id = Guid.NewGuid().ToString();
 
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[LoadFromDisk] Skipping invalid relationship '{key}': {ex.Message}");
-                    rel = null;
-                    return false;
-                }
+                return true;
             }
-
-            bool TryParseGroup(JObject source, string key, out CopierGroup grp)
+            catch (Exception ex)
             {
-                grp = new CopierGroup();
-                try
-                {
-                    var normalized = NormalizeConfigObject(source);
-                    normalized = RemoveUnknownEnums(normalized, typeof(CopierGroup));
-
-                    if (!normalized.ContainsKey("GroupName"))
-                        normalized["GroupName"] = key;
-                    if (!normalized.ContainsKey("LeaderAccountName"))
-                        normalized["LeaderAccountName"] = "Sim101";
-
-                    JsonConvert.PopulateObject(normalized.ToString(), grp);
-                    grp.PerTickerRatios = EnsureOrdinalIgnoreCase(grp.PerTickerRatios);
-                    grp.CustomSymbolMappings = EnsureOrdinalIgnoreCase(grp.CustomSymbolMappings);
-
-                    if (string.IsNullOrEmpty(grp.Id))
-                        grp.Id = Guid.NewGuid().ToString();
-
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[LoadFromDisk] Skipping invalid group '{key}': {ex.Message}");
-                    grp = null;
-                    return false;
-                }
+                Console.WriteLine($"[LoadFromDisk] Skipping invalid relationship '{key}': {ex.Message}");
+                rel = null;
+                return false;
             }
+        }
 
-            JObject NormalizeConfigObject(JObject source)
+        internal static bool TryParseGroup(JObject source, string key, out CopierGroup grp)
+        {
+            grp = new CopierGroup();
+            try
             {
-                var target = new JObject();
-                foreach (var prop in source.Properties())
+                var normalized = NormalizeConfigObject(source);
+                normalized = RemoveUnknownEnums(normalized, typeof(CopierGroup));
+
+                if (!normalized.ContainsKey("GroupName"))
+                    normalized["GroupName"] = key;
+                if (!normalized.ContainsKey("LeaderAccountName"))
+                    normalized["LeaderAccountName"] = "Sim101";
+
+                JsonConvert.PopulateObject(normalized.ToString(), grp);
+                grp.PerTickerRatios = EnsureOrdinalIgnoreCase(grp.PerTickerRatios);
+                grp.CustomSymbolMappings = EnsureOrdinalIgnoreCase(grp.CustomSymbolMappings);
+
+                if (string.IsNullOrEmpty(grp.Id))
+                    grp.Id = Guid.NewGuid().ToString();
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LoadFromDisk] Skipping invalid group '{key}': {ex.Message}");
+                grp = null;
+                return false;
+            }
+        }
+
+        internal static JObject NormalizeConfigObject(JObject source)
+        {
+            var target = new JObject();
+            foreach (var prop in source.Properties())
+            {
+                if (!ConfigAliasMap.ContainsKey(prop.Name))
+                    target[prop.Name] = prop.Value;
+            }
+            foreach (var prop in source.Properties())
+            {
+                if (ConfigAliasMap.TryGetValue(prop.Name, out string canonical))
                 {
-                    if (!aliasMap.ContainsKey(prop.Name))
-                        target[prop.Name] = prop.Value;
-                }
-                foreach (var prop in source.Properties())
-                {
-                    if (aliasMap.TryGetValue(prop.Name, out string canonical))
+                    if (!target.ContainsKey(canonical))
                     {
-                        if (!target.ContainsKey(canonical))
+                        target[canonical] = prop.Value;
+                    }
+                    else if (target[canonical] is JObject existingObj && prop.Value is JObject aliasObj)
+                    {
+                        var merged = new JObject(aliasObj);
+                        foreach (var p in existingObj.Properties())
                         {
-                            target[canonical] = prop.Value;
+                            merged[p.Name] = p.Value;
                         }
-                        else if (target[canonical] is JObject existingObj && prop.Value is JObject aliasObj)
-                        {
-                            var merged = new JObject(aliasObj);
-                            foreach (var p in existingObj.Properties())
-                            {
-                                merged[p.Name] = p.Value;
-                            }
-                            target[canonical] = merged;
-                        }
+                        target[canonical] = merged;
                     }
                 }
-                return target;
             }
+            return target;
+        }
 
-            JObject RemoveUnknownEnums(JObject source, Type targetType)
+        internal static JObject RemoveUnknownEnums(JObject source, Type targetType)
+        {
+            var clone = (JObject)source.DeepClone();
+            foreach (var prop in targetType.GetProperties())
             {
-                var clone = (JObject)source.DeepClone();
-                foreach (var prop in targetType.GetProperties())
+                Type enumType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+                if (!enumType.IsEnum)
+                    continue;
+                bool isFlags = Attribute.IsDefined(enumType, typeof(FlagsAttribute));
+                JToken token = clone[prop.Name];
+                if (token == null)
+                    continue;
+                bool keep = false;
+                if (token.Type == JTokenType.String)
                 {
-                    Type enumType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-                    if (!enumType.IsEnum)
-                        continue;
-                    bool isFlags = Attribute.IsDefined(enumType, typeof(FlagsAttribute));
-                    JToken token = clone[prop.Name];
-                    if (token == null)
-                        continue;
-                    bool keep = false;
-                    if (token.Type == JTokenType.String)
-                    {
-                        string s = token.Value<string>();
-                        if (!string.IsNullOrEmpty(s))
-                        {
-                            try
-                            {
-                                object parsed = Enum.Parse(enumType, s, true);
-                                if (Enum.IsDefined(enumType, parsed) || isFlags)
-                                    keep = true;
-                            }
-                            catch { }
-                        }
-                    }
-                    else if (token.Type == JTokenType.Integer)
+                    string s = token.Value<string>();
+                    if (!string.IsNullOrEmpty(s))
                     {
                         try
                         {
-                            long v = token.Value<long>();
-                            object enumVal = Enum.ToObject(enumType, v);
-                            if (Enum.IsDefined(enumType, enumVal) || isFlags)
+                            object parsed = Enum.Parse(enumType, s, true);
+                            if (Enum.IsDefined(enumType, parsed) || isFlags)
                                 keep = true;
                         }
                         catch { }
                     }
-                    if (!keep)
-                        clone.Remove(prop.Name);
                 }
-                return clone;
+                else if (token.Type == JTokenType.Integer)
+                {
+                    try
+                    {
+                        long v = token.Value<long>();
+                        object enumVal = Enum.ToObject(enumType, v);
+                        if (Enum.IsDefined(enumType, enumVal) || isFlags)
+                            keep = true;
+                    }
+                    catch { }
+                }
+                if (!keep)
+                    clone.Remove(prop.Name);
             }
+            return clone;
+        }
 
-            Dictionary<string, T> EnsureOrdinalIgnoreCase<T>(IDictionary<string, T> source)
-            {
-                if (source == null)
-                    return new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
-                return new Dictionary<string, T>(source, StringComparer.OrdinalIgnoreCase);
-            }
+        internal static Dictionary<string, T> EnsureOrdinalIgnoreCase<T>(IDictionary<string, T> source)
+        {
+            if (source == null)
+                return new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, T>(source, StringComparer.OrdinalIgnoreCase);
         }
 
         public void SaveToDisk(string filePath)
