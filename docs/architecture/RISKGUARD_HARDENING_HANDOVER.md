@@ -2220,3 +2220,108 @@ opposite the leader** — `P1-56`'s class, in a plan the arbiter shipped. Three 
 five human corrections to the CM1 ticket came from findings the arbiter had
 dismissed. **Do not treat `ARBITER_SHIP` on this profile as a review.** Read the
 patch against the file.
+
+---
+
+## 4x. Session 14 record — 2026-08-11: the copier ratio converter, slice 3a
+
+> **THIS IS THE ADDON HANDOVER.** If you are working on the **agent-loop
+> package** instead, read `C:\Users\vinay\agent-loop\docs\architecture\HANDOVER.md`
+> §17. The two are not interchangeable: ten loop defects were closed the same
+> day and none of them is recorded here.
+
+**Still a FEATURE, not a defect fix.** No `P`-number. Slice 1 shipped in session
+13; this is slice 3a.
+
+### State
+
+`harden/riskguard-p0-51`, **unpushed**, on top of session 13's `3b6478e8`:
+
+| commit | what |
+|---|---|
+| `90933671` | CM2 acceptance tests, RED at baseline: 815 passed, **10 failed** |
+| `62d1dc1b` | guard: one unreadable field must not discard the whole config (green at baseline) |
+| `305fa4b9` | guard: a malformed number must not become a zero limit (green at baseline) |
+| `1a210d7c` | **the implementation: 831 passed, 0 failed** |
+
+**Not deployed. Not compiled in NT8. Not live-validated.** `dotnet build` +
+suite only. Before deploying follow CLAUDE.md's NT8 rules —
+`sync_nt8_strategies.py --verify --only addons`, then `--only addons`, then
+`nt_compile` — and do not hand-copy.
+
+### What slice 3a changed, and why it was bigger than session 13 thought
+
+§4w recorded the problem as "`PerTickerRatios` is parsed by nothing". The real
+shape is worse. `SaveToDisk` serialises each relationship and group **whole**,
+with `JsonConvert.SerializeObject`, so every property reaches the file.
+`LoadFromDisk` hand-parsed a remembered subset at **three** construction sites —
+structured relationships, groups, and the flat legacy dictionary — and none read
+`SizingMode`, `Mode`, `PerTickerRatios`, `CustomSymbolMappings` or
+`StealthMode`. Only the relationship site read `MaxSlippageTicks`.
+
+So the fields were **on disk, visible in the file, and looking set**, and loading
+returned them to their defaults with no error. That is `P2-41`'s shape, not
+"config that cannot be set". And `SizingMode` was among them, so slice 1's
+`PerTickerMatrix` could not be selected by any means except editing C# and
+recompiling.
+
+All three sites now go through one alias map + reflective populate, with
+`EnsureOrdinalIgnoreCase` re-applied to both dictionaries afterwards.
+
+### Settled here — do not re-litigate
+
+* **A malformed ENUM falls back to the default; a malformed NUMBER fails
+  closed.** Tolerating an unrecognised enum name is not tolerating every
+  deserialisation error. A blanket `Error` handler leaves a type-mismatched field
+  at the CLR default — `MaxPositionSize` 0 instead of 100, `QuantityRatio` 0.0
+  instead of 1.0 — and a zero cap sizes every fill at nothing, so the leader
+  trades and the follower does not. **A review panel caught exactly this in a
+  candidate that had already passed every mechanical gate**, and it is now
+  pinned by a green-at-baseline test.
+* **The camelCase aliases stay.** `leaderAccount` is a different NAME from
+  `LeaderAccountName`, not a different case of it; Json.NET will not map it.
+* **`ObjectCreationHandling.Replace` is still forbidden** (`P1-39`). It discards
+  the property initialisers' `StringComparer.OrdinalIgnoreCase`.
+
+### ⚠️ Applied by hand over a NOT_CONVERGING verdict — the reasoning
+
+The loop produced a fully green candidate on rounds 2, 3 AND 4 and shipped none
+of them. It stopped on thrash: blocking findings `0 -> 7 -> 10`, zero overlap.
+
+**The leading 0 was false.** It is the loop's own O61 — a reviewer that
+degenerated to 1,219 findings and was truncated before its closing marker parsed
+as *zero* findings. The convergence history the detector ruled on was corrupted
+by a defect fixed after the run.
+
+**And the arbiter's five upheld findings do not survive checking.** Four are one
+claim repeated: *"nested dictionaries inside `PerTickerRatios` lose their
+comparer"*. `PerTickerRatios` is `Dictionary<string,double>` and
+`CustomSymbolMappings` is `Dictionary<string,string>` — there are no nested
+dictionaries, the candidate already calls `EnsureOrdinalIgnoreCase` on both, and
+the acceptance test that reloads and matches `'mes'` against a stored `'MES'` is
+green. The fifth was real but narrower than filed, and is now pinned by a test.
+
+The loop's own stop message says what to do: *"arbitrate the findings by hand"*.
+That is what happened, and this section is the record of it.
+
+### Still open
+
+* **Slice 3b — the bridge.** `McpBridgeAddOn.cs`'s `CopierConfig(body)` builds a
+  `CopierGroup` from a hand-written field list: a **fourth** site with the same
+  remembered subset, and the last thing between slice 1 and being settable from
+  the UI. It is no longer a hand-edit — the loop's O53 fix means that file can be
+  edited now.
+* **Slice 2 — cross-instrument** (`1 MNQ -> 3 MES`), which must REPLACE slice 1's
+  deliberate refusal. `P1-22`'s rule survives: a cross-instrument mapping records
+  no slippage.
+* **Write slice 3b as TWO smaller regions.** CM2 was one 113-line region and took
+  six attempts; the panel found new surface every round on a candidate that was
+  already green.
+
+### Everything in §4w's "two constraints that will bite" is now stale
+
+* `McpBridgeAddOn.cs` and `RiskGuardAddOnTests.cs` **can** be edited by the loop
+  (agent-loop O53). The block-comment refusal is gone.
+* The `Program`-is-not-partial constraint **stands**: new tests still go into
+  `RiskGuardAddOnTests.cs` and must be registered in `Main`, or they compile and
+  run nothing. The CM2 tests are at the end of that file.
