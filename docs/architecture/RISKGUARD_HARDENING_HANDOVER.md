@@ -1,17 +1,21 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-11 (session 15 — **the copier RATIO CONVERTER: slices 1, 3a and 3b are
-implemented and green, NONE of them deployed — §4w, §4x, §4y**. A feature, not a defect: no
-`P`-number, nothing closed. **Next work is slice 2 (cross-instrument `1 MNQ -> 3 MES`), the last
-slice of the converter, or the still-open `P0-62` — §4a and §4y.**)
+**Last updated**: 2026-08-12 (session 15 — **the copier RATIO CONVERTER IS COMPLETE and DEPLOYED**:
+slices 1, 2, 3a, 3b, suite **929/0**, `nt_compile` 0 errors, and validated on the sim accounts —
+§4w, §4x, §4y, **§4z**. A feature, not a defect: no `P`-number, nothing closed.
+**Next work is the open `P1-22` metrics question in §4z, then the still-open `P0-62` — §4a.**)
 
-> ⚠️ **Start at §4y**, then §4x, then §4w. This file accretes: §4x's "Still open" describes
-> slice 3b as a missing field list, which is **wrong** — see the correction block inside it.
+> ⚠️ **Start at §4z**, then §4y, §4x, §4w. This file accretes and earlier sections are
+> superseded: §4x's "Still open" describes slice 3b as a missing field list, which is **wrong**
+> (see the correction block inside it), and §4y's "not deployed" is now stale.
 >
 > ⚠️ **Sessions 13, 14 and 15 touched NO defect.** The 62/49 counts below are unchanged and
-> correct. All three slices are unit-tested and build; **none has ever run on a live feed**, and
-> the deployed build is still session 12's `f174ba68`. The two `McpBridgeAddOn.cs` edits in
-> slice 3b have not even been through a compiler — that file is excluded from the test project.
+> correct. **The deployed build is no longer session 12's `f174ba68`** — session 15 synced and
+> recompiled, and `1 MNQ -> 3 MES` has copied on `Sim101 -> SimCopy2` for real.
+>
+> ⚠️ **`P1-22`'s slippage/latency metrics produced NO reading on the live run and I could not
+> establish why** (§4z). Two candidate causes are recorded. Slice 2 and slice 3b are
+> live-validated; **`P1-22` is not** — do not read its zeros as a pass.
 >
 > ⚠️ **Do not treat `ARBITER_SHIP` from the agent loop as a review on this addon.** Across four
 > SHIP rulings in session 13 the arbiter upheld **0 of 66 panel findings**, and on one plan the
