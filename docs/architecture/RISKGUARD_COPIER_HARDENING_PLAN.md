@@ -14,6 +14,15 @@ Live progress: [RISKGUARD_HARDENING_HANDOVER.md](RISKGUARD_HARDENING_HANDOVER.md
 
 ## Defect inventory — the count of record
 
+> ⚠️ **STALE, 2026-08-12. For "what is left?" read
+> [`RISKGUARD_HARDENING_HANDOVER.md` §5](RISKGUARD_HARDENING_HANDOVER.md#5-the-open-backlog--authoritative-as-of-2026-08-12).**
+> This table drifted out of agreement with itself and with the entries it summarises: it says
+> "58 defects" where the handover header says 62, and it calls `P0-51`/`P1-52` OPEN in one
+> paragraph and FIXED in the note four lines below. `P0-62` is also SUPERSEDED by `P0-63`.
+> The per-defect entries in §1–§4 below are still accurate and remain the reference; only this
+> summary is not. Regenerating it from the entries is itself a backlog item (§5.3).
+
+
 **58 defects.** Numbered once, never renumbered, never reused. `P0-49` and `P0-50` were opened
 and closed on 2026-08-07 (session 8); **`P0-51` and `P1-52` were opened on 2026-08-09 and are
 OPEN**. All four were found by a live operator ATM trade rather than by any test — see the

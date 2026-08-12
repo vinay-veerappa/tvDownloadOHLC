@@ -5,9 +5,14 @@ slices 1, 2, 3a, 3b, suite **929/0**, `nt_compile` 0 errors, and validated on th
 §4w, §4x, §4y, **§4z**. A feature, not a defect: no `P`-number, nothing closed.
 **Next work is the open `P1-22` metrics question in §4z, then the still-open `P0-62` — §4a.**)
 
-> ⚠️ **Start at §4z**, then §4y, §4x, §4w. This file accretes and earlier sections are
-> superseded: §4x's "Still open" describes slice 3b as a missing field list, which is **wrong**
-> (see the correction block inside it), and §4y's "not deployed" is now stale.
+> ⚠️ **NEW SESSION? GO STRAIGHT TO [§5, THE OPEN BACKLOG](#5-the-open-backlog--authoritative-as-of-2026-08-12).**
+> It is the authoritative answer to "what is left?" and it **supersedes §4a's START HERE and the
+> plan's inventory table**, both of which had drifted out of agreement with themselves. Read §5
+> first and the session records only when you need the reasoning behind an entry.
+>
+> ⚠️ For the session records: start at §4z, then §4y, §4x, §4w. This file accretes and earlier
+> sections are superseded: §4x's "Still open" describes slice 3b as a missing field list, which is
+> **wrong** (see the correction block inside it), and §4y's "not deployed" is now stale.
 >
 > ⚠️ **Sessions 13, 14 and 15 touched NO defect.** The 62/49 counts below are unchanged and
 > correct. **The deployed build is no longer session 12's `f174ba68`** — session 15 synced and
@@ -2637,3 +2642,80 @@ limitation, not a documentation gap.
 * The `P1-22` question above — **do this before trusting any slippage number**.
 * `P0-62`, still open (§4a).
 * `main` untouched.
+
+---
+
+# 5. THE OPEN BACKLOG — authoritative as of 2026-08-12
+
+> **This section supersedes §4a's "START HERE" and the plan's inventory table for the
+> question "what is left?".** Both had drifted: the plan says "58 defects" where the
+> header says 62, lists `P0-51`/`P1-52` as OPEN and then FIXED four lines later, and
+> §4a still points at `P0-62`, which `P0-63` superseded. Everything below was
+> re-derived from the entries themselves on 2026-08-12, not copied forward.
+>
+> **Nothing here is a new defect discovered by a new review.** It is the residue of
+> sessions 1–15 plus what session 15's live run exposed.
+
+## 5.1 Open defects, by band
+
+| ID | What | Band | Notes |
+|---|---|---|---|
+| **`P0-63`** | **`Account.Change()` is a silent no-op on `provider: Simulator` — the mirrored stop has NEVER trailed** | P0 | Highest risk item open. Supersedes `P0-62`. **Blocked on a decision, not on work** — see 5.4. |
+| `P1-57` | We would mirror another copier's mirror; the "not ours" test is a name substring | P1 | Live on this box: a third-party copier fans `Sim101 → Sim-ORB → {SimCopyTest1, SimCopy2}` copying names verbatim |
+| `P1-13` | Guard evaluation on the WPF dispatcher — **threading half only** | P1 | The fail-open half is closed |
+| `P2-24` | Written-but-never-called safety machinery | P2 | |
+| `P2-25` | The news shield can never fire in production | P2 | |
+| `P2-26` | Design-doc drift in `RiskGuardAddOn.md` | P2 | |
+| `P2-27` | The riskiest code has zero coverage | P2 | **Half done.** `OnExecution` is covered now; `McpBridgeAddOn.cs` and `TradeCopierWindow.cs` are still excluded from `RiskGuardTests.csproj` |
+| `P2-29` | Single-file size / complexity | P2 | |
+| `P3-30` | Independent reconciler | P3 | **Copier half shipped + live-validated.** The **RiskGuard-side audit** and the **background timer** remain |
+| `P3-31` | Expected-position ledger with reserve/rollback | P3 | The seam in `Reconcile` exists; the ledger does not. **Required BEFORE the timer** |
+| `P3-32` | Follower risk anchored to the follower's own fill | P3 | **May be superseded by `P0-9`** — read before scheduling |
+| `P3-33` | Replace the global lock on the hot path | P3 | |
+| `P3-34` | Arm/shadow discipline extended to the copier | P3 | **The copier acts regardless of guard mode**; `shadow` restrains RiskGuard only |
+
+## 5.2 NEW — opened by session 15's live run (need `P`-numbers)
+
+Take the next free numbers from `P0-64` onward; **do not extend a band in place**.
+
+| Proposed | What | Why it matters |
+|---|---|---|
+| **`P?-64`** | **The copier UI writes to a DIFFERENT FILE than everything else reads.** UI → `UserDataDir/CopierConfig.json` (7 call sites); bridge + `State.Configure` startup load → `UserDataDir/RiskGuard/copier_config.json`. `TradeCopierWindow` **never calls `LoadFromDisk`**. | **Every UI change is silently lost on the next NT8 restart.** Both files exist on this box with different contents. This is operator config vanishing without an error — `P2-41`'s shape. |
+| **`P?-65`** | **`TradeCopierWindow`'s two save sites are a 5th and 6th remembered subset** (`:997`, `:1055`): fresh object → `UpsertRelationship` → `SaveToDisk`. | Exactly the destructive pattern slice 3b deleted from the bridge. Clicking Add/Update **wipes** `PerTickerRatios`, `CustomSymbolMappings`, `MaxSlippageTicks`, `Mode`, `DailyLossLimit`, `IsQuarantined`. |
+| **`P?-66`** | **`P1-22`'s slippage/latency metrics produced NO reading on the live path** and the cause is unresolved. | Either `_pendingCopies` misses (keyed on the cached **`Order` reference** — the `P0-59`/`P3-30` shape again) or latency is rejected by its sanity bound on a `DateTimeKind` mismatch. **A zero is not a pass.** Cheap first step: log the hit AND the miss inside `ObserveFollowerFill`. |
+
+## 5.3 NEW — enhancements, not defects
+
+| Item | What |
+|---|---|
+| **UI redesign** | The operator's own assessment: *"not very usable or professional enough"*. On top of `P?-64`/`P?-65`, `PerTickerMatrix` is not in either sizing-mode combo (`:367`, `:459`) and `PerTickerRatios`/`CustomSymbolMappings`/`MaxSlippageTicks` have **no editor at all** — they appear only in a read-only status string. **The ratio converter is reachable ONLY through the bridge today.** |
+| **MCP wrapper gap** | `nt_copier_config` accepts only `leaderAccount`/`followerAccount`/`quantityRatio`/`autoConversion`. It cannot express `sizingMode`, `perTickerRatios`, `customSymbolMappings`, `maxSlippageTicks`, or any group action. Session 15 had to drive raw HTTP to `localhost:7890`, which `.agent/USER.md` asks agents not to do. **The preference is unfollowable until the wrapper is extended.** |
+| **Doc consolidation** | This section exists because the plan's inventory table and §4a contradict each other and themselves. The inventory should be regenerated from the entries, once. |
+
+## 5.4 ⚠️ Blocked on the operator, not on engineering
+
+**`P0-63` cannot be finished without a decision only the account holder can make.** Every account
+validated on so far is `provider: Simulator`. The funded accounts are `Provider31` and were
+`Disconnected`. If `Change()` is honoured there, the trail works in production and only our
+*testing* misleads; if not, the trail is broken everywhere. Establishing it means **placing a real
+order on a funded account**.
+
+Remedy option 3 — *after a `Change()`, verify the order actually took the new values and fall back
+to cancel-then-create when it did not* — **works on both provider types without answering the
+question**, turns a silent no-op into an observable one, and composes with the other two. That is
+the recommended path if the funded-account test is not wanted.
+
+## 5.5 Suggested order, and why
+
+1. **`P0-63` via remedy 3.** Naked-risk-adjacent, live, and it does not need the funded test.
+2. **`P?-66`** (one log line) — until it is answered, no slippage number in the UI means anything.
+3. **`P?-64` + `P?-65` together.** Same fix, same shape as slice 3b: point the window at
+   `ApplyRelationshipRequest`/`ApplyGroupRequest` and the single `CopierConfigFile`. Doing 64
+   without 65 leaves a UI that persists correctly and destroys the payload on the way.
+4. **MCP wrapper**, which is what makes 5 testable the way this repo prefers.
+5. **UI redesign**, on top of a UI that no longer loses or destroys config.
+6. Then `P3-31` ledger → timer → RiskGuard-side audit (`P3-30`'s remaining half), in that order.
+   **The ledger comes BEFORE the timer** — between `Submit` and `Accepted` an order is in neither
+   `Account.Orders` nor the cache, so a timer alone creates the second leg.
+
+`P1-57`, `P1-13`, and the `P2` band are real but none is naked-risk; schedule them after the above.
