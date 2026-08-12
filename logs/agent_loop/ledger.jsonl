@@ -170,3 +170,12 @@
 {"ts": "2026-08-10T06:17:48", "ticket": "SELFTEST", "verdict": "ESCALATED", "applied": false, "rounds": 1, "cost_usd": 0.0}
 {"ts": "2026-08-10T06:17:48", "ticket": "SELFTEST_EVIL", "verdict": "TICKET_REJECTED", "detail": "scripts/ninjatrader/addons/RiskGuardAddOnTests.cs matches protected pattern '*Tests.cs'"}
 {"ts": "2026-08-10T13:25:02", "mode": "review", "range": "HEAD~1..HEAD", "files": [".agent/skills/context_manager/SKILL.md", ".agent/skills/context_manager/scripts/memory_db.py", ".agent/skills/context_manager/scripts/seed_profile.py", ".agent/skills/context_manager/scripts/store_schema.py", ".github/copilot-instructions.md", "docs/README.md", "mcp/data_server.py", "scripts/skill_writer.py"], "panel_verdict": "REJECT", "panel_valid": true, "findings_total": 79, "findings_blocking": 30, "arbiter": "INVALID (upheld=0 rejected=0 out-of-scope=0)", "arbiter_upheld": 0, "artifacts": "C:\\Users\\vinay\\tvDownloadOHLC\\logs\\agent_loop\\review-HEAD_1_HEAD", "secs": 69.9}
+{"ts": "2026-08-11T12:03:24", "ticket": "CM1", "verdict": "IMPLEMENTER_UNREACHABLE", "applied": false, "rounds": 1, "cost_usd": 0.0, "gate": "implement"}
+{"ts": "2026-08-11T12:06:52", "ticket": "CM1", "verdict": "IMPLEMENTER_UNREACHABLE", "applied": false, "rounds": 1, "cost_usd": 0.0, "gate": "implement"}
+{"ts": "2026-08-11T12:15:33", "ticket": "CM1", "verdict": "ARBITER_SHIP", "applied": false, "rounds": 3, "cost_usd": 0.0, "gate": ["review", "test"]}
+{"ts": "2026-08-11T15:13:50", "ticket": "CM2", "verdict": "MAX_ROUNDS_EXHAUSTED", "applied": false, "rounds": 3, "cost_usd": 0.0, "gate": ["compile", "review", "test"]}
+{"ts": "2026-08-11T15:38:56", "ticket": "CM2", "verdict": "PANEL_UNREACHABLE", "applied": false, "rounds": 1, "cost_usd": 0.0, "gate": "review"}
+{"ts": "2026-08-11T16:00:35", "ticket": "CM2", "verdict": "PANEL_UNREACHABLE", "applied": false, "rounds": 2, "cost_usd": 0.0, "gate": ["review", "test"]}
+{"ts": "2026-08-11T16:14:12", "ticket": "CM2", "verdict": "IMPLEMENTER_UNREACHABLE", "applied": false, "rounds": 1, "cost_usd": 0.0, "gate": "implement"}
+{"ts": "2026-08-11T16:23:59", "ticket": "CM2", "verdict": "IMPLEMENTER_UNREACHABLE", "applied": false, "rounds": 1, "cost_usd": 0.0, "gate": "implement"}
+{"ts": "2026-08-11T16:51:44", "ticket": "CM2", "verdict": "NOT_CONVERGING", "applied": false, "rounds": 4, "cost_usd": 0.0, "gate": ["review", "test"]}
