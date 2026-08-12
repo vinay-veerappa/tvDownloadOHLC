@@ -1,13 +1,17 @@
 # RiskGuard / TradeCopier Hardening — Session Handover
 
-**Last updated**: 2026-08-11 (session 13 — **the copier RATIO CONVERTER, slice 1 of 3, is
-implemented and green but NOT deployed — §4w**. A feature, not a defect: no `P`-number, nothing
-closed. **Next work is either slice 2 (cross-instrument `1 MNQ -> 3 MES`) and slice 3 (making the
-table settable from disk and the bridge at all), or the still-open `P0-62` — §4a and §4w.**)
+**Last updated**: 2026-08-11 (session 15 — **the copier RATIO CONVERTER: slices 1, 3a and 3b are
+implemented and green, NONE of them deployed — §4w, §4x, §4y**. A feature, not a defect: no
+`P`-number, nothing closed. **Next work is slice 2 (cross-instrument `1 MNQ -> 3 MES`), the last
+slice of the converter, or the still-open `P0-62` — §4a and §4y.**)
 
-> ⚠️ **Session 13 touched NO defect.** The 62/49 counts below are unchanged and correct. Slice 1
-> is unit-tested and compiles; it has **never run on a live feed**, and the deployed build is
-> still session 12's `f174ba68`.
+> ⚠️ **Start at §4y**, then §4x, then §4w. This file accretes: §4x's "Still open" describes
+> slice 3b as a missing field list, which is **wrong** — see the correction block inside it.
+>
+> ⚠️ **Sessions 13, 14 and 15 touched NO defect.** The 62/49 counts below are unchanged and
+> correct. All three slices are unit-tested and build; **none has ever run on a live feed**, and
+> the deployed build is still session 12's `f174ba68`. The two `McpBridgeAddOn.cs` edits in
+> slice 3b have not even been through a compiler — that file is excluded from the test project.
 >
 > ⚠️ **Do not treat `ARBITER_SHIP` from the agent loop as a review on this addon.** Across four
 > SHIP rulings in session 13 the arbiter upheld **0 of 66 panel findings**, and on one plan the
@@ -2311,6 +2315,35 @@ That is what happened, and this section is the record of it.
   remembered subset, and the last thing between slice 1 and being settable from
   the UI. It is no longer a hand-edit — the loop's O53 fix means that file can be
   edited now.
+
+  > **Session 15 correction — this understates it, and "add the six fields" is
+  > the WRONG fix.** Three things found by reading the call path:
+  >
+  > 1. `UpsertGroup` (`TradeCopierEngine.cs:256`) and `UpsertRelationship`
+  >    (`:139`) **remove the existing object and add the new one wholesale**.
+  >    The bridge always constructs a *fresh* object, so every field the caller
+  >    omits reverts to its CLR/initialiser default and is then written to disk
+  >    by the `SaveToDisk` on the next line. A `set_group` carrying only
+  >    `{groupName, quantityRatio}` therefore **destroys** the stored
+  >    `PerTickerRatios`, `SizingMode`, `CustomSymbolMappings`, `StealthMode`
+  >    and `MaxSlippageTicks`. That is data loss, not a missing feature — and
+  >    completing the field list does not fix it, because the *next* omitted
+  >    field is destroyed just the same. The fix is **merge semantics**: apply
+  >    only the fields actually present in the request.
+  > 2. Slice 3a's alias map, `NormalizeConfigObject`, `RemoveUnknownEnums` and
+  >    `EnsureOrdinalIgnoreCase` are **local functions nested inside
+  >    `LoadFromDisk`** (`:766`–`:905`). Nothing else can reach them. That is
+  >    why the bridge hand-writes a field list: the machinery that would have
+  >    made it unnecessary is trapped one scope down. Lifting them to statics
+  >    removes the fourth remembered subset *structurally* rather than patching
+  >    it — [[fix-the-class-not-the-instance]].
+  > 3. `McpBridgeAddOn.cs` is `<Compile Remove>`d from `RiskGuardTests.csproj`
+  >    (WPF deps). Anything left in that file can only be pinned by source-text
+  >    regex, which is not evidence. The request→object mapping must move into
+  >    `TradeCopierEngine` to be *executed* by the harness.
+  >
+  > So slice 3b is: lift the machinery (green at baseline), then add a merge
+  > apply, then reduce the bridge to a call. Two regions, per the note below.
 * **Slice 2 — cross-instrument** (`1 MNQ -> 3 MES`), which must REPLACE slice 1's
   deliberate refusal. `P1-22`'s rule survives: a cross-instrument mapping records
   no slippage.
@@ -2325,3 +2358,115 @@ That is what happened, and this section is the record of it.
 * The `Program`-is-not-partial constraint **stands**: new tests still go into
   `RiskGuardAddOnTests.cs` and must be registered in `Main`, or they compile and
   run nothing. The CM2 tests are at the end of that file.
+
+---
+
+## 4y. Session 15 record — 2026-08-11: the copier ratio converter, slice 3b
+
+**Slice 3b is done.** Still a FEATURE, no `P`-number. Read §4x's "Session 15
+correction" block first — it says why "add the six missing fields" was the wrong
+fix and this is not what §4x originally scoped.
+
+### State
+
+`harden/riskguard-p0-51`, **unpushed**, on top of session 14's `1a210d7c`:
+
+| commit | what | suite |
+|---|---|---|
+| `373d34b4` | refactor: lift slice 3a's normalisation out of `LoadFromDisk` | 831 / 0 (unchanged) |
+| `622f760c` | CM3 acceptance tests + verbatim move of the bridge mapping | 851 / **21 FAILED** |
+| `33c0bfea` | the implementation: merge instead of rebuild | **889 / 0** |
+
+**Not deployed. Not compiled in NT8. Not live-validated.** `dotnet build` +
+suite only, exactly as slice 3a was left. Deploy per CLAUDE.md —
+`sync_nt8_strategies.py --verify --only addons`, then `--only addons`, then
+`nt_compile`. Do not hand-copy.
+
+> ⚠️ **`McpBridgeAddOn.cs` is `<Compile Remove>`d from `RiskGuardTests.csproj`,
+> so the two edits in that file have NEVER been through a compiler.** They are
+> three lines each and were read back, but `nt_compile` is the first real check.
+> Everything else in this slice is covered by the suite.
+
+### What changed
+
+The defect was not a short field list. `UpsertGroup`/`UpsertRelationship` remove
+the existing object and add the new one wholesale, the bridge always built a
+*fresh* object, and the next line is `SaveToDisk` — so a `set_group` carrying
+`{groupName, quantityRatio}` wrote initialiser defaults over the stored config:
+
+| field | stored | after a partial update, before this slice |
+|---|---|---|
+| `SizingMode` | `PerTickerMatrix` | `QuantityRatio` |
+| `PerTickerRatios` | 2 entries | 0 |
+| `CustomSymbolMappings` | 1 entry | 0 |
+| `MaxSlippageTicks` | 2.5 | 0 |
+| `MaxPositionSize` | 42 | 100 |
+| `StealthMode` | false | true |
+| `LeaderAccountName` | `Cm3Leader` | `Sim101` |
+| `FollowerAccounts` | `[Cm3Follower]` | `[]` |
+
+`ApplyGroupRequest`/`ApplyRelationshipRequest` now live on `TradeCopierEngine`,
+start from what is stored, and apply only the keys **present** in the request.
+The remembered subset is deleted, not extended — a fifth copy would have left
+the next omitted field just as destroyed.
+
+### Settled here — do not re-litigate
+
+* **An explicit `null` means "not specified", not "wipe it".** Json.NET's
+  default `NullValueHandling` *sets* the property to null, so a UI serialising
+  untouched fields as null would null the ratio matrix and hand a
+  `NullReferenceException` to whatever sizes the next fill.
+* **A malformed NUMBER fails closed AND atomically.** Session 14 settled the
+  first half. The merge runs against a defensive clone, so a request whose valid
+  field precedes a bad one applies *neither* — without the clone the group is
+  left in a state the caller never asked for and no longer knows about.
+* **A malformed ENUM falls back without sinking the rest of the request.** One
+  stale dropdown value must not refuse every edit sent alongside it.
+* **Arming still requires `confirmLive`; a request that never mentions
+  `armedForLive` leaves the stored value alone.** It has to — otherwise nudging
+  a ratio on a live group silently stops it copying, which is `P0-9`'s shape
+  from a new direction. An explicit `armedForLive:false` disarms without
+  confirmation; refusing to disarm is not a safe default. Because the gate is
+  decided in `ApplyArmingGate`, `Upsert*` is called with `confirmLive:true` so
+  it does not re-apply its own gate and undo the preserved value. **This is the
+  one decision in the slice that is a judgement call rather than a defect fix.**
+* **Two inert lines were deleted rather than kept** — re-asserting `GroupName`
+  and the relationship's account names after populate, where the lookup
+  fallbacks are byte-identical to the initialiser defaults. The
+  `EnsureOrdinalIgnoreCase` calls *look* equally inert (PopulateObject reuses the
+  initialiser's dictionary instance) but catch a **stored** null, which
+  `Upsert*` accepts, so they stay and are now covered on both sides.
+
+### Mutation testing found what the tests missed — again
+
+`scripts/ninjatrader/addons/mutation/mutate_cm3.py`, 11 mutants, **all killed**.
+Three survived the first draft of the CM3 tests and are the reason four more
+tests exist:
+
+* **the defensive clone could be removed** — the malformed-request test used a
+  request whose *only* field was malformed, so nothing could half-apply. Fixed
+  by putting a valid field in front of the bad one.
+* **unknown-enum stripping could be removed** — nothing sent a bad enum through
+  the *request* path at all (only the load path).
+* **the relationship's comparer guard could be removed** — the suite tested
+  only the group half of a guard that exists twice.
+
+Re-run it after any edit to `ApplyGroupRequest`/`ApplyRelationshipRequest`.
+[[mutation-testing-beats-review]] holds for a third time on this addon.
+
+### Known, deliberately not fixed
+
+`set_group`/`set` do **not** `LoadFromDisk` first, so the merge starts from
+in-memory state. `State.Configure` loads at startup and `SaveToDisk` runs on
+every write, so memory is authoritative — but a config file edited **externally
+while NT8 is running** will be overwritten by the next write, not merged with.
+Pre-existing, and reloading before every write has its own failure mode
+(discarding in-memory-only state), so it is left alone and recorded here.
+
+### Still open
+
+* **Slice 2 — cross-instrument** (`1 MNQ -> 3 MES`), which must REPLACE slice
+  1's deliberate refusal. `P1-22`'s rule survives: a cross-instrument mapping
+  records no slippage. This is now the last slice of the ratio converter.
+* **Deploy and live-validate slices 3a and 3b together.** Neither has run in
+  NT8. The bridge edits in particular have not been compiled.
