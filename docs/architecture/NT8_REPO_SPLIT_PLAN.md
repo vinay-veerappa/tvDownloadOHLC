@@ -143,9 +143,9 @@ from the HTTP handlers — **not** to accept an untested bridge. Same rule for
   between repos fixes no defect.** Do the migration as its own change, green before and after.
 * The `ninjatrader-mcp` repo's `nt8-addon/` copy. Once `nt8-mcp-bridge` exists, that directory
   should become a README pointing at it, or consume it as a submodule — decide then, not now.
-* `docs/archive/temp_repo` (146 MB vendored `tradingview/lightweight-charts`) and the two
-  `scripts/setup/copy_*.py` scripts that reference a **`temp_repo/` path which no longer exists**.
-  Unrelated cleanup, recorded so it is not lost.
+* `docs/archive/temp_repo` (146 MB vendored `tradingview/lightweight-charts`). Unrelated cleanup,
+  recorded so it is not lost. **The dead `scripts/setup/` cluster that referenced it was deleted
+  2026-08-12** — see that commit; 31 one-shot scripts against a UI that no longer exists.
 
 ## 8. Sequencing
 
