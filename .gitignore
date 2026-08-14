@@ -106,7 +106,6 @@ scripts/trading_framework/research.db
 scripts/trading_framework/research_optuna.db
 
 # Standalone MCP repositories
-tos-ui-mcp/
 .tos_web_profile/
 
 .env

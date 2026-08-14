@@ -34,7 +34,6 @@ from scripts.streaming.options.config import HUB_URL
 from scripts.streaming.options.gex_calculator import calculate_tos_expected_move
 from scripts.streaming.options.tos_rtd.adapter import TOSRTDAdapter, RTDConfig
 from scripts.streaming.options.tos_rtd.quote_types import QuoteType
-from scripts.market_data.tos_web_ui_extractor import extract_tos_ui_expected_moves
 from scripts.market_data.schwab_options_utils import (
     find_expiration_key,
     first_contracts_for_expiration,

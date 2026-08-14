@@ -1,5 +1,9 @@
 """
 Extract Expected Values / Expected Moves from TOS for ES, NQ, SPX, SPY, QQQ, DIA, IWM.
+
+Uses the tos-ui-mcp submodule's web extractor (tos_ui_mcp.extractor) which provides
+login automation, paperMoneyAr mode switching, and the parse_page_expected_moves
+function. The submodule must be initialised: `git submodule update --init tos-ui-mcp`.
 """
 
 import asyncio
@@ -14,7 +18,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.market_data.tos_web_ui_extractor import parse_page_expected_moves, PROFILE_DIR
+# The tos-ui-mcp submodule provides the maintained web extractor.
+TOS_UI_MCP = REPO_ROOT / "tos-ui-mcp"
+if str(TOS_UI_MCP) not in sys.path:
+    sys.path.insert(0, str(TOS_UI_MCP))
+
+from tos_ui_mcp.extractor import extract_tos_ui_expected_moves
 from playwright.async_api import async_playwright
 
 TICKERS = ["ES", "NQ", "SPX", "SPY", "QQQ", "DIA", "IWM"]
@@ -28,67 +37,14 @@ async def extract_all_tos_values():
     print(f" Tickers: {', '.join(TICKERS)}")
     print(f"==================================================")
 
+    # Use the tos-ui-mcp extractor directly -- it handles login, profile, and parsing
+    data = await extract_tos_ui_expected_moves(tickers=TICKERS, headless=True, save_json=False)
+
     results = {
         "extracted_at": datetime.now().isoformat(),
         "extracted_at_formatted": timestamp_str,
-        "tickers": {}
+        "tickers": data.get("tickers", {})
     }
-
-    if not PROFILE_DIR.exists():
-        print(f"Error: Profile directory {PROFILE_DIR} does not exist.")
-        return results
-
-    async with async_playwright() as p:
-        print(f"[TOS-Extract] Launching browser context using profile: {PROFILE_DIR}")
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
-            headless=True,
-            viewport={"width": 1400, "height": 900},
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-        )
-
-        page = context.pages[0] if context.pages else await context.new_page()
-
-        for symbol in TICKERS:
-            url_sym = symbol if symbol.startswith("/") else f"/{symbol}" if symbol in ["ES", "NQ"] else symbol
-            clean_sym = symbol.upper()
-            url = f"https://trade.thinkorswim.com/trade?symbol={url_sym}"
-            print(f"[TOS-Extract] Fetching {clean_sym} ({url})...")
-
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                await asyncio.sleep(4.0)
-
-                series = await parse_page_expected_moves(page)
-                
-                # Also try searching for price
-                spot_price = None
-                try:
-                    price_el = await page.query_selector("[data-test-id*='last-price'], .last-price, span[class*='price']")
-                    if price_el:
-                        txt = await price_el.inner_text()
-                        txt_clean = txt.replace(",", "").replace("$", "").strip()
-                        spot_price = float(txt_clean)
-                except Exception:
-                    pass
-
-                results["tickers"][clean_sym] = {
-                    "symbol": clean_sym,
-                    "spot_price": spot_price,
-                    "series_count": len(series),
-                    "expirations": series
-                }
-                print(f"  -> {clean_sym}: Found {len(series)} expirations.")
-
-            except Exception as e:
-                print(f"  -> {clean_sym}: Error: {e}")
-                results["tickers"][clean_sym] = {
-                    "symbol": clean_sym,
-                    "error": str(e),
-                    "expirations": []
-                }
-
-        await context.close()
 
     # Save JSON
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +61,7 @@ async def extract_all_tos_values():
 
     for sym in TICKERS:
         tdata = results["tickers"].get(sym, {})
-        spot = f"${tdata.get('spot_price'):,.2f}" if tdata.get("spot_price") else "N/A"
+        spot = f"${tdata.get('spot_price'):,.2f}" if tdata.get('spot_price') else "N/A"
         exps = tdata.get("expirations", [])
         if exps:
             front = exps[0]

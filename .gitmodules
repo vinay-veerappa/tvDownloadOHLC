@@ -27,3 +27,6 @@
 	path = docs/archive/temp_repo
 	url = https://github.com/tradingview/lightweight-charts.git
 	branch = master
+[submodule "tos-ui-mcp"]
+	path = tos-ui-mcp
+	url = https://github.com/vinay-veerappa/tos-ui-mcp.git
