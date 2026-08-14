@@ -29,6 +29,8 @@ This central catalog documents all strategies, hunters, and statistical models i
 
 | Strategy | Standard | Location | Status |
 | :--- | :--- | :--- | :--- |
+| **5m MTF IFVG + CISD** | **ADR-017 / ADR-020** | `scripts/strategies/ifvg_cisd/core/` | **Vectorized ✅ (PF 1.44 / 10-Yr)** |
+| **Institutional VWAP Suite** | **ADR-017 / ADR-020** | `scripts/strategies/vwap_reclaim/core/` | **Vectorized ✅ (ORB/Quarters)** |
 | **Bandits 80/20 Sub-Grid**| **ADR-017 / NT8** | `scripts/research/validate_8020_subgrids.py` | **Production NT8 / Vectorized ✅** |
 | **IB Pullback (ICT FVG)** | **ADR-017** | `scripts/strategies/initial_balance/core/` | **Vectorized ✅** |
 | **Box Reversion (False Break)**| **ADR-017** | `scripts/strategies/reversal/core/` | **Vectorized ✅** |
@@ -40,7 +42,17 @@ This central catalog documents all strategies, hunters, and statistical models i
 
 ---
 
-## 🧩 4. ICT Suite (Layer 4)
+## 🧩 4. Price Action & Microstructure Engines (Layer 3/4)
+
+| Library / Module | Standard | Location | Capabilities |
+| :--- | :--- | :--- | :--- |
+| **Price Action Suite** | **ADR-009 / ADR-020** | `scripts/libs_py/price_action/` | Break & Retest, Level Rejections, Al Brooks H2/L2 |
+| **Leading Volatility** | **ADR-009** | `scripts/libs_py/price_action/volatility_leading.py` | Kaufman ER, TTM Squeeze, Bar Overlap |
+| **Surgical Anti-Chop** | **ADR-009** | `scripts/libs_py/price_action/volatility_leading.py` | Candle Color Alternation, EMA Cross Ping-Pong |
+
+---
+
+## 🧩 5. ICT Suite (Layer 4)
 
 | Strategy | Standard | Location | Status |
 | :--- | :--- | :--- | :--- |
@@ -49,7 +61,7 @@ This central catalog documents all strategies, hunters, and statistical models i
 | **ICT FVG Rejection** | **ADR-017** | `scripts/strategies/ict/strategies/ict_fvg_rejection.py` | **Vectorized ✅** |
 | **ICT NY Session KZ** | **ADR-017** | `scripts/strategies/ict/strategies/ict_ny_session.py` | **Vectorized ✅** |
 | **ICT Asia Volatility** | **ADR-017** | `scripts/strategies/ict/strategies/ict_asia_volatility.py` | **Vectorized ✅** |
-| **FVG+CISD Rejection** | **ADR-017** | `scripts/strategies/ict/strategies/ict_fvg_cisd_rejection.py` | **🚧 In Progress** |
+| **FVG+CISD Rejection** | **ADR-017** | `scripts/strategies/ict/strategies/ict_fvg_cisd_rejection.py` | **Vectorized ✅** |
 
 > **FVG+CISD Rejection Spec**: `docs/strategies/fvg_cisd_rejection/FVG_CISD_REJECTION_STRATEGY.md`
 > Multi-arm sweep testing HTF FVG draw → rejection-leg LTF FVG → CISD + MSS confirmation → entry.
