@@ -1,7 +1,7 @@
 # NinjaTrader 8 Model Context Protocol (MCP) — Architecture & Feature Specification
 
 > **Version**: 1.5.0  
-> **Status**: Production Shipped Architecture & 50-Tool Specification  
+> **Status**: Production Shipped Architecture & 52-Tool Specification  
 > **Target Audience**: Engineering Team, Quant Researchers, & External Reviewers
 
 ---
@@ -22,7 +22,7 @@ The **NinjaTrader MCP Bridge** provides a standardized [Model Context Protocol (
 +------------------------+                        +-------------------------------------------------+
 |  nt-mcp-server.js      |                        |  NinjaTrader Unified Hub (ninjatrader_hub.py)   |
 |  (Node.js MCP Relay)   |                        |  FastAPI + WebSockets: http://127.0.0.1:7891    |
-|  50 Tool RPC Registry  |                        |  Local Broadcast Bus: ws://127.0.0.1:7891/ws    |
+|  52 Tool RPC Registry  |                        |  Local Broadcast Bus: ws://127.0.0.1:7891/ws    |
 +------------------------+                        +-------------------------------------------------+
        ^                                                            |
        | Stdio JSON-RPC                                             +---> Discord Notifier Spoke
@@ -89,7 +89,7 @@ The **NinjaTrader Unified Hub** ([scripts/streaming/ninjatrader_hub.py](file:///
 
 ---
 
-## 4. Complete 50-Tool Reference (Phases 1–8 Shipped)
+## 4. Complete 52-Tool Reference (Phases 1–8 Shipped)
 
 ### Phase 1 — Account Management, Live Trading & Quotes
 | Tool Name | Endpoint | Description |
@@ -180,20 +180,29 @@ The **NinjaTrader Unified Hub** ([scripts/streaming/ninjatrader_hub.py](file:///
 
 ## 11. Test Harness
 
-The bridge is covered by two test suites. Run both after modifying AddOn source (`DynamicAtmManager.cs`, `McpBridgeAddOn.cs`, `RiskGuardAddOn.cs`, `TradeCopierEngine.cs`) or the mock/stub layer.
+The bridge is covered by three test suites. The C# harness and JS tests run in CI on every push; the Python integration tests run live against the NT8 box.
 
-### C# Unit Tests — `ninjatrader-addon\RiskGuardTests.csproj`
+### C# Test Harness — `nt8-mcp-bridge/tests/BridgeTests.csproj`
 
-Pure-logic tests with NT8 runtime types stubbed under `#if TESTING` (`TestingStubs.cs` + mocks in `RiskGuardAddOnTests.cs`). No NinjaTrader assembly required.
+Source-text and executed tests covering P2-38 (no name-based sim classification), P1-90 (account resolver refuses rather than guessing), P1-97 (order action resolution from position), P0-104 (emergency flatten cancel set), P1-106 (lockout gate admits exits), P3-34 (copier mode), and the vendored-core presence check. Extracted logic (BridgeAccountResolver, BridgeLockoutGate, BridgeFlattenPlan, BridgeOrderAction, CopierEnforcementView) is executed; McpBridgeAddOn.cs is source-asserted (P2-27).
 
 ```powershell
-dotnet build ninjatrader-addon\RiskGuardTests.csproj
-dotnet run --project ninjatrader-addon\RiskGuardTests.csproj --no-build
+dotnet run --project tests/BridgeTests.csproj    # 133 tests, 0 failures
 ```
 
-**323 tests** covering RiskGuard FSM/lockout/sizing, TradeCopier hedging/reconciliation, and the **DynamicAtmManager** bracket engine (20 ATM tests: 8-strategy math, OCO wiring, bracket registration, breakeven logic, profile fallback, rejected-exit `partial_submit`, quantity caps). ATR/swing tests inject deterministic bars via `BarsRequest.TestBarsFactory`.
+### JS Schema Tests — `nt8-mcp-bridge/mcp/tests/`
 
-### Python Integration Tests — `tests\test_risk_guard_integration.py`
+Pins the MCP wrapper's tool schemas against the addon's actual behaviour. P1-91 (no schema defaults that supply arguments the caller never sent), P1-72 (the copier action enum names only actions the addon accepts — reads `addons/McpBridgeAddOn.cs` directly), P3-34 (copier mode), and the request builder for `nt_copier_config` (P1-73 merge semantics).
+
+```bash
+cd mcp && node --test    # 43 tests, 0 dependencies, node:test
+```
+
+### Core Test Suite — `nt8-riskguard/tests/RiskGuardTests.csproj`
+
+1436 tests covering RiskGuard FSM/lockout/sizing, TradeCopier hedging/reconciliation, and the DynamicAtmManager bracket engine. See [nt8-riskguard](https://github.com/vinay-veerappa/nt8-riskguard).
+
+### Python Integration Tests — `tests/test_risk_guard_integration.py`
 
 Live HTTP tests against the running bridge (requires NT8 + McpBridge AddOn). Auth: `Authorization: Bearer <NT8_MCP_TOKEN>` (token from env or `.mcp.json`).
 
