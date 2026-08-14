@@ -63,16 +63,33 @@ STRATEGIES_SRC_DIRS = [
 # Shared source dir — classes used by both strategies and indicators
 SHARED_SRC = NT8_SRC / "shared"
 
-# Indicator source dirs — all subfolders sync to a single flat NT8 Indicators/
-INDICATOR_SRC_DIRS = [
-    ("vinay",        NT8_SRC / "indicators" / "vinay"),
-    ("redtail",      NT8_SRC / "indicators" / "redtail"),
-    ("third_party",  NT8_SRC / "indicators" / "third_party"),
-]
-
 NT8_HOME = Path(os.environ.get("USERPROFILE", "")) / "Documents" / "NinjaTrader 8" / "bin" / "Custom"
 STRATEGIES_DST = NT8_HOME / "Strategies" / "Vinay"  # NT8 expects this folder name
-INDICATORS_DST = NT8_HOME / "Indicators"
+INDICATORS_ROOT = NT8_HOME / "Indicators"
+
+# Indicator source dirs, each with its OWN destination subfolder.
+#
+# ⚠️ THIS USED TO BE A FLAT `Indicators/` FOR ALL OF THEM, AND IT WAS AN ARMED TRAP.
+# Measured 2026-08-14: all 23 repo indicators are already deployed, byte-identical, at
+# `Indicators/Vinay/` (9) and `Indicators/RedTail/` (14) — put there by hand, in the same
+# per-vendor style as the other eleven subfolders NT8 already has (LuxAlgo2/, BTMM/, Gemify/…).
+# The tool looked only at top-level `Indicators/*.cs`, found nothing, and reported all 23 as
+# needing deployment. Running it WITHOUT --verify would have copied every one into
+# `Indicators/`, next to the identical copy already in its subfolder.
+#
+# That is 23 duplicate class definitions. The measured consequence of exactly two such copies
+# (RiskManagerBase.cs, earlier the same day) was one CS0101 followed by 496 x CS0229 — which
+# fails the compile of the ENTIRE NT8 Custom assembly, so EVERY addon stops loading, RiskGuard
+# included. NT8 then keeps serving the last good assembly, so nt_health reads healthy and the
+# only symptom is a deploy that has no effect.
+#
+# So the destination is now per-source, matching where the files actually live. Strategies were
+# always right (Strategies/Vinay/); only the indicator half was flat.
+INDICATOR_SRC_DIRS = [
+    ("vinay",        NT8_SRC / "indicators" / "vinay",       INDICATORS_ROOT / "Vinay"),
+    ("redtail",      NT8_SRC / "indicators" / "redtail",     INDICATORS_ROOT / "RedTail"),
+    ("third_party",  NT8_SRC / "indicators" / "third_party", INDICATORS_ROOT / "ThirdParty"),
+]
 
 
 def file_hash(path: Path) -> str:
@@ -129,6 +146,11 @@ def sync_dir(src_dir: Path, dst_dir: Path, label: str, dry_run: bool = False, ve
                     print(f"  [COPIED]  {src_file.name}  (new file)")
                 else:
                     print(f"  [DRY-RUN] {src_file.name}  (would copy — new file)")
+            else:
+                # These were counted in the summary as "differ" and printed NOWHERE, so
+                # --verify reported 23 files it never named and the only way to learn which
+                # was to reimplement the comparison by hand. A count is not a report.
+                print(f"  [MISSING] {src_file.name}  (in repo, NOT in NT8)")
             continue
 
         # Compare hashes
@@ -211,33 +233,51 @@ def main():
             all_strategy_src_names.update(f.name for f in SHARED_SRC.glob("*.cs"))
             print()
 
-    # ── Indicator files: all subfolders -> NT8 Indicators/ ──
-    # NT8 compiles all .cs in Indicators/ together. All indicator subfolders
-    # (vinay/, redtail/, third_party/) sync to the same flat Indicators/ folder.
+    # ── Indicator files: each source subfolder -> its OWN NT8 Indicators/<Name>/ ──
+    # NT8 compiles every .cs under Indicators/ recursively, so the subfolder is organisation,
+    # not scoping — which is exactly why a second copy in a DIFFERENT folder still collides.
+    # See INDICATOR_SRC_DIRS for what a flat destination did here.
     all_indicator_src_names = set()
+    indicator_dsts = []
     if "indicators" in scopes:
-        for label, src_dir in INDICATOR_SRC_DIRS:
+        for label, src_dir, dst_dir in INDICATOR_SRC_DIRS:
             if not src_dir.exists():
                 continue
-            print(f"[Indicators/{label}/] {src_dir} -> {INDICATORS_DST}")
-            r = sync_dir(src_dir, INDICATORS_DST, label, args.dry_run, args.verify)
+            print(f"[Indicators/{label}/] {src_dir} -> {dst_dir}")
+            r = sync_dir(src_dir, dst_dir, label, args.dry_run, args.verify)
             all_results.append(("Indicators/" + label, r))
             all_indicator_src_names.update(f.name for f in src_dir.glob("*.cs"))
-            print()
+            indicator_dsts.append(dst_dir)
             print()
 
     # ── Orphan detection (aggregate): files in NT8 but not in ANY source ──
     # Only meaningful for areas actually scanned this run; a scoped-out area has
     # an empty source set, which would report every deployed file as an orphan.
+    # ⚠️ Compared CASE-INSENSITIVELY. Windows resolves `EMAPullbackBot.cs` and
+    # `EMAPullBackBot.cs` to the SAME file, so an exact-name set difference reported the
+    # deployed copy as an orphan on the line after reporting it [OK] — one file, two verdicts.
+    def lower(names):
+        return {n.lower() for n in names}
+
     strategy_orphans = []
     if "strategies" in scopes and STRATEGIES_DST.exists():
-        dst_names = set(f.name for f in STRATEGIES_DST.glob("*.cs"))
-        strategy_orphans = sorted(dst_names - all_strategy_src_names)
+        src_lower = lower(all_strategy_src_names)
+        strategy_orphans = sorted(f.name for f in STRATEGIES_DST.glob("*.cs")
+                                  if f.name.lower() not in src_lower)
 
+    # Only the folders this tool OWNS. The other eleven subfolders under Indicators/ are
+    # vendor packs (LuxAlgo2/, BTMM/, Gemify/…) and the 210 files at top level are NT8's own
+    # samples plus hand-installed third-party indicators — none of it is repo-owned, so
+    # calling it "orphaned" would be noise that trains you to ignore the list.
     indicator_orphans = []
-    if "indicators" in scopes and INDICATORS_DST.exists():
-        ind_dst_names = set(f.name for f in INDICATORS_DST.glob("*.cs"))
-        indicator_orphans = sorted(ind_dst_names - all_indicator_src_names)
+    if "indicators" in scopes:
+        src_lower = lower(all_indicator_src_names)
+        for dst_dir in indicator_dsts:
+            if not dst_dir.exists():
+                continue
+            indicator_orphans.extend(
+                f"{dst_dir.name}/{f.name}" for f in sorted(dst_dir.glob("*.cs"))
+                if f.name.lower() not in src_lower)
 
     # ── Summary ──
     print()
@@ -248,12 +288,21 @@ def main():
     total_drift = total_synced + total_copied
     total_orphans = len(strategy_orphans) + len(indicator_orphans)
 
+    # ⚠️ The summary used to say "N file(s) differ" for a total that is `synced + missing_dst`.
+    # In --verify nothing syncs, so every one of them was actually MISSING FROM NT8 — a
+    # different fact with a different fix, described by a word that means neither.
+    verify_exit = 0
     if args.verify:
         if total_drift == 0:
             print(f"  ALL IN SYNC ({total_identical} files identical, {total_orphans} orphan(s) in NT8)")
         else:
-            print(f"  DRIFT DETECTED: {total_drift} file(s) differ, {total_identical} identical, {total_orphans} orphan(s)")
-            sys.exit(1)
+            print(f"  DRIFT DETECTED: {total_copied} missing from NT8, {total_synced} content-differs, "
+                  f"{total_identical} identical, {total_orphans} orphan(s)")
+            # ⚠️ sys.exit(1) USED TO BE HERE, above the orphan block below — so the list was
+            # unreachable whenever there was drift, and 23 permanently-missing files guaranteed
+            # drift on every run. The tool announced "212 orphan(s)" and exited before naming
+            # one, for as long as it has existed. Exit AFTER the report, never before it.
+            verify_exit = 1
     else:
         if args.dry_run:
             print(f"  DRY-RUN: {total_drift} file(s) would be synced, {total_identical} already identical")
@@ -261,13 +310,15 @@ def main():
             print(f"  DONE: {total_synced} synced, {total_copied} copied (new), {total_identical} already identical")
 
     if total_orphans > 0:
-        print(f"  Orphan files in NT8 (not in repo source):")
+        print(f"  Orphan files in NT8 (in a folder this tool owns, but not in repo source):")
         for name in strategy_orphans:
             print(f"    Strategies/Vinay/{name}")
         for name in indicator_orphans:
             print(f"    Indicators/{name}")
 
     print("=" * 70)
+    if verify_exit:
+        sys.exit(verify_exit)
 
 
 if __name__ == "__main__":
