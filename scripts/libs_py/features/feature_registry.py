@@ -34,6 +34,8 @@ _DEPENDENCIES: dict[str, list[str]] = {
     "atr":              [],
     "vwap":             ["atr"],
     "ib":               [],           # only needs trading_date + is_rth
+    "orb_bias":         [],           # 09:30 1m opening range breakout bias
+    "quarterly_cycles": [],           # Pack Quarterly Theory & 90-min sessions
     "internals":        [],
     "chop":             ["internals", "vwap"],
     "ema":              [],
@@ -51,18 +53,20 @@ _DEPENDENCIES: dict[str, list[str]] = {
 # Used by ensure_features() to detect whether a group has already been run.
 
 _GROUP_SENTINEL: dict[str, str] = {
-    "atr":        "atr_14",
-    "vwap":       "vwap",
-    "ib":         "ib_high",
-    "internals":  "tick_persistence",
-    "chop":       "chop_score",
-    "ema":        "ema_9",
-    "bollinger":  "bb_mid",
-    "keltner":    "kc_mid",
-    "acceptance": "level_state",
-    "auction":    "fast_move_detected",
-    "context":    "vix_regime",
-    "session":    "session_block",
+    "atr":              "atr_14",
+    "vwap":             "vwap",
+    "ib":               "ib_high",
+    "orb_bias":         "orb_1m_bias",
+    "quarterly_cycles": "quarter_90m",
+    "internals":        "tick_persistence",
+    "chop":             "chop_score",
+    "ema":              "ema_9",
+    "bollinger":        "bb_mid",
+    "keltner":          "kc_mid",
+    "acceptance":       "level_state",
+    "auction":          "fast_move_detected",
+    "context":          "vix_regime",
+    "session":          "session_block",
 }
 
 # Convenience map: individual feature name → group name
@@ -93,6 +97,23 @@ _FEATURE_TO_GROUP: dict[str, str] = {
     "ib_ext_dn_100":        "ib",
     "ib_formed":            "ib",
     "price_vs_ib":          "ib",
+    # ORB Bias family
+    "orb_1m_high":          "orb_bias",
+    "orb_1m_low":           "orb_bias",
+    "orb_1m_width":         "orb_bias",
+    "orb_1m_confirmed_up":  "orb_bias",
+    "orb_1m_confirmed_dn":  "orb_bias",
+    "orb_1m_bias":          "orb_bias",
+    "orb_1m_formed":        "orb_bias",
+    # Quarterly Cycles family
+    "quarter_90m":          "quarterly_cycles",
+    "is_quarterly_expansion_window": "quarterly_cycles",
+    "is_quarterly_consolidation_window": "quarterly_cycles",
+    "hour_quarter":         "quarterly_cycles",
+    "is_05_box":            "quarterly_cycles",
+    "hour_box05_high":      "quarterly_cycles",
+    "hour_box05_low":       "quarterly_cycles",
+    "q1_sweep_retreat":     "quarterly_cycles",
     # Internals family
     "vold":                 "internals",
     "tick_abs":             "internals",
@@ -366,6 +387,12 @@ class FeatureRegistry:
             if group == "ib":
                 from scripts.libs_py.features.initial_balance import compute_initial_balance
                 return compute_initial_balance
+            if group == "orb_bias":
+                from scripts.libs_py.features.orb_bias import compute_orb_bias
+                return compute_orb_bias
+            if group == "quarterly_cycles":
+                from scripts.libs_py.features.quarterly_cycles import compute_quarterly_cycles
+                return compute_quarterly_cycles
             if group == "internals":
                 from scripts.libs_py.features.internals import compute_internals_features
                 return compute_internals_features

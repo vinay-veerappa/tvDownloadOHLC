@@ -65,6 +65,16 @@ def run_validation(symbol: str = "NQ1"):
             "params": {"model_mode": "all", "sl_atr_mult": 1.8, "tp1_r_mult": 1.0, "tp2_r_mult": 2.5, "filter_lunch": True},
             "move_be": True,
         },
+        {
+            "name": "6. 09:30 ORB Confirmed Bias + Retest [Cover the Queen]",
+            "params": {"model_mode": "retest", "sl_atr_mult": 1.8, "tp1_r_mult": 1.0, "tp2_r_mult": 2.5, "use_orb_bias": True, "filter_lunch": True},
+            "move_be": False,
+        },
+        {
+            "name": "7. 09:30 ORB Bias + Q1/Q3 Quarterly Cycles [Cover the Queen + 1/Day]",
+            "params": {"model_mode": "retest", "sl_atr_mult": 1.8, "tp1_r_mult": 1.0, "tp2_r_mult": 2.5, "use_orb_bias": True, "use_quarterly_cycles": True, "max_trades_day": 1, "filter_lunch": False},
+            "move_be": False,
+        },
     ]
 
     report_rows = []

@@ -27,6 +27,8 @@ if _current_dir.name == "scripts":
 
 from scripts.libs_py.data.resampler import resample_ohlcv, add_resampled_columns
 from scripts.libs_py.ict_engine import detect_swings, detect_cisd
+from scripts.libs_py.features.orb_bias import compute_orb_bias
+from scripts.libs_py.features.quarterly_cycles import compute_quarterly_cycles
 
 
 class VWAPInstitutionalStrategy:
@@ -65,7 +67,15 @@ class VWAPInstitutionalStrategy:
         min_retest_adx = float(p.get("min_retest_adx", 18.0))
         max_fade_adx = float(p.get("max_fade_adx", 22.0))
         filter_lunch = bool(p.get("filter_lunch", True))
+        use_orb_bias = bool(p.get("use_orb_bias", False))
+        use_quarterly_cycles = bool(p.get("use_quarterly_cycles", False))
         max_trades_day = int(p.get("max_trades_day", 2))
+
+        # ── Compute Optional Confluence Feature Modules ──
+        if use_orb_bias:
+            df = compute_orb_bias(df)
+        if use_quarterly_cycles:
+            df = compute_quarterly_cycles(df)
 
         # ── 1. Calculate 1m Base VWAP & Standard Deviation Bands ──
         date_key = df.index.normalize()
@@ -147,6 +157,9 @@ class VWAPInstitutionalStrategy:
         else:
             in_session = (t >= time(9, 45)) & (t <= time(15, 30))
 
+        if use_quarterly_cycles and "is_quarterly_expansion_window" in df.columns:
+            in_session = in_session & df["is_quarterly_expansion_window"]
+
         # ── 6. Signal Model Generation ──
         # Model 1: Dynamic Retest (Trend Pullback)
         is_bull_trend = (df["5m_adx"] >= min_retest_adx) & (df["close"] > df["5m_sma50"]) & (df["vwap"] > df["5m_sma50"])
@@ -165,6 +178,13 @@ class VWAPInstitutionalStrategy:
         # Model 3: ICT Liquidity Sweep Reclaim (CISD Shift at VWAP)
         sweep_long = in_session & (df["cisd"] == 1) & (df["close"] > df["vwap"]) & (df["low"] <= df["vwap"])
         sweep_short = in_session & (df["cisd"] == -1) & (df["close"] < df["vwap"]) & (df["high"] >= df["vwap"])
+
+        # Apply 09:30 1m ORB Directional Bias Gate
+        if use_orb_bias and "orb_1m_bias" in df.columns:
+            retest_long = retest_long & (df["orb_1m_bias"] == 1)
+            retest_short = retest_short & (df["orb_1m_bias"] == -1)
+            sweep_long = sweep_long & (df["orb_1m_bias"] == 1)
+            sweep_short = sweep_short & (df["orb_1m_bias"] == -1)
 
         # ── 7. Dispatch Selected Models ──
         sig_records = []
