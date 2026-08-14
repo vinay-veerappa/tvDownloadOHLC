@@ -3140,42 +3140,27 @@ def get_intermarket_quotes() -> dict:
     if not _is_schwab_hub_reachable():
         log.debug("[intermarket] Schwab hub (127.0.0.1:8080) not reachable — using yfinance fallback")
     else:
-        # Schwab fetch
-        client = None
-        try:
-            from schwab.auth import easy_client
-            import json
-            secrets_path = REPO_ROOT / "secrets.json"
-            token_path = REPO_ROOT / "token.json"
-            if secrets_path.exists() and token_path.exists():
-                with open(secrets_path, "r") as f:
-                    secrets = json.load(f)
-                client = easy_client(
-                    api_key=secrets["app_key"],
-                    app_secret=secrets["app_secret"],
-                    callback_url='https://127.0.0.1:8182',
-                    token_path=str(token_path),
-                    enforce_enums=False
-                )
-        except Exception as e:
-            log.debug("[intermarket] Schwab auth failed: %s", e)
-            client = None
-
-        # We only know Schwab tickers for VIX/VVIX that work well with get_quote currently
+        # Fetch from Schwab Hub proxy
+        import requests
         schwab_map = {"vix": "$VIX", "vvix": "$VVIX"}
-        if client:
-            for key, sym in schwab_map.items():
-                try:
-                    resp = client.get_quote(sym)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        if sym in data:
-                            q = data[sym].get("quote", {})
+        for key, sym in schwab_map.items():
+            try:
+                resp = requests.post(
+                    "http://127.0.0.1:8080/request",
+                    json={"method": "get_quote", "params": {"symbol_id": sym}},
+                    timeout=2.0,
+                )
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    if payload.get("status") == "success":
+                        quote_data = payload.get("data", {})
+                        if sym in quote_data:
+                            q = quote_data[sym].get("quote", {})
                             if "lastPrice" in q:
                                 quotes[key]["price"] = q["lastPrice"]
                                 quotes[key]["change"] = q.get("netChange", 0.0)
-                except Exception as e:
-                    log.debug("[intermarket] Schwab quote %s failed: %s", sym, e)
+            except Exception as e:
+                log.debug("[intermarket] Schwab hub quote %s failed: %s", sym, e)
 
     # Fallback to yfinance for missing
     yf_map = {

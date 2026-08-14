@@ -104,6 +104,8 @@ class SchwabDevProvider(SchwabHubProvider):
         translations = {
             "get_option_chain": "option_chains",
             "get_quotes": "quotes",
+            "get_quote": "quote",
+            "quote": "quote",
             "get_price_history": "price_history",
             "get_account_numbers": "linked_accounts",
             "get_market_hours": "market_hours"
@@ -114,11 +116,17 @@ class SchwabDevProvider(SchwabHubProvider):
         # Generic Parameter translation (snake_case -> camelCase for schwabdev)
         final_params = {}
         
-        # Special translations for date parameters in price_history
+        # Special translations for date parameters in price_history and quote/option_chains
         param_translation_map = {
             "start_datetime": "startDate",
-            "end_datetime": "endDate"
+            "end_datetime": "endDate",
         }
+        if target_method == "quote":
+            param_translation_map["symbol"] = "symbol_id"
+            param_translation_map["symbol_id"] = "symbol_id"
+        elif target_method == "option_chains":
+            param_translation_map["symbol_id"] = "symbol"
+            param_translation_map["symbol"] = "symbol"
 
         for k, v in params.items():
             if k in param_translation_map:

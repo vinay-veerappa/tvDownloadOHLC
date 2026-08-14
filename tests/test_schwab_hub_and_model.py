@@ -174,9 +174,10 @@ class TestUnifiedDefaultModel:
         from scripts.trader import trader_narrative
         from scripts.trader.config_loader import get_llm_config
         cfg = get_llm_config()
-        assert trader_narrative.DEFAULT_MODEL == cfg["default_model"], (
+        expected = cfg.get("default_trader_model") or cfg["default_model"]
+        assert trader_narrative.DEFAULT_MODEL == expected, (
             f"trader_narrative.DEFAULT_MODEL={trader_narrative.DEFAULT_MODEL!r} "
-            f"!= config default_model={cfg['default_model']!r}"
+            f"!= config expected={expected!r}"
         )
 
     def test_fallback_model_also_unified(self) -> None:

@@ -1917,7 +1917,12 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         sys.exit(1)
 
     tz = ZoneInfo(SCHEDULE_TIMEZONE)
-    scheduler = BlockingScheduler(timezone=tz)  # type: ignore[call-arg]
+    job_defaults = {
+        "misfire_grace_time": SCHEDULER_MISFIRE_GRACE_TIME,
+        "coalesce": True,
+        "max_instances": 1,
+    }
+    scheduler = BlockingScheduler(timezone=tz, job_defaults=job_defaults)
 
     if not narratives_only:
         # Deduplicate schedule times to prevent double-firing (e.g. duplicate
@@ -1950,7 +1955,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
                 trigger=CronTrigger(hour=hour, minute=minute, timezone=tz),
                 id=f"dealer_levels_{time_str.replace(':', '')}",
                 replace_existing=True,
-                misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,   # allow for delayed execution before skipping
+                misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+                coalesce=True,
             )
             log.info("Scheduled Options Run: %s ET", time_str)
     else:
@@ -1974,7 +1980,7 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         hour, minute = map(int, time_str.split(":"))
         return hour, minute
 
-    def _run_subprocess(args: list[str], label: str) -> None:
+    def _run_subprocess(args: list[str], label: str, timeout: int = 600) -> None:
         if not _is_trading_day():
             log.info("Non-trading day — skipping %s.", label)
             return
@@ -1984,15 +1990,21 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
             # does not block the apscheduler thread pool or crash the main pipeline.
             # NOTE: always use sys.executable (the interpreter that launched this
             # pipeline, i.e. the project venv) instead of the bare "python" on PATH.
-            # The system python (e.g. C:\Python314) does NOT have prisma installed,
-            # which broke daily_eod_update / daily_narrative at briefing_core.get_db()
-            # with ModuleNotFoundError: No module named 'prisma' (2026-07-20 EOD run).
             from scripts.streaming.options.config import REPO_ROOT
             env = os.environ.copy()
             env["PYTHONPATH"] = str(REPO_ROOT)
             resolved_args = [sys.executable, *args[1:]] if args and args[0] == "python" else args
-            subprocess.run(resolved_args, env=env, cwd=str(REPO_ROOT), check=True)
+            subprocess.run(
+                resolved_args,
+                env=env,
+                cwd=str(REPO_ROOT),
+                check=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+            )
             log.info("✓ %s completed", label)
+        except subprocess.TimeoutExpired:
+            log.error("Timed out running %s after %ds", label, timeout)
         except Exception as e:
             log.error("Failed to run %s: %s", label, e)
 
@@ -2013,6 +2025,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         trigger=CronTrigger(day_of_week='mon-fri', hour=premarket_hour, minute=premarket_minute, timezone=tz),
         id="narrative_premarket",
         replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
     log.info("Scheduled Narrative: %s ET (Premarket)", NARRATIVE_SCHEDULE["premarket"])
 
@@ -2027,6 +2041,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         trigger=CronTrigger(day_of_week='mon-fri', hour=open_hour, minute=open_minute, timezone=tz),
         id="narrative_open",
         replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
     log.info("Scheduled Narrative: %s ET (Open)", NARRATIVE_SCHEDULE["open"])
 
@@ -2039,6 +2055,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         trigger=CronTrigger(day_of_week='mon-fri', hour=intraday_hour, minute=intraday_minute, timezone=tz),
         id="narrative_intraday",
         replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
     log.info("Scheduled Narrative: %s ET (Intraday)", NARRATIVE_SCHEDULE["intraday"])
 
@@ -2053,6 +2071,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         trigger=CronTrigger(day_of_week='mon-fri', hour=close_hour, minute=close_minute, timezone=tz),
         id="narrative_eod",
         replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
     log.info("Scheduled Narrative: %s ET (EOD)", NARRATIVE_SCHEDULE["close"])
 
@@ -2066,6 +2086,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         trigger=CronTrigger(day_of_week='fri', hour=weekly_hour, minute=weekly_minute, timezone=tz),
         id="narrative_weekly",
         replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
     log.info("Scheduled Narrative: %s ET (Weekly, Friday)", WEEKLY_NARRATIVE_TIME)
 
@@ -2078,6 +2100,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         trigger=CronTrigger(day_of_week='mon-fri', hour=17, minute=10, timezone=tz),
         id="derived_data_refresh",
         replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
     log.info("Scheduled Derived Data Refresh: 17:10 ET (Mon-Fri, after close)")
 
@@ -2090,6 +2114,8 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
         trigger=CronTrigger(day_of_week='fri', hour=16, minute=15, timezone=tz),
         id="weekly_multi_expiry_tos_em",
         replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
     log.info("Scheduled Multi-Expiry TOS EM: 16:15 ET (Friday / Last Trading Day)")
 
