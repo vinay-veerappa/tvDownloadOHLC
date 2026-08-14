@@ -189,7 +189,7 @@ Handles historical database updates, real-time option chain snapshotting, VIX in
 * **Associated AGY Skill & Design:**
   * [`.agent/skills/tos_expected_moves/SKILL.md`](file:///c:/Users/vinay/tvDownloadOHLC/.agent/skills/tos_expected_moves/SKILL.md)
   * [`docs/architecture/TOS_EXPECTED_MOVE_PIPELINE_DESIGN.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TOS_EXPECTED_MOVE_PIPELINE_DESIGN.md)
-* **Output Artifacts:** Writes `data/tos_expected_moves_all_expiries.json` and `data/tos_expected_moves_all_expiries.md`.
+* **Output Artifacts:** Writes `data/options/ExpectedMoves/tos_expected_moves_all_expiries.json` and `data/options/ExpectedMoves/tos_expected_moves_all_expiries.md`.
 
 #### 💻 [weekly_expected_moves.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/weekly_expected_moves.py)
 

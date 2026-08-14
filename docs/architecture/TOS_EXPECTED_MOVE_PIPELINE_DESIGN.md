@@ -43,7 +43,7 @@ graph TD
     subgraph Persistence Layer
         J --> K["Prisma DB: ExpectedMove<br/>(manualEm, price, straddle, em365, em252, adjEm)"]
         J --> L["Prisma DB: HistoricalVolatility<br/>(ticker, date, iv, closePrice)"]
-        J --> M["File Exports: data/tos_expected_moves_all_expiries.json & .md"]
+        J --> M["File Exports: data/options/ExpectedMoves/tos_expected_moves_all_expiries.json & .md"]
     end
     
     subgraph Downstream Consumers
@@ -152,7 +152,7 @@ model HistoricalVolatility {
      ```
    * Displays the exact TOS Expected Move on all charts without requiring on-demand web calculations.
 2. **Pine Script & Discord Overlays:**
-   * Downstream scripts ingest `data/tos_expected_moves_all_expiries.json` to generate formatted Pine Script input bands (`ExecutionHUD.pine`, `MacroDealerLevels.pine`).
+   * Downstream scripts ingest `data/options/ExpectedMoves/tos_expected_moves_all_expiries.json` to generate formatted Pine Script input bands (`ExecutionHUD.pine`, `MacroDealerLevels.pine`).
 
 ---
 

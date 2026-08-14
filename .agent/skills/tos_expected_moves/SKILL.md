@@ -61,8 +61,8 @@ The extraction runs automatically as part of the streaming options pipeline:
 1. **Database Tables (`web/prisma/dev.db`):**
    - **`ExpectedMove`:** Stores `manualEm` for each weekly expiry, keyed by `(ticker, calculationDate, expiryDate)`. Non-destructive: preserves previous days' S/R levels.
    - **`HistoricalVolatility`:** Stores daily closing `iv` and `closePrice`, keyed by `(ticker, date)`.
-2. **JSON Data File:** `data/tos_expected_moves_all_expiries.json`
-3. **Markdown Summary Report:** `data/tos_expected_moves_all_expiries.md`
+2. **JSON Data File:** `data/options/ExpectedMoves/tos_expected_moves_all_expiries.json`
+3. **Markdown Summary Report:** `data/options/ExpectedMoves/tos_expected_moves_all_expiries.md`
 
 ---
 

@@ -13,7 +13,7 @@ Execution & Persistence:
 3. Automatically upserts results to SQLite DB (`web/prisma/dev.db`):
    - `ExpectedMove` table: populates `manualEm` with TOS EM, preserving previous days' S/R levels.
    - `HistoricalVolatility` table: populates daily closing `iv` for historical ranking.
-4. Saves export files: `data/tos_expected_moves_all_expiries.json` & `.md`.
+4. Saves export files: `data/options/ExpectedMoves/tos_expected_moves_all_expiries.json` & `.md`.
 """
 
 import argparse
@@ -493,12 +493,13 @@ async def extract_all_expiries(
 
     # Save File Artifacts
     if save_files:
-        out_json = REPO_ROOT / "data" / "tos_expected_moves_all_expiries.json"
-        out_json.parent.mkdir(parents=True, exist_ok=True)
+        out_dir = REPO_ROOT / "data" / "options" / "ExpectedMoves"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_json = out_dir / "tos_expected_moves_all_expiries.json"
         with open(out_json, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
 
-        out_md = REPO_ROOT / "data" / "tos_expected_moves_all_expiries.md"
+        out_md = out_dir / "tos_expected_moves_all_expiries.md"
         md_lines = [
             "# ThinkorSwim (TOS) Multi-Expiry Expected Moves Report",
             f"**Extracted Time:** `{now_str}`",
