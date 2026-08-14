@@ -36,6 +36,8 @@ _DEPENDENCIES: dict[str, list[str]] = {
     "ib":               [],           # only needs trading_date + is_rth
     "orb_bias":         [],           # 09:30 1m opening range breakout bias
     "quarterly_cycles": [],           # Pack Quarterly Theory & 90-min sessions
+    "volatility_leading": [],         # Kaufman ER, TTM Squeeze, Bar Overlap
+    "price_action":     ["volatility_leading"], # Al Brooks H1/H2/L1/L2 & bar classification
     "internals":        [],
     "chop":             ["internals", "vwap"],
     "ema":              [],
@@ -58,6 +60,8 @@ _GROUP_SENTINEL: dict[str, str] = {
     "ib":               "ib_high",
     "orb_bias":         "orb_1m_bias",
     "quarterly_cycles": "quarter_90m",
+    "volatility_leading": "ker_5",
+    "price_action":     "is_trend_bar",
     "internals":        "tick_persistence",
     "chop":             "chop_score",
     "ema":              "ema_9",
@@ -114,6 +118,26 @@ _FEATURE_TO_GROUP: dict[str, str] = {
     "hour_box05_high":      "quarterly_cycles",
     "hour_box05_low":       "quarterly_cycles",
     "q1_sweep_retreat":     "quarterly_cycles",
+    # Volatility Leading family
+    "ker_5":                "volatility_leading",
+    "is_efficient_trend":   "volatility_leading",
+    "is_choppy_noise":      "volatility_leading",
+    "squeeze_on":           "volatility_leading",
+    "squeeze_mom":          "volatility_leading",
+    "squeeze_fired_bull":   "volatility_leading",
+    "squeeze_fired_bear":   "volatility_leading",
+    "bar_overlap_pct":      "volatility_leading",
+    "is_barbwire_overlap":  "volatility_leading",
+    # Price Action & Al Brooks family
+    "is_trend_bar":         "price_action",
+    "is_bull_trend_bar":    "price_action",
+    "is_bear_trend_bar":    "price_action",
+    "is_doji_bar":          "price_action",
+    "is_barbwire":          "price_action",
+    "h1_signal":            "price_action",
+    "h2_signal":            "price_action",
+    "l1_signal":            "price_action",
+    "l2_signal":            "price_action",
     # Internals family
     "vold":                 "internals",
     "tick_abs":             "internals",
@@ -393,6 +417,23 @@ class FeatureRegistry:
             if group == "quarterly_cycles":
                 from scripts.libs_py.features.quarterly_cycles import compute_quarterly_cycles
                 return compute_quarterly_cycles
+            if group == "volatility_leading":
+                def _compute_vol_lead(df, cfg=None):
+                    from scripts.libs_py.price_action.volatility_leading import (
+                        compute_kaufman_efficiency,
+                        compute_ttm_squeeze,
+                        compute_bar_overlap,
+                    )
+                    df = compute_kaufman_efficiency(df)
+                    df = compute_ttm_squeeze(df)
+                    df = compute_bar_overlap(df)
+                    return df
+                return _compute_vol_lead
+            if group == "price_action":
+                def _compute_pa(df, cfg=None):
+                    from scripts.libs_py.price_action.al_brooks import detect_h1_h2_l1_l2
+                    return detect_h1_h2_l1_l2(df)
+                return _compute_pa
             if group == "internals":
                 from scripts.libs_py.features.internals import compute_internals_features
                 return compute_internals_features
