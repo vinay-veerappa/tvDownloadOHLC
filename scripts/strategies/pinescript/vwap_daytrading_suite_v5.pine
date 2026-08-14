@@ -1,0 +1,386 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Antigravity AI
+// Institutional VWAP Day Trading Suite v7.6 (Pure Uninhibited Pullback Rejection Calibrated)
+
+//@version=6
+strategy("Institutional VWAP Day Trading Suite v7.6", overlay=true, 
+  initial_capital=100000, 
+  default_qty_type=strategy.fixed, 
+  default_qty_value=1, 
+  commission_type=strategy.commission.cash_per_contract, 
+  commission_value=2.50,
+  max_boxes_count=500, 
+  max_lines_count=500, 
+  max_labels_count=500, 
+  max_bars_back=5000)
+
+// ══════════════════════════════════════════════
+// ══ CONSTANTS & PALETTES
+// ══════════════════════════════════════════════
+COLOR_VWAP      = color.rgb(255, 170, 0)
+COLOR_BAND1     = color.rgb(41, 98, 255, 40)
+COLOR_BAND2     = color.rgb(255, 82, 82, 40)
+COLOR_BAND3     = color.rgb(156, 39, 176, 40)
+COLOR_FILL      = color.rgb(255, 170, 0, 93)
+COLOR_BULL      = color.rgb(38, 166, 154)
+COLOR_BEAR      = color.rgb(239, 83, 80)
+COLOR_NEUTRAL   = color.rgb(178, 181, 190)
+
+// ══════════════════════════════════════════════
+// ══ INPUTS & MODE SELECTION
+// ══════════════════════════════════════════════
+// ── Mode Selection ──
+i_stratMode     = input.string("2. Dynamic Retest (Trend)", "Active Strategy Model", 
+  options=["1. Band Fade (Mean Reversion)", "2. Dynamic Retest (Trend)", "3. dVWAP Reclaim (Morning Shift)", "4. Slope Accel + IB Breakout", "5. 15m ORB Fade to VWAP", "All Strategies Combined"], 
+  group="Strategy Mode Select", tooltip="Select 1 model to test independently or All Combined")
+
+// ── Global Execution Controls ──
+GRP_RISK        = "Global Risk Controls"
+i_rrRatio       = input.float(2.0, "Risk-to-Reward Ratio (for Retest/Reclaim/Breakout)", minval=1.0, maxval=4.0, step=0.5, group=GRP_RISK)
+i_maxTradesDay  = input.int(4, "Max Trades Per Day", minval=1, maxval=10, group=GRP_RISK)
+
+// ── Strategy 1: Band Fade Settings ──
+GRP_FADE        = "Strategy 1: Band Fade (Mean Reversion)"
+i_fadeSdMult    = input.float(2.0, "SD Band Level to Fade", minval=1.5, maxval=3.0, step=0.5, group=GRP_FADE)
+i_wickPct       = input.float(20.0, "Min Rejection Wick % of Bar Range", minval=10.0, maxval=50.0, step=5.0, group=GRP_FADE)
+i_fadeAdxMax    = input.int(22, "Max ADX Filter (Ensure Ranging Market)", minval=12, maxval=30, group=GRP_FADE)
+
+// ── Strategy 2: Dynamic Retest Settings ──
+GRP_RETEST      = "Strategy 2: Dynamic Retest (Trend Continuation)"
+i_useDailyFilter= input.bool(false, "Use Daily 200-SMA Macro Trend Filter (Disabled)", group=GRP_RETEST)
+i_useVwapSlope  = input.bool(false, "Require 3-Bar VWAP Slope (Disabled: Preserves Dip-Buying Edge)", group=GRP_RETEST, tooltip="Disabling this preserves pure pullback buying into VWAP")
+i_trendSmaLen   = input.int(50, "Trend Filter SMA Length", minval=20, maxval=200, group=GRP_RETEST)
+i_retestAdxMin  = input.int(18, "Min ADX Filter (Ensure Trending Market)", minval=12, maxval=35, group=GRP_RETEST)
+
+// ── Strategy 3: dVWAP Reclaim Settings ──
+GRP_RECLAIM     = "Strategy 3: dVWAP Reclaim (Morning Shift)"
+i_reclaimBars   = input.int(3, "Min Bars Away From VWAP Before Reclaim", minval=2, maxval=10, group=GRP_RECLAIM)
+i_volMult       = input.float(1.1, "Min Reclaim Volume Multiplier (x SMA)", minval=1.0, maxval=2.5, step=0.1, group=GRP_RECLAIM)
+
+// ── Strategy 4: Slope Acceleration + IB Settings ──
+GRP_SLOPE       = "Strategy 4: Slope Accel + IB Breakout"
+i_slopeZMin     = input.float(1.5, "Min VWAP Slope Z-Score", minval=1.0, maxval=3.0, step=0.1, group=GRP_SLOPE)
+
+// ── Strategy 5: 15m ORB Fade Settings ──
+GRP_ORB         = "Strategy 5: 15m ORB Fade to VWAP"
+i_orbMaxVol     = input.float(1.2, "Max Breakout Volume Multiplier (Low Vol Check)", minval=0.8, maxval=2.0, step=0.1, group=GRP_ORB)
+i_orbShortOnly  = input.bool(true, "Short Fades Only (Fade Upside Breakouts)", group=GRP_ORB)
+i_minVwapDist   = input.float(0.8, "Min VWAP Stretch Distance (x ATR)", minval=0.3, maxval=2.0, step=0.1, group=GRP_ORB)
+
+// ── Session & Time Filter ──
+GRP_TIME        = "Time & Session Window"
+i_rthSession    = input.session("0945-1530:23456", "RTH Entry Hours (ET)", group=GRP_TIME)
+i_timeZone      = input.string("America/New_York", "Time Zone", group=GRP_TIME)
+
+// ── Dashboard Layout ──
+GRP_DASH        = "Dashboard Settings"
+i_showDash      = input.bool(true, "Show Diagnostic Dashboard", group=GRP_DASH)
+i_dashPos       = input.string("Top Right", "Dashboard Position", options=["Top Left","Top Right","Bottom Left","Bottom Right"], group=GRP_DASH)
+i_dashSize      = input.string("normal", "Dashboard Text Size", options=["tiny","small","normal","large"], group=GRP_DASH)
+i_textFont      = input.string("Monospace", "Text Font Family", options=["Monospace", "Default"], group=GRP_DASH)
+
+// ══════════════════════════════════════════════
+// ══ HELPER FUNCTIONS
+// ══════════════════════════════════════════════
+f_font(string fontName) => fontName == "Monospace" ? font.family_monospace : font.family_default
+
+f_tablePos(string pos) =>
+    switch pos
+        "Top Left"     => position.top_left
+        "Top Right"    => position.top_right
+        "Bottom Left"  => position.bottom_left
+        => position.bottom_right
+
+f_tableSize(string sz) =>
+    switch sz
+        "tiny"   => size.tiny
+        "small"  => size.small
+        "normal" => size.normal
+        => size.large
+
+// ══════════════════════════════════════════════
+// ══ PURE MATHEMATICAL SESSION VWAP & SD BANDS
+// ══════════════════════════════════════════════
+inEntryWindow = not na(time(timeframe.period, i_rthSession, i_timeZone))
+isNewDay      = ta.change(time("D")) != 0
+
+var float sumSrcVol  = 0.0
+var float sumVol     = 0.0
+var float sumSrc2Vol = 0.0
+
+if isNewDay
+    sumSrcVol  := hlc3 * volume
+    sumVol     := volume
+    sumSrc2Vol := (hlc3 * hlc3) * volume
+else
+    sumSrcVol  += hlc3 * volume
+    sumVol     += volume
+    sumSrc2Vol += (hlc3 * hlc3) * volume
+
+vwapVal  = sumVol > 0 ? (sumSrcVol / sumVol) : hlc3
+variance = sumVol > 0 ? math.max(0.0, (sumSrc2Vol / sumVol) - (vwapVal * vwapVal)) : 0.0
+stdevVal = math.sqrt(variance)
+
+upperBand1 = vwapVal + (stdevVal * 1.0)
+lowerBand1 = vwapVal - (stdevVal * 1.0)
+upperBand2 = vwapVal + (stdevVal * 2.0)
+lowerBand2 = vwapVal - (stdevVal * 2.0)
+upperBand3 = vwapVal + (stdevVal * 3.0)
+lowerBand3 = vwapVal - (stdevVal * 3.0)
+
+fadeUpper = vwapVal + (stdevVal * i_fadeSdMult)
+fadeLower = vwapVal - (stdevVal * i_fadeSdMult)
+
+// ══════════════════════════════════════════════
+// ══ TECHNICAL INDICATORS & RANGE METRICS
+// ══════════════════════════════════════════════
+atrVal = ta.atr(14)
+rsiVal = ta.rsi(close, 14)
+[_, _, adxVal] = ta.dmi(14, 14)
+volSma = ta.sma(volume, 20)
+trendSma = ta.sma(close, i_trendSmaLen)
+isHighVol = volume >= (volSma * i_volMult)
+
+// Daily 200-SMA Security Request
+dailySma200 = request.security(syminfo.tickerid, "D", ta.sma(close, 200))
+bool macroBull = not i_useDailyFilter or (close > dailySma200)
+bool macroBear = not i_useDailyFilter or (close < dailySma200)
+
+// Intraday VWAP Slope Direction
+bool vwapSlopeUp = not i_useVwapSlope or (vwapVal > vwapVal[3])
+bool vwapSlopeDn = not i_useVwapSlope or (vwapVal < vwapVal[3])
+
+// VWAP Slope Z-Score Calculation
+vwapSlopeRaw = (vwapVal - vwapVal[5]) / atrVal
+slopeMu      = ta.sma(vwapSlopeRaw, 50)
+slopeSig     = ta.stdev(vwapSlopeRaw, 50)
+slopeZ       = slopeSig > 0 ? (vwapSlopeRaw - slopeMu) / slopeSig : 0.0
+
+// ── Initial Balance & 15m ORB Tracking ──
+inIB  = not na(time(timeframe.period, "0930-1030:23456", i_timeZone))
+inORB = not na(time(timeframe.period, "0930-0945:23456", i_timeZone))
+
+var float ibHigh = 0.0
+var float ibLow  = 0.0
+var float orbHigh = 0.0
+var float orbLow  = 0.0
+
+if isNewDay
+    ibHigh := 0.0
+    ibLow  := 0.0
+    orbHigh := 0.0
+    orbLow  := 0.0
+
+if inIB
+    ibHigh := (ibHigh == 0.0) ? high : math.max(ibHigh, high)
+    ibLow  := (ibLow == 0.0)  ? low  : math.min(ibLow, low)
+
+if inORB
+    orbHigh := (orbHigh == 0.0) ? high : math.max(orbHigh, high)
+    orbLow  := (orbLow == 0.0)  ? low  : math.min(orbLow, low)
+
+// Candle Metrics
+barRange  = math.max(high - low, syminfo.mintick)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+upWickPct = (upperWick / barRange) * 100.0
+dnWickPct = (lowerWick / barRange) * 100.0
+
+// Daily Trade Counter & Directional Lockout
+var bool shortDisabledToday = false
+var bool longDisabledToday  = false
+var int  tradesToday        = 0
+
+if isNewDay
+    shortDisabledToday := false
+    longDisabledToday  := false
+    tradesToday        := 0
+
+bool canTrade = inEntryWindow and (tradesToday < i_maxTradesDay) and (strategy.position_size == 0)
+
+// Minimum VWAP Distance Guards
+bool longDistValid  = close <= (vwapVal - (atrVal * i_minVwapDist))
+bool shortDistValid = close >= (vwapVal + (atrVal * i_minVwapDist))
+
+// ══════════════════════════════════════════════
+// ══ STRATEGY 1: BAND FADE (MEAN REVERSION)
+// ══════════════════════════════════════════════
+bool wasBelowLower = (low <= fadeLower) or (low[1] <= fadeLower) or (low[2] <= fadeLower)
+bool wasAboveUpper = (high >= fadeUpper) or (high[1] >= fadeUpper) or (high[2] >= fadeUpper)
+
+bool fadeLongSetup  = canTrade and not longDisabledToday and longDistValid and (adxVal < i_fadeAdxMax) and wasBelowLower and (close > fadeLower) and (dnWickPct >= i_wickPct or close > open)
+bool fadeShortSetup = canTrade and not shortDisabledToday and shortDistValid and (adxVal < i_fadeAdxMax) and wasAboveUpper and (close < fadeUpper) and (upWickPct >= i_wickPct or close < open)
+
+// ══════════════════════════════════════════════
+// ══ STRATEGY 2: DYNAMIC RETEST (TREND CONTINUATION)
+// ══════════════════════════════════════════════
+bool isBullTrend = (adxVal >= i_retestAdxMin) and (close > trendSma) and (vwapVal > trendSma)
+bool isBearTrend = (adxVal >= i_retestAdxMin) and (close < trendSma) and (vwapVal < trendSma)
+
+bool vwapLongRejection  = isBullTrend and (low <= vwapVal) and (close > vwapVal) and (close >= low + barRange * 0.4)
+bool vwapShortRejection = isBearTrend and (high >= vwapVal) and (close < vwapVal) and (close <= high - barRange * 0.4)
+
+bool retestLongSetup  = canTrade and macroBull and vwapSlopeUp and not longDisabledToday and vwapLongRejection[1] and (high > high[1])
+bool retestShortSetup = canTrade and macroBear and vwapSlopeDn and not shortDisabledToday and vwapShortRejection[1] and (low < low[1])
+
+// ══════════════════════════════════════════════
+// ══ STRATEGY 3: dVWAP RECLAIM & HOLD (MORNING SHIFT)
+// ══════════════════════════════════════════════
+var int barsBelowVwap = 0
+var int barsAboveVwap = 0
+
+if close < vwapVal
+    barsBelowVwap := barsBelowVwap + 1
+    barsAboveVwap := 0
+else if close > vwapVal
+    barsAboveVwap := barsAboveVwap + 1
+    barsBelowVwap := 0
+
+bool morningWindow = not na(time(timeframe.period, "0945-1200:23456", i_timeZone))
+
+bool reclaimLongSetup  = canTrade and morningWindow and not longDisabledToday and (barsBelowVwap[1] >= i_reclaimBars) and ta.crossover(close, vwapVal) and isHighVol
+bool reclaimShortSetup = canTrade and morningWindow and not shortDisabledToday and (barsAboveVwap[1] >= i_reclaimBars) and ta.crossunder(close, vwapVal) and isHighVol
+
+// ══════════════════════════════════════════════
+// ══ STRATEGY 4: SLOPE ACCEL + IB BREAKOUT
+// ══════════════════════════════════════════════
+bool postIB = not inIB and (ibHigh > 0.0)
+bool slopeLongSetup  = canTrade and postIB and macroBull and not longDisabledToday and (slopeZ >= i_slopeZMin) and ta.crossover(close, ibHigh)
+bool slopeShortSetup = canTrade and postIB and macroBear and not shortDisabledToday and (slopeZ <= -i_slopeZMin) and ta.crossunder(close, ibLow)
+
+// ══════════════════════════════════════════════
+// ══ STRATEGY 5: 15M ORB FADE TO VWAP
+// ══════════════════════════════════════════════
+bool postORB = not inORB and (orbHigh > 0.0) and not na(time(timeframe.period, "0945-1100:23456", i_timeZone))
+bool lowVolBreakout = volume <= (volSma * i_orbMaxVol)
+
+bool orbLongFadeSetup  = canTrade and postORB and not longDisabledToday and not i_orbShortOnly and longDistValid and lowVolBreakout and (low[1] <= orbLow or low <= orbLow) and ta.crossover(close, orbLow)
+bool orbShortFadeSetup = canTrade and postORB and not shortDisabledToday and shortDistValid and lowVolBreakout and (high[1] >= orbHigh or high >= orbHigh) and ta.crossunder(close, orbHigh)
+
+// ══════════════════════════════════════════════
+// ══ FINAL SIGNAL DISPATCH & EXECUTION
+// ══════════════════════════════════════════════
+bool longEntry  = false
+bool shortEntry = false
+string signalName = ""
+
+if i_stratMode == "1. Band Fade (Mean Reversion)"
+    longEntry  := fadeLongSetup
+    shortEntry := fadeShortSetup
+    signalName := "Band_Fade"
+else if i_stratMode == "2. Dynamic Retest (Trend)"
+    longEntry  := retestLongSetup
+    shortEntry := retestShortSetup
+    signalName := "Retest"
+else if i_stratMode == "3. dVWAP Reclaim (Morning Shift)"
+    longEntry  := reclaimLongSetup
+    shortEntry := reclaimShortSetup
+    signalName := "dVWAP_Reclaim"
+else if i_stratMode == "4. Slope Accel + IB Breakout"
+    longEntry  := slopeLongSetup
+    shortEntry := slopeShortSetup
+    signalName := "Slope_IB"
+else if i_stratMode == "5. 15m ORB Fade to VWAP"
+    longEntry  := orbLongFadeSetup
+    shortEntry := orbShortFadeSetup
+    signalName := "ORB_Fade"
+else // All Strategies Combined
+    longEntry  := fadeLongSetup or retestLongSetup or reclaimLongSetup or slopeLongSetup or orbLongFadeSetup
+    shortEntry := fadeShortSetup or retestShortSetup or reclaimShortSetup or slopeShortSetup or orbShortFadeSetup
+    signalName := "Combined"
+
+bool isMeanReversionExit = (i_stratMode == "1. Band Fade (Mean Reversion)") or (i_stratMode == "5. 15m ORB Fade to VWAP") or fadeLongSetup or fadeShortSetup or orbLongFadeSetup or orbShortFadeSetup
+
+if longEntry
+    float slDist  = math.max(atrVal * 1.8, close - math.min(low, low[1]))
+    float slPrice = close - slDist
+    float tpPrice = isMeanReversionExit ? vwapVal : close + (slDist * i_rrRatio)
+    
+    strategy.entry("Long_" + signalName, strategy.long)
+    strategy.exit("Exit_Long_" + signalName, "Long_" + signalName, stop=slPrice, limit=tpPrice)
+    tradesToday := tradesToday + 1
+
+if shortEntry
+    float slDist  = math.max(atrVal * 1.8, math.max(high, high[1]) - close)
+    float slPrice = close + slDist
+    float tpPrice = isMeanReversionExit ? vwapVal : close - (slDist * i_rrRatio)
+    
+    strategy.entry("Short_" + signalName, strategy.short)
+    strategy.exit("Exit_Short_" + signalName, "Short_" + signalName, stop=slPrice, limit=tpPrice)
+    tradesToday := tradesToday + 1
+
+// Directional Lockout on Stop Loss
+if strategy.position_size[1] > 0 and strategy.position_size == 0 and strategy.closedtrades.profit(strategy.closedtrades - 1) < 0
+    longDisabledToday := true
+
+if strategy.position_size[1] < 0 and strategy.position_size == 0 and strategy.closedtrades.profit(strategy.closedtrades - 1) < 0
+    shortDisabledToday := true
+
+// Force Close at 15:45 ET
+bool isEod = not na(time(timeframe.period, "1545-1600:23456", i_timeZone))
+if isEod and strategy.position_size != 0
+    strategy.close_all(comment="RTH EOD Close")
+
+// ══════════════════════════════════════════════
+// ══ VISUAL PLOTS
+// ══════════════════════════════════════════════
+p_vwap   = plot(vwapVal, "Session VWAP", color=COLOR_VWAP, linewidth=2)
+p_upper1 = plot(upperBand1, "+1SD Band", color=COLOR_BAND1, linewidth=1)
+p_lower1 = plot(lowerBand1, "-1SD Band", color=COLOR_BAND1, linewidth=1)
+p_upper2 = plot(upperBand2, "+2SD Band", color=COLOR_BAND2, linewidth=2)
+p_lower2 = plot(lowerBand2, "-2SD Band", color=COLOR_BAND2, linewidth=2)
+p_upper3 = plot(upperBand3, "+3SD Band", color=COLOR_BAND3, linewidth=1, style=plot.style_circles)
+p_lower3 = plot(lowerBand3, "-3SD Band", color=COLOR_BAND3, linewidth=1, style=plot.style_circles)
+
+fill(p_upper2, p_lower2, color=COLOR_FILL, title="VWAP 2SD Fill")
+
+plot(ibHigh > 0.0 ? ibHigh : na, "IB High", color=color.new(color.blue, 40), linewidth=1, style=plot.style_linebr)
+plot(ibLow > 0.0 ? ibLow : na, "IB Low", color=color.new(color.blue, 40), linewidth=1, style=plot.style_linebr)
+
+plotshape(longEntry, "Long Entry", shape.triangleup, location.belowbar, COLOR_BULL, size=size.normal)
+plotshape(shortEntry, "Short Entry", shape.triangledown, location.abovebar, COLOR_BEAR, size=size.normal)
+
+// ══════════════════════════════════════════════
+// ══ DIAGNOSTIC DASHBOARD TABLE
+// ══════════════════════════════════════════════
+var table dash = na
+
+if i_showDash and barstate.islast
+    if not na(dash)
+        table.delete(dash)
+    
+    dash := table.new(f_tablePos(i_dashPos), 2, 7, border_color=color.gray, border_width=1, bgcolor=color.new(color.black, 15))
+    
+    tSz = f_tableSize(i_dashSize)
+    tFont = f_font(i_textFont)
+    
+    table.cell(dash, 0, 0, "Institutional VWAP v7.6", text_color=color.white, text_size=tSz, text_font_family=tFont, bgcolor=color.navy)
+    table.cell(dash, 1, 0, "Performance & Status", text_color=color.white, text_size=tSz, text_font_family=tFont, bgcolor=color.navy)
+    
+    table.cell(dash, 0, 1, "Selected Model", text_color=COLOR_NEUTRAL, text_size=tSz, text_font_family=tFont)
+    table.cell(dash, 1, 1, i_stratMode, text_color=color.yellow, text_size=tSz, text_font_family=tFont)
+    
+    string mktState = adxVal < i_fadeAdxMax ? "Ranging (ADX < " + str.tostring(i_fadeAdxMax) + ")" : "Trending (ADX >= " + str.tostring(i_retestAdxMin) + ")"
+    color stateCol = adxVal < i_fadeAdxMax ? COLOR_BULL : COLOR_BEAR
+    table.cell(dash, 0, 2, "Market State", text_color=COLOR_NEUTRAL, text_size=tSz, text_font_family=tFont)
+    table.cell(dash, 1, 2, mktState, text_color=stateCol, text_size=tSz, text_font_family=tFont)
+    
+    int totalTrades = strategy.closedtrades
+    int winTrades   = strategy.wintrades
+    float winRate   = totalTrades > 0 ? (winTrades / totalTrades) * 100.0 : 0.0
+    color winCol    = winRate >= 50.0 ? COLOR_BULL : COLOR_BEAR
+    table.cell(dash, 0, 3, "Win Rate (Closed Trades)", text_color=COLOR_NEUTRAL, text_size=tSz, text_font_family=tFont)
+    table.cell(dash, 1, 3, str.tostring(winRate, "#.#") + "% (" + str.tostring(totalTrades) + " trades)", text_color=winCol, text_size=tSz, text_font_family=tFont)
+    
+    float pf = strategy.grossprofit > 0 and strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : 0.0
+    table.cell(dash, 0, 4, "Profit Factor", text_color=COLOR_NEUTRAL, text_size=tSz, text_font_family=tFont)
+    table.cell(dash, 1, 4, str.tostring(pf, "#.##"), text_color=pf >= 1.2 ? COLOR_BULL : COLOR_BEAR, text_size=tSz, text_font_family=tFont)
+    
+    float netProfit = strategy.netprofit
+    color npCol = netProfit >= 0 ? COLOR_BULL : COLOR_BEAR
+    table.cell(dash, 0, 5, "Net Profit", text_color=COLOR_NEUTRAL, text_size=tSz, text_font_family=tFont)
+    table.cell(dash, 1, 5, "$" + str.tostring(netProfit, "#.##"), text_color=npCol, text_size=tSz, text_font_family=tFont)
+    
+    float maxDd = strategy.max_drawdown
+    table.cell(dash, 0, 6, "Max Drawdown", text_color=COLOR_NEUTRAL, text_size=tSz, text_font_family=tFont)
+    table.cell(dash, 1, 6, "$" + str.tostring(maxDd, "#.##"), text_color=COLOR_BEAR, text_size=tSz, text_font_family=tFont)

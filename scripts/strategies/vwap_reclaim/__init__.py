@@ -12,5 +12,7 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.strategies.vwap_reclaim.core.vwap_reclaim import VWAPReclaimStrategy
+from scripts.strategies.vwap_reclaim.core.vwap_institutional import VWAPInstitutionalStrategy
 
-__all__ = ["VWAPReclaimStrategy"]
+__all__ = ["VWAPReclaimStrategy", "VWAPInstitutionalStrategy"]
+
