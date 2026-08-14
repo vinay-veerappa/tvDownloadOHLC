@@ -168,9 +168,13 @@ def test_play3_same_bar_fill_and_stop_is_loss_not_nosetup():
     o = df.index == pd.Timestamp("2026-06-01 10:32:00", tz="US/Eastern")
     df.loc[o, ['high', 'low', 'close']] = [100.2, 99.7, 100.15]
 
-    # Next bar has close-confirmed fill and stop exceed on the same bar.
+    # Next bar has close-confirmed fill (close <= 100.0) and stop exceed (high >= 100.25).
     f = df.index == pd.Timestamp("2026-06-01 10:33:00", tz="US/Eastern")
-    df.loc[f, ['high', 'low', 'close']] = [100.3, 99.0, 99.9]
+    df.loc[f, ['high', 'low', 'close']] = [100.3, 99.6, 99.9]
+
+    # Subsequent bars stay above mid (99.5) and hit stop (100.25)
+    after = df.index >= pd.Timestamp("2026-06-01 10:34:00", tz="US/Eastern")
+    df.loc[after, ['open', 'high', 'low', 'close']] = [100.0, 100.5, 99.8, 100.3]
 
     facts, _, _ = calculate_ib_statistics_v5(
         df_1m=df,

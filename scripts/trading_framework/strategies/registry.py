@@ -25,6 +25,7 @@ from scripts.strategies.reversal.core.mean_reversion import MeanReversionStrateg
 from scripts.strategies.reversal.core.six_am_reversal import SixAMReversalStrategy
 from scripts.strategies.vwap_reclaim.core.vwap_reclaim import VWAPReclaimStrategy
 from scripts.strategies.vwap_reclaim.core.vwap_institutional import VWAPInstitutionalStrategy
+from scripts.strategies.ifvg_cisd.core.ifvg_cisd_strategy import IFVGCISDStrategy
 
 # ── ICT Suite (Harmonised Pillar-2, ADR-020 compliant) ─────────────────────
 from scripts.strategies.ict.strategies import (
@@ -59,6 +60,7 @@ STRATEGY_FACTORY_REGISTRY: Dict[str, Callable[[str], Any]] = {
     "ema_pullback":       lambda ticker: HunterStrategyAdapter(EMAPullbackStrategy(ticker=ticker),       "EMA Pullback"),
     "vwap_reclaim":       lambda ticker: HunterStrategyAdapter(VWAPReclaimStrategy(ticker=ticker),       "VWAP Reclaim"),
     "vwap_institutional": lambda ticker: HunterStrategyAdapter(VWAPInstitutionalStrategy(ticker=ticker), "Institutional VWAP"),
+    "ifvg_cisd":          lambda ticker: HunterStrategyAdapter(IFVGCISDStrategy(ticker=ticker),          "5m IFVG CISD Distribution"),
     "failed_auction":     lambda ticker: HunterStrategyAdapter(FailedAuctionStrategy(ticker=ticker),     "Failed Auction"),
     "six_am_reversal":    lambda ticker: HunterStrategyAdapter(SixAMReversalStrategy(ticker=ticker),    "6 AM Reversal"),
     # ── ICT Suite (Harmonised, ADR-020) ────────────────────────────────────
