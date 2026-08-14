@@ -1,0 +1,454 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Author: Antigravity AI
+// Order Flow Sub-Grid Bands Indicator v1.4
+// Visualizes institutional sub-grid liquidity bands (Century 80/20 & Mid-Point 40/60 bands) 
+// based on Scott Pulcini's Bookmap Order Flow framework across NQ, ES, CL, GC, YM, RTY, and Custom futures grids.
+
+//@version=6
+indicator("Order Flow Sub-Grid Bands", "OF Bands", overlay = true,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ INSTITUTIONAL ORDER FLOW SUB-GRID FRAMEWORK & METHODOLOGY SUMMARY
+// ═════════════════════════════════════════════════════════════════════════════
+// Source: Scott Pulcini (Bookmap Order Flow & Liquidity Dynamics Course) & CME Market Microstructure
+//
+// 1. CORE MECHANICS & THE 20-MULTIPLES / QUANTILE / OCTILE PRINCIPLE:
+//    Institutional high-frequency market-making algorithms and order books place passive limit order
+//    stacks at fixed decimal sub-divisions:
+//      • Quintiles (5ths / 20% steps): 20%, 40%, 50%, 60%, 80%
+//      • Quarters (4ths / 25% steps): 25%, 50%, 75%
+//      • Octiles / Half-Quarters (8ths / 12.5% steps): 12.5%, 37.5%, 62.5%, 87.5%
+//    These levels reflect psychological price sub-division, stop-loss clustering, and algorithmic
+//    front-running / absorption around major round numbers.
+//
+// 2. CONTRACT-BY-CONTRACT ORDER FLOW BEHAVIOR:
+//
+//    A. NQ (Nasdaq-100 Futures) & YM (Dow Jones Futures):
+//       - Primary Unit (U): 100 points | ADR: 250-400 pts (NQ) / 300-500 pts (YM)
+//       - 12.5% (12.5 pts): Octile 1 Breakout buffer.
+//       - 20s / 20% (00 + 20): Q1 Breakout Acceptance Zone. Algo momentum trades pause to confirm if 00 breakout is real.
+//       - 25% (25 pts): Major Quarter 1.
+//       - 20-40 Zone: Value Area Consolidation Range between breakout acceptance (20%) and mid-point defense (40%).
+//       - 37.5% (37.5 pts): Octile 3 Pre-50 Defense Node.
+//       - 40s / 40% (50 - 10): Q2 Pre-50 Defense / Front-Running Resistance. Sell limit stacks front-run major 50 level.
+//       - 50s / 50%: Q50 Mid-Point Centroid Pivot.
+//       - 60s / 60% (50 + 10): Q3 Post-50 Support (dropping from above) or pre-75 target (rising from below).
+//       - 62.5% (62.5 pts): Octile 5 Post-50 Support Node.
+//       - 60-80 Zone: Rotational range between post-50 support (60%) and pre-00 defense (80%).
+//       - 75% (75 pts): Major Quarter 3.
+//       - 80s / 80% (100 - 20): Q4 Pre-00 Defense / Target Zone. Trailing stops & profit-taking trigger before major 00.
+//       - 87.5% (87.5 pts): Octile 7 Pre-00 Defense Node.
+//
+//    B. ES (S&P 500 E-mini Futures):
+//       - Primary Unit (U): 25-pt Quarters & 100-pt Macro Grid | ADR: 40-60 pts
+//       - 10-Point Order Book Buffer Nodes & Octiles (Half-Quarters = 12.5 pts):
+//         • 85–90 (87.5% Octile): Passive sell limit stacks defense 10-15% ahead of 00 (Pre-00 Defense Node).
+//         • 05–10 (10-12.5% Octile): Breakout momentum pause buffer after clearing 00 (equivalent to NQ 20%).
+//         • 35–40 (37.5% Octile): Pre-50 defense buffer front-running 50 (equivalent to NQ 40%).
+//         • 60–65 (62.5% Octile): Post-50 support buffer coming down from above (equivalent to NQ 60%).
+//       - Major Quarter Pivots: 00 (0%), 25 (25%), 50 (50%), 75 (75%).
+//
+//    C. CL (Crude Oil Futures):
+//       - Primary Unit (U): $1.00 (100 cents) | ADR: $1.50-$3.00 (150-300c)
+//       - Exact Structural Twin to NQ! Rotates in 100-cent handles with 20c (20% quintile) and 12.5c (octile) sub-multiples.
+//
+//    D. GC (Gold Futures):
+//       - Primary Intraday Unit (U): $10.00 | Macro Unit: $100.00 | ADR: $20-$40
+//       - Intraday $10 Handle Sub-Grid & Quantiles/Octiles ($1.25, $2.00, $2.50, $3.75, $5.00, $6.25, $7.50, $8.75).
+//
+//    E. RTY (Russell 2000 Futures):
+//       - Primary Intraday Unit (U): 10 points | Macro Unit: 100 points | ADR: 25-45 pts
+//       - Sub-grid rotations occur in 2.0 (20% quintile), 2.5 (25% quarter), and 1.25 (12.5% octile) steps.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ CONSTANTS & UDTs
+// ═════════════════════════════════════════════════════════════════════════════
+MONO_FONT = font.family_monospace
+
+type SubGridLevel
+    float  price
+    string tag
+    color  col
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ INPUTS
+// ═════════════════════════════════════════════════════════════════════════════
+GRP_INSTR = "Instrument Preset & Scale"
+i_preset    = input.string("Auto (Symbol-Based)", "Instrument Preset",
+     options = ["Auto (Symbol-Based)", "NQ / YM (100pt Cent / 50pt Mid)", "ES (100pt Macro & 25pt Quarters)", 
+                "CL ($1.00 Dollar / $0.50 Mid)", "GC ($10.00 Intraday / $5.00 Mid)", "RTY (10pt Unit / 5pt Mid)", "Custom Grid"],
+     group = GRP_INSTR, tooltip = "Auto detects scale from ticker symbol or choose manual instrument preset.")
+i_showESBuffers = input.bool(true, "Show ES 10-Pt Buffer Nodes (35-40, 85-90, 05-10, 60-65)", group = GRP_INSTR, tooltip = "Highlight ES front-running order book defense & pause buffer nodes.")
+i_custUnit  = input.float(100.0, "Custom Primary Unit (U)", minval = 0.01, group = GRP_INSTR, tooltip = "Primary unit size for custom grid.")
+i_custCentW = input.float(20.0,  "Custom Century Band Offset (+/-)", minval = 0.001, group = GRP_INSTR, tooltip = "Offset around century levels (e.g., 20 for 80/20 band).")
+i_custMidW  = input.float(10.0,  "Custom Mid-Point Band Offset (+/-)", minval = 0.001, group = GRP_INSTR, tooltip = "Offset around mid-point levels (e.g., 10 for 40/60 band around 50).")
+i_numUnits  = input.int(5,       "Active Grid Units Each Side", minval = 1, maxval = 20, group = GRP_INSTR, tooltip = "Number of grid units to render above and below current price.")
+
+GRP_QUANTILES = "Quantile, Quarter & Octile Levels"
+i_showQuantiles    = input.bool(true,           "Show Quantile / Octile Levels", group = GRP_QUANTILES, tooltip = "Display quintile (20%), quarter (25%), and octile (12.5% - half of a quarter) sub-grid levels.")
+i_quantileMode     = input.string("All Sub-Levels (Quintiles 20% + Quarters 25% + Octiles 12.5%)", "Sub-Level Mode",
+     options = ["All Sub-Levels (Quintiles 20% + Quarters 25% + Octiles 12.5%)", 
+                "Quintiles Only (20%, 40%, 60%, 80%)", 
+                "Quarters Only (25%, 50%, 75%)",
+                "Octiles Only / Half-Quarters (12.5%, 37.5%, 62.5%, 87.5%)"], group = GRP_QUANTILES)
+i_lineColorQ2575   = input.color(#FFD54F,        "Quarter Line Color (25% / 75%)", group = GRP_QUANTILES)
+i_lineColorOctile  = input.color(#B388FF,        "Octile Line Color (12.5% / 37.5% / 62.5% / 87.5%)", group = GRP_QUANTILES)
+
+GRP_CENTURY = "Century / Major Unit Bands (00s)"
+i_showCenturyBands = input.bool(true,           "Show Century Bands", group = GRP_CENTURY)
+i_centuryBandColor = input.color(#00BCD4,        "Century Band Color", group = GRP_CENTURY)
+i_centuryBandTransp= input.int(88,              "Band Fill Transparency", minval = 0, maxval = 100, group = GRP_CENTURY)
+
+GRP_MIDPOINT = "Mid-Point / Half-Unit Bands (50s)"
+i_showMidBands     = input.bool(true,           "Show Mid-Point Bands", group = GRP_MIDPOINT)
+i_midBandColor     = input.color(#FF9800,        "Mid-Point Band Color", group = GRP_MIDPOINT)
+i_midBandTransp    = input.int(88,              "Band Fill Transparency", minval = 0, maxval = 100, group = GRP_MIDPOINT)
+
+GRP_LINES = "Sub-Grid Level Lines"
+i_showLines        = input.bool(true,           "Show Sub-Grid Lines", group = GRP_LINES)
+i_showLineLbls     = input.bool(true,           "Show Level Price Labels", group = GRP_LINES)
+i_lineStyleStr     = input.string("Dashed",     "Line Style", options = ["Solid", "Dashed", "Dotted"], group = GRP_LINES)
+i_lineWidth        = input.int(1,               "Line Width", minval = 1, maxval = 4, group = GRP_LINES)
+i_lineTransp       = input.int(40,              "Line Transparency", minval = 0, maxval = 100, group = GRP_LINES)
+i_lineColorCent    = input.color(#00BCD4,        "00 Century Line Color", group = GRP_LINES)
+i_lineColor8020    = input.color(#29B6F6,        "80/20 Quintile Line Color", group = GRP_LINES)
+i_lineColor4060    = input.color(#FFA726,        "40/60 Quintile Line Color", group = GRP_LINES)
+i_lineColor50      = input.color(#E91E63,        "50 Mid-Point Line Color", group = GRP_LINES)
+i_lineColorESBuff  = input.color(#AB47BC,        "ES Buffer Node Color", group = GRP_LINES)
+
+GRP_REACTION = "Band Reaction Diagnostics"
+i_showReversals    = input.bool(true,           "Show Band Tap Markers", group = GRP_REACTION)
+i_tapColorBull     = input.color(#00E676,        "Bullish Band Reversal", group = GRP_REACTION)
+i_tapColorBear     = input.color(#FF1744,        "Bearish Band Reversal", group = GRP_REACTION)
+
+GRP_TABLE = "Dashboard & Layout"
+i_showTable        = input.bool(true,           "Show Dashboard Table", group = GRP_TABLE)
+i_tablePosStr      = input.string("Top Right",  "Table Position", 
+     options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = GRP_TABLE)
+i_tableSizeStr     = input.string("Small",      "Table Text Size", 
+     options = ["Tiny", "Small", "Normal", "Large"], group = GRP_TABLE)
+i_textFontStr      = input.string("Monospace",  "Text Font", options = ["Monospace", "Default"], group = GRP_TABLE)
+i_theme            = input.string("Dark",       "Dashboard Theme", options = ["Dark", "Light"], group = GRP_TABLE)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ HELPER FUNCTIONS
+// ═════════════════════════════════════════════════════════════════════════════
+f_lineStyle(string s) =>
+    switch s
+        "Solid"  => line.style_solid
+        "Dashed" => line.style_dashed
+        => line.style_dotted
+
+f_labelSize(string s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.large
+
+f_tablePos(string s) =>
+    switch s
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Top Right"     => position.top_right
+        "Middle Left"   => position.middle_left
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        "Bottom Right"  => position.bottom_right
+        => position.top_right
+
+f_font(string fontName) =>
+    fontName == "Monospace" ? font.family_monospace : font.family_default
+
+// Detect instrument scale parameters based on root symbol or preset choice
+f_detectPreset(string choice) =>
+    float u = 100.0
+    float centW = 20.0
+    float midW = 10.0
+    string root = syminfo.root
+    string instType = "NQ"
+    
+    if choice == "Auto (Symbol-Based)"
+        if root == "NQ" or root == "MNQ" or root == "YM" or root == "MYM"
+            u := 100.0, centW := 20.0, midW := 10.0, instType := "NQ"
+        else if root == "ES" or root == "MES"
+            u := 100.0, centW := 12.5, midW := 12.5, instType := "ES"
+        else if root == "CL" or root == "MCL"
+            u := 1.00, centW := 0.20, midW := 0.10, instType := "CL"
+        else if root == "GC" or root == "MGC"
+            u := 10.00, centW := 2.00, midW := 1.00, instType := "GC"
+        else if root == "RTY" or root == "M2K"
+            u := 10.00, centW := 2.00, midW := 1.00, instType := "RTY"
+        else
+            if close >= 10000
+                u := 100.0, centW := 20.0, midW := 10.0, instType := "NQ"
+            else if close >= 1000
+                u := 100.0, centW := 12.5, midW := 12.5, instType := "ES"
+            else
+                u := 1.0, centW := 0.2, midW := 0.1, instType := "CL"
+    else if choice == "NQ / YM (100pt Cent / 50pt Mid)"
+        u := 100.0, centW := 20.0, midW := 10.0, instType := "NQ"
+    else if choice == "ES (100pt Macro & 25pt Quarters)"
+        u := 100.0, centW := 12.5, midW := 12.5, instType := "ES"
+    else if choice == "CL ($1.00 Dollar / $0.50 Mid)"
+        u := 1.00, centW := 0.20, midW := 0.10, instType := "CL"
+    else if choice == "GC ($10.00 Intraday / $5.00 Mid)"
+        u := 10.00, centW := 2.00, midW := 1.00, instType := "GC"
+    else if choice == "RTY (10pt Unit / 5pt Mid)"
+        u := 10.00, centW := 2.00, midW := 1.00, instType := "RTY"
+    else if choice == "Custom Grid"
+        u := i_custUnit, centW := i_custCentW, midW := i_custMidW, instType := "CUSTOM"
+        
+    [u, centW, midW, instType]
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ CORE CALCULATIONS & PRESET SETUP
+// ═════════════════════════════════════════════════════════════════════════════
+[unitSize, centBandOffset, midBandOffset, activeInstType] = f_detectPreset(i_preset)
+
+// State tracking for price location relative to bands & quantiles
+float baseCent = math.floor(close / unitSize) * unitSize
+float centLevel = baseCent
+float midLevel  = baseCent + (unitSize * 0.5)
+if close > midLevel + (unitSize * 0.25)
+    centLevel := baseCent + unitSize
+
+// Current Unit Quantile Percentage Calculation
+float unitProgress = close - baseCent
+float currentQuantilePct = (unitProgress / unitSize) * 100.0
+
+// Current Band Boundaries surrounding price
+float currCentTop = centLevel + (activeInstType == "ES" ? 10.0 : centBandOffset)
+float currCentBot = centLevel - (activeInstType == "ES" ? 12.5 : centBandOffset)
+float currMidTop  = midLevel + (activeInstType == "ES" ? 12.5 : midBandOffset)
+float currMidBot  = midLevel - (activeInstType == "ES" ? 12.5 : midBandOffset)
+
+bool inCenturyBand  = close >= currCentBot and close <= currCentTop
+bool inMidPointBand = close >= currMidBot  and close <= currMidTop
+string bandStatusStr = inCenturyBand ? "INSIDE CENTURY BAND" : inMidPointBand ? "INSIDE MID-POINT BAND" : "IN ROTATION ZONE"
+
+// Distance calculations to nearest Century Band and Mid-Point Band
+float distToCentBand = math.min(math.abs(close - currCentTop), math.abs(close - currCentBot))
+float distToMidBand  = math.min(math.abs(close - currMidTop),  math.abs(close - currMidBot))
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ REACTION DIAGNOSTICS (BAR-BY-BAR SIGNALS)
+// ═════════════════════════════════════════════════════════════════════════════
+bool centuryTapBull = low <= currCentTop and close > currCentTop and close > open
+bool centuryTapBear = high >= currCentBot and close < currCentBot and close < open
+bool midTapBull     = low <= currMidTop  and low >= currMidBot and close > open
+bool midTapBear     = high >= currMidBot and high <= currMidTop and close < open
+
+plotshape(i_showReversals and (centuryTapBull or midTapBull), title = "Bullish Band Tap", 
+     style = shape.triangleup, location = location.belowbar, color = i_tapColorBull, size = size.small)
+plotshape(i_showReversals and (centuryTapBear or midTapBear), title = "Bearish Band Tap", 
+     style = shape.triangledown, location = location.abovebar, color = i_tapColorBear, size = size.small)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ VISUALS: BANDS, QUANTILES & LEVEL LINES (LAST BAR RENDER)
+// ═════════════════════════════════════════════════════════════════════════════
+var activeBoxes = array.new<box>()
+var activeLines = array.new<line>()
+var activeLbls  = array.new<label>()
+
+if barstate.islast
+    // Clear dynamic drawings
+    while array.size(activeBoxes) > 0
+        box.delete(array.shift(activeBoxes))
+    while array.size(activeLines) > 0
+        line.delete(array.shift(activeLines))
+    while array.size(activeLbls) > 0
+        label.delete(array.shift(activeLbls))
+
+    // Determine grid centroids around current price
+    float centerCent = math.floor(close / unitSize) * unitSize
+    
+    for i = -i_numUnits to i_numUnits
+        float cent = centerCent + (i * unitSize)
+        float mid  = cent + (unitSize * 0.5)
+        
+        // 1. Render Century Zone Band (00s / Major Unit)
+        if i_showCenturyBands
+            float topZ = cent + (activeInstType == "ES" ? 10.0 : centBandOffset)
+            float botZ = cent - (activeInstType == "ES" ? 12.5 : centBandOffset)
+            box bx = box.new(bar_index - 1, topZ, bar_index, botZ,
+                 border_color = na, bgcolor = color.new(i_centuryBandColor, i_centuryBandTransp),
+                 extend = extend.both)
+            activeBoxes.push(bx)
+            
+        // 2. Render Mid-Point Zone Band (50s / Half Unit)
+        if i_showMidBands
+            float topM = mid + (activeInstType == "ES" ? 12.5 : midBandOffset)
+            float botM = mid - (activeInstType == "ES" ? 12.5 : midBandOffset)
+            box bxM = box.new(bar_index - 1, topM, bar_index, botM,
+                 border_color = na, bgcolor = color.new(i_midBandColor, i_midBandTransp),
+                 extend = extend.both)
+            activeBoxes.push(bxM)
+
+        // 3. Render ES 10-Point Order Book Buffer Nodes (35-40, 85-90, 05-10, 60-65)
+        if activeInstType == "ES" and i_showESBuffers
+            // 85-90 Pre-00 Defense Node (87.5% Octile)
+            box b8590 = box.new(bar_index - 1, cent - 10.0, bar_index, cent - 15.0,
+                 border_color = na, bgcolor = color.new(i_lineColorESBuff, 85), extend = extend.both)
+            activeBoxes.push(b8590)
+            
+            // 05-10 Breakout Pause Node (10-12.5% Octile)
+            box b0510 = box.new(bar_index - 1, cent + 10.0, bar_index, cent + 5.0,
+                 border_color = na, bgcolor = color.new(i_lineColorESBuff, 85), extend = extend.both)
+            activeBoxes.push(b0510)
+
+            // 35-40 Pre-50 Defense Node (37.5% Octile)
+            box b3540 = box.new(bar_index - 1, cent + 40.0, bar_index, cent + 35.0,
+                 border_color = na, bgcolor = color.new(i_lineColorESBuff, 85), extend = extend.both)
+            activeBoxes.push(b3540)
+
+            // 60-65 Post-50 Support Node (62.5% Octile)
+            box b6065 = box.new(bar_index - 1, cent + 65.0, bar_index, cent + 60.0,
+                 border_color = na, bgcolor = color.new(i_lineColorESBuff, 85), extend = extend.both)
+            activeBoxes.push(b6065)
+
+        // 4. Render Sub-Grid, Quantile, Quarter & Octile Level Lines & Labels
+        if i_showLines or i_showQuantiles
+            levelsArr = array.new<SubGridLevel>()
+            
+            bool wantQuintiles = i_quantileMode != "Quarters Only" and i_quantileMode != "Octiles Only / Half-Quarters (12.5%, 37.5%, 62.5%, 87.5%)"
+            bool wantQuarters  = i_quantileMode != "Quintiles Only (20%, 40%, 60%, 80%)" and i_quantileMode != "Octiles Only / Half-Quarters (12.5%, 37.5%, 62.5%, 87.5%)"
+            bool wantOctiles   = i_quantileMode == "All Sub-Levels (Quintiles 20% + Quarters 25% + Octiles 12.5%)" or i_quantileMode == "Octiles Only / Half-Quarters (12.5%, 37.5%, 62.5%, 87.5%)"
+            
+            if activeInstType == "ES"
+                // ES Specific Sub-Grid Levels (Centroid, Octiles & Quarters)
+                levelsArr.push(SubGridLevel.new(cent, " 00 (0% Centroid)", i_lineColorCent))
+                if wantOctiles or wantQuintiles
+                    levelsArr.push(SubGridLevel.new(cent + 10.0, " 10 (10% Pause)", i_lineColorESBuff))
+                if wantQuarters
+                    levelsArr.push(SubGridLevel.new(cent + 25.0, " 25 (25% Q25)", i_lineColorQ2575))
+                if wantOctiles
+                    levelsArr.push(SubGridLevel.new(cent + 37.5, " 37.5 (37.5% Def Octile)", i_lineColorOctile))
+                levelsArr.push(SubGridLevel.new(cent + 50.0, " 50 (50% Mid)", i_lineColor50))
+                if wantOctiles
+                    levelsArr.push(SubGridLevel.new(cent + 62.5, " 62.5 (62.5% Supp Octile)", i_lineColorOctile))
+                if wantQuarters
+                    levelsArr.push(SubGridLevel.new(cent + 75.0, " 75 (75% Q75)", i_lineColorQ2575))
+                if wantOctiles or wantQuintiles
+                    levelsArr.push(SubGridLevel.new(cent + 87.5, " 87.5 (87.5% Def Octile)", i_lineColorOctile))
+            else
+                // Standard Multi-Asset Grid: Quintiles (20%), Quarters (25%), and Octiles (12.5% - Half-Quarter)
+                float p00 = cent
+                float p12 = cent + (unitSize * 0.125)
+                float p20 = cent + (unitSize * 0.20)
+                float p25 = cent + (unitSize * 0.25)
+                float p37 = cent + (unitSize * 0.375)
+                float p40 = cent + (unitSize * 0.40)
+                float p50 = mid
+                float p60 = cent + (unitSize * 0.60)
+                float p62 = cent + (unitSize * 0.625)
+                float p75 = cent + (unitSize * 0.75)
+                float p80 = cent + (unitSize * 0.80)
+                float p87 = cent + (unitSize * 0.875)
+                
+                levelsArr.push(SubGridLevel.new(p00, " 00 (0% Centroid)", i_lineColorCent))
+                if wantOctiles
+                    levelsArr.push(SubGridLevel.new(p12, " 12.5 (12.5% Octile 1)", i_lineColorOctile))
+                if wantQuintiles
+                    levelsArr.push(SubGridLevel.new(p20, " 20 (20% Q1)", i_lineColor8020))
+                if wantQuarters
+                    levelsArr.push(SubGridLevel.new(p25, " 25 (25% Q25)", i_lineColorQ2575))
+                if wantOctiles
+                    levelsArr.push(SubGridLevel.new(p37, " 37.5 (37.5% Octile 3 Def)", i_lineColorOctile))
+                if wantQuintiles
+                    levelsArr.push(SubGridLevel.new(p40, " 40 (40% Q2)", i_lineColor4060))
+                levelsArr.push(SubGridLevel.new(p50, " 50 (50% Mid)", i_lineColor50))
+                if wantQuintiles
+                    levelsArr.push(SubGridLevel.new(p60, " 60 (60% Q3)", i_lineColor4060))
+                if wantOctiles
+                    levelsArr.push(SubGridLevel.new(p62, " 62.5 (62.5% Octile 5 Supp)", i_lineColorOctile))
+                if wantQuarters
+                    levelsArr.push(SubGridLevel.new(p75, " 75 (75% Q75)", i_lineColorQ2575))
+                if wantQuintiles
+                    levelsArr.push(SubGridLevel.new(p80, " 80 (80% Q4)", i_lineColor8020))
+                if wantOctiles
+                    levelsArr.push(SubGridLevel.new(p87, " 87.5 (87.5% Octile 7 Def)", i_lineColorOctile))
+
+            for item in levelsArr
+                bool isMajorPivot = str.contains(item.tag, "00") or str.contains(item.tag, "50")
+                line ln = line.new(bar_index - 1, item.price, bar_index, item.price,
+                     extend = extend.both, color = color.new(item.col, i_lineTransp),
+                     style = isMajorPivot ? line.style_solid : f_lineStyle(i_lineStyleStr),
+                     width = isMajorPivot ? i_lineWidth + 1 : i_lineWidth)
+                activeLines.push(ln)
+                
+                if i_showLineLbls
+                    label lb = label.new(bar_index + 3, item.price, str.tostring(item.price, format.mintick) + item.tag,
+                         style = label.style_none, textcolor = item.col, size = size.small,
+                         text_font_family = f_font(i_textFontStr))
+                    activeLbls.push(lb)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ DASHBOARD TABLE
+// ═════════════════════════════════════════════════════════════════════════════
+var table dashTable = na
+
+if i_showTable and barstate.islast
+    if not na(dashTable)
+        table.delete(dashTable)
+        dashTable := na
+
+    bool isDark = i_theme == "Dark"
+    color tblBg    = isDark ? #131722 : #FFFFFF
+    color tblBorder= isDark ? #363A45 : #E0E0E0
+    color hdrBg    = isDark ? #1E222D : #F0F3F8
+    color hdrTxt   = isDark ? #D1D4DC : #131722
+    color cellTxt  = isDark ? #B2B5BE : #434651
+    color statusCol= inCenturyBand ? i_centuryBandColor : inMidPointBand ? i_midBandColor : color.gray
+
+    dashTable := table.new(f_tablePos(i_tablePosStr), 2, 7,
+         bgcolor = tblBg, border_width = 1, border_color = tblBorder,
+         frame_width = 1, frame_color = tblBorder)
+
+    tSz = f_labelSize(i_tableSizeStr)
+    fontFam = f_font(i_textFontStr)
+
+    // Header
+    table.cell(dashTable, 0, 0, "ORDER FLOW SUB-GRID (" + activeInstType + ")", bgcolor = hdrBg, text_color = hdrTxt,
+         text_font_family = fontFam, text_size = tSz, text_halign = text.align_left)
+    table.cell(dashTable, 1, 0, "", bgcolor = hdrBg)
+    table.merge_cells(dashTable, 0, 0, 1, 0)
+
+    // Preset / Scale
+    table.cell(dashTable, 0, 1, "Preset", text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_left)
+    table.cell(dashTable, 1, 1, i_preset == "Auto (Symbol-Based)" ? syminfo.root + " (U=" + str.tostring(unitSize) + ")" : activeInstType + " (U=" + str.tostring(unitSize) + ")", 
+         text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_right)
+
+    // Band State
+    table.cell(dashTable, 0, 2, "Band State", text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_left)
+    table.cell(dashTable, 1, 2, bandStatusStr, text_color = statusCol, text_font_family = fontFam, text_size = tSz, text_halign = text.align_right)
+
+    // Unit Quantile %
+    table.cell(dashTable, 0, 3, "Unit Progress", text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_left)
+    table.cell(dashTable, 1, 3, str.tostring(currentQuantilePct, "#.#") + "%", text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_right)
+
+    // Dist to Century Band
+    table.cell(dashTable, 0, 4, "Dist to Century Band", text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_left)
+    table.cell(dashTable, 1, 4, str.tostring(distToCentBand, "#.##") + " pts (" + str.tostring(math.round(distToCentBand / syminfo.mintick)) + " tks)", 
+         text_color = i_centuryBandColor, text_font_family = fontFam, text_size = tSz, text_halign = text.align_right)
+
+    // Dist to Mid-Point Band
+    table.cell(dashTable, 0, 5, "Dist to Mid Band", text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_left)
+    table.cell(dashTable, 1, 5, str.tostring(distToMidBand, "#.##") + " pts (" + str.tostring(math.round(distToMidBand / syminfo.mintick)) + " tks)", 
+         text_color = i_midBandColor, text_font_family = fontFam, text_size = tSz, text_halign = text.align_right)
+
+    // Century / Mid Band Boundaries
+    table.cell(dashTable, 0, 6, "Active Cent / Mid", text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_left)
+    table.cell(dashTable, 1, 6, str.tostring(centLevel, "#") + " / " + str.tostring(midLevel, "#"), 
+         text_color = cellTxt, text_font_family = fontFam, text_size = tSz, text_halign = text.align_right)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ══ ALERTS
+// ═════════════════════════════════════════════════════════════════════════════
+alertcondition(centuryTapBull or centuryTapBear, "Century Band Tap", "Price tapped Century Zone Band on {{interval}}")
+alertcondition(midTapBull or midTapBear, "Mid-Point Band Tap", "Price tapped Mid-Point Zone Band on {{interval}}")
+alertcondition(inCenturyBand and not inCenturyBand[1], "Entered Century Band", "Price entered Century Zone Band on {{interval}}")
+alertcondition(inMidPointBand and not inMidPointBand[1], "Entered Mid-Point Band", "Price entered Mid-Point Zone Band on {{interval}}")

@@ -1,0 +1,620 @@
+//@version=6
+indicator("8020 System Indicator", "8020", overlay = true,
+     max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+
+// ---------------------------------------------------------------------------
+//  Inputs
+// ---------------------------------------------------------------------------
+gL = "80/20 Levels"
+showLevels8020 = input.bool(true,   "Show levels 80/20 (Hundreds)", group = gL)
+showLevels     = input.bool(false,  "Show sub-levels 8/2 (< 10000)", group = gL)
+levelDashed    = input.bool(true,   "Dashed lines",                 group = gL)
+showLevelLbls  = input.bool(false,  "Price labels",                 group = gL)
+showZoneBands  = input.bool(true,   "40-pt zone bands",             group = gL)
+lvlEachSide    = input.int(10,      "Levels each side",             minval = 1, group = gL)
+lvlWidth       = input.int(1,       "Line width",                   minval = 1, group = gL)
+lvlTransp      = input.int(60,      "Line transparency",            minval = 0, maxval = 100, group = gL)
+zoneTransp     = input.int(90,      "Zone band transparency",       minval = 0, maxval = 100, group = gL)
+lvlColor       = input.color(color.gray, "Line color",              group = gL)
+zoneColor      = input.color(color.teal, "Zone band color",         group = gL)
+
+gR = "Repairs"
+showRepairs   = input.bool(true,   "Show repairs",                  group = gR)
+showRepairLbl = input.bool(true,   "\"R\" labels",                  group = gR)
+repWickTk     = input.int(0,       "Max wick (ticks)",              minval = 0, group = gR)
+
+gX = "Cross Sections"
+showXS      = input.bool(true,     "Show cross sections",           group = gX)
+showXSLbl   = input.bool(true,     "\"XS\" labels",                 group = gX)
+xsRatio     = input.float(0.6,     "Body / range ratio",            minval = 0.3, step = 0.05, group = gX)
+xsJuncTk    = input.int(2,         "Junction tolerance (ticks)",    minval = 0, group = gX)
+xsMinBodyTk = input.int(40,        "Min body (ticks)",              minval = 0, group = gX)
+
+gF = "Fork (Twin-Wick Reversal)"
+showFork         = input.bool(true,  "Show fork",                   group = gF)
+showForkLbl      = input.bool(true,  "\"F\" labels",                group = gF)
+forkWickTk       = input.int(3,      "Twin-wick similarity (ticks)",minval = 0, group = gF)
+forkMinWickRatio = input.float(0.45, "Min wick / range ratio",      minval = 0.2, maxval = 0.9, step = 0.05, group = gF)
+forkMaxBodyRatio = input.float(0.50, "Max body / range ratio",      minval = 0.1, maxval = 0.8, step = 0.05, group = gF)
+
+gH = "h Pattern (Bearish Continuation)"
+showH          = input.bool(true,  "Show h pattern",                group = gH)
+showHLbl       = input.bool(true,  "\"h\" labels",                  group = gH)
+hLookback      = input.int(8,      "Impulse swing lookback",        minval = 3, maxval = 30, group = gH)
+hArchRejRatio  = input.float(0.35, "Min upper wick at h-arch",      minval = 0.1, maxval = 0.8, step = 0.05, group = gH)
+
+gMTF = "10-Minute Trend Filter (MTF)"
+useMTF       = input.bool(false,   "Enable 10m HTF Trend Filter",   group = gMTF)
+htfTimeframe = input.timeframe("10","HTF Timeframe",                group = gMTF)
+htfEmaLen    = input.int(20,       "HTF Trend EMA Length",          minval = 1, group = gMTF)
+
+gM = "Marker Style (Repairs + Cross Sections + Fork + h)"
+extWidth     = input.int(2,        "Line width",                    minval = 1, group = gM)
+lookbackBars = input.int(1000,     "Lookback (bars, 0 = none)",     minval = 0, group = gM)
+bullColor    = input.color(#00D4FF, "Bullish color",                group = gM)
+bearColor    = input.color(#F8549E, "Bearish color",                group = gM)
+
+gCf = "Confluence"
+useConf   = input.bool(true,       "Highlight confluence",          group = gCf)
+confTk    = input.int(8,           "Distance to level (ticks)",      minval = 0, group = gCf)
+confColor = input.color(#B217C8,   "Color",                         group = gCf)
+
+gG = "Gaps"
+showGaps  = input.bool(true,       "Show gaps",                     group = gG)
+gapMinTk  = input.int(4,           "Min gap size (ticks)",          minval = 0, group = gG)
+gapTransp = input.int(60,          "Box transparency",              minval = 0, maxval = 100, group = gG)
+gapColor  = input.color(#5B8DEF,   "Box color",                     group = gG)
+
+gA = "A+ Windows"
+showAplus   = input.bool(true,     "Shade A+ windows",              group = gA)
+aplusTransp = input.int(80,        "Transparency",                  minval = 0, maxval = 100, group = gA)
+aplusColor  = input.color(#877ACF, "Color",                         group = gA)
+
+// One TradingView alert on "Any alert() function call" covers everything below;
+// these toggles choose which events are included in it.
+gAl = "Alerts"
+alertRepairs  = input.bool(true,  "New repair",                     group = gAl)
+alertFork     = input.bool(true,  "New fork",                       group = gAl)
+alertXS       = input.bool(true,  "New cross section",              group = gAl)
+alertH        = input.bool(true,  "New h pattern",                  group = gAl)
+alertGaps     = input.bool(false, "New gap",                        group = gAl)
+alertTaps     = input.bool(true,  "Level tapped / gap filled",      group = gAl)
+alertConfOnly = input.bool(false, "New-marker alerts: \"+\" only",  group = gAl)
+alertWindows  = input.bool(false, "A+ window opens",                group = gAl)
+
+gTb = "Stats Table"
+showTable  = input.bool(true,      "Show table",                    group = gTb)
+tablePosS  = input.string("Top right", "Position",
+     options = ["Top left", "Top center", "Top right", "Middle left", "Middle right",
+     "Bottom left", "Bottom center", "Bottom right"], group = gTb)
+tableSizeS = input.string("Small", "Text size",
+     options = ["Tiny", "Small", "Normal", "Large"], group = gTb)
+tableRows  = input.int(10,         "Max untapped rows",             minval = 1, maxval = 30, group = gTb)
+
+gGen = "General"
+tickOverride = input.float(0.0,    "Tick size (0 = auto)",          minval = 0, step = 0.25, group = gGen)
+
+// ---------------------------------------------------------------------------
+//  Derived settings + constants
+// ---------------------------------------------------------------------------
+tablePos = switch tablePosS
+    "Top left"      => position.top_left
+    "Top center"    => position.top_center
+    "Top right"     => position.top_right
+    "Middle left"   => position.middle_left
+    "Middle right"  => position.middle_right
+    "Bottom left"   => position.bottom_left
+    "Bottom center" => position.bottom_center
+    "Bottom right"  => position.bottom_right
+    => position.top_right
+
+tableSize = switch tableSizeS
+    "Tiny"   => size.tiny
+    "Small"  => size.small
+    "Normal" => size.normal
+    "Large"  => size.large
+    => size.small
+
+// Stats-table palette: white body with black text; header rows are inverted.
+TBL_BG      = color.white
+TBL_TEXT    = color.black
+TBL_HDR_BG  = color.black
+TBL_HDR_TXT = color.white
+MONO        = font.family_monospace
+
+MAX_MARKERS = 400
+MAX_GAPS    = 450
+
+tick = tickOverride > 0 ? tickOverride : syminfo.mintick
+
+// ---------------------------------------------------------------------------
+//  Multi-Timeframe Trend Calculation & Series Math
+// ---------------------------------------------------------------------------
+htfClose        = request.security(syminfo.tickerid, htfTimeframe, close, lookahead = barmerge.lookahead_off)
+htfEma          = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, htfEmaLen), lookahead = barmerge.lookahead_off)
+htfBull         = not useMTF or (htfClose >= htfEma)
+htfBear         = not useMTF or (htfClose <= htfEma)
+lowestLowSeries = ta.lowest(low, hLookback)
+
+// ---------------------------------------------------------------------------
+//  Helpers
+// ---------------------------------------------------------------------------
+
+// Distance from a price to the closest 80/20 level.
+nearestLevelsDist(float p) =>
+    float best = 1.0e10
+    
+    // 1. Check 80/20 levels (Hundreds)
+    if showLevels8020
+        float b100 = math.floor(p / 100) * 100
+        for off = -100 to 100 by 100
+            best := math.min(best, math.abs(p - (b100 + off + 20)))
+            best := math.min(best, math.abs(p - (b100 + off + 80)))
+        
+    // 2. Check 8/2 levels if price is 4 digits or less (< 10000) and enabled
+    if showLevels and p < 10000
+        float b10 = math.floor(p / 10) * 10
+        for off = -10 to 10 by 10
+            best := math.min(best, math.abs(p - (b10 + off + 2)))
+            best := math.min(best, math.abs(p - (b10 + off + 8)))
+    best
+    
+atLevel(float p) =>
+    useConf and nearestLevelsDist(p) <= confTk * tick
+
+barsText(int n) =>
+    str.tostring(n) + (n == 1 ? " bar" : " bars")
+
+// ---------------------------------------------------------------------------
+//  Alert queue
+// ---------------------------------------------------------------------------
+var alertQ = array.new<string>()
+
+queueAlert(string msg) =>
+    alertQ.push(msg)
+
+priceTxt(float p) =>
+    str.tostring(p, format.mintick)
+
+// ---------------------------------------------------------------------------
+//  Marker / gap state
+// ---------------------------------------------------------------------------
+type Marker
+    int    startBar
+    float  price
+    bool   isUp
+    string txt
+    color  col
+    line   ln
+    label  lb
+    bool   filled
+
+type BodyGap
+    int   startBar
+    float top
+    float bot
+    bool  isUp
+    box   bx
+    bool  filled
+
+var markers = array.new<Marker>()
+var gapsArr = array.new<BodyGap>()
+
+deleteMarker(Marker m) =>
+    line.delete(m.ln)
+    if not na(m.lb)
+        label.delete(m.lb)
+
+// Evict the oldest FILLED marker first; fall back to the oldest if none filled.
+evictMarker() =>
+    if markers.size() > 0
+        di = 0
+        for [i, m] in markers
+            if m.filled
+                di := i
+                break
+        deleteMarker(markers.get(di))
+        markers.remove(di)
+
+evictGap() =>
+    if gapsArr.size() > 0
+        di = 0
+        for [i, g] in gapsArr
+            if g.filled
+                di := i
+                break
+        box.delete(gapsArr.get(di).bx)
+        gapsArr.remove(di)
+
+newMarker(float p, bool isUp, string baseTxt, bool showLbl, int atBar = bar_index) =>
+    conf = atLevel(p)
+    col  = conf ? confColor : isUp ? bullColor : bearColor
+    txt  = conf ? baseTxt + "+" : baseTxt
+    ln   = line.new(atBar, p, atBar + 1, p, extend = extend.right, color = col, width = extWidth)
+    label lb = na
+    if showLbl
+        lb := label.new(atBar, p, isUp ? "\n" + txt : txt + "\n",
+             style = label.style_none, textcolor = col, size = size.small,
+             text_font_family = MONO)
+    markers.push(Marker.new(atBar, p, isUp, txt, col, ln, lb, false))
+    if markers.size() > MAX_MARKERS
+        evictMarker()
+    
+    // Alert routing: Repairs, Fork, Cross Section, h Pattern
+    wantAlert = baseTxt == "R" ? alertRepairs : baseTxt == "F" ? alertFork : baseTxt == "XS" ? alertXS : alertH
+    if wantAlert and (not alertConfOnly or conf)
+        queueAlert("new " + txt + (isUp ? " (bullish)" : " (bearish)") + " @ " + priceTxt(p))
+
+newGap(float top, float bot, bool isUp) =>
+    bx = box.new(bar_index - 1, top, bar_index, bot, border_color = na,
+         bgcolor = color.new(gapColor, gapTransp), extend = extend.right)
+    gapsArr.push(BodyGap.new(bar_index - 1, top, bot, isUp, bx, false))
+    if gapsArr.size() > MAX_GAPS
+        evictGap()
+    if alertGaps
+        queueAlert("new GAP" + (isUp ? " (up)" : " (down)") + " " + priceTxt(bot) + "-" + priceTxt(top))
+
+// ---------------------------------------------------------------------------
+//  Main Bar Execution
+// ---------------------------------------------------------------------------
+if barstate.isconfirmed
+    alertQ.clear()
+
+    // ---- Lookback pruning
+    if lookbackBars > 0
+        while markers.size() > 0 and bar_index - markers.first().startBar > lookbackBars
+            deleteMarker(markers.first())
+            markers.shift()
+        while gapsArr.size() > 0 and bar_index - gapsArr.first().startBar > lookbackBars
+            box.delete(gapsArr.first().bx)
+            gapsArr.shift()
+
+    // ---- Fill checks
+    for m in markers
+        if not m.filled and (m.isUp ? low <= m.price : high >= m.price)
+            m.filled := true
+            line.set_x2(m.ln, bar_index)
+            line.set_extend(m.ln, extend.none)
+            if alertTaps
+                queueAlert(m.txt + (m.isUp ? " (bullish)" : " (bearish)") + " tapped @ " + priceTxt(m.price))
+    for g in gapsArr
+        if not g.filled and (g.isUp ? low <= g.top : high >= g.bot)
+            g.filled := true
+            box.set_right(g.bx, bar_index)
+            box.set_extend(g.bx, extend.none)
+            if alertTaps
+                queueAlert("GAP filled " + priceTxt(g.bot) + "-" + priceTxt(g.top))
+
+    // ---- 1. Repairs (single candle missing a wick on one side)
+    if showRepairs
+        upperWick = high - math.max(open, close)
+        lowerWick = math.min(open, close) - low
+        tol = repWickTk * tick
+        if close > open and lowerWick <= tol and htfBull
+            newMarker(low, true, "R", showRepairLbl)
+        else if close < open and upperWick <= tol and htfBear
+            newMarker(high, false, "R", showRepairLbl)
+
+    // ---- 2. Fork Setup (Twin equal-wick rejection reversal)
+    if showFork and not na(close[2])
+        wickTol = forkWickTk * tick
+        
+        // Bar metrics: Current [0], Previous [1], Prior [2]
+        r0 = high - low
+        b0 = math.abs(close - open)
+        w0_lo = math.min(open, close) - low
+        w0_hi = high - math.max(open, close)
+        
+        r1 = high[1] - low[1]
+        b1 = math.abs(close[1] - open[1])
+        w1_lo = math.min(open[1], close[1]) - low[1]
+        w1_hi = high[1] - math.max(open[1], close[1])
+
+        r2 = high[2] - low[2]
+        b2 = math.abs(close[2] - open[2])
+        w2_lo = math.min(open[2], close[2]) - low[2]
+        w2_hi = high[2] - math.max(open[2], close[2])
+
+        // Bullish Fork: Twin lower wicks of similar price, small bodies, bullish rejection close
+        // Variant A: Adjacent bars [1] and [0]
+        forkUp2 = r1 > 0 and r0 > 0 and
+             (w1_lo >= forkMinWickRatio * r1) and (w0_lo >= forkMinWickRatio * r0) and
+             (b1 <= forkMaxBodyRatio * r1) and (b0 <= forkMaxBodyRatio * r0) and
+             math.abs(low[1] - low) <= wickTol and close > open and htfBull
+             
+        // Variant B: 3-bar twin wicks [2] and [0] with inside low [1]
+        forkUp3 = r2 > 0 and r0 > 0 and
+             (w2_lo >= forkMinWickRatio * r2) and (w0_lo >= forkMinWickRatio * r0) and
+             (b2 <= forkMaxBodyRatio * r2) and (b0 <= forkMaxBodyRatio * r0) and
+             math.abs(low[2] - low) <= wickTol and (low[1] >= math.min(low[2], low) - wickTol) and
+             close > open and htfBull
+
+        // Bearish Fork: Twin upper wicks of similar price, small bodies, bearish rejection close
+        forkDn2 = r1 > 0 and r0 > 0 and
+             (w1_hi >= forkMinWickRatio * r1) and (w0_hi >= forkMinWickRatio * r0) and
+             (b1 <= forkMaxBodyRatio * r1) and (b0 <= forkMaxBodyRatio * r0) and
+             math.abs(high[1] - high) <= wickTol and close < open and htfBear
+
+        forkDn3 = r2 > 0 and r0 > 0 and
+             (w2_hi >= forkMinWickRatio * r2) and (w0_hi >= forkMinWickRatio * r0) and
+             (b2 <= forkMaxBodyRatio * r2) and (b0 <= forkMaxBodyRatio * r0) and
+             math.abs(high[2] - high) <= wickTol and (high[1] <= math.max(high[2], high) + wickTol) and
+             close < open and htfBear
+
+        if forkUp2
+            newMarker(math.min(low, low[1]), true, "F", showForkLbl, bar_index)
+        else if forkUp3
+            newMarker(math.min(low, low[2]), true, "F", showForkLbl, bar_index)
+        else if forkDn2
+            newMarker(math.max(high, high[1]), false, "F", showForkLbl, bar_index)
+        else if forkDn3
+            newMarker(math.max(high, high[2]), false, "F", showForkLbl, bar_index)
+
+    // ---- 3. Cross Sections (two same-direction momentum candles)
+    if showXS and not na(close[1])
+        body1  = math.abs(close[1] - open[1])
+        range1 = high[1] - low[1]
+        body2  = math.abs(close - open)
+        range2 = high - low
+        strong1 = range1 > 0 and body1 >= xsRatio * range1 and body1 >= xsMinBodyTk * tick
+        strong2 = range2 > 0 and body2 >= xsRatio * range2 and body2 >= xsMinBodyTk * tick
+        junctionClean = math.abs(close[1] - open) <= xsJuncTk * tick
+        junction = (close[1] + open) / 2
+        if strong1 and strong2 and junctionClean
+            if close[1] > open[1] and close > open and close > high[1] and htfBull
+                newMarker(junction, true, "XS", showXSLbl)
+            else if close[1] < open[1] and close < open and close < low[1] and htfBear
+                newMarker(junction, false, "XS", showXSLbl)
+
+    // ---- 4. "h" Pattern (Bearish continuation arch after lower low)
+    if showH and not na(close[hLookback]) and htfBear
+        // Check if recent price printed a lower low in the prior lookback window
+        lowestLowPrior = lowestLowSeries[1]
+        archTopPrice   = math.max(high[1], high[2])
+        archBarOffset  = high[1] >= high[2] ? 1 : 2
+        archRange      = high[archBarOffset] - low[archBarOffset]
+        archUpperWick  = high[archBarOffset] - math.max(open[archBarOffset], close[archBarOffset])
+        
+        // Rejection at arch top + rollover red candle closing below prior open/close
+        archHasRejection = archRange > 0 and (archUpperWick >= hArchRejRatio * archRange or math.abs(close[archBarOffset] - open[archBarOffset]) <= 0.45 * archRange)
+        rolloverRedBar   = close < open and close < math.min(open[1], close[1])
+        archAtMagnet     = atLevel(archTopPrice)
+        
+        if archHasRejection and rolloverRedBar and (archAtMagnet or useConf == false)
+            newMarker(archTopPrice, false, "h", showHLbl, bar_index - archBarOffset)
+
+    // ---- 5. Gaps (two consecutive candle BODIES leaving a gap between them)
+    if showGaps and not na(close[1])
+        leftTop  = math.max(open[1], close[1])
+        leftBot  = math.min(open[1], close[1])
+        rightTop = math.max(open, close)
+        rightBot = math.min(open, close)
+        minGap = gapMinTk * tick
+        if rightBot - leftTop >= minGap
+            newGap(rightBot, leftTop, true)     // up gap: [leftTop .. rightBot]
+        else if leftBot - rightTop >= minGap
+            newGap(leftBot, rightTop, false)    // down gap: [rightTop .. leftBot]
+
+    // ---- Send everything this bar produced as ONE alert message
+    if alertQ.size() > 0
+        alert(syminfo.ticker + " 8020: " + alertQ.join(" | "), alert.freq_once_per_bar)
+
+// ---------------------------------------------------------------------------
+//  80/20 levels + zone bands
+// ---------------------------------------------------------------------------
+var lvlLines  = array.new<line>()
+var lvlLabels = array.new<label>()
+var zoneBoxes = array.new<box>()
+
+if barstate.islast
+    for l in lvlLines
+        line.delete(l)
+    lvlLines.clear()
+    for l in lvlLabels
+        label.delete(l)
+    lvlLabels.clear()
+    for zb in zoneBoxes
+        box.delete(zb)
+    zoneBoxes.clear()
+
+    if showZoneBands or showLevels8020 or showLevels
+        levels = array.new<float>()
+        
+        if showLevels8020
+            // --- 1. Generate 80/20 Levels (Hundreds) ---
+            base100 = math.floor(close / 100) * 100
+            cand100 = array.new<float>()
+            for i = -lvlEachSide - 1 to lvlEachSide + 1
+                hund = base100 + i * 100
+                cand100.push(hund + 20)
+                cand100.push(hund + 80)
+            cand100.sort()
+            
+            below100 = array.new<float>()
+            above100 = array.new<float>()
+            for v in cand100
+                if v <= close
+                    below100.push(v)
+                else
+                    above100.push(v)
+            while below100.size() > lvlEachSide
+                below100.shift()
+            while above100.size() > lvlEachSide
+                above100.pop()
+                
+            for v in below100
+                levels.push(v)
+            for v in above100
+                levels.push(v)
+
+        // --- 2. Generate 8/2 Levels (Tens) if < 10000 ---
+        if close < 10000 and showLevels
+            base10 = math.floor(close / 10) * 10
+            cand10 = array.new<float>()
+            for i = -lvlEachSide - 1 to lvlEachSide + 1
+                ten = base10 + i * 10
+                cand10.push(ten + 2)
+                cand10.push(ten + 8)
+            cand10.sort()
+            
+            below10 = array.new<float>()
+            above10 = array.new<float>()
+            for v in cand10
+                if v <= close
+                    below10.push(v)
+                else
+                    above10.push(v)
+            while below10.size() > lvlEachSide
+                below10.shift()
+            while above10.size() > lvlEachSide
+                above10.pop()
+                
+            for v in below10
+                levels.push(v)
+            for v in above10
+                levels.push(v)
+
+        levels.sort()
+
+        // --- 3. Draw Zone Bands ---
+        if showZoneBands and showLevels8020 and levels.size() > 0 
+            loB = levels.first() - 20
+            hiB = levels.last() + 20
+            
+            // 80/20 Zones (40-pt bands straddling hundreds)
+            hh = math.floor(loB / 100) * 100
+            while hh <= math.ceil(hiB / 100) * 100
+                topZ = hh + 20
+                botZ = hh - 20
+                if not (topZ < loB or botZ > hiB)
+                    zoneBoxes.push(box.new(bar_index - 1, topZ, bar_index, botZ,
+                         border_color = na, bgcolor = color.new(zoneColor, zoneTransp),
+                         extend = extend.both))
+                hh += 100
+
+        if showZoneBands and showLevels and levels.size() > 0 and close < 10000        
+            // 8/2 Zones (4-pt bands straddling tens)
+            loB = levels.first() - 20
+            hiB = levels.last() + 20
+            tt = math.floor(loB / 10) * 10
+            while tt <= math.ceil(hiB / 10) * 10
+                topZ10 = tt + 2
+                botZ10 = tt - 2
+                if not (topZ10 < loB or botZ10 > hiB)
+                    zoneBoxes.push(box.new(bar_index - 1, topZ10, bar_index, botZ10,
+                        border_color = na, bgcolor = color.new(zoneColor, zoneTransp),
+                        extend = extend.both))
+                tt += 10
+
+        // --- 4. Draw Lines ---
+        if (showLevels or showLevels8020) and levels.size() > 0
+            for v in levels
+                lvlLines.push(line.new(bar_index - 1, v, bar_index, v,
+                     extend = extend.both, color = color.new(lvlColor, lvlTransp),
+                     style = levelDashed ? line.style_dashed : line.style_solid,
+                     width = lvlWidth))
+                if showLevelLbls
+                    lvlLabels.push(label.new(bar_index + 3, v, str.tostring(v),
+                         style = label.style_none, textcolor = lvlColor, size = size.small,
+                         text_font_family = MONO))
+                         
+// ---------------------------------------------------------------------------
+//  A+ windows: 09:30-11:00 and 15:00-16:00 ET (DST handled by the timezone arg)
+// ---------------------------------------------------------------------------
+inAplus = not na(time(timeframe.period, "0930-1100", "America/New_York")) or
+     not na(time(timeframe.period, "1500-1600", "America/New_York"))
+bgcolor(showAplus and inAplus ? color.new(aplusColor, aplusTransp) : na)
+
+// A+ window-open alert (fires on the first bar of each window)
+if alertWindows and inAplus and not inAplus[1]
+    alert(syminfo.ticker + " 8020: A+ window open", alert.freq_once_per_bar)
+
+// ---------------------------------------------------------------------------
+//  Stats table: legend + untapped levels (rebuilt on every last-bar update)
+// ---------------------------------------------------------------------------
+
+// Full-width inverted header row (black background, white text).
+hdrRow(table t, int row, string txt, string sz) =>
+    table.cell(t, 0, row, txt, bgcolor = TBL_HDR_BG, text_color = TBL_HDR_TXT,
+         text_font_family = MONO, text_size = sz, text_halign = text.align_left)
+    table.cell(t, 1, row, "", bgcolor = TBL_HDR_BG)
+    table.cell(t, 2, row, "", bgcolor = TBL_HDR_BG)
+    table.merge_cells(t, 0, row, 2, row)
+
+// Legend row: colored symbol + dimmed description.
+legendRow(table t, int row, string sym, color symC, string desc, string sz) =>
+    table.cell(t, 0, row, sym, text_color = symC, text_font_family = MONO, text_size = sz)
+    table.cell(t, 1, row, desc, text_color = color.new(TBL_TEXT, 35),
+         text_font_family = MONO, text_size = sz, text_halign = text.align_left)
+    table.merge_cells(t, 1, row, 2, row)
+
+var table tb = na
+if barstate.islast
+    if not na(tb)
+        table.delete(tb)
+        tb := na
+    if showTable
+        // Collect every unfilled marker and gap.
+        idxs = array.new<int>()      // origin bar
+        txts = array.new<string>()   // type text
+        prcs = array.new<string>()   // price text
+        cols = array.new<color>()    // row color
+        for m in markers
+            if not m.filled
+                idxs.push(m.startBar)
+                txts.push(m.txt + (m.isUp ? " ▲" : " ▼"))
+                prcs.push(str.tostring(m.price, format.mintick))
+                cols.push(m.col)
+        for g in gapsArr
+            if not g.filled
+                idxs.push(g.startBar)
+                txts.push("GAP" + (g.isUp ? " ▲" : " ▼"))
+                prcs.push(str.tostring(g.bot, format.mintick) + "–" + str.tostring(g.top, format.mintick))
+                cols.push(gapColor)
+
+        nUntapped = idxs.size()
+        shown = math.min(nUntapped, tableRows)
+
+        // Rows: 0 title | 1-8 legend | 9 section header | 10 column headers | 11.. entries
+        rowsTotal = 11 + math.max(shown, 1)
+        tb := table.new(tablePos, 3, rowsTotal, bgcolor = TBL_BG,
+             border_width = 1, border_color = color.new(TBL_TEXT, 80),
+             frame_width = 1, frame_color = TBL_TEXT)
+        dim = color.new(TBL_TEXT, 35)
+
+        hdrRow(tb, 0, "8020 SYSTEM", tableSize)
+
+        legendRow(tb, 1, "R",  TBL_TEXT,  "repair (no-wick candle)",  tableSize)
+        legendRow(tb, 2, "F",  TBL_TEXT,  "fork (twin-wick reversal)",tableSize)
+        legendRow(tb, 3, "XS", TBL_TEXT,  "cross section (junction)", tableSize)
+        legendRow(tb, 4, "h",  TBL_TEXT,  "h pattern (bearish rollover)", tableSize)
+        legendRow(tb, 5, "■",  gapColor,  "body gap",                 tableSize)
+        legendRow(tb, 6, "+",  confColor, "confluence w/ 80/20 lvl",  tableSize)
+        legendRow(tb, 7, "▲",  bullColor, "bullish marker",           tableSize)
+        legendRow(tb, 8, "▼",  bearColor, "bearish marker",           tableSize)
+
+        hdrRow(tb, 9, "UNTAPPED (" + str.tostring(nUntapped) + ")", tableSize)
+
+        // Column headers: AGE = bars elapsed since the marker's origin candle.
+        table.cell(tb, 0, 10, "TYPE", bgcolor = color.new(TBL_HDR_BG, 85), text_color = TBL_TEXT,
+             text_font_family = MONO, text_size = tableSize, text_halign = text.align_left)
+        table.cell(tb, 1, 10, "PRICE", bgcolor = color.new(TBL_HDR_BG, 85), text_color = TBL_TEXT,
+             text_font_family = MONO, text_size = tableSize, text_halign = text.align_right)
+        table.cell(tb, 2, 10, "AGE", bgcolor = color.new(TBL_HDR_BG, 85), text_color = TBL_TEXT,
+             text_font_family = MONO, text_size = tableSize, text_halign = text.align_right)
+
+        if shown == 0
+            table.cell(tb, 0, 11, "— none —", text_color = dim,
+                 text_font_family = MONO, text_size = tableSize)
+            table.merge_cells(tb, 0, 11, 2, 11)
+        else
+            // Newest first.
+            sortedIdx = array.sort_indices(idxs, order.descending)
+            for r = 0 to shown - 1
+                si = sortedIdx.get(r)
+                table.cell(tb, 0, 11 + r, txts.get(si), text_color = cols.get(si),
+                     text_font_family = MONO, text_size = tableSize, text_halign = text.align_left)
+                table.cell(tb, 1, 11 + r, prcs.get(si), text_color = TBL_TEXT,
+                     text_font_family = MONO, text_size = tableSize, text_halign = text.align_right)
+                table.cell(tb, 2, 11 + r, barsText(bar_index - idxs.get(si)), text_color = dim,
+                     text_font_family = MONO, text_size = tableSize, text_halign = text.align_right)
