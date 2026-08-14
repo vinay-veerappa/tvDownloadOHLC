@@ -4,7 +4,7 @@ This directory contains the core architectural designs for the Hub-and-Spoke dat
 
 ## Key Documents
 - [Schwab Unified Hub Design](./schwab_unified_hub_design.md): Blueprint for Schwab Hub-and-Spoke L1/L2 streaming.
-- [NinjaTrader MCP Specification](../ninjatrader-mcp.md): Blueprint for NinjaTrader 8 Unified Hub (`ninjatrader_hub.py`) and 50-tool MCP suite.
+- [NinjaTrader MCP Specification](https://github.com/vinay-veerappa/nt8-mcp-bridge/blob/fold-mcp-wrapper/docs/ninjatrader-mcp.md): Blueprint for NinjaTrader 8 Unified Hub (`ninjatrader_hub.py`) and 52-tool MCP suite (now in the nt8-mcp-bridge repo).
 - [L2 Bookmap Engine](./l2_engine_specs.md): Technical specifications for heatmap and mHVN detection.
 
 ## Streaming Hub Services

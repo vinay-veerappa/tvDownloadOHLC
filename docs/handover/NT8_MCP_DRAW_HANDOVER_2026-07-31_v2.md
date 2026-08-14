@@ -1,7 +1,7 @@
 # NT8 MCP Bridge — Draw API Handover v2 (2026-07-31)
 
 > **STATUS: RESOLVED** (2026-08-01). All issues from this handover have been fixed.
-> See `docs/NT8_MCP_ENDPOINT_AUDIT.md` for the current comprehensive audit.
+> See `nt8-mcp-bridge/docs/NT8_MCP_ENDPOINT_AUDIT.md` for the current comprehensive audit.
 >
 > This handover is kept for historical reference only. The original issues (C# 7 `out var`
 > compile failure, WPF dispatcher deadlock, indexer-safe GetP/SetP, chart discovery
