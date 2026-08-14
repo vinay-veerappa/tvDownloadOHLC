@@ -4,9 +4,13 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Windows.Media;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
 #endregion
@@ -24,14 +28,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// Bandits8020Bot — High-Precision Level Sniping & Sub-Grid Reversion Bot for NinjaTrader 8.
     /// 
     /// Key Capabilities:
-    /// 1. Automatic Instrument Profiling: Automatically detects NQ, MNQ, ES, MES, YM, MYM, CL, MCL, RTY, M2K
-    ///    and configures appropriate Grid Handles (100 vs 25 vs 1.0), Stop Distances, and Targets.
-    /// 2. Multi-Contract Auto-Scaling:
-    ///    - AutoMicroScale: Automatically scales 10x contracts on Micros to match Mini dollar risk/PnL.
-    ///    - TargetRiskDollars: Computes exact contract quantities based on fixed dollar risk (e.g. $200 risk/trade).
-    /// 3. Precision Limit Execution: Submits limit orders directly at xx20 & xx80 nodes.
-    /// 4. True RTH Open (09:30 ET) Directional Dealing Bias Gate.
-    /// 5. Prop Firm ATM Brackets with strict 2R daily loss limits.
+    /// 1. Comprehensive On-Chart Visual UI:
+    ///    - Live HUD Dashboard: Bias, active grid levels, session PnL, circuit breaker counters, active sizing.
+    ///    - Dynamic Sub-Grid Overlay: Automatically plots xx00 (Handle), xx20 (Support), xx50 (Mid), xx80 (Resistance).
+    ///    - Setup Verification Markers: Clear arrows and text labels for Fork, 'h' pattern, and Sniper limit entries.
+    ///    - Active Bracket Overlay: Visualizes Entry, Stop Loss, and Target lines in real-time.
+    /// 2. Automatic Instrument Profiling: Auto-detects NQ, MNQ, ES, MES, YM, MYM, CL, MCL, RTY, M2K.
+    /// 3. Multi-Contract Auto-Scaling: Target dollar risk per trade (e.g. $200) or Micro scaling (10x).
+    /// 4. Precision Limit Execution at exact sub-grid nodes (eliminating bar-close chasing).
+    /// 5. True 09:30 AM ET RTH Open Directional Dealing Bias Gate.
+    /// 6. Prop Firm ATM Brackets with 2R daily loss limits and consecutive loser cooldowns.
     /// </summary>
     public class Bandits8020Bot : RiskManagerBase
     {
@@ -110,6 +116,28 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public bool SkipDeadZone { get; set; } = true;
         #endregion
 
+        #region Visuals & On-Chart UI
+        [NinjaScriptProperty]
+        [Display(Name = "Show Dashboard HUD", Order = 1, GroupName = "5. Visuals & Chart UI",
+                 Description = "Displays sleek top-right Head-Up Display panel with live bias, grid levels, and PnL")]
+        public bool ShowDashboardHUD { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show Sub-Grid Rays", Order = 2, GroupName = "5. Visuals & Chart UI",
+                 Description = "Plots dynamic horizontal rays for xx00, xx20, xx50, and xx80 nodes")]
+        public bool ShowSubGridLines { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show Setup Verification Markers", Order = 3, GroupName = "5. Visuals & Chart UI",
+                 Description = "Draws arrows and text tags verifying the exact setup triggering the entry")]
+        public bool ShowSignalMarkers { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show Active Trade Brackets", Order = 4, GroupName = "5. Visuals & Chart UI",
+                 Description = "Draws real-time Entry, Stop Loss, and Profit Target horizontal bracket lines")]
+        public bool ShowTradeBrackets { get; set; } = true;
+        #endregion
+
         #endregion
 
         #region Internal State
@@ -122,6 +150,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private int touchesOnCurrentLevelToday;
         private bool isMicroInstrument;
         private int calculatedQuantity;
+        private string lastTriggeredSetup = "None";
+        private double lastTriggerPrice = 0;
 
         #endregion
 
@@ -132,7 +162,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description                  = "Prop Firm Bandits 80/20 & Orderflow Sub-Grid Strategy with Auto-Calibration & Contract Scaling";
+            Description                  = "Prop Firm Bandits 80/20 & Orderflow Sub-Grid Strategy with Full Visual UI Suite";
             Name                         = "Bandits8020Bot";
             Calculate                    = Calculate.OnBarClose;
             EntriesPerDirection          = 1;
@@ -177,6 +207,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             UseRthOpenBias     = true;
             TradeAsiaSession   = false;
             SkipDeadZone       = true;
+
+            ShowDashboardHUD   = true;
+            ShowSubGridLines   = true;
+            ShowSignalMarkers  = true;
+            ShowTradeBrackets  = true;
         }
 
         protected override void ConfigureStrategy()
@@ -191,6 +226,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             rthOpenPrice = 0;
             rthOpenCaptured = false;
             sessionDate = DateTime.MinValue;
+            lastTriggeredSetup = "None";
+            lastTriggerPrice = 0;
 
             CalibrateInstrumentSettings();
         }
@@ -222,27 +259,33 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 else if (name.Contains("YM"))
                 {
                     GridUnit = 100.0;
-                    StopLossPoints = 20.0;
-                    ProfitTargetPoints = 40.0;
+                    StopLossPoints = 15.0;
+                    ProfitTargetPoints = 30.0;
                     LevelToleranceTicks = 4;
                 }
                 else if (name.Contains("CL"))
                 {
                     GridUnit = 1.0;
-                    StopLossPoints = 0.20;
-                    ProfitTargetPoints = 0.40;
+                    StopLossPoints = 0.10;
+                    ProfitTargetPoints = 0.20;
                     LevelToleranceTicks = 2;
                 }
                 else if (name.Contains("RTY") || name.Contains("2K"))
                 {
                     GridUnit = 10.0;
-                    StopLossPoints = 3.0;
-                    ProfitTargetPoints = 6.0;
+                    StopLossPoints = 1.0;
+                    ProfitTargetPoints = 2.0;
+                    LevelToleranceTicks = 3;
+                }
+                else if (name.Contains("GC"))
+                {
+                    GridUnit = 10.0;
+                    StopLossPoints = 1.0;
+                    ProfitTargetPoints = 2.0;
                     LevelToleranceTicks = 3;
                 }
             }
 
-            // Calculate Order Quantity
             calculatedQuantity = Math.Max(1, DefaultQuantity);
 
             if (SizingMode == BanditsSizingMode.AutoMicroScale)
@@ -279,9 +322,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override int CheckForSignal()
         {
-            if (Position.MarketPosition != MarketPosition.Flat)
-                return 0;
-
             if (CurrentBars[0] < 5)
                 return 0;
 
@@ -305,12 +345,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 rthOpenCaptured = true;
             }
 
-            if (!IsAllowedTradingWindow(timeHHMM))
-                return 0;
-
-            if (CurrentBars[0] - lastEntryBar < 5)
-                return 0;
-
             double close0 = Closes[0][0];
             double high0  = Highs[0][0];
             double low0   = Lows[0][0];
@@ -318,6 +352,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             double baseHandle = Math.Floor(close0 / GridUnit) * GridUnit;
             double level20 = baseHandle + (0.20 * GridUnit);
+            double level50 = baseHandle + (0.50 * GridUnit);
             double level80 = baseHandle + (0.80 * GridUnit);
             double tol = LevelToleranceTicks * TickSize;
 
@@ -326,6 +361,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 bias = (close0 >= rthOpenPrice) ? 1 : -1;
             }
+
+            // Render on-chart UI elements
+            if (ShowSubGridLines)
+                RenderSubGridLines(baseHandle, level20, level50, level80);
+
+            if (ShowDashboardHUD)
+                RenderDashboardHUD(bias, baseHandle, level20, level80);
+
+            if (Position.MarketPosition != MarketPosition.Flat)
+                return 0;
+
+            if (!IsAllowedTradingWindow(timeHHMM))
+                return 0;
+
+            if (CurrentBars[0] - lastEntryBar < 5)
+                return 0;
 
             // ──────────────────────────────────────────────────────────
             // SETUP 1: FORK REVERSAL
@@ -356,6 +407,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                     if (isBullFork)
                     {
+                        lastTriggeredSetup = "FORK BULL [20]";
+                        lastTriggerPrice = level20;
+                        if (ShowSignalMarkers)
+                            RenderSignalMarker("Long", "FORK BULL [20]", level20);
                         ExecuteTrade("Long", level20, level20 - StopLossPoints, level20 + ProfitTargetPoints);
                         lastEntryBar = CurrentBars[0];
                         return 0;
@@ -372,6 +427,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                     if (isBearFork)
                     {
+                        lastTriggeredSetup = "FORK BEAR [80]";
+                        lastTriggerPrice = level80;
+                        if (ShowSignalMarkers)
+                            RenderSignalMarker("Short", "FORK BEAR [80]", level80);
                         ExecuteTrade("Short", level80, level80 + StopLossPoints, level80 - ProfitTargetPoints);
                         lastEntryBar = CurrentBars[0];
                         return 0;
@@ -398,6 +457,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 if (archRejection >= 0.30 && nearMagnet && close0 < Math.Min(Opens[0][1], Closes[0][1]))
                 {
+                    lastTriggeredSetup = "'h' PATTERN [80]";
+                    lastTriggerPrice = archTop;
+                    if (ShowSignalMarkers)
+                        RenderSignalMarker("Short", "'h' PATTERN [80]", archTop);
                     ExecuteTrade("Short", archTop, archTop + StopLossPoints, archTop - ProfitTargetPoints);
                     lastEntryBar = CurrentBars[0];
                     return 0;
@@ -424,6 +487,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                     if (touchesOnCurrentLevelToday <= 2)
                     {
+                        lastTriggeredSetup = "SNIPER LONG [20]";
+                        lastTriggerPrice = level20;
+                        if (ShowSignalMarkers)
+                            RenderSignalMarker("Long", "SNIPER LONG [20]", level20);
                         ExecuteTrade("Long", level20, level20 - StopLossPoints, level20 + ProfitTargetPoints);
                         lastEntryBar = CurrentBars[0];
                         return 0;
@@ -445,6 +512,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                     if (touchesOnCurrentLevelToday <= 2)
                     {
+                        lastTriggeredSetup = "SNIPER SHORT [80]";
+                        lastTriggerPrice = level80;
+                        if (ShowSignalMarkers)
+                            RenderSignalMarker("Short", "SNIPER SHORT [80]", level80);
                         ExecuteTrade("Short", level80, level80 + StopLossPoints, level80 - ProfitTargetPoints);
                         lastEntryBar = CurrentBars[0];
                         return 0;
@@ -473,8 +544,82 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 SetProfitTarget(signalName, CalculationMode.Price, target);
             }
 
+            if (ShowTradeBrackets)
+                RenderTradeBrackets(entry, stop, target, direction);
+
             Log(string.Format("[{0} LIMIT] {1:HH:mm:ss} | Qty: {2} | Entry: {3:F2} | Stop: {4:F2} | Target: {5:F2} | Total Risk: ${6:F2}",
                 direction.ToUpper(), Times[0][0], qty, entry, stop, target, qty * Math.Abs(entry - stop) * GetPointValue()), LogLevel.Information);
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // ON-CHART UI & VISUALIZATION ENGINE
+        // ──────────────────────────────────────────────────────────────
+
+        private void RenderDashboardHUD(int bias, double baseHandle, double level20, double level80)
+        {
+            string biasStr = bias > 0 ? "BULLISH ▲ (Price >= RTH Open)" : (bias < 0 ? "BEARISH ▼ (Price < RTH Open)" : "NEUTRAL ◄►");
+            string instName = Instrument != null ? Instrument.MasterInstrument.Name : "FUTURES";
+            double dollarRisk = calculatedQuantity * StopLossPoints * GetPointValue();
+            double pnl = SystemPerformance.AllTrades.TradesPerformance.NetProfit;
+
+            string hud = string.Format(
+                "╔══════════════════════════════════════════════════╗\n" +
+                "║ 🏛️  BANDITS 80/20 SUB-GRID ENGINE                ║\n" +
+                "╠══════════════════════════════════════════════════╣\n" +
+                "║ Instrument : {0,-8} | Qty: {1} cnts (${2:F0} Risk)  ║\n" +
+                "║ Dealing Bias: {3,-33}║\n" +
+                "║ 09:30 Open  : {4,-10:F2} | Current: {5,-10:F2}      ║\n" +
+                "║ Active Grid : 20: {6:F2} ◄► 80: {7:F2}       ║\n" +
+                "║ Session PnL : ${8,-9:F2} | Today Trades: {9}/3       ║\n" +
+                "║ Last Trigger: {10,-33}║\n" +
+                "╚══════════════════════════════════════════════════╝",
+                instName, calculatedQuantity, dollarRisk,
+                biasStr,
+                rthOpenPrice, Closes[0][0],
+                level20, level80,
+                pnl, todayTradeCount,
+                string.Format("{0} @ {1:F2}", lastTriggeredSetup, lastTriggerPrice)
+            );
+
+            Draw.TextFixed(this, "BanditsHUD", hud, TextPosition.TopRight,
+                Brushes.White, new SimpleFont("Consolas", 10),
+                Brushes.Transparent, new SolidColorBrush(Color.FromArgb(220, 15, 23, 42)), 1);
+        }
+
+        private void RenderSubGridLines(double baseHandle, double level20, double level50, double level80)
+        {
+            Draw.Ray(this, "Handle_00", false, 10, baseHandle, 0, baseHandle, Brushes.DarkGoldenrod, DashStyleHelper.Solid, 1);
+            Draw.Ray(this, "SubGrid_20", false, 10, level20, 0, level20, Brushes.DodgerBlue, DashStyleHelper.Solid, 2);
+            Draw.Ray(this, "MidPoint_50", false, 10, level50, 0, level50, Brushes.SlateGray, DashStyleHelper.Dash, 1);
+            Draw.Ray(this, "SubGrid_80", false, 10, level80, 0, level80, Brushes.Crimson, DashStyleHelper.Solid, 2);
+            Draw.Ray(this, "Handle_100", false, 10, baseHandle + GridUnit, 0, baseHandle + GridUnit, Brushes.DarkGoldenrod, DashStyleHelper.Solid, 1);
+        }
+
+        private void RenderSignalMarker(string direction, string setupName, double price)
+        {
+            string tag = string.Format("Sig_{0}_{1}", CurrentBars[0], direction);
+
+            if (direction == "Long")
+            {
+                Draw.ArrowUp(this, tag + "_arr", false, 0, price - 2 * TickSize, Brushes.LimeGreen);
+                Draw.Text(this, tag + "_lbl", false, string.Format("▲ {0}\n@{1:F2}", setupName, price),
+                    0, price - 6 * TickSize, -15, Brushes.LimeGreen, new SimpleFont("Arial", 9),
+                    System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            else
+            {
+                Draw.ArrowDown(this, tag + "_arr", false, 0, price + 2 * TickSize, Brushes.Crimson);
+                Draw.Text(this, tag + "_lbl", false, string.Format("▼ {0}\n@{1:F2}", setupName, price),
+                    0, price + 6 * TickSize, 15, Brushes.Crimson, new SimpleFont("Arial", 9),
+                    System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+        }
+
+        private void RenderTradeBrackets(double entry, double stop, double target, string direction)
+        {
+            Draw.Line(this, "ActiveEntry", false, 5, entry, -10, entry, Brushes.DeepSkyBlue, DashStyleHelper.Solid, 2);
+            Draw.Line(this, "ActiveSL", false, 5, stop, -10, stop, Brushes.Crimson, DashStyleHelper.Dash, 2);
+            Draw.Line(this, "ActiveTP", false, 5, target, -10, target, Brushes.LimeGreen, DashStyleHelper.Dash, 2);
         }
 
         private bool IsAllowedTradingWindow(int timeHHMM)
