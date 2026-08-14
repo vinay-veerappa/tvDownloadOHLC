@@ -973,7 +973,7 @@ def test_expected_move_fallback_paths(caplog) -> None:
     # 2. Crossed/missing bid/ask: bid <= 0
     calls_bad1 = [OptionContract(symbol="C100", strike=100.0, contract_type="CALL", bid=0.0, ask=2.0)]
     puts_bad1 = [OptionContract(symbol="P100", strike=100.0, contract_type="PUT", bid=1.0, ask=2.0)]
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         em, straddle = _expected_move(calls_bad1, puts_bad1, spot=100.0)
     assert em == 0.0
     assert any("Crossed or missing bid/ask" in record.message for record in caplog.records)
@@ -982,7 +982,7 @@ def test_expected_move_fallback_paths(caplog) -> None:
     # 3. Crossed bid/ask: bid >= ask
     calls_bad2 = [OptionContract(symbol="C100", strike=100.0, contract_type="CALL", bid=2.5, ask=2.0)]
     puts_bad2 = [OptionContract(symbol="P100", strike=100.0, contract_type="PUT", bid=1.0, ask=2.0)]
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         em, straddle = _expected_move(calls_bad2, puts_bad2, spot=100.0)
     assert em == 0.0
     assert any("Crossed bid/ask for expected move" in record.message for record in caplog.records)

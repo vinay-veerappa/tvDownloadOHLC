@@ -1,0 +1,104 @@
+{
+  "timestamp": "2026-07-16T09:30:00-04:00",
+  "ticker": "ES1",
+  "direction": "short",
+  "confidence": 0.3477272727272727,
+  "signals": [
+    {
+      "domain": "bias",
+      "direction": "short",
+      "strength": 0.85,
+      "source": "herman_pre_ny_sweep",
+      "citation": "herman_stats",
+      "notes": "Pre-NY broke London Low | bias=bearish | prob=77.9% | dominant=True"
+    },
+    {
+      "domain": "session",
+      "direction": "neutral",
+      "strength": 0.4,
+      "source": "killzone_ny_am",
+      "citation": "ict_killzones",
+      "notes": "ny_am killzone active (9.5\u201312.0 ET)"
+    },
+    {
+      "domain": "structure",
+      "direction": "neutral",
+      "strength": 0.3,
+      "source": "range_position_RTH",
+      "citation": "range_detection:RTH",
+      "notes": "RTH mid-range (50%)"
+    }
+  ],
+  "matched_candidate_ids": [],
+  "kb_citations": [
+    {
+      "knowledge_type": "framework",
+      "source_file": "Flux_NY_Guide.pdf",
+      "confidence": 0.6,
+      "concepts": "liquidity_sweep,trading_range,htf_draw,premium_discount,smt_divergence,csd,state_of_delivery,order_flow,accumulation_phase,expansion",
+      "summary": "NY-session-profiling reference: Flux_NY_Guide_p031",
+      "verbatim_anchor": ""
+    },
+    {
+      "knowledge_type": "framework",
+      "source_file": "Vinay_Models.pdf",
+      "confidence": 0.6,
+      "concepts": "liquidity_sweep,trading_range",
+      "summary": "NY-session-profiling reference: Vinay_Models_p091",
+      "verbatim_anchor": ""
+    },
+    {
+      "knowledge_type": "setup",
+      "source_file": "ICTNotes.pdf",
+      "confidence": 0.7,
+      "concepts": "mss,market_structure,liquidity_sweep",
+      "summary": "New York Reversal",
+      "verbatim_anchor": ""
+    },
+    {
+      "knowledge_type": "tip",
+      "source_file": "01_January 15 2024",
+      "confidence": 0.8,
+      "concepts": "",
+      "summary": "Start looking 15 minutes before equities open but start trading after equities open to avoid time zone confusion.",
+      "verbatim_anchor": "participate 15 minutes before equity is open"
+    },
+    {
+      "knowledge_type": "tip",
+      "source_file": "2023-05-09",
+      "confidence": 0.8,
+      "concepts": "consequent_encroachment,overnight_session",
+      "summary": "Wait about 30 minutes until equities open before trading.",
+      "verbatim_anchor": "wait about 30 minutes until equities open"
+    },
+    {
+      "knowledge_type": "framework",
+      "source_file": "2023-12-11",
+      "confidence": 0.6,
+      "concepts": "trading_range,engineered_origin,weekly_open_level,weekly_profile",
+      "summary": "The trader marks the weekly open at 4am and uses EO ranges to frame Monday and Tuesday development.",
+      "verbatim_anchor": "I mark the weekly open at 4am"
+    },
+    {
+      "knowledge_type": "setup",
+      "source_file": "Vinay_Models.pdf",
+      "confidence": 0.7,
+      "concepts": "judas_swing,liquidity_sweep",
+      "summary": "Range to New York Open/London Close Rally",
+      "verbatim_anchor": ""
+    }
+  ],
+  "trade_plan": {
+    "direction": "short",
+    "entry": 7587.0,
+    "stop": 7615.0,
+    "target": 7548.25,
+    "risk_pct": 0.369,
+    "reward_pct": 0.511,
+    "rr_ratio": 1.38,
+    "max_exit_time": "16:00 ET",
+    "session_filter": "ny_am",
+    "notes": "confidence=35% | signals=3"
+  },
+  "reasoning": "net=-0.35 | agreeing_domains=1/3 | bias=-0.77 | session=+0.00 | structure=+0.00"
+}

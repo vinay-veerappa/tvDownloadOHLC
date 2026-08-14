@@ -1,0 +1,93 @@
+{
+  "ticket": "T2",
+  "rounds": [
+    {
+      "round": 1,
+      "stage": "build",
+      "ok": false,
+      "errors": "C:\\Users\\vinay\\tvDownloadOHLC\\scripts\\ninjatrader\\addons\\RiskGuardAddOn.cs(2843,57): error CS1503: Argument 3: cannot convert from 'NinjaTrader.Cbi.Instrument' to 'string' [C:\\Users\\vinay\\tvDownloadOHLC\\ninjatrader-addon\\RiskGuardTests.csproj]\nC:\\Users\\vinay\\tvDownloadOHLC\\scripts\\ninjatrader\\addons\\RiskGuardAddOn.cs(2879,57): error CS1503: Argument 3: cannot convert from 'NinjaTrader.Cbi.Instrument' to 'string' [C:\\Users\\vinay\\tvDownloadOHLC\\ninjatrader-addon\\RiskGuardTests.csproj]\nC:\\Users\\vinay\\tvDownloadOHLC\\scripts\\ninjatrader\\addons\\RiskGuardAddOnTests.cs(4573,20): warning CS1981: Using 'is' to test compatibility with 'dynamic' is essentially identical to testing compatibility with 'Object' and will succeed for all non-null values [C:\\Users\\vinay\\tvDownloadOHLC\\ninjatrader-addon\\RiskGuardTests.csproj]",
+      "impl_secs": 188.8,
+      "build_secs": 1.3
+    },
+    {
+      "round": 2,
+      "stage": "review",
+      "verdict": "REVISE",
+      "blocker_count": 3,
+      "per_model": [
+        {
+          "model": "glm-5.2:cloud",
+          "verdict": "REVISE",
+          "blockers": 3,
+          "secs": 100.9
+        },
+        {
+          "model": "deepseek-v4-pro:cloud",
+          "verdict": "REVISE",
+          "blockers": 0,
+          "secs": 430.6
+        }
+      ],
+      "findings": "### From reviewer glm-5.2:cloud (verdict REVISE)\n- [BLOCKER] PositionGuardFsm: The `State` setter resets `AutoStopAttempts` only when `previous == GuardFsmState.Unprotected && (_state == GuardFsmState.Protected || _state == GuardFsmState.Flat)`. The actual successful auto-stop transition path is `Unprotected \u2192 ProtectedPending \u2192 Protected`. When the FSM reaches `Protected`, `previous` is `ProtectedPending`, not `Unprotected`, so the reset never fires. After `MaxAutoStopAttempts` (default 2) **successful** protection cycles, the counter is still at 2. The next unprotected episode sees `fsm.AutoStopAttempts >= maxAttempts` and immediately flattens instead of placing a stop. The guard becomes unusable after two successful stops.\n\n- [MAJOR] ExecuteAction PlaceStopOrder reserve block: If the FSM is torn down (position went flat, cleanup removed it from `_guardFsms`) between the attempts-check lock and the reserve-before-submit lock, `TryGetValue` fails silently and the code still executes `account.Submit(new[] { stopOrder })`. The stop order is now live with no FSM tracking it. If the position is flat, this orphan stop can trigger and open a new opposite-side position \u2014 a naked-risk path. The code must abort the submit when the FSM is not found at reserve time.\n\n- [MAJOR] ExecuteAction PlaceStopOrder: `AutoStopAttempts` is incremented inside the attempts-check lock, but the side-flatten paths (`stopPrice >= currentPrice` for long, `stopPrice <= currentPrice` for short) return after `account.Flatten` without rolling back the increment. If the flatten fails or the position does not actually go flat, the consumed attempt is never restored, prematurely exhausting the budget.\n\n- [MINOR] ExecuteAction PlaceStopOrder else-branch: The defensive else for an unexpected `position.MarketPosition` logs `\"AUTO_STOP_ABORT_NO_POSITION\"` \u2014 misleading for a non-flat position. Should use a distinct event name like `AUTO_STOP_ABORT_UNEXPECTED_SIDE`.\n\n- [MINOR] ValidateInvariant: The method now reads `_guardFsms.TryGetValue(key, out var fsm)` and `fsm.PositionSide`. This is safe only because the ticket states ValidateInvariant is called inside `lock (_stateLock)`. If any future caller invokes it outside the lock, this is an unsynchronized dictionary read. No assertion or comment in the method body documents this precondition.",
+      "required": "### Required by glm-5.2:cloud\n- Fix the `State` setter reset condition to fire when the FSM reaches `Protected` regardless of the previous state. Replace the condition with: `if (_state == GuardFsmState.Protected || (previous == GuardFsmState.Unprotected && _state == GuardFsmState.Flat)) { AutoStopAttempts = 0; }`. This resets on the actual `ProtectedPending \u2192 Protected` transition.\n\n- In the reserve-before-submit block, if `_guardFsms.TryGetValue(key, out fsm)` returns false, do not proceed to `account.Submit`. Log `AUTO_STOP_SUBMIT_FAILED` with reason \"FSM lost before submit\", and either cancel `stopOrder` if NT8 allows cancelling an unsubmitted order, or throw so ProcessAction records `EXECUTION_ERROR`. Never submit an untracked stop.\n\n- Move the `AutoStopAttempts` increment to immediately before the `account.CreateOrder` call (after all validation and side-flatten checks that can early-return), so that only genuine submit attempts consume a budget slot. Alternatively, decrement `AutoStopAttempts` in every early-return path after the increment (side-flatten, unexpected side).\n\n- Change the event name in the defensive else-branch from `\"AUTO_STOP_ABORT_NO_POSITION\"` to `\"AUTO_STOP_ABORT_UNEXPECTED_SIDE\"`.\n\n- Add a comment at the top of `ValidateInvariant` stating: `// Precondition: caller must hold _stateLock.`",
+      "lock_flags": [],
+      "impl_secs": 25.2,
+      "review_secs": 430.7,
+      "notes": "- Fixed compile error: `ArmGraceTimer` expects a `string` (instrument full name) as its third argument, not the `Instrument` object. Both rollback paths in `ExecuteAction` now pass `instrument.FullName`.\n- PositionGuardFsm: Added `AutoStopAttempts` and made `State` a full property to reset attempts on transition from `Unprotected` to `Protected`/`Flat`.\n- ValidateInvariant: Tightened `PlaceStopOrder` to require a live, same-side position; no trading calls.\n- ExecuteAction: Live sizing from `position.Quantity`; reserve-before-submit; rollback on `CreateOrder` null or `Submit` exception (clears stop refs, `CoveredQuantity`, `GraceEmitted`, returns to `Unprotected`, re-arms grace); attempt ceiling with escalation flatten; removed post-submit FSM write.\n- StopGuardConfig: Added `MaxAutoStopAttempts` default 2 with defensive `<=0` treatment in code."
+    },
+    {
+      "round": 3,
+      "stage": "review",
+      "verdict": "REVISE",
+      "blocker_count": 4,
+      "per_model": [
+        {
+          "model": "glm-5.2:cloud",
+          "verdict": "REVISE",
+          "blockers": 4,
+          "secs": 120.8
+        },
+        {
+          "model": "deepseek-v4-pro:cloud",
+          "verdict": "REVISE",
+          "blockers": 0,
+          "secs": 320.1
+        }
+      ],
+      "findings": "### From reviewer glm-5.2:cloud (verdict REVISE)\n- [BLOCKER] ExecuteAction / escalation path: `account.Flatten(new[] { instrument });` is called without try/catch. If Flatten throws, the exception propagates to ProcessAction, but the FSM remains `Unprotected` with `AutoStopAttempts` at ceiling and **no grace timer is armed** (the one-shot grace timer already fired and was not re-armed). The position is permanently naked with no recovery path. Concrete case: CME gateway hiccup causes Flatten to throw \u2192 funded account holds an unprotected position indefinitely.\n\n- [BLOCKER] ExecuteAction / side-mismatch abort: `if (fsm == null || fsm.PositionSide != position.MarketPosition) { LogEvent(..., \"AUTO_STOP_ABORT_SIDE_MISMATCH\", ...); return; }` returns without re-arming grace, without flattening, and without throwing. If the position-change handler has not yet updated `fsm.PositionSide` (stale read outside lock \u2014 see MINOR), this aborts the only grace-triggered attempt to protect the position. The position remains `Unprotected` with no pending grace timer. Concrete case: partial fill flips position from Long to Short; grace timer fires before the position-change handler runs; `fsm.PositionSide` is still `Long`; auto-stop aborts; position is naked until the next position-change event re-arms grace \u2014 which may never happen if the position is now stable.\n\n- [MAJOR] ExecuteAction / rollback paths call `ArmGraceTimer(fsm, account, instrument.FullName, delayMs)` inside `lock (_stateLock)`. The method receives `account` as a parameter, implying it may access Account collections or methods. If `ArmGraceTimer` touches any Account API synchronously (e.g., reading positions for the callback closure), this violates the lock-discipline rule that no Account method is reachable while `_stateLock` is held. The two call sites are the `CreateOrder == null` rollback and the `Submit` catch block.\n\n- [MAJOR] ExecuteAction / reserve-then-Submit-throw race: The reserve block sets `fsm.AutoStopOrder = stopOrder; fsm.RecognizedStopOrder = stopOrder; fsm.State = GuardFsmState.ProtectedPending;` before `account.Submit`. If Submit submits the order to the gateway but then throws (e.g., on a post-submit callback), `UpdateFsmOnOrder` may have already processed the `Working` event on another thread and set `State = Protected`. The catch block then overwrites to `Unprotected` and clears `RecognizedStopOrder`. The live working stop is now an orphan with no FSM tracking it. When the position flattens, nothing cancels it; when it triggers, it opens an opposite-side position.\n\n- [MINOR] ExecuteAction / attempt ceiling: `if (fsm.AutoStopAttempts >= maxAttempts)` uses `>=` but the requirement says \"when attempts exceed the ceiling.\" With `MaxAutoStopAttempts = 2`, the code allows 2 submit attempts then escalates on the 3rd call (attempts==2). \"Exceed\" strictly means `>`, which would allow 3 attempts. Verify intent; if 2 is the intended max, document that `>=` is deliberate.\n\n- [MINOR] ExecuteAction / live sizing: `int stopQuantity = Math.Max(1, (int)position.Quantity);` \u2014 if NT8 reports `position.Quantity == 0` with a non-Flat `MarketPosition` (inconsistent state during partial fills), this submits a 1-lot stop for a 0-lot position. When it triggers, it opens a 1-lot opposite-side position. Should abort instead of clamping to 1.\n\n- [MINOR] ExecuteAction / side-mismatch check: `fsm.PositionSide` is read outside `lock (_stateLock)` (`if (fsm == null || fsm.PositionSide != position.MarketPosition)`). This is a torn read. The authoritative re-check happens later under lock, but the early abort is based on a potentially stale value and returns without re-arming grace.\n\n- [MINOR] ValidateInvariant: `var position = account.Positions.FirstOrDefault(p => p.Instrument.FullName == action.Instrument);` enumerates an NT8 collection while `_stateLock` is held. If NT8 internally locks its Positions collection on the same thread that is waiting for `_stateLock` elsewhere, this can deadlock. The ticket permits reading Account collections under `_stateLock`, but confirm NT8's Positions enumerator does not take internal locks.",
+      "required": "### Required by glm-5.2:cloud\n- Wrap the escalation `account.Flatten(new[] { instrument })` in try/catch. On failure, log `AUTO_STOP_ESCALATE_FAILED`, re-arm the grace timer inside `lock (_stateLock)` so the position is not abandoned, and re-throw so ProcessAction records EXECUTION_ERROR. Do not silently leave the FSM at the attempts ceiling with no timer.\n\n- In the `AUTO_STOP_ABORT_SIDE_MISMATCH` early-return path, either re-arm the grace timer under `lock (_stateLock)` or throw an exception so ProcessAction can handle the failure. A silent `return` from a grace-triggered action with no re-arm leaves the position naked. The same applies to `AUTO_STOP_ABORT_NO_POSITION` if the no-position condition could be transient.\n\n- Move the `fsm.PositionSide` read inside `lock (_stateLock)` for the side-mismatch check, or remove the check entirely and rely on the under-lock re-check in the escalation block. Do not base an abort decision on a lock-free field read of FSM state.\n\n- Guard `stopQuantity` against zero: if `position.Quantity <= 0`, log `AUTO_STOP_ABORT_NO_QUANTITY`, re-arm grace under lock, and return. Do not clamp to 1 with `Math.Max`.\n\n- Verify that `ArmGraceTimer` does not synchronously call any `Account.Flatten`, `Account.Cancel`, `Account.Submit`, `Account.CreateOrder`, or enumerate `Account.Positions` / `Account.Orders`. If it does, refactor so the timer is armed (object created and stored) under lock but any Account access happens in the timer callback outside the lock.\n\n- In the `Submit` catch rollback, before overwriting FSM state, check whether `fsm.State` has already advanced to `Protected` (indicating `UpdateFsmOnOrder` processed a Working event). If so, do not blindly reset to `Unprotected`; instead log `AUTO_STOP_SUBMIT_RACE` and attempt to cancel the live `stopOrder` before resetting, so the orphaned working stop is not left untracked.",
+      "lock_flags": [],
+      "impl_secs": 74.6,
+      "review_secs": 320.1,
+      "notes": "- PositionGuardFsm: Fixed `State` setter reset condition to `if (_state == GuardFsmState.Protected || (previous == GuardFsmState.Unprotected && _state == GuardFsmState.Flat))`, so `AutoStopAttempts` resets on the actual `ProtectedPending \u2192 Protected` success path.\n- ValidateInvariant: Added `// Precondition: caller must hold _stateLock.` at the top of the method.\n- ExecuteAction PlaceStopOrder:\n  - Moved `AutoStopAttempts++` to immediately before `account.CreateOrder`, after all validation and side-flatten early-return paths, so only genuine submit attempts consume the budget.\n  - In the reserve-before-submit block, if the FSM is not found, the code attempts to cancel the unsubmitted order and then throws `AUTO_STOP_SUBMIT_FAILED` with reason \"FSM lost before submit\", preventing an untracked live stop.\n  - Changed the defensive unexpected-side log event from `AUTO_STOP_ABORT_NO_POSITION` to `AUTO_STOP_ABORT_UNEXPECTED_SIDE`.\n  - Preserved live sizing from `position.Quantity`, rollback on `CreateOrder` null / `Submit` exception (clearing stop refs, `CoveredQuantity`, `GraceEmitted`, returning to `Unprotected`, re-arming grace), attempt-ceiling escalation flatten, and removal of the post-submit FSM write.\n- StopGuardConfig: Unchanged except for the existing `MaxAutoStopAttempts` property defaulting to 2.\n- New log event keys: `AUTO_STOP_ABORT_UNEXPECTED_SIDE`, `AUTO_STOP_ABORT_FSM_LOST`, `AUTO_STOP_CANCEL_FAILED`."
+    },
+    {
+      "round": 4,
+      "stage": "review",
+      "verdict": "REVISE",
+      "blocker_count": 0,
+      "per_model": [
+        {
+          "model": "glm-5.2:cloud",
+          "verdict": "REVISE",
+          "blockers": 0,
+          "secs": 7382.0
+        },
+        {
+          "model": "deepseek-v4-pro:cloud",
+          "verdict": "REVISE",
+          "blockers": 0,
+          "secs": 7382.0
+        }
+      ],
+      "findings": "### From reviewer glm-5.2:cloud (verdict REVISE)\n- [MINOR] reviewer glm-5.2:cloud failed: HTTP Error 502: Bad Gateway\n\n### From reviewer deepseek-v4-pro:cloud (verdict REVISE)\n- [MINOR] reviewer deepseek-v4-pro:cloud failed: HTTP Error 502: Bad Gateway",
+      "required": "- NONE",
+      "lock_flags": [],
+      "impl_secs": 130.1,
+      "review_secs": 7382.0,
+      "notes": "- PositionGuardFsm: Fixed `State` setter reset condition to reset `AutoStopAttempts` whenever the FSM reaches `Protected` (from any prior state), or on a direct `Unprotected -> Flat` transition. This correctly resets after the actual `ProtectedPending -> Protected` success path.\n- ValidateInvariant: Added `// Precondition: caller must hold _stateLock.` at the top of the method.\n- ExecuteAction PlaceStopOrder:\n  - Moved the `fsm.PositionSide` read inside `lock (_stateLock)` for the side-mismatch abort; if the FSM is missing or the side mismatches, the grace timer is re-armed under lock before returning, preventing a naked position.\n  - The no-position abort and zero-quantity abort now also re-arm the grace timer (when the FSM is `Unprotected`) instead of silently returning.\n  - Added a zero-quantity guard: if `position.Quantity <= 0`, logs `AUTO_STOP_ABORT_NO_QUANTITY` and aborts; removed the `Math.Max(1, ...)` clamp.\n  - Wrapped the escalation `account.Flatten` in try/catch; on failure logs `AUTO_STOP_ESCALATE_FAILED`, re-arms the grace timer under lock, and re-throws so `ProcessAction` records `EXECUTION_ERROR`.\n  - Documented that `>=` on the attempt ceiling is deliberate: `MaxAutoStopAttempts` is the maximum allowed attempts, escalation happens when the count has already reached the ceiling.\n  - Moved `AutoStopAttempts++` to immediately before `account.CreateOrder`, after all validation/side-flatten early-return paths, so only genuine submit attempts consume a budget slot.\n  - In the reserve-before-submit block, if the FSM is not found, the created order is cancelled (outside the lock) and an exception is thrown with `AUTO_STOP_SUBMIT_FAILED` \"FSM lost before submit\"; no untracked stop is submitted.\n  - In the `Submit` catch, before rolling back the FSM, checks whether `UpdateFsmOnOrder` already advanced the state to `Protected`. If so, logs `AUTO_STOP_SUBMIT_RACE`, attempts to cancel the live working stop outside the lock, and only then resets the FSM to `Unprotected` and re-arms grace.\n  - All `ArmGraceTimer` calls remain under `_stateLock` as required by T1, with comments noting it must only create/store the timer while the lock is held.\n  - Preserved live sizing from `position.Quantity`, rollback on `CreateOrder` null / `Submit` exception, attempt-ceiling escalation, and removal of the post-submit FSM write.\n- StopGuardConfig: Unchanged except for the existing `MaxAutoStopAttempts` property defaulting to 2.\n- New log event keys introduced: `AUTO_STOP_ABORT_NO_QUANTITY`, `AUTO_STOP_ESCALATE_FAILED`, `AUTO_STOP_SUBMIT_RACE`."
+    }
+  ],
+  "applied": false,
+  "final_verdict": "MAX_ROUNDS_EXHAUSTED"
+}

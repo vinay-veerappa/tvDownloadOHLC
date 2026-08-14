@@ -4,6 +4,7 @@ description: Multi-expiry ThinkorSwim (TOS) Expected Move extraction for all dat
 allowed-tools: Read, Write, Edit, Run
 version: 1.1
 priority: HIGH
+applyTo: "**/*.py"
 ---
 
 # ThinkorSwim (TOS) Multi-Expiry Expected Moves Skill
@@ -11,6 +12,10 @@ priority: HIGH
 > **RULE:** Whenever the user asks for Expected Move (EM) data, ALWAYS extract/compute values for **ALL available expiration dates starting from today/current day up to and including the next Friday's expiration date** (0DTE, 1DTE, 2DTE... through next Friday). Never limit output to a single expiration date unless explicitly requested.
 
 ---
+
+## When to use
+
+Use when the user needs ThinkorSwim (TOS) Expected Move data — multi-expiry extraction for all dates up to next Friday.
 
 ## 🔍 Data Source Failover Hierarchy
 

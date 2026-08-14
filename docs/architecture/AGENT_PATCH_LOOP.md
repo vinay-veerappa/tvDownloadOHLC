@@ -512,6 +512,38 @@ that does not work.
 
 ---
 
+### 7.6 `--resume-raw … --apply` applied a candidate nobody had read (P1-56, 2026-08-10)
+
+The promote command in §9 was run with `--resume-raw` pointing at a reviewed, `ARBITER_SHIP`
+candidate. What landed in the live tree was a **different, unreviewed candidate**.
+
+`--resume-raw` seeds round 1 with that raw — and then gates *and reviews* it like any other round.
+On this run the panel returned `REVISE`, so the loop did what it is designed to do: it ran **round 2
+with a fresh implementer call**, that round reached `ARBITER_SHIP`, and `--apply` shipped round 2.
+The flag reuses a candidate as a *starting point*; it does not pin one.
+
+That mattered, because round 2 was worse than the candidate that had been read. It set
+`countAttempt = (pass == 0)` so re-drive passes reached the broker without counting an attempt —
+making a bound of 3 into effectively 9 submissions — and it restored a `WorkingStop = null` on the
+failure paths that reintroduced the defect the ticket existed to fix. Both changes passed compile,
+the full suite including both acceptance tests, and the lock-scope gate.
+
+**Two lessons, in order of importance:**
+
+1. **§9 step 3 is not ceremony.** It is the only thing standing between a green ladder and a live
+   defect, and this is the second time it has caught one (§7.4 was the first).
+2. **To promote an exact candidate, do the splice yourself** — `loop.parse_blocks` on the raw you
+   read, `regions.apply` over `regions.extract`, then diff the working tree against the `final.patch`
+   you reviewed (`diff --strip-trailing-cr`, because the patch export and `git diff` disagree on line
+   endings). That is deterministic and reuses the loop's own region machinery, so the splice is
+   identical to the one that was gated.
+
+A `--pin-raw` flag that skips review and applies verbatim would make this safe by construction, and
+is worth adding. Until then the ladder cannot tell you *which* candidate it blessed — only that
+something passed.
+
+---
+
 ## 8. Debugging playbook
 
 ### 8.1 Where to look
@@ -582,7 +614,15 @@ The loop stops at `ARBITER_SHIP` on purpose. Before `--apply`:
 2. **Distrust proposed fixes especially.** Two reviewer "required changes" during this phase would
    have created live defects: one reintroduced the exact defect the previous round upheld, another
    would have aborted an auto-stop whenever the position scaled up, leaving it naked.
-3. **Confirm the candidate is the one that was reviewed** (§7.4).
+3. **Confirm the candidate is the one that was reviewed** (§7.4). **`--resume-raw … --apply` does not
+   do this for you** — see §7.6. It is a *fresh run seeded with that raw*, not "promote what I read":
+   the seeded round is re-reviewed, and a `REVISE` there produces a new implementation which is what
+   `--apply` then lands. To promote an exact candidate, splice it yourself and diff the result:
+
+   ```powershell
+   # blocks = loop.parse_blocks(<the raw you reviewed>); regions.apply(regions.extract(REPO, ticket["regions"]), blocks)
+   # then: diff --strip-trailing-cr <(git diff <file>) <the final.patch you reviewed>
+   ```
 4. **Confirm the acceptance test flipped**, by name (§7.5).
 5. **Read `final.patch`.** The blast radius is the region set, but the consequences are not.
 6. Promote with `--resume-raw <candidate> --allow-unapproved --apply`, then **stage explicit

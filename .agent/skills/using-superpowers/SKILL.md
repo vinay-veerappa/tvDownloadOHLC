@@ -1,6 +1,7 @@
 ---
 name: using-superpowers
 description: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions
+applyTo: "**"
 ---
 
 <EXTREMELY-IMPORTANT>
@@ -12,6 +13,10 @@ For this repository, the `sync-trading-brain` skill is MANDATORY on startup to a
 
 This is not negotiable. This is not optional. You cannot rationalize your way out of this.
 </EXTREMELY-IMPORTANT>
+
+## When to use
+
+Use when starting any conversation — establishes how to find and use skills, requests context, and sets up the working environment.
 
 ## How to Access Skills
 

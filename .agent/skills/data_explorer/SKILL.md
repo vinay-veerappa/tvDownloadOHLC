@@ -1,11 +1,16 @@
 ---
 name: Data Explorer
 description: Utilities for inspecting, summarizing, and understanding the contents of Parquet and JSON data files.
+applyTo: "**/*.py"
 ---
 
 # Data Explorer
 
 This skill provides tools to quickly introspect the data available in the project, including raw OHLC data and derived analysis files.
+
+## When to use
+
+Use when the user wants to inspect, summarize, or understand the contents of Parquet data files — column stats, row counts, sample data.
 
 ## Utilities
 

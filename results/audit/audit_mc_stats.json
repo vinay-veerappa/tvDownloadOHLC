@@ -1,8 +1,0 @@
-{
-  "pass_rate": 0.0,
-  "fails_drawdown_rate": 0.0,
-  "fails_timeout_rate": 1.0,
-  "avg_days_to_pass": 0,
-  "p50_days": 0,
-  "n_sims": 2000
-}

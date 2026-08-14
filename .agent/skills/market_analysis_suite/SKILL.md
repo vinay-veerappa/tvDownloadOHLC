@@ -1,11 +1,16 @@
 ---
 name: Market Analysis Suite
 description: Runs the full technical analysis pipeline (Day Types, Overnight Probabilities, Sequence Stats, Magnet Analysis) for a list of tickers.
+applyTo: "**/*.py"
 ---
 
 # Market Analysis Suite
 
 This skill automates the generation of comprehensive market analysis reports for NQ1, ES1, YM1, RTY1, CL1, and GC1.
+
+## When to use
+
+Use when the user asks for the full technical analysis pipeline — Day Types, Overnight Probabilities, Session Boxes, and bias generation.
 
 ## Prerequisites
 

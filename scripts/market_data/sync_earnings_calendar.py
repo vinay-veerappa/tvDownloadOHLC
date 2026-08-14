@@ -38,9 +38,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("sync_earnings")
 
+import os
+
 # Get project root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = REPO_ROOT / "web" / "prisma" / "dev.db"
+if "DATABASE_URL" not in os.environ:
+    os.environ["DATABASE_URL"] = f"file:{DB_PATH.as_posix()}"
 
 # Core Watchlist that should ALWAYS be included regardless of market cap
 CORE_WATCHLIST = {"SPY", "QQQ", "IWM", "SPX", "NDX", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"}
@@ -56,8 +60,10 @@ NASDAQ_HEADERS = {
 
 def _get_db_connection() -> sqlite3.Connection:
     """Fallback sqlite3 connection."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0, isolation_level=None)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
     return conn
 
 
@@ -246,80 +252,44 @@ async def run_sync(days: int, min_market_cap: float, dry_run: bool = False):
             log.info(f" ... and {len(events_to_save)-10} more.")
         return
 
-    # Persist to database via Prisma
+    # Persist to database via direct SQLite
     saved_count = 0
-    if Prisma is not None:
+    for attempt in range(1, 4):
         try:
-            db = Prisma()
-            await db.connect()
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            now_str = datetime.now(timezone.utc).isoformat()
+            
             for ev in events_to_save:
-                dt = ev["earningsDate"]
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                
-                await db.earningscalendar.upsert(
-                    where={
-                        "ticker_earningsDate": {
-                            "ticker": ev["ticker"],
-                            "earningsDate": dt
-                        }
-                    },
-                    data={
-                        "create": {
-                            "id": uuid.uuid4().hex,
-                            "ticker": ev["ticker"],
-                            "earningsDate": dt,
-                            "beforeMarket": ev["beforeMarket"],
-                            "confirmed": True,
-                            "source": ev["source"],
-                            "company": ev["company"],
-                            "marketCap": ev["marketCap"]
-                        },
-                        "update": {
-                            "beforeMarket": ev["beforeMarket"],
-                            "confirmed": True,
-                            "source": ev["source"],
-                            "fetchedAt": datetime.now(timezone.utc),
-                            "company": ev["company"],
-                            "marketCap": ev["marketCap"]
-                        }
-                    }
+                dt_str = ev["earningsDate"].isoformat()
+                if not dt_str.endswith("Z") and "+" not in dt_str:
+                    dt_str += "+00:00"
+
+                cursor.execute(
+                    """
+                    INSERT INTO EarningsCalendar (id, ticker, earningsDate, beforeMarket, confirmed, source, fetchedAt, company, marketCap)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+                    ON CONFLICT(ticker, earningsDate) DO UPDATE SET
+                        beforeMarket = excluded.beforeMarket,
+                        confirmed = excluded.confirmed,
+                        source = excluded.source,
+                        fetchedAt = excluded.fetchedAt,
+                        company = excluded.company,
+                        marketCap = excluded.marketCap
+                    """,
+                    (uuid.uuid4().hex, ev["ticker"], dt_str, 1 if ev["beforeMarket"] else 0, ev["source"], now_str, ev["company"], ev["marketCap"])
                 )
                 saved_count += 1
-            await db.disconnect()
-            log.info(f"Successfully upserted {saved_count} earnings events via Prisma.")
+            conn.commit()
+            conn.close()
+            log.info(f"Successfully upserted {saved_count} earnings events into database.")
             return
         except Exception as e:
-            log.warning(f"Prisma sync failed: {e}. Falling back to direct SQLite...")
-
-    # Fallback to direct sqlite3
-    try:
-        conn = _get_db_connection()
-        cursor = conn.cursor()
-        now_str = datetime.now(timezone.utc).isoformat()
-        
-        start_range_str = start_date.strftime("%Y-%m-%d") + "T00:00:00.000+00:00"
-        end_range_str = end_date.strftime("%Y-%m-%d") + "T23:59:59.999+00:00"
-        cursor.execute(
-            "DELETE FROM EarningsCalendar WHERE earningsDate >= ? AND earningsDate <= ?",
-            (start_range_str, end_range_str)
-        )
-        
-        for ev in events_to_save:
-            dt_str = ev["earningsDate"].isoformat()
-            if not dt_str.endswith("Z") and "+" not in dt_str:
-                dt_str += "+00:00"
-
-            cursor.execute(
-                "INSERT INTO EarningsCalendar (id, ticker, earningsDate, beforeMarket, confirmed, source, fetchedAt, company, marketCap) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)",
-                (uuid.uuid4().hex, ev["ticker"], dt_str, 1 if ev["beforeMarket"] else 0, ev["source"], now_str, ev["company"], ev["marketCap"])
-            )
-            saved_count += 1
-        conn.commit()
-        conn.close()
-        log.info(f"Successfully upserted {saved_count} earnings events via fallback SQLite.")
-    except Exception as e:
-        log.error(f"Failed to write to SQLite: {e}")
+            if attempt < 3:
+                log.warning(f"SQLite write attempt {attempt} failed ({e}), retrying in 1s...")
+                await asyncio.sleep(1.0)
+            else:
+                log.error(f"Failed to write to SQLite after {attempt} attempts: {e}")
 
 
 def has_upcoming_earnings(ticker: str, window_days: int = 7) -> bool:

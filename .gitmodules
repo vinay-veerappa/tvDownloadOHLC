@@ -1,0 +1,34 @@
+# Five gitlinks were committed to this repo with NO .gitmodules file, so a fresh
+# clone produced five EMPTY directories and `git submodule update --init` did
+# nothing at all. This file is the missing half; it was reconstructed on
+# 2026-08-12 from each checkout's own `origin` remote and current branch.
+#
+# `branch` is recorded where the checkout is NOT on the upstream default, so
+# `git submodule update --remote` cannot silently move it.
+
+[submodule "mcp/ninjatrader-mcp"]
+	path = mcp/ninjatrader-mcp
+	url = https://github.com/vinay-veerappa/ninjatrader-mcp.git
+	branch = main
+
+[submodule "tradingview-mcp"]
+	path = tradingview-mcp
+	url = https://github.com/tradesdontlie/tradingview-mcp.git
+	branch = feat/exact-timestamp-replay
+
+[submodule "web/libs/lightweight-charts"]
+	path = web/libs/lightweight-charts
+	url = https://github.com/difurious/lightweight-charts-line-tools-core.git
+	branch = main
+
+[submodule "web/openalgo-chart"]
+	path = web/openalgo-chart
+	url = https://github.com/crypt0inf0/openalgo-chart.git
+	branch = main
+
+# Vendored third-party clone kept under docs/archive/ for reference only.
+# Nothing in this repo builds against it.
+[submodule "docs/archive/temp_repo"]
+	path = docs/archive/temp_repo
+	url = https://github.com/tradingview/lightweight-charts.git
+	branch = master

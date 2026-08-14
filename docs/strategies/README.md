@@ -29,6 +29,7 @@ This central catalog documents all strategies, hunters, and statistical models i
 
 | Strategy | Standard | Location | Status |
 | :--- | :--- | :--- | :--- |
+| **Bandits 80/20 Sub-Grid**| **ADR-017 / NT8** | `scripts/research/validate_8020_subgrids.py` | **Production NT8 / Vectorized ✅** |
 | **IB Pullback (ICT FVG)** | **ADR-017** | `scripts/strategies/initial_balance/core/` | **Vectorized ✅** |
 | **Box Reversion (False Break)**| **ADR-017** | `scripts/strategies/reversal/core/` | **Vectorized ✅** |
 | **Mean Reversion (Bollinger)** | **ADR-017** | `scripts/strategies/reversal/core/` | **Vectorized ✅** |
@@ -85,6 +86,8 @@ Documentation for specific high-conviction models:
 - [Reversal & Mean Reversion Suite](reversal/README.md)
 - [Expected Moves Methodology](expected_moves/README.md)
 - [NinjaTrader Risk Manager Suite](ninjatrader/risk_manager_suite/README.md)
+- [Prop Firm Bandits 80/20 Liquidity Code](prop_firm_bandits_80_20_liquidity_code.md)
+- [80/20 & Orderflow Sub-Grid Master Research Report](8020_ORDERFLOW_SUBGRID_MASTER_REPORT.md)
 
 ---
 

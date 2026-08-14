@@ -1,11 +1,16 @@
 ---
 name: NQStats Analyzer
 description: Automates the verification of NQStats metrics and generates daily bias briefings based on the Unified Bias Algorithm.
+applyTo: "**/*.py"
 ---
 
 # NQStats Analyzer Skill
 
 This skill allows you to run specialized statistical analysis for NQ1, ES1, and other futures based on the NQStats methodology.
+
+## When to use
+
+Use when the user wants to verify NQStats metrics or generate daily bias briefings — automated statistical analysis.
 
 ## Key Metrics
 

@@ -2,7 +2,8 @@ import sys
 import os
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import List
 from fastmcp import FastMCP
 
 # Add root to sys.path for internal imports
@@ -10,51 +11,96 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
-from api.features.indicators.service import calculate_indicators, get_available_indicators
-from api.features.shared.data_loader import load_parquet, get_available_data
-from api.features.candle_science.service import CandleScienceService
-from scripts.libs_py.profiler import ProfilerData, ProfilerFilter, ProfilerStats, get_live_context
+# Add context_manager scripts to sys.path for shared schema (B1: single schema owner)
+CM_SCRIPTS = os.path.join(BASE_DIR, ".agent", "skills", "context_manager", "scripts")
+if CM_SCRIPTS not in sys.path:
+    sys.path.insert(0, CM_SCRIPTS)
+
+# Heavy data services (pandas/profiler/candle-science) are imported LAZILY
+# inside each tool so server startup stays light.
 
 # Paths
 DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_PATH = os.path.join(BASE_DIR, "mcp", "memory.db")
+DB_PATH = os.path.join(BASE_DIR, ".agent", "memory.db")
+
+# Shared schema + helpers (stdlib + sqlite3 only — preserves startup weight)
+from store_schema import (
+    USER_MD_PATH,
+    ensure_schema,
+    get_db_connection,
+    fts_search,
+    upsert_pref,
+    get_prefs,
+    render_profile_md,
+    add_outcome,
+    aggregate_outcomes,
+    get_outcome_rows,
+    generate_outcome_warnings,
+    archive_outcome as _archive_outcome_db,
+    discard_outcome as _discard_outcome_db,
+    enqueue,
+    list_queue,
+    approve_queue_item,
+    reject_queue_item,
+    prune_queue,
+    propose_skill_draft,
+    maintain_store,
+)
+
 
 class SemanticMemory:
+    """Adapter over the shared context_manager schema (content/tags).
+
+    The MCP tools keep their (topic, content, metadata) signature; topic and
+    metadata are folded into the single `tags` column on write.
+    Schema is owned by store_schema.ensure_schema (B1: single schema owner).
+    """
+
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS memories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    category TEXT NOT NULL, -- ADR, Nuance, Regime, Lesson
-                    topic TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    metadata TEXT, -- JSON extra data
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_category ON memories(category)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_topic ON memories(topic)")
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        ensure_schema(conn)
+        conn.close()
+
+    @staticmethod
+    def _to_tags(topic, metadata):
+        parts = [topic] if topic else []
+        if metadata:
+            if isinstance(metadata, dict):
+                if metadata.get("linked_file"):
+                    parts.append(f"linked_file:{metadata['linked_file']}")
+                else:
+                    parts.append(json.dumps(metadata))
+            else:
+                parts.append(str(metadata))
+        return ", ".join(p for p in parts if p)
 
     def add(self, category, topic, content, metadata=None):
+        tags = self._to_tags(topic, metadata)
+        body = f"{topic} | {content}" if topic else content
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "INSERT INTO memories (category, topic, content, metadata) VALUES (?, ?, ?, ?)",
-                (category, topic, content, json.dumps(metadata) if metadata else None)
+                "INSERT INTO memories (category, content, tags) VALUES (?, ?, ?)",
+                (category, body, tags)
             )
         return f"Memory stored under '{category}': {topic}"
 
     def query(self, search_term):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT category, topic, content, created_at FROM memories WHERE topic LIKE ? OR content LIKE ? LIMIT 10",
-                (f"%{search_term}%", f"%{search_term}%")
-            )
-            return cursor.fetchall()
+        """FTS5-first search with LIKE fallback. Returns tuples (cat, content, tags, date)."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = fts_search(conn, search_term, limit=10)
+            return [(r["category"], r["content"], r["tags"], r["created_at"]) for r in rows]
+        finally:
+            conn.close()
+
 
 # Initialize FastMCP server
 mcp = FastMCP("DataBridge")
@@ -71,62 +117,68 @@ def add_memory(topic: str, content: str, category: str = "ADR", metadata: dict =
 @mcp.tool()
 def query_memory(query: str) -> str:
     """Searches the Second Brain for relevant architectural decisions or strategy nuances."""
-    results = memory.query(query)
-    if not results:
-        return f"No memories found for '{query}'."
-    
-    formatted = []
-    for cat, topic, content, date in results:
-        formatted.append(f"[{cat}] {topic} ({date})\n{content}")
-    return "\n\n".join(formatted)
+    # Gather all three sources on one connection before deciding what to return.
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        # 1. Memory results (FTS5-first)
+        memory_results = memory.query(query)
 
-@mcp.tool()
-def bootstrap_memory() -> str:
-    """Initializes the memory with known foundations from the brainstorming phase."""
-    seeds = [
-        # Architecture
-        ("ADR", "MCP Architecture", "Platform transitioned to AI-Native using CBM-MCP and custom DataBridge."),
-        ("Nuance", "Token Efficiency", "Structural Graph (36k nodes) reduces navigation tokens by ~90%."),
-        ("Nuance", "Data Access", "Indicators and Market Levels are now served via MCP tools to bypass file parsing."),
-        # Shell Gotchas (Windows/PowerShell)
-        ("Shell", "curl", "Always use `curl.exe -i` on Windows to avoid interactive Invoke-WebRequest prompts."),
-        ("Shell", "ls", "Use `Get-ChildItem` for reliable file listing; be wary of `ls` alias limits."),
-        ("Shell", "rm", "Use `Remove-Item -Force -Recurse` for clean deletions."),
-        ("Shell", "mv", "Use `Move-Item -Force` for reliable moves, especially across different drives."),
-        ("Shell", "paths", "schema.prisma is at web/prisma/schema.prisma NOT in root prisma/ directory."),
-        ("Shell", "multiline-args", "Avoid multiline strings in PowerShell CLI args; use single-line strings instead."),
-        # Data Cards
-        ("DataCard", "NQ1", "Parquet OHLCV. Timeframes: 1m,5m,15m,1h,4h,1d,1W. Columns: [time,open,high,low,close,volume]. Timezone: US/Eastern. Source: TradingView."),
-        ("DataCard", "ES1", "Parquet OHLCV. Timeframes: 1m,5m,15m,1h,4h,1d,1W. Same schema as NQ1. Source: TradingView."),
-        ("DataCard", "all_tickers", "Futures: NQ1,ES1,RTY1,YM1,GC1,CL1. ETFs: QQQ,SPY,IWM,GLD,TLT. Equities: AAPL,NVDA,MSFT,META,TSLA,AMZN,GOOGL,AMD,PLTR. Indices: NDX,SPX,RUT,DJI. Vols: VIX,VVIX."),
-        ("DataCard", "json_files", "Per-ticker derived files: _profiler.json, _hod_lod.json, _daily_hod_lod.json, _opening_range.json, _level_touches.json, _range_dist.json, _ny_levels_stats.json."),
-        # Schema Cards
-        ("SchemaCard", "Trade", "Core journal model. Key fields: id,ticker,entryDate,exitDate,entryPrice,exitPrice,quantity,direction(LONG/SHORT),status(OPEN/CLOSED/PENDING),pnl,notes,metadata(JSON). Relations: account,strategy,playbook,marketCondition."),
-        ("SchemaCard", "MacroSnapshot", "Institutional options dashboard model. Fields: id,ticker,timestamp,tradingDate,spotPrice,macroCallWall,macroPutWall,zeroGamma,anomalies(JSON),dominantNodes(JSON). Unique on [ticker,tradingDate]."),
-        ("SchemaCard", "Analysis", "Daily pre-market context model. Fields: date(unique),sentiment,bias,notes,keyLevels,profilerSnapshot,candleScienceSnapshot. Relations: charts,wargames."),
-        ("SchemaCard", "GexSnapshot", "Intraday GEX timeseries. Fields: ticker,timestamp,tradingDate,totalGex,gexRegime,spotPrice,gammaMagnet,pinStrike. Index on [ticker,tradingDate]."),
-        # DevOps Runner Cards
-        ("DevOps", "Ports", "Frontend: 3000 | FastAPI: 8000 | MCP: Dynamic. Check .env for GEX_PORT overrides."),
-        ("DevOps", "Commands", "Web: `npm run dev` (in /web) | Backend: `fastapi dev api/main.py` | DataBridge: `python mcp/data_server.py`."),
-        # Incident Records (The "Never Again" List)
-        ("Incident", "Prisma Path", "ALWAYS run `npx prisma generate` inside the `web/` directory. Schema is at `web/prisma/schema.prisma`."),
-        ("Incident", "API Types", "POST /candle-science/calculate requires STRICT integers for min_ticks. 1.0 will fail with 422; use 1."),
-        ("Incident", "MCP Args", "FastMCP `call` CLI fails on multiline strings. Always use single-line single-quoted strings for manual tool testing."),
-        # Shell Enforcement (Windows/PowerShell Standard)
-        ("Shell", "Enforcement", "THIS IS A WINDOWS/POWERSHELL ENVIRONMENT. NEVER use Unix commands (grep, ls, rm, mv). USE: Select-String, Get-ChildItem, Remove-Item -Force, Move-Item -Force."),
-        ("Shell", "paths", "schema.prisma is at web/prisma/schema.prisma NOT in root prisma/ directory."),
-        ("Shell", "multiline-args", "Avoid multiline strings in PowerShell CLI args; use single-line strings instead."),
-        # Library & Domain Manuals (Foundational Knowledge)
-        ("Lib", "SchwabAPI", "Use `schwabdev`. Client init requires `app_key, app_secret, callback_url`. KEY STEP: call `linked_accounts()` to get `hashValue` for account/order calls. Orders use strict JSON mappings from the Guide."),
-        ("Lib", "PineScript", "TradingView v6 standard: Use //@version=6. ALWAYS use UDTs (User Defined Types) for entities with 3+ fields. NEVER delete historical drawings (boxes/lines) — only update live ones or trim based on max count."),
-        ("Lib", "FastAPI", "Project standard: Feature-First. Routers go in `api/features/{name}/router.py`. Mount in `api/main.py`."),
-        ("Lib", "Prisma", "Use `db.macroSnapshot.upsert` with `ticker_tradingDate` compound unique index for daily options data."),
-        ("Domain", "ICT", "Core Logic: Killzones (London: 02-05, NYAM: 09:30-11:00). Bias Stacking = HTF Sweep + LTF CISD (Change in State of Delivery). SMT Divergence = Crack in correlation between NQ, ES, YM."),
-        ("Data", "Inventory", "Derived Data at `/data/derived/`. Use `ict_nwog_ndog.json` for gaps, `NQ1_daily_classification.parquet` for bias, and `hourly_quarter_stats_NQ1.json` for intraday probabilities. DON'T RE-CALC!"),
-    ]
-    for cat, topic, content in seeds:
-        memory.add(cat, topic, content)
-    return "Second Brain bootstrapped with foundational knowledge."
+        # 2. Profile rows for preference-keyword matches
+        profile_lines: List[str] = []
+        try:
+            prefs = get_prefs(conn)
+            pref_matches = [p for p in prefs if query.lower() in p["key"].lower() or query.lower() in p["value"].lower()]
+            if pref_matches:
+                profile_lines.append("**Profile matches:**")
+                for p in pref_matches:
+                    profile_lines.append(f"- {p['key']}: {p['value']} (confidence={p['confidence']:.1f})")
+        except Exception:
+            pass
+
+        # 3. Outcome projection (counts only, no raw PnL)
+        outcome_lines: List[str] = []
+        try:
+            agg = aggregate_outcomes(conn, tag=query, period_days=7)
+            for a in agg:
+                if a.get("total", 0) > 0:
+                    wr = a.get("win_rate_pct")
+                    wr_str = f"{wr:.1f}%" if wr is not None else "N/A"
+                    outcome_lines.append(
+                        f"Outcomes [{a['tag']}]: {a['n_wins']} wins / {a['n_losses']} losses "
+                        f"(win-rate {wr_str}) in last 7d"
+                    )
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+    # If absolutely nothing matched, say so.
+    if not memory_results and not profile_lines and not outcome_lines:
+        return f"No memories, profile entries, or outcomes found for '{query}'."
+
+    formatted: List[str] = []
+    if profile_lines:
+        formatted.append("\n".join(profile_lines))
+
+    for cat, content, tags, date in memory_results:
+        # Strip linked_file: prefix when picking display topic
+        first_tag = tags.split(",")[0].strip() if tags else ""
+        if first_tag.startswith("linked_file:"):
+            topic = ""
+            for t in tags.split(","):
+                t = t.strip()
+                if not t.startswith("linked_file:"):
+                    topic = t
+                    break
+        else:
+            topic = first_tag
+        formatted.append(f"[{cat}] {topic} ({date})\n{content}")
+
+    if outcome_lines:
+        formatted.extend(outcome_lines)
+
+    return "\n\n".join(formatted)
 
 @mcp.tool()
 def link_memory_to_code(topic: str, file_path: str) -> str:
@@ -137,15 +189,216 @@ def link_memory_to_code(topic: str, file_path: str) -> str:
     full_path = os.path.join(BASE_DIR, file_path.replace("/", os.sep))
     if not os.path.exists(full_path):
         return f"Warning: File {file_path} does not exist. Link stored anyway."
-    
-    # Store this as metadata or a separate linkage? 
-    # For now, we'll just update the memory entry with the file path in metadata.
+
+    # FTS5 search to find matching rows (B2: ported from LIKE)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        matches = fts_search(conn, topic, limit=20)
+        if not matches:
+            return f"No memories found for '{topic}' to link."
+    finally:
+        conn.close()
+
+    # Append the linked file to the tags of matching memories.
+    linked_tag = f"linked_file:{file_path}"
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            "UPDATE memories SET metadata = json_insert(ifnull(metadata, '{}'), '$.linked_file', ?) WHERE topic = ?",
-            (file_path, topic)
+        for m in matches:
+            conn.execute(
+                "UPDATE memories SET tags = "
+                "CASE WHEN tags IS NULL OR tags = '' THEN ?"
+                "     WHEN instr(tags, ?) = 0 THEN tags || ', ' || ?"
+                "     ELSE tags END "
+                "WHERE id = ?",
+                (linked_tag, linked_tag, linked_tag, m["id"])
+            )
+    return f"Linked {topic} to {file_path} ({len(matches)} memory rows)."
+
+
+# ---------------------------------------------------------------------------
+# P1: render_profile
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def render_profile() -> str:
+    """Renders USER.md from user_prefs + select memories. Also writes to .agent/USER.md."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        md = render_profile_md(conn)
+    finally:
+        conn.close()
+    with open(USER_MD_PATH, "w", encoding="utf-8") as f:
+        f.write(md)
+    return md
+
+
+# ---------------------------------------------------------------------------
+# P2: capture_outcome + recap_outcomes
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def capture_outcome(
+    tag: str,
+    subject: str,
+    outcome: str,
+    pnl: float = 0.0,
+    ticker: str = None,
+    entry_price: float = None,
+    exit_price: float = None,
+    run_id: str = None,
+    symbol: str = None,
+    session: str = None,
+    verdict: str = None,
+    metadata: dict = None,
+) -> str:
+    """
+    Records a trade/run outcome. Consent via call (same pattern as link_memory_to_code).
+    The return text is the confirmation surface. Verdict is inferred from outcome text if omitted.
+    Pass verdict explicitly (win/loss/flat/mixed) to override inference.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        oid = add_outcome(
+            conn, tag, subject, outcome, pnl, ticker, entry_price, exit_price,
+            run_id, symbol, session, verdict=verdict, metadata=metadata,
         )
-    return f"Linked {topic} to {file_path}."
+        # read back the verdict and whether it was inferred
+        row = conn.execute("SELECT verdict FROM outcomes WHERE id = ?", (oid,)).fetchone()
+        stored_verdict = row["verdict"] if row else "?"
+    finally:
+        conn.close()
+
+    inferred_note = ""
+    if verdict is None:
+        inferred_note = f" Verdict was inferred as '{stored_verdict}'; pass verdict=... to override."
+    return (f"Recorded outcome [{tag}] id={oid} verdict={stored_verdict} "
+            f"subject='{subject}' pnl={pnl}.{inferred_note} "
+            f"If this was not intended, use discard_outcome(id={oid}).")
+
+
+@mcp.tool()
+def recap_outcomes(period_days: int = 7, tag: str = None, verbose: bool = False) -> str:
+    """
+    Returns aggregate outcome stats. Default: counts only (no raw PnL).
+    verbose=True adds itemized rows including pnl_local.
+    Includes Phase-4 loss-rate warnings when a tag's losses exceed 2x its wins.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        agg = aggregate_outcomes(conn, tag=tag, period_days=period_days)
+        warnings = generate_outcome_warnings(agg, period_days=period_days)
+        out = {"period_days": period_days, "aggregates": agg, "warnings": warnings}
+        if verbose:
+            rows = get_outcome_rows(conn, tag=tag, period_days=period_days, limit=50)
+            out["itemized"] = rows
+        return json.dumps(out, indent=2, default=str)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# P2: archive / discard outcomes
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def archive_outcome(outcome_id: int) -> str:
+    """Soft-deletes an outcome (sets archived=1). Use to hide bad data without removing it."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        ok = _archive_outcome_db(conn, outcome_id)
+    finally:
+        conn.close()
+    if ok:
+        return f"Outcome id={outcome_id} archived."
+    return f"Outcome id={outcome_id} not found."
+
+
+@mcp.tool()
+def discard_outcome(outcome_id: int) -> str:
+    """Hard-deletes an outcome row. Use when a capture was accidental."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        ok = _discard_outcome_db(conn, outcome_id)
+    finally:
+        conn.close()
+    if ok:
+        return f"Outcome id={outcome_id} discarded."
+    return f"Outcome id={outcome_id} not found."
+
+
+# ---------------------------------------------------------------------------
+# P3: propose_skill
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def propose_skill(tag: str) -> str:
+    """
+    Proposes a reusable SKILL.md from repeated successful outcomes on a tag.
+    Requires >=3 distinct win run_ids + zero losses in 30d. Never writes a file.
+    Returns the draft text if eligible, or a refusal message.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        eligible, msg, qid = propose_skill_draft(conn, tag)
+    finally:
+        conn.close()
+    if eligible:
+        return f"Skill proposal drafted (queue id={qid}). Review, edit, then persist via:\n" \
+               f"  python scripts/skill_writer.py --name <name> --source <saved_draft_path>\n\n" \
+               f"{msg}"
+    return msg
+
+
+@mcp.tool()
+def reject_skill_proposal(queue_id: int) -> str:
+    """Marks a queued skill proposal as rejected. Rejected proposals are pruned after 30d."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        row = reject_queue_item(conn, queue_id)
+    finally:
+        conn.close()
+    if row:
+        return f"Skill proposal id={queue_id} rejected."
+    return f"Skill proposal id={queue_id} not found."
+
+
+# ---------------------------------------------------------------------------
+# P4: maintenance
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def maintain_memory_store(dry_run: bool = False, render_profile: bool = False) -> str:
+    """
+    Periodic maintenance for the memory store.
+
+    - Applies confidence decay to stale user_prefs rows (>90d inactive, -0.1 per 30d, floor 0.2).
+    - Prunes unapproved skill proposals older than 30 days.
+    - Optionally re-renders USER.md.
+
+    Set dry_run=True to preview changes without writing.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ensure_schema(conn)
+        report = maintain_store(conn, render=render_profile, dry_run=dry_run)
+    finally:
+        conn.close()
+    return json.dumps(report, indent=2, default=str)
+
 
 # Paths
 INVENTORY_PATH = os.path.join(BASE_DIR, "DATA_INVENTORY.md")
@@ -157,6 +410,9 @@ def calculate_indicator(ticker: str, timeframe: str, indicators: list[str]) -> s
     Calculates technical indicators for a ticker/timeframe using historical Parquet data.
     Example: ticker="ES1", timeframe="5m", indicators=["vwap", "sma_20"]
     """
+    from api.features.shared.data_loader import load_parquet
+    from api.features.indicators.service import calculate_indicators
+
     df = load_parquet(ticker, timeframe)
     if df is None:
         return f"Error: Data not found for {ticker} {timeframe}"
@@ -177,6 +433,8 @@ def get_profiler_stats(ticker: str, days: int = 50) -> str:
     Gets session-based profiler statistics and probabilities for a ticker.
     Analyzes historical sessions from the pre-computed JSON.
     """
+    from scripts.libs_py.profiler import ProfilerData, ProfilerStats
+
     try:
         data = ProfilerData.load(ticker)
         # Calculate stats for the last N sessions
@@ -207,6 +465,8 @@ def get_profiler_combinations(
     Filters keys should match keys in ProfilerData.get_trading_day_context():
     ['prev_ny1_status', 'prev_ny2_status', 'prev_asia_status', 'prev_lon_status', 'asia_status', 'lon_status', 'ny1_status']
     """
+    from scripts.libs_py.profiler import ProfilerData, ProfilerFilter, ProfilerStats
+
     try:
         data = ProfilerData.load(ticker)
         # ProfilerFilter expects context as a dict
@@ -226,6 +486,8 @@ def calculate_candle_science(ticker: str, timeframe: str, filters: dict = None) 
     Executes Candle Science statistical analysis using the Filter-then-Compute methodology.
     Returns probabilities for 3-candle patterns based on provided filters.
     """
+    from api.features.candle_science.service import CandleScienceService
+
     result = CandleScienceService.calculate_stats(ticker, timeframe, filters)
     return json.dumps(result, indent=2)
 
@@ -241,6 +503,9 @@ def get_prediction(session: str, ticker: str = "NQ1") -> str:
         return "Invalid session. Use 'asia', 'london', 'ny1', or 'ny2'."
 
     try:
+        from scripts.libs_py.profiler import ProfilerData, ProfilerFilter, ProfilerStats
+        from scripts.libs_py.profiler import get_live_context
+
         # 1. Get current LIVE state from Parquet (Source of truth)
         context = get_live_context(ticker)
         

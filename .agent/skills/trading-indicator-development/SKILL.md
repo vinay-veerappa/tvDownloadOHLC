@@ -1,6 +1,7 @@
 ﻿---
 name: Trading Indicator Development
 description: Cross-platform trading indicator development skill covering Pine Script v6, NinjaScript, and Tradovate with architecture patterns and conversion guidance.
+applyTo: "**"
 ---
 
 # Trading Indicator Development Skill
@@ -11,6 +12,10 @@ description: Cross-platform trading indicator development skill covering Pine Sc
 > Includes cross-platform conversion mappings.
 
 ---
+
+## When to use
+
+Use when developing trading indicators across platforms (Pine Script, NinjaScript, Python) — cross-platform patterns and API references. Reference skill, not a workflow.
 
 ## 1. Script Structure (Mandatory Order)
 

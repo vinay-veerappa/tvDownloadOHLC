@@ -1,6 +1,7 @@
 ---
 name: agentic-maker-checker-protocol
 description: Standard operating architecture for AI development in Antigravity. Enforces Maker-Checker, LLM-as-a-Judge, Multi-Agent Debate, and Self-Correction reflection loops.
+applyTo: "**"
 ---
 
 # Agentic Maker-Checker & Evaluation Protocol
@@ -8,6 +9,10 @@ description: Standard operating architecture for AI development in Antigravity. 
 This protocol establishes the mandatory standard operating procedure for code generation, strategy development, and analysis in Antigravity.
 
 ---
+
+## When to use
+
+Use when implementing any feature using the maker-checker protocol — two agents (maker + checker) collaborate on implementation with verification gates.
 
 ## 🏛️ The 4 Core Architectural Patterns
 

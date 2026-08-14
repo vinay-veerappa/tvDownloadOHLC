@@ -150,6 +150,10 @@ Key skills in this repo:
 
 ## CODE SEARCH — USE CODEBASE-MEMORY MCP FIRST (mandatory)
 
+**Consult `.agent/USER.md` when user preferences, trading style, risk rules, or
+project conventions are relevant to the task.** This file is auto-rendered from
+the `user_prefs` table — it is authoritative shorthand for what the user wants.
+
 For **any** code-exploration task — finding a function/class/route, who-calls-what,
 architecture questions, refactor-impact analysis, dead-code detection — you MUST
 use the `codebase-memory-mcp` tools **first**, not `grep_search` / `file_search`.
@@ -174,12 +178,12 @@ Using the MCP first is faster and more accurate for code questions.
 
 - **Compile**: ALWAYS use the `mcp_nt-mcp-server_nt_compile` MCP tool. NEVER use curl, PowerShell `Invoke-RestMethod`, Python `requests`, or any manual HTTP call to `http://localhost:7890/api/compile`. The MCP tool handles the connection-reset/hot-swap correctly via the `/api/compile/result` polling fallback. Manual HTTP calls crash because the bridge's HTTP listener thread is not the WPF UI thread.
 - **All NT8 operations**: Use MCP tools (prefixed `mcp_nt-mcp-server_nt_*`) for everything — compile, backtest, accounts, quotes, bars, search, logs, indicator values, draw levels, open chart, script execute, riskguard. The MCP server (`nt-mcp-server.js`) handles the HTTP bridge correctly. Only use direct `curl` to `http://localhost:7890/api/*` as a fallback if the MCP tool is unavailable.
-- **Sync**: Use `.\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py` to push repo source to NT8 Custom folder. After syncing new files, NT8 may need a restart to detect them (hot-swap only updates existing files, not new ones).
+- **Sync**: Use `.\.venv\Scripts\python.exe scripts\utils\sync_nt8_strategies.py` to push repo source to NT8 Custom folder. This covers **strategies and indicators only** — the addons moved out (2026-08-12) and deploy from `nt8-riskguard` (`tools/sync_nt8.py`) and `nt8-mcp-bridge` (`tools/deploy.py`). After syncing new files, NT8 may need a restart to detect them (hot-swap only updates existing files, not new ones).
 - **Stale cache**: If the MCP compile returns errors referencing line numbers beyond the file's actual length, or referencing code you've already fixed, NT8 is caching a stale version. Restart NT8 to clear the Roslyn cache.
 - **Bridge port**: 7890 (NOT 51328 — that port is stale).
 - **Indicator values fix**: The `indicator_values` endpoint uses `AppDomain.CurrentDomain.GetAssemblies()` to find `NinjaTrader.Custom` (Type.GetType fails because it's in a separate AssemblyLoadContext). If it still fails, the indicator needs to be hosted on a chart or strategy instead.
 - **DevMode**: Create `mcp_dev.on` in NT8 UserDataDir to enable `script_execute` and dev endpoints. Currently enabled.
-- **Audit other bridge endpoints**: Before using any `/api/*` endpoint, check whether it marshals to the WPF Dispatcher. Endpoints that call NT8 APIs (compile, backtest, indicator operations) MUST run on the UI thread via `Dispatcher.Invoke()`. The `McpBridgeAddOn.cs` source is at `scripts/ninjatrader/addons/McpBridgeAddOn.cs` — read it before assuming an endpoint works.
+- **Audit other bridge endpoints**: Before using any `/api/*` endpoint, check whether it marshals to the WPF Dispatcher. Endpoints that call NT8 APIs (compile, backtest, indicator operations) MUST run on the UI thread via `Dispatcher.Invoke()`. The `McpBridgeAddOn.cs` source **left this repo in the 2026-08-12 split** — it is now `addons/McpBridgeAddOn.cs` in the [nt8-mcp-bridge](https://github.com/vinay-veerappa/nt8-mcp-bridge) repo (`C:\Users\vinay\nt8-mcp-bridge`). Read it there before assuming an endpoint works.
 
 ## CONTEXT ANCHORS (same as Antigravity's sync-trading-brain)
 

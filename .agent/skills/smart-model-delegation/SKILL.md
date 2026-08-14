@@ -1,11 +1,16 @@
 ---
 name: smart-model-delegation
 description: Mandatory token-saving delegation protocol inside Antigravity. Automatically dispatches tasks to lower-token subagent models (flash_lite, flash) and local/cloud Ollama models.
+applyTo: "**"
 ---
 
 # Smart Model Delegation Protocol (Antigravity Native)
 
 Use this protocol during all development tasks to keep parent token consumption ultra-low while maintaining high reasoning quality.
+
+## When to use
+
+Use when delegating tasks to other models — mandatory token-saving protocol that routes work to the cheapest capable model.
 
 ## Core Rules
 

@@ -1,9 +1,14 @@
 ---
 name: Code Guardian
 description: Enforces code quality, checks for lint errors, and validates types before specialized tasks.
+applyTo: "**"
 ---
 
 # Code Guardian
+
+## When to use
+
+Use before running tests or committing code — enforces code quality by checking for lint errors, type validation, and common pitfalls before executing specialized workflows.
 
 ## Purpose
 Acts as the Quality Assurance gatekeeper. Ensures that code changes do not break the build or introduce regressions.

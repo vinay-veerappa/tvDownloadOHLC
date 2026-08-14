@@ -1,11 +1,16 @@
 ---
 name: RTH Gaps Manager
 description: Manages the generation, maintenance, and statistical analysis of RTH (Regular Trading Hours) gaps and their subsequent fills.
+applyTo: "**/*.py"
 ---
 
 # RTH Gaps Manager
 
 This skill handles the lifecycle of "RTH Gap" data—specifically the price difference between the previous session's RTH Close (e.g., 16:15 ET) and the current session's RTH Open (09:30 ET).
+
+## When to use
+
+Use when managing RTH (Regular Trading Hours) gap data — generation, maintenance, and statistical analysis of gap events.
 
 ## Capabilities
 1.  **Generate Data**: scanning intraday data to identify historical gaps.

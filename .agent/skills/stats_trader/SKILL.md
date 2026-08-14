@@ -1,11 +1,16 @@
 ---
 name: Stats Trader
 description: Generates a statistical trade plan for the day based on previous day's classification and overnight context.
+applyTo: "**/*.py"
 ---
 
 # Stats Based Day Trader
 
 This skill helps you build a data-driven "Morning Brief" by querying the probability matrices generated from historical analysis.
+
+## When to use
+
+Use when generating a statistical trade plan for the day — based on previous day's classification and session profiler data.
 
 ## Workflow
 

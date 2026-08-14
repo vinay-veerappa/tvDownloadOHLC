@@ -1257,8 +1257,8 @@ def _expected_move(
         
     # 3. Guardrail: crossed or missing market check
     if c.bid <= 0 or c.ask <= 0 or p.bid <= 0 or p.ask <= 0:
-        log.warning(
-            "LOUD WARNING: Crossed or missing bid/ask for expected move at strike %.2f. "
+        log.debug(
+            "Crossed or missing bid/ask for expected move at strike %.2f. "
             "Call bid/ask: %.2f/%.2f, Put bid/ask: %.2f/%.2f",
             atm_strike, c.bid, c.ask, p.bid, p.ask
         )
@@ -1267,8 +1267,8 @@ def _expected_move(
     # Crossed market is bid > ask (not >=).  When bid == ask (e.g. RTD MARK
     # pricing where both are set to the same mid-price), the quote is valid.
     if c.bid > c.ask or p.bid > p.ask:
-        log.warning(
-            "LOUD WARNING: Crossed bid/ask for expected move at strike %.2f. "
+        log.debug(
+            "Crossed bid/ask for expected move at strike %.2f. "
             "Call: %.2f > %.2f, Put: %.2f > %.2f",
             atm_strike, c.bid, c.ask, p.bid, p.ask
         )

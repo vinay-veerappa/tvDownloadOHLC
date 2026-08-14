@@ -9,13 +9,21 @@ NinjaTrader 8 live compilation folder.
 Source (repo, git-tracked):
     scripts/ninjatrader/strategies/**/*.cs  ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/
     scripts/ninjatrader/indicators/**/*.cs  ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Indicators/
-    scripts/ninjatrader/addons/*.cs         ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/AddOns/
     scripts/ninjatrader/shared/*.cs         ->  %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/  (shared classes compile with strategies)
 
 Destination (NT8 live, untracked):
     %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/
     %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/Indicators/
-    %USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/AddOns/
+
+NOT the AddOns. The RiskGuard/TradeCopier/McpBridge addons left this repo in the
+2026-08-12 split and deploy from their own repos:
+    nt8-riskguard    ->  python tools/sync_nt8.py
+    nt8-mcp-bridge   ->  python tools/deploy.py   (deploys the bridge AND its
+                         vendored core; deploying either alone fails the whole
+                         NT8 Custom assembly)
+Running --only addons here now exits with an error rather than silently doing
+nothing, because a deploy command that reports success while deploying nothing is
+how a stale addon stays live.
 
 Usage:
     python scripts/utils/sync_nt8_strategies.py          # sync all
@@ -62,12 +70,9 @@ INDICATOR_SRC_DIRS = [
     ("third_party",  NT8_SRC / "indicators" / "third_party"),
 ]
 
-ADDONS_SRC = NT8_SRC / "addons"
-
 NT8_HOME = Path(os.environ.get("USERPROFILE", "")) / "Documents" / "NinjaTrader 8" / "bin" / "Custom"
 STRATEGIES_DST = NT8_HOME / "Strategies" / "Vinay"  # NT8 expects this folder name
 INDICATORS_DST = NT8_HOME / "Indicators"
-ADDONS_DST = NT8_HOME / "AddOns"
 
 
 def file_hash(path: Path) -> str:
@@ -145,60 +150,6 @@ def sync_dir(src_dir: Path, dst_dir: Path, label: str, dry_run: bool = False, ve
     return result
 
 
-def sync_addon_files(dry_run: bool, verify: bool) -> dict:
-    """
-    Sync addon .cs files (copy trading + riskguard) from scripts/strategies/nt8/addons/
-    to NT8 AddOns/ folder. This is for the RiskGuard, TradeCopier, McpBridge, etc.
-    that are NT8 AddOns (not strategies).
-    """
-    result = {"copied": [], "identical": [], "missing_dst": [], "missing_src": [], "extra_dst": []}
-
-    if not ADDONS_DST.exists():
-        print(f"  [ERROR] NT8 AddOns dir does not exist: {ADDONS_DST}")
-        return result
-
-    if not ADDONS_SRC.exists():
-        print(f"  [ERROR] Source addons dir does not exist: {ADDONS_SRC}")
-        return result
-
-    src_files = sorted(ADDONS_SRC.glob("*.cs"))
-    dst_files = set(f.name for f in ADDONS_DST.glob("*.cs"))
-    src_names = set(f.name for f in src_files)
-
-    for name in sorted(dst_files - src_names):
-        result["extra_dst"].append(name)
-
-    for src_file in src_files:
-        dst_file = ADDONS_DST / src_file.name
-
-        if not dst_file.exists():
-            result["missing_dst"].append(src_file.name)
-            if not verify:
-                if not dry_run:
-                    shutil.copy2(src_file, dst_file)
-                    print(f"  [COPIED]  {src_file.name}  (new file in AddOns/)")
-                else:
-                    print(f"  [DRY-RUN] {src_file.name}  (would copy to AddOns/)")
-            continue
-
-        if file_hash(src_file) == file_hash(dst_file):
-            result["identical"].append(src_file.name)
-            if verify:
-                print(f"  [OK]      {src_file.name}")
-        else:
-            result["copied"].append(src_file.name)
-            if not verify:
-                if not dry_run:
-                    shutil.copy2(src_file, dst_file)
-                    print(f"  [SYNCED]  {src_file.name}  (content differed)")
-                else:
-                    print(f"  [DRY-RUN] {src_file.name}  (would sync)")
-            else:
-                print(f"  [DRIFT]   {src_file.name}  (source differs from NT8)")
-
-    return result
-
-
 def main():
     parser = argparse.ArgumentParser(description="Sync repo strategy .cs files to NT8 live folder.")
     parser.add_argument("--verify", action="store_true", help="Show drift status without copying.")
@@ -213,7 +164,14 @@ def main():
     )
     args = parser.parse_args()
 
-    scopes = set(args.only) if args.only else {"strategies", "indicators", "addons"}
+    if args.only and "addons" in args.only:
+        print("[ERROR] The addons no longer live in this repo (2026-08-12 split).")
+        print("        Deploy them from their own repos:")
+        print("          nt8-riskguard:   python tools/sync_nt8.py")
+        print("          nt8-mcp-bridge:  python tools/deploy.py")
+        sys.exit(2)
+
+    scopes = set(args.only) if args.only else {"strategies", "indicators"}
 
     print("=" * 70)
     print("NT8 NinjaScript Sync — repo source -> NT8 live compilation folder")
@@ -268,13 +226,6 @@ def main():
             print()
             print()
 
-    # ── AddOns: copy trading + riskguard -> NT8 AddOns/ ──
-    addon_result = None
-    if "addons" in scopes:
-        print(f"[AddOns/] {ADDONS_SRC} -> {ADDONS_DST}")
-        addon_result = sync_addon_files(args.dry_run, args.verify)
-        all_results.append(("AddOns", addon_result))
-
     # ── Orphan detection (aggregate): files in NT8 but not in ANY source ──
     # Only meaningful for areas actually scanned this run; a scoped-out area has
     # an empty source set, which would report every deployed file as an orphan.
@@ -288,8 +239,6 @@ def main():
         ind_dst_names = set(f.name for f in INDICATORS_DST.glob("*.cs"))
         indicator_orphans = sorted(ind_dst_names - all_indicator_src_names)
 
-    addon_orphans = addon_result.get("extra_dst", []) if addon_result else []
-
     # ── Summary ──
     print()
     print("=" * 70)
@@ -297,7 +246,7 @@ def main():
     total_copied = sum(len(r["missing_dst"]) for _, r in all_results)
     total_identical = sum(len(r["identical"]) for _, r in all_results)
     total_drift = total_synced + total_copied
-    total_orphans = len(strategy_orphans) + len(indicator_orphans) + len(addon_orphans)
+    total_orphans = len(strategy_orphans) + len(indicator_orphans)
 
     if args.verify:
         if total_drift == 0:
@@ -317,8 +266,6 @@ def main():
             print(f"    Strategies/Vinay/{name}")
         for name in indicator_orphans:
             print(f"    Indicators/{name}")
-        for name in addon_orphans:
-            print(f"    AddOns/{name}")
 
     print("=" * 70)
 

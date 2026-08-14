@@ -4,6 +4,7 @@ description: Pragmatic coding standards - concise, direct, no over-engineering, 
 allowed-tools: Read, Write, Edit
 version: 2.0
 priority: CRITICAL
+applyTo: "**/*.py"
 ---
 
 # Clean Code - Pragmatic AI Coding Standards
@@ -11,6 +12,10 @@ priority: CRITICAL
 > **CRITICAL SKILL** - Be **concise, direct, and solution-focused**.
 
 ---
+
+## When to use
+
+Use when writing or reviewing code — enforces pragmatic standards: concise, direct, no over-engineering, no unnecessary comments, meaningful names, single responsibility.
 
 ## Core Principles
 

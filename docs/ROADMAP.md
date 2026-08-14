@@ -97,18 +97,38 @@ This document consolidates all planned features, requirements, and known technic
 
 - [x] **Date Parsing**: Ensure consistent handling of "YYYY-MM-DD" vs Unix Timestamps across Python/JS.
 - [ ] **Data Gaps**: `DATA_GAPS_REPORT.md` highlights missing chunks in historical data.
-- [x] **Purge historical parquet from git history** (0.28 GB still on GitHub). The
-  2026-08-07 cleanup untracked `data/` and purged parquet from the then-unpushed
-  range, but **50 parquet objects remain in the older published history** — including
-  two 96.8 MB copies of `data/NQ1_1m.parquet`. Only 6 commits touch them, but they
-  predate the rewrite boundary, so clearing them means a full-history rewrite of all
-  1493 commits plus a force-push. Nothing is broken today; this is pure clone bloat.
-  Note that the RiskGuard handover docs already reference commit SHAs orphaned by the
-  first rewrite (`76137575`, `922b2c44`, `c5a4f035`, `1d9566fe`, and others) — worth
-  fixing those references in the same pass.
-- [ ] **Enable the pre-commit hook on every clone**: `git config core.hooksPath .githooks`.
-  It blocks parquet/audio/video and anything over 50 MB. It is *not* automatic — a
-  fresh clone has it disabled until that command is run.
+- [x] **Purge historical parquet from git history** — ✅ **done, and verified by measurement
+  2026-08-13.** The 2026-08-07 cleanup only covered the then-unpushed range, leaving 50
+  parquet objects (0.28 GB, two of them 96.8 MB copies of `data/NQ1_1m.parquet`) in the
+  older *published* history. A later full-history rewrite cleared them.
+
+  How it was checked, so the next person does not have to trust this line:
+
+  ```bash
+  git fetch --all --prune
+  git rev-list --objects --remotes | grep -ciE '\.parquet$'   # 0
+  git rev-list --objects --all     | grep -ciE '\.parquet$'   # 0  (local refs too)
+  ```
+
+  Largest blob remaining in published history is **39.2 MB** (`web/public/duckdb/duckdb-mvp.wasm`),
+  then two 34 MB `results/RESEARCH/` files and a run of 14–20 MB `.pkl`/`.npz` report
+  artifacts — all well under GitHub's 100 MB hard limit. Published history totals 11,959
+  blobs / 2.14 GB uncompressed.
+
+  ⚠️ **Two things that look like failure and are not:** the GitHub API still reports
+  `size: 423 MB`, because that counts objects made unreachable by the rewrite until
+  GitHub's own GC runs; and this clone's `.git` is still 1.5 GB (`size-pack` 1021 MiB) for
+  the same reason locally. `git gc --prune=now` reclaims the local half — but it also
+  destroys the only remaining copy of the pre-rewrite objects, so leave it a while. There
+  is also a stray `.git/objects/pack/tmp_pack_*` (0 bytes) that makes git print
+  `warning: garbage found`; harmless, and `git gc` removes it.
+
+  Still true, and unrelated to the parquet: **both rewrites orphaned commit SHAs that the
+  RiskGuard docs cite.** That is recorded in the handover's §0.0 rather than here.
+- **Pre-commit hook — install per clone**: `git config core.hooksPath .githooks`. Not a task
+  that can ever be ticked, because `core.hooksPath` is *local config*: a fresh clone has the
+  hook disabled and nothing says so. Installed as of 2026-08-13 in this repo and in both NT8
+  addon repos, which carry their own copy blocking build output rather than parquet.
 
 ## ✅ Completed (Recent)
 - [x] **Scheduled Expected Move**: Database persistence with Read-First strategy + 09:30/16:15 Cron Job.

@@ -1,0 +1,62 @@
+{
+  "_comment": [
+    "Consumer overrides for tvDownloadOHLC. Only these keys override; everything",
+    "else inherits from agent_loop/config.py, which records WHY each default has",
+    "its value. Unknown keys are a hard error, not a silent no-op.",
+    "",
+    "WHY 64000 AND NOT THE PACKAGE DEFAULT OF 96000: a budget is only valid",
+    "against a specific model's output ceiling, and nothing in the config can",
+    "express that relationship. The package default of 96000 is correct for",
+    "kimi-k2.7-code, but qwen3.5's ceiling is 65536 and it rejects the request",
+    "outright:",
+    "  HTTP 400 {\"error\":\"max_tokens (96000) exceeds model's maximum output",
+    "            tokens (65536) for model qwen3.5\"}",
+    "64000 fits under qwen3.5's ceiling AND is ample for kimi, so a run does not",
+    "break when the implementer is substituted because the primary is overloaded.",
+    "It is well above the 48000 that returned 207,078 characters of reasoning and",
+    "empty content on a five-part feature brief (O42)."
+  ],
+
+  "_roles_comment": [
+    "The implementer ROLE budget is what patch mode spends -- capping only the",
+    "plan/test MODES left it at the package default of 96000, and the first loop",
+    "run died on the same 400. The two are separate knobs and both have to fit the",
+    "model actually in use.",
+    "",
+    "`model` is required alongside max_tokens and think, so the package default is",
+    "restated here; --implementer overrides it per run.",
+    "",
+    "RAISED BACK TO 96000 on 2026-08-11. 64000 was chosen for the WEAKEST model",
+    "that might be substituted in, not for the one actually configured, and CM2",
+    "round 1 then died on it: kimi-k2.7-code emitted 282935 chars of thinking and",
+    "empty content at eval_count=64000. kimi has room; qwen3.5 does not. Setting",
+    "one number for both means the configured model runs at the substitute's",
+    "ceiling on every round. If you substitute qwen3.5, lower this to 64000 --",
+    "or rely on the package clamp once agent-loop records per-model output",
+    "ceilings (O59).",
+    "",
+    "think=false SINCE 2026-08-11, and the budget is NOT what fixed it. On the",
+    "CM2 ticket kimi-k2.7-code returned EMPTY CONTENT twice with think=true:",
+    "  64000 budget -> 282935 chars of thinking (4.42 chars/token)",
+    "  96000 budget -> 435641 chars of thinking (4.54 chars/token)",
+    "Same model, same prompt, same ticket. The reasoning expanded to fill",
+    "whatever it was given, so the budget is not a control on it -- it is only",
+    "where the model gets cut off. This is the identical failure the REVIEWER",
+    "role already has a measured answer for (think=true: 159s and no verdict;",
+    "think=false: 21s and ten findings), and the answer there was think=false.",
+    "Revert this if patch quality drops; the budget stays at 96000 either way."
+  ],
+
+  "roles": {
+    "implementer": {
+      "model": "kimi-k2.7-code:cloud",
+      "max_tokens": 96000,
+      "think": false
+    }
+  },
+
+  "modes": {
+    "plan": {"max_tokens": 64000, "think": true},
+    "test": {"max_tokens": 64000, "think": true}
+  }
+}

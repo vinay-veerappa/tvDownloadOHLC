@@ -1,6 +1,7 @@
 ﻿---
 name: Pine Script v6 TradingView
 description: Comprehensive Pine Script v6 development skill for building TradingView indicators and strategies, including structure, naming, UDT patterns, and implementation guidance.
+applyTo: "**/*.pine"
 ---
 
 # Pine Script v6 Development Skill
@@ -9,6 +10,10 @@ description: Comprehensive Pine Script v6 development skill for building Trading
 > Tailored for ICT-methodology trading tools, overlay indicators, and statistical dashboards.
 
 ---
+
+## When to use
+
+Use when writing Pine Script v6 indicators or strategies for TradingView — comprehensive API reference and foot-guns. Reference skill, not a workflow.
 
 ## 1. Script Structure (Mandatory Order)
 

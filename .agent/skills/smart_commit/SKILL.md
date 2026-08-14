@@ -1,11 +1,16 @@
 ---
 name: smart_commit
 description: Automated, token-efficient single-command git staging and conventional committing. Use when user requests a git commit or when finalizing feature work.
+applyTo: "**"
 ---
 
 # Smart Commit Skill
 
 Use this skill whenever the user requests a git commit or when completing a feature to minimize token overhead and execute staging + conventional commits in a single fast command.
+
+## When to use
+
+Use when the user wants to commit changes — automated, token-efficient single-command git staging and conventional commit messages.
 
 ## Instructions
 
