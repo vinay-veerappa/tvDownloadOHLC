@@ -72,6 +72,21 @@ having deployed nothing.
 
 ## Current State *(pre-migration, historical)*
 
+> ⚠️ **`scripts/strategies/nt8/` NO LONGER EXISTS — deleted 2026-08-14.** Everything in this
+> section and in the migration steps below is the **record of a move that is finished**, kept for
+> why rather than where. Do not go looking for these paths; the code is under
+> `scripts/ninjatrader/`.
+>
+> The old tree survived the migration as 10 `.cs` files that nothing read, and was removed once
+> all 10 were verified **byte-identical** to their twins in `scripts/ninjatrader/strategies/`. It
+> was worth finishing rather than leaving inert: one of the duplicates was
+> `base/RiskManagerBase.cs`, and two byte-identical copies of that file reaching `bin/Custom/` is a
+> **measured** incident — one `CS0101` then **496 × `CS0229`**, which fails the compile of the
+> entire NT8 Custom assembly and stops **every** addon loading, RiskGuard included. NT8 keeps
+> running the last good assembly, so `nt_health` reads healthy and the only symptom is a deploy
+> that has no effect. A duplicate source nothing deploys today is one accidental sync path away
+> from that.
+
 ```
 scripts/strategies/nt8/           ← all NT8 code lives here
 ├── addons/                        ← AddOn .cs files (synced to AddOns/)

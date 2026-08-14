@@ -626,8 +626,21 @@ scripts/ninjatrader/
 - `addons/*.cs` → `Custom/AddOns/`
 - Orphan detection covers all 3 destinations
 
-### Old location
-`scripts/strategies/nt8/` still exists (not yet deleted). Once the first real sync + compile from the new location is verified, the old folder can be removed.
+### Old location — ✅ REMOVED 2026-08-14
+
+`scripts/strategies/nt8/` is **deleted**. Its stated condition was met long before it went: the new
+location has synced and compiled from `scripts/ninjatrader/strategies/` many times, `nt_compile`
+returning **0 errors**, and all 10 of the old tree's `.cs` files were verified **byte-identical** to
+their twins in the managed tree immediately before removal.
+
+⚠️ **Why it was worth finishing rather than leaving inert.** Nothing read the old path, so it broke
+nothing — but one of the duplicates was `base/RiskManagerBase.cs`, and two byte-identical copies of
+*that* file reaching `bin/Custom/` is a measured incident, not a hypothetical: it produced one
+`CS0101` and **496 × `CS0229`**, which fails the compile of the **entire** NT8 Custom assembly and so
+stops **every** addon loading, RiskGuard included. NT8 then keeps running the last good assembly, so
+`nt_health` reads healthy and the only symptom is a deploy that has no effect — indistinguishable
+from one that worked. See `NT8_FILE_ORGANIZATION.md` and the "broken NT8 assembly is invisible"
+record. A duplicate source that nothing deploys today is one accidental sync path away from that.
 
 ---
 
