@@ -12,7 +12,7 @@
 
 Everything this document says about `scripts/ninjatrader/addons/`, `ninjatrader-addon/` and
 `--only addons` **describes a layout that no longer exists here**. The addon half of the
-split was executed; see [NT8_REPO_SPLIT_PLAN.md](https://github.com/vinay-veerappa/nt8-riskguard/blob/main/docs/architecture/NT8_REPO_SPLIT_PLAN.md) (now in the nt8-riskguard repo).
+split was executed; see [NT8_REPO_SPLIT_PLAN.md](https://github.com/vinay-veerappa/nt8-riskguard/blob/main/docs/NT8_REPO_SPLIT_PLAN.md) (now in the nt8-riskguard repo).
 
 | What | Where it lives now | Deploy with |
 |---|---|---|
@@ -70,7 +70,7 @@ having deployed nothing.
   change what the live trading system compiles next. The explicit deploy step is deliberate.
 - `mcp/ninjatrader-mcp/nt8-addon/` was a stale fourth copy of the addon sources; it was
   deleted 2026-08-14 when the MCP wrapper was folded into `nt8-mcp-bridge` (see
-  `docs/architecture/NT8_REPO_SPLIT_PLAN.md` §7, now in the nt8-riskguard repo). The wrapper now lives at
+  `nt8-riskguard/docs/NT8_REPO_SPLIT_PLAN.md` §7). The wrapper now lives at
   `nt8-mcp-bridge/mcp/`; the canonical addon sources are in `nt8-mcp-bridge/addons/`
   and `nt8-riskguard/{addons,tests}/`.
 
