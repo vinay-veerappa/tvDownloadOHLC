@@ -28,16 +28,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// Bandits8020Bot — High-Precision Level Sniping & Sub-Grid Reversion Bot for NinjaTrader 8.
     /// 
     /// Key Capabilities:
-    /// 1. Comprehensive On-Chart Visual UI:
-    ///    - Live HUD Dashboard: Bias, active grid levels, session PnL, circuit breaker counters, active sizing.
-    ///    - Dynamic Sub-Grid Overlay: Automatically plots xx00 (Handle), xx20 (Support), xx50 (Mid), xx80 (Resistance).
-    ///    - Setup Verification Markers: Clear arrows and text labels for Fork, 'h' pattern, and Sniper limit entries.
-    ///    - Active Bracket Overlay: Visualizes Entry, Stop Loss, and Target lines in real-time.
-    /// 2. Automatic Instrument Profiling: Auto-detects NQ, MNQ, ES, MES, YM, MYM, CL, MCL, RTY, M2K.
-    /// 3. Multi-Contract Auto-Scaling: Target dollar risk per trade (e.g. $200) or Micro scaling (10x).
-    /// 4. Precision Limit Execution at exact sub-grid nodes (eliminating bar-close chasing).
-    /// 5. True 09:30 AM ET RTH Open Directional Dealing Bias Gate.
-    /// 6. Prop Firm ATM Brackets with 2R daily loss limits and consecutive loser cooldowns.
+    /// 1. Bulletproof OCO Brackets: Native tick-based Stop Loss and Profit Target brackets guaranteed to attach to every fill.
+    /// 2. Comprehensive On-Chart Visual UI: Live HUD, dynamic sub-grid rays, setup verification markers, and trade brackets.
+    /// 3. Automatic Instrument Profiling: Auto-detects NQ, MNQ, ES, MES, YM, MYM, CL, MCL, RTY, M2K.
+    /// 4. Multi-Contract Auto-Scaling: Target dollar risk per trade (e.g. $200) or Micro scaling (10x).
+    /// 5. Precision Limit Execution at exact sub-grid nodes (eliminating bar-close chasing).
+    /// 6. True 09:30 AM ET RTH Open Directional Dealing Bias Gate.
+    /// 7. Prop Firm ATM Brackets with 2R daily loss limits, consecutive loser cooldowns, and mandatory 15:55 EOD flatten.
     /// </summary>
     public class Bandits8020Bot : RiskManagerBase
     {
@@ -162,7 +159,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description                  = "Prop Firm Bandits 80/20 & Orderflow Sub-Grid Strategy with Full Visual UI Suite";
+            Description                  = "Prop Firm Bandits 80/20 & Orderflow Sub-Grid Strategy with Bulletproof OCO Brackets";
             Name                         = "Bandits8020Bot";
             Calculate                    = Calculate.OnBarClose;
             EntriesPerDirection          = 1;
@@ -230,6 +227,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             lastTriggerPrice = 0;
 
             CalibrateInstrumentSettings();
+
+            // Set bulletproof global tick-based OCO brackets
+            int stopTicks = Math.Max(1, (int)Math.Round(StopLossPoints / TickSize));
+            int targetTicks = Math.Max(1, (int)Math.Round(ProfitTargetPoints / TickSize));
+
+            SetStopLoss(CalculationMode.Ticks, stopTicks);
+            SetProfitTarget(CalculationMode.Ticks, targetTicks);
         }
 
         private void CalibrateInstrumentSettings()
@@ -369,8 +373,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (ShowDashboardHUD)
                 RenderDashboardHUD(bias, baseHandle, level20, level80);
 
+            // Position management & Flatten EOD protection
             if (Position.MarketPosition != MarketPosition.Flat)
+            {
+                if (timeHHMM >= FlattenBy)
+                {
+                    if (Position.MarketPosition == MarketPosition.Long)
+                        ExitLong("Flatten_EOD");
+                    else
+                        ExitShort("Flatten_EOD");
+                }
                 return 0;
+            }
 
             if (!IsAllowedTradingWindow(timeHHMM))
                 return 0;
@@ -528,20 +542,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private void ExecuteTrade(string direction, double entry, double stop, double target)
         {
-            string signalName = direction == "Long" ? "Bandits8020_Long" : "Bandits8020_Short";
+            string signalName = string.Format("B8020_{0}_{1}", direction == "Long" ? "L" : "S", CurrentBars[0]);
             int qty = Math.Max(1, calculatedQuantity);
 
             if (direction == "Long")
             {
                 EnterLongLimit(qty, entry, signalName);
-                SetStopLoss(signalName, CalculationMode.Price, stop, false);
-                SetProfitTarget(signalName, CalculationMode.Price, target);
             }
             else
             {
                 EnterShortLimit(qty, entry, signalName);
-                SetStopLoss(signalName, CalculationMode.Price, stop, false);
-                SetProfitTarget(signalName, CalculationMode.Price, target);
             }
 
             if (ShowTradeBrackets)
