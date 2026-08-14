@@ -35,7 +35,10 @@ scripts/ninjatrader/shared/*.cs          ← compiled with the strategies
         │
         │  scripts/utils/sync_nt8_strategies.py
         ▼
-%USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/{Strategies/Vinay,Indicators}/
+%USERPROFILE%/Documents/NinjaTrader 8/bin/Custom/
+        ├── Strategies/Vinay/     ← every strategy source, flat
+        └── Indicators/Vinay/     ← one subfolder PER SOURCE, not flat
+            Indicators/RedTail/
         ← live, untracked, compiled by NT8
 ```
 
@@ -140,7 +143,8 @@ scripts/ninjatrader/               ← TOP-LEVEL: all NT8 NinjaScript code
 
 ```
 scripts/ninjatrader/strategies/**/*.cs  →  Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/
-scripts/ninjatrader/indicators/**/*.cs  →  Documents/NinjaTrader 8/bin/Custom/Indicators/
+scripts/ninjatrader/indicators/vinay/*.cs    →  .../bin/Custom/Indicators/Vinay/     (NOT flat -- see Step 3)
+scripts/ninjatrader/indicators/redtail/*.cs  →  .../bin/Custom/Indicators/RedTail/
 scripts/ninjatrader/addons/*.cs         →  Documents/NinjaTrader 8/bin/Custom/AddOns/
 scripts/ninjatrader/shared/*.cs         →  Documents/NinjaTrader 8/bin/Custom/Strategies/Vinay/  (shared classes compile with strategies)
 ```
@@ -177,7 +181,16 @@ mkdir scripts/ninjatrader/shared
 ### Step 3: Update sync script
 Update `sync_nt8_strategies.py` to:
 - Read from `scripts/ninjatrader/` instead of `scripts/strategies/nt8/`
-- Sync `indicators/` subfolders to `Custom/Indicators/` (flatten — NT8 expects all indicators in one folder)
+- ~~Sync `indicators/` subfolders to `Custom/Indicators/` (flatten — NT8 expects all indicators in one folder)~~
+  ⚠️ **THIS LINE WAS WRONG, IT WAS IMPLEMENTED, AND IT WAS AN ARMED TRAP UNTIL 2026-08-14.**
+  NT8 does **not** expect all indicators in one folder — it compiles `Custom/Indicators/`
+  **recursively**, which is why eleven vendor subfolders (`LuxAlgo2/`, `BTMM/`, `Gemify/`, …)
+  coexist there today. Because the folder is organisation and not scoping, a second copy in a
+  *different* subfolder still collides. The 23 repo indicators had been deployed by hand to
+  `Indicators/Vinay/` and `Indicators/RedTail/`; the flattening tool looked only at the top level,
+  found none of them, and a plain sync would have written all 23 into `Indicators/` beside their
+  existing twins — **23 duplicate class definitions**. Corrected: indicators now sync to
+  `Custom/Indicators/Vinay/` and `Custom/Indicators/RedTail/`, one destination per source.
 - Sync `shared/` to `Custom/Strategies/Vinay/` (so strategies can reference shared classes)
 
 ### Step 4: Remove old `scripts/strategies/nt8/` folder
@@ -233,4 +246,7 @@ This is less work (no file moves) but the path `scripts/strategies/nt8/indicator
 1. **Option A**: Full restructure to `scripts/ninjatrader/` (cleaner, more work)
 2. **Option B**: Keep `scripts/strategies/nt8/` and add `indicators/vinay/` + `shared/` (less work, slightly misleading path)
 
-Either way, the sync script needs updating to handle indicators → `Custom/Indicators/`.
+Either way, the sync script needs updating to handle indicators. ⚠️ **The destination in this
+line was originally `Custom/Indicators/` (flat) and that was wrong** — see the correction under
+Step 3. Indicators sync to a per-source subfolder: `Custom/Indicators/Vinay/`,
+`Custom/Indicators/RedTail/`.

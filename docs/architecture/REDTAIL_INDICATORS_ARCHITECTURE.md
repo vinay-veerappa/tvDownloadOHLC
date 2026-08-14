@@ -15,7 +15,10 @@ The **RedTail Indicator Suite** consists of 14 high-performance NinjaTrader 8 (C
 - **Volume-Weighted Average Price (VWAP)**: Multi-timeframe VWAP (NY, Daily, Weekly, Monthly, Yearly, HOD/LOD), MIDAS VWAP, Swing-Anchored VWAP.
 - **Liquidity & Range Levels**: 33 key plot levels (Pivots, PDH/PDL, PWH/PWL, PMH/PML, Monday/Globex/RTH Ranges, Opening Bar Ranges).
 
-All RedTail indicators are maintained in [`scripts/ninjatrader/indicators/redtail/`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/ninjatrader/indicators/redtail/) and automatically synced to NinjaTrader 8 (`Documents/NinjaTrader 8/bin/Custom/Indicators/`) via [`sync_nt8_strategies.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/utils/sync_nt8_strategies.py).
+All RedTail indicators are maintained in [`scripts/ninjatrader/indicators/redtail/`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/ninjatrader/indicators/redtail/) and automatically synced to NinjaTrader 8 (`Documents/NinjaTrader 8/bin/Custom/Indicators/RedTail/`
+— its **own subfolder**, corrected 2026-08-14; syncing these to a flat `Indicators/` would have
+duplicated all 14 beside the copies already deployed there, and a duplicate `.cs` fails the whole
+NT8 Custom assembly) via [`sync_nt8_strategies.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/utils/sync_nt8_strategies.py).
 
 ---
 

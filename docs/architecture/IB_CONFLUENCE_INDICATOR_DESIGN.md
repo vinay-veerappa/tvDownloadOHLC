@@ -622,7 +622,9 @@ scripts/ninjatrader/
 `scripts/utils/sync_nt8_strategies.py` now syncs from `scripts/ninjatrader/`:
 - `strategies/**/*.cs` → `Custom/Strategies/Vinay/`
 - `shared/*.cs` → `Custom/Strategies/Vinay/`
-- `indicators/**/*.cs` → `Custom/Indicators/` (NEW)
+- `indicators/<source>/*.cs` → `Custom/Indicators/<Source>/` — **one subfolder per source**,
+  corrected 2026-08-14. It was `Custom/Indicators/` flat, which would have duplicated all 23
+  indicators beside the copies already deployed in their subfolders.
 - `addons/*.cs` → `Custom/AddOns/`
 - Orphan detection covers all 3 destinations
 
