@@ -495,6 +495,7 @@ async def extract_all_expiries(
     if save_files:
         out_dir = REPO_ROOT / "data" / "options" / "ExpectedMoves"
         out_dir.mkdir(parents=True, exist_ok=True)
+        # 1. Save latest snapshot
         out_json = out_dir / "tos_expected_moves_all_expiries.json"
         with open(out_json, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
@@ -526,11 +527,23 @@ async def extract_all_expiries(
                 )
             md_lines.append("")
 
+        md_content = "\n".join(md_lines)
         with open(out_md, "w", encoding="utf-8") as f:
-            f.write("\n".join(md_lines))
+            f.write(md_content)
 
-        print(f"[OK] Saved JSON output to: {out_json}")
-        print(f"[OK] Saved Markdown report to: {out_md}")
+        # 2. Date and time stamped versioned files (e.g. tos_expected_moves_20260814_1614.json)
+        ts_slug = now_dt.strftime("%Y%m%d_%H%M")
+        versioned_json = out_dir / f"tos_expected_moves_{ts_slug}.json"
+        versioned_md = out_dir / f"tos_expected_moves_{ts_slug}.md"
+        with open(versioned_json, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
+        with open(versioned_md, "w", encoding="utf-8") as f:
+            f.write(md_content)
+
+        print(f"[OK] Saved latest JSON snapshot to: {out_json}")
+        print(f"[OK] Saved latest Markdown report to: {out_md}")
+        print(f"[OK] Saved versioned snapshot to: {versioned_json}")
+        print(f"[OK] Saved versioned Markdown to: {versioned_md}")
 
     return results
 
