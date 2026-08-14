@@ -263,4 +263,7 @@ class VWAPInstitutionalStrategy:
             "min_retest_adx": ("float", 15.0, 25.0),
             "max_fade_adx": ("float", 18.0, 26.0),
             "filter_lunch": [True, False],
+            "use_orb_bias": [True, False],
+            "use_quarterly_cycles": [True, False],
         }
+
