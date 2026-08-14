@@ -108,7 +108,7 @@ The `/api/chart/diag` output confirms: `appDispatcher.Invoke timed out`.
 ## Files changed
 - `scripts/ninjatrader/addons/McpBridgeAddOn.cs` — source of truth
 - `scripts/strategies/nt8/addons/McpBridgeAddOn.cs` — synced copy
-- `mcp/ninjatrader-mcp/nt8-addon/McpBridgeAddOn.cs` — synced copy
+- `mcp/ninjatrader-mcp/nt8-addon/McpBridgeAddOn.cs` — synced copy **[DELETED 2026-08-14: wrapper folded into nt8-mcp-bridge, stale fourth copy removed]**
 - `C:\Users\vinay\Documents\NinjaTrader 8\bin\Custom\AddOns\McpBridgeAddOn.cs` — live NT8
 
 ## Compile state

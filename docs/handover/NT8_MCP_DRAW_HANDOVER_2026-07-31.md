@@ -119,7 +119,7 @@ These were applied in the first pass and remain in `McpBridgeAddOn.cs` (now vers
 ## Source-of-truth files
 - `scripts/ninjatrader/addons/McpBridgeAddOn.cs` — repo source-of-truth (current version `1.5.2-chart-discovery`). Sync to the NT8 live folder via `scripts/utils/sync_nt8_strategies.py` (`--verify` reports `[OK]`; the dispatcher fix was `[SYNCED]` this session).
 - `C:\Users\vinay\Documents\NinjaTrader 8\bin\Custom\AddOns\McpBridgeAddOn.cs` — live AddOn (NT8 compiles from this on startup).
-- `mcp/ninjatrader-mcp/nt8-addon/McpBridgeAddOn.cs` — submodule copy (keep in sync).
+- `mcp/ninjatrader-mcp/nt8-addon/McpBridgeAddOn.cs` — submodule copy (keep in sync). **[DELETED 2026-08-14: wrapper folded into nt8-mcp-bridge, stale fourth copy removed]**
 - `docs/NT8_MCP_ENDPOINT_AUDIT.md` — endpoint status.
 - This handover: `docs/handover/NT8_MCP_DRAW_HANDOVER_2026-07-31.md`
 

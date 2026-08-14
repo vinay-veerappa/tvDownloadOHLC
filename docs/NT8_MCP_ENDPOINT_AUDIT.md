@@ -190,7 +190,7 @@ The repository currently contains three identical copies of the AddOn source:
 
 1. `scripts/ninjatrader/addons/McpBridgeAddOn.cs` — primary sync source. `sync_nt8_strategies.py` pushes this file (and the rest of `scripts/ninjatrader`) to the live NT8 `bin\Custom` folder.
 2. `scripts/strategies/nt8/addons/McpBridgeAddOn.cs` — legacy duplicate kept alongside the NT8 strategy source tree.
-3. `mcp/ninjatrader-mcp/nt8-addon/McpBridgeAddOn.cs` — copy inside the `ninjatrader-mcp` submodule, referenced by the MCP server README quick-start.
+3. `mcp/ninjatrader-mcp/nt8-addon/McpBridgeAddOn.cs` — ~~copy inside the `ninjatrader-mcp` submodule~~ **DELETED 2026-08-14**: the wrapper was folded into `nt8-mcp-bridge` and the stale fourth copy removed. The canonical source is now `nt8-mcp-bridge/addons/McpBridgeAddOn.cs`.
 
 All three were updated together in this session to keep them in sync. The long-term plan should be to remove (2) and (3) and make `scripts/ninjatrader/addons/McpBridgeAddOn.cs` the single source of truth, with the submodule README pointing to that path or a build-time copy step.
 

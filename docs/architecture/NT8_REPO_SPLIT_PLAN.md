@@ -208,8 +208,13 @@ from the HTTP handlers — **not** to accept an untested bridge. Same rule for
 
 * `P0-63` (the mirrored stop has never trailed), `P1-57`, and the rest of handover §5. **Moving code
   between repos fixes no defect.** Do the migration as its own change, green before and after.
-* The `ninjatrader-mcp` repo's `nt8-addon/` copy. Once `nt8-mcp-bridge` exists, that directory
-  should become a README pointing at it, or consume it as a submodule — decide then, not now.
+* The `ninjatrader-mcp` repo's `nt8-addon/` copy. ~~Once `nt8-mcp-bridge` exists, that directory
+  should become a README pointing at it, or consume it as a submodule — decide then, not now.~~
+  **EXECUTED 2026-08-14**: the MCP wrapper was folded into `nt8-mcp-bridge` via `git subtree add`
+  (history preserved), the stale `nt8-addon/` fourth copy was deleted (verified divergent from
+  canonical homes), and the P1-72 pin was rewritten to read `addons/McpBridgeAddOn.cs` directly.
+  The fork (`github.com/vinay-veerappa/ninjatrader-mcp`) is archived. The wrapper now lives at
+  `nt8-mcp-bridge/mcp/`; the tvDownloadOHLC submodule was removed.
 * `docs/archive/temp_repo` (146 MB vendored `tradingview/lightweight-charts`). Unrelated cleanup,
   recorded so it is not lost. **The dead `scripts/setup/` cluster that referenced it was deleted
   2026-08-12** — see that commit; 31 one-shot scripts against a UI that no longer exists.

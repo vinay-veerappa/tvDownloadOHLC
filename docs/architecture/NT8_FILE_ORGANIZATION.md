@@ -68,8 +68,11 @@ having deployed nothing.
   by hand, use `diff --strip-trailing-cr`.
 - **A hard link from repo to NT8 was considered and rejected.** It would make every keystroke
   change what the live trading system compiles next. The explicit deploy step is deliberate.
-- `mcp/ninjatrader-mcp/nt8-addon/` holds its own partial copies, but that path is a **git
-  submodule** — fix it in that repo, not this one.
+- `mcp/ninjatrader-mcp/nt8-addon/` was a stale fourth copy of the addon sources; it was
+  deleted 2026-08-14 when the MCP wrapper was folded into `nt8-mcp-bridge` (see
+  `docs/architecture/NT8_REPO_SPLIT_PLAN.md` §7). The wrapper now lives at
+  `nt8-mcp-bridge/mcp/`; the canonical addon sources are in `nt8-mcp-bridge/addons/`
+  and `nt8-riskguard/{addons,tests}/`.
 
 ---
 

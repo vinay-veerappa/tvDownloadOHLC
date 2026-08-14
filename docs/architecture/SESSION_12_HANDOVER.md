@@ -170,7 +170,7 @@ NT8's Roslyn hot-swap compiler:
 - `docs/architecture/IB_CONFLUENCE_INDICATOR_DESIGN.md` — IB Confluence blueprint (updated with RedTail gap analysis)
 
 ### MCP Documentation
-- `mcp/ninjatrader-mcp/README.md` — existing MCP server README (account, trading, strategy, backtest, compile features)
+- `mcp/ninjatrader-mcp/README.md` — ~~existing MCP server README~~ **[Path gone 2026-08-14: wrapper folded into nt8-mcp-bridge/mcp/]**
 - Bridge AddOn source: `scripts/ninjatrader/addons/McpBridgeAddOn.cs` (v1.5.0, 65+ endpoints)
 - **MCP tool to use**: `mcp_nt-mcp-server_nt_compile` — handles connection reset via `/api/compile/result` polling fallback
 

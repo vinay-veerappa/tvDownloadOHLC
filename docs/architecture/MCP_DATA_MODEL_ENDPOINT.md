@@ -53,7 +53,7 @@ GET /api/indicator/levels?symbol=<instrument>
 - [ ] Each record has `key`, `label`, `price`, `category`, `scheme_color`, `state`, `date`.
 - [ ] `label` uses the canonical compact code from `scripts/config/abbreviations.json` (e.g. `PDH`, `NYH`, `P12L`).
 - [ ] Works regardless of SharpDX rendering (data model is render-independent).
-- [ ] Covered by a Python integration test in `mcp/ninjatrader-mcp/`.
+- [ ] Covered by a Python integration test in `nt8-mcp-bridge/mcp/`.
 
 ## Related
 

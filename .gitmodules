@@ -6,11 +6,6 @@
 # `branch` is recorded where the checkout is NOT on the upstream default, so
 # `git submodule update --remote` cannot silently move it.
 
-[submodule "mcp/ninjatrader-mcp"]
-	path = mcp/ninjatrader-mcp
-	url = https://github.com/vinay-veerappa/ninjatrader-mcp.git
-	branch = main
-
 [submodule "tradingview-mcp"]
 	path = tradingview-mcp
 	url = https://github.com/tradesdontlie/tradingview-mcp.git
