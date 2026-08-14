@@ -103,3 +103,19 @@ Stores prior run state to detect regime/bias/structure changes and trigger alert
 - **Data Integrity Cache**: `pipeline_state.json` snapshots prior state for resilient diffing.
 - **ETF Fallback**: SPX/NDX automatically fallback to SPY/QQQ if index chains are missing or sparse.
 - **Discord Hardening**: oversized embed paths are compacted and retried as text payloads.
+
+---
+
+## 6) Daily 16:14 ET TOS Expected Move & Historical IV Pipeline
+
+For full architectural details, see [TOS_EXPECTED_MOVE_PIPELINE_DESIGN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TOS_EXPECTED_MOVE_PIPELINE_DESIGN.md).
+
+- **Execution Time:** Scheduled daily at **16:14 ET** (Mon–Fri) in `run_options_levels.py` (`daily_multi_expiry_tos_em`).
+- **Prioritization:**
+  1. Priority 1 (Futures): `ES`, `NQ` (with settlement verification).
+  2. Priority 2 (Indices & ETFs): `SPX`, `SPY`, `QQQ`, `IWM`, `DIA`, `NDX`, `SMH`, `SPCX`.
+  3. Priority 3 (Stocks): 39 monitored mega-caps, semis, infra, cyber, crypto, and pharma names.
+- **Database Target (`web/prisma/dev.db`):**
+  - `ExpectedMove`: Populates `manualEm` for weekly Friday expiries, preserving daily calculation dates as active support/resistance lines.
+  - `HistoricalVolatility`: Populates daily closing `iv` and `closePrice` for historical IV ranking and percentile analytics.
+

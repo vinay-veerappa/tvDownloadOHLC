@@ -348,21 +348,25 @@ Models used to persist historical and RTH calculations for volatility (HV/IV) an
 model ExpectedMove {
   id              Int      @id @default(autoincrement())
   ticker          String
-  calculationDate DateTime
-  expiryDate      DateTime
-  price           Float
-  straddle        Float
-  em365           Float
-  em252           Float
-  adjEm           Float
-  manualEm        Float?
+  calculationDate DateTime // Truncated to 00:00:00 UTC epoch ms
+  expiryDate      DateTime // Target weekly Friday expiration epoch ms
+  price           Float    // Settlement or closing spot price
+  straddle        Float    // ATM straddle cost (Call Mark + Put Mark)
+  em365           Float    // Textbook Price * IV * sqrt(DTE/365)
+  em252           Float    // Textbook Price * IV * sqrt(DTE/252)
+  adjEm           Float    // 0.85 * Straddle
+  manualEm        Float?   // Authoritative TOS-calibrated Expected Move (populated daily @ 16:14 ET)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   basis           String?
-  note            String?
+  note            String?  // Data source (e.g. "ThinkorSwim Desktop Application (COM RTD Stream)")
 
   @@unique([ticker, calculationDate, expiryDate])
 }
+
+// Populated daily @ 16:14 ET via extract_all_expiries_em.py:
+// Preserves historical daily calculation records without overwriting, serving as weekly Support/Resistance bands.
+// Web UI (web/lib/options-live-v3/adapters.ts) reads manualEm with top priority.
 
 model ExpectedMoveHistory {
   id            Int      @id @default(autoincrement())
@@ -404,16 +408,18 @@ model RthExpectedMove {
 model HistoricalVolatility {
   id         Int      @id @default(autoincrement())
   ticker     String
-  date       DateTime
-  iv         Float
-  hv         Float?
-  closePrice Float?
+  date       DateTime // Calculation date epoch ms
+  iv         Float    // Closing ATM Series Implied Volatility (%)
+  hv         Float?   // Historical Realized Volatility
+  closePrice Float?   // Closing spot price
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@unique([ticker, date])
   @@index([ticker])
 }
+// Populated daily @ 16:14 ET via extract_all_expiries_em.py:
+// Maintains immutable daily IV time series for downstream IV Rank, Percentile, and IV vs HV models.
 ```
 
 ---

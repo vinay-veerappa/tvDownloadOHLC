@@ -34,13 +34,9 @@ The extraction engine automatically detects system state and executes in order:
 
 ## Tickers Covered
 
-- **ES** (`/ES:XCME`) — E-mini S&P 500 Futures
-- **NQ** (`/NQ:XCME`) — E-mini Nasdaq 100 Futures
-- **SPX** (`SPX` / `$SPX`) — S&P 500 Index
-- **SPY** (`SPY`) — SPDR S&P 500 ETF
-- **QQQ** (`QQQ`) — Invesco QQQ Trust
-- **DIA** (`DIA`) — SPDR Dow Jones Industrial Average ETF
-- **IWM** (`IWM`) — iShares Russell 2000 ETF
+- **Priority 1 (Time-Critical Futures):** `ES` (`/ES:XCME`), `NQ` (`/NQ:XCME`)
+- **Priority 2 (Core Indices & ETFs):** `SPX`, `SPY`, `QQQ`, `IWM`, `DIA`, `NDX`, `SMH`, `SPCX`
+- **Priority 3 (Monitored Stocks):** `AAPL`, `MSFT`, `NVDA`, `AMZN`, `GOOGL`, `META`, `TSLA`, `AVGO`, `CSCO`, `ORCL`, `AMD`, `TSM`, `ARM`, `MRVL`, `MU`, `QCOM`, `INTC`, `ASML`, `LRCX`, `AMAT`, `SKHY`, `SNDK`, `DELL`, `VRT`, `ANET`, `PLTR`, `CRWD`, `PANW`, `SNOW`, `NET`, `DDOG`, `MDB`, `NOW`, `MSTR`, `COIN`, `HOOD`, `SOFI`, `LLY`, `NVO`
 
 ---
 
@@ -55,15 +51,18 @@ To run the full multi-expiry extraction manually or verify output:
 ### Options Pipeline Schedule Integration
 
 The extraction runs automatically as part of the streaming options pipeline:
-- **Frequency:** Every Friday (and last trading day of the week) at **16:15 ET (4:15 PM EST)**.
-- **Pipeline entry:** `scripts/streaming/options/run_options_levels.py` (`weekly_multi_expiry_tos_em` job).
+- **Frequency:** Daily Monday through Friday at **16:14 ET (4:14 PM EST)**.
+- **Pipeline entry:** `scripts/streaming/options/run_options_levels.py` (`daily_multi_expiry_tos_em` job).
 
 ---
 
-## Output Artifacts
+## Database & Output Artifacts
 
-1. **JSON Data File:** `data/tos_expected_moves_all_expiries.json`
-2. **Markdown Summary Report:** `data/tos_expected_moves_all_expiries.md`
+1. **Database Tables (`web/prisma/dev.db`):**
+   - **`ExpectedMove`:** Stores `manualEm` for each weekly expiry, keyed by `(ticker, calculationDate, expiryDate)`. Non-destructive: preserves previous days' S/R levels.
+   - **`HistoricalVolatility`:** Stores daily closing `iv` and `closePrice`, keyed by `(ticker, date)`.
+2. **JSON Data File:** `data/tos_expected_moves_all_expiries.json`
+3. **Markdown Summary Report:** `data/tos_expected_moves_all_expiries.md`
 
 ---
 

@@ -174,13 +174,21 @@ Handles historical database updates, real-time option chain snapshotting, VIX in
     $$\text{Index EM}_{\text{normalized}} = \frac{\text{ETF Straddle Cost}}{\text{ETF Spot Price}} \times \text{Index Spot Price} \times 0.85$$
 
 #### 💻 [extract_all_expiries_em.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/market_data/extract_all_expiries_em.py)
-* **Description:** **Multi-Expiry ThinkorSwim (TOS) Expected Move Extractor** — extracts expected moves for ALL available daily expiration dates starting from today up to and including next Friday's expiration date for `ES`, `NQ`, `SPX`, `SPY`, `QQQ`, `DIA`, `IWM`.
-* **Dynamic Source Detection:**
+* **Description:** **Daily Multi-Expiry ThinkorSwim (TOS) Expected Move & Historical IV Extractor** — extracts weekly Friday expected moves and ATM implied volatilities for 49 prioritized tickers:
+  * **Priority 1 (Time-Critical Futures):** `ES` (`/ES:XCME`), `NQ` (`/NQ:XCME`) with settlement and price validation.
+  * **Priority 2 (Core Indices & ETFs):** `SPX`, `SPY`, `QQQ`, `IWM`, `DIA`, `NDX`, `SMH`, `SPCX`.
+  * **Priority 3 (Monitored Stocks):** 39 stocks across Mega-Cap Tech, AI/Semis, Infrastructure, Cyber, Crypto, and Pharma.
+* **Dynamic Source Detection & Failover:**
   1. Checks if ThinkorSwim Desktop (`thinkorswim.exe`) is running. If active, streams live quotes & IVs directly from ThinkorSwim Desktop via **TOS RTD COM**.
   2. If TOS Desktop is NOT running, opens **ThinkorSwim Web** (`trade.thinkorswim.com`) via Playwright browser context (`~/.tos_web_profile`) and extracts platform-rendered Expected Moves directly from the DOM.
-  3. Secondary fallback to Schwab REST API / Hub proxy.
-* **Scheduling:** Scheduled in `run_options_levels.py` (`weekly_multi_expiry_tos_em` job) to run automatically at **16:15 ET (4:15 PM EST)** on every last trading day of the week (Friday).
-* **Associated AGY Skill:** [`.agent/skills/tos_expected_moves/SKILL.md`](file:///c:/Users/vinay/tvDownloadOHLC/.agent/skills/tos_expected_moves/SKILL.md) — enforces the rule that Expected Move data requests ALWAYS output all dates up to next Friday's expiry.
+  3. Secondary fallback to Schwab REST API / Hub proxy with series ATM IV extraction and the calibrated TOS mathematical model.
+* **Database & Persistence:**
+  * **`ExpectedMove` (Prisma):** Upserts calculated Expected Moves directly into `manualEm`, uniquely keyed by `(ticker, calculationDate, expiryDate)`. Non-destructive: preserves previous days' S/R levels across the week.
+  * **`HistoricalVolatility` (Prisma):** Upserts daily closing `iv` and `closePrice` keyed by `(ticker, date)` to build an ongoing IV dataset for historical IV rank and percentile metrics.
+* **Scheduling:** Scheduled in `run_options_levels.py` (`daily_multi_expiry_tos_em` job) to run automatically at **16:14 ET (4:14 PM EST)** daily (Mon–Fri).
+* **Associated AGY Skill & Design:**
+  * [`.agent/skills/tos_expected_moves/SKILL.md`](file:///c:/Users/vinay/tvDownloadOHLC/.agent/skills/tos_expected_moves/SKILL.md)
+  * [`docs/architecture/TOS_EXPECTED_MOVE_PIPELINE_DESIGN.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TOS_EXPECTED_MOVE_PIPELINE_DESIGN.md)
 * **Output Artifacts:** Writes `data/tos_expected_moves_all_expiries.json` and `data/tos_expected_moves_all_expiries.md`.
 
 #### 💻 [weekly_expected_moves.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/streaming/options/weekly_expected_moves.py)

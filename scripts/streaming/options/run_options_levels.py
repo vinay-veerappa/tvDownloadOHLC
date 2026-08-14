@@ -2105,19 +2105,19 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
     )
     log.info("Scheduled Derived Data Refresh: 17:10 ET (Mon-Fri, after close)")
 
-    # 6. Multi-Expiry TOS Expected Moves Extraction (16:15 ET Friday / Last Trading Day)
+    # 6. Multi-Expiry TOS Expected Moves Extraction (16:14 ET Daily Mon-Fri)
     scheduler.add_job(
         lambda: _run_subprocess(
             ["python", "-m", "scripts.market_data.extract_all_expiries_em"],
             "Multi-Expiry TOS Expected Moves"
         ) if _is_trading_day() else None,
-        trigger=CronTrigger(day_of_week='fri', hour=16, minute=15, timezone=tz),
-        id="weekly_multi_expiry_tos_em",
+        trigger=CronTrigger(day_of_week='mon-fri', hour=16, minute=14, timezone=tz),
+        id="daily_multi_expiry_tos_em",
         replace_existing=True,
         misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
         coalesce=True,
     )
-    log.info("Scheduled Multi-Expiry TOS EM: 16:15 ET (Friday / Last Trading Day)")
+    log.info("Scheduled Multi-Expiry TOS EM: 16:14 ET (Mon-Fri)")
 
 
     log.info("APScheduler started (timezone=%s). Press Ctrl-C to stop.", SCHEDULE_TIMEZONE)
