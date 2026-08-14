@@ -1,9 +1,10 @@
 """
 Daily Multi-Expiry ThinkorSwim (TOS) Expected Move & Historical IV Extractor
 =============================================================================
-Extracts expected move and implied volatility data for weekly expirations across:
-- Priority 1: ES (/ES), NQ (/NQ) [Time-critical with settlement price validation]
-- Priority 2: SPX, SPY, QQQ, IWM, DIA, NDX, SMH, SPCX
+Extracts expected move and implied volatility data for ALL available daily and weekly
+expirations starting from today up to and including next Friday's expiration date across:
+- Priority 1: ES (/ES:XCME), NQ (/NQ:XCME) [Time-critical with settlement price validation]
+- Priority 2: SPX, SPY, QQQ, IWM, DIA, NDX, SMH, SPCX [Daily & weekly 0DTE-to-next-Friday expiries]
 - Priority 3: Monitored Stock Universe (AAPL, MSFT, NVDA, AMD, PLTR, CSCO, SNDK, SKHY, etc.)
 
 Execution & Persistence:
@@ -34,6 +35,10 @@ from scripts.streaming.options.config import HUB_URL
 from scripts.streaming.options.gex_calculator import calculate_tos_expected_move
 from scripts.streaming.options.tos_rtd.adapter import TOSRTDAdapter, RTDConfig
 from scripts.streaming.options.tos_rtd.quote_types import QuoteType
+try:
+    from tos_ui_mcp.extractor import extract_tos_ui_expected_moves
+except Exception:
+    extract_tos_ui_expected_moves = None
 from scripts.market_data.schwab_options_utils import (
     find_expiration_key,
     first_contracts_for_expiration,
@@ -46,7 +51,7 @@ from scripts.market_data.schwab_options_utils import (
 # Priority 1: Time-Critical Equity Futures (Run First @ 16:14 ET)
 FUTURES_TICKERS = ["ES", "NQ"]
 
-# Priority 2: Core Indices & ETFs (Weekly Expirations)
+# Priority 2: Core Indices & ETFs (Daily 0DTE - Next Friday Expirations)
 INDEX_ETF_TICKERS = ["SPX", "SPY", "QQQ", "IWM", "DIA", "NDX", "SMH", "SPCX"]
 
 # Priority 3: Monitored Stocks (Run After Indices/Futures)
@@ -81,8 +86,8 @@ RTD_SYMBOL_MAP = {
 }
 
 SCHWAB_SYMBOL_MAP = {
-    "ES": "/ES",
-    "NQ": "/NQ",
+    "ES": "$SPX",      # Chain proxy for ES
+    "NQ": "$NDX",      # Chain proxy for NQ
     "SPX": "$SPX",
     "NDX": "$NDX",
 }
@@ -99,20 +104,22 @@ def is_tos_desktop_running() -> bool:
         print(f"[Check] Exception checking process list: {e}")
     return False
 
-def get_weekly_expiration_dates(today: date, count: int = 2) -> list[date]:
-    """
-    Returns the nearest weekly Friday expiration dates (e.g. W0 current week Friday, W1 next week Friday).
-    If today is Friday, returns today and the following Friday.
-    """
-    expiries = []
-    days_to_fri = (4 - today.weekday()) % 7
-    first_friday = today + timedelta(days=days_to_fri)
-    
-    current = first_friday
-    for _ in range(count):
-        expiries.append(current)
-        current += timedelta(days=7)
-    return expiries
+def get_next_friday(d: date) -> date:
+    """Returns the next Friday's date. If today is Friday, returns the following Friday."""
+    days_ahead = 4 - d.weekday()
+    if days_ahead <= 0:
+        days_ahead += 7
+    return d + timedelta(days=days_ahead)
+
+def get_expiration_dates_range(start_date: date, end_date: date) -> list[date]:
+    """Generates all weekday dates (Mon-Fri) from start_date to end_date (inclusive)."""
+    dates = []
+    curr = start_date
+    while curr <= end_date:
+        if curr.weekday() < 5:  # Skip weekends
+            dates.append(curr)
+        curr += timedelta(days=1)
+    return dates
 
 async def hub_request(method: str, params: dict) -> dict:
     """Send a REST request through the Schwab Hub proxy."""
@@ -130,6 +137,20 @@ async def hub_request(method: str, params: dict) -> dict:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+def get_snap_val(snap: dict, sym: str, qtype: str):
+    """Retrieve value from RTD snapshot across multiple keying conventions."""
+    if not snap:
+        return None
+    val = (
+        snap.get(f"{sym}:{qtype}")
+        or snap.get(f"{sym}:{qtype.upper()}")
+        or snap.get((qtype, sym))
+        or snap.get((qtype.upper(), sym))
+        or snap.get(sym, {}).get(qtype)
+        or snap.get(sym, {}).get(qtype.upper())
+    )
+    return val
+
 def fetch_live_tos_rtd_snapshot(tickers: list[str]) -> dict:
     """Fetch live quotes and IVs from TOS Desktop RTD COM if running."""
     snapshot = {}
@@ -143,6 +164,10 @@ def fetch_live_tos_rtd_snapshot(tickers: list[str]) -> dict:
             subs.append((QuoteType.MARK, rtd_sym))
             subs.append((QuoteType.CLOSE, rtd_sym))
             subs.append((QuoteType.IMPL_VOL, rtd_sym))
+            if sym in ["ES", "NQ"]:
+                subs.append((QuoteType.LAST, f"/{sym}"))
+                subs.append((QuoteType.MARK, f"/{sym}"))
+                subs.append((QuoteType.IMPL_VOL, f"/{sym}"))
 
         adapter.start_raw(subs)
         time.sleep(3.5)
@@ -204,7 +229,7 @@ def save_to_database(results: dict):
             except Exception as e:
                 print(f"[DB Error] Failed to upsert HistoricalVolatility for {ticker}: {e}")
 
-        # 2. Upsert ExpectedMove for each weekly expiration
+        # 2. Upsert ExpectedMove for each expiration date
         for exp in tdata["expirations"]:
             exp_date_str = exp["date"]
             exp_dt = datetime.strptime(exp_date_str, "%Y-%m-%d")
@@ -245,8 +270,7 @@ def save_to_database(results: dict):
 async def extract_all_expiries(
     tickers: list[str] = None,
     save_files: bool = True,
-    save_db: bool = True,
-    weekly_count: int = 2
+    save_db: bool = True
 ) -> dict:
     if tickers is None:
         tickers = DEFAULT_TICKERS
@@ -254,12 +278,13 @@ async def extract_all_expiries(
     now_dt = datetime.now()
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
     today = date.today()
-    weekly_exp_dates = get_weekly_expiration_dates(today, count=weekly_count)
+    next_friday = get_next_friday(today)
+    all_target_dates = get_expiration_dates_range(today, next_friday)
 
     print(f"=========================================================================")
     print(f" DAILY TOS MULTI-EXPIRY EXPECTED MOVE & HISTORICAL IV EXTRACTION")
     print(f" Time: {now_str} | Date: {today.strftime('%Y-%m-%d')}")
-    print(f" Target Weekly Expiries: {[d.strftime('%Y-%m-%d') for d in weekly_exp_dates]}")
+    print(f" Target Scope Range: {today.strftime('%Y-%m-%d')} to {next_friday.strftime('%Y-%m-%d')} (All Expiries to Next Friday)")
     print(f" Total Tickers: {len(tickers)} (Priority: Futures -> Indices/ETFs -> Stocks)")
     print(f"=========================================================================\n")
 
@@ -277,11 +302,20 @@ async def extract_all_expiries(
         rtd_snapshot = {}
         data_source_label = "Schwab API & TOS Calibrated Formula"
 
+    # Pre-fetch futures quotes via Schwab Hub fallback if needed
+    hub_futures_quotes = {}
+    try:
+        fq_resp = await hub_request("quotes", {"symbols": ["/ES", "/NQ"]})
+        if fq_resp.get("status") == "success":
+            hub_futures_quotes = fq_resp.get("data", {})
+    except Exception as e:
+        print(f"[Hub Note] Futures quote pre-fetch warning: {e}")
+
     results = {
         "extracted_at": now_dt.isoformat(),
         "extracted_at_formatted": now_str,
         "start_date": today.strftime("%Y-%m-%d"),
-        "weekly_expirations": [d.strftime("%Y-%m-%d") for d in weekly_exp_dates],
+        "end_date": next_friday.strftime("%Y-%m-%d"),
         "data_source": data_source_label,
         "tickers": {}
     }
@@ -303,22 +337,27 @@ async def extract_all_expiries(
             rtd_sym = RTD_SYMBOL_MAP.get(ticker, ticker)
             schwab_sym = SCHWAB_SYMBOL_MAP.get(ticker, ticker)
 
-            # Retrieve Spot Price & IV from TOS RTD if available
+            # Retrieve Spot Price & Base IV from TOS RTD
             spot_price = 0.0
             base_iv = 0.0
 
             if desktop_active and rtd_snapshot:
-                last_val = rtd_snapshot.get((QuoteType.LAST.value, rtd_sym))
-                mark_val = rtd_snapshot.get((QuoteType.MARK.value, rtd_sym))
-                close_val = rtd_snapshot.get((QuoteType.CLOSE.value, rtd_sym))
-                iv_val = rtd_snapshot.get((QuoteType.IMPL_VOL.value, rtd_sym))
+                last_val = get_snap_val(rtd_snapshot, rtd_sym, "LAST")
+                mark_val = get_snap_val(rtd_snapshot, rtd_sym, "MARK")
+                close_val = get_snap_val(rtd_snapshot, rtd_sym, "CLOSE")
+                iv_val = get_snap_val(rtd_snapshot, rtd_sym, "IMPL_VOL")
 
-                if last_val is not None and isinstance(last_val, (int, float)) and last_val > 0:
-                    spot_price = float(last_val)
-                elif mark_val is not None and isinstance(mark_val, (int, float)) and mark_val > 0:
-                    spot_price = float(mark_val)
-                elif close_val is not None and isinstance(close_val, (int, float)) and close_val > 0:
-                    spot_price = float(close_val)
+                # If futures symbol, also try "/ES" / "/NQ"
+                if is_futures and last_val is None:
+                    last_val = get_snap_val(rtd_snapshot, f"/{ticker}", "LAST")
+                    mark_val = get_snap_val(rtd_snapshot, f"/{ticker}", "MARK")
+                    close_val = get_snap_val(rtd_snapshot, f"/{ticker}", "CLOSE")
+                    iv_val = get_snap_val(rtd_snapshot, f"/{ticker}", "IMPL_VOL")
+
+                for val in [last_val, mark_val, close_val]:
+                    if val is not None and isinstance(val, (int, float)) and val > 0:
+                        spot_price = float(val)
+                        break
 
                 if iv_val is not None:
                     try:
@@ -327,68 +366,87 @@ async def extract_all_expiries(
                     except ValueError:
                         base_iv = 0.0
 
-            # Priority 1 Settlement Validation check for Futures
-            if is_futures and (spot_price <= 0 or base_iv <= 0):
-                print(f"[Futures Check] Verifying settlement price for {ticker}...")
-                q_resp = await hub_request("get_quote", {"symbol_id": schwab_sym})
-                if q_resp.get("status") == "success":
-                    qdata = q_resp.get("data", {}).get(schwab_sym, {}).get("quote", {})
-                    if qdata.get("lastPrice"):
-                        spot_price = float(qdata["lastPrice"])
+            # Futures Price Fallback via Hub quotes
+            if is_futures and spot_price <= 0:
+                for fkey, fobj in hub_futures_quotes.items():
+                    if fkey.startswith(f"/{ticker}"):
+                        q = fobj.get("quote", {})
+                        spot_price = q.get("lastPrice") or q.get("futureSettlementPrice") or q.get("closePrice") or q.get("mark") or 0.0
+                        if spot_price > 0:
+                            break
 
-            # Fallback to Hub quote if spot is still missing
+            # Equity/ETF Spot Price Fallback via Hub quotes
             if spot_price <= 0:
-                q_resp = await hub_request("get_quote", {"symbol_id": schwab_sym})
+                q_resp = await hub_request("quotes", {"symbols": [ticker]})
                 if q_resp.get("status") == "success":
-                    qdata = q_resp.get("data", {}).get(schwab_sym, {}).get("quote", {})
-                    if qdata.get("lastPrice"):
-                        spot_price = float(qdata["lastPrice"])
+                    qdata = q_resp.get("data", {}).get(ticker, {}).get("quote", {})
+                    spot_price = qdata.get("lastPrice") or qdata.get("closePrice") or qdata.get("mark") or 0.0
 
             if spot_price <= 0:
                 print(f"[Warning] Could not obtain price for {ticker}. Skipping.")
                 results["tickers"][ticker] = {"error": "Could not obtain price", "symbol": ticker}
                 continue
 
+            # Fetch full option chain from Hub to find all available expirations up to next Friday
+            chain_symbol = schwab_sym
+            chain_resp = await hub_request("get_option_chain", {
+                "symbol": chain_symbol,
+                "strike_count": 8,
+                "strategy": "ANALYTICAL"
+            })
+
+            call_map = {}
+            put_map = {}
+            discovered_exp_dates = []
+
+            if chain_resp.get("status") == "success":
+                cdata = chain_resp.get("data", {})
+                call_map = cdata.get("callExpDateMap", {})
+                put_map = cdata.get("putExpDateMap", {})
+
+                # Discover all actual expiration dates present in the option chain <= next_friday
+                for exp_key in call_map.keys():
+                    try:
+                        d_part = exp_key.split(":")[0]
+                        d_obj = datetime.strptime(d_part, "%Y-%m-%d").date()
+                        if today <= d_obj <= next_friday:
+                            if d_obj not in discovered_exp_dates:
+                                discovered_exp_dates.append(d_obj)
+                    except Exception:
+                        pass
+                discovered_exp_dates.sort()
+
+            # If chain discovery had dates, use them; otherwise iterate over all target weekday dates
+            target_dates_for_ticker = discovered_exp_dates if discovered_exp_dates else all_target_dates
+
             ticker_expiries = []
 
-            # Iterate over target weekly Friday expiration dates
-            for exp_date in weekly_exp_dates:
+            for exp_date in target_dates_for_ticker:
                 dte = (exp_date - today).days
                 date_str = exp_date.strftime("%Y-%m-%d")
                 exp_iv = base_iv
                 straddle_price = 0.0
 
-                # Pull option chain for specific expiry to get exact Series ATM IV & Straddle
-                chain_resp = await hub_request("get_option_chain", {
-                    "symbol": schwab_sym,
-                    "strike_count": 8,
-                    "strategy": "ANALYTICAL",
-                    "from_date": date_str,
-                    "to_date": date_str
-                })
+                exp_key = find_expiration_key(call_map, exp_date) if call_map else None
 
-                if chain_resp.get("status") == "success":
-                    cdata = chain_resp.get("data", {})
-                    call_map = cdata.get("callExpDateMap", {})
-                    put_map = cdata.get("putExpDateMap", {})
-                    exp_key = find_expiration_key(call_map, exp_date)
-
-                    if exp_key:
-                        calls = first_contracts_for_expiration(call_map, exp_key)
-                        puts = first_contracts_for_expiration(put_map, exp_key)
-                        if calls and puts:
-                            calls.sort(key=lambda x: abs(float(x.get("strikePrice", 0)) - spot_price))
-                            puts.sort(key=lambda x: abs(float(x.get("strikePrice", 0)) - spot_price))
-                            atm_call = calls[0]
-                            atm_put = puts[0]
-                            c_mark = atm_call.get("mark", 0) or (atm_call.get("bid", 0) + atm_call.get("ask", 0))/2.0
-                            p_mark = atm_put.get("mark", 0) or (atm_put.get("bid", 0) + atm_put.get("ask", 0))/2.0
-                            straddle_price = c_mark + p_mark
-                            c_iv = get_option_iv(atm_call)
-                            p_iv = get_option_iv(atm_put)
-                            series_iv = (c_iv + p_iv) / 2.0 if (c_iv > 0 and p_iv > 0) else max(c_iv, p_iv)
-                            if series_iv > 0:
-                                exp_iv = series_iv
+                if exp_key:
+                    calls = first_contracts_for_expiration(call_map, exp_key)
+                    puts = first_contracts_for_expiration(put_map, exp_key)
+                    if calls and puts:
+                        # For futures proxying from SPX/NDX, sort ATM by cash index price or scaled price
+                        atm_anchor = cdata.get("underlyingPrice", spot_price) if is_futures else spot_price
+                        calls.sort(key=lambda x: abs(float(x.get("strikePrice", 0)) - atm_anchor))
+                        puts.sort(key=lambda x: abs(float(x.get("strikePrice", 0)) - atm_anchor))
+                        atm_call = calls[0]
+                        atm_put = puts[0]
+                        c_mark = atm_call.get("mark", 0) or (atm_call.get("bid", 0) + atm_call.get("ask", 0))/2.0
+                        p_mark = atm_put.get("mark", 0) or (atm_put.get("bid", 0) + atm_put.get("ask", 0))/2.0
+                        straddle_price = c_mark + p_mark
+                        c_iv = get_option_iv(atm_call)
+                        p_iv = get_option_iv(atm_put)
+                        series_iv = (c_iv + p_iv) / 2.0 if (c_iv > 0 and p_iv > 0) else max(c_iv, p_iv)
+                        if series_iv > 0:
+                            exp_iv = series_iv
 
                 # Calculate calibrated TOS Expected Move
                 em_val = calculate_tos_expected_move(
@@ -425,9 +483,9 @@ async def extract_all_expiries(
             }
 
             # Console Summary
-            print(f"[EM] {ticker:5s} | Spot: ${spot_price:10,.2f}")
+            print(f"[EM] {ticker:5s} | Spot: ${spot_price:10,.2f} | {len(ticker_expiries)} Expiries ({ticker_expiries[0]['date']} -> {ticker_expiries[-1]['date']})")
             for e in ticker_expiries:
-                print(f"     - {e['date']} ({e['weekday']:6s} | DTE: {e['dte']:2d}d) | IV: {e['iv_pct']:5.2f}% | EM: ±{e['expected_move']:7.2f} (±{e['expected_move_pct']:.2f}%) | [${e['lower_bound']:,.2f} – ${e['upper_bound']:,.2f}]")
+                print(f"     - {e['date']} ({e['weekday']:9s} | DTE: {e['dte']:2d}d) | IV: {e['iv_pct']:5.2f}% | EM: ±{e['expected_move']:7.2f} (±{e['expected_move_pct']:.2f}%) | [${e['lower_bound']:,.2f} – ${e['upper_bound']:,.2f}]")
 
     # Save to Database
     if save_db:
@@ -445,22 +503,23 @@ async def extract_all_expiries(
             "# ThinkorSwim (TOS) Multi-Expiry Expected Moves Report",
             f"**Extracted Time:** `{now_str}`",
             f"**Data Source:** `{data_source_label}`",
-            f"**Weekly Expirations:** {', '.join([d.strftime('%Y-%m-%d') for d in weekly_exp_dates])}\n",
+            f"**Scope Range:** `{today.strftime('%Y-%m-%d')}` to `{next_friday.strftime('%Y-%m-%d')}` (All Available Expirations up to Next Friday)\n",
             "---"
         ]
 
         for ticker in tickers:
             tdata = results["tickers"].get(ticker, {})
-            if "error" in tdata:
+            if "error" in tdata or not tdata.get("expirations"):
                 continue
 
-            md_lines.append(f"## {ticker} (Spot: `${tdata['spot_price']:,.2f}`)")
+            md_lines.append(f"## {ticker} (Spot: `${tdata['spot_price']:,.2f}` | {len(tdata['expirations'])} Expirations)")
             md_lines.append("| Expiry Date | Day | DTE | ATM IV % | Expected Move (±) | EM % | Expected Range (Lower – Upper) | Straddle |")
             md_lines.append("|---|---|---|---|---|---|---|---|")
 
             for e in tdata.get("expirations", []):
+                d_bold = f"**{e['date']}**" if e['dte'] == 0 or e['date'] == next_friday.strftime('%Y-%m-%d') else e['date']
                 md_lines.append(
-                    f"| **{e['date']}** | {e['weekday']} | {e['dte']}d | {e['iv_pct']:.2f}% | "
+                    f"| {d_bold} | {e['weekday']} | {e['dte']}d | {e['iv_pct']:.2f}% | "
                     f"**± {e['expected_move']:.2f}** | ±{e['expected_move_pct']:.2f}% | "
                     f"`${e['lower_bound']:,.2f}` – `${e['upper_bound']:,.2f}` | `${e['straddle_price']:.2f}` |"
                 )
@@ -479,15 +538,13 @@ def main():
     parser.add_argument("--ticker", action="append", help="Specific tickers to extract")
     parser.add_argument("--no-save", action="store_true", help="Do not save output JSON/MD files")
     parser.add_argument("--no-db", action="store_true", help="Do not write to database")
-    parser.add_argument("--weekly-count", type=int, default=2, help="Number of weekly Friday expiries (default: 2)")
     args = parser.parse_args()
 
     tickers = args.ticker if args.ticker else DEFAULT_TICKERS
     asyncio.run(extract_all_expiries(
         tickers=tickers,
         save_files=not args.no_save,
-        save_db=not args.no_db,
-        weekly_count=args.weekly_count
+        save_db=not args.no_db
     ))
 
 if __name__ == "__main__":
