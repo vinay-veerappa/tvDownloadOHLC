@@ -476,19 +476,22 @@ def run_stat_enhanced_backtest(
             z_ce = (z_top + z_bot) / 2.0
 
             e_price = z_ce
-            sl_price = (armed_cisd_origin_sl if not np.isnan(armed_cisd_origin_sl) else l1) - tick_buf
+            raw_sl = armed_cisd_origin_sl if not np.isnan(armed_cisd_origin_sl) else l1
+            if raw_sl >= e_price:
+                raw_sl = min(l0, l1, l2)
+            sl_price = raw_sl - tick_buf
 
-            # Hard Risk Ceiling Check (Max 15 bps)
+            # Hard Risk Ceiling Check (Max 15 bps, Strictly Positive Risk!)
             risk_dist = e_price - sl_price
-            risk_bps = (risk_dist / e_price) * 10000.0
-
-            if risk_bps <= max_risk_bps:
-                pending_zone = {
-                    "dir": 1,
-                    "entry_level": e_price,
-                    "sl": sl_price,
-                    "armed_bar": i,
-                }
+            if risk_dist > 0:
+                risk_bps = (risk_dist / e_price) * 10000.0
+                if 0 < risk_bps <= max_risk_bps:
+                    pending_zone = {
+                        "dir": 1,
+                        "entry_level": e_price,
+                        "sl": sl_price,
+                        "armed_bar": i,
+                    }
 
         if bear_cisd_trigger or (current_delivery_regime == -1 and new_bear_fvg and pending_zone is None and not in_position):
             z_top = l2 if new_bear_fvg else (armed_bear_low + (tick_buf * 4))
@@ -496,18 +499,21 @@ def run_stat_enhanced_backtest(
             z_ce = (z_top + z_bot) / 2.0
 
             e_price = z_ce
-            sl_price = (armed_cisd_origin_sl if not np.isnan(armed_cisd_origin_sl) else h1) + tick_buf
+            raw_sl = armed_cisd_origin_sl if not np.isnan(armed_cisd_origin_sl) else h1
+            if raw_sl <= e_price:
+                raw_sl = max(h0, h1, h2)
+            sl_price = raw_sl + tick_buf
 
             risk_dist = sl_price - e_price
-            risk_bps = (risk_dist / e_price) * 10000.0
-
-            if risk_bps <= max_risk_bps:
-                pending_zone = {
-                    "dir": -1,
-                    "entry_level": e_price,
-                    "sl": sl_price,
-                    "armed_bar": i,
-                }
+            if risk_dist > 0:
+                risk_bps = (risk_dist / e_price) * 10000.0
+                if 0 < risk_bps <= max_risk_bps:
+                    pending_zone = {
+                        "dir": -1,
+                        "entry_level": e_price,
+                        "sl": sl_price,
+                        "armed_bar": i,
+                    }
 
     trades_df = pd.DataFrame(trades)
     if len(trades_df) == 0:

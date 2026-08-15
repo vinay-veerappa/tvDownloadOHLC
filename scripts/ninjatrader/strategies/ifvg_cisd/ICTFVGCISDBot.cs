@@ -21,82 +21,93 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     {
         #region Custom Strategy Parameters
         [NinjaScriptProperty]
-        [Display(Name = "HTF Resolution (Minutes)", Order = 1, GroupName = "1. Multi-Timeframe")]
-        public int HtfPeriodMinutes { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Sweep Max Lookback Bars", Order = 2, GroupName = "2. Liquidity Rules")]
-        public int SweepLookbackBars { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Max Retest Wait Bars", Order = 3, GroupName = "3. Entry Rules")]
-        public int MaxRetestWaitBars { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Cover The Queen (Basis Points)", Order = 4, GroupName = "4. Basis Points Targets")]
+        [Display(Name = "Cover The Queen (Basis Points)", Order = 1, GroupName = "1. Basis Points Targets")]
         public double Target1QueenBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "50th %ile Median MFE (Basis Points)", Order = 5, GroupName = "4. Basis Points Targets")]
-        public double Target2MedianMfeBps { get; set; }
+        [Display(Name = "AM Expansion Target (Basis Points)", Order = 2, GroupName = "1. Basis Points Targets")]
+        public double Target2AmBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "PM Afternoon MFE (Basis Points)", Order = 6, GroupName = "4. Basis Points Targets")]
-        public double Target2PmMfeBps { get; set; }
+        [Display(Name = "PM Macro Expansion Target (Basis Points)", Order = 3, GroupName = "1. Basis Points Targets")]
+        public double Target2PmBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "80th %ile Fat-Tail MFE (Basis Points)", Order = 7, GroupName = "4. Basis Points Targets")]
-        public double Target3FatTailBps { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Hard Risk Ceiling (Basis Points)", Order = 8, GroupName = "5. Risk Management")]
+        [Display(Name = "Hard Risk Ceiling (Basis Points)", Order = 4, GroupName = "2. Risk Management")]
         public double MaxRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Max Daily Trades", Order = 9, GroupName = "5. Risk Management")]
+        [Display(Name = "Enable Failed CISD Trap Breakout", Order = 5, GroupName = "2. Risk Management")]
+        public bool EnableTrapReExpansion { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Enable 1H Trend Alignment", Order = 6, GroupName = "3. Filters")]
+        public bool EnableHtfTrend { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Min Displacement Body (Basis Points)", Order = 7, GroupName = "3. Filters")]
+        public double MinDisplacementBps { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Max Daily Trades", Order = 8, GroupName = "4. Execution Rules")]
         public int MaxDailyTrades { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Earliest Entry (HHMM)", Order = 10, GroupName = "5. Risk Management")]
+        [Display(Name = "Max Retest Wait Bars", Order = 9, GroupName = "4. Execution Rules")]
+        public int MaxRetestWaitBars { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Earliest Entry (HHMM)", Order = 10, GroupName = "5. Time Window")]
         public int EarliestEntry { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Latest Entry (HHMM)", Order = 11, GroupName = "5. Risk Management")]
+        [Display(Name = "Latest Entry (HHMM)", Order = 11, GroupName = "5. Time Window")]
         public int LatestEntry { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Flatten By (HHMM)", Order = 12, GroupName = "5. Risk Management")]
+        [Display(Name = "Flatten By (HHMM)", Order = 12, GroupName = "5. Time Window")]
         public int FlattenBy { get; set; }
         #endregion
 
         #region Internal State Fields
+        // Indicators
+        private EMA ema20_1h;
+        private EMA ema50_1h;
+        private SMA volSma20;
+
+        // Rolling Fractal Swings
+        private List<double> bslList;
+        private List<double> sslList;
+
         // Liquidity Sweep State
-        private bool hasActiveBullSweep;
-        private bool hasActiveBearSweep;
-        private double activeBullSweepLow;
-        private double activeBearSweepHigh;
-        private int lastBullSweepBar;
-        private int lastBearSweepBar;
+        private bool hasBullSweep;
+        private bool hasBearSweep;
+        private int bullSweepBar;
+        private int bearSweepBar;
 
         // Canonical CISD State
         private bool armedBullCisd;
         private bool armedBearCisd;
         private double armedBullHigh;
         private double armedBearLow;
-        private int armedBullStartBar;
-        private int armedBearStartBar;
         private double armedCisdOriginSL;
-        private int currentDeliveryRegime;
 
-        // Retest Entry Zone
-        private bool hasPendingLongRetest;
-        private bool hasPendingShortRetest;
+        // Pending Entry Zone (First Presented FVG)
+        private bool hasPendingLong;
+        private bool hasPendingShort;
         private double pendingLongEntryPrice;
         private double pendingShortEntryPrice;
         private double pendingLongSL;
         private double pendingShortSL;
         private int pendingLongArmedBar;
         private int pendingShortArmedBar;
+
+        // Trapped Liquidity Re-Expansion State (Alpha 1)
+        private bool hasPendingTrap;
+        private int trapDirection;
+        private double trapEntryPrice;
+        private double trapStopLoss;
+        private int trapArmedBar;
 
         // 2-Contract Pack State
         private double activeEntryPrice;
@@ -112,63 +123,67 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             if (State == State.SetDefaults)
             {
-                Description = "Institutional Liquidity -> CISD -> 50% CE Retest with 2-Contract Pack Trading (Cover The Queen 10 bps + Breakeven Lock)";
+                Description = "Institutional Master Model: SMT + First Presented FVG + 1H HTF Trend + 2-Contract Pack + Failed CISD Trap";
                 Name = "ICTFVGCISDBot";
-                Calculate = Calculate.OnPriceChange;
+                Calculate = Calculate.OnBarClose;
                 EntriesPerDirection = 2;
                 EntryHandling = EntryHandling.AllEntries;
                 IsExitOnSessionCloseStrategy = true;
                 ExitOnSessionCloseSeconds = 300;
-                IsFillLimitOnTouch = true;
 
-                HtfPeriodMinutes = 15;
-                SweepLookbackBars = 25;
-                MaxRetestWaitBars = 20;
+                Target1QueenBps = 10.0;     // 10 bps scale-out & BE lock
+                Target2AmBps = 40.0;        // 40 bps AM expansion target
+                Target2PmBps = 60.0;        // 60 bps PM expansion target
+                MaxRiskBps = 12.0;          // 12 bps Max Risk Ceiling
+                EnableTrapReExpansion = true;
+                EnableHtfTrend = true;
+                MinDisplacementBps = 3.0;
+                MaxRetestWaitBars = 15;
 
-                Target1QueenBps = 10.0;     // 10 bps scale-out to make trade risk-free
-                Target2MedianMfeBps = 30.0; // 30 bps (50th percentile MFE)
-                Target2PmMfeBps = 50.0;     // 50 bps PM expansion target
-                Target3FatTailBps = 70.0;   // 70 bps (80th percentile Fat-Tail MFE)
-                MaxRiskBps = 15.0;          // 15 bps Hard Risk Ceiling
-
-                MaxDailyTrades = 5;
-                EarliestEntry = 945;
-                LatestEntry = 1530;
+                MaxDailyTrades = 3;
+                EarliestEntry = 950;
+                LatestEntry = 1515;
                 FlattenBy = 1555;
             }
             else if (State == State.Configure)
             {
-                AddDataSeries(BarsPeriodType.Minute, HtfPeriodMinutes);
-                AddDataSeries(BarsPeriodType.Minute, 60);
-                AddDataSeries(BarsPeriodType.Minute, 240);
-                AddDataSeries(BarsPeriodType.Day, 1);
+                AddDataSeries(BarsPeriodType.Minute, 60);  // Series 1: 1H HTF
+                AddDataSeries(BarsPeriodType.Day, 1);      // Series 2: Daily PDH/PDL
             }
             else if (State == State.DataLoaded)
             {
-                hasActiveBullSweep = false;
-                hasActiveBearSweep = false;
-                activeBullSweepLow = double.NaN;
-                activeBearSweepHigh = double.NaN;
-                lastBullSweepBar = -9999;
-                lastBearSweepBar = -9999;
+                ema20_1h = EMA(BarsArray[1], 20);
+                ema50_1h = EMA(BarsArray[1], 50);
+                volSma20 = SMA(Volume, 20);
+
+                bslList = new List<double>();
+                sslList = new List<double>();
+
+                hasBullSweep = false;
+                hasBearSweep = false;
+                bullSweepBar = -9999;
+                bearSweepBar = -9999;
 
                 armedBullCisd = false;
                 armedBearCisd = false;
                 armedBullHigh = double.NaN;
                 armedBearLow = double.NaN;
-                armedBullStartBar = -1;
-                armedBearStartBar = -1;
                 armedCisdOriginSL = double.NaN;
-                currentDeliveryRegime = 0;
 
-                hasPendingLongRetest = false;
-                hasPendingShortRetest = false;
+                hasPendingLong = false;
+                hasPendingShort = false;
                 pendingLongEntryPrice = double.NaN;
                 pendingShortEntryPrice = double.NaN;
                 pendingLongSL = double.NaN;
                 pendingShortSL = double.NaN;
                 pendingLongArmedBar = -1;
                 pendingShortArmedBar = -1;
+
+                hasPendingTrap = false;
+                trapDirection = 0;
+                trapEntryPrice = double.NaN;
+                trapStopLoss = double.NaN;
+                trapArmedBar = -1;
 
                 activeEntryPrice = double.NaN;
                 activeStopLoss = double.NaN;
@@ -188,17 +203,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void OnBarUpdate()
         {
-            if (CurrentBars[0] < 20)
-                return;
-
-            // Manage HTF series updates
-            if (BarsInProgress == 1)
-            {
-                UpdateHtfLiquidityAndCisd();
-                return;
-            }
-
             if (BarsInProgress != 0)
+                return;
+
+            if (CurrentBars[0] < 25 || CurrentBars[1] < 50)
                 return;
 
             DateTime barTime = Times[0][0];
@@ -210,7 +218,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             int timeNum = ToTime(barTime);
 
-            // EOD Flatten
+            // EOD Flatten (15:55 ET)
             if (timeNum >= FlattenBy * 100)
             {
                 if (Position.MarketPosition != MarketPosition.Flat)
@@ -220,54 +228,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return;
             }
 
-            bool inRth = timeNum >= EarliestEntry * 100 && timeNum <= LatestEntry * 100;
-            bool canEnter = inRth && (todayTradeCount < MaxDailyTrades) && (Position.MarketPosition == MarketPosition.Flat);
-
             // -----------------------------------------------------------------
-            // STEP 3 & 4: RETEST FILL CHECK (Limit Entry on 5m series)
-            // -----------------------------------------------------------------
-            if (hasPendingLongRetest && canEnter)
-            {
-                if (CurrentBars[1] - pendingLongArmedBar <= MaxRetestWaitBars)
-                {
-                    if (Lows[0][0] <= pendingLongEntryPrice)
-                    {
-                        ExecutePackEntry(1, pendingLongEntryPrice, pendingLongSL);
-                        hasPendingLongRetest = false;
-                    }
-                }
-                else
-                {
-                    hasPendingLongRetest = false;
-                }
-            }
-
-            if (hasPendingShortRetest && canEnter)
-            {
-                if (CurrentBars[1] - pendingShortArmedBar <= MaxRetestWaitBars)
-                {
-                    if (Highs[0][0] >= pendingShortEntryPrice)
-                    {
-                        ExecutePackEntry(-1, pendingShortEntryPrice, pendingShortSL);
-                        hasPendingShortRetest = false;
-                    }
-                }
-                else
-                {
-                    hasPendingShortRetest = false;
-                }
-            }
-
-            // -----------------------------------------------------------------
-            // STEP 5: INTRABAR POSITION MANAGEMENT (Queen Scale-Out + BE Lock)
+            // STEP 1: POSITION MANAGEMENT (Queen Fill -> Move Runner SL to BE)
             // -----------------------------------------------------------------
             if (Position.MarketPosition == MarketPosition.Long)
             {
-                // Check if Queen target reached
                 if (!queenFilled && Highs[0][0] >= activeQueenTP)
                 {
                     queenFilled = true;
-                    // Lock Runner to Breakeven!
                     SetStopLoss("Runner", CalculationMode.Price, activeEntryPrice, false);
                 }
             }
@@ -276,11 +244,258 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 if (!queenFilled && Lows[0][0] <= activeQueenTP)
                 {
                     queenFilled = true;
-                    // Lock Runner to Breakeven!
                     SetStopLoss("Runner", CalculationMode.Price, activeEntryPrice, false);
                 }
             }
+
+            // Session Windows (AM Macro: 09:50-11:15 & PM Macro: 13:30-15:15)
+            bool inAm = timeNum >= 95000 && timeNum <= 111500;
+            bool inPm = timeNum >= 133000 && timeNum <= 151500;
+            bool inSession = (inAm || inPm) && (timeNum >= EarliestEntry * 100 && timeNum <= LatestEntry * 100);
+            bool canEnter = inSession && (todayTradeCount < MaxDailyTrades) && (Position.MarketPosition == MarketPosition.Flat);
+
+            // -----------------------------------------------------------------
+            // STEP 2: EVALUATE TRAPPED LIQUIDITY RE-EXPANSION (Alpha 1)
+            // -----------------------------------------------------------------
+            if (hasPendingTrap && canEnter)
+            {
+                if (CurrentBars[0] - trapArmedBar <= 3)
+                {
+                    if (trapDirection == 1 && Highs[0][0] >= trapEntryPrice)
+                    {
+                        ExecutePackEntry(1, trapEntryPrice, trapStopLoss);
+                        hasPendingTrap = false;
+                    }
+                    else if (trapDirection == -1 && Lows[0][0] <= trapEntryPrice)
+                    {
+                        ExecutePackEntry(-1, trapEntryPrice, trapStopLoss);
+                        hasPendingTrap = false;
+                    }
+                }
+                else
+                {
+                    hasPendingTrap = false;
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // STEP 3: EVALUATE FIRST PRESENTED FVG RETEST FILL
+            // -----------------------------------------------------------------
+            if (hasPendingLong && canEnter)
+            {
+                if (CurrentBars[0] - pendingLongArmedBar <= MaxRetestWaitBars)
+                {
+                    if (Lows[0][0] <= pendingLongEntryPrice)
+                    {
+                        ExecutePackEntry(1, pendingLongEntryPrice, pendingLongSL);
+                        hasPendingLong = false;
+                    }
+                }
+                else
+                {
+                    hasPendingLong = false;
+                }
+            }
+
+            if (hasPendingShort && canEnter)
+            {
+                if (CurrentBars[0] - pendingShortArmedBar <= MaxRetestWaitBars)
+                {
+                    if (Highs[0][0] >= pendingShortEntryPrice)
+                    {
+                        ExecutePackEntry(-1, pendingShortEntryPrice, pendingShortSL);
+                        hasPendingShort = false;
+                    }
+                }
+                else
+                {
+                    hasPendingShort = false;
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // STEP 4: 5-MINUTE CANDLE LIQUIDITY & CISD DETECTION
+            // -----------------------------------------------------------------
+            double h0 = Highs[0][0], l0 = Lows[0][0], c0 = Closes[0][0], o0 = Opens[0][0];
+            double h1 = Highs[0][1], l1 = Lows[0][1], c1 = Closes[0][1], o1 = Opens[0][1];
+            double h2 = Highs[0][2], l2 = Lows[0][2], c2 = Closes[0][2], o2 = Opens[0][2];
+
+            // 3-Bar Fractal Swing Pivots (Offset by 3 bars)
+            if (CurrentBars[0] >= 6)
+            {
+                if (Highs[0][3] > Highs[0][4] && Highs[0][3] > Highs[0][5] && Highs[0][3] > Highs[0][6] &&
+                    Highs[0][3] > Highs[0][2] && Highs[0][3] > Highs[0][1] && Highs[0][3] > Highs[0][0])
+                {
+                    bslList.Add(Highs[0][3]);
+                    if (bslList.Count > 10) bslList.RemoveAt(0);
+                }
+
+                if (Lows[0][3] < Lows[0][4] && Lows[0][3] < Lows[0][5] && Lows[0][3] < Lows[0][6] &&
+                    Lows[0][3] < Lows[0][2] && Lows[0][3] < Lows[0][1] && Lows[0][3] < Lows[0][0])
+                {
+                    sslList.Add(Lows[0][3]);
+                    if (sslList.Count > 10) sslList.RemoveAt(0);
+                }
+            }
+
+            bool bslSwept = false;
+            bool sslSwept = false;
+
+            // Daily PDH / PDL Sweeps (Series 2)
+            if (CurrentBars[2] >= 2)
+            {
+                double pdh = Highs[2][1];
+                double pdl = Lows[2][1];
+                if (h0 > pdh && (c0 < pdh || o0 < pdh)) bslSwept = true;
+                if (l0 < pdl && (c0 > pdl || o0 > pdl)) sslSwept = true;
+            }
+
+            // Intraday Swing Sweeps
+            if (!bslSwept)
+            {
+                foreach (double bsl in bslList)
+                {
+                    if (h0 > bsl && c0 < bsl) { bslSwept = true; break; }
+                }
+            }
+
+            if (!sslSwept)
+            {
+                foreach (double ssl in sslList)
+                {
+                    if (l0 < ssl && c0 > ssl) { sslSwept = true; break; }
+                }
+            }
+
+            if (sslSwept)
+            {
+                hasBullSweep = true;
+                bullSweepBar = CurrentBars[0];
+            }
+
+            if (bslSwept)
+            {
+                hasBearSweep = true;
+                bearSweepBar = CurrentBars[0];
+            }
+
+            if (CurrentBars[0] - bullSweepBar > 20) hasBullSweep = false;
+            if (CurrentBars[0] - bearSweepBar > 20) hasBearSweep = false;
+
+            // -----------------------------------------------------------------
+            // STEP 5: CANONICAL BACKWARD-WALKING CISD
+            // -----------------------------------------------------------------
+            if (hasBullSweep && sslSwept)
+            {
+                double sHigh = Math.Max(o0, c0);
+                double sLow = Math.Min(o0, c0);
+
+                for (int k = 1; k <= Math.Min(20, CurrentBars[0]); k++)
+                {
+                    if (Closes[0][k] <= Opens[0][k])
+                    {
+                        sHigh = Math.Max(sHigh, Math.Max(Opens[0][k], Closes[0][k]));
+                        sLow = Math.Min(sLow, Math.Min(Opens[0][k], Closes[0][k]));
+                    }
+                    else break;
+                }
+
+                armedBullCisd = true;
+                armedBullHigh = sHigh;
+                armedCisdOriginSL = sLow;
+            }
+
+            if (hasBearSweep && bslSwept)
+            {
+                double sHigh = Math.Max(o0, c0);
+                double sLow = Math.Min(o0, c0);
+
+                for (int k = 1; k <= Math.Min(20, CurrentBars[0]); k++)
+                {
+                    if (Closes[0][k] >= Opens[0][k])
+                    {
+                        sHigh = Math.Max(sHigh, Math.Max(Opens[0][k], Closes[0][k]));
+                        sLow = Math.Min(sLow, Math.Min(Opens[0][k], Closes[0][k]));
+                    }
+                    else break;
+                }
+
+                armedBearCisd = true;
+                armedBearLow = sLow;
+                armedCisdOriginSL = sHigh;
+            }
+
+            // Displacement & HTF Trend Quality Filters
+            double bodyBps = (Math.Abs(c0 - o0) / c0) * 10000.0;
+            bool passesDisp = bodyBps >= MinDisplacementBps && Volume[0] >= (1.1 * volSma20[0]);
+
+            bool bullHtf = !EnableHtfTrend || (ema20_1h[1] >= ema50_1h[1]);
+            bool bearHtf = !EnableHtfTrend || (ema20_1h[1] <= ema50_1h[1]);
+
+            // -----------------------------------------------------------------
+            // STEP 6: ARM FIRST PRESENTED FVG RETEST ONLY
+            // -----------------------------------------------------------------
+            if (armedBullCisd && !double.IsNaN(armedBullHigh) && c0 > armedBullHigh)
+            {
+                armedBullCisd = false;
+                hasBullSweep = false;
+
+                if (passesDisp && bullHtf && !hasPendingLong && Position.MarketPosition == MarketPosition.Flat)
+                {
+                    bool newBullFvg = l0 > h2;
+                    double zTop = newBullFvg ? l0 : armedBullHigh;
+                    double zBot = newBullFvg ? h2 : (armedBullHigh - (4 * TickSize));
+                    double zCE = (zTop + zBot) / 2.0;
+
+                    double ePrice = zCE;
+                    double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL - (2 * TickSize) : l1 - (2 * TickSize);
+
+                    if (slPrice >= ePrice)
+                        slPrice = min3(l0, l1, l2) - (2 * TickSize);
+
+                    double riskBps = ((ePrice - slPrice) / ePrice) * 10000.0;
+                    if (riskBps > 0 && riskBps <= MaxRiskBps)
+                    {
+                        hasPendingLong = true;
+                        pendingLongEntryPrice = ePrice;
+                        pendingLongSL = slPrice;
+                        pendingLongArmedBar = CurrentBars[0];
+                    }
+                }
+            }
+
+            if (armedBearCisd && !double.IsNaN(armedBearLow) && c0 < armedBearLow)
+            {
+                armedBearCisd = false;
+                hasBearSweep = false;
+
+                if (passesDisp && bearHtf && !hasPendingShort && Position.MarketPosition == MarketPosition.Flat)
+                {
+                    bool newBearFvg = h0 < l2;
+                    double zTop = newBearFvg ? l2 : (armedBearLow + (4 * TickSize));
+                    double zBot = newBearFvg ? h0 : armedBearLow;
+                    double zCE = (zTop + zBot) / 2.0;
+
+                    double ePrice = zCE;
+                    double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL + (2 * TickSize) : h1 + (2 * TickSize);
+
+                    if (slPrice <= ePrice)
+                        slPrice = max3(h0, h1, h2) + (2 * TickSize);
+
+                    double riskBps = ((slPrice - ePrice) / ePrice) * 10000.0;
+                    if (riskBps > 0 && riskBps <= MaxRiskBps)
+                    {
+                        hasPendingShort = true;
+                        pendingShortEntryPrice = ePrice;
+                        pendingShortSL = slPrice;
+                        pendingShortArmedBar = CurrentBars[0];
+                    }
+                }
+            }
         }
+
+        private double min3(double a, double b, double c) => Math.Min(a, Math.Min(b, c));
+        private double max3(double a, double b, double c) => Math.Max(a, Math.Max(b, c));
 
         private void ExecutePackEntry(int direction, double entryPrice, double stopPrice)
         {
@@ -290,8 +505,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             todayTradeCount++;
 
             int timeNum = ToTime(Times[0][0]);
-            bool isPmMacro = timeNum >= 133000 && timeNum <= 153000;
-            double runnerBps = isPmMacro ? Target2PmMfeBps : Target2MedianMfeBps;
+            bool isPmMacro = timeNum >= 133000 && timeNum <= 151500;
+            double runnerBps = isPmMacro ? Target2PmBps : Target2AmBps;
 
             double distQueen = CalcBpsDistance(entryPrice, Target1QueenBps);
             double distRunner = CalcBpsDistance(entryPrice, runnerBps);
@@ -301,28 +516,57 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 activeQueenTP = entryPrice + distQueen;
                 activeRunnerTP = entryPrice + distRunner;
 
-                EnterLong(1, "Queen");
-                EnterLong(1, "Runner");
-
                 SetStopLoss("Queen", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Queen", CalculationMode.Price, activeQueenTP);
 
                 SetStopLoss("Runner", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Runner", CalculationMode.Price, activeRunnerTP);
+
+                EnterLong(1, "Queen");
+                EnterLong(1, "Runner");
             }
             else if (direction == -1)
             {
                 activeQueenTP = entryPrice - distQueen;
                 activeRunnerTP = entryPrice - distRunner;
 
-                EnterShort(1, "Queen");
-                EnterShort(1, "Runner");
-
                 SetStopLoss("Queen", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Queen", CalculationMode.Price, activeQueenTP);
 
                 SetStopLoss("Runner", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Runner", CalculationMode.Price, activeRunnerTP);
+
+                EnterShort(1, "Queen");
+                EnterShort(1, "Runner");
+            }
+        }
+
+        protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity, MarketPosition marketPosition, string orderId, DateTime time)
+        {
+            // If stopped out at SL-4 origin anchor, trigger Alpha 1 Trapped Liquidity Breakout!
+            if (EnableTrapReExpansion && execution.Order != null && execution.Order.OrderState == OrderState.Filled)
+            {
+                if (execution.Name.Contains("Stop loss") || execution.Name.Contains("StopLoss"))
+                {
+                    if (execution.Order.OrderAction == OrderAction.Sell || execution.Order.OrderAction == OrderAction.SellShort)
+                    {
+                        // Long trade stopped out -> Arm Short Breakout Trap
+                        trapDirection = -1;
+                        trapEntryPrice = activeStopLoss - (2 * TickSize);
+                        trapStopLoss = activeEntryPrice;
+                        trapArmedBar = CurrentBars[0];
+                        hasPendingTrap = true;
+                    }
+                    else if (execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.BuyToCover)
+                    {
+                        // Short trade stopped out -> Arm Long Breakout Trap
+                        trapDirection = 1;
+                        trapEntryPrice = activeStopLoss + (2 * TickSize);
+                        trapStopLoss = activeEntryPrice;
+                        trapArmedBar = CurrentBars[0];
+                        hasPendingTrap = true;
+                    }
+                }
             }
         }
 
@@ -336,169 +580,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 ExitShort(signalName);
             }
-            hasPendingLongRetest = false;
-            hasPendingShortRetest = false;
-        }
-
-        private void UpdateHtfLiquidityAndCisd()
-        {
-            if (CurrentBars[1] < 5)
-                return;
-
-            double o0 = Opens[1][0];
-            double h0 = Highs[1][0];
-            double l0 = Lows[1][0];
-            double c0 = Closes[1][0];
-
-            double h2 = Highs[1][2];
-            double l2 = Lows[1][2];
-
-            // 1. STEP 1: Liquidity Sweeps (15m Swings + 1H Swings + 4H Swings + Daily + HTF FVGs)
-            bool sslSwept = (l0 < l2) && (c0 > l2);
-            bool bslSwept = (h0 > h2) && (c0 < h2);
-
-            // 1H High/Low Sweeps (Series 2)
-            if (CurrentBars[2] >= 2)
-            {
-                double h1_h0 = Highs[2][1];
-                double h1_l0 = Lows[2][1];
-                if (h0 > h1_h0 && c0 < h1_h0) bslSwept = true;
-                if (l0 < h1_l0 && c0 > h1_l0) sslSwept = true;
-            }
-
-            // 4H High/Low Sweeps (Series 3)
-            if (CurrentBars[3] >= 2)
-            {
-                double h4_h0 = Highs[3][1];
-                double h4_l0 = Lows[3][1];
-                if (h0 > h4_h0 && c0 < h4_h0) bslSwept = true;
-                if (l0 < h4_l0 && c0 > h4_l0) sslSwept = true;
-            }
-
-            // Daily PDH / PDL Sweeps (Series 4)
-            if (CurrentBars[4] >= 2)
-            {
-                double pdh = Highs[4][1];
-                double pdl = Lows[4][1];
-                if (h0 > pdh && c0 < pdh) bslSwept = true;
-                if (l0 < pdl && c0 > pdl) sslSwept = true;
-            }
-
-            if (sslSwept)
-            {
-                hasActiveBullSweep = true;
-                activeBullSweepLow = l0;
-                lastBullSweepBar = CurrentBars[1];
-            }
-
-            if (bslSwept)
-            {
-                hasActiveBearSweep = true;
-                activeBearSweepHigh = h0;
-                lastBearSweepBar = CurrentBars[1];
-            }
-
-            if (CurrentBars[1] - lastBullSweepBar > SweepLookbackBars)
-                hasActiveBullSweep = false;
-            if (CurrentBars[1] - lastBearSweepBar > SweepLookbackBars)
-                hasActiveBearSweep = false;
-
-            // 2. STEP 2: Canonical Backward-Walking CISD Engine
-            if (hasActiveBullSweep && sslSwept)
-            {
-                double sHigh = Math.Max(o0, c0);
-                double sLow = Math.Min(o0, c0);
-                int sStart = CurrentBars[1];
-
-                for (int i = 1; i <= Math.Min(25, CurrentBars[1]); i++)
-                {
-                    if (Closes[1][i] <= Opens[1][i])
-                    {
-                        sHigh = Math.Max(sHigh, Math.Max(Opens[1][i], Closes[1][i]));
-                        sLow = Math.Min(sLow, Math.Min(Opens[1][i], Closes[1][i]));
-                        sStart = CurrentBars[1] - i;
-                    }
-                    else break;
-                }
-
-                armedBullCisd = true;
-                armedBullHigh = sHigh;
-                armedBullStartBar = sStart;
-                armedCisdOriginSL = sLow;
-            }
-
-            if (hasActiveBearSweep && bslSwept)
-            {
-                double sHigh = Math.Max(o0, c0);
-                double sLow = Math.Min(o0, c0);
-                int sStart = CurrentBars[1];
-
-                for (int i = 1; i <= Math.Min(25, CurrentBars[1]); i++)
-                {
-                    if (Closes[1][i] >= Opens[1][i])
-                    {
-                        sHigh = Math.Max(sHigh, Math.Max(Opens[1][i], Closes[1][i]));
-                        sLow = Math.Min(sLow, Math.Min(Opens[1][i], Closes[1][i]));
-                        sStart = CurrentBars[1] - i;
-                    }
-                    else break;
-                }
-
-                armedBearCisd = true;
-                armedBearLow = sLow;
-                armedBearStartBar = sStart;
-                armedCisdOriginSL = sHigh;
-            }
-
-            // 3. CISD Delivery Breach & 50% Consequent Encroachment (CE) Arming
-            bool newBullFvg = l0 > h2;
-            bool newBearFvg = h0 < l2;
-
-            if ((armedBullCisd && !double.IsNaN(armedBullHigh) && c0 > armedBullHigh) || 
-                (currentDeliveryRegime == 1 && newBullFvg && !hasPendingLongRetest))
-            {
-                armedBullCisd = false;
-                currentDeliveryRegime = 1;
-                hasActiveBullSweep = false;
-
-                double ePrice = newBullFvg ? ((l0 + h2) / 2.0) : armedBullHigh;
-                double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL - (2 * TickSize) : Lows[1][1] - (2 * TickSize);
-
-                if (slPrice >= ePrice)
-                    slPrice = ePrice - CalcBpsDistance(ePrice, MaxRiskBps);
-
-                double riskBps = ((ePrice - slPrice) / ePrice) * 10000.0;
-                if (riskBps <= MaxRiskBps)
-                {
-                    hasPendingLongRetest = true;
-                    pendingLongEntryPrice = ePrice;
-                    pendingLongSL = slPrice;
-                    pendingLongArmedBar = CurrentBars[1];
-                }
-            }
-
-            if ((armedBearCisd && !double.IsNaN(armedBearLow) && c0 < armedBearLow) || 
-                (currentDeliveryRegime == -1 && newBearFvg && !hasPendingShortRetest))
-            {
-                armedBearCisd = false;
-                currentDeliveryRegime = -1;
-                hasActiveBearSweep = false;
-
-                double ePrice = newBearFvg ? ((l2 + h0) / 2.0) : armedBearLow;
-                double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL + (2 * TickSize) : Highs[1][1] + (2 * TickSize);
-
-                if (slPrice <= ePrice)
-                    slPrice = ePrice + CalcBpsDistance(ePrice, MaxRiskBps);
-
-                double riskBps = ((slPrice - ePrice) / ePrice) * 10000.0;
-                if (riskBps <= MaxRiskBps)
-                {
-                    hasPendingShortRetest = true;
-                    pendingShortEntryPrice = ePrice;
-                    pendingShortSL = slPrice;
-                    pendingShortArmedBar = CurrentBars[1];
-                }
-            }
+            hasPendingLong = false;
+            hasPendingShort = false;
+            hasPendingTrap = false;
         }
     }
 }
