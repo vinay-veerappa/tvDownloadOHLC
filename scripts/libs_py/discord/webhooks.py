@@ -134,23 +134,69 @@ def load_webhook_url(
     Provide either ``repo_root`` (resolved via
     :func:`scripts.libs_py.discord.config.resolve_webhooks_path`)
     or a direct ``webhooks_path`` override (the test-friendly
-    path).
+    path). With **neither**, the repo root is derived from this
+    module's own location — see below.
+
+    .. note:: **Why the default exists.**
+
+       This used to return ``None`` when given neither argument,
+       while the deprecated shim it replaced
+       (``scripts.utils.discord_notify.get_webhook_url``) derived
+       the repo root from ``__file__``. So the two APIs in this
+       repo disagreed, and *following the deprecation notice*
+       silently broke webhook lookup: the call returned ``None``,
+       the sender logged ``called with empty URL; skipping`` and
+       returned ``False``, and the caller saw a completed run that
+       had notified nobody.
+
+       Measured 2026-08-15 while evaluating this library as the
+       transport for the NT8 RiskGuard alerts:
+       ``load_webhook_url('test_channel')`` → ``None``, then
+       ``send_message`` → ``False``. The probe "succeeded" at doing
+       nothing. On a channel whose entire job is to tell an operator
+       their account is in trouble, a silent no-op is the worst
+       available failure, so the ergonomic call now works.
+
+       This only ever finds MORE webhooks than before, never fewer,
+       so the best-effort contract is unchanged.
+
+    Every ``None`` is now logged with its CAUSE. Three very
+    different problems — no file, unreadable file, absent key —
+    previously produced one indistinguishable silent answer, which
+    is what made the above take a debugging session rather than a
+    glance at a log.
     """
     if webhooks_path is None:
         if repo_root is None:
-            return None
+            # <repo>/scripts/libs_py/discord/webhooks.py → parents[3] is <repo>.
+            repo_root = Path(__file__).resolve().parents[3]
         webhooks_path = resolve_webhooks_path(repo_root)
 
     if not webhooks_path.exists():
+        log.warning(
+            "load_webhook_url(%r): no webhooks file at %s", webhook_key, webhooks_path
+        )
         return None
     try:
         with open(webhooks_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning(
+            "load_webhook_url(%r): could not read %s (%s)",
+            webhook_key,
+            webhooks_path,
+            exc,
+        )
         return None
 
     url = data.get(webhook_key)
     if not url:
+        log.warning(
+            "load_webhook_url(%r): key absent from %s. Known keys: %s",
+            webhook_key,
+            webhooks_path,
+            ", ".join(sorted(data)) if isinstance(data, dict) else "(not a JSON object)",
+        )
         return None
     return str(url)
 

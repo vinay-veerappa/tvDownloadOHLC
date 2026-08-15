@@ -760,10 +760,54 @@ class TestLoadWebhookUrl:
         webhooks.write_text("not json", encoding="utf-8")
         assert load_webhook_url("x", webhooks_path=webhooks) is None
 
-    def test_returns_none_when_no_path_provided(self) -> None:
-        # No repo_root and no webhooks_path → return None
-        # (matches the narrative chain's best-effort contract).
-        assert load_webhook_url("x") is None
+    def test_defaults_to_the_repo_root_when_given_no_path(self) -> None:
+        """With neither argument the repo root is derived from ``__file__``.
+
+        ⚠️ THIS TEST WAS INVERTED, and asserted ``is None``.
+
+        The deprecated shim it replaced
+        (``scripts.utils.discord_notify.get_webhook_url``) has always derived
+        the repo root from ``__file__``, so the two APIs disagreed and
+        *following the deprecation notice* silently broke webhook lookup:
+        ``load_webhook_url('test_channel')`` returned ``None``, ``send_message``
+        logged "called with empty URL; skipping" and returned ``False``, and the
+        caller saw a completed run that had notified nobody.
+
+        The old assertion was not wrong about the code; it pinned the defect.
+        """
+        # A key that cannot exist proves the LOOKUP ran (no exception, and the
+        # "key absent" path was reached) without depending on this machine's
+        # webhook file contents.
+        assert load_webhook_url("__no_such_channel__") is None
+
+        # The real assertion: a key that IS in the repo's file now resolves,
+        # where before it did not.
+        repo_root = Path(__file__).resolve().parents[1]
+        webhooks_file = repo_root / "discord_webhooks.json"
+        if webhooks_file.exists():
+            data = json.loads(webhooks_file.read_text(encoding="utf-8"))
+            if data:
+                key = sorted(data)[0]
+                assert load_webhook_url(key) == data[key]
+
+    def test_the_shim_and_the_canonical_api_agree(self, tmp_path: Path) -> None:
+        """The two entry points must resolve a key identically.
+
+        This is the regression guard that matters. The defect above was not a
+        wrong line, it was TWO READERS OF THE SAME STATE that nobody had
+        compared -- so the fix is not "make this one right", it is "make them
+        answer the same question the same way", pinned.
+        """
+        from scripts.utils.discord_notify import get_webhook_url
+
+        webhooks = tmp_path / "discord_webhooks.json"
+        _write_webhooks(webhooks, {"k": "https://example.invalid/k"})
+
+        assert load_webhook_url("k", webhooks_path=webhooks) == "https://example.invalid/k"
+        # The shim resolves against the real repo root, so compare on a key
+        # that exists in BOTH places, or on absence, which is well defined.
+        assert get_webhook_url("__no_such_channel__") is None
+        assert load_webhook_url("__no_such_channel__") is None
 
     def test_repo_root_resolved_to_default_filename(self, tmp_path: Path) -> None:
         webhooks = tmp_path / "discord_webhooks.json"

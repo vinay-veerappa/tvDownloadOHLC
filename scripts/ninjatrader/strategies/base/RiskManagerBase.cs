@@ -325,11 +325,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (atr <= 0)
                 return;
 
-            double stopDistance = StopAtrMult * atr;
+            double stopPrice = GetCustomStopPrice(signal, Closes[0][0]);
+            double stopDistance = Math.Abs(Closes[0][0] - stopPrice);
+            if (double.IsNaN(stopPrice) || stopDistance <= 0)
+            {
+                stopDistance = StopAtrMult * atr;
+                stopPrice = signal == 1 ? Closes[0][0] - stopDistance : Closes[0][0] + stopDistance;
+            }
+
             if (signal == 1)
-                EnterTrade("Long",  Closes[0][0], Closes[0][0] - stopDistance, stopDistance);
+                EnterTrade("Long",  Closes[0][0], stopPrice, stopDistance);
             else if (signal == -1)
-                EnterTrade("Short", Closes[0][0], Closes[0][0] + stopDistance, stopDistance);
+                EnterTrade("Short", Closes[0][0], stopPrice, stopDistance);
         }
 
         // ──────────────────────────────────────────────────────────────
@@ -543,7 +550,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 EnterLong(1, signalName);
                 SetStopLoss(signalName, CalculationMode.Price, stop, false);
 
-                if (TradePolicy == "FixedTarget")
+                double customTarget = GetCustomProfitTarget(1, entry, stopDist);
+                if (!double.IsNaN(customTarget) && customTarget > entry)
+                    SetProfitTarget(signalName, CalculationMode.Price, customTarget);
+                else if (TradePolicy == "FixedTarget")
                     SetProfitTarget(signalName, CalculationMode.Price, entry + TargetRMultiple * riskPoints);
                 else if (TradePolicy == "BaseHits")
                     SetProfitTarget(signalName, CalculationMode.Price, entry + GetBaseHitsTargets().tp1Pts);
@@ -553,7 +563,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 EnterShort(1, signalName);
                 SetStopLoss(signalName, CalculationMode.Price, stop, false);
 
-                if (TradePolicy == "FixedTarget")
+                double customTarget = GetCustomProfitTarget(-1, entry, stopDist);
+                if (!double.IsNaN(customTarget) && customTarget < entry)
+                    SetProfitTarget(signalName, CalculationMode.Price, customTarget);
+                else if (TradePolicy == "FixedTarget")
                     SetProfitTarget(signalName, CalculationMode.Price, entry - TargetRMultiple * riskPoints);
                 else if (TradePolicy == "BaseHits")
                     SetProfitTarget(signalName, CalculationMode.Price, entry - GetBaseHitsTargets().tp1Pts);
@@ -857,6 +870,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             if (!AddSecondaryTimeframe) throw new InvalidOperationException("Low5m requires AddSecondaryTimeframe=true");
             return Lows[1][barsAgo];
+        }
+
+        protected virtual double GetCustomStopPrice(int signal, double entryPrice)
+        {
+            return double.NaN;
+        }
+
+        protected virtual double GetCustomProfitTarget(int signal, double entryPrice, double stopDist)
+        {
+            return double.NaN;
         }
 
         private string GetSignalName(string direction)
