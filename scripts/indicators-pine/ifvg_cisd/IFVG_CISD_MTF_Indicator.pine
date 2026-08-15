@@ -361,13 +361,13 @@ float fillLongPrice   = na
 float fillLongSL      = na
 
 if not na(activeLongZone) and not activeLongZone.isFilled
-    if (bar_index - activeLongZone.armedBar) <= i_maxEntryWait
+    if (bar_index > activeLongZone.armedBar) and ((bar_index - activeLongZone.armedBar) <= i_maxEntryWait)
         if low <= activeLongZone.entryLevel and high >= activeLongZone.zoneBot
             triggerLongEntry := true
             fillLongPrice    := activeLongZone.entryLevel
             fillLongSL       := activeLongZone.structStopLoss
             activeLongZone.isFilled := true
-    else
+    else if (bar_index - activeLongZone.armedBar) > i_maxEntryWait
         box.delete(activeLongZone.boxObj)
         activeLongZone := na
 
@@ -376,13 +376,13 @@ float fillShortPrice   = na
 float fillShortSL      = na
 
 if not na(activeShortZone) and not activeShortZone.isFilled
-    if (bar_index - activeShortZone.armedBar) <= i_maxEntryWait
+    if (bar_index > activeShortZone.armedBar) and ((bar_index - activeShortZone.armedBar) <= i_maxEntryWait)
         if high >= activeShortZone.entryLevel and low <= activeShortZone.zoneTop
             triggerShortEntry := true
             fillShortPrice    := activeShortZone.entryLevel
             fillShortSL       := activeShortZone.structStopLoss
             activeShortZone.isFilled := true
-    else
+    else if (bar_index - activeShortZone.armedBar) > i_maxEntryWait
         box.delete(activeShortZone.boxObj)
         activeShortZone := na
 
