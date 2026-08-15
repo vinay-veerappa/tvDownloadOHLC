@@ -87,7 +87,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description = "Pure Liquidity -> CISD -> Retest Entry Strategy with Pure Basis Points (bps) MFE Scaling & Structural Stops";
+            Description = "Pure Liquidity -> CISD -> Retest Entry Strategy with Intraday Multi-Trade Support & Basis Points MFE Scaling";
             Name = "ICTFVGCISDBot";
 
             HtfPeriodMinutes = 15;
@@ -99,7 +99,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Target3FatTailBps = 70.0;   // 70 bps (80th percentile Fat-Tail MFE)
 
             DailyMaxLoss = 1000;
-            MaxTradesPerDay = 3;
+            MaxTradesPerDay = 5;
             EarliestEntry = 945;
             LatestEntry = 1530;
             FlattenBy = 1555;
@@ -186,10 +186,29 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             double h2 = Highs[1][2];
             double l2 = Lows[1][2];
 
-            // 1. STEP 1: Liquidity Sweeps
+            // 1. STEP 1: Liquidity Sweeps (15m Swings + 1H Swings + 4H Swings + Daily + HTF FVGs)
             bool sslSwept = (l0 < l2) && (c0 > l2);
             bool bslSwept = (h0 > h2) && (c0 < h2);
 
+            // 1H High/Low Sweeps (Series 2)
+            if (CurrentBars[2] >= 2)
+            {
+                double h1_h0 = Highs[2][1];
+                double h1_l0 = Lows[2][1];
+                if (h0 > h1_h0 && c0 < h1_h0) bslSwept = true;
+                if (l0 < h1_l0 && c0 > h1_l0) sslSwept = true;
+            }
+
+            // 4H High/Low Sweeps (Series 3)
+            if (CurrentBars[3] >= 2)
+            {
+                double h4_h0 = Highs[3][1];
+                double h4_l0 = Lows[3][1];
+                if (h0 > h4_h0 && c0 < h4_h0) bslSwept = true;
+                if (l0 < h4_l0 && c0 > h4_l0) sslSwept = true;
+            }
+
+            // Daily Sweeps (Series 4)
             if (CurrentBars[4] >= 2)
             {
                 double pdh = Highs[4][1];
@@ -262,15 +281,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 armedCisdOriginSL = sHigh;
             }
 
-            if (armedBullCisd && !double.IsNaN(armedBullHigh) && c0 > armedBullHigh)
+            // CISD Delivery Breach & Continuation FVGs
+            bool newBullFvg = l0 > h2;
+            bool newBearFvg = h0 < l2;
+
+            if ((armedBullCisd && !double.IsNaN(armedBullHigh) && c0 > armedBullHigh) || 
+                (currentDeliveryRegime == 1 && newBullFvg && !hasPendingLongRetest))
             {
                 armedBullCisd = false;
                 currentDeliveryRegime = 1;
                 hasActiveBullSweep = false;
 
-                bool newBullFvg = l0 > h2;
                 double ePrice = newBullFvg ? l0 : armedBullHigh;
-                double slPrice = activeBullSweepLow - (2 * TickSize);
+                double slPrice = !double.IsNaN(activeBullSweepLow) ? activeBullSweepLow - (2 * TickSize) : Lows[1][1] - (2 * TickSize);
 
                 hasPendingLongRetest = true;
                 pendingLongEntryPrice = ePrice;
@@ -278,15 +301,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 pendingLongArmedBar = CurrentBars[1];
             }
 
-            if (armedBearCisd && !double.IsNaN(armedBearLow) && c0 < armedBearLow)
+            if ((armedBearCisd && !double.IsNaN(armedBearLow) && c0 < armedBearLow) || 
+                (currentDeliveryRegime == -1 && newBearFvg && !hasPendingShortRetest))
             {
                 armedBearCisd = false;
                 currentDeliveryRegime = -1;
                 hasActiveBearSweep = false;
 
-                bool newBearFvg = h0 < l2;
                 double ePrice = newBearFvg ? h0 : armedBearLow;
-                double slPrice = activeBearSweepHigh + (2 * TickSize);
+                double slPrice = !double.IsNaN(activeBearSweepHigh) ? activeBearSweepHigh + (2 * TickSize) : Highs[1][1] + (2 * TickSize);
 
                 hasPendingShortRetest = true;
                 pendingShortEntryPrice = ePrice;

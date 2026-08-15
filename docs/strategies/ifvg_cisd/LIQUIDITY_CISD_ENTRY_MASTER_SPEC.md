@@ -36,10 +36,12 @@ From rolling in-sample (75–100 day) and outer-sample (20-year) distribution da
 ## 🏛️ The 5-Step Execution State Machine
 
 ```
-[ STEP 1: LIQUIDITY SWEEP & HTF PD ARRAY TAP ]
-  • Price sweeps institutional liquidity (PDH/PDL, 4H/1H Swings, Asia/London Ranges)
-    OR taps into a Higher Timeframe (HTF) Fair Value Gap (4H/1H FVG/OB).
-  • The system captures and locks the exact SWEEP EXTREME (Wick Invalidation).
+[ STEP 1: LIQUIDITY SWEEPS (1-HOUR, 4-HOUR, DAILY & SESSIONS) ]
+  • 1-Hour Swings: Price sweeps Previous 1-Hour High / Low (Hourly BSL / SSL) or 1H FVG.
+  • 4-Hour Swings: Price sweeps Previous 4-Hour High / Low (4H BSL / SSL) or 4H FVG.
+  • Daily & Sessions: Price sweeps PDH/PDL, Asia Range (6pm-2am), or London Range (2am-8am).
+  • Intraday Pools: Price sweeps 15m Swings / 15m FVGs or 5m fractal pivots.
+  • The system captures and locks the exact SWEEP EXTREME (Wick Invalidation SL-1).
                                   │
                                   ▼
 [ STEP 2: CANONICAL CISD FLIP (DELIVERY ANCHOR BREACH) ]
