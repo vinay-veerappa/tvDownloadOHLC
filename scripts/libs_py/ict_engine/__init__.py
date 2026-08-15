@@ -11,7 +11,13 @@ from .core.pa import (
     detect_first_fvg_per_hour,
     detect_first_fvg_after_time
 )
-from .core.structure import detect_swings, detect_structure_breaks, detect_cisd, detect_cisd_authoritative
+from .core.structure import (
+    detect_swings,
+    detect_structure_breaks,
+    detect_cisd,
+    detect_cisd_neo,
+    detect_cisd_authoritative,
+)
 from .core.sessions import (
     get_session_data,
     get_macro_data,

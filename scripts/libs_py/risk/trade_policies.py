@@ -292,22 +292,106 @@ class ScaledExit(TradePolicy):
                             return PolicyDecision(action=PolicyAction.EXIT_FULL, exit_reason="target")
                         return PolicyDecision(action=PolicyAction.TAKE_PARTIAL, partial_pct=exit_cfg.get("pct", 0.33))
                 
-        return PolicyDecision(action=PolicyAction.HOLD)
+
+# =============================================================================
+# PER-INSTRUMENT BASE HITS (80/20 SCALP & FIXED POINTS) SPECIFICATION
+# =============================================================================
+INSTRUMENT_BASE_HITS_TARGETS = {
+    "NQ": {"stop_pts": 10.0, "tp1_pts": 10.0, "tp2_pts": 20.0, "point_value": 20.0, "micro_point_value": 2.0, "tick_size": 0.25},
+    "MNQ": {"stop_pts": 10.0, "tp1_pts": 10.0, "tp2_pts": 20.0, "point_value": 2.0, "micro_point_value": 2.0, "tick_size": 0.25},
+    "ES": {"stop_pts": 2.50, "tp1_pts": 2.50, "tp2_pts": 5.00, "point_value": 50.0, "micro_point_value": 5.0, "tick_size": 0.25},
+    "MES": {"stop_pts": 2.50, "tp1_pts": 2.50, "tp2_pts": 5.00, "point_value": 5.0, "micro_point_value": 5.0, "tick_size": 0.25},
+    "YM": {"stop_pts": 15.0, "tp1_pts": 15.0, "tp2_pts": 30.0, "point_value": 5.0, "micro_point_value": 0.5, "tick_size": 1.00},
+    "MYM": {"stop_pts": 15.0, "tp1_pts": 15.0, "tp2_pts": 30.0, "point_value": 0.5, "micro_point_value": 0.5, "tick_size": 1.00},
+    "RTY": {"stop_pts": 1.00, "tp1_pts": 1.25, "tp2_pts": 2.50, "point_value": 50.0, "micro_point_value": 5.0, "tick_size": 0.10},
+    "M2K": {"stop_pts": 1.00, "tp1_pts": 1.25, "tp2_pts": 2.50, "point_value": 5.0, "micro_point_value": 5.0, "tick_size": 0.10},
+    "CL": {"stop_pts": 0.10, "tp1_pts": 0.15, "tp2_pts": 0.30, "point_value": 1000.0, "micro_point_value": 100.0, "tick_size": 0.01},
+    "MCL": {"stop_pts": 0.10, "tp1_pts": 0.15, "tp2_pts": 0.30, "point_value": 100.0, "micro_point_value": 100.0, "tick_size": 0.01},
+    "GC": {"stop_pts": 1.00, "tp1_pts": 1.25, "tp2_pts": 2.50, "point_value": 100.0, "micro_point_value": 10.0, "tick_size": 0.10},
+    "MGC": {"stop_pts": 1.00, "tp1_pts": 1.25, "tp2_pts": 2.50, "point_value": 10.0, "micro_point_value": 10.0, "tick_size": 0.10},
+}
+
+
+class BaseHitsProfile(TradePolicy):
+    """
+    Standardized Base Hits (Fixed Point / 80-20 Scalp) Trade Management Policy.
+    
+    Phases:
+    1. Phase 1 (Base Hit Scalp): When trade reaches TP1 (e.g. 10.0 pts on NQ / 2.5 pts on ES),
+       takes 50% partial off and immediately moves Stop Loss to Breakeven (entry fill).
+    2. Phase 2 (Stretch Target / Runner): Holds remaining 50% for TP2 (e.g. 20.0 pts on NQ / 5.0 pts on ES).
+    """
+
+    def __init__(self, params: dict):
+        symbol = params.get("symbol", "NQ").upper().replace("-", "").replace("1", "")
+        inst_defaults = INSTRUMENT_BASE_HITS_TARGETS.get(symbol, INSTRUMENT_BASE_HITS_TARGETS["NQ"])
+
+        self.tp1_pts = params.get("tp1_pts", inst_defaults["tp1_pts"])
+        self.tp2_pts = params.get("tp2_pts", inst_defaults["tp2_pts"])
+        self.stop_pts = params.get("stop_pts", inst_defaults["stop_pts"])
+        self.partial_exit_pct = params.get("partial_exit_pct", 0.50)
+        self.move_stop_to_breakeven = params.get("move_stop_to_breakeven", True)
         
-    def reset(self):
-        self._exits_taken = [False] * len(self.exits)
+        self._tp1_taken = False
         self._trailing_stop = None
 
+    def manage(self, trade: "TradeRecord", current_bar: dict, bars_since_entry: int) -> PolicyDecision:
+        close_price = current_bar["close"]
+        low_price = current_bar["low"]
+        high_price = current_bar["high"]
+        entry = trade.signal.entry_price
+        is_long = trade.signal.direction == TradeDirection.LONG
+
+        orig_stop = trade.signal.stop_price
+        current_stop = self._trailing_stop or orig_stop
+
+        # 1. Stop Check
+        if is_long and low_price <= current_stop:
+            return PolicyDecision(action=PolicyAction.EXIT_FULL, exit_reason="stop" if not self._trailing_stop else "be_stop")
+        elif not is_long and high_price >= current_stop:
+            return PolicyDecision(action=PolicyAction.EXIT_FULL, exit_reason="stop" if not self._trailing_stop else "be_stop")
+
+        # 2. TP1 Base Hit (e.g. 10 pts on NQ)
+        if not self._tp1_taken:
+            tp1_target = entry + self.tp1_pts if is_long else entry - self.tp1_pts
+            if (is_long and high_price >= tp1_target) or (not is_long and low_price <= tp1_target):
+                self._tp1_taken = True
+                if self.move_stop_to_breakeven:
+                    self._trailing_stop = entry
+                    return PolicyDecision(
+                        action=PolicyAction.TAKE_PARTIAL_AND_MOVE_STOP,
+                        partial_pct=self.partial_exit_pct,
+                        new_stop_price=entry
+                    )
+                return PolicyDecision(action=PolicyAction.TAKE_PARTIAL, partial_pct=self.partial_exit_pct)
+
+        # 3. TP2 Extended Target (e.g. 20 pts on NQ)
+        if self._tp1_taken:
+            tp2_target = entry + self.tp2_pts if is_long else entry - self.tp2_pts
+            if (is_long and high_price >= tp2_target) or (not is_long and low_price <= tp2_target):
+                return PolicyDecision(action=PolicyAction.EXIT_FULL, exit_reason="target_tp2")
+
+        return PolicyDecision(action=PolicyAction.HOLD)
+
+    def reset(self):
+        self._tp1_taken = False
+        self._trailing_stop = None
+
+
 def get_policy(name: str, params: dict, base_policy: TradePolicy = None) -> TradePolicy:
-    if name == "cover_the_queen":
+    name_norm = name.lower()
+    if name_norm in ("cover_the_queen", "coverthequeen"):
         return CoverTheQueen(params)
-    elif name == "fixed_target":
+    elif name_norm in ("base_hits", "basehits", "base_hits_8020", "8020"):
+        return BaseHitsProfile(params)
+    elif name_norm in ("fixed_target", "fixedtarget"):
         return FixedTarget(params)
-    elif name == "scaled_exit":
+    elif name_norm in ("scaled_exit", "scaledexit"):
         return ScaledExit(params)
-    elif name == "breakeven_trail":
+    elif name_norm in ("breakeven_trail", "breakeventrail"):
         return BreakevenTrail(params)
-    elif name == "time_stop":
+    elif name_norm in ("time_stop", "timestop"):
         return TimeStop(params, base_policy)
     else:
         raise ValueError(f"Unknown risk policy: {name}")
+

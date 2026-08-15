@@ -1,21 +1,22 @@
 """
-5-Minute MTF Inversion FVG (IFVG) & CISD Distribution/Accumulation Strategy.
-=============================================================================
-Combines 5-minute institutional displacement and orderflow failure with 1-minute precision execution:
-1. 5m Change in State of Delivery (CISD) confirms delivery bias flip.
-2. 5m Inversion Fair Value Gap (IFVG) confirms orderflow absorption / trapped participants.
-3. Surgical execution with Cover the Queen scale-outs (1.0R TP1 / 2.5R TP2).
+Multi-Timeframe Inversion FVG (IFVG) + CISD Strategy Engine.
+============================================================
+Combines Higher-Timeframe (5m/15m) institutional displacement, Volume Imbalance (VI)
+boundary mergers, and Delivery State shifts (CISD) with 1-minute execution:
+1. HTF CISD confirms state of delivery flip (Neo pullback & expansion arming).
+2. HTF Inversion Fair Value Gap (IFVG + VI) confirms orderflow absorption / trapped liquidity.
+3. 1m execution timeline with ATR risk brackets and Cover The Queen trade management.
 """
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from datetime import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
-# Add project root to sys.path dynamically
+# Dynamic path bootstrap
 _current_dir = Path(__file__).resolve().parent
 while _current_dir.name and _current_dir.name != "scripts":
     _current_dir = _current_dir.parent
@@ -24,12 +25,18 @@ if _current_dir.name == "scripts":
     if _root_dir not in sys.path:
         sys.path.insert(0, _root_dir)
 
+from scripts.libs_py.cisd import compute_cisd
+from scripts.libs_py.fvg import compute_fvg
+from scripts.libs_py.ifvg import compute_ifvg
 from scripts.libs_py.data.resampler import resample_ohlcv
-from scripts.libs_py.ict_engine import detect_swings, detect_fvg, detect_inversion_fvg, detect_cisd
+from scripts.libs_py.price_action.volatility_leading import (
+    compute_kaufman_efficiency,
+    compute_bar_overlap,
+)
 
 
 class IFVGCISDStrategy:
-    """5-Minute MTF Inversion FVG (IFVG) & CISD Strategy."""
+    """Multi-Timeframe Inversion FVG (IFVG) & CISD Strategy."""
 
     OUTPUT_COLUMNS = [
         "signal_time",
@@ -60,28 +67,45 @@ class IFVGCISDStrategy:
         r_mult_tp1 = p.get("r_mult_tp1", 1.0)
         r_mult_tp2 = p.get("r_mult_tp2", 2.5)
         atr_risk_mult = p.get("atr_risk_mult", 1.8)
-        filter_lunch = p.get("filter_lunch", True)
 
-        # 1. Resample to 5m HTF
+        # Strategy Configuration
+        filter_lunch = bool(p.get("filter_lunch", True))
+        use_ker_filter = bool(p.get("use_ker_filter", False))
+        ker_min = float(p.get("ker_min", 0.45))
+        use_barbwire_filter = bool(p.get("use_barbwire_filter", False))
+        max_bar_overlap = float(p.get("max_bar_overlap", 65.0))
+        include_vi = bool(p.get("include_vi", True))
+        strict_ifvg_only = bool(p.get("strict_ifvg_only", True))
+
+        # 1. Compute HTF CISD & Inversion FVG (with Volume Imbalance extensions)
         df_htf = resample_ohlcv(df, resample_tf)
-        swings_htf = detect_swings(df_htf, swing_length=5)
-        cisd_htf = detect_cisd(df_htf, swings_htf)
-        fvg_htf = detect_fvg(df_htf, require_candle_direction=True)
-        ifvg_htf = detect_inversion_fvg(df_htf, fvg_htf)
+        cisd_htf = compute_cisd(df_htf)
+        ifvg_htf = compute_ifvg(df_htf, include_vi=include_vi)
+        fvg_htf = compute_fvg(df_htf, include_vi=include_vi)
 
         sig_htf = pd.DataFrame(index=df_htf.index)
-        sig_htf["cisd_htf"] = cisd_htf["cisd"]
-        sig_htf["ifvg_htf"] = ifvg_htf["ifvg"]
-        sig_htf["fvg_htf"] = fvg_htf["fvg_type"]
+        sig_htf["cisd_htf"] = cisd_htf["cisd_state"]
+        sig_htf["ifvg_htf"] = ifvg_htf["ifvg_event"]
+        sig_htf["ifvg_state"] = ifvg_htf["ifvg_state"]
+        sig_htf["fvg_htf"] = fvg_htf["fvg_event"]
 
-        recent_cisd_bull = (sig_htf["cisd_htf"] == 1).rolling(3, min_periods=1).max().astype(bool)
-        recent_cisd_bear = (sig_htf["cisd_htf"] == -1).rolling(3, min_periods=1).max().astype(bool)
+        if strict_ifvg_only:
+            sig_htf["htf_long"] = (sig_htf["cisd_htf"] == 1) & (sig_htf["ifvg_htf"] == 1)
+            sig_htf["htf_short"] = (sig_htf["cisd_htf"] == -1) & (sig_htf["ifvg_htf"] == -1)
+        else:
+            recent_cisd_bull = (sig_htf["cisd_htf"] == 1).rolling(3, min_periods=1).max().astype(bool)
+            recent_cisd_bear = (sig_htf["cisd_htf"] == -1).rolling(3, min_periods=1).max().astype(bool)
+            sig_htf["htf_long"] = recent_cisd_bull & ((sig_htf["ifvg_htf"] == 1) | (sig_htf["fvg_htf"] == 1))
+            sig_htf["htf_short"] = recent_cisd_bear & ((sig_htf["ifvg_htf"] == -1) | (sig_htf["fvg_htf"] == -1))
 
-        sig_htf["htf_long"] = recent_cisd_bull & ((sig_htf["ifvg_htf"] == 1) | (sig_htf["fvg_htf"] == 1))
-        sig_htf["htf_short"] = recent_cisd_bear & ((sig_htf["ifvg_htf"] == -1) | (sig_htf["fvg_htf"] == -1))
-
-        # 2. Merge causally onto 1m execution timeline
-        df = pd.merge_asof(df, sig_htf[["htf_long", "htf_short"]], left_index=True, right_index=True, direction="backward")
+        # 2. Merge causally onto 1m execution timeline (no lookahead)
+        df = pd.merge_asof(
+            df,
+            sig_htf[["htf_long", "htf_short"]],
+            left_index=True,
+            right_index=True,
+            direction="backward",
+        )
         df["htf_long"] = df["htf_long"].fillna(False)
         df["htf_short"] = df["htf_short"].fillna(False)
 
@@ -105,52 +129,59 @@ class IFVGCISDStrategy:
         sig_mask_long = time_mask & df["htf_long"]
         sig_mask_short = time_mask & df["htf_short"]
 
-        sig_df = df.copy()
-        sig_df["direction"] = pd.Series(pd.NA, index=df.index, dtype="object")
-        sig_df.loc[sig_mask_long, "direction"] = "long"
-        sig_df.loc[sig_mask_short, "direction"] = "short"
+        # Isolated Filter 1: Kaufman Efficiency Ratio on Execution Timeline
+        if use_ker_filter:
+            ker_series = compute_kaufman_efficiency(df, length=10)
+            sig_mask_long = sig_mask_long & (ker_series >= ker_min)
+            sig_mask_short = sig_mask_short & (ker_series >= ker_min)
 
-        comb = sig_df.dropna(subset=["direction"]).copy()
-        if comb.empty:
-            return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
+        # Isolated Filter 2: Barbwire Anti-Chop on Execution Timeline
+        if use_barbwire_filter:
+            overlap_series = compute_bar_overlap(df, length=5)
+            sig_mask_long = sig_mask_long & (overlap_series <= max_bar_overlap)
+            sig_mask_short = sig_mask_short & (overlap_series <= max_bar_overlap)
 
-        comb["date"] = comb.index.normalize()
-        sigs = comb.groupby("date").head(max_trades_per_day).copy()
-        sigs["signal_time"] = sigs.index
-        sigs["entry_price"] = sigs["close"]
-        sigs["model_name"] = f"ifvg_cisd_{resample_tf}"
+        # 4. Signal Extraction & Daily Trade Throttling
+        trades: list[dict[str, Any]] = []
+        last_date = None
+        daily_trades = 0
 
-        swing_dist_long = sigs["entry_price"] - sigs["swing_low2"].shift(1).fillna(sigs["low"])
-        swing_dist_short = sigs["swing_high2"].shift(1).fillna(sigs["high"]) - sigs["entry_price"]
-        risk_long = np.maximum(sigs["atr"] * atr_risk_mult, swing_dist_long)
-        risk_short = np.maximum(sigs["atr"] * atr_risk_mult, swing_dist_short)
-        risk = np.where(sigs["direction"] == "long", risk_long, risk_short)
-        sigs["risk_pts"] = risk
+        for idx, row in df[sig_mask_long | sig_mask_short].iterrows():
+            current_date = idx.date()
+            if current_date != last_date:
+                last_date = current_date
+                daily_trades = 0
 
-        sigs["stop_price"] = np.where(
-            sigs["direction"] == "long",
-            sigs["entry_price"] - risk,
-            sigs["entry_price"] + risk,
-        )
-        sigs["target1_price"] = np.where(
-            sigs["direction"] == "long",
-            sigs["entry_price"] + (risk * r_mult_tp1),
-            sigs["entry_price"] - (risk * r_mult_tp1),
-        )
-        sigs["target2_price"] = np.where(
-            sigs["direction"] == "long",
-            sigs["entry_price"] + (risk * r_mult_tp2),
-            sigs["entry_price"] - (risk * r_mult_tp2),
-        )
+            if daily_trades >= max_trades_per_day:
+                continue
 
-        return sigs[self.OUTPUT_COLUMNS].dropna().reset_index(drop=True)
+            entry_price = float(row["close"])
+            raw_risk = float(row["atr"]) * atr_risk_mult
+            risk = max(10.0, min(50.0, raw_risk))
 
-    def get_param_grid(self) -> Dict[str, Any]:
-        return {
-            "resample_tf": ["3min", "5min"],
-            "max_trades_per_day": [1, 2],
-            "r_mult_tp1": [1.0, 1.2],
-            "r_mult_tp2": [2.0, 2.5, 3.0],
-            "atr_risk_mult": [1.5, 1.8, 2.0],
-            "filter_lunch": [True, False],
-        }
+            if row["htf_long"]:
+                direction = "LONG"
+                stop_price = entry_price - risk
+                target1_price = entry_price + (risk * r_mult_tp1)
+                target2_price = entry_price + (risk * r_mult_tp2)
+            else:
+                direction = "SHORT"
+                stop_price = entry_price + risk
+                target1_price = entry_price - (risk * r_mult_tp1)
+                target2_price = entry_price - (risk * r_mult_tp2)
+
+            trades.append(
+                {
+                    "signal_time": idx,
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "stop_price": stop_price,
+                    "target1_price": target1_price,
+                    "target2_price": target2_price,
+                    "model_name": self.strategy_name,
+                    "risk_pts": risk,
+                }
+            )
+            daily_trades += 1
+
+        return pd.DataFrame(trades, columns=self.OUTPUT_COLUMNS)

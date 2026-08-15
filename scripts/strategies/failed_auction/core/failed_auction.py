@@ -1,26 +1,80 @@
-import numpy as np
-import pandas as pd
+"""
+ADR-017 Vectorized Failed Auction Strategy with Independent Filter & Regime Toggles.
+====================================================================================
+Identifies momentum sweeps outside prior-day extremes and trades mean reversion.
+Supports modular ablations:
+- CISD Delivery Series Reversal Trigger (eliminates blind limit knife-catching)
+- Rejection-Leg FVG Creation (requires displacement gap off extreme)
+- Impulse Exhaustion Filter (KER <= 0.40 at peak exhaustion)
+- Barbwire Bar Overlap (mutual containment <= 65%)
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
 from datetime import time
 from typing import Any, Dict, Optional
+import numpy as np
+import pandas as pd
+
+# Add project root to sys.path dynamically
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and _current_dir.name != "scripts":
+    _current_dir = _current_dir.parent
+if _current_dir.name == "scripts":
+    _root_dir = str(_current_dir.parent)
+    if _root_dir not in sys.path:
+        sys.path.insert(0, _root_dir)
+
+from scripts.libs_py.price_action.volatility_leading import (
+    compute_kaufman_efficiency,
+    compute_bar_overlap,
+)
+from scripts.libs_py.ict_engine import (
+    detect_fvg,
+    detect_swings,
+    detect_cisd,
+)
 
 
 class FailedAuctionStrategy:
-    """ADR-017 vectorized failed auction hunter using prior-day extremes."""
+    """ADR-017 vectorized failed auction hunter with modular filter ablations."""
 
-    OUTPUT_COLUMNS = ["signal_time", "direction", "entry_price", "stop_price", "target1_price"]
+    OUTPUT_COLUMNS = [
+        "signal_time",
+        "direction",
+        "entry_price",
+        "stop_price",
+        "target1_price",
+        "model_name",
+        "risk_pts",
+    ]
 
     def __init__(self, ticker: str = "NQ1"):
         self.ticker = ticker
+        self.strategy_name = "Failed Auction"
 
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         p = params or {}
         df = data.copy()
+
+        if "close" not in df.columns or df.empty:
+            return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
 
         atr_period = int(p.get("atr_period", 14))
         sl_atr_mult = float(p.get("sl_atr_mult", 0.8))
         tp_r_mult = float(p.get("tp_r_mult", 2.0))
         break_buffer = float(p.get("break_buffer", 0.0))
 
+        # Filter Toggles (all default to False for pristine raw baseline unless specified)
+        use_cisd_trigger = bool(p.get("use_cisd_trigger", False))
+        use_rejection_fvg_filter = bool(p.get("use_rejection_fvg_filter", False))
+        use_exhaustion_ker_filter = bool(p.get("use_exhaustion_ker_filter", False))
+        ker_exhaustion_max = float(p.get("ker_exhaustion_max", 0.40))
+        use_barbwire_filter = bool(p.get("use_barbwire_filter", False))
+        max_bar_overlap = float(p.get("max_bar_overlap", 65.0))
+
+        # 1. Base Prior Day Levels
         date_key = df.index.normalize()
         daily = df.groupby(date_key).agg(day_high=("high", "max"), day_low=("low", "min"))
         prior_day = daily.shift(1)
@@ -28,11 +82,12 @@ class FailedAuctionStrategy:
         df["prior_high"] = date_key.map(prior_day["day_high"])
         df["prior_low"] = date_key.map(prior_day["day_low"])
 
+        # ATR calculation
         high_low = df["high"] - df["low"]
         high_close = (df["high"] - df["close"].shift()).abs()
         low_close = (df["low"] - df["close"].shift()).abs()
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df["atr"] = tr.rolling(window=atr_period, min_periods=atr_period).mean()
+        df["atr"] = tr.rolling(window=atr_period, min_periods=atr_period).mean().bfill()
 
         intraday_mask = (df.index.time >= time(9, 35)) & (df.index.time <= time(14, 30))
 
@@ -44,34 +99,49 @@ class FailedAuctionStrategy:
         long_mask = intraday_mask & sweep_low & reclaim_low
         short_mask = intraday_mask & sweep_high & reclaim_high
 
+        # ---------------------------------------------------------------------
+        # Isolated Filter 1: CISD Delivery Series Reversal Trigger
+        # ---------------------------------------------------------------------
+        if use_cisd_trigger and (long_mask | short_mask).any():
+            swings = detect_swings(df, swing_length=3)
+            cisd_df = detect_cisd(df, swings)
+            recent_bull_cisd = (cisd_df["cisd"] == 1).rolling(5, min_periods=1).max().astype(bool)
+            recent_bear_cisd = (cisd_df["cisd"] == -1).rolling(5, min_periods=1).max().astype(bool)
+            long_mask &= recent_bull_cisd
+            short_mask &= recent_bear_cisd
+
+        # ---------------------------------------------------------------------
+        # Isolated Filter 2: Rejection-Leg FVG Creation
+        # ---------------------------------------------------------------------
+        if use_rejection_fvg_filter and (long_mask | short_mask).any():
+            fvg_df = detect_fvg(df, require_candle_direction=True)
+            recent_bull_fvg = (fvg_df["fvg_type"] == 1).rolling(3, min_periods=1).max().astype(bool)
+            recent_bear_fvg = (fvg_df["fvg_type"] == -1).rolling(3, min_periods=1).max().astype(bool)
+            long_mask &= recent_bull_fvg
+            short_mask &= recent_bear_fvg
+
+        # ---------------------------------------------------------------------
+        # Isolated Filter 3: Impulse Exhaustion (KER <= threshold at reversal)
+        # ---------------------------------------------------------------------
+        if use_exhaustion_ker_filter and (long_mask | short_mask).any():
+            ker_df = compute_kaufman_efficiency(df, period=5)
+            # Exhaustion means prior runaway momentum has decelerated
+            is_exhausted = ker_df["ker_5"] <= ker_exhaustion_max
+            long_mask &= is_exhausted
+            short_mask &= is_exhausted
+
+        # ---------------------------------------------------------------------
+        # Isolated Filter 4: Barbwire Anti-Chop (Bar Overlap <= threshold)
+        # ---------------------------------------------------------------------
+        if use_barbwire_filter and (long_mask | short_mask).any():
+            overlap_df = compute_bar_overlap(df, window=3, threshold=max_bar_overlap / 100.0)
+            not_barbwire = ~overlap_df["is_barbwire_overlap"]
+            long_mask &= not_barbwire
+            short_mask &= not_barbwire
+
         df["direction"] = pd.Series(pd.NA, index=df.index, dtype="object")
         df.loc[long_mask, "direction"] = "long"
         df.loc[short_mask, "direction"] = "short"
-
-        # ---------------------------------------------------------------------
-        # Layer 1: Chop Filter (Institutional Context)
-        # ---------------------------------------------------------------------
-        if p.get("chop_filter", False):
-            # Optimization: only compute for points near potential signals
-            potential_mask = long_mask | short_mask
-            if potential_mask.any():
-                from scripts.libs_py.indicators.market_regime import compute_chop_score
-                
-                # Chop score looks back 14 bars by default
-                results = compute_chop_score(df, lookback=14)
-                df['chop_score_1'] = results['chop_score']
-                df['chop_score_0'] = df['chop_score_1'].shift(1)
-                
-                # Veto if BOTH signal bar and prior bar are below threshold (2.0)
-                # This ensures we aren't entering into deep compression
-                veto_mask = (df['chop_score_1'] < 2.0) & (df['chop_score_0'] < 2.0)
-                
-                df.loc[veto_mask & potential_mask, "direction"] = pd.NA
-                
-                # Log vetoes if in debug/detailed mode
-                vetoes = (veto_mask & potential_mask).sum()
-                if vetoes > 0:
-                    print(f"[FAILED AUCTION] Vetoed {vetoes} signals due to Chop Filter (< 2.0)")
 
         combined = df.dropna(subset=["direction"]).copy()
         if combined.empty:
@@ -82,12 +152,14 @@ class FailedAuctionStrategy:
 
         first_sigs["signal_time"] = first_sigs.index
         first_sigs["entry_price"] = first_sigs["close"]
+        first_sigs["model_name"] = "failed_auction"
 
         stop_long = np.minimum(first_sigs["low"], first_sigs["prior_low"]) - (first_sigs["atr"] * sl_atr_mult)
         stop_short = np.maximum(first_sigs["high"], first_sigs["prior_high"]) + (first_sigs["atr"] * sl_atr_mult)
         first_sigs["stop_price"] = np.where(first_sigs["direction"] == "long", stop_long, stop_short)
 
         risk = (first_sigs["entry_price"] - first_sigs["stop_price"]).abs()
+        first_sigs["risk_pts"] = risk
         first_sigs["target1_price"] = np.where(
             first_sigs["direction"] == "long",
             first_sigs["entry_price"] + (risk * tp_r_mult),
@@ -99,7 +171,10 @@ class FailedAuctionStrategy:
     @staticmethod
     def get_param_grid() -> Dict[str, Any]:
         return {
-            "sl_atr_mult": ("float", 0.4, 1.8),
-            "tp_r_mult": ("float", 1.0, 4.0),
-            "break_buffer": ("float", 0.0, 0.002),
+            "sl_atr_mult": [0.4, 0.8, 1.2],
+            "tp_r_mult": [1.2, 2.0, 3.0],
+            "use_cisd_trigger": [True, False],
+            "use_rejection_fvg_filter": [True, False],
+            "use_exhaustion_ker_filter": [True, False],
+            "use_barbwire_filter": [True, False],
         }

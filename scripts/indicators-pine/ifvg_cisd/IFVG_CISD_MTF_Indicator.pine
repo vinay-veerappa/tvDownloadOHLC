@@ -1,0 +1,389 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Institutional Research Suite / Antigravity
+
+//@version=6
+indicator("Institutional Liquidity · CISD · Entry Indicator (Basis Points MFE)", 
+  shorttitle="Liquidity->CISD->Entry Ind", 
+  overlay=true, 
+  max_boxes_count=500, 
+  max_lines_count=500, 
+  max_labels_count=500, 
+  max_bars_back=5000)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1 — INPUTS & CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════
+var string GRP_LIQ = "1. Liquidity & HTF Catalyst Engine"
+i_checkPdhPdl     = input.bool(true, "Track Daily Liquidity (PDH / PDL)", group=GRP_LIQ)
+i_check4h         = input.bool(true, "Track 4H Swings & 4H FVGs", group=GRP_LIQ)
+i_check1h         = input.bool(true, "Track 1H Swings & 1H FVGs", group=GRP_LIQ)
+i_checkSessions   = input.bool(true, "Track Asia / London Session Extremes", group=GRP_LIQ)
+i_sweepLookback   = input.int(25, "Max Bars Since Liquidity Sweep", minval=5, maxval=100, group=GRP_LIQ)
+
+var string GRP_CISD = "2. Canonical CISD Engine"
+i_useBodyConfirm  = input.bool(true, "Use Candle Body for Delivery Run & Breach", group=GRP_CISD)
+i_maxSeriesBack   = input.int(25, "Max Delivery Series Lookback Bars", minval=5, maxval=50, group=GRP_CISD)
+i_showCisdLines   = input.bool(true, "Draw Active CISD Line", group=GRP_CISD)
+
+var string GRP_ENTRY = "3. Non-Chasing Entry Model"
+i_entryModel      = input.string("FVG_Touch", "Entry Execution Model", options=["FVG_Touch", "FVG_CE_50", "CISD_Level_Retest", "First_Presented_FVG"], group=GRP_ENTRY)
+i_maxEntryWait    = input.int(20, "Max Bars Waiting for Retest", minval=3, maxval=50, group=GRP_ENTRY)
+
+var string GRP_RISK = "4. Structural Stop Loss & Basis Points MFE Targets"
+i_slModel         = input.string("SL1_SweepWick", "Structural Stop Loss Model", options=["SL1_SweepWick", "SL4_CISD_Origin", "FVG_FormingWick"], group=GRP_RISK)
+i_slBufferTicks   = input.int(2, "Stop Invalidation Buffer (Ticks)", minval=0, maxval=10, group=GRP_RISK)
+i_tp1QueenBps     = input.float(10.0, "Target 1: Cover The Queen (Basis Points)", step=1.0, group=GRP_RISK)
+i_tp2MedianMfeBps = input.float(30.0, "Target 2: 50th Percentile Median MFE (Basis Points)", step=5.0, group=GRP_RISK)
+i_tp3FatTailBps   = input.float(70.0, "Target 3: 80th Percentile Fat-Tail MFE (Basis Points)", step=10.0, group=GRP_RISK)
+
+var string GRP_KL = "5. Key Levels Catalog (Last Bar View)"
+i_showKeyLevels   = input.bool(true, "Show Key Levels", group=GRP_KL)
+i_klExtBars       = input.int(30, "Line Extension (Bars Right)", group=GRP_KL)
+i_klLabelOffset   = input.int(15, "Label Offset (Bars Right)", group=GRP_KL)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2 — INSTITUTIONAL KEY LEVELS & HTF CATALYSTS
+// ═══════════════════════════════════════════════════════════════════
+[pdh, pdl]   = request.security(syminfo.tickerid, "D",   [high[1], low[1]], lookahead=barmerge.lookahead_on)
+[pw_h, pw_l] = request.security(syminfo.tickerid, "W",   [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+[h4_h0, h4_l0, h4_h2, h4_l2] = request.security(syminfo.tickerid, "240", [high[1], low[1], high[3], low[3]], lookahead=barmerge.lookahead_on)
+bool h4_bull_fvg = h4_l0 > h4_h2
+bool h4_bear_fvg = h4_h0 < h4_l2
+
+[h1_h0, h1_l0, h1_h2, h1_l2] = request.security(syminfo.tickerid, "60", [high[1], low[1], high[3], low[3]], lookahead=barmerge.lookahead_on)
+bool h1_bull_fvg = h1_l0 > h1_h2
+bool h1_bear_fvg = h1_h0 < h1_l2
+
+kl_hour = hour(time, "America/New_York")
+isAsia   = (kl_hour >= 18) or (kl_hour < 2)
+isLondon = (kl_hour >= 2)  and (kl_hour < 8)
+
+var float asiaH = na, var float asiaL = na
+var float lonH  = na, var float lonL  = na
+var bool  asiaOn = false, var bool lonOn = false
+
+if isAsia
+    if not asiaOn
+        asiaOn := true, asiaH := high, asiaL := low
+    else
+        asiaH := math.max(asiaH, high), asiaL := math.min(asiaL, low)
+else
+    asiaOn := false
+
+if isLondon
+    if not lonOn
+        lonOn := true, lonH := high, lonL := low
+    else
+        lonH := math.max(lonH, high), lonL := math.min(lonL, low)
+else
+    lonOn := false
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3 — STEP 1: LIQUIDITY SWEEP & HTF PD ARRAY TAP
+// ═══════════════════════════════════════════════════════════════════
+bool bslSwept = false
+bool sslSwept = false
+float currentSweepExtreme = na
+
+if i_checkPdhPdl
+    if high > pdh and (close < pdh or open < pdh)
+        bslSwept := true, currentSweepExtreme := high
+    if low < pdl and (close > pdl or open > pdl)
+        sslSwept := true, currentSweepExtreme := low
+
+if i_check4h
+    if h4_bear_fvg and high >= h4_h0 and low <= h4_l2
+        bslSwept := true, currentSweepExtreme := high
+    if h4_bull_fvg and low <= h4_l0 and high >= h4_h2
+        sslSwept := true, currentSweepExtreme := low
+
+if i_check1h
+    if h1_bear_fvg and high >= h1_h0 and low <= h1_l2
+        bslSwept := true, currentSweepExtreme := high
+    if h1_bull_fvg and low <= h1_l0 and high >= h1_h2
+        sslSwept := true, currentSweepExtreme := low
+
+if i_checkSessions
+    if not na(asiaH) and high > asiaH and close < asiaH
+        bslSwept := true, currentSweepExtreme := high
+    if not na(asiaL) and low < asiaL and close > asiaL
+        sslSwept := true, currentSweepExtreme := low
+    if not na(lonH) and high > lonH and close < lonH
+        bslSwept := true, currentSweepExtreme := high
+    if not na(lonL) and low < lonL and close > lonL
+        sslSwept := true, currentSweepExtreme := low
+
+var bool  hasActiveBullSweep = false
+var bool  hasActiveBearSweep = false
+var float activeBullSweepLow = na
+var float activeBearSweepHigh = na
+var int   bullSweepBar = -9999
+var int   bearSweepBar = -9999
+
+if sslSwept
+    hasActiveBullSweep := true
+    activeBullSweepLow := not na(currentSweepExtreme) ? currentSweepExtreme : low
+    bullSweepBar       := bar_index
+
+if bslSwept
+    hasActiveBearSweep  := true
+    activeBearSweepHigh := not na(currentSweepExtreme) ? currentSweepExtreme : high
+    bearSweepBar        := bar_index
+
+if (bar_index - bullSweepBar) > i_sweepLookback
+    hasActiveBullSweep := false
+
+if (bar_index - bearSweepBar) > i_sweepLookback
+    hasActiveBearSweep := false
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4 — STEP 2: CANONICAL BACKWARD-WALKING CISD ENGINE
+// ═══════════════════════════════════════════════════════════════════
+var bool  armedBullCisd     = false
+var bool  armedBearCisd     = false
+var float armedBullHigh     = na
+var float armedBearLow      = na
+var int   armedBullStartBar = na
+var int   armedBearStartBar = na
+var float armedCisdOriginSL = na
+var line  activeCisdLine    = na
+
+if hasActiveBullSweep and (sslSwept or ta.change(hasActiveBullSweep))
+    float sHigh = i_useBodyConfirm ? math.max(open[0], close[0]) : high[0]
+    float sLow  = i_useBodyConfirm ? math.min(open[0], close[0]) : low[0]
+    int   sStart = bar_index
+    
+    for i = 1 to math.min(i_maxSeriesBack, bar_index)
+        bool isDown = close[i] <= open[i]
+        if isDown
+            float bH = i_useBodyConfirm ? math.max(open[i], close[i]) : high[i]
+            float bL = i_useBodyConfirm ? math.min(open[i], close[i]) : low[i]
+            sHigh := math.max(sHigh, bH)
+            sLow  := math.min(sLow,  bL)
+            sStart := bar_index - i
+        else
+            break
+            
+    armedBullCisd     := true
+    armedBullHigh     := sHigh
+    armedBullStartBar := sStart
+    armedCisdOriginSL := sLow
+
+if hasActiveBearSweep and (bslSwept or ta.change(hasActiveBearSweep))
+    float sHigh = i_useBodyConfirm ? math.max(open[0], close[0]) : high[0]
+    float sLow  = i_useBodyConfirm ? math.min(open[0], close[0]) : low[0]
+    int   sStart = bar_index
+    
+    for i = 1 to math.min(i_maxSeriesBack, bar_index)
+        bool isUp = close[i] >= open[i]
+        if isUp
+            float bH = i_useBodyConfirm ? math.max(open[i], close[i]) : high[i]
+            float bL = i_useBodyConfirm ? math.min(open[i], close[i]) : low[i]
+            sHigh := math.max(sHigh, bH)
+            sLow  := math.min(sLow,  bL)
+            sStart := bar_index - i
+        else
+            break
+            
+    armedBearCisd     := true
+    armedBearLow      := sLow
+    armedBearStartBar := sStart
+    armedCisdOriginSL := sHigh
+
+bool bullCisdTrigger = false
+bool bearCisdTrigger = false
+var int currentDeliveryRegime = 0
+
+if armedBullCisd and not na(armedBullHigh)
+    if close > armedBullHigh
+        armedBullCisd         := false
+        bullCisdTrigger       := true
+        currentDeliveryRegime := 1
+        hasActiveBullSweep    := false
+        if i_showCisdLines
+            line.delete(activeCisdLine)
+            activeCisdLine := line.new(x1=armedBullStartBar, y1=armedBullHigh, x2=bar_index + 15, y2=armedBullHigh, color=color.blue, width=2)
+
+if armedBearCisd and not na(armedBearLow)
+    if close < armedBearLow
+        armedBearCisd         := false
+        bearCisdTrigger       := true
+        currentDeliveryRegime := -1
+        hasActiveBearSweep    := false
+        if i_showCisdLines
+            line.delete(activeCisdLine)
+            activeCisdLine := line.new(x1=armedBearStartBar, y1=armedBearLow, x2=bar_index + 15, y2=armedBearLow, color=color.blue, width=2)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5 — STEP 3: NON-CHASING ENTRY ZONE ARMING
+// ═══════════════════════════════════════════════════════════════════
+type PendingEntryZone
+    int   dir
+    float entryLevel
+    float zoneTop
+    float zoneBot
+    float zoneCE
+    float structStopLoss
+    int   armedBar
+    bool  isFilled
+    box   boxObj
+
+var PendingEntryZone activeLongZone  = na
+var PendingEntryZone activeShortZone = na
+
+bool newBullFvg = low[0] > high[2]
+bool newBearFvg = high[0] < low[2]
+
+if bullCisdTrigger
+    float eLevel = armedBullHigh
+    float zTop   = armedBullHigh
+    float zBot   = armedBullHigh - (syminfo.mintick * 4)
+    float zCE    = (zTop + zBot) / 2.0
+    
+    if newBullFvg
+        zTop   := low[0]
+        zBot   := high[2]
+        zCE    := (zTop + zBot) / 2.0
+        eLevel := i_entryModel == "FVG_CE_50" ? zCE : zTop
+    else
+        eLevel := armedBullHigh
+        
+    float slPrice = na
+    if i_slModel == "SL1_SweepWick"
+        slPrice := activeBullSweepLow - (i_slBufferTicks * syminfo.mintick)
+    else if i_slModel == "SL4_CISD_Origin"
+        slPrice := armedCisdOriginSL - (i_slBufferTicks * syminfo.mintick)
+    else
+        slPrice := (newBullFvg ? high[2] : activeBullSweepLow) - (i_slBufferTicks * syminfo.mintick)
+
+    box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#26a69a, 80), border_color=color.teal)
+    activeLongZone := PendingEntryZone.new(dir=1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
+
+if bearCisdTrigger
+    float eLevel = armedBearLow
+    float zTop   = armedBearLow + (syminfo.mintick * 4)
+    float zBot   = armedBearLow
+    float zCE    = (zTop + zBot) / 2.0
+    
+    if newBearFvg
+        zTop   := low[2]
+        zBot   := high[0]
+        zCE    := (zTop + zBot) / 2.0
+        eLevel := i_entryModel == "FVG_CE_50" ? zCE : zBot
+    else
+        eLevel := armedBearLow
+        
+    float slPrice = na
+    if i_slModel == "SL1_SweepWick"
+        slPrice := activeBearSweepHigh + (i_slBufferTicks * syminfo.mintick)
+    else if i_slModel == "SL4_CISD_Origin"
+        slPrice := armedCisdOriginSL + (i_slBufferTicks * syminfo.mintick)
+    else
+        slPrice := (newBearFvg ? low[2] : activeBearSweepHigh) + (i_slBufferTicks * syminfo.mintick)
+
+    box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#ef5350, 80), border_color=color.maroon)
+    activeShortZone := PendingEntryZone.new(dir=-1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6 — RETEST FILL EVALUATION & BASIS POINTS MFE VISUALS
+// ═══════════════════════════════════════════════════════════════════
+calcBpsDist(float price, float bps) =>
+    math.round((price * (bps / 10000.0)) / syminfo.mintick) * syminfo.mintick
+
+bool triggerLongEntry = false
+float fillLongPrice   = na
+float fillLongSL      = na
+
+if not na(activeLongZone) and not activeLongZone.isFilled
+    if (bar_index - activeLongZone.armedBar) <= i_maxEntryWait
+        if low <= activeLongZone.entryLevel and high >= activeLongZone.zoneBot
+            triggerLongEntry := true
+            fillLongPrice    := activeLongZone.entryLevel
+            fillLongSL       := activeLongZone.structStopLoss
+            activeLongZone.isFilled := true
+    else
+        box.delete(activeLongZone.boxObj)
+        activeLongZone := na
+
+bool triggerShortEntry = false
+float fillShortPrice   = na
+float fillShortSL      = na
+
+if not na(activeShortZone) and not activeShortZone.isFilled
+    if (bar_index - activeShortZone.armedBar) <= i_maxEntryWait
+        if high >= activeShortZone.entryLevel and low <= activeShortZone.zoneTop
+            triggerShortEntry := true
+            fillShortPrice    := activeShortZone.entryLevel
+            fillShortSL       := activeShortZone.structStopLoss
+            activeShortZone.isFilled := true
+    else
+        box.delete(activeShortZone.boxObj)
+        activeShortZone := na
+
+plotshape(triggerLongEntry, title="Long Retest Entry", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BUY RETEST")
+plotshape(triggerShortEntry, title="Short Retest Entry", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL RETEST")
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7 — ALERTS (BASIS POINTS)
+// ═══════════════════════════════════════════════════════════════════
+if triggerLongEntry
+    float dist10 = calcBpsDist(fillLongPrice, i_tp1QueenBps)
+    float distMfe = calcBpsDist(fillLongPrice, i_tp2MedianMfeBps)
+    alert("BUY RETEST Filled @ " + str.tostring(fillLongPrice, "#.##") + " | SL: " + str.tostring(fillLongSL, "#.##") + " | Queen TP1 (10 bps): " + str.tostring(fillLongPrice + dist10, "#.##") + " | Median MFE TP2 (30 bps): " + str.tostring(fillLongPrice + distMfe, "#.##"), alert.freq_once_per_bar_close)
+
+if triggerShortEntry
+    float dist10 = calcBpsDist(fillShortPrice, i_tp1QueenBps)
+    float distMfe = calcBpsDist(fillShortPrice, i_tp2MedianMfeBps)
+    alert("SELL RETEST Filled @ " + str.tostring(fillShortPrice, "#.##") + " | SL: " + str.tostring(fillShortSL, "#.##") + " | Queen TP1 (10 bps): " + str.tostring(fillShortPrice - dist10, "#.##") + " | Median MFE TP2 (30 bps): " + str.tostring(fillShortPrice - distMfe, "#.##"), alert.freq_once_per_bar_close)
+
+alertcondition(triggerLongEntry, title="BUY Retest Entry", message="BUY RETEST")
+alertcondition(triggerShortEntry, title="SELL Retest Entry", message="SELL RETEST")
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8 — KEY LEVELS DRAWING (barstate.islast only)
+// ═══════════════════════════════════════════════════════════════════
+kl_drawLine(float lv, color col, string sty, int wid) =>
+    st = sty == "Solid" ? line.style_solid : sty == "Dashed" ? line.style_dashed : line.style_dotted
+    line.new(bar_index - 50, lv, bar_index + i_klExtBars, lv, xloc=xloc.bar_index, color=col, style=st, width=wid)
+
+kl_drawLabel(float lv, string txt, color col) =>
+    label.new(bar_index + i_klLabelOffset, lv, txt, xloc=xloc.bar_index, style=label.style_none, color=color.new(color.white, 100), textcolor=col, size=size.small, textalign=text.align_left)
+
+var line kl_l_pdh = na, var line kl_l_pdl = na, var label kl_lbl_pdh = na, var label kl_lbl_pdl = na
+var line kl_l_4hh = na, var line kl_l_4hl = na, var label kl_lbl_4hh = na, var label kl_lbl_4hl = na
+var line kl_l_ah  = na, var line kl_l_al  = na, var label kl_lbl_ah  = na, var label kl_lbl_al  = na
+var line kl_l_lh  = na, var line kl_l_ll  = na, var label kl_lbl_lh  = na, var label kl_lbl_ll  = na
+
+if barstate.islast and i_showKeyLevels
+    if not na(pdh) and not na(pdl)
+        line.delete(kl_l_pdh), label.delete(kl_lbl_pdh)
+        line.delete(kl_l_pdl), label.delete(kl_lbl_pdl)
+        kl_l_pdh := kl_drawLine(pdh, color.blue, "Solid", 1)
+        kl_lbl_pdh := kl_drawLabel(pdh, "PDH", color.blue)
+        kl_l_pdl := kl_drawLine(pdl, color.blue, "Solid", 1)
+        kl_lbl_pdl := kl_drawLabel(pdl, "PDL", color.blue)
+
+    if not na(h4_h0) and not na(h4_l0)
+        line.delete(kl_l_4hh), label.delete(kl_lbl_4hh)
+        line.delete(kl_l_4hl), label.delete(kl_lbl_4hl)
+        kl_l_4hh := kl_drawLine(h4_h0, color.gray, "Dotted", 1)
+        kl_lbl_4hh := kl_drawLabel(h4_h0, "4H High", color.gray)
+        kl_l_4hl := kl_drawLine(h4_l0, color.gray, "Dotted", 1)
+        kl_lbl_4hl := kl_drawLabel(h4_l0, "4H Low", color.gray)
+
+    if not na(asiaH) and not na(asiaL)
+        line.delete(kl_l_ah), label.delete(kl_lbl_ah)
+        line.delete(kl_l_al), label.delete(kl_lbl_al)
+        kl_l_ah := kl_drawLine(asiaH, color.orange, "Dashed", 1)
+        kl_lbl_ah := kl_drawLabel(asiaH, "Asia High", color.orange)
+        kl_l_al := kl_drawLine(asiaL, color.orange, "Dashed", 1)
+        kl_lbl_al := kl_drawLabel(asiaL, "Asia Low", color.orange)
+
+    if not na(lonH) and not na(lonL)
+        line.delete(kl_l_lh), label.delete(kl_lbl_lh)
+        line.delete(kl_l_ll), label.delete(kl_lbl_ll)
+        kl_l_lh := kl_drawLine(lonH, color.purple, "Dashed", 1)
+        kl_lbl_lh := kl_drawLabel(lonH, "London High", color.purple)
+        kl_l_ll := kl_drawLine(lonL, color.purple, "Dashed", 1)
+        kl_lbl_ll := kl_drawLabel(lonL, "London Low", color.purple)

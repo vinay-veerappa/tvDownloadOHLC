@@ -500,9 +500,34 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // TRADE ENTRY
         // ──────────────────────────────────────────────────────────────
 
+        protected virtual (double stopPts, double tp1Pts, double tp2Pts) GetBaseHitsTargets()
+        {
+            string inst = (Instrument != null && Instrument.MasterInstrument != null) ? Instrument.MasterInstrument.Name.ToUpper() : "NQ";
+            if (inst.Contains("NQ") || inst.Contains("MNQ"))
+                return (10.0, 10.0, 20.0);
+            if (inst.Contains("ES") || inst.Contains("MES"))
+                return (2.50, 2.50, 5.00);
+            if (inst.Contains("YM") || inst.Contains("MYM"))
+                return (15.0, 15.0, 30.0);
+            if (inst.Contains("RTY") || inst.Contains("M2K"))
+                return (1.00, 1.25, 2.50);
+            if (inst.Contains("CL") || inst.Contains("MCL"))
+                return (0.10, 0.15, 0.30);
+            if (inst.Contains("GC") || inst.Contains("MGC"))
+                return (1.00, 1.25, 2.50);
+            return (10.0, 10.0, 20.0); // Default to NQ
+        }
+
         private void EnterTrade(string direction, double entry, double stop, double stopDist)
         {
             string signalName = GetSignalName(direction);
+
+            if (TradePolicy == "BaseHits")
+            {
+                var targets = GetBaseHitsTargets();
+                stopDist = targets.stopPts;
+                stop = direction == "Long" ? entry - targets.stopPts : entry + targets.stopPts;
+            }
 
             entryPrice        = entry;
             initialStopPrice  = stop;
@@ -520,6 +545,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 if (TradePolicy == "FixedTarget")
                     SetProfitTarget(signalName, CalculationMode.Price, entry + TargetRMultiple * riskPoints);
+                else if (TradePolicy == "BaseHits")
+                    SetProfitTarget(signalName, CalculationMode.Price, entry + GetBaseHitsTargets().tp1Pts);
             }
             else
             {
@@ -528,13 +555,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 if (TradePolicy == "FixedTarget")
                     SetProfitTarget(signalName, CalculationMode.Price, entry - TargetRMultiple * riskPoints);
+                else if (TradePolicy == "BaseHits")
+                    SetProfitTarget(signalName, CalculationMode.Price, entry - GetBaseHitsTargets().tp1Pts);
             }
 
             todayTradeCount++;
 
-            Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | Risk {4:C} | Trade #{5}",
+            Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | Risk {4:C} | Trade #{5} | Policy {6}",
                 GetStrategyName(), direction, entry, stop,
-                stopDist * GetPointValue(), todayTradeCount));
+                stopDist * GetPointValue(), todayTradeCount, TradePolicy));
         }
 
         // ──────────────────────────────────────────────────────────────
@@ -551,8 +580,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             // If a flatten has already been submitted (tradeIsActive=false),
             // skip trade management — the exit order is pending fill and
-            // managed orders have been cancelled. Running the daily max loss
-            // or breakeven trail here would re-flatten with a different signal.
+            // managed orders have been cancelled.
             if (!tradeIsActive)
                 return;
 
@@ -564,13 +592,35 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 FlattenPosition("Daily max loss breached (with open PnL)");
                 isDoneForDay = true;
-                // Notify gatekeeper so other strategies on this account also stop
                 RiskGatekeeper.MarkDailyMaxLossBreached(Account.Name);
                 return;
             }
 
             if (TradePolicy == "BreakevenTrail")
                 ManageBreakevenTrail(currentPrice);
+            else if (TradePolicy == "BaseHits")
+                ManageBaseHits(currentPrice);
+        }
+
+        private void ManageBaseHits(double currentPrice)
+        {
+            string signalName = GetSignalName(tradeDirection);
+            var targets = GetBaseHitsTargets();
+
+            if (!breakevenMoved)
+            {
+                bool triggerBE = tradeDirection == "Long"
+                    ? (currentPrice >= entryPrice + (targets.tp1Pts * 0.8))
+                    : (currentPrice <= entryPrice - (targets.tp1Pts * 0.8));
+
+                if (triggerBE)
+                {
+                    breakevenMoved = true;
+                    currentStopPrice = entryPrice;
+                    SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                    Print(string.Format("[{0}] BaseHits Breakeven moved @ {1:F2}", GetStrategyName(), entryPrice));
+                }
+            }
         }
 
         private void ManageBreakevenTrail(double currentPrice)

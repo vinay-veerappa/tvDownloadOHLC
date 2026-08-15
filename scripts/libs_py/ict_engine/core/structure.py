@@ -85,6 +85,195 @@ def detect_structure_breaks(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.Data
         "structure_type": structure_type,
     }, index=ohlc.index)
 
+import numba
+from typing import Tuple
+
+
+@numba.njit(fastmath=True)
+def _compute_cisd_neo_jit(
+    open_arr: np.ndarray,
+    high_arr: np.ndarray,
+    low_arr: np.ndarray,
+    close_arr: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Fast JIT kernel for Neo/Canonical CISD detection.
+    Evaluates multi-bar pullbacks, structure expansion breaks, and body-close level breaches.
+    """
+    n = len(open_arr)
+    cisd_event = np.zeros(n, dtype=np.int8)
+    cisd_state = np.zeros(n, dtype=np.int8)
+    active_bull_lvl = np.full(n, np.nan, dtype=np.float64)
+    active_bear_lvl = np.full(n, np.nan, dtype=np.float64)
+    struct_top = np.zeros(n, dtype=np.float64)
+    struct_bot = np.zeros(n, dtype=np.float64)
+
+    if n < 2:
+        return cisd_event, cisd_state, active_bull_lvl, active_bear_lvl, struct_top, struct_bot
+
+    curr_struct_top = high_arr[0]
+    curr_struct_bot = low_arr[0]
+
+    is_bullish_pb = False
+    is_bearish_pb = False
+
+    potential_top_price = np.nan
+    potential_bot_price = np.nan
+    bullish_break_idx = -1
+    bearish_break_idx = -1
+
+    armed_bull_level = np.nan
+    armed_bear_level = np.nan
+    armed_bull_completed = True
+    armed_bear_completed = True
+
+    current_regime = 0
+
+    for t in range(1, n):
+        o = open_arr[t]
+        h = high_arr[t]
+        l = low_arr[t]
+        c = close_arr[t]
+
+        o_prev = open_arr[t - 1]
+        c_prev = close_arr[t - 1]
+
+        # 1. Pullback detection on previous bar
+        bearish_pb_detected = c_prev > o_prev  # Prior candle was green
+        bullish_pb_detected = c_prev < o_prev  # Prior candle was red
+
+        # 2. Initiate pullback state
+        if bearish_pb_detected and not is_bearish_pb:
+            is_bearish_pb = True
+            potential_top_price = o_prev
+            bullish_break_idx = t - 1
+
+        if bullish_pb_detected and not is_bullish_pb:
+            is_bullish_pb = True
+            potential_bot_price = o_prev
+            bearish_break_idx = t - 1
+
+        # 3. Dynamically update potential anchor open during multi-bar pullbacks
+        if is_bullish_pb:
+            if o < potential_bot_price or np.isnan(potential_bot_price):
+                potential_bot_price = o
+                bearish_break_idx = t
+            elif (c < o) and (o > potential_bot_price):
+                potential_bot_price = o
+                bearish_break_idx = t
+
+        if is_bearish_pb:
+            if o > potential_top_price or np.isnan(potential_top_price):
+                potential_top_price = o
+                bullish_break_idx = t
+            elif (c > o) and (o < potential_top_price):
+                potential_top_price = o
+                bullish_break_idx = t
+
+        # 4. Structure Expansion & Level Arming
+        # Bearish Structure Break (New Low) -> Arms +CISD Resistance Level
+        if l < curr_struct_bot:
+            curr_struct_bot = l
+            if is_bearish_pb and (t != bullish_break_idx):
+                h1 = high_arr[bullish_break_idx]
+                h2 = high_arr[bullish_break_idx + 1] if (bullish_break_idx + 1 < t) else h1
+                curr_struct_top = max(h1, h2)
+                is_bearish_pb = False
+                armed_bull_level = potential_top_price
+                armed_bull_completed = False
+            elif (c_prev > o_prev) and (c < o):
+                curr_struct_top = high_arr[t - 1]
+                is_bearish_pb = False
+                armed_bull_level = potential_top_price
+                armed_bull_completed = False
+
+        # Bullish Structure Break (New High) -> Arms -CISD Support Level
+        if h > curr_struct_top:
+            curr_struct_top = h
+            if is_bullish_pb and (t != bearish_break_idx):
+                l1 = low_arr[bearish_break_idx]
+                l2 = low_arr[bearish_break_idx + 1] if (bearish_break_idx + 1 < t) else l1
+                curr_struct_bot = min(l1, l2)
+                is_bullish_pb = False
+                armed_bear_level = potential_bot_price
+                armed_bear_completed = False
+            elif (c_prev < o_prev) and (c > o):
+                curr_struct_bot = low_arr[t - 1]
+                is_bullish_pb = False
+                armed_bear_level = potential_bot_price
+                armed_bear_completed = False
+
+        # 5. Check Breach of Armed Anchor Levels (The CISD State Flip)
+        # Bearish CISD: Body-close below armed support floor (-CISD)
+        if not armed_bear_completed and not np.isnan(armed_bear_level):
+            if c < armed_bear_level:
+                armed_bear_completed = True
+                cisd_event[t] = -1
+                current_regime = -1
+
+        # Bullish CISD: Body-close above armed resistance ceiling (+CISD)
+        if not armed_bull_completed and not np.isnan(armed_bull_level):
+            if c > armed_bull_level:
+                armed_bull_completed = True
+                cisd_event[t] = 1
+                current_regime = 1
+
+        cisd_state[t] = current_regime
+        active_bull_lvl[t] = armed_bull_level if not armed_bull_completed else np.nan
+        active_bear_lvl[t] = armed_bear_level if not armed_bear_completed else np.nan
+        struct_top[t] = curr_struct_top
+        struct_bot[t] = curr_struct_bot
+
+    return cisd_event, cisd_state, active_bull_lvl, active_bear_lvl, struct_top, struct_bot
+
+
+@validate_ohlc(input_type="ohlc")
+def detect_cisd_neo(ohlc: pd.DataFrame) -> pd.DataFrame:
+    """
+    Authoritative CISD (Change in State of Delivery) Engine - Neo/Institutional Standard.
+
+    Detects true Changes in State of Delivery (CISD) by:
+    1. Tracking multi-bar pullback delivery runs (recording the deepest open price).
+    2. Arming anchor levels ONLY upon structural impulse expansions (new swing highs/lows).
+    3. Confirming the state flip when price body-closes through the armed anchor level.
+
+    Parameters
+    ----------
+    ohlc : pd.DataFrame
+        DataFrame with columns ['open', 'high', 'low', 'close'] and DatetimeIndex.
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+        - 'cisd_event'        : int8 (1 = Bullish CISD trigger on this bar, -1 = Bearish CISD trigger, 0 = None)
+        - 'cisd_state'        : int8 (1 = Bullish delivery regime, -1 = Bearish delivery regime, 0 = Neutral)
+        - 'active_bull_level' : float (Active +CISD resistance ceiling level)
+        - 'active_bear_level' : float (Active -CISD support floor level)
+        - 'structure_top'     : float (Running structural swing high)
+        - 'structure_bottom'  : float (Running structural swing low)
+    """
+    open_arr = np.ascontiguousarray(ohlc["open"].values, dtype=np.float64)
+    high_arr = np.ascontiguousarray(ohlc["high"].values, dtype=np.float64)
+    low_arr = np.ascontiguousarray(ohlc["low"].values, dtype=np.float64)
+    close_arr = np.ascontiguousarray(ohlc["close"].values, dtype=np.float64)
+
+    events, states, bull_lvls, bear_lvls, s_tops, s_bots = _compute_cisd_neo_jit(
+        open_arr, high_arr, low_arr, close_arr
+    )
+
+    return pd.DataFrame(
+        {
+            "cisd_event": events,
+            "cisd_state": states,
+            "active_bull_level": bull_lvls,
+            "active_bear_level": bear_lvls,
+            "structure_top": s_tops,
+            "structure_bottom": s_bots,
+        },
+        index=ohlc.index,
+    )
+
+
 @validate_ohlc(input_type="ohlc")
 def detect_cisd(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
     """
@@ -125,6 +314,7 @@ def detect_cisd(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
         "cisd": cisd_type,
         "extreme_ref": curr_extreme_open
     }, index=ohlc.index)
+
 
 
 @validate_ohlc(input_type="ohlc")
