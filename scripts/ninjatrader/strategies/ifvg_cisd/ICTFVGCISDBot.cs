@@ -42,8 +42,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public double Target2MedianMfeBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "80th %ile Fat-Tail MFE (Basis Points)", Order = 6, GroupName = "4. Basis Points Targets")]
+        [Display(Name = "PM Afternoon MFE (Basis Points)", Order = 6, GroupName = "4. Basis Points Targets")]
+        public double Target2PmMfeBps { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "80th %ile Fat-Tail MFE (Basis Points)", Order = 7, GroupName = "4. Basis Points Targets")]
         public double Target3FatTailBps { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Hard Risk Ceiling (Basis Points)", Order = 8, GroupName = "5. Risk Management")]
+        public double MaxRiskBps { get; set; }
         #endregion
 
         #region Internal State Fields
@@ -87,7 +95,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description = "Pure Liquidity -> CISD -> Retest Entry Strategy with Intraday Multi-Trade Support & Basis Points MFE Scaling";
+            Description = "Institutional Liquidity -> CISD -> 50% CE Retest Entry with SL-4 Origin Stop and Basis Points MFE Scaling";
             Name = "ICTFVGCISDBot";
 
             HtfPeriodMinutes = 15;
@@ -96,7 +104,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             Target1QueenBps = 10.0;     // 10 bps scale-out to make trade risk-free
             Target2MedianMfeBps = 30.0; // 30 bps (50th percentile MFE)
+            Target2PmMfeBps = 50.0;     // 50 bps PM expansion target
             Target3FatTailBps = 70.0;   // 70 bps (80th percentile Fat-Tail MFE)
+            MaxRiskBps = 15.0;          // 15 bps Hard Risk Ceiling
 
             DailyMaxLoss = 1000;
             MaxTradesPerDay = 5;
@@ -208,7 +218,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 if (l0 < h4_l0 && c0 > h4_l0) sslSwept = true;
             }
 
-            // Daily Sweeps (Series 4)
+            // Daily PDH / PDL Sweeps (Series 4)
             if (CurrentBars[4] >= 2)
             {
                 double pdh = Highs[4][1];
@@ -231,8 +241,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 lastBearSweepBar = CurrentBars[1];
             }
 
-            if (CurrentBars[1] - lastBullSweepBar > SweepLookbackBars) hasActiveBullSweep = false;
-            if (CurrentBars[1] - lastBearSweepBar > SweepLookbackBars) hasActiveBearSweep = false;
+            if (CurrentBars[1] - lastBullSweepBar > SweepLookbackBars)
+                hasActiveBullSweep = false;
+            if (CurrentBars[1] - lastBearSweepBar > SweepLookbackBars)
+                hasActiveBearSweep = false;
 
             // 2. STEP 2: Canonical Backward-Walking CISD Engine
             if (hasActiveBullSweep && sslSwept)
@@ -281,7 +293,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 armedCisdOriginSL = sHigh;
             }
 
-            // CISD Delivery Breach & Continuation FVGs
+            // CISD Delivery Breach & 50% Consequent Encroachment (CE) Arming
             bool newBullFvg = l0 > h2;
             bool newBearFvg = h0 < l2;
 
@@ -292,13 +304,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 currentDeliveryRegime = 1;
                 hasActiveBullSweep = false;
 
-                double ePrice = newBullFvg ? l0 : armedBullHigh;
-                double slPrice = !double.IsNaN(activeBullSweepLow) ? activeBullSweepLow - (2 * TickSize) : Lows[1][1] - (2 * TickSize);
+                double ePrice = newBullFvg ? ((l0 + h2) / 2.0) : armedBullHigh;
+                double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL - (2 * TickSize) : Lows[1][1] - (2 * TickSize);
 
-                hasPendingLongRetest = true;
-                pendingLongEntryPrice = ePrice;
-                pendingLongSL = slPrice;
-                pendingLongArmedBar = CurrentBars[1];
+                double riskBps = ((ePrice - slPrice) / ePrice) * 10000.0;
+                if (riskBps <= MaxRiskBps)
+                {
+                    hasPendingLongRetest = true;
+                    pendingLongEntryPrice = ePrice;
+                    pendingLongSL = slPrice;
+                    pendingLongArmedBar = CurrentBars[1];
+                }
             }
 
             if ((armedBearCisd && !double.IsNaN(armedBearLow) && c0 < armedBearLow) || 
@@ -308,13 +324,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 currentDeliveryRegime = -1;
                 hasActiveBearSweep = false;
 
-                double ePrice = newBearFvg ? h0 : armedBearLow;
-                double slPrice = !double.IsNaN(activeBearSweepHigh) ? activeBearSweepHigh + (2 * TickSize) : Highs[1][1] + (2 * TickSize);
+                double ePrice = newBearFvg ? ((l2 + h0) / 2.0) : armedBearLow;
+                double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL + (2 * TickSize) : Highs[1][1] + (2 * TickSize);
 
-                hasPendingShortRetest = true;
-                pendingShortEntryPrice = ePrice;
-                pendingShortSL = slPrice;
-                pendingShortArmedBar = CurrentBars[1];
+                double riskBps = ((slPrice - ePrice) / ePrice) * 10000.0;
+                if (riskBps <= MaxRiskBps)
+                {
+                    hasPendingShortRetest = true;
+                    pendingShortEntryPrice = ePrice;
+                    pendingShortSL = slPrice;
+                    pendingShortArmedBar = CurrentBars[1];
+                }
             }
         }
 

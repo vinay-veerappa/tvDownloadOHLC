@@ -28,14 +28,17 @@ i_maxSeriesBack   = input.int(25, "Max Delivery Series Lookback Bars", minval=5,
 i_showCisdLines   = input.bool(true, "Draw Active CISD Line", group=GRP_CISD)
 
 var string GRP_ENTRY = "3. Non-Chasing Entry Model"
-i_entryModel      = input.string("FVG_Touch", "Entry Execution Model", options=["FVG_Touch", "FVG_CE_50", "CISD_Level_Retest", "First_Presented_FVG"], group=GRP_ENTRY)
+i_entryModel      = input.string("FVG_CE_50", "Entry Execution Model", options=["FVG_CE_50", "FVG_Touch", "CISD_Level_Retest", "First_Presented_FVG"], group=GRP_ENTRY)
 i_maxEntryWait    = input.int(20, "Max Bars Waiting for Retest", minval=3, maxval=50, group=GRP_ENTRY)
 
 var string GRP_RISK = "4. Structural Stop Loss & Basis Points MFE Targets"
-i_slModel         = input.string("SL1_SweepWick", "Structural Stop Loss Model", options=["SL1_SweepWick", "SL4_CISD_Origin", "FVG_FormingWick"], group=GRP_RISK)
+i_slModel         = input.string("SL4_CISD_Origin", "Structural Stop Loss Model", options=["SL4_CISD_Origin", "SL1_SweepWick", "FVG_FormingWick"], group=GRP_RISK)
 i_slBufferTicks   = input.int(2, "Stop Invalidation Buffer (Ticks)", minval=0, maxval=10, group=GRP_RISK)
+i_maxRiskBps      = input.float(15.0, "Hard Risk Ceiling (Basis Points)", step=1.0, group=GRP_RISK, tooltip="Skips setup if SL distance > 15 bps (eliminates uncompensated loser tail drag).")
+
 i_tp1QueenBps     = input.float(10.0, "Target 1: Cover The Queen (Basis Points)", step=1.0, group=GRP_RISK)
-i_tp2MedianMfeBps = input.float(30.0, "Target 2: 50th Percentile Median MFE (Basis Points)", step=5.0, group=GRP_RISK)
+i_tp2MedianMfeBps = input.float(30.0, "Target 2: Standard MFE (Basis Points)", step=5.0, group=GRP_RISK)
+i_tp2PmMfeBps     = input.float(50.0, "Target 2 PM: Afternoon Expansion (Basis Points)", step=5.0, group=GRP_RISK)
 i_tp3FatTailBps   = input.float(70.0, "Target 3: 80th Percentile Fat-Tail MFE (Basis Points)", step=10.0, group=GRP_RISK)
 
 var string GRP_KL = "5. Key Levels Catalog (Last Bar View)"
@@ -315,8 +318,10 @@ if bullCisdTrigger or (currentDeliveryRegime == 1 and newBullFvg and na(activeLo
     else
         slPrice := (newBullFvg ? high[2] : activeBullSweepLow) - (i_slBufferTicks * syminfo.mintick)
 
-    box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#26a69a, 80), border_color=color.teal)
-    activeLongZone := PendingEntryZone.new(dir=1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
+    float riskBps = ((eLevel - slPrice) / eLevel) * 10000.0
+    if riskBps <= i_maxRiskBps
+        box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#26a69a, 80), border_color=color.teal)
+        activeLongZone := PendingEntryZone.new(dir=1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
 
 if bearCisdTrigger or (currentDeliveryRegime == -1 and newBearFvg and na(activeShortZone))
     float eLevel = armedBearLow
@@ -340,8 +345,10 @@ if bearCisdTrigger or (currentDeliveryRegime == -1 and newBearFvg and na(activeS
     else
         slPrice := (newBearFvg ? low[2] : activeBearSweepHigh) + (i_slBufferTicks * syminfo.mintick)
 
-    box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#ef5350, 80), border_color=color.maroon)
-    activeShortZone := PendingEntryZone.new(dir=-1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
+    float riskBps = ((slPrice - eLevel) / eLevel) * 10000.0
+    if riskBps <= i_maxRiskBps
+        box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#ef5350, 80), border_color=color.maroon)
+        activeShortZone := PendingEntryZone.new(dir=-1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 6 — RETEST FILL EVALUATION & BASIS POINTS MFE VISUALS

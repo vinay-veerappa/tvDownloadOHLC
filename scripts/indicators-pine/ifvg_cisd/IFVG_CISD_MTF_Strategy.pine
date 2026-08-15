@@ -37,16 +37,18 @@ i_maxSeriesBack   = input.int(25, "Max Delivery Series Lookback Bars", minval=5,
 i_showCisdLines   = input.bool(true, "Draw Active CISD Line", group=GRP_CISD)
 
 var string GRP_ENTRY = "3. Non-Chasing Entry Model"
-i_entryModel      = input.string("FVG_Touch", "Entry Execution Model", options=["FVG_Touch", "FVG_CE_50", "CISD_Level_Retest", "First_Presented_FVG"], group=GRP_ENTRY)
+i_entryModel      = input.string("FVG_CE_50", "Entry Execution Model", options=["FVG_CE_50", "FVG_Touch", "CISD_Level_Retest", "First_Presented_FVG"], group=GRP_ENTRY)
 i_maxEntryWait    = input.int(20, "Max Bars Waiting for Retest", minval=3, maxval=50, group=GRP_ENTRY)
 
 var string GRP_RISK = "4. Structural Stop Loss & Basis Points MFE Targets"
-i_slModel         = input.string("SL1_SweepWick", "Structural Stop Loss Model", options=["SL1_SweepWick", "SL4_CISD_Origin", "FVG_FormingWick"], group=GRP_RISK)
+i_slModel         = input.string("SL4_CISD_Origin", "Structural Stop Loss Model", options=["SL4_CISD_Origin", "SL1_SweepWick", "FVG_FormingWick"], group=GRP_RISK)
 i_slBufferTicks   = input.int(2, "Stop Invalidation Buffer (Ticks)", minval=0, maxval=10, group=GRP_RISK)
+i_maxRiskBps      = input.float(15.0, "Hard Risk Ceiling (Basis Points)", step=1.0, group=GRP_RISK, tooltip="Skips setup if SL distance > 15 bps (eliminates uncompensated loser tail drag).")
 
 // Pure Basis Points (bps) Target Matrix (1 bps = 0.01% of entry price)
 i_tp1QueenBps     = input.float(10.0, "Target 1: Cover The Queen (Basis Points)", step=1.0, group=GRP_RISK, tooltip="Exact 10 bps scale-out to make trade risk-free.")
-i_tp2MedianMfeBps = input.float(30.0, "Target 2: 50th Percentile Median MFE (Basis Points)", step=5.0, group=GRP_RISK, tooltip="Typical 45th-55th percentile MFE expansion (e.g. 30 bps).")
+i_tp2MedianMfeBps = input.float(30.0, "Target 2: Standard MFE (Basis Points)", step=5.0, group=GRP_RISK, tooltip="Standard 45th-55th percentile MFE expansion (e.g. 30 bps).")
+i_tp2PmMfeBps     = input.float(50.0, "Target 2 PM: Afternoon Expansion (Basis Points)", step=5.0, group=GRP_RISK, tooltip="Afternoon 13:30-15:30 ET high-conviction expansion target.")
 i_tp3FatTailBps   = input.float(70.0, "Target 3: 80th Percentile Fat-Tail MFE (Basis Points)", step=10.0, group=GRP_RISK, tooltip="Extended 70th-80th+ percentile MFE expansion for DNP/DWP trend days.")
 
 var string GRP_PROP = "5. Session Rules"
@@ -340,8 +342,10 @@ if bullCisdTrigger or (currentDeliveryRegime == 1 and newBullFvg and na(activeLo
     else
         slPrice := (newBullFvg ? high[2] : activeBullSweepLow) - (i_slBufferTicks * syminfo.mintick)
 
-    box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#26a69a, 80), border_color=color.teal)
-    activeLongZone := PendingEntryZone.new(dir=1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
+    float riskBps = ((eLevel - slPrice) / eLevel) * 10000.0
+    if riskBps <= i_maxRiskBps
+        box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#26a69a, 80), border_color=color.teal)
+        activeLongZone := PendingEntryZone.new(dir=1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
 
 // Arm Short Entry upon Bearish CISD OR First Presented FVG in Bearish Regime
 if bearCisdTrigger or (currentDeliveryRegime == -1 and newBearFvg and na(activeShortZone) and strategy.position_size == 0)
@@ -366,14 +370,17 @@ if bearCisdTrigger or (currentDeliveryRegime == -1 and newBearFvg and na(activeS
     else
         slPrice := (newBearFvg ? low[2] : activeBearSweepHigh) + (i_slBufferTicks * syminfo.mintick)
 
-    box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#ef5350, 80), border_color=color.maroon)
-    activeShortZone := PendingEntryZone.new(dir=-1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
+    float riskBps = ((slPrice - eLevel) / eLevel) * 10000.0
+    if riskBps <= i_maxRiskBps
+        box bObj = box.new(left=bar_index, top=zTop, right=bar_index + 15, bottom=zBot, bgcolor=color.new(#ef5350, 80), border_color=color.maroon)
+        activeShortZone := PendingEntryZone.new(dir=-1, entryLevel=eLevel, zoneTop=zTop, zoneBot=zBot, zoneCE=zCE, structStopLoss=slPrice, armedBar=bar_index, isFilled=false, boxObj=bObj)
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 6 — STEP 4 & 5: RETEST EXECUTION & BASIS POINTS MFE BRACKET
 // ═══════════════════════════════════════════════════════════════════
 inRthSession = not na(time(timeframe.period, i_sessionRTH, "America/New_York"))
 isEodBar     = not na(time(timeframe.period, "1555-1600:23456", "America/New_York"))
+isPmMacro    = not na(time(timeframe.period, "1330-1530:23456", "America/New_York"))
 
 var int dailyTrades = 0
 if ta.change(time("D")) != 0
@@ -423,15 +430,16 @@ if triggerLongEntry
     activeEntryPrice := fillLongPrice
     activeStopLoss   := fillLongSL
     
+    float curRunnerBps  = isPmMacro ? i_tp2PmMfeBps : i_tp2MedianMfeBps
     float distTp1_Queen = calcBpsDistance(activeEntryPrice, i_tp1QueenBps)
-    float distTp2_Mfe   = calcBpsDistance(activeEntryPrice, i_tp2MedianMfeBps)
+    float distTp2_Mfe   = calcBpsDistance(activeEntryPrice, curRunnerBps)
     
     activeTP1_Queen  := activeEntryPrice + distTp1_Queen
     activeTP2_Runner := activeEntryPrice + distTp2_Mfe
     dailyTrades      += 1
 
     strategy.entry("Long_Queen", strategy.long, qty=1, limit=activeEntryPrice, comment="L Queen (" + str.tostring(i_tp1QueenBps, "#") + "bps)")
-    strategy.entry("Long_Runner", strategy.long, qty=1, limit=activeEntryPrice, comment="L Runner (" + str.tostring(i_tp2MedianMfeBps, "#") + "bps)")
+    strategy.entry("Long_Runner", strategy.long, qty=1, limit=activeEntryPrice, comment="L Runner (" + str.tostring(curRunnerBps, "#") + "bps)")
     strategy.exit("Exit_Queen", from_entry="Long_Queen", limit=activeTP1_Queen, stop=activeStopLoss, comment="Queen Covered (" + str.tostring(distTp1_Queen, "#.#") + "pts)")
     strategy.exit("Exit_Runner", from_entry="Long_Runner", limit=activeTP2_Runner, stop=activeStopLoss, comment="TP2 MFE (" + str.tostring(distTp2_Mfe, "#.#") + "pts)")
 
@@ -439,15 +447,16 @@ if triggerShortEntry
     activeEntryPrice := fillShortPrice
     activeStopLoss   := fillShortSL
     
+    float curRunnerBps  = isPmMacro ? i_tp2PmMfeBps : i_tp2MedianMfeBps
     float distTp1_Queen = calcBpsDistance(activeEntryPrice, i_tp1QueenBps)
-    float distTp2_Mfe   = calcBpsDistance(activeEntryPrice, i_tp2MedianMfeBps)
+    float distTp2_Mfe   = calcBpsDistance(activeEntryPrice, curRunnerBps)
     
     activeTP1_Queen  := activeEntryPrice - distTp1_Queen
     activeTP2_Runner := activeEntryPrice - distTp2_Mfe
     dailyTrades      += 1
 
     strategy.entry("Short_Queen", strategy.short, qty=1, limit=activeEntryPrice, comment="S Queen (" + str.tostring(i_tp1QueenBps, "#") + "bps)")
-    strategy.entry("Short_Runner", strategy.short, qty=1, limit=activeEntryPrice, comment="S Runner (" + str.tostring(i_tp2MedianMfeBps, "#") + "bps)")
+    strategy.entry("Short_Runner", strategy.short, qty=1, limit=activeEntryPrice, comment="S Runner (" + str.tostring(curRunnerBps, "#") + "bps)")
     strategy.exit("Exit_Queen", from_entry="Short_Queen", limit=activeTP1_Queen, stop=activeStopLoss, comment="Queen Covered (" + str.tostring(distTp1_Queen, "#.#") + "pts)")
     strategy.exit("Exit_Runner", from_entry="Short_Runner", limit=activeTP2_Runner, stop=activeStopLoss, comment="TP2 MFE (" + str.tostring(distTp2_Mfe, "#.#") + "pts)")
 
