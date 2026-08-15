@@ -75,6 +75,13 @@ DEFAULT_HEARTBEAT_MINUTES = 60
 # is not running -- not that the market is quiet.
 GUARD_STALE_AFTER_SECONDS = 180
 
+# ⚠️ EXIT CODES ARE PART OF THIS MODULE'S CONTRACT WITH ITS SUPERVISOR.
+# `start_alert_relay.bat` restarts the relay on ANY other exit, because a crashed relay is
+# a silently dead alert channel. This code means "the problem is configuration and
+# restarting cannot fix it" -- without it, the keep-alive loop becomes an infinite respawn
+# that looks busy and delivers nothing.
+EXIT_CONFIG_REFUSED = 2
+
 SUPPORTED_CHANNELS = ("discord", "sms")
 NOT_IMPLEMENTED_CHANNELS = {
     "telegram": (
@@ -274,10 +281,18 @@ def run(
         # ⚠️ REFUSE, do not start. A relay that runs with no destination delivers nothing
         # and looks exactly like a quiet trading day -- which is the failure this component
         # is built to make impossible.
-        raise SystemExit(
-            f"no webhook URL for key {webhook_key!r}. Refusing to start: a relay with no "
-            f"destination is silently indistinguishable from a working one."
+        #
+        # ⚠️ EXIT CODE 2, AND THE CODE IS LOAD-BEARING. The supervisor restarts this process
+        # on any other exit, because a crash must not silently end the alert channel. A
+        # misconfiguration is the one failure restarting CANNOT fix, so it gets a code the
+        # supervisor is told to stop on -- otherwise the "keep it alive" loop becomes an
+        # infinite respawn that fills a log and still delivers nothing.
+        log.error(
+            "no webhook URL for key %r. Refusing to start: a relay with no destination is "
+            "silently indistinguishable from a working one.",
+            webhook_key,
         )
+        raise SystemExit(EXIT_CONFIG_REFUSED)
 
     outbox = guard_dir / OUTBOX_NAME
     cursor_path = guard_dir / CURSOR_NAME
@@ -332,7 +347,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    resolve_channel(args.transport)
+    # An unimplemented or unknown transport is configuration, not a transient fault, so it
+    # exits with the code the supervisor stops on rather than being respawned forever.
+    try:
+        resolve_channel(args.transport)
+    except (NotImplementedError, ValueError) as exc:
+        log.error("%s", exc)
+        return EXIT_CONFIG_REFUSED
 
     delivered = run(
         guard_dir=args.guard_dir,
