@@ -87,9 +87,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // Session H/L
         private double asiaHigh, asiaLow;
         private double lonHigh, lonLow;
-        private double nyamHigh, nyamLow;
-        private bool wasAsia, wasLon, wasNyam;
-        private bool hasAsia, hasLon, hasNyam;
+        private bool wasAsia, wasLon;
+        private bool hasAsia, hasLon;
 
         // Liquidity Sweep State
         private bool hasBullSweep;
@@ -183,9 +182,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 prev4hHigh = double.NaN;
                 prev4hLow = double.NaN;
 
-                asiaHigh = asiaLow = lonHigh = lonLow = nyamHigh = nyamLow = double.NaN;
-                wasAsia = wasLon = wasNyam = false;
-                hasAsia = hasLon = hasNyam = false;
+                asiaHigh = asiaLow = lonHigh = lonLow = double.NaN;
+                wasAsia = wasLon = false;
+                hasAsia = hasLon = false;
 
                 hasBullSweep = false;
                 hasBearSweep = false;
@@ -300,7 +299,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             bool isAsia = (hhmm >= 1800 || hhmm < 200);
             bool isLon = (hhmm >= 200 && hhmm < 800);
-            bool isNyam = (hhmm >= 930 && hhmm < 1000);
 
             if (isAsia && !wasAsia) { asiaHigh = h0; asiaLow = l0; hasAsia = true; }
             else if (isAsia) { if (h0 > asiaHigh) asiaHigh = h0; if (l0 < asiaLow) asiaLow = l0; }
@@ -309,10 +307,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (isLon && !wasLon) { lonHigh = h0; lonLow = l0; hasLon = true; }
             else if (isLon) { if (h0 > lonHigh) lonHigh = h0; if (l0 < lonLow) lonLow = l0; }
             wasLon = isLon;
-
-            if (isNyam && !wasNyam) { nyamHigh = h0; nyamLow = l0; hasNyam = true; }
-            else if (isNyam) { if (h0 > nyamHigh) nyamHigh = h0; if (l0 < nyamLow) nyamLow = l0; }
-            wasNyam = isNyam;
 
             // === STEP 1: EOD FLATTEN (15:55 ET) ===
             if (timeNum >= FlattenBy * 100)
@@ -438,15 +432,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
             }
 
-            // Session Sweeps
+            // Session Sweeps — only sweep COMPLETED session levels
+            // Asia H/L: only valid after Asia session ends (02:00 ET)
+            // London H/L: only valid after London session ends (08:00 ET)
+            // NYAM H/L: removed — not an ICT institutional level
             if (CheckSessions)
             {
-                if (!bslSwept && hasAsia && !double.IsNaN(asiaHigh) && h0 > asiaHigh && (c0 < asiaHigh || o0 < asiaHigh)) { bslSwept = true; curLevel = "Asia_H"; }
-                if (!sslSwept && hasAsia && !double.IsNaN(asiaLow) && l0 < asiaLow && (c0 > asiaLow || o0 > asiaLow)) { sslSwept = true; curLevel = "Asia_L"; }
-                if (!bslSwept && hasLon && !double.IsNaN(lonHigh) && h0 > lonHigh && (c0 < lonHigh || o0 < lonHigh)) { bslSwept = true; curLevel = "Lon_H"; }
-                if (!sslSwept && hasLon && !double.IsNaN(lonLow) && l0 < lonLow && (c0 > lonLow || o0 > lonLow)) { sslSwept = true; curLevel = "Lon_L"; }
-                if (!bslSwept && hasNyam && !double.IsNaN(nyamHigh) && h0 > nyamHigh && (c0 < nyamHigh || o0 < nyamHigh)) { bslSwept = true; curLevel = "NYAM_H"; }
-                if (!sslSwept && hasNyam && !double.IsNaN(nyamLow) && l0 < nyamLow && (c0 > nyamLow || o0 > nyamLow)) { sslSwept = true; curLevel = "NYAM_L"; }
+                bool asiaComplete = hasAsia && !isAsia && hhmm >= 200;
+                bool lonComplete = hasLon && !isLon && hhmm >= 800;
+
+                if (!bslSwept && asiaComplete && !double.IsNaN(asiaHigh) && h0 > asiaHigh && (c0 < asiaHigh || o0 < asiaHigh)) { bslSwept = true; curLevel = "Asia_H"; }
+                if (!sslSwept && asiaComplete && !double.IsNaN(asiaLow) && l0 < asiaLow && (c0 > asiaLow || o0 > asiaLow)) { sslSwept = true; curLevel = "Asia_L"; }
+                if (!bslSwept && lonComplete && !double.IsNaN(lonHigh) && h0 > lonHigh && (c0 < lonHigh || o0 < lonHigh)) { bslSwept = true; curLevel = "Lon_H"; }
+                if (!sslSwept && lonComplete && !double.IsNaN(lonLow) && l0 < lonLow && (c0 > lonLow || o0 > lonLow)) { sslSwept = true; curLevel = "Lon_L"; }
             }
 
             // Intraday 3-bar fractal swings (on primary series)
