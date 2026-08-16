@@ -329,10 +329,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return;
             }
 
-            // === STEP 2: QUEEN BE RATCHET ===
+            // === STEP 2: QUEEN BE RATCHET (only after entry bar) ===
             if (Position.MarketPosition == MarketPosition.Long && !double.IsNaN(activeEntryPrice))
             {
-                if (!queenFilled && !double.IsNaN(activeQueenTP) && h0 >= activeQueenTP)
+                if (!queenFilled && !double.IsNaN(activeQueenTP) && CurrentBars[0] > entryBarIndex && h0 >= activeQueenTP)
                 {
                     queenFilled = true;
                     SetStopLoss("Runner", CalculationMode.Price, activeEntryPrice, false);
@@ -340,7 +340,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
             else if (Position.MarketPosition == MarketPosition.Short && !double.IsNaN(activeEntryPrice))
             {
-                if (!queenFilled && !double.IsNaN(activeQueenTP) && l0 <= activeQueenTP)
+                if (!queenFilled && !double.IsNaN(activeQueenTP) && CurrentBars[0] > entryBarIndex && l0 <= activeQueenTP)
                 {
                     queenFilled = true;
                     SetStopLoss("Runner", CalculationMode.Price, activeEntryPrice, false);
@@ -533,7 +533,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             bool newBearFvg = h0 < l2;
 
             // Long: CISD trigger OR continuation FVG in bull regime
-            if ((bullCisdTrigger || (deliveryRegime == 1 && newBullFvg)) && !hasPendingLong && Position.MarketPosition == MarketPosition.Flat)
+            // Continuation FVG requires a recent CISD origin (within 25 bars)
+            bool bullContFvg = deliveryRegime == 1 && newBullFvg && !double.IsNaN(armedCisdOriginSL) && (CurrentBars[0] - bullSweepBar <= 25);
+            if ((bullCisdTrigger || bullContFvg) && !hasPendingLong && Position.MarketPosition == MarketPosition.Flat)
             {
                 double zTop = newBullFvg ? l0 : armedBullHigh;
                 double zBot = newBullFvg ? h2 : (armedBullHigh - (4 * TickSize));
@@ -562,7 +564,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             // Short: CISD trigger OR continuation FVG in bear regime
-            if ((bearCisdTrigger || (deliveryRegime == -1 && newBearFvg)) && !hasPendingShort && Position.MarketPosition == MarketPosition.Flat)
+            bool bearContFvg = deliveryRegime == -1 && newBearFvg && !double.IsNaN(armedCisdOriginSL) && (CurrentBars[0] - bearSweepBar <= 25);
+            if ((bearCisdTrigger || bearContFvg) && !hasPendingShort && Position.MarketPosition == MarketPosition.Flat)
             {
                 double zTop = newBearFvg ? l2 : (armedBearLow + (4 * TickSize));
                 double zBot = newBearFvg ? h0 : armedBearLow;
@@ -607,6 +610,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             activeEntryPrice = fillPrice;
             activeStopLoss = stopPrice;
             queenFilled = false;
+            entryBarIndex = CurrentBars[0];
             todayTradeCount++;
 
             int contracts = CalcContracts(entryPrice, stopPrice);
