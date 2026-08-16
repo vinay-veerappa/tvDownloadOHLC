@@ -764,14 +764,15 @@ def run_ict_v3_backtest(
             has_bear_sweep = False
 
         # === ARM ENTRY ZONE ===
-        # The FVG must be on the SAME bar as the CISD trigger (the displacement leg).
-        # If no FVG on the trigger bar, skip — no continuation FVGs from later bars.
+        # FVG must be in the delivery regime established by the CISD.
+        # The SL is the CISD origin (run low/high) — the structural level that
+        # was broken to establish the regime. No fallback, no arbitrary window.
         min_fvg_gap = 0.50  # 2 ticks on NQ (0.25 tick size)
         new_bull_fvg = l0 > h2 and (l0 - h2) >= min_fvg_gap
         new_bear_fvg = h0 < l2 and (l2 - h0) >= min_fvg_gap
 
-        if bull_cisd_trigger and new_bull_fvg and pending_zone is None and not in_position:
-            # FVG on the displacement leg — entry at FVG top
+        if (bull_cisd_trigger or (current_delivery_regime == 1 and new_bull_fvg)) and pending_zone is None and not in_position:
+            # FVG in the bull delivery regime — entry at FVG top
             z_top = l0
             z_bot = h2
             e_price = z_top
@@ -796,8 +797,8 @@ def run_ict_v3_backtest(
                     pending_zone = {"dir": 1, "entry_level": e_price, "sl": sl_price, "armed_bar": i,
                                     "entry_model": entry_model, "sl_model": sl_model, "sweep_source": last_sweep_source}
 
-        if bear_cisd_trigger and new_bear_fvg and pending_zone is None and not in_position:
-            # FVG on the displacement leg — entry at FVG bottom
+        if (bear_cisd_trigger or (current_delivery_regime == -1 and new_bear_fvg)) and pending_zone is None and not in_position:
+            # FVG in the bear delivery regime — entry at FVG bottom
             z_top = l2
             z_bot = h0
             e_price = z_bot
