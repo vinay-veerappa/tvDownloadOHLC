@@ -473,40 +473,54 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (CurrentBars[0] - bearSweepBar > 25) hasBearSweep = false;
 
             // === STEP 5: CANONICAL BACKWARD-WALKING CISD ===
+            // Requires a minimum 3-candle opposing run for a valid CISD origin.
+            // A 1-2 candle "run" produces an SL too close to the sweep = invalid setup.
             if (hasBullSweep && sslSwept)
             {
                 double sHigh = Math.Max(o0, c0);
                 double sLow = Math.Min(o0, c0);
+                int runLen = 0;
                 for (int k = 1; k <= Math.Min(25, CurrentBars[0]); k++)
                 {
                     if (Closes[0][k] <= Opens[0][k])
                     {
                         sHigh = Math.Max(sHigh, Math.Max(Opens[0][k], Closes[0][k]));
                         sLow = Math.Min(sLow, Math.Min(Opens[0][k], Closes[0][k]));
+                        runLen++;
                     }
                     else break;
                 }
-                armedBullCisd = true;
-                armedBullHigh = sHigh;
-                armedCisdOriginSL = sLow;
+
+                if (runLen >= 3)
+                {
+                    armedBullCisd = true;
+                    armedBullHigh = sHigh;
+                    armedCisdOriginSL = sLow;
+                }
             }
 
             if (hasBearSweep && bslSwept)
             {
                 double sHigh = Math.Max(o0, c0);
                 double sLow = Math.Min(o0, c0);
+                int runLen = 0;
                 for (int k = 1; k <= Math.Min(25, CurrentBars[0]); k++)
                 {
                     if (Closes[0][k] >= Opens[0][k])
                     {
                         sHigh = Math.Max(sHigh, Math.Max(Opens[0][k], Closes[0][k]));
                         sLow = Math.Min(sLow, Math.Min(Opens[0][k], Closes[0][k]));
+                        runLen++;
                     }
                     else break;
                 }
-                armedBearCisd = true;
-                armedBearLow = sLow;
-                armedCisdOriginSL = sHigh;
+
+                if (runLen >= 3)
+                {
+                    armedBearCisd = true;
+                    armedBearLow = sLow;
+                    armedCisdOriginSL = sHigh;
+                }
             }
 
             // === STEP 6: CISD CONFIRMATION + FVG TOUCH ENTRY ARMING ===
@@ -529,8 +543,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 deliveryRegime = -1;
             }
 
-            bool newBullFvg = l0 > h2;
-            bool newBearFvg = h0 < l2;
+            bool newBullFvg = l0 > h2 && (l0 - h2) >= (2 * TickSize);
+            bool newBearFvg = h0 < l2 && (l2 - h0) >= (2 * TickSize);
 
             // Long: CISD trigger OR continuation FVG in bull regime
             // Continuation FVG requires a recent CISD origin (within 25 bars)
