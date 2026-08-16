@@ -554,7 +554,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return;
 
                 double riskBps = ((ePrice - slPrice) / ePrice) * 10000.0;
-                if (riskBps >= 2.0 && riskBps <= MaxRiskBps)
+                if (riskBps >= 10.0 && riskBps <= MaxRiskBps)
                 {
                     hasPendingLong = true;
                     pendingLongEntryPrice = ePrice;
@@ -584,7 +584,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return;
 
                 double riskBps = ((slPrice - ePrice) / ePrice) * 10000.0;
-                if (riskBps >= 2.0 && riskBps <= MaxRiskBps)
+                if (riskBps >= 10.0 && riskBps <= MaxRiskBps)
                 {
                     hasPendingShort = true;
                     pendingShortEntryPrice = ePrice;
@@ -604,7 +604,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 ? ((fillPrice - stopPrice) / fillPrice) * 10000.0
                 : ((stopPrice - fillPrice) / fillPrice) * 10000.0;
 
-            if (actualRisk < 2.0 || actualRisk > MaxRiskBps)
+            if (actualRisk < 10.0 || actualRisk > MaxRiskBps)
                 return;
 
             activeEntryPrice = fillPrice;
