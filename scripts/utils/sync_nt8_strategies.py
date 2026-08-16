@@ -58,6 +58,7 @@ STRATEGIES_SRC_DIRS = [
     ("ema_pullback",   NT8_SRC / "strategies" / "ema_pullback"),
     ("failed_auction", NT8_SRC / "strategies" / "failed_auction"),
     ("vwap_reclaim",   NT8_SRC / "strategies" / "vwap_reclaim"),
+    ("ifvg_cisd",      NT8_SRC / "strategies" / "ifvg_cisd"),
 ]
 
 # Shared source dir — classes used by both strategies and indicators

@@ -25,8 +25,74 @@ if str(_root) not in sys.path:
 
 from scripts.libs_py.ict_engine.core.smt import SMTDivergenceEngine
 from scripts.libs_py.ict_engine.core.trap_engine import TrappedLiquidityEngine
-from scripts.libs_py.strategy_engine.pack_bracket_manager import PackBracketManager
+from scripts.libs_py.strategy_engine.pack_bracket_manager import PackBracketManager, PackExitResult
+from scripts.libs_py.strategy_engine.three_tier_pack_manager import ThreeTierPackManager
 from scripts.libs_py.features.htf_order_flow import HTFOrderFlowFilter
+
+
+class ThreeTierAdapter:
+    """
+    Wraps ThreeTierPackManager behind the same API as PackBracketManager so the
+    master backtest loop can drive either model without changes. Exposes
+    `active_position`, `open_pack()`, `update_bar()` returning PackExitResult,
+    and `completed_trades`.
+    """
+
+    def __init__(self, queen_bps, expansion_bps, runner_bps, point_value, comm_per_contract, tick_size):
+        self.mgr = ThreeTierPackManager(
+            queen_bps=queen_bps, expansion_bps=expansion_bps, runner_bps=runner_bps,
+            point_value=point_value, comm_per_contract=comm_per_contract, tick_size=tick_size,
+        )
+        self.active_position = None
+        self.completed_trades: list = []
+        self._trade_counter = 0
+        self._cur_mfe = 0.0
+        self._cur_mae = 0.0
+        self._entry_bar = 0
+
+    def open_pack(self, direction, entry_price, stop_loss, bar_idx, bar_time, is_pm_macro=False):
+        self.active_position = self.mgr.calculate_pack_levels(
+            direction=direction, entry_price=entry_price, stop_price=stop_loss,
+            entry_time=bar_time, entry_bar=bar_idx, sweep_level="3-tier",
+        )
+        self._cur_mfe = 0.0
+        self._cur_mae = 0.0
+        self._entry_bar = bar_idx
+
+    def update_bar(self, bar_idx, bar_time, high, low, close, is_eod_bar=False):
+        pos = self.active_position
+        if pos is None:
+            return None
+
+        if pos.direction == 1:
+            self._cur_mfe = max(self._cur_mfe, high - pos.entry_price)
+            self._cur_mae = max(self._cur_mae, pos.entry_price - low)
+        else:
+            self._cur_mfe = max(self._cur_mfe, pos.entry_price - low)
+            self._cur_mae = max(self._cur_mae, high - pos.entry_price)
+
+        closed, summary = self.mgr.update_bar(pos, high=high, low=low, close=close, is_eod=is_eod_bar)
+        if not closed:
+            return None
+
+        self._trade_counter += 1
+        res = PackExitResult(
+            trade_id=self._trade_counter,
+            direction=pos.direction,
+            entry_time=pos.entry_time,
+            exit_time=bar_time,
+            entry_price=pos.entry_price,
+            queen_filled=summary.get("tp1_hit", False),
+            exit_reason=summary["exit_reason"],
+            net_pnl_pts=summary["pnl_points"],
+            net_pnl_usd=summary["net_pnl"],
+            mfe_pts=self._cur_mfe,
+            mae_pts=self._cur_mae,
+            bars_held=bar_idx - self._entry_bar,
+        )
+        self.active_position = None
+        self.completed_trades.append(res)
+        return res
 
 def run_master_backtest(
     df_nq: pd.DataFrame,
@@ -39,7 +105,16 @@ def run_master_backtest(
     runner_bps: float = 40.0,
     runner_pm_bps: float = 60.0,
     max_risk_bps: float = 12.0,
+    tier_model: str = "2-tier",
+    expansion_bps: float = 30.0,
+    runner_3t_bps: float = 60.0,
 ) -> Tuple[pd.DataFrame, Dict]:
+    """
+    tier_model: "2-tier" uses PackBracketManager (Queen + Runner 40/60bps AM/PM).
+                "3-tier" uses ThreeTierPackManager (Queen + Expansion 30bps + Runner 60bps).
+    When 3-tier is selected, runner_bps/runner_pm_bps are ignored in favour of
+    expansion_bps + runner_3t_bps.
+    """
 
     common = df_nq.index.intersection(df_es.index)
     df_nq = df_nq.loc[common].sort_index()
@@ -57,17 +132,29 @@ def run_master_backtest(
     es_lows = df_es["low"].values
     es_closes = df_es["close"].values
 
+    tick_size = 0.25 if symbol == "ES" else 0.50
+
     # 1. Initialize Modular Engines
     smt_engine = SMTDivergenceEngine(pivot_left=3, pivot_right=3, max_swings_tracked=10)
     trap_engine = TrappedLiquidityEngine(max_wait_bars=3, target_bps=40.0, max_risk_bps=15.0)
-    bracket_mgr = PackBracketManager(
-        queen_bps=queen_bps,
-        runner_bps=runner_bps,
-        runner_pm_bps=runner_pm_bps,
-        point_value=point_value,
-        comm_per_contract=comm_per_contract,
-        tick_size=0.25 if symbol == "ES" else 0.50,
-    )
+    if tier_model == "3-tier":
+        bracket_mgr = ThreeTierAdapter(
+            queen_bps=queen_bps,
+            expansion_bps=expansion_bps,
+            runner_bps=runner_3t_bps,
+            point_value=point_value,
+            comm_per_contract=comm_per_contract,
+            tick_size=tick_size,
+        )
+    else:
+        bracket_mgr = PackBracketManager(
+            queen_bps=queen_bps,
+            runner_bps=runner_bps,
+            runner_pm_bps=runner_pm_bps,
+            point_value=point_value,
+            comm_per_contract=comm_per_contract,
+            tick_size=tick_size,
+        )
 
     # 2. HTF Features
     htf_trend_series = HTFOrderFlowFilter.compute_1h_trend_series(df_nq, fast_span=20, slow_span=50)
@@ -325,27 +412,72 @@ def run_master_backtest(
     return trades_df, stats
 
 if __name__ == "__main__":
-    df_nq = pd.read_parquet(_root / "data" / "NQ1_5m.parquet")
-    df_es = pd.read_parquet(_root / "data" / "ES1_5m.parquet")
+    import argparse
+    p = argparse.ArgumentParser(description="Master Institutional Backtest — 2-tier vs 3-tier")
+    p.add_argument("--start", default="2024-01-01")
+    p.add_argument("--end", default="2026-08-15")
+    p.add_argument("--symbol", default="NQ", choices=["NQ", "ES"])
+    p.add_argument("--enable-trap", action="store_true", default=True)
+    p.add_argument("--no-trap", dest="enable_trap", action="store_false")
+    p.add_argument("--queen-bps", type=float, default=10.0)
+    p.add_argument("--runner-2t-am", type=float, default=40.0)
+    p.add_argument("--runner-2t-pm", type=float, default=60.0)
+    p.add_argument("--expansion-bps", type=float, default=30.0)
+    p.add_argument("--runner-3t", type=float, default=60.0)
+    p.add_argument("--max-risk-bps", type=float, default=12.0)
+    p.add_argument("--tier", default="both", choices=["2-tier", "3-tier", "both"])
+    args = p.parse_args()
 
+    df_nq = pd.read_parquet(_root / "data" / f"{args.symbol}1_5m.parquet")
+    df_es = pd.read_parquet(_root / "data" / "ES1_5m.parquet")
     for d in (df_nq, df_es):
         if not isinstance(d.index, pd.DatetimeIndex):
             d["datetime"] = pd.to_datetime(d["datetime"])
             d.set_index("datetime", inplace=True)
 
-    df_nq_sub = df_nq[df_nq.index >= "2024-01-01"]
-    df_es_sub = df_es[df_es.index >= "2024-01-01"]
+    df_nq = df_nq[(df_nq.index >= args.start) & (df_nq.index <= args.end)]
+    df_es = df_es[(df_es.index >= args.start) & (df_es.index <= args.end)]
 
-    print("Running Modular Master Institutional Backtest (2024–2026)...")
-    tdf, stats = run_master_backtest(df_nq_sub, df_es_sub, symbol="NQ", point_value=2.0)
+    pv = 2.0 if args.symbol == "NQ" else 5.0
+    comm = 0.52 if args.symbol == "NQ" else 0.40
 
-    print("\n" + "=" * 80)
-    print("MODULAR MASTER STRATEGY RESULTS (2024–2026)")
-    print("=" * 80)
-    print(f"Total Completed Trades: {stats['trades']}")
-    print(f"Win Rate:               {stats['win_rate']:.1f}%")
-    print(f"Profit Factor:          {stats['profit_factor']:.2f}")
-    print(f"Net PnL (Micro MNQ):    ${stats['net_pnl']:,.2f}  (or +${stats['net_pnl']*10:,.2f} on 1 NQ)")
-    print(f"Average Win:            ${stats['avg_win']:.2f}")
-    print(f"Average Loss:           ${stats['avg_loss']:.2f}")
-    print(f"Payoff Ratio:           {stats['payoff_ratio']:.2f} : 1")
+    def _run(tier):
+        return run_master_backtest(
+            df_nq, df_es, symbol=args.symbol, point_value=pv, comm_per_contract=comm,
+            enable_trap_reexpansion=args.enable_trap, queen_bps=args.queen_bps,
+            runner_bps=args.runner_2t_am, runner_pm_bps=args.runner_2t_pm,
+            max_risk_bps=args.max_risk_bps, tier_model=tier,
+            expansion_bps=args.expansion_bps, runner_3t_bps=args.runner_3t,
+        )
+
+    results = {}
+    tiers = ["2-tier", "3-tier"] if args.tier == "both" else [args.tier]
+    for tier in tiers:
+        tdf, stats = _run(tier)
+        results[tier] = (tdf, stats)
+
+    print("\n" + "=" * 88)
+    print(f"  MASTER INSTITUTIONAL STRATEGY — {args.symbol} ({args.start} -> {args.end})")
+    print("=" * 88)
+    print(f"{'Metric':<24} {'2-Tier':>22}   {'3-Tier':>22}")
+    print("-" * 88)
+    keys = ["trades", "win_rate", "profit_factor", "net_pnl", "gross_profit", "gross_loss",
+            "avg_win", "avg_loss", "payoff_ratio"]
+    for k in keys:
+        vals = []
+        for tier in tiers:
+            s = results[tier][1]
+            v = s.get(k, "-")
+            if k in ("net_pnl", "gross_profit", "gross_loss", "avg_win", "avg_loss") and isinstance(v, (int, float)):
+                v = f"${v:,.2f}"
+            vals.append(str(v))
+        while len(vals) < 2: vals.append("-")
+        print(f"  {k:<22} {vals[0]:>22}   {vals[1]:>22}")
+    print("=" * 88)
+
+    for tier in tiers:
+        tdf = results[tier][0]
+        if len(tdf) > 0:
+            print(f"\n  {tier} exit reasons:")
+            for reason, cnt in tdf["exit_reason"].value_counts().items():
+                print(f"    {reason:<20} {cnt:>5}  ({cnt/len(tdf)*100:.1f}%)")
