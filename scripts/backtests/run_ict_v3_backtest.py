@@ -216,6 +216,123 @@ def run_ict_v3_backtest(
     h4_h0_series = df_4h["h4_h0"].reindex(df.index, method="ffill").values
     h4_l0_series = df_4h["h4_l0"].reindex(df.index, method="ffill").values
 
+    # === HTF FVG Detection (1H, 4H, Daily, Weekly) ===
+    # A bullish FVG: bar[i].low > bar[i-2].high (gap between bar i-2 high and bar i low)
+    # A bearish FVG: bar[i].high < bar[i-2].low (gap between bar i-2 low and bar i high)
+    # The FVG boundary acts as a liquidity level — price sweeps back to fill it.
+    # We store active FVGs as (level, type) and remove them when filled (mitigated).
+
+    def detect_htf_fvgs(df_htf, label):
+        """Detect 3-bar FVGs on a resampled HTF DataFrame. Returns list of (bar_index, fvg_top, fvg_bot, is_bull)."""
+        fvgs = []
+        h = df_htf["high"].values
+        l = df_htf["low"].values
+        for i in range(2, len(df_htf)):
+            if l[i] > h[i - 2]:  # bullish FVG
+                fvgs.append((i, l[i], h[i - 2], True))  # (bar_idx, top, bot, is_bull)
+            if h[i] < l[i - 2]:  # bearish FVG
+                fvgs.append((i, l[i - 2], h[i], False))  # (bar_idx, top, bot, is_bull)
+        return df_htf.index, fvgs
+
+    # Build HTF FVG lists with their timestamps for later mapping to 5m bars
+    htf_fvg_data = {}
+    for tf, df_tf, name in [("1H", df_1h, "1H_FVG"), ("4H", df_4h, "4H_FVG")]:
+        ts, fvgs = detect_htf_fvgs(df_tf, name)
+        htf_fvg_data[name] = (ts, fvgs)
+
+    # Daily FVGs
+    df_daily = df.resample("1D").agg({"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+    ts_d, fvgs_d = detect_htf_fvgs(df_daily, "Daily_FVG")
+    htf_fvg_data["Daily_FVG"] = (ts_d, fvgs_d)
+
+    # Weekly FVGs
+    df_weekly = df.resample("1W").agg({"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+    ts_w, fvgs_w = detect_htf_fvgs(df_weekly, "Weekly_FVG")
+    htf_fvg_data["Weekly_FVG"] = (ts_w, fvgs_w)
+
+    # Build active HTF FVG lookup: for each 5m bar, which HTF FVGs are active (formed but not yet filled)
+    # An FVG is "active" from the bar AFTER it forms until price fills it.
+    # For sweeps: a bullish FVG is swept when price's low touches the FVG top (L0 <= fvg_top).
+    # A bearish FVG is swept when price's high touches the FVG bottom (H0 >= fvg_bot).
+    # We store the FVG boundary as the "sweep level" — the edge price returns to.
+
+    def build_htf_fvg_levels(times_5m, htf_fvg_data):
+        """For each 5m bar, build lists of active HTF FVG boundaries (sweep levels)."""
+        # Returns: dict of arrays — htf_fvg_bsl_levels[i] = list of (level, source) for buy-side liquidity
+        #         htf_fvg_ssl_levels[i] = list of (level, source) for sell-side liquidity
+        # BSL = price swept a bullish FVG top (buy-side liquidity above)
+        # SSL = price swept a bearish FVG bottom (sell-side liquidity below)
+        # Actually: a bullish FVG has its TOP as a level price returns to — sweeping that top is a BSL sweep.
+        # A bearish FVG has its BOTTOM as a level price returns to — sweeping that bottom is an SSL sweep.
+
+        n_5m = len(times_5m)
+        # For each HTF FVG, we need to know when it becomes active and track if it's been filled.
+        # Active FVGs: store as list of (start_time, fvg_top, fvg_bot, is_bull, source_name)
+
+        all_fvgs = []
+        for name, (ts, fvgs) in htf_fvg_data.items():
+            for bar_idx, fvg_top, fvg_bot, is_bull in fvgs:
+                if bar_idx < len(ts):
+                    form_time = ts[bar_idx]
+                    all_fvgs.append((form_time, fvg_top, fvg_bot, is_bull, name))
+
+        all_fvgs.sort(key=lambda x: x[0])
+
+        # For each 5m bar, find which FVGs are active (formed before this bar, not yet filled)
+        # An FVG is filled when price trades through it.
+        # Bullish FVG filled when 5m low <= fvg_bot (price filled the gap completely)
+        # Bearish FVG filled when 5m high >= fvg_top
+        active_fvgs = []  # list of [form_time, fvg_top, fvg_bot, is_bull, source, filled]
+        htf_bsl_levels = [[] for _ in range(n_5m)]  # buy-side liquidity (bullish FVG tops)
+        htf_ssl_levels = [[] for _ in range(n_5m)]  # sell-side liquidity (bearish FVG bots)
+
+        fvg_idx = 0
+        for i in range(n_5m):
+            t = times_5m[i]
+            h0 = highs[i]
+            l0 = lows[i]
+
+            # Add newly formed FVGs
+            while fvg_idx < len(all_fvgs) and all_fvgs[fvg_idx][0] <= t:
+                ft, ftop, fbot, is_bull, src = all_fvgs[fvg_idx]
+                active_fvgs.append([ft, ftop, fbot, is_bull, src, False])
+                fvg_idx += 1
+
+            # Check and update active FVGs
+            remaining = []
+            for fvg in active_fvgs:
+                ft, ftop, fbot, is_bull, src, filled = fvg
+                if filled:
+                    continue
+
+                # Check if this FVG is swept by the current bar
+                # Bullish FVG: price returns to fill it — the TOP is the sweep level (BSL)
+                # A sweep of a bullish FVG top = price's low touches the top (l0 <= ftop) and close > ftop
+                # Bearish FVG: price returns to fill it — the BOT is the sweep level (SSL)
+                # A sweep of a bearish FVG bot = price's high touches the bot (h0 >= fbot) and close < fbot
+
+                # Check if FVG is fully filled (mitigated)
+                if is_bull and l0 <= fbot:
+                    fvg[5] = True  # filled
+                    continue
+                if not is_bull and h0 >= ftop:
+                    fvg[5] = True  # filled
+                    continue
+
+                # FVG still active — add its boundary as a sweep level
+                if is_bull:
+                    htf_bsl_levels[i].append((ftop, src))
+                else:
+                    htf_ssl_levels[i].append((fbot, src))
+
+                remaining.append(fvg)
+
+            active_fvgs = [f for f in active_fvgs if not f[5]]
+
+        return htf_bsl_levels, htf_ssl_levels
+
+    htf_fvg_bsl, htf_fvg_ssl = build_htf_fvg_levels(times, htf_fvg_data)
+
     # Session sweeps (NEW)
     asia_h_arr = np.full(n, np.nan)
     asia_l_arr = np.full(n, np.nan)
@@ -542,6 +659,20 @@ def run_ict_v3_backtest(
             if not ssl_swept and i < len(lon_l_arr) and not np.isnan(lon_l_arr[i]):
                 if l0 < lon_l_arr[i] and (c0 > lon_l_arr[i] or o0 > lon_l_arr[i]):
                     ssl_swept = True; sweep_extreme = l0; sweep_src = "Lon_L"
+
+        # HTF FVG sweeps (1H, 4H, Daily, Weekly FVGs as liquidity levels)
+        # Bullish FVG top = BSL (price sweeps up into the gap from below)
+        # Bearish FVG bot = SSL (price sweeps down into the gap from above)
+        if not bsl_swept and i < len(htf_fvg_bsl):
+            for fvg_level, fvg_src in htf_fvg_bsl[i]:
+                if h0 > fvg_level and (c0 < fvg_level or o0 < fvg_level):
+                    bsl_swept = True; sweep_extreme = h0; sweep_src = fvg_src + "_BSL"
+                    break
+        if not ssl_swept and i < len(htf_fvg_ssl):
+            for fvg_level, fvg_src in htf_fvg_ssl[i]:
+                if l0 < fvg_level and (c0 > fvg_level or o0 > fvg_level):
+                    ssl_swept = True; sweep_extreme = l0; sweep_src = fvg_src + "_SSL"
+                    break
 
         # Update rolling swing lists (from original)
         if i < n and not np.isnan(sw_h[i]):
