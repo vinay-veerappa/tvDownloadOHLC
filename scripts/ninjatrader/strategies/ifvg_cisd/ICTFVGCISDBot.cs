@@ -116,6 +116,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private int pendingLongArmedBar;
         private int pendingShortArmedBar;
 
+        // Triggered entry (touch detected, execute on next bar open)
+        private bool longTriggered;
+        private bool shortTriggered;
+        private double triggeredLongEntry;
+        private double triggeredLongSL;
+        private double triggeredShortEntry;
+        private double triggeredShortSL;
+
         // Active Trade State (2-contract: Queen + Runner)
         private double activeEntryPrice;
         private double activeStopLoss;
@@ -136,6 +144,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 Description = "ICT v3: Liquidity Sweep -> CISD -> FVG Touch -> SL-4 -> Cover The Queen (2-contract pack)";
                 Name = "ICTFVGCISDBot";
                 Calculate = Calculate.OnBarClose;
+                IsFillLimitOnTouch = true;
                 EntriesPerDirection = 2;
                 EntryHandling = EntryHandling.AllEntries;
                 IsExitOnSessionCloseStrategy = true;
@@ -345,14 +354,21 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Volume gate
             bool passesVol = volSma20[0] > 0 && Volume[0] >= (MinVolMult * volSma20[0]);
 
-            // === STEP 3: PENDING ZONE FILL ===
-            if (hasPendingLong && canEnter && passesVol)
+            // === STEP 3: PENDING ZONE FILL (detect touch, defer execution to next bar) ===
+            if (longTriggered)
+            {
+                ExecutePackEntry(1, triggeredLongEntry, triggeredLongSL);
+                longTriggered = false;
+            }
+            else if (hasPendingLong && canEnter && passesVol)
             {
                 if (CurrentBars[0] > pendingLongArmedBar && (CurrentBars[0] - pendingLongArmedBar <= MaxRetestWaitBars))
                 {
                     if (l0 <= pendingLongEntryPrice)
                     {
-                        ExecutePackEntry(1, pendingLongEntryPrice, pendingLongSL);
+                        longTriggered = true;
+                        triggeredLongEntry = pendingLongEntryPrice;
+                        triggeredLongSL = pendingLongSL;
                         hasPendingLong = false;
                     }
                 }
@@ -362,13 +378,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
             }
 
-            if (hasPendingShort && canEnter && passesVol)
+            if (shortTriggered)
+            {
+                ExecutePackEntry(-1, triggeredShortEntry, triggeredShortSL);
+                shortTriggered = false;
+            }
+            else if (hasPendingShort && canEnter && passesVol)
             {
                 if (CurrentBars[0] > pendingShortArmedBar && (CurrentBars[0] - pendingShortArmedBar <= MaxRetestWaitBars))
                 {
                     if (h0 >= pendingShortEntryPrice)
                     {
-                        ExecutePackEntry(-1, pendingShortEntryPrice, pendingShortSL);
+                        shortTriggered = true;
+                        triggeredShortEntry = pendingShortEntryPrice;
+                        triggeredShortSL = pendingShortSL;
                         hasPendingShort = false;
                     }
                 }
@@ -517,10 +540,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 // FVG Touch entry = zTop (top of the FVG)
                 double ePrice = zTop;
-                double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL - (2 * TickSize) : l1 - (2 * TickSize);
 
+                // SL-4: CISD delivery origin (run LOW) minus 2 ticks. No fallback — if no CISD origin, skip.
+                if (double.IsNaN(armedCisdOriginSL))
+                    return;
+
+                double slPrice = armedCisdOriginSL - (2 * TickSize);
+
+                // Sanity: stop must be below entry for a long
                 if (slPrice >= ePrice)
-                    slPrice = Math.Min(l0, Math.Min(l1, l2)) - (2 * TickSize);
+                    return;
 
                 double riskBps = ((ePrice - slPrice) / ePrice) * 10000.0;
                 if (riskBps >= 2.0 && riskBps <= MaxRiskBps)
@@ -540,10 +569,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 // FVG Touch entry = zBot (bottom of the FVG)
                 double ePrice = zBot;
-                double slPrice = !double.IsNaN(armedCisdOriginSL) ? armedCisdOriginSL + (2 * TickSize) : h1 + (2 * TickSize);
 
+                // SL-4: CISD delivery origin (run HIGH) plus 2 ticks. No fallback — if no CISD origin, skip.
+                if (double.IsNaN(armedCisdOriginSL))
+                    return;
+
+                double slPrice = armedCisdOriginSL + (2 * TickSize);
+
+                // Sanity: stop must be above entry for a short
                 if (slPrice <= ePrice)
-                    slPrice = Math.Max(h0, Math.Max(h1, h2)) + (2 * TickSize);
+                    return;
 
                 double riskBps = ((slPrice - ePrice) / ePrice) * 10000.0;
                 if (riskBps >= 2.0 && riskBps <= MaxRiskBps)
@@ -558,7 +593,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private void ExecutePackEntry(int direction, double entryPrice, double stopPrice)
         {
-            activeEntryPrice = entryPrice;
+            // Use actual fill price (next bar open) for risk check
+            double fillPrice = Open[0];
+
+            // Recalculate risk at execution time
+            double actualRisk = direction == 1
+                ? ((fillPrice - stopPrice) / fillPrice) * 10000.0
+                : ((stopPrice - fillPrice) / fillPrice) * 10000.0;
+
+            if (actualRisk < 2.0 || actualRisk > MaxRiskBps)
+                return;
+
+            activeEntryPrice = fillPrice;
             activeStopLoss = stopPrice;
             queenFilled = false;
             todayTradeCount++;
