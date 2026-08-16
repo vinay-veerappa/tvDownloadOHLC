@@ -126,10 +126,9 @@ Futures trade nearly 24 hours. The **trading day** starts at **18:00 ET** (Sunda
 | 1 | Daily | PDH / PDL | Prior day H/L |
 | 2 | 4-Hour | 4H BSL / SSL | Prior 4H bar H/L (shifted 1) |
 | 3 | 1-Hour | 1H BSL / SSL | Prior 1H bar H/L (shifted 1) |
-| 4 | Session | Asia H / Asia L | 18:00-02:00 ET range |
-| 5 | Session | London H / London L | 02:00-08:00 ET range |
-| 6 | Session | NYAM IB H / NYAM IB L | 09:30-10:00 ET range |
-| 7 | Intraday | Swing High / Swing Low | 3-bar fractal pivots on 5m |
+| 4 | Session | Asia H / Asia L | 18:00-02:00 ET (sweeps only after 02:00) |
+| 5 | Session | London H / London L | 02:00-08:00 ET (sweeps only after 08:00) |
+| 6 | Intraday | Swing High / Swing Low | 3-bar fractal pivots on 5m |
 
 ### Entry Window
 Entries fill during RTH: **09:45-15:30 ET**. Sweeps can be detected and CISD armed outside this window (overnight, London session), but the limit order only fills when RTH opens.
