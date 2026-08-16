@@ -141,6 +141,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 IsExitOnSessionCloseStrategy = true;
                 ExitOnSessionCloseSeconds = 300;
                 BarsRequiredToTrade = 25;
+                IncludeTradeHistoryInBacktest = true;
+                IsTradingHoursBreakLineVisible = false;
 
                 QueenBps = 10.0;
                 RunnerBps = 30.0;
@@ -308,8 +310,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 if (Position.MarketPosition != MarketPosition.Flat)
                 {
-                    ExitLong(0, "EOD Flatten", "");
-                    ExitShort(0, "EOD Flatten", "");
+                    ExitLong("EOD Flatten", "Queen");
+                    ExitLong("EOD Flatten", "Runner");
+                    ExitShort("EOD Flatten", "Queen");
+                    ExitShort("EOD Flatten", "Runner");
                 }
                 hasPendingLong = false;
                 hasPendingShort = false;
@@ -569,26 +573,26 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 activeQueenTP = entryPrice + distQueen;
                 activeRunnerTP = entryPrice + distRunner;
 
+                EnterLong(contracts, "Queen");
+                EnterLong(contracts, "Runner");
+
                 SetStopLoss("Queen", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Queen", CalculationMode.Price, activeQueenTP);
                 SetStopLoss("Runner", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Runner", CalculationMode.Price, activeRunnerTP);
-
-                EnterLong(0, contracts, "Queen");
-                EnterLong(0, contracts, "Runner");
             }
             else if (direction == -1)
             {
                 activeQueenTP = entryPrice - distQueen;
                 activeRunnerTP = entryPrice - distRunner;
 
+                EnterShort(contracts, "Queen");
+                EnterShort(contracts, "Runner");
+
                 SetStopLoss("Queen", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Queen", CalculationMode.Price, activeQueenTP);
                 SetStopLoss("Runner", CalculationMode.Price, activeStopLoss, false);
                 SetProfitTarget("Runner", CalculationMode.Price, activeRunnerTP);
-
-                EnterShort(0, contracts, "Queen");
-                EnterShort(0, contracts, "Runner");
             }
         }
     }
