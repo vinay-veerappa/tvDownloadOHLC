@@ -51,6 +51,7 @@ class TradeRecord:
     mfe_pts: float = 0.0
     mae_pts: float = 0.0
     sweep_source: str = ""
+    initial_stop_loss: float = 0.0
 
 
 # Prop firm presets: (account_size, risk_pct, max_contracts)
@@ -347,6 +348,15 @@ def run_ict_v3_backtest(
             lon_h_arr = df_sess["lon_h"].values
             lon_l_arr = df_sess["lon_l"].values
 
+    # Prior Week and Prior Month H/L (institutional liquidity levels)
+    weekly_df = df.resample("1W").agg({"high": "max", "low": "min"}).dropna().shift(1)
+    pwh_series = weekly_df["high"].reindex(df.index, method="ffill").values
+    pwl_series = weekly_df["low"].reindex(df.index, method="ffill").values
+
+    monthly_df = df.resample("1ME").agg({"high": "max", "low": "min"}).dropna().shift(1)
+    pmh_series = monthly_df["high"].reindex(df.index, method="ffill").values
+    pml_series = monthly_df["low"].reindex(df.index, method="ffill").values
+
     # 3-bar swing pivots (from original) — build rolling lists
     sw_h = np.full(n, np.nan)
     sw_l = np.full(n, np.nan)
@@ -401,6 +411,7 @@ def run_ict_v3_backtest(
     pos_num_contracts = 2
     pos_risk_usd = 0.0
     active_stop_loss = 0.0
+    initial_stop_loss = 0.0
     active_queen_tp = 0.0
     active_runner_tp = 0.0
     active_sl_model = ""
@@ -575,6 +586,7 @@ def run_ict_v3_backtest(
 
                         in_position = True; pos_dir = 1
                         pos_entry_price = p_level; active_stop_loss = p_sl
+                        initial_stop_loss = p_sl
                         active_sl_model = p_sl_model; active_entry_model = p_entry_model
                         pos_entry_bar = i; pos_entry_time = t
                         pos_num_contracts = contracts; pos_risk_usd = risk_usd
@@ -599,6 +611,7 @@ def run_ict_v3_backtest(
 
                         in_position = True; pos_dir = -1
                         pos_entry_price = p_level; active_stop_loss = p_sl
+                        initial_stop_loss = p_sl
                         active_sl_model = p_sl_model; active_entry_model = p_entry_model
                         pos_entry_bar = i; pos_entry_time = t
                         pos_num_contracts = contracts; pos_risk_usd = risk_usd
@@ -628,6 +641,22 @@ def run_ict_v3_backtest(
             bsl_swept = True; sweep_extreme = h0; sweep_src = "PDH"
         if not np.isnan(pdl) and l0 < pdl and (c0 > pdl or o0 > pdl):
             ssl_swept = True; sweep_extreme = l0; sweep_src = "PDL"
+
+        # Prior Week H/L sweeps
+        pwh = pwh_series[i] if i < len(pwh_series) else np.nan
+        pwl = pwl_series[i] if i < len(pwl_series) else np.nan
+        if not bsl_swept and not np.isnan(pwh) and h0 > pwh and (c0 < pwh or o0 < pwh):
+            bsl_swept = True; sweep_extreme = h0; sweep_src = "PWH"
+        if not ssl_swept and not np.isnan(pwl) and l0 < pwl and (c0 > pwl or o0 > pwl):
+            ssl_swept = True; sweep_extreme = l0; sweep_src = "PWL"
+
+        # Prior Month H/L sweeps
+        pmh = pmh_series[i] if i < len(pmh_series) else np.nan
+        pml = pml_series[i] if i < len(pml_series) else np.nan
+        if not bsl_swept and not np.isnan(pmh) and h0 > pmh and (c0 < pmh or o0 < pmh):
+            bsl_swept = True; sweep_extreme = h0; sweep_src = "PMH"
+        if not ssl_swept and not np.isnan(pml) and l0 < pml and (c0 > pml or o0 > pml):
+            ssl_swept = True; sweep_extreme = l0; sweep_src = "PML"
 
         # 4H sweeps
         h4_h = h4_h0_series[i] if i < len(h4_h0_series) else np.nan
@@ -673,24 +702,6 @@ def run_ict_v3_backtest(
                 if l0 < fvg_level and (c0 > fvg_level or o0 > fvg_level):
                     ssl_swept = True; sweep_extreme = l0; sweep_src = fvg_src + "_SSL"
                     break
-
-        # Update rolling swing lists (from original)
-        if i < n and not np.isnan(sw_h[i]):
-            bsl_list.append(sw_h[i])
-            if len(bsl_list) > 10: bsl_list.pop(0)
-        if i < n and not np.isnan(sw_l[i]):
-            ssl_list.append(sw_l[i])
-            if len(ssl_list) > 10: ssl_list.pop(0)
-
-        # Intraday swing sweeps (from original — uses rolling list)
-        if not bsl_swept:
-            for bsl_val in bsl_list:
-                if h0 > bsl_val and c0 < bsl_val:
-                    bsl_swept = True; sweep_extreme = h0; sweep_src = "Swing_H"; break
-        if not ssl_swept:
-            for ssl_val in ssl_list:
-                if l0 < ssl_val and c0 > ssl_val:
-                    ssl_swept = True; sweep_extreme = l0; sweep_src = "Swing_L"; break
 
         if ssl_swept:
             has_bull_sweep = True
@@ -752,30 +763,32 @@ def run_ict_v3_backtest(
             current_delivery_regime = -1
             has_bear_sweep = False
 
-        # === ARM ENTRY ZONE (min 2-tick FVG, min 10 bps SL, skip if entry==SL) ===
+        # === ARM ENTRY ZONE ===
+        # The FVG must be on the SAME bar as the CISD trigger (the displacement leg).
+        # If no FVG on the trigger bar, skip — no continuation FVGs from later bars.
         min_fvg_gap = 0.50  # 2 ticks on NQ (0.25 tick size)
         new_bull_fvg = l0 > h2 and (l0 - h2) >= min_fvg_gap
         new_bear_fvg = h0 < l2 and (l2 - h0) >= min_fvg_gap
 
-        if bull_cisd_trigger or (current_delivery_regime == 1 and new_bull_fvg and pending_zone is None and not in_position):
-            z_top = l0 if new_bull_fvg else armed_bull_high
-            z_bot = h2 if new_bull_fvg else (armed_bull_high - 1.0)
-            z_ce = (z_top + z_bot) / 2.0
-
-            if entry_model == "FVG_CE_50": e_price = z_ce
-            elif entry_model == "CISD_Level": e_price = armed_bull_high if not np.isnan(armed_bull_high) else z_top
-            else: e_price = z_top
+        if bull_cisd_trigger and new_bull_fvg and pending_zone is None and not in_position:
+            # FVG on the displacement leg — entry at FVG top
+            z_top = l0
+            z_bot = h2
+            e_price = z_top
 
             # SL-4: CISD delivery origin. No fallback — skip if no CISD origin.
             sl_price = np.nan
-            if sl_model == "SL1_SweepWick": sl_price = (bull_sweep_low if not np.isnan(bull_sweep_low) else l1) - 0.50
+            if sl_model == "SL1_SweepWick":
+                if not np.isnan(bull_sweep_low):
+                    sl_price = bull_sweep_low - 0.50
             elif sl_model == "SL4_CISD_Origin":
                 if not np.isnan(armed_cisd_origin_sl):
                     sl_price = armed_cisd_origin_sl - 0.50
-            else: sl_price = (h2 if new_bull_fvg else bull_sweep_low) - 0.50
+            else:
+                sl_price = h2 - 0.50
 
             # Sanity checks: SL must be valid, below entry, min 2 bps risk
-            if np.isnan(sl_price) or sl_price >= e_price:
+            if np.isnan(sl_price) or sl_price >= e_price or abs(e_price - sl_price) < 0.50:
                 pass  # skip — invalid SL
             else:
                 risk_bps = ((e_price - sl_price) / e_price) * 10000.0
@@ -783,25 +796,25 @@ def run_ict_v3_backtest(
                     pending_zone = {"dir": 1, "entry_level": e_price, "sl": sl_price, "armed_bar": i,
                                     "entry_model": entry_model, "sl_model": sl_model, "sweep_source": last_sweep_source}
 
-        if bear_cisd_trigger or (current_delivery_regime == -1 and new_bear_fvg and pending_zone is None and not in_position):
-            z_top = l2 if new_bear_fvg else (armed_bear_low + 1.0)
-            z_bot = h0 if new_bear_fvg else armed_bear_low
-            z_ce = (z_top + z_bot) / 2.0
-
-            if entry_model == "FVG_CE_50": e_price = z_ce
-            elif entry_model == "CISD_Level": e_price = armed_bear_low if not np.isnan(armed_bear_low) else z_bot
-            else: e_price = z_bot
+        if bear_cisd_trigger and new_bear_fvg and pending_zone is None and not in_position:
+            # FVG on the displacement leg — entry at FVG bottom
+            z_top = l2
+            z_bot = h0
+            e_price = z_bot
 
             # SL-4: CISD delivery origin. No fallback — skip if no CISD origin.
             sl_price = np.nan
-            if sl_model == "SL1_SweepWick": sl_price = (bear_sweep_high if not np.isnan(bear_sweep_high) else h1) + 0.50
+            if sl_model == "SL1_SweepWick":
+                if not np.isnan(bear_sweep_high):
+                    sl_price = bear_sweep_high + 0.50
             elif sl_model == "SL4_CISD_Origin":
                 if not np.isnan(armed_cisd_origin_sl):
                     sl_price = armed_cisd_origin_sl + 0.50
-            else: sl_price = (l2 if new_bear_fvg else bear_sweep_high) + 0.50
+            else:
+                sl_price = l2 + 0.50
 
-            # Sanity checks: SL must be valid, above entry, min 10 bps risk
-            if np.isnan(sl_price) or sl_price <= e_price:
+            # Sanity checks: SL must be valid, above entry, min 2 bps risk
+            if np.isnan(sl_price) or sl_price <= e_price or abs(sl_price - e_price) < 0.50:
                 pass  # skip — invalid SL
             else:
                 risk_bps = ((sl_price - e_price) / e_price) * 10000.0
