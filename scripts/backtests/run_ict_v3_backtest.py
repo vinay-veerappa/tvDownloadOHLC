@@ -666,7 +666,7 @@ def run_ict_v3_backtest(
         if not np.isnan(h4_l) and l0 < h4_l and (c0 > h4_l or o0 > h4_l):
             ssl_swept = True; sweep_extreme = l0; sweep_src = "4H_SSL"
 
-        # 1H sweeps
+        # 1H sweeps (prior 1H bar H/L)
         h1_h = h1_h0_series[i] if i < len(h1_h0_series) else np.nan
         h1_l = h1_l0_series[i] if i < len(h1_l0_series) else np.nan
         if not np.isnan(h1_h) and h0 > h1_h and (c0 < h1_h or o0 < h1_h):
