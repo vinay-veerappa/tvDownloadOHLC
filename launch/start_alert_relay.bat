@@ -23,8 +23,25 @@ cd /d %~dp0..
 set CHANNEL=test_channel
 if not "%~1"=="" set CHANNEL=%~1
 
+:: WHY THERE IS A LOG FILE (added 2026-08-16). Under Task Scheduler there is no console, so
+:: everything this window prints was going NOWHERE. Measured: the task's LastTaskResult read
+:: 255 from a run the previous afternoon, the relay was not running, and there was NOT ONE
+:: LINE anywhere on the box saying why. The heartbeat tells you the channel died; it cannot
+:: tell you what killed it, and by the time you look the console is long gone.
+::
+:: That is half of "you cannot detect silence" left undone: F-6 made the SILENCE detectable
+:: and left the CAUSE unrecorded.
+set LOGDIR=%CD%\logs
+set LOGFILE=%LOGDIR%\alert_relay.log
+if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+
+:: Roll at ~8MB so an unattended crash-loop cannot fill the disk. One generation back is
+:: enough: the interesting lines are always the last ones before a death.
+for %%A in ("%LOGFILE%") do if %%~zA GTR 8388608 move /y "%LOGFILE%" "%LOGFILE%.1" >nul
+
 if not exist ".venv\Scripts\python.exe" (
     echo [ERROR] venv not found at %CD%\.venv
+    echo [%DATE% %TIME%] FATAL: venv not found at %CD%\.venv >> "%LOGFILE%"
     exit /b 2
 )
 
@@ -32,24 +49,36 @@ echo ===================================================
 echo   RiskGuard alert relay
 echo   channel:  %CHANNEL%
 echo   outbox:   %USERPROFILE%\Documents\NinjaTrader 8\RiskGuard\alerts_outbox.jsonl
+echo   log:      %LOGFILE%
 echo   stop:     close this window, or Ctrl+C
 echo ===================================================
 echo.
 
+echo [%DATE% %TIME%] relay launcher starting, channel=%CHANNEL% >> "%LOGFILE%"
+
 :relay_loop
-.venv\Scripts\python.exe -m scripts.riskguard.alert_relay --channel %CHANNEL%
+:: stdout AND stderr to the log. The relay logs through `logging`, which writes to stderr --
+:: redirecting only stdout would produce an empty file and read as a quiet, healthy relay.
+.venv\Scripts\python.exe -m scripts.riskguard.alert_relay --channel %CHANNEL% >> "%LOGFILE%" 2>&1
+set RELAY_RC=%ERRORLEVEL%
+
+echo [%DATE% %TIME%] relay exited with code %RELAY_RC% >> "%LOGFILE%"
 
 :: A clean Ctrl+C also lands here. Restarting is still correct: the operator closing the
 :: window is what stops it, and an unattended exit is exactly the case this loop exists for.
-if errorlevel 2 (
+if %RELAY_RC% GEQ 2 (
     echo.
     echo [STOPPED] the relay refused to start -- this is a configuration problem and
-    echo           restarting cannot fix it. Read the error above.
-    pause
+    echo           restarting cannot fix it. See %LOGFILE%
+    echo [%DATE% %TIME%] STOPPING: exit %RELAY_RC% is a configuration failure; not restarting. >> "%LOGFILE%"
+    :: No `pause` here. Under Task Scheduler there is no console to read it, so it bought
+    :: nothing headless -- and the reason it existed (let the operator read the error) is
+    :: now served by the log, which outlives the window.
     exit /b 2
 )
 
 echo.
 echo [RESTARTING] the relay exited; restarting in 10s. A dead relay is a dead alert channel.
+echo [%DATE% %TIME%] restarting in 10s >> "%LOGFILE%"
 timeout /t 10 /nobreak >nul
 goto relay_loop
