@@ -64,62 +64,87 @@ PROP_FIRM_PRESETS = {
 
 def compute_session_levels(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Computes Asia (18:00-02:00 ET), London (02:00-08:00 ET), and
-    NYAM IB (09:30-10:00 ET) session highs/lows.
-    Returns df with columns: asia_h, asia_l, lon_h, lon_l, nyam_h, nyam_l
+    Computes Asia (18:00-02:00 ET) and London (02:00-08:00 ET) session highs/lows.
+    Uses RUNNING H/L — the session level is only available AFTER the session closes.
+    This avoids lookahead bias: you cannot sweep a session level that is still forming.
+
+    Asia H/L: computed bar-by-bar during 18:00-02:00, available from 02:00 onward.
+    London H/L: computed bar-by-bar during 02:00-08:00, available from 08:00 onward.
     """
     times = df.index
     hhmm = times.strftime("%H%M")
+    n = len(df)
 
-    # Asia session: 18:00 previous day to 02:00 current day
-    # Assign each bar to a "trading day" = the NY session date
-    # Bars from 18:00-23:59 belong to the NEXT trading day's Asia session
-    # Bars from 00:00-02:00 belong to the CURRENT trading day's Asia session
-    trading_day = np.where(times.hour >= 18,
-                           (times + pd.Timedelta(days=1)).date,
-                           times.date)
-
-    # London session: 02:00-08:00 ET
+    is_asia = (hhmm >= "1800") | (hhmm < "0200")
     is_london = (hhmm >= "0200") & (hhmm < "0800")
 
-    # NYAM IB: 09:30-10:00 ET
-    is_nyam = (hhmm >= "0930") & (hhmm < "1000")
+    asia_h = np.full(n, np.nan)
+    asia_l = np.full(n, np.nan)
+    lon_h = np.full(n, np.nan)
+    lon_l = np.full(n, np.nan)
 
-    # Asia: 18:00-02:00 (overnight)
-    is_asia = (hhmm >= "1800") | (hhmm < "0200")
+    cur_asia_h = np.nan
+    cur_asia_l = np.nan
+    cur_lon_h = np.nan
+    cur_lon_l = np.nan
+    in_asia = False
+    in_lon = False
+    asia_complete = False
+    lon_complete = False
+
+    for i in range(n):
+        h = df["high"].iloc[i]
+        l = df["low"].iloc[i]
+        bar_is_asia = bool(is_asia[i])
+        bar_is_lon = bool(is_london[i])
+
+        # Asia session tracking
+        if bar_is_asia and not in_asia:
+            # Asia session just started
+            cur_asia_h = h
+            cur_asia_l = l
+            in_asia = True
+            asia_complete = False
+        elif bar_is_asia and in_asia:
+            cur_asia_h = max(cur_asia_h, h)
+            cur_asia_l = min(cur_asia_l, l)
+        elif not bar_is_asia and in_asia:
+            # Asia session just ended — freeze the levels
+            in_asia = False
+            asia_complete = True
+
+        # London session tracking
+        if bar_is_lon and not in_lon:
+            cur_lon_h = h
+            cur_lon_l = l
+            in_lon = True
+            lon_complete = False
+        elif bar_is_lon and in_lon:
+            cur_lon_h = max(cur_lon_h, h)
+            cur_lon_l = min(cur_lon_l, l)
+        elif not bar_is_lon and in_lon:
+            in_lon = False
+            lon_complete = True
+
+        # Only set the levels AFTER the session completes
+        if asia_complete and not in_asia:
+            asia_h[i] = cur_asia_h
+            asia_l[i] = cur_asia_l
+        if lon_complete and not in_lon:
+            lon_h[i] = cur_lon_h
+            lon_l[i] = cur_lon_l
 
     df_out = df.copy()
-    df_out["trading_day"] = trading_day
+    df_out["asia_h"] = asia_h
+    df_out["asia_l"] = asia_l
+    df_out["lon_h"] = lon_h
+    df_out["lon_l"] = lon_l
 
-    # Asia H/L per trading day
-    asia_bars = df_out[is_asia]
-    if len(asia_bars) > 0:
-        asia_agg = asia_bars.groupby("trading_day").agg(asia_h=("high", "max"), asia_l=("low", "min"))
-        df_out["asia_h"] = df_out["trading_day"].map(asia_agg["asia_h"].to_dict())
-        df_out["asia_l"] = df_out["trading_day"].map(asia_agg["asia_l"].to_dict())
-    else:
-        df_out["asia_h"] = np.nan
-        df_out["asia_l"] = np.nan
-
-    # London H/L per trading day
-    lon_bars = df_out[is_london]
-    if len(lon_bars) > 0:
-        lon_agg = lon_bars.groupby("trading_day").agg(lon_h=("high", "max"), lon_l=("low", "min"))
-        df_out["lon_h"] = df_out["trading_day"].map(lon_agg["lon_h"].to_dict())
-        df_out["lon_l"] = df_out["trading_day"].map(lon_agg["lon_l"].to_dict())
-    else:
-        df_out["lon_h"] = np.nan
-        df_out["lon_l"] = np.nan
-
-    # NYAM IB H/L per trading day
-    nyam_bars = df_out[is_nyam]
-    if len(nyam_bars) > 0:
-        nyam_agg = nyam_bars.groupby("trading_day").agg(nyam_h=("high", "max"), nyam_l=("low", "min"))
-        df_out["nyam_h"] = df_out["trading_day"].map(nyam_agg["nyam_h"].to_dict())
-        df_out["nyam_l"] = df_out["trading_day"].map(nyam_agg["nyam_l"].to_dict())
-    else:
-        df_out["nyam_h"] = np.nan
-        df_out["nyam_l"] = np.nan
+    # Forward-fill the completed session levels so they persist through the trading day
+    df_out["asia_h"] = df_out["asia_h"].ffill()
+    df_out["asia_l"] = df_out["asia_l"].ffill()
+    df_out["lon_h"] = df_out["lon_h"].ffill()
+    df_out["lon_l"] = df_out["lon_l"].ffill()
 
     return df_out
 
@@ -196,8 +221,6 @@ def run_ict_v3_backtest(
     asia_l_arr = np.full(n, np.nan)
     lon_h_arr = np.full(n, np.nan)
     lon_l_arr = np.full(n, np.nan)
-    nyam_h_arr = np.full(n, np.nan)
-    nyam_l_arr = np.full(n, np.nan)
 
     if use_session_sweeps:
         df_sess = compute_session_levels(df)
@@ -206,8 +229,6 @@ def run_ict_v3_backtest(
             asia_l_arr = df_sess["asia_l"].values
             lon_h_arr = df_sess["lon_h"].values
             lon_l_arr = df_sess["lon_l"].values
-            nyam_h_arr = df_sess["nyam_h"].values
-            nyam_l_arr = df_sess["nyam_l"].values
 
     # 3-bar swing pivots (from original) — build rolling lists
     sw_h = np.full(n, np.nan)
@@ -507,7 +528,7 @@ def run_ict_v3_backtest(
         if not np.isnan(h1_l) and l0 < h1_l and (c0 > h1_l or o0 > h1_l):
             ssl_swept = True; sweep_extreme = l0; sweep_src = "1H_SSL"
 
-        # Session sweeps (NEW)
+        # Session sweeps (NEW — only completed session levels)
         if use_session_sweeps:
             if not bsl_swept and i < len(asia_h_arr) and not np.isnan(asia_h_arr[i]):
                 if h0 > asia_h_arr[i] and (c0 < asia_h_arr[i] or o0 < asia_h_arr[i]):
@@ -521,12 +542,6 @@ def run_ict_v3_backtest(
             if not ssl_swept and i < len(lon_l_arr) and not np.isnan(lon_l_arr[i]):
                 if l0 < lon_l_arr[i] and (c0 > lon_l_arr[i] or o0 > lon_l_arr[i]):
                     ssl_swept = True; sweep_extreme = l0; sweep_src = "Lon_L"
-            if not bsl_swept and i < len(nyam_h_arr) and not np.isnan(nyam_h_arr[i]):
-                if h0 > nyam_h_arr[i] and (c0 < nyam_h_arr[i] or o0 < nyam_h_arr[i]):
-                    bsl_swept = True; sweep_extreme = h0; sweep_src = "NYAM_H"
-            if not ssl_swept and i < len(nyam_l_arr) and not np.isnan(nyam_l_arr[i]):
-                if l0 < nyam_l_arr[i] and (c0 > nyam_l_arr[i] or o0 > nyam_l_arr[i]):
-                    ssl_swept = True; sweep_extreme = l0; sweep_src = "NYAM_L"
 
         # Update rolling swing lists (from original)
         if i < n and not np.isnan(sw_h[i]):
@@ -560,32 +575,38 @@ def run_ict_v3_backtest(
         if (i - bull_sweep_bar) > 25: has_bull_sweep = False
         if (i - bear_sweep_bar) > 25: has_bear_sweep = False
 
-        # === CISD (UNCHANGED from original) ===
+        # === CISD (min 3-candle opposing run) ===
         if has_bull_sweep and ssl_swept:
             s_high = max(o0, c0)
             s_low = min(o0, c0)
+            run_len = 0
             for k in range(1, min(25, i)):
                 if closes[i - k] <= opens[i - k]:
                     s_high = max(s_high, max(opens[i - k], closes[i - k]))
                     s_low = min(s_low, min(opens[i - k], closes[i - k]))
+                    run_len += 1
                 else:
                     break
-            armed_bull_cisd = True
-            armed_bull_high = s_high
-            armed_cisd_origin_sl = s_low
+            if run_len >= 3:
+                armed_bull_cisd = True
+                armed_bull_high = s_high
+                armed_cisd_origin_sl = s_low
 
         if has_bear_sweep and bsl_swept:
             s_high = max(o0, c0)
             s_low = min(o0, c0)
+            run_len = 0
             for k in range(1, min(25, i)):
                 if closes[i - k] >= opens[i - k]:
                     s_high = max(s_high, max(opens[i - k], closes[i - k]))
                     s_low = min(s_low, min(opens[i - k], closes[i - k]))
+                    run_len += 1
                 else:
                     break
-            armed_bear_cisd = True
-            armed_bear_low = s_low
-            armed_cisd_origin_sl = s_high
+            if run_len >= 3:
+                armed_bear_cisd = True
+                armed_bear_low = s_low
+                armed_cisd_origin_sl = s_high
 
         bull_cisd_trigger = False
         bear_cisd_trigger = False
@@ -600,9 +621,10 @@ def run_ict_v3_backtest(
             current_delivery_regime = -1
             has_bear_sweep = False
 
-        # === ARM ENTRY ZONE (from original) ===
-        new_bull_fvg = l0 > h2
-        new_bear_fvg = h0 < l2
+        # === ARM ENTRY ZONE (min 2-tick FVG, min 10 bps SL, skip if entry==SL) ===
+        min_fvg_gap = 0.50  # 2 ticks on NQ (0.25 tick size)
+        new_bull_fvg = l0 > h2 and (l0 - h2) >= min_fvg_gap
+        new_bear_fvg = h0 < l2 and (l2 - h0) >= min_fvg_gap
 
         if bull_cisd_trigger or (current_delivery_regime == 1 and new_bull_fvg and pending_zone is None and not in_position):
             z_top = l0 if new_bull_fvg else armed_bull_high
@@ -613,12 +635,22 @@ def run_ict_v3_backtest(
             elif entry_model == "CISD_Level": e_price = armed_bull_high if not np.isnan(armed_bull_high) else z_top
             else: e_price = z_top
 
+            # SL-4: CISD delivery origin. No fallback — skip if no CISD origin.
+            sl_price = np.nan
             if sl_model == "SL1_SweepWick": sl_price = (bull_sweep_low if not np.isnan(bull_sweep_low) else l1) - 0.50
-            elif sl_model == "SL4_CISD_Origin": sl_price = (armed_cisd_origin_sl if not np.isnan(armed_cisd_origin_sl) else l1) - 0.50
+            elif sl_model == "SL4_CISD_Origin":
+                if not np.isnan(armed_cisd_origin_sl):
+                    sl_price = armed_cisd_origin_sl - 0.50
             else: sl_price = (h2 if new_bull_fvg else bull_sweep_low) - 0.50
 
-            pending_zone = {"dir": 1, "entry_level": e_price, "sl": sl_price, "armed_bar": i,
-                            "entry_model": entry_model, "sl_model": sl_model, "sweep_source": last_sweep_source}
+            # Sanity checks: SL must be valid, below entry, min 2 bps risk
+            if np.isnan(sl_price) or sl_price >= e_price:
+                pass  # skip — invalid SL
+            else:
+                risk_bps = ((e_price - sl_price) / e_price) * 10000.0
+                if risk_bps >= 2.0 and risk_bps <= max_risk_bps:
+                    pending_zone = {"dir": 1, "entry_level": e_price, "sl": sl_price, "armed_bar": i,
+                                    "entry_model": entry_model, "sl_model": sl_model, "sweep_source": last_sweep_source}
 
         if bear_cisd_trigger or (current_delivery_regime == -1 and new_bear_fvg and pending_zone is None and not in_position):
             z_top = l2 if new_bear_fvg else (armed_bear_low + 1.0)
@@ -629,12 +661,22 @@ def run_ict_v3_backtest(
             elif entry_model == "CISD_Level": e_price = armed_bear_low if not np.isnan(armed_bear_low) else z_bot
             else: e_price = z_bot
 
+            # SL-4: CISD delivery origin. No fallback — skip if no CISD origin.
+            sl_price = np.nan
             if sl_model == "SL1_SweepWick": sl_price = (bear_sweep_high if not np.isnan(bear_sweep_high) else h1) + 0.50
-            elif sl_model == "SL4_CISD_Origin": sl_price = (armed_cisd_origin_sl if not np.isnan(armed_cisd_origin_sl) else h1) + 0.50
+            elif sl_model == "SL4_CISD_Origin":
+                if not np.isnan(armed_cisd_origin_sl):
+                    sl_price = armed_cisd_origin_sl + 0.50
             else: sl_price = (l2 if new_bear_fvg else bear_sweep_high) + 0.50
 
-            pending_zone = {"dir": -1, "entry_level": e_price, "sl": sl_price, "armed_bar": i,
-                            "entry_model": entry_model, "sl_model": sl_model, "sweep_source": last_sweep_source}
+            # Sanity checks: SL must be valid, above entry, min 10 bps risk
+            if np.isnan(sl_price) or sl_price <= e_price:
+                pass  # skip — invalid SL
+            else:
+                risk_bps = ((sl_price - e_price) / e_price) * 10000.0
+                if risk_bps >= 2.0 and risk_bps <= max_risk_bps:
+                    pending_zone = {"dir": -1, "entry_level": e_price, "sl": sl_price, "armed_bar": i,
+                                    "entry_model": entry_model, "sl_model": sl_model, "sweep_source": last_sweep_source}
 
     # Compile results
     trades_data = []
