@@ -187,8 +187,8 @@ Hard close at **15:55 ET** — all positions exit at market.
 
 | Parameter | Value | Python | Pine | NT8 |
 | :--- | :--- | :--- | :--- | :--- |
-| Queen Target | 10 bps | ✅ | ✅ | ✅ |
-| Runner Target | 30 bps | ✅ | ✅ | ✅ |
+| QueenTarget | 10 bps | ✅ | ✅ | ✅ |
+| RunnerTarget | 30 bps | ✅ | ✅ | ✅ |
 | Risk Ceiling | 15 bps | ✅ | ✅ | ✅ |
 | Volume Gate | 1.5× SMA20 | ✅ | ✅ | ✅ |
 | Entry Model | FVG Touch | ✅ | ✅ | ✅ |
@@ -205,3 +205,76 @@ Hard close at **15:55 ET** — all positions exit at market.
 2. **Same-bar execution**: NT8 evaluates stop loss on the entry bar; Python delays stop check to bar after entry → NT8 has lower WR
 3. **1H/4H bar construction**: Python resamples from 5m; NT8 uses native AddDataSeries → different swing levels
 4. **Swing detection**: Python uses 3-bar fractal on 5m; NT8 uses 3-bar fractal on primary series → should match but timing may differ by 1 bar
+
+---
+
+## 🔧 Refactoring TODO (Next Session)
+
+The current implementation uses inline level detection in both the Python backtest and the NT8 strategy. This must be refactored to use the **derived data** from `scripts/libs_py/ict_engine` (Python) and the **LiquidityLevels indicator** (NT8).
+
+### 1. Python: Use `scripts/libs_py/ict_engine` for Level Detection
+
+The Python backtest has inline sweep detection that duplicates (and diverges from) the ICT engine. The ICT engine has:
+
+| Module | What It Does | Current Backtest |
+| :--- | :--- | :--- |
+| `detect_fvg` (pa.py) | FVG detection with mitigation tracking | Inline `l0 > h2` (no mitigation) |
+| `detect_htf_levels` (htf.py) | PDH/PDL/PWH/PWL/PMH/PML | Only PDH/PDL inline |
+| `detect_ipda_ranges` (htf.py) | IPDA 20/40/60 dealing ranges | Not used |
+| `detect_opening_gaps` (gaps.py) | NWOG/NDOG gap detection | Not used |
+| `detect_liquidity` (pa.py) | Liquidity pool detection | Not used |
+| `detect_swings` (structure.py) | Swing high/low detection | Inline 3-bar fractal |
+| `detect_cisd` (structure.py) | CISD detection | Inline backward walk |
+| `get_session_data` (sessions.py) | Session highs/lows | Inline (fixed lookahead) |
+
+**Action**: Refactor `run_ict_v3_backtest.py` to call the ICT engine for all level detection. This ensures the backtest matches the indicator and the live strategy.
+
+### 2. NT8: Use `LiquidityLevels` Indicator for Level Detection
+
+The NT8 strategy (`ICTFVGCISDBot.cs`) has inline sweep detection that only checks PDH/PDL, 4H BSL/SSL, 1H BSL/SSL, Asia H/L, London H/L, and 5m swings. The `LiquidityLevels` indicator has **52+ levels** including:
+
+| Level | Current Strategy | LiquidityLevels Indicator |
+| :--- | :--- | :--- |
+| PDH/PDL | ✅ Inline | ✅ |
+| PWH/PWL | ❌ Missing | ✅ |
+| PMH/PML | ❌ Missing | ✅ (as confluence, should be sweep target) |
+| Asia H/L | ✅ Inline (fixed) | ✅ |
+| London H/L | ✅ Inline (fixed) | ✅ |
+| 4H BSL/SSL | ✅ Inline | ✅ |
+| 1H BSL/SSL | ❌ Removed | ✅ |
+| Session Opens | ❌ Missing | ✅ (Midnight, London, NY, Globex opens) |
+| IB H/L | ❌ Missing | ✅ |
+| P12 H/L | ❌ Missing | ✅ (18:00-06:00 ET overnight range) |
+| Naked POC/VAH/VAL | ❌ Missing | ✅ (unmitigated volume profile) |
+| Strong Levels | ❌ Missing | ✅ (market structure) |
+| HTF FVGs | ❌ Missing | ❌ (needs adding to indicator) |
+
+**Action**: Refactor `ICTFVGCISDBot.cs` to reference the `LiquidityLevels` indicator for all sweep detection. This gives the strategy access to all 52+ institutional levels without inline duplication.
+
+### 3. Unmitigated Old Levels
+
+Both the Python backtest and NT8 strategy only check the **most recent** PDH/PDL, 4H BSL/SSL, etc. A PDH from 3 days ago that hasn't been swept is still a valid sweep target. Similarly, a prior week high from 2 weeks ago that hasn't been mitigated is still institutional liquidity.
+
+**Action**: Track unmitigated levels — when a level is swept, mark it as mitigated and remove it from the active list. When a new level forms (e.g., new PDH at the daily close), add it to the active list. The `LiquidityLevels` indicator already tracks this via `LevelState.Swept` — the strategy needs to consume it.
+
+### 4. Daily/Weekly FVGs as Liquidity Levels
+
+Daily and Weekly FVGs are major institutional liquidity targets. A Daily FVG boundary is far more significant than a 5m swing high. These need to be added to the `LiquidityLevels` indicator (NT8) and the ICT engine (Python) as sweep targets.
+
+**Action**: Add Daily FVG and Weekly FVG detection to both the indicator and the engine. When price sweeps a Daily/Weekly FVG boundary, it's a sweep event that arms CISD.
+
+---
+
+## 📋 Refactoring Checklist (Next Session)
+
+- [ ] Refactor Python backtest to use `scripts/libs_py/ict_engine` for all level detection
+- [ ] Refactor NT8 strategy to use `LiquidityLevels` indicator for all sweep detection
+- [ ] Add unmitigated old level tracking (PDH from 3 days ago, PWH from 2 weeks ago, etc.)
+- [ ] Add Daily/Weekly FVG detection to `LiquidityLevels` indicator and ICT engine
+- [ ] Add PWH/PWL/PMH/PML as sweep targets in NT8 strategy
+- [ ] Add session opens (Midnight, London, NY, Globex) as sweep targets
+- [ ] Add IB H/L and P12 H/L as sweep targets
+- [ ] Add Naked POC/VAH/VAL as sweep targets
+- [ ] Re-run Python backtest with ICT engine levels
+- [ ] Re-run NT8 backtest with LiquidityLevels indicator
+- [ ] Compare sweep sources between Python and NT8
