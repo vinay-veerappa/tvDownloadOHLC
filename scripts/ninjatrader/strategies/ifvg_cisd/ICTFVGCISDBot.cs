@@ -141,7 +141,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 IsExitOnSessionCloseStrategy = true;
                 ExitOnSessionCloseSeconds = 300;
                 BarsRequiredToTrade = 25;
-                IsOverlay = true;
 
                 QueenBps = 10.0;
                 RunnerBps = 30.0;
