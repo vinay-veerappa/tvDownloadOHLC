@@ -1,7 +1,14 @@
 # tvDownloadOHLC Project Guidelines
 
 ## Global Rules
-See `.agents/AGENTS.md` for fail-fast error handling and GPU/hardware awareness rules. These apply to all agents (Copilot, Antigravity, Claude Code).
+See `.agents/AGENTS.md` for fail-fast error handling, GPU/hardware awareness, and repository directory organization standards. These apply to all agents (Copilot, Antigravity, Claude Code).
+
+### Repository Directory & Script Organization Standard
+- **Pine Scripts**: `scripts/indicators-pine/<feature_subfolder>/` (e.g. `scripts/indicators-pine/range_probability/`). Never drop loose `.pine` files in root or `indicators/`.
+- **NinjaTrader 8**: `scripts/ninjatrader/indicators/<feature_or_author>/` and `scripts/ninjatrader/strategies/<feature_or_author>/`.
+- **Python Scripts**: `scripts/<domain>/` (e.g. `scripts/range_probability/`, `scripts/ranges/`, `scripts/trader/`). Reusable packages in `src/<package_name>/`.
+- **Data & Feeds**: `data/live/` (raw market data), `data/<domain>/` (derived matrices/feeds).
+- **Documentation**: `docs/<domain>/` (feature docs), `docs/architecture/` (ADRs).
 
 ## Core Commands
 * **Start Next.js App**: `cd web && npm run dev`
