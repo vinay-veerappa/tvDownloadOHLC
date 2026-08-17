@@ -32,13 +32,19 @@ def generate_nt8_lut_class():
             for rec in tf_data.get("records", []):
                 slot = rec["slot"]
                 b_char = rec["bucket_char"]
-                direction = rec["direction"]
-                prob = int(round(rec.get("prob_all", 50)))
-                test = int(round(rec.get("prob_test", prob)))
-                n = min(999, rec["sample_size"])
-                res = min(99, int(round(rec["resolve_rate"])))
+                p_val = rec.get("prob_all")
+                prob = 50 if (p_val is None or (isinstance(p_val, float) and (p_val != p_val))) else int(round(p_val))
+                
+                t_val = rec.get("prob_test")
+                test = prob if (t_val is None or (isinstance(t_val, float) and (t_val != t_val))) else int(round(t_val))
+                
+                r_val = rec.get("resolve_rate")
+                res = 50 if (r_val is None or (isinstance(r_val, float) and (r_val != r_val))) else min(99, int(round(r_val)))
+                
+                n = min(999, rec.get("sample_size", 0))
 
                 key = f"{slot}{b_char}"
+                direction = rec.get("direction", "NONE")
                 dir_char = direction[0] if direction in ["UP", "DOWN", "U", "D"] else "N"
                 if dir_char == "D" and direction == "DOWN":
                     dir_char = "D"
