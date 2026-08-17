@@ -40,7 +40,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int fixedTargetTicks = 80;
         private bool useTrailingStop = false;
 
-        private RangeProbabilityIndicator rangeIndicator;
         private DateTime currentRangeStart = DateTime.MinValue;
         private double curO = double.NaN;
         private double curH = double.MinValue;
@@ -131,8 +130,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.DataLoaded)
             {
-                rangeIndicator = RangeProbabilityIndicator(Input, RangeMinutes, AnchorHourET);
-                AddChartIndicator(rangeIndicator);
+                // Headless-safe: no UI chart indicator allocation needed
             }
         }
 

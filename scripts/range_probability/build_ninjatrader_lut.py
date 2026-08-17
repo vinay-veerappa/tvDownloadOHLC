@@ -58,25 +58,24 @@ def generate_nt8_lut_class():
         "{",
         "    public static class RangeProbabilityLutData",
         "    {",
-        "        // Dictionary keyed by: \"TICKER_TF_SLOT_BUCKET\"",
-        "        // Value: dir(1) + prob(3) + test(3) + N(3) + res(2)",
-        "        private static readonly Dictionary<string, string> MasterLut = new Dictionary<string, string>()",
+        "        // Dictionary keyed by \"TICKER_TF\" -> (slot+bucket -> value)",
+        "        private static readonly Dictionary<string, Dictionary<string, string>> MasterLut = new Dictionary<string, Dictionary<string, string>>()",
         "        {",
     ]
 
     for (t, tf), entries in all_entries.items():
-        cs_lines.append(f"            // === {t} {tf}m ===")
+        master_key = f"{t}_{tf}"
+        cs_lines.append(f'            ["{master_key}"] = new Dictionary<string, string>()')
+        cs_lines.append("            {")
         for k, v in entries:
-            # Combined master key: "NQ_60_10009"
-            master_key = f"{t}_{tf}_{k}"
-            cs_lines.append(f'            ["{master_key}"] = "{v}",')
+            cs_lines.append(f'                ["{k}"] = "{v}",')
+        cs_lines.append("            },")
 
     cs_lines.extend([
         "        };",
         "",
         "        public static Dictionary<string, string> GetEntries(string instrument = \"NQ\", int rangeMinutes = 60)",
         "        {",
-        "            var lut = new Dictionary<string, string>();",
         "            string instClean = \"NQ\";",
         "            if (!string.IsNullOrEmpty(instrument))",
         "            {",
@@ -95,30 +94,19 @@ def generate_nt8_lut_class():
         "                else instClean = \"NQ\";",
         "            }",
         "",
-        "            string prefix = instClean + \"_\" + rangeMinutes + \"_\";",
-        "            foreach (var kvp in MasterLut)",
+        "            string key = instClean + \"_\" + rangeMinutes;",
+        "            if (MasterLut.TryGetValue(key, out var dict))",
         "            {",
-        "                if (kvp.Key.StartsWith(prefix))",
-        "                {",
-        "                    string slotBucket = kvp.Key.Substring(prefix.Length);",
-        "                    lut[slotBucket] = kvp.Value;",
-        "                }",
+        "                return dict;",
         "            }",
         "",
-        "            // Fallback to NQ if no entries found for instrument/tf",
-        "            if (lut.Count == 0 && instClean != \"NQ\")",
+        "            // Fallback to NQ_60 if not found",
+        "            if (MasterLut.TryGetValue(\"NQ_\" + rangeMinutes, out var fbDict))",
         "            {",
-        "                string fbPrefix = \"NQ_\" + rangeMinutes + \"_\";",
-        "                foreach (var kvp in MasterLut)",
-        "                {",
-        "                    if (kvp.Key.StartsWith(fbPrefix))",
-        "                    {",
-        "                        string slotBucket = kvp.Key.Substring(fbPrefix.Length);",
-        "                        lut[slotBucket] = kvp.Value;",
-        "                    }",
-        "                }",
+        "                return fbDict;",
         "            }",
-        "            return lut;",
+        "",
+        "            return new Dictionary<string, string>();",
         "        }",
         "    }",
         "}",

@@ -204,9 +204,16 @@ class RangeProbBacktester:
         if len(trades_df) == 0:
             return {
                 "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
                 "win_rate": 0.0,
                 "net_profit": 0.0,
+                "gross_profit": 0.0,
+                "gross_loss": 0.0,
                 "profit_factor": 0.0,
+                "avg_trade_pnl": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
                 "max_drawdown": 0.0,
                 "sharpe_ratio": 0.0,
                 "trades": trades_df,

@@ -156,8 +156,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                         }
                     }
 
-                    // Draw completed box
-                    if (ShowBox)
+                    // Draw completed box (GUI charts only, skip in headless backtesting)
+                    if (ShowBox && ChartControl != null)
                     {
                         string boxTag = "RangeBox_" + currentRangeStart.Ticks;
                         Brush boxBrush = wasUp ? Brushes.Teal : wasDn ? Brushes.Maroon : Brushes.DimGray;
@@ -221,8 +221,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                         isQualified = false;
                     }
 
-                    // Place signal marker
-                    if (isQualified)
+                    // Place signal marker (GUI charts only)
+                    if (isQualified && ChartControl != null)
                     {
                         string markerTag = "Sig_" + currentRangeStart.Ticks;
                         if (sDir == "U")
@@ -246,8 +246,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 PriorLow[0] = prvL;
             }
 
-            // Render on-chart HUD text box
-            if (ShowHud)
+            // Render on-chart HUD text box (GUI charts only)
+            if (ShowHud && ChartControl != null)
             {
                 RenderHudTable();
             }

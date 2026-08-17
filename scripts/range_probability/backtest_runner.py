@@ -46,6 +46,7 @@ def main():
     parser.add_argument("--min-sample", type=int, default=20, help="Min sample size threshold")
     parser.add_argument("--target-mode", type=str, default="prior_boundary", choices=["prior_boundary", "fixed_rr", "range_close"])
     parser.add_argument("--stop-mode", type=str, default="prior_midpoint", choices=["prior_midpoint", "prior_opposite", "fixed_pts"])
+    parser.add_argument("--risk-reward", type=float, default=1.5, help="Risk:Reward ratio for fixed_rr target mode")
     parser.add_argument("--output-dir", type=str, default="results/range_prob_backtests")
 
     args = parser.parse_args()
@@ -61,7 +62,7 @@ def main():
     print("RANGE PROBABILITY BACKTEST RUNNER (PYTHON)")
     print(f"Tickers: {ticker_list} | Intervals: {interval_list}")
     print(f"Strategy Edge Filter: Prob >= {args.min_prob}% | Resolve >= {args.min_resolve}% | N >= {args.min_sample}")
-    print(f"Execution: Target = {args.target_mode} | Stop = {args.stop_mode}")
+    print(f"Execution: Target = {args.target_mode} (RR: {args.risk_reward}) | Stop = {args.stop_mode}")
     print("=" * 80)
 
     for ticker in ticker_list:
@@ -89,6 +90,7 @@ def main():
                 min_sample_size=args.min_sample,
                 target_mode=args.target_mode,
                 stop_mode=args.stop_mode,
+                risk_reward=args.risk_reward,
                 point_value=pt_val,
             )
 
