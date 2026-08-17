@@ -56,6 +56,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool useHourlyFilter = true;
         private string allowedSlots = "0100,0300,0400,0600,0700,1000,1100,1200,1300,1400,1600,1800,1900,2000,2100,2200,2300";
         private HashSet<string> allowedSlotSet = new HashSet<string>();
+
+        // Exit management
+        private bool exitOnRangeClose = true;
+        private string targetMode = "PriorBoundary";
         #endregion
 
         protected override void OnStateChange()
@@ -86,10 +90,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 MinResolveRate = 45.0;
                 MinSampleSize = 25;
                 OrderQuantity = 1;
+                TargetMode = "PriorBoundary";
                 StopMode = "PriorOpposite";
                 FixedStopTicks = 40;
                 FixedTargetTicks = 80;
                 UseTrailingStop = false;
+                ExitOnRangeClose = true;
                 UseHourlyFilter = true;
                 AllowedSlots = "0100,0300,0400,0600,0700,1000,1100,1200,1300,1400,1600,1800,1900,2000,2100,2200,2300";
             }
@@ -145,6 +151,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (isNewRange)
             {
+                // Exit any open trade at the end of the range window if it hasn't hit target/stop
+                if (ExitOnRangeClose && Position.MarketPosition != MarketPosition.Flat)
+                {
+                    if (Position.MarketPosition == MarketPosition.Long)
+                        ExitLong("RangeEndExit", "LongRange");
+                    else if (Position.MarketPosition == MarketPosition.Short)
+                        ExitShort("RangeEndExit", "ShortRange");
+                }
+
                 // Range rollover
                 if (!double.IsNaN(curO))
                 {
@@ -195,7 +210,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                     if (longSignal && Position.MarketPosition == MarketPosition.Flat)
                     {
-                        double targetPrice = prvH;
+                        double targetPrice = (TargetMode == "PriorBoundary") ? prvH : (curO + FixedTargetTicks * TickSize);
                         double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (StopMode == "PriorOpposite") ? prvL : (curO - FixedStopTicks * TickSize);
 
                         int stopTicks = Math.Max(10, (int)Math.Round((curO - stopPrice) / TickSize));
@@ -207,7 +222,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                     else if (shortSignal && Position.MarketPosition == MarketPosition.Flat)
                     {
-                        double targetPrice = prvL;
+                        double targetPrice = (TargetMode == "PriorBoundary") ? prvL : (curO - FixedTargetTicks * TickSize);
                         double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (StopMode == "PriorOpposite") ? prvH : (curO + FixedStopTicks * TickSize);
 
                         int stopTicks = Math.Max(10, (int)Math.Round((stopPrice - curO) / TickSize));
@@ -243,44 +258,52 @@ namespace NinjaTrader.NinjaScript.Strategies
         public int OrderQuantity { get => orderQuantity; set => orderQuantity = value; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Stop Mode", GroupName = "Order Management", Order = 4)]
+        [Display(Name = "Target Mode", GroupName = "Order Management", Order = 4)]
+        public string TargetMode { get => targetMode; set => targetMode = value; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Stop Mode", GroupName = "Order Management", Order = 5)]
         public string StopMode { get => stopMode; set => stopMode = value; }
 
         [NinjaScriptProperty]
         [Range(5, 500)]
-        [Display(Name = "Fixed Stop Ticks", GroupName = "Order Management", Order = 5)]
+        [Display(Name = "Fixed Stop Ticks", GroupName = "Order Management", Order = 6)]
         public int FixedStopTicks { get => fixedStopTicks; set => fixedStopTicks = value; }
 
         [NinjaScriptProperty]
         [Range(5, 1000)]
-        [Display(Name = "Fixed Target Ticks", GroupName = "Order Management", Order = 6)]
+        [Display(Name = "Fixed Target Ticks", GroupName = "Order Management", Order = 7)]
         public int FixedTargetTicks { get => fixedTargetTicks; set => fixedTargetTicks = value; }
 
         [NinjaScriptProperty]
+        [Display(Name = "Exit on Range Close", GroupName = "Order Management", Order = 8)]
+        public bool ExitOnRangeClose { get => exitOnRangeClose; set => exitOnRangeClose = value; }
+
+        [NinjaScriptProperty]
         [Range(50.0, 95.0)]
-        [Display(Name = "Min Probability Edge (%)", GroupName = "Filters", Order = 7)]
+        [Display(Name = "Min Probability Edge (%)", GroupName = "Filters", Order = 9)]
         public double MinProbThreshold { get => minProbThreshold; set => minProbThreshold = value; }
 
         [NinjaScriptProperty]
         [Range(20.0, 90.0)]
-        [Display(Name = "Min Resolve Rate (%)", GroupName = "Filters", Order = 8)]
+        [Display(Name = "Min Resolve Rate (%)", GroupName = "Filters", Order = 10)]
         public double MinResolveRate { get => minResolveRate; set => minResolveRate = value; }
 
         [NinjaScriptProperty]
         [Range(10, 500)]
-        [Display(Name = "Min Sample Size", GroupName = "Filters", Order = 9)]
+        [Display(Name = "Min Sample Size", GroupName = "Filters", Order = 11)]
         public int MinSampleSize { get => minSampleSize; set => minSampleSize = value; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Use Trailing Stop", GroupName = "Order Management", Order = 10)]
+        [Display(Name = "Use Trailing Stop", GroupName = "Order Management", Order = 12)]
         public bool UseTrailingStop { get => useTrailingStop; set => useTrailingStop = value; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Use Hourly Time Filter", GroupName = "Session Filters", Order = 11)]
+        [Display(Name = "Use Hourly Time Filter", GroupName = "Session Filters", Order = 13)]
         public bool UseHourlyFilter { get => useHourlyFilter; set => useHourlyFilter = value; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Allowed Slots (HHMM, CSV)", GroupName = "Session Filters", Order = 12)]
+        [Display(Name = "Allowed Slots (HHMM, CSV)", GroupName = "Session Filters", Order = 14)]
         public string AllowedSlots { get => allowedSlots; set => allowedSlots = value; }
         #endregion
     }
