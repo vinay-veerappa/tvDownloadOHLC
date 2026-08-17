@@ -15,6 +15,11 @@ from src.range_prob.calculator import (
     build_ranges_from_ohlc,
     compute_probability_matrix,
 )
+
+try:
+    from src.range_prob.calculator import compute_expanding_probabilities
+except ImportError:
+    compute_expanding_probabilities = None
 from src.range_prob.backtest_adapter import RangeProbBacktester
 
 NY_TZ = zoneinfo.ZoneInfo("America/New_York")
@@ -195,3 +200,91 @@ def test_backtester_execution():
     assert res["win_rate"] == 100.0
     # Prior High = 120, Entry = 100 -> Gain = 20 pts - 0.5 slip = 19.5 pts * $20 - $2 comm = $388.00
     assert np.isclose(res["net_profit"], 388.00)
+
+
+def test_lookahead_bias():
+    # Construct 100 ranges in one slot/bucket where the first 70 are 80% UP
+    # and the last 30 are 20% UP (reversed). The full-sample probability
+    # will be ~62% UP, but the expanding probability for later rows should
+    # start at ~80% and degrade toward ~62% as reversed data arrives.
+    # This proves the expanding window uses ONLY past data (no look-ahead).
+    np.random.seed(42)
+    records = []
+    base_time = pd.Timestamp("2026-01-01 23:00:00", tz="UTC")
+
+    cur_p = 100.0
+    for i in range(100):
+        t_start = base_time + pd.Timedelta(hours=i)
+        p_high = cur_p + 10.0
+        p_low = cur_p - 10.0
+        r_open = p_low + 2.0  # pos = 0.10 -> bucket 2
+
+        # First 70: 80% UP. Last 30: 20% UP (reversed)
+        if i < 70:
+            outcome = "UP" if i % 10 < 8 else "DOWN"
+        else:
+            outcome = "UP" if i % 10 < 2 else "DOWN"
+
+        r_close = p_high + 5.0 if outcome == "UP" else p_low - 5.0
+
+        records.append({
+            "start_time_utc": t_start,
+            "end_time_utc": t_start + pd.Timedelta(minutes=59),
+            "start_time_ny": t_start.tz_convert(NY_TZ),
+            "slot": "1000",
+            "range_minutes": 60,
+            "open": r_open,
+            "high": p_high + 6.0,
+            "low": p_low - 6.0,
+            "close": r_close,
+            "prior_high": p_high,
+            "prior_low": p_low,
+            "prior_open": p_low,
+            "prior_close": p_high,
+            "prior_start_time_utc": t_start - pd.Timedelta(hours=1),
+            "is_adjacent": True,
+            "open_pos": 0.10,
+            "bucket": 2,
+            "bucket_char": "2",
+            "bucket_name": "0.1 - 0.2",
+            "outcome": outcome,
+            "is_resolved": True,
+        })
+        cur_p = r_close
+
+    df = pd.DataFrame(records)
+
+    # Full-sample matrix: direction from ALL data
+    matrix = compute_probability_matrix(df, min_prob_threshold=70.0, min_sample_size=20)
+    rec = [r for r in matrix["records"] if r["slot"] == "1000" and r["bucket"] == 2][0]
+
+    # Full sample: ~62% UP (70*0.8 + 30*0.2 = 62 up out of 100)
+    assert "prob_full" in rec, "prob_all must be renamed to prob_full"
+    assert rec["prob_full"] != rec["prob_train"], \
+        "prob_full (all data) must differ from prob_train (train split only)"
+
+    # Expanding window: row 50 should see ~80% UP (only train-like data so far)
+    # row 95 should have degraded toward 62%
+    expanding = compute_expanding_probabilities(df)
+    assert "exp_prob" in expanding.columns, "must have exp_prob column"
+    assert "exp_dir" in expanding.columns, "must have exp_dir column"
+
+    # Row 50 (0-indexed): only first 51 ranges seen, ~80% UP
+    early_idx = 50
+    early_prob = expanding.iloc[early_idx]["exp_prob"]
+    assert not pd.isna(early_prob), "early expanding prob should not be NaN"
+    assert early_prob >= 70.0, \
+        f"early expanding prob should be ~80% (got {early_prob})"
+
+    # Row 95: has seen all 100, should be closer to 62%
+    late_idx = 95
+    late_prob = expanding.iloc[late_idx]["exp_prob"]
+    assert not pd.isna(late_prob), "late expanding prob should not be NaN"
+    assert late_prob < early_prob, \
+        f"late expanding prob ({late_prob}) should be < early ({early_prob}) - lookahead if not"
+
+    # The expanding prob at the last row should NOT equal the full-sample prob
+    # because the full-sample includes the current row's outcome; expanding doesn't
+    last_exp = expanding.iloc[-1]["exp_prob"]
+    assert last_exp != rec["prob_full"], \
+        "expanding prob at last row equals full-sample prob: look-ahead bias present"

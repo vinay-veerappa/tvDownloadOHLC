@@ -40,7 +40,8 @@ PYTHON_TVDOWNLOADOHLC = Profile(
     # and run in ~6s.
     test_cmd=(
         f'"{sys.executable}" -m pytest scripts/libs_py/ict_engine/tests '
-        "scripts/trading_framework/tests -q --tb=short -p no:cacheprovider"
+        "scripts/trading_framework/tests "
+        "tests/test_range_probability.py -q --tb=short -p no:cacheprovider"
     ),
     # No lock primitive in Python
     lock_name="",
