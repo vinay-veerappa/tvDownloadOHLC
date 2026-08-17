@@ -1,0 +1,81 @@
+{
+  "tickets": [
+    {
+      "id": "T1",
+      "title": "Fix look-ahead bias in compute_probability_matrix",
+      "defect": "Look-ahead bias in compute_probability_matrix: the 'prob_all' field (set from train_p on line 273) is actually the FULL-SAMPLE conditional probability computed from n_up/n_resolved over ALL data (lines 225-236), not the train-only probability. The backtester filters trades on this value (backtest_adapter.py:58), so every trade is evaluated against a probability computed using data that includes that trade's own period. Additionally, direction is chosen using full-sample data (line 231, p_up_cond from all data), peeking at the test set. Finally, tr_prob falls back to train_p (the full-sample value) when train data is empty (line 248), another look-ahead. Fix: (1) Rename 'prob_all' to 'prob_full' throughout for clarity. (2) Compute direction from TRAIN data only (train_df), not full sample. (3) When train data is empty for a cell, tr_prob should be NaN, not the full-sample value. (4) Add a new function compute_expanding_probabilities that, for each range row, computes the (slot,bucket) probability using ONLY data from ranges that came BEFORE it (strict temporal cutoff). This produces a walk-forward probability per row with zero look-ahead. (5) Update the returned dict to include 'prob_full' (renamed from 'prob_all') and keep prob_train/prob_test as-is but now direction is from train data. (6) Update the Z-score to use prob_train not prob_full.",
+      "spec": "Rename prob_all to prob_full in the record dict. Compute direction from train_df only. When train data is empty for a cell, set tr_prob to NaN. Add compute_expanding_probabilities(ranges_df) function that returns a DataFrame with exp_prob, exp_dir, exp_n, exp_res_rate columns computed using only prior rows (strict temporal cutoff). Update Z-score to use prob_train.",
+      "regions": [
+        {
+          "id": "R1",
+          "file": "src/range_prob/calculator.py",
+          "anchor": "def compute_probability_matrix(",
+          "kind": "decl",
+          "note": "The entire compute_probability_matrix function. Rename prob_all->prob_full, compute direction from train_df only, fix tr_prob fallback to NaN, add compute_expanding_probabilities function after this function."
+        },
+        {
+          "id": "R2",
+          "file": "src/range_prob/__init__.py",
+          "anchor": "\"compute_probability_matrix\",",
+          "kind": "line",
+          "note": "Add compute_expanding_probabilities to the __all__ list after compute_probability_matrix"
+        }
+      ],
+      "expect_green": [
+        "tests/test_range_probability.py::test_lookahead_bias",
+        "tests/test_range_probability.py::test_matrix_probability_computation"
+      ]
+    },
+    {
+      "id": "T2",
+      "title": "Fix extractor to use expanding window probabilities",
+      "defect": "extractor.py uses rec['prob_all'] (line 86) for the backtest signal probability field s_prob. Since prob_all is the full-sample probability (look-ahead bias), the backtest is in-sample. Fix: replace the static lookup with a call to compute_expanding_probabilities. The extractor should call compute_expanding_probabilities(ranges_df) to get a per-row walk-forward probability, then use those per-row values to populate s_dir, s_prob, s_res_rate, s_n, and is_qualified for each row. The s_train and s_test fields can be removed or kept as the full-sample values for reference, but s_prob MUST be the expanding-window value (zero look-ahead). Also fix: the trade_win computation (line 113) should use the expanding signal, not the static lookup.",
+      "spec": "Replace the static LUT lookup loop with compute_expanding_probabilities(ranges_df). Use the per-row expanding values for s_dir, s_prob, s_res_rate, s_n, is_qualified. Keep s_train and s_test from the full matrix for reference. Update trade_win to use the expanding signal.",
+      "regions": [
+        {
+          "id": "R1",
+          "file": "scripts/range_probability/extractor.py",
+          "anchor": "def extract_features_for_ticker(",
+          "kind": "decl",
+          "note": "The extract_features_for_ticker function body after the matrix computation call. Replace the static LUT lookup loop with compute_expanding_probabilities."
+        }
+      ],
+      "expect_green": [
+        "tests/test_range_probability.py::test_lookahead_bias"
+      ]
+    },
+    {
+      "id": "T3",
+      "title": "Fix backtest_adapter slippage, Sharpe, collision mode",
+      "defect": "backtest_adapter.py has three issues: (1) Slippage is one-sided (line 109): 'points = exit_price - entry_price - self.slippage_pts' subtracts slippage once, but both entry and exit have slippage. Fix: multiply slippage by 2 (entry + exit). Same for short trades (line 141). (2) Sharpe ratio annualization is arbitrary (line 198): uses np.sqrt(252 * 4) assuming exactly 4 trades/day. Fix: annualize based on actual trade frequency. If trades span N_days calendar days with T trades, annualization factor = sqrt(252 * T / N_days). If all trades are on the same day or N_days==0, return per-trade Sharpe (mean/std, no annualization). (3) Intrabar collision always pessimistic (lines 100-103): when both target and stop are hit, always assumes stop-first. Add a 'collision_mode' parameter with values 'pessimistic' (stop-first), 'optimistic' (target-first), and 'conservative' (assume worst of the two: if stop loss > target gain, assume stop; else assume target). The conservative mode is the new default since it's more realistic than always-stop.",
+      "spec": "Add collision_mode parameter (default 'conservative') to __init__. Fix slippage to 2x (entry+exit) in both long and short paths. Add collision_mode logic for target+stop hit. Replace fixed Sharpe annualization with actual trade frequency: sqrt(252 * T / N_days) where N_days is calendar days spanned. If N_days==0, return per-trade Sharpe.",
+      "regions": [
+        {
+          "id": "R1",
+          "file": "src/range_prob/backtest_adapter.py",
+          "anchor": "class RangeProbBacktester",
+          "kind": "decl",
+          "note": "Constructor __init__ and the full class. Add collision_mode parameter with default 'conservative'. Fix slippage to 2x, add collision_mode logic, fix Sharpe ratio annualization."
+        }
+      ],
+      "expect_green": [
+        "tests/test_range_probability.py::test_backtester_execution"
+      ]
+    },
+    {
+      "id": "T4",
+      "title": "Update tests for renamed fields and add lookahead bias test",
+      "defect": "test_range_probability.py::test_matrix_probability_computation asserts rec['prob_all'] == 75.0 (line 154) but prob_all is being renamed to prob_full. Also the test does not verify walk-forward integrity (no test that expanding probabilities don't look ahead). Fix: (1) Update test_matrix_probability_computation to use 'prob_full' instead of 'prob_all' and assert prob_train == 75.0 (since all 100 ranges are in one slot/bucket, the train split should have ~75 records with 75% up). (2) The new test 'test_lookahead_bias' was already added to the test file (it is the failing acceptance test for T1). Update it if needed to match the actual compute_expanding_probabilities API.",
+      "spec": "Update test_matrix_probability_computation to assert 'prob_full' instead of 'prob_all'. Assert prob_train == 75.0. Ensure test_lookahead_bias passes with the actual compute_expanding_probabilities API.",
+      "regions": [
+        {
+          "id": "R1",
+          "file": "tests/test_range_probability.py",
+          "anchor": "def test_matrix_probability_computation(",
+          "kind": "decl",
+          "note": "test_matrix_probability_computation. Update prob_all->prob_full, assert prob_train."
+        }
+      ]
+    }
+  ]
+}

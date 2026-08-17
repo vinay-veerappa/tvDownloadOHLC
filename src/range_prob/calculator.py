@@ -220,20 +220,13 @@ def compute_probability_matrix(
 
             resolve_rate = (n_resolved / n_total * 100.0) if n_total > 0 else 0.0
 
-            # Directional conditional probability
+            # Full-sample directional conditional probability (for reference only)
             if n_resolved > 0:
-                p_up_cond = (n_up / n_resolved) * 100.0
-                p_down_cond = (n_down / n_resolved) * 100.0
+                p_up_full = (n_up / n_resolved) * 100.0
+                p_down_full = (n_down / n_resolved) * 100.0
             else:
-                p_up_cond = 50.0
-                p_down_cond = 50.0
-
-            if p_up_cond >= 50.0:
-                direction = "U"
-                train_p = p_up_cond
-            else:
-                direction = "D"
-                train_p = p_down_cond
+                p_up_full = 50.0
+                p_down_full = 50.0
 
             # Calculate Train vs Test breakdown
             cell_train = train_df[(train_df["slot"] == slot) & (train_df["bucket"] == b)]
@@ -242,10 +235,28 @@ def compute_probability_matrix(
             n_tr_down = (cell_train["outcome"] == "DOWN").sum()
             n_tr_res = n_tr_up + n_tr_down
 
+            # Direction chosen from TRAIN data only (no look-ahead)
             if n_tr_res > 0:
-                tr_prob = (n_tr_up / n_tr_res * 100.0) if direction == "U" else (n_tr_down / n_tr_res * 100.0)
+                p_up_train_cond = (n_tr_up / n_tr_res) * 100.0
+                p_down_train_cond = (n_tr_down / n_tr_res) * 100.0
             else:
-                tr_prob = train_p
+                p_up_train_cond = 50.0
+                p_down_train_cond = 50.0
+
+            if p_up_train_cond >= 50.0:
+                direction = "U"
+                prob_full = p_up_full
+                prob_train = p_up_train_cond
+            else:
+                direction = "D"
+                prob_full = p_down_full
+                prob_train = p_down_train_cond
+
+            # When train data is empty for this cell, tr_prob is NaN (no look-ahead fallback)
+            if n_tr_res == 0:
+                tr_prob = np.nan
+            else:
+                tr_prob = (n_tr_up / n_tr_res * 100.0) if direction == "U" else (n_tr_down / n_tr_res * 100.0)
 
             cell_test = test_df[(test_df["slot"] == slot) & (test_df["bucket"] == b)]
             n_te_total = len(cell_test)
@@ -256,13 +267,13 @@ def compute_probability_matrix(
             if n_te_res > 0:
                 te_prob = (n_te_up / n_te_res * 100.0) if direction == "U" else (n_te_down / n_te_res * 100.0)
             else:
-                te_prob = tr_prob
+                te_prob = np.nan
 
-            # Statistical significance (Z-score vs 50% random coin flip)
-            p_hat = (train_p / 100.0)
-            z_score = float((p_hat - 0.5) / np.sqrt(0.25 / n_resolved)) if n_resolved > 0 else 0.0
+            # Statistical significance (Z-score vs 50% random coin flip) using train prob
+            p_hat = (prob_train / 100.0) if not pd.isna(prob_train) else 0.5
+            z_score = float((p_hat - 0.5) / np.sqrt(0.25 / n_tr_res)) if n_tr_res > 0 else 0.0
 
-            is_qual = bool((train_p >= min_prob_threshold) and (n_total >= min_sample_size))
+            is_qual = bool((prob_train >= min_prob_threshold) and (n_total >= min_sample_size) and not pd.isna(prob_train))
 
             rec = {
                 "slot": str(slot),
@@ -270,9 +281,9 @@ def compute_probability_matrix(
                 "bucket_char": str(get_bucket_char(b)),
                 "bucket_name": str(get_bucket_name(b)),
                 "direction": str(direction),
-                "prob_all": float(round(train_p, 1)),
-                "prob_train": float(round(tr_prob, 1)),
-                "prob_test": float(round(te_prob, 1)),
+                "prob_full": float(round(prob_full, 1)),
+                "prob_train": float(round(tr_prob, 1)) if not pd.isna(tr_prob) else np.nan,
+                "prob_test": float(round(te_prob, 1)) if not pd.isna(te_prob) else np.nan,
                 "sample_size": int(n_total),
                 "sample_resolved": int(n_resolved),
                 "resolve_rate": float(round(resolve_rate, 1)),
@@ -293,8 +304,10 @@ def compute_probability_matrix(
             slot_str = r["slot"]
             b_char = r["bucket_char"]
             d_str = r["direction"]
-            p_tr_str = f"{int(round(r['prob_train'])):03d}"
-            p_te_str = f"{int(round(r['prob_test'])):03d}"
+            p_tr_val = r["prob_train"] if not pd.isna(r["prob_train"]) else r["prob_full"]
+            p_te_val = r["prob_test"] if not pd.isna(r["prob_test"]) else r["prob_full"]
+            p_tr_str = f"{int(round(p_tr_val)):03d}"
+            p_te_str = f"{int(round(p_te_val)):03d}"
             n_str = f"{min(999, int(r['sample_size'])):03d}"
             res_str = f"{min(99, int(round(r['resolve_rate']))):02d}"
 
@@ -313,3 +326,80 @@ def compute_probability_matrix(
         "qualified_count": len(pine_lut_chunks),
         "pine_lut_string": pine_lut_str,
     }
+
+
+def compute_expanding_probabilities(ranges_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Walk-forward expanding-window probability for each range row.
+    For a given row, the probability for its (slot, bucket) is computed
+    using ONLY rows that strictly precede it in time (no look-ahead).
+
+    Returns a DataFrame indexed like ranges_df with columns:
+    - exp_prob: directional probability (%) using only prior data
+    - exp_dir: 'U' or 'D' based on prior data
+    - exp_n: number of prior resolved ranges in this (slot, bucket)
+    - exp_res_rate: resolve rate (%) using only prior data
+    """
+    result = pd.DataFrame(
+        index=ranges_df.index,
+        columns=["exp_prob", "exp_dir", "exp_n", "exp_res_rate"],
+        dtype=float,
+    )
+    result["exp_dir"] = ""
+    result["exp_n"] = 0
+
+    valid = ranges_df[ranges_df["is_adjacent"] & (ranges_df["bucket"] >= 0)].copy()
+    if valid.empty:
+        return result
+
+    valid = valid.sort_values("start_time_utc").reset_index(drop=True)
+
+    # Track cumulative counts per (slot, bucket) group
+    cum_up = {}
+    cum_down = {}
+    cum_total = {}
+
+    for idx, row in valid.iterrows():
+        key = (row["slot"], row["bucket"])
+        n_prior = cum_total.get(key, 0)
+        n_up_prior = cum_up.get(key, 0)
+        n_down_prior = cum_down.get(key, 0)
+        n_res_prior = n_up_prior + n_down_prior
+
+        if n_res_prior > 0:
+            p_up = n_up_prior / n_res_prior
+            if p_up >= 0.5:
+                exp_dir = "U"
+                exp_prob = p_up * 100.0
+            else:
+                exp_dir = "D"
+                exp_prob = (1.0 - p_up) * 100.0
+            exp_res_rate = (n_res_prior / n_prior * 100.0) if n_prior > 0 else 0.0
+        else:
+            exp_dir = ""
+            exp_prob = np.nan
+            exp_res_rate = np.nan
+
+        # Map back to original index
+        orig_idx = ranges_df[
+            (ranges_df["slot"] == row["slot"])
+            & (ranges_df["bucket"] == row["bucket"])
+        ].index
+        # Use the start_time to find the exact row
+        matching = ranges_df[ranges_df["start_time_utc"] == row["start_time_utc"]]
+        if len(matching) > 0:
+            orig_idx = matching.index[0]
+            result.loc[orig_idx, "exp_prob"] = exp_prob
+            result.loc[orig_idx, "exp_dir"] = exp_dir
+            result.loc[orig_idx, "exp_n"] = n_res_prior
+            result.loc[orig_idx, "exp_res_rate"] = exp_res_rate
+
+        # Update cumulative counts AFTER computing (no look-ahead)
+        outcome = row["outcome"]
+        cum_total[key] = n_prior + 1
+        if outcome == "UP":
+            cum_up[key] = n_up_prior + 1
+        elif outcome == "DOWN":
+            cum_down[key] = n_down_prior + 1
+
+    return result

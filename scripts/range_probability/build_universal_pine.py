@@ -238,7 +238,7 @@ if newRange
     sOP := na
     sBucket := ""
     sDir := ""
-    sAdj := not na(prvStart) and (curStart - prvStart) == tfMs
+    sAdj := not na(prvStart) and (curStart - prvStart) >= math.round(tfMs * 0.9) and (curStart - prvStart) <= math.round(tfMs * 1.5)
     sSlot := pad2(hour(curStart, "America/New_York")) + pad2(minute(curStart, "America/New_York"))
 
     if sAdj and not na(prvH) and prvH > prvL

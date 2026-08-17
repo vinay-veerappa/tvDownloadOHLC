@@ -157,7 +157,8 @@ def test_matrix_probability_computation():
     assert rec["direction"] == "U"
     assert "prob_full" in rec, "prob_all must be renamed to prob_full"
     assert rec["prob_full"] == 75.0
-    assert rec["prob_train"] == 75.0
+    # Train split is first 70 of 100 rows; all 70 are UP (i < 75 -> UP), so train prob = 100%
+    assert rec["prob_train"] == 100.0
     assert rec["sample_size"] == 100
     assert rec["resolve_rate"] == 100.0
     assert rec["is_qualified"] == True

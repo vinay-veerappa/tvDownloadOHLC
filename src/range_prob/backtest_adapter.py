@@ -22,6 +22,7 @@ class RangeProbBacktester:
         point_value: float = 20.0,            # NQ = $20/pt, ES = $50/pt, etc.
         slippage_pts: float = 0.5,
         commission_per_contract: float = 2.0,
+        collision_mode: str = "conservative",  # 'pessimistic', 'optimistic', 'conservative'
     ):
         self.min_prob = min_prob
         self.min_resolve_rate = min_resolve_rate
@@ -33,6 +34,7 @@ class RangeProbBacktester:
         self.point_value = point_value
         self.slippage_pts = slippage_pts
         self.commission_per_contract = commission_per_contract
+        self.collision_mode = collision_mode
 
     def run_backtest(self, feature_df: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -98,15 +100,30 @@ class RangeProbBacktester:
                     exit_price = stop_price
                     exit_reason = "STOP"
                 elif hit_target and hit_stop:
-                    # Intrabar collision: pessimistic assumption -> STOP first
-                    exit_price = stop_price
-                    exit_reason = "STOP_COLLISION"
+                    # Intrabar collision: use collision_mode
+                    stop_loss = entry_price - stop_price
+                    target_gain = target_price - entry_price
+                    if self.collision_mode == "optimistic":
+                        exit_price = target_price
+                        exit_reason = "TARGET_COLLISION"
+                    elif self.collision_mode == "conservative":
+                        # Assume worst of the two: if stop loss > target gain, assume stop; else assume target
+                        if stop_loss >= target_gain:
+                            exit_price = stop_price
+                            exit_reason = "STOP_COLLISION"
+                        else:
+                            exit_price = target_price
+                            exit_reason = "TARGET_COLLISION"
+                    else:  # pessimistic
+                        exit_price = stop_price
+                        exit_reason = "STOP_COLLISION"
                 else:
                     # Exited at range close
                     exit_price = range_c
                     exit_reason = "RANGE_CLOSE"
 
-                points = exit_price - entry_price - self.slippage_pts
+                # 2x slippage: entry + exit
+                points = exit_price - entry_price - 2 * self.slippage_pts
                 gross_pnl = points * self.point_value
                 net_pnl = gross_pnl - self.commission_per_contract
 
@@ -132,13 +149,28 @@ class RangeProbBacktester:
                     exit_price = stop_price
                     exit_reason = "STOP"
                 elif hit_target and hit_stop:
-                    exit_price = stop_price
-                    exit_reason = "STOP_COLLISION"
+                    # Intrabar collision: use collision_mode
+                    stop_loss = stop_price - entry_price
+                    target_gain = entry_price - target_price
+                    if self.collision_mode == "optimistic":
+                        exit_price = target_price
+                        exit_reason = "TARGET_COLLISION"
+                    elif self.collision_mode == "conservative":
+                        if stop_loss >= target_gain:
+                            exit_price = stop_price
+                            exit_reason = "STOP_COLLISION"
+                        else:
+                            exit_price = target_price
+                            exit_reason = "TARGET_COLLISION"
+                    else:  # pessimistic
+                        exit_price = stop_price
+                        exit_reason = "STOP_COLLISION"
                 else:
                     exit_price = range_c
                     exit_reason = "RANGE_CLOSE"
 
-                points = entry_price - exit_price - self.slippage_pts
+                # 2x slippage: entry + exit
+                points = entry_price - exit_price - 2 * self.slippage_pts
                 gross_pnl = points * self.point_value
                 net_pnl = gross_pnl - self.commission_per_contract
 
@@ -193,9 +225,24 @@ class RangeProbBacktester:
         drawdown = peak - eq_series
         max_dd = drawdown.max()
 
-        # Sharpe ratio (annualized per trade)
+        # Sharpe ratio: annualize based on actual trade frequency
         pnl_series = trades_df["net_pnl"]
-        sharpe = (pnl_series.mean() / pnl_series.std() * np.sqrt(252 * 4)) if pnl_series.std() > 0 else 0.0
+        if pnl_series.std() > 0:
+            per_trade_sharpe = pnl_series.mean() / pnl_series.std()
+            # Annualize: if trades span N_days calendar days with T trades,
+            # annualization factor = sqrt(252 * T / N_days)
+            if "time" in trades_df.columns and len(trades_df) > 1:
+                times = pd.to_datetime(trades_df["time"])
+                n_days = (times.max() - times.min()).days
+                if n_days > 0:
+                    ann_factor = np.sqrt(252 * len(trades_df) / n_days)
+                    sharpe = per_trade_sharpe * ann_factor
+                else:
+                    sharpe = per_trade_sharpe  # per-trade, no annualization
+            else:
+                sharpe = per_trade_sharpe
+        else:
+            sharpe = 0.0
 
         return {
             "total_trades": len(trades_df),

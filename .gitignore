@@ -30,18 +30,22 @@ logs/agent_loop/*
 
 # Data
 downloads_es_futures/
-data/
+/data/
 backup/
 old_data/
 debug_files/
 *.csv
 *.parquet
 # Explicitly exclude generated Phase 1 daily_context parquet files (regenerated locally)
-data/derived/daily_context_*.parquet
+/data/derived/daily_context_*.parquet
 **/data/*.parquet
 !web/components/data/
 !docs/data/
 web/public/data/
+# Source modules living under data/ subdirs must NOT be gitignored
+# (the bare `data/` pattern above matched scripts/libs_py/data/ too)
+!scripts/libs_py/data/
+!scripts/libs_py/data/**
 
 # Chrome
 chrome_profile/

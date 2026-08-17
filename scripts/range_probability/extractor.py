@@ -14,7 +14,7 @@ import numpy as np
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from src.range_prob.calculator import build_ranges_from_ohlc, compute_probability_matrix, get_bucket_char
+from src.range_prob.calculator import build_ranges_from_ohlc, compute_probability_matrix, compute_expanding_probabilities, get_bucket_char
 from src.range_prob.matrix_store import MatrixStore
 from scripts.range_probability.engine import load_ticker_data
 
@@ -60,18 +60,21 @@ def extract_features_for_ticker(
         volume_col=vol_col,
     )
 
-    # Compute probability matrix
+    # Compute probability matrix (full-sample, for reference fields)
     matrix_res = compute_probability_matrix(
         ranges_df=ranges,
         min_prob_threshold=min_prob,
         min_sample_size=min_sample,
     )
 
-    # Build lookup map: (slot, bucket) -> record
+    # Build lookup map: (slot, bucket) -> record (full-sample, for reference)
     lut_map = {}
     for rec in matrix_res["records"]:
         key = (rec["slot"], rec["bucket"])
         lut_map[key] = rec
+
+    # Compute expanding-window probabilities (walk-forward, no look-ahead)
+    expanding = compute_expanding_probabilities(ranges)
 
     # Enrich ranges with lookup stats
     rows = []
@@ -80,24 +83,41 @@ def extract_features_for_ticker(
         b = row["bucket"]
         key = (slot, b)
 
+        # Full-sample reference values
         rec = lut_map.get(key)
         if rec is not None:
-            direction = rec["direction"]
-            p_prob = rec["prob_all"]
+            ref_direction = rec["direction"]
             p_train = rec["prob_train"]
             p_test = rec["prob_test"]
-            n_sample = rec["sample_size"]
-            res_rate = rec["resolve_rate"]
+            ref_n = rec["sample_size"]
+            ref_res_rate = rec["resolve_rate"]
             z_score = rec["z_score"]
-            is_qual = rec["is_qualified"]
+        else:
+            ref_direction = "NONE"
+            p_train = np.nan
+            p_test = np.nan
+            ref_n = 0
+            ref_res_rate = np.nan
+            z_score = 0.0
+
+        # Expanding-window values (zero look-ahead) -- used for s_prob, s_dir, is_qualified
+        exp_row = expanding.loc[idx] if idx in expanding.index else None
+        if exp_row is not None and not pd.isna(exp_row["exp_prob"]):
+            direction = exp_row["exp_dir"]
+            p_prob = exp_row["exp_prob"]
+            n_sample = int(exp_row["exp_n"])
+            res_rate = exp_row["exp_res_rate"]
+            is_qual = bool(
+                not pd.isna(p_prob)
+                and p_prob >= min_prob
+                and n_sample >= min_sample
+                and direction in ["U", "D"]
+            )
         else:
             direction = "NONE"
             p_prob = np.nan
-            p_train = np.nan
-            p_test = np.nan
             n_sample = 0
             res_rate = np.nan
-            z_score = 0.0
             is_qual = False
 
         # Compute theoretical unconditional probabilities

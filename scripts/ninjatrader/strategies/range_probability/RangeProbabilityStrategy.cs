@@ -48,13 +48,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double prvH = double.NaN;
         private double prvL = double.NaN;
         private TimeZoneInfo nyTimeZone;
+
+        // Session & Hourly Filtering
+        private bool useHourlyFilter = true;
+        private string allowedSlots = "0100,0300,0400,0600,0700,1000,1100,1200,1300,1400,1600,1800,1900,2000,2100,2200,2300";
+        private HashSet<string> allowedSlotSet = new HashSet<string>();
         #endregion
 
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
-                Description = @"Automated Range Probability Decile Edge Strategy for NinjaTrader 8.";
+                Description = @"Automated Range Probability Decile Edge Strategy with Time-of-Day Hourly Filtering for NinjaTrader 8.";
                 Name = "RangeProbabilityStrategy";
                 Calculate = Calculate.OnBarClose;
                 EntriesPerDirection = 1;
@@ -74,14 +79,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 RangeMinutes = 60;
                 AnchorHourET = 18;
-                MinProbThreshold = 70.0;
-                MinResolveRate = 40.0;
-                MinSampleSize = 20;
+                MinProbThreshold = 75.0;
+                MinResolveRate = 45.0;
+                MinSampleSize = 25;
                 OrderQuantity = 1;
-                StopMode = "PriorMidpoint";
+                StopMode = "PriorOpposite";
                 FixedStopTicks = 40;
                 FixedTargetTicks = 80;
                 UseTrailingStop = false;
+                UseHourlyFilter = true;
+                AllowedSlots = "0100,0300,0400,0600,0700,1000,1100,1200,1300,1400,1600,1800,1900,2000,2100,2200,2300";
             }
             else if (State == State.Configure)
             {
@@ -92,6 +99,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 catch
                 {
                     nyTimeZone = TimeZoneInfo.Local;
+                }
+
+                allowedSlotSet.Clear();
+                if (!string.IsNullOrEmpty(AllowedSlots))
+                {
+                    foreach (var s in AllowedSlots.Split(','))
+                    {
+                        var trimmed = s.Trim();
+                        if (!string.IsNullOrEmpty(trimmed)) allowedSlotSet.Add(trimmed);
+                    }
                 }
             }
             else if (State == State.DataLoaded)
@@ -110,6 +127,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             int sinceAnchor = (etMins - anchorHourET * 60 + 1440) % 1440;
             int offsetMins = sinceAnchor % rangeMinutes;
             DateTime rStart = timeNy.AddMinutes(-offsetMins).AddSeconds(-timeNy.Second);
+            string slotStr = string.Format("{0:D2}{1:D2}", rStart.Hour, rStart.Minute);
 
             bool isNewRange = (currentRangeStart == DateTime.MinValue) || (rStart != currentRangeStart);
 
@@ -127,6 +145,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 curH = High[0];
                 curL = Low[0];
 
+                // Check Time-of-Day Filter
+                if (UseHourlyFilter && !allowedSlotSet.Contains(slotStr))
+                {
+                    return; // Skip toxic hours
+                }
+
                 // Check for trade signal entry at the open of the range
                 if (!double.IsNaN(prvH) && prvH > prvL)
                 {
@@ -135,9 +159,27 @@ namespace NinjaTrader.NinjaScript.Strategies
                     int bucket = openPos < 0.0 ? 0 : openPos >= 1.0 ? 11 : Math.Min(10, Math.Max(1, (int)Math.Floor(openPos * 10) + 1));
                     double priorMid = (prvH + prvL) / 2.0;
 
-                    // Signal heuristics or indicator lookup
-                    bool longSignal = bucket <= 2; // Oversold open decile
-                    bool shortSignal = bucket >= 9; // Overbought open decile
+                    // Read the indicator's qualified signal (empirical LUT, not heuristic)
+                    bool longSignal = rangeIndicator != null
+                        && rangeIndicator.SignalIsQualified
+                        && rangeIndicator.SignalDirection == "U";
+                    bool shortSignal = rangeIndicator != null
+                        && rangeIndicator.SignalIsQualified
+                        && rangeIndicator.SignalDirection == "D";
+
+                    // Additional filter: respect min probability and resolve rate thresholds
+                    if (longSignal && rangeIndicator.SignalProbability < MinProbThreshold)
+                        longSignal = false;
+                    if (longSignal && rangeIndicator.SignalResolveRate < MinResolveRate)
+                        longSignal = false;
+                    if (longSignal && rangeIndicator.SignalSampleSize < MinSampleSize)
+                        longSignal = false;
+                    if (shortSignal && rangeIndicator.SignalProbability < MinProbThreshold)
+                        shortSignal = false;
+                    if (shortSignal && rangeIndicator.SignalResolveRate < MinResolveRate)
+                        shortSignal = false;
+                    if (shortSignal && rangeIndicator.SignalSampleSize < MinSampleSize)
+                        shortSignal = false;
 
                     if (longSignal && Position.MarketPosition == MarketPosition.Flat)
                     {
@@ -213,9 +255,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         public double MinResolveRate { get => minResolveRate; set => minResolveRate = value; }
 
         [NinjaScriptProperty]
-        [Range(10, 500)]
-        [Display(Name = "Min Sample Size", GroupName = "Filters", Order = 9)]
-        public int MinSampleSize { get => minSampleSize; set => minSampleSize = value; }
+        [Display(Name = "Use Hourly Time Filter", GroupName = "Session Filters", Order = 10)]
+        public bool UseHourlyFilter { get => useHourlyFilter; set => useHourlyFilter = value; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Allowed Slots (HHMM, CSV)", GroupName = "Session Filters", Order = 11)]
+        public string AllowedSlots { get => allowedSlots; set => allowedSlots = value; }
         #endregion
     }
 }
