@@ -38,6 +38,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
     /// Named color scheme registry. Each scheme maps every palette token to a
     /// concrete color. Adding a theme = adding a named preset here.
     /// </summary>
+    [System.CLSCompliant(false)]
     public static class NtPalette
     {
         // Core palette tokens (VISUAL_SYSTEM.md §2.1)
@@ -228,6 +229,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
     /// Resolves a palette token + scheme + profile to a concrete SharpDX
     /// Color4 (with alpha). Cached per render cycle by the caller.
     /// </summary>
+    [System.CLSCompliant(false)]
     public static class NtStyleResolver
     {
         public static Color4 ResolveColor(string token, NtScheme scheme, int transparency, NtDisplayProfile profile)
