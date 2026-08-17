@@ -49,7 +49,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private TimeZoneInfo nyTimeZone;
 
         // Direct self-contained LUT lookup table for 100% deterministic execution
-        private Dictionary<string, string> lookupTable = new Dictionary<string, string>();
+        private Dictionary<string, RangeLutCell> lookupTable = new Dictionary<string, RangeLutCell>();
 
         // Session & Hourly Filtering
         private bool useHourlyFilter = true;
@@ -119,14 +119,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     }
                 }
 
-                lookupTable.Clear();
                 string inst = (Instrument != null && Instrument.MasterInstrument != null) ? Instrument.MasterInstrument.Name : "NQ";
-                var entries = RangeProbabilityLutData.GetEntries(inst, RangeMinutes);
-                foreach (var entry in entries)
-                {
-                    if (!lookupTable.ContainsKey(entry.Key))
-                        lookupTable[entry.Key] = entry.Value;
-                }
+                lookupTable = RangeProbabilityLutData.GetEntries(inst, RangeMinutes);
             }
             else if (State == State.DataLoaded)
             {
@@ -153,9 +147,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (ExitOnRangeClose && Position.MarketPosition != MarketPosition.Flat)
                 {
                     if (Position.MarketPosition == MarketPosition.Long)
-                        ExitLong("RangeEndExit", "LongRange");
+                        ExitLong();
                     else if (Position.MarketPosition == MarketPosition.Short)
-                        ExitShort("RangeEndExit", "ShortRange");
+                        ExitShort();
                 }
 
                 // Range rollover
@@ -188,19 +182,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                     bool longSignal = false;
                     bool shortSignal = false;
 
-                    if (lookupTable.ContainsKey(key))
+                    if (lookupTable.TryGetValue(key, out var cell))
                     {
-                        string v = lookupTable[key];
-                        string sDir = v.Substring(0, 1);
-                        double sProb = double.Parse(v.Substring(1, 3));
-                        double sTest = double.Parse(v.Substring(4, 3));
-                        int sN = int.Parse(v.Substring(7, 3));
-                        double sRes = double.Parse(v.Substring(10, 2));
-
-                        if (sProb >= MinProbThreshold && sRes >= MinResolveRate && sN >= MinSampleSize)
+                        if (cell.Prob >= MinProbThreshold && cell.Res >= MinResolveRate && cell.N >= MinSampleSize)
                         {
-                            if (sDir == "U") longSignal = true;
-                            else if (sDir == "D") shortSignal = true;
+                            if (cell.Dir == 'U') longSignal = true;
+                            else if (cell.Dir == 'D') shortSignal = true;
                         }
                     }
 
@@ -211,8 +198,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                         double targetPrice = (TargetMode == "PriorBoundary") ? prvH : (curO + FixedTargetTicks * TickSize);
                         double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (StopMode == "PriorOpposite") ? prvL : (curO - FixedStopTicks * TickSize);
 
-                        int stopTicks = Math.Max(10, (int)Math.Round((curO - stopPrice) / TickSize));
-                        int targetTicks = Math.Max(10, (int)Math.Round((targetPrice - curO) / TickSize));
+                        if (stopPrice >= curO) stopPrice = curO - FixedStopTicks * TickSize;
+                        if (targetPrice <= curO) targetPrice = curO + FixedTargetTicks * TickSize;
+
+                        int stopTicks = Math.Max(4, (int)Math.Round((curO - stopPrice) / TickSize));
+                        int targetTicks = Math.Max(4, (int)Math.Round((targetPrice - curO) / TickSize));
 
                         SetStopLoss("LongRange", CalculationMode.Ticks, stopTicks, false);
                         SetProfitTarget("LongRange", CalculationMode.Ticks, targetTicks);
@@ -223,8 +213,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                         double targetPrice = (TargetMode == "PriorBoundary") ? prvL : (curO - FixedTargetTicks * TickSize);
                         double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (StopMode == "PriorOpposite") ? prvH : (curO + FixedStopTicks * TickSize);
 
-                        int stopTicks = Math.Max(10, (int)Math.Round((stopPrice - curO) / TickSize));
-                        int targetTicks = Math.Max(10, (int)Math.Round((curO - targetPrice) / TickSize));
+                        if (stopPrice <= curO) stopPrice = curO + FixedStopTicks * TickSize;
+                        if (targetPrice >= curO) targetPrice = curO - FixedTargetTicks * TickSize;
+
+                        int stopTicks = Math.Max(4, (int)Math.Round((stopPrice - curO) / TickSize));
+                        int targetTicks = Math.Max(4, (int)Math.Round((curO - targetPrice) / TickSize));
 
                         SetStopLoss("ShortRange", CalculationMode.Ticks, stopTicks, false);
                         SetProfitTarget("ShortRange", CalculationMode.Ticks, targetTicks);

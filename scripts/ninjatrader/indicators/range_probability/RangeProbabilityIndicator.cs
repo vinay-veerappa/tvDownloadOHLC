@@ -63,8 +63,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private List<int> liveResolved = new List<int>();
         private List<double> liveResolveClaims = new List<double>();
 
-        // Lookup table key: Slot (HHMM) + BucketChar (0..b) -> Values (Dir, Prob, Test, N, Res)
-        private Dictionary<string, string> lookupTable = new Dictionary<string, string>();
+        // Lookup table key: Slot (HHMM) + BucketChar (0..b) -> RangeLutCell
+        private Dictionary<string, RangeLutCell> lookupTable = new Dictionary<string, RangeLutCell>();
         private TimeZoneInfo nyTimeZone;
         #endregion
 
@@ -111,14 +111,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void InitializeLookupTable()
         {
-            lookupTable.Clear();
             string inst = (Instrument != null && Instrument.MasterInstrument != null) ? Instrument.MasterInstrument.Name : "NQ";
-            var entries = RangeProbabilityLutData.GetEntries(inst, RangeMinutes);
-            foreach (var entry in entries)
-            {
-                if (!lookupTable.ContainsKey(entry.Key))
-                    lookupTable[entry.Key] = entry.Value;
-            }
+            lookupTable = RangeProbabilityLutData.GetEntries(inst, RangeMinutes);
         }
 
         protected override void OnBarUpdate()
@@ -198,14 +192,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                     string bChar = "0123456789ab".Substring(bucketIdx, 1);
                     string key = slotStr + bChar;
 
-                    if (lookupTable.ContainsKey(key))
+                    if (lookupTable.TryGetValue(key, out var cell))
                     {
-                        string v = lookupTable[key];
-                        sDir = v.Substring(0, 1);
-                        sProb = double.Parse(v.Substring(1, 3));
-                        sTest = double.Parse(v.Substring(4, 3));
-                        sN = int.Parse(v.Substring(7, 3));
-                        sRes = double.Parse(v.Substring(10, 2));
+                        sDir = cell.Dir.ToString();
+                        sProb = cell.Prob;
+                        sTest = cell.Test;
+                        sN = cell.N;
+                        sRes = cell.Res;
                         isQualified = (sProb >= minProbThreshold) && (sN >= minSampleSize);
                     }
                     else
