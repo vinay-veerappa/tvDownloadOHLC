@@ -41,15 +41,18 @@ tblPos     = input.string("Top right", "Position", options = ["Top right", "Top 
 tblSize    = input.string("Small", "Text size", options = ["Tiny", "Small", "Normal", "Large"], group = g3)
 showDetail = input.bool(true, "Show test outcome and sample size", group = g3)
 
-g4 = "Signals"
-showMarker = input.bool(true,  "Label the chart when a cell qualifies", group = g4)
-useAlerts  = input.bool(false, "Fire an alert when a cell qualifies", group = g4)
-showOthers = input.bool(true,  "Scan the other range sizes for live signals", group = g4)
-
-g6 = "Live tracker"
-showLive = input.bool(true, "Track how the calls are doing on this chart", group = g6)
-trackN   = input.int(100, "Calls to keep in the window", minval = 10, maxval = 1000, group = g6)
-showDebug  = input.bool(false, "Show lookup diagnostics in the table", group = g4)
+g4 = "Signals & B/S Markers"
+showMarker   = input.bool(true,  "Show Buy / Sell (B/S) Markers", group = g4)
+markerMode   = input.string("B/S + Prob", "Marker Display Text", options = ["B/S + Prob", "BUY / SELL", "B / S Only", "Arrow + Prob"], group = g4)
+markerSize   = input.string("Small", "Marker Size", options = ["Tiny", "Small", "Normal", "Large"], group = g4)
+minProbSig   = input.float(70.0, "Min Probability for B/S Marker (%)", minval = 50.0, maxval = 100.0, group = g4)
+minSampleSig = input.int(10, "Min Sample Size (N) for Marker", minval = 1, group = g4)
+colBuy       = input.color(color.new(#00897b, 0), "Buy Marker Background", group = g4)
+colSell      = input.color(color.new(#d32f2f, 0), "Sell Marker Background", group = g4)
+colTxt       = input.color(color.white, "Marker Text Color", group = g4)
+useAlerts    = input.bool(false, "Fire TradingView alert popup on bar close", group = g4)
+showOthers   = input.bool(true,  "Scan the other range sizes for live signals", group = g4)
+showDebug    = input.bool(false, "Show lookup diagnostics in the table", group = g4)
 
 // ------------------------------------------------------------ active asset detection ---
 currTicker = syminfo.ticker
@@ -1225,17 +1228,38 @@ if newRange
         while boxes.size() > keepN
             box.delete(boxes.shift())
 
-    if sHit and showMarker
-        label.new(bar_index, sDir == "U" ? low : high,
-             (sDir == "U" ? "▲ " : "▼ ") + str.tostring(sProb, "#") + "%",
-             style = sDir == "U" ? label.style_label_up : label.style_label_down,
-             color = color.new(sDir == "U" ? color.teal : color.maroon, 20),
-             textcolor = color.white, size = size.tiny)
+    // Signal Qualification
+    isSigQual = sHit and not na(sProb) and sProb >= minProbSig and sN >= minSampleSig
 
-    if sHit and useAlerts and barstate.isconfirmed
+    if isSigQual and showMarker
+        sz = markerSize == "Tiny" ? size.tiny : markerSize == "Small" ? size.small : markerSize == "Normal" ? size.normal : size.large
+        isBuy = sDir == "U"
+        
+        mText = markerMode == "B/S + Prob" ? (isBuy ? "BUY " : "SELL ") + str.tostring(sProb, "#") + "%" :
+                markerMode == "BUY / SELL" ? (isBuy ? "BUY" : "SELL") :
+                markerMode == "B / S Only" ? (isBuy ? "B" : "S") :
+                (isBuy ? "▲ " : "▼ ") + str.tostring(sProb, "#") + "%"
+
+        mStyle = isBuy ? label.style_label_up : label.style_label_down
+        mBg = isBuy ? colBuy : colSell
+        mY = isBuy ? low : high
+
+        label.new(bar_index, mY, mText,
+             style = mStyle,
+             color = mBg,
+             textcolor = colTxt,
+             size = sz,
+             tooltip = (isBuy ? "BUY SIGNAL (Closes Above Prev High)" : "SELL SIGNAL (Closes Below Prev Low)") + 
+                       "\nProb: " + str.tostring(sProb, "0.0") + "%" +
+                       "\nResolve Rate: " + str.tostring(sRes, "0.0") + "%" +
+                       "\nSample Size (N): " + str.tostring(sN) +
+                       "\nAnchor Slot: " + str.substring(sSlot, 0, 2) + ":" + str.substring(sSlot, 2, 4) + " ET" +
+                       "\nOpening Decile: " + sBucket)
+
+    if isSigQual and useAlerts and barstate.isconfirmed
         alert(activeAsset + " " + tfSel + "M " + str.substring(sSlot, 0, 2) + ":" + str.substring(sSlot, 2, 4) +
              " ET opened at " + str.tostring(sOP, "0.00") + " " +
-             (sDir == "U" ? "closes ABOVE high " : "closes BELOW low ") +
+             (sDir == "U" ? "BUY SIGNAL (Closes Above High) " : "SELL SIGNAL (Closes Below Low) ") +
              str.tostring(sProb, "#") + "% (" + str.tostring(sRes, "#") + "% res)", alert.freq_once_per_bar_close)
 else
     curH := math.max(curH, high)
@@ -1503,3 +1527,10 @@ if showTbl and barstate.islast
 
         table.cell(tb, 0, 21, "resolve rate, claimed vs actual", text_color = dim, text_size = ts, text_halign = text.align_left)
         table.cell(tb, 1, 21, nCalls == 0 ? "—" : pc2(rClaim) + " vs " + pc2(rLive), text_color = dim, text_size = ts, text_halign = text.align_right)
+
+// ------------------------------------------------------------ TradingView Alert Conditions ---
+buyAlertCond  = newRange and sHit and sDir == "U" and sProb >= minProbSig and sN >= minSampleSig
+sellAlertCond = newRange and sHit and sDir == "D" and sProb >= minProbSig and sN >= minSampleSig
+
+alertcondition(buyAlertCond,  title = "Range Probability BUY Signal",  message = "{{ticker}} ({{interval}}m) Range Probability BUY Signal — Closes Above High (Prob: {{plot_0}}%)")
+alertcondition(sellAlertCond, title = "Range Probability SELL Signal", message = "{{ticker}} ({{interval}}m) Range Probability SELL Signal — Closes Below Low (Prob: {{plot_0}}%)")
