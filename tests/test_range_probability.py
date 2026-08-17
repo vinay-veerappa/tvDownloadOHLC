@@ -155,7 +155,9 @@ def test_matrix_probability_computation():
     rec = [r for r in matrix["records"] if r["slot"] == "1000" and r["bucket"] == 2][0]
 
     assert rec["direction"] == "U"
-    assert rec["prob_all"] == 75.0
+    assert "prob_full" in rec, "prob_all must be renamed to prob_full"
+    assert rec["prob_full"] == 75.0
+    assert rec["prob_train"] == 75.0
     assert rec["sample_size"] == 100
     assert rec["resolve_rate"] == 100.0
     assert rec["is_qualified"] == True
