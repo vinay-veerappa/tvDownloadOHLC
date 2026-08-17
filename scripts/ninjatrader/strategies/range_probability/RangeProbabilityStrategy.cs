@@ -49,6 +49,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double prvL = double.NaN;
         private TimeZoneInfo nyTimeZone;
 
+        // Direct self-contained LUT lookup table for 100% deterministic execution
+        private Dictionary<string, string> lookupTable = new Dictionary<string, string>();
+
         // Session & Hourly Filtering
         private bool useHourlyFilter = true;
         private string allowedSlots = "0100,0300,0400,0600,0700,1000,1100,1200,1300,1400,1600,1800,1900,2000,2100,2200,2300";
@@ -110,10 +113,19 @@ namespace NinjaTrader.NinjaScript.Strategies
                         if (!string.IsNullOrEmpty(trimmed)) allowedSlotSet.Add(trimmed);
                     }
                 }
+
+                lookupTable.Clear();
+                string inst = (Instrument != null && Instrument.MasterInstrument != null) ? Instrument.MasterInstrument.Name : "NQ";
+                var entries = RangeProbabilityLutData.GetEntries(inst, RangeMinutes);
+                foreach (var entry in entries)
+                {
+                    if (!lookupTable.ContainsKey(entry.Key))
+                        lookupTable[entry.Key] = entry.Value;
+                }
             }
             else if (State == State.DataLoaded)
             {
-                rangeIndicator = RangeProbabilityIndicator(RangeMinutes, AnchorHourET);
+                rangeIndicator = RangeProbabilityIndicator(Input, RangeMinutes, AnchorHourET);
                 AddChartIndicator(rangeIndicator);
             }
         }
@@ -157,34 +169,34 @@ namespace NinjaTrader.NinjaScript.Strategies
                     double span = prvH - prvL;
                     double openPos = (curO - prvL) / span;
                     int bucket = openPos < 0.0 ? 0 : openPos >= 1.0 ? 11 : Math.Min(10, Math.Max(1, (int)Math.Floor(openPos * 10) + 1));
+                    string bChar = "0123456789ab".Substring(bucket, 1);
+                    string key = slotStr + bChar;
+
+                    bool longSignal = false;
+                    bool shortSignal = false;
+
+                    if (lookupTable.ContainsKey(key))
+                    {
+                        string v = lookupTable[key];
+                        string sDir = v.Substring(0, 1);
+                        double sProb = double.Parse(v.Substring(1, 3));
+                        double sTest = double.Parse(v.Substring(4, 3));
+                        int sN = int.Parse(v.Substring(7, 3));
+                        double sRes = double.Parse(v.Substring(10, 2));
+
+                        if (sProb >= MinProbThreshold && sRes >= MinResolveRate && sN >= MinSampleSize)
+                        {
+                            if (sDir == "U") longSignal = true;
+                            else if (sDir == "D") shortSignal = true;
+                        }
+                    }
+
                     double priorMid = (prvH + prvL) / 2.0;
-
-                    // Read the indicator's qualified signal (empirical LUT, not heuristic)
-                    bool longSignal = rangeIndicator != null
-                        && rangeIndicator.SignalIsQualified
-                        && rangeIndicator.SignalDirection == "U";
-                    bool shortSignal = rangeIndicator != null
-                        && rangeIndicator.SignalIsQualified
-                        && rangeIndicator.SignalDirection == "D";
-
-                    // Additional filter: respect min probability and resolve rate thresholds
-                    if (longSignal && rangeIndicator.SignalProbability < MinProbThreshold)
-                        longSignal = false;
-                    if (longSignal && rangeIndicator.SignalResolveRate < MinResolveRate)
-                        longSignal = false;
-                    if (longSignal && rangeIndicator.SignalSampleSize < MinSampleSize)
-                        longSignal = false;
-                    if (shortSignal && rangeIndicator.SignalProbability < MinProbThreshold)
-                        shortSignal = false;
-                    if (shortSignal && rangeIndicator.SignalResolveRate < MinResolveRate)
-                        shortSignal = false;
-                    if (shortSignal && rangeIndicator.SignalSampleSize < MinSampleSize)
-                        shortSignal = false;
 
                     if (longSignal && Position.MarketPosition == MarketPosition.Flat)
                     {
                         double targetPrice = prvH;
-                        double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (curO - FixedStopTicks * TickSize);
+                        double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (StopMode == "PriorOpposite") ? prvL : (curO - FixedStopTicks * TickSize);
 
                         int stopTicks = Math.Max(10, (int)Math.Round((curO - stopPrice) / TickSize));
                         int targetTicks = Math.Max(10, (int)Math.Round((targetPrice - curO) / TickSize));
@@ -196,7 +208,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     else if (shortSignal && Position.MarketPosition == MarketPosition.Flat)
                     {
                         double targetPrice = prvL;
-                        double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (curO + FixedStopTicks * TickSize);
+                        double stopPrice = (StopMode == "PriorMidpoint") ? priorMid : (StopMode == "PriorOpposite") ? prvH : (curO + FixedStopTicks * TickSize);
 
                         int stopTicks = Math.Max(10, (int)Math.Round((stopPrice - curO) / TickSize));
                         int targetTicks = Math.Max(10, (int)Math.Round((curO - targetPrice) / TickSize));
@@ -255,11 +267,20 @@ namespace NinjaTrader.NinjaScript.Strategies
         public double MinResolveRate { get => minResolveRate; set => minResolveRate = value; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Use Hourly Time Filter", GroupName = "Session Filters", Order = 10)]
+        [Range(10, 500)]
+        [Display(Name = "Min Sample Size", GroupName = "Filters", Order = 9)]
+        public int MinSampleSize { get => minSampleSize; set => minSampleSize = value; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use Trailing Stop", GroupName = "Order Management", Order = 10)]
+        public bool UseTrailingStop { get => useTrailingStop; set => useTrailingStop = value; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use Hourly Time Filter", GroupName = "Session Filters", Order = 11)]
         public bool UseHourlyFilter { get => useHourlyFilter; set => useHourlyFilter = value; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Allowed Slots (HHMM, CSV)", GroupName = "Session Filters", Order = 11)]
+        [Display(Name = "Allowed Slots (HHMM, CSV)", GroupName = "Session Filters", Order = 12)]
         public string AllowedSlots { get => allowedSlots; set => allowedSlots = value; }
         #endregion
     }
