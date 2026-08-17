@@ -198,8 +198,9 @@ def test_backtester_execution():
     assert res["total_trades"] == 1
     assert res["winning_trades"] == 1
     assert res["win_rate"] == 100.0
-    # Prior High = 120, Entry = 100 -> Gain = 20 pts - 0.5 slip = 19.5 pts * $20 - $2 comm = $388.00
-    assert np.isclose(res["net_profit"], 388.00)
+    # Prior High = 120, Entry = 100 -> Gain = 20 pts
+    # 2x slippage (entry+exit) = 1.0 pt -> 19.0 pts * $20 - $2 comm = $378.00
+    assert np.isclose(res["net_profit"], 378.00)
 
 
 def test_lookahead_bias():
