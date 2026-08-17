@@ -26703,12 +26703,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!string.IsNullOrEmpty(instrument))
             {
                 string upper = instrument.ToUpper();
-                if (upper.Contains("NQ") || upper.Contains("MNQ") || upper.Contains("USTEC")) instClean = "NQ";
-                else if (upper.Contains("ES") || upper.Contains("MES") || upper.Contains("SPX")) instClean = "ES";
-                else if (upper.Contains("YM") || upper.Contains("MYM") || upper.Contains("US30")) instClean = "YM";
-                else if (upper.Contains("RTY") || upper.Contains("M2K") || upper.Contains("US2000")) instClean = "RTY";
-                else if (upper.Contains("CL") || upper.Contains("MCL")) instClean = "CL";
-                else if (upper.Contains("GC") || upper.Contains("MGC")) instClean = "GC";
+                if (upper.Contains("MNQ") || upper.Contains("NQ") || upper.Contains("USTEC") || upper.Contains("NAS100")) instClean = "NQ";
+                else if (upper.Contains("MES") || upper.Contains("ES") || upper.Contains("SPX") || upper.Contains("US500")) instClean = "ES";
+                else if (upper.Contains("MYM") || upper.Contains("YM") || upper.Contains("US30") || upper.Contains("DOW")) instClean = "YM";
+                else if (upper.Contains("M2K") || upper.Contains("RTY") || upper.Contains("US2000") || upper.Contains("RUSSELL")) instClean = "RTY";
+                else if (upper.Contains("MCL") || upper.Contains("CL") || upper.Contains("CRUDE") || upper.Contains("WTI")) instClean = "CL";
+                else if (upper.Contains("MGC") || upper.Contains("GC") || upper.Contains("GOLD")) instClean = "GC";
                 else if (upper.Contains("SPY")) instClean = "SPY";
                 else if (upper.Contains("QQQ")) instClean = "QQQ";
                 else if (upper.Contains("AAPL")) instClean = "AAPL";

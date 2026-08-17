@@ -85,9 +85,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 RangeMinutes = 60;
                 AnchorHourET = 18;
-                MinProbThreshold = 75.0;
-                MinResolveRate = 45.0;
-                MinSampleSize = 25;
+                MinProbThreshold = 70.0;
+                MinResolveRate = 40.0;
+                MinSampleSize = 10;
                 OrderQuantity = 1;
                 TargetMode = "PriorBoundary";
                 StopMode = "PriorOpposite";
@@ -95,8 +95,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 FixedTargetTicks = 80;
                 UseTrailingStop = false;
                 ExitOnRangeClose = true;
-                UseHourlyFilter = true;
-                AllowedSlots = "0100,0300,0400,0600,0700,1000,1100,1200,1300,1400,1600,1800,1900,2000,2100,2200,2300";
+                UseHourlyFilter = false;
+                AllowedSlots = "";
             }
             else if (State == State.Configure)
             {
@@ -109,18 +109,36 @@ namespace NinjaTrader.NinjaScript.Strategies
                     nyTimeZone = TimeZoneInfo.Local;
                 }
 
+                string inst = (Instrument != null && Instrument.MasterInstrument != null) ? Instrument.MasterInstrument.Name : "NQ";
+                lookupTable = RangeProbabilityLutData.GetEntries(inst, RangeMinutes);
+
                 allowedSlotSet.Clear();
-                if (!string.IsNullOrEmpty(AllowedSlots))
+                string slotsToUse = AllowedSlots;
+
+                // Auto-populate golden hours if UseHourlyFilter is true but AllowedSlots is empty
+                if (UseHourlyFilter && string.IsNullOrWhiteSpace(slotsToUse))
                 {
-                    foreach (var s in AllowedSlots.Split(','))
+                    string upper = inst.ToUpper();
+                    if (upper.Contains("ES") || upper.Contains("MES") || upper.Contains("SPX"))
+                        slotsToUse = "1100,1200,1900";
+                    else if (upper.Contains("YM") || upper.Contains("MYM") || upper.Contains("US30") || upper.Contains("DOW"))
+                        slotsToUse = "0100,0200,0300,0400,0500,0700,1200,1300,1400,1600,2000,2100,2200,2300";
+                    else if (upper.Contains("GC") || upper.Contains("MGC") || upper.Contains("GOLD"))
+                        slotsToUse = "0200,0600,1000,1400,1500,2300";
+                    else if (upper.Contains("RTY") || upper.Contains("M2K") || upper.Contains("US2000"))
+                        slotsToUse = "1100,1200";
+                    else
+                        slotsToUse = "0100,0300,0400,0600,0700,1000,1100,1200,1300,1400,1600,1800,1900,2000,2100,2200,2300";
+                }
+
+                if (!string.IsNullOrEmpty(slotsToUse))
+                {
+                    foreach (var s in slotsToUse.Split(','))
                     {
                         var trimmed = s.Trim();
                         if (!string.IsNullOrEmpty(trimmed)) allowedSlotSet.Add(trimmed);
                     }
                 }
-
-                string inst = (Instrument != null && Instrument.MasterInstrument != null) ? Instrument.MasterInstrument.Name : "NQ";
-                lookupTable = RangeProbabilityLutData.GetEntries(inst, RangeMinutes);
             }
             else if (State == State.DataLoaded)
             {
