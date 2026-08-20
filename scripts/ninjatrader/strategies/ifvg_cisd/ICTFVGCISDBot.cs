@@ -86,14 +86,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private List<double> bearFvgTops;
         private List<double> bearFvgBots;
 
-        // CISD & Delivery State Machine
-        private bool armedBullCisd;
-        private bool armedBearCisd;
-        private double armedBullLevel;
-        private double armedBearLevel;
-        private double armedBullLow;
-        private double armedBearHigh;
-        private int currentRegime; // +1 Bull, -1 Bear, 0 Flat
+        // CISD & Delivery State Machine (tncylyv extreme-open + continuous re-anchor)
+        private int vibes;              // +1 bull / -1 bear / 0 uninit
+        private double bagholderEntry;  // extreme open of current delivery run
+        private double painThreshold;   // running extreme in bias direction
 
         // Diagnostic CSV writer for CISD parity analysis
         private System.IO.StreamWriter diagCsv;
@@ -163,13 +159,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bearFvgTops = new List<double>();
                 bearFvgBots = new List<double>();
 
-                armedBullCisd = false;
-                armedBearCisd = false;
-                armedBullLevel = double.NaN;
-                armedBearLevel = double.NaN;
-                armedBullLow = double.NaN;
-                armedBearHigh = double.NaN;
-                currentRegime = 0;
+                vibes = 0;
+                bagholderEntry = double.NaN;
+                painThreshold = double.NaN;
 
                 legHasBpr = false;
                 legHasIfvg = false;
@@ -190,6 +182,85 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 todayTradeCount = 0;
                 lastTradeDate = DateTime.MinValue;
             }
+        }
+
+        // ── tncylyv CISD scan helpers ──────────────────────────────────
+        // ConsultCrystalBall: scan from current bar backward. Never returns NaN.
+        private void ConsultCrystalBall(int bias, out double extremeOpen, out int extremeBarIdx)
+        {
+            int temporalShift = 0;
+            extremeOpen = Open[0];
+            extremeBarIdx = CurrentBar;
+            int att = (Close[0] > Open[0]) ? 1 : (Close[0] < Open[0]) ? -1 : 0;
+            if (att == 0 || att != bias)
+                return;
+            int maxLookback = Math.Min(500, CurrentBar);
+            for (int i = 1; i <= maxLookback; i++)
+            {
+                att = (Close[i] > Open[i]) ? 1 : (Close[i] < Open[i]) ? -1 : 0;
+                if (att == 0) continue;
+                if (att != bias) break;
+                temporalShift = i;
+                if (bias == 1)
+                {
+                    if (Open[i] < extremeOpen) extremeOpen = Open[i];
+                }
+                else
+                {
+                    if (Open[i] > extremeOpen) extremeOpen = Open[i];
+                }
+            }
+            int extremeShift = 0;
+            for (int k = 0; k <= temporalShift; k++)
+            {
+                if (Open[k] == extremeOpen) { extremeShift = k; break; }
+            }
+            extremeBarIdx = CurrentBar - extremeShift;
+        }
+
+        // ArchaeologistJones: skip current bar, find first matching candle backward. May return NaN.
+        private void ArchaeologistJones(int bias, out double extremeOpen, out int extremeBarIdx)
+        {
+            extremeOpen = double.NaN;
+            extremeBarIdx = -1;
+            bool artifactFound = false;
+            int maxShift = -1;
+            int maxLookback = Math.Min(500, CurrentBar);
+            for (int j = 1; j <= maxLookback; j++)
+            {
+                int att = (Close[j] > Open[j]) ? 1 : (Close[j] < Open[j]) ? -1 : 0;
+                if (att == 0) continue;
+                bool isCorrectEra = (att == bias);
+                if (!artifactFound)
+                {
+                    if (isCorrectEra)
+                    {
+                        artifactFound = true;
+                        maxShift = j;
+                        extremeOpen = Open[j];
+                    }
+                }
+                else
+                {
+                    if (!isCorrectEra) break;
+                    maxShift = j;
+                    if (bias == 1)
+                    {
+                        if (Open[j] < extremeOpen) extremeOpen = Open[j];
+                    }
+                    else
+                    {
+                        if (Open[j] > extremeOpen) extremeOpen = Open[j];
+                    }
+                }
+            }
+            if (maxShift < 0) return;
+            int extremeShift = maxShift;
+            for (int k = 1; k <= maxShift; k++)
+            {
+                if (Open[k] == extremeOpen) { extremeShift = k; break; }
+            }
+            extremeBarIdx = CurrentBar - extremeShift;
         }
 
         private DateTime GetETTime(DateTime dt)
@@ -368,86 +439,102 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             // ── STEP 4: CANONICAL INSTITUTIONAL CISD ENGINE ───────────────
-            bool isLowPivot  = (l1 < l2) && (l1 < l0);
-            bool isHighPivot = (h1 > h2) && (h1 > h0);
+            // tncylyv extreme-open + continuous re-anchor model.
+            // One continuous level per regime; extreme open of the delivery run;
+            // re-anchors on every new bias-direction extreme.
+            // See docs/strategies/ifvg_cisd/CISD_ENGINE_AUDIT.md
 
-            if (isLowPivot && currentRegime != 1)
+            int candlePersonality = (c0 > o0) ? 1 : (c0 < o0) ? -1 : 0;
+
+            // --- Init ---
+            if (vibes == 0 && CurrentBar > 10)
             {
-                double runOpen = Open[1];
-                double runLow = Low[1];
-                for (int i = 1; i < Math.Min(25, CurrentBar); i++)
+                int firstImpression = candlePersonality;
+                if (firstImpression == 0)
                 {
-                    if (i == 1 || Close[i] <= Open[i])
+                    for (int k = 1; k <= Math.Min(50, CurrentBar); k++)
                     {
-                        runOpen = Open[i];
-                        runLow = Math.Min(runLow, Low[i]);
+                        firstImpression = (Close[k] > Open[k]) ? 1 : (Close[k] < Open[k]) ? -1 : 0;
+                        if (firstImpression != 0) break;
                     }
-                    else break;
                 }
-                armedBullLevel = runOpen;
-                armedBullLow = runLow;
-                armedBullCisd = true;
-                bullMoveFvgCount = 0;
-            }
-
-            if (isHighPivot && currentRegime != -1)
-            {
-                double runOpen = Open[1];
-                double runHigh = High[1];
-                for (int i = 1; i < Math.Min(25, CurrentBar); i++)
+                if (firstImpression != 0)
                 {
-                    if (i == 1 || Close[i] >= Open[i])
-                    {
-                        runOpen = Open[i];
-                        runHigh = Math.Max(runHigh, High[i]);
-                    }
-                    else break;
+                    vibes = firstImpression;
+                    double ep; int eb;
+                    ConsultCrystalBall(firstImpression, out ep, out eb);
+                    bagholderEntry = ep;
+                    painThreshold = (firstImpression == 1) ? h0 : l0;
                 }
-                armedBearLevel = runOpen;
-                armedBearHigh = runHigh;
-                armedBearCisd = true;
-                bearMoveFvgCount = 0;
             }
 
-            // Accumulate FVGs in the active move
-            if (armedBullCisd || currentRegime == 1)
+            // --- Re-anchor on new extreme ---
+            if (vibes == 1 && h0 > painThreshold)
             {
-                if (isBullFvg) bullMoveFvgCount++;
+                painThreshold = h0;
+                double ep; int eb;
+                if (candlePersonality == 1)
+                    ConsultCrystalBall(1, out ep, out eb);
+                else
+                    ArchaeologistJones(1, out ep, out eb);
+                if (!double.IsNaN(ep))
+                    bagholderEntry = ep;
             }
-
-            if (armedBearCisd || currentRegime == -1)
+            else if (vibes == -1 && l0 < painThreshold)
             {
-                if (isBearFvg) bearMoveFvgCount++;
+                painThreshold = l0;
+                double ep; int eb;
+                if (candlePersonality == -1)
+                    ConsultCrystalBall(-1, out ep, out eb);
+                else
+                    ArchaeologistJones(-1, out ep, out eb);
+                if (!double.IsNaN(ep))
+                    bagholderEntry = ep;
             }
 
-            // Check CISD Flip Triggers
+            // --- Flip detection ---
+            bool shortsSqueezed = vibes == -1 && !double.IsNaN(bagholderEntry) && c0 > bagholderEntry;
+            bool longsRekt = vibes == 1 && !double.IsNaN(bagholderEntry) && c0 < bagholderEntry;
+
             bool bullCisdTrigger = false;
             bool bearCisdTrigger = false;
 
-            if (armedBullCisd && !double.IsNaN(armedBullLevel) && c0 > armedBullLevel)
+            if (shortsSqueezed)
             {
-                armedBullCisd = false;
                 bullCisdTrigger = true;
-                currentRegime = 1;
-
-                legOriginLow = armedBullLow;
-                legCisdLevel = armedBullLevel;
+                vibes = 1;
+                legOriginLow = double.NaN;
+                legOriginHigh = bagholderEntry;
+                legCisdLevel = bagholderEntry;
                 legHasBpr = isBullBpr;
                 legHasIfvg = isBullIfvg;
                 v2TriggeredInLeg = false;
+                bullMoveFvgCount = 0;
+                double ep; int eb;
+                ConsultCrystalBall(1, out ep, out eb);
+                bagholderEntry = ep;
+                painThreshold = h0;
             }
-            else if (armedBearCisd && !double.IsNaN(armedBearLevel) && c0 < armedBearLevel)
+            else if (longsRekt)
             {
-                armedBearCisd = false;
                 bearCisdTrigger = true;
-                currentRegime = -1;
-
-                legOriginHigh = armedBearHigh;
-                legCisdLevel = armedBearLevel;
+                vibes = -1;
+                legOriginLow = bagholderEntry;
+                legOriginHigh = double.NaN;
+                legCisdLevel = bagholderEntry;
                 legHasBpr = isBearBpr;
                 legHasIfvg = isBearIfvg;
                 v2TriggeredInLeg = false;
+                bearMoveFvgCount = 0;
+                double ep; int eb;
+                ConsultCrystalBall(-1, out ep, out eb);
+                bagholderEntry = ep;
+                painThreshold = l0;
             }
+
+            // Accumulate FVGs in the active move
+            if (vibes == 1 && isBullFvg) bullMoveFvgCount++;
+            if (vibes == -1 && isBearFvg) bearMoveFvgCount++;
 
             // ── STEP 5: VARIANT SIGNAL EVALUATION ──────────────────────────
             bool signalLong = false;
@@ -457,14 +544,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             if (Variant == CISDStrategyVariant.Baseline_IFVG_CISD)
             {
-                if (currentRegime == 1 && isBullIfvg)
+                if (vibes == 1 && isBullIfvg)
                 {
                     signalLong = true;
                     entryPrice = c0;
                     double risk = Math.Max(MinRiskPts, Math.Min(MaxRiskPts, atr14[0] * 1.8));
                     stopPrice = entryPrice - risk;
                 }
-                else if (currentRegime == -1 && isBearIfvg)
+                else if (vibes == -1 && isBearIfvg)
                 {
                     signalShort = true;
                     entryPrice = c0;
@@ -493,7 +580,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
             else if (Variant == CISDStrategyVariant.Variant2_DoubleFVG_NoIFVG)
             {
-                if ((currentRegime == 1 || bullCisdTrigger) && !v2TriggeredInLeg && isBullFvg && bullMoveFvgCount >= 2)
+                if ((vibes == 1 || bullCisdTrigger) && !v2TriggeredInLeg && isBullFvg && bullMoveFvgCount >= 2)
                 {
                     signalLong = true;
                     entryPrice = c0;
@@ -502,7 +589,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     stopPrice = entryPrice - risk;
                     v2TriggeredInLeg = true;
                 }
-                else if ((currentRegime == -1 || bearCisdTrigger) && !v2TriggeredInLeg && isBearFvg && bearMoveFvgCount >= 2)
+                else if ((vibes == -1 || bearCisdTrigger) && !v2TriggeredInLeg && isBearFvg && bearMoveFvgCount >= 2)
                 {
                     signalShort = true;
                     entryPrice = c0;
@@ -528,13 +615,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 if (!diagCsvHeaderWritten)
                 {
-                    diagCsv.WriteLine("BarCloseTime,BarOpenTime,Open,High,Low,Close,IsLowPivot,IsHighPivot,ArmedBull,ArmedBullLevel,BullCisdTrigger,CurrentRegime,BullFvgCount,IsBullFvg,SignalLong,CanEnter,InRth");
+                    diagCsv.WriteLine("BarCloseTime,BarOpenTime,Open,High,Low,Close,CandlePersonality,Vibes,BagholderEntry,PainThreshold,BullCisdTrigger,CurrentRegime,BullFvgCount,IsBullFvg,SignalLong,CanEnter,InRth");
                     diagCsvHeaderWritten = true;
                 }
                 DateTime barOpenTime = Time[0].AddMinutes(-BarsPeriod.Value);
                 diagCsv.WriteLine(string.Format("{0:yyyy-MM-dd HH:mm:ss},{1:yyyy-MM-dd HH:mm:ss},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17}",
-                    Time[0], barOpenTime, o0, h0, l0, c0, isLowPivot ? 1 : 0, isHighPivot ? 1 : 0, armedBullCisd ? 1 : 0,
-                    armedBullLevel, bullCisdTrigger ? 1 : 0, currentRegime, bullMoveFvgCount, isBullFvg ? 1 : 0, signalLong ? 1 : 0, canEnter ? 1 : 0, inRth ? 1 : 0));
+                    Time[0], barOpenTime, o0, h0, l0, c0, candlePersonality, vibes, bagholderEntry, painThreshold,
+                    bullCisdTrigger ? 1 : 0, vibes, bullMoveFvgCount, isBullFvg ? 1 : 0, signalLong ? 1 : 0, canEnter ? 1 : 0, inRth ? 1 : 0));
                 diagCsv.Flush();
             }
 

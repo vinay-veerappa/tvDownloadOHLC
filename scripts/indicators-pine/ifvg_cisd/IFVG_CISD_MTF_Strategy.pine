@@ -1,11 +1,10 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © Institutional Research Suite / Antigravity
-// ICT v3 — Liquidity Sweep -> CISD -> FVG Touch Entry -> SL-4 -> Cover The Queen
-// Validated: WR 68.9%, PF 3.48 on NQ 2022-2026
+// Canonical ICT CISD / iFVG / BPR Multi-Variant Strategy & Visualization Engine
 
 //@version=6
-strategy("ICT v3 Institutional (Liquidity -> CISD -> FVG Touch -> SL-4 -> Queen)",
-  shorttitle="ICT_v3_Strategy",
+strategy("ICT CISD / iFVG / BPR Multi-Variant Strategy",
+  shorttitle="ICT_CISD_Strategy",
   overlay=true,
   pyramiding=2,
   default_qty_type=strategy.fixed,
@@ -24,403 +23,497 @@ strategy("ICT v3 Institutional (Liquidity -> CISD -> FVG Touch -> SL-4 -> Queen)
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 1 — CONFIGURATION & PARAMETERS
 // ═══════════════════════════════════════════════════════════════════
-var string GRP_LIQ = "1. Liquidity Sources"
-i_checkPdhPdl     = input.bool(true,  "Track Daily PDH/PDL Sweeps", group=GRP_LIQ)
-i_check4H         = input.bool(true,  "Track 4-Hour Sweeps", group=GRP_LIQ)
-i_check1H         = input.bool(true,  "Track 1-Hour Sweeps", group=GRP_LIQ)
-i_checkSession    = input.bool(true,  "Track Session Range Sweeps (Asia/London/NYAM)", group=GRP_LIQ)
-i_checkSwings     = input.bool(true,  "Track Intraday Swing Sweeps", group=GRP_LIQ)
-i_sweepLookback   = input.int(25,     "Max Bars Since Liquidity Sweep", minval=5, maxval=50, group=GRP_LIQ)
+var string GRP_VAR = "1. Strategy Variant"
+i_variant         = input.string("Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry (CISD Low/High Stop)", "Strategy Variant", 
+  options=[
+    "Baseline: IFVG + CISD (ATR Stop)", 
+    "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High Stop)", 
+    "Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry (CISD Low/High Stop)"
+  ], group=GRP_VAR)
 
-var string GRP_ENTRY = "2. Entry & Risk Parameters"
-i_entryModel      = input.string("FVG_Touch", "Entry Model", options=["FVG_Touch", "FVG_CE_50", "CISD_Level"], group=GRP_ENTRY)
-i_slModel         = input.string("SL4_CISD_Origin", "Stop Loss Model", options=["SL1_SweepWick", "SL4_CISD_Origin", "FVG_FormingWick"], group=GRP_ENTRY)
-i_maxRiskBps      = input.float(15.0, "Hard Risk Ceiling (Basis Points)", step=1.0, group=GRP_ENTRY)
-i_minVolMult      = input.float(1.5,  "Min Volume Multiplier (x SMA20)", step=0.1, group=GRP_ENTRY)
-i_maxEntryWait    = input.int(20,     "Max Bars Waiting for Retest", minval=3, maxval=30, group=GRP_ENTRY)
-i_maxDailyTrades  = input.int(5,      "Max Trades Per Day", minval=1, maxval=10, group=GRP_ENTRY)
+var string GRP_RISK = "2. Risk & Position Management"
+i_rMultTP1        = input.float(1.0, "Queen Target R-Multiplier (TP1 50%)", step=0.1, group=GRP_RISK)
+i_rMultTP2        = input.float(2.5, "Runner Target R-Multiplier (TP2 50%)", step=0.5, group=GRP_RISK)
+i_minRiskPts      = input.float(6.0, "Min Risk (Points)", step=0.5, group=GRP_RISK)
+i_maxRiskPts      = input.float(80.0, "Max Risk Ceiling (Points)", step=5.0, group=GRP_RISK)
+i_maxDailyTrades  = input.int(5, "Max Trades Per Day", minval=1, maxval=10, group=GRP_RISK)
 
-var string GRP_TP = "3. Basis Points Targets"
-i_tp1QueenBps     = input.float(10.0, "Target 1: Cover The Queen (Basis Points)", step=1.0, group=GRP_TP)
-i_runnerBps       = input.float(30.0, "Runner Target (Basis Points)", step=5.0, group=GRP_TP)
+var string GRP_SESS = "3. Session Windows"
+i_rthSession      = input.session("0930-1600:23456", "Trading Session Window", group=GRP_SESS)
+i_filterLunch     = input.bool(false, "Exclude Lunch Lull (11:30 - 13:30)", group=GRP_SESS)
+i_eodFlatten      = input.bool(true, "Force EOD Flatten at 15:55 ET", group=GRP_SESS)
 
-var string GRP_RISK = "4. Position Sizing"
-i_riskUsd         = input.float(250.0, "Risk per Trade (USD)", step=50, group=GRP_RISK)
-i_maxContracts    = input.int(10,     "Max Contracts", minval=1, maxval=50, group=GRP_RISK)
+var string GRP_VIS = "4. Visual Drawings & Annotations"
+i_drawFvg         = input.bool(true,  "Draw FVG Boxes with C.E. 50% Line", group=GRP_VIS)
+i_drawCisd        = input.bool(true,  "Draw CISD Lines & Labels", group=GRP_VIS)
+i_drawSignals     = input.bool(true,  "Show Entry & Exit Markers", group=GRP_VIS)
+i_extendFvgBars   = input.int(10,     "FVG Box Projection Length (Bars)", minval=1, maxval=50, group=GRP_VIS)
+i_boxTransparency = input.int(80,     "Box Transparency %", minval=0, maxval=100, group=GRP_VIS)
 
-var string GRP_SESS = "5. Session Windows"
-i_rthSession      = input.session("0945-1530:23456", "RTH Trading Window", group=GRP_SESS)
-i_eodFlatten      = input.bool(true,  "Force EOD Flatten at 15:55 ET", group=GRP_SESS)
+// Visual Palette
+color c_bullFvgFill   = color.new(#00BCD4, i_boxTransparency)
+color c_bullFvgBorder = color.new(#00BCD4, 30)
+color c_bearFvgFill   = color.new(#FF5252, i_boxTransparency)
+color c_bearFvgBorder = color.new(#FF5252, 30)
+color c_cisdLine      = color.new(#2962FF, 0)
+color c_ceMidLine     = color.new(#9E9E9E, 40)
 
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 2 — LIQUIDITY LEVELS (Daily, 4H, 1H, Sessions, Swings)
-// ═══════════════════════════════════════════════════════════════════
-// Daily PDH / PDL (shifted 1 bar for zero lookahead)
-[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+float atr14 = ta.atr(14)
 
-// 4H High/Low (shifted 1 bar)
-[h4_h, h4_l] = request.security(syminfo.tickerid, "240", [high[1], low[1]], lookahead=barmerge.lookahead_on)
-
-// 1H High/Low (shifted 1 bar)
-[h1_h, h1_l] = request.security(syminfo.tickerid, "60", [high[1], low[1]], lookahead=barmerge.lookahead_on)
-
-// Session Range Sweeps — Asia (18:00-02:00), London (02:00-08:00), NYAM IB (09:30-10:00)
-// Compute session H/L using request.security on daily with custom session windows
-[asiaH, asiaL] = request.security(syminfo.tickerid, "D", [ta.highest(high, 1), ta.lowest(low, 1)], lookahead=barmerge.lookahead_on)
-// For sessions, we use intraday session functions and track H/L
-var float asiaHigh = na
-var float asiaLow  = na
-var float lonHigh  = na
-var float lonLow   = na
-var float nyamHigh = na
-var float nyamLow  = na
-
-// Session detection using time() on the chart timeframe
-isAsiaBar  = not na(time(timeframe.period, "1800-0200:23456", "America/New_York"))
-isLonBar   = not na(time(timeframe.period, "0200-0800:23456", "America/New_York"))
-isNyamBar  = not na(time(timeframe.period, "0930-1000:23456", "America/New_York"))
-
-// Track session H/L — reset at the START of each session
-var bool wasAsia = false
-var bool wasLon  = false
-var bool wasNyam = false
-
-if isAsiaBar and not wasAsia
-    asiaHigh := high
-    asiaLow  := low
-else if isAsiaBar
-    asiaHigh := math.max(asiaHigh, high)
-    asiaLow  := math.min(asiaLow, low)
-wasAsia := isAsiaBar
-
-if isLonBar and not wasLon
-    lonHigh := high
-    lonLow  := low
-else if isLonBar
-    lonHigh := math.max(lonHigh, high)
-    lonLow  := math.min(lonLow, low)
-wasLon := isLonBar
-
-if isNyamBar and not wasNyam
-    nyamHigh := high
-    nyamLow  := low
-else if isNyamBar
-    nyamHigh := math.max(nyamHigh, high)
-    nyamLow  := math.min(nyamLow, low)
-wasNyam := isNyamBar
-
-// Intraday 3-Bar Fractal Swings (rolling list of last 10)
-swH = ta.pivothigh(high, 3, 3)
-swL = ta.pivotlow(low, 3, 3)
-var float[] bslList = array.new<float>()
-var float[] sslList = array.new<float>()
-
-if not na(swH)
-    array.push(bslList, swH)
-    if array.size(bslList) > 10
-        array.shift(bslList)
-
-if not na(swL)
-    array.push(sslList, swL)
-    if array.size(sslList) > 10
-        array.shift(sslList)
+// Managed Drawing Collections (FIFO to prevent TradingView 500-limit garbage collection glitches)
+var box[]   fvgBoxes   = array.new_box()
+var line[]  fvgLines   = array.new_line()
+var line[]  cisdLines  = array.new_line()
+var label[] cisdLabels = array.new_label()
 
 // ═══════════════════════════════════════════════════════════════════
-// SECTION 3 — SWEEP DETECTION
+// SECTION 2 — FAIR VALUE GAPS (FVG), iFVG & BPR DETECTION
 // ═══════════════════════════════════════════════════════════════════
-bool bslSwept = false
-bool sslSwept = false
-float sweepExtreme = na
-string sweepSource = ""
+// Pure 3-bar ICT imbalance definition (Independent of bar 0 candle color!)
+bool isBullFvg = (low > high[2])
+bool isBearFvg = (high < low[2])
 
-// Daily PDH/PDL
-if i_checkPdhPdl
-    if not na(pdh) and high > pdh and (close < pdh or open < pdh)
-        bslSwept := true, sweepExtreme := high, sweepSource := "PDH"
-    if not na(pdl) and low < pdl and (close > pdl or open > pdl)
-        sslSwept := true, sweepExtreme := low, sweepSource := "PDL"
+var float[] bullFvgTops = array.new_float()
+var float[] bullFvgBots = array.new_float()
+var float[] bearFvgTops = array.new_float()
+var float[] bearFvgBots = array.new_float()
 
-// 4H Sweeps
-if i_check4H and not bslSwept
-    if not na(h4_h) and high > h4_h and (close < h4_h or open < h4_h)
-        bslSwept := true, sweepExtreme := high, sweepSource := "4H_BSL"
-if i_check4H and not sslSwept
-    if not na(h4_l) and low < h4_l and (close > h4_l or open > h4_l)
-        sslSwept := true, sweepExtreme := low, sweepSource := "4H_SSL"
+bool isBullBpr = false
+bool isBearBpr = false
 
-// 1H Sweeps
-if i_check1H and not bslSwept
-    if not na(h1_h) and high > h1_h and (close < h1_h or open < h1_h)
-        bslSwept := true, sweepExtreme := high, sweepSource := "1H_BSL"
-if i_check1H and not sslSwept
-    if not na(h1_l) and low < h1_l and (close > h1_l or open > h1_l)
-        sslSwept := true, sweepExtreme := low, sweepSource := "1H_SSL"
+// Render Bullish FVG
+if isBullFvg
+    float gTop = low
+    float gBot = high[2]
 
-// Session Sweeps
-if i_checkSession and not bslSwept and not na(asiaHigh)
-    if high > asiaHigh and (close < asiaHigh or open < asiaHigh)
-        bslSwept := true, sweepExtreme := high, sweepSource := "Asia_H"
-if i_checkSession and not sslSwept and not na(asiaLow)
-    if low < asiaLow and (close > asiaLow or open > asiaLow)
-        sslSwept := true, sweepExtreme := low, sweepSource := "Asia_L"
-if i_checkSession and not bslSwept and not na(lonHigh)
-    if high > lonHigh and (close < lonHigh or open < lonHigh)
-        bslSwept := true, sweepExtreme := high, sweepSource := "Lon_H"
-if i_checkSession and not sslSwept and not na(lonLow)
-    if low < lonLow and (close > lonLow or open > lonLow)
-        sslSwept := true, sweepExtreme := low, sweepSource := "Lon_L"
-if i_checkSession and not bslSwept and not na(nyamHigh)
-    if high > nyamHigh and (close < nyamHigh or open < nyamHigh)
-        bslSwept := true, sweepExtreme := high, sweepSource := "NYAM_H"
-if i_checkSession and not sslSwept and not na(nyamLow)
-    if low < nyamLow and (close > nyamLow or open > nyamLow)
-        sslSwept := true, sweepExtreme := low, sweepSource := "NYAM_L"
+    // Canonical ICT body-gap merging: gaps between candle bodies 1-2 and/or 2-3
+    // within the 3-candle FVG formation expand the FVG zone.
+    float bodyTop2 = math.max(open[2], close[2])
+    float bodyBot1 = math.min(open[1], close[1])
+    if (bodyBot1 > bodyTop2) and (high[2] >= low[1]) and (bodyTop2 <= gTop) and (bodyBot1 >= gBot)
+        gTop := math.max(gTop, bodyBot1)
+        gBot := math.min(gBot, bodyTop2)
 
-// Intraday Swing Sweeps
-if i_checkSwings and not bslSwept and array.size(bslList) > 0
-    for b = 0 to array.size(bslList) - 1
-        float lvl = array.get(bslList, b)
-        if high > lvl and close < lvl
-            bslSwept := true, sweepExtreme := high, sweepSource := "Swing_H"
-            break
-if i_checkSwings and not sslSwept and array.size(sslList) > 0
-    for s = 0 to array.size(sslList) - 1
-        float lvl = array.get(sslList, s)
-        if low < lvl and close > lvl
-            sslSwept := true, sweepExtreme := low, sweepSource := "Swing_L"
+    float bodyTop1 = math.max(open[1], close[1])
+    float bodyBot0 = math.min(open, close)
+    if (bodyBot0 > bodyTop1) and (high[1] >= low) and (bodyTop1 <= gTop) and (bodyBot0 >= gBot)
+        gTop := math.max(gTop, bodyBot0)
+        gBot := math.min(gBot, bodyTop1)
+
+    float gMid = (gTop + gBot) / 2.0
+
+    // Check BPR Overlap
+    if array.size(bearFvgTops) > 0
+        for b = array.size(bearFvgTops) - 1 to 0
+            float ovTop = math.min(gTop, array.get(bearFvgTops, b))
+            float ovBot = math.max(gBot, array.get(bearFvgBots, b))
+            if ovTop > ovBot
+                isBullBpr := true
+                break
+
+    array.push(bullFvgTops, gTop)
+    array.push(bullFvgBots, gBot)
+    if array.size(bullFvgTops) > 50
+        array.shift(bullFvgTops)
+        array.shift(bullFvgBots)
+
+    if i_drawFvg
+        bx = box.new(left=bar_index - 2, top=gTop, right=bar_index + i_extendFvgBars, bottom=gBot,
+          border_color=c_bullFvgBorder, border_width=1, bgcolor=c_bullFvgFill)
+        ln = line.new(x1=bar_index - 2, y1=gMid, x2=bar_index + i_extendFvgBars, y2=gMid,
+          color=c_ceMidLine, style=line.style_dashed, width=1)
+        array.push(fvgBoxes, bx)
+        array.push(fvgLines, ln)
+        if array.size(fvgBoxes) > 80
+            box.delete(array.shift(fvgBoxes))
+            line.delete(array.shift(fvgLines))
+
+// Render Bearish FVG
+if isBearFvg
+    float gTop = low[2]
+    float gBot = high
+
+    // Canonical ICT body-gap merging: gaps between candle bodies 1-2 and/or 2-3
+    // within the 3-candle FVG formation expand the FVG zone.
+    float bodyBot2 = math.min(open[2], close[2])
+    float bodyTop1 = math.max(open[1], close[1])
+    if (bodyTop1 < bodyBot2) and (low[2] <= high[1]) and (bodyBot2 >= gBot) and (bodyTop1 <= gTop)
+        gBot := math.min(gBot, bodyTop1)
+        gTop := math.max(gTop, bodyBot2)
+
+    float bodyBot1 = math.min(open[1], close[1])
+    float bodyTop0 = math.max(open, close)
+    if (bodyTop0 < bodyBot1) and (low[1] <= high) and (bodyBot1 >= gBot) and (bodyTop0 <= gTop)
+        gBot := math.min(gBot, bodyTop0)
+        gTop := math.max(gTop, bodyBot1)
+
+    float gMid = (gTop + gBot) / 2.0
+
+    // Check BPR Overlap
+    if array.size(bullFvgTops) > 0
+        for b = array.size(bullFvgTops) - 1 to 0
+            float ovTop = math.min(gTop, array.get(bullFvgTops, b))
+            float ovBot = math.max(gBot, array.get(bullFvgBots, b))
+            if ovTop > ovBot
+                isBearBpr := true
+                break
+
+    array.push(bearFvgTops, gTop)
+    array.push(bearFvgBots, gBot)
+    if array.size(bearFvgTops) > 50
+        array.shift(bearFvgTops)
+        array.shift(bearFvgBots)
+
+    if i_drawFvg
+        bx = box.new(left=bar_index - 2, top=gTop, right=bar_index + i_extendFvgBars, bottom=gBot,
+          border_color=c_bearFvgBorder, border_width=1, bgcolor=c_bearFvgFill)
+        ln = line.new(x1=bar_index - 2, y1=gMid, x2=bar_index + i_extendFvgBars, y2=gMid,
+          color=c_ceMidLine, style=line.style_dashed, width=1)
+        array.push(fvgBoxes, bx)
+        array.push(fvgLines, ln)
+        if array.size(fvgBoxes) > 80
+            box.delete(array.shift(fvgBoxes))
+            line.delete(array.shift(fvgLines))
+
+// Inversion FVG Check
+bool isBullIfvg = false
+bool isBearIfvg = false
+
+if array.size(bearFvgTops) > 0
+    for b = array.size(bearFvgTops) - 1 to 0
+        if close > array.get(bearFvgTops, b) and close[1] <= array.get(bearFvgTops, b)
+            isBullIfvg := true
             break
 
-// Active Sweep State
-var bool  hasBullSweep = false
-var bool  hasBearSweep = false
-var float bullSweepLow = na
-var float bearSweepHigh = na
-var int   bullSweepBar = -9999
-var int   bearSweepBar = -9999
-var string lastSweepSource = ""
-
-if sslSwept
-    hasBullSweep := true
-    bullSweepLow := not na(sweepExtreme) ? sweepExtreme : low
-    bullSweepBar := bar_index
-    lastSweepSource := sweepSource
-
-if bslSwept
-    hasBearSweep := true
-    bearSweepHigh := not na(sweepExtreme) ? sweepExtreme : high
-    bearSweepBar := bar_index
-    lastSweepSource := sweepSource
-
-if (bar_index - bullSweepBar) > i_sweepLookback
-    hasBullSweep := false
-if (bar_index - bearSweepBar) > i_sweepLookback
-    hasBearSweep := false
+if array.size(bullFvgBots) > 0
+    for b = array.size(bullFvgBots) - 1 to 0
+        if close < array.get(bullFvgBots, b) and close[1] >= array.get(bullFvgBots, b)
+            isBearIfvg := true
+            break
 
 // ═══════════════════════════════════════════════════════════════════
-// SECTION 4 — CANONICAL BACKWARD-WALKING CISD (UNCHANGED from validated baseline)
+// SECTION 3 — CANONICAL INSTITUTIONAL CISD ENGINE (tncylyv extreme-open model)
 // ═══════════════════════════════════════════════════════════════════
-var bool  armedBullCisd     = false
-var bool  armedBearCisd     = false
-var float armedBullHigh     = na
-var float armedBearLow      = na
-var float armedCisdOriginSL = na
-var int   deliveryRegime    = 0   // +1 = Bull, -1 = Bear (persists for continuation FVGs)
+// One continuous level per regime; extreme open of the delivery run;
+// re-anchors on every new bias-direction extreme; fires on close cross.
+// See docs/strategies/ifvg_cisd/CISD_ENGINE_AUDIT.md
 
-if hasBullSweep and sslSwept
-    float sHigh = math.max(open, close)
-    float sLow  = math.min(open, close)
-    for k = 1 to math.min(25, bar_index)
-        if close[k] <= open[k]
-            sHigh := math.max(sHigh, math.max(open[k], close[k]))
-            sLow  := math.min(sLow,  math.min(open[k], close[k]))
+consult_the_crystal_ball(int bias) =>
+    int temporal_shift = 0
+    float extreme = open[0]
+    int candle_attitude = close[0] > open[0] ? 1 : close[0] < open[0] ? -1 : 0
+    if candle_attitude == 0 or candle_attitude != bias
+        [extreme, bar_index]
+    for i = 1 to 500
+        candle_attitude := close[i] > open[i] ? 1 : close[i] < open[i] ? -1 : 0
+        if candle_attitude == 0
+            continue
+        if candle_attitude != bias
+            break
+        temporal_shift := i
+        if bias == 1
+            if open[i] < extreme
+                extreme := open[i]
         else
+            if open[i] > extreme
+                extreme := open[i]
+    int extreme_shift = na
+    for k = 0 to temporal_shift
+        if open[k] == extreme
+            extreme_shift := k
             break
-    armedBullCisd     := true
-    armedBullHigh     := sHigh
-    armedCisdOriginSL := sLow
+    [extreme, bar_index - extreme_shift]
 
-if hasBearSweep and bslSwept
-    float sHigh = math.max(open, close)
-    float sLow  = math.min(open, close)
-    for k = 1 to math.min(25, bar_index)
-        if close[k] >= open[k]
-            sHigh := math.max(sHigh, math.max(open[k], close[k]))
-            sLow  := math.min(sLow,  math.min(open[k], close[k]))
+archaeologist_jones(int bias) =>
+    int i = 1
+    bool artifact_found = false
+    int max_shift = na
+    float extreme = na
+    for j = 1 to 500
+        i := j
+        int candle_attitude = close[i] > open[i] ? 1 : close[i] < open[i] ? -1 : 0
+        if candle_attitude == 0
+            continue
+        bool is_correct_era = candle_attitude == bias
+        if not artifact_found
+            if is_correct_era
+                artifact_found := true
+                max_shift := i
+                extreme := open[i]
         else
+            if not is_correct_era
+                break
+            max_shift := i
+            if bias == 1
+                if open[i] < extreme
+                    extreme := open[i]
+            else
+                if open[i] > extreme
+                    extreme := open[i]
+    int extreme_shift = na
+    for k = 1 to max_shift
+        if open[k] == extreme
+            extreme_shift := k
             break
-    armedBearCisd     := true
-    armedBearLow      := sLow
-    armedCisdOriginSL := sHigh
+    [extreme, bar_index - extreme_shift]
 
-// CISD Confirmation: close crosses the run HIGH (full reclamation)
+var int   vibes              = 0
+var float bagholderEntry      = na
+var int   timeMachineSetting  = na
+var float painThreshold       = na
+var int   bullMoveFvgCount    = 0
+var int   bearMoveFvgCount    = 0
+
+int candlePersonality = close > open ? 1 : close < open ? -1 : 0
+
+// --- Init ---
+if vibes == 0 and bar_index > 10
+    int firstImpression = candlePersonality
+    if firstImpression == 0
+        for k = 1 to 50
+            firstImpression := close[k] > open[k] ? 1 : close[k] < open[k] ? -1 : 0
+            if firstImpression != 0
+                break
+    if firstImpression != 0
+        vibes := firstImpression
+        [origin_price, origin_time] = consult_the_crystal_ball(firstImpression)
+        bagholderEntry     := origin_price
+        timeMachineSetting := origin_time
+        painThreshold      := firstImpression == 1 ? high : low
+
+// --- Re-anchor on new extreme ---
+if vibes == 1 and high > painThreshold
+    painThreshold := high
+    float p1 = na
+    int   b1 = na
+    if candlePersonality == 1
+        [p1, b1] = consult_the_crystal_ball(1)
+    else
+        [p1, b1] = archaeologist_jones(1)
+    if not na(p1)
+        bagholderEntry     := p1
+        timeMachineSetting := b1
+else if vibes == -1 and low < painThreshold
+    painThreshold := low
+    float p1 = na
+    int   b1 = na
+    if candlePersonality == -1
+        [p1, b1] = consult_the_crystal_ball(-1)
+    else
+        [p1, b1] = archaeologist_jones(-1)
+    if not na(p1)
+        bagholderEntry     := p1
+        timeMachineSetting := b1
+
+// --- Flip detection ---
+bool shortsSqueezed = vibes == -1 and close > bagholderEntry
+bool longsRekt      = vibes == 1 and close < bagholderEntry
+
+// Leg Trackers
+var bool  legHasBpr        = false
+var bool  legHasIfvg       = false
+var float legOriginLow     = na
+var float legOriginHigh    = na
+var float legCisdLevel     = na
+var bool  v2TriggeredInLeg = false
+
 bool bullCisdTrigger = false
 bool bearCisdTrigger = false
 
-if armedBullCisd and not na(armedBullHigh) and close > armedBullHigh
-    armedBullCisd := false
-    hasBullSweep  := false
-    bullCisdTrigger := true
-    deliveryRegime := 1
+if shortsSqueezed
+    bullCisdTrigger  := true
+    vibes            := 1
+    legOriginLow     := na
+    legOriginHigh    := bagholderEntry
+    legCisdLevel     := bagholderEntry
+    legHasBpr        := isBullBpr
+    legHasIfvg       := isBullIfvg
+    v2TriggeredInLeg := false
+    bullMoveFvgCount := 0
 
-if armedBearCisd and not na(armedBearLow) and close < armedBearLow
-    armedBearCisd := false
-    hasBearSweep  := false
-    bearCisdTrigger := true
-    deliveryRegime := -1
+    if i_drawCisd
+        ln = line.new(x1=timeMachineSetting, y1=bagholderEntry, x2=bar_index + 4, y2=bagholderEntry,
+          color=c_cisdLine, width=2)
+        lb = label.new(x=bar_index, y=bagholderEntry, text="+CISD", color=color.new(color.green, 100),
+          textcolor=c_cisdLine, style=label.style_label_left, size=size.small)
+        array.push(cisdLines, ln)
+        array.push(cisdLabels, lb)
+        if array.size(cisdLines) > 30
+            line.delete(array.shift(cisdLines))
+            label.delete(array.shift(cisdLabels))
 
-// Volume Gate (1.5x SMA20)
-volSma20 = ta.sma(volume, 20)
-bool passesVol = volume >= (i_minVolMult * volSma20)
+    [reset_price, reset_time] = consult_the_crystal_ball(1)
+    bagholderEntry     := reset_price
+    timeMachineSetting := reset_time
+    painThreshold      := high
 
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 5 — FVG TOUCH ENTRY ARMING (with SL-4 stop)
-// ═══════════════════════════════════════════════════════════════════
-type PendingZone
-    int    dir
-    float  entryLevel
-    float  stopLoss
-    int    armedBar
-    string sweepSrc
-    box    boxObj
+else if longsRekt
+    bearCisdTrigger   := true
+    vibes             := -1
+    legOriginLow      := bagholderEntry
+    legOriginHigh     := na
+    legCisdLevel      := bagholderEntry
+    legHasBpr         := isBearBpr
+    legHasIfvg        := isBearIfvg
+    v2TriggeredInLeg  := false
+    bearMoveFvgCount  := 0
 
-var PendingZone activeLong = na
-var PendingZone activeShort = na
+    if i_drawCisd
+        ln = line.new(x1=timeMachineSetting, y1=bagholderEntry, x2=bar_index + 4, y2=bagholderEntry,
+          color=c_cisdLine, width=2)
+        lb = label.new(x=bar_index, y=bagholderEntry, text="-CISD", color=color.new(color.red, 100),
+          textcolor=c_cisdLine, style=label.style_label_left, size=size.small)
+        array.push(cisdLines, ln)
+        array.push(cisdLabels, lb)
+        if array.size(cisdLines) > 30
+            line.delete(array.shift(cisdLines))
+            label.delete(array.shift(cisdLabels))
 
-bool newBullFvg = low > high[2]
-bool newBearFvg = high < low[2]
+    [reset_price, reset_time] = consult_the_crystal_ball(-1)
+    bagholderEntry     := reset_price
+    timeMachineSetting := reset_time
+    painThreshold      := low
 
-// Long: CISD trigger OR continuation FVG in bull delivery regime
-if (bullCisdTrigger or (deliveryRegime == 1 and newBullFvg)) and na(activeLong) and strategy.position_size == 0
-    float zTop = newBullFvg ? low : armedBullHigh
-    float zBot = newBullFvg ? high[2] : (armedBullHigh - (syminfo.mintick * 4))
-    float zCE  = (zTop + zBot) / 2.0
-
-    // Entry model selection
-    float ePrice = i_entryModel == "FVG_CE_50" ? zCE : (i_entryModel == "CISD_Level" ? (not na(armedBullHigh) ? armedBullHigh : zTop) : zTop)
-
-    // SL model selection
-    float slPrice = i_slModel == "SL1_SweepWick" ? (not na(bullSweepLow) ? bullSweepLow : low[1]) - (2 * syminfo.mintick) : (i_slModel == "SL4_CISD_Origin" ? (not na(armedCisdOriginSL) ? armedCisdOriginSL : low[1]) - (2 * syminfo.mintick) : (newBullFvg ? high[2] : bullSweepLow) - (2 * syminfo.mintick))
-    if slPrice >= ePrice
-        slPrice := math.min(low, math.min(low[1], low[2])) - (2 * syminfo.mintick)
-
-    float riskBps = ((ePrice - slPrice) / ePrice) * 10000.0
-    if riskBps > 0 and riskBps <= i_maxRiskBps
-        box bObj = box.new(left=bar_index, top=zTop, right=bar_index + i_maxEntryWait, bottom=zBot, bgcolor=color.new(#26a69a, 80), border_color=color.teal)
-        activeLong := PendingZone.new(1, ePrice, slPrice, bar_index, lastSweepSource, bObj)
-
-// Short: CISD trigger OR continuation FVG in bear delivery regime
-if (bearCisdTrigger or (deliveryRegime == -1 and newBearFvg)) and na(activeShort) and strategy.position_size == 0
-    float zTop = newBearFvg ? low[2] : (armedBearLow + (syminfo.mintick * 4))
-    float zBot = newBearFvg ? high : armedBearLow
-    float zCE  = (zTop + zBot) / 2.0
-
-    float ePrice = i_entryModel == "FVG_CE_50" ? zCE : (i_entryModel == "CISD_Level" ? (not na(armedBearLow) ? armedBearLow : zBot) : zBot)
-
-    float slPrice = i_slModel == "SL1_SweepWick" ? (not na(bearSweepHigh) ? bearSweepHigh : high[1]) + (2 * syminfo.mintick) : (i_slModel == "SL4_CISD_Origin" ? (not na(armedCisdOriginSL) ? armedCisdOriginSL : high[1]) + (2 * syminfo.mintick) : (newBearFvg ? low[2] : bearSweepHigh) + (2 * syminfo.mintick))
-    if slPrice <= ePrice
-        slPrice := math.max(high, math.max(high[1], high[2])) + (2 * syminfo.mintick)
-
-    float riskBps = ((slPrice - ePrice) / ePrice) * 10000.0
-    if riskBps > 0 and riskBps <= i_maxRiskBps
-        box bObj = box.new(left=bar_index, top=zTop, right=bar_index + i_maxEntryWait, bottom=zBot, bgcolor=color.new(#ef5350, 80), border_color=color.maroon)
-        activeShort := PendingZone.new(-1, ePrice, slPrice, bar_index, lastSweepSource, bObj)
+// Accumulate FVGs in the active move
+if vibes == 1 and isBullFvg
+    bullMoveFvgCount += 1
+if vibes == -1 and isBearFvg
+    bearMoveFvgCount += 1
 
 // ═══════════════════════════════════════════════════════════════════
-// SECTION 6 — EXECUTION, POSITION SIZING & 2-CONTRACT PACK
+// SECTION 4 — VARIANT SIGNAL LOGIC
 // ═══════════════════════════════════════════════════════════════════
-inRth = not na(time(timeframe.period, i_rthSession, "America/New_York"))
-isEod = not na(time(timeframe.period, "1555-1600:23456", "America/New_York"))
+bool signalLong = false
+bool signalShort = false
+float entryPrice = close
+float stopPrice = na
+string signalTag = ""
+
+if i_variant == "Baseline: IFVG + CISD (ATR Stop)"
+    if vibes == 1 and isBullIfvg
+        signalLong  := true
+        entryPrice  := close
+        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, atr14 * 1.8))
+        stopPrice   := entryPrice - risk
+        signalTag   := "Baseline IFVG"
+    else if vibes == -1 and isBearIfvg
+        signalShort := true
+        entryPrice  := close
+        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, atr14 * 1.8))
+        stopPrice   := entryPrice + risk
+        signalTag   := "Baseline IFVG"
+
+else if i_variant == "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High Stop)"
+    if bullCisdTrigger and (legHasBpr or (legHasIfvg and bullMoveFvgCount >= 1))
+        signalLong  := true
+        entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
+        float rawStop = not na(legOriginLow) ? (legOriginLow - syminfo.mintick * 2) : (low - syminfo.mintick * 2)
+        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, entryPrice - rawStop))
+        stopPrice   := entryPrice - risk
+        signalTag   := "V1: CISD Entry"
+    else if bearCisdTrigger and (legHasBpr or (legHasIfvg and bearMoveFvgCount >= 1))
+        signalShort := true
+        entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
+        float rawStop = not na(legOriginHigh) ? (legOriginHigh + syminfo.mintick * 2) : (high + syminfo.mintick * 2)
+        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, rawStop - entryPrice))
+        stopPrice   := entryPrice + risk
+        signalTag   := "V1: CISD Entry"
+
+else if i_variant == "Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry (CISD Low/High Stop)"
+    // Bullish Variant 2: In Bullish Regime, 2nd Bullish FVG is printed
+    if (vibes == 1 or bullCisdTrigger) and not v2TriggeredInLeg and isBullFvg and bullMoveFvgCount >= 2
+        signalLong  := true
+        entryPrice  := close
+        float rawStop = not na(legOriginLow) ? (legOriginLow - syminfo.mintick * 2) : (low - syminfo.mintick * 2)
+        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, entryPrice - rawStop))
+        stopPrice   := entryPrice - risk
+        v2TriggeredInLeg := true
+        signalTag   := "V2: 2nd FVG Entry"
+    else if (vibes == -1 or bearCisdTrigger) and not v2TriggeredInLeg and isBearFvg and bearMoveFvgCount >= 2
+        signalShort := true
+        entryPrice  := close
+        float rawStop = not na(legOriginHigh) ? (legOriginHigh + syminfo.mintick * 2) : (high + syminfo.mintick * 2)
+        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, rawStop - entryPrice))
+        stopPrice   := entryPrice + risk
+        v2TriggeredInLeg := true
+        signalTag   := "V2: 2nd FVG Entry"
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5 — EXECUTION & POSITION MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════
+bool inRth = not na(time(timeframe.period, i_rthSession, "America/New_York"))
+bool inLunch = i_filterLunch and not na(time(timeframe.period, "1130-1330:23456", "America/New_York"))
+bool canTrade = inRth and not inLunch
 
 var int dailyTrades = 0
-if ta.change(time("D")) != 0
+bool isNewDay = not na(ta.change(time("D"))) and ta.change(time("D")) != 0
+if isNewDay
     dailyTrades := 0
-
-calcBpsDistance(price, bps) =>
-    math.round((price * (bps / 10000.0)) / syminfo.mintick) * syminfo.mintick
-
-// Position sizing: contracts = risk_usd / (sl_dist_pts * point_value)
-calcContracts(entryPrice, slPrice) =>
-    float slDist = math.abs(entryPrice - slPrice)
-    if slDist <= 0
-        2
-    else
-        int qty = int(i_riskUsd / (slDist * syminfo.pointvalue))
-        math.max(2, math.min(qty, i_maxContracts))
 
 var float activeEntry = na
 var float activeSL    = na
-var float activeQueenTP = na
-var float activeRunnerTP = na
-var bool  queenFilled = false
+var float activeTP1   = na
+var float activeTP2   = na
+var bool  tp1Hit      = false
 
-// Long Fill
-if not na(activeLong) and strategy.position_size == 0 and inRth and dailyTrades < i_maxDailyTrades and passesVol
-    if (bar_index > activeLong.armedBar) and ((bar_index - activeLong.armedBar) <= i_maxEntryWait)
-        if low <= activeLong.entryLevel
-            int contracts = calcContracts(activeLong.entryLevel, activeLong.stopLoss)
-            activeEntry := activeLong.entryLevel
-            activeSL    := activeLong.stopLoss
-            queenFilled := false
+// Execute Entry
+if canTrade and dailyTrades < i_maxDailyTrades and strategy.position_size == 0
+    if signalLong and not na(stopPrice)
+        float riskPts = entryPrice - stopPrice
+        activeEntry := entryPrice
+        activeSL    := stopPrice
+        activeTP1   := entryPrice + (riskPts * i_rMultTP1)
+        activeTP2   := entryPrice + (riskPts * i_rMultTP2)
+        tp1Hit      := false
 
-            float distQ = calcBpsDistance(activeEntry, i_tp1QueenBps)
-            float distR = calcBpsDistance(activeEntry, i_runnerBps)
-            activeQueenTP  := activeEntry + distQ
-            activeRunnerTP := activeEntry + distR
-            dailyTrades += 1
+        strategy.entry("Queen", strategy.long, qty=1)
+        strategy.entry("Runner", strategy.long, qty=1)
+        dailyTrades += 1
 
-            strategy.entry("L_Queen", strategy.long, qty=contracts, limit=activeEntry, comment="L Queen")
-            strategy.entry("L_Runner", strategy.long, qty=contracts, limit=activeEntry, comment="L Runner")
-            strategy.exit("X_L_Q", from_entry="L_Queen", limit=activeQueenTP, stop=activeSL, comment="Queen Hit")
-            strategy.exit("X_L_R", from_entry="L_Runner", limit=activeRunnerTP, stop=activeSL, comment="Runner TP")
-            box.delete(activeLong.boxObj)
-            activeLong := na
-    else if (bar_index - activeLong.armedBar) > i_maxEntryWait
-        box.delete(activeLong.boxObj)
-        activeLong := na
+        if i_drawSignals
+            label.new(x=bar_index, y=low - (riskPts * 0.3), text="BUY (" + signalTag + ")\nSL: " + str.tostring(stopPrice, "#.##"),
+              color=color.green, textcolor=color.white, style=label.style_label_up, size=size.normal)
 
-// Short Fill
-if not na(activeShort) and strategy.position_size == 0 and inRth and dailyTrades < i_maxDailyTrades and passesVol
-    if (bar_index > activeShort.armedBar) and ((bar_index - activeShort.armedBar) <= i_maxEntryWait)
-        if high >= activeShort.entryLevel
-            int contracts = calcContracts(activeShort.entryLevel, activeShort.stopLoss)
-            activeEntry := activeShort.entryLevel
-            activeSL    := activeShort.stopLoss
-            queenFilled := false
+    else if signalShort and not na(stopPrice)
+        float riskPts = stopPrice - entryPrice
+        activeEntry := entryPrice
+        activeSL    := stopPrice
+        activeTP1   := entryPrice - (riskPts * i_rMultTP1)
+        activeTP2   := entryPrice - (riskPts * i_rMultTP2)
+        tp1Hit      := false
 
-            float distQ = calcBpsDistance(activeEntry, i_tp1QueenBps)
-            float distR = calcBpsDistance(activeEntry, i_runnerBps)
-            activeQueenTP  := activeEntry - distQ
-            activeRunnerTP := activeEntry - distR
-            dailyTrades += 1
+        strategy.entry("Queen", strategy.short, qty=1)
+        strategy.entry("Runner", strategy.short, qty=1)
+        dailyTrades += 1
 
-            strategy.entry("S_Queen", strategy.short, qty=contracts, limit=activeEntry, comment="S Queen")
-            strategy.entry("S_Runner", strategy.short, qty=contracts, limit=activeEntry, comment="S Runner")
-            strategy.exit("X_S_Q", from_entry="S_Queen", limit=activeQueenTP, stop=activeSL, comment="Queen Hit")
-            strategy.exit("X_S_R", from_entry="S_Runner", limit=activeRunnerTP, stop=activeSL, comment="Runner TP")
-            box.delete(activeShort.boxObj)
-            activeShort := na
-    else if (bar_index - activeShort.armedBar) > i_maxEntryWait
-        box.delete(activeShort.boxObj)
-        activeShort := na
+        if i_drawSignals
+            label.new(x=bar_index, y=high + (riskPts * 0.3), text="SELL (" + signalTag + ")\nSL: " + str.tostring(stopPrice, "#.##"),
+              color=color.red, textcolor=color.white, style=label.style_label_down, size=size.normal)
 
-// Breakeven Stop on Runner when Queen fills
-if strategy.position_size > 0 and not queenFilled and high >= activeQueenTP
-    queenFilled := true
-    strategy.exit("X_L_R_BE", from_entry="L_Runner", limit=activeRunnerTP, stop=activeEntry, comment="Runner BE")
+// Manage Active Positions (Cover The Queen scale out + BE Lock)
+string lossComment = tp1Hit ? "BE Hit" : "SL Hit"
 
-if strategy.position_size < 0 and not queenFilled and low <= activeQueenTP
-    queenFilled := true
-    strategy.exit("X_S_R_BE", from_entry="S_Runner", limit=activeRunnerTP, stop=activeEntry, comment="Runner BE")
+if strategy.position_size > 0
+    if not tp1Hit and high >= activeTP1
+        tp1Hit := true
+        activeSL := activeEntry // Breakeven lock
 
-// Hard EOD Flatten
-if i_eodFlatten and isEod and strategy.position_size != 0
-    strategy.close_all(comment="EOD 15:55 Flat")
+    strategy.exit("Exit Queen", "Queen", limit=activeTP1, stop=activeSL, comment_profit="TP1 (Queen)", comment_loss=lossComment)
+    strategy.exit("Exit Runner", "Runner", limit=activeTP2, stop=activeSL, comment_profit="TP2 (Runner)", comment_loss=lossComment)
 
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 7 — VISUAL PLOTS
-// ═══════════════════════════════════════════════════════════════════
-plot(strategy.position_size != 0 ? activeSL : na, "Stop Loss (SL-4)", color=color.red, style=plot.style_linebr, linewidth=2)
-plot(strategy.position_size != 0 ? activeQueenTP : na, "Queen TP (10 bps)", color=color.green, style=plot.style_linebr, linewidth=2)
-plot(strategy.position_size != 0 ? activeRunnerTP : na, "Runner TP (30 bps)", color=color.teal, style=plot.style_linebr, linewidth=2)
-bgcolor(not na(activeLong) ? color.new(color.green, 95) : na, title="Long Zone")
-bgcolor(not na(activeShort) ? color.new(color.red, 95) : na, title="Short Zone")
+else if strategy.position_size < 0
+    if not tp1Hit and low <= activeTP1
+        tp1Hit := true
+        activeSL := activeEntry // Breakeven lock
+
+    strategy.exit("Exit Queen", "Queen", limit=activeTP1, stop=activeSL, comment_profit="TP1 (Queen)", comment_loss=lossComment)
+    strategy.exit("Exit Runner", "Runner", limit=activeTP2, stop=activeSL, comment_profit="TP2 (Runner)", comment_loss=lossComment)
+
+// EOD Flatten (15:55 ET)
+if i_eodFlatten and not na(time(timeframe.period, "1555-1600:23456", "America/New_York"))
+    strategy.close_all("EOD Flatten")
+
+// Visual Annotations for active brackets
+plot(strategy.position_size != 0 ? activeSL : na, "Active Stop Loss", color=color.red, style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size != 0 ? activeTP1 : na, "Target 1 (Queen)", color=color.green, style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size != 0 ? activeTP2 : na, "Target 2 (Runner)", color=color.teal, style=plot.style_linebr, linewidth=2)
