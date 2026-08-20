@@ -1,8 +1,8 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © Institutional Research Suite / Antigravity
+// Institutional Research Suite / Antigravity
 
 //@version=6
-indicator("Institutional Master Engine (First FVG · SMT · 1H Trend · Pack · Trap)", 
+indicator("Institutional Master Engine (First FVG SMT 1H Trend Pack Trap)", 
   shorttitle="Master_Institutional_Indicator", 
   overlay=true, 
   max_boxes_count=500, 
@@ -10,9 +10,9 @@ indicator("Institutional Master Engine (First FVG · SMT · 1H Trend · Pack · 
   max_labels_count=500, 
   max_bars_back=5000)
 
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 1 — CONFIGURATION & PARAMETERS
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
+// SECTION 1 - CONFIGURATION & PARAMETERS
+// ===================================================================
 var string GRP_LIQ = "1. Liquidity & HTF Trend Engine"
 i_enableHtfTrend  = input.bool(true, "Enable 1H Trend Alignment (EMA 20/50)", group=GRP_LIQ)
 i_minDispBps      = input.float(3.0, "Min Displacement Body (Basis Points)", step=0.5, group=GRP_LIQ)
@@ -24,7 +24,6 @@ var string GRP_ENTRY = "2. Execution & Risk Parameters"
 i_maxRiskBps      = input.float(12.0, "Hard Risk Ceiling (Basis Points)", step=1.0, group=GRP_ENTRY)
 i_maxEntryWait    = input.int(15, "Max Bars Waiting for Retest", minval=3, maxval=30, group=GRP_ENTRY)
 
-// Pure Basis Points Target Matrix (1 bps = 0.01% of entry price)
 var string GRP_TP = "3. Basis Points Targets"
 i_tp1QueenBps     = input.float(10.0, "Target 1: Cover The Queen (Basis Points)", step=1.0, group=GRP_TP)
 i_tp2AmBps        = input.float(40.0, "Target 2: AM Macro Expansion (Basis Points)", step=5.0, group=GRP_TP)
@@ -34,18 +33,15 @@ var string GRP_SESS = "4. Session Windows"
 i_sessionAm       = input.session("0950-1115:23456", "AM Macro Window", group=GRP_SESS)
 i_sessionPm       = input.session("1330-1515:23456", "PM Macro Window", group=GRP_SESS)
 
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 2 — HTF ORDER FLOW & LIQUIDITY LEVELS
-// ═══════════════════════════════════════════════════════════════════
-// 1-Hour HTF EMA 20/50
+// ===================================================================
+// SECTION 2 - HTF ORDER FLOW & LIQUIDITY LEVELS
+// ===================================================================
 [h1_ema20, h1_ema50] = request.security(syminfo.tickerid, "60", [ta.ema(close, 20)[1], ta.ema(close, 50)[1]], lookahead=barmerge.lookahead_on)
 bool bullHtf = not i_enableHtfTrend or (h1_ema20 >= h1_ema50)
 bool bearHtf = not i_enableHtfTrend or (h1_ema20 <= h1_ema50)
 
-// Daily PDH / PDL
 [pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
 
-// Intraday 3-Bar Fractal Swings
 swH = ta.pivothigh(high, 3, 3)
 swL = ta.pivotlow(low, 3, 3)
 var float[] bslList = array.new<float>()
@@ -55,15 +51,14 @@ if not na(swH)
     array.push(bslList, swH)
     if array.size(bslList) > 10
         array.shift(bslList)
-
 if not na(swL)
     array.push(sslList, swL)
     if array.size(sslList) > 10
         array.shift(sslList)
 
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 3 — SWEEP DETECTION & CANONICAL CISD
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
+// SECTION 3 - SWEEP DETECTION (kept for downstream strategy)
+// ===================================================================
 bool bslSwept = false
 bool sslSwept = false
 float currentSweepExtreme = na
@@ -81,7 +76,6 @@ if i_checkLocalSw
             if high > lvl and close < lvl
                 bslSwept := true, currentSweepExtreme := high
                 break
-
     if array.size(sslList) > 0 and not sslSwept
         for s = 0 to array.size(sslList) - 1
             float lvl = array.get(sslList, s)
@@ -100,56 +94,148 @@ if sslSwept
     hasActiveBullSweep := true
     activeBullSweepLow := not na(currentSweepExtreme) ? currentSweepExtreme : low
     bullSweepBar       := bar_index
-
 if bslSwept
     hasActiveBearSweep  := true
     activeBearSweepHigh := not na(currentSweepExtreme) ? currentSweepExtreme : high
     bearSweepBar        := bar_index
-
 if (bar_index - bullSweepBar) > i_sweepLookback
     hasActiveBullSweep := false
-
 if (bar_index - bearSweepBar) > i_sweepLookback
     hasActiveBearSweep := false
 
-// Canonical Backward-Walking CISD
-var bool  armedBullCisd     = false
-var bool  armedBearCisd     = false
-var float armedBullHigh     = na
-var float armedBearLow      = na
-var float armedCisdOriginSL = na
+// ===================================================================
+// SECTION 4 - CANONICAL CISD (verbatim tncylyv port)
+// ===================================================================
+var string GRP_VIZ = "5. CISD Level Visualization"
+i_showCisdLines   = input.bool(true, "Show Triggered CISD Lines", group=GRP_VIZ)
+i_extendLines     = input.int(0, "Extend Lines (Bars)", minval=0, group=GRP_VIZ)
+i_lineWidth       = input.int(2, "Line Width", minval=1, group=GRP_VIZ)
+i_showLabels      = input.bool(true, "Show Labels", group=GRP_VIZ)
+i_maxLines        = input.int(50, "Max Historical Lines", minval=1, group=GRP_VIZ)
+i_showActiveLevel = input.bool(true, "Show Active CISD Level", group=GRP_VIZ)
 
-if hasActiveBullSweep and (sslSwept or ta.change(hasActiveBullSweep))
-    float sHigh = math.max(open[0], close[0])
-    float sLow  = math.min(open[0], close[0])
-    
-    for i = 1 to math.min(20, bar_index)
-        if close[i] <= open[i]
-            sHigh := math.max(sHigh, math.max(open[i], close[i]))
-            sLow  := math.min(sLow,  math.min(open[i], close[i]))
-        else
+var int   vibes              = 0
+var float bagholder_entry     = na
+var int   time_machine_setting = na
+var float pain_threshold      = na
+
+var array<line>  graveyard_of_hopes = array.new<line>()
+var array<label> choir_of_screams    = array.new<label>()
+var label        sticky_note_of_shame = na
+
+// --- tncylyv functions (verbatim) ---
+consult_the_crystal_ball(int bias) =>
+    int temporal_shift = 0
+    float extreme = open[0]
+    int candle_attitude = close[0] > open[0] ? 1 : close[0] < open[0] ? -1 : 0
+    if candle_attitude == 0 or candle_attitude != bias
+        [extreme, bar_index]
+    for i = 1 to 500
+        candle_attitude := close[i] > open[i] ? 1 : close[i] < open[i] ? -1 : 0
+        if candle_attitude == 0
+            continue
+        bool mood_match = candle_attitude == bias
+        if not mood_match
             break
-            
-    armedBullCisd     := true
-    armedBullHigh     := sHigh
-    armedCisdOriginSL := sLow
-
-if hasActiveBearSweep and (bslSwept or ta.change(hasActiveBearSweep))
-    float sHigh = math.max(open[0], close[0])
-    float sLow  = math.min(open[0], close[0])
-    
-    for i = 1 to math.min(20, bar_index)
-        if close[i] >= open[i]
-            sHigh := math.max(sHigh, math.max(open[i], close[i]))
-            sLow  := math.min(sLow,  math.min(open[i], close[i]))
+        temporal_shift := i
+        if bias == 1
+            if open[i] < extreme
+                extreme := open[i]
         else
+            if open[i] > extreme
+                extreme := open[i]
+    int extreme_shift = na
+    for k = 0 to temporal_shift
+        if open[k] == extreme
+            extreme_shift := k
             break
-            
-    armedBearCisd     := true
-    armedBearLow      := sLow
-    armedCisdOriginSL := sHigh
+    [extreme, bar_index - extreme_shift]
 
-// Displacement Verification
+archaeologist_jones(int bias) =>
+    int i = 1
+    bool artifact_found = false
+    int max_shift = na
+    float extreme = na
+    for j = 1 to 500
+        i := j
+        int candle_attitude = close[i] > open[i] ? 1 : close[i] < open[i] ? -1 : 0
+        if candle_attitude == 0
+            continue
+        bool is_correct_era = candle_attitude == bias
+        if not artifact_found
+            if is_correct_era
+                artifact_found := true
+                max_shift := i
+                extreme := open[i]
+        else
+            if not is_correct_era
+                break
+            max_shift := i
+            if bias == 1
+                if open[i] < extreme
+                    extreme := open[i]
+            else
+                if open[i] > extreme
+                    extreme := open[i]
+    int extreme_shift = na
+    for k = 1 to max_shift
+        if open[k] == extreme
+            extreme_shift := k
+            break
+    [extreme, bar_index - extreme_shift]
+
+// --- Init ---
+if vibes == 0 and bar_index > 10
+    int first_impression = close > open ? 1 : close < open ? -1 : 0
+    if first_impression == 0
+        for k = 1 to 50
+            first_impression := close[k] > open[k] ? 1 : close[k] < open[k] ? -1 : 0
+            if first_impression != 0
+                break
+    if first_impression != 0
+        vibes := first_impression
+        [origin_price, origin_time] = consult_the_crystal_ball(first_impression)
+        bagholder_entry := origin_price
+        time_machine_setting := origin_time
+        pain_threshold := first_impression == 1 ? high : low
+
+// --- Re-anchor ---
+int candle_personality = close > open ? 1 : close < open ? -1 : 0
+float fresh_hopium = na
+int fresh_timestamp = na
+
+if vibes == 1
+    if high > pain_threshold
+        pain_threshold := high
+        if candle_personality == 1
+            [p_price, p_idx] = consult_the_crystal_ball(1)
+            fresh_hopium := p_price
+            fresh_timestamp := p_idx
+        else
+            [p_price, p_idx] = archaeologist_jones(1)
+            fresh_hopium := p_price
+            fresh_timestamp := p_idx
+        bagholder_entry := fresh_hopium
+        time_machine_setting := fresh_timestamp
+else if vibes == -1
+    if low < pain_threshold
+        pain_threshold := low
+        if candle_personality == -1
+            [p_price, p_idx] = consult_the_crystal_ball(-1)
+            fresh_hopium := p_price
+            fresh_timestamp := p_idx
+        else
+            [p_price, p_idx] = archaeologist_jones(-1)
+            fresh_hopium := p_price
+            fresh_timestamp := p_idx
+        bagholder_entry := fresh_hopium
+        time_machine_setting := fresh_timestamp
+
+// --- Flip detection ---
+bool shorts_squeezed = vibes == -1 and close > bagholder_entry
+bool longs_rekt = vibes == 1 and close < bagholder_entry
+
+// Displacement filter (strategy-grade only, does NOT gate line drawing)
 float bodyBps = (math.abs(close - open) / close) * 10000.0
 float volSma  = ta.sma(volume, 20)
 bool passesDisp = (bodyBps >= i_minDispBps) and (volume >= 1.1 * volSma)
@@ -157,20 +243,57 @@ bool passesDisp = (bodyBps >= i_minDispBps) and (volume >= 1.1 * volSma)
 bool bullCisdTrigger = false
 bool bearCisdTrigger = false
 
-if armedBullCisd and not na(armedBullHigh) and close > armedBullHigh
-    armedBullCisd      := false
-    hasActiveBullSweep := false
-    if passesDisp and bullHtf
-        bullCisdTrigger := true
+if shorts_squeezed or longs_rekt
+    // Draw the line at the crossed level (tncylyv-style)
+    if i_showCisdLines
+        color mood_ring = shorts_squeezed ? color.green : color.red
+        line tragedy_line = line.new(time_machine_setting, bagholder_entry, bar_index + i_extendLines, bagholder_entry, color=mood_ring, width=i_lineWidth, style=line.style_solid)
+        array.push(graveyard_of_hopes, tragedy_line)
 
-if armedBearCisd and not na(armedBearLow) and close < armedBearLow
-    armedBearCisd      := false
-    hasActiveBearSweep := false
-    if passesDisp and bearHtf
+        if i_showLabels
+            int soapbox_location = math.round((time_machine_setting + bar_index + i_extendLines) / 2)
+            string gibberish = shorts_squeezed ? "+CISD" : "-CISD"
+            color ink_color = shorts_squeezed ? color.green : color.red
+            label loud_noise = label.new(soapbox_location, bagholder_entry, gibberish, style=shorts_squeezed ? label.style_label_down : label.style_label_up, color=color.new(color.black, 100), textcolor=ink_color, size=size.small)
+            array.push(choir_of_screams, loud_noise)
+
+        if array.size(graveyard_of_hopes) > i_maxLines
+            line.delete(array.shift(graveyard_of_hopes))
+            if array.size(choir_of_screams) > 0
+                label.delete(array.shift(choir_of_screams))
+
+    // Strategy-grade trigger (with displacement + HTF filter)
+    if shorts_squeezed and passesDisp and bullHtf
+        bullCisdTrigger := true
+    if longs_rekt and passesDisp and bearHtf
         bearCisdTrigger := true
 
-// ═══════════════════════════════════════════════════════════════════
-// SECTION 4 — PLOTS & VISUAL ANNOTATIONS
-// ═══════════════════════════════════════════════════════════════════
+    // Flip regime
+    int new_emotional_state = shorts_squeezed ? 1 : -1
+    vibes := new_emotional_state
+    [reset_price, reset_time] = consult_the_crystal_ball(new_emotional_state)
+    bagholder_entry := reset_price
+    time_machine_setting := reset_time
+    pain_threshold := new_emotional_state == 1 ? high : low
+
+// --- Active CISD level label ---
+if i_showActiveLevel and not na(bagholder_entry)
+    label.delete(sticky_note_of_shame)
+    color active_crayon = vibes == 1 ? color.green : color.red
+    string status_msg = vibes == 1 ? "+Active CISD" : "-Active CISD"
+    sticky_note_of_shame := label.new(bar_index, bagholder_entry, status_msg, color=color.new(active_crayon, 100), textcolor=active_crayon, style=label.style_label_left, size=size.small)
+
+// --- Plots ---
 plotshape(bullCisdTrigger, title="Bullish CISD Trigger", style=shape.labelup, location=location.belowbar, color=color.green, text="CISD LONG", textcolor=color.white, size=size.small)
 plotshape(bearCisdTrigger, title="Bearish CISD Trigger", style=shape.labeldown, location=location.abovebar, color=color.red, text="CISD SHORT", textcolor=color.white, size=size.small)
+
+// Active CISD level as a plot (tncylyv uses plot.style_linebr)
+plot(i_showActiveLevel ? bagholder_entry : na, "Active CISD", color=vibes == 1 ? color.green : color.red, linewidth=i_lineWidth, style=plot.style_linebr)
+
+// --- Debug ---
+i_debug = input.bool(false, "Debug: Show Engine State", group=GRP_VIZ)
+plot(i_debug ? vibes : na, "Debug Regime", color=color.blue, linewidth=2, style=plot.style_histogram)
+plot(i_debug ? bagholder_entry : na, "Debug CISD Level", color=color.orange, linewidth=2, style=plot.style_linebr)
+plot(i_debug ? pain_threshold : na, "Debug Pain Threshold", color=color.purple, linewidth=1, style=plot.style_circles)
+plot(i_debug and shorts_squeezed ? close : na, "Debug Short Squeezed", color=color.green, linewidth=4, style=plot.style_cross)
+plot(i_debug and longs_rekt ? close : na, "Debug Longs Rekt", color=color.red, linewidth=4, style=plot.style_cross)
