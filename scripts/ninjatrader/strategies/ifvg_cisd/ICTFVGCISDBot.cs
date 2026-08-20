@@ -610,18 +610,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             bool canEnter = inRth && (todayTradeCount < MaxDailyTrades) && (Position.MarketPosition == MarketPosition.Flat);
 
-            // Diagnostic CSV row for every bar during Aug 19 2026 morning session
-            if (Time[0].Date == new DateTime(2026, 8, 19) && Time[0].Hour >= 9 && Time[0].Hour <= 12)
+            // Diagnostic CSV row for every bar (full backtest range)
             {
                 if (!diagCsvHeaderWritten)
                 {
-                    diagCsv.WriteLine("BarCloseTime,BarOpenTime,Open,High,Low,Close,CandlePersonality,Vibes,BagholderEntry,PainThreshold,BullCisdTrigger,CurrentRegime,BullFvgCount,IsBullFvg,SignalLong,CanEnter,InRth");
+                    diagCsv.WriteLine("BarCloseTime,BarOpenTime,Open,High,Low,Close,CandlePersonality,Vibes,BagholderEntry,PainThreshold,BullCisdTrigger,BearCisdTrigger,BullFvgCount,BearFvgCount,IsBullFvg,IsBearFvg,SignalLong,SignalShort,CanEnter,InRth,HasBPR,HasIFVG");
                     diagCsvHeaderWritten = true;
                 }
                 DateTime barOpenTime = Time[0].AddMinutes(-BarsPeriod.Value);
-                diagCsv.WriteLine(string.Format("{0:yyyy-MM-dd HH:mm:ss},{1:yyyy-MM-dd HH:mm:ss},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17}",
-                    Time[0], barOpenTime, o0, h0, l0, c0, candlePersonality, vibes, bagholderEntry, painThreshold,
-                    bullCisdTrigger ? 1 : 0, vibes, bullMoveFvgCount, isBullFvg ? 1 : 0, signalLong ? 1 : 0, canEnter ? 1 : 0, inRth ? 1 : 0));
+                diagCsv.WriteLine(string.Format("{0:yyyy-MM-dd HH:mm:ss},{1:yyyy-MM-dd HH:mm:ss},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17},{18},{19},{20},{21}",
+                    Time[0], barOpenTime, o0, h0, l0, c0, candlePersonality, vibes,
+                    double.IsNaN(bagholderEntry) ? "" : bagholderEntry.ToString("G"),
+                    double.IsNaN(painThreshold) ? "" : painThreshold.ToString("G"),
+                    bullCisdTrigger ? 1 : 0, bearCisdTrigger ? 1 : 0,
+                    bullMoveFvgCount, bearMoveFvgCount,
+                    isBullFvg ? 1 : 0, isBearFvg ? 1 : 0,
+                    signalLong ? 1 : 0, signalShort ? 1 : 0,
+                    canEnter ? 1 : 0, inRth ? 1 : 0,
+                    legHasBpr ? 1 : 0, legHasIfvg ? 1 : 0));
                 diagCsv.Flush();
             }
 

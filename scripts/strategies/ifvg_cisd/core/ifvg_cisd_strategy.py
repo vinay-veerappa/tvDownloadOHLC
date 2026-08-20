@@ -394,6 +394,8 @@ class IFVGCISDStrategy:
                 if i > 0:
                     bar_delta = ts - htf_index[i - 1]
                 bar_open = ts - bar_delta
+                # CandlePersonality: 1=bull, -1=bear, 0=doji
+                cp = 1 if c > o else -1 if c < o else 0
                 diag_rows.append({
                     "BarCloseTime": ts,
                     "BarOpenTime": bar_open,
@@ -401,25 +403,26 @@ class IFVGCISDStrategy:
                     "High": h,
                     "Low": l,
                     "Close": c,
-                    "IsLowPivot": int(is_low_pivot),
-                    "IsHighPivot": int(is_high_pivot),
-                    "ArmedBull": np.nan,  # CISD kernel does not expose this; placeholder
-                    "ArmedBullLevel": np.nan,
+                    "CandlePersonality": cp,
+                    "Vibes": cisd_state,  # cisd_state is the running regime (+1/-1/0)
+                    "BagholderEntry": leg.cisd_level if not np.isnan(leg.cisd_level) else np.nan,
+                    "PainThreshold": np.nan,  # not tracked in this strategy layer
                     "BullCisdTrigger": int(cisd_event == 1),
-                    "CurrentRegime": cisd_state,
+                    "BearCisdTrigger": int(cisd_event == -1),
                     "BullFvgCount": leg.bull_fvg_count,
                     "BearFvgCount": leg.bear_fvg_count,
                     "IsBullFvg": int(fvg_event == 1),
                     "IsBearFvg": int(fvg_event == -1),
+                    "IsBullIfvg": int(ifvg_event == 1),
+                    "IsBearIfvg": int(ifvg_event == -1),
+                    "IsBullBpr": int(bpr_event == 1),
+                    "IsBearBpr": int(bpr_event == -1),
                     "SignalLong": int(direction == "LONG"),
                     "SignalShort": int(direction == "SHORT"),
                     "CanEnter": int(direction is not None),
                     "InRth": int(time(9, 45) <= ts.time() <= time(15, 30)),
                     "HasBPR": int(leg.has_bpr),
                     "HasIFVG": int(leg.has_ifvg),
-                    # Reserved columns for future concepts (liquidity levels, etc.)
-                    "LiqHigh": np.nan,
-                    "LiqLow": np.nan,
                 })
 
             if direction is None:
