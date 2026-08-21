@@ -58,6 +58,7 @@ def simulate_trade_policy(
     tick_size: float = 0.25,
     account_size: float = 50000.0,
     max_forward_bars: int = 240,
+    eod_flatten_time: str = "15:50",  # EOD flatten in ET, None to disable
 ) -> Dict[str, Any]:
     """
     Simulates trades with various risk management policies:
@@ -65,6 +66,7 @@ def simulate_trade_policy(
     - CoverTheQueen_1.0R_2.5R (50% at 1.0R + BE + 50% at 2.5R)
     - BreakevenTrail (BE at 1.0R + 1.5x ATR Trail)
     - TimeStop_30Bars / TimeStop_60Bars (Target 2.0R, max bars horizon)
+    - EOD flatten at 15:50 ET (no overnight holding)
     """
     if signals is None or signals.empty:
         return _empty_metrics(account_size)
@@ -139,6 +141,12 @@ def simulate_trade_policy(
         fixed_tp_r = 2.0
         max_bars_limit = 60
 
+    # EOD flatten time parsing
+    eod_hour, eod_minute = 15, 50
+    if eod_flatten_time:
+        parts = eod_flatten_time.split(":")
+        eod_hour, eod_minute = int(parts[0]), int(parts[1])
+
     slippage_cost = slippage_ticks * tick_size
     trade_log = []
 
@@ -174,6 +182,27 @@ def simulate_trade_policy(
 
         executed_entry = entry_raw + slippage_cost if is_long else entry_raw - slippage_cost
         end_idx = min(start_idx + max_bars_limit, n_data)
+
+        # EOD flatten: find the last bar of the entry day (<= 15:50 ET)
+        # If the trade is still open at EOD, force exit at that bar's close.
+        eod_exit_idx = end_idx  # default: no EOD exit
+        if eod_flatten_time:
+            entry_time = times[start_idx]
+            entry_date = entry_time.date()
+            for b in range(start_idx, end_idx):
+                bar_time = times[b]
+                if bar_time.date() != entry_date:
+                    # Crossed midnight — exit at last bar of entry day
+                    eod_exit_idx = b
+                    break
+                bar_hour = bar_time.hour
+                bar_minute = bar_time.minute
+                # ET timezone: data is in ET for futures
+                if bar_hour > eod_hour or (bar_hour == eod_hour and bar_minute >= eod_minute):
+                    eod_exit_idx = b + 1  # exit at this bar's close
+                    break
+            # Cap end_idx at EOD
+            end_idx = min(end_idx, eod_exit_idx)
 
         # Calculate Targets
         if is_base_hits:
