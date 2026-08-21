@@ -74,6 +74,7 @@ def simulate_trade_policy(
     highs = data["high"].values
     lows = data["low"].values
     closes = data["close"].values
+    opens = data["open"].values
     atrs = data["atr"].values if "atr" in data.columns else np.full(len(data), 5.0)
     times = data.index
 
@@ -179,17 +180,20 @@ def simulate_trade_policy(
         is_long = direction.lower() == "long"
         entry_raw = float(sig_entries[i])
         risk = max(float(sig_risks[i]), 1.0)
-        orig_stop = float(sig_stops[i])
         mechanism = str(sig_mechs[i]).lower()
 
-        # ── Entry mechanism resolution ──────────────────────────────────────
-        # market      : fill at signal bar close (current behavior)
-        # cisd_limit  : limit order at the CISD level; fills only if price
-        #               retraces to that level within max_forward_bars
-        # breakout    : stop order above/below the signal bar; fills when price
-        #               trades through the signal bar's extreme
-        executed_entry = entry_raw + slippage_cost if is_long else entry_raw - slippage_cost
+        # ── Entry mechanism resolution (NT8-faithful) ──────────────────────
+        # NT8 uses Calculate.OnBarClose: the signal is evaluated at bar close,
+        # but the order fills on the NEXT bar. Stop/target are set in TICKS
+        # from the actual fill price (risk = |CISD level - crossed level|).
+        #
+        # market      : EnterLong()/EnterShort() → fills at next bar OPEN
+        # cisd_limit  : EnterLongLimit()/EnterShortLimit() → fills at CISD level
+        #               when price touches it (IsFillLimitOnTouch=true)
+        # breakout    : EnterLongStopMarket()/EnterShortStopMarket() → fills
+        #               when price trades through the signal bar extreme
         fill_idx = start_idx
+        executed_entry = entry_raw
         if mechanism == "cisd_limit":
             # Limit at the CISD level (entry_raw). Fill if a later bar's range
             # touches the level. Skip the trade if never touched.
@@ -223,6 +227,12 @@ def simulate_trade_policy(
             if not filled:
                 continue
             executed_entry = (trigger + slippage_cost) if is_long else (trigger - slippage_cost)
+        else:
+            # market: fill at the NEXT bar's open (OnBarClose semantics)
+            fill_idx = start_idx + 1
+            if fill_idx >= n_data:
+                continue
+            executed_entry = opens[fill_idx] + slippage_cost if is_long else opens[fill_idx] - slippage_cost
 
         end_idx = min(fill_idx + max_bars_limit, n_data)
 
@@ -247,22 +257,26 @@ def simulate_trade_policy(
             # Cap end_idx at EOD
             end_idx = min(end_idx, eod_exit_idx)
 
-        # Calculate Targets
+        # Calculate Targets (stop/target offset from ACTUAL fill, in risk units)
+        # NT8 sets stop/target in ticks from the fill: stop = fill - risk,
+        # target1 = fill + risk*R1, target2 = fill + risk*R2.
         if is_base_hits:
             tp1_target = executed_entry + base_tp1_pts if is_long else executed_entry - base_tp1_pts
             tp2_target = executed_entry + base_tp2_pts if is_long else executed_entry - base_tp2_pts
-            orig_stop = executed_entry - base_stop_pts if is_long else executed_entry + base_stop_pts
+            current_stop = executed_entry - base_stop_pts if is_long else executed_entry + base_stop_pts
         elif is_cover_the_queen:
             tp1_target = executed_entry + (risk * tp1_r) if is_long else executed_entry - (risk * tp1_r)
             tp2_target = executed_entry + (risk * tp2_r) if is_long else executed_entry - (risk * tp2_r)
+            current_stop = executed_entry - risk if is_long else executed_entry + risk
         elif is_be_trail:
             tp1_target = executed_entry + (risk * tp1_r) if is_long else executed_entry - (risk * tp1_r)
             tp2_target = executed_entry + (risk * tp2_r) if is_long else executed_entry - (risk * tp2_r)
+            current_stop = executed_entry - risk if is_long else executed_entry + risk
         else:
             tp1_target = executed_entry + (risk * fixed_tp_r) if is_long else executed_entry - (risk * fixed_tp_r)
             tp2_target = tp1_target
+            current_stop = executed_entry - risk if is_long else executed_entry + risk
 
-        current_stop = orig_stop
         tp1_hit = False
         tp2_hit = False
         stop_hit = False
