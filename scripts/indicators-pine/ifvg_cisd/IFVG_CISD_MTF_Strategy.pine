@@ -43,6 +43,10 @@ i_rthSession      = input.session("0930-1600:23456", "Trading Session Window", g
 i_filterLunch     = input.bool(false, "Exclude Lunch Lull (11:30 - 13:30)", group=GRP_SESS)
 i_eodFlatten      = input.bool(true, "Force EOD Flatten at 15:55 ET", group=GRP_SESS)
 
+var string GRP_ENTRY = "3b. Entry Mechanism"
+i_entryMech       = input.string("Market", "Entry Mechanism",
+  options=["Market", "CISD Limit", "Breakout"], group=GRP_ENTRY)
+
 var string GRP_VIS = "4. Visual Drawings & Annotations"
 i_drawFvg         = input.bool(true,  "Draw FVG Boxes with C.E. 50% Line", group=GRP_VIS)
 i_drawCisd        = input.bool(true,  "Draw CISD Lines & Labels", group=GRP_VIS)
@@ -394,11 +398,15 @@ else if longsRekt
     timeMachineSetting := reset_time2
     painThreshold      := low
 
-// Accumulate FVGs in the active move
+// Accumulate FVGs in the active move + set leg flags (mirrors Python kernel)
 if vibes == 1 and isBullFvg
     bullMoveFvgCount += 1
 if vibes == -1 and isBearFvg
     bearMoveFvgCount += 1
+if isBullBpr or isBearBpr
+    legHasBpr := true
+if isBullIfvg or isBearIfvg
+    legHasIfvg := true
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 4 — VARIANT SIGNAL LOGIC (ICT-corrected)
@@ -432,8 +440,9 @@ if i_variant == "Baseline: IFVG + CISD (ATR Stop)"
         signalTag   := "Baseline IFVG"
 
 else if i_variant == "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High Stop)"
-    // V1 uses PRIOR leg flags. For a bull CISD, prior leg was bear -> check bear FVGs
-    if bullCisdTrigger and (priorLegHasBpr or (priorLegHasIfvg and priorBearFvgSnap >= 1))
+    // V1 uses PRIOR leg flags. The prior leg's BPR or IFVG is the reversal
+    // evidence; no FVG-count AND.
+    if bullCisdTrigger and (priorLegHasBpr or priorLegHasIfvg)
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginLow) ? (legOriginLow - syminfo.mintick * 2) : (low - syminfo.mintick * 2)
         if rawStop >= entryPrice
@@ -443,7 +452,7 @@ else if i_variant == "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High
             signalLong  := true
             stopPrice   := rawStop
             signalTag   := "V1: CISD Entry"
-    else if bearCisdTrigger and (priorLegHasBpr or (priorLegHasIfvg and priorBullFvgSnap >= 1))
+    else if bearCisdTrigger and (priorLegHasBpr or priorLegHasIfvg)
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginHigh) ? (legOriginHigh + syminfo.mintick * 2) : (high + syminfo.mintick * 2)
         if rawStop <= entryPrice
@@ -501,15 +510,25 @@ var bool  tp1Hit      = false
 // Execute Entry
 if canTrade and dailyTrades < i_maxDailyTrades and strategy.position_size == 0
     if signalLong and not na(stopPrice)
-        float riskPts = entryPrice - stopPrice
-        activeEntry := entryPrice
+        float orderEntry = entryPrice
+        if i_entryMech == "Breakout"
+            orderEntry := high
+        float riskPts = orderEntry - stopPrice
+        activeEntry := orderEntry
         activeSL    := stopPrice
-        activeTP1   := entryPrice + (riskPts * i_rMultTP1)
-        activeTP2   := entryPrice + (riskPts * i_rMultTP2)
+        activeTP1   := orderEntry + (riskPts * i_rMultTP1)
+        activeTP2   := orderEntry + (riskPts * i_rMultTP2)
         tp1Hit      := false
 
-        strategy.entry("Queen", strategy.long, qty=1)
-        strategy.entry("Runner", strategy.long, qty=1)
+        if i_entryMech == "CISD Limit"
+            strategy.entry("Queen", strategy.long, qty=1, limit=orderEntry)
+            strategy.entry("Runner", strategy.long, qty=1, limit=orderEntry)
+        else if i_entryMech == "Breakout"
+            strategy.entry("Queen", strategy.long, qty=1, stop=orderEntry)
+            strategy.entry("Runner", strategy.long, qty=1, stop=orderEntry)
+        else
+            strategy.entry("Queen", strategy.long, qty=1)
+            strategy.entry("Runner", strategy.long, qty=1)
         dailyTrades += 1
 
         if i_drawSignals
@@ -517,15 +536,25 @@ if canTrade and dailyTrades < i_maxDailyTrades and strategy.position_size == 0
               color=color.green, textcolor=color.white, style=label.style_label_up, size=size.normal)
 
     else if signalShort and not na(stopPrice)
-        float riskPts = stopPrice - entryPrice
-        activeEntry := entryPrice
+        float orderEntry = entryPrice
+        if i_entryMech == "Breakout"
+            orderEntry := low
+        float riskPts = stopPrice - orderEntry
+        activeEntry := orderEntry
         activeSL    := stopPrice
-        activeTP1   := entryPrice - (riskPts * i_rMultTP1)
-        activeTP2   := entryPrice - (riskPts * i_rMultTP2)
+        activeTP1   := orderEntry - (riskPts * i_rMultTP1)
+        activeTP2   := orderEntry - (riskPts * i_rMultTP2)
         tp1Hit      := false
 
-        strategy.entry("Queen", strategy.short, qty=1)
-        strategy.entry("Runner", strategy.short, qty=1)
+        if i_entryMech == "CISD Limit"
+            strategy.entry("Queen", strategy.short, qty=1, limit=orderEntry)
+            strategy.entry("Runner", strategy.short, qty=1, limit=orderEntry)
+        else if i_entryMech == "Breakout"
+            strategy.entry("Queen", strategy.short, qty=1, stop=orderEntry)
+            strategy.entry("Runner", strategy.short, qty=1, stop=orderEntry)
+        else
+            strategy.entry("Queen", strategy.short, qty=1)
+            strategy.entry("Runner", strategy.short, qty=1)
         dailyTrades += 1
 
         if i_drawSignals

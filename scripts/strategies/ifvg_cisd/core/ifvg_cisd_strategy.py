@@ -54,7 +54,7 @@ from scripts.libs_py.price_action.volatility_leading import (
 @_njit
 def _variant_signal_kernel(
     htf_open, htf_high, htf_low, htf_close,
-    cisd_event_arr, cisd_state_arr, fvg_event_arr,
+    cisd_event_arr, cisd_state_arr, fvg_event_arr, fvg_top_arr, fvg_bottom_arr,
     ifvg_event_arr, bpr_event_arr,
     bull_cisd_level_arr, bear_cisd_level_arr,
     variant_int, tick_size, min_risk_bps, max_risk_bps,
@@ -73,22 +73,25 @@ def _variant_signal_kernel(
     leg_cisd_level = np.nan
     leg_has_bpr = False
     leg_has_ifvg = False
+    v2_triggered = False
+
+    # Unmitigated FVG tracking (fixed arrays, per-leg)
+    max_fvg = 50
+    bull_fvg_bots = np.full(max_fvg, np.nan, dtype=np.float64)
+    bear_fvg_tops = np.full(max_fvg, np.nan, dtype=np.float64)
     bull_fvg_count = 0
     bear_fvg_count = 0
-    prior_bear_fvg = 0
-    prior_bull_fvg = 0
-    v2_triggered = False
 
     for i in range(n):
         o = htf_open[i]; h = htf_high[i]; l = htf_low[i]; c = htf_close[i]
         ce = cisd_event_arr[i]; cs = cisd_state_arr[i]
         fe = fvg_event_arr[i]; ie = ifvg_event_arr[i]; be = bpr_event_arr[i]
 
-        # Snapshot prior leg flags BEFORE reset (for V1 check at flip)
+        # Snapshot prior leg flags BEFORE reset (for V1/V2 check at flip)
         prior_leg_has_bpr = leg_has_bpr
         prior_leg_has_ifvg = leg_has_ifvg
-        prior_bull_fvg_snap = bull_fvg_count
-        prior_bear_fvg_snap = bear_fvg_count
+        prior_bull_fvg = bull_fvg_count
+        prior_bear_fvg = bear_fvg_count
 
         if ce == 1:
             crossed = np.nan
@@ -98,7 +101,11 @@ def _variant_signal_kernel(
             leg_origin_low = crossed; leg_origin_high = np.nan
             leg_cisd_level = bull_cisd_level_arr[i] if not np.isnan(bull_cisd_level_arr[i]) else o
             leg_has_bpr = False; leg_has_ifvg = False
-            prior_bear_fvg = prior_bear_fvg_snap; bull_fvg_count = 0; v2_triggered = False
+            v2_triggered = False
+            bull_fvg_count = 0; bear_fvg_count = 0
+            for k in range(max_fvg):
+                bull_fvg_bots[k] = np.nan
+                bear_fvg_tops[k] = np.nan
         elif ce == -1:
             crossed = np.nan
             if i > 0 and not np.isnan(bull_cisd_level_arr[i-1]):
@@ -107,26 +114,52 @@ def _variant_signal_kernel(
             leg_origin_low = np.nan; leg_origin_high = crossed
             leg_cisd_level = bear_cisd_level_arr[i] if not np.isnan(bear_cisd_level_arr[i]) else o
             leg_has_bpr = False; leg_has_ifvg = False
-            prior_bull_fvg = prior_bull_fvg_snap; bear_fvg_count = 0; v2_triggered = False
+            v2_triggered = False
+            bull_fvg_count = 0; bear_fvg_count = 0
+            for k in range(max_fvg):
+                bull_fvg_bots[k] = np.nan
+                bear_fvg_tops[k] = np.nan
         else:
             regime = cs
 
         if regime != 0:
-            if fe == 1: bull_fvg_count += 1
-            elif fe == -1: bear_fvg_count += 1
+            # Track unmitigated FVGs in the active leg
+            if fe == 1 and bull_fvg_count < max_fvg:
+                bull_fvg_bots[bull_fvg_count] = fvg_bottom_arr[i]
+                bull_fvg_count += 1
+            elif fe == -1 and bear_fvg_count < max_fvg:
+                bear_fvg_tops[bear_fvg_count] = fvg_top_arr[i]
+                bear_fvg_count += 1
             if ie == 1 and regime == 1: leg_has_ifvg = True
             if ie == -1 and regime == -1: leg_has_ifvg = True
             if be != 0: leg_has_bpr = True
+
+            # Mitigation: remove filled FVGs (bull filled when low <= bot, bear when high >= top)
+            k = 0
+            while k < bull_fvg_count:
+                if l <= bull_fvg_bots[k]:
+                    for m in range(k, bull_fvg_count - 1):
+                        bull_fvg_bots[m] = bull_fvg_bots[m + 1]
+                    bull_fvg_count -= 1
+                else:
+                    k += 1
+            k = 0
+            while k < bear_fvg_count:
+                if h >= bear_fvg_tops[k]:
+                    for m in range(k, bear_fvg_count - 1):
+                        bear_fvg_tops[m] = bear_fvg_tops[m + 1]
+                    bear_fvg_count -= 1
+                else:
+                    k += 1
 
         price_ref = c if not np.isnan(c) else o
         min_risk = price_ref * min_risk_bps / 10000.0
         max_risk = price_ref * max_risk_bps / 10000.0
 
         if variant_int == 1:
-            # V1: CISD trigger + (prior leg had BPR OR (prior leg had IFVG + >=1 opposing FVG))
-            # For a bull CISD, prior leg was bear -> check bear FVGs
-            # For a bear CISD, prior leg was bull -> check bull FVGs
-            if ce == 1 and (prior_leg_has_bpr or (prior_leg_has_ifvg and prior_bear_fvg_snap >= 1)):
+            # V1: CISD trigger + (prior leg had BPR OR prior leg had IFVG)
+            # The prior leg's BPR/IFVG are the reversal evidence; no FVG-count AND.
+            if ce == 1 and (prior_leg_has_bpr or prior_leg_has_ifvg):
                 ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
                 rs = leg_origin_low - 2*tick_size if not np.isnan(leg_origin_low) else l - 2*tick_size
                 if rs >= ep: rs = l - 2*tick_size
@@ -134,7 +167,7 @@ def _variant_signal_kernel(
                 if risk >= min_risk and risk <= max_risk:
                     sig_idx[sig_count]=i; sig_dir[sig_count]=1; sig_entry[sig_count]=ep
                     sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
-            elif ce == -1 and (prior_leg_has_bpr or (prior_leg_has_ifvg and prior_bull_fvg_snap >= 1)):
+            elif ce == -1 and (prior_leg_has_bpr or prior_leg_has_ifvg):
                 ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
                 rs = leg_origin_high + 2*tick_size if not np.isnan(leg_origin_high) else h + 2*tick_size
                 if rs <= ep: rs = h + 2*tick_size
@@ -143,6 +176,7 @@ def _variant_signal_kernel(
                     sig_idx[sig_count]=i; sig_dir[sig_count]=-1; sig_entry[sig_count]=ep
                     sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
         elif variant_int == 2:
+            # V2: CISD trigger + 2+ unmitigated FVGs in the OPPOSING delivery run
             if ce == 1 and not v2_triggered and prior_bear_fvg >= 2:
                 ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
                 rs = leg_origin_low - 2*tick_size if not np.isnan(leg_origin_low) else l - 2*tick_size
@@ -192,6 +226,7 @@ class IFVGCISDStrategy:
         "target2_price",
         "model_name",
         "risk_pts",
+        "entry_mechanism",
     ]
 
     def __init__(self, ticker: str = "NQ1") -> None:
@@ -226,8 +261,9 @@ class IFVGCISDStrategy:
         # 1. Compute HTF CISD / FVG / iFVG / BPR
         df_htf = resample_ohlcv(df, resample_tf)
         cisd_htf = compute_cisd(df_htf)
-        ifvg_htf = compute_ifvg(df_htf, include_vi=include_vi)
-        fvg_htf = compute_fvg(df_htf, include_vi=include_vi)
+        require_directional = bool(p.get("require_directional_candle", False))
+        ifvg_htf = compute_ifvg(df_htf, include_vi=include_vi, require_directional_candle=require_directional)
+        fvg_htf = compute_fvg(df_htf, include_vi=include_vi, require_directional_candle=require_directional)
 
         if variant in ("baseline", "strict_ifvg", "loose"):
             return self._hunt_baseline(
@@ -239,7 +275,7 @@ class IFVGCISDStrategy:
                 p,
             )
 
-        bpr_htf = compute_bpr(df_htf, align_to_base=False)
+        bpr_htf = compute_bpr(df_htf, align_to_base=False, require_directional_candle=require_directional)
         return self._hunt_csharp_variants(
             df,
             df_htf,
@@ -376,6 +412,7 @@ class IFVGCISDStrategy:
                     "target2_price": target2_price,
                     "model_name": self.strategy_name,
                     "risk_pts": risk,
+                    "entry_mechanism": str(p.get("entry_mechanism", "market")).lower(),
                 }
             )
             daily_trades += 1
@@ -416,6 +453,8 @@ class IFVGCISDStrategy:
         sig_htf["ifvg_event"] = ifvg_htf["ifvg_event"]
         sig_htf["ifvg_state"] = ifvg_htf["ifvg_state"]
         sig_htf["fvg_event"] = fvg_htf["fvg_event"]
+        sig_htf["fvg_top"] = fvg_htf["fvg_top"]
+        sig_htf["fvg_bottom"] = fvg_htf["fvg_bottom"]
         sig_htf["bpr_event"] = bpr_htf["bpr_event"]
         # Track the armed CISD levels so we can capture the crossed level on flip
         sig_htf["bull_cisd_level"] = cisd_htf["active_bull_cisd_level"]
@@ -438,6 +477,8 @@ class IFVGCISDStrategy:
             sig_htf["cisd_event"].values.astype(np.int8),
             sig_htf["cisd_state"].values.astype(np.int8),
             sig_htf["fvg_event"].values.astype(np.int8),
+            sig_htf["fvg_top"].values.astype(np.float64),
+            sig_htf["fvg_bottom"].values.astype(np.float64),
             sig_htf["ifvg_event"].values.astype(np.int8),
             sig_htf["bpr_event"].values.astype(np.int8),
             sig_htf["bull_cisd_level"].values.astype(np.float64),
@@ -450,6 +491,7 @@ class IFVGCISDStrategy:
         last_signal_date: Optional[Any] = None
         daily_trades = 0
         htf_index = sig_htf.index
+        entry_mechanism = str(p.get("entry_mechanism", "market")).lower()
 
         for j in range(len(sig_idx)):
             i = sig_idx[j]
@@ -486,6 +528,7 @@ class IFVGCISDStrategy:
                 "target2_price": target2_price,
                 "model_name": self.strategy_name,
                 "risk_pts": risk,
+                "entry_mechanism": entry_mechanism,
             })
             daily_trades += 1
 

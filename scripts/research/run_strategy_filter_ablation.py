@@ -161,6 +161,7 @@ def simulate_trade_policy(
     sig_entries = signals["entry_price"].values
     sig_stops = signals["stop_price"].values
     sig_risks = signals["risk_pts"].values if "risk_pts" in signals.columns else np.abs(sig_entries - sig_stops)
+    sig_mechs = signals["entry_mechanism"].values if "entry_mechanism" in signals.columns else np.full(len(signals), "market")
 
     # Fast searchsorted for index positions
     data_times_int = times.view("int64")
@@ -179,17 +180,59 @@ def simulate_trade_policy(
         entry_raw = float(sig_entries[i])
         risk = max(float(sig_risks[i]), 1.0)
         orig_stop = float(sig_stops[i])
+        mechanism = str(sig_mechs[i]).lower()
 
+        # ── Entry mechanism resolution ──────────────────────────────────────
+        # market      : fill at signal bar close (current behavior)
+        # cisd_limit  : limit order at the CISD level; fills only if price
+        #               retraces to that level within max_forward_bars
+        # breakout    : stop order above/below the signal bar; fills when price
+        #               trades through the signal bar's extreme
         executed_entry = entry_raw + slippage_cost if is_long else entry_raw - slippage_cost
-        end_idx = min(start_idx + max_bars_limit, n_data)
+        fill_idx = start_idx
+        if mechanism == "cisd_limit":
+            # Limit at the CISD level (entry_raw). Fill if a later bar's range
+            # touches the level. Skip the trade if never touched.
+            filled = False
+            for b in range(start_idx, min(start_idx + max_forward_bars, n_data)):
+                if is_long and lows[b] <= entry_raw:
+                    fill_idx = b
+                    filled = True
+                    break
+                if not is_long and highs[b] >= entry_raw:
+                    fill_idx = b
+                    filled = True
+                    break
+            if not filled:
+                continue
+            executed_entry = entry_raw + slippage_cost if is_long else entry_raw - slippage_cost
+        elif mechanism == "breakout":
+            # Stop entry beyond the signal bar's extreme. Fill on the first bar
+            # that trades through it.
+            trigger = highs[start_idx] if is_long else lows[start_idx]
+            filled = False
+            for b in range(start_idx + 1, min(start_idx + max_forward_bars, n_data)):
+                if is_long and highs[b] > trigger:
+                    fill_idx = b
+                    filled = True
+                    break
+                if not is_long and lows[b] < trigger:
+                    fill_idx = b
+                    filled = True
+                    break
+            if not filled:
+                continue
+            executed_entry = (trigger + slippage_cost) if is_long else (trigger - slippage_cost)
+
+        end_idx = min(fill_idx + max_bars_limit, n_data)
 
         # EOD flatten: find the last bar of the entry day (<= 15:50 ET)
         # If the trade is still open at EOD, force exit at that bar's close.
         eod_exit_idx = end_idx  # default: no EOD exit
         if eod_flatten_time:
-            entry_time = times[start_idx]
+            entry_time = times[fill_idx]
             entry_date = entry_time.date()
-            for b in range(start_idx, end_idx):
+            for b in range(fill_idx, end_idx):
                 bar_time = times[b]
                 if bar_time.date() != entry_date:
                     # Crossed midnight — exit at last bar of entry day
@@ -229,7 +272,7 @@ def simulate_trade_policy(
         tp2_exit_price = 0.0
         stop_exit_price = 0.0
 
-        for b_idx in range(start_idx, end_idx):
+        for b_idx in range(fill_idx, end_idx):
             h = highs[b_idx]
             l = lows[b_idx]
             c = closes[b_idx]
@@ -332,7 +375,7 @@ def simulate_trade_policy(
         trade_log.append({
             "signal_time": sig_times[i],
             "pnl_usd": pnl_usd,
-            "holding_bars": exit_bar_idx - start_idx + 1,
+            "holding_bars": exit_bar_idx - fill_idx + 1,
             "is_win": pnl_usd > 0,
         })
 

@@ -80,6 +80,7 @@ def _compute_bpr_kernel(
     low_arr: np.ndarray,
     close_arr: np.ndarray,
     min_overlap_pts: float,
+    require_directional_candle: bool,
     max_active_gaps: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -118,11 +119,35 @@ def _compute_bpr_kernel(
         g_top = 0.0
         g_bot = 0.0
 
-        # 1. Detect new Bullish FVG
+        o1 = open_arr[t - 1]
+        h1 = high_arr[t - 1]
+        l1 = low_arr[t - 1]
+        c1 = close_arr[t - 1]
+        o2 = open_arr[t - 2]
+        c2 = close_arr[t - 2]
+
+        # 1. Detect new Bullish FVG with canonical body-gap merging
         bull_gap = l - h2
-        if bull_gap > 0.0 and (c > o):
+        if bull_gap > 0.0 and (not require_directional_candle or (c > o)):
             g_top = l
             g_bot = h2
+
+            # Merge left-side body gap (t-2 / t-1)
+            body_top_2 = max(o2, c2)
+            body_bot_1 = min(o1, c1)
+            if (body_bot_1 > body_top_2) and (h2 >= l1):
+                if body_top_2 <= g_top + 1e-4 and body_bot_1 >= g_bot - 1e-4:
+                    g_top = max(g_top, body_bot_1)
+                    g_bot = min(g_bot, body_top_2)
+
+            # Merge right-side body gap (t-1 / t)
+            body_top_1 = max(o1, c1)
+            body_bot_0 = min(o, c)
+            if (body_bot_0 > body_top_1) and (h1 >= l):
+                if body_top_1 <= g_top + 1e-4 and body_bot_0 >= g_bot - 1e-4:
+                    g_top = max(g_top, body_bot_0)
+                    g_bot = min(g_bot, body_top_1)
+
             new_bull = True
 
             # Check overlap against recent active Bearish FVGs
@@ -145,11 +170,28 @@ def _compute_bpr_kernel(
                 bull_bots[bull_count] = g_bot
                 bull_count += 1
 
-        # 2. Detect new Bearish FVG
+        # 2. Detect new Bearish FVG with canonical body-gap merging
         bear_gap = l2 - h
-        if bear_gap > 0.0 and (c < o):
+        if bear_gap > 0.0 and (not require_directional_candle or (c < o)):
             g_top = l2
             g_bot = h
+
+            # Merge left-side body gap (t-2 / t-1)
+            body_bot_2 = min(o2, c2)
+            body_top_1 = max(o1, c1)
+            if (body_top_1 < body_bot_2) and (l2 <= h1):
+                if body_bot_2 >= g_bot - 1e-4 and body_top_1 <= g_top + 1e-4:
+                    g_top = max(g_top, body_bot_2)
+                    g_bot = min(g_bot, body_top_1)
+
+            # Merge right-side body gap (t-1 / t)
+            body_bot_1 = min(o1, c1)
+            body_top_0 = max(o, c)
+            if (body_top_0 < body_bot_1) and (l1 <= h):
+                if body_bot_1 >= g_bot - 1e-4 and body_top_0 <= g_top + 1e-4:
+                    g_top = max(g_top, body_bot_1)
+                    g_bot = min(g_bot, body_top_0)
+
             new_bear = True
 
             # Check overlap against recent active Bullish FVGs
@@ -182,6 +224,7 @@ def _compute_bpr_kernel(
 def compute_bpr(
     df: pd.DataFrame,
     min_overlap_pts: float = 0.0,
+    require_directional_candle: bool = True,
     timeframe: Optional[str] = None,
     align_to_base: bool = True,
     max_active_gaps: int = 50,
@@ -237,7 +280,7 @@ def compute_bpr(
     close_arr = np.ascontiguousarray(target_df[close_col].values, dtype=np.float64)
 
     events, tops, bottoms, midpoints, mitigations = _compute_bpr_kernel(
-        open_arr, high_arr, low_arr, close_arr, min_overlap_pts, max_active_gaps
+        open_arr, high_arr, low_arr, close_arr, min_overlap_pts, require_directional_candle, max_active_gaps
     )
 
     res_df = pd.DataFrame(
@@ -279,8 +322,9 @@ class BPRBarResult:
 class BPRTracker:
     """Incremental stateful tracker for live execution engines and webhooks."""
 
-    def __init__(self, min_overlap_pts: float = 0.0) -> None:
+    def __init__(self, min_overlap_pts: float = 0.0, require_directional_candle: bool = True) -> None:
         self.min_overlap_pts = min_overlap_pts
+        self.require_directional_candle = require_directional_candle
         self.history: List[Tuple[float, float, float, float]] = []
         self.bull_gaps: List[Tuple[float, float]] = []
         self.bear_gaps: List[Tuple[float, float]] = []
@@ -297,11 +341,31 @@ class BPRTracker:
             h2 = self.history[-3][1]
             l2 = self.history[-3][2]
 
-            # Bullish FVG
+            o1, c1 = self.history[-2][0], self.history[-2][3]
+            o2, c2 = self.history[-3][0], self.history[-3][3]
+
+            # Bullish FVG with canonical body-gap merging
             bull_gap = l - h2
-            if bull_gap > 0.0 and (c > o):
+            if bull_gap > 0.0 and (not self.require_directional_candle or (c > o)):
                 g_top = l
                 g_bot = h2
+
+                # Merge left-side body gap (t-2 / t-1)
+                body_top_2 = max(o2, c2)
+                body_bot_1 = min(o1, c1)
+                if (body_bot_1 > body_top_2) and (h2 >= l1):
+                    if body_top_2 <= g_top + 1e-4 and body_bot_1 >= g_bot - 1e-4:
+                        g_top = max(g_top, body_bot_1)
+                        g_bot = min(g_bot, body_top_2)
+
+                # Merge right-side body gap (t-1 / t)
+                body_top_1 = max(o1, c1)
+                body_bot_0 = min(o, c)
+                if (body_bot_0 > body_top_1) and (h1 >= l):
+                    if body_top_1 <= g_top + 1e-4 and body_bot_0 >= g_bot - 1e-4:
+                        g_top = max(g_top, body_bot_0)
+                        g_bot = min(g_bot, body_top_1)
+
                 for bt, bb in reversed(self.bear_gaps):
                     ov_top = min(g_top, bt)
                     ov_bot = max(g_bot, bb)
@@ -313,11 +377,28 @@ class BPRTracker:
                         break
                 self.bull_gaps.append((g_top, g_bot))
 
-            # Bearish FVG
+            # Bearish FVG with canonical body-gap merging
             bear_gap = l2 - h
-            if bear_gap > 0.0 and (c < o):
+            if bear_gap > 0.0 and (not self.require_directional_candle or (c < o)):
                 g_top = l2
                 g_bot = h
+
+                # Merge left-side body gap (t-2 / t-1)
+                body_bot_2 = min(o2, c2)
+                body_top_1 = max(o1, c1)
+                if (body_top_1 < body_bot_2) and (l2 <= h1):
+                    if body_bot_2 >= g_bot - 1e-4 and body_top_1 <= g_top + 1e-4:
+                        g_top = max(g_top, body_bot_2)
+                        g_bot = min(g_bot, body_top_1)
+
+                # Merge right-side body gap (t-1 / t)
+                body_bot_1 = min(o1, c1)
+                body_top_0 = max(o, c)
+                if (body_top_0 < body_bot_1) and (l1 <= h):
+                    if body_bot_1 >= g_bot - 1e-4 and body_top_0 <= g_top + 1e-4:
+                        g_top = max(g_top, body_bot_1)
+                        g_bot = min(g_bot, body_top_0)
+
                 for bt, bb in reversed(self.bull_gaps):
                     ov_top = min(g_top, bt)
                     ov_bot = max(g_bot, bb)

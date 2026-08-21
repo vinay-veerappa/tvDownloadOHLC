@@ -69,6 +69,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [NinjaScriptProperty]
         [Display(Name = "Flatten By (HHMM ET)", Order = 11, GroupName = "4. Time Window")]
         public int FlattenBy { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Entry Mechanism (0=Market, 1=CISD Limit, 2=Breakout)", Order = 12, GroupName = "5. Entry Mechanism")]
+        [Range(0, 2)]
+        public int EntryMechanism { get; set; }
         #endregion
 
         #region Internal State Fields
@@ -80,6 +85,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private List<double> bullFvgBots;
         private List<double> bearFvgTops;
         private List<double> bearFvgBots;
+
+        // Separate inversion pool (mirrors Python compute_ifvg: inverted zones are removed)
+        private List<double> invBearFvgTops;   // bear FVGs awaiting bull inversion
+        private List<double> invBearFvgBots;
+        private List<double> invBullFvgTops;   // bull FVGs awaiting bear inversion
+        private List<double> invBullFvgBots;
 
         // CISD & Delivery State Machine (tncylyv extreme-open + continuous re-anchor)
         private int vibes;              // +1 bull / -1 bear / 0 uninit
@@ -102,6 +113,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private bool v2TriggeredInLeg;
         private int priorBearFvgCount;     // FVGs from bear run that led into a bull CISD
         private int priorBullFvgCount;     // FVGs from bull run that led into a bear CISD
+
+        // Unmitigated FVG tracking for the active leg (V2 displacement proxy)
+        private List<double> legBullFvgBots;   // bull FVG bottoms (mitigated when low <= bot)
+        private List<double> legBearFvgTops;   // bear FVG tops (mitigated when high >= top)
 
         // Active Trade State
         private double activeEntryPrice;
@@ -142,6 +157,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 EarliestEntry = 945;
                 LatestEntry = 1530;
                 FlattenBy = 1555;
+                EntryMechanism = 0; // 0=Market, 1=CISD Limit, 2=Breakout
             }
             else if (State == State.DataLoaded)
             {
@@ -156,6 +172,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bullFvgBots = new List<double>();
                 bearFvgTops = new List<double>();
                 bearFvgBots = new List<double>();
+
+                invBearFvgTops = new List<double>();
+                invBearFvgBots = new List<double>();
+                invBullFvgTops = new List<double>();
+                invBullFvgBots = new List<double>();
 
                 vibes = 0;
                 bagholderEntry = double.NaN;
@@ -172,6 +193,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 v2TriggeredInLeg = false;
                 priorBearFvgCount = 0;
                 priorBullFvgCount = 0;
+
+                legBullFvgBots = new List<double>();
+                legBearFvgTops = new List<double>();
 
                 activeEntryPrice = double.NaN;
                 activeStopLoss = double.NaN;
@@ -378,6 +402,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bullFvgTops.Add(gTop);
                 bullFvgBots.Add(gBot);
                 if (bullFvgTops.Count > 50) { bullFvgTops.RemoveAt(0); bullFvgBots.RemoveAt(0); }
+
+                // Add to inversion pool (awaiting bear inversion)
+                invBullFvgTops.Add(gTop);
+                invBullFvgBots.Add(gBot);
+                if (invBullFvgTops.Count > 50) { invBullFvgTops.RemoveAt(0); invBullFvgBots.RemoveAt(0); }
             }
 
             // Track Bearish FVG and check for BPR overlap against active Bullish FVGs
@@ -419,22 +448,33 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bearFvgTops.Add(gTop);
                 bearFvgBots.Add(gBot);
                 if (bearFvgTops.Count > 50) { bearFvgTops.RemoveAt(0); bearFvgBots.RemoveAt(0); }
+
+                // Add to inversion pool (awaiting bull inversion)
+                invBearFvgTops.Add(gTop);
+                invBearFvgBots.Add(gBot);
+                if (invBearFvgTops.Count > 50) { invBearFvgTops.RemoveAt(0); invBearFvgBots.RemoveAt(0); }
             }
 
-            // Inversion FVG check (body close through opposing active FVGs)
-            for (int b = bearFvgTops.Count - 1; b >= 0; b--)
+            // Inversion FVG check (body close through opposing FVGs, with crossing guard)
+            // Bullish inversion: close crosses ABOVE a bear FVG top (close[1] was <= top)
+            for (int b = invBearFvgTops.Count - 1; b >= 0; b--)
             {
-                if (c0 > bearFvgTops[b])
+                if (c0 > invBearFvgTops[b] && c1 <= invBearFvgTops[b])
                 {
                     isBullIfvg = true;
+                    invBearFvgTops.RemoveAt(b);
+                    invBearFvgBots.RemoveAt(b);
                     break;
                 }
             }
-            for (int b = bullFvgTops.Count - 1; b >= 0; b--)
+            // Bearish inversion: close crosses BELOW a bull FVG bottom (close[1] was >= bottom)
+            for (int b = invBullFvgBots.Count - 1; b >= 0; b--)
             {
-                if (c0 < bullFvgBots[b])
+                if (c0 < invBullFvgBots[b] && c1 >= invBullFvgBots[b])
                 {
                     isBearIfvg = true;
+                    invBullFvgTops.RemoveAt(b);
+                    invBullFvgBots.RemoveAt(b);
                     break;
                 }
             }
@@ -526,6 +566,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 v2TriggeredInLeg = false;
                 priorBearFvgCount = priorBearFvgSnap;      // carry prior bear-run FVGs
                 bullMoveFvgCount = 0;
+                legBullFvgBots.Clear();
+                legBearFvgTops.Clear();
                 painThreshold = h0;
             }
             else if (longsRekt)
@@ -545,12 +587,34 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 v2TriggeredInLeg = false;
                 priorBullFvgCount = priorBullFvgSnap;      // carry prior bull-run FVGs
                 bearMoveFvgCount = 0;
+                legBullFvgBots.Clear();
+                legBearFvgTops.Clear();
                 painThreshold = l0;
             }
 
-            // Accumulate FVGs in the active move
-            if (vibes == 1 && isBullFvg) bullMoveFvgCount++;
-            if (vibes == -1 && isBearFvg) bearMoveFvgCount++;
+            // Accumulate FVGs in the active move + set leg flags (mirrors Python kernel)
+            if (vibes == 1 && isBullFvg)
+            {
+                bullMoveFvgCount++;
+                legBullFvgBots.Add(h2);   // bull FVG bottom (mitigated when low <= bot)
+            }
+            if (vibes == -1 && isBearFvg)
+            {
+                bearMoveFvgCount++;
+                legBearFvgTops.Add(l2);   // bear FVG top (mitigated when high >= top)
+            }
+            if (isBullBpr || isBearBpr) legHasBpr = true;
+            if (isBullIfvg || isBearIfvg) legHasIfvg = true;
+
+            // Mitigation: remove filled leg FVGs
+            for (int b = legBullFvgBots.Count - 1; b >= 0; b--)
+            {
+                if (l0 <= legBullFvgBots[b]) legBullFvgBots.RemoveAt(b);
+            }
+            for (int b = legBearFvgTops.Count - 1; b >= 0; b--)
+            {
+                if (h0 >= legBearFvgTops[b]) legBearFvgTops.RemoveAt(b);
+            }
 
             // ── STEP 5: VARIANT SIGNAL EVALUATION (ICT-corrected) ──────────
             // All variants: entry at CISD level, stop at crossed CISD level (SL-4),
@@ -582,11 +646,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     stopPrice = entryPrice + risk;
                 }
             }
-            else if (Variant == 1) // Variant1: BPR or (IFVG+FVG) from prior leg
+            else if (Variant == 1) // Variant1: BPR or IFVG from prior leg
             {
-                // V1 uses PRIOR leg flags. For a bull CISD, prior leg was bear.
-                // Check if prior bear leg had BPR or (IFVG in bear direction + bear FVGs).
-                if (bullCisdTrigger && (priorLegHasBpr || (priorLegHasIfvg && priorBearFvgSnap >= 1)))
+                // V1 uses PRIOR leg flags. The prior leg's BPR or IFVG is the
+                // reversal evidence; no FVG-count AND.
+                if (bullCisdTrigger && (priorLegHasBpr || priorLegHasIfvg))
                 {
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginLow) ? (legOriginLow - 2 * TickSize) : (l0 - 2 * TickSize);
@@ -598,7 +662,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                         stopPrice = rawStop;
                     }
                 }
-                else if (bearCisdTrigger && (priorLegHasBpr || (priorLegHasIfvg && priorBullFvgSnap >= 1)))
+                else if (bearCisdTrigger && (priorLegHasBpr || priorLegHasIfvg))
                 {
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginHigh) ? (legOriginHigh + 2 * TickSize) : (h0 + 2 * TickSize);
@@ -611,9 +675,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     }
                 }
             }
-            else if (Variant == 2) // Variant2: 2x opposing FVG
+            else if (Variant == 2) // Variant2: 2x unmitigated opposing FVG
             {
-                // ICT-corrected: CISD trigger bar only + 2+ FVGs from OPPOSING delivery run
+                // ICT-corrected: CISD trigger bar only + 2+ UNMITIGATED FVGs from
+                // the OPPOSING delivery run (the delivery that got reversed).
                 if (bullCisdTrigger && !v2TriggeredInLeg && priorBearFvgCount >= 2)
                 {
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
@@ -693,16 +758,31 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 int qtyPerContract = Math.Max(1, DefaultContracts / 2);
                 double riskPts = Math.Abs(entryPrice - stopPrice);
-                int slTicks = (int)Math.Round(riskPts / TickSize);
-                int tp1Ticks = (int)Math.Round((riskPts * RMultTP1) / TickSize);
-                int tp2Ticks = (int)Math.Round((riskPts * RMultTP2) / TickSize);
+
+                // Entry mechanism: 0=Market, 1=CISD Limit, 2=Breakout
+                double orderEntryPrice = entryPrice;
+                if (EntryMechanism == 1)
+                {
+                    // CISD limit: place limit at the CISD level (entryPrice already = legCisdLevel)
+                    orderEntryPrice = entryPrice;
+                }
+                else if (EntryMechanism == 2)
+                {
+                    // Breakout: stop entry beyond the signal bar's extreme
+                    orderEntryPrice = signalLong ? h0 : l0;
+                }
+
+                double orderRiskPts = Math.Abs(orderEntryPrice - stopPrice);
+                int slTicks = (int)Math.Round(orderRiskPts / TickSize);
+                int tp1Ticks = (int)Math.Round((orderRiskPts * RMultTP1) / TickSize);
+                int tp2Ticks = (int)Math.Round((orderRiskPts * RMultTP2) / TickSize);
 
                 if (signalLong)
                 {
-                    activeEntryPrice = entryPrice;
+                    activeEntryPrice = orderEntryPrice;
                     activeStopLoss = stopPrice;
-                    activeTP1 = entryPrice + (riskPts * RMultTP1);
-                    activeTP2 = entryPrice + (riskPts * RMultTP2);
+                    activeTP1 = orderEntryPrice + (orderRiskPts * RMultTP1);
+                    activeTP2 = orderEntryPrice + (orderRiskPts * RMultTP2);
                     tp1Filled = false;
                     entryBarIndex = CurrentBar;
 
@@ -712,17 +792,30 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     SetStopLoss("Runner", CalculationMode.Ticks, slTicks, false);
                     SetProfitTarget("Runner", CalculationMode.Ticks, tp2Ticks);
 
-                    EnterLong(qtyPerContract, "Queen");
-                    EnterLong(qtyPerContract, "Runner");
+                    if (EntryMechanism == 1)
+                    {
+                        EnterLongLimit(qtyPerContract, orderEntryPrice, "Queen");
+                        EnterLongLimit(qtyPerContract, orderEntryPrice, "Runner");
+                    }
+                    else if (EntryMechanism == 2)
+                    {
+                        EnterLongStopMarket(qtyPerContract, orderEntryPrice, "Queen");
+                        EnterLongStopMarket(qtyPerContract, orderEntryPrice, "Runner");
+                    }
+                    else
+                    {
+                        EnterLong(qtyPerContract, "Queen");
+                        EnterLong(qtyPerContract, "Runner");
+                    }
 
                     todayTradeCount++;
                 }
                 else if (signalShort)
                 {
-                    activeEntryPrice = entryPrice;
+                    activeEntryPrice = orderEntryPrice;
                     activeStopLoss = stopPrice;
-                    activeTP1 = entryPrice - (riskPts * RMultTP1);
-                    activeTP2 = entryPrice - (riskPts * RMultTP2);
+                    activeTP1 = orderEntryPrice - (orderRiskPts * RMultTP1);
+                    activeTP2 = orderEntryPrice - (orderRiskPts * RMultTP2);
                     tp1Filled = false;
                     entryBarIndex = CurrentBar;
 
@@ -732,8 +825,21 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     SetStopLoss("Runner", CalculationMode.Ticks, slTicks, false);
                     SetProfitTarget("Runner", CalculationMode.Ticks, tp2Ticks);
 
-                    EnterShort(qtyPerContract, "Queen");
-                    EnterShort(qtyPerContract, "Runner");
+                    if (EntryMechanism == 1)
+                    {
+                        EnterShortLimit(qtyPerContract, orderEntryPrice, "Queen");
+                        EnterShortLimit(qtyPerContract, orderEntryPrice, "Runner");
+                    }
+                    else if (EntryMechanism == 2)
+                    {
+                        EnterShortStopMarket(qtyPerContract, orderEntryPrice, "Queen");
+                        EnterShortStopMarket(qtyPerContract, orderEntryPrice, "Runner");
+                    }
+                    else
+                    {
+                        EnterShort(qtyPerContract, "Queen");
+                        EnterShort(qtyPerContract, "Runner");
+                    }
 
                     todayTradeCount++;
                 }

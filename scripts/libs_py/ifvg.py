@@ -85,6 +85,7 @@ def _compute_ifvg_kernel(
     close_arr: np.ndarray,
     min_gap_pts: float,
     include_vi: bool,
+    require_directional_candle: bool,
     max_active_zones: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -123,26 +124,30 @@ def _compute_ifvg_kernel(
 
         # 1. Detect New Imbalances
         bull_gap = l0 - h2
-        if bull_gap > min_gap_pts and (c0 > o0):
+        if bull_gap > min_gap_pts and (not require_directional_candle or (c0 > o0)):
             top = l0
             bot = h2
             has_vi = 0
-            if include_vi:
-                body_top_2 = max(o2, c2)
-                body_bot_1 = min(o1, c1)
-                if (body_bot_1 > body_top_2) and (h2 >= l1):
-                    if body_top_2 <= top + 1e-4 and body_bot_1 >= bot - 1e-4:
-                        top = max(top, body_bot_1)
-                        bot = min(bot, body_top_2)
-                        has_vi = 1
 
-                body_top_1 = max(o1, c1)
-                body_bot_0 = min(o0, c0)
-                if (body_bot_0 > body_top_1) and (h1 >= l0):
-                    if body_top_1 <= top + 1e-4 and body_bot_0 >= bot - 1e-4:
-                        top = max(top, body_bot_0)
-                        bot = min(bot, body_top_1)
-                        has_vi = 1
+            # Canonical ICT definition: body gaps within the 3-candle FVG formation
+            # (between candles 1-2 and/or candles 2-3) are part of the FVG zone.
+            # Merge left-side VI (t-2 / t-1)
+            body_top_2 = max(o2, c2)
+            body_bot_1 = min(o1, c1)
+            if (body_bot_1 > body_top_2) and (h2 >= l1):
+                if body_top_2 <= top + 1e-4 and body_bot_1 >= bot - 1e-4:
+                    top = max(top, body_bot_1)
+                    bot = min(bot, body_top_2)
+                    has_vi = 1
+
+            # Merge right-side VI (t-1 / t)
+            body_top_1 = max(o1, c1)
+            body_bot_0 = min(o0, c0)
+            if (body_bot_0 > body_top_1) and (h1 >= l0):
+                if body_top_1 <= top + 1e-4 and body_bot_0 >= bot - 1e-4:
+                    top = max(top, body_bot_0)
+                    bot = min(bot, body_top_1)
+                    has_vi = 1
 
             if pool_count < max_active_zones:
                 pool_type[pool_count] = 1
@@ -153,26 +158,28 @@ def _compute_ifvg_kernel(
                 pool_count += 1
 
         bear_gap = l2 - h0
-        if bear_gap > min_gap_pts and (c0 < o0):
+        if bear_gap > min_gap_pts and (not require_directional_candle or (c0 < o0)):
             top = l2
             bot = h0
             has_vi = 0
-            if include_vi:
-                body_bot_2 = min(o2, c2)
-                body_top_1 = max(o1, c1)
-                if (body_top_1 < body_bot_2) and (l2 <= h1):
-                    if body_bot_2 >= bot - 1e-4 and body_top_1 <= top + 1e-4:
-                        top = max(top, body_bot_2)
-                        bot = min(bot, body_top_1)
-                        has_vi = 1
 
-                body_bot_1 = min(o1, c1)
-                body_top_0 = max(o0, c0)
-                if (body_top_0 < body_bot_1) and (l1 <= h0):
-                    if body_bot_1 >= bot - 1e-4 and body_top_0 <= top + 1e-4:
-                        top = max(top, body_bot_1)
-                        bot = min(bot, body_top_0)
-                        has_vi = 1
+            # Merge left-side VI (t-2 / t-1)
+            body_bot_2 = min(o2, c2)
+            body_top_1 = max(o1, c1)
+            if (body_top_1 < body_bot_2) and (l2 <= h1):
+                if body_bot_2 >= bot - 1e-4 and body_top_1 <= top + 1e-4:
+                    top = max(top, body_bot_2)
+                    bot = min(bot, body_top_1)
+                    has_vi = 1
+
+            # Merge right-side VI (t-1 / t)
+            body_bot_1 = min(o1, c1)
+            body_top_0 = max(o0, c0)
+            if (body_top_0 < body_bot_1) and (l1 <= h0):
+                if body_bot_1 >= bot - 1e-4 and body_top_0 <= top + 1e-4:
+                    top = max(top, body_bot_1)
+                    bot = min(bot, body_top_0)
+                    has_vi = 1
 
             if pool_count < max_active_zones:
                 pool_type[pool_count] = -1
@@ -243,6 +250,7 @@ def compute_ifvg(
     df: pd.DataFrame,
     min_gap_pts: float = 0.0,
     include_vi: bool = True,
+    require_directional_candle: bool = True,
     timeframe: Optional[str] = None,
     align_to_base: bool = True,
     max_active_zones: int = 50,
@@ -253,6 +261,7 @@ def compute_ifvg(
 ) -> pd.DataFrame:
     """
     Vectorized high-speed Inversion Fair Value Gap (iFVG) computation across ANY timeframe,
+    with body-gap-merged FVG boundaries by default.
     with composite Volume Imbalance (VI) support.
 
     Parameters
@@ -301,6 +310,7 @@ def compute_ifvg(
         close_arr,
         min_gap_pts,
         include_vi,
+        require_directional_candle,
         max_active_zones,
     )
 
@@ -351,9 +361,11 @@ class IFVGTracker:
         self,
         min_gap_pts: float = 0.0,
         include_vi: bool = True,
+        require_directional_candle: bool = True,
     ) -> None:
         self.min_gap_pts = min_gap_pts
         self.include_vi = include_vi
+        self.require_directional_candle = require_directional_candle
         self.history: List[Tuple[float, float, float, float]] = []
         self.uninverted_gaps: List[Dict[str, float]] = []
         self.current_state = 0
@@ -374,7 +386,7 @@ class IFVGTracker:
 
             # 1. New Bullish FVG
             bull_gap = l0 - h2
-            if bull_gap > self.min_gap_pts and (c0 > o0):
+            if bull_gap > self.min_gap_pts and (not self.require_directional_candle or (c0 > o0)):
                 top = l0
                 bot = h2
                 has_vi = False
@@ -400,7 +412,7 @@ class IFVGTracker:
 
             # 2. New Bearish FVG
             bear_gap = l2 - h0
-            if bear_gap > self.min_gap_pts and (c0 < o0):
+            if bear_gap > self.min_gap_pts and (not self.require_directional_candle or (c0 < o0)):
                 top = l2
                 bot = h0
                 has_vi = False

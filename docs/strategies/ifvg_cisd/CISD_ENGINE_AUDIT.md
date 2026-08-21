@@ -226,3 +226,94 @@ This ensures the CISD visualization always shows every state change (matching tn
 - **Pivot vs no pivot.** tncylyv arms without a pivot. Our default requires a 3-bar fractal. Which produces fewer false CISDs when combined with the extreme-open fix? Unknown until we test.
 - **Sweep + body-close gating (strict kernel).** Keep it as an option, but the default should match tncylyv until proven otherwise.
 - **Python port.** The PineScript is now verified. Next step is porting the same `consult_the_crystal_ball` / `archaeologist_jones` model into `cisd.py :: _compute_cisd_kernel`.
+
+---
+
+## 8. Parity Bug Fixes (2026-08-21)
+
+Cross-platform parity review found three signal-generation bugs and two ICT-logic
+defects. All fixed across Python / C# / PineScript.
+
+### Fixed
+
+1. **iFVG crossing condition (C# only).** C# `isBullIfvg`/`isBearIfvg` lacked the
+   `close[1]` crossing guard, so the flag stayed `true` on every subsequent bar and
+   the baseline variant over-fired (425 vs 131 trades). Added the crossing guard and a
+   separate inversion pool that removes inverted zones (mirrors `ifvg.py`).
+
+2. **Dead `legHasBpr`/`legHasIfvg` flags (C# + Pine).** These were declared and reset
+   but never set `true`, so V1 always evaluated false (0 trades on NT8/TV). Now set
+   from `isBullBpr`/`isBearBpr` and `isBullIfvg`/`isBearIfvg` during the leg.
+
+3. **FVG directional-candle inconsistency.** Python required `c0 > o0` (bull) /
+   `c0 < o0` (bear); C#/Pine did not. Added `require_directional_candle` to
+   `compute_ifvg` and `compute_bpr` (default `False` to match C#/Pine).
+
+4. **V1 logic (all platforms).** Changed from `priorLegHasBpr OR (priorLegHasIfvg AND
+   FVG_count >= 1)` to `priorLegHasBpr OR priorLegHasIfvg`. The prior leg's BPR or
+   IFVG is the reversal evidence; the FVG-count AND was internally inconsistent.
+
+5. **V2 logic (all platforms).** Now counts **unmitigated** FVGs in the opposing
+   delivery run (removed when filled) instead of raw FVG count.
+
+### Entry mechanism (testable)
+
+Added a 3-way entry mechanism across all platforms:
+
+| Mechanism | Python | C# | Pine | Behavior |
+|---|---|---|---|---|
+| `market` | default | `EntryMechanism=0` | `"Market"` | Fill at signal bar close |
+| `cisd_limit` | `entry_mechanism="cisd_limit"` | `EntryMechanism=1` | `"CISD Limit"` | Limit at CISD level; fills only on retrace |
+| `breakout` | `entry_mechanism="breakout"` | `EntryMechanism=2` | `"Breakout"` | Stop entry beyond signal bar extreme |
+
+The Python simulator (`simulate_trade_policy`) resolves the fill bar for each
+mechanism; C# uses `EnterLongLimit`/`EnterLongStopMarket`; Pine uses `limit=`/`stop=`
+on `strategy.entry`. This is the primary knob to validate which entry works best.
+
+---
+
+## 9. Backlog — Confluence & Target Enhancements
+
+To be added one at a time after the parity bugs are confirmed fixed. Each item is a
+separate, independently testable layer.
+
+### 9.1 Multi-timeframe CISD confirmation (bias confluence)
+
+- Compute CISD on 1m, 3m, and 5m simultaneously.
+- Bias confluence score = how many TFs agree on the current delivery direction.
+- Use as a **bias filter** (only trade with the majority TF direction) and/or a
+  **signal-strength weight**.
+- Goal: filter counter-trend CISD flips that only appear on one TF.
+
+### 9.2 Multi-timeframe FVG confluence (entry refinement)
+
+- Compute FVG/iFVG on 1m, 3m, 5m.
+- Prefer entries where the execution-TF FVG overlaps a higher-TF FVG (stacked
+  imbalance = stronger institutional level).
+- Goal: find the best entry point within a confirmed bias.
+
+### 9.3 Liquidity levels (targets & bias)
+
+- Detect buy-side / sell-side liquidity pools (equal highs/lows, swing highs/lows,
+  session highs/lows).
+- Use liquidity pools as **targets** (price is drawn to liquidity) and as **bias
+  context** (which side of liquidity is being swept).
+- Goal: replace fixed R-multiple targets with liquidity-based targets where
+  appropriate, and confirm CISD flips that occur at a liquidity sweep.
+
+### 9.4 HTF FVG targets
+
+- Track unmitigated HTF (15m/1h) FVGs as magnet targets.
+- When a trade is in profit, extend the runner toward the next HTF FVG instead of a
+  fixed 2.5R.
+- Goal: capture larger runners on trend days while keeping the queen scale-out.
+
+### Suggested order
+
+1. 9.1 (bias confluence) — highest impact on false-signal reduction.
+2. 9.2 (entry refinement) — pairs with the entry-mechanism testing.
+3. 9.3 (liquidity) — targets + bias context.
+4. 9.4 (HTF FVG targets) — runner extension.
+
+Each layer should be validated in isolation (Python first, then port to C#/Pine) and
+compared against the current baseline before stacking.
