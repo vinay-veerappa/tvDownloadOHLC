@@ -317,3 +317,43 @@ separate, independently testable layer.
 
 Each layer should be validated in isolation (Python first, then port to C#/Pine) and
 compared against the current baseline before stacking.
+
+---
+
+## 10. PineScript Strategy Parity Fixes (2026-08-21, session close)
+
+The PineScript strategy (`IFVG_CISD_MTF_Strategy.pine`) was still behind C#/Python on
+three points. Fixed to bring all three platforms to identical logic:
+
+1. **V2 unmitigated FVG count.** Pine still used raw `priorBearFvgCount >= 2` /
+   `priorBullFvgCount >= 2`. Added `legBullFvgBots` / `legBearFvgTops` arrays that
+   track **unmitigated** FVGs (removed when filled), and switched V2 to
+   `priorBearFvgUnmitigated >= 2` / `priorBullFvgUnmitigated >= 2`.
+
+2. **`legHasIfvg` regime-matching.** Pine set `legHasIfvg` on *any* IFVG; now requires
+   the IFVG to match the active regime (`(isBullIfvg and vibes == 1) or
+   (isBearIfvg and vibes == -1)`), matching C#/Python.
+
+3. **Merged FVG boundary tracking.** Pine stored raw `h2`/`l2` for leg FVG tracking;
+   now stores the merged `gBot`/`gTop` (via `lastBullFvgBot`/`lastBearFvgTop`),
+   matching C#/Python.
+
+Compile-verified via TradingView server API: **0 errors** (9 pre-existing shadowing
+warnings in the tncylyv scan functions, unrelated to these changes).
+
+### Remaining known divergence (not yet fixed)
+
+- **Baseline variant** still uses different logic per platform:
+  - C#/Pine: `vibes == 1 && isBullIfvg` (regime + IFVG event on the 5m bar).
+  - Python: `_hunt_baseline` uses HTF `strict_ifvg_only` + `merge_asof` onto 1m.
+  This is the reason baseline entry counts differ (NT8 405 vs Python 494). To make
+  baseline comparable, the Python baseline path must be rewritten to mirror the C#
+  `Variant == 0` block. Deferred to next session.
+
+### Next session pickup
+
+1. Rewrite Python `_hunt_baseline` to mirror C#/Pine `Variant == 0` (regime + IFVG
+   event, no HTF merge), then re-run the NT8 vs Python benchmark for baseline.
+2. Re-run the full parity tool (`scripts/research/parity_nt8_python.py`) against a
+   fresh NT8 diag CSV to confirm V1/V2 signal counts still match after the Pine fixes.
+3. Begin backlog 9.1 (multi-TF CISD confluence).

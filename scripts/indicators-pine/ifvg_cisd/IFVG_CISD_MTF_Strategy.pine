@@ -82,6 +82,10 @@ var float[] bullFvgBots = array.new_float()
 var float[] bearFvgTops = array.new_float()
 var float[] bearFvgBots = array.new_float()
 
+// Merged FVG boundaries (this bar) for unmitigated leg tracking
+var float lastBullFvgBot = na
+var float lastBearFvgTop = na
+
 bool isBullBpr = false
 bool isBearBpr = false
 
@@ -120,6 +124,7 @@ if isBullFvg
     if array.size(bullFvgTops) > 50
         array.shift(bullFvgTops)
         array.shift(bullFvgBots)
+    lastBullFvgBot := gBot
 
     if i_drawFvg
         bx = box.new(left=bar_index - 2, top=gTop, right=bar_index + i_extendFvgBars, bottom=gBot,
@@ -167,6 +172,7 @@ if isBearFvg
     if array.size(bearFvgTops) > 50
         array.shift(bearFvgTops)
         array.shift(bearFvgBots)
+    lastBearFvgTop := gTop
 
     if i_drawFvg
         bx = box.new(left=bar_index - 2, top=gTop, right=bar_index + i_extendFvgBars, bottom=gBot,
@@ -322,11 +328,17 @@ var float legCisdLevel     = na    // new armed CISD level (entry price)
 var float legCrossedLevel  = na    // the old regime's level that was breached
 var bool  v2TriggeredInLeg = false
 
+// Unmitigated FVG tracking for the active leg (V2 displacement proxy)
+var float[] legBullFvgBots = array.new_float()
+var float[] legBearFvgTops = array.new_float()
+
 // Prior leg flags (snapshot before reset at CISD flip)
 var bool  priorLegHasBpr = false
 var bool  priorLegHasIfvg = false
 var int   priorBullFvgSnap = 0
 var int   priorBearFvgSnap = 0
+var int   priorBullFvgUnmitigated = 0
+var int   priorBearFvgUnmitigated = 0
 
 bool bullCisdTrigger = false
 bool bearCisdTrigger = false
@@ -339,6 +351,8 @@ priorLegHasBpr := legHasBpr
 priorLegHasIfvg := legHasIfvg
 priorBullFvgSnap := bullMoveFvgCount
 priorBearFvgSnap := bearMoveFvgCount
+priorBullFvgUnmitigated := array.size(legBullFvgBots)
+priorBearFvgUnmitigated := array.size(legBearFvgTops)
 
 if shortsSqueezed
     bullCisdTrigger  := true
@@ -351,8 +365,9 @@ if shortsSqueezed
     legHasBpr        := false                   // reset for new leg
     legHasIfvg       := false
     v2TriggeredInLeg := false
-    priorBearFvgCount := priorBearFvgSnap       // carry prior bear-run FVGs
     bullMoveFvgCount := 0
+    array.clear(legBullFvgBots)
+    array.clear(legBearFvgTops)
 
     if i_drawCisd
         ln = line.new(x1=timeMachineSetting, y1=bagholderEntry, x2=bar_index + 4, y2=bagholderEntry,
@@ -380,8 +395,9 @@ else if longsRekt
     legHasBpr         := false                   // reset for new leg
     legHasIfvg        := false
     v2TriggeredInLeg  := false
-    priorBullFvgCount := priorBullFvgSnap        // carry prior bull-run FVGs
     bearMoveFvgCount  := 0
+    array.clear(legBullFvgBots)
+    array.clear(legBearFvgTops)
 
     if i_drawCisd
         ln = line.new(x1=timeMachineSetting, y1=bagholderEntry, x2=bar_index + 4, y2=bagholderEntry,
@@ -401,12 +417,24 @@ else if longsRekt
 // Accumulate FVGs in the active move + set leg flags (mirrors Python kernel)
 if vibes == 1 and isBullFvg
     bullMoveFvgCount += 1
+    array.push(legBullFvgBots, lastBullFvgBot)
 if vibes == -1 and isBearFvg
     bearMoveFvgCount += 1
+    array.push(legBearFvgTops, lastBearFvgTop)
 if isBullBpr or isBearBpr
     legHasBpr := true
-if isBullIfvg or isBearIfvg
+if (isBullIfvg and vibes == 1) or (isBearIfvg and vibes == -1)
     legHasIfvg := true
+
+// Mitigation: remove filled leg FVGs (bull filled when low <= bot, bear when high >= top)
+if array.size(legBullFvgBots) > 0
+    for b = array.size(legBullFvgBots) - 1 to 0
+        if low <= array.get(legBullFvgBots, b)
+            array.remove(legBullFvgBots, b)
+if array.size(legBearFvgTops) > 0
+    for b = array.size(legBearFvgTops) - 1 to 0
+        if high >= array.get(legBearFvgTops, b)
+            array.remove(legBearFvgTops, b)
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 4 — VARIANT SIGNAL LOGIC (ICT-corrected)
@@ -464,9 +492,9 @@ else if i_variant == "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High
             signalTag   := "V1: CISD Entry"
 
 else if i_variant == "Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry (CISD Low/High Stop)"
-    // ICT-corrected: CISD trigger bar only + 2+ FVGs from the OPPOSING delivery run
-    // (the delivery that got reversed). Entry at CISD level, stop at crossed CISD level.
-    if bullCisdTrigger and not v2TriggeredInLeg and priorBearFvgCount >= 2
+    // ICT-corrected: CISD trigger bar only + 2+ UNMITIGATED FVGs from the
+    // OPPOSING delivery run (the delivery that got reversed).
+    if bullCisdTrigger and not v2TriggeredInLeg and priorBearFvgUnmitigated >= 2
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginLow) ? (legOriginLow - syminfo.mintick * 2) : (low - syminfo.mintick * 2)
         if rawStop >= entryPrice
@@ -477,7 +505,7 @@ else if i_variant == "Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry (CISD Low/Hi
             stopPrice   := rawStop
             v2TriggeredInLeg := true
             signalTag   := "V2: CISD+2FVG"
-    else if bearCisdTrigger and not v2TriggeredInLeg and priorBullFvgCount >= 2
+    else if bearCisdTrigger and not v2TriggeredInLeg and priorBullFvgUnmitigated >= 2
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginHigh) ? (legOriginHigh + syminfo.mintick * 2) : (high + syminfo.mintick * 2)
         if rawStop <= entryPrice
