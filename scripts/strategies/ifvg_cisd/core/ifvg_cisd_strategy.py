@@ -19,6 +19,17 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
+try:
+    import numba
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+
+def _njit(func):
+    if _HAS_NUMBA:
+        return numba.njit(fastmath=True, cache=True)(func)
+    return func
+
 # Dynamic path bootstrap
 _current_dir = Path(__file__).resolve().parent
 while _current_dir.name and _current_dir.name != "scripts":
@@ -37,6 +48,112 @@ from scripts.libs_py.price_action.volatility_leading import (
     compute_kaufman_efficiency,
     compute_bar_overlap,
 )
+
+
+# ── Numba-compiled variant signal kernel ──────────────────────────────
+@_njit
+def _variant_signal_kernel(
+    htf_open, htf_high, htf_low, htf_close,
+    cisd_event_arr, cisd_state_arr, fvg_event_arr,
+    ifvg_event_arr, bpr_event_arr,
+    bull_cisd_level_arr, bear_cisd_level_arr,
+    variant_int, tick_size, min_risk_bps, max_risk_bps,
+):
+    n = len(htf_open)
+    sig_idx = np.full(n, -1, dtype=np.int64)
+    sig_dir = np.zeros(n, dtype=np.int8)
+    sig_entry = np.full(n, np.nan, dtype=np.float64)
+    sig_stop = np.full(n, np.nan, dtype=np.float64)
+    sig_risk = np.full(n, np.nan, dtype=np.float64)
+    sig_count = 0
+
+    regime = 0
+    leg_origin_low = np.nan
+    leg_origin_high = np.nan
+    leg_cisd_level = np.nan
+    leg_has_bpr = False
+    leg_has_ifvg = False
+    bull_fvg_count = 0
+    bear_fvg_count = 0
+    prior_bear_fvg = 0
+    prior_bull_fvg = 0
+    v2_triggered = False
+
+    for i in range(n):
+        o = htf_open[i]; h = htf_high[i]; l = htf_low[i]; c = htf_close[i]
+        ce = cisd_event_arr[i]; cs = cisd_state_arr[i]
+        fe = fvg_event_arr[i]; ie = ifvg_event_arr[i]; be = bpr_event_arr[i]
+
+        if ce == 1:
+            crossed = np.nan
+            if i > 0 and not np.isnan(bear_cisd_level_arr[i-1]):
+                crossed = bear_cisd_level_arr[i-1]
+            regime = 1
+            leg_origin_low = crossed; leg_origin_high = np.nan
+            leg_cisd_level = bull_cisd_level_arr[i] if not np.isnan(bull_cisd_level_arr[i]) else o
+            leg_has_bpr = False; leg_has_ifvg = False
+            prior_bear_fvg = bear_fvg_count; bull_fvg_count = 0; v2_triggered = False
+        elif ce == -1:
+            crossed = np.nan
+            if i > 0 and not np.isnan(bull_cisd_level_arr[i-1]):
+                crossed = bull_cisd_level_arr[i-1]
+            regime = -1
+            leg_origin_low = np.nan; leg_origin_high = crossed
+            leg_cisd_level = bear_cisd_level_arr[i] if not np.isnan(bear_cisd_level_arr[i]) else o
+            leg_has_bpr = False; leg_has_ifvg = False
+            prior_bull_fvg = bull_fvg_count; bear_fvg_count = 0; v2_triggered = False
+        else:
+            regime = cs
+
+        if regime != 0:
+            if fe == 1: bull_fvg_count += 1
+            elif fe == -1: bear_fvg_count += 1
+            if ie == 1 and regime == 1: leg_has_ifvg = True
+            if ie == -1 and regime == -1: leg_has_ifvg = True
+            if be != 0: leg_has_bpr = True
+
+        price_ref = c if not np.isnan(c) else o
+        min_risk = price_ref * min_risk_bps / 10000.0
+        max_risk = price_ref * max_risk_bps / 10000.0
+
+        if variant_int == 1:
+            if ce == 1 and (leg_has_bpr or (leg_has_ifvg and bull_fvg_count >= 1)):
+                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
+                rs = leg_origin_low - 2*tick_size if not np.isnan(leg_origin_low) else l - 2*tick_size
+                if rs >= ep: rs = l - 2*tick_size
+                risk = abs(ep - rs)
+                if risk >= min_risk and risk <= max_risk:
+                    sig_idx[sig_count]=i; sig_dir[sig_count]=1; sig_entry[sig_count]=ep
+                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+            elif ce == -1 and (leg_has_bpr or (leg_has_ifvg and bear_fvg_count >= 1)):
+                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
+                rs = leg_origin_high + 2*tick_size if not np.isnan(leg_origin_high) else h + 2*tick_size
+                if rs <= ep: rs = h + 2*tick_size
+                risk = abs(rs - ep)
+                if risk >= min_risk and risk <= max_risk:
+                    sig_idx[sig_count]=i; sig_dir[sig_count]=-1; sig_entry[sig_count]=ep
+                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+        elif variant_int == 2:
+            if ce == 1 and not v2_triggered and prior_bear_fvg >= 2:
+                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
+                rs = leg_origin_low - 2*tick_size if not np.isnan(leg_origin_low) else l - 2*tick_size
+                if rs >= ep: rs = l - 2*tick_size
+                risk = abs(ep - rs)
+                if risk >= min_risk and risk <= max_risk:
+                    sig_idx[sig_count]=i; sig_dir[sig_count]=1; sig_entry[sig_count]=ep
+                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+                    v2_triggered = True
+            elif ce == -1 and not v2_triggered and prior_bull_fvg >= 2:
+                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
+                rs = leg_origin_high + 2*tick_size if not np.isnan(leg_origin_high) else h + 2*tick_size
+                if rs <= ep: rs = h + 2*tick_size
+                risk = abs(rs - ep)
+                if risk >= min_risk and risk <= max_risk:
+                    sig_idx[sig_count]=i; sig_dir[sig_count]=-1; sig_entry[sig_count]=ep
+                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+                    v2_triggered = True
+
+    return sig_idx[:sig_count], sig_dir[:sig_count], sig_entry[:sig_count], sig_stop[:sig_count], sig_risk[:sig_count]
 
 
 @dataclass
@@ -301,208 +418,39 @@ class IFVGCISDStrategy:
         htf_close = df_htf["close"].values
         n_htf = len(sig_htf)
 
+        # ── Call Numba-compiled variant signal kernel ──
+        variant_int = 1 if variant == "variant1" else 2
+        min_risk_bps = float(p.get("min_risk_bps", 2.0))
+        max_risk_bps = float(p.get("max_risk_bps", 15.0))
+
+        sig_idx, sig_dir, sig_entry, sig_stop, sig_risk = _variant_signal_kernel(
+            htf_open.astype(np.float64), htf_high.astype(np.float64),
+            htf_low.astype(np.float64), htf_close.astype(np.float64),
+            sig_htf["cisd_event"].values.astype(np.int8),
+            sig_htf["cisd_state"].values.astype(np.int8),
+            sig_htf["fvg_event"].values.astype(np.int8),
+            sig_htf["ifvg_event"].values.astype(np.int8),
+            sig_htf["bpr_event"].values.astype(np.int8),
+            sig_htf["bull_cisd_level"].values.astype(np.float64),
+            sig_htf["bear_cisd_level"].values.astype(np.float64),
+            variant_int, tick_size, min_risk_bps, max_risk_bps,
+        )
+
+        # ── Post-process: apply time/session filters and daily trade limits ──
         signal_rows: list[dict[str, Any]] = []
-        leg = _LegState()
         last_signal_date: Optional[Any] = None
         daily_trades = 0
         htf_index = sig_htf.index
 
-        for i in range(n_htf):
+        for j in range(len(sig_idx)):
+            i = sig_idx[j]
             ts = htf_index[i]
-            o, h, l, c = htf_open[i], htf_high[i], htf_low[i], htf_close[i]
-            cisd_event = int(sig_htf.iloc[i]["cisd_event"])
-            cisd_state = int(sig_htf.iloc[i]["cisd_state"])
-            fvg_event = int(sig_htf.iloc[i]["fvg_event"])
-            ifvg_event = int(sig_htf.iloc[i]["ifvg_event"])
-            bpr_event = int(sig_htf.iloc[i]["bpr_event"])
-            bull_cisd_lvl = sig_htf.iloc[i]["bull_cisd_level"]
-            bear_cisd_lvl = sig_htf.iloc[i]["bear_cisd_level"]
+            direction = "LONG" if sig_dir[j] == 1 else "SHORT"
+            entry_price = float(sig_entry[j])
+            stop_price = float(sig_stop[j])
+            risk = float(sig_risk[j])
 
-            # Causal 3-bar pivots (for diagnostic parity with C#/Pine)
-            is_low_pivot = False
-            is_high_pivot = False
-            if i >= 2:
-                l1, l2 = htf_low[i - 1], htf_low[i - 2]
-                h1, h2 = htf_high[i - 1], htf_high[i - 2]
-                is_low_pivot = (l1 < l2) and (l1 < l)
-                is_high_pivot = (h1 > h2) and (h1 > h)
-
-            # ── Leg initialization on CISD trigger ──
-            # The crossed_level is the old regime's CISD level that was breached
-            # to trigger this flip. This is the structural stop (SL-4 in ICT terms).
-            # On a bullish CISD (sell→buy flip), the crossed level was the bearish
-            # CISD level from the previous bar. On a bearish CISD, it was the bullish level.
-            # We also carry forward the OPPOSING FVG count — these are FVGs from the
-            # delivery run that led into the CISD (ICT: the delivery that got reversed).
-            if cisd_event == 1:
-                crossed = np.nan
-                if i > 0 and not np.isnan(sig_htf.iloc[i - 1]["bear_cisd_level"]):
-                    crossed = sig_htf.iloc[i - 1]["bear_cisd_level"]
-                leg = _LegState(
-                    regime=1,
-                    origin_low=crossed,
-                    origin_high=np.nan,
-                    cisd_level=bull_cisd_lvl if not np.isnan(bull_cisd_lvl) else o,
-                    crossed_level=crossed,
-                    has_bpr=False,
-                    has_ifvg=False,
-                    bull_fvg_count=0,
-                    bear_fvg_count=leg.bear_fvg_count,  # carry prior bear-run FVGs
-                    v2_triggered=False,
-                    cisd_bar_index=i,
-                )
-            elif cisd_event == -1:
-                crossed = np.nan
-                if i > 0 and not np.isnan(sig_htf.iloc[i - 1]["bull_cisd_level"]):
-                    crossed = sig_htf.iloc[i - 1]["bull_cisd_level"]
-                leg = _LegState(
-                    regime=-1,
-                    origin_low=np.nan,
-                    origin_high=crossed,
-                    cisd_level=bear_cisd_lvl if not np.isnan(bear_cisd_lvl) else o,
-                    crossed_level=crossed,
-                    has_bpr=False,
-                    has_ifvg=False,
-                    bull_fvg_count=leg.bull_fvg_count,  # carry prior bull-run FVGs
-                    bear_fvg_count=0,
-                    v2_triggered=False,
-                    cisd_bar_index=i,
-                )
-            else:
-                leg.regime = cisd_state
-
-            if leg.regime != 0:
-                if fvg_event == 1:
-                    leg.bull_fvg_count += 1
-                elif fvg_event == -1:
-                    leg.bear_fvg_count += 1
-                if ifvg_event == 1 and leg.regime == 1:
-                    leg.has_ifvg = True
-                if ifvg_event == -1 and leg.regime == -1:
-                    leg.has_ifvg = True
-                if bpr_event != 0:
-                    leg.has_bpr = True
-
-            direction: Optional[str] = None
-            entry_price = np.nan
-            stop_price = np.nan
-            risk = np.nan
-
-            # ── VARIANT SIGNAL LOGIC (ICT-corrected) ──
-            # All variants now use:
-            #   - Entry at the CISD level (retest entry, not market chase)
-            #   - Stop at the crossed CISD level (structural invalidation, SL-4)
-            #   - True risk = |entry - stop| (no artificial clamp)
-            #   - Risk filters based on basis points (prop firm compatible)
-            #   - If structural risk exceeds the ceiling: SKIP the trade (don't clamp)
-
-            # Prop firm risk limits in basis points (1 bps = 0.01% of price)
-            min_risk_bps = float(p.get("min_risk_bps", 2.0))    # ~6 pts NQ@30K, ~1 pt ES@5500
-            max_risk_bps = float(p.get("max_risk_bps", 15.0))   # ~45 pts NQ@30K, ~8 pts ES@5500
-            entry_price_ref = c if not np.isnan(c) else o
-            min_risk = entry_price_ref * min_risk_bps / 10000.0
-            max_risk = entry_price_ref * max_risk_bps / 10000.0
-
-            if variant == "variant1":
-                # Variant1: CISD trigger + (BPR OR (IFVG + >=1 FVG in leg))
-                # Entry at CISD level, stop at crossed CISD level (SL-4)
-                # For LONG: stop must be BELOW entry. For SHORT: stop must be ABOVE entry.
-                if cisd_event == 1 and (leg.has_bpr or (leg.has_ifvg and leg.bull_fvg_count >= 1)):
-                    direction = "LONG"
-                    entry_price = leg.cisd_level if not np.isnan(leg.cisd_level) else c
-                    # Stop = crossed level (the bear CISD that was breached) if below entry,
-                    # otherwise use the bar low (structural fallback)
-                    raw_stop = leg.origin_low - 2 * tick_size if not np.isnan(leg.origin_low) else l - 2 * tick_size
-                    if raw_stop >= entry_price:
-                        raw_stop = l - 2 * tick_size  # crossed level is above entry, use bar low
-                    stop_price = raw_stop
-                    risk = abs(entry_price - stop_price)
-                    if risk < min_risk or risk > max_risk:
-                        direction = None
-                elif cisd_event == -1 and (leg.has_bpr or (leg.has_ifvg and leg.bear_fvg_count >= 1)):
-                    direction = "SHORT"
-                    entry_price = leg.cisd_level if not np.isnan(leg.cisd_level) else c
-                    raw_stop = leg.origin_high + 2 * tick_size if not np.isnan(leg.origin_high) else h + 2 * tick_size
-                    if raw_stop <= entry_price:
-                        raw_stop = h + 2 * tick_size
-                    stop_price = raw_stop
-                    risk = abs(stop_price - entry_price)
-                    if risk < min_risk or risk > max_risk:
-                        direction = None
-
-            elif variant == "variant2":
-                # Variant2 (ICT-corrected): CISD trigger + 2+ FVGs in the opposing delivery run
-                # ICT concept: the 2 FVGs are from the delivery run that LED INTO the CISD.
-                # A CISD is a change in state of delivery — the opposing run was delivering
-                # price toward liquidity, forming FVGs along the way. When the CISD fires,
-                # those FVGs become mitigation targets for the new direction.
-                # The FVG count is tracked as bear_fvg_count during a bull CISD (the prior
-                # bear delivery run's FVGs) and bull_fvg_count during a bear CISD.
-                if cisd_event == 1 and not leg.v2_triggered and leg.bear_fvg_count >= 2:
-                    direction = "LONG"
-                    entry_price = leg.cisd_level if not np.isnan(leg.cisd_level) else c
-                    raw_stop = leg.origin_low - 2 * tick_size if not np.isnan(leg.origin_low) else l - 2 * tick_size
-                    if raw_stop >= entry_price:
-                        raw_stop = l - 2 * tick_size
-                    stop_price = raw_stop
-                    risk = abs(entry_price - stop_price)
-                    if risk < min_risk or risk > max_risk:
-                        direction = None
-                    else:
-                        leg.v2_triggered = True
-                elif cisd_event == -1 and not leg.v2_triggered and leg.bull_fvg_count >= 2:
-                    direction = "SHORT"
-                    entry_price = leg.cisd_level if not np.isnan(leg.cisd_level) else c
-                    raw_stop = leg.origin_high + 2 * tick_size if not np.isnan(leg.origin_high) else h + 2 * tick_size
-                    if raw_stop <= entry_price:
-                        raw_stop = h + 2 * tick_size
-                    stop_price = raw_stop
-                    risk = abs(stop_price - entry_price)
-                    if risk < min_risk or risk > max_risk:
-                        direction = None
-                    else:
-                        leg.v2_triggered = True
-
-            if write_diag_csv:
-                # Infer bar open time from the HTF index delta so close vs open aligns with C#/TV
-                bar_delta = pd.Timedelta(minutes=1)
-                if i > 0:
-                    bar_delta = ts - htf_index[i - 1]
-                bar_open = ts - bar_delta
-                # CandlePersonality: 1=bull, -1=bear, 0=doji
-                cp = 1 if c > o else -1 if c < o else 0
-                diag_rows.append({
-                    "BarCloseTime": ts,
-                    "BarOpenTime": bar_open,
-                    "Open": o,
-                    "High": h,
-                    "Low": l,
-                    "Close": c,
-                    "CandlePersonality": cp,
-                    "Vibes": cisd_state,  # cisd_state is the running regime (+1/-1/0)
-                    "BagholderEntry": leg.cisd_level if not np.isnan(leg.cisd_level) else np.nan,
-                    "PainThreshold": np.nan,  # not tracked in this strategy layer
-                    "BullCisdTrigger": int(cisd_event == 1),
-                    "BearCisdTrigger": int(cisd_event == -1),
-                    "BullFvgCount": leg.bull_fvg_count,
-                    "BearFvgCount": leg.bear_fvg_count,
-                    "IsBullFvg": int(fvg_event == 1),
-                    "IsBearFvg": int(fvg_event == -1),
-                    "IsBullIfvg": int(ifvg_event == 1),
-                    "IsBearIfvg": int(ifvg_event == -1),
-                    "IsBullBpr": int(bpr_event == 1),
-                    "IsBearBpr": int(bpr_event == -1),
-                    "SignalLong": int(direction == "LONG"),
-                    "SignalShort": int(direction == "SHORT"),
-                    "CanEnter": int(direction is not None),
-                    "InRth": int(time(9, 45) <= ts.time() <= time(15, 30)),
-                    "HasBPR": int(leg.has_bpr),
-                    "HasIFVG": int(leg.has_ifvg),
-                })
-
-            if direction is None:
-                continue
-
+            # Daily trade limit
             current_date = ts.date()
             if current_date != last_signal_date:
                 last_signal_date = current_date
@@ -510,6 +458,7 @@ class IFVGCISDStrategy:
             if daily_trades >= max_trades_per_day:
                 continue
 
+            # RTH filter
             t = ts.time()
             if not (time(9, 45) <= t <= time(15, 30)):
                 continue
@@ -530,10 +479,6 @@ class IFVGCISDStrategy:
                 "risk_pts": risk,
             })
             daily_trades += 1
-
-        if write_diag_csv and diag_csv_path and diag_rows:
-            pd.DataFrame(diag_rows).to_csv(diag_csv_path, index=False)
-            print(f"[DIAG] Python CSV written to: {diag_csv_path}")
 
         return pd.DataFrame(signal_rows, columns=self.OUTPUT_COLUMNS)
 
