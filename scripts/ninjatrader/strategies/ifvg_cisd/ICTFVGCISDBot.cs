@@ -18,19 +18,13 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
-    public enum CISDStrategyVariant
-    {
-        Baseline_IFVG_CISD,
-        Variant1_BPR_Or_IFVG_FVG,
-        Variant2_DoubleFVG_NoIFVG
-    }
-
     public class ICTFVGCISDBot : Strategy
     {
         #region Custom Strategy Parameters
         [NinjaScriptProperty]
-        [Display(Name = "Strategy Variant", Order = 0, GroupName = "1. Strategy Variant")]
-        public CISDStrategyVariant Variant { get; set; }
+        [Display(Name = "Strategy Variant (0=Baseline, 1=V1, 2=V2)", Order = 0, GroupName = "1. Strategy Variant")]
+        [Range(0, 2)]
+        public int Variant { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "Queen Target R-Mult", Order = 1, GroupName = "2. Targets & Risk Management")]
@@ -136,7 +130,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 IncludeTradeHistoryInBacktest = true;
                 IsTradingHoursBreakLineVisible = false;
 
-                Variant = CISDStrategyVariant.Variant2_DoubleFVG_NoIFVG;
+                Variant = 2; // 0=Baseline, 1=Variant1, 2=Variant2
                 RMultTP1 = 1.0;
                 RMultTP2 = 2.5;
                 MinRiskBps = 2.0;
@@ -516,15 +510,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 legCrossedLevel = crossedLevelSnapshot;
                 legOriginLow = crossedLevelSnapshot;    // structural stop = crossed bear CISD level
                 legOriginHigh = double.NaN;
-                legCisdLevel = crossedLevelSnapshot;     // entry = the CISD level that was crossed
+                // Entry = the NEW armed CISD level (from ConsultCrystalBall), not the crossed level
+                double ep; int eb;
+                ConsultCrystalBall(1, out ep, out eb);
+                legCisdLevel = ep;                        // entry = new armed CISD level
+                bagholderEntry = ep;
                 legHasBpr = isBullBpr;
                 legHasIfvg = isBullIfvg;
                 v2TriggeredInLeg = false;
                 priorBearFvgCount = bearMoveFvgCount;    // carry prior bear-run FVGs
                 bullMoveFvgCount = 0;
-                double ep; int eb;
-                ConsultCrystalBall(1, out ep, out eb);
-                bagholderEntry = ep;
                 painThreshold = h0;
             }
             else if (longsRekt)
@@ -534,15 +529,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 legCrossedLevel = crossedLevelSnapshot;
                 legOriginLow = double.NaN;
                 legOriginHigh = crossedLevelSnapshot;   // structural stop = crossed bull CISD level
-                legCisdLevel = crossedLevelSnapshot;     // entry = the CISD level that was crossed
+                // Entry = the NEW armed CISD level (from ConsultCrystalBall), not the crossed level
+                double ep2; int eb2;
+                ConsultCrystalBall(-1, out ep2, out eb2);
+                legCisdLevel = ep2;                       // entry = new armed CISD level
+                bagholderEntry = ep2;
                 legHasBpr = isBearBpr;
                 legHasIfvg = isBearIfvg;
                 v2TriggeredInLeg = false;
                 priorBullFvgCount = bullMoveFvgCount;    // carry prior bull-run FVGs
                 bearMoveFvgCount = 0;
-                double ep; int eb;
-                ConsultCrystalBall(-1, out ep, out eb);
-                bagholderEntry = ep;
                 painThreshold = l0;
             }
 
@@ -563,7 +559,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             double minRiskPts = priceRef * MinRiskBps / 10000.0;
             double maxRiskPts = priceRef * MaxRiskBps / 10000.0;
 
-            if (Variant == CISDStrategyVariant.Baseline_IFVG_CISD)
+            if (Variant == 0) // Baseline
             {
                 if (vibes == 1 && isBullIfvg)
                 {
@@ -580,7 +576,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     stopPrice = entryPrice + risk;
                 }
             }
-            else if (Variant == CISDStrategyVariant.Variant1_BPR_Or_IFVG_FVG)
+            else if (Variant == 1) // Variant1: BPR or (IFVG+FVG)
             {
                 // Entry at CISD level, stop at crossed CISD level (SL-4)
                 if (bullCisdTrigger && (legHasBpr || (legHasIfvg && bullMoveFvgCount >= 1)))
@@ -608,7 +604,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     }
                 }
             }
-            else if (Variant == CISDStrategyVariant.Variant2_DoubleFVG_NoIFVG)
+            else if (Variant == 2) // Variant2: 2x opposing FVG
             {
                 // ICT-corrected: CISD trigger bar only + 2+ FVGs from OPPOSING delivery run
                 if (bullCisdTrigger && !v2TriggeredInLeg && priorBearFvgCount >= 2)
@@ -682,7 +678,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     minRiskPts.ToString("G", CultureInfo.InvariantCulture),
                     maxRiskPts.ToString("G", CultureInfo.InvariantCulture),
                     canEnter ? 1 : 0, inRth ? 1 : 0,
-                    (int)Variant));
+                    Variant));
                 diagCsv.Flush();
             }
 
