@@ -201,6 +201,97 @@ def _compute_cisd_strict_kernel(
     return cisd_event, cisd_state, active_bull_lvl, active_bear_lvl, last_sh, last_sl
 
 
+# ======================================================================================
+# 1c. TNCYLYV EXTREME-OPEN KERNEL (Numba JIT, inlined scan functions)
+# ======================================================================================
+
+@_jit_decorator
+def _consult_crystal_ball_jit(
+    open_arr: np.ndarray, close_arr: np.ndarray, bias: int, t: int,
+) -> Tuple[float, int]:
+    """Scan from bar t backward. Never returns na — falls back to open[t]."""
+    temporal_shift = 0
+    extreme = open_arr[t]
+    if close_arr[t] > open_arr[t]:
+        att = 1
+    elif close_arr[t] < open_arr[t]:
+        att = -1
+    else:
+        att = 0
+    if att == 0 or att != bias:
+        return extreme, t
+    max_i = min(500, t)
+    for i in range(1, max_i + 1):
+        if close_arr[t - i] > open_arr[t - i]:
+            att = 1
+        elif close_arr[t - i] < open_arr[t - i]:
+            att = -1
+        else:
+            att = 0
+        if att == 0:
+            continue
+        if att != bias:
+            break
+        temporal_shift = i
+        if bias == 1:
+            if open_arr[t - i] < extreme:
+                extreme = open_arr[t - i]
+        else:
+            if open_arr[t - i] > extreme:
+                extreme = open_arr[t - i]
+    extreme_shift = 0
+    for k in range(temporal_shift + 1):
+        if open_arr[t - k] == extreme:
+            extreme_shift = k
+            break
+    return extreme, t - extreme_shift
+
+
+@_jit_decorator
+def _archaeologist_jones_jit(
+    open_arr: np.ndarray, close_arr: np.ndarray, bias: int, t: int,
+) -> Tuple[float, int]:
+    """Skip bar t, find first matching candle backward. Returns (nan, -1) if none."""
+    artifact_found = False
+    max_shift = -1
+    extreme = np.nan
+    max_j = min(500, t)
+    for j in range(1, max_j + 1):
+        if close_arr[t - j] > open_arr[t - j]:
+            att = 1
+        elif close_arr[t - j] < open_arr[t - j]:
+            att = -1
+        else:
+            att = 0
+        if att == 0:
+            continue
+        is_correct_era = (att == bias)
+        if not artifact_found:
+            if is_correct_era:
+                artifact_found = True
+                max_shift = j
+                extreme = open_arr[t - j]
+        else:
+            if not is_correct_era:
+                break
+            max_shift = j
+            if bias == 1:
+                if open_arr[t - j] < extreme:
+                    extreme = open_arr[t - j]
+            else:
+                if open_arr[t - j] > extreme:
+                    extreme = open_arr[t - j]
+    if max_shift < 0:
+        return np.nan, -1
+    extreme_shift = max_shift
+    for k in range(1, max_shift + 1):
+        if open_arr[t - k] == extreme:
+            extreme_shift = k
+            break
+    return extreme, t - extreme_shift
+
+
+@_jit_decorator
 def _compute_cisd_kernel(
     open_arr: np.ndarray,
     high_arr: np.ndarray,
@@ -208,17 +299,10 @@ def _compute_cisd_kernel(
     close_arr: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Default CISD engine — tncylyv extreme-open + continuous re-anchor model.
+    Default CISD engine — tncylyv extreme-open + continuous re-anchor model (Numba JIT).
 
-    Port of the tncylyv TradingView CISD indicator. Key differences from the
-    old pivot+first-open kernel:
-
-    1. One continuous CISD level per regime (not one level per pivot).
-    2. Level = EXTREME open of the full delivery run (lowest open for a bull
-       run, highest open for a bear run) — the "last defense" open price.
-    3. On every new bias-direction extreme, re-scan the full contiguous run
-       (up to 500 bars) and re-anchor the level to the true extreme open.
-    4. Fires on close cross of the extreme open. No body-close requirement.
+    One continuous level per regime; extreme open of the delivery run;
+    re-anchors on every new bias-direction extreme; fires on close cross.
 
     See docs/strategies/ifvg_cisd/CISD_ENGINE_AUDIT.md for full rationale.
     """
@@ -234,130 +318,79 @@ def _compute_cisd_kernel(
         return cisd_event, cisd_state, active_bull_lvl, active_bear_lvl, struct_top, struct_bot
 
     vibes = 0              # +1 bull / -1 bear / 0 uninit
-    bagholder_entry = np.nan   # extreme open of current delivery run
-    pain_threshold = np.nan   # running extreme in bias direction
+    bagholder_entry = np.nan
+    pain_threshold = np.nan
     current_origin_low = np.nan
     current_origin_high = np.nan
-
-    def _candle_body(c, o):
-        if c > o:
-            return 1
-        elif c < o:
-            return -1
-        return 0
-
-    def _consult_crystal_ball(bias, t):
-        """Scan from bar t backward. Never returns na — falls back to open[t]."""
-        temporal_shift = 0
-        extreme = open_arr[t]
-        att = _candle_body(close_arr[t], open_arr[t])
-        if att == 0 or att != bias:
-            return extreme, t
-        for i in range(1, min(501, t + 1)):
-            att = _candle_body(close_arr[t - i], open_arr[t - i])
-            if att == 0:
-                continue
-            if att != bias:
-                break
-            temporal_shift = i
-            if bias == 1:
-                if open_arr[t - i] < extreme:
-                    extreme = open_arr[t - i]
-            else:
-                if open_arr[t - i] > extreme:
-                    extreme = open_arr[t - i]
-        # Find which bar had the extreme open
-        extreme_shift = 0
-        for k in range(temporal_shift + 1):
-            if open_arr[t - k] == extreme:
-                extreme_shift = k
-                break
-        return extreme, t - extreme_shift
-
-    def _archaeologist_jones(bias, t):
-        """Skip bar t, find first matching candle backward. May return na."""
-        artifact_found = False
-        max_shift = -1
-        extreme = np.nan
-        for j in range(1, min(501, t + 1)):
-            att = _candle_body(close_arr[t - j], open_arr[t - j])
-            if att == 0:
-                continue
-            is_correct_era = (att == bias)
-            if not artifact_found:
-                if is_correct_era:
-                    artifact_found = True
-                    max_shift = j
-                    extreme = open_arr[t - j]
-            else:
-                if not is_correct_era:
-                    break
-                max_shift = j
-                if bias == 1:
-                    if open_arr[t - j] < extreme:
-                        extreme = open_arr[t - j]
-                else:
-                    if open_arr[t - j] > extreme:
-                        extreme = open_arr[t - j]
-        if max_shift < 0:
-            return np.nan, -1
-        extreme_shift = max_shift
-        for k in range(1, max_shift + 1):
-            if open_arr[t - k] == extreme:
-                extreme_shift = k
-                break
-        return extreme, t - extreme_shift
 
     for t in range(n):
         c = close_arr[t]
         o = open_arr[t]
         h = high_arr[t]
         l = low_arr[t]
-        candle_personality = _candle_body(c, o)
+        if c > o:
+            candle_personality = 1
+        elif c < o:
+            candle_personality = -1
+        else:
+            candle_personality = 0
 
         # --- Init ---
         if vibes == 0 and t > 10:
             first_impression = candle_personality
             if first_impression == 0:
-                for k in range(1, min(51, t + 1)):
-                    first_impression = _candle_body(close_arr[t - k], open_arr[t - k])
+                max_k = min(50, t)
+                for k in range(1, max_k + 1):
+                    if close_arr[t - k] > open_arr[t - k]:
+                        first_impression = 1
+                    elif close_arr[t - k] < open_arr[t - k]:
+                        first_impression = -1
+                    else:
+                        first_impression = 0
                     if first_impression != 0:
                         break
             if first_impression != 0:
                 vibes = first_impression
-                ep, eb = _consult_crystal_ball(first_impression, t)
+                ep, _eb = _consult_crystal_ball_jit(open_arr, close_arr, first_impression, t)
                 bagholder_entry = ep
-                pain_threshold = h if first_impression == 1 else l
+                if first_impression == 1:
+                    pain_threshold = h
+                else:
+                    pain_threshold = l
 
         # --- Re-anchor on new extreme ---
-        if vibes == 1 and h > pain_threshold:
+        if vibes == 1 and h > pain_threshold and not np.isnan(pain_threshold):
             pain_threshold = h
             if candle_personality == 1:
-                ep, eb = _consult_crystal_ball(1, t)
+                ep, _eb = _consult_crystal_ball_jit(open_arr, close_arr, 1, t)
             else:
-                ep, eb = _archaeologist_jones(1, t)
+                ep, _eb = _archaeologist_jones_jit(open_arr, close_arr, 1, t)
             if not np.isnan(ep):
                 bagholder_entry = ep
-        elif vibes == -1 and l < pain_threshold:
+        elif vibes == -1 and l < pain_threshold and not np.isnan(pain_threshold):
             pain_threshold = l
             if candle_personality == -1:
-                ep, eb = _consult_crystal_ball(-1, t)
+                ep, _eb = _consult_crystal_ball_jit(open_arr, close_arr, -1, t)
             else:
-                ep, eb = _archaeologist_jones(-1, t)
+                ep, _eb = _archaeologist_jones_jit(open_arr, close_arr, -1, t)
             if not np.isnan(ep):
                 bagholder_entry = ep
 
         # --- Flip detection ---
-        shorts_squeezed = (vibes == -1) and (c > bagholder_entry) and not np.isnan(bagholder_entry)
-        longs_rekt = (vibes == 1) and (c < bagholder_entry) and not np.isnan(bagholder_entry)
+        shorts_squeezed = False
+        longs_rekt = False
+        if vibes == -1 and not np.isnan(bagholder_entry) and c > bagholder_entry:
+            shorts_squeezed = True
+        if vibes == 1 and not np.isnan(bagholder_entry) and c < bagholder_entry:
+            longs_rekt = True
 
         if shorts_squeezed:
             cisd_event[t] = 1
             cisd_state[t] = 1
             vibes = 1
-            current_origin_low = np.nan  # origin not tracked in this kernel
+            current_origin_low = np.nan
             current_origin_high = bagholder_entry
-            ep, eb = _consult_crystal_ball(1, t)
+            ep, _eb = _consult_crystal_ball_jit(open_arr, close_arr, 1, t)
             bagholder_entry = ep
             pain_threshold = h
         elif longs_rekt:
@@ -366,7 +399,7 @@ def _compute_cisd_kernel(
             vibes = -1
             current_origin_low = bagholder_entry
             current_origin_high = np.nan
-            ep, eb = _consult_crystal_ball(-1, t)
+            ep, _eb = _consult_crystal_ball_jit(open_arr, close_arr, -1, t)
             bagholder_entry = ep
             pain_threshold = l
         else:

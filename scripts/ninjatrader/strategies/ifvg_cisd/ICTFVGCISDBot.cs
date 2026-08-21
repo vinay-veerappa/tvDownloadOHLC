@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Core.FloatingPoint;
@@ -40,12 +41,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public double RMultTP2 { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Min Risk Points", Order = 3, GroupName = "2. Targets & Risk Management")]
-        public double MinRiskPts { get; set; }
+        [Display(Name = "Min Risk (Bps)", Order = 3, GroupName = "2. Targets & Risk Management")]
+        public double MinRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Max Risk Points", Order = 4, GroupName = "2. Targets & Risk Management")]
-        public double MaxRiskPts { get; set; }
+        [Display(Name = "Max Risk Ceiling (Bps)", Order = 4, GroupName = "2. Targets & Risk Management")]
+        public double MaxRiskBps { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "Fixed Contracts (2-Pack)", Order = 5, GroupName = "2. Targets & Risk Management")]
@@ -100,10 +101,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private bool legHasIfvg;
         private int bullMoveFvgCount;
         private int bearMoveFvgCount;
-        private double legOriginLow;
-        private double legOriginHigh;
-        private double legCisdLevel;
+        private double legOriginLow;       // crossed CISD level (structural stop for LONG)
+        private double legOriginHigh;      // crossed CISD level (structural stop for SHORT)
+        private double legCisdLevel;       // new armed CISD level (entry price)
+        private double legCrossedLevel;    // the old regime's level that was breached
         private bool v2TriggeredInLeg;
+        private int priorBearFvgCount;     // FVGs from bear run that led into a bull CISD
+        private int priorBullFvgCount;     // FVGs from bull run that led into a bear CISD
 
         // Active Trade State
         private double activeEntryPrice;
@@ -135,8 +139,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 Variant = CISDStrategyVariant.Variant2_DoubleFVG_NoIFVG;
                 RMultTP1 = 1.0;
                 RMultTP2 = 2.5;
-                MinRiskPts = 6.0;
-                MaxRiskPts = 50.0;
+                MinRiskBps = 2.0;
+                MaxRiskBps = 15.0;
                 DefaultContracts = 2;
                 MaxDailyTrades = 2;
                 FilterLunch = true;
@@ -170,7 +174,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 legOriginLow = double.NaN;
                 legOriginHigh = double.NaN;
                 legCisdLevel = double.NaN;
+                legCrossedLevel = double.NaN;
                 v2TriggeredInLeg = false;
+                priorBearFvgCount = 0;
+                priorBullFvgCount = 0;
 
                 activeEntryPrice = double.NaN;
                 activeStopLoss = double.NaN;
@@ -499,16 +506,21 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             bool bullCisdTrigger = false;
             bool bearCisdTrigger = false;
 
+            // Snapshot the crossed level BEFORE re-arming
+            double crossedLevelSnapshot = bagholderEntry;
+
             if (shortsSqueezed)
             {
                 bullCisdTrigger = true;
                 vibes = 1;
-                legOriginLow = double.NaN;
-                legOriginHigh = bagholderEntry;
-                legCisdLevel = bagholderEntry;
+                legCrossedLevel = crossedLevelSnapshot;
+                legOriginLow = crossedLevelSnapshot;    // structural stop = crossed bear CISD level
+                legOriginHigh = double.NaN;
+                legCisdLevel = crossedLevelSnapshot;     // entry = the CISD level that was crossed
                 legHasBpr = isBullBpr;
                 legHasIfvg = isBullIfvg;
                 v2TriggeredInLeg = false;
+                priorBearFvgCount = bearMoveFvgCount;    // carry prior bear-run FVGs
                 bullMoveFvgCount = 0;
                 double ep; int eb;
                 ConsultCrystalBall(1, out ep, out eb);
@@ -519,12 +531,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 bearCisdTrigger = true;
                 vibes = -1;
-                legOriginLow = bagholderEntry;
-                legOriginHigh = double.NaN;
-                legCisdLevel = bagholderEntry;
+                legCrossedLevel = crossedLevelSnapshot;
+                legOriginLow = double.NaN;
+                legOriginHigh = crossedLevelSnapshot;   // structural stop = crossed bull CISD level
+                legCisdLevel = crossedLevelSnapshot;     // entry = the CISD level that was crossed
                 legHasBpr = isBearBpr;
                 legHasIfvg = isBearIfvg;
                 v2TriggeredInLeg = false;
+                priorBullFvgCount = bullMoveFvgCount;    // carry prior bull-run FVGs
                 bearMoveFvgCount = 0;
                 double ep; int eb;
                 ConsultCrystalBall(-1, out ep, out eb);
@@ -536,11 +550,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (vibes == 1 && isBullFvg) bullMoveFvgCount++;
             if (vibes == -1 && isBearFvg) bearMoveFvgCount++;
 
-            // ── STEP 5: VARIANT SIGNAL EVALUATION ──────────────────────────
+            // ── STEP 5: VARIANT SIGNAL EVALUATION (ICT-corrected) ──────────
+            // All variants: entry at CISD level, stop at crossed CISD level (SL-4),
+            // risk in basis points (prop firm compatible). Skip if risk outside limits.
             bool signalLong = false;
             bool signalShort = false;
             double entryPrice = c0;
             double stopPrice = double.NaN;
+
+            // Bps risk limits: min_risk = price * min_bps / 10000, max_risk = price * max_bps / 10000
+            double priceRef = c0;
+            double minRiskPts = priceRef * MinRiskBps / 10000.0;
+            double maxRiskPts = priceRef * MaxRiskBps / 10000.0;
 
             if (Variant == CISDStrategyVariant.Baseline_IFVG_CISD)
             {
@@ -548,55 +569,73 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 {
                     signalLong = true;
                     entryPrice = c0;
-                    double risk = Math.Max(MinRiskPts, Math.Min(MaxRiskPts, atr14[0] * 1.8));
+                    double risk = Math.Max(minRiskPts, Math.Min(maxRiskPts, atr14[0] * 1.8));
                     stopPrice = entryPrice - risk;
                 }
                 else if (vibes == -1 && isBearIfvg)
                 {
                     signalShort = true;
                     entryPrice = c0;
-                    double risk = Math.Max(MinRiskPts, Math.Min(MaxRiskPts, atr14[0] * 1.8));
+                    double risk = Math.Max(minRiskPts, Math.Min(maxRiskPts, atr14[0] * 1.8));
                     stopPrice = entryPrice + risk;
                 }
             }
             else if (Variant == CISDStrategyVariant.Variant1_BPR_Or_IFVG_FVG)
             {
+                // Entry at CISD level, stop at crossed CISD level (SL-4)
                 if (bullCisdTrigger && (legHasBpr || (legHasIfvg && bullMoveFvgCount >= 1)))
                 {
-                    signalLong = true;
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginLow) ? (legOriginLow - 2 * TickSize) : (l0 - 2 * TickSize);
-                    double risk = Math.Max(MinRiskPts, Math.Min(MaxRiskPts, entryPrice - rawStop));
-                    stopPrice = entryPrice - risk;
+                    if (rawStop >= entryPrice) rawStop = l0 - 2 * TickSize;
+                    double risk = Math.Abs(entryPrice - rawStop);
+                    if (risk >= minRiskPts && risk <= maxRiskPts)
+                    {
+                        signalLong = true;
+                        stopPrice = rawStop;
+                    }
                 }
                 else if (bearCisdTrigger && (legHasBpr || (legHasIfvg && bearMoveFvgCount >= 1)))
                 {
-                    signalShort = true;
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginHigh) ? (legOriginHigh + 2 * TickSize) : (h0 + 2 * TickSize);
-                    double risk = Math.Max(MinRiskPts, Math.Min(MaxRiskPts, rawStop - entryPrice));
-                    stopPrice = entryPrice + risk;
+                    if (rawStop <= entryPrice) rawStop = h0 + 2 * TickSize;
+                    double risk = Math.Abs(rawStop - entryPrice);
+                    if (risk >= minRiskPts && risk <= maxRiskPts)
+                    {
+                        signalShort = true;
+                        stopPrice = rawStop;
+                    }
                 }
             }
             else if (Variant == CISDStrategyVariant.Variant2_DoubleFVG_NoIFVG)
             {
-                if ((vibes == 1 || bullCisdTrigger) && !v2TriggeredInLeg && isBullFvg && bullMoveFvgCount >= 2)
+                // ICT-corrected: CISD trigger bar only + 2+ FVGs from OPPOSING delivery run
+                if (bullCisdTrigger && !v2TriggeredInLeg && priorBearFvgCount >= 2)
                 {
-                    signalLong = true;
-                    entryPrice = c0;
+                    entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginLow) ? (legOriginLow - 2 * TickSize) : (l0 - 2 * TickSize);
-                    double risk = Math.Max(MinRiskPts, Math.Min(MaxRiskPts, entryPrice - rawStop));
-                    stopPrice = entryPrice - risk;
-                    v2TriggeredInLeg = true;
+                    if (rawStop >= entryPrice) rawStop = l0 - 2 * TickSize;
+                    double risk = Math.Abs(entryPrice - rawStop);
+                    if (risk >= minRiskPts && risk <= maxRiskPts)
+                    {
+                        signalLong = true;
+                        stopPrice = rawStop;
+                        v2TriggeredInLeg = true;
+                    }
                 }
-                else if ((vibes == -1 || bearCisdTrigger) && !v2TriggeredInLeg && isBearFvg && bearMoveFvgCount >= 2)
+                else if (bearCisdTrigger && !v2TriggeredInLeg && priorBullFvgCount >= 2)
                 {
-                    signalShort = true;
-                    entryPrice = c0;
+                    entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginHigh) ? (legOriginHigh + 2 * TickSize) : (h0 + 2 * TickSize);
-                    double risk = Math.Max(MinRiskPts, Math.Min(MaxRiskPts, rawStop - entryPrice));
-                    stopPrice = entryPrice + risk;
-                    v2TriggeredInLeg = true;
+                    if (rawStop <= entryPrice) rawStop = h0 + 2 * TickSize;
+                    double risk = Math.Abs(rawStop - entryPrice);
+                    if (risk >= minRiskPts && risk <= maxRiskPts)
+                    {
+                        signalShort = true;
+                        stopPrice = rawStop;
+                        v2TriggeredInLeg = true;
+                    }
                 }
             }
 
@@ -611,23 +650,39 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             bool canEnter = inRth && (todayTradeCount < MaxDailyTrades) && (Position.MarketPosition == MarketPosition.Flat);
 
             // Diagnostic CSV row for every bar (full backtest range)
+            // Includes all state machine variables needed for bar-by-bar parity comparison.
             {
                 if (!diagCsvHeaderWritten)
                 {
-                    diagCsv.WriteLine("BarCloseTime,BarOpenTime,Open,High,Low,Close,CandlePersonality,Vibes,BagholderEntry,PainThreshold,BullCisdTrigger,BearCisdTrigger,BullFvgCount,BearFvgCount,IsBullFvg,IsBearFvg,SignalLong,SignalShort,CanEnter,InRth,HasBPR,HasIFVG");
+                    diagCsv.WriteLine("BarCloseTime,BarOpenTime,Open,High,Low,Close,CandlePersonality,Vibes,BagholderEntry,PainThreshold,BullCisdTrigger,BearCisdTrigger,BullFvgCount,BearFvgCount,PriorBullFvgCount,PriorBearFvgCount,IsBullFvg,IsBearFvg,IsBullIfvg,IsBearIfvg,IsBullBpr,IsBearBpr,LegCisdLevel,LegCrossedLevel,LegOriginLow,LegOriginHigh,V2TriggeredInLeg,SignalLong,SignalShort,EntryPrice,StopPrice,RiskPts,MinRiskPts,MaxRiskPts,CanEnter,InRth,Variant");
                     diagCsvHeaderWritten = true;
                 }
                 DateTime barOpenTime = Time[0].AddMinutes(-BarsPeriod.Value);
-                diagCsv.WriteLine(string.Format("{0:yyyy-MM-dd HH:mm:ss},{1:yyyy-MM-dd HH:mm:ss},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17},{18},{19},{20},{21}",
+                double riskPtsVal = (signalLong || signalShort) && !double.IsNaN(stopPrice) ? Math.Abs(entryPrice - stopPrice) : double.NaN;
+                diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "{0:yyyy-MM-dd HH:mm:ss},{1:yyyy-MM-dd HH:mm:ss},{2:G},{3:G},{4:G},{5:G},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17},{18},{19},{20},{21},{22},{23},{24},{25},{26},{27},{28},{29:G},{30:G},{31:G},{32:G},{33:G},{34},{35},{36}",
                     Time[0], barOpenTime, o0, h0, l0, c0, candlePersonality, vibes,
-                    double.IsNaN(bagholderEntry) ? "" : bagholderEntry.ToString("G"),
-                    double.IsNaN(painThreshold) ? "" : painThreshold.ToString("G"),
+                    double.IsNaN(bagholderEntry) ? "" : bagholderEntry.ToString("G", CultureInfo.InvariantCulture),
+                    double.IsNaN(painThreshold) ? "" : painThreshold.ToString("G", CultureInfo.InvariantCulture),
                     bullCisdTrigger ? 1 : 0, bearCisdTrigger ? 1 : 0,
                     bullMoveFvgCount, bearMoveFvgCount,
+                    priorBullFvgCount, priorBearFvgCount,
                     isBullFvg ? 1 : 0, isBearFvg ? 1 : 0,
+                    isBullIfvg ? 1 : 0, isBearIfvg ? 1 : 0,
+                    isBullBpr ? 1 : 0, isBearBpr ? 1 : 0,
+                    double.IsNaN(legCisdLevel) ? "" : legCisdLevel.ToString("G", CultureInfo.InvariantCulture),
+                    double.IsNaN(legCrossedLevel) ? "" : legCrossedLevel.ToString("G", CultureInfo.InvariantCulture),
+                    double.IsNaN(legOriginLow) ? "" : legOriginLow.ToString("G", CultureInfo.InvariantCulture),
+                    double.IsNaN(legOriginHigh) ? "" : legOriginHigh.ToString("G", CultureInfo.InvariantCulture),
+                    v2TriggeredInLeg ? 1 : 0,
                     signalLong ? 1 : 0, signalShort ? 1 : 0,
+                    double.IsNaN(entryPrice) ? "" : entryPrice.ToString("G", CultureInfo.InvariantCulture),
+                    double.IsNaN(stopPrice) ? "" : stopPrice.ToString("G", CultureInfo.InvariantCulture),
+                    double.IsNaN(riskPtsVal) ? "" : riskPtsVal.ToString("G", CultureInfo.InvariantCulture),
+                    minRiskPts.ToString("G", CultureInfo.InvariantCulture),
+                    maxRiskPts.ToString("G", CultureInfo.InvariantCulture),
                     canEnter ? 1 : 0, inRth ? 1 : 0,
-                    legHasBpr ? 1 : 0, legHasIfvg ? 1 : 0));
+                    (int)Variant));
                 diagCsv.Flush();
             }
 

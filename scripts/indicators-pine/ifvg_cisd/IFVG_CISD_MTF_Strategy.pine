@@ -34,8 +34,8 @@ i_variant         = input.string("Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry 
 var string GRP_RISK = "2. Risk & Position Management"
 i_rMultTP1        = input.float(1.0, "Queen Target R-Multiplier (TP1 50%)", step=0.1, group=GRP_RISK)
 i_rMultTP2        = input.float(2.5, "Runner Target R-Multiplier (TP2 50%)", step=0.5, group=GRP_RISK)
-i_minRiskPts      = input.float(6.0, "Min Risk (Points)", step=0.5, group=GRP_RISK)
-i_maxRiskPts      = input.float(80.0, "Max Risk Ceiling (Points)", step=5.0, group=GRP_RISK)
+i_minRiskBps      = input.float(2.0, "Min Risk (Basis Points)", step=0.5, group=GRP_RISK, tooltip="1 bps = 0.01% of price. Skip if risk below this.")
+i_maxRiskBps      = input.float(15.0, "Max Risk Ceiling (Basis Points)", step=1.0, group=GRP_RISK, tooltip="Prop firm limit. Skip if structural risk above this.")
 i_maxDailyTrades  = input.int(5, "Max Trades Per Day", minval=1, maxval=10, group=GRP_RISK)
 
 var string GRP_SESS = "3. Session Windows"
@@ -312,23 +312,35 @@ bool longsRekt      = vibes == 1 and close < bagholderEntry
 // Leg Trackers
 var bool  legHasBpr        = false
 var bool  legHasIfvg       = false
-var float legOriginLow     = na
-var float legOriginHigh    = na
-var float legCisdLevel     = na
+var float legOriginLow     = na    // crossed CISD level (structural stop for LONG)
+var float legOriginHigh    = na    // crossed CISD level (structural stop for SHORT)
+var float legCisdLevel     = na    // new armed CISD level (entry price)
+var float legCrossedLevel  = na    // the old regime's level that was breached
 var bool  v2TriggeredInLeg = false
+
+// Prior leg FVG counts (carried forward on CISD flip)
+// When a bull CISD fires, bearMoveFvgCount has the FVGs from the prior bear delivery run.
+// When a bear CISD fires, bullMoveFvgCount has the FVGs from the prior bull delivery run.
+var int   priorBearFvgCount = 0   // FVGs from the bear run that led into a bull CISD
+var int   priorBullFvgCount = 0   // FVGs from the bull run that led into a bear CISD
 
 bool bullCisdTrigger = false
 bool bearCisdTrigger = false
 
+// Snapshot the crossed level BEFORE re-arming
+float crossedLevelSnapshot = bagholderEntry
+
 if shortsSqueezed
     bullCisdTrigger  := true
     vibes            := 1
-    legOriginLow     := na
-    legOriginHigh    := bagholderEntry
-    legCisdLevel     := bagholderEntry
+    legCrossedLevel  := crossedLevelSnapshot
+    legOriginLow     := crossedLevelSnapshot  // structural stop = crossed bear CISD level
+    legOriginHigh    := na
+    legCisdLevel     := bagholderEntry         // entry = the CISD level that was crossed
     legHasBpr        := isBullBpr
     legHasIfvg       := isBullIfvg
     v2TriggeredInLeg := false
+    priorBearFvgCount := bearMoveFvgCount      // carry prior bear-run FVGs
     bullMoveFvgCount := 0
 
     if i_drawCisd
@@ -350,12 +362,14 @@ if shortsSqueezed
 else if longsRekt
     bearCisdTrigger   := true
     vibes             := -1
-    legOriginLow      := bagholderEntry
-    legOriginHigh     := na
-    legCisdLevel      := bagholderEntry
+    legCrossedLevel   := crossedLevelSnapshot
+    legOriginLow      := na
+    legOriginHigh     := crossedLevelSnapshot  // structural stop = crossed bull CISD level
+    legCisdLevel      := bagholderEntry          // entry = the CISD level that was crossed
     legHasBpr         := isBearBpr
     legHasIfvg        := isBearIfvg
     v2TriggeredInLeg  := false
+    priorBullFvgCount := bullMoveFvgCount        // carry prior bull-run FVGs
     bearMoveFvgCount  := 0
 
     if i_drawCisd
@@ -381,62 +395,85 @@ if vibes == -1 and isBearFvg
     bearMoveFvgCount += 1
 
 // ═══════════════════════════════════════════════════════════════════
-// SECTION 4 — VARIANT SIGNAL LOGIC
+// SECTION 4 — VARIANT SIGNAL LOGIC (ICT-corrected)
 // ═══════════════════════════════════════════════════════════════════
+// All variants: entry at CISD level, stop at crossed CISD level (SL-4),
+// risk in basis points (prop firm compatible). Skip if risk outside limits.
+
 bool signalLong = false
 bool signalShort = false
 float entryPrice = close
 float stopPrice = na
 string signalTag = ""
 
+// Bps risk limits: min_risk = price * min_bps / 10000, max_risk = price * max_bps / 10000
+float priceRef = close
+float minRiskPts = priceRef * i_minRiskBps / 10000.0
+float maxRiskPts = priceRef * i_maxRiskBps / 10000.0
+
 if i_variant == "Baseline: IFVG + CISD (ATR Stop)"
     if vibes == 1 and isBullIfvg
         signalLong  := true
         entryPrice  := close
-        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, atr14 * 1.8))
+        float risk  = math.max(minRiskPts, math.min(maxRiskPts, atr14 * 1.8))
         stopPrice   := entryPrice - risk
         signalTag   := "Baseline IFVG"
     else if vibes == -1 and isBearIfvg
         signalShort := true
         entryPrice  := close
-        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, atr14 * 1.8))
+        float risk  = math.max(minRiskPts, math.min(maxRiskPts, atr14 * 1.8))
         stopPrice   := entryPrice + risk
         signalTag   := "Baseline IFVG"
 
 else if i_variant == "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High Stop)"
+    // Entry at CISD level, stop at crossed CISD level (SL-4)
+    // Stop must be below entry for LONG, above for SHORT
     if bullCisdTrigger and (legHasBpr or (legHasIfvg and bullMoveFvgCount >= 1))
-        signalLong  := true
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginLow) ? (legOriginLow - syminfo.mintick * 2) : (low - syminfo.mintick * 2)
-        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, entryPrice - rawStop))
-        stopPrice   := entryPrice - risk
-        signalTag   := "V1: CISD Entry"
+        if rawStop >= entryPrice
+            rawStop := low - syminfo.mintick * 2
+        float risk  = math.abs(entryPrice - rawStop)
+        if risk >= minRiskPts and risk <= maxRiskPts
+            signalLong  := true
+            stopPrice   := rawStop
+            signalTag   := "V1: CISD Entry"
     else if bearCisdTrigger and (legHasBpr or (legHasIfvg and bearMoveFvgCount >= 1))
-        signalShort := true
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginHigh) ? (legOriginHigh + syminfo.mintick * 2) : (high + syminfo.mintick * 2)
-        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, rawStop - entryPrice))
-        stopPrice   := entryPrice + risk
-        signalTag   := "V1: CISD Entry"
+        if rawStop <= entryPrice
+            rawStop := high + syminfo.mintick * 2
+        float risk  = math.abs(rawStop - entryPrice)
+        if risk >= minRiskPts and risk <= maxRiskPts
+            signalShort := true
+            stopPrice   := rawStop
+            signalTag   := "V1: CISD Entry"
 
 else if i_variant == "Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry (CISD Low/High Stop)"
-    // Bullish Variant 2: In Bullish Regime, 2nd Bullish FVG is printed
-    if (vibes == 1 or bullCisdTrigger) and not v2TriggeredInLeg and isBullFvg and bullMoveFvgCount >= 2
-        signalLong  := true
-        entryPrice  := close
+    // ICT-corrected: CISD trigger bar only + 2+ FVGs from the OPPOSING delivery run
+    // (the delivery that got reversed). Entry at CISD level, stop at crossed CISD level.
+    if bullCisdTrigger and not v2TriggeredInLeg and priorBearFvgCount >= 2
+        entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginLow) ? (legOriginLow - syminfo.mintick * 2) : (low - syminfo.mintick * 2)
-        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, entryPrice - rawStop))
-        stopPrice   := entryPrice - risk
-        v2TriggeredInLeg := true
-        signalTag   := "V2: 2nd FVG Entry"
-    else if (vibes == -1 or bearCisdTrigger) and not v2TriggeredInLeg and isBearFvg and bearMoveFvgCount >= 2
-        signalShort := true
-        entryPrice  := close
+        if rawStop >= entryPrice
+            rawStop := low - syminfo.mintick * 2
+        float risk  = math.abs(entryPrice - rawStop)
+        if risk >= minRiskPts and risk <= maxRiskPts
+            signalLong  := true
+            stopPrice   := rawStop
+            v2TriggeredInLeg := true
+            signalTag   := "V2: CISD+2FVG"
+    else if bearCisdTrigger and not v2TriggeredInLeg and priorBullFvgCount >= 2
+        entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginHigh) ? (legOriginHigh + syminfo.mintick * 2) : (high + syminfo.mintick * 2)
-        float risk  = math.max(i_minRiskPts, math.min(i_maxRiskPts, rawStop - entryPrice))
-        stopPrice   := entryPrice + risk
-        v2TriggeredInLeg := true
-        signalTag   := "V2: 2nd FVG Entry"
+        if rawStop <= entryPrice
+            rawStop := high + syminfo.mintick * 2
+        float risk  = math.abs(rawStop - entryPrice)
+        if risk >= minRiskPts and risk <= maxRiskPts
+            signalShort := true
+            stopPrice   := rawStop
+            v2TriggeredInLeg := true
+            signalTag   := "V2: CISD+2FVG"
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 5 — EXECUTION & POSITION MANAGEMENT
