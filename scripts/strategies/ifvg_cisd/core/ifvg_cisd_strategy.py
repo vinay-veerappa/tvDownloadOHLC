@@ -84,6 +84,12 @@ def _variant_signal_kernel(
         ce = cisd_event_arr[i]; cs = cisd_state_arr[i]
         fe = fvg_event_arr[i]; ie = ifvg_event_arr[i]; be = bpr_event_arr[i]
 
+        # Snapshot prior leg flags BEFORE reset (for V1 check at flip)
+        prior_leg_has_bpr = leg_has_bpr
+        prior_leg_has_ifvg = leg_has_ifvg
+        prior_bull_fvg_snap = bull_fvg_count
+        prior_bear_fvg_snap = bear_fvg_count
+
         if ce == 1:
             crossed = np.nan
             if i > 0 and not np.isnan(bear_cisd_level_arr[i-1]):
@@ -92,7 +98,7 @@ def _variant_signal_kernel(
             leg_origin_low = crossed; leg_origin_high = np.nan
             leg_cisd_level = bull_cisd_level_arr[i] if not np.isnan(bull_cisd_level_arr[i]) else o
             leg_has_bpr = False; leg_has_ifvg = False
-            prior_bear_fvg = bear_fvg_count; bull_fvg_count = 0; v2_triggered = False
+            prior_bear_fvg = prior_bear_fvg_snap; bull_fvg_count = 0; v2_triggered = False
         elif ce == -1:
             crossed = np.nan
             if i > 0 and not np.isnan(bull_cisd_level_arr[i-1]):
@@ -101,7 +107,7 @@ def _variant_signal_kernel(
             leg_origin_low = np.nan; leg_origin_high = crossed
             leg_cisd_level = bear_cisd_level_arr[i] if not np.isnan(bear_cisd_level_arr[i]) else o
             leg_has_bpr = False; leg_has_ifvg = False
-            prior_bull_fvg = bull_fvg_count; bear_fvg_count = 0; v2_triggered = False
+            prior_bull_fvg = prior_bull_fvg_snap; bear_fvg_count = 0; v2_triggered = False
         else:
             regime = cs
 
@@ -117,7 +123,10 @@ def _variant_signal_kernel(
         max_risk = price_ref * max_risk_bps / 10000.0
 
         if variant_int == 1:
-            if ce == 1 and (leg_has_bpr or (leg_has_ifvg and bull_fvg_count >= 1)):
+            # V1: CISD trigger + (prior leg had BPR OR (prior leg had IFVG + >=1 opposing FVG))
+            # For a bull CISD, prior leg was bear -> check bear FVGs
+            # For a bear CISD, prior leg was bull -> check bull FVGs
+            if ce == 1 and (prior_leg_has_bpr or (prior_leg_has_ifvg and prior_bear_fvg_snap >= 1)):
                 ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
                 rs = leg_origin_low - 2*tick_size if not np.isnan(leg_origin_low) else l - 2*tick_size
                 if rs >= ep: rs = l - 2*tick_size
@@ -125,7 +134,7 @@ def _variant_signal_kernel(
                 if risk >= min_risk and risk <= max_risk:
                     sig_idx[sig_count]=i; sig_dir[sig_count]=1; sig_entry[sig_count]=ep
                     sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
-            elif ce == -1 and (leg_has_bpr or (leg_has_ifvg and bear_fvg_count >= 1)):
+            elif ce == -1 and (prior_leg_has_bpr or (prior_leg_has_ifvg and prior_bull_fvg_snap >= 1)):
                 ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
                 rs = leg_origin_high + 2*tick_size if not np.isnan(leg_origin_high) else h + 2*tick_size
                 if rs <= ep: rs = h + 2*tick_size

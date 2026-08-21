@@ -503,6 +503,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Snapshot the crossed level BEFORE re-arming
             double crossedLevelSnapshot = bagholderEntry;
 
+            // Snapshot prior leg flags BEFORE reset (for V1 check at flip)
+            bool priorLegHasBpr = legHasBpr;
+            bool priorLegHasIfvg = legHasIfvg;
+            int priorBullFvgSnap = bullMoveFvgCount;
+            int priorBearFvgSnap = bearMoveFvgCount;
+
             if (shortsSqueezed)
             {
                 bullCisdTrigger = true;
@@ -515,10 +521,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 ConsultCrystalBall(1, out ep, out eb);
                 legCisdLevel = ep;                        // entry = new armed CISD level
                 bagholderEntry = ep;
-                legHasBpr = isBullBpr;
-                legHasIfvg = isBullIfvg;
+                legHasBpr = false;                         // reset for new leg
+                legHasIfvg = false;
                 v2TriggeredInLeg = false;
-                priorBearFvgCount = bearMoveFvgCount;    // carry prior bear-run FVGs
+                priorBearFvgCount = priorBearFvgSnap;      // carry prior bear-run FVGs
                 bullMoveFvgCount = 0;
                 painThreshold = h0;
             }
@@ -534,10 +540,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 ConsultCrystalBall(-1, out ep2, out eb2);
                 legCisdLevel = ep2;                       // entry = new armed CISD level
                 bagholderEntry = ep2;
-                legHasBpr = isBearBpr;
-                legHasIfvg = isBearIfvg;
+                legHasBpr = false;                          // reset for new leg
+                legHasIfvg = false;
                 v2TriggeredInLeg = false;
-                priorBullFvgCount = bullMoveFvgCount;    // carry prior bull-run FVGs
+                priorBullFvgCount = priorBullFvgSnap;      // carry prior bull-run FVGs
                 bearMoveFvgCount = 0;
                 painThreshold = l0;
             }
@@ -576,10 +582,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     stopPrice = entryPrice + risk;
                 }
             }
-            else if (Variant == 1) // Variant1: BPR or (IFVG+FVG)
+            else if (Variant == 1) // Variant1: BPR or (IFVG+FVG) from prior leg
             {
-                // Entry at CISD level, stop at crossed CISD level (SL-4)
-                if (bullCisdTrigger && (legHasBpr || (legHasIfvg && bullMoveFvgCount >= 1)))
+                // V1 uses PRIOR leg flags. For a bull CISD, prior leg was bear.
+                // Check if prior bear leg had BPR or (IFVG in bear direction + bear FVGs).
+                if (bullCisdTrigger && (priorLegHasBpr || (priorLegHasIfvg && priorBearFvgSnap >= 1)))
                 {
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginLow) ? (legOriginLow - 2 * TickSize) : (l0 - 2 * TickSize);
@@ -591,7 +598,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                         stopPrice = rawStop;
                     }
                 }
-                else if (bearCisdTrigger && (legHasBpr || (legHasIfvg && bearMoveFvgCount >= 1)))
+                else if (bearCisdTrigger && (priorLegHasBpr || (priorLegHasIfvg && priorBullFvgSnap >= 1)))
                 {
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginHigh) ? (legOriginHigh + 2 * TickSize) : (h0 + 2 * TickSize);

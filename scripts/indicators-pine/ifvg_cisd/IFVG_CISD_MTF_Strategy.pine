@@ -318,11 +318,11 @@ var float legCisdLevel     = na    // new armed CISD level (entry price)
 var float legCrossedLevel  = na    // the old regime's level that was breached
 var bool  v2TriggeredInLeg = false
 
-// Prior leg FVG counts (carried forward on CISD flip)
-// When a bull CISD fires, bearMoveFvgCount has the FVGs from the prior bear delivery run.
-// When a bear CISD fires, bullMoveFvgCount has the FVGs from the prior bull delivery run.
-var int   priorBearFvgCount = 0   // FVGs from the bear run that led into a bull CISD
-var int   priorBullFvgCount = 0   // FVGs from the bull run that led into a bear CISD
+// Prior leg flags (snapshot before reset at CISD flip)
+var bool  priorLegHasBpr = false
+var bool  priorLegHasIfvg = false
+var int   priorBullFvgSnap = 0
+var int   priorBearFvgSnap = 0
 
 bool bullCisdTrigger = false
 bool bearCisdTrigger = false
@@ -330,17 +330,24 @@ bool bearCisdTrigger = false
 // Snapshot the crossed level BEFORE re-arming
 float crossedLevelSnapshot = bagholderEntry
 
+// Snapshot prior leg flags BEFORE reset
+priorLegHasBpr := legHasBpr
+priorLegHasIfvg := legHasIfvg
+priorBullFvgSnap := bullMoveFvgCount
+priorBearFvgSnap := bearMoveFvgCount
+
 if shortsSqueezed
     bullCisdTrigger  := true
     vibes            := 1
     legCrossedLevel  := crossedLevelSnapshot
     legOriginLow     := crossedLevelSnapshot  // structural stop = crossed bear CISD level
     legOriginHigh    := na
-    legCisdLevel     := bagholderEntry         // entry = the CISD level that was crossed
-    legHasBpr        := isBullBpr
-    legHasIfvg       := isBullIfvg
+    [reset_price, reset_time] = consult_the_crystal_ball(1)
+    legCisdLevel     := reset_price             // entry = new armed CISD level
+    legHasBpr        := false                   // reset for new leg
+    legHasIfvg       := false
     v2TriggeredInLeg := false
-    priorBearFvgCount := bearMoveFvgCount      // carry prior bear-run FVGs
+    priorBearFvgCount := priorBearFvgSnap       // carry prior bear-run FVGs
     bullMoveFvgCount := 0
 
     if i_drawCisd
@@ -354,7 +361,6 @@ if shortsSqueezed
             line.delete(array.shift(cisdLines))
             label.delete(array.shift(cisdLabels))
 
-    [reset_price, reset_time] = consult_the_crystal_ball(1)
     bagholderEntry     := reset_price
     timeMachineSetting := reset_time
     painThreshold      := high
@@ -365,11 +371,12 @@ else if longsRekt
     legCrossedLevel   := crossedLevelSnapshot
     legOriginLow      := na
     legOriginHigh     := crossedLevelSnapshot  // structural stop = crossed bull CISD level
-    legCisdLevel      := bagholderEntry          // entry = the CISD level that was crossed
-    legHasBpr         := isBearBpr
-    legHasIfvg        := isBearIfvg
+    [reset_price2, reset_time2] = consult_the_crystal_ball(-1)
+    legCisdLevel      := reset_price2            // entry = new armed CISD level
+    legHasBpr         := false                   // reset for new leg
+    legHasIfvg        := false
     v2TriggeredInLeg  := false
-    priorBullFvgCount := bullMoveFvgCount        // carry prior bull-run FVGs
+    priorBullFvgCount := priorBullFvgSnap        // carry prior bull-run FVGs
     bearMoveFvgCount  := 0
 
     if i_drawCisd
@@ -383,9 +390,8 @@ else if longsRekt
             line.delete(array.shift(cisdLines))
             label.delete(array.shift(cisdLabels))
 
-    [reset_price, reset_time] = consult_the_crystal_ball(-1)
-    bagholderEntry     := reset_price
-    timeMachineSetting := reset_time
+    bagholderEntry     := reset_price2
+    timeMachineSetting := reset_time2
     painThreshold      := low
 
 // Accumulate FVGs in the active move
@@ -426,9 +432,8 @@ if i_variant == "Baseline: IFVG + CISD (ATR Stop)"
         signalTag   := "Baseline IFVG"
 
 else if i_variant == "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High Stop)"
-    // Entry at CISD level, stop at crossed CISD level (SL-4)
-    // Stop must be below entry for LONG, above for SHORT
-    if bullCisdTrigger and (legHasBpr or (legHasIfvg and bullMoveFvgCount >= 1))
+    // V1 uses PRIOR leg flags. For a bull CISD, prior leg was bear -> check bear FVGs
+    if bullCisdTrigger and (priorLegHasBpr or (priorLegHasIfvg and priorBearFvgSnap >= 1))
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginLow) ? (legOriginLow - syminfo.mintick * 2) : (low - syminfo.mintick * 2)
         if rawStop >= entryPrice
@@ -438,7 +443,7 @@ else if i_variant == "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High
             signalLong  := true
             stopPrice   := rawStop
             signalTag   := "V1: CISD Entry"
-    else if bearCisdTrigger and (legHasBpr or (legHasIfvg and bearMoveFvgCount >= 1))
+    else if bearCisdTrigger and (priorLegHasBpr or (priorLegHasIfvg and priorBullFvgSnap >= 1))
         entryPrice  := not na(legCisdLevel) ? legCisdLevel : close
         float rawStop = not na(legOriginHigh) ? (legOriginHigh + syminfo.mintick * 2) : (high + syminfo.mintick * 2)
         if rawStop <= entryPrice
