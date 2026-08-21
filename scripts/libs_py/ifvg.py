@@ -102,14 +102,16 @@ def _compute_ifvg_kernel(
     if n < 3:
         return ifvg_event, ifvg_state, ifvg_top, ifvg_bottom, ifvg_ce, ifvg_has_vi
 
-    # Active unimbalance pool
-    # type: +1 = Bullish FVG (waiting for bearish inversion), -1 = Bearish FVG (waiting for bullish inversion)
-    pool_type = np.zeros(max_active_zones, dtype=np.int8)
-    pool_top = np.zeros(max_active_zones, dtype=np.float64)
-    pool_bot = np.zeros(max_active_zones, dtype=np.float64)
-    pool_ce = np.zeros(max_active_zones, dtype=np.float64)
-    pool_vi = np.zeros(max_active_zones, dtype=np.int8)
-    pool_count = 0
+    # Two separate inversion pools (matches C# ICTFVGCISDBot):
+    #   bull pool = bull FVGs awaiting bear inversion (checked against their BOTTOM)
+    #   bear pool = bear FVGs awaiting bull inversion (checked against their TOP)
+    # Each pool is a rolling window: remove-oldest when full (C# RemoveAt(0)).
+    bull_tops = np.zeros(max_active_zones, dtype=np.float64)
+    bull_bots = np.zeros(max_active_zones, dtype=np.float64)
+    bull_count = 0
+    bear_tops = np.zeros(max_active_zones, dtype=np.float64)
+    bear_bots = np.zeros(max_active_zones, dtype=np.float64)
+    bear_count = 0
 
     current_state = 0
     active_inv_top = np.nan
@@ -149,13 +151,15 @@ def _compute_ifvg_kernel(
                     bot = min(bot, body_top_1)
                     has_vi = 1
 
-            if pool_count < max_active_zones:
-                pool_type[pool_count] = 1
-                pool_top[pool_count] = top
-                pool_bot[pool_count] = bot
-                pool_ce[pool_count] = (top + bot) / 2.0
-                pool_vi[pool_count] = has_vi
-                pool_count += 1
+            # Rolling pool: remove oldest when full (matches C# RemoveAt(0))
+            if bull_count >= max_active_zones:
+                for m in range(max_active_zones - 1):
+                    bull_tops[m] = bull_tops[m + 1]
+                    bull_bots[m] = bull_bots[m + 1]
+                bull_count = max_active_zones - 1
+            bull_tops[bull_count] = top
+            bull_bots[bull_count] = bot
+            bull_count += 1
 
         bear_gap = l2 - h0
         if bear_gap > min_gap_pts and (not require_directional_candle or (c0 < o0)):
@@ -181,56 +185,48 @@ def _compute_ifvg_kernel(
                     bot = min(bot, body_top_0)
                     has_vi = 1
 
-            if pool_count < max_active_zones:
-                pool_type[pool_count] = -1
-                pool_top[pool_count] = top
-                pool_bot[pool_count] = bot
-                pool_ce[pool_count] = (top + bot) / 2.0
-                pool_vi[pool_count] = has_vi
-                pool_count += 1
+            # Rolling pool: remove oldest when full (matches C# RemoveAt(0))
+            if bear_count >= max_active_zones:
+                for m in range(max_active_zones - 1):
+                    bear_tops[m] = bear_tops[m + 1]
+                    bear_bots[m] = bear_bots[m + 1]
+                bear_count = max_active_zones - 1
+            bear_tops[bear_count] = top
+            bear_bots[bear_count] = bot
+            bear_count += 1
 
-        # 2. Check Inversion Flips against existing pool
-        k = 0
-        while k < pool_count:
-            z_type = pool_type[k]
-            z_top = pool_top[k]
-            z_bot = pool_bot[k]
-            z_ce = pool_ce[k]
-            z_vi = pool_vi[k]
-
-            inverted = False
-
-            # Bullish Inversion: Prior Bearish FVG (-1) is body-closed ABOVE its top
-            if z_type == -1 and c0 > z_top and c1 <= z_top:
+        # 2. Check Inversion Flips (iterate newest-first, remove on inversion)
+        # Bullish Inversion: close crosses ABOVE a bear FVG top (close[1] was <= top)
+        for k in range(bear_count - 1, -1, -1):
+            if c0 > bear_tops[k] and c1 <= bear_tops[k]:
                 ifvg_event[t] = 1
                 current_state = 1
-                active_inv_top = z_top
-                active_inv_bot = z_bot
-                active_inv_ce = z_ce
-                active_inv_vi = z_vi
-                inverted = True
+                active_inv_top = bear_tops[k]
+                active_inv_bot = bear_bots[k]
+                active_inv_ce = (bear_tops[k] + bear_bots[k]) / 2.0
+                active_inv_vi = 0
+                # Remove inverted zone
+                for m in range(k, bear_count - 1):
+                    bear_tops[m] = bear_tops[m + 1]
+                    bear_bots[m] = bear_bots[m + 1]
+                bear_count -= 1
+                break
 
-            # Bearish Inversion: Prior Bullish FVG (+1) is body-closed BELOW its bottom
-            elif z_type == 1 and c0 < z_bot and c1 >= z_bot:
+        # Bearish Inversion: close crosses BELOW a bull FVG bottom (close[1] was >= bottom)
+        for k in range(bull_count - 1, -1, -1):
+            if c0 < bull_bots[k] and c1 >= bull_bots[k]:
                 ifvg_event[t] = -1
                 current_state = -1
-                active_inv_top = z_top
-                active_inv_bot = z_bot
-                active_inv_ce = z_ce
-                active_inv_vi = z_vi
-                inverted = True
-
-            if inverted:
-                # Remove from tracking pool once inverted
-                for m in range(k, pool_count - 1):
-                    pool_type[m] = pool_type[m + 1]
-                    pool_top[m] = pool_top[m + 1]
-                    pool_bot[m] = pool_bot[m + 1]
-                    pool_ce[m] = pool_ce[m + 1]
-                    pool_vi[m] = pool_vi[m + 1]
-                pool_count -= 1
-            else:
-                k += 1
+                active_inv_top = bull_tops[k]
+                active_inv_bot = bull_bots[k]
+                active_inv_ce = (bull_tops[k] + bull_bots[k]) / 2.0
+                active_inv_vi = 0
+                # Remove inverted zone
+                for m in range(k, bull_count - 1):
+                    bull_tops[m] = bull_tops[m + 1]
+                    bull_bots[m] = bull_bots[m + 1]
+                bull_count -= 1
+                break
 
         ifvg_state[t] = current_state
         if not np.isnan(active_inv_top):

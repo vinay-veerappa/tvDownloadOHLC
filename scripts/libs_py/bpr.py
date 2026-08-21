@@ -158,17 +158,22 @@ def _compute_bpr_kernel(
                 overlap_top = min(g_top, b_top)
                 overlap_bot = max(g_bot, b_bot)
 
-                if (overlap_top - overlap_bot) >= min_overlap_pts:
+                if (overlap_top - overlap_bot) > min_overlap_pts:
                     bpr_event[t] = 1
                     bpr_top[t] = overlap_top
                     bpr_bottom[t] = overlap_bot
                     bpr_midpoint[t] = (overlap_top + overlap_bot) / 2.0
                     break
 
-            if bull_count < max_active_gaps:
-                bull_tops[bull_count] = g_top
-                bull_bots[bull_count] = g_bot
-                bull_count += 1
+            # Rolling pool: remove oldest when full (matches C# RemoveAt(0))
+            if bull_count >= max_active_gaps:
+                for m in range(max_active_gaps - 1):
+                    bull_tops[m] = bull_tops[m + 1]
+                    bull_bots[m] = bull_bots[m + 1]
+                bull_count = max_active_gaps - 1
+            bull_tops[bull_count] = g_top
+            bull_bots[bull_count] = g_bot
+            bull_count += 1
 
         # 2. Detect new Bearish FVG with canonical body-gap merging
         bear_gap = l2 - h
@@ -202,17 +207,22 @@ def _compute_bpr_kernel(
                 overlap_top = min(g_top, b_top)
                 overlap_bot = max(g_bot, b_bot)
 
-                if (overlap_top - overlap_bot) >= min_overlap_pts:
+                if (overlap_top - overlap_bot) > min_overlap_pts:
                     bpr_event[t] = -1
                     bpr_top[t] = overlap_top
                     bpr_bottom[t] = overlap_bot
                     bpr_midpoint[t] = (overlap_top + overlap_bot) / 2.0
                     break
 
-            if bear_count < max_active_gaps:
-                bear_tops[bear_count] = g_top
-                bear_bots[bear_count] = g_bot
-                bear_count += 1
+            # Rolling pool: remove oldest when full (matches C# RemoveAt(0))
+            if bear_count >= max_active_gaps:
+                for m in range(max_active_gaps - 1):
+                    bear_tops[m] = bear_tops[m + 1]
+                    bear_bots[m] = bear_bots[m + 1]
+                bear_count = max_active_gaps - 1
+            bear_tops[bear_count] = g_top
+            bear_bots[bear_count] = g_bot
+            bear_count += 1
 
     return bpr_event, bpr_top, bpr_bottom, bpr_midpoint, is_mitigated
 

@@ -117,6 +117,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // Unmitigated FVG tracking for the active leg (V2 displacement proxy)
         private List<double> legBullFvgBots;   // bull FVG bottoms (mitigated when low <= bot)
         private List<double> legBearFvgTops;   // bear FVG tops (mitigated when high >= top)
+        private double lastBullFvgBot;         // merged bull FVG bottom (this bar)
+        private double lastBearFvgTop;         // merged bear FVG top (this bar)
 
         // Active Trade State
         private double activeEntryPrice;
@@ -196,6 +198,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 legBullFvgBots = new List<double>();
                 legBearFvgTops = new List<double>();
+                lastBullFvgBot = double.NaN;
+                lastBearFvgTop = double.NaN;
 
                 activeEntryPrice = double.NaN;
                 activeStopLoss = double.NaN;
@@ -402,6 +406,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bullFvgTops.Add(gTop);
                 bullFvgBots.Add(gBot);
                 if (bullFvgTops.Count > 50) { bullFvgTops.RemoveAt(0); bullFvgBots.RemoveAt(0); }
+                lastBullFvgBot = gBot;
 
                 // Add to inversion pool (awaiting bear inversion)
                 invBullFvgTops.Add(gTop);
@@ -448,6 +453,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bearFvgTops.Add(gTop);
                 bearFvgBots.Add(gBot);
                 if (bearFvgTops.Count > 50) { bearFvgTops.RemoveAt(0); bearFvgBots.RemoveAt(0); }
+                lastBearFvgTop = gTop;
 
                 // Add to inversion pool (awaiting bull inversion)
                 invBearFvgTops.Add(gTop);
@@ -548,6 +554,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             bool priorLegHasIfvg = legHasIfvg;
             int priorBullFvgSnap = bullMoveFvgCount;
             int priorBearFvgSnap = bearMoveFvgCount;
+            // Unmitigated FVG counts (V2 displacement proxy — matches Python kernel)
+            int priorBullFvgUnmitigated = legBullFvgBots.Count;
+            int priorBearFvgUnmitigated = legBearFvgTops.Count;
 
             if (shortsSqueezed)
             {
@@ -596,15 +605,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (vibes == 1 && isBullFvg)
             {
                 bullMoveFvgCount++;
-                legBullFvgBots.Add(h2);   // bull FVG bottom (mitigated when low <= bot)
+                legBullFvgBots.Add(lastBullFvgBot);   // merged bull FVG bottom
             }
             if (vibes == -1 && isBearFvg)
             {
                 bearMoveFvgCount++;
-                legBearFvgTops.Add(l2);   // bear FVG top (mitigated when high >= top)
+                legBearFvgTops.Add(lastBearFvgTop);   // merged bear FVG top
             }
             if (isBullBpr || isBearBpr) legHasBpr = true;
-            if (isBullIfvg || isBearIfvg) legHasIfvg = true;
+            if ((isBullIfvg && vibes == 1) || (isBearIfvg && vibes == -1)) legHasIfvg = true;
 
             // Mitigation: remove filled leg FVGs
             for (int b = legBullFvgBots.Count - 1; b >= 0; b--)
@@ -679,7 +688,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 // ICT-corrected: CISD trigger bar only + 2+ UNMITIGATED FVGs from
                 // the OPPOSING delivery run (the delivery that got reversed).
-                if (bullCisdTrigger && !v2TriggeredInLeg && priorBearFvgCount >= 2)
+                if (bullCisdTrigger && !v2TriggeredInLeg && priorBearFvgUnmitigated >= 2)
                 {
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginLow) ? (legOriginLow - 2 * TickSize) : (l0 - 2 * TickSize);
@@ -692,7 +701,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                         v2TriggeredInLeg = true;
                     }
                 }
-                else if (bearCisdTrigger && !v2TriggeredInLeg && priorBullFvgCount >= 2)
+                else if (bearCisdTrigger && !v2TriggeredInLeg && priorBullFvgUnmitigated >= 2)
                 {
                     entryPrice = !double.IsNaN(legCisdLevel) ? legCisdLevel : c0;
                     double rawStop = !double.IsNaN(legOriginHigh) ? (legOriginHigh + 2 * TickSize) : (h0 + 2 * TickSize);
