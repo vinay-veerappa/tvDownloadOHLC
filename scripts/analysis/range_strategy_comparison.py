@@ -494,7 +494,11 @@ class BacktestEngine:
         if session_bars is None:
             return None
 
-        sim = session_bars.loc[signal.entry_time:]
+        # Fill checks start from the NEXT 1m bar after the 5m signal bar closes.
+        # Using signal.entry_time (5m bar start, inclusive) includes the 1m bars that
+        # formed the signal — that's a lookahead (the entry level was MADE by those bars).
+        # Next bar after signal = signal bar end = signal time + 5 min.
+        sim = session_bars.loc[signal.entry_time + pd.Timedelta(minutes=5):]
         if len(sim) == 0:
             return None
 
