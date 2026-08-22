@@ -47,6 +47,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public int    MaxConsecutiveLosers      { get; set; } = 2;
         public int    PauseMinutes              { get; set; } = 30;
         public int    HardStopConsecutiveLosers { get; set; } = 3;
+
+        // P1-149. The per-account contract cap. 0 (or less) means NO CAP — matching how the guard
+        // reports MaxContractsPerAccount <= 0 as "no per-account contract cap". Consulted by
+        // CanTradeSize below, which delegates the actual decision to the pure, mutation-tested
+        // ContractCapGate so the same rule the bridge enforces on its order paths is enforced on
+        // the RiskManagerBase entry path too.
+        public int    MaxContractsPerAccount    { get; set; } = 0;
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -125,6 +132,59 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     return false;
 
                 return true;
+            }
+        }
+
+        /// <summary>
+        /// P1-149. The PRE-TRADE contract-size decision for the RiskManagerBase entry path: whether
+        /// this order may be placed given the account's configured MaxContractsPerAccount and the
+        /// position it currently holds.
+        ///
+        /// The actual logic lives in the pure, mutation-tested <see cref="ContractCapGate"/> — this
+        /// method only supplies the account's cap and delegates, so the strategy-side path and the
+        /// bridge/order path enforce the SAME rule (including its load-bearing anti-trap exception:
+        /// a strictly-reducing order is NEVER refused, whatever the cap and position size).
+        ///
+        /// Unregistered (excluded) accounts always ALLOW — not monitored — matching
+        /// <see cref="CanTrade"/>. Returns the full decision so the caller can log the reason and the
+        /// resulting position, rather than a bare bool that says nothing about what to do instead.
+        ///
+        /// <paramref name="positionSide"/> is NT8's MarketPosition ("Long"/"Short"/"Flat") and
+        /// <paramref name="positionQuantity"/> is its ABSOLUTE magnitude — never a signed value.
+        /// </summary>
+        public static NinjaTrader.NinjaScript.AddOns.ContractCapDecision CanTradeSize(
+            string accountName, int orderQuantity, string orderSide,
+            string positionSide, int positionQuantity)
+        {
+            lock (_lock)
+            {
+                if (!_parameters.ContainsKey(accountName))
+                    return new NinjaTrader.NinjaScript.AddOns.ContractCapDecision
+                    {
+                        Allowed = true,
+                        ResultingQuantity = positionQuantity
+                    };
+
+                int cap = _parameters[accountName].MaxContractsPerAccount;
+                return NinjaTrader.NinjaScript.AddOns.ContractCapGate.Evaluate(
+                    cap, orderQuantity, orderSide, positionSide, positionQuantity,
+                    accountName, null);
+            }
+        }
+
+        /// <summary>
+        /// P1-149. Sets this account's contract cap. Called by RiskManagerAddOn from the guard's
+        /// single source of truth (RiskConfig.Sizing.MaxContractsPerAccount) -- at registration and
+        /// again on each equity update, so a guard addon that loads AFTER this one, or a config change,
+        /// is picked up within a cycle rather than leaving the cap stuck at its registration-time value.
+        /// A no-op for an unregistered account: nothing to cap until it is monitored.
+        /// </summary>
+        public static void SetContractCap(string accountName, int cap)
+        {
+            lock (_lock)
+            {
+                if (_parameters.TryGetValue(accountName, out AccountRiskParameters parms))
+                    parms.MaxContractsPerAccount = cap;
             }
         }
 

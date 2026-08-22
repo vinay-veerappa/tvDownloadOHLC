@@ -529,6 +529,35 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             string signalName = GetSignalName(direction);
 
+            // ── P1-149 sub-task 2: pre-trade contract-size refusal (strategy-side half) ──
+            // The one enforcement gap RiskManagerBase strategies had: the per-account contract cap
+            // (MaxContractsPerAccount) was configured, reported in the UI and enforced reactively by the
+            // guard's MAX_SIZE_BREACH flatten -- but nothing on THIS entry path said no BEFORE the fill.
+            // The decision lives in the pure, mutation-tested ContractCapGate; RiskGatekeeper.CanTradeSize
+            // supplies this account's cap and delegates, so the strategy path and the bridge/order path
+            // enforce the SAME rule. INERT unless an operator has set MaxContractsPerAccount > 0 (cap <= 0
+            // allows everything), and a strictly-reducing order is NEVER refused, so this can only block a
+            // size-INCREASING entry that would leave the account over its cap. Position.Quantity is an
+            // ABSOLUTE magnitude and MarketPosition carries the side -- there is no sign to misread.
+            {
+                string sizeAcct = (Account != null) ? Account.Name : "";
+                bool sizeIsBacktest = sizeAcct.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
+                                   || sizeAcct.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (!sizeIsBacktest)
+                {
+                    string orderSide = direction == "Long" ? "buy" : "sell";
+                    var sizeDecision = RiskGatekeeper.CanTradeSize(
+                        sizeAcct, 1, orderSide,
+                        Position.MarketPosition.ToString(), Position.Quantity);
+                    if (!sizeDecision.Allowed)
+                    {
+                        Log(string.Format("[RiskManagerBase] entry refused by contract cap: {0}",
+                            sizeDecision.Reason), LogLevel.Warning);
+                        return;
+                    }
+                }
+            }
+
             if (TradePolicy == "BaseHits")
             {
                 var targets = GetBaseHitsTargets();

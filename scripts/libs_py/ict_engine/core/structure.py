@@ -230,12 +230,12 @@ def _compute_cisd_neo_jit(
 @validate_ohlc(input_type="ohlc")
 def detect_cisd_neo(ohlc: pd.DataFrame) -> pd.DataFrame:
     """
-    Authoritative CISD (Change in State of Delivery) Engine - Neo/Institutional Standard.
+    Authoritative CISD (Change in State of Delivery) Engine.
 
-    Detects true Changes in State of Delivery (CISD) by:
-    1. Tracking multi-bar pullback delivery runs (recording the deepest open price).
-    2. Arming anchor levels ONLY upon structural impulse expansions (new swing highs/lows).
-    3. Confirming the state flip when price body-closes through the armed anchor level.
+    Delegates to the high-performance ``scripts.libs_py.cisd`` kernel that matches
+    the NinjaTrader C# bot and TradingView Pine Script behavior: a 3-bar swing
+    pivot arms a delivery-run open level, and a later body-close beyond that level
+    triggers the CISD event.
 
     Parameters
     ----------
@@ -252,26 +252,53 @@ def detect_cisd_neo(ohlc: pd.DataFrame) -> pd.DataFrame:
         - 'structure_top'     : float (Running structural swing high)
         - 'structure_bottom'  : float (Running structural swing low)
     """
-    open_arr = np.ascontiguousarray(ohlc["open"].values, dtype=np.float64)
-    high_arr = np.ascontiguousarray(ohlc["high"].values, dtype=np.float64)
-    low_arr = np.ascontiguousarray(ohlc["low"].values, dtype=np.float64)
-    close_arr = np.ascontiguousarray(ohlc["close"].values, dtype=np.float64)
+    from scripts.libs_py.cisd import compute_cisd
 
-    events, states, bull_lvls, bear_lvls, s_tops, s_bots = _compute_cisd_neo_jit(
-        open_arr, high_arr, low_arr, close_arr
-    )
-
+    res = compute_cisd(ohlc)
+    # Map the performance-lib output to the legacy column names expected by callers.
     return pd.DataFrame(
         {
-            "cisd_event": events,
-            "cisd_state": states,
-            "active_bull_level": bull_lvls,
-            "active_bear_level": bear_lvls,
-            "structure_top": s_tops,
-            "structure_bottom": s_bots,
+            "cisd_event": res["cisd_event"].values,
+            "cisd_state": res["cisd_state"].values,
+            "active_bull_level": res["active_bull_cisd_level"].values,
+            "active_bear_level": res["active_bear_cisd_level"].values,
+            "structure_top": res["last_swing_high"].values,
+            "structure_bottom": res["last_swing_low"].values,
         },
         index=ohlc.index,
     )
+
+
+def detect_cisd_authoritative(
+    ohlc: pd.DataFrame,
+    swings: pd.DataFrame,
+    displacement_ratio: float = 0.0,
+) -> pd.DataFrame:
+    """CISD — Change in State of Delivery (strict canonical ICT definition).
+
+    Delegates to ``scripts.libs_py.cisd.compute_cisd(canonical=True)``. The
+    ``swings`` and ``displacement_ratio`` parameters are kept for API
+    compatibility but are not used by the canonical kernel, which detects its
+    own causal 3-bar swing pivots internally.
+    """
+    from scripts.libs_py.cisd import compute_cisd
+
+    res = compute_cisd(ohlc, canonical=True)
+    level_arr = np.where(
+        res["cisd_event"].values != 0,
+        np.where(
+            res["cisd_event"].values == 1,
+            res["active_bull_cisd_level"].values,
+            res["active_bear_cisd_level"].values,
+        ),
+        np.nan,
+    )
+    sweep_time_arr = np.where(res["cisd_event"].values != 0, ohlc.index, pd.NaT)
+    return pd.DataFrame({
+        "cisd_type": res["cisd_event"].astype(np.float64).values,
+        "cisd_level": level_arr,
+        "sweep_time": sweep_time_arr,
+    }, index=ohlc.index)
 
 
 @validate_ohlc(input_type="ohlc")
@@ -318,92 +345,6 @@ def detect_cisd(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
 
 
 @validate_ohlc(input_type="ohlc")
-def detect_cisd_authoritative(
-    ohlc: pd.DataFrame,
-    swings: pd.DataFrame,
-    displacement_ratio: float = 0.0,
-) -> pd.DataFrame:
-    """CISD — Change in State of Delivery (authoritative ICT definition).
-    """
-    close = ohlc["close"].values
-    open_ = ohlc["open"].values
-    high = ohlc["high"].values
-    low = ohlc["low"].values
-    n = len(ohlc)
-    idx = ohlc.index
-
-    last_sh = swings["level"].where(swings["shl"] == 1).ffill().values
-    last_sl = swings["level"].where(swings["shl"] == -1).ffill().values
-
-    sweep_high = (high > last_sh) & (close <= last_sh)
-    sweep_low = (low < last_sl) & (close >= last_sl)
-
-    cisd_type = np.zeros(n, dtype=np.float64)
-    cisd_level = np.full(n, np.nan)
-    sweep_time_arr = np.full(n, np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
-
-    down_close = close < open_
-    up_close = close > open_
-
-    active_sweep_low = np.zeros(n, dtype=bool)
-    active_sweep_high = np.zeros(n, dtype=bool)
-    active_level = np.full(n, np.nan)
-
-    sweep_low_idx = np.where(sweep_low)[0]
-    sweep_high_idx = np.where(sweep_high)[0]
-
-    for si in sweep_low_idx:
-        j = si - 1
-        while j >= 0 and down_close[j]:
-            j -= 1
-        series_start = j + 1
-        cisd_ref = open_[series_start]
-        active_sweep_low[si] = True
-        active_level[si] = cisd_ref
-        sweep_time_arr[si] = idx[si]
-
-    for si in sweep_high_idx:
-        j = si - 1
-        while j >= 0 and up_close[j]:
-            j -= 1
-        series_start = j + 1
-        cisd_ref = open_[series_start]
-        active_sweep_high[si] = True
-        active_level[si] = cisd_ref
-        sweep_time_arr[si] = idx[si]
-
-    active_low_ff = pd.Series(active_sweep_low).cummax().astype(bool).values
-    active_high_ff = pd.Series(active_sweep_high).cummax().astype(bool).values
-    level_ff = pd.Series(active_level).ffill().values
-
-    body_range = np.where(high > low, high - low, 1e-9)
-    body_size = np.abs(close - open_)
-    body_ratio = body_size / body_range
-
-    bull_cisd = (
-        active_low_ff
-        & (close > level_ff)
-        & (close > open_)
-    )
-    if displacement_ratio > 0:
-        bull_cisd &= (body_ratio >= displacement_ratio)
-
-    bear_cisd = (
-        active_high_ff
-        & (close < level_ff)
-        & (close < open_)
-    )
-    if displacement_ratio > 0:
-        bear_cisd &= (body_ratio >= displacement_ratio)
-
-    cisd_type[bull_cisd] = 1
-    cisd_type[bear_cisd] = -1
-
-    return pd.DataFrame({
-        "cisd_type": cisd_type,
-        "cisd_level": level_ff,
-        "sweep_time": sweep_time_arr,
-    }, index=ohlc.index)
 
 
 @validate_ohlc(input_type="ohlc")

@@ -1078,8 +1078,8 @@ calcEM(bool isClose, OptionsData opts, string underlyingSym, bool useETFConv) =>
 bool is_recent = time >= (timenow - (86400000 * 4)) // Keeping 4 days to allow for long weekends
 
 // Define the underlying equity ticker based on your futures contract
-var string equity_ref = str.contains(syminfo.ticker, "NQ")  ? "QQQ" : 
-                         str.contains(syminfo.ticker, "ES")  ? "SPY" : 
+var string equity_ref = str.contains(syminfo.ticker, "NQ")  ? "SPX" : // using SPX to get RTH Close and Open
+                         str.contains(syminfo.ticker, "ES")  ? "SPX" : 
                          str.contains(syminfo.ticker, "YM")  ? "DIA" : 
                          str.contains(syminfo.ticker, "RTY") ? "IWM" : 
                          str.contains(syminfo.ticker, "GC")  ? "GLD" :

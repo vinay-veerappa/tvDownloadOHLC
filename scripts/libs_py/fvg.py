@@ -130,28 +130,30 @@ def _compute_fvg_kernel(
                 bot = h2
                 has_vi = 0
 
-                if include_vi:
-                    # Check VI between candle 1 & 2 (t-2 and t-1)
-                    body_top_2 = max(o2, c2)
-                    body_bot_1 = min(o1, c1)
-                    if (body_bot_1 > body_top_2) and (h2 >= l1):
-                        vi_top = body_bot_1
-                        vi_bot = body_top_2
-                        if vi_bot <= top + 1e-4 and vi_top >= bot - 1e-4:
-                            top = max(top, vi_top)
-                            bot = min(bot, vi_bot)
-                            has_vi = 1
+                # Canonical ICT definition: body gaps within the 3-candle FVG formation
+                # (between candles 1-2 and/or candles 2-3) are part of the FVG zone.
+                # We always merge contiguous Volume Imbalances (VI) into the FVG boundary.
+                # Check VI between candle 1 & 2 (t-2 and t-1)
+                body_top_2 = max(o2, c2)
+                body_bot_1 = min(o1, c1)
+                if (body_bot_1 > body_top_2) and (h2 >= l1):
+                    vi_top = body_bot_1
+                    vi_bot = body_top_2
+                    if vi_bot <= top + 1e-4 and vi_top >= bot - 1e-4:
+                        top = max(top, vi_top)
+                        bot = min(bot, vi_bot)
+                        has_vi = 1
 
-                    # Check VI between candle 2 & 3 (t-1 and t)
-                    body_top_1 = max(o1, c1)
-                    body_bot_0 = min(o0, c0)
-                    if (body_bot_0 > body_top_1) and (h1 >= l0):
-                        vi_top = body_bot_0
-                        vi_bot = body_top_1
-                        if vi_bot <= top + 1e-4 and vi_top >= bot - 1e-4:
-                            top = max(top, vi_top)
-                            bot = min(bot, vi_bot)
-                            has_vi = 1
+                # Check VI between candle 2 & 3 (t-1 and t)
+                body_top_1 = max(o1, c1)
+                body_bot_0 = min(o0, c0)
+                if (body_bot_0 > body_top_1) and (h1 >= l0):
+                    vi_top = body_bot_0
+                    vi_bot = body_top_1
+                    if vi_bot <= top + 1e-4 and vi_top >= bot - 1e-4:
+                        top = max(top, vi_top)
+                        bot = min(bot, vi_bot)
+                        has_vi = 1
 
                 ce = (top + bot) / 2.0
                 fvg_event[t] = 1
@@ -267,6 +269,10 @@ def compute_fvg(
     """
     Vectorized high-speed Fair Value Gap (FVG) computation across ANY timeframe,
     with support for contiguous Volume Imbalance (VI) expansion.
+
+    .. note::
+        Body gaps within the 3-candle FVG formation are merged into the FVG zone
+        by default (``include_vi=True``), matching ICT's canonical definition.
 
     Parameters
     ----------
@@ -398,24 +404,25 @@ class FVGTracker:
                 if not self.require_directional_candle or (c0 > o0):
                     top = l0
                     bot = h2
-                    if self.include_vi:
-                        # VI between candle 1 & 2
-                        body_top_2 = max(o2, c2)
-                        body_bot_1 = min(o1, c1)
-                        if (body_bot_1 > body_top_2) and (h2 >= l1):
-                            if body_top_2 <= top + 1e-4 and body_bot_1 >= bot - 1e-4:
-                                top = max(top, body_bot_1)
-                                bot = min(bot, body_top_2)
-                                has_vi = True
 
-                        # VI between candle 2 & 3
-                        body_top_1 = max(o1, c1)
-                        body_bot_0 = min(o0, c0)
-                        if (body_bot_0 > body_top_1) and (h1 >= l0):
-                            if body_top_1 <= top + 1e-4 and body_bot_0 >= bot - 1e-4:
-                                top = max(top, body_bot_0)
-                                bot = min(bot, body_top_1)
-                                has_vi = True
+                    # Canonical ICT: body gaps within the 3-candle FVG are part of the FVG
+                    # Merge left-side body gap (candle 1 / candle 2)
+                    body_top_2 = max(o2, c2)
+                    body_bot_1 = min(o1, c1)
+                    if (body_bot_1 > body_top_2) and (h2 >= l1):
+                        if body_top_2 <= top + 1e-4 and body_bot_1 >= bot - 1e-4:
+                            top = max(top, body_bot_1)
+                            bot = min(bot, body_top_2)
+                            has_vi = True
+
+                    # Merge right-side body gap (candle 2 / candle 3)
+                    body_top_1 = max(o1, c1)
+                    body_bot_0 = min(o0, c0)
+                    if (body_bot_0 > body_top_1) and (h1 >= l0):
+                        if body_top_1 <= top + 1e-4 and body_bot_0 >= bot - 1e-4:
+                            top = max(top, body_bot_0)
+                            bot = min(bot, body_top_1)
+                            has_vi = True
 
                     ce = (top + bot) / 2.0
                     size = top - bot
@@ -428,24 +435,24 @@ class FVGTracker:
                 if not self.require_directional_candle or (c0 < o0):
                     top = l2
                     bot = h0
-                    if self.include_vi:
-                        # VI between candle 1 & 2
-                        body_bot_2 = min(o2, c2)
-                        body_top_1 = max(o1, c1)
-                        if (body_top_1 < body_bot_2) and (l2 <= h1):
-                            if body_bot_2 >= bot - 1e-4 and body_top_1 <= top + 1e-4:
-                                top = max(top, body_bot_2)
-                                bot = min(bot, body_top_1)
-                                has_vi = True
 
-                        # VI between candle 2 & 3
-                        body_bot_1 = min(o1, c1)
-                        body_top_0 = max(o0, c0)
-                        if (body_top_0 < body_bot_1) and (l1 <= h0):
-                            if body_bot_1 >= bot - 1e-4 and body_top_0 <= top + 1e-4:
-                                top = max(top, body_bot_1)
-                                bot = min(bot, body_top_0)
-                                has_vi = True
+                    # Merge left-side body gap (candle 1 / candle 2)
+                    body_bot_2 = min(o2, c2)
+                    body_top_1 = max(o1, c1)
+                    if (body_top_1 < body_bot_2) and (l2 <= h1):
+                        if body_bot_2 >= bot - 1e-4 and body_top_1 <= top + 1e-4:
+                            top = max(top, body_bot_2)
+                            bot = min(bot, body_top_1)
+                            has_vi = True
+
+                    # Merge right-side body gap (candle 2 / candle 3)
+                    body_bot_1 = min(o1, c1)
+                    body_top_0 = max(o0, c0)
+                    if (body_top_0 < body_bot_1) and (l1 <= h0):
+                        if body_bot_1 >= bot - 1e-4 and body_top_0 <= top + 1e-4:
+                            top = max(top, body_bot_1)
+                            bot = min(bot, body_top_0)
+                            has_vi = True
 
                     ce = (top + bot) / 2.0
                     size = top - bot
