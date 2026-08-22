@@ -101,10 +101,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private double armedTp1Price;
         private double armedTp2Price;
 
-        // ATR for compression filter (daily ATR from 1m bars)
+        // Daily ATR tracking — session-based, no lookback
+        private double todayHigh, todayLow, todayClose;
+        private double priorDayH, priorDayL, priorDayC;
         private double dailyAtrVal;
-        private double priorDayHigh, priorDayLow, priorDayClose;
-        private bool priorDayReady;
+        private const int ATR_PERIOD = 10;
+        private double[] atrHistory = new double[ATR_PERIOD];
+        private int atrHistoryCount;
 
         #endregion
 
@@ -178,9 +181,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             currentSweepExtreme = 0;
             sweepSweepDir = 0;
+            armedEntryPrice = 0;
+            armedStopPrice = 0;
+            armedTp1Price = 0;
+            armedTp2Price = 0;
+            todayHigh = todayLow = todayClose = 0;
+            priorDayH = priorDayL = priorDayC = 0;
             dailyAtrVal = 0;
-            priorDayHigh = priorDayLow = priorDayClose = 0;
-            priorDayReady = false;
+            atrHistoryCount = 0;
+            for (int i = 0; i < ATR_PERIOD; i++) atrHistory[i] = 0;
         }
 
         protected override void OnSessionOpenReset()
@@ -190,8 +199,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             currentSweepExtreme = 0;
             sweepSweepDir = 0;
 
-            // Capture prior day OHLC for ATR (will be finalized at first bar of new day)
-            // priorDayReady is set when we have enough data
+            // Roll daily OHLC: today becomes prior day
+            if (todayClose > 0)
+            {
+                priorDayH = todayHigh;
+                priorDayL = todayLow;
+                priorDayC = todayClose;
+            }
+            todayHigh = 0;
+            todayLow = 0;
+            todayClose = 0;
         }
 
         /// <summary>
@@ -218,52 +235,43 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         /// <summary>
-        /// Compute daily ATR from prior day OHLC.
-        /// TR = max(H-L, |H-prevClose|, |L-prevClose|), ATR = 10-day SMA of TR.
-        /// For simplicity in NT8 1m context, we approximate using prior day's range
-        /// as a proxy when full 10-day ATR history is not available.
+        /// Compute daily ATR from session-based daily OHLC tracking.
+        /// Tracks today's H/L/C, rolls to prior day on session change,
+        /// computes True Range and 10-day SMA.
         /// </summary>
         private void UpdateDailyAtr()
         {
-            if (CurrentBar < 1) return;
+            // Track today's high/low/close
+            if (todayHigh == 0 || High[0] > todayHigh) todayHigh = High[0];
+            if (todayLow == 0 || Low[0] < todayLow) todayLow = Low[0];
+            todayClose = Close[0];
 
-            DateTime today = Time[0].Date;
-            DateTime prevDay = today.AddDays(-1);
-            // Find the actual prior trading day by looking back
-            if (!priorDayReady)
+            // If we have a prior day close, compute TR and update ATR
+            if (priorDayC > 0)
             {
-                // Approximate: use the rolling high/low of the last ~390 bars (1 day)
-                int lookback = Math.Min(CurrentBar, 390);
-                double h = double.MinValue, l = double.MaxValue, c = 0;
-                for (int i = lookback; i >= 1; i--)
+                double tr = Math.Max(
+                    todayHigh - todayLow,
+                    Math.Max(Math.Abs(todayHigh - priorDayC), Math.Abs(todayLow - priorDayC)));
+
+                // Rolling ATR: update the history array
+                if (atrHistoryCount < ATR_PERIOD)
                 {
-                    if (High[i] > h) h = High[i];
-                    if (Low[i] < l) l = Low[i];
-                    if (i == 1) c = Close[i];
+                    atrHistory[atrHistoryCount] = tr;
+                    atrHistoryCount++;
                 }
-                if (h > double.MinValue && l < double.MaxValue)
+                else
                 {
-                    priorDayHigh = h;
-                    priorDayLow = l;
-                    priorDayClose = c;
-                    dailyAtrVal = h - l;  // Simple proxy: prior day range
-                    priorDayReady = true;
+                    // Shift and add
+                    for (int i = 0; i < ATR_PERIOD - 1; i++)
+                        atrHistory[i] = atrHistory[i + 1];
+                    atrHistory[ATR_PERIOD - 1] = tr;
                 }
-            }
-            else
-            {
-                // Update on new day
-                if (Time[0].Date != Time[1].Date)
-                {
-                    priorDayHigh = High[1];
-                    priorDayLow = Low[1];
-                    priorDayClose = Close[1];
-                    // Rolling ATR approximation: 90% old + 10% new TR
-                    double newTr = Math.Max(
-                        High[0] - Low[0],
-                        Math.Max(Math.Abs(High[0] - priorDayClose), Math.Abs(Low[0] - priorDayClose)));
-                    dailyAtrVal = dailyAtrVal * 0.9 + newTr * 0.1;
-                }
+
+                // Compute SMA
+                double sum = 0;
+                for (int i = 0; i < atrHistoryCount; i++)
+                    sum += atrHistory[i];
+                dailyAtrVal = sum / atrHistoryCount;
             }
         }
 

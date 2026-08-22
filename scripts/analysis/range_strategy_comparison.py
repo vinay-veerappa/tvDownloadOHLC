@@ -905,12 +905,29 @@ def main():
         if df_1m.index.tz is not None:
             df_1m.index = df_1m.index.tz_convert("America/New_York").tz_localize(None)
 
-        print(f"[{sym}] Fused: {len(df_1m)} rows ({df_1m.index.min()} -> {df_1m.index.max()})")
+        print(f"[{sym}] Fused 1m: {len(df_1m)} rows ({df_1m.index.min()} -> {df_1m.index.max()})")
 
-        # 5m resample
-        df_5m = df_1m.resample("5min").agg({
-            "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
-        }).dropna()
+        # Load native 5m parquet (avoids resampling divergence with NT8)
+        hist_5m_path = Path(f"data/{sym_key}_5m.parquet")
+        if hist_5m_path.exists():
+            df_5m = pd.read_parquet(hist_5m_path)
+            if not df_5m.empty and isinstance(df_5m.index, pd.DatetimeIndex):
+                if "time" in df_5m.columns:
+                    df_5m = df_5m.drop(columns=["time"])
+                if df_5m.index.tz is not None:
+                    df_5m.index = df_5m.index.tz_convert("America/New_York").tz_localize(None)
+                df_5m = df_5m.sort_index()
+                print(f"[{sym}] Native 5m: {len(df_5m)} rows ({df_5m.index.min()} -> {df_5m.index.max()})")
+            else:
+                df_5m = df_1m.resample("5min").agg({
+                    "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
+                }).dropna()
+                print(f"[{sym}] Fallback 5m resample: {len(df_5m)} rows")
+        else:
+            df_5m = df_1m.resample("5min").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
+            }).dropna()
+            print(f"[{sym}] Fallback 5m resample: {len(df_5m)} rows")
 
         # Build strategies
         strategies = [
