@@ -136,9 +136,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxTradesPerDay = 2;
             ConfluenceFilterEnabled = false;  // Override the old Play 3 filter stack — FVG is the real filter
 
-            // Enable 5m secondary series for FVG detection (overrides base's false)
-            AddSecondaryTimeframe = true;
-            BarsRequiredToTrade = 3;  // 3 bars on 5m = 15 min warmup
+            // Use manual 5m accumulator (not secondary series) — avoids BarsArray[1] indexing issues
+            AddSecondaryTimeframe = false;
+            BarsRequiredToTrade = 1;
         }
 
         protected override void InitializeStrategy()
@@ -301,7 +301,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return CheckForEntryOvershootOnly();
             }
 
-            // FVG Sweep Fade mode: use 5m secondary series (BarsArray[1]) for FVG detection
+            // FVG Sweep Fade mode: use manual 5m accumulator (built from 1m bars)
+            // This avoids the BarsArray[1] indexing issues with Calculate.OnBarClose
+            Accumulate5mBar(now);
+
             // Only scan for entries during Midday/PM window
             if (timeNum < MiddayStart * 100 || timeNum >= PmEnd * 100)
                 return 0;
@@ -311,8 +314,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (dailyAtrVal > 0 && rangeRange >= IbCompressionAtrRatio * dailyAtrVal)
                 return 0;
 
-            // FVG Sweep Fade: use 5m bars from secondary series
-            return CheckForEntryFvgSweep5m(now);
+            // FVG Sweep Fade: check for fill of armed signal or new signal
+            return CheckForEntryFvgSweepFill(now);
         }
 
         /// <summary>
