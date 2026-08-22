@@ -96,6 +96,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // Track the sweep wick extreme for stop placement
         private double currentSweepExtreme;
         private int sweepSweepDir;  // +1 = swept high (short setup), -1 = swept low (long setup)
+        private double armedEntryPrice;
+        private double armedStopPrice;
+        private double armedTp1Price;
+        private double armedTp2Price;
 
         // ATR for compression filter (daily ATR from 1m bars)
         private double dailyAtrVal;
@@ -139,6 +143,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Use manual 5m accumulator (not secondary series) — avoids BarsArray[1] indexing issues
             AddSecondaryTimeframe = false;
             BarsRequiredToTrade = 1;
+
+            // Limit orders fill on touch (matches Python limit fill behavior)
+            IsFillLimitOnTouch = true;
         }
 
         protected override void InitializeStrategy()
@@ -440,56 +447,31 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// </summary>
         private int CheckForEntryFvgSweepFill(DateTime now)
         {
-            // If we have a pending sweep signal, check for fill
-            if (sweepSweepDir != 0 && (CanEnterShort || CanEnterLong))
+            // If we have a pending sweep signal, check for limit fill
+            if (sweepSweepDir == 1 && CanEnterShort)
             {
-                // Check if the 1m bar touches the entry price (FVG edge)
-                double entryPrice, stopPrice, tp1Price, tp2Price;
-
-                if (sweepSweepDir == 1)  // Short setup (swept IB high)
+                // Short: fill when price rallies back up to the FVG edge
+                if (High[0] >= armedEntryPrice)
                 {
-                    if (!CanEnterShort) { sweepSweepDir = 0; return 0; }
-                    entryPrice = prev5mClose[1];  // b2.high (stored as close of the 5m bar that made the FVG)
-                    // Actually we stored the high of b2 in prev5mHigh[1] — use that
-                    entryPrice = prev5mHigh[1];
-                    stopPrice = currentSweepExtreme + SweepStopTicks * TickSize;
-                    tp1Price = rangeMid;
-                    tp2Price = rangeLow;
-
-                    double risk = stopPrice - entryPrice;
-                    if (risk <= 0 || risk > MaxRiskAtrFraction * dailyAtrVal) { sweepSweepDir = 0; return 0; }
-                    if (!TargetIsSane(entryPrice, tp1Price, -1)) { sweepSweepDir = 0; return 0; }
-
-                    // Check if price touched the entry (limit fill)
-                    if (High[0] >= entryPrice)
-                    {
-                        int qty = CalcQuantity(risk, 1.0);
-                        EnterSweepFade(-1, entryPrice, stopPrice, tp1Price, tp2Price, qty);
-                        sweepSweepDir = 0;
-                        shortTakenToday = true;
-                        return -1;
-                    }
+                    double risk = armedStopPrice - armedEntryPrice;
+                    int qty = CalcQuantity(risk, 1.0);
+                    EnterSweepFade(-1, armedEntryPrice, armedStopPrice, armedTp1Price, armedTp2Price, qty);
+                    sweepSweepDir = 0;
+                    shortTakenToday = true;
+                    return -1;
                 }
-                else if (sweepSweepDir == -1)  // Long setup (swept IB low)
+            }
+            else if (sweepSweepDir == -1 && CanEnterLong)
+            {
+                // Long: fill when price dips back down to the FVG edge
+                if (Low[0] <= armedEntryPrice)
                 {
-                    if (!CanEnterLong) { sweepSweepDir = 0; return 0; }
-                    entryPrice = prev5mLow[1];  // b2.low
-                    stopPrice = currentSweepExtreme - SweepStopTicks * TickSize;
-                    tp1Price = rangeMid;
-                    tp2Price = rangeHigh;
-
-                    double risk = entryPrice - stopPrice;
-                    if (risk <= 0 || risk > MaxRiskAtrFraction * dailyAtrVal) { sweepSweepDir = 0; return 0; }
-                    if (!TargetIsSane(entryPrice, tp1Price, 1)) { sweepSweepDir = 0; return 0; }
-
-                    if (Low[0] <= entryPrice)
-                    {
-                        int qty = CalcQuantity(risk, 1.0);
-                        EnterSweepFade(1, entryPrice, stopPrice, tp1Price, tp2Price, qty);
-                        sweepSweepDir = 0;
-                        longTakenToday = true;
-                        return 1;
-                    }
+                    double risk = armedEntryPrice - armedStopPrice;
+                    int qty = CalcQuantity(risk, 1.0);
+                    EnterSweepFade(1, armedEntryPrice, armedStopPrice, armedTp1Price, armedTp2Price, qty);
+                    sweepSweepDir = 0;
+                    longTakenToday = true;
+                    return 1;
                 }
             }
 
@@ -578,9 +560,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 if (sweptH && closedInside && bearFvg && CanEnterShort)
                 {
                     currentSweepExtreme = Math.Max(b1High, b2High);
-                    sweepSweepDir = 1;  // armed for short entry
-                    Print(string.Format("[SWEEP-FADE] SHORT armed: b0Low={0:F2} b2High={1:F2} fvg={2:F2} sweepExt={3:F2} entry={4:F2} stop={5:F2} at {6:HH:mm} ibH={7:F2} ibL={8:F2}",
-                        b0Low, b2High, b0Low - b2High, currentSweepExtreme, b2High, currentSweepExtreme + SweepStopTicks * TickSize, Time[0], rangeHigh, rangeLow));
+                    armedEntryPrice = b2High;
+                    armedStopPrice = currentSweepExtreme + SweepStopTicks * TickSize;
+                    armedTp1Price = rangeMid;
+                    armedTp2Price = rangeLow;
+                    double risk = armedStopPrice - armedEntryPrice;
+                    double atrFallback = dailyAtrVal > 0 ? dailyAtrVal : rangeRange * 3;
+                    if (risk > 0 && risk < MaxRiskAtrFraction * atrFallback && armedTp1Price < armedEntryPrice)
+                    {
+                        sweepSweepDir = 1;  // armed for short entry
+                        Print(string.Format("[SWEEP-FADE] SHORT armed: entry={0:F2} stop={1:F2} tp1={2:F2} risk={3:F2} at {4:HH:mm}",
+                            armedEntryPrice, armedStopPrice, armedTp1Price, risk, Time[0]));
+                    }
                 }
 
                 // LONG: Sweep IB Low + bullish FVG
@@ -593,9 +584,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     if (sweptL && closedInsideL && bullFvg && CanEnterLong)
                     {
                         currentSweepExtreme = Math.Min(b1Low, b2Low);
-                        sweepSweepDir = -1;  // armed for long entry
-                        Print(string.Format("[SWEEP-FADE] LONG armed: b0High={0:F2} b2Low={1:F2} fvg={2:F2} sweepExt={3:F2} entry={4:F2} stop={5:F2} at {6:HH:mm} ibH={7:F2} ibL={8:F2}",
-                            b0High, b2Low, b2Low - b0High, currentSweepExtreme, b2Low, currentSweepExtreme - SweepStopTicks * TickSize, Time[0], rangeHigh, rangeLow));
+                        armedEntryPrice = b2Low;
+                        armedStopPrice = currentSweepExtreme - SweepStopTicks * TickSize;
+                        armedTp1Price = rangeMid;
+                        armedTp2Price = rangeHigh;
+                        double risk = armedEntryPrice - armedStopPrice;
+                        double atrFallback = dailyAtrVal > 0 ? dailyAtrVal : rangeRange * 3;
+                        if (risk > 0 && risk < MaxRiskAtrFraction * atrFallback && armedTp1Price > armedEntryPrice)
+                        {
+                            sweepSweepDir = -1;  // armed for long entry
+                            Print(string.Format("[SWEEP-FADE] LONG armed: entry={0:F2} stop={1:F2} tp1={2:F2} risk={3:F2} at {4:HH:mm}",
+                                armedEntryPrice, armedStopPrice, armedTp1Price, risk, Time[0]));
+                        }
                     }
                 }
             }
@@ -642,8 +642,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 tradeDirection = "Long";
                 entrySignalName = "SweepFadeLong";
-                EnterLong(qtyPerLeg, "SweepFadeLeg1");
-                EnterLong(qtyPerLeg, "SweepFadeLeg2");
+                // Limit entry at the FVG edge (matches Python limit fill)
+                EnterLongLimit(qtyPerLeg, entry, "SweepFadeLeg1");
+                EnterLongLimit(qtyPerLeg, entry, "SweepFadeLeg2");
                 SetProfitTarget("SweepFadeLeg1", CalculationMode.Price, tp1);
                 SetStopLoss("SweepFadeLeg1", CalculationMode.Price, stop, false);
                 SetProfitTarget("SweepFadeLeg2", CalculationMode.Price, tp2);
@@ -653,8 +654,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 tradeDirection = "Short";
                 entrySignalName = "SweepFadeShort";
-                EnterShort(qtyPerLeg, "SweepFadeLeg1");
-                EnterShort(qtyPerLeg, "SweepFadeLeg2");
+                // Limit entry at the FVG edge (matches Python limit fill)
+                EnterShortLimit(qtyPerLeg, entry, "SweepFadeLeg1");
+                EnterShortLimit(qtyPerLeg, entry, "SweepFadeLeg2");
                 SetProfitTarget("SweepFadeLeg1", CalculationMode.Price, tp1);
                 SetStopLoss("SweepFadeLeg1", CalculationMode.Price, stop, false);
                 SetProfitTarget("SweepFadeLeg2", CalculationMode.Price, tp2);
