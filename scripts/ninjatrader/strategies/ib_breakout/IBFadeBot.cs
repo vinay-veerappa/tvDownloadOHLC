@@ -127,13 +127,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             PmEnd = 1600;
             UseTwoLegScaling = true;
 
-            // Session: Midday + PM only
-            EarliestEntry = 1130;
+            // Session: EarliestEntry must be before IB window (09:30) so the IB gets built
+            // Actual FVG entry is gated to Midday/PM inside CheckForEntry
+            EarliestEntry = 930;
             LatestEntry = 1555;
             FlattenBy = 1555;
 
             MaxTradesPerDay = 2;
             ConfluenceFilterEnabled = false;  // Override the old Play 3 filter stack — FVG is the real filter
+
+            // Enable 5m secondary series for FVG detection (overrides base's false)
+            AddSecondaryTimeframe = true;
+            BarsRequiredToTrade = 3;  // 3 bars on 5m = 15 min warmup
         }
 
         protected override void InitializeStrategy()
@@ -180,6 +185,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             // Capture prior day OHLC for ATR (will be finalized at first bar of new day)
             // priorDayReady is set when we have enough data
+        }
+
+        /// <summary>
+        /// Override the IB confluence indicator hook — skip the expensive AVWAP/EMA/FVG
+        /// computation when in FVG Sweep Fade mode. We use the 5m secondary series instead.
+        /// </summary>
+        protected override void UpdateConfluenceIndicatorsHook()
+        {
+            if (FvgDisplacementRequired)
+                return;  // skip — we use BarsArray[1] for FVG detection
+            base.UpdateConfluenceIndicatorsHook();
         }
 
         private void Reset5mAccumulator()
@@ -260,6 +276,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// </summary>
         protected override int CheckForEntry()
         {
+            // TOP-LEVEL DIAG: confirm CheckForEntry is being called
+            if (CurrentBar % 500 == 0)
+                Print(string.Format("[SWEEP-ENTRY] CheckForEntry called bar={0} time={1:HH:mm} rangeComplete={2} fvgReq={3}",
+                    CurrentBar, Time[0], rangeComplete, FvgDisplacementRequired));
+
             DateTime now = Time[0];
             int timeNum = now.Hour * 10000 + now.Minute * 100 + now.Second;
 
@@ -280,10 +301,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return CheckForEntryOvershootOnly();
             }
 
-            // FVG Sweep Fade mode: accumulate 5m bars from IB completion onwards
-            // (NOT just from Midday — need 5m history before 11:30 for pattern detection)
-            Accumulate5mBar(now);
-
+            // FVG Sweep Fade mode: use 5m secondary series (BarsArray[1]) for FVG detection
             // Only scan for entries during Midday/PM window
             if (timeNum < MiddayStart * 100 || timeNum >= PmEnd * 100)
                 return 0;
@@ -293,8 +311,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (dailyAtrVal > 0 && rangeRange >= IbCompressionAtrRatio * dailyAtrVal)
                 return 0;
 
-            // FVG Sweep Fade: check for fill of any armed signal
-            return CheckForEntryFvgSweepFill(now);
+            // FVG Sweep Fade: use 5m bars from secondary series
+            return CheckForEntryFvgSweep5m(now);
         }
 
         /// <summary>
@@ -330,6 +348,83 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 overshootBelow = false;
                 longTakenToday = true;
                 return 1;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// FVG Sweep Fade using 5m secondary series (BarsArray[1]).
+        /// Checks the 3 most recent CLOSED 5m bars for the sweep+FVG pattern.
+        /// b0 = 5m bar [2], b1 = 5m bar [1], b2 = 5m bar [0] (most recent closed)
+        /// </summary>
+        private int CheckForEntryFvgSweep5m(DateTime now)
+        {
+            // Use BarsArray[1] for 5m bars — need at least 4 closed bars
+            // Index 0 = currently forming 5m bar (incomplete)
+            // Index 1 = last closed 5m bar (b2 in our pattern)
+            // Index 2 = 5m bar before that (b1)
+            // Index 3 = 5m bar before that (b0)
+            if (BarsArray[1] == null || CurrentBars[1] < 4)
+                return 0;
+
+            double b0High = Highs[1][3];  // 5m bar i-2 (oldest)
+            double b0Low = Lows[1][3];
+            double b1High = Highs[1][2];  // 5m bar i-1
+            double b1Low = Lows[1][2];
+            double b2High = Highs[1][1];  // 5m bar i (last closed)
+            double b2Low = Lows[1][1];
+            double b2Open = Opens[1][1];
+            double b2Close = Closes[1][1];
+
+            // SHORT: Sweep IB High + bearish FVG
+            bool sweptH = (b1High > rangeHigh || b2High > rangeHigh);
+            bool closedInside = (b2Close < rangeHigh) && (b2Close < b2Open);
+            bool bearFvg = (b0Low - b2High) >= MinFvgSize;
+
+            if (sweptH && closedInside && bearFvg && CanEnterShort)
+            {
+                double sweepExt = Math.Max(b1High, b2High);
+                double entryPrice = b2High;
+                double stopPrice = sweepExt + SweepStopTicks * TickSize;
+                double tp1Price = rangeMid;
+                double tp2Price = rangeLow;
+                double risk = stopPrice - entryPrice;
+
+                if (risk > 0 && risk < MaxRiskAtrFraction * (dailyAtrVal > 0 ? dailyAtrVal : rangeRange * 3) && tp1Price < entryPrice)
+                {
+                    int qty = CalcQuantity(risk, 1.0);
+                    Print(string.Format("[SWEEP-FADE] SHORT entry={0:F2} stop={1:F2} tp1={2:F2} tp2={3:F2} risk={4:F2} at {5:HH:mm}",
+                        entryPrice, stopPrice, tp1Price, tp2Price, risk, now));
+                    EnterSweepFade(-1, entryPrice, stopPrice, tp1Price, tp2Price, qty);
+                    shortTakenToday = true;
+                    return -1;
+                }
+            }
+
+            // LONG: Sweep IB Low + bullish FVG
+            bool sweptL = (b1Low < rangeLow || b2Low < rangeLow);
+            bool closedInsideL = (b2Close > rangeLow) && (b2Close > b2Open);
+            bool bullFvg = (b2Low - b0High) >= MinFvgSize;
+
+            if (sweptL && closedInsideL && bullFvg && CanEnterLong)
+            {
+                double sweepExt = Math.Min(b1Low, b2Low);
+                double entryPrice = b2Low;
+                double stopPrice = sweepExt - SweepStopTicks * TickSize;
+                double tp1Price = rangeMid;
+                double tp2Price = rangeHigh;
+                double risk = entryPrice - stopPrice;
+
+                if (risk > 0 && risk < MaxRiskAtrFraction * (dailyAtrVal > 0 ? dailyAtrVal : rangeRange * 3) && tp1Price > entryPrice)
+                {
+                    int qty = CalcQuantity(risk, 1.0);
+                    Print(string.Format("[SWEEP-FADE] LONG entry={0:F2} stop={1:F2} tp1={2:F2} tp2={3:F2} risk={4:F2} at {5:HH:mm}",
+                        entryPrice, stopPrice, tp1Price, tp2Price, risk, now));
+                    EnterSweepFade(1, entryPrice, stopPrice, tp1Price, tp2Price, qty);
+                    longTakenToday = true;
+                    return 1;
+                }
             }
 
             return 0;
@@ -476,14 +571,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bool sweptH = (b1High > rangeHigh || b2High > rangeHigh);
                 bool closedInside = (b2Close < rangeHigh) && (b2Close < b2Open);
                 bool bearFvg = (b0Low - b2High) >= MinFvgSize;
-
-                // Diagnostic: log why signal didn't fire
-                if (sweptH && !closedInside)
-                    Print(string.Format("[SWEEP-FADE] SHORT swept but not closed inside: b2Close={0:F2} ibHigh={1:F2} b2Open={2:F2} at {3:HH:mm}",
-                        b2Close, rangeHigh, b2Open, Time[0]));
-                if (sweptH && closedInside && !bearFvg)
-                    Print(string.Format("[SWEEP-FADE] SHORT swept+closed but FVG too small: fvg={0:F2} min={1:F2} b0Low={2:F2} b2High={3:F2} at {4:HH:mm}",
-                        b0Low - b2High, MinFvgSize, b0Low, b2High, Time[0]));
 
                 if (sweptH && closedInside && bearFvg && CanEnterShort)
                 {
