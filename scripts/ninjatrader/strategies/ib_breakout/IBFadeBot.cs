@@ -141,13 +141,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             FlattenBy = 1555;
 
             MaxTradesPerDay = 2;
-            ConfluenceFilterEnabled = false;  // Override the old Play 3 filter stack — FVG is the real filter
+            ConfluenceFilterEnabled = false;
 
-            // Use manual 5m accumulator (not secondary series) — avoids BarsArray[1] indexing issues
+            // Run on 5m chart for FVG mode — no secondary series needed
             AddSecondaryTimeframe = false;
             BarsRequiredToTrade = 1;
-
-            // Limit orders fill on touch (matches Python limit fill behavior)
             IsFillLimitOnTouch = true;
         }
 
@@ -316,21 +314,85 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return CheckForEntryOvershootOnly();
             }
 
-            // FVG Sweep Fade mode: use manual 5m accumulator (built from 1m bars)
-            // This avoids the BarsArray[1] indexing issues with Calculate.OnBarClose
-            Accumulate5mBar(now);
-
+            // FVG Sweep Fade mode: uses the chart's native bars directly.
+            // Run this strategy on a 5-MINUTE chart — then High[0], Low[0], etc.
+            // are 5m bars and the 3-bar FVG pattern is just High[2], High[1], High[0].
+            //
             // Only scan for entries during Midday/PM window
             if (timeNum < MiddayStart * 100 || timeNum >= PmEnd * 100)
                 return 0;
 
             // IB Compression Filter: IB range must be < ratio × ATR
-            // Skip filter if ATR not yet computed (allow trades when ATR unknown)
             if (dailyAtrVal > 0 && rangeRange >= IbCompressionAtrRatio * dailyAtrVal)
                 return 0;
 
-            // FVG Sweep Fade: check for fill of armed signal or new signal
-            return CheckForEntryFvgSweepFill(now);
+            // Need at least 3 bars (b0, b1, b2) — CurrentBar is 0-based
+            if (CurrentBar < 2)
+                return 0;
+
+            // 3-bar FVG pattern on native chart bars (5m when run on 5m chart)
+            double b0High = High[2];
+            double b0Low = Low[2];
+            double b1High = High[1];
+            double b1Low = Low[1];
+            double b2High = High[0];
+            double b2Low = Low[0];
+            double b2Open = Open[0];
+            double b2Close = Close[0];
+
+            // SHORT: Sweep IB High + bearish FVG + close back inside
+            bool sweptH = (b1High > rangeHigh || b2High > rangeHigh);
+            bool closedInside = (b2Close < rangeHigh) && (b2Close < b2Open);
+            bool bearFvg = (b0Low - b2High) >= MinFvgSize;
+
+            if (sweptH && closedInside && bearFvg && CanEnterShort)
+            {
+                double sweepExt = Math.Max(b1High, b2High);
+                double entryPrice = b2High;
+                double stopPrice = sweepExt + SweepStopTicks * TickSize;
+                double tp1Price = rangeMid;
+                double tp2Price = rangeLow;
+                double risk = stopPrice - entryPrice;
+                double atrFallback = dailyAtrVal > 0 ? dailyAtrVal : rangeRange * 3;
+
+                if (risk > 0 && risk < MaxRiskAtrFraction * atrFallback && tp1Price < entryPrice)
+                {
+                    int qty = CalcQuantity(risk, 1.0);
+                    Print(string.Format("[SWEEP-FADE] SHORT entry={0:F2} stop={1:F2} tp1={2:F2} risk={3:F2} at {4:HH:mm} ibH={5:F2} ibL={6:F2}",
+                        entryPrice, stopPrice, tp1Price, risk, now, rangeHigh, rangeLow));
+                    EnterSweepFade(-1, entryPrice, stopPrice, tp1Price, tp2Price, qty);
+                    shortTakenToday = true;
+                    return -1;
+                }
+            }
+
+            // LONG: Sweep IB Low + bullish FVG + close back inside
+            bool sweptL = (b1Low < rangeLow || b2Low < rangeLow);
+            bool closedInsideL = (b2Close > rangeLow) && (b2Close > b2Open);
+            bool bullFvg = (b2Low - b0High) >= MinFvgSize;
+
+            if (sweptL && closedInsideL && bullFvg && CanEnterLong)
+            {
+                double sweepExt = Math.Min(b1Low, b2Low);
+                double entryPrice = b2Low;
+                double stopPrice = sweepExt - SweepStopTicks * TickSize;
+                double tp1Price = rangeMid;
+                double tp2Price = rangeHigh;
+                double risk = entryPrice - stopPrice;
+                double atrFallback = dailyAtrVal > 0 ? dailyAtrVal : rangeRange * 3;
+
+                if (risk > 0 && risk < MaxRiskAtrFraction * atrFallback && tp1Price > entryPrice)
+                {
+                    int qty = CalcQuantity(risk, 1.0);
+                    Print(string.Format("[SWEEP-FADE] LONG entry={0:F2} stop={1:F2} tp1={2:F2} risk={3:F2} at {4:HH:mm} ibH={5:F2} ibL={6:F2}",
+                        entryPrice, stopPrice, tp1Price, risk, now, rangeHigh, rangeLow));
+                    EnterSweepFade(1, entryPrice, stopPrice, tp1Price, tp2Price, qty);
+                    longTakenToday = true;
+                    return 1;
+                }
+            }
+
+            return 0;
         }
 
         /// <summary>
