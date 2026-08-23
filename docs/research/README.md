@@ -9,8 +9,8 @@
 | Class | NotebookLM (backup) | Local | Data OK? | Status |
 |---|---|---|---|---|
 | BB mean reversion | `b52fb636` Consolidation & Range | `docs/architecture/BB_EXPERIMENTS.md` + `data/derived/bb_experiments_log.csv` | ✅ OHLCV | **15 experiments done, E14 MACD PF2.44 best** |
-| VWAP reclaim | *create `VWAP Reclaim Strategies`* | `docs/research/vwap/VWAP_EXPERIMENTS.md` | ✅ OHLCV+vol | **next** (deep research queued `ChAyN2Iy...`) |
-| Supertrend / HalfTrend | *create `Trend ATR Supertrend`* | `docs/research/trend_atr/SUPERTREND_HALFTREND.md` | ✅ OHLCV+ATR | queued |
+| VWAP reclaim / fade | — | `docs/research/vwap/VWAP_EXPERIMENTS.md` | ✅ OHLCV+vol | **PARKED — 7 variants PF<0.70, no edge (F01-F05/C01-C02)** |
+| Supertrend / HalfTrend | *create `Trend ATR Supertrend`* | `docs/research/trend_atr/SUPERTREND_HALFTREND.md` | ✅ OHLCV+ATR | **next** |
 | MA + ATR Channel (Keltner/Donchian) | *create `MA ATR Channel`* | `docs/research/trend_atr/MA_ATR_CHANNEL.md` | ✅ OHLCV+ATR | queued |
 | ORB / NR7 breakout | later | — | ✅ OHLCV | parked (BB first) |
 
