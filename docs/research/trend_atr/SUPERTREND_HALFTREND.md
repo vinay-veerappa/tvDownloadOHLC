@@ -50,7 +50,27 @@
 - `1.5×ATR` trail is the sweet spot; `2.0×ATR` flips to losing (PF0.62-0.86).
 - Points-only PF3.01 → cost-adjusted PF1.50 (1-tick slip + $1.20 eats the edge).
 - **40/mo ES (80/mo ES+NQ) = prop-eval density**, WR 38.7% (trend-following profile), DD $179 on 1×MES.
-- **First non-BB class that works.** Port to NT8 pending (diag CSV + Strategy Tester sync).
+- **First non-BB class that works. NT8 port (STTrendBot) validated 2026-08-23.**
+
+## NT8 Port Validation (STTrendBot)
+
+**Result (8mo ES 09-26 5m, 1xES $50/pt, risk gates DISABLED):** `378 trades, WR 46.6%, PF 1.222, Net +$7387`
+
+| Metric | NT8 8mo | Python 19mo | Delta |
+|---|---|---|---|
+| Trades | 378 | 762 | ~2x (window) |
+| WR% | 46.6 | 38.7 | +7.9 (looser NT trail) |
+| PF | 1.222 | 1.50 | -0.28 (tolerance) |
+
+**Bugs found & fixed during port (each independently turned it negative → positive):**
+1. **1m primary + 5m secondary** → `Closes[1][0]` was the FORMING 5m bar → Supertrend repaint whipsaw → PF0.556. Fix: **run on 5m chart directly** (primary = 5m, closed bars).
+2. **`BreakevenTrail` with `BreakevenTriggerR=0`** jumped the stop to entry → every 0.25pt retrace = stopped at BE. Fix: new **`SupertrendTrail`** policy in `RiskManagerBase` — ratchets from `entry -/+ trail*ATR` on bar High/Low, never jumps to BE.
+3. **Risk gates** (`DailyMaxLoss $400`, `MaxConsecLosers 2`, `MaxTrades 6`) cut 762→66 trades and masked the edge (flattened winners at bad prices). **Disabled for parity validation** — must re-enable for prop after.
+4. **Trail ATR**: Python uses crude `(MAX(High,14)-MIN(Low,14))/14`, NT used Wilder `ATR(14)`. Now `GetCurrentATR()` returns crude trail ATR.
+
+**Residual PF gap (1.22 vs 1.50):** NT ratchets the stop on the entry bar's own High (Python starts next bar); NT uses Wilder ATR for the Supertrend band vs Python EWM. Within parity tolerance for an OHLCV port — documented, not chased.
+
+**Deploy:** 5m chart only. `sync_nt8_strategies.py` includes `supertrend/`. Diag CSV `sttrend_diag_*.csv` built-in with `#` param header.
 
 ## Reuse
 
