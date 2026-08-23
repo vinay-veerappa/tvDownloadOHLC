@@ -642,6 +642,40 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 ManageBreakevenTrail(currentPrice);
             else if (TradePolicy == "BaseHits")
                 ManageBaseHits(currentPrice);
+            else if (TradePolicy == "SupertrendTrail")
+                ManageSupertrendTrail(currentPrice);
+        }
+
+        /// <summary>
+        /// Supertrend-style trailing stop: starts at entry -/+ trail_mult*ATR and only ratchets
+        /// toward price. NEVER jumps to breakeven (unlike BreakevenTrail with trigger R=0).
+        /// Mirrors Python supertrend_intraday_cost.py: stop = max(stop, high - trail_mult*ATR).
+        /// </summary>
+        private void ManageSupertrendTrail(double currentPrice)
+        {
+            string signalName = GetSignalName(tradeDirection);
+            double atr = GetCurrentATR();
+            if (atr <= 0) return;
+            double trailDistance = TrailAtrMult * atr;
+
+            if (tradeDirection == "Long")
+            {
+                double newStop = currentPrice - trailDistance;
+                if (newStop > currentStopPrice)
+                {
+                    currentStopPrice = newStop;
+                    SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                }
+            }
+            else
+            {
+                double newStop = currentPrice + trailDistance;
+                if (newStop < currentStopPrice)
+                {
+                    currentStopPrice = newStop;
+                    SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                }
+            }
         }
 
         private void ManageBaseHits(double currentPrice)
