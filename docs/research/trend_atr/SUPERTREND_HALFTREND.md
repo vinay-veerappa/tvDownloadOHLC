@@ -33,6 +33,25 @@
 | E03 | +`daily ST up` | trend context |
 | E04 | `5m HalfTrend` same | non-repaint vs ST |
 
+## RESULT (2026-08-23) — trailing exit is the confluence, NOT the range gate
+
+**Cost-adjusted (1×MES $5/pt $1.20/rt 1-tick slip), 19mo ES 5m:**
+
+| ST(period,mult) | trail | Trades | WR% | PF | Net$ | DD$ | /mo |
+|---|---|---|---|---|---|---|---|
+| **ST(14,2)** | **1.5×ATR** | **762** | **38.7** | **1.50** | **+1889** | 179 | **40** |
+| ST(10,2) | 1.5×ATR | 884 | 39.1 | 1.40 | +1673 | 325 | 46 |
+| ST(7,2) | 1.5×ATR | 934 | 41.2 | 1.40 | +1824 | 346 | 49 |
+| ST(10,3) | 1.5×ATR | 294 | 43.9 | 1.43 | +675 | 208 | 15 |
+| any | 2.0×ATR | — | 32-36 | 0.62-0.86 | losing | — | — |
+
+**Key findings:**
+- `flip` exit + `IB<0.4` range gate + fixed targets = WRONG confluence (PF1.04, 295 trades). Supertrend is trend-following — needs **trailing stop** and **no range gate**.
+- `1.5×ATR` trail is the sweet spot; `2.0×ATR` flips to losing (PF0.62-0.86).
+- Points-only PF3.01 → cost-adjusted PF1.50 (1-tick slip + $1.20 eats the edge).
+- **40/mo ES (80/mo ES+NQ) = prop-eval density**, WR 38.7% (trend-following profile), DD $179 on 1×MES.
+- **First non-BB class that works.** Port to NT8 pending (diag CSV + Strategy Tester sync).
+
 ## Reuse
 
 `AuSuperTrendU11` indicator already instantiated in `From_NT8/BB1.cs:150` (dead-coded, `3,3,15`) — port to `scripts/ninjatrader/indicators/` or Python `np` (median+ATR 3 lines, no dep).
