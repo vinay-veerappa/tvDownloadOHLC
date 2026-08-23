@@ -658,9 +658,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (atr <= 0) return;
             double trailDistance = TrailAtrMult * atr;
 
+            // Ratchet on the BAR HIGH/LOW (Python parity: stop = max(stop, high - trail*ATR)),
+            // not on close — a 5m bar that spikes through the stop must still fill it.
             if (tradeDirection == "Long")
             {
-                double newStop = currentPrice - trailDistance;
+                double newStop = High[0] - trailDistance;
                 if (newStop > currentStopPrice)
                 {
                     currentStopPrice = newStop;
@@ -669,7 +671,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
             else
             {
-                double newStop = currentPrice + trailDistance;
+                double newStop = Low[0] + trailDistance;
                 if (newStop < currentStopPrice)
                 {
                     currentStopPrice = newStop;
