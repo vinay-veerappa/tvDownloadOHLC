@@ -135,8 +135,10 @@ class IBSweepFadeStrategy(RangeStrategy):
     Filter: IB range < 0.40 * ATR (compressed = mean-reverting regime).
     """
 
-    def __init__(self, symbol: str, tick_size: float = 0.25):
+    def __init__(self, symbol: str, tick_size: float = 0.25, sweep_fvg_size: float = None, ib_minutes: int = None):
         super().__init__("IB_Sweep_Fade", symbol, tick_size)
+        self._fvg_override = sweep_fvg_size
+        self._ib_minutes_override = ib_minutes
 
     def detect_signal(self, ctx: DayContext, session_name: str) -> Optional[TradeSignal]:
         if session_name not in ("NY_MIDDAY", "NY_PM"):
@@ -150,7 +152,8 @@ class IBSweepFadeStrategy(RangeStrategy):
         if ref_r >= (0.40 * ctx.atr_val):
             return None
 
-        min_fvg = 0.75 if "ES" in self.symbol else 3.5
+        min_fvg = self._fvg_override if self._fvg_override is not None else (0.75 if "ES" in self.symbol else 3.5)
+        ib_minutes = self._ib_minutes_override if self._ib_minutes_override is not None else 30
         bars_5m = ctx.session_5m.get(session_name)
         if bars_5m is None or len(bars_5m) < 4:
             return None
@@ -470,15 +473,228 @@ class IBBreakoutContinuationStrategy(RangeStrategy):
 
 
 # ============================================================================
+# STRATEGY 6: BB + RSI MEAN REVERSION (P1 — BB1 clean port)
+# ============================================================================
+
+def _wilder_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder RSI matching NT8 RSI(period,3) smoothing."""
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    rsi = rsi.fillna(50)
+    rsi[avg_loss == 0] = 100
+    rsi[(avg_gain == 0) & (avg_loss == 0)] = 50
+    return rsi
+
+
+def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """Classic Wilder ADX."""
+    tr = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    up = high.diff()
+    dn = -low.diff()
+    plus_dm = up.where((up > dn) & (up > 0), 0.0)
+    minus_dm = dn.where((dn > up) & (dn > 0), 0.0)
+    plus_di = 100 * plus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr
+    minus_di = 100 * minus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    adx = dx.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    return adx.fillna(20)
+
+
+class BBRsiMeanReversionStrategy(RangeStrategy):
+    """
+    P1: BB(20,2) + RSI(14) reversion — clean port of From_NT8/BB1.cs core.
+    BB1 traded HAClose re-entering Lower/Upper on 2-bar HA confirmation.
+    This port uses Close (not HA) + RSI confirmation + ADX regime gate
+    so it stays prop-frequency (~200-300/yr) instead of BB1's HA filter
+    which choked to <30/yr.
+
+    Entry (scan 5m, NY_MIDDAY+NY_PM 11:30-16:00):
+      Long: close[1] < lower[1] and RSI[1] < 30 → close[0] > lower[0] and RSI[0] > 30 → close back inside
+            (first close back inside band, hook out of oversold — 993341480e25:9)
+      Short: mirror upper / RSI>70
+    Filter: ADX(14) on 5m < adx_threshold (default 25) — skip trending regime.
+            Optional squeeze_only: trade only if daily BB bandwidth < percentile.
+    Stop: band ± 1×ATR beyond entry (≈ BB1 stopLossTicks 80 → ~0.8 ATR on ES 5m)
+    TP: middle band (20 SMA) — scale 50% there, runner to opposite band or EOD.
+    """
+
+    def __init__(
+        self,
+        symbol: str,
+        tick_size: float = 0.25,
+        bb_period: int = 20,
+        std_dev: float = 2.0,
+        rsi_period: int = 14,
+        adx_threshold: float = 25.0,
+        use_adx: bool = True,
+        squeeze_only: bool = False,
+        squeeze_lookback: int = 20,
+        squeeze_pct: float = 30.0,
+    ):
+        name = "BB_RSI_Sq" if squeeze_only else "BB_RSI"
+        super().__init__(name, symbol, tick_size)
+        self.bb_period = bb_period
+        self.std_dev = std_dev
+        self.rsi_period = rsi_period
+        self.adx_threshold = adx_threshold
+        self.use_adx = use_adx
+        self.squeeze_only = squeeze_only
+        self.squeeze_lookback = squeeze_lookback
+        self.squeeze_pct = squeeze_pct
+
+    def _is_squeeze_day(self, ctx: DayContext) -> bool:
+        """Intraday BB bandwidth percentile — squeeze = narrow band vs last N 5m bars."""
+        # Use session 5m breadth: compare current bandwidth to rolling window
+        # Fallback: if no history, allow trade (don't gate on sparse data)
+        for sess in ("NY_MIDDAY", "NY_PM"):
+            bars5 = ctx.session_5m.get(sess)
+            if bars5 is not None and len(bars5) >= self.bb_period + 5:
+                sma = bars5["close"].rolling(self.bb_period).mean()
+                std = bars5["close"].rolling(self.bb_period).std()
+                bw = (2 * self.std_dev * std) / sma
+                bw = bw.dropna()
+                if len(bw) >= 10:
+                    cur_bw = bw.iloc[-1]
+                    hist = bw.tail(self.squeeze_lookback).dropna()
+                    if len(hist) >= 10:
+                        pct = (hist <= cur_bw).mean() * 100
+                        if pct <= self.squeeze_pct:
+                            return True
+        # Also check day-level bandwidth as fallback
+        bars5 = ctx.day_bars_5m
+        if len(bars5) >= self.bb_period + self.squeeze_lookback:
+            sma = bars5["close"].rolling(self.bb_period).mean()
+            std = bars5["close"].rolling(self.bb_period).std()
+            bw = (2 * self.std_dev * std) / sma
+            bw = bw.dropna()
+            if len(bw) >= self.squeeze_lookback:
+                cur_bw = bw.iloc[-1]
+                hist = bw.tail(self.squeeze_lookback)
+                pct = (hist <= cur_bw).mean() * 100
+                return pct <= self.squeeze_pct
+        return False
+
+    def detect_signal(self, ctx: DayContext, session_name: str) -> Optional[TradeSignal]:
+        if session_name not in ("NY_MIDDAY", "NY_PM"):
+            return None
+        if self.squeeze_only and not self._is_squeeze_day(ctx):
+            return None
+
+        bars_5m = ctx.session_5m.get(session_name)
+        if bars_5m is None or len(bars_5m) < self.bb_period + 10:
+            return None
+
+        close = bars_5m["close"]
+        high = bars_5m["high"]
+        low = bars_5m["low"]
+
+        sma = close.rolling(self.bb_period).mean()
+        std = close.rolling(self.bb_period).std()
+        upper = sma + self.std_dev * std
+        lower = sma - self.std_dev * std
+        rsi = _wilder_rsi(close, self.rsi_period)
+        adx_s = _adx(high, low, close, 14)
+
+        # Need daily ATR for risk cap (ctx.atr_val is 10d ATR in points)
+        atr = ctx.atr_val if not np.isnan(ctx.atr_val) and ctx.atr_val > 0 else 20.0
+
+        for i in range(2, len(bars_5m)):
+            curr_time = bars_5m.index[i]
+            # Enforce session window 11:30 cutoff already via session_5m slice
+            if curr_time.time() < pd.Timestamp("11:30:00").time():
+                continue
+            # ADX regime gate on prior bar (zero look-ahead: decision uses bar i close, trade starts i+5m)
+            adx_val = adx_s.iloc[i]
+            if self.use_adx and not np.isnan(adx_val) and adx_val >= self.adx_threshold:
+                continue
+
+            # Long: prior bar tagged lower band + RSI oversold, now closed back inside
+            long_setup = (
+                close.iloc[i - 1] < lower.iloc[i - 1]
+                and rsi.iloc[i - 1] < 33
+                and close.iloc[i] > lower.iloc[i]
+                and rsi.iloc[i] > rsi.iloc[i - 1]
+                and close.iloc[i] < sma.iloc[i]
+                and rsi.iloc[i] < 50
+            )
+            if long_setup:
+                entry = float(close.iloc[i])  # market at close — like BB1 EnterLong at bar close
+                atr_5m = float((high.rolling(14).max() - low.rolling(14).min()).iloc[i] / 14) if len(bars_5m) > 20 else atr / 6
+                if np.isnan(atr_5m) or atr_5m <= 0:
+                    atr_5m = atr / 6
+                sl = float(min(lower.iloc[i], close.iloc[i]) - 1.5 * atr_5m)
+                sl = min(sl, entry - (1.0 * atr_5m))
+                risk = entry - sl
+                if risk <= 0 or risk > (0.70 * atr):
+                    continue
+                tp1 = float(sma.iloc[i])
+                tp2 = float(upper.iloc[i])
+                if tp1 <= entry:
+                    continue
+                return TradeSignal(
+                    direction="LONG", entry_price=entry, stop_loss=sl,
+                    tp1_price=tp1, tp2_price=tp2, risk_points=risk,
+                    entry_time=curr_time, session_name=session_name,
+                    metadata={"rsi": float(rsi.iloc[i]), "adx": float(adx_val), "bw": float((upper.iloc[i]-lower.iloc[i])/sma.iloc[i])},
+                )
+
+            short_setup = (
+                close.iloc[i - 1] > upper.iloc[i - 1]
+                and rsi.iloc[i - 1] > 67
+                and close.iloc[i] < upper.iloc[i]
+                and rsi.iloc[i] < rsi.iloc[i - 1]
+                and close.iloc[i] > sma.iloc[i]
+                and rsi.iloc[i] > 50
+            )
+            if short_setup:
+                entry = float(close.iloc[i])
+                atr_5m = float((high.rolling(14).max() - low.rolling(14).min()).iloc[i] / 14) if len(bars_5m) > 20 else atr / 6
+                if np.isnan(atr_5m) or atr_5m <= 0:
+                    atr_5m = atr / 6
+                sl = float(max(upper.iloc[i], close.iloc[i]) + 1.5 * atr_5m)
+                sl = max(sl, entry + (1.0 * atr_5m))
+                risk = sl - entry
+                if risk <= 0 or risk > (0.70 * atr):
+                    continue
+                tp1 = float(sma.iloc[i])
+                tp2 = float(lower.iloc[i])
+                if tp1 >= entry:
+                    continue
+                return TradeSignal(
+                    direction="SHORT", entry_price=entry, stop_loss=sl,
+                    tp1_price=tp1, tp2_price=tp2, risk_points=risk,
+                    entry_time=curr_time, session_name=session_name,
+                    metadata={"rsi": float(rsi.iloc[i]), "adx": float(adx_val), "bw": float((upper.iloc[i]-lower.iloc[i])/sma.iloc[i])},
+                )
+
+        return None
+
+
+# ============================================================================
 # BACKTEST ENGINE
 # ============================================================================
 
 class BacktestEngine:
-    """Shared execution engine. Simulates 1m fills with slippage and commission."""
+    """Shared execution engine. Simulates 1m fills with slippage and commission.
 
-    def __init__(self, symbol: str, tick_size: float = 0.25):
+    entry_mode: "limit" (limit at FVG edge, retrace required) | "market" (fill at
+    next-bar open, no retrace needed) — see RANGE_STRATEGY_BRIDGE §3.
+    """
+
+    def __init__(self, symbol: str, tick_size: float = 0.25, entry_mode: str = "limit"):
         self.symbol = symbol
         self.tick_size = tick_size
+        self.entry_mode = entry_mode  # "limit" | "market" — see RANGE_STRATEGY_BRIDGE §3.
 
         # Position sizing
         is_es = "ES" in symbol
@@ -498,19 +714,36 @@ class BacktestEngine:
         # Using signal.entry_time (5m bar start, inclusive) includes the 1m bars that
         # formed the signal — that's a lookahead (the entry level was MADE by those bars).
         # Next bar after signal = signal bar end = signal time + 5 min.
-        sim = session_bars.loc[signal.entry_time + pd.Timedelta(minutes=5):]
-        if len(sim) == 0:
-            return None
+        if self.entry_mode == "market":
+            # Market entry: fill at next 1m bar's open + slippage. No retrace needed.
+            sim = session_bars.loc[signal.entry_time + pd.Timedelta(minutes=5):]
+            if len(sim) == 0:
+                return None
+            entry = sim.iloc[0]["open"] + (self.slippage_ticks * self.tick_size if signal.direction == "LONG" else -self.slippage_ticks * self.tick_size)
+            sl = signal.stop_loss  # stop at the signal's sweep extreme
+            tp1 = signal.tp1_price
+            tp2 = signal.tp2_price
+            risk = abs(entry - sl)
+            if risk <= 0:
+                return None
+        else:
+            sim = session_bars.loc[signal.entry_time + pd.Timedelta(minutes=5):]
+            if len(sim) == 0:
+                return None
 
         is_long = signal.direction == "LONG"
-        entry = signal.entry_price
-        sl = signal.stop_loss
-        tp1 = signal.tp1_price
-        tp2 = signal.tp2_price
-        risk = signal.risk_points
+        if self.entry_mode != "market":
+            entry = signal.entry_price
+            sl = signal.stop_loss
+            tp1 = signal.tp1_price
+            tp2 = signal.tp2_price
+            risk = signal.risk_points
 
         filled = False
         fill_idx = None
+        if self.entry_mode == "market":
+            filled = True
+            fill_idx = sim.index[0]
         t1_hit = False
         t2_hit = False
         stopped = False
@@ -520,14 +753,16 @@ class BacktestEngine:
 
         for t_bar, row in sim.iterrows():
             if not filled:
-                if is_long and row["low"] <= entry:
-                    filled = True
-                    fill_idx = t_bar
-                elif not is_long and row["high"] >= entry:
-                    filled = True
-                    fill_idx = t_bar
-                else:
-                    continue
+                 if is_long and row["low"] <= entry:
+                     filled = True
+                     fill_idx = t_bar
+                 elif not is_long and row["high"] >= entry:
+                     filled = True
+                     fill_idx = t_bar
+                 else:
+                     continue
+                 if self.entry_mode == "market":
+                     continue  # market is pre-filled; skip limit check on the fill bar itself
 
             # Check stop
             if is_long and row["low"] <= sl:
@@ -603,6 +838,7 @@ def build_day_context(
     df_1m: pd.DataFrame,
     df_5m: pd.DataFrame,
     daily_atr: pd.Series,
+    ib_minutes: int = 30,
 ) -> Optional[DayContext]:
     """Build zero-lookahead context for a single trading day."""
     prev_day = trade_date - pd.Timedelta(days=1)
@@ -629,7 +865,9 @@ def build_day_context(
     on_h = on["high"].max() if len(on) > 0 else np.nan
     on_l = on["low"].min() if len(on) > 0 else np.nan
 
-    ib = df_1m.loc[f"{trade_date} 09:30:00":f"{trade_date} 10:30:00"]
+    # IB window: 09:30 + ib_minutes (default 30 → 09:30-10:00, 15 → 09:30-09:45)
+    ib_end_ts = pd.Timestamp(f"{trade_date} 09:30:00") + pd.Timedelta(minutes=ib_minutes)
+    ib = df_1m[(df_1m.index >= pd.Timestamp(f"{trade_date} 09:30:00")) & (df_1m.index < ib_end_ts)]
     ib_h = ib["high"].max() if len(ib) > 0 else np.nan
     ib_l = ib["low"].min() if len(ib) > 0 else np.nan
     ib_r = (ib_h - ib_l) if not np.isnan(ib_h) else np.nan
@@ -686,6 +924,8 @@ def run_comparison(
     strategies: List[RangeStrategy],
     start_year: int = 2021,
     end_year: int = 2026,
+    engine_kwargs: dict = None,
+    ib_minutes: int = 30,
 ) -> pd.DataFrame:
     """Run all strategies on the same data and return combined results."""
     df_1m = df_1m[(df_1m.index.year >= start_year) & (df_1m.index.year <= end_year)].copy()
@@ -707,10 +947,10 @@ def run_comparison(
     df_1m.loc[evening, "trade_date"] = (df_1m.loc[evening].index + pd.Timedelta(days=1)).date
     unique_dates = sorted(df_1m["trade_date"].unique())
 
-    engine = BacktestEngine(symbol)
+    engine = BacktestEngine(symbol, **(engine_kwargs or {}))
     all_trades: List[TradeResult] = []
 
-    print(f"\n[{symbol}] Running {len(strategies)} strategies over {len(unique_dates)} days...")
+    print(f"\n[{symbol}] Running {len(strategies)} strategies over {len(unique_dates)} days...  (IB={ib_minutes}m, entry_mode={engine.entry_mode})")
 
     for i_date, t_date in enumerate(unique_dates):
         if i_date % 200 == 0:
@@ -720,7 +960,7 @@ def run_comparison(
         if ts.weekday() >= 5:
             continue
 
-        ctx = build_day_context(ts, df_1m, df_5m, daily_atr)
+        ctx = build_day_context(ts, df_1m, df_5m, daily_atr, ib_minutes=ib_minutes)
         if ctx is None:
             continue
 
@@ -866,6 +1106,12 @@ def main():
     parser.add_argument("--start-year", type=int, default=2021)
     parser.add_argument("--end-year", type=int, default=2026)
     parser.add_argument("--symbols", type=str, default="ES,NQ")
+    parser.add_argument("--sweep-fvg-size", type=float, default=None,
+                        help="Override MinFvgSize on IBSweepFade (ES pts). Default 0.75 ES / 3.5 NQ.")
+    parser.add_argument("--sweep-ib-minutes", type=int, default=None,
+                        help="Override IB window minutes on IBSweepFade. Default 30 (09:30-10:00).")
+    parser.add_argument("--entry-mode", type=str, default="limit", choices=["limit", "market"],
+                        help="BacktestEngine fill mode for the sweep strategies (see RANGE_STRATEGY_BRIDGE §3).")
     args = parser.parse_args()
 
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
@@ -933,16 +1179,19 @@ def main():
             }).dropna()
             print(f"[{sym}] Fallback 5m resample: {len(df_5m)} rows")
 
-        # Build strategies
+        # Build strategies (6 + squeeze-gated variant for P3 frequency demo)
         strategies = [
-            IBSweepFadeStrategy(sym),
+            IBSweepFadeStrategy(sym, sweep_fvg_size=args.sweep_fvg_size, ib_minutes=args.sweep_ib_minutes),
             ORBStrategy(sym),
             VWAPMeanReversionStrategy(sym),
             FailedBreakoutStrategy(sym),
             IBBreakoutContinuationStrategy(sym),
+            BBRsiMeanReversionStrategy(sym, use_adx=True, squeeze_only=False),
+            BBRsiMeanReversionStrategy(sym, use_adx=True, squeeze_only=True, squeeze_pct=30),
         ]
+        engine_kwargs = {"entry_mode": args.entry_mode}
 
-        df_results = run_comparison(sym, df_1m, df_5m, strategies, args.start_year, args.end_year)
+        df_results = run_comparison(sym, df_1m, df_5m, strategies, args.start_year, args.end_year, engine_kwargs=engine_kwargs)
         all_results[sym] = df_results
 
         if not df_results.empty:

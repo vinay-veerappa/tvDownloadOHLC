@@ -59,6 +59,7 @@ STRATEGIES_SRC_DIRS = [
     ("failed_auction", NT8_SRC / "strategies" / "failed_auction"),
     ("vwap_reclaim",   NT8_SRC / "strategies" / "vwap_reclaim"),
     ("ifvg_cisd",      NT8_SRC / "strategies" / "ifvg_cisd"),
+    ("bandits_8020",   NT8_SRC / "strategies" / "bandits_8020"),
 ]
 
 # Shared source dir — classes used by both strategies and indicators
