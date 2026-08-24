@@ -23,7 +23,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// Inherits from RiskManagerBase for centralized risk management and ATM execution.
     ///
     /// Visual Features:
-    ///   - Paints Strat numbers (1, 2U, 2D, 3) directly on chart.
+    ///   - Paints Strat numbers (1, 2U, 2D, 3) on ALL bars on the chart.
     ///   - Draws Signal entry arrows, Stop Loss lines, and Target lines.
     /// </summary>
     public class Strat212ContinuationBot : RiskManagerBase
@@ -85,6 +85,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
         }
 
+        protected override void OnBarUpdate()
+        {
+            // Paint visual elements on every primary bar unconditionally
+            if (BarsInProgress == 0 && CurrentBars[0] >= 2 && ShowVisualElements)
+            {
+                RenderBarNumber();
+            }
+
+            base.OnBarUpdate();
+        }
+
         protected override int CheckForSignal()
         {
             if (CurrentBars[0] < 4)
@@ -104,34 +115,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             bool l1Lower = l1 < l2;
             bool bar1IsInside = (!h1Higher && !l1Lower);
 
+            if (!bar1IsInside)
+                return 0;
+
             // 2. Classify Bar[2]
             bool h2Higher = h2 > h3;
             bool l2Lower = l2 < l3;
             bool bar2Is2U = (h2Higher && !l2Lower);
             bool bar2Is2D = (l2Lower && !h2Higher);
 
-            // 3. Draw Strat numbering if enabled
-            if (ShowVisualElements)
-            {
-                RenderBarNumber(0, h0, l0, h1, l1);
-            }
-
-            if (!bar1IsInside)
-                return 0;
-
             // Bullish 2-1-2 Trigger: Current bar breaks High[1]
             if (h0 > h1)
             {
                 if (bar2Is2U || (AllowReversals && bar2Is2D))
                 {
-                    double targetPrice = Math.Max(h2, h1 + MinTargetPoints);
-                    double stopPrice = l1 - TickSize;
-
                     if (ShowVisualElements)
                     {
                         string tag = "Strat212_Buy_" + CurrentBars[0];
-                        Draw.ArrowUp(this, tag, false, 0, l0 - (4 * TickSize), Brushes.Lime);
-                        Draw.Text(this, tag + "_txt", false, "2-1-2 BUY", 0, l0 - (10 * TickSize), 0, Brushes.Lime, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                        Draw.ArrowUp(this, tag, false, 0, l0 - (6 * TickSize), Brushes.Lime);
+                        Draw.Text(this, tag + "_txt", false, "2-1-2 BUY", 0, l0 - (14 * TickSize), 0, Brushes.Lime, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                     }
                     return 1; // Long
                 }
@@ -142,14 +144,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 if (bar2Is2D || (AllowReversals && bar2Is2U))
                 {
-                    double targetPrice = Math.Min(l2, l1 - MinTargetPoints);
-                    double stopPrice = h1 + TickSize;
-
                     if (ShowVisualElements)
                     {
                         string tag = "Strat212_Sell_" + CurrentBars[0];
-                        Draw.ArrowDown(this, tag, false, 0, h0 + (4 * TickSize), Brushes.Red);
-                        Draw.Text(this, tag + "_txt", false, "2-1-2 SELL", 0, h0 + (10 * TickSize), 0, Brushes.Red, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                        Draw.ArrowDown(this, tag, false, 0, h0 + (6 * TickSize), Brushes.Red);
+                        Draw.Text(this, tag + "_txt", false, "2-1-2 SELL", 0, h0 + (14 * TickSize), 0, Brushes.Red, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                     }
                     return -1; // Short
                 }
@@ -158,8 +157,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return 0;
         }
 
-        private void RenderBarNumber(int barsAgo, double currH, double currL, double prevH, double prevL)
+        private void RenderBarNumber()
         {
+            double currH = Highs[0][0];
+            double currL = Lows[0][0];
+            double prevH = Highs[0][1];
+            double prevL = Lows[0][1];
+
             string numText = "";
             Brush numColor = Brushes.Gray;
             bool above = true;
@@ -190,8 +194,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             string tag = "StratNum_" + CurrentBars[0];
-            double price = above ? currH + (4 * TickSize) : currL - (4 * TickSize);
-            Draw.Text(this, tag, false, numText, barsAgo, price, 0, numColor, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            double price = above ? currH + (6 * TickSize) : currL - (6 * TickSize);
+            Draw.Text(this, tag, false, numText, 0, price, 0, numColor, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
         }
     }
 }

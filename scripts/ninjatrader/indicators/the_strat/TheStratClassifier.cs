@@ -6,12 +6,11 @@ using System.Windows;
 using System.Windows.Media;
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
+using NinjaTrader.Data;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Chart;
 using NinjaTrader.Gui.Tools;
-using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
-using NinjaTrader.Core.FloatingPoint;
 using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
 
@@ -24,46 +23,51 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
     ///   21 = 2U (Directional Up)
     ///   22 = 2D (Directional Down)
     ///   3  = Outside Bar (Broadening)
-    /// Also detects Actionable Hammer / Shooter wicks.
     /// </summary>
     public class TheStratClassifier : Indicator
     {
         #region Properties & Inputs
         [NinjaScriptProperty]
-        [Display(Name = "Show Bar Numbers", Description = "Draw Strat numbers (1, 2U, 2D, 3) above/below candles", Order = 1, GroupName = "Display Settings")]
+        [Display(Name = "Show Bar Numbers", Description = "Draw Strat numbers (1, 2U, 2D, 3) above/below candles", Order = 1, GroupName = "1. Display Settings")]
         public bool ShowBarNumbers { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Show Actionable Wick Markers", Description = "Highlight actionable hammer / shooter wicks", Order = 2, GroupName = "Display Settings")]
+        [Display(Name = "Show Actionable Wick Markers", Description = "Highlight actionable hammer / shooter wicks", Order = 2, GroupName = "1. Display Settings")]
         public bool ShowActionableWicks { get; set; }
 
         [NinjaScriptProperty]
         [Range(0.50, 0.90)]
-        [Display(Name = "Actionable Wick Threshold", Description = "Minimum wick ratio of total range for hammer/shooter", Order = 3, GroupName = "Display Settings")]
+        [Display(Name = "Actionable Wick Threshold", Description = "Minimum wick ratio of total range for hammer/shooter", Order = 3, GroupName = "1. Display Settings")]
         public double WickThreshold { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Text Offset (Ticks)", Description = "Distance from candle high/low in ticks", Order = 4, GroupName = "Display Settings")]
+        [Range(1, 50)]
+        [Display(Name = "Text Offset (Ticks)", Description = "Distance from candle high/low in ticks", Order = 4, GroupName = "1. Display Settings")]
         public int TextOffsetTicks { get; set; }
 
         [NinjaScriptProperty]
+        [Range(8, 24)]
+        [Display(Name = "Font Size", Description = "Font size for bar numbers", Order = 5, GroupName = "1. Display Settings")]
+        public int FontSize { get; set; }
+
+        [NinjaScriptProperty]
         [XmlIgnore]
-        [Display(Name = "1 (Inside) Color", Order = 5, GroupName = "Color Settings")]
+        [Display(Name = "1 (Inside) Color", Order = 6, GroupName = "2. Colors")]
         public Brush ColorInside { get; set; }
 
         [NinjaScriptProperty]
         [XmlIgnore]
-        [Display(Name = "2U (Up) Color", Order = 6, GroupName = "Color Settings")]
+        [Display(Name = "2U (Up) Color", Order = 7, GroupName = "2. Colors")]
         public Brush ColorTwoUp { get; set; }
 
         [NinjaScriptProperty]
         [XmlIgnore]
-        [Display(Name = "2D (Down) Color", Order = 7, GroupName = "Color Settings")]
+        [Display(Name = "2D (Down) Color", Order = 8, GroupName = "2. Colors")]
         public Brush ColorTwoDown { get; set; }
 
         [NinjaScriptProperty]
         [XmlIgnore]
-        [Display(Name = "3 (Outside) Color", Order = 8, GroupName = "Color Settings")]
+        [Display(Name = "3 (Outside) Color", Order = 9, GroupName = "2. Colors")]
         public Brush ColorOutside { get; set; }
 
         [Browsable(false)]
@@ -88,8 +92,9 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
 
                 ShowBarNumbers = true;
                 ShowActionableWicks = true;
-                WickThreshold = 0.65;
-                TextOffsetTicks = 4;
+                WickThreshold = 0.60;
+                TextOffsetTicks = 6;
+                FontSize = 11;
 
                 ColorInside = Brushes.Gold;
                 ColorTwoUp = Brushes.LimeGreen;
@@ -187,14 +192,15 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
 
             ActionableWickSeries[0] = wickType;
 
-            // Render numbers and markers
+            // Render numbers on chart
             if (ShowBarNumbers && !string.IsNullOrEmpty(labelText))
             {
                 double textPrice = drawAbove ? currHigh + (TextOffsetTicks * TickSize) : currLow - (TextOffsetTicks * TickSize);
                 string tag = "StratLabel_" + CurrentBar;
-                Draw.Text(this, tag, false, labelText, 0, textPrice, 0, labelBrush, new SimpleFont("Arial", 11), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                Draw.Text(this, tag, false, labelText, 0, textPrice, 0, labelBrush, new SimpleFont("Arial", FontSize), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
             }
 
+            // Render actionable wick markers
             if (ShowActionableWicks && wickType != 0)
             {
                 string wickTag = "StratWick_" + CurrentBar;
