@@ -167,7 +167,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 TraceOrders                  = false;
                 BarsRequiredToTrade          = 1;   // FIX: was 50 — blocked IB entries for 250 min on 5-min secondary
                 BarsRequiredToTradeParam     = 1;   // exposed as NinjaScriptProperty so SA params can override
-                StartBehavior                = StartBehavior.WaitUntilFlat;
+                StartBehavior                = StartBehavior.AdoptAccountPosition;
                 RealtimeErrorHandling        = RealtimeErrorHandling.StopCancelClose;
 
                 // Risk defaults
@@ -413,12 +413,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             string acctName = Account?.Name ?? "null";
 
-            // ── Backtest mode bypass ──
-            // In Strategy Analyzer backtests, Account.Name is "Backtest" or similar.
-            // The RiskGatekeeper monitors LIVE accounts via the AddOn, and its daily-max-loss
-            // gate (default $400) blocks backtest entries because potentialLoss ($575 for MNQ)
-            // exceeds the live limit. Skip ALL gatekeeper gates in backtest mode.
-            bool isBacktest = acctName.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
+            // ── Backtest / Historical mode bypass ──
+            // In Strategy Analyzer or when processing historical chart bars (State == State.Historical),
+            // Account.Name is "Backtest" or a Sim account. Skip gatekeeper live lockout checks.
+            bool isBacktest = (State == State.Historical)
+                           || acctName.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
                            || acctName.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0;
 
             // ── RiskGatekeeper check (live/sim mode — cross-strategy, cross-session) ──
@@ -541,7 +540,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // ABSOLUTE magnitude and MarketPosition carries the side -- there is no sign to misread.
             {
                 string sizeAcct = (Account != null) ? Account.Name : "";
-                bool sizeIsBacktest = sizeAcct.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
+                bool sizeIsBacktest = (State == State.Historical)
+                                   || sizeAcct.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
                                    || sizeAcct.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0;
                 if (!sizeIsBacktest)
                 {
