@@ -2,8 +2,13 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Windows;
+using System.Windows.Media;
 using NinjaTrader.Cbi;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
 #endregion
@@ -83,10 +88,23 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override int CheckForSignal()
         {
-            if (stratClassifier == null || CurrentBar < 4)
-                return 0;
-
-            return stratClassifier.Signal212Series[0];
+            if (stratClassifier == null || CurrentBar < 4) return 0;
+            int sig = stratClassifier.Signal212Series[0];
+            if (sig != 0 && DrawVisuals)
+            {
+                string tag = "Strat212_Strat_" + CurrentBar;
+                if (sig == 1)
+                {
+                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
+                    Draw.Text(this, tag + "_Txt", false, "2-1-2 BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                }
+                else if (sig == -1)
+                {
+                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.Red);
+                    Draw.Text(this, tag + "_Txt", false, "2-1-2 SELL", 0, High[0] + (10 * TickSize), 0, Brushes.Red, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                }
+            }
+            return sig;
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)

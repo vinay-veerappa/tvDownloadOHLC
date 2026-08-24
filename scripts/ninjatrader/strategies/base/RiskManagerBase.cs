@@ -4,9 +4,14 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Windows;
+using System.Windows.Media;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
 #endregion
@@ -124,6 +129,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [NinjaScriptProperty]
         [Display(Name = "Debug Mode (verbose logging)", Order = 1, GroupName = "Timeframe")]
         public bool DebugMode { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Draw Visuals on Chart", Order = 2, GroupName = "Visuals")]
+        public bool DrawVisuals { get; set; } = true;
         #endregion
 
         // ──────────────────────────────────────────────────────────────
@@ -638,6 +647,43 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             todayTradeCount++;
+
+            if (DrawVisuals)
+            {
+                string tag = "Trade_" + CurrentBar;
+                if (direction == "Long")
+                {
+                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, entry - (4 * TickSize), Brushes.LimeGreen);
+                    Draw.Line(this, tag + "_Entry", false, 0, entry, -10, entry, Brushes.DodgerBlue, DashStyleHelper.Solid, 2);
+                    Draw.Line(this, tag + "_Stop", false, 0, stop, -10, stop, Brushes.Crimson, DashStyleHelper.Dash, 2);
+                    Draw.Text(this, tag + "_Txt", false, string.Format("BUY @ {0:F2}\nSL: {1:F2}", entry, stop), 0, entry - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                    if (TradePolicy == TradePolicyType.CoverTheQueen)
+                    {
+                        double bpsPts = entry * 0.0010;
+                        double queenPts = Math.Max(bpsPts, riskPoints);
+                        double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 2.5);
+                        Draw.Line(this, tag + "_TP1", false, 0, entry + queenPts, -10, entry + queenPts, Brushes.Gold, DashStyleHelper.Solid, 2);
+                        Draw.Line(this, tag + "_TP2", false, 0, entry + runnerPts, -10, entry + runnerPts, Brushes.SpringGreen, DashStyleHelper.Solid, 2);
+                    }
+                }
+                else
+                {
+                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, entry + (4 * TickSize), Brushes.OrangeRed);
+                    Draw.Line(this, tag + "_Entry", false, 0, entry, -10, entry, Brushes.DodgerBlue, DashStyleHelper.Solid, 2);
+                    Draw.Line(this, tag + "_Stop", false, 0, stop, -10, stop, Brushes.Crimson, DashStyleHelper.Dash, 2);
+                    Draw.Text(this, tag + "_Txt", false, string.Format("SELL @ {0:F2}\nSL: {1:F2}", entry, stop), 0, entry + (10 * TickSize), 0, Brushes.OrangeRed, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                    if (TradePolicy == TradePolicyType.CoverTheQueen)
+                    {
+                        double bpsPts = entry * 0.0010;
+                        double queenPts = Math.Max(bpsPts, riskPoints);
+                        double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 2.5);
+                        Draw.Line(this, tag + "_TP1", false, 0, entry - queenPts, -10, entry - queenPts, Brushes.Gold, DashStyleHelper.Solid, 2);
+                        Draw.Line(this, tag + "_TP2", false, 0, entry - runnerPts, -10, entry - runnerPts, Brushes.SpringGreen, DashStyleHelper.Solid, 2);
+                    }
+                }
+            }
 
             Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | Risk {4:C} | Trade #{5} | Policy {6}",
                 GetStrategyName(), direction, entry, stop,

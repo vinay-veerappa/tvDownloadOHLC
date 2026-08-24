@@ -2,7 +2,12 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Windows;
+using System.Windows.Media;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
 #endregion
@@ -64,7 +69,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override int CheckForSignal()
         {
             if (vwapIndicator == null || CurrentBar < 10) return 0;
-            return vwapIndicator.SignalSeries[0];
+            int sig = vwapIndicator.SignalSeries[0];
+            if (sig != 0 && DrawVisuals)
+            {
+                string tag = "VWAP_Strat_" + CurrentBar;
+                if (sig == 1)
+                {
+                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.DarkOrange);
+                    Draw.Text(this, tag + "_Txt", false, "VWAP BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.DarkOrange, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                }
+                else if (sig == -1)
+                {
+                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.DarkOrange);
+                    Draw.Text(this, tag + "_Txt", false, "VWAP SELL", 0, High[0] + (10 * TickSize), 0, Brushes.DarkOrange, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                }
+            }
+            return sig;
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)
