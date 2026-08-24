@@ -87,6 +87,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return double.NaN;
         }
 
+        protected override double GetCurrentATR()
+        {
+            if (CurrentBar >= 14) return Math.Max(10.0, High[0] - Low[0]);
+            return 15.0;
+        }
+
         protected override double GetPotentialLoss()
         {
             if (ictIndicator != null && CurrentBar >= 20)
@@ -95,10 +101,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 if (!double.IsNaN(sl) && sl > 0)
                 {
                     double dist = Math.Abs(Close[0] - sl);
-                    return dist * GetPointValue();
+                    return dist * GetPointValue() * Math.Max(1, DefaultQuantity);
                 }
             }
-            return 15.0 * GetPointValue();
+            return 15.0 * GetPointValue() * Math.Max(1, DefaultQuantity);
         }
     }
 }

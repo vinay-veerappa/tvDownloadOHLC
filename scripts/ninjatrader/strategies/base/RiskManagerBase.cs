@@ -917,11 +917,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// </summary>
         protected virtual double GetCurrentATR()
         {
-            if (!AddSecondaryTimeframe || atrIndicator == null)
-                return 0;
-            if (CurrentBars[1] < AtrPeriod)
-                return 0;
-            return atrIndicator[0];
+            if (AddSecondaryTimeframe && atrIndicator != null && CurrentBars.Length > 1 && CurrentBars[1] >= AtrPeriod)
+                return atrIndicator[0];
+            if (CurrentBars[0] >= 1)
+                return Math.Max(TickSize * 4, High[0] - Low[0]);
+            return 15.0;
         }
 
         /// <summary>

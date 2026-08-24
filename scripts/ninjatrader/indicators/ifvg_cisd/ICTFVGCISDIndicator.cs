@@ -159,41 +159,21 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
         private void ConsultCrystalBall(int bias, out double extremeOpen, out int extremeBarIdx)
         {
-            int temporalShift = 0;
-            for (int i = 1; i <= Math.Min(50, CurrentBar); i++)
+            extremeOpen = bias == 1 ? Low[1] : High[1];
+            extremeBarIdx = CurrentBar - 1;
+            int maxLookback = Math.Min(15, CurrentBar);
+            for (int i = 1; i <= maxLookback; i++)
             {
-                bool isCorrectEra = (bias == 1) ? (Close[i] > Open[i]) : (Close[i] < Open[i]);
-                if (isCorrectEra) { temporalShift = i; break; }
-            }
-            extremeOpen = Open[temporalShift];
-            int maxShift = -1;
-            for (int j = temporalShift; j <= Math.Min(50, CurrentBar); j++)
-            {
-                bool isCorrectEra = (bias == 1) ? (Close[j] > Open[j]) : (Close[j] < Open[j]);
-                if (Variant == 0)
+                // In bullish trend (bias=1), reference is the most recent down-close candle open.
+                // In bearish trend (bias=-1), reference is the most recent up-close candle open.
+                bool isOpposing = (bias == 1) ? (Close[i] < Open[i]) : (Close[i] > Open[i]);
+                if (isOpposing)
                 {
-                    if (isCorrectEra)
-                    {
-                        maxShift = j;
-                        if (bias == 1 && Open[j] < extremeOpen) extremeOpen = Open[j];
-                        if (bias == -1 && Open[j] > extremeOpen) extremeOpen = Open[j];
-                    }
-                }
-                else
-                {
-                    if (!isCorrectEra) break;
-                    maxShift = j;
-                    if (bias == 1 && Open[j] < extremeOpen) extremeOpen = Open[j];
-                    if (bias == -1 && Open[j] > extremeOpen) extremeOpen = Open[j];
+                    extremeOpen = Open[i];
+                    extremeBarIdx = CurrentBar - i;
+                    break;
                 }
             }
-            if (maxShift < 0) { extremeBarIdx = CurrentBar; return; }
-            int extremeShift = maxShift;
-            for (int k = 1; k <= maxShift; k++)
-            {
-                if (Open[k] == extremeOpen) { extremeShift = k; break; }
-            }
-            extremeBarIdx = CurrentBar - extremeShift;
         }
 
         protected override void OnBarUpdate()
@@ -314,12 +294,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             double target2 = double.NaN;
 
             // CISD Cross Detection
-            if (vibes == -1 && c0 > bagholderEntry && c1 <= bagholderEntry)
+            if (vibes == -1 && c0 > activeLevel)
             {
                 // Bullish CISD Reversal Trigger
                 signal = 1;
                 vibes = 1;
-                stopLoss = Low[1]; // Prior swing low / trigger bar low
+                stopLoss = Low[0];
                 for (int k = 1; k <= 5; k++) if (Low[k] < stopLoss) stopLoss = Low[k];
 
                 double riskPts = Math.Max(c0 - stopLoss, 10.0);
@@ -339,12 +319,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 ConsultCrystalBall(1, out ep, out eb);
                 bagholderEntry = ep;
             }
-            else if (vibes == 1 && c0 < bagholderEntry && c1 >= bagholderEntry)
+            else if (vibes == 1 && c0 < activeLevel)
             {
                 // Bearish CISD Reversal Trigger
                 signal = -1;
                 vibes = -1;
-                stopLoss = High[1]; // Prior swing high
+                stopLoss = High[0];
                 for (int k = 1; k <= 5; k++) if (High[k] > stopLoss) stopLoss = High[k];
 
                 double riskPts = Math.Max(stopLoss - c0, 10.0);
