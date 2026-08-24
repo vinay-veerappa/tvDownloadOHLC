@@ -1,0 +1,190 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © LizardIndicators Re-engineering / Antigravity
+
+//@version=6
+indicator(Current Day Median [Lizard Style], shorttitle=Current Day Median, overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=5000)
+
+// -------------------------------------------------------------------------------------------------
+// CONSTANTS & PALETTE (Matching LizardIndicators Screenshot)
+// -------------------------------------------------------------------------------------------------
+color COLOR_BULL_MEDIAN = color.blue             // Blue dashed when price > Median
+color COLOR_BEAR_MEDIAN = color.red              // Red dashed when price < Median
+color COLOR_BAND_BORDER = #768199                // Slate outline
+color COLOR_INNER_FILL  = color.new(#A4B0C7, 82) // Light slate inner Value Area fill (Band 1)
+color COLOR_OUTER_FILL  = color.new(#7384A6, 68) // Deeper slate outer channel fill (Band 2)
+color COLOR_PRIOR_VAL   = #506575                // Prior session reference levels
+
+// -------------------------------------------------------------------------------------------------
+// INPUTS
+// -------------------------------------------------------------------------------------------------
+string GRP_CALC   = "Median Calculation"
+string GRP_BANDS  = "Residual Mean Absolute Deviation (MAD) Bands"
+string GRP_SESS   = "Session Settings"
+string GRP_PRIOR  = "Prior Session Reference Levels"
+
+string calc_type  = input.string("Volume-Weighted TPO (VWTPO)", "Calculation Mode", options=["Volume-Weighted TPO (VWTPO)", "Time Price Opportunity (TPO)"], group=GRP_CALC)
+bool interpolate  = input.bool(true, "Interpolate Values", tooltip="Linearly interpolates price within the median tick slice for smoother precision", group=GRP_CALC)
+
+bool show_bands   = input.bool(true, "Show MAD Bands", group=GRP_BANDS)
+float band_mult1  = input.float(1.25, "Inner Band Multiplier (≈ 1.0σ / Value Area)", minval=0.1, step=0.05, group=GRP_BANDS)
+float band_mult2  = input.float(2.50, "Outer Band Multiplier (≈ 2.0σ)", minval=0.1, step=0.05, group=GRP_BANDS)
+bool show_band2   = input.bool(true, "Show Outer Band (2.0x)", group=GRP_BANDS)
+
+string sess_type  = input.string("Full Day (24H)", "Session Selection", options=["Full Day (24H)", "RTH (09:30 - 16:00)", "Asia (18:00 - 02:30)", "London (02:30 - 07:30)", "NY AM (08:30 - 11:30)", "NY PM (12:30 - 16:15)", "Custom Session"], group=GRP_SESS)
+string cust_sess  = input.session("0930-1600:23456", "Custom Session Window", group=GRP_SESS)
+string tz_input   = input.string("America/New_York", "Timezone", group=GRP_SESS)
+
+bool show_prior   = input.bool(true, "Show Prior Session Reference Levels", group=GRP_PRIOR)
+
+// -------------------------------------------------------------------------------------------------
+// SESSION DETECTION
+// -------------------------------------------------------------------------------------------------
+string active_session_window = switch sess_type
+    "RTH (09:30 - 16:00)"     => "0930-1600:23456"
+    "Asia (18:00 - 02:30)"    => "1800-0230:1234567"
+    "London (02:30 - 07:30)"  => "0230-0730:23456"
+    "NY AM (08:30 - 11:30)"   => "0830-1130:23456"
+    "NY PM (12:30 - 16:15)"   => "1230-1615:23456"
+    "Custom Session"          => cust_sess
+    => ""
+
+bool is_full_day = (sess_type == "Full Day (24H)")
+bool in_session  = is_full_day ? true : not na(time(timeframe.period, active_session_window, tz_input))
+bool new_day     = ta.change(time("D", "", tz_input)) != 0
+bool new_sess    = not is_full_day and (in_session and not in_session[1])
+bool session_reset = is_full_day ? new_day : new_sess
+
+// Prior session values tracking
+var float prior_median = na
+var float prior_upper1 = na
+var float prior_lower1 = na
+
+var float cur_median   = na
+var float cur_upper1   = na
+var float cur_lower1   = na
+
+// -------------------------------------------------------------------------------------------------
+// DYNAMIC VOLUME / TPO PROFILE ARRAYS
+// -------------------------------------------------------------------------------------------------
+var float[] price_levels = array.new_float(0)
+var float[] vol_weights  = array.new_float(0)
+var float   total_vol    = 0.0
+
+if session_reset
+    if not na(cur_median)
+        prior_median := cur_median
+        prior_upper1 := cur_upper1
+        prior_lower1 := cur_lower1
+    array.clear(price_levels)
+    array.clear(vol_weights)
+    total_vol := 0.0
+
+// Add bar data to profile
+if in_session
+    float bar_h = high
+    float bar_l = low
+    float bar_v = (calc_type == "Volume-Weighted TPO (VWTPO)") ? (volume > 0 ? volume : 1.0) : 1.0
+    
+    // Ticks spanned by bar
+    int ticks = math.max(1, math.round((bar_h - bar_l) / syminfo.mintick) + 1)
+    float slice_v = bar_v / ticks
+    
+    // Distribute across ticks
+    for i = 0 to ticks - 1
+        float p = bar_l + i * syminfo.mintick
+        int sz = array.size(price_levels)
+        int idx = -1
+        int insert_pos = sz
+        
+        // Binary search for exact level or insertion slot
+        if sz > 0
+            int l = 0
+            int r = sz - 1
+            while l <= r
+                int mid = math.floor((l + r) / 2)
+                float val = array.get(price_levels, mid)
+                if math.abs(val - p) < (syminfo.mintick * 0.5)
+                    idx := mid
+                    break
+                else if val < p
+                    l := mid + 1
+                else
+                    insert_pos := mid
+                    r := mid - 1
+            if idx == -1
+                insert_pos := l
+        
+        if idx >= 0
+            array.set(vol_weights, idx, array.get(vol_weights, idx) + slice_v)
+        else
+            array.insert(price_levels, insert_pos, p)
+            array.insert(vol_weights, insert_pos, slice_v)
+        
+        total_vol += slice_v
+
+// -------------------------------------------------------------------------------------------------
+// CALCULATE MEDIAN & MAD (Mean Absolute Deviation)
+// -------------------------------------------------------------------------------------------------
+float current_median = na
+float mad_val        = na
+
+int sz = array.size(price_levels)
+if in_session and sz > 0 and total_vol > 0
+    float target_vol = total_vol * 0.5
+    float cum_vol = 0.0
+    float prior_cum = 0.0
+    
+    for i = 0 to sz - 1
+        float w = array.get(vol_weights, i)
+        cum_vol += w
+        if cum_vol >= target_vol
+            if interpolate and (cum_vol - prior_cum) > 0
+                float p = array.get(price_levels, i)
+                current_median := p + ((target_vol - prior_cum) / (cum_vol - prior_cum) - 0.5) * syminfo.mintick
+            else
+                current_median := array.get(price_levels, i)
+            break
+        prior_cum := cum_vol
+    
+    // Calculate Mean Absolute Deviation (MAD) = sum(weight * |p - median|) / total_vol
+    if not na(current_median) and show_bands
+        float abs_dev_sum = 0.0
+        for i = 0 to sz - 1
+            float p = array.get(price_levels, i)
+            float w = array.get(vol_weights, i)
+            abs_dev_sum += w * math.abs(p - current_median)
+        mad_val := abs_dev_sum / total_vol
+
+// Hold values outside session
+if in_session
+    cur_median := current_median
+    cur_upper1 := show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult1 * mad_val) : na
+    cur_lower1 := show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult1 * mad_val) : na
+
+float plot_median = in_session ? current_median : cur_median
+float plot_u1     = in_session ? (show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult1 * mad_val) : na) : cur_upper1
+float plot_l1     = in_session ? (show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult1 * mad_val) : na) : cur_lower1
+float plot_u2     = in_session ? (show_band2 and show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult2 * mad_val) : na) : na
+float plot_l2     = in_session ? (show_band2 and show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult2 * mad_val) : na) : na
+
+// -------------------------------------------------------------------------------------------------
+// PLOTS & EXACT LIZARD VISUALS (Matching Screenshot)
+// -------------------------------------------------------------------------------------------------
+// Dynamic Blue/Red dashed color based on close > median
+color median_col = close >= plot_median ? COLOR_BULL_MEDIAN : COLOR_BEAR_MEDIAN
+
+p_u2 = plot(plot_u2, "Upper Band 2 (+2.5 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_u1 = plot(plot_u1, "Upper Band 1 (+1.25 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_med = plot(plot_median, "Current Day Median", color=median_col, linewidth=2, style=plot.style_linebr)
+p_l1 = plot(plot_l1, "Lower Band 1 (-1.25 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_l2 = plot(plot_l2, "Lower Band 2 (-2.5 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+
+// Multi-tiered layered fills matching Lizard screenshot
+fill(p_u2, p_u1, color=COLOR_OUTER_FILL, title="Outer Upper Channel Cloud")
+fill(p_u1, p_l1, color=COLOR_INNER_FILL, title="Inner Value Area Cloud")
+fill(p_l1, p_l2, color=COLOR_OUTER_FILL, title="Outer Lower Channel Cloud")
+
+// Prior Session Horizontal Reference Plots (Y-VAH, Y-Median, Y-VAL)
+plot(show_prior ? prior_upper1 : na, "Y-VAH (Prior Upper Band 1)", color=COLOR_PRIOR_VAL, style=plot.style_circles, linewidth=1)
+plot(show_prior ? prior_median : na, "Y-Median (Prior Median)", color=color.new(COLOR_PRIOR_VAL, 30), style=plot.style_circles, linewidth=1)
+plot(show_prior ? prior_lower1 : na, "Y-VAL (Prior Lower Band 1)", color=COLOR_PRIOR_VAL, style=plot.style_circles, linewidth=1)
