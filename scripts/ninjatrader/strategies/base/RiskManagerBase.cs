@@ -13,6 +13,15 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
+    public enum TradePolicyType
+    {
+        CoverTheQueen,
+        BreakevenTrail,
+        FixedTarget,
+        BaseHits,
+        SupertrendTrail
+    }
+
     public abstract class RiskManagerBase : Strategy
     {
         // ──────────────────────────────────────────────────────────────
@@ -81,8 +90,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public int AtrPeriod { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Policy (BreakevenTrail / FixedTarget)", Order = 3, GroupName = "Trade Management")]
-        public string TradePolicy { get; set; }
+        [Display(Name = "Trade Policy", Description = "Trade management and profit target policy", Order = 3, GroupName = "Trade Management")]
+        public TradePolicyType TradePolicy { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "BE Trigger (R-multiple)", Order = 4, GroupName = "Trade Management")]
@@ -189,7 +198,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 // Trade management defaults
                 StopAtrMult         = 2.0;
                 AtrPeriod           = 14;
-                TradePolicy         = "BreakevenTrail";
+                TradePolicy         = TradePolicyType.CoverTheQueen;
                 BreakevenTriggerR   = 1.0;
                 TrailAtrMult        = 2.0;
                 TargetRMultiple     = 2.0;
@@ -558,7 +567,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
             }
 
-            if (TradePolicy == "BaseHits")
+            if (TradePolicy == TradePolicyType.BaseHits)
             {
                 var targets = GetBaseHitsTargets();
                 stopDist = targets.stopPts;
@@ -574,7 +583,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             tradeDirection    = direction;
             entrySignalName   = signalName;
 
-            if (TradePolicy == "CoverTheQueen")
+            if (TradePolicy == TradePolicyType.CoverTheQueen)
             {
                 double bpsPts = entry * 0.0010; // 10 Basis Points (approx 20-29 pts on NQ)
                 double queenPts = Math.Max(bpsPts, riskPoints);
@@ -609,9 +618,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 double customTarget = GetCustomProfitTarget(1, entry, stopDist);
                 if (!double.IsNaN(customTarget) && customTarget > entry)
                     SetProfitTarget(signalName, CalculationMode.Price, customTarget);
-                else if (TradePolicy == "FixedTarget")
+                else if (TradePolicy == TradePolicyType.FixedTarget)
                     SetProfitTarget(signalName, CalculationMode.Price, entry + TargetRMultiple * riskPoints);
-                else if (TradePolicy == "BaseHits")
+                else if (TradePolicy == TradePolicyType.BaseHits)
                     SetProfitTarget(signalName, CalculationMode.Price, entry + GetBaseHitsTargets().tp1Pts);
             }
             else
@@ -622,9 +631,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 double customTarget = GetCustomProfitTarget(-1, entry, stopDist);
                 if (!double.IsNaN(customTarget) && customTarget < entry)
                     SetProfitTarget(signalName, CalculationMode.Price, customTarget);
-                else if (TradePolicy == "FixedTarget")
+                else if (TradePolicy == TradePolicyType.FixedTarget)
                     SetProfitTarget(signalName, CalculationMode.Price, entry - TargetRMultiple * riskPoints);
-                else if (TradePolicy == "BaseHits")
+                else if (TradePolicy == TradePolicyType.BaseHits)
                     SetProfitTarget(signalName, CalculationMode.Price, entry - GetBaseHitsTargets().tp1Pts);
             }
 
@@ -665,13 +674,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return;
             }
 
-            if (TradePolicy == "BreakevenTrail")
+            if (TradePolicy == TradePolicyType.BreakevenTrail)
                 ManageBreakevenTrail(currentPrice);
-            else if (TradePolicy == "CoverTheQueen")
+            else if (TradePolicy == TradePolicyType.CoverTheQueen)
                 ManageCoverTheQueen(currentPrice);
-            else if (TradePolicy == "BaseHits")
+            else if (TradePolicy == TradePolicyType.BaseHits)
                 ManageBaseHits(currentPrice);
-            else if (TradePolicy == "SupertrendTrail")
+            else if (TradePolicy == TradePolicyType.SupertrendTrail)
                 ManageSupertrendTrail(currentPrice);
         }
 

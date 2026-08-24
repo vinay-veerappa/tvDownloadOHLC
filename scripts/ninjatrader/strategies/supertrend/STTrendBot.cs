@@ -44,11 +44,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         #endregion
 
+        private Indicators.Vinay.SupertrendIndicator stIndicator;
         private ATR atr;
-        private double stUpper, stLower, stValue;
-        private double prevStValue;
-        private bool stInit;
-        // Crude trail ATR (Python parity): (MAX(High,14)-MIN(Low,14))/14 — NOT Wilder ATR.
         private MAX maxHigh;
         private MIN minLow;
         private const int TRAIL_ATR_PERIOD = 14;
@@ -65,13 +62,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             StopAtrMult = 1.5;
             AtrPeriod = 14;
-            TradePolicy = "SupertrendTrail";  // ratchet from entry -/+ trail*ATR on bar High/Low
+            TradePolicy = TradePolicyType.SupertrendTrail;  // ratchet from entry -/+ trail*ATR on bar High/Low
             BreakevenTriggerR = 0.0;
             TrailAtrMult = 1.5;
 
             // RISK GATES DISABLED for Python-parity validation (Python sim has none).
-            // Python: 762 trades PF1.50. Gates cut to 66 trades PF0.84 and mask the edge.
-            // Re-enable for prop AFTER parity confirmed.
             DailyMaxLoss = 99999;
             MaxConsecutiveLosers = 99;
             PauseMinutes = 30;
@@ -97,12 +92,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void InitializeStrategy()
         {
-            atr = ATR(BarsArray[0], 14);  // Wilder ATR for the Supertrend band (Python uses EWM ATR — close enough)
+            stIndicator = SupertrendIndicator(StPeriod, StAtrMult);
+            atr = ATR(BarsArray[0], 14);
             maxHigh = MAX(High, TRAIL_ATR_PERIOD);
             minLow = MIN(Low, TRAIL_ATR_PERIOD);
-            stUpper = stLower = stValue = 0;
-            prevStValue = 0;
-            stInit = false;
 
             string csvPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sttrend_diag_" + Guid.NewGuid().ToString("N") + ".csv");
             diagCsv = new System.IO.StreamWriter(csvPath);
@@ -119,17 +112,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return diff / TRAIL_ATR_PERIOD;
         }
 
-        // Reset Supertrend each day (Python parity: sim computes ST fresh on day_bars_5m per day).
-        protected override void OnBarUpdate()
+        protected override double GetPotentialLoss()
         {
-            // Detect new session date on primary (5m) and reset ST state
-            if (Bars.IsFirstBarOfSession || (CurrentBar > 0 && Time[0].Date != Time[1].Date))
-            {
-                stUpper = stLower = stValue = 0;
-                prevStValue = 0;
-                stInit = false;
-            }
-            base.OnBarUpdate();
+            double a = GetCurrentATR();
+            if (a <= 0) a = 15.0;
+            return a * TrailAtrMultParam * GetPointValue();
         }
 
         // Primary = 5m, so ATR is on the 5m primary itself (no secondary).
@@ -142,80 +129,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return atr[0];
         }
 
-        /// <summary>
-        /// Update Supertrend on primary 5m closed bars. Seban: median + mult*ATR, upper can't rise, lower can't fall.
-        /// </summary>
-        private void UpdateSupertrend()
-        {
-            if (CurrentBars[0] < StPeriod + 2) return;
-            double hl2 = (High[0] + Low[0]) / 2.0;
-            double a = atr[0];
-            if (a <= 0) return;
-
-            double upper = hl2 + StAtrMult * a;
-            double lower = hl2 - StAtrMult * a;
-
-            // final bands: upper can't rise, lower can't fall
-            if (stInit)
-            {
-                if (upper > stUpper) upper = stUpper;
-                if (lower < stLower) lower = stLower;
-            }
-
-            double close = Close[0];
-            double newSt;
-            if (!stInit)
-            {
-                newSt = close > upper ? 1 : (close < lower ? -1 : 0);
-            }
-            else
-            {
-                if (close > stUpper) newSt = 1;
-                else if (close < stLower) newSt = -1;
-                else newSt = prevStValue;
-            }
-
-            prevStValue = stValue;
-            stValue = newSt;
-            stUpper = upper;
-            stLower = lower;
-            stInit = true;
-        }
-
         protected override int CheckForSignal()
         {
-            try { UpdateSupertrend(); } catch { }
-            try { WriteDiagRow(); } catch { }
-            if (CurrentBars[0] < StPeriod + 2 || !stInit) return 0;
-
-            double st0 = stValue;
-            double st1 = prevStValue;
-            if (st0 == 0 || st1 == 0) return 0;
-
-            if (st0 == 1 && st1 == -1) return 1;   // long flip
-            if (st0 == -1 && st1 == 1) return -1;  // short flip
-            return 0;
-        }
-
-        private void WriteDiagRow()
-        {
-            if (diagCsv == null) return;
-            if (CurrentBars[0] < 2) return;
-            if (!diagCsvHeaderWritten)
-            {
-                diagCsv.WriteLine("BarTime,BarIdx,Close0,High0,Low0,StUpper,StLower,StValue,PrevStValue,Atr,LongFlip,ShortFlip,Signal");
-                diagCsvHeaderWritten = true;
-            }
-            double atrV = atr != null ? atr[0] : 0;
-            bool longFlip = stValue == 1 && prevStValue == -1;
-            bool shortFlip = stValue == -1 && prevStValue == 1;
-            int sig = longFlip ? 1 : (shortFlip ? -1 : 0);
-            var bt = Time[0];
-            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                "{0:yyyy-MM-dd HH:mm:ss},{1},{2:G},{3:G},{4:G},{5:G},{6:G},{7:G},{8:G},{9:G},{10},{11},{12}",
-                bt, CurrentBar, Close[0], High[0], Low[0], stUpper, stLower, stValue, prevStValue, atrV,
-                longFlip ? 1 : 0, shortFlip ? 1 : 0, sig));
-            diagCsv.Flush();
+            if (stIndicator == null || CurrentBars[0] < StPeriod + 2) return 0;
+            return stIndicator.SignalSeries[0];
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)

@@ -105,7 +105,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Risk — tight for prop, use base defaults but widen time window to midday/PM
             StopAtrMult = 1.5;
             AtrPeriod = 14;
-            TradePolicy = "BreakevenTrail";
+            TradePolicy = TradePolicyType.CoverTheQueen;
             BreakevenTriggerR = 1.0;
             TrailAtrMult = 1.0;
 

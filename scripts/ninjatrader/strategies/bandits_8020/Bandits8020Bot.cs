@@ -169,7 +169,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             IsFillLimitOnTouch           = true;
 
             StopAtrMult       = 1.0;
-            TradePolicy       = "FixedTarget";
+            TradePolicy       = TradePolicyType.FixedTarget;
             TargetRMultiple   = 2.0;
             BreakevenTriggerR = 1.0;
             TrailAtrMult      = 1.0;
