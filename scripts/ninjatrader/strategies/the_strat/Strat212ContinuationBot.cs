@@ -70,9 +70,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             LatestEntry = 1530;
             FlattenBy = 1555;
 
-            // Brackets
-            TradePolicy = "BreakevenTrail";
-            TargetRMultiple = 2.0;
+            // Brackets & Execution Policy
+            TradePolicy = "CoverTheQueen"; // Default to Cover the Queen (10 bps scale-out + risk-free runner)
+            TargetRMultiple = 2.5;
             BreakevenTriggerR = 1.0;
             AtrPeriod = 14;
             StopAtrMult = 1.5;
