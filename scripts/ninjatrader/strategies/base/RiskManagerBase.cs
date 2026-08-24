@@ -159,7 +159,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 Description                  = "Risk Manager Base — inherited by all strategies";
                 Name                         = "RiskManagerBase";
                 Calculate                    = Calculate.OnBarClose;
-                EntriesPerDirection          = 1;
+                EntriesPerDirection          = 2; // Allow multi-bracket entries (Queen + Runner)
                 EntryHandling                = EntryHandling.AllEntries;
                 IsExitOnSessionCloseStrategy = true;
                 ExitOnSessionCloseSeconds    = 60;
