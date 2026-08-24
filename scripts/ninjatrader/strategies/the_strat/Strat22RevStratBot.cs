@@ -7,42 +7,29 @@ using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
-using NinjaTrader.NinjaScript.Indicators.TheStrat;
 #endregion
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
     /// <summary>
     /// Strat22RevStratBot - Automated 2-2 Reversal and RevStrat Momentum Trap Strategy.
-    /// Inherits from RiskManagerBase for centralized risk management and ATM order execution.
+    /// Inherits from RiskManagerBase for centralized risk management and ATM execution.
     ///
     /// Logic:
-    ///   - Bullish: Bar[1] == 2D -> Bar[0] crosses above High[1] -> Enter Long, SL @ Low[1] - 1 tick, TP @ High[2]
-    ///   - Bearish: Bar[1] == 2U -> Bar[0] crosses below Low[1] -> Enter Short, SL @ High[1] + 1 tick, TP @ Low[2]
+    ///   - Bullish: Bar[1] is 2D (failed breakdown) -> Bar[0] breaks High[1] -> Signal Long = +1
+    ///   - Bearish: Bar[1] is 2U (failed breakout) -> Bar[0] breaks Low[1] -> Signal Short = -1
     /// </summary>
     public class Strat22RevStratBot : RiskManagerBase
     {
         #region Strat Strategy Parameters
         [NinjaScriptProperty]
-        [Display(Name = "Require Actionable Wick (Hammer/Shooter)", Description = "Only take 2-2 reversals if setup bar formed an actionable wick", Order = 1, GroupName = "The Strat")]
-        public bool RequireActionableWick { get; set; }
+        [Display(Name = "Require Rejection Wick (60%)", Order = 1, GroupName = "The Strat")]
+        public bool RequireRejectionWick { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Use FTFC Filter", Description = "Only trade in direction of Full Time Frame Continuity", Order = 2, GroupName = "The Strat")]
-        public bool UseFTFCFilter { get; set; }
-
-        [NinjaScriptProperty]
-        [Range(1, 4)]
-        [Display(Name = "Min FTFC Score", Description = "Minimum agreeing timeframes required", Order = 3, GroupName = "The Strat")]
-        public int MinFTFCScore { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Min R:R Ratio", Description = "Minimum Reward to Risk ratio to accept setup", Order = 4, GroupName = "The Strat")]
-        public double MinRewardRiskRatio { get; set; }
+        [Display(Name = "Min Target Points", Order = 2, GroupName = "The Strat")]
+        public double MinTargetPoints { get; set; }
         #endregion
-
-        private TheStratClassifier stratClassifier;
-        private TheStratFTFCHud ftfcHud;
 
         protected override string GetStrategyName()
         {
@@ -51,14 +38,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description = "Automated 2-2 Reversal and RevStrat trap strategy with centralized RiskManagerBase";
+            Description = "Automated 2-2 Reversal and RevStrat momentum trap bot with centralized RiskManagerBase";
             Name = "Strat22RevStratBot";
 
             // Strat Parameters
-            RequireActionableWick = false;
-            UseFTFCFilter = true;
-            MinFTFCScore = 2;
-            MinRewardRiskRatio = 1.0;
+            RequireRejectionWick = false;
+            MinTargetPoints = 20.0;
 
             // RiskManagerBase Defaults
             DailyMaxLoss = 500;
@@ -71,96 +56,72 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             FlattenBy = 1555;
 
             // Brackets
-            TradePolicy = "FixedTarget";
+            TradePolicy = "BreakevenTrail";
             TargetRMultiple = 2.0;
             BreakevenTriggerR = 1.0;
             AtrPeriod = 14;
             StopAtrMult = 1.5;
+            TrailAtrMult = 2.0;
+            AddSecondaryTimeframe = true;
         }
 
-        protected override void OnStrategyStateChange(State state)
+        protected override void ConfigureStrategy()
         {
-            if (state == State.DataLoaded)
-            {
-                stratClassifier = TheStratClassifier(true, true, 0.65, 4);
-                if (UseFTFCFilter)
-                {
-                    ftfcHud = TheStratFTFCHud(false, NinjaTrader.Gui.Chart.TextPosition.TopRight, 10);
-                }
-            }
         }
 
-        protected override void OnBarUpdate()
+        protected override void InitializeStrategy()
         {
-            base.OnBarUpdate();
+        }
 
-            if (CurrentBar < 2 || Position.MarketPosition != MarketPosition.Flat)
-                return;
+        protected override int CheckForSignal()
+        {
+            if (CurrentBars[0] < 3)
+                return 0;
 
-            int prev1Strat = stratClassifier.StratTypeSeries[1]; // Bar[1]
-            int prev1Wick = stratClassifier.ActionableWickSeries[1]; // 1 = Hammer, -1 = Shooter
+            double h1 = Highs[0][1];
+            double l1 = Lows[0][1];
+            double o1 = Opens[0][1];
+            double c1 = Closes[0][1];
 
-            int ftfcScore = ftfcHud != null ? ftfcHud.FTFCScore : 0;
+            double h2 = Highs[0][2];
+            double l2 = Lows[0][2];
 
-            // ----------------------------------------------------
-            // 1. Bullish 2-2 Reversal: Bar[1] is 2D -> Enter Long if price breaks High[1]
-            // ----------------------------------------------------
-            if (prev1Strat == 22)
+            bool h1Higher = h1 > h2;
+            bool l1Lower = l1 < l2;
+
+            bool bar1Is2D = (l1Lower && !h1Higher);
+            bool bar1Is2U = (h1Higher && !l1Lower);
+
+            double h0 = Highs[0][0];
+            double l0 = Lows[0][0];
+
+            double range1 = h1 - l1;
+
+            // 1. Bullish 2-2 Reversal: Bar[1] was 2D, Bar[0] breaks High[1]
+            if (bar1Is2D && h0 > h1)
             {
-                if (!RequireActionableWick || prev1Wick == 1)
+                if (RequireRejectionWick && range1 > TickSize)
                 {
-                    if (!UseFTFCFilter || ftfcScore >= MinFTFCScore)
-                    {
-                        double entryPrice = High[1] + TickSize;
-                        double stopPrice = Low[1] - TickSize;
-                        double targetPrice = High[2]; // Magnitude 1
-
-                        double risk = entryPrice - stopPrice;
-                        double reward = targetPrice - entryPrice;
-                        double rr = risk > 0 ? reward / risk : 0.0;
-
-                        if (rr >= MinRewardRiskRatio || targetPrice <= entryPrice)
-                        {
-                            EnterLongStopMarket(0, true, 1, entryPrice, "Strat22_Long");
-                            SetStopLoss("Strat22_Long", CalculationMode.Price, stopPrice, false);
-                            if (targetPrice > entryPrice)
-                            {
-                                SetProfitTarget("Strat22_Long", CalculationMode.Price, targetPrice);
-                            }
-                        }
-                    }
+                    double lowerWick = Math.Min(o1, c1) - l1;
+                    if ((lowerWick / range1) < 0.60)
+                        return 0;
                 }
+                return 1; // Long
             }
 
-            // ----------------------------------------------------
-            // 2. Bearish 2-2 Reversal: Bar[1] is 2U -> Enter Short if price breaks Low[1]
-            // ----------------------------------------------------
-            if (prev1Strat == 21)
+            // 2. Bearish 2-2 Reversal: Bar[1] was 2U, Bar[0] breaks Low[1]
+            if (bar1Is2U && l0 < l1)
             {
-                if (!RequireActionableWick || prev1Wick == -1)
+                if (RequireRejectionWick && range1 > TickSize)
                 {
-                    if (!UseFTFCFilter || ftfcScore <= -MinFTFCScore)
-                    {
-                        double entryPrice = Low[1] - TickSize;
-                        double stopPrice = High[1] + TickSize;
-                        double targetPrice = Low[2]; // Magnitude 1
-
-                        double risk = stopPrice - entryPrice;
-                        double reward = entryPrice - targetPrice;
-                        double rr = risk > 0 ? reward / risk : 0.0;
-
-                        if (rr >= MinRewardRiskRatio || targetPrice >= entryPrice)
-                        {
-                            EnterShortStopMarket(0, true, 1, entryPrice, "Strat22_Short");
-                            SetStopLoss("Strat22_Short", CalculationMode.Price, stopPrice, false);
-                            if (targetPrice < entryPrice)
-                            {
-                                SetProfitTarget("Strat22_Short", CalculationMode.Price, targetPrice);
-                            }
-                        }
-                    }
+                    double upperWick = h1 - Math.Max(o1, c1);
+                    if ((upperWick / range1) < 0.60)
+                        return 0;
                 }
+                return -1; // Short
             }
+
+            return 0;
         }
     }
 }

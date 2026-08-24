@@ -2,11 +2,13 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Windows;
 using System.Windows.Media;
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.Core.FloatingPoint;
@@ -58,46 +60,35 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
             else if (State == State.Configure)
             {
                 // Add higher timeframe data series
-                // BarsArray[0] = Primary Chart Timeframe
-                // BarsArray[1] = 5-minute
                 AddDataSeries(BarsPeriodType.Minute, 5);
-                // BarsArray[2] = 15-minute
                 AddDataSeries(BarsPeriodType.Minute, 15);
-                // BarsArray[3] = 60-minute
                 AddDataSeries(BarsPeriodType.Minute, 60);
-                // BarsArray[4] = Daily
                 AddDataSeries(BarsPeriodType.Day, 1);
             }
         }
 
         protected override void OnBarUpdate()
         {
-            // Only evaluate when all series have data
             if (CurrentBars[0] < 1 || CurrentBars[1] < 1 || CurrentBars[2] < 1 || CurrentBars[3] < 1 || CurrentBars[4] < 1)
                 return;
 
-            // Only run on the primary bar update
             if (BarsInProgress != 0)
                 return;
 
             double currPrice = Closes[0][0];
 
-            // 5M direction
             double o5m = Opens[1][0];
             string d5m = currPrice > o5m ? "G" : (currPrice < o5m ? "R" : "N");
             int score5m = currPrice > o5m ? 1 : (currPrice < o5m ? -1 : 0);
 
-            // 15M direction
             double o15m = Opens[2][0];
             string d15m = currPrice > o15m ? "G" : (currPrice < o15m ? "R" : "N");
             int score15m = currPrice > o15m ? 1 : (currPrice < o15m ? -1 : 0);
 
-            // 60M direction
             double o60m = Opens[3][0];
             string d60m = currPrice > o60m ? "G" : (currPrice < o60m ? "R" : "N");
             int score60m = currPrice > o60m ? 1 : (currPrice < o60m ? -1 : 0);
 
-            // Daily direction
             double oD = Opens[4][0];
             string dD = currPrice > oD ? "G" : (currPrice < oD ? "R" : "N");
             int scoreD = currPrice > oD ? 1 : (currPrice < oD ? -1 : 0);

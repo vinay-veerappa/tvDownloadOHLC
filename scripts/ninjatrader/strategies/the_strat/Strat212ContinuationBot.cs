@@ -7,42 +7,29 @@ using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
-using NinjaTrader.NinjaScript.Indicators.TheStrat;
 #endregion
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
     /// <summary>
     /// Strat212ContinuationBot - Automated 2-1-2 Strat Continuation Strategy.
-    /// Inherits from RiskManagerBase for centralized risk management and ATM order execution.
+    /// Inherits from RiskManagerBase for centralized risk management and ATM execution.
     ///
     /// Logic:
-    ///   - Bullish: Bar[2] == 2U, Bar[1] == 1 (Inside Bar) -> Buy Stop @ High[1] + 1 tick, SL @ Low[1] - 1 tick, TP @ High[2] (Magnitude 1)
-    ///   - Bearish: Bar[2] == 2D, Bar[1] == 1 (Inside Bar) -> Sell Stop @ Low[1] - 1 tick, SL @ High[1] + 1 tick, TP @ Low[2] (Magnitude 1)
+    ///   - Bullish 2-1-2: Bar[2] is 2U (Higher High), Bar[1] is 1 (Inside Bar) -> Signal Long = +1
+    ///   - Bearish 2-1-2: Bar[2] is 2D (Lower Low), Bar[1] is 1 (Inside Bar) -> Signal Short = -1
     /// </summary>
     public class Strat212ContinuationBot : RiskManagerBase
     {
         #region Strat Strategy Parameters
         [NinjaScriptProperty]
-        [Display(Name = "Use FTFC Filter", Description = "Only trade in direction of Full Time Frame Continuity", Order = 1, GroupName = "The Strat")]
-        public bool UseFTFCFilter { get; set; }
-
-        [NinjaScriptProperty]
-        [Range(1, 4)]
-        [Display(Name = "Min FTFC Score", Description = "Minimum agreeing timeframes required", Order = 2, GroupName = "The Strat")]
-        public int MinFTFCScore { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Min R:R Ratio", Description = "Minimum Reward to Risk ratio to accept setup", Order = 3, GroupName = "The Strat")]
-        public double MinRewardRiskRatio { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Allow Reversals (2D-1-2U / 2U-1-2D)", Description = "Also trade 2-1-2 reversals in addition to continuations", Order = 4, GroupName = "The Strat")]
+        [Display(Name = "Allow Reversals (2D-1-2U / 2U-1-2D)", Order = 1, GroupName = "The Strat")]
         public bool AllowReversals { get; set; }
-        #endregion
 
-        private TheStratClassifier stratClassifier;
-        private TheStratFTFCHud ftfcHud;
+        [NinjaScriptProperty]
+        [Display(Name = "Min Target Points", Order = 2, GroupName = "The Strat")]
+        public double MinTargetPoints { get; set; }
+        #endregion
 
         protected override string GetStrategyName()
         {
@@ -55,12 +42,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Name = "Strat212ContinuationBot";
 
             // Strat Parameters
-            UseFTFCFilter = true;
-            MinFTFCScore = 2;
-            MinRewardRiskRatio = 1.0;
             AllowReversals = false;
+            MinTargetPoints = 15.0;
 
-            // RiskManagerBase Defaults (NQ 5m / 1m tuned)
+            // RiskManagerBase Defaults (NQ 5m)
             DailyMaxLoss = 500;
             MaxConsecutiveLosers = 2;
             PauseMinutes = 30;
@@ -71,107 +56,81 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             FlattenBy = 1555;
 
             // Brackets
-            TradePolicy = "FixedTarget";
+            TradePolicy = "BreakevenTrail";
             TargetRMultiple = 2.0;
             BreakevenTriggerR = 1.0;
             AtrPeriod = 14;
             StopAtrMult = 1.5;
+            TrailAtrMult = 2.0;
+            AddSecondaryTimeframe = true;
         }
 
-        protected override void OnStrategyStateChange(State state)
+        protected override void ConfigureStrategy()
         {
-            if (state == State.DataLoaded)
-            {
-                stratClassifier = TheStratClassifier(true, true, 0.65, 4);
-                if (UseFTFCFilter)
-                {
-                    ftfcHud = TheStratFTFCHud(false, NinjaTrader.Gui.Chart.TextPosition.TopRight, 10);
-                }
-            }
         }
 
-        protected override void OnBarUpdate()
+        protected override void InitializeStrategy()
         {
-            // Allow RiskManagerBase to run risk guards, daily stops, and trailing stops
-            base.OnBarUpdate();
+        }
 
-            if (CurrentBar < 3 || Position.MarketPosition != MarketPosition.Flat)
-                return;
+        protected override int CheckForSignal()
+        {
+            if (CurrentBars[0] < 3)
+                return 0;
 
-            // Verify Strat classifier outputs
-            int prev1Strat = stratClassifier.StratTypeSeries[1]; // Bar[1]
-            int prev2Strat = stratClassifier.StratTypeSeries[2]; // Bar[2]
+            // Evaluate Bar[1] vs Bar[2] for Strat Type
+            double h1 = Highs[0][1];
+            double l1 = Lows[0][1];
+            double h2 = Highs[0][2];
+            double l2 = Lows[0][2];
 
-            // We look for Bar[1] to be an Inside Bar (Type 1)
-            if (prev1Strat != 1)
-                return;
+            bool h1Higher = h1 > h2;
+            bool l1Lower = l1 < l2;
 
-            double insideHigh = High[1];
-            double insideLow = Low[1];
+            // Bar[1] must be an Inside Bar (Type 1): High[1] <= High[2] and Low[1] >= Low[2]
+            bool bar1IsInside = (!h1Higher && !l1Lower);
+            if (!bar1IsInside)
+                return 0;
 
-            int ftfcScore = ftfcHud != null ? ftfcHud.FTFCScore : 0;
+            // Evaluate Bar[2] vs Bar[3]
+            if (CurrentBars[0] < 4)
+                return 0;
 
-            // ----------------------------------------------------
-            // Bullish 2-1-2 Setup: Bar[2]=2U (or 2D if reversal enabled)
-            // ----------------------------------------------------
-            bool isBullishCont = (prev2Strat == 21);
-            bool isBullishRev = AllowReversals && (prev2Strat == 22);
+            double h3 = Highs[0][3];
+            double l3 = Lows[0][3];
+            bool h2Higher = h2 > h3;
+            bool l2Lower = l2 < l3;
 
-            if (isBullishCont || isBullishRev)
+            bool bar2Is2U = (h2Higher && !l2Lower);
+            bool bar2Is2D = (l2Lower && !h2Higher);
+
+            // Check current bar trigger
+            double h0 = Highs[0][0];
+            double l0 = Lows[0][0];
+
+            // Bullish Trigger: Current bar breaks High[1]
+            if (h0 > h1)
             {
-                if (!UseFTFCFilter || ftfcScore >= MinFTFCScore)
+                if (bar2Is2U || (AllowReversals && bar2Is2D))
                 {
-                    double entryPrice = insideHigh + TickSize;
-                    double stopPrice = insideLow - TickSize;
-                    double targetPrice = High[2]; // Magnitude 1
-
-                    double risk = entryPrice - stopPrice;
-                    double reward = targetPrice - entryPrice;
-                    double rr = risk > 0 ? reward / risk : 0.0;
-
-                    if (rr >= MinRewardRiskRatio || targetPrice <= entryPrice)
-                    {
-                        // Submit Stop Market Order
-                        EnterLongStopMarket(0, true, 1, entryPrice, "Strat212_Long");
-                        SetStopLoss("Strat212_Long", CalculationMode.Price, stopPrice, false);
-                        if (targetPrice > entryPrice)
-                        {
-                            SetProfitTarget("Strat212_Long", CalculationMode.Price, targetPrice);
-                        }
-                    }
+                    double targetDist = Math.Max(MinTargetPoints, h2 - h1);
+                    if (targetDist >= MinTargetPoints)
+                        return 1; // Long
                 }
             }
 
-            // ----------------------------------------------------
-            // Bearish 2-1-2 Setup: Bar[2]=2D (or 2U if reversal enabled)
-            // ----------------------------------------------------
-            bool isBearishCont = (prev2Strat == 22);
-            bool isBearishRev = AllowReversals && (prev2Strat == 21);
-
-            if (isBearishCont || isBearishRev)
+            // Bearish Trigger: Current bar breaks Low[1]
+            if (l0 < l1)
             {
-                if (!UseFTFCFilter || ftfcScore <= -MinFTFCScore)
+                if (bar2Is2D || (AllowReversals && bar2Is2U))
                 {
-                    double entryPrice = insideLow - TickSize;
-                    double stopPrice = insideHigh + TickSize;
-                    double targetPrice = Low[2]; // Magnitude 1
-
-                    double risk = stopPrice - entryPrice;
-                    double reward = entryPrice - targetPrice;
-                    double rr = risk > 0 ? reward / risk : 0.0;
-
-                    if (rr >= MinRewardRiskRatio || targetPrice >= entryPrice)
-                    {
-                        // Submit Stop Market Order
-                        EnterShortStopMarket(0, true, 1, entryPrice, "Strat212_Short");
-                        SetStopLoss("Strat212_Short", CalculationMode.Price, stopPrice, false);
-                        if (targetPrice < entryPrice)
-                        {
-                            SetProfitTarget("Strat212_Short", CalculationMode.Price, targetPrice);
-                        }
-                    }
+                    double targetDist = Math.Max(MinTargetPoints, l1 - l2);
+                    if (targetDist >= MinTargetPoints)
+                        return -1; // Short
                 }
             }
+
+            return 0;
         }
     }
 }
