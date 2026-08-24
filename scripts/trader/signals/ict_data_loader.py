@@ -997,24 +997,41 @@ def compute_ftfc(ticker: str, current_price: float, now_et: datetime | None = No
             ms_dir = "NEUTRAL"
         tf_ms[tf_label] = ms_dir
 
-    # Daily candle + MS
+    # Daily candle + MS (Session-aware: Globex 18:00 ET open)
+    last_dt = df_et.index[-1]
+    session_open_dt = last_dt.replace(hour=18, minute=0, second=0, microsecond=0)
+    if last_dt.hour < 18:
+        session_open_dt -= pd.Timedelta(days=1)
+    df_d_curr = df_et.loc[df_et.index >= session_open_dt]
+
+    if not df_d_curr.empty:
+        d_open = float(df_d_curr["open"].iloc[0])
+        d_close = float(df_d_curr["close"].iloc[-1])
+        d_high = float(df_d_curr["high"].max())
+        d_low = float(df_d_curr["low"].min())
+        tf_candle["D"] = "BULLISH" if d_close > d_open else (
+            "BEARISH" if d_close < d_open else "NEUTRAL"
+        )
+    else:
+        tf_candle["D"] = "NEUTRAL"
+
+    # Prior day for MS
+    prior_session_start = session_open_dt - pd.Timedelta(days=1)
+    df_d_prior = df_et.loc[(df_et.index >= prior_session_start) & (df_et.index < session_open_dt)]
+    if not df_d_curr.empty and not df_d_prior.empty:
+        p_high = float(df_d_prior["high"].max())
+        p_low = float(df_d_prior["low"].min())
+        tf_ms["D"] = "BULLISH" if (d_high > p_high and d_low > p_low) else (
+            "BEARISH" if (d_high < p_high and d_low < p_low) else "NEUTRAL"
+        )
+    else:
+        tf_ms["D"] = "NEUTRAL"
+
+    # 200 SMA (daily resample for historical depth)
     daily = df_et[["open", "high", "low", "close"]].resample("D").agg({
         "open": "first", "high": "max", "low": "min", "close": "last"
     }).dropna()
     if not daily.empty:
-        last_d = daily.iloc[-1]
-        tf_candle["D"] = "BULLISH" if last_d["close"] > last_d["open"] else (
-            "BEARISH" if last_d["close"] < last_d["open"] else "NEUTRAL"
-        )
-        if len(daily) >= 2:
-            prior_d = daily.iloc[-2]
-            tf_ms["D"] = "BULLISH" if (last_d["high"] > prior_d["high"] and last_d["low"] > prior_d["low"]) else (
-                "BEARISH" if (last_d["high"] < prior_d["high"] and last_d["low"] < prior_d["low"]) else "NEUTRAL"
-            )
-        else:
-            tf_ms["D"] = "NEUTRAL"
-
-        # 200 SMA (daily)
         daily["sma_200"] = daily["close"].rolling(200).mean()
         sma_val = daily["sma_200"].iloc[-1] if "sma_200" in daily.columns and not daily["sma_200"].isna().all() else None
     else:

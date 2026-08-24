@@ -1,0 +1,32 @@
+# The Strat Strategy Configuration
+strategy_name: "The Strat"
+version: "1.0.0"
+
+instruments:
+  NQ:
+    tick_size: 0.25
+    point_value: 20.0
+    commission: 2.05
+    slippage_ticks: 1
+  ES:
+    tick_size: 0.25
+    point_value: 50.0
+    commission: 2.05
+    slippage_ticks: 1
+
+defaults:
+  timeframe: "5min"
+  allowed_setups:
+    - "2-1-2_BULL_CONT"
+    - "2-1-2_BEAR_CONT"
+    - "2-2_BULL_REV"
+    - "2-2_BEAR_REV"
+    - "3-1-2_BULL"
+    - "3-1-2_BEAR"
+  use_ftfc_filter: true
+  min_ftfc_score: 2
+  min_rr_ratio: 1.0
+  max_holding_bars: 20
+  earliest_entry: "09:30"
+  latest_entry: "15:30"
+  flatten_by: "15:55"
