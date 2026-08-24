@@ -52,6 +52,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Browsable(false)]
         [XmlIgnore]
         public Series<double> StopLossSeries { get; private set; }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> EmaSeries { get; private set; }
         #endregion
 
         private EMA ema;
@@ -88,6 +92,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 atr = ATR(14);
                 SignalSeries = new Series<int>(this);
                 StopLossSeries = new Series<double>(this);
+                EmaSeries = new Series<double>(this);
                 sessionDate = DateTime.MinValue;
             }
         }
@@ -98,10 +103,12 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             {
                 SignalSeries[0] = 0;
                 StopLossSeries[0] = double.NaN;
+                EmaSeries[0] = ema[0];
                 return;
             }
 
             Values[0][0] = ema[0];
+            EmaSeries[0] = ema[0];
 
             if (Time[0].Date != sessionDate)
             {

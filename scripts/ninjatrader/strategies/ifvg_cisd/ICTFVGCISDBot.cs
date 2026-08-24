@@ -81,6 +81,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override int CheckForSignal()
         {
             if (ictIndicator == null || CurrentBar < 20) return 0;
+
+            if (DrawVisuals && CurrentBar > 20)
+            {
+                double cisdCurr = ictIndicator.CisdLevelSeries[0];
+                double cisdPrev = ictIndicator.CisdLevelSeries[1];
+                if (!double.IsNaN(cisdCurr) && !double.IsNaN(cisdPrev) && cisdCurr > 0 && cisdPrev > 0)
+                {
+                    Draw.Line(this, "CISD_Line_" + CurrentBar, false, 1, cisdPrev, 0, cisdCurr, Brushes.Gold, DashStyleHelper.Solid, 2);
+                }
+            }
+
             int sig = ictIndicator.SignalSeries[0];
             if (sig != 0 && DrawVisuals)
             {

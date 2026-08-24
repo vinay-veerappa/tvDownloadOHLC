@@ -69,6 +69,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override int CheckForSignal()
         {
             if (vwapIndicator == null || CurrentBar < 10) return 0;
+
+            if (DrawVisuals && CurrentBar > 10)
+            {
+                double vwapCurr = vwapIndicator.VwapSeries[0];
+                double vwapPrev = vwapIndicator.VwapSeries[1];
+                if (vwapCurr > 0 && vwapPrev > 0)
+                {
+                    Draw.Line(this, "VWAP_Line_" + CurrentBar, false, 1, vwapPrev, 0, vwapCurr, Brushes.DarkOrange, DashStyleHelper.Solid, 2);
+                }
+            }
+
             int sig = vwapIndicator.SignalSeries[0];
             if (sig != 0 && DrawVisuals)
             {

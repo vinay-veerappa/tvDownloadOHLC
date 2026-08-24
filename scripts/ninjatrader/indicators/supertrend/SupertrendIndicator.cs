@@ -41,6 +41,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Browsable(false)]
         [XmlIgnore]
         public Series<int> TrendDirection { get; private set; }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> SupertrendValue { get; private set; }
         #endregion
 
         private ATR atr;
@@ -71,6 +75,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 atr = ATR(Period);
                 SignalSeries = new Series<int>(this);
                 TrendDirection = new Series<int>(this);
+                SupertrendValue = new Series<double>(this);
                 stUpper = stLower = 0;
                 prevStValue = 0;
             }
@@ -117,6 +122,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             TrendDirection[0] = curDir;
             double stValue = curDir == 1 ? stLower : stUpper;
+            SupertrendValue[0] = stValue;
 
             // Plot styling
             if (curDir == 1)

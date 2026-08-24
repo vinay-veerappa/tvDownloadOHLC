@@ -83,6 +83,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override int CheckForSignal()
         {
             if (emaIndicator == null || CurrentBar < EmaPeriod + 5) return 0;
+
+            if (DrawVisuals && CurrentBar > EmaPeriod + 5)
+            {
+                double emaCurr = emaIndicator.EmaSeries[0];
+                double emaPrev = emaIndicator.EmaSeries[1];
+                if (emaCurr > 0 && emaPrev > 0)
+                {
+                    Draw.Line(this, "EMA_Line_" + CurrentBar, false, 1, emaPrev, 0, emaCurr, Brushes.DodgerBlue, DashStyleHelper.Solid, 2);
+                }
+            }
+
             int sig = emaIndicator.SignalSeries[0];
             if (sig != 0 && DrawVisuals)
             {

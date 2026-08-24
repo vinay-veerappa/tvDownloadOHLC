@@ -138,6 +138,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override int CheckForSignal()
         {
             if (stIndicator == null || CurrentBars[0] < StPeriod + 2) return 0;
+
+            if (DrawVisuals && CurrentBars[0] > StPeriod + 2)
+            {
+                double stCurr = stIndicator.SupertrendValue[0];
+                double stPrev = stIndicator.SupertrendValue[1];
+                int dir = stIndicator.TrendDirection[0];
+                Brush lineBrush = dir == 1 ? Brushes.LimeGreen : Brushes.OrangeRed;
+                Draw.Line(this, "ST_Line_" + CurrentBar, false, 1, stPrev, 0, stCurr, lineBrush, DashStyleHelper.Solid, 2);
+            }
+
             int sig = stIndicator.SignalSeries[0];
             if (sig != 0 && DrawVisuals)
             {

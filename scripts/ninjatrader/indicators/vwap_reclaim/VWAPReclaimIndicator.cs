@@ -43,6 +43,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Browsable(false)]
         [XmlIgnore]
         public Series<double> StopLossSeries { get; private set; }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> VwapSeries { get; private set; }
         #endregion
 
         private double cumTypicalPriceVolume;
@@ -78,6 +82,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             {
                 SignalSeries = new Series<int>(this);
                 StopLossSeries = new Series<double>(this);
+                VwapSeries = new Series<double>(this);
 
                 cumTypicalPriceVolume = 0;
                 cumVolume = 0;
@@ -119,6 +124,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             double currentVWAP = cumVolume > 0 ? cumTypicalPriceVolume / cumVolume : typicalPrice;
             Values[0][0] = currentVWAP;
+            VwapSeries[0] = currentVWAP;
 
             // Tracking streaks
             if (Close[0] > currentVWAP)
