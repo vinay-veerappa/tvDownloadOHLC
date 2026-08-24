@@ -9,15 +9,35 @@
 
 ---
 
-## Benchmark Comparison Table
+## Institutional Trader Critique: The "1-2 Point Scalping Illusion"
 
-| # | Strategy Configuration | Trades | Win Rate | Profit Factor | Net PnL ($) | Net Points | Max Drawdown | Avg Trade |
+### Why Micro-Scalps (< 5-10 pts on NQ) Fail in Live Trading:
+1. **Friction Destruction**:
+   On NQ, with a 1-tick entry slip ($0.25) + 1-tick exit slip ($0.25) + $4.10 round-turn commission, a 2-point gross scalp is reduced to a meager 1.3 pt net gain.
+2. **Inverted Risk-Reward Ratio**:
+   In a naive 2-1-2 where Target = `High[2]` (often only 2-3 pts away), but the Stop Loss is placed at `Low[1]` (6-12 pts away), the trade has an inverted $1:4$ risk-to-reward ratio. A single loss destroys 4 consecutive wins!
+3. **Execution Latency & Volatility**:
+   NQ has an intraday 5-minute ATR of 15–35 points. Trying to catch 2 points is picking up pennies in front of a steamroller.
+
+---
+
+## Institutional Upgrade: 15–25pt Targets + 2-Tier Execution (2024–2025)
+
+We upgraded the engine to:
+- Enforce a **minimum 15–20 pt Target 1** (or $0.75 \times \text{ATR}$).
+- Implement **2-Tier Position Execution**: Scale 50% at Target 1, move Stop to Breakeven, and let the remaining 50% runner ride until 5m 9 EMA trailing breakdown.
+- Blackout **midday chop (11:30–13:45 ET)**.
+
+### Institutional Strategy Benchmark Table (NQ 5-Min, 2024–2025)
+
+| # | Strategy Variant | Trades | Win Rate | Profit Factor | Net PnL ($) | Max DD ($) | Avg Win / Avg Loss | Avg Trade |
 |---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **1** | **Pure 2-1-2 Continuation (Baseline)** | 1,499 | **77.5%** | **1.49** | **+$35,784.10** | **+1,789.2 pts** | **$3,870.80** | +1.40 pts |
-| **2** | **High-Conviction 2-1-2 ($R:R \ge 1.0$)** | 28 | 60.7% | 1.24 | +$1,170.20 | +58.5 pts | $2,782.80 | +2.29 pts |
-| **3** | **2-2 Momentum Reversals (RevStrat)** | 3,123 | **60.8%** | **1.22** | **+$147,200.70** | **+8,000.3 pts** | $30,160.80 | +2.56 pts |
-| **4** | **3-1-2 Broadening Expansion Breakouts** | 71 | 49.3% | 1.05 | +$843.90 | +42.2 pts | $5,758.80 | +0.80 pts |
-| **5** | **Multi-Setup Strat Portfolio** | 1,772 | **55.1%** | **1.29** | **+$120,449.80** | **+6,022.5 pts** | **$13,007.40** | **+3.60 pts** |
+| **1** | **Inst 2-1-2 Trend Scalper (Min 15pt TP + Runner)** | 842 | **65.3%** | **1.50** | **+$56,929.76** | **$4,466.60** | **+15.7 pt / -19.2 pt** | **+3.59 pts** |
+| **2** | **Inst 2-1-2 Trend Scalper (Min 20pt TP + Runner)** | 829 | **59.2%** | **1.45** | **+$59,620.56** | **$4,889.30** | **+19.7 pt / -19.4 pt** | **+3.80 pts** |
+| **3** | **Inst 2-2 Reversals (Min 20pt TP + Runner)** | 2,883 | **58.2%** | **1.21** | **+$147,012.56** | **$17,561.60** | **+25.1 pt / -28.4 pt** | **+2.75 pts** |
+| **4** | **Inst 2-2 Reversals (Min 25pt TP + Runner)** | 2,751 | **54.3%** | **1.19** | **+$139,351.26** | **$17,666.49** | **+29.1 pt / -28.6 pt** | **+2.74 pts** |
+| **5** | **Master Institutional Strat Portfolio (15pt+)** | 3,518 | **63.0%** | **1.26** | **+$185,598.52** | **$20,324.60** | **+20.6 pt / -27.4 pt** | **+2.84 pts** |
+| **6** | **Master Institutional Strat Portfolio (20pt+)** | 3,281 | **58.4%** | **1.23** | **+$175,043.79** | **$20,078.00** | **+24.4 pt / -27.3 pt** | **+2.87 pts** |
 
 ---
 
