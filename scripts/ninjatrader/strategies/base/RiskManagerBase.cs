@@ -574,7 +574,34 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             tradeDirection    = direction;
             entrySignalName   = signalName;
 
-            if (direction == "Long")
+            if (TradePolicy == "CoverTheQueen")
+            {
+                double bpsPts = entry * 0.0010; // 10 Basis Points (approx 20-29 pts on NQ)
+                double queenPts = Math.Max(bpsPts, riskPoints);
+                double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 2.5);
+
+                if (direction == "Long")
+                {
+                    EnterLong(1, signalName + "_Queen");
+                    SetStopLoss(signalName + "_Queen", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, entry + queenPts);
+
+                    EnterLong(1, signalName + "_Runner");
+                    SetStopLoss(signalName + "_Runner", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, entry + runnerPts);
+                }
+                else
+                {
+                    EnterShort(1, signalName + "_Queen");
+                    SetStopLoss(signalName + "_Queen", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, entry - queenPts);
+
+                    EnterShort(1, signalName + "_Runner");
+                    SetStopLoss(signalName + "_Runner", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, entry - runnerPts);
+                }
+            }
+            else if (direction == "Long")
             {
                 EnterLong(1, signalName);
                 SetStopLoss(signalName, CalculationMode.Price, stop, false);
@@ -640,10 +667,62 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             if (TradePolicy == "BreakevenTrail")
                 ManageBreakevenTrail(currentPrice);
+            else if (TradePolicy == "CoverTheQueen")
+                ManageCoverTheQueen(currentPrice);
             else if (TradePolicy == "BaseHits")
                 ManageBaseHits(currentPrice);
             else if (TradePolicy == "SupertrendTrail")
                 ManageSupertrendTrail(currentPrice);
+        }
+
+        private void ManageCoverTheQueen(double currentPrice)
+        {
+            string runnerSignal = GetSignalName(tradeDirection) + "_Runner";
+            double bpsPts = entryPrice * 0.0010;
+            double queenPts = Math.Max(bpsPts, riskPoints);
+
+            // Once price reaches Queen TP1, move Runner stop to Breakeven (+1 tick)
+            if (!breakevenMoved)
+            {
+                bool queenHit = tradeDirection == "Long"
+                    ? (currentPrice >= entryPrice + queenPts)
+                    : (currentPrice <= entryPrice - queenPts);
+
+                if (queenHit)
+                {
+                    breakevenMoved = true;
+                    currentStopPrice = tradeDirection == "Long" ? entryPrice + TickSize : entryPrice - TickSize;
+                    SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                    Print(string.Format("[{0}] CoverTheQueen TP1 Hit! Runner stop moved to BE @ {1:F2}", GetStrategyName(), currentStopPrice));
+                }
+            }
+
+            // Trail Runner stop once Breakeven is secured
+            if (breakevenMoved)
+            {
+                double atr = GetCurrentATR();
+                if (atr <= 0) return;
+                double trailDistance = TrailAtrMult * atr;
+
+                if (tradeDirection == "Long")
+                {
+                    double newStop = currentPrice - trailDistance;
+                    if (newStop > currentStopPrice)
+                    {
+                        currentStopPrice = newStop;
+                        SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                    }
+                }
+                else
+                {
+                    double newStop = currentPrice + trailDistance;
+                    if (newStop < currentStopPrice)
+                    {
+                        currentStopPrice = newStop;
+                        SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                    }
+                }
+            }
         }
 
         /// <summary>
