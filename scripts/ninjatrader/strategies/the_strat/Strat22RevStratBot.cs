@@ -22,9 +22,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// Strat22RevStratBot - Automated 2-2 Reversal and RevStrat Momentum Trap Strategy.
     /// Inherits from RiskManagerBase for centralized risk management and ATM execution.
     ///
-    /// Visual Features:
-    ///   - Paints Strat numbers (1, 2U, 2D, 3) on ALL bars on the chart.
-    ///   - Draws Reversal trigger arrows and annotations.
+    /// Fixed:
+    ///   - Self-contained ATR and structural risk calculations (No secondary timeframe dependency).
+    ///   - Fixed potential loss estimation so DailyMaxLoss never falsely blocks entries.
+    ///   - Unconditional visual bar numbering on all bars.
     /// </summary>
     public class Strat22RevStratBot : RiskManagerBase
     {
@@ -42,6 +43,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public double MinTargetPoints { get; set; }
         #endregion
 
+        private ATR chartAtr;
+
         protected override string GetStrategyName()
         {
             return "Strat22Bot";
@@ -58,11 +61,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MinTargetPoints = 20.0;
 
             // RiskManagerBase Defaults
-            DailyMaxLoss = 500;
-            MaxConsecutiveLosers = 2;
+            DailyMaxLoss = 1500;
+            MaxConsecutiveLosers = 3;
             PauseMinutes = 30;
-            HardStopConsecutiveLosers = 3;
-            MaxTradesPerDay = 4;
+            HardStopConsecutiveLosers = 4;
+            MaxTradesPerDay = 6;
             EarliestEntry = 930;
             LatestEntry = 1530;
             FlattenBy = 1555;
@@ -74,7 +77,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             AtrPeriod = 14;
             StopAtrMult = 1.5;
             TrailAtrMult = 2.0;
-            AddSecondaryTimeframe = true;
+            AddSecondaryTimeframe = false; // Self-contained on chart series
         }
 
         protected override void ConfigureStrategy()
@@ -83,11 +86,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void InitializeStrategy()
         {
+            chartAtr = ATR(AtrPeriod);
+        }
+
+        protected override double GetCurrentATR()
+        {
+            if (chartAtr == null || CurrentBar < AtrPeriod)
+                return 15.0 * TickSize * 4;
+            return chartAtr[0];
+        }
+
+        protected override double GetPotentialLoss()
+        {
+            return 15.0 * GetPointValue() * Math.Max(1, DefaultQuantity);
         }
 
         protected override void OnBarUpdate()
         {
-            if (BarsInProgress == 0 && CurrentBars[0] >= 2 && ShowVisualElements)
+            if (CurrentBar >= 2 && ShowVisualElements)
             {
                 RenderBarNumber();
             }
@@ -97,17 +113,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override int CheckForSignal()
         {
-            if (CurrentBars[0] < 3)
+            if (CurrentBar < 3)
                 return 0;
 
-            double h0 = Highs[0][0];
-            double l0 = Lows[0][0];
-            double h1 = Highs[0][1];
-            double l1 = Lows[0][1];
-            double o1 = Opens[0][1];
-            double c1 = Closes[0][1];
-            double h2 = Highs[0][2];
-            double l2 = Lows[0][2];
+            double h0 = High[0];
+            double l0 = Low[0];
+            double h1 = High[1];
+            double l1 = Low[1];
+            double o1 = Open[1];
+            double c1 = Close[1];
+            double h2 = High[2];
+            double l2 = Low[2];
 
             bool h1Higher = h1 > h2;
             bool l1Lower = l1 < l2;
@@ -129,7 +145,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 if (ShowVisualElements)
                 {
-                    string tag = "Strat22_Buy_" + CurrentBars[0];
+                    string tag = "Strat22_Buy_" + CurrentBar;
                     Draw.ArrowUp(this, tag, false, 0, l0 - (6 * TickSize), Brushes.Gold);
                     Draw.Text(this, tag + "_txt", false, "2-2 REV BUY", 0, l0 - (14 * TickSize), 0, Brushes.Gold, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                 }
@@ -148,7 +164,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 if (ShowVisualElements)
                 {
-                    string tag = "Strat22_Sell_" + CurrentBars[0];
+                    string tag = "Strat22_Sell_" + CurrentBar;
                     Draw.ArrowDown(this, tag, false, 0, h0 + (6 * TickSize), Brushes.OrangeRed);
                     Draw.Text(this, tag + "_txt", false, "2-2 REV SELL", 0, h0 + (14 * TickSize), 0, Brushes.OrangeRed, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                 }
@@ -160,10 +176,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private void RenderBarNumber()
         {
-            double currH = Highs[0][0];
-            double currL = Lows[0][0];
-            double prevH = Highs[0][1];
-            double prevL = Lows[0][1];
+            double currH = High[0];
+            double currL = Low[0];
+            double prevH = High[1];
+            double prevL = Low[1];
 
             string numText = "";
             Brush numColor = Brushes.Gray;
@@ -194,7 +210,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 above = true;
             }
 
-            string tag = "StratNum_" + CurrentBars[0];
+            string tag = "StratNum_" + CurrentBar;
             double price = above ? currH + (6 * TickSize) : currL - (6 * TickSize);
             Draw.Text(this, tag, false, numText, 0, price, 0, numColor, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
         }
