@@ -5,14 +5,13 @@
 indicator(Current Day Median [Lizard Style], shorttitle=Current Day Median, overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=5000)
 
 // -------------------------------------------------------------------------------------------------
-// CONSTANTS & PALETTE (Matching LizardIndicators Screenshot)
+// CONSTANTS & PALETTE (Exact Match to LizardIndicators Screenshot)
 // -------------------------------------------------------------------------------------------------
-color COLOR_BULL_MEDIAN = color.blue             // Blue dashed when price > Median
+color COLOR_BULL_MEDIAN = color.blue             // Blue dashed when price >= Median
 color COLOR_BEAR_MEDIAN = color.red              // Red dashed when price < Median
-color COLOR_BAND_BORDER = #768199                // Slate outline
-color COLOR_INNER_FILL  = color.new(#48D1CC, 80) // Medium Turquoise inner Value Area fill (Band 1)
-color COLOR_MID_FILL    = color.new(#5F9EA0, 65) // Cadet Blue middle channel fill (Band 2)
-color COLOR_OUTER_FILL  = color.new(#2F4F4F, 50) // Dark Slate Gray extreme exhaustion fill (Band 3)
+color COLOR_BAND_BORDER = #3E5F64                // Slate outline for bands
+color COLOR_INNER_FILL  = color.new(#5FD0C5, 55) // Bright turquoise Value Area core (Band 1 Upper -> Lower 1)
+color COLOR_OUTER_FILL  = color.new(#3B8C88, 35) // Deep Teal / Sea Green outer extreme clouds (Band 2 -> Band 3)
 color COLOR_PRIOR_VAL   = #506575                // Prior session reference levels
 
 // -------------------------------------------------------------------------------------------------
@@ -186,25 +185,23 @@ if in_session
 // Dynamic Blue/Red dashed color based on close > median
 color median_col = close >= plot_median ? COLOR_BULL_MEDIAN : COLOR_BEAR_MEDIAN
 
-p_u3 = plot(plot_u3, "Upper Band 3 (+4.00 MAD Extreme)", color=color.new(COLOR_BAND_BORDER, 30), linewidth=1, style=plot.style_line)
+p_u3 = plot(plot_u3, "Upper Band 3 (+4.00 MAD Extreme)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
 p_u2 = plot(plot_u2, "Upper Band 2 (+2.75 MAD Channel)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
 p_u1 = plot(plot_u1, "Upper Band 1 (+1.50 MAD Value)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
 p_med = plot(plot_median, "Current Day Median", color=median_col, linewidth=2, style=plot.style_linebr)
 p_l1 = plot(plot_l1, "Lower Band 1 (-1.50 MAD Value)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
 p_l2 = plot(plot_l2, "Lower Band 2 (-2.75 MAD Channel)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
-p_l3 = plot(plot_l3, "Lower Band 3 (-4.00 MAD Extreme)", color=color.new(COLOR_BAND_BORDER, 30), linewidth=1, style=plot.style_line)
+p_l3 = plot(plot_l3, "Lower Band 3 (-4.00 MAD Extreme)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
 
-// Multi-tiered layered fills matching Lizard screenshot
-// 1. Extreme Tail Outer Fills (Band 3 <-> Band 2)
+// Multi-tiered layered fills matching exact screenshot styling:
+// 1. Extreme Tail Outer Fills (Band 3 <-> Band 2): Deep Teal / Sea Green
 fill(p_u3, p_u2, color=COLOR_OUTER_FILL, title="Upper Extreme Exhaustion Cloud")
 fill(p_l2, p_l3, color=COLOR_OUTER_FILL, title="Lower Extreme Exhaustion Cloud")
 
-// 2. Middle Discovery Channel Fills (Band 2 <-> Band 1)
-fill(p_u2, p_u1, color=COLOR_MID_FILL, title="Upper Discovery Channel Cloud")
-fill(p_l1, p_l2, color=COLOR_MID_FILL, title="Lower Discovery Channel Cloud")
-
-// 3. Inner Value Area Cloud (Band 1 Upper <-> Band 1 Lower)
+// 2. Inner Value Area Cloud (Band 1 Upper <-> Band 1 Lower): Bright Turquoise Core
 fill(p_u1, p_l1, color=COLOR_INNER_FILL, title="Inner Value Area Cloud")
+
+// Note: The intermediate channel between Band 1 and Band 2 is kept clear / unshaded matching the screenshot!
 
 // Prior Session Horizontal Reference Plots (Y-VAH, Y-Median, Y-VAL)
 plot(show_prior ? prior_upper1 : na, "Y-VAH (Prior Upper Band 1)", color=COLOR_PRIOR_VAL, style=plot.style_circles, linewidth=1)
