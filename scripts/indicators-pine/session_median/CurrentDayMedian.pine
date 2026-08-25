@@ -10,15 +10,16 @@ indicator(Current Day Median [Lizard Style], shorttitle=Current Day Median, over
 color COLOR_BULL_MEDIAN = color.blue             // Blue dashed when price > Median
 color COLOR_BEAR_MEDIAN = color.red              // Red dashed when price < Median
 color COLOR_BAND_BORDER = #768199                // Slate outline
-color COLOR_INNER_FILL  = color.new(#A4B0C7, 82) // Light slate inner Value Area fill (Band 1)
-color COLOR_OUTER_FILL  = color.new(#7384A6, 68) // Deeper slate outer channel fill (Band 2)
+color COLOR_INNER_FILL  = color.new(#48D1CC, 80) // Medium Turquoise inner Value Area fill (Band 1)
+color COLOR_MID_FILL    = color.new(#5F9EA0, 65) // Cadet Blue middle channel fill (Band 2)
+color COLOR_OUTER_FILL  = color.new(#2F4F4F, 50) // Dark Slate Gray extreme exhaustion fill (Band 3)
 color COLOR_PRIOR_VAL   = #506575                // Prior session reference levels
 
 // -------------------------------------------------------------------------------------------------
 // INPUTS
 // -------------------------------------------------------------------------------------------------
 string GRP_CALC   = "Median Calculation"
-string GRP_BANDS  = "Residual Mean Absolute Deviation (MAD) Bands"
+string GRP_BANDS  = "Residual Mean Absolute Deviation (MAD) 6 Bands"
 string GRP_SESS   = "Session Settings"
 string GRP_PRIOR  = "Prior Session Reference Levels"
 
@@ -26,9 +27,11 @@ string calc_type  = input.string("Volume-Weighted TPO (VWTPO)", "Calculation Mod
 bool interpolate  = input.bool(true, "Interpolate Values", tooltip="Linearly interpolates price within the median tick slice for smoother precision", group=GRP_CALC)
 
 bool show_bands   = input.bool(true, "Show MAD Bands", group=GRP_BANDS)
-float band_mult1  = input.float(1.25, "Inner Band Multiplier (≈ 1.0σ / Value Area)", minval=0.1, step=0.05, group=GRP_BANDS)
-float band_mult2  = input.float(2.50, "Outer Band Multiplier (≈ 2.0σ)", minval=0.1, step=0.05, group=GRP_BANDS)
-bool show_band2   = input.bool(true, "Show Outer Band (2.0x)", group=GRP_BANDS)
+float band_mult1  = input.float(1.50, "Tier 1: Value Area Multiplier (68.3%)", minval=0.1, step=0.05, group=GRP_BANDS)
+float band_mult2  = input.float(2.75, "Tier 2: Discovery Channel Multiplier (95.5%)", minval=0.1, step=0.05, group=GRP_BANDS)
+float band_mult3  = input.float(4.00, "Tier 3: Extreme Tail Multiplier (99.7%)", minval=0.1, step=0.05, group=GRP_BANDS)
+bool show_band2   = input.bool(true, "Show Tier 2 Channel Bands", group=GRP_BANDS)
+bool show_band3   = input.bool(true, "Show Tier 3 Extreme Bands", group=GRP_BANDS)
 
 string sess_type  = input.string("Full Day (24H)", "Session Selection", options=["Full Day (24H)", "RTH (09:30 - 16:00)", "Asia (18:00 - 02:30)", "London (02:30 - 07:30)", "NY AM (08:30 - 11:30)", "NY PM (12:30 - 16:15)", "Custom Session"], group=GRP_SESS)
 string cust_sess  = input.session("0930-1600:23456", "Custom Session Window", group=GRP_SESS)
@@ -37,7 +40,7 @@ string tz_input   = input.string("America/New_York", "Timezone", group=GRP_SESS)
 bool show_prior   = input.bool(true, "Show Prior Session Reference Levels", group=GRP_PRIOR)
 
 // -------------------------------------------------------------------------------------------------
-// SESSION DETECTION
+// SESSION DETECTION & RESET (Bands reset fresh for each session)
 // -------------------------------------------------------------------------------------------------
 string active_session_window = switch sess_type
     "RTH (09:30 - 16:00)"     => "0930-1600:23456"
@@ -166,23 +169,34 @@ float plot_u1     = in_session ? (show_bands and not na(current_median) and not 
 float plot_l1     = in_session ? (show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult1 * mad_val) : na) : cur_lower1
 float plot_u2     = in_session ? (show_band2 and show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult2 * mad_val) : na) : na
 float plot_l2     = in_session ? (show_band2 and show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult2 * mad_val) : na) : na
+float plot_u3     = in_session ? (show_band3 and show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult3 * mad_val) : na) : na
+float plot_l3     = in_session ? (show_band3 and show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult3 * mad_val) : na) : na
 
 // -------------------------------------------------------------------------------------------------
-// PLOTS & EXACT LIZARD VISUALS (Matching Screenshot)
+// PLOTS & EXACT 6-BAND VISUALS (Matching Screenshot)
 // -------------------------------------------------------------------------------------------------
 // Dynamic Blue/Red dashed color based on close > median
 color median_col = close >= plot_median ? COLOR_BULL_MEDIAN : COLOR_BEAR_MEDIAN
 
-p_u2 = plot(plot_u2, "Upper Band 2 (+2.5 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
-p_u1 = plot(plot_u1, "Upper Band 1 (+1.25 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_u3 = plot(plot_u3, "Upper Band 3 (+4.00 MAD Extreme)", color=color.new(COLOR_BAND_BORDER, 30), linewidth=1, style=plot.style_line)
+p_u2 = plot(plot_u2, "Upper Band 2 (+2.75 MAD Channel)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_u1 = plot(plot_u1, "Upper Band 1 (+1.50 MAD Value)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
 p_med = plot(plot_median, "Current Day Median", color=median_col, linewidth=2, style=plot.style_linebr)
-p_l1 = plot(plot_l1, "Lower Band 1 (-1.25 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
-p_l2 = plot(plot_l2, "Lower Band 2 (-2.5 MAD)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_l1 = plot(plot_l1, "Lower Band 1 (-1.50 MAD Value)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_l2 = plot(plot_l2, "Lower Band 2 (-2.75 MAD Channel)", color=COLOR_BAND_BORDER, linewidth=1, style=plot.style_line)
+p_l3 = plot(plot_l3, "Lower Band 3 (-4.00 MAD Extreme)", color=color.new(COLOR_BAND_BORDER, 30), linewidth=1, style=plot.style_line)
 
 // Multi-tiered layered fills matching Lizard screenshot
-fill(p_u2, p_u1, color=COLOR_OUTER_FILL, title="Outer Upper Channel Cloud")
+// 1. Extreme Tail Outer Fills (Band 3 <-> Band 2)
+fill(p_u3, p_u2, color=COLOR_OUTER_FILL, title="Upper Extreme Exhaustion Cloud")
+fill(p_l2, p_l3, color=COLOR_OUTER_FILL, title="Lower Extreme Exhaustion Cloud")
+
+// 2. Middle Discovery Channel Fills (Band 2 <-> Band 1)
+fill(p_u2, p_u1, color=COLOR_MID_FILL, title="Upper Discovery Channel Cloud")
+fill(p_l1, p_l2, color=COLOR_MID_FILL, title="Lower Discovery Channel Cloud")
+
+// 3. Inner Value Area Cloud (Band 1 Upper <-> Band 1 Lower)
 fill(p_u1, p_l1, color=COLOR_INNER_FILL, title="Inner Value Area Cloud")
-fill(p_l1, p_l2, color=COLOR_OUTER_FILL, title="Outer Lower Channel Cloud")
 
 // Prior Session Horizontal Reference Plots (Y-VAH, Y-Median, Y-VAL)
 plot(show_prior ? prior_upper1 : na, "Y-VAH (Prior Upper Band 1)", color=COLOR_PRIOR_VAL, style=plot.style_circles, linewidth=1)
