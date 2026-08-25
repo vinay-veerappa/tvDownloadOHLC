@@ -398,6 +398,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
             // Band width / range detection (on HTF)
             double bw = (_upper2Sigma - _lower2Sigma) / _vwmean * 100.0;
+            htfBandWidth[0] = bw;
             int bwLen = Math.Min(BandWidthLength, CurrentBar + 1);
             double sumBW = 0; for (int i = 0; i < bwLen; i++) sumBW += htfBandWidth[i];
             double avgBW = bwLen > 0 ? sumBW / bwLen : 0;
@@ -599,9 +600,58 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private void EnsureBrushes(SharpDX.Direct2D1.RenderTarget rt)
         { if (!brushesNeedUpdate && upperFillBrush != null && lowerFillBrush != null) return; if (upperFillBrush != null) upperFillBrush.Dispose(); if (lowerFillBrush != null) lowerFillBrush.Dispose(); Brush ubc = ShowRangeState ? (isTightRange ? TightRangeColor : (isWideRange ? WideRangeColor : BearishColor)) : BearishColor; Brush lbc = ShowRangeState ? (isTightRange ? TightRangeColor : (isWideRange ? WideRangeColor : BullishColor)) : BullishColor; upperFillBrush = CreateFillBrush(rt, ubc, 50); lowerFillBrush = CreateFillBrush(rt, lbc, 50); brushesNeedUpdate = false; }
         protected override void OnRender(ChartControl cc, ChartScale cs)
-        { /* cloud disabled for debugging */ }
+        {
+            base.OnRender(cc, cs);
+            try
+            {
+                if (!FillBands || Bars == null || ChartBars == null) return;
+                var rt = RenderTarget;
+                if (rt == null) return;
+                EnsureBrushes(rt);
+                int fi = ChartBars.FromIndex, li = ChartBars.ToIndex;
+                RenderCloudBand(rt, cc, cs, Values[1], Values[3], upperFillBrush, fi, li);
+                RenderCloudBand(rt, cc, cs, Values[2], Values[4], lowerFillBrush, fi, li);
+            }
+            catch { }
+        }
         private void RenderCloudBand(SharpDX.Direct2D1.RenderTarget rt, ChartControl cc, ChartScale cs, Series<double> topS, Series<double> botS, SharpDX.Direct2D1.Brush brush, int fi, int li)
-        { if (rt == null || brush == null) return; var tp = new List<SharpDX.Vector2>(); var bp = new List<SharpDX.Vector2>(); for (int i = fi; i <= li; i++) { if (i < 0 || i >= Bars.Count) continue; double tv = topS.GetValueAt(i), bv = botS.GetValueAt(i); if (double.IsNaN(tv) || double.IsNaN(bv)) continue; float x = (float)cc.GetXByBarIndex(ChartBars, i); tp.Add(new SharpDX.Vector2(x, (float)cs.GetYByValue(tv))); bp.Add(new SharpDX.Vector2(x, (float)cs.GetYByValue(bv))); } if (tp.Count < 2) return; using (var g = new SharpDX.Direct2D1.PathGeometry(Core.Globals.D2DFactory)) using (var s = g.Open()) { s.SetFillMode(SharpDX.Direct2D1.FillMode.Winding); s.BeginFigure(tp[0], SharpDX.Direct2D1.FigureBegin.Filled); for (int i = 1; i < tp.Count; i++) s.AddLine(tp[i]); for (int i = bp.Count - 1; i >= 0; i--) s.AddLine(bp[i]); s.EndFigure(SharpDX.Direct2D1.FigureEnd.Closed); s.Close(); rt.FillGeometry(g, brush); } }
+        {
+            if (rt == null || brush == null) return;
+            // Collect contiguous runs of valid bars and fill each as a separate polygon,
+            // matching the RedTailEMACloud pattern. This avoids corrupted geometry when
+            // NaN gaps exist (e.g. early bars before the HTF computed).
+            var xCoords = new List<float>();
+            var yTop = new List<float>();
+            var yBot = new List<float>();
+            int barCount = Bars.Count;
+            for (int i = fi; i <= li; i++)
+            {
+                if (i < 0 || i >= barCount) { FlushRun(rt, xCoords, yTop, yBot, brush); continue; }
+                double tv = topS.GetValueAt(i), bv = botS.GetValueAt(i);
+                if (double.IsNaN(tv) || double.IsNaN(bv)) { FlushRun(rt, xCoords, yTop, yBot, brush); continue; }
+                xCoords.Add((float)cc.GetXByBarIndex(ChartBars, i));
+                yTop.Add((float)cs.GetYByValue(tv));
+                yBot.Add((float)cs.GetYByValue(bv));
+            }
+            FlushRun(rt, xCoords, yTop, yBot, brush);
+        }
+
+        private void FlushRun(SharpDX.Direct2D1.RenderTarget rt, List<float> x, List<float> yt, List<float> yb, SharpDX.Direct2D1.Brush brush)
+        {
+            if (x.Count < 2) { x.Clear(); yt.Clear(); yb.Clear(); return; }
+            using (var g = new SharpDX.Direct2D1.PathGeometry(Core.Globals.D2DFactory))
+            using (var s = g.Open())
+            {
+                s.SetFillMode(SharpDX.Direct2D1.FillMode.Winding);
+                s.BeginFigure(new SharpDX.Vector2(x[0], yt[0]), SharpDX.Direct2D1.FigureBegin.Filled);
+                for (int i = 1; i < x.Count; i++) s.AddLine(new SharpDX.Vector2(x[i], yt[i]));
+                for (int i = x.Count - 1; i >= 0; i--) s.AddLine(new SharpDX.Vector2(x[i], yb[i]));
+                s.EndFigure(SharpDX.Direct2D1.FigureEnd.Closed);
+                s.Close();
+                rt.FillGeometry(g, brush);
+            }
+            x.Clear(); yt.Clear(); yb.Clear();
+        }
         #endregion
 
         #region Pivot helpers
