@@ -1,0 +1,243 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © APEX / Converted & Modernized to Pine Script v6
+// Original: https://in.tradingview.com/script/vXakWc27-Keltner-Channel-APEX/
+// Title: Keltner Channel Signals v6
+
+//@version=6
+indicator("Keltner Channel signals", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══ INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── MA Base Settings ──
+i_src                 = input.source(close, "Price Source", group="MA Base Settings")
+i_maLength            = input.int(34, "MA Length", minval=1, group="MA Base Settings")
+i_maType              = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA", "DEMA", "TEMA", "TRIMA", "KAMA", "MAMA", "T3"], group="MA Base Settings")
+
+// ── Keltner Channel Settings ──
+i_atrMultMin          = input.float(1.5, "ATR Multiplier Min", minval=0.0, step=0.1, group="Keltner Channels")
+i_atrMultMax          = input.float(3.5, "ATR Multiplier Max", minval=0.0, step=0.1, group="Keltner Channels")
+i_atrMaType           = input.string("EMA", "ATR Smoothing MA", options=["SMA", "EMA", "WMA", "DEMA", "TEMA", "TRIMA", "KAMA", "MAMA", "T3"], group="Keltner Channels")
+i_atrLength           = input.int(88, "ATR Smoothing Length", minval=1, group="Keltner Channels")
+i_kcUseHtf            = input.bool(false, "Use HTF for Channels?", group="Keltner Channels")
+i_kcHtfRes            = input.timeframe("15", "Channels HTF Timeframe", group="Keltner Channels")
+
+// ── Reversal Signals (%B from KC Mid + StDev) ──
+i_kcDevLength         = input.int(34, "Keltner Deviation Length", minval=1, group="Reversal Signals (%B)")
+i_kcDevMultiplier     = input.float(2.0, "Keltner Deviation Multiplier", minval=0.1, step=0.1, group="Reversal Signals (%B)")
+i_overbought          = input.float(1.0, "Overbought Threshold", group="Reversal Signals (%B)")
+i_oversold            = input.float(0.0, "Oversold Threshold", group="Reversal Signals (%B)")
+i_sigUseHtf           = input.bool(false, "Use HTF for Reversal Signals?", group="Reversal Signals (%B)")
+i_sigHtfRes           = input.timeframe("60", "Reversal Signals HTF Timeframe", group="Reversal Signals (%B)")
+
+// ── WaveTrend Momentum Background Filter ──
+i_wtChannelLen        = input.int(10, "Channel Length", minval=1, group="WaveTrend Settings")
+i_wtMaLen             = input.int(3, "Moving Average Length", minval=1, group="WaveTrend Settings")
+i_wtSmoothLen         = input.int(3, "Smoothing Average Length", minval=1, group="WaveTrend Settings")
+i_wtOverbought        = input.float(90.0, "WaveTrend Overbought", group="WaveTrend Settings")
+i_wtOversold          = input.float(-90.0, "WaveTrend Oversold", group="WaveTrend Settings")
+i_wtShowCross         = input.bool(false, "Highlight WT Cross", group="WaveTrend Settings")
+i_wtShowOverbought    = input.bool(false, "Highlight WT Overbought", group="WaveTrend Settings")
+i_wtShowOversold      = input.bool(false, "Highlight WT Oversold", group="WaveTrend Settings")
+i_wtUseHtf            = input.bool(false, "Use HTF for WaveTrend?", group="WaveTrend Settings")
+i_wtHtfRes            = input.timeframe("15", "WaveTrend HTF Timeframe", group="WaveTrend Settings")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══ HELPER MOVING AVERAGE FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+f_kama(series float src, int len) =>
+    float xvnoise  = math.abs(src - nz(src[1]))
+    float nfastend = 0.666
+    float nslowend = 0.0645
+    float nsignal  = math.abs(src - nz(src[len]))
+    float nnoise   = ta.cum(xvnoise) - nz(ta.cum(xvnoise)[len])
+    float nefratio = nnoise != 0 ? nsignal / nnoise : 0.0
+    float nsmooth  = math.pow(nefratio * (nfastend - nslowend) + nslowend, 2)
+    var float nAMA = na
+    nAMA := na(nAMA[1]) ? src : nz(nAMA[1]) + nsmooth * (src - nz(nAMA[1]))
+    nAMA
+
+f_mama(series float src, int len) =>
+    float fl    = 0.5
+    float sl    = 0.05
+    float pi    = 3.141592653589793
+    float sp    = (4.0 * src + 3.0 * nz(src[1]) + 2.0 * nz(src[2]) + nz(src[3])) / 10.0
+    var float p = 0.0
+    var float i2 = 0.0
+    var float q2 = 0.0
+    var float re = 0.0
+    var float im = 0.0
+    var float spp = 0.0
+    var float mamaVal = na
+
+    float dt = (0.0962 * sp + 0.5769 * nz(sp[2]) - 0.5769 * nz(sp[4]) - 0.0962 * nz(sp[6])) * (0.075 * nz(p[1]) + 0.54)
+    float q1 = (0.0962 * dt + 0.5769 * nz(dt[2]) - 0.5769 * nz(dt[4]) - 0.0962 * nz(dt[6])) * (0.075 * nz(p[1]) + 0.54)
+    float i1 = nz(dt[3])
+    float jI = (0.0962 * i1 + 0.5769 * nz(i1[2]) - 0.5769 * nz(i1[4]) - 0.0962 * nz(i1[6])) * (0.075 * nz(p[1]) + 0.54)
+    float jq = (0.0962 * q1 + 0.5769 * nz(q1[2]) - 0.5769 * nz(q1[4]) - 0.0962 * nz(q1[6])) * (0.075 * nz(p[1]) + 0.54)
+
+    float i2_ = i1 - jq
+    float q2_ = q1 + jI
+    i2 := 0.2 * i2_ + 0.8 * nz(i2[1])
+    q2 := 0.2 * q2_ + 0.8 * nz(q2[1])
+
+    float re_ = i2 * nz(i2[1]) + q2 * nz(q2[1])
+    float im_ = i2 * nz(q2[1]) - q2 * nz(i2[1])
+    re := 0.2 * re_ + 0.8 * nz(re[1])
+    im := 0.2 * im_ + 0.8 * nz(im[1])
+
+    float p1 = (im != 0.0 and re != 0.0) ? (2.0 * pi / math.atan(im / re)) : nz(p[1])
+    float p2 = p1 > 1.5 * nz(p1[1]) ? 1.5 * nz(p1[1]) : p1 < 0.67 * nz(p1[1]) ? 0.67 * nz(p1[1]) : p1
+    float p3 = p2 < 6.0 ? 6.0 : p2 > 50.0 ? 50.0 : p2
+    p := 0.2 * p3 + 0.8 * nz(p3[1])
+    spp := 0.33 * p + 0.67 * nz(spp[1])
+
+    float phase = (180.0 / pi) * math.atan(q1 / (i1 != 0.0 ? i1 : 0.0001))
+    float dphase_ = nz(phase[1]) - phase
+    float dphase = dphase_ < 1.0 ? 1.0 : dphase_
+    float alpha_ = fl / dphase
+    float alpha = alpha_ < sl ? sl : alpha_ > fl ? fl : alpha_
+    mamaVal := na(mamaVal[1]) ? src : alpha * src + (1.0 - alpha) * nz(mamaVal[1])
+    mamaVal
+
+f_t3(series float src, int len) =>
+    float xe1 = ta.ema(src, len)
+    float xe2 = ta.ema(xe1, len)
+    float xe3 = ta.ema(xe2, len)
+    float xe4 = ta.ema(xe3, len)
+    float xe5 = ta.ema(xe4, len)
+    float xe6 = ta.ema(xe5, len)
+    float b   = 0.7
+    float c1  = -b * b * b
+    float c2  = 3.0 * b * b + 3.0 * b * b * b
+    float c3  = -6.0 * b * b - 3.0 * b - 3.0 * b * b * b
+    float c4  = 1.0 + 3.0 * b + b * b * b + 3.0 * b * b
+    c1 * xe6 + c2 * xe5 + c3 * xe4 + c4 * xe3
+
+f_variant(string maType, series float src, int len) =>
+    switch maType
+        "SMA"   => ta.sma(src, len)
+        "EMA"   => ta.ema(src, len)
+        "WMA"   => ta.wma(src, len)
+        "DEMA"  => 2.0 * ta.ema(src, len) - ta.ema(ta.ema(src, len), len)
+        "TEMA"  => 3.0 * (ta.ema(src, len) - ta.ema(ta.ema(src, len), len)) + ta.ema(ta.ema(ta.ema(src, len), len), len)
+        "TRIMA" => ta.sma(ta.sma(src, int(math.ceil(len / 2.0))), int(math.floor(len / 2.0)) + 1)
+        "KAMA"  => f_kama(src, len)
+        "MAMA"  => f_mama(src, len)
+        "T3"    => f_t3(src, len)
+        => ta.sma(src, len)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══ KELTNER CHANNEL CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+kcMidRaw       = f_variant(i_maType, i_src, i_maLength)
+kcRangeRaw     = f_variant(i_atrMaType, ta.tr(true), i_atrLength)
+kcBotMinRaw    = kcMidRaw - kcRangeRaw * i_atrMultMin
+kcBotMaxRaw    = kcMidRaw - kcRangeRaw * i_atrMultMax
+kcTopMinRaw    = kcMidRaw + kcRangeRaw * i_atrMultMin
+kcTopMaxRaw    = kcMidRaw + kcRangeRaw * i_atrMultMax
+
+// HTF Channel resolution wrapper
+f_getKcData() => [kcMidRaw, kcTopMinRaw, kcTopMaxRaw, kcBotMinRaw, kcBotMaxRaw]
+[htfKcMid, htfKcTopMin, htfKcTopMax, htfKcBotMin, htfKcBotMax] = request.security(syminfo.tickerid, i_kcHtfRes, f_getKcData())
+
+kcMid          = i_kcUseHtf ? htfKcMid : kcMidRaw
+kcTopMin       = i_kcUseHtf ? htfKcTopMin : kcTopMinRaw
+kcTopMax       = i_kcUseHtf ? htfKcTopMax : kcTopMaxRaw
+kcBotMin       = i_kcUseHtf ? htfKcBotMin : kcBotMinRaw
+kcBotMax       = i_kcUseHtf ? htfKcBotMax : kcBotMaxRaw
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══ REVERSAL SIGNALS & %B CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+f_getSigData() =>
+    float c = close
+    float h = high
+    float l = low
+    float b = kcMidRaw
+    float s = ta.stdev(close, i_kcDevLength)
+    [c, h, l, b, s]
+
+[htfC, htfH, htfL, htfBasis, htfStdev] = request.security(syminfo.tickerid, i_sigHtfRes, f_getSigData())
+
+sigC      = i_sigUseHtf ? htfC : close
+sigH      = i_sigUseHtf ? htfH : high
+sigL      = i_sigUseHtf ? htfL : low
+sigBasis  = i_sigUseHtf ? htfBasis : kcMid
+sigStdev  = i_sigUseHtf ? htfStdev : ta.stdev(close, i_kcDevLength)
+
+sigDev    = i_kcDevMultiplier * sigStdev
+sigUpper  = sigBasis + sigDev
+sigLower  = sigBasis - sigDev
+sigBbr    = (sigUpper != sigLower) ? (sigC - sigLower) / (sigUpper - sigLower) : 0.5
+
+// Support and Resistance tracking
+var float resLevel = na
+var float supLevel = na
+
+bool isOverboughtExit = (sigBbr[1] > i_overbought) and (sigBbr < i_overbought)
+bool isOversoldExit   = (sigBbr[1] < i_oversold) and (sigBbr > i_oversold)
+
+if isOverboughtExit
+    resLevel := sigH[1]
+
+if isOversoldExit
+    supLevel := sigL[1]
+
+bool buySignal  = ta.change(supLevel) != 0
+bool sellSignal = ta.change(resLevel) != 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══ WAVETREND MOMENTUM CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+wtSrc = hlc3
+wtMa  = ta.ema(wtSrc, i_wtChannelLen)
+wtCh  = ta.ema(math.abs(wtSrc - wtMa), i_wtChannelLen)
+wtCi  = (wtCh != 0.0) ? (wtSrc - wtMa) / (0.015 * wtCh) : 0.0
+
+wtWaveTrend1_t = ta.ema(wtCi, i_wtMaLen)
+wtWaveTrend2_t = ta.sma(wtWaveTrend1_t, i_wtSmoothLen)
+
+f_getWtData() => [wtWaveTrend1_t, wtWaveTrend2_t]
+[htfWt1, htfWt2] = request.security(syminfo.tickerid, i_wtHtfRes, f_getWtData())
+
+wtWaveTrend1 = i_wtUseHtf ? htfWt1 : wtWaveTrend1_t
+wtWaveTrend2 = i_wtUseHtf ? htfWt2 : wtWaveTrend2_t
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══ VISUAL PLOTS & BACKGROUNDS
+// ══════════════════════════════════════════════════════════════════════════════
+
+plot(kcMid, "KC Base (Midline)", color=color.new(color.orange, 20), linewidth=1)
+p_topMin = plot(kcTopMin, "KC Top Min", color=color.new(color.red, 30), linewidth=1)
+p_topMax = plot(kcTopMax, "KC Top Max", color=color.new(color.red, 30), linewidth=1)
+fill(p_topMin, p_topMax, color=color.new(color.red, 85), title="KC Top Zone Fill")
+
+p_botMin = plot(kcBotMin, "KC Bottom Min", color=color.new(color.lime, 30), linewidth=1)
+p_botMax = plot(kcBotMax, "KC Bottom Max", color=color.new(color.lime, 30), linewidth=1)
+fill(p_botMin, p_botMax, color=color.new(color.lime, 85), title="KC Bottom Zone Fill")
+
+// Resistance & Support persistent levels
+plot(resLevel, "Resistance Level", color=color.red, linewidth=2, style=plot.style_circles)
+plot(supLevel, "Support Level", color=color.green, linewidth=2, style=plot.style_circles)
+
+// Buy / Sell Arrows
+plotshape(buySignal, title="Buy Signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(sellSignal, title="Sell Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+// WaveTrend Background Highlights
+bgcolor(i_wtShowCross and ta.crossover(wtWaveTrend1, wtWaveTrend2) ? color.new(color.orange, 50) : na, title="WT Bullish Cross Background")
+bgcolor(i_wtShowOverbought and wtWaveTrend2 > i_wtOverbought ? color.new(color.red, 80) : na, title="WT Overbought Background")
+bgcolor(i_wtShowOversold and wtWaveTrend2 < i_wtOversold ? color.new(color.lime, 80) : na, title="WT Oversold Background")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══ ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(buySignal, title="Buy Alert", message="Keltner Channel: Support Formed / Oversold Reclaim - Go Long {{ticker}} at {{close}}")
+alertcondition(sellSignal, title="Sell Alert", message="Keltner Channel: Resistance Formed / Overbought Reclaim - Go Short {{ticker}} at {{close}}")

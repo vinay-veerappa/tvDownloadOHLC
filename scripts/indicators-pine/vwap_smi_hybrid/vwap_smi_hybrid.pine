@@ -1,0 +1,553 @@
+// This Pine Script™ source code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+
+//@version=6
+indicator('[Smith] VWAP + SMI Hybrid', shorttitle = 'VWAP-SMI', overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 📊 VWAP DEVIATION + SMI CYCLING HYBRID — MULTI-TIMEFRAME
+// VWAP bands + SMI oscillator computed on a HIGHER timeframe (tf input).
+// Band touches, volume filters, session stats, and signal detection run on the
+// CHART timeframe for precise entries.
+// Example: set tf='5' on a 1-min chart to see 5-min VWAP bands + 5-min SMI
+// confirmation while entering on 1-min price action.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// === 🎯 VWAP SETTINGS ===
+group_vwap = '📊 VWAP Settings'
+ls = input.bool(true, title = 'Log-space Scaling', tooltip = 'Enable proportional scaling with price axis', group = group_vwap)
+vwapLength = input.int(60, title = 'VWAP Length', group = group_vwap)
+vwapSource = input.source(close, title = 'Source', group = group_vwap)
+tf = input.timeframe('', 'Timeframe for VWAP + SMI (empty = chart TF)', group = group_vwap, tooltip = 'Set to a higher TF (e.g. 5) to compute VWAP bands and SMI on that TF while entering on the chart TF')
+dev2Mult = input.float(2.0, title = '2σ Multiplier', minval = 0.1, step = 0.1, group = group_vwap)
+dev3Mult = input.float(3.0, title = '3σ Multiplier', minval = 0.1, step = 0.1, group = group_vwap)
+
+// === 📈 SMI CORE SETTINGS ===
+group_smi = '📈 SMI Core Settings'
+kLength = input.int(14, 'SMI %K Length', minval = 5, maxval = 50, group = group_smi)
+kSmooth1 = input.int(3, 'SMI 1st Smoothing', minval = 1, maxval = 20, group = group_smi)
+kSmooth2 = input.int(3, 'SMI 2nd Smoothing', minval = 1, maxval = 20, group = group_smi)
+
+// === 📉 SMI SIGNAL SYSTEM ===
+group_signal = '📉 SMI Signal System'
+signalLength = input.int(8, 'Signal EMA', minval = 2, maxval = 50, group = group_signal)
+filterLength = input.int(21, 'Filter EMA', minval = 2, maxval = 100, group = group_signal)
+obLevel = input.float(40, 'Overbought Level', minval = 20, maxval = 80, group = group_signal)
+osLevel = input.float(-40, 'Oversold Level', minval = -80, maxval = -20, group = group_signal)
+crossFlexibility = input.int(3, 'Cross Flexibility [1-10]', minval = 1, maxval = 10, group = group_signal)
+
+// === 💧 MFI-SMI CONFLUENCE ===
+group_mfi = '💧 MFI Confluence'
+useMFI = input.bool(true, 'Enable MFI Confluence', group = group_mfi, tooltip = 'Adds volume-weighted confirmation via SMI of MFI')
+mfiLength = input.int(14, 'MFI Length', minval = 5, maxval = 50, group = group_mfi)
+mfiSmiK = input.int(10, 'MFI-SMI %K Length', minval = 5, maxval = 30, group = group_mfi)
+mfiSmiSmooth1 = input.int(3, 'MFI-SMI 1st Smooth', minval = 1, maxval = 10, group = group_mfi)
+mfiSmiSmooth2 = input.int(3, 'MFI-SMI 2nd Smooth', minval = 1, maxval = 10, group = group_mfi)
+
+// === 🎯 SIGNAL FILTERS ===
+group_filters = '🎯 Signal Filters'
+minSignalQuality = input.int(2, 'Min Signal Quality', minval = 1, maxval = 7, group = group_filters, tooltip = 'Minimum SMI signal quality score required (lower = more signals)')
+useVolumeFilter = input.bool(false, title = 'Volume Filter', tooltip = 'Require above-average volume', group = group_filters)
+volumeMultiplier = input.float(1.2, title = 'Volume Threshold', minval = 0.5, maxval = 3.0, step = 0.1, group = group_filters)
+useMarketRegime = input.bool(false, title = 'Market Type Filter', tooltip = 'Adapt signals based on trending vs ranging markets', group = group_filters)
+
+// === 📏 RANGE FILTER (VWAP Band Width) ===
+group_range = '📏 Range Filter'
+useRangeFilter = input.bool(true, title = 'Enable Range Filter', group = group_range, tooltip = 'Filter signals based on VWAP band width')
+rangeMethod = input.string('Filter Choppy', title = 'Range Mode', options = ['Filter Choppy', 'Range Only', 'Trend Only'], group = group_range, tooltip = 'Filter Choppy: removes wide+choppy. Range Only: only signal in tight ranges. Trend Only: only signal in wide/trending')
+bandWidthLength = input.int(20, title = 'Band Width Lookback', minval = 5, maxval = 50, group = group_range, tooltip = 'Period to calculate average band width')
+tightRangeThreshold = input.float(0.8, title = 'Tight Range Threshold', minval = 0.3, maxval = 1.0, step = 0.05, group = group_range, tooltip = 'Below this = tight range (relative to average)')
+wideRangeThreshold = input.float(1.3, title = 'Wide Range Threshold', minval = 1.0, maxval = 2.0, step = 0.05, group = group_range, tooltip = 'Above this = wide/volatile range')
+showRangeState = input.bool(true, title = 'Color Bands by Range State', group = group_range, tooltip = 'Change band colors based on range detection')
+
+// === ⚡ ADVANCED FEATURES ===
+group_advanced = '⚡ Advanced Features'
+showSessionStats = input.bool(true, title = 'Session Statistics', group = group_advanced)
+requireDivergence = input.bool(false, title = 'Require SMI Divergence', tooltip = 'Only signal when SMI divergence is present', group = group_advanced)
+
+// === 🎨 VISUAL SETTINGS ===
+group_visual = '🎨 Visual Settings'
+showVwapLine = input.bool(true, title = 'Show VWAP Line', group = group_visual)
+fillBands = input.bool(true, title = 'Fill Band Areas', group = group_visual)
+showSignals = input.bool(true, title = 'Show Trade Signals', group = group_visual)
+showBandTouches = input.bool(false, title = 'Show ALL Band Touches', tooltip = 'Debug: shows every band touch regardless of SMI confirmation', group = group_visual)
+showWinRate = input.bool(true, title = 'Show Win Rate Table', group = group_visual)
+showSmiPanel = input.bool(true, title = 'Show SMI Info Panel', group = group_visual)
+
+// === 🌈 COLORS ===
+group_colors = '🌈 Colors'
+bullishColor = input.color(#4CAF50, title = 'Bullish Color', group = group_colors)
+bearishColor = input.color(#F44336, title = 'Bearish Color', group = group_colors)
+tightRangeColor = input.color(#2196F3, title = 'Tight Range Color', group = group_colors)
+wideRangeColor = input.color(#FF9800, title = 'Wide/Choppy Color', group = group_colors)
+
+// === 🔔 ALERTS ===
+group_alerts = '🔔 Alerts'
+enableAlerts = input.bool(true, title = 'Enable Alerts', group = group_alerts)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 📊 HTF VWAP CALCULATIONS — computed entirely on the higher timeframe via request.security
+// The VWAP uses HTF close × HTF volume. The result is forward-filled to the chart TF.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// smith_vwmean: volume-weighted mean of x over y bars (runs in HTF context)
+f_smith_vwmean(x, y) =>
+    d_sum = 0.0
+    w_sum = 0.0
+    for i = 0 to y - 1 by 1
+        d_sum += nz(volume[i]) * nz(x[i])
+        w_sum += nz(volume[i])
+    w_sum > 0 ? d_sum / w_sum : x
+
+// smith_vwavdev: volume-weighted mean absolute deviation (runs in HTF context)
+f_smith_vwavdev(x, y, b) =>
+    d_sum = 0.0
+    w_sum = 0.0
+    for i = 0 to y - 1 by 1
+        d_sum += nz(volume[i]) * math.abs(nz(x[i]) - b)
+        w_sum += nz(volume[i])
+    w_sum > 0 ? d_sum / w_sum : 0.0
+
+// SMI computed on HTF (runs in HTF context)
+f_smi(kLen, s1, s2) =>
+    hh = ta.highest(high, kLen)
+    ll = ta.lowest(low, kLen)
+    mid = (hh + ll) / 2.0
+    dist = close - mid
+    rng = hh - ll
+    sDist = ta.ema(ta.ema(dist, s1), s2)
+    sRng = ta.ema(ta.ema(rng, s1), s2)
+    sRng != 0 ? 100 * (sDist / (sRng / 2.0)) : 0.0
+
+// MFI-SMI computed on HTF (runs in HTF context)
+f_mfiSmi(mfiLen, k, s1, s2) =>
+    m = ta.mfi(hlc3, mfiLen)
+    hh = ta.highest(m, k)
+    ll = ta.lowest(m, k)
+    mid = (hh + ll) / 2.0
+    dist = m - mid
+    rng = hh - ll
+    sDist = ta.ema(ta.ema(dist, s1), s2)
+    sRng = ta.ema(ta.ema(rng, s1), s2)
+    sRng != 0 ? 200 * (sDist / sRng) : 0.0
+
+// Fetch VWAP bands from the HTF — all five values computed on HTF bars
+_htf_src = ls ? math.log(vwapSource) : vwapSource
+[_htf_vwmean, _htf_u2, _htf_l2, _htf_u3, _htf_l3] = request.security(syminfo.tickerid, tf, [
+    f_smith_vwmean(_htf_src, vwapLength),
+    f_smith_vwmean(_htf_src, vwapLength) + f_smith_vwavdev(_htf_src, vwapLength, f_smith_vwmean(_htf_src, vwapLength)) * dev2Mult,
+    f_smith_vwmean(_htf_src, vwapLength) - f_smith_vwavdev(_htf_src, vwapLength, f_smith_vwmean(_htf_src, vwapLength)) * dev2Mult,
+    f_smith_vwmean(_htf_src, vwapLength) + f_smith_vwavdev(_htf_src, vwapLength, f_smith_vwmean(_htf_src, vwapLength)) * dev3Mult,
+    f_smith_vwmean(_htf_src, vwapLength) - f_smith_vwavdev(_htf_src, vwapLength, f_smith_vwmean(_htf_src, vwapLength)) * dev3Mult
+])
+
+// Convert back from log space
+_vwmean = ls ? math.exp(_htf_vwmean) : _htf_vwmean
+_upper2Sigma = ls ? math.exp(_htf_u2) : _htf_u2
+_lower2Sigma = ls ? math.exp(_htf_l2) : _htf_l2
+_upper3Sigma = ls ? math.exp(_htf_u3) : _htf_u3
+_lower3Sigma = ls ? math.exp(_htf_l3) : _htf_l3
+
+// Fetch SMI from the HTF
+_htf_smi_raw = f_smi(kLength, kSmooth1, kSmooth2)
+[_htf_smi, _htf_smiSignal, _htf_smiFilter] = request.security(syminfo.tickerid, tf, [
+    _htf_smi_raw,
+    ta.ema(_htf_smi_raw, signalLength),
+    ta.ema(_htf_smi_raw, filterLength)
+])
+
+// Fetch MFI-SMI from the HTF
+_htf_mfiSmi = request.security(syminfo.tickerid, tf, f_mfiSmi(mfiLength, mfiSmiK, mfiSmiSmooth1, mfiSmiSmooth2))
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 📏 VWAP BAND WIDTH (Range Detection) — uses HTF band values
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+bandWidth = (_upper2Sigma - _lower2Sigma) / _vwmean * 100
+avgBandWidth = ta.sma(bandWidth, bandWidthLength)
+relativeBandWidth = avgBandWidth > 0 ? bandWidth / avgBandWidth : 1.0
+
+isTightRange = relativeBandWidth < tightRangeThreshold
+isWideRange = relativeBandWidth > wideRangeThreshold
+isNormalRange = not isTightRange and not isWideRange
+
+var bool rangeFilterPass = true
+if useRangeFilter
+    if rangeMethod == 'Filter Choppy'
+        rangeFilterPass := not isWideRange
+    else if rangeMethod == 'Range Only'
+        rangeFilterPass := isTightRange
+    else if rangeMethod == 'Trend Only'
+        rangeFilterPass := isWideRange
+else
+    rangeFilterPass := true
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 📈 SMI STATES (from HTF — forward-filled to chart TF)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+bullishTrend = _htf_smiSignal > _htf_smiFilter
+bearishTrend = _htf_smiSignal < _htf_smiFilter
+filterRising = _htf_smiFilter > _htf_smiFilter[1]
+filterFalling = _htf_smiFilter < _htf_smiFilter[1]
+signalAboveZero = _htf_smiSignal > 0
+signalBelowZero = _htf_smiSignal < 0
+
+inOverbought = _htf_smiSignal > obLevel
+inOversold = _htf_smiSignal < osLevel
+wasOversold = ta.barssince(inOversold) <= 5
+wasOverbought = ta.barssince(inOverbought) <= 5
+
+bullCross = ta.crossover(_htf_smiSignal, _htf_smiFilter)
+bearCross = ta.crossunder(_htf_smiSignal, _htf_smiFilter)
+zeroBullCross = ta.crossover(_htf_smiSignal, 0)
+zeroBearCross = ta.crossunder(_htf_smiSignal, 0)
+bullCrossRecent = ta.barssince(bullCross) <= crossFlexibility
+bearCrossRecent = ta.barssince(bearCross) <= crossFlexibility
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 💧 MFI-SMI CONFLUENCE (from HTF)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+mfiSmiRising = _htf_mfiSmi > _htf_mfiSmi[1]
+mfiSmiFalling = _htf_mfiSmi < _htf_mfiSmi[1]
+mfiSmiAboveZero = _htf_mfiSmi > 0
+mfiSmiBelowZero = _htf_mfiSmi < 0
+
+mfiConfirmsBull = mfiSmiAboveZero or mfiSmiRising
+mfiConfirmsBear = mfiSmiBelowZero or mfiSmiFalling
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 📊 SMI DIVERGENCE DETECTION (uses HTF SMI values vs chart-TF price pivots)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+divLookback = 5
+pricePivotHigh = ta.pivothigh(high, divLookback, divLookback)
+pricePivotLow = ta.pivotlow(low, divLookback, divLookback)
+smiPivotHigh = ta.pivothigh(_htf_smi, divLookback, divLookback)
+smiPivotLow = ta.pivotlow(_htf_smi, divLookback, divLookback)
+
+currPriceHigh = ta.valuewhen(not na(pricePivotHigh), high[divLookback], 0)
+prevPriceHigh = ta.valuewhen(not na(pricePivotHigh), high[divLookback], 1)
+currPriceLow = ta.valuewhen(not na(pricePivotLow), low[divLookback], 0)
+prevPriceLow = ta.valuewhen(not na(pricePivotLow), low[divLookback], 1)
+
+currSMIHigh = ta.valuewhen(not na(smiPivotHigh), _htf_smi[divLookback], 0)
+prevSMIHigh = ta.valuewhen(not na(smiPivotHigh), _htf_smi[divLookback], 1)
+currSMILow = ta.valuewhen(not na(smiPivotLow), _htf_smi[divLookback], 0)
+prevSMILow = ta.valuewhen(not na(smiPivotLow), _htf_smi[divLookback], 1)
+
+currHighBar = ta.valuewhen(not na(pricePivotHigh), bar_index - divLookback, 0)
+prevHighBar = ta.valuewhen(not na(pricePivotHigh), bar_index - divLookback, 1)
+currLowBar = ta.valuewhen(not na(pricePivotLow), bar_index - divLookback, 0)
+prevLowBar = ta.valuewhen(not na(pricePivotLow), bar_index - divLookback, 1)
+
+barsFromPrevHigh = currHighBar - prevHighBar
+barsFromPrevLow = currLowBar - prevLowBar
+
+bearishDivergence = not na(pricePivotHigh) and currPriceHigh > prevPriceHigh and currSMIHigh < prevSMIHigh and barsFromPrevHigh >= 10 and barsFromPrevHigh <= 50
+bullishDivergence = not na(pricePivotLow) and currPriceLow < prevPriceLow and currSMILow > prevSMILow and barsFromPrevLow >= 10 and barsFromPrevLow <= 50
+
+bullishDivRecent = ta.barssince(bullishDivergence) <= 10
+bearishDivRecent = ta.barssince(bearishDivergence) <= 10
+
+// MFI-SMI divergence
+mfiSmiPivotHigh = ta.pivothigh(_htf_mfiSmi, divLookback, divLookback)
+mfiSmiPivotLow = ta.pivotlow(_htf_mfiSmi, divLookback, divLookback)
+
+currMfiSmiHigh = ta.valuewhen(not na(mfiSmiPivotHigh), _htf_mfiSmi[divLookback], 0)
+prevMfiSmiHigh = ta.valuewhen(not na(mfiSmiPivotHigh), _htf_mfiSmi[divLookback], 1)
+currMfiSmiLow = ta.valuewhen(not na(mfiSmiPivotLow), _htf_mfiSmi[divLookback], 0)
+prevMfiSmiLow = ta.valuewhen(not na(mfiSmiPivotLow), _htf_mfiSmi[divLookback], 1)
+
+currMfiSmiHighBar = ta.valuewhen(not na(mfiSmiPivotHigh), bar_index - divLookback, 0)
+prevMfiSmiHighBar = ta.valuewhen(not na(mfiSmiPivotHigh), bar_index - divLookback, 1)
+currMfiSmiLowBar = ta.valuewhen(not na(mfiSmiPivotLow), bar_index - divLookback, 0)
+prevMfiSmiLowBar = ta.valuewhen(not na(mfiSmiPivotLow), bar_index - divLookback, 1)
+
+mfiSmiBarsFromHighPivot = currMfiSmiHighBar - prevMfiSmiHighBar
+mfiSmiBarsFromLowPivot = currMfiSmiLowBar - prevMfiSmiLowBar
+
+mfiSmiBearishDiv = not na(mfiSmiPivotHigh) and currPriceHigh > prevPriceHigh and currMfiSmiHigh < prevMfiSmiHigh and mfiSmiBarsFromHighPivot > 5 and mfiSmiBarsFromHighPivot < 50
+mfiSmiBullishDiv = not na(mfiSmiPivotLow) and currPriceLow < prevPriceLow and currMfiSmiLow > prevMfiSmiLow and mfiSmiBarsFromLowPivot > 5 and mfiSmiBarsFromLowPivot < 50
+
+mfiSmiBullishDivRecent = ta.barssince(mfiSmiBullishDiv) <= 10
+mfiSmiBearishDivRecent = ta.barssince(mfiSmiBearishDiv) <= 10
+
+dualBullishDiv = bullishDivergence and mfiSmiBullishDivRecent
+dualBearishDiv = bearishDivergence and mfiSmiBearishDivRecent
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 🎯 SIGNAL QUALITY SCORING (uses HTF SMI states)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+var int bullSignalQuality = 0
+if bullCross
+    bullSignalQuality := 1
+    if wasOversold
+        bullSignalQuality += 1
+    if signalAboveZero or zeroBullCross
+        bullSignalQuality += 1
+    if filterRising
+        bullSignalQuality += 1
+    if useMFI and mfiConfirmsBull
+        bullSignalQuality += 1
+    if useMFI and mfiSmiBullishDivRecent
+        bullSignalQuality += 1
+    if useMFI and dualBullishDiv
+        bullSignalQuality += 1
+
+var int bearSignalQuality = 0
+if bearCross
+    bearSignalQuality := 1
+    if wasOverbought
+        bearSignalQuality += 1
+    if signalBelowZero or zeroBearCross
+        bearSignalQuality += 1
+    if filterFalling
+        bearSignalQuality += 1
+    if useMFI and mfiConfirmsBear
+        bearSignalQuality += 1
+    if useMFI and mfiSmiBearishDivRecent
+        bearSignalQuality += 1
+    if useMFI and dualBearishDiv
+        bearSignalQuality += 1
+
+if not bullCross and bullSignalQuality > 0 and ta.barssince(bullCross) > crossFlexibility
+    bullSignalQuality := 0
+if not bearCross and bearSignalQuality > 0 and ta.barssince(bearCross) > crossFlexibility
+    bearSignalQuality := 0
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// ⚡ CHART-TF FILTERS (volume, session, regime — on the entry timeframe)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+currentHour = hour(time)
+isAsian = currentHour >= 21 or currentHour < 8
+isLondon = currentHour >= 8 and currentHour < 13
+isNY = currentHour >= 13 and currentHour < 21
+
+avgVolume = ta.sma(volume, 20)
+volumeQualified = useVolumeFilter ? volume >= avgVolume * volumeMultiplier : true
+
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+atr20 = ta.atr(20)
+isTrending = math.abs(ema21 - ema50) > atr20 * 1.5
+trendDirection = ema21 > ema50 ? 1 : -1
+regimeLongOK = useMarketRegime ? not isTrending or isTrending and trendDirection > 0 : true
+regimeShortOK = useMarketRegime ? not isTrending or isTrending and trendDirection < 0 : true
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 🎯 COMBINED SIGNAL DETECTION (chart-TF close touches HTF bands, HTF SMI confirms)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// VWAP band touches — chart-TF close crosses HTF band values
+upper2Touch = close >= _upper2Sigma and close[1] < _upper2Sigma
+lower2Touch = close <= _lower2Sigma and close[1] > _lower2Sigma
+upper3Touch = close >= _upper3Sigma and close[1] < _upper3Sigma
+lower3Touch = close <= _lower3Sigma and close[1] > _lower3Sigma
+
+atUpperBands = close >= _upper2Sigma
+atLowerBands = close <= _lower2Sigma
+atUpper3 = close >= _upper3Sigma
+atLower3 = close <= _lower3Sigma
+
+nearUpper2 = ta.barssince(upper2Touch) <= crossFlexibility or atUpperBands
+nearLower2 = ta.barssince(lower2Touch) <= crossFlexibility or atLowerBands
+nearUpper3 = ta.barssince(upper3Touch) <= crossFlexibility or atUpper3
+nearLower3 = ta.barssince(lower3Touch) <= crossFlexibility or atLower3
+
+// SMI confirmation from HTF
+smiConfirmLong = bullCrossRecent and bullSignalQuality >= minSignalQuality or bullishTrend and wasOversold or inOversold and filterRising
+smiConfirmShort = bearCrossRecent and bearSignalQuality >= minSignalQuality or bearishTrend and wasOverbought or inOverbought and filterFalling
+
+divFilterLong = requireDivergence ? bullishDivRecent or mfiSmiBullishDivRecent : true
+divFilterShort = requireDivergence ? bearishDivRecent or mfiSmiBearishDivRecent : true
+
+rawLongOpportunity = nearLower2 and smiConfirmLong and volumeQualified and regimeLongOK and divFilterLong and rangeFilterPass
+rawShortOpportunity = nearUpper2 and smiConfirmShort and volumeQualified and regimeShortOK and divFilterShort and rangeFilterPass
+rawStrongLong = nearLower3 and bullCrossRecent and bullSignalQuality >= 5 and volumeQualified and regimeLongOK and divFilterLong and rangeFilterPass
+rawStrongShort = nearUpper3 and bearCrossRecent and bearSignalQuality >= 5 and volumeQualified and regimeShortOK and divFilterShort and rangeFilterPass
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 🔄 SIGNAL COOLDOWN
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+var int barsSinceLastLong = 100
+var int barsSinceLastShort = 100
+var int barsSinceLastStrongLong = 100
+var int barsSinceLastStrongShort = 100
+
+cooldownBars = crossFlexibility + 3
+
+longOpportunity = rawLongOpportunity and barsSinceLastLong >= cooldownBars
+shortOpportunity = rawShortOpportunity and barsSinceLastShort >= cooldownBars
+strongLongOpportunity = rawStrongLong and barsSinceLastStrongLong >= cooldownBars and not longOpportunity
+strongShortOpportunity = rawStrongShort and barsSinceLastStrongShort >= cooldownBars and not shortOpportunity
+
+barsSinceLastLong := longOpportunity or strongLongOpportunity ? 0 : barsSinceLastLong + 1
+barsSinceLastShort := shortOpportunity or strongShortOpportunity ? 0 : barsSinceLastShort + 1
+barsSinceLastStrongLong := strongLongOpportunity ? 0 : barsSinceLastStrongLong + 1
+barsSinceLastStrongShort := strongShortOpportunity ? 0 : barsSinceLastStrongShort + 1
+
+regularLongOpportunity = longOpportunity and not strongLongOpportunity
+regularShortOpportunity = shortOpportunity and not strongShortOpportunity
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 📊 STATISTICS TRACKING
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+var int totalOpportunities = 0
+var int successfulTrades = 0
+var int asianSignals = 0
+var int londonSignals = 0
+var int nySignals = 0
+var int asianWins = 0
+var int londonWins = 0
+var int nyWins = 0
+
+if longOpportunity or shortOpportunity
+    totalOpportunities += 1
+    if showSessionStats
+        if isAsian
+            asianSignals += 1
+        else if isLondon
+            londonSignals += 1
+        else if isNY
+            nySignals += 1
+
+if longOpportunity[5]
+    if ta.highest(close, 5) > _vwmean
+        successfulTrades += 1
+        if showSessionStats and isAsian[5]
+            asianWins += 1
+        if showSessionStats and isLondon[5]
+            londonWins += 1
+        if showSessionStats and isNY[5]
+            nyWins += 1
+
+if shortOpportunity[5]
+    if ta.lowest(close, 5) < _vwmean
+        successfulTrades += 1
+        if showSessionStats and isAsian[5]
+            asianWins += 1
+        if showSessionStats and isLondon[5]
+            londonWins += 1
+        if showSessionStats and isNY[5]
+            nyWins += 1
+
+winRate = totalOpportunities > 5 ? math.round(successfulTrades * 100 / totalOpportunities) : 0
+asianWinRate = asianSignals > 2 ? math.round(asianWins * 100 / asianSignals) : 0
+londonWinRate = londonSignals > 2 ? math.round(londonWins * 100 / londonSignals) : 0
+nyWinRate = nySignals > 2 ? math.round(nyWins * 100 / nySignals) : 0
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 🎨 PLOTTING - VWAP BANDS
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+upperBandColor = showRangeState ? isTightRange ? tightRangeColor : isWideRange ? wideRangeColor : bearishColor : bearishColor
+lowerBandColor = showRangeState ? isTightRange ? tightRangeColor : isWideRange ? wideRangeColor : bullishColor : bullishColor
+
+upperFillColor = showRangeState ? isTightRange ? color.new(tightRangeColor, 85) : isWideRange ? color.new(wideRangeColor, 85) : color.new(bearishColor, 85) : color.new(bearishColor, 85)
+lowerFillColor = showRangeState ? isTightRange ? color.new(tightRangeColor, 85) : isWideRange ? color.new(wideRangeColor, 85) : color.new(bullishColor, 85) : color.new(bullishColor, 85)
+
+vwapLine = plot(showVwapLine ? _vwmean : na, title = 'VWAP', color = color.new(color.gray, 50), linewidth = 1)
+upper2Plot = plot(_upper2Sigma, title = 'Upper 2σ', color = upperBandColor, linewidth = 1)
+lower2Plot = plot(_lower2Sigma, title = 'Lower 2σ', color = lowerBandColor, linewidth = 1)
+upper3Plot = plot(_upper3Sigma, title = 'Upper 3σ', color = color.new(upperBandColor, 20), linewidth = 1, display = display.none)
+lower3Plot = plot(_lower3Sigma, title = 'Lower 3σ', color = color.new(lowerBandColor, 20), linewidth = 1, display = display.none)
+
+fill(upper2Plot, upper3Plot, color = fillBands ? upperFillColor : na, title = 'Upper Zone')
+fill(lower2Plot, lower3Plot, color = fillBands ? lowerFillColor : na, title = 'Lower Zone')
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 🎯 SIGNAL SHAPES
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+plotshape(showBandTouches and lower2Touch, title = 'Lower 2σ Touch', style = shape.circle, location = location.belowbar, color = color.new(bullishColor, 50), size = size.tiny)
+plotshape(showBandTouches and upper2Touch, title = 'Upper 2σ Touch', style = shape.circle, location = location.abovebar, color = color.new(bearishColor, 50), size = size.tiny)
+plotshape(showBandTouches and lower3Touch, title = 'Lower 3σ Touch', style = shape.diamond, location = location.belowbar, color = color.new(bullishColor, 30), size = size.tiny)
+plotshape(showBandTouches and upper3Touch, title = 'Upper 3σ Touch', style = shape.diamond, location = location.abovebar, color = color.new(bearishColor, 30), size = size.tiny)
+
+plotshape(showSignals and regularLongOpportunity, title = 'Long', style = shape.triangleup, location = location.belowbar, color = bullishColor, size = size.normal, text = 'LONG')
+plotshape(showSignals and regularShortOpportunity, title = 'Short', style = shape.triangledown, location = location.abovebar, color = bearishColor, size = size.normal, text = 'SHORT')
+
+plotshape(showSignals and strongLongOpportunity, title = 'Strong Long', style = shape.diamond, location = location.belowbar, color = bullishColor, size = size.large, text = 'STRONG\nLONG')
+plotshape(showSignals and strongShortOpportunity, title = 'Strong Short', style = shape.diamond, location = location.abovebar, color = bearishColor, size = size.large, text = 'STRONG\nSHORT')
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 📊 INFO TABLES
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+if showSmiPanel and barstate.islast
+    var table smiTable = table.new(position.top_right, 2, 6, bgcolor = color.new(#1a1a1a, 20), border_width = 0)
+    trendText = bullishTrend ? '▲' : '▼'
+    zeroText = signalAboveZero ? '+' : '−'
+    table.cell(smiTable, 0, 0, 'SMI', text_color = color.new(color.white, 30), text_size = size.small)
+    table.cell(smiTable, 1, 0, trendText + ' ' + zeroText, text_color = bullishTrend and signalAboveZero ? bullishColor : bearishTrend and signalBelowZero ? bearishColor : color.yellow, text_size = size.small)
+    zoneText = inOverbought ? 'OB' : inOversold ? 'OS' : '—'
+    zoneColor = inOverbought ? bearishColor : inOversold ? bullishColor : color.gray
+    table.cell(smiTable, 0, 1, 'Zone', text_color = color.new(color.white, 30), text_size = size.small)
+    table.cell(smiTable, 1, 1, zoneText, text_color = zoneColor, text_size = size.small)
+    rangeText = isTightRange ? 'TIGHT' : isWideRange ? 'WIDE' : 'NORMAL'
+    rangeColor = isTightRange ? tightRangeColor : isWideRange ? wideRangeColor : color.gray
+    rangeValue = str.tostring(relativeBandWidth, '#.##') + 'x'
+    table.cell(smiTable, 0, 2, 'Range', text_color = color.new(color.white, 30), text_size = size.small)
+    table.cell(smiTable, 1, 2, rangeText + ' ' + rangeValue, text_color = rangeColor, text_size = size.small)
+    if useMFI
+        mfiDir = mfiSmiRising ? '▲' : mfiSmiFalling ? '▼' : '—'
+        mfiZeroPos = mfiSmiAboveZero ? '+' : '−'
+        divFlag = dualBullishDiv or dualBearishDiv ? ' D²' : mfiSmiBullishDivRecent ? ' D+' : mfiSmiBearishDivRecent ? ' D−' : ''
+        table.cell(smiTable, 0, 3, 'Vol', text_color = color.new(color.white, 30), text_size = size.small)
+        table.cell(smiTable, 1, 3, mfiDir + mfiZeroPos + divFlag, text_color = mfiSmiAboveZero ? bullishColor : bearishColor, text_size = size.small)
+    qualityScore = bullCrossRecent ? bullSignalQuality : bearCrossRecent ? bearSignalQuality : 0
+    if qualityScore > 0
+        qualityText = ''
+        for i = 1 to 7 by 1
+            qualityText += i <= qualityScore ? '●' : '○'
+        qualityColor = qualityScore >= 5 ? color.lime : qualityScore >= 4 ? color.green : qualityScore >= 3 ? color.yellow : color.orange
+        crossDir = bullCrossRecent ? '▲' : '▼'
+        table.cell(smiTable, 0, 4, 'Sig', text_color = color.new(color.white, 30), text_size = size.small)
+        table.cell(smiTable, 1, 4, crossDir + ' ' + qualityText, text_color = qualityColor, text_size = size.small)
+
+if showWinRate and barstate.islast and totalOpportunities > 0
+    var table winTable = table.new(position.bottom_left, 3, showSessionStats ? 8 : 3, bgcolor = color.new(color.white, 90), border_width = 1, border_color = color.gray)
+    table.cell(winTable, 0, 0, '🎯 VWAP+SMI Stats', bgcolor = bullishColor, text_color = color.white, text_size = size.small)
+    table.cell(winTable, 1, 0, '', bgcolor = bullishColor)
+    table.cell(winTable, 2, 0, '', bgcolor = bullishColor)
+    table.cell(winTable, 0, 1, 'Win Rate', text_color = color.black, text_size = size.small)
+    table.cell(winTable, 1, 1, str.tostring(winRate) + '%', text_color = winRate >= 60 ? color.green : winRate >= 40 ? color.orange : color.red, text_size = size.small)
+    table.cell(winTable, 0, 2, 'Signals', text_color = color.black, text_size = size.small)
+    table.cell(winTable, 1, 2, str.tostring(successfulTrades) + '/' + str.tostring(totalOpportunities), text_color = color.gray, text_size = size.small)
+    if useMarketRegime
+        regimeText = isTrending ? trendDirection > 0 ? '📈 BULL' : '📉 BEAR' : '📊 RANGE'
+        table.cell(winTable, 2, 1, 'MARKET', text_color = color.gray, text_size = size.tiny)
+        table.cell(winTable, 2, 2, regimeText, text_color = isTrending ? trendDirection > 0 ? color.green : color.red : color.orange, text_size = size.tiny)
+    if showSessionStats
+        table.cell(winTable, 0, 3, 'Session Stats', bgcolor = color.new(bullishColor, 70), text_color = color.white, text_size = size.tiny)
+        table.cell(winTable, 1, 3, '', bgcolor = color.new(bullishColor, 70))
+        table.cell(winTable, 2, 3, '', bgcolor = color.new(bullishColor, 70))
+        currentSession = isAsian ? '🌏 ASIAN' : isLondon ? '🇬🇧 LONDON' : '🇺🇸 NEW YORK'
+        table.cell(winTable, 0, 4, 'Current', text_color = color.black, text_size = size.tiny)
+        table.cell(winTable, 1, 4, currentSession, text_color = color.blue, text_size = size.tiny)
+        table.cell(winTable, 2, 4, 'TRADES', text_color = color.gray, text_size = size.tiny)
+        table.cell(winTable, 0, 5, 'Asian', text_color = color.black, text_size = size.tiny)
+        table.cell(winTable, 1, 5, str.tostring(asianWinRate) + '%', text_color = asianWinRate >= 60 ? color.green : color.gray, text_size = size.tiny)
+        table.cell(winTable, 2, 5, str.tostring(asianSignals), text_color = color.gray, text_size = size.tiny)
+        table.cell(winTable, 0, 6, 'London', text_color = color.black, text_size = size.tiny)
+        table.cell(winTable, 1, 6, str.tostring(londonWinRate) + '%', text_color = londonWinRate >= 60 ? color.green : color.gray, text_size = size.tiny)
+        table.cell(winTable, 2, 6, str.tostring(londonSignals), text_color = color.gray, text_size = size.tiny)
+        table.cell(winTable, 0, 7, 'NY', text_color = color.black, text_size = size.tiny)
+        table.cell(winTable, 1, 7, str.tostring(nyWinRate) + '%', text_color = nyWinRate >= 60 ? color.green : color.gray, text_size = size.tiny)
+        table.cell(winTable, 2, 7, str.tostring(nySignals), text_color = color.gray, text_size = size.tiny)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 🔔 ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enableAlerts and regularLongOpportunity, title = 'Long Opportunity', message = '🟢 {{ticker}} LONG - VWAP band touch + SMI confirmation')
+alertcondition(enableAlerts and regularShortOpportunity, title = 'Short Opportunity', message = '🔴 {{ticker}} SHORT - VWAP band touch + SMI confirmation')
+alertcondition(enableAlerts and strongLongOpportunity, title = 'STRONG Long', message = '💚 {{ticker}} STRONG LONG - 3σ touch + high quality SMI signal')
+alertcondition(enableAlerts and strongShortOpportunity, title = 'STRONG Short', message = '❤️ {{ticker}} STRONG SHORT - 3σ touch + high quality SMI signal')
+alertcondition(enableAlerts and (dualBullishDiv or dualBearishDiv), title = 'Dual Divergence', message = '⚡ {{ticker}} DUAL DIVERGENCE - Price-SMI and MFI-SMI both diverging')
