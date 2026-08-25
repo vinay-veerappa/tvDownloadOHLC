@@ -33,29 +33,36 @@ float band_mult3  = input.float(4.00, "Tier 3: Extreme Tail Multiplier (99.7%)",
 bool show_band2   = input.bool(true, "Show Tier 2 Channel Bands", group=GRP_BANDS)
 bool show_band3   = input.bool(true, "Show Tier 3 Extreme Bands", group=GRP_BANDS)
 
-string sess_type  = input.string("Full Day (24H)", "Session Selection", options=["Full Day (24H)", "RTH (09:30 - 16:00)", "Asia (18:00 - 02:30)", "London (02:30 - 07:30)", "NY AM (08:30 - 11:30)", "NY PM (12:30 - 16:15)", "Custom Session"], group=GRP_SESS)
+string sess_mode  = input.string("Session (Asia/London/NY AM/NY PM)", "Session Selection", options=["Session (Asia/London/NY AM/NY PM)", "RTH (09:30 - 16:00)", "Full Day (24H)", "Custom Session"], group=GRP_SESS)
 string cust_sess  = input.session("0930-1600:23456", "Custom Session Window", group=GRP_SESS)
 string tz_input   = input.string("America/New_York", "Timezone", group=GRP_SESS)
 
 bool show_prior   = input.bool(true, "Show Prior Session Reference Levels", group=GRP_PRIOR)
 
 // -------------------------------------------------------------------------------------------------
-// SESSION DETECTION & RESET (Bands reset fresh for each session)
+// SESSION DETECTION & RESET (Bands reset fresh for each session and do NOT stretch across gaps)
 // -------------------------------------------------------------------------------------------------
-string active_session_window = switch sess_type
-    "RTH (09:30 - 16:00)"     => "0930-1600:23456"
-    "Asia (18:00 - 02:30)"    => "1800-0230:1234567"
-    "London (02:30 - 07:30)"  => "0230-0730:23456"
-    "NY AM (08:30 - 11:30)"   => "0830-1130:23456"
-    "NY PM (12:30 - 16:15)"   => "1230-1615:23456"
-    "Custom Session"          => cust_sess
-    => ""
+// Define standard institutional sessions
+bool is_asia   = not na(time(timeframe.period, "1800-0230:1234567", tz_input))
+bool is_london = not na(time(timeframe.period, "0230-0730:23456",   tz_input))
+bool is_ny_am  = not na(time(timeframe.period, "0830-1130:23456",   tz_input))
+bool is_ny_pm  = not na(time(timeframe.period, "1230-1615:23456",   tz_input))
+bool is_rth    = not na(time(timeframe.period, "0930-1600:23456",   tz_input))
+bool is_custom = not na(time(timeframe.period, cust_sess,           tz_input))
+bool is_full   = (sess_mode == "Full Day (24H)")
 
-bool is_full_day = (sess_type == "Full Day (24H)")
-bool in_session  = is_full_day ? true : not na(time(timeframe.period, active_session_window, tz_input))
-bool new_day     = ta.change(time("D", "", tz_input)) != 0
-bool new_sess    = not is_full_day and (in_session and not in_session[1])
-bool session_reset = is_full_day ? new_day : new_sess
+int session_id = 0
+if sess_mode == "Session (Asia/London/NY AM/NY PM)"
+    session_id := is_asia ? 1 : is_london ? 2 : is_ny_am ? 3 : is_ny_pm ? 4 : 0
+else if sess_mode == "RTH (09:30 - 16:00)"
+    session_id := is_rth ? 10 : 0
+else if sess_mode == "Custom Session"
+    session_id := is_custom ? 20 : 0
+else if sess_mode == "Full Day (24H)"
+    session_id := 100
+
+bool in_session = (session_id > 0)
+bool session_reset = is_full ? (ta.change(time("D", "", tz_input)) != 0) : (session_id > 0 and session_id != session_id[1])
 
 // Prior session values tracking
 var float prior_median = na
@@ -158,19 +165,20 @@ if in_session and sz > 0 and total_vol > 0
             abs_dev_sum += w * math.abs(p - current_median)
         mad_val := abs_dev_sum / total_vol
 
-// Hold values outside session
+// Plotting variables: strictly NaN when out of session so lines and clouds do NOT stretch across session gaps
+float plot_median = in_session ? current_median : na
+float plot_u1     = (in_session and show_bands and not na(current_median) and not na(mad_val)) ? (current_median + band_mult1 * mad_val) : na
+float plot_l1     = (in_session and show_bands and not na(current_median) and not na(mad_val)) ? (current_median - band_mult1 * mad_val) : na
+float plot_u2     = (in_session and show_band2 and show_bands and not na(current_median) and not na(mad_val)) ? (current_median + band_mult2 * mad_val) : na
+float plot_l2     = (in_session and show_band2 and show_bands and not na(current_median) and not na(mad_val)) ? (current_median - band_mult2 * mad_val) : na
+float plot_u3     = (in_session and show_band3 and show_bands and not na(current_median) and not na(mad_val)) ? (current_median + band_mult3 * mad_val) : na
+float plot_l3     = (in_session and show_band3 and show_bands and not na(current_median) and not na(mad_val)) ? (current_median - band_mult3 * mad_val) : na
+
+// Update prior trackers
 if in_session
     cur_median := current_median
-    cur_upper1 := show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult1 * mad_val) : na
-    cur_lower1 := show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult1 * mad_val) : na
-
-float plot_median = in_session ? current_median : cur_median
-float plot_u1     = in_session ? (show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult1 * mad_val) : na) : cur_upper1
-float plot_l1     = in_session ? (show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult1 * mad_val) : na) : cur_lower1
-float plot_u2     = in_session ? (show_band2 and show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult2 * mad_val) : na) : na
-float plot_l2     = in_session ? (show_band2 and show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult2 * mad_val) : na) : na
-float plot_u3     = in_session ? (show_band3 and show_bands and not na(current_median) and not na(mad_val) ? (current_median + band_mult3 * mad_val) : na) : na
-float plot_l3     = in_session ? (show_band3 and show_bands and not na(current_median) and not na(mad_val) ? (current_median - band_mult3 * mad_val) : na) : na
+    cur_upper1 := plot_u1
+    cur_lower1 := plot_l1
 
 // -------------------------------------------------------------------------------------------------
 // PLOTS & EXACT 6-BAND VISUALS (Matching Screenshot)

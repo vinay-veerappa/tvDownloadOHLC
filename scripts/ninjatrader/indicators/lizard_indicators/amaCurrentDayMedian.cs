@@ -31,15 +31,12 @@ using SharpDX.Direct2D1;
 
 namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 {
-	public enum amaSessionTypeCDM
+	public enum amaSessionModeCDM
 	{
-		FullDay,
-		RTH,
-		Asia,
-		London,
-		NY_AM,
-		NY_PM,
-		CustomSession
+		Session,        // Automatically resets and plots for each standard session (Asia, London, NY AM, NY PM)
+		RTH,            // Regular Trading Hours only (09:30 - 16:00)
+		FullDay,        // Continuous 24-hour day
+		CustomSession   // User-defined start/end time
 	}
 
 	[Gui.CategoryOrder("Input Parameters", 0)]
@@ -53,11 +50,11 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 	{
 		private bool				isVWTPO						= true;
 		private bool				interpolate					= true;
-		private amaSessionTypeCDM	sessionType					= amaSessionTypeCDM.FullDay;
+		private amaSessionModeCDM	sessionMode					= amaSessionModeCDM.Session;
 		private string				sessionStartTime			= "09:30";
 		private string				sessionEndTime				= "16:00";
-		private TimeSpan			startTimeSpan				= new TimeSpan(9, 30, 0);
-		private TimeSpan			endTimeSpan					= new TimeSpan(16, 0, 0);
+		private TimeSpan			customStart					= new TimeSpan(9, 30, 0);
+		private TimeSpan			customEnd					= new TimeSpan(16, 0, 0);
 
 		private bool				showBands					= true;
 		private double				bandMultiplier1				= 1.50; // Inner Value Area (68.3%)
@@ -75,15 +72,16 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 		private int 				fieldSize					= 0;
 		private double				sessionVolume				= 0.0;
 		private List<double> 		fList	 					= new List<double>();
-		private bool				inCustomSession				= false;
-		private bool				prevInCustomSession			= false;
-		private string				versionString				= "v 1.4 - 6-Band Extreme Clouds";
+		
+		private int					currentSessionId			= -1;
+		private int					prevSessionId				= -1;
+		private string				versionString				= "v 1.5 - Multi-Session Auto Reset";
 
 		protected override void OnStateChange()
 		{
 			if (State == State.SetDefaults)
 			{
-				Description					= "Current Day Median with 6 Residual MAD Bands (3 Upper + 3 Lower) and Multi-Tiered Cloud Fills.";
+				Description					= "Current Day Median with 6 Residual MAD Bands (3 Upper + 3 Lower), Multi-Tiered Clouds, and Per-Session Resets.";
 				Name						= "amaCurrentDayMedian";
 				IsSuspendedWhileInactive	= true;
 				IsOverlay					= true;
@@ -108,41 +106,41 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 
 		private void UpdateTimeSpans()
 		{
-			switch (sessionType)
-			{
-				case amaSessionTypeCDM.RTH:
-					startTimeSpan = new TimeSpan(9, 30, 0);
-					endTimeSpan   = new TimeSpan(16, 0, 0);
-					break;
-				case amaSessionTypeCDM.Asia:
-					startTimeSpan = new TimeSpan(18, 0, 0);
-					endTimeSpan   = new TimeSpan(2, 30, 0);
-					break;
-				case amaSessionTypeCDM.London:
-					startTimeSpan = new TimeSpan(2, 30, 0);
-					endTimeSpan   = new TimeSpan(7, 30, 0);
-					break;
-				case amaSessionTypeCDM.NY_AM:
-					startTimeSpan = new TimeSpan(8, 30, 0);
-					endTimeSpan   = new TimeSpan(11, 30, 0);
-					break;
-				case amaSessionTypeCDM.NY_PM:
-					startTimeSpan = new TimeSpan(12, 30, 0);
-					endTimeSpan   = new TimeSpan(16, 15, 0);
-					break;
-				case amaSessionTypeCDM.CustomSession:
-					TimeSpan.TryParse(sessionStartTime, out startTimeSpan);
-					TimeSpan.TryParse(sessionEndTime, out endTimeSpan);
-					break;
-			}
+			TimeSpan.TryParse(sessionStartTime, out customStart);
+			TimeSpan.TryParse(sessionEndTime, out customEnd);
 		}
 
-		private bool IsTimeInSession(TimeSpan t, TimeSpan start, TimeSpan end)
+		private bool IsTimeInRange(TimeSpan t, TimeSpan start, TimeSpan end)
 		{
 			if (start <= end)
-				return t >= start && t <= end;
+				return t >= start && t < end;
 			else
-				return t >= start || t <= end;
+				return t >= start || t < end; // wraps midnight
+		}
+
+		/// <summary>
+		/// Returns the active session ID:
+		/// 1: Asia (18:00 - 02:30)
+		/// 2: London (02:30 - 07:30)
+		/// 3: NY AM (08:30 - 11:30)
+		/// 4: NY PM (12:30 - 16:15)
+		/// -1: In-between session gaps (no calculation/plotting)
+		/// </summary>
+		private int GetAutoSessionId(TimeSpan t)
+		{
+			// Asia: 18:00 to 02:30
+			if (t >= new TimeSpan(18, 0, 0) || t < new TimeSpan(2, 30, 0))
+				return 1;
+			// London: 02:30 to 07:30
+			if (t >= new TimeSpan(2, 30, 0) && t < new TimeSpan(7, 30, 0))
+				return 2;
+			// NY AM: 08:30 to 11:30
+			if (t >= new TimeSpan(8, 30, 0) && t < new TimeSpan(11, 30, 0))
+				return 3;
+			// NY PM: 12:30 to 16:15
+			if (t >= new TimeSpan(12, 30, 0) && t < new TimeSpan(16, 15, 0))
+				return 4;
+			return -1;
 		}
 
 		protected override void OnBarUpdate()
@@ -151,20 +149,41 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 
 			TimeSpan barTime = Time[0].TimeOfDay;
 			bool isSessionStart = false;
-			bool isActive = true;
+			bool isActive = false;
 
-			if (sessionType == amaSessionTypeCDM.FullDay)
+			switch (sessionMode)
 			{
-				isSessionStart = Bars.IsFirstBarOfSession;
-				isActive = true;
+				case amaSessionModeCDM.FullDay:
+					isActive = true;
+					isSessionStart = Bars.IsFirstBarOfSession;
+					currentSessionId = 0;
+					break;
+
+				case amaSessionModeCDM.RTH:
+					// RTH: 09:30 to 16:00
+					isActive = IsTimeInRange(barTime, new TimeSpan(9, 30, 0), new TimeSpan(16, 0, 0));
+					int rthId = isActive ? 10 : -1;
+					isSessionStart = (rthId != prevSessionId && isActive);
+					currentSessionId = rthId;
+					break;
+
+				case amaSessionModeCDM.CustomSession:
+					isActive = IsTimeInRange(barTime, customStart, customEnd);
+					int custId = isActive ? 20 : -1;
+					isSessionStart = (custId != prevSessionId && isActive);
+					currentSessionId = custId;
+					break;
+
+				case amaSessionModeCDM.Session:
+				default:
+					int autoId = GetAutoSessionId(barTime);
+					isActive = (autoId > 0);
+					isSessionStart = (autoId > 0 && autoId != prevSessionId);
+					currentSessionId = autoId;
+					break;
 			}
-			else
-			{
-				inCustomSession = IsTimeInSession(barTime, startTimeSpan, endTimeSpan);
-				isSessionStart = inCustomSession && (!prevInCustomSession || Bars.IsFirstBarOfSession);
-				prevInCustomSession = inCustomSession;
-				isActive = inCustomSession;
-			}
+
+			prevSessionId = currentSessionId;
 
 			// Clean session reset: start accumulation fresh at the start of each session
 			if (isSessionStart)
@@ -178,19 +197,17 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 				sessionVolume = 0.0;
 			}
 
+			// When not active (e.g. outside session hours or in gaps), reset values to NaN so plots do not stretch
 			if (!isActive)
 			{
-				if (CurrentBar > 0)
-				{
-					Values[0][0] = Values[0][1];
-					Values[1][0] = Values[1][1];
-					Values[2][0] = Values[2][1];
-					Values[3][0] = Values[3][1];
-					Values[4][0] = Values[4][1];
-					Values[5][0] = Values[5][1];
-					Values[6][0] = Values[6][1];
-					Values[7][0] = Values[7][1];
-				}
+				Values[0].Reset();
+				Values[1].Reset();
+				Values[2].Reset();
+				Values[3].Reset();
+				Values[4].Reset();
+				Values[5].Reset();
+				Values[6].Reset();
+				Values[7].Reset();
 				return;
 			}
 
@@ -325,8 +342,10 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 				{
 					if (barIdx < 0 || barIdx >= Values[0].Count - 1) continue;
 
-					float x1 = chartControl.GetXByBarIndex(ChartBars, barIdx);
-					float x2 = chartControl.GetXByBarIndex(ChartBars, barIdx + 1);
+					// Check that BOTH bars are valid inside session (not reset/NaN)
+					if (!Values[1].IsValidDataPointAt(barIdx) || !Values[1].IsValidDataPointAt(barIdx + 1) ||
+					    !Values[2].IsValidDataPointAt(barIdx) || !Values[2].IsValidDataPointAt(barIdx + 1))
+						continue;
 
 					double u1_0 = Values[1].GetValueAt(barIdx);
 					double u1_1 = Values[1].GetValueAt(barIdx + 1);
@@ -335,6 +354,9 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 
 					if (double.IsNaN(u1_0) || double.IsNaN(u1_1) || double.IsNaN(l1_0) || double.IsNaN(l1_1))
 						continue;
+
+					float x1 = chartControl.GetXByBarIndex(ChartBars, barIdx);
+					float x2 = chartControl.GetXByBarIndex(ChartBars, barIdx + 1);
 
 					float y_u1_0 = chartScale.GetYByValue(u1_0);
 					float y_u1_1 = chartScale.GetYByValue(u1_1);
@@ -357,7 +379,8 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 					}
 
 					// 2. Middle Channel Clouds (Upper 2 -> Upper 1 & Lower 1 -> Lower 2)
-					if (showBand2)
+					if (showBand2 && Values[3].IsValidDataPointAt(barIdx) && Values[3].IsValidDataPointAt(barIdx + 1) &&
+					    Values[4].IsValidDataPointAt(barIdx) && Values[4].IsValidDataPointAt(barIdx + 1))
 					{
 						double u2_0 = Values[3].GetValueAt(barIdx);
 						double u2_1 = Values[3].GetValueAt(barIdx + 1);
@@ -405,7 +428,8 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 						}
 
 						// 3. Extreme Exhaustion Clouds (Upper 3 -> Upper 2 & Lower 2 -> Lower 3)
-						if (showBand3)
+						if (showBand3 && Values[5].IsValidDataPointAt(barIdx) && Values[5].IsValidDataPointAt(barIdx + 1) &&
+						    Values[6].IsValidDataPointAt(barIdx) && Values[6].IsValidDataPointAt(barIdx + 1))
 						{
 							double u3_0 = Values[5].GetValueAt(barIdx);
 							double u3_1 = Values[5].GetValueAt(barIdx + 1);
@@ -512,10 +536,10 @@ namespace NinjaTrader.NinjaScript.Indicators.LizardIndicators
 
 		[NinjaScriptProperty]
 		[Display(ResourceType = typeof(Custom.Resource), Name = "Session Selection", GroupName = "Session Settings", Order = 0)]
-		public amaSessionTypeCDM SessionType
+		public amaSessionModeCDM SessionMode
 		{
-			get { return sessionType; }
-			set { sessionType = value; UpdateTimeSpans(); }
+			get { return sessionMode; }
+			set { sessionMode = value; UpdateTimeSpans(); }
 		}
 
 		[NinjaScriptProperty]
@@ -647,18 +671,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private LizardIndicators.amaCurrentDayMedian[] cacheamaCurrentDayMedian;
-		public LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(bool isVWTPO, bool interpolate, LizardIndicators.amaSessionTypeCDM sessionType, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
+		public LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(bool isVWTPO, bool interpolate, LizardIndicators.amaSessionModeCDM sessionMode, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
 		{
-			return amaCurrentDayMedian(Input, isVWTPO, interpolate, sessionType, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
+			return amaCurrentDayMedian(Input, isVWTPO, interpolate, sessionMode, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
 		}
 
-		public LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(ISeries<double> input, bool isVWTPO, bool interpolate, LizardIndicators.amaSessionTypeCDM sessionType, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
+		public LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(ISeries<double> input, bool isVWTPO, bool interpolate, LizardIndicators.amaSessionModeCDM sessionMode, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
 		{
 			if (cacheamaCurrentDayMedian != null)
 				for (int idx = 0; idx < cacheamaCurrentDayMedian.Length; idx++)
-					if (cacheamaCurrentDayMedian[idx] != null && cacheamaCurrentDayMedian[idx].IsVWTPO == isVWTPO && cacheamaCurrentDayMedian[idx].Interpolate == interpolate && cacheamaCurrentDayMedian[idx].SessionType == sessionType && cacheamaCurrentDayMedian[idx].SessionStartTime == sessionStartTime && cacheamaCurrentDayMedian[idx].SessionEndTime == sessionEndTime && cacheamaCurrentDayMedian[idx].ShowBands == showBands && cacheamaCurrentDayMedian[idx].BandMultiplier1 == bandMultiplier1 && cacheamaCurrentDayMedian[idx].ShowBand2 == showBand2 && cacheamaCurrentDayMedian[idx].BandMultiplier2 == bandMultiplier2 && cacheamaCurrentDayMedian[idx].ShowBand3 == showBand3 && cacheamaCurrentDayMedian[idx].BandMultiplier3 == bandMultiplier3 && cacheamaCurrentDayMedian[idx].ShowClouds == showClouds && cacheamaCurrentDayMedian[idx].InnerCloudOpacity == innerCloudOpacity && cacheamaCurrentDayMedian[idx].MidCloudOpacity == midCloudOpacity && cacheamaCurrentDayMedian[idx].OuterCloudOpacity == outerCloudOpacity && cacheamaCurrentDayMedian[idx].EqualsInput(input))
+					if (cacheamaCurrentDayMedian[idx] != null && cacheamaCurrentDayMedian[idx].IsVWTPO == isVWTPO && cacheamaCurrentDayMedian[idx].Interpolate == interpolate && cacheamaCurrentDayMedian[idx].SessionMode == sessionMode && cacheamaCurrentDayMedian[idx].SessionStartTime == sessionStartTime && cacheamaCurrentDayMedian[idx].SessionEndTime == sessionEndTime && cacheamaCurrentDayMedian[idx].ShowBands == showBands && cacheamaCurrentDayMedian[idx].BandMultiplier1 == bandMultiplier1 && cacheamaCurrentDayMedian[idx].ShowBand2 == showBand2 && cacheamaCurrentDayMedian[idx].BandMultiplier2 == bandMultiplier2 && cacheamaCurrentDayMedian[idx].ShowBand3 == showBand3 && cacheamaCurrentDayMedian[idx].BandMultiplier3 == bandMultiplier3 && cacheamaCurrentDayMedian[idx].ShowClouds == showClouds && cacheamaCurrentDayMedian[idx].InnerCloudOpacity == innerCloudOpacity && cacheamaCurrentDayMedian[idx].MidCloudOpacity == midCloudOpacity && cacheamaCurrentDayMedian[idx].OuterCloudOpacity == outerCloudOpacity && cacheamaCurrentDayMedian[idx].EqualsInput(input))
 						return cacheamaCurrentDayMedian[idx];
-			return CacheIndicator<LizardIndicators.amaCurrentDayMedian>(new LizardIndicators.amaCurrentDayMedian(){ IsVWTPO = isVWTPO, Interpolate = interpolate, SessionType = sessionType, SessionStartTime = sessionStartTime, SessionEndTime = sessionEndTime, ShowBands = showBands, BandMultiplier1 = bandMultiplier1, ShowBand2 = showBand2, BandMultiplier2 = bandMultiplier2, ShowBand3 = showBand3, BandMultiplier3 = bandMultiplier3, ShowClouds = showClouds, InnerCloudOpacity = innerCloudOpacity, MidCloudOpacity = midCloudOpacity, OuterCloudOpacity = outerCloudOpacity }, input, ref cacheamaCurrentDayMedian);
+			return CacheIndicator<LizardIndicators.amaCurrentDayMedian>(new LizardIndicators.amaCurrentDayMedian(){ IsVWTPO = isVWTPO, Interpolate = interpolate, SessionMode = sessionMode, SessionStartTime = sessionStartTime, SessionEndTime = sessionEndTime, ShowBands = showBands, BandMultiplier1 = bandMultiplier1, ShowBand2 = showBand2, BandMultiplier2 = bandMultiplier2, ShowBand3 = showBand3, BandMultiplier3 = bandMultiplier3, ShowClouds = showClouds, InnerCloudOpacity = innerCloudOpacity, MidCloudOpacity = midCloudOpacity, OuterCloudOpacity = outerCloudOpacity }, input, ref cacheamaCurrentDayMedian);
 		}
 	}
 }
@@ -667,14 +691,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionTypeCDM sessionType, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
+		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionModeCDM sessionMode, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
 		{
-			return indicator.amaCurrentDayMedian(Input, isVWTPO, interpolate, sessionType, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
+			return indicator.amaCurrentDayMedian(Input, isVWTPO, interpolate, sessionMode, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
 		}
 
-		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(ISeries<double> input, bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionTypeCDM sessionType, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
+		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(ISeries<double> input, bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionModeCDM sessionMode, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
 		{
-			return indicator.amaCurrentDayMedian(input, isVWTPO, interpolate, sessionType, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
+			return indicator.amaCurrentDayMedian(input, isVWTPO, interpolate, sessionMode, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
 		}
 	}
 }
@@ -683,14 +707,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionTypeCDM sessionType, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
+		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionModeCDM sessionMode, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
 		{
-			return indicator.amaCurrentDayMedian(Input, isVWTPO, interpolate, sessionType, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
+			return indicator.amaCurrentDayMedian(Input, isVWTPO, interpolate, sessionMode, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
 		}
 
-		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(ISeries<double> input, bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionTypeCDM sessionType, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
+		public Indicators.LizardIndicators.amaCurrentDayMedian amaCurrentDayMedian(ISeries<double> input, bool isVWTPO, bool interpolate, Indicators.LizardIndicators.amaSessionModeCDM sessionMode, string sessionStartTime, string sessionEndTime, bool showBands, double bandMultiplier1, bool showBand2, double bandMultiplier2, bool showBand3, double bandMultiplier3, bool showClouds, int innerCloudOpacity, int midCloudOpacity, int outerCloudOpacity)
 		{
-			return indicator.amaCurrentDayMedian(input, isVWTPO, interpolate, sessionType, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
+			return indicator.amaCurrentDayMedian(input, isVWTPO, interpolate, sessionMode, sessionStartTime, sessionEndTime, showBands, bandMultiplier1, showBand2, bandMultiplier2, showBand3, bandMultiplier3, showClouds, innerCloudOpacity, midCloudOpacity, outerCloudOpacity);
 		}
 	}
 }
