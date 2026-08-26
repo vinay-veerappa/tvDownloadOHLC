@@ -29,27 +29,39 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public int EntryMode { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Queen Target (Bps)", Order = 2, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Use HTF Orderflow Filter", Order = 2, GroupName = "1. Strategy Variant")]
+        public bool UseHtfFilter { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Filter NY Lunch (12:00-13:30)", Order = 3, GroupName = "1. Strategy Variant")]
+        public bool FilterLunch { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Require External Liquidity Sweep", Order = 4, GroupName = "1. Strategy Variant")]
+        public bool RequireExternalSweep { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Queen Target (Bps)", Order = 5, GroupName = "2. Targets & Risk")]
         public double QueenTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Runner Target (Bps)", Order = 3, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Runner Target (Bps)", Order = 6, GroupName = "2. Targets & Risk")]
         public double RunnerTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Stop Loss (Bps)", Order = 4, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Stop Loss (Bps)", Order = 7, GroupName = "2. Targets & Risk")]
         public double StopLossBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Min Risk Floor (Bps)", Order = 5, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Min Risk Floor (Bps)", Order = 8, GroupName = "2. Targets & Risk")]
         public double MinRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Max Risk Ceiling (Bps)", Order = 6, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Max Risk Ceiling (Bps)", Order = 9, GroupName = "2. Targets & Risk")]
         public double MaxRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Enable 50% Midline Reclaims", Order = 7, GroupName = "3. Midline Features")]
+        [Display(Name = "Enable 50% Midline Reclaims", Order = 10, GroupName = "3. Midline Features")]
         public bool EnableMidlineReclaims { get; set; }
         #endregion
 
@@ -79,12 +91,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             DebugMode = true;
 
             Variant = 2;
-            EntryMode = 1;           // 1 = FVG Limit Touch (Proven highest alpha PF 1.38)
-            QueenTargetBps = 10.0;   // +10 Basis Points (0.10%)
-            RunnerTargetBps = 30.0;  // +30 Basis Points (0.30%)
-            StopLossBps = 5.0;       // 5.0 Basis Points tight FVG-covering stop
-            MinRiskBps = 2.0;        // 2 Basis Points risk floor
-            MaxRiskBps = 15.0;       // 15 Basis Points risk ceiling
+            EntryMode = 1;               // 1 = FVG Limit Touch
+            UseHtfFilter = true;         // Pro-Trend 4H Orderflow
+            FilterLunch = true;          // Blackout 12:00-13:30
+            RequireExternalSweep = false; // Modular toggle
+            QueenTargetBps = 10.0;       // +10 Basis Points (0.10%)
+            RunnerTargetBps = 30.0;      // +30 Basis Points (0.30%)
+            StopLossBps = 5.0;           // 5.0 Basis Points tight FVG-covering stop
+            MinRiskBps = 2.0;            // 2 Basis Points risk floor
+            MaxRiskBps = 15.0;           // 15 Basis Points risk ceiling
             EnableMidlineReclaims = true;
         }
 
@@ -92,14 +107,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void InitializeStrategy()
         {
-            ictIndicator = ICTFVGCISDIndicator(Variant, EntryMode, QueenTargetBps, RunnerTargetBps, StopLossBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims);
+            ictIndicator = ICTFVGCISDIndicator(Variant, EntryMode, UseHtfFilter, FilterLunch, RequireExternalSweep, QueenTargetBps, RunnerTargetBps, StopLossBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims);
         }
 
         protected override int CheckForSignal()
         {
-            if (ictIndicator == null || CurrentBar < 25) return 0;
+            if (ictIndicator == null || CurrentBar < 50) return 0;
 
-            if (DrawVisuals && CurrentBar > 25)
+            if (DrawVisuals && CurrentBar > 50)
             {
                 double cisdCurr = ictIndicator.CisdLevelSeries[0];
                 double cisdPrev = ictIndicator.CisdLevelSeries[1];
@@ -129,7 +144,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetCustomLimitPrice(int signal, double currentPrice)
         {
-            if (ictIndicator == null || CurrentBar < 25) return double.NaN;
+            if (ictIndicator == null || CurrentBar < 50) return double.NaN;
             double lp = ictIndicator.LimitPriceSeries[0];
             if (!double.IsNaN(lp) && lp > 0) return lp;
             return double.NaN;
@@ -137,7 +152,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)
         {
-            if (ictIndicator == null || CurrentBar < 25) return double.NaN;
+            if (ictIndicator == null || CurrentBar < 50) return double.NaN;
             double sl = ictIndicator.StopLossSeries[0];
             if (!double.IsNaN(sl) && sl > 0) return sl;
             return double.NaN;
@@ -145,7 +160,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetCustomProfitTarget(int signal, double entryPrice, double stopDistance)
         {
-            if (ictIndicator == null || CurrentBar < 25) return double.NaN;
+            if (ictIndicator == null || CurrentBar < 50) return double.NaN;
             double tp = ictIndicator.RunnerTargetSeries[0];
             if (!double.IsNaN(tp) && tp > 0) return tp;
             return double.NaN;
@@ -159,7 +174,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetPotentialLoss()
         {
-            if (ictIndicator != null && CurrentBar >= 25)
+            if (ictIndicator != null && CurrentBar >= 50)
             {
                 double sl = ictIndicator.StopLossSeries[0];
                 if (!double.IsNaN(sl) && sl > 0)

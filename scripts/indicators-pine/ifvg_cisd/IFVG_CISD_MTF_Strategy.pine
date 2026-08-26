@@ -30,6 +30,7 @@ i_variant         = input.string("Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry 
     "Variant 1: [BPR or (IFVG+FVG)] @ CISD Entry (CISD Low/High Stop)", 
     "Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry (CISD Low/High Stop)"
   ], group=GRP_VAR)
+i_useHtfFilter    = input.bool(true, "Use 4H HTF Orderflow Filter", group=GRP_VAR, tooltip="Only take signals aligned with 4H HTF trend")
 
 var string GRP_RISK = "2. Risk & Position Management"
 i_rMultTP1        = input.float(1.0, "Queen Target R-Multiplier (TP1 50%)", step=0.1, group=GRP_RISK)
@@ -41,7 +42,7 @@ i_maxDailyTrades  = input.int(5, "Max Trades Per Day", minval=1, maxval=10, grou
 
 var string GRP_SESS = "3. Session Windows"
 i_rthSession      = input.session("0945-1600:23456", "Trading Session Window (09:45 Turnaround)", group=GRP_SESS, tooltip="Filters out 09:30-09:45 Judas trap; starts at 09:45 turnaround.")
-i_filterLunch     = input.bool(false, "Exclude Lunch Lull (11:30 - 13:30)", group=GRP_SESS)
+i_filterLunch     = input.bool(true, "Exclude Lunch Lull (12:00 - 13:30)", group=GRP_SESS)
 i_eodFlatten      = input.bool(true, "Force EOD Flatten at 15:55 ET", group=GRP_SESS)
 
 var string GRP_ENTRY = "3b. Entry Mechanism"
