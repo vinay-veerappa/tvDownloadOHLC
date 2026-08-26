@@ -125,3 +125,37 @@
   1. **Zero Overfitting**: Every single strategy exhibited an OOS/IS stability ratio between **0.96x and 1.22x**, proving that the parameters are robust and not curve-fit to historical noise.
   2. **Drawdown Slashed by 50% to 80%**: The 12 bps MAE Stop Ceiling and Cover The Queen (+10 bps TP1 + BE lock) reduced Max Drawdown from ~800 bps down to 131–149 bps on ES1.
   3. **ES1 Performance Outperformance**: On ES1, Calibrated Breakout (PF 1.20, +665 bps) and Calibrated Fib Retest (PF 1.18, +549 bps) performed exceptionally well Out-of-Sample.
+
+---
+
+### EXP-IB-007: Hierarchical 6-Level Forensic Failure Analysis (7.5-Year Data, 1,932 Trades)
+* **Date**: 2026-08-26
+* **Objective**: Granularly categorize every single trade loss across 6 hierarchical levels of abstraction (Macro, Structure, Time Window, Signal Quality, Trade Management, Orderflow Microstructure).
+* **Dataset**: NQ1 (2,721,865 bars, 2019-2026, 1,932 total trades: 1,040 wins / 892 losses).
+* **The 6-Level Forensic Failure Taxonomy**:
+
+`
++---------------------------------------------------------------------------------------------------------+
+|                                    6-LEVEL FORENSIC FAILURE TAXONOMY                                    |
++--------------------+---------------------------+-------------------+------------------------------------+
+| Hierarchy Level    | Failure Mechanism         | Loss Proportion   | Actionable Engineering Remedy      |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **LEVEL 1: Macro** | Severe ATR Compression    | **80.05%**        | Switch to Fade Mode when           |
+|                    | (< 0.50x ATR)             | (50.96% <0.35x)   | IB/ATR < 0.50                      |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **LEVEL 2: Struct**| Tiny/Narrow IB Range      | **73.32%**        | Filter out IB ranges < 40 bps;     |
+|                    | (< 70 bps)                | (33.7% <40 bps)   | Require minimum IB height          |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **LEVEL 3: Time**  | 10:00-10:30 AM Opening    | **76.24%**        | 10:30 ET Stabilization Gate;       |
+|                    | Liquidity Whip            | (62.0% 10:00-15)  | Delay entry until 10:30 Macro      |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **LEVEL 4: Signal**| Flash Wick Reversal       | **52.00%**        | Require Candle Body Displacement;  |
+|                    | (Duration <= 5 min)       |                   | Avoid single-wick tick pokes       |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **LEVEL 5: Mgmt**  | Round-Trip MFE Trap       | **35.80%**        | Early Micro-BE Ratchet at +5 bps;  |
+|                    | (MFE >= 5.0 bps before SL)|                   | Cover The Queen TP1 at +10 bps     |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **LEVEL 6: Order** | Intrabar Wick Stop Sweep  | **53.14%**        | Add 2-tick stop buffer beyond wick;|
+|                    | (Closed back inside)      |                   | Candle-close confirmed stops       |
++--------------------+---------------------------+-------------------+------------------------------------+
+`
