@@ -122,7 +122,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private double[] dynamicRsiGain;
         private double[] dynamicRsiLoss;
         private double prevDynamicRsi;
-        private DateTime last5mBarTime;  // track 5m bar changes
+        private int last5mBarIdx;  // track 5m bar index changes (not timestamp)
         private double rsi1Saved;  // properly saved rsi1 from prior 5m bar
 
         // 2-bar hook state
@@ -199,15 +199,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             macd = MACD(Closes[1], 12, 26, 9);
             AddChartIndicator(bollinger);
 
-            // Kaufman ER RSI state
+            // Kaufman ER RSI state — buffer must be large enough for the slowest RSI period
+            int bufSize = Math.Max(ErPeriod, KaufmanSlowLen) + 2;
             erValues = new double[ErPeriod + 1];
-            closeHistory = new double[ErPeriod + 1];
+            closeHistory = new double[bufSize];
             erHistoryCount = 0;
             dynamicRsiGain = new double[1];
             dynamicRsiLoss = new double[1];
             prevDynamicRsi = 50.0;
             rsi1Saved = 50.0;
-            last5mBarTime = DateTime.MinValue;
+            last5mBarIdx = -1;
             rsi2barsAgo = close2barsAgo = lower2barsAgo = upper2barsAgo = 0;
 
             string csvPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "bbmr_diag_" + Guid.NewGuid().ToString("N") + ".csv");
@@ -224,15 +225,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// Compute Kaufman Efficiency Ratio and return a dynamic-period RSI value.
         /// ER = |close[t] - close[t-er_period]| / sum(|close[i]-close[i-1]|, er_period)
         /// Period interpolates between FastLen (ER=1, trending) and SlowLen (ER=0, choppy).
-        /// Only updates when a new 5m bar closes (detected via Times[1] change).
+        /// Only updates when a new 5m bar closes (detected via CurrentBars[1] change).
         /// </summary>
         private double ComputeKaufmanErRsi()
         {
             if (CurrentBars[1] < ErPeriod + 2) return 50.0;
 
-            // Only update on new 5m bar close
-            DateTime current5mTime = Times[1][0];
-            if (current5mTime == last5mBarTime)
+            int bufSize = Math.Max(ErPeriod, KaufmanSlowLen) + 2;
+
+            // Only update on new 5m bar close — detect via bar index change
+            int current5mBar = CurrentBars[1];
+            if (current5mBar == last5mBarIdx)
             {
                 // Same 5m bar — return the last computed value
                 return prevDynamicRsi;
@@ -242,8 +245,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             rsi1Saved = prevDynamicRsi;
 
             // New 5m bar — update the close history
-            last5mBarTime = current5mTime;
-            closeHistory[erHistoryCount % (ErPeriod + 1)] = Closes[1][0];
+            last5mBarIdx = current5mBar;
+            closeHistory[erHistoryCount % bufSize] = Closes[1][0];
             erHistoryCount++;
 
             if (erHistoryCount < ErPeriod + 1)
@@ -253,8 +256,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             // Get closes from ErPeriod bars ago and now
-            int idxNow = erHistoryCount % (ErPeriod + 1);
-            int idxThen = (erHistoryCount - ErPeriod) % (ErPeriod + 1);
+            int idxNow = erHistoryCount % bufSize;
+            int idxThen = (erHistoryCount - ErPeriod) % bufSize;
             double closeNow = closeHistory[idxNow];
             double closeThen = closeHistory[idxThen];
 
@@ -265,8 +268,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             double volatility = 0;
             for (int i = 0; i < ErPeriod; i++)
             {
-                int idxI = (erHistoryCount - i) % (ErPeriod + 1);
-                int idxI1 = (erHistoryCount - i - 1) % (ErPeriod + 1);
+                int idxI = (erHistoryCount - i) % bufSize;
+                int idxI1 = (erHistoryCount - i - 1) % bufSize;
+                // Handle negative modulo in C#
+                if (idxI < 0) idxI += bufSize;
+                if (idxI1 < 0) idxI1 += bufSize;
                 volatility += Math.Abs(closeHistory[idxI] - closeHistory[idxI1]);
             }
 
@@ -291,8 +297,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             double avgGain = 0, avgLoss = 0;
             for (int i = erHistoryCount - period; i < erHistoryCount; i++)
             {
-                int idxI = i % (ErPeriod + 1);
-                int idxI1 = (i - 1) % (ErPeriod + 1);
+                int idxI = i % bufSize;
+                int idxI1 = (i - 1) % bufSize;
+                if (idxI < 0) idxI += bufSize;
+                if (idxI1 < 0) idxI1 += bufSize;
                 double diff = closeHistory[idxI] - closeHistory[idxI1];
                 if (diff > 0) avgGain += diff;
                 else avgLoss += -diff;

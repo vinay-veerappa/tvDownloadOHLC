@@ -56,12 +56,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private Indicators.Vinay.SupertrendIndicator stIndicator;
         private ATR atr;
-        private MAX maxHigh;
-        private MIN minLow;
         private const int TRAIL_ATR_PERIOD = 14;
         private double[] atr5mHistory;
         private int atr5mHistoryCount;
         private const int ATR_REGIME_LOOKBACK = 20;
+
+        // Per-day rolling high/low for crude ATR (Python parity: fresh per-day)
+        private double[] dayHighs;
+        private double[] dayLows;
+        private int dayBarCount;
+        private DateTime currentDay;
 
         private System.IO.StreamWriter diagCsv;
         private bool diagCsvHeaderWritten;
@@ -119,10 +123,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             stIndicator = SupertrendIndicator(StPeriod, StAtrMult);
             atr = ATR(BarsArray[0], 14);
-            maxHigh = MAX(High, TRAIL_ATR_PERIOD);
-            minLow = MIN(Low, TRAIL_ATR_PERIOD);
             atr5mHistory = new double[ATR_REGIME_LOOKBACK];
             atr5mHistoryCount = 0;
+            dayHighs = new double[TRAIL_ATR_PERIOD];
+            dayLows = new double[TRAIL_ATR_PERIOD];
+            dayBarCount = 0;
+            currentDay = DateTime.MinValue;
 
             string csvPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sttrend_diag_" + Guid.NewGuid().ToString("N") + ".csv");
             diagCsv = new System.IO.StreamWriter(csvPath);
@@ -134,19 +140,45 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private double GetTrailAtr()
         {
-            if (maxHigh == null || minLow == null || CurrentBars[0] < TRAIL_ATR_PERIOD) return 0;
-            double diff = maxHigh[0] - minLow[0];
-            return diff / TRAIL_ATR_PERIOD;
+            if (CurrentBars[0] < 1) return 0;
+
+            // Detect new day — reset per-day buffers (Python parity: fresh per-day)
+            if (Time[0].Date != currentDay)
+            {
+                currentDay = Time[0].Date;
+                dayBarCount = 0;
+            }
+
+            // Store this bar's high/low in the per-day rolling buffer
+            dayHighs[dayBarCount % TRAIL_ATR_PERIOD] = High[0];
+            dayLows[dayBarCount % TRAIL_ATR_PERIOD] = Low[0];
+            dayBarCount++;
+
+            if (dayBarCount < 2) return 0;
+
+            // Compute MAX(High, min(dayBarCount, 14)) and MIN(Low, min(dayBarCount, 14))
+            int lookback = Math.Min(dayBarCount, TRAIL_ATR_PERIOD);
+            double maxH = double.MinValue;
+            double minL = double.MaxValue;
+            for (int i = 0; i < lookback; i++)
+            {
+                int idx = (dayBarCount - lookback + i) % TRAIL_ATR_PERIOD;
+                if (dayHighs[idx] > maxH) maxH = dayHighs[idx];
+                if (dayLows[idx] < minL) minL = dayLows[idx];
+            }
+
+            if (maxH == double.MinValue || minL == double.MaxValue) return 0;
+            return (maxH - minL) / TRAIL_ATR_PERIOD;
         }
 
         private bool PassesAtrRegimeFilter()
         {
             if (!UseAtrRegimeFilter) return true;
-            // Compute crude (MAX-MIN)/14 ATR for this bar
+            // Compute crude (MAX-MIN)/14 ATR for this bar (per-day, Python parity)
             double currentAtr5m = GetTrailAtr();
             if (currentAtr5m <= 0) return false;
 
-            // Reset buffer at start of each new day (Python parity: rolling window is per-day)
+            // Reset ATR regime buffer at start of each new day too
             if (CurrentBar > 0 && Time[0].Date != Time[1].Date)
             {
                 atr5mHistoryCount = 0;
