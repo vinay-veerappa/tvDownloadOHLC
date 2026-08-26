@@ -151,6 +151,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected bool   tradeIsActive;
         protected string tradeDirection;
         protected string entrySignalName;  // set by EnterWithRangeStop / EnterTrade
+        protected bool   trailFirstBar;     // SupertrendTrail: skip ratchet on entry bar (Python parity)
 
         // Backtest-only account state (not used in live mode — RiskGatekeeper owns this)
         protected double accountEquity;
@@ -591,6 +592,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             tradeIsActive     = true;
             tradeDirection    = direction;
             entrySignalName   = signalName;
+            trailFirstBar     = true;  // skip ratchet on entry bar (Python parity)
 
             double customLimit = GetCustomLimitPrice(direction == "Long" ? 1 : -1, entry);
             bool isLimit = !double.IsNaN(customLimit) && customLimit > 0;
@@ -809,6 +811,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             double atr = GetCurrentATR();
             if (atr <= 0) return;
             double trailDistance = TrailAtrMult * atr;
+
+            // Python parity: skip ratchet on the entry bar.
+            // Python's sim loop starts managing from the NEXT bar after entry,
+            // so the entry bar's High/Low does NOT ratchet the stop.
+            // Without this, a tight 1.0xATR trail gets hit immediately on the
+            // entry bar's own range (entry bar High - 1.0*ATR ≈ entry price).
+            if (trailFirstBar)
+            {
+                trailFirstBar = false;
+                return;
+            }
 
             // Ratchet on the BAR HIGH/LOW (Python parity: stop = max(stop, high - trail*ATR)),
             // not on close — a 5m bar that spikes through the stop must still fill it.
