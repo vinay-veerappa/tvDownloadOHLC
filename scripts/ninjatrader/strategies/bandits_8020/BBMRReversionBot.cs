@@ -122,6 +122,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private double[] dynamicRsiGain;
         private double[] dynamicRsiLoss;
         private double prevDynamicRsi;
+        private DateTime last5mBarTime;  // track 5m bar changes
+        private double rsi1Saved;  // properly saved rsi1 from prior 5m bar
 
         // 2-bar hook state
         private double rsi2barsAgo;
@@ -144,19 +146,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Description = "BB(20,2)+RSI(14) mean reversion — clean BB1 port. Squeeze gate optional. Prop-frequency tuned.";
             Name = "BBMRReversionBot";
 
-            // Risk — tight for prop, use base defaults but widen time window to midday/PM
+            // Risk — DISABLED for Python-parity validation (Python sim has none)
             StopAtrMult = 1.5;
             AtrPeriod = 14;
             TradePolicy = TradePolicyType.CoverTheQueen;
             BreakevenTriggerR = 1.0;
             TrailAtrMult = 1.0;
 
-            DailyMaxLoss = 400;
-            MaxConsecutiveLosers = 2;
+            DailyMaxLoss = 99999;
+            MaxConsecutiveLosers = 99;
             PauseMinutes = 30;
-            HardStopConsecutiveLosers = 3;
-            MaxTradesPerDay = 4;
-            TrailingDrawdown = 2000;
+            HardStopConsecutiveLosers = 99;
+            MaxTradesPerDay = 99;
+            TrailingDrawdown = 99999;
 
             // Time — NY midday/PM only (matches python NY_MIDDAY+NY_PM 11:30-16:00)
             EarliestEntry = 1130;
@@ -204,6 +206,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             dynamicRsiGain = new double[1];
             dynamicRsiLoss = new double[1];
             prevDynamicRsi = 50.0;
+            rsi1Saved = 50.0;
+            last5mBarTime = DateTime.MinValue;
             rsi2barsAgo = close2barsAgo = lower2barsAgo = upper2barsAgo = 0;
 
             string csvPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "bbmr_diag_" + Guid.NewGuid().ToString("N") + ".csv");
@@ -220,16 +224,33 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// Compute Kaufman Efficiency Ratio and return a dynamic-period RSI value.
         /// ER = |close[t] - close[t-er_period]| / sum(|close[i]-close[i-1]|, er_period)
         /// Period interpolates between FastLen (ER=1, trending) and SlowLen (ER=0, choppy).
+        /// Only updates when a new 5m bar closes (detected via Times[1] change).
         /// </summary>
         private double ComputeKaufmanErRsi()
         {
             if (CurrentBars[1] < ErPeriod + 2) return 50.0;
 
-            // Store close in rolling buffer
+            // Only update on new 5m bar close
+            DateTime current5mTime = Times[1][0];
+            if (current5mTime == last5mBarTime)
+            {
+                // Same 5m bar — return the last computed value
+                return prevDynamicRsi;
+            }
+
+            // Save the prior bar's RSI as rsi1 before computing new one
+            rsi1Saved = prevDynamicRsi;
+
+            // New 5m bar — update the close history
+            last5mBarTime = current5mTime;
             closeHistory[erHistoryCount % (ErPeriod + 1)] = Closes[1][0];
             erHistoryCount++;
 
-            if (erHistoryCount < ErPeriod + 1) return 50.0;
+            if (erHistoryCount < ErPeriod + 1)
+            {
+                prevDynamicRsi = 50.0;
+                return prevDynamicRsi;
+            }
 
             // Get closes from ErPeriod bars ago and now
             int idxNow = erHistoryCount % (ErPeriod + 1);
@@ -249,7 +270,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 volatility += Math.Abs(closeHistory[idxI] - closeHistory[idxI1]);
             }
 
-            if (volatility <= 0) return prevDynamicRsi;
+            if (volatility <= 0)
+            {
+                return prevDynamicRsi;
+            }
 
             double er = change / volatility;
             er = Math.Max(0, Math.Min(1, er));
@@ -259,8 +283,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             period = Math.Max(2, Math.Min(50, period));
 
             // Compute Wilder RSI over the dynamic period using the close history
-            // We need at least `period` bars of close data
-            if (erHistoryCount < period + 1) return prevDynamicRsi;
+            if (erHistoryCount < period + 1)
+            {
+                return prevDynamicRsi;
+            }
 
             double avgGain = 0, avgLoss = 0;
             for (int i = erHistoryCount - period; i < erHistoryCount; i++)
@@ -344,21 +370,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (UseKaufmanErRsi)
             {
                 rsi0 = ComputeKaufmanErRsi();
-                // For prior bar RSI, we need to recompute — but since the rolling buffer
-                // already has the prior value, we use prevDynamicRsi as rsi1
-                // This is approximate — the real Python computes per-bar RSI independently.
-                // For parity, we store the prior bar's RSI value.
-                // Actually, we need to track rsi1 as the RSI from the prior bar.
-                // Since ComputeKaufmanErRsi updates prevDynamicRsi, rsi1 = prior prevDynamicRsi.
-                // We need to save it before computing current. Let's handle this:
-                rsi1 = prevDynamicRsi;  // This is the value from the PREVIOUS call (prior bar)
-                // But wait — we just updated prevDynamicRsi in the call above.
-                // So rsi1 is actually the current bar's value, and we need the one before.
-                // Fix: save before compute.
-                // For now this approximation works — the hook logic uses rsi0 > rsi1,
-                // and since we compute fresh each bar, rsi0 is current and rsi1 should be prior.
-                // The most correct approach: compute RSI for bar[1] separately.
-                // Simple fix: shift by using the stored value before update.
+                rsi1 = rsi1Saved;  // properly saved from prior 5m bar
             }
             else
             {
