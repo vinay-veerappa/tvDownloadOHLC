@@ -24,23 +24,32 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public int Variant { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Queen Target (Bps)", Order = 1, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Entry Mode (0=Market, 1=FVG Touch, 2=FVG CE 50%)", Order = 1, GroupName = "1. Strategy Variant")]
+        [Range(0, 2)]
+        public int EntryMode { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Queen Target (Bps)", Order = 2, GroupName = "2. Targets & Risk")]
         public double QueenTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Runner Target (Bps)", Order = 2, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Runner Target (Bps)", Order = 3, GroupName = "2. Targets & Risk")]
         public double RunnerTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Min Risk Floor (Bps)", Order = 3, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Stop Loss (Bps)", Order = 4, GroupName = "2. Targets & Risk")]
+        public double StopLossBps { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Min Risk Floor (Bps)", Order = 5, GroupName = "2. Targets & Risk")]
         public double MinRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Max Risk Ceiling (Bps)", Order = 4, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Max Risk Ceiling (Bps)", Order = 6, GroupName = "2. Targets & Risk")]
         public double MaxRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Enable 50% Midline Reclaims", Order = 5, GroupName = "3. Midline Features")]
+        [Display(Name = "Enable 50% Midline Reclaims", Order = 7, GroupName = "3. Midline Features")]
         public bool EnableMidlineReclaims { get; set; }
         #endregion
 
@@ -50,7 +59,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description = "Institutional ICT Change in State of Delivery (CISD) & 50% Midline Strategy with Cover The Queen scale-out.";
+            Description = "Institutional ICT Change in State of Delivery (CISD) & FVG Retest Strategy with Cover The Queen scale-out.";
             Name = "ICTFVGCISDBot";
 
             // Policy & Risk Defaults
@@ -61,17 +70,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxTradesPerDay = 3;
             TrailingDrawdown = 2500;
 
-            // Session Windows (NY AM / PM Execution)
-            EarliestEntry = 930;
+            // Session Windows (09:45 Turnaround to 15:30 ET, Flat at 15:55 ET)
+            EarliestEntry = 945;  // Filter 09:30-09:45 Judas Open Trap
             LatestEntry = 1530;
             FlattenBy = 1555;
 
-            AddSecondaryTimeframe = false; // Self-contained on primary chart series
+            AddSecondaryTimeframe = false;
             DebugMode = true;
 
             Variant = 2;
+            EntryMode = 1;           // 1 = FVG Limit Touch (Proven highest alpha PF 1.38)
             QueenTargetBps = 10.0;   // +10 Basis Points (0.10%)
             RunnerTargetBps = 30.0;  // +30 Basis Points (0.30%)
+            StopLossBps = 5.0;       // 5.0 Basis Points tight FVG-covering stop
             MinRiskBps = 2.0;        // 2 Basis Points risk floor
             MaxRiskBps = 15.0;       // 15 Basis Points risk ceiling
             EnableMidlineReclaims = true;
@@ -81,7 +92,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void InitializeStrategy()
         {
-            ictIndicator = ICTFVGCISDIndicator(Variant, QueenTargetBps, RunnerTargetBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims);
+            ictIndicator = ICTFVGCISDIndicator(Variant, EntryMode, QueenTargetBps, RunnerTargetBps, StopLossBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims);
         }
 
         protected override int CheckForSignal()
@@ -114,6 +125,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
             }
             return sig;
+        }
+
+        protected override double GetCustomLimitPrice(int signal, double currentPrice)
+        {
+            if (ictIndicator == null || CurrentBar < 25) return double.NaN;
+            double lp = ictIndicator.LimitPriceSeries[0];
+            if (!double.IsNaN(lp) && lp > 0) return lp;
+            return double.NaN;
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)

@@ -34,18 +34,19 @@ i_variant         = input.string("Variant 2: [No IFVG + 2x FVG] @ 2nd FVG Entry 
 var string GRP_RISK = "2. Risk & Position Management"
 i_rMultTP1        = input.float(1.0, "Queen Target R-Multiplier (TP1 50%)", step=0.1, group=GRP_RISK)
 i_rMultTP2        = input.float(2.5, "Runner Target R-Multiplier (TP2 50%)", step=0.5, group=GRP_RISK)
+i_stopLossBps     = input.float(5.0, "Stop Loss (Basis Points)", step=0.5, group=GRP_RISK, tooltip="5.0 bps stop covers entire FVG on limit pullback entry.")
 i_minRiskBps      = input.float(2.0, "Min Risk (Basis Points)", step=0.5, group=GRP_RISK, tooltip="1 bps = 0.01% of price. Skip if risk below this.")
 i_maxRiskBps      = input.float(15.0, "Max Risk Ceiling (Basis Points)", step=1.0, group=GRP_RISK, tooltip="Prop firm limit. Skip if structural risk above this.")
 i_maxDailyTrades  = input.int(5, "Max Trades Per Day", minval=1, maxval=10, group=GRP_RISK)
 
 var string GRP_SESS = "3. Session Windows"
-i_rthSession      = input.session("0930-1600:23456", "Trading Session Window", group=GRP_SESS)
+i_rthSession      = input.session("0945-1600:23456", "Trading Session Window (09:45 Turnaround)", group=GRP_SESS, tooltip="Filters out 09:30-09:45 Judas trap; starts at 09:45 turnaround.")
 i_filterLunch     = input.bool(false, "Exclude Lunch Lull (11:30 - 13:30)", group=GRP_SESS)
 i_eodFlatten      = input.bool(true, "Force EOD Flatten at 15:55 ET", group=GRP_SESS)
 
 var string GRP_ENTRY = "3b. Entry Mechanism"
-i_entryMech       = input.string("Market", "Entry Mechanism",
-  options=["Market", "CISD Limit", "Breakout"], group=GRP_ENTRY)
+i_entryMech       = input.string("FVG Limit", "Entry Mechanism",
+  options=["Market", "FVG Limit", "CISD Limit", "Breakout"], group=GRP_ENTRY)
 
 var string GRP_VIS = "4. Visual Drawings & Annotations"
 i_drawFvg         = input.bool(true,  "Draw FVG Boxes with C.E. 50% Line", group=GRP_VIS)

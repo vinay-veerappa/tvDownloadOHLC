@@ -25,27 +25,36 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         public int Variant { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Queen Target (Bps)", Order = 1, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Entry Mode (0=Market, 1=FVG Touch, 2=FVG CE 50%)", Order = 1, GroupName = "1. Strategy Variant")]
+        [Range(0, 2)]
+        public int EntryMode { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Queen Target (Bps)", Order = 2, GroupName = "2. Targets & Risk")]
         public double QueenTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Runner Target (Bps)", Order = 2, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Runner Target (Bps)", Order = 3, GroupName = "2. Targets & Risk")]
         public double RunnerTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Min Risk Floor (Bps)", Order = 3, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Stop Loss (Bps)", Order = 4, GroupName = "2. Targets & Risk")]
+        public double StopLossBps { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Min Risk Floor (Bps)", Order = 5, GroupName = "2. Targets & Risk")]
         public double MinRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Max Risk Ceiling (Bps)", Order = 4, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Max Risk Ceiling (Bps)", Order = 6, GroupName = "2. Targets & Risk")]
         public double MaxRiskBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Enable 50% Midline Reclaims", Order = 5, GroupName = "3. Midline Features")]
+        [Display(Name = "Enable 50% Midline Reclaims", Order = 7, GroupName = "3. Midline Features")]
         public bool EnableMidlineReclaims { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Show Visual Elements", Order = 6, GroupName = "4. Visuals")]
+        [Display(Name = "Show Visual Elements", Order = 8, GroupName = "4. Visuals")]
         public bool ShowVisualElements { get; set; }
         #endregion
 
@@ -69,6 +78,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [Browsable(false)]
         [XmlIgnore]
         public Series<double> CisdLevelSeries { get; private set; }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> LimitPriceSeries { get; private set; }
 
         [Browsable(false)]
         [XmlIgnore]
@@ -104,7 +117,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         {
             if (State == State.SetDefaults)
             {
-                Description = "Institutional ICT Change in State of Delivery (CISD) & 50% Midline Strategy Engine with Basis Points Brackets.";
+                Description = "Institutional ICT Change in State of Delivery (CISD) & FVG Retest Strategy Engine with Basis Points Brackets.";
                 Name = "ICTFVGCISDIndicator";
                 Calculate = Calculate.OnBarClose;
                 IsOverlay = true;
@@ -112,8 +125,10 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 DrawOnPricePanel = true;
 
                 Variant = 2;
+                EntryMode = 1;           // Default to FVG Limit Touch (Proven highest alpha PF 1.38)
                 QueenTargetBps = 10.0;   // 10 Basis Points (0.10%)
                 RunnerTargetBps = 30.0;  // 30 Basis Points (0.30%)
+                StopLossBps = 5.0;       // 5 Basis Points tight FVG stop (0.05%)
                 MinRiskBps = 2.0;        // 2 Basis Points minimum risk floor
                 MaxRiskBps = 15.0;       // 15 Basis Points maximum risk ceiling
                 EnableMidlineReclaims = true;
@@ -129,6 +144,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 QueenTargetSeries = new Series<double>(this);
                 RunnerTargetSeries = new Series<double>(this);
                 CisdLevelSeries = new Series<double>(this);
+                LimitPriceSeries = new Series<double>(this);
                 ActiveMidlineSeries = new Series<double>(this);
 
                 bullFvgTops = new List<double>();
@@ -173,7 +189,6 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 }
             }
 
-            // Find origin extreme of the delivery run (SL-4 Anchor)
             for (int i = 1; i <= Math.Min(10, CurrentBar); i++)
             {
                 if (bias == 1 && Low[i] < originExtreme) originExtreme = Low[i];
@@ -260,6 +275,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 QueenTargetSeries[0] = double.NaN;
                 RunnerTargetSeries[0] = double.NaN;
                 CisdLevelSeries[0] = double.NaN;
+                LimitPriceSeries[0] = double.NaN;
                 ActiveMidlineSeries[0] = double.NaN;
                 return;
             }
@@ -329,34 +345,43 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             double stopLoss = double.NaN;
             double target1 = double.NaN;
             double target2 = double.NaN;
+            double limitPrice = double.NaN;
 
-            // 1. STANDARD CISD REVERSAL
+            // 1. STANDARD CISD REVERSAL TRIGGER
             if (vibes == -1 && c0 > activeLevel)
             {
-                // Structural SL-4 Anchor with 2-tick buffer
-                stopLoss = !double.IsNaN(deliveryOriginLow) ? deliveryOriginLow - (2 * TickSize) : l0 - (2 * TickSize);
-                for (int k = 1; k <= 5; k++) if (Low[k] - (2 * TickSize) < stopLoss) stopLoss = Low[k] - (2 * TickSize);
+                // Calculate Entry Price (Market vs FVG Limit vs FVG CE 50%)
+                if (EntryMode == 1) // FVG Touch (Proximal boundary)
+                    limitPrice = isBullFvg ? h2 : activeLevel;
+                else if (EntryMode == 2) // FVG CE 50% Midpoint
+                    limitPrice = isBullFvg ? (l0 + h2) / 2.0 : (c0 + activeLevel) / 2.0;
+                else
+                    limitPrice = double.NaN; // Market order
 
-                double riskPts = c0 - stopLoss;
-                double riskBps = (riskPts / c0) * 10000.0;
+                double effectiveEntry = !double.IsNaN(limitPrice) ? limitPrice : c0;
 
-                // Enforce Institutional Risk Ceiling (MaxRiskBps = 15 bps) & Risk Floor (MinRiskBps = 2 bps)
+                // Stop Loss Calculation: 5 bps covering FVG
+                stopLoss = effectiveEntry - (effectiveEntry * (StopLossBps / 10000.0));
+
+                double riskPts = effectiveEntry - stopLoss;
+                double riskBps = (riskPts / effectiveEntry) * 10000.0;
+
                 if (riskBps >= MinRiskBps && riskBps <= MaxRiskBps)
                 {
                     signal = 1;
                     vibes = 1;
 
-                    // Dynamic Basis Point Targets
-                    double queenPts = c0 * (QueenTargetBps / 10000.0);
-                    double runnerPts = c0 * (RunnerTargetBps / 10000.0);
-                    target1 = c0 + queenPts;
-                    target2 = c0 + Math.Max(runnerPts, (!double.IsNaN(activeMid) && activeMid > c0 ? activeMid : runnerPts));
+                    double queenPts = effectiveEntry * (QueenTargetBps / 10000.0);
+                    double runnerPts = effectiveEntry * (RunnerTargetBps / 10000.0);
+                    target1 = effectiveEntry + queenPts;
+                    target2 = effectiveEntry + Math.Max(runnerPts, (!double.IsNaN(activeMid) && activeMid > effectiveEntry ? activeMid : runnerPts));
 
                     if (ShowVisualElements)
                     {
                         string tag = "CISD_Bull_" + CurrentBar;
                         Draw.ArrowUp(this, tag, false, 0, l0 - (6 * TickSize), Brushes.Gold);
-                        Draw.Text(this, tag + "_txt", false, $"CISD BUY ({riskBps:F1}bps)", 0, l0 - (14 * TickSize), 0, Brushes.Gold, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                        string modeStr = EntryMode == 0 ? "MKT" : (EntryMode == 1 ? "LMT FVG" : "LMT CE");
+                        Draw.Text(this, tag + "_txt", false, $"CISD BUY {modeStr} ({riskBps:F1}bps)", 0, l0 - (14 * TickSize), 0, Brushes.Gold, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                     }
 
                     painThreshold = h0;
@@ -368,27 +393,35 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
             else if (vibes == 1 && c0 < activeLevel)
             {
-                stopLoss = !double.IsNaN(deliveryOriginHigh) ? deliveryOriginHigh + (2 * TickSize) : h0 + (2 * TickSize);
-                for (int k = 1; k <= 5; k++) if (High[k] + (2 * TickSize) > stopLoss) stopLoss = High[k] + (2 * TickSize);
+                if (EntryMode == 1)
+                    limitPrice = isBearFvg ? l2 : activeLevel;
+                else if (EntryMode == 2)
+                    limitPrice = isBearFvg ? (h0 + l2) / 2.0 : (c0 + activeLevel) / 2.0;
+                else
+                    limitPrice = double.NaN;
 
-                double riskPts = stopLoss - c0;
-                double riskBps = (riskPts / c0) * 10000.0;
+                double effectiveEntry = !double.IsNaN(limitPrice) ? limitPrice : c0;
+                stopLoss = effectiveEntry + (effectiveEntry * (StopLossBps / 10000.0));
+
+                double riskPts = stopLoss - effectiveEntry;
+                double riskBps = (riskPts / effectiveEntry) * 10000.0;
 
                 if (riskBps >= MinRiskBps && riskBps <= MaxRiskBps)
                 {
                     signal = -1;
                     vibes = -1;
 
-                    double queenPts = c0 * (QueenTargetBps / 10000.0);
-                    double runnerPts = c0 * (RunnerTargetBps / 10000.0);
-                    target1 = c0 - queenPts;
-                    target2 = c0 - Math.Max(runnerPts, (!double.IsNaN(activeMid) && activeMid < c0 ? (c0 - activeMid) : runnerPts));
+                    double queenPts = effectiveEntry * (QueenTargetBps / 10000.0);
+                    double runnerPts = effectiveEntry * (RunnerTargetBps / 10000.0);
+                    target1 = effectiveEntry - queenPts;
+                    target2 = effectiveEntry - Math.Max(runnerPts, (!double.IsNaN(activeMid) && activeMid < effectiveEntry ? (effectiveEntry - activeMid) : runnerPts));
 
                     if (ShowVisualElements)
                     {
                         string tag = "CISD_Bear_" + CurrentBar;
                         Draw.ArrowDown(this, tag, false, 0, h0 + (6 * TickSize), Brushes.Cyan);
-                        Draw.Text(this, tag + "_txt", false, $"CISD SELL ({riskBps:F1}bps)", 0, h0 + (14 * TickSize), 0, Brushes.Cyan, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                        string modeStr = EntryMode == 0 ? "MKT" : (EntryMode == 1 ? "LMT FVG" : "LMT CE");
+                        Draw.Text(this, tag + "_txt", false, $"CISD SELL {modeStr} ({riskBps:F1}bps)", 0, h0 + (14 * TickSize), 0, Brushes.Cyan, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                     }
 
                     painThreshold = l0;
@@ -402,18 +435,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             // 2. 50% MIDLINE RECLAIM SETUP (Optional Confluence)
             if (EnableMidlineReclaims && signal == 0 && !double.IsNaN(activeMid))
             {
-                // Bullish Midline Reclaim: Wick below Midline, body close above
                 if (l0 < activeMid && c0 > activeMid && o0 > activeMid && c1 <= activeMid)
                 {
-                    stopLoss = l0 - (2 * TickSize);
-                    double riskPts = c0 - stopLoss;
-                    double riskBps = (riskPts / c0) * 10000.0;
+                    double effectiveEntry = c0;
+                    stopLoss = effectiveEntry - (effectiveEntry * (StopLossBps / 10000.0));
+                    double riskPts = effectiveEntry - stopLoss;
+                    double riskBps = (riskPts / effectiveEntry) * 10000.0;
 
                     if (riskBps >= MinRiskBps && riskBps <= MaxRiskBps)
                     {
                         signal = 1;
-                        target1 = c0 + (c0 * (QueenTargetBps / 10000.0));
-                        target2 = c0 + (c0 * (RunnerTargetBps / 10000.0));
+                        limitPrice = double.NaN;
+                        target1 = effectiveEntry + (effectiveEntry * (QueenTargetBps / 10000.0));
+                        target2 = effectiveEntry + (effectiveEntry * (RunnerTargetBps / 10000.0));
 
                         if (ShowVisualElements)
                         {
@@ -423,18 +457,19 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                         }
                     }
                 }
-                // Bearish Midline Reclaim: Wick above Midline, body close below
                 else if (h0 > activeMid && c0 < activeMid && o0 < activeMid && c1 >= activeMid)
                 {
-                    stopLoss = h0 + (2 * TickSize);
-                    double riskPts = stopLoss - c0;
-                    double riskBps = (riskPts / c0) * 10000.0;
+                    double effectiveEntry = c0;
+                    stopLoss = effectiveEntry + (effectiveEntry * (StopLossBps / 10000.0));
+                    double riskPts = stopLoss - effectiveEntry;
+                    double riskBps = (riskPts / effectiveEntry) * 10000.0;
 
                     if (riskBps >= MinRiskBps && riskBps <= MaxRiskBps)
                     {
                         signal = -1;
-                        target1 = c0 - (c0 * (QueenTargetBps / 10000.0));
-                        target2 = c0 - (c0 * (RunnerTargetBps / 10000.0));
+                        limitPrice = double.NaN;
+                        target1 = effectiveEntry - (effectiveEntry * (QueenTargetBps / 10000.0));
+                        target2 = effectiveEntry - (effectiveEntry * (RunnerTargetBps / 10000.0));
 
                         if (ShowVisualElements)
                         {
@@ -450,6 +485,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             StopLossSeries[0] = stopLoss;
             QueenTargetSeries[0] = target1;
             RunnerTargetSeries[0] = target2;
+            LimitPriceSeries[0] = limitPrice;
         }
 
         private void invBullTopsAdd(double top, double bot)
@@ -474,18 +510,18 @@ namespace NinjaTrader.NinjaScript.Indicators
     public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
     {
         private Vinay.ICTFVGCISDIndicator[] cacheICTFVGCISDIndicator;
-        public Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(int variant, double queenTargetBps, double runnerTargetBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims)
+        public Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(int variant, int entryMode, double queenTargetBps, double runnerTargetBps, double stopLossBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims)
         {
-            return ICTFVGCISDIndicator(Input, variant, queenTargetBps, runnerTargetBps, minRiskBps, maxRiskBps, enableMidlineReclaims, true);
+            return ICTFVGCISDIndicator(Input, variant, entryMode, queenTargetBps, runnerTargetBps, stopLossBps, minRiskBps, maxRiskBps, enableMidlineReclaims, true);
         }
 
-        public Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(ISeries<double> input, int variant, double queenTargetBps, double runnerTargetBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims, bool showVisualElements)
+        public Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(ISeries<double> input, int variant, int entryMode, double queenTargetBps, double runnerTargetBps, double stopLossBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims, bool showVisualElements)
         {
             if (cacheICTFVGCISDIndicator != null)
                 for (int idx = 0; idx < cacheICTFVGCISDIndicator.Length; idx++)
-                    if (cacheICTFVGCISDIndicator[idx] != null && cacheICTFVGCISDIndicator[idx].Variant == variant && cacheICTFVGCISDIndicator[idx].QueenTargetBps == queenTargetBps && cacheICTFVGCISDIndicator[idx].RunnerTargetBps == runnerTargetBps && cacheICTFVGCISDIndicator[idx].MinRiskBps == minRiskBps && cacheICTFVGCISDIndicator[idx].MaxRiskBps == maxRiskBps && cacheICTFVGCISDIndicator[idx].EnableMidlineReclaims == enableMidlineReclaims && cacheICTFVGCISDIndicator[idx].ShowVisualElements == showVisualElements && cacheICTFVGCISDIndicator[idx].EqualsInput(input))
+                    if (cacheICTFVGCISDIndicator[idx] != null && cacheICTFVGCISDIndicator[idx].Variant == variant && cacheICTFVGCISDIndicator[idx].EntryMode == entryMode && cacheICTFVGCISDIndicator[idx].QueenTargetBps == queenTargetBps && cacheICTFVGCISDIndicator[idx].RunnerTargetBps == runnerTargetBps && cacheICTFVGCISDIndicator[idx].StopLossBps == stopLossBps && cacheICTFVGCISDIndicator[idx].MinRiskBps == minRiskBps && cacheICTFVGCISDIndicator[idx].MaxRiskBps == maxRiskBps && cacheICTFVGCISDIndicator[idx].EnableMidlineReclaims == enableMidlineReclaims && cacheICTFVGCISDIndicator[idx].ShowVisualElements == showVisualElements && cacheICTFVGCISDIndicator[idx].EqualsInput(input))
                         return cacheICTFVGCISDIndicator[idx];
-            return CacheIndicator<Vinay.ICTFVGCISDIndicator>(new Vinay.ICTFVGCISDIndicator() { Variant = variant, QueenTargetBps = queenTargetBps, RunnerTargetBps = runnerTargetBps, MinRiskBps = minRiskBps, MaxRiskBps = maxRiskBps, EnableMidlineReclaims = enableMidlineReclaims, ShowVisualElements = showVisualElements }, input, ref cacheICTFVGCISDIndicator);
+            return CacheIndicator<Vinay.ICTFVGCISDIndicator>(new Vinay.ICTFVGCISDIndicator() { Variant = variant, EntryMode = entryMode, QueenTargetBps = queenTargetBps, RunnerTargetBps = runnerTargetBps, StopLossBps = stopLossBps, MinRiskBps = minRiskBps, MaxRiskBps = maxRiskBps, EnableMidlineReclaims = enableMidlineReclaims, ShowVisualElements = showVisualElements }, input, ref cacheICTFVGCISDIndicator);
         }
     }
 }
@@ -494,14 +530,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
     public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
     {
-        public Indicators.Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(int variant, double queenTargetBps, double runnerTargetBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims)
+        public Indicators.Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(int variant, int entryMode, double queenTargetBps, double runnerTargetBps, double stopLossBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims)
         {
-            return indicator.ICTFVGCISDIndicator(Input, variant, queenTargetBps, runnerTargetBps, minRiskBps, maxRiskBps, enableMidlineReclaims, true);
+            return indicator.ICTFVGCISDIndicator(Input, variant, entryMode, queenTargetBps, runnerTargetBps, stopLossBps, minRiskBps, maxRiskBps, enableMidlineReclaims, true);
         }
 
-        public Indicators.Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(ISeries<double> input, int variant, double queenTargetBps, double runnerTargetBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims, bool showVisualElements)
+        public Indicators.Vinay.ICTFVGCISDIndicator ICTFVGCISDIndicator(ISeries<double> input, int variant, int entryMode, double queenTargetBps, double runnerTargetBps, double stopLossBps, double minRiskBps, double maxRiskBps, bool enableMidlineReclaims, bool showVisualElements)
         {
-            return indicator.ICTFVGCISDIndicator(input, variant, queenTargetBps, runnerTargetBps, minRiskBps, maxRiskBps, enableMidlineReclaims, showVisualElements);
+            return indicator.ICTFVGCISDIndicator(input, variant, entryMode, queenTargetBps, runnerTargetBps, stopLossBps, minRiskBps, maxRiskBps, enableMidlineReclaims, showVisualElements);
         }
     }
 }

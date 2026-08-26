@@ -592,31 +592,51 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             tradeDirection    = direction;
             entrySignalName   = signalName;
 
+            double customLimit = GetCustomLimitPrice(direction == "Long" ? 1 : -1, entry);
+            bool isLimit = !double.IsNaN(customLimit) && customLimit > 0;
+            double effectiveEntry = isLimit ? customLimit : entry;
+
             if (TradePolicy == TradePolicyType.CoverTheQueen)
             {
-                double bpsPts = entry * 0.0010; // 10 Basis Points (approx 20-29 pts on NQ)
+                double bpsPts = effectiveEntry * 0.0010; // 10 Basis Points (approx 20-29 pts on NQ)
                 double queenPts = Math.Max(bpsPts, riskPoints);
                 double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 2.5);
 
                 if (direction == "Long")
                 {
-                    EnterLong(1, signalName + "_Queen");
+                    if (isLimit)
+                    {
+                        EnterLongLimit(1, customLimit, signalName + "_Queen");
+                        EnterLongLimit(1, customLimit, signalName + "_Runner");
+                    }
+                    else
+                    {
+                        EnterLong(1, signalName + "_Queen");
+                        EnterLong(1, signalName + "_Runner");
+                    }
                     SetStopLoss(signalName + "_Queen", CalculationMode.Price, stop, false);
-                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, entry + queenPts);
+                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, effectiveEntry + queenPts);
 
-                    EnterLong(1, signalName + "_Runner");
                     SetStopLoss(signalName + "_Runner", CalculationMode.Price, stop, false);
-                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, entry + runnerPts);
+                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, effectiveEntry + runnerPts);
                 }
                 else
                 {
-                    EnterShort(1, signalName + "_Queen");
+                    if (isLimit)
+                    {
+                        EnterShortLimit(1, customLimit, signalName + "_Queen");
+                        EnterShortLimit(1, customLimit, signalName + "_Runner");
+                    }
+                    else
+                    {
+                        EnterShort(1, signalName + "_Queen");
+                        EnterShort(1, signalName + "_Runner");
+                    }
                     SetStopLoss(signalName + "_Queen", CalculationMode.Price, stop, false);
-                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, entry - queenPts);
+                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, effectiveEntry - queenPts);
 
-                    EnterShort(1, signalName + "_Runner");
                     SetStopLoss(signalName + "_Runner", CalculationMode.Price, stop, false);
-                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, entry - runnerPts);
+                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, effectiveEntry - runnerPts);
                 }
             }
             else if (direction == "Long")
@@ -1072,6 +1092,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         protected virtual double GetCustomStopPrice(int signal, double entryPrice)
+        {
+            return double.NaN;
+        }
+
+        protected virtual double GetCustomLimitPrice(int signal, double currentPrice)
         {
             return double.NaN;
         }
