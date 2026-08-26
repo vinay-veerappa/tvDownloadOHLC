@@ -598,9 +598,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             if (TradePolicy == TradePolicyType.CoverTheQueen)
             {
-                double bpsPts = effectiveEntry * 0.0010; // 10 Basis Points (approx 20-29 pts on NQ)
-                double queenPts = Math.Max(bpsPts, riskPoints);
-                double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 2.5);
+                double queenPts = effectiveEntry * 0.0010; // 10 Basis Points (approx 20-30 pts on NQ)
+                double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 3.0); // 30 bps runner target
 
                 if (direction == "Long")
                 {
@@ -752,9 +751,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private void ManageCoverTheQueen(double currentPrice)
         {
-            string runnerSignal = GetSignalName(tradeDirection) + "_Runner";
-            double bpsPts = entryPrice * 0.0010;
-            double queenPts = Math.Max(bpsPts, riskPoints);
+            string runnerSignal = (!string.IsNullOrEmpty(entrySignalName) ? entrySignalName : GetSignalName(tradeDirection)) + "_Runner";
+            double queenPts = entryPrice * 0.0010;
 
             // Once price reaches Queen TP1, move Runner stop to Breakeven (+1 tick)
             if (!breakevenMoved)

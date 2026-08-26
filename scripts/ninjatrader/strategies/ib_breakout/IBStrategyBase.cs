@@ -121,9 +121,29 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "P2: Depth Moderate Size Mult", Order = 18, GroupName = "IB Confluence Filters")]
         public double DepthModerateSizeMult { get; set; } = 0.50; // moderate retest size fraction
 
+        #endregion
+
+        #region Universal Basis Points (bps) & Pack Trading Parameters
+
         [NinjaScriptProperty]
-        [Display(Name = "Draw Visuals (IB+Q+FVG+HUD)", Order = 19, GroupName = "IB Confluence Filters")]
-        public bool DrawVisuals { get; set; } = true;  // draw IB boundaries, quarters, FVG, HUD
+        [Display(Name = "Risk Floor (bps)", Order = 1, GroupName = "Pack Trading & Risk Brackets")]
+        public double RiskFloorBps { get; set; } = 2.0;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Risk Ceiling (bps)", Order = 2, GroupName = "Pack Trading & Risk Brackets")]
+        public double RiskCeilingBps { get; set; } = 15.0;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Cover The Queen Target (bps)", Order = 3, GroupName = "Pack Trading & Risk Brackets")]
+        public double CoverQueenBps { get; set; } = 10.0;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Runner Target (bps)", Order = 4, GroupName = "Pack Trading & Risk Brackets")]
+        public double RunnerBps { get; set; } = 30.0;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use BPS Stop Ceiling", Order = 5, GroupName = "Pack Trading & Risk Brackets")]
+        public bool UseBpsStopCeiling { get; set; } = true;
 
         #endregion
 
@@ -140,6 +160,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         /// <summary>Time of the first break — for clock-size multiplier.</summary>
         protected DateTime firstBreakTime;
+
+        /// <summary>Breakout wave extreme tracked after the first break (highest high for long, lowest low for short).</summary>
+        protected double breakoutExtreme;
+        protected bool breakoutActive;
 
         // ── Retest-depth tracker (Play 2 bias overlay — Session 11 regime kill-switch) ──
         // Max excursion past rangeMid in the break direction, measured in POINTS,
@@ -284,6 +308,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             overshootBelow = false;
             firstBreakDir = 0;
             firstBreakTime = DateTime.MinValue;
+            breakoutExtreme = 0;
+            breakoutActive = false;
             // Reset retest-depth tracker at session open
             maxExcursionPastMid = 0;
             // Reset one-entry-per-direction guards at session open
@@ -473,6 +499,97 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (depthRatio < DepthWeakThreshold) return DepthWeakSizeMult;
             if (depthRatio < DepthStrongThreshold) return DepthModerateSizeMult;
             return 1.0;
+        }
+
+        /// <summary>
+        /// Converts Basis Points (bps, 1 bps = 0.01% = 0.0001) to price points.
+        /// </summary>
+        public double BpsToPoints(double bps, double refPrice)
+        {
+            return refPrice * (bps * 0.0001);
+        }
+
+        /// <summary>
+        /// Converts price points to Basis Points (bps).
+        /// </summary>
+        public double PointsToBps(double points, double refPrice)
+        {
+            return refPrice > 0 ? (points / refPrice) * 10000.0 : 0;
+        }
+
+        /// <summary>
+        /// Calculates the Fibonacci retracement level after an IB breakout (Play 2 Fib Retest).
+        /// Long: Fib retraced from breakoutExtreme back towards rangeHigh.
+        /// Short: Fib retraced from breakoutExtreme back towards rangeLow.
+        /// </summary>
+        public double GetFibRetracementLevel(int dir, double fibRatio)
+        {
+            if (dir == 1 && rangeHigh > 0 && breakoutExtreme >= rangeHigh)
+            {
+                double wave = breakoutExtreme - rangeHigh;
+                return breakoutExtreme - (wave * fibRatio);
+            }
+            else if (dir == -1 && rangeLow > 0 && breakoutExtreme <= rangeLow)
+            {
+                double wave = rangeLow - breakoutExtreme;
+                return breakoutExtreme + (wave * fibRatio);
+            }
+            return rangeMid;
+        }
+
+        /// <summary>
+        /// Enters trade with 2-tier Pack Trading brackets (Cover The Queen + Runner) or single-order range stop/target.
+        /// Conforms strictly to Universal Basis Points standard (ADR-002/ADR-010).
+        /// </summary>
+        protected void EnterWithPackTradingBrackets(int dir, double entry, double stopPrice, double tp1Price, double tp2Price, int qty)
+        {
+            if (dir == 1 && (stopPrice >= entry || tp1Price <= entry)) return;
+            if (dir == -1 && (stopPrice <= entry || tp1Price >= entry)) return;
+
+            entryPrice = entry;
+            initialStopPrice = stopPrice;
+            currentStopPrice = stopPrice;
+            riskPoints = Math.Abs(entry - stopPrice);
+            breakevenMoved = false;
+            tradeIsActive = true;
+
+            int halfQty = Math.Max(1, qty / 2);
+            int runnerQty = Math.Max(1, qty - halfQty);
+
+            if (TradePolicy == TradePolicyType.CoverTheQueen)
+            {
+                if (dir == 1)
+                {
+                    tradeDirection = "Long";
+                    entrySignalName = "IB_Long";
+                    EnterLong(halfQty, entrySignalName + "_Queen");
+                    EnterLong(runnerQty, entrySignalName + "_Runner");
+                    SetProfitTarget(entrySignalName + "_Queen", CalculationMode.Price, tp1Price);
+                    SetStopLoss(entrySignalName + "_Queen", CalculationMode.Price, stopPrice, false);
+                    SetProfitTarget(entrySignalName + "_Runner", CalculationMode.Price, tp2Price);
+                    SetStopLoss(entrySignalName + "_Runner", CalculationMode.Price, stopPrice, false);
+                }
+                else
+                {
+                    tradeDirection = "Short";
+                    entrySignalName = "IB_Short";
+                    EnterShort(halfQty, entrySignalName + "_Queen");
+                    EnterShort(runnerQty, entrySignalName + "_Runner");
+                    SetProfitTarget(entrySignalName + "_Queen", CalculationMode.Price, tp1Price);
+                    SetStopLoss(entrySignalName + "_Queen", CalculationMode.Price, stopPrice, false);
+                    SetProfitTarget(entrySignalName + "_Runner", CalculationMode.Price, tp2Price);
+                    SetStopLoss(entrySignalName + "_Runner", CalculationMode.Price, stopPrice, false);
+                }
+            }
+            else
+            {
+                EnterWithRangeStop(dir, entry, stopPrice, tp1Price, qty);
+                return;
+            }
+
+            todayTradeCount++;
+            Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | TP1 {4:F2} | TP2 {5:F2} | Qty {6} | Policy {7}",
+                GetStrategyName(), tradeDirection, entry, stopPrice, tp1Price, tp2Price, qty, TradePolicy));
         }
 
         // ── CHART VISUALIZATION (Session 12) ────────────────────────────────
@@ -696,6 +813,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 double excursion = firstBreakDir == 1 ? High[0] - rangeMid : rangeMid - Low[0];
                 if (excursion > maxExcursionPastMid) maxExcursionPastMid = excursion;
+
+                // Track breakout wave extreme for Fibonacci retracement calculations (Play 2 Fib 38.2%)
+                if (firstBreakDir == 1)
+                {
+                    if (!breakoutActive) { breakoutExtreme = High[0]; breakoutActive = true; }
+                    else if (High[0] > breakoutExtreme) breakoutExtreme = High[0];
+                }
+                else if (firstBreakDir == -1)
+                {
+                    if (!breakoutActive) { breakoutExtreme = Low[0]; breakoutActive = true; }
+                    else if (Low[0] < breakoutExtreme) breakoutExtreme = Low[0];
+                }
             }
 
             // Log AVWAP state periodically for debugging

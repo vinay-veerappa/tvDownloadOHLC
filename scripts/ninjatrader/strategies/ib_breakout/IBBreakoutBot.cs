@@ -36,9 +36,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Name = "IBBreakoutBot";  // CRITICAL: override base's Name='RiskManagerBase' so SA loads THIS bot
             ActivePlay = 1;
             TargetLvl = 0.5;   // Play 1 best at 0.5x (E[R] +0.093, PF 1.49)
-            StopRMult = 2.0;   // Full-range stop (= 2.0*0.5*range = 1.0*range = opposite IB boundary).
-                               // Python report says 0.25R and 1.0R give same E[R], but 1.0R survives
-                               // intrabar wicks in NT8 tick-level sim that kill the 0.25R stop (23% WR vs 51.8%).
+            StopRMult = 2.0;   // Fallback multiplier for full-range stop
+            TradePolicy = TradePolicyType.CoverTheQueen; // Institutional Pack Trading execution standard
             ConfluenceFilterEnabled = true;  // Enable Play 1 validated filter stack
             DebugMode = true;  // verbose logging for filter debugging
         }
@@ -63,19 +62,33 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 if (!CanEnterLong)  // one entry per direction per session
                     return 0;
 
-                double entry  = Close[0];
-                double stop   = rangeLow;  // IB-relative: opposite IB boundary (not entry-relative)
-                double target = rangeHigh + TargetLvl * rangeRange;
+                double entry = Close[0];
+                double stop = rangeLow;
 
-                if (!TargetIsSane(entry, target, 1))
+                if (UseBpsStopCeiling)
                 {
-                    if (DebugMode) Log($"[DIAG] LONG target not sane: entry={entry} target={target} at {Time[0]:HH:mm}", LogLevel.Information);
+                    double maxRiskPts = BpsToPoints(RiskCeilingBps, entry);
+                    double minRiskPts = BpsToPoints(RiskFloorBps, entry);
+                    double rawDist = entry - rangeLow;
+                    double clampedDist = Math.Min(rawDist, maxRiskPts);
+                    clampedDist = Math.Max(clampedDist, minRiskPts);
+                    stop = entry - clampedDist;
+                }
+
+                double tp1Pts = BpsToPoints(CoverQueenBps, entry);
+                double tp2Pts = Math.Max(TargetLvl * rangeRange, BpsToPoints(RunnerBps, entry));
+                double target1 = entry + tp1Pts;
+                double target2 = entry + tp2Pts;
+
+                if (!TargetIsSane(entry, target1, 1))
+                {
+                    if (DebugMode) Log($"[DIAG] LONG target not sane: entry={entry} target1={target1} at {Time[0]:HH:mm}", LogLevel.Information);
                     return 0;
                 }
 
                 int qty = CalcQuantity(entry - stop, sizeMult);
-                Log($"[ENTRY] LONG {Time[0]:HH:mm} entry={entry} stop={stop} target={target} qty={qty}", LogLevel.Information);
-                EnterWithRangeStop(1, entry, stop, target, qty);
+                Log($"[ENTRY] LONG {Time[0]:HH:mm} entry={entry:F2} stop={stop:F2} TP1={target1:F2} TP2={target2:F2} qty={qty}", LogLevel.Information);
+                EnterWithPackTradingBrackets(1, entry, stop, target1, target2, qty);
                 longTakenToday = true;  // prevent re-entry in this direction today
                 return 1;
             }
@@ -92,19 +105,33 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 if (!CanEnterShort)  // one entry per direction per session
                     return 0;
 
-                double entry  = Close[0];
-                double stop   = rangeHigh;  // IB-relative: opposite IB boundary (not entry-relative)
-                double target = rangeLow - TargetLvl * rangeRange;
+                double entry = Close[0];
+                double stop = rangeHigh;
 
-                if (!TargetIsSane(entry, target, -1))
+                if (UseBpsStopCeiling)
                 {
-                    if (DebugMode) Log($"[DIAG] SHORT target not sane: entry={entry} target={target} at {Time[0]:HH:mm}", LogLevel.Information);
+                    double maxRiskPts = BpsToPoints(RiskCeilingBps, entry);
+                    double minRiskPts = BpsToPoints(RiskFloorBps, entry);
+                    double rawDist = rangeHigh - entry;
+                    double clampedDist = Math.Min(rawDist, maxRiskPts);
+                    clampedDist = Math.Max(clampedDist, minRiskPts);
+                    stop = entry + clampedDist;
+                }
+
+                double tp1Pts = BpsToPoints(CoverQueenBps, entry);
+                double tp2Pts = Math.Max(TargetLvl * rangeRange, BpsToPoints(RunnerBps, entry));
+                double target1 = entry - tp1Pts;
+                double target2 = entry - tp2Pts;
+
+                if (!TargetIsSane(entry, target1, -1))
+                {
+                    if (DebugMode) Log($"[DIAG] SHORT target not sane: entry={entry} target1={target1} at {Time[0]:HH:mm}", LogLevel.Information);
                     return 0;
                 }
 
                 int qty = CalcQuantity(stop - entry, sizeMult);
-                Log($"[ENTRY] SHORT {Time[0]:HH:mm} entry={entry} stop={stop} target={target} qty={qty}", LogLevel.Information);
-                EnterWithRangeStop(-1, entry, stop, target, qty);
+                Log($"[ENTRY] SHORT {Time[0]:HH:mm} entry={entry:F2} stop={stop:F2} TP1={target1:F2} TP2={target2:F2} qty={qty}", LogLevel.Information);
+                EnterWithPackTradingBrackets(-1, entry, stop, target1, target2, qty);
                 shortTakenToday = true;  // prevent re-entry in this direction today
                 return -1;
             }
