@@ -58,14 +58,27 @@ def deploy_strategy(strategy_name: str) -> bool:
     return True
 
 def deploy_all():
-    print("Deploying all repository strategies and base classes to NT8...")
-    cs_files = list(REPO_STRATEGIES_DIR.rglob("*.cs"))
-    count = 0
-    for f in cs_files:
+    print("Deploying all repository strategies, indicators, and base classes to NT8...")
+    NT8_STRATEGIES_DIR.mkdir(parents=True, exist_ok=True)
+    NT8_INDICATORS_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Deploy Strategies
+    strat_files = list(REPO_STRATEGIES_DIR.rglob("*.cs"))
+    s_count = 0
+    for f in strat_files:
         dest = NT8_STRATEGIES_DIR / f.name
         shutil.copy2(f, dest)
-        count += 1
-    print(f"✅ Deployed {count} strategy files to {NT8_STRATEGIES_DIR}")
+        s_count += 1
+    print(f"✅ Deployed {s_count} strategy files to {NT8_STRATEGIES_DIR}")
+
+    # Deploy Indicators
+    ind_files = list(REPO_INDICATORS_DIR.rglob("*.cs"))
+    i_count = 0
+    for f in ind_files:
+        dest = NT8_INDICATORS_DIR / f.name
+        shutil.copy2(f, dest)
+        i_count += 1
+    print(f"✅ Deployed {i_count} indicator files to {NT8_INDICATORS_DIR}")
 
 def main():
     parser = argparse.ArgumentParser(description="Deploy NinjaScript strategies to NinjaTrader 8 Custom folder")

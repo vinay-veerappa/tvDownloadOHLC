@@ -427,3 +427,24 @@ except Exception:
 * **JIT Compilation**: Numba-compiled functions run 10-100× faster than Python loops on first call (cached after first compile).
 * **GPU Offload**: Cumulative array operations on 6.7M elements take ~5ms on GPU vs ~50ms on CPU.
 
+---
+
+## [ADR-023] Universal Basis Points (bps), Price Percentage & Excursion Statistics Standard
+**Status:** Approved  
+**Date:** 2026-08-25  
+
+### Context
+Arbitrary point-based stops and targets (e.g. 10/20 pts on NQ) degrade as asset prices scale over time (e.g., 20 pts was 18.2 bps in 2022 at NQ 11k, but only 10.0 bps at NQ 20k). Furthermore, cross-asset comparisons (NQ vs ES vs YM) are invalidated by raw point figures.
+
+### Decision
+1. **Absolute Ban on Arbitrary Points**: All strategies across Python, Pine Script v6, and NinjaTrader 8 MUST define risk, stops, targets, and excursions in **Basis Points (bps, where 1 bps = 0.01% = 0.0001)** and **Price Percentage (%)**.
+2. **Mandatory Excursion Analysis**: All backtests and strategy evaluations MUST derive and report:
+   - **MFE** and **MAE** distributions across percentiles (p10, p25, p50, p75, p90, p95).
+   - Cumulative target reach probabilities (CDF).
+   - MAE drawdown survival curves (win rate conditioned on incurred adverse drawdown bins).
+3. **Execution Brackets**: Standardize on the institutional Pack Trading model:
+   - Minimum Risk Floor: 2.0 bps (0.02%).
+   - Maximum Risk Ceiling: 15.0 bps (0.15%).
+   - Target 1 ("Cover The Queen"): +10.0 bps (0.10%) — 50% scale-out + lock BE.
+   - Target 2 ("Runner Target"): +30.0 bps (0.30%) or trailing structural swing pivots.
+

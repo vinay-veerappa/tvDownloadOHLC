@@ -960,6 +960,22 @@ namespace NinjaTrader.NinjaScript.Indicators
     public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
     {
         private KeltnerChannelSignals[] cacheKeltnerChannelSignals;
+
+        public KeltnerChannelSignals KeltnerChannelSignals()
+        {
+            return KeltnerChannelSignals(Input, false, BarsPeriodType.Minute, 15, 34, MovingAverageVariant.EMA, 1.5, 3.5, MovingAverageVariant.EMA, 88, 34, 2.0, 1.0, 0.0, true, 10, 3, 3, 90.0, -90.0, false, false, false);
+        }
+
+        public KeltnerChannelSignals KeltnerChannelSignals(int movingAverageLength, MovingAverageVariant maType, double atrMultiplierMin, double atrMultiplierMax)
+        {
+            return KeltnerChannelSignals(Input, false, BarsPeriodType.Minute, 15, movingAverageLength, maType, atrMultiplierMin, atrMultiplierMax, MovingAverageVariant.EMA, 88, 34, 2.0, 1.0, 0.0, true, 10, 3, 3, 90.0, -90.0, false, false, false);
+        }
+
+        public KeltnerChannelSignals KeltnerChannelSignals(bool useHtf, BarsPeriodType htfPeriodType, int htfPeriodValue)
+        {
+            return KeltnerChannelSignals(Input, useHtf, htfPeriodType, htfPeriodValue, 34, MovingAverageVariant.EMA, 1.5, 3.5, MovingAverageVariant.EMA, 88, 34, 2.0, 1.0, 0.0, true, 10, 3, 3, 90.0, -90.0, false, false, false);
+        }
+
         public KeltnerChannelSignals KeltnerChannelSignals(bool useHtf, BarsPeriodType htfPeriodType, int htfPeriodValue, int movingAverageLength, MovingAverageVariant maType, double atrMultiplierMin, double atrMultiplierMax, MovingAverageVariant atrSmoothingMaType, int atrLength, int keltnerDeviationLength, double keltnerDeviationMultiplier, double overboughtThreshold, double oversoldThreshold, bool showArrows, int waveTrendChannelLength, int waveTrendMALength, int waveTrendSmoothLength, double waveTrendOverbought, double waveTrendOversold, bool showWtCrossBackground, bool showWtOverboughtBackground, bool showWtOversoldBackground)
         {
             return KeltnerChannelSignals(Input, useHtf, htfPeriodType, htfPeriodValue, movingAverageLength, maType, atrMultiplierMin, atrMultiplierMax, atrSmoothingMaType, atrLength, keltnerDeviationLength, keltnerDeviationMultiplier, overboughtThreshold, oversoldThreshold, showArrows, waveTrendChannelLength, waveTrendMALength, waveTrendSmoothLength, waveTrendOverbought, waveTrendOversold, showWtCrossBackground, showWtOverboughtBackground, showWtOversoldBackground);
@@ -996,6 +1012,27 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ShowWtOverboughtBackground = showWtOverboughtBackground,
                 ShowWtOversoldBackground   = showWtOversoldBackground
             };
+        }
+    }
+}
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+    public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+    {
+        public Indicators.KeltnerChannelSignals KeltnerChannelSignals()
+        {
+            return indicator.KeltnerChannelSignals(Input, false, BarsPeriodType.Minute, 15, 34, Indicators.MovingAverageVariant.EMA, 1.5, 3.5, Indicators.MovingAverageVariant.EMA, 88, 34, 2.0, 1.0, 0.0, true, 10, 3, 3, 90.0, -90.0, false, false, false);
+        }
+
+        public Indicators.KeltnerChannelSignals KeltnerChannelSignals(bool useHtf, BarsPeriodType htfPeriodType, int htfPeriodValue, int movingAverageLength, Indicators.MovingAverageVariant maType, double atrMultiplierMin, double atrMultiplierMax, Indicators.MovingAverageVariant atrSmoothingMaType, int atrLength, int keltnerDeviationLength, double keltnerDeviationMultiplier, double overboughtThreshold, double oversoldThreshold, bool showArrows, int waveTrendChannelLength, int waveTrendMALength, int waveTrendSmoothLength, double waveTrendOverbought, double waveTrendOversold, bool showWtCrossBackground, bool showWtOverboughtBackground, bool showWtOversoldBackground)
+        {
+            return indicator.KeltnerChannelSignals(Input, useHtf, htfPeriodType, htfPeriodValue, movingAverageLength, maType, atrMultiplierMin, atrMultiplierMax, atrSmoothingMaType, atrLength, keltnerDeviationLength, keltnerDeviationMultiplier, overboughtThreshold, oversoldThreshold, showArrows, waveTrendChannelLength, waveTrendMALength, waveTrendSmoothLength, waveTrendOverbought, waveTrendOversold, showWtCrossBackground, showWtOverboughtBackground, showWtOversoldBackground);
+        }
+
+        public Indicators.KeltnerChannelSignals KeltnerChannelSignals(ISeries<double> input, bool useHtf, BarsPeriodType htfPeriodType, int htfPeriodValue, int movingAverageLength, Indicators.MovingAverageVariant maType, double atrMultiplierMin, double atrMultiplierMax, Indicators.MovingAverageVariant atrSmoothingMaType, int atrLength, int keltnerDeviationLength, double keltnerDeviationMultiplier, double overboughtThreshold, double oversoldThreshold, bool showArrows, int waveTrendChannelLength, int waveTrendMALength, int waveTrendSmoothLength, double waveTrendOverbought, double waveTrendOversold, bool showWtCrossBackground, bool showWtOverboughtBackground, bool showWtOversoldBackground)
+        {
+            return indicator.KeltnerChannelSignals(input, useHtf, htfPeriodType, htfPeriodValue, movingAverageLength, maType, atrMultiplierMin, atrMultiplierMax, atrSmoothingMaType, atrLength, keltnerDeviationLength, keltnerDeviationMultiplier, overboughtThreshold, oversoldThreshold, showArrows, waveTrendChannelLength, waveTrendMALength, waveTrendSmoothLength, waveTrendOverbought, waveTrendOversold, showWtCrossBackground, showWtOverboughtBackground, showWtOversoldBackground);
         }
     }
 }

@@ -24,20 +24,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public int Variant { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Queen Target R-Mult", Order = 1, GroupName = "2. Targets & Risk")]
-        public double RMultTP1 { get; set; }
+        [Display(Name = "Queen Target (Bps)", Order = 1, GroupName = "2. Targets & Risk")]
+        public double QueenTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Runner Target R-Mult", Order = 2, GroupName = "2. Targets & Risk")]
-        public double RMultTP2 { get; set; }
+        [Display(Name = "Runner Target (Bps)", Order = 2, GroupName = "2. Targets & Risk")]
+        public double RunnerTargetBps { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Min Risk (Bps)", Order = 3, GroupName = "2. Targets & Risk")]
+        [Display(Name = "Min Risk Floor (Bps)", Order = 3, GroupName = "2. Targets & Risk")]
         public double MinRiskBps { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "Max Risk Ceiling (Bps)", Order = 4, GroupName = "2. Targets & Risk")]
         public double MaxRiskBps { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Enable 50% Midline Reclaims", Order = 5, GroupName = "3. Midline Features")]
+        public bool EnableMidlineReclaims { get; set; }
         #endregion
 
         private Indicators.Vinay.ICTFVGCISDIndicator ictIndicator;
@@ -46,10 +50,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description = "Institutional ICT Change in State of Delivery (CISD) & iFVG Strategy Engine with Cover The Queen scale-out.";
+            Description = "Institutional ICT Change in State of Delivery (CISD) & 50% Midline Strategy with Cover The Queen scale-out.";
             Name = "ICTFVGCISDBot";
 
-            // Policy & Risk
+            // Policy & Risk Defaults
             TradePolicy = TradePolicyType.CoverTheQueen;
             TargetRMultiple = 2.5;
             BreakevenTriggerR = 1.0;
@@ -57,6 +61,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxTradesPerDay = 3;
             TrailingDrawdown = 2500;
 
+            // Session Windows (NY AM / PM Execution)
             EarliestEntry = 930;
             LatestEntry = 1530;
             FlattenBy = 1555;
@@ -65,24 +70,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             DebugMode = true;
 
             Variant = 2;
-            RMultTP1 = 1.0;
-            RMultTP2 = 2.5;
-            MinRiskBps = 2.0;
-            MaxRiskBps = 15.0;
+            QueenTargetBps = 10.0;   // +10 Basis Points (0.10%)
+            RunnerTargetBps = 30.0;  // +30 Basis Points (0.30%)
+            MinRiskBps = 2.0;        // 2 Basis Points risk floor
+            MaxRiskBps = 15.0;       // 15 Basis Points risk ceiling
+            EnableMidlineReclaims = true;
         }
 
         protected override void ConfigureStrategy() { }
 
         protected override void InitializeStrategy()
         {
-            ictIndicator = ICTFVGCISDIndicator(Variant, RMultTP1, RMultTP2, MinRiskBps, MaxRiskBps);
+            ictIndicator = ICTFVGCISDIndicator(Variant, QueenTargetBps, RunnerTargetBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims);
         }
 
         protected override int CheckForSignal()
         {
-            if (ictIndicator == null || CurrentBar < 20) return 0;
+            if (ictIndicator == null || CurrentBar < 25) return 0;
 
-            if (DrawVisuals && CurrentBar > 20)
+            if (DrawVisuals && CurrentBar > 25)
             {
                 double cisdCurr = ictIndicator.CisdLevelSeries[0];
                 double cisdPrev = ictIndicator.CisdLevelSeries[1];
@@ -112,9 +118,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)
         {
-            if (ictIndicator == null || CurrentBar < 20) return double.NaN;
+            if (ictIndicator == null || CurrentBar < 25) return double.NaN;
             double sl = ictIndicator.StopLossSeries[0];
             if (!double.IsNaN(sl) && sl > 0) return sl;
+            return double.NaN;
+        }
+
+        protected override double GetCustomProfitTarget(int signal, double entryPrice, double stopDistance)
+        {
+            if (ictIndicator == null || CurrentBar < 25) return double.NaN;
+            double tp = ictIndicator.RunnerTargetSeries[0];
+            if (!double.IsNaN(tp) && tp > 0) return tp;
             return double.NaN;
         }
 
@@ -126,7 +140,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetPotentialLoss()
         {
-            if (ictIndicator != null && CurrentBar >= 20)
+            if (ictIndicator != null && CurrentBar >= 25)
             {
                 double sl = ictIndicator.StopLossSeries[0];
                 if (!double.IsNaN(sl) && sl > 0)
