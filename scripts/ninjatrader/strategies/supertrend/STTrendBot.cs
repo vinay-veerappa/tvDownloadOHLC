@@ -48,6 +48,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "Trail ATR Mult", Order = 3, GroupName = "Supertrend")]
         public double TrailAtrMultParam { get; set; }
 
+        [NinjaScriptProperty]
+        [Display(Name = "Use ATR Regime Filter", Order = 4, GroupName = "Supertrend")]
+        public bool UseAtrRegimeFilter { get; set; }
+
         #endregion
 
         private Indicators.Vinay.SupertrendIndicator stIndicator;
@@ -55,6 +59,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private MAX maxHigh;
         private MIN minLow;
         private const int TRAIL_ATR_PERIOD = 14;
+        private double[] atr5mHistory;
+        private int atr5mHistoryCount;
+        private const int ATR_REGIME_LOOKBACK = 20;
 
         private System.IO.StreamWriter diagCsv;
         private bool diagCsvHeaderWritten;
@@ -81,8 +88,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             TrailingDrawdown = 99999;
 
             // Full day — trend-following needs trend days, NO range gate
+            // Time filter: skip 14:00+ (afternoon chop whipsaws trailing stop)
+            // Python: if h >= 14: continue (so 13:xx is OK, 14:00+ is skipped)
+            // LatestEntry=1555 means "last allowed entry at 15:55" but we want
+            // to skip 14:00+, so LatestEntry should be 1359 (last 13:xx bar).
+            // Actually the time fence in RiskManagerBase checks currentTime > LatestEntry*100
+            // where currentTime = hour*100 + minute. So 1359 → 135900. 14:00 → 140000 > 135900 → blocked. ✓
+            // But we also want to ALLOW entries from 09:30-13:59. So LatestEntry=1359 is correct.
+            // However, Python's time_filter also blocks 14:00+ but allows 09:30-13:59.
+            // The mismatch is that NT8 also has FlattenBy=1555 which flattens at 15:55.
+            // Python doesn't flatten at 15:55 — it exits at EOD (16:00 close).
+            // For parity, set FlattenBy=1555 (ADR-020 requires 16:00 ET exit).
             EarliestEntry = 930;
-            LatestEntry = 1555;
+            LatestEntry = 1359;  // skip 14:00+ (time filter — afternoon chop)
             FlattenBy = 1555;
 
             // MUST be 5m primary, no secondary — closed bars only
@@ -91,7 +109,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             StPeriod = 14;
             StAtrMult = 2.0;
-            TrailAtrMultParam = 1.5;
+            TrailAtrMultParam = 1.0;  // tighter trail (was 1.5) — captures MFE before reversion
+            UseAtrRegimeFilter = true;  // only trade when 5m ATR > 20-bar median
         }
 
         protected override void ConfigureStrategy() { }
@@ -102,10 +121,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             atr = ATR(BarsArray[0], 14);
             maxHigh = MAX(High, TRAIL_ATR_PERIOD);
             minLow = MIN(Low, TRAIL_ATR_PERIOD);
+            atr5mHistory = new double[ATR_REGIME_LOOKBACK];
+            atr5mHistoryCount = 0;
 
             string csvPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sttrend_diag_" + Guid.NewGuid().ToString("N") + ".csv");
             diagCsv = new System.IO.StreamWriter(csvPath);
-            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture, "# Strategy=STTrendBot StPeriod={0} StAtrMult={1} TrailAtrMult={2} AtrPeriod={3} Primary=5m Risk=1xMES", StPeriod, StAtrMult, TrailAtrMultParam, AtrPeriod));
+            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture, "# Strategy=STTrendBot StPeriod={0} StAtrMult={1} TrailAtrMult={2} AtrPeriod={3} Primary=5m Risk=1xMES AtrRegimeFilter={4} LatestEntry={5}", StPeriod, StAtrMult, TrailAtrMultParam, AtrPeriod, UseAtrRegimeFilter, LatestEntry));
             diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture, "# Execution: Earliest={0} Latest={1} FlattenBy={2} MaxTradesPerDay={3} DailyMaxLoss={4} TrailingDD={5}", EarliestEntry, LatestEntry, FlattenBy, MaxTradesPerDay, DailyMaxLoss, TrailingDrawdown));
             diagCsvHeaderWritten = false;
             Print("[DIAG] STTrendBot CSV path: " + csvPath);
@@ -116,6 +137,37 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (maxHigh == null || minLow == null || CurrentBars[0] < TRAIL_ATR_PERIOD) return 0;
             double diff = maxHigh[0] - minLow[0];
             return diff / TRAIL_ATR_PERIOD;
+        }
+
+        private bool PassesAtrRegimeFilter()
+        {
+            if (!UseAtrRegimeFilter) return true;
+            // Compute crude (MAX-MIN)/14 ATR for this bar
+            double currentAtr5m = GetTrailAtr();
+            if (currentAtr5m <= 0) return false;
+
+            // Reset buffer at start of each new day (Python parity: rolling window is per-day)
+            if (CurrentBar > 0 && Time[0].Date != Time[1].Date)
+            {
+                atr5mHistoryCount = 0;
+            }
+
+            // Store in rolling buffer
+            atr5mHistory[atr5mHistoryCount % ATR_REGIME_LOOKBACK] = currentAtr5m;
+            atr5mHistoryCount++;
+
+            if (atr5mHistoryCount < 5) return true;  // min_periods=5 (Python parity)
+
+            // Compute median of the available history (up to ATR_REGIME_LOOKBACK bars)
+            int count = Math.Min(atr5mHistoryCount, ATR_REGIME_LOOKBACK);
+            double[] sorted = new double[count];
+            for (int i = 0; i < count; i++)
+                sorted[i] = atr5mHistory[(atr5mHistoryCount - count + i) % ATR_REGIME_LOOKBACK];
+            Array.Sort(sorted);
+            double median = sorted[count / 2];
+
+            // Only trade when current ATR >= median (high-vol regime)
+            return currentAtr5m >= median;
         }
 
         protected override double GetPotentialLoss()
@@ -138,6 +190,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override int CheckForSignal()
         {
             if (stIndicator == null || CurrentBars[0] < StPeriod + 2) return 0;
+
+            // ATR regime filter: only trade in high-vol regimes
+            if (!PassesAtrRegimeFilter()) return 0;
 
             if (DrawVisuals && CurrentBars[0] > StPeriod + 2)
             {
