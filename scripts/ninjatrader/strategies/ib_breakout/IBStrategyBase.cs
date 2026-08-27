@@ -598,6 +598,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         /// <summary>
+        /// Validates 5m FVG displacement confluence (bullish FVG for Longs, bearish FVG for Shorts).
+        /// </summary>
+        public bool HasFvgConfluence(int dir)
+        {
+            if (!UseFvgChopGate || biasFvg == 0) return true;
+            return biasFvg == dir;
+        }
+
+        /// <summary>
         /// Enters trade with 2-tier Pack Trading brackets (Cover The Queen + Runner) or single-order range stop/target.
         /// Conforms strictly to Universal Basis Points standard (ADR-002/ADR-010).
         /// </summary>

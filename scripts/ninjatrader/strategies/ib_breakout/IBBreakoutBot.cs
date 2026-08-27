@@ -54,7 +54,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             double sizeMult = ClockSizeMultiplier(breakMinutes);
 
             // Long break: close above IB high
-            if (Close[0] > rangeHigh && HasIbMidConfluence(1, Close[0]))
+            if (Close[0] > rangeHigh && HasIbMidConfluence(1, Close[0]) && HasFvgConfluence(1))
             {
                 if (RequireDirectionBias && predictedDir != 1)
                 {
@@ -97,7 +97,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             // Short break: close below IB low
-            if (Close[0] < rangeLow && HasIbMidConfluence(-1, Close[0]))
+            if (Close[0] < rangeLow && HasIbMidConfluence(-1, Close[0]) && HasFvgConfluence(-1))
             {
                 if (RequireDirectionBias && predictedDir != -1)
                 {

@@ -90,7 +90,10 @@ def run_trend_v3(ctx, session_name, after_time=None):
             continue
 
         # Time filter: skip entries after 14:00 ET (LatestEntry=1359 in NT8)
-        if curr_time.hour >= 14:
+        if curr_time.hour >= 14 and curr_time.minute > 0:
+            continue
+        # Also skip before 10:30 (10:30 stabilization fence)
+        if curr_time.hour < 10 or (curr_time.hour == 10 and curr_time.minute < 30):
             continue
 
         st0, st1 = st.iloc[i], st.iloc[i-1]
@@ -116,6 +119,8 @@ def run_trend_v3(ctx, session_name, after_time=None):
         sim = bars_1m.loc[curr_time + pd.Timedelta(minutes=5):]
         if len(sim) == 0: return None
 
+        # Trail: 50% of initial risk, only after 1R profit, ratchet only
+        trail_dist = risk * 0.5
         trail_stop = stop
         exit_price, exit_time, exit_reason = None, None, None
         mae, mfe, hold_bars = 0.0, 0.0, 0
@@ -125,8 +130,8 @@ def run_trend_v3(ctx, session_name, after_time=None):
             if direction == 'LONG':
                 mae = max(mae, entry - row['low'])
                 mfe = max(mfe, row['high'] - entry)
-                if j > 0:
-                    new_trail = row['high'] - 1.0 * a5
+                if j > 0 and row['high'] - entry >= risk:
+                    new_trail = row['high'] - trail_dist
                     if new_trail > trail_stop: trail_stop = new_trail
                 if row['low'] <= trail_stop:
                     exit_price, exit_time, exit_reason = trail_stop, t_bar, 'trail'
@@ -134,8 +139,8 @@ def run_trend_v3(ctx, session_name, after_time=None):
             else:
                 mae = max(mae, row['high'] - entry)
                 mfe = max(mfe, entry - row['low'])
-                if j > 0:
-                    new_trail = row['low'] + 1.0 * a5
+                if j > 0 and entry - row['low'] >= risk:
+                    new_trail = row['low'] + trail_dist
                     if new_trail < trail_stop: trail_stop = new_trail
                 if row['high'] >= trail_stop:
                     exit_price, exit_time, exit_reason = trail_stop, t_bar, 'trail'
@@ -402,7 +407,7 @@ def _simulate_scalp(bars_1m, signal_time, direction, entry, sl, tp, risk,
 
 # ─── Run all three ─────────────────────────────────────────────────────────
 
-trend_sessions = ['GLOBEX', 'ASIA', 'LONDON', 'NY_AM', 'NY_MIDDAY', 'NY_PM']
+trend_sessions = ['NY_AM', 'NY_MIDDAY', 'NY_PM']  # RTH only (matches NT8)
 scalp_sessions = ['NY_AM', 'NY_MIDDAY']
 
 all_trades = []

@@ -100,7 +100,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
 
                 // Entry condition: bar low touched the retracement level and bar closed holding at/above it
-                if (Low[0] <= triggerLevel && Close[0] >= triggerLevel && HasIbMidConfluence(1, Close[0]))
+                if (Low[0] <= triggerLevel && Close[0] >= triggerLevel && HasIbMidConfluence(1, Close[0]) && HasFvgConfluence(1))
                 {
                     double entry = Close[0];
                     double stop = rangeLow;
@@ -157,7 +157,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
 
                 // Entry condition: bar high touched the retracement level and bar closed holding at/below it
-                if (High[0] >= triggerLevel && Close[0] <= triggerLevel && HasIbMidConfluence(-1, Close[0]))
+                if (High[0] >= triggerLevel && Close[0] <= triggerLevel && HasIbMidConfluence(-1, Close[0]) && HasFvgConfluence(-1))
                 {
                     double entry = Close[0];
                     double stop = rangeHigh;
