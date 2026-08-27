@@ -106,6 +106,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "SHORT Only (drop LONG)", Order = 18, GroupName = "BB+RSI")]
         public bool ShortOnly { get; set; }
 
+        [NinjaScriptProperty]
+        [Display(Name = "Use HTF Proximity Filter", Order = 19, GroupName = "BB+RSI")]
+        public bool UseHtfProximity { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(1, 100)]
+        [Display(Name = "HTF Proximity (pts)", Order = 20, GroupName = "BB+RSI")]
+        public double HtfProximityPts { get; set; }
+
         #endregion
 
         private Bollinger bollinger;
@@ -130,6 +139,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private double close2barsAgo;
         private double lower2barsAgo;
         private double upper2barsAgo;
+
+        // HTF levels (Prior Day High/Low)
+        private double pdh = double.NaN;
+        private double pdl = double.NaN;
+        private DateTime htfDate;
 
         // IB tracking for regime gate (09:30-10:00)
         private double ibHigh, ibLow;
@@ -160,8 +174,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxTradesPerDay = 99;
             TrailingDrawdown = 99999;
 
-            // Time — NY midday/PM only (matches python NY_MIDDAY+NY_PM 11:30-16:00)
-            EarliestEntry = 1130;
+            // Time — NY_PM only (matches Python v3: 13:30-16:00)
+            EarliestEntry = 1330;
             LatestEntry = 1600;
             FlattenBy = 1615;
 
@@ -180,12 +194,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             IbMaxAtrRatio = 0.40;
             SkipLunchHour = false;
             UseMacdGate = false;
-            UseKaufmanErRsi = true;  // Kaufman ER RSI: PF1.90 vs Wilder PF1.12
+            UseKaufmanErRsi = false;  // v3: Wilder RSI (not Kaufman ER)
             ErPeriod = 10;
             KaufmanFastLen = 5;
             KaufmanSlowLen = 30;
-            Allow2BarHook = true;  // 2-bar hook: 28 trades vs 16, PF1.81
+            Allow2BarHook = true;  // 2-bar hook: doubles trades while maintaining PF
             ShortOnly = false;
+
+            // HTF proximity filter (v3: require entry within 15pts of PDH/PDL)
+            UseHtfProximity = true;
+            HtfProximityPts = 15.0;
         }
 
         protected override void ConfigureStrategy() { }
@@ -421,6 +439,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // SHORT-only filter
             if (ShortOnly) longSetup = false;
 
+            // HTF proximity filter (v3): require entry near PDH (for SHORT) or PDL (for LONG)
+            if (UseHtfProximity)
+            {
+                UpdateHtfLevels();
+                if (longSetup && !double.IsNaN(pdl))
+                {
+                    if (Math.Abs(close0 - pdl) > HtfProximityPts) longSetup = false;
+                }
+                if (shortSetup && !double.IsNaN(pdh))
+                {
+                    if (Math.Abs(close0 - pdh) > HtfProximityPts) shortSetup = false;
+                }
+            }
+
             if (longSetup)
             {
                 if (UseMacdGate && macd != null && macd.Diff[0] <= macd.Diff[1]) return 0;
@@ -440,6 +472,45 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             upper2barsAgo = upper1;
 
             return 0;
+        }
+
+        private void UpdateHtfLevels()
+        {
+            // Compute PDH/PDL from the prior day's RTH bars (09:30-16:00 ET)
+            var today = Times[0][0].Date;
+            if (htfDate == today) return;  // already computed for this day
+
+            try
+            {
+                // Use BarsArray[0] (1m primary) to find prior day's high/low
+                var priorDate = today.AddDays(-1);
+                // Skip weekends
+                while (priorDate.DayOfWeek == DayOfWeek.Saturday || priorDate.DayOfWeek == DayOfWeek.Sunday)
+                    priorDate = priorDate.AddDays(-1);
+
+                double dayHigh = double.MinValue;
+                double dayLow = double.MaxValue;
+                bool found = false;
+
+                for (int i = 0; i < BarsArray[0].Count && i < 5000; i++)
+                {
+                    var barTime = Times[0][i];
+                    if (barTime.Date == priorDate && barTime.Hour >= 9 && barTime.Hour < 16)
+                    {
+                        dayHigh = Math.Max(dayHigh, Highs[0][i]);
+                        dayLow = Math.Min(dayLow, Lows[0][i]);
+                        found = true;
+                    }
+                }
+
+                if (found)
+                {
+                    pdh = dayHigh;
+                    pdl = dayLow;
+                    htfDate = today;
+                }
+            }
+            catch { }
         }
 
         private void UpdateIb()
