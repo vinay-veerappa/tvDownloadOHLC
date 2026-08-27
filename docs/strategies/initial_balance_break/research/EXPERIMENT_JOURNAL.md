@@ -277,3 +277,29 @@
 * **Critical Execution Law**:
   * FVGs must **NEVER** be traded via blind limit touches.
   * FVGs must **ALWAYS** be confirmed with **5m candle body respect or inversion closure** (as proven in EXP-IB-010 which produced 68.1% WR and 1.88 PF).
+
+---
+
+### EXP-IB-012: Empirical Validation of Pack Trading Quarters Theory (2019-2026, 1,958 Sessions)
+* **Date**: 2026-08-26
+* **Objective**: Quantify the mathematical edge of Pack Trading Quarters Theory across Hourly Time Quarters (Q1-Q4) and Price Grid Quarters (250-pt hesitation zones).
+* **Dataset**: Continuous 1-minute NQ1 (2,721,865 bars, 2019-2026, 1,958 sessions).
+* **Empirical Matrix**:
+
+`
++---------------------------------------------------------------------------------------------------------+
+|                                    QUARTERS THEORY EMPIRICAL VALIDATION                                 |
++--------------------+---------------------------+-------------------+------------------------------------+
+| Dimension          | Event / Formation Quarter | Probability / Stat| Institutional Edge & Action        |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **Time Quarters**  | High of Hour forms in Q1  | **89.5% RED Close** Fade early spikes (:00-:15m);      |
+| *(10:00-11:00 AM)* | (:00 - :15m)              | (725 sessions)    | Bearish mean reversion edge        |
+|                    | High of Hour forms in Q4  | 95.0% GREEN Close | Clean trend day expansion;         |
+|                    | (:45 - :60m)              | (618 sessions)    | Ride runners to session close      |
+|                    | Low of Hour forms in Q1   | **87.7% GREEN**   | Buy Judas sweep low (:00-:15m);    |
+|                    | (:00 - :15m)              | (846 sessions)    | Bullish mean reversion edge        |
++--------------------+---------------------------+-------------------+------------------------------------+
+| **Price Grid**     | Clean Air (> 25 pts away) | **87.6% Win Rate**| Unobstructed continuation flow     |
+| *(250-pt Quarters)*| In Hesitation Zone (<25pt)| 84.2% Win Rate    | Expect stall / delay at quarter    |
++--------------------+---------------------------+-------------------+------------------------------------+
+`
