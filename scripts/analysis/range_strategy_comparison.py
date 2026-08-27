@@ -119,7 +119,7 @@ class RangeStrategy(ABC):
 
     def get_active_sessions(self) -> List[str]:
         """Which sessions this strategy trades in."""
-        return ["NY_MIDDAY", "NY_PM"]
+        return ["GLOBEX", "ASIA", "LONDON", "NY_AM", "NY_MIDDAY", "NY_PM"]
 
 
 # ============================================================================
@@ -540,6 +540,7 @@ class BBRsiMeanReversionStrategy(RangeStrategy):
         squeeze_only: bool = False,
         squeeze_lookback: int = 20,
         squeeze_pct: float = 30.0,
+        max_trades_per_session: int = 3,
     ):
         name = "BB_RSI_Sq" if squeeze_only else "BB_RSI"
         super().__init__(name, symbol, tick_size)
@@ -551,6 +552,7 @@ class BBRsiMeanReversionStrategy(RangeStrategy):
         self.squeeze_only = squeeze_only
         self.squeeze_lookback = squeeze_lookback
         self.squeeze_pct = squeeze_pct
+        self.max_trades_per_session = max_trades_per_session
 
     def _is_squeeze_day(self, ctx: DayContext) -> bool:
         """Intraday BB bandwidth percentile — squeeze = narrow band vs last N 5m bars."""
@@ -584,8 +586,14 @@ class BBRsiMeanReversionStrategy(RangeStrategy):
                 return pct <= self.squeeze_pct
         return False
 
-    def detect_signal(self, ctx: DayContext, session_name: str) -> Optional[TradeSignal]:
-        if session_name not in ("NY_MIDDAY", "NY_PM"):
+    def detect_signal(self, ctx: DayContext, session_name: str,
+                      after_time: pd.Timestamp = None) -> Optional[TradeSignal]:
+        """Scan session bars for a BB+RSI mean-reversion signal.
+
+        after_time: if set, skip bars at or before this time (for multi-trade
+        per session — the next signal must be after the prior trade's exit).
+        """
+        if session_name not in ("NY_MIDDAY", "NY_PM", "NY_AM", "LONDON", "ASIA", "GLOBEX"):
             return None
         if self.squeeze_only and not self._is_squeeze_day(ctx):
             return None
@@ -610,8 +618,8 @@ class BBRsiMeanReversionStrategy(RangeStrategy):
 
         for i in range(2, len(bars_5m)):
             curr_time = bars_5m.index[i]
-            # Enforce session window 11:30 cutoff already via session_5m slice
-            if curr_time.time() < pd.Timestamp("11:30:00").time():
+            # Skip bars at or before a prior trade's exit (multi-trade support)
+            if after_time is not None and curr_time <= after_time:
                 continue
             # ADX regime gate on prior bar (zero look-ahead: decision uses bar i close, trade starts i+5m)
             adx_val = adx_s.iloc[i]
@@ -874,13 +882,15 @@ def build_day_context(
     ib_r = (ib_h - ib_l) if not np.isnan(ib_h) else np.nan
     ib_mid = (ib_h + ib_l) / 2.0 if not np.isnan(ib_h) else np.nan
 
-    # Session bars
+    # Session bars — all time-based ranges, no hardcoded strategy logic here.
+    # Sessions span the full 24h futures day. Strategies pick which to trade.
     sessions = {
-        "ASIA": (f"{prev_day} 18:00:00", f"{trade_date} 02:00:00"),
-        "LONDON": (f"{trade_date} 02:00:00", f"{trade_date} 08:30:00"),
-        "NY_AM": (f"{trade_date} 09:30:00", f"{trade_date} 11:30:00"),
+        "GLOBEX":  (f"{prev_day} 18:00:00", f"{trade_date} 09:30:00"),  # overnight session
+        "ASIA":    (f"{prev_day} 18:00:00", f"{trade_date} 02:00:00"),  # Tokyo
+        "LONDON":  (f"{trade_date} 02:00:00", f"{trade_date} 08:30:00"),
+        "NY_AM":   (f"{trade_date} 09:30:00", f"{trade_date} 11:30:00"),
         "NY_MIDDAY": (f"{trade_date} 11:30:00", f"{trade_date} 13:30:00"),
-        "NY_PM": (f"{trade_date} 13:30:00", f"{trade_date} 16:00:00"),
+        "NY_PM":   (f"{trade_date} 13:30:00", f"{trade_date} 16:00:00"),
     }
 
     session_bars = {}
@@ -967,14 +977,23 @@ def run_comparison(
 
         for strat in strategies:
             for sess_name in strat.get_active_sessions():
-                signal = strat.detect_signal(ctx, sess_name)
-                if signal is None:
-                    continue
-                signal.metadata["strategy_name"] = strat.name
-                trade = engine.simulate_trade(signal, ctx)
-                if trade is not None:
-                    trade.strategy_name = strat.name
-                    all_trades.append(trade)
+                # Multi-trade per session: detect → simulate → detect after exit → repeat
+                max_trades = getattr(strat, 'max_trades_per_session', 1)
+                after_time = None
+                for trade_num in range(max_trades):
+                    signal = strat.detect_signal(ctx, sess_name, after_time=after_time)
+                    if signal is None:
+                        break
+                    signal.metadata["strategy_name"] = strat.name
+                    signal.metadata["trade_num_session"] = trade_num + 1
+                    trade = engine.simulate_trade(signal, ctx)
+                    if trade is not None:
+                        trade.strategy_name = strat.name
+                        all_trades.append(trade)
+                        # Next signal must be after this trade's exit time
+                        after_time = trade.exit_time
+                    else:
+                        break
 
     return pd.DataFrame([t.__dict__ for t in all_trades])
 
