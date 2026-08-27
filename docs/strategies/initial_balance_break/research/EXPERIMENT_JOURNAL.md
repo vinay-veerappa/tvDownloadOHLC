@@ -261,3 +261,19 @@
      * **Respected Bullish/Bearish FVG**: Provides the structural entry level for **Play 1 & Play 2 Continuation**.
      * **Inverted FVG (iFVG)**: Provides the confirmed failure level for **Play 3 Sweep Fade** (retesting the broken FVG from the opposite side).
   3. **Mandatory Standard**: The 5m FVG / iFVG respect precondition is now cemented as the master gate for all execution bots.
+
+---
+
+### EXP-IB-011: Hierarchical 3-Tier FVG Fallback Coverage & Execution Mechanics
+* **Date**: 2026-08-26
+* **Objective**: Evaluate session coverage and execution mechanics across the 3-Tier FVG Hierarchy (Tier 1: 10:00 5m FVG -> Tier 2: 09:00 5m FVG -> Tier 3: 09:30 1m FVG).
+* **Dataset**: Continuous 1-minute NQ1 (2,721,865 bars, 2019-2026, 1,958 sessions).
+* **Coverage Results**:
+  * **Tier 1 (10:00 5m FVG)**: Forms on **53.0%** of days (1,038 sessions).
+  * **Tier 2 (09:00 5m FVG Fallback)**: Available on **35.4%** of days (694 sessions).
+  * **Tier 3 (09:30 1m FVG Fallback)**: Available on **2.6%** of days (51 sessions).
+  * **Total Structural Coverage**: **91.1% of days** (1,783 sessions have at least one valid FVG anchor).
+  * **No FVG Formed (Pure Range Chop)**: **8.9% of days** (175 sessions).
+* **Critical Execution Law**:
+  * FVGs must **NEVER** be traded via blind limit touches.
+  * FVGs must **ALWAYS** be confirmed with **5m candle body respect or inversion closure** (as proven in EXP-IB-010 which produced 68.1% WR and 1.88 PF).
