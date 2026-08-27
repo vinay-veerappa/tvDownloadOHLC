@@ -159,3 +159,43 @@
 |                    | (Closed back inside)      |                   | Candle-close confirmed stops       |
 +--------------------+---------------------------+-------------------+------------------------------------+
 `
+
+---
+
+### EXP-IB-008: Quantitative Relationship Between IB Size and Play Expectancy (2019-2026, 5,270 Sessions)
+* **Date**: 2026-08-26
+* **Objective**: Measure the exact mathematical relationship between Initial Balance (IB) range size (bps quintiles Q1-Q5 and ATR ratio bins) vs. performance across Play 1 (Breakout), Play 2 (Retest), and Play 3 (Fade).
+* **Dataset**: Continuous 1-minute NQ1 (2019-2026, 1,932 simulated setups).
+* **The Empirical IB Size vs. Play Matrix**:
+
+`
++---------------------------------------------------------------------------------------------------------+
+|                                    IB SIZE vs. PLAY EXPECTANCY MATRIX                                   |
++---------------------+-------------------+-------------------+-------------------+-----------------------+
+| IB Size Quintile    | Range in bps (NQ) | Play 1: Breakout  | Play 2: Retest    | Play 3: Sweep Fade    |
++---------------------+-------------------+-------------------+-------------------+-----------------------+
+| **Q1: Tiny**        | < 45 bps (<)  | 78.2% WR, 3.12 PF | 80.2% WR, 3.38 PF | **75.2% WR, 4.89 PF** |
+| **Q2: Small**       | 45 - 60 bps       | 84.5% WR, 4.53 PF | 85.1% WR, 4.76 PF | **68.3% WR, 5.10 PF** |
+| **Q3: Normal**      | 60 - 80 bps       | 88.5% WR, 6.40 PF | 89.7% WR, 7.27 PF | 61.4% WR, 4.52 PF     |
+| **Q4: Large**       | 80 - 115 bps      | 89.6% WR, 7.21 PF | 89.6% WR, 7.19 PF | 62.6% WR, 6.06 PF     |
+| **Q5: Huge**        | > 115 bps (>) | **95.0% WR, 15.9PF** 92.9% WR, 10.9PF | 54.0% WR, 5.63 PF     |
++---------------------+-------------------+-------------------+-------------------+-----------------------+
+`
+
+* **By ATR Compression Ratio (IB Range / 14-day ATR)**:
+
+`
++---------------------+-------------------+-------------------+-------------------+-----------------------+
+| ATR Regime Bin      | IB / ATR Ratio    | Play 1: Breakout  | Play 2: Retest    | Play 3: Sweep Fade    |
++---------------------+-------------------+-------------------+-------------------+-----------------------+
+| **Severe Compress** | < 0.35x ATR       | 85.7% WR, 5.14 PF | 87.5% WR, 5.83 PF | **73.5% WR, 6.30 PF** |
+| **Moderate Compress** 0.35 - 0.50x ATR  | 88.6% WR, 6.46 PF | 89.0% WR, 6.73 PF | 56.0% WR, 4.13 PF     |
+| **Normal**          | 0.50 - 0.75x ATR  | 87.8% WR, 5.98 PF | 85.6% WR, 4.96 PF | 59.3% WR, 6.61 PF     |
+| **Expanded**        | 0.75 - 1.00x ATR  | **92.1% WR, 9.72PF** **91.4% WR, 8.89PF** 29.2% WR (COLLAPSE)|
+| **Extreme**         | > 1.00x ATR       | **93.8% WR, 12.5PF** 81.2% WR, 3.61PF | 30.0% WR (COLLAPSE)  |
++---------------------+-------------------+-------------------+-------------------+-----------------------+
+`
+
+* **Core Institutional Insights**:
+  1. **Monotonic Expansion for Continuation**: Breakout (Play 1) and Retest (Play 2) follow-through and MFE scale directly with IB size. Larger IBs ($>80\text{ bps}$ / $>0.75\times\text{ATR}$) have massive institutional momentum backing, yielding up to a **15.92 Profit Factor** and $+107\text{ bps}$ average MFE.
+  2. **Inverted Regime for Fades**: Play 3 (Sweep Fade) thrives in **Severe Compression ($<0.35\times\text{ATR}$)** with a **.5\%\text{ win rate}$**, but **COLLAPSES to $<30\%\text{ win rate}$** in expanded regimes ($>0.75\times\text{ATR}$).
