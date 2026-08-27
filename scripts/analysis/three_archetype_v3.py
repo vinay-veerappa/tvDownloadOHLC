@@ -119,8 +119,7 @@ def run_trend_v3(ctx, session_name, after_time=None):
         sim = bars_1m.loc[curr_time + pd.Timedelta(minutes=5):]
         if len(sim) == 0: return None
 
-        # Trail: 50% of initial risk, only after 1R profit, ratchet only
-        trail_dist = risk * 0.5
+        # Trail: 1.0x 5m-ATR, skip entry bar, ratchet only (NT8 parity)
         trail_stop = stop
         exit_price, exit_time, exit_reason = None, None, None
         mae, mfe, hold_bars = 0.0, 0.0, 0
@@ -130,8 +129,8 @@ def run_trend_v3(ctx, session_name, after_time=None):
             if direction == 'LONG':
                 mae = max(mae, entry - row['low'])
                 mfe = max(mfe, row['high'] - entry)
-                if j > 0 and row['high'] - entry >= risk:
-                    new_trail = row['high'] - trail_dist
+                if j > 0:
+                    new_trail = row['high'] - 1.0 * a5
                     if new_trail > trail_stop: trail_stop = new_trail
                 if row['low'] <= trail_stop:
                     exit_price, exit_time, exit_reason = trail_stop, t_bar, 'trail'
@@ -139,8 +138,8 @@ def run_trend_v3(ctx, session_name, after_time=None):
             else:
                 mae = max(mae, row['high'] - entry)
                 mfe = max(mfe, entry - row['low'])
-                if j > 0 and entry - row['low'] >= risk:
-                    new_trail = row['low'] + trail_dist
+                if j > 0:
+                    new_trail = row['low'] + 1.0 * a5
                     if new_trail < trail_stop: trail_stop = new_trail
                 if row['high'] >= trail_stop:
                     exit_price, exit_time, exit_reason = trail_stop, t_bar, 'trail'
