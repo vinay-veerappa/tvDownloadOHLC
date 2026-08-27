@@ -399,3 +399,15 @@ t_compile) with **0 errors**.
   1. Universal overnight time fence logic in RiskManagerBase.cs supporting both daytime and overnight spanning across midnight.
   2. Dynamic session boundaries in IntradayStrategyBase.cs preventing premature midnight resets during active overnight sessions.
   3. Dynamic stabilization fences in IBStrategyBase.cs calculating relative entry buffers (+30m post-range) regardless of session start time.
+
+---
+
+### EXP-IB-016: 122,320 Master In-Sample & Out-of-Sample Trade Dataset Generation (2019-2026)
+* **Date**: 2026-08-26
+* **Objective**: Generate and export an exhaustive, granular trade-by-trade master dataset across all 6 futures assets (NQ1, ES1, YM1, GC1, CL1, RTY1), all 4 sessions (NY_RTH, London_Open, Tokyo_Asia, Globex_Overnight), and all 3 strategy plays for both In-Sample (2019-2023) and Out-of-Sample (2024-2026) periods to power interactive dashboard analytics.
+* **Technology**: Accelerated with (1)$ in-memory date dictionary indexing and Numba JIT fastmath C-level compilation (159.8 seconds for 122,320 trades across 16+ million bars).
+* **Dataset Export Deliverables**:
+  - data/derived/ib_master_trades_2019_2026.csv (29.36 MB, 122,320 rows)
+  - data/derived/ib_master_trades_2019_2026.parquet (8.45 MB, columnar format for DuckDB-WASM web dashboard)
+* **Granular Attributes Exported per Trade**:
+  	rade_id, date, year, month, day_of_week, 	icker, session, sample_type, strategy_play, direction, entry_time, exit_time, hold_duration_min, entry_price, exit_price, stop_price, 	p1_price, 	p2_price, pnl_bps, pnl_points, pnl_dollar_micro, pnl_dollar_mini, is_win, outcome, mfe_bps, mae_bps, mfe_mae_ratio, ib_range_points, ib_range_bps, ib_atr_ratio, ib_mid.
