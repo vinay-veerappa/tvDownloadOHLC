@@ -701,8 +701,8 @@ class BacktestEngine:
         self.contracts_total = 4 if is_es else 2
         self.contracts_per_leg = 2 if is_es else 1
         self.pt_val_per_leg = (5.0 * self.contracts_per_leg) if is_es else (2.0 * self.contracts_per_leg)
-        self.comm_total = self.contracts_total * 1.20
-        self.slippage_ticks = 1
+        self.comm_total = 0  # NT8 parity: $0 commission (prop firm eval uses PropFirmSimulator costs)
+        self.slippage_ticks = 0  # NT8 parity: $0 slippage
 
     def simulate_trade(self, signal: TradeSignal, ctx: DayContext) -> Optional[TradeResult]:
         """Simulate a trade signal on 1m bars with 2-leg management."""

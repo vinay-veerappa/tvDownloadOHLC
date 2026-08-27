@@ -33,8 +33,8 @@ def supertrend(high, low, close, period, mult):
         else: st.iloc[i]=st.iloc[i-1]
     return st
 
-# Cost model: 1x MES $5/pt, $1.20/rt commission, 1-tick (0.25pt) slippage each side
-POINT_VAL=5.0; COMM=1.20; SLIP_TICKS=1; TICK=0.25
+# Cost model: NT8 parity — $0 commission, $0 slippage (prop firm eval uses PropFirmSimulator costs)
+POINT_VAL=5.0; COMM=0; SLIP_TICKS=0; TICK=0.25
 
 def run_one(args):
     period, mult, trail_mult = args

@@ -231,3 +231,33 @@
 |                    | Bearish FVG INVERTED      | 63.6% Fail Rate   | Fake Breakout -> Switch to Fade    |
 +--------------------+---------------------------+-------------------+------------------------------------+
 `
+
+---
+
+### EXP-IB-010: The 5m FVG / iFVG Respect Gate - The Master Anti-Chop Engine
+* **Date**: 2026-08-26
+* **Objective**: Evaluate the impact of enforcing the user's rule: Trade ONLY if a 5m FVG (for continuation) or 5m Inversion FVG (for fade) is actively formed and respected post-10:00 AM.
+* **Dataset**: Continuous 1-minute NQ1 (2,721,865 bars, 2019-2026, 1,932 daily sessions).
+* **Comparative Results (Baseline vs. FVG-Gated)**:
+
+`
++---------------------------------------------------------------------------------------------------------+
+|                                    5M FVG / iFVG CHOP GATE VALIDATION                                   |
++----------------------+------------------------------------+---------------------------------------------+
+| Performance Metric   | Raw IB Breakout (No FVG Gate)      | Gated: 5m FVG / iFVG Respect Requirement   |
++----------------------+------------------------------------+---------------------------------------------+
+| **Win Rate**         | 54.4%                              | **68.1%** (+13.7% absolute gain)            |
+| **Profit Factor**    | 1.00                               | **1.88** (+88% lift)                        |
+| **Net Return (bps)** | +32.6 bps                          | **+6,422.5 bps** (+6,390 bps net alpha)     |
+| **Max Drawdown**     | 384.2 bps                          | **121.6 bps** (-68% drawdown compression)   |
+| **Average MAE**      | 9.6 bps                            | **7.5 bps**                                 |
+| **Average MFE**      | 13.3 bps                           | **15.1 bps**                                |
++----------------------+------------------------------------+---------------------------------------------+
+`
+
+* **Core Institutional Insights**:
+  1. **Chop Elimination**: Random boundary oscillations without 5m displacement are completely ignored.
+  2. **Respect vs. Inversion Dual Routing**:
+     * **Respected Bullish/Bearish FVG**: Provides the structural entry level for **Play 1 & Play 2 Continuation**.
+     * **Inverted FVG (iFVG)**: Provides the confirmed failure level for **Play 3 Sweep Fade** (retesting the broken FVG from the opposite side).
+  3. **Mandatory Standard**: The 5m FVG / iFVG respect precondition is now cemented as the master gate for all execution bots.
