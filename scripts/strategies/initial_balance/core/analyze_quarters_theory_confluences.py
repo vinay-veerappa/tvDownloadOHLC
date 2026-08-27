@@ -132,8 +132,8 @@ def run_quarters_study():
     clean_trades = df_qp[~df_qp['in_hesitation']]
     hesitation_trades = df_qp[df_qp['in_hesitation']]
     
-    print(f'Breakout with Clean Air (> 25 pts from 250-pt Quarter): {len(clean_trades):4d} trades | Win Rate: {(clean_trades[win]).mean()*100:5.1f}%')
-    print(f'Breakout Trapped inside 25-pt Quarter Hesitation Zone:  {len(hesitation_trades):4d} trades | Win Rate: {(hesitation_trades[win]).mean()*100:5.1f}% (⚠️ -14.6% Edge Decay!)')
+    print(f'Breakout with Clean Air (> 25 pts from 250-pt Quarter): {len(clean_trades):4d} trades | Win Rate: {(clean_trades["win"]).mean()*100:5.1f}%')
+    print(f'Breakout Trapped inside 25-pt Quarter Hesitation Zone:  {len(hesitation_trades):4d} trades | Win Rate: {(hesitation_trades["win"]).mean()*100:5.1f}%')
 
 if __name__ == '__main__':
     run_quarters_study()
