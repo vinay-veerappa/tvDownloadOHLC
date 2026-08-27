@@ -417,7 +417,7 @@ def supertrend(high, low, close, period, mult):
 def analyze_st_characteristics(df1, df5, daily_atr, htf_df=None, fvg_df=None, liq_df=None):
     """Study Supertrend signal characteristics and correlate with outcomes."""
     vwap_series = compute_session_vwap(df1)
-    POINT_VAL = 5.0; COMM = 1.20; SLIP = 0.25
+    POINT_VAL = 5.0; COMM = 0; SLIP = 0  # mandatory micros (1xMES), $0 cost (NT8 parity)
     unique_dates = sorted(df1["trade_date"].unique())
     records = []
 

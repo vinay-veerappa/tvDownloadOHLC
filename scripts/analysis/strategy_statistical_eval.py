@@ -197,7 +197,7 @@ def supertrend(high, low, close, period, mult):
 
 def run_supertrend_s09(df1, df5, daily_atr):
     """Run ST(14,2) trail 1.5xATR — S09 best config."""
-    POINT_VAL = 5.0
+    POINT_VAL = 5.0  # 1x MES (mandatory micro for all backtests)
     COMM = 0  # NT8 parity: $0 commission
     SLIP = 0  # NT8 parity: $0 slippage
     unique_dates = sorted(df1["trade_date"].unique())
@@ -608,7 +608,7 @@ def main():
         "# Strategy Statistical Evaluation (ADR-002, 010, 021, 023)",
         f"\n_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_",
         f"\n_Data: ES 09-26 MergeBackAdjusted 5m, 2025-01-01 → 2026-08-21_",
-        f"\n_Engine: 1×MES $5/pt, $0 commission, $0 slippage (NT8 parity)_",
+        f"\n_Engine: 1×MES $5/pt, $0 commission, $0 slippage (NT8 parity, mandatory micros)_",
         "\n---\n",
         "## 1. Summary Metrics\n",
     ]

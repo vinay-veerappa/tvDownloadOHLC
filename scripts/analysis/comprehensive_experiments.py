@@ -266,7 +266,7 @@ def supertrend(high, low, close, period, mult):
 def run_st_variant(df1, df5, daily_atr, atr_regime_filter=False, time_filter=False,
                    htf_skip=False, htf_df=None, trail_mult=1.5):
     """Run Supertrend with optional filters."""
-    POINT_VAL = 5.0; COMM = 1.20; SLIP = 0.25
+    POINT_VAL = 5.0; COMM = 0; SLIP = 0  # mandatory micros (1xMES), $0 cost (NT8 parity)
     unique_dates = sorted(df1["trade_date"].unique())
     trades = []
 

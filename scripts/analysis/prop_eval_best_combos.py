@@ -98,7 +98,7 @@ def main():
     report_lines = [
         "# Prop Firm Evaluation — Best Strategy Combos",
         f"\n_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_",
-        f"\n_Engine: 1xMES $5/pt (2xMES noted), $1.20/rt commission, 1-tick slippage_",
+        f"\n_Engine: 1xMES $5/pt (2xMES noted), $0 commission, $0 slippage (mandatory micros, NT8 parity)_",
         f"\n_MC: 3000 permutations per profile_",
         "\n---\n",
         "## Viability Summary\n",

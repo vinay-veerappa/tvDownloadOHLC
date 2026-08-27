@@ -90,7 +90,7 @@ def run_one(args):
 
 if __name__=="__main__":
     grid=list(itertools.product([7,10,14],[2.0,3.0],[1.5,2.0]))
-    print(f"Supertrend intraday cost-adjusted grid: {len(grid)} arms, 8 workers (1x MES $5/pt $1.20/rt 1-tick slip)")
+    print(f"Supertrend intraday grid: {len(grid)} arms, 8 workers (1x MES $5/pt, $0 comm/slip — NT8 parity)")
     results=Parallel(n_jobs=8, backend="loky", verbose=5)(delayed(run_one)(a) for a in grid)
     df=pd.DataFrame(results).sort_values(["pf","net"],ascending=False)
     print(df.to_string(index=False))

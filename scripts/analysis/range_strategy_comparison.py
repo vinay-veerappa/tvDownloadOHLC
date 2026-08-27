@@ -696,11 +696,12 @@ class BacktestEngine:
         self.tick_size = tick_size
         self.entry_mode = entry_mode  # "limit" | "market" — see RANGE_STRATEGY_BRIDGE §3.
 
-        # Position sizing
+        # Position sizing — MANDATORY MICROS (MES $5/pt, MNQ $2/pt)
+        # 1 micro per leg, 2 total. No full-size ES/NQ for backtests.
         is_es = "ES" in symbol
-        self.contracts_total = 4 if is_es else 2
-        self.contracts_per_leg = 2 if is_es else 1
-        self.pt_val_per_leg = (5.0 * self.contracts_per_leg) if is_es else (2.0 * self.contracts_per_leg)
+        self.contracts_total = 2
+        self.contracts_per_leg = 1
+        self.pt_val_per_leg = 5.0 if is_es else 2.0
         self.comm_total = 0  # NT8 parity: $0 commission (prop firm eval uses PropFirmSimulator costs)
         self.slippage_ticks = 0  # NT8 parity: $0 slippage
 
