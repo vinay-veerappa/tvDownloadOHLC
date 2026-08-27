@@ -149,24 +149,36 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         /// <summary>
         /// Called on session start. Resets range state and calls subclass hook.
-        /// NOTE: RiskManagerBase.OnNewSession is private, so we cannot override it.
-        /// Instead we hook into SetStrategyDefaults/InitializeStrategy lifecycle +
-        /// detect the session change in CheckForSignal via date comparison.
+        /// Universally supports both daytime sessions (NY, London) and overnight sessions (Tokyo, Globex).
         /// </summary>
         private DateTime _lastSessionDate = DateTime.MinValue;
         private void CheckSessionReset(DateTime now)
         {
-            DateTime barDate = now.Date;
-            if (barDate != _lastSessionDate)
+            bool isOvernight = RangeStartHour >= 17 || (SessionEndHour < RangeStartHour);
+            if (!isOvernight)
             {
-                _lastSessionDate = barDate;
-                // Capture prior session close before resetting
-                if (BarsArray[0] != null && BarsArray[0].Count > 1)
-                    priorSessionClose = BarsArray[0].GetClose(BarsArray[0].Count - 2);
-                // Call OnSessionOpenReset BEFORE ResetRangeState so subclasses can
-                // access the previous session's rangeRange (e.g. VCP history roll).
-                OnSessionOpenReset();
-                ResetRangeState();
+                DateTime barDate = now.Date;
+                if (barDate != _lastSessionDate)
+                {
+                    _lastSessionDate = barDate;
+                    if (BarsArray[0] != null && BarsArray[0].Count > 1)
+                        priorSessionClose = BarsArray[0].GetClose(BarsArray[0].Count - 2);
+                    OnSessionOpenReset();
+                    ResetRangeState();
+                }
+            }
+            else
+            {
+                // Overnight session resets when bar enters the RangeStart window
+                DateTime barDate = now.Date;
+                if (now.Hour == RangeStartHour && now.Minute >= RangeStartMinute && barDate != _lastSessionDate)
+                {
+                    _lastSessionDate = barDate;
+                    if (BarsArray[0] != null && BarsArray[0].Count > 1)
+                        priorSessionClose = BarsArray[0].GetClose(BarsArray[0].Count - 2);
+                    OnSessionOpenReset();
+                    ResetRangeState();
+                }
             }
         }
 
@@ -208,10 +220,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             CheckSessionReset(now);  // detect session boundary + reset state
 
             // Update confluence indicators (AVWAP, EMA, break direction) on EVERY bar
-            // — the AVWAP needs to accumulate from 09:30 even during the IB window.
             UpdateConfluenceIndicatorsHook();
 
-            DateTime rangeStart = new DateTime(now.Year, now.Month, now.Day, RangeStartHour, RangeStartMinute, 0);
+            bool isOvernight = RangeStartHour >= 17 || (SessionEndHour < RangeStartHour);
+            DateTime rangeStart;
+            if (isOvernight && now.Hour < RangeStartHour)
+            {
+                // Morning part (post-midnight) of overnight session
+                rangeStart = new DateTime(now.Year, now.Month, now.Day, RangeStartHour, RangeStartMinute, 0).AddDays(-1);
+            }
+            else
+            {
+                rangeStart = new DateTime(now.Year, now.Month, now.Day, RangeStartHour, RangeStartMinute, 0);
+            }
             DateTime rangeEnd = rangeStart.AddMinutes(RangeDurationMin);
 
             if (!rangeComplete)
@@ -223,7 +244,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 else if (now >= rangeEnd)
                 {
                     FinalizeRange();
-                    Log($"[DIAG] IB finalized: high={rangeHigh} low={rangeLow} range={rangeRange} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir}", LogLevel.Information);
+                    Log($"[DIAG] Range finalized: high={rangeHigh} low={rangeLow} range={rangeRange} closePos={rangeClosePosition} bias={biasFirstreach} predicted={predictedDir}", LogLevel.Information);
                 }
                 return 0;
             }

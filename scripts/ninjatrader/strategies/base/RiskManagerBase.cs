@@ -302,9 +302,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (barDate != currentTradingDate)
                 OnNewSession(barDate);
 
-            // ── End-of-day flatten ──
+            // ── End-of-day / End-of-session flatten ──
             int currentTime = ToTime(Times[0][0]);
-            if (currentTime >= FlattenBy * 100 && Position.MarketPosition != MarketPosition.Flat)
+            bool isOvernightSession = EarliestEntry > LatestEntry || EarliestEntry >= 1700;
+            bool shouldFlatten;
+            if (!isOvernightSession)
+            {
+                shouldFlatten = (currentTime >= FlattenBy * 100);
+            }
+            else
+            {
+                // Overnight session (e.g. FlattenBy = 155 for 01:55 AM, EarliestEntry = 1930)
+                // Flatten when time is past FlattenBy in the post-midnight morning and before new session open
+                shouldFlatten = (currentTime >= FlattenBy * 100 && currentTime < EarliestEntry * 100);
+            }
+
+            if (shouldFlatten && Position.MarketPosition != MarketPosition.Flat)
             {
                 FlattenPosition("Flatten by time");
                 return;
@@ -482,10 +495,23 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             // Time fence — always enforced locally (strategy-specific windows)
-            if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
+            // Supports both daytime (Earliest <= Latest) and overnight (Earliest > Latest)
+            if (EarliestEntry <= LatestEntry)
             {
-                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL timeFence: currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} bar={CurrentBar}", LogLevel.Information);
-                return false;
+                if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL timeFence: currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} bar={CurrentBar}", LogLevel.Information);
+                    return false;
+                }
+            }
+            else
+            {
+                // Overnight session (e.g. EarliestEntry = 1930, LatestEntry = 130)
+                if (currentTime < EarliestEntry * 100 && currentTime > LatestEntry * 100)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL timeFence: currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} bar={CurrentBar}", LogLevel.Information);
+                    return false;
+                }
             }
 
             // NOTE: The GetCurrentATR()>0 sanity gate was REMOVED from here.

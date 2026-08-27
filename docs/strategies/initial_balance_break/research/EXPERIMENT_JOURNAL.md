@@ -369,3 +369,33 @@ t_compile) with **0 errors**.
 * **Core Session Dynamics Discovered**:
   1. **Cash Hours (NY & London)**: Breakouts (Play 1) and Fib Retests (Play 2) thrive during NY RTH (PF 1.30, +2,661 bps) and London Open (PF 1.25, +2,300 bps) driven by institutional volume expansion.
   2. **Overnight Hours (Tokyo & Globex)**: Fades (Play 3) achieve extraordinary win rates (**84.2% in Tokyo, 80.9% in Globex**) and Profit Factors (**9.53 in Tokyo, 7.49 in Globex**) with Max Drawdowns suppressed to 51.9 bps due to false opening wick sweeps.
+
+---
+
+### EXP-IB-015: Multi-Session NinjaTrader 8 Strategy Analyzer Parity Verification
+* **Date**: 2026-08-26
+* **Objective**: Verify that the NinjaTrader 8 C# Strategy Suite (IBBreakoutBot, IBRetestBot, IBFadeBot, IBStrategyBase, IntradayStrategyBase, RiskManagerBase) supports multi-session execution across international cash sessions and overnight windows (London Open, Tokyo / Asia Open, Globex Reopen).
+* **Dataset**: NinjaTrader 8 Strategy Analyzer on MNQ 09-26 and ES 09-26 (2026-06-01 to 2026-08-25).
+* **NinjaTrader 8 Verification Results**:
+
+`
++-------------------------------------------------------------------------------------------------------------------------------+
+|                                    NINJATRADER 8 MULTI-SESSION VERIFICATION RESULTS                                           |
++-------------------+--------------------+---------+--------+-------------------+--------------+--------------------------------+
+| Session           | Strategy           | Entries | WR %   | Net Profit        | Profit Factor| Execution Notes                |
++-------------------+--------------------+---------+--------+-------------------+--------------+--------------------------------+
+| **NY RTH Open**   | IBBreakoutBot    | 29      | 48.3%  | -.00          | 0.73         | Pack Trading brackets verified |
+| *(09:30-10:00 ET)*| IBFadeBot        | 3       | 66.7%  | +.50          | 1.41         | 2-Leg target scaling verified  |
++-------------------+--------------------+---------+--------+-------------------+--------------+--------------------------------+
+| **London Open**   | IBBreakoutBot    | 61      | 49.2%  | -.00           | 0.99         | 122 trades, 50 TP1 + TP2 hits  |
+| *(03:00-03:30 ET)*|                    |         |        |                   |              | First entry at 04:02 ET        |
++-------------------+--------------------+---------+--------+-------------------+--------------+--------------------------------+
+| **Tokyo / Asia**  | IBBreakoutBot    | 44      | **59.1%**| **+.50**     | **1.34**     | 88 trades, 48 winners          |
+| *(19:30-20:00 ET)*|                    |         |        |                   |              | First entry at 20:31 ET        |
++-------------------+--------------------+---------+--------+-------------------+--------------+--------------------------------+
+`
+
+* **Core Architectural Enhancements Verified**:
+  1. Universal overnight time fence logic in RiskManagerBase.cs supporting both daytime and overnight spanning across midnight.
+  2. Dynamic session boundaries in IntradayStrategyBase.cs preventing premature midnight resets during active overnight sessions.
+  3. Dynamic stabilization fences in IBStrategyBase.cs calculating relative entry buffers (+30m post-range) regardless of session start time.

@@ -563,13 +563,27 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         /// <summary>
-        /// Validates temporal and macro gates (10:30 stabilization fence, lunch moratorium, and R1 double sweep lockout).
+        /// Validates temporal and macro gates (stabilization fence, lunch moratorium, and R1 double sweep lockout).
+        /// Dynamically adjusts for both NY RTH and international/overnight sessions (London, Tokyo, Globex).
         /// </summary>
         public bool IsContinuationTimeAllowed()
         {
-            int nowNum = ToTime(Time[0]);
-            if (nowNum < EarliestContinuationTime * 100) return false;
-            if (EnableLunchMoratorium && nowNum >= 113000 && nowNum <= 133000) return false;
+            DateTime now = Time[0];
+            int nowNum = ToTime(now);
+
+            // Dynamic stabilization fence: if RangeStartHour != 9, use relative +30m post range completion
+            if (RangeStartHour != 9)
+            {
+                if (rangeCompleteTime > DateTime.MinValue && now < rangeCompleteTime.AddMinutes(30))
+                    return false;
+            }
+            else
+            {
+                if (nowNum < EarliestContinuationTime * 100) return false;
+            }
+
+            // Lunch Moratorium only applies to NY RTH session (11:30 - 13:30 ET)
+            if (EnableLunchMoratorium && RangeStartHour == 9 && nowNum >= 113000 && nowNum <= 133000) return false;
             if (Use0900SweepGate && isDoubleSweepWhipsawDay) return false;
             return true;
         }
