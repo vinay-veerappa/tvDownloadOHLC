@@ -25,6 +25,7 @@ Standard Operating Procedures (SOPs) and technical details for data ingestion.
 
 - **[OVERVIEW.md](pipeline/OVERVIEW.md)**: **Start Here**. The Master Pipeline document. Describes the end-to-end flow, script reference, and key processes.
 - **[SOURCES.md](pipeline/SOURCES.md)**: Detailed specifications for supported data sources (TradingView, NinjaTrader, BacktestMarket) and their formats.
+- **[VOLATILITY_INDICES.md](pipeline/VOLATILITY_INDICES.md)**: CBOE volatility index (VIX family) data sources — Cboe CDN flat CSVs, source matrix, puller scripts.
 - **[INSTRUCTIONS.md](pipeline/INSTRUCTIONS.md)**: Specific processing instructions for edge cases.
 - **[INTEGRITY.md](pipeline/INTEGRITY.md)**: Guidelines for maintaining data integrity.
 

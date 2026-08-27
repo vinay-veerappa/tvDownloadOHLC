@@ -14,6 +14,9 @@ This document describes the various data sources used by the trading platform an
 | Selenium Downloader | Unix timestamps | UTC | `scripts/convert_all_csv.py` |
 | NinjaTrader Export | Local (Shifted) | Local -> EST | `scripts/data_processing/import_ninjatrader.py` |
 | **yfinance (Yahoo Finance)** | Daily/Weekly OHLC | UTC | `stream_chart.py` (automatic) |
+| **Cboe CDN** | Daily OHLC (vol indices) | UTC | `scripts/market_data/fetch_cboe_indices.py` |
+
+> **Volatility indices (VIX family)**: see [VOLATILITY_INDICES.md](VOLATILITY_INDICES.md) — Cboe serves flat CSVs off their CDN (no auth); only VOLI is not on Cboe's CDN.
 
 ---
 

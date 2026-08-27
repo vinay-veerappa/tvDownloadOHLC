@@ -119,7 +119,7 @@ def get_live_files(symbol):
     }
 
 def get_watchlist_symbols():
-    defaults = ["/NQ", "/ES", "/RTY", "/YM", "/CL", "/GC", "QQQ", "SPY", "SPX", "GOOGL", "AAPL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA", "VVIX", "VIX"]
+    defaults = ["/NQ", "/ES", "/RTY", "/YM", "/CL", "/GC", "QQQ", "SPY", "SPX", "GOOGL", "AAPL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA", "VVIX", "VIX", "VXN", "OVX", "RVX", "GVZ", "VXSLV", "VXD", "VOLI", "VIX1D", "VIX9D"]
     try:
         if not os.path.exists(DB_PATH):
             return defaults
@@ -322,7 +322,10 @@ def detect_gaps(candles, symbol, threshold_minutes=1):
 
 def get_schwab_api_symbol(symbol: str) -> str:
     """Prepend '$' for cash indices for Schwab REST API requests."""
-    if symbol in ["SPX", "VIX", "VVIX", "NDX", "RUT", "DJX"]:
+    if symbol in [
+        "SPX", "VIX", "VVIX", "NDX", "RUT", "DJX",
+        "VXN", "OVX", "RVX", "GVZ", "VXSLV", "VXD", "VOLI", "VIX1D", "VIX9D",
+    ]:
         return "$" + symbol
     return symbol
 
@@ -821,6 +824,8 @@ async def update_historical_files(symbol):
     symbol_map = {
         "/ES": "ES1", "/NQ": "NQ1", "/YM": "YM1", "/RTY": "RTY1",
         "/CL": "CL1", "/GC": "GC1","VVIX":"VVIX","VIX":"VIX","SPX":"SPX",
+        "VXN":"VXN","OVX":"OVX","RVX":"RVX","GVZ":"GVZ","VXSLV":"VXSLV",
+        "VXD":"VXD","VOLI":"VOLI","VIX1D":"VIX1D","VIX9D":"VIX9D",
         "SPY":"SPY","QQQ":"QQQ","TSLA":"TSLA","NVDA":"NVDA","MSFT":"MSFT","AAPL":"AAPL","AMZN":"AMZN","META":"META"
     }
     ticker = symbol_map.get(symbol)
