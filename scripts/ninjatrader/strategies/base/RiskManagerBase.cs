@@ -24,7 +24,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         BreakevenTrail,
         FixedTarget,
         BaseHits,
-        SupertrendTrail
+        SupertrendTrail,
+        FixedTP1TP2   // Python parity: TP1=custom (BB mid, scale 50%), TP2=custom (opp band), EOD flatten
     }
 
     public abstract class RiskManagerBase : Strategy
@@ -640,6 +641,64 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     SetProfitTarget(signalName + "_Runner", CalculationMode.Price, effectiveEntry - runnerPts);
                 }
             }
+            else if (TradePolicy == TradePolicyType.FixedTP1TP2)
+            {
+                // Python parity: TP1 = GetCustomProfitTarget (BB middle), TP2 = GetCustomTP2 (opposite band)
+                // 2 contracts: leg1 scales 50% at TP1, leg2 runs to TP2 or EOD
+                double tp1 = GetCustomProfitTarget(direction == "Long" ? 1 : -1, effectiveEntry, stopDist);
+                double tp2 = GetCustomTP2(direction == "Long" ? 1 : -1, effectiveEntry);
+
+                if (double.IsNaN(tp1) || double.IsNaN(tp2))
+                {
+                    // Fallback to single contract if custom targets not provided
+                    if (direction == "Long")
+                    {
+                        EnterLong(1, signalName);
+                        SetStopLoss(signalName, CalculationMode.Price, stop, false);
+                    }
+                    else
+                    {
+                        EnterShort(1, signalName);
+                        SetStopLoss(signalName, CalculationMode.Price, stop, false);
+                    }
+                }
+                else if (direction == "Long")
+                {
+                    if (isLimit)
+                    {
+                        EnterLongLimit(1, customLimit, signalName + "_Leg1");
+                        EnterLongLimit(1, customLimit, signalName + "_Leg2");
+                    }
+                    else
+                    {
+                        EnterLong(1, signalName + "_Leg1");
+                        EnterLong(1, signalName + "_Leg2");
+                    }
+                    SetStopLoss(signalName + "_Leg1", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg1", CalculationMode.Price, tp1);
+
+                    SetStopLoss(signalName + "_Leg2", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg2", CalculationMode.Price, tp2);
+                }
+                else
+                {
+                    if (isLimit)
+                    {
+                        EnterShortLimit(1, customLimit, signalName + "_Leg1");
+                        EnterShortLimit(1, customLimit, signalName + "_Leg2");
+                    }
+                    else
+                    {
+                        EnterShort(1, signalName + "_Leg1");
+                        EnterShort(1, signalName + "_Leg2");
+                    }
+                    SetStopLoss(signalName + "_Leg1", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg1", CalculationMode.Price, tp1);
+
+                    SetStopLoss(signalName + "_Leg2", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg2", CalculationMode.Price, tp2);
+                }
+            }
             else if (direction == "Long")
             {
                 EnterLong(1, signalName);
@@ -749,6 +808,27 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 ManageBaseHits(currentPrice);
             else if (TradePolicy == TradePolicyType.SupertrendTrail)
                 ManageSupertrendTrail(currentPrice);
+            else if (TradePolicy == TradePolicyType.FixedTP1TP2)
+                ManageFixedTP1TP2(currentPrice);
+        }
+
+        private void ManageFixedTP1TP2(double currentPrice)
+        {
+            // Python parity: after TP1 (leg1) hits, move leg2 stop to breakeven.
+            // NT8 handles the profit target fills automatically via SetProfitTarget.
+            // We only need to move the runner (leg2) stop to BE after TP1 fills.
+            string runnerSignal = (!string.IsNullOrEmpty(entrySignalName) ? entrySignalName : GetSignalName(tradeDirection)) + "_Leg2";
+
+            if (!breakevenMoved)
+            {
+                // Check if leg1 has been filled (position reduced from 2 to 1)
+                if (Position.MarketPosition != MarketPosition.Flat && Position.Quantity == 1)
+                {
+                    breakevenMoved = true;
+                    currentStopPrice = tradeDirection == "Long" ? entryPrice : entryPrice;
+                    SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                }
+            }
         }
 
         private void ManageCoverTheQueen(double currentPrice)
@@ -1113,6 +1193,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         protected virtual double GetCustomProfitTarget(int signal, double entryPrice, double stopDist)
+        {
+            return double.NaN;
+        }
+
+        /// <summary>
+        /// Second target (runner) for FixedTP1TP2 policy.
+        /// BBMRReversionBot returns the opposite BB band here.
+        /// </summary>
+        protected virtual double GetCustomTP2(int signal, double entryPrice)
         {
             return double.NaN;
         }

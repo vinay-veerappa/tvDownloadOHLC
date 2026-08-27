@@ -149,7 +149,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Risk — DISABLED for Python-parity validation (Python sim has none)
             StopAtrMult = 1.5;
             AtrPeriod = 14;
-            TradePolicy = TradePolicyType.CoverTheQueen;
+            TradePolicy = TradePolicyType.FixedTP1TP2;  // Python parity: TP1=BB mid, TP2=opp band
             BreakevenTriggerR = 1.0;
             TrailAtrMult = 1.0;
 
@@ -526,8 +526,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetCustomProfitTarget(int signal, double entryPrice, double stopDist)
         {
+            // TP1 = BB middle band (matches Python)
             double mid = bollinger.Middle[0];
             return mid;
+        }
+
+        protected override double GetCustomTP2(int signal, double entryPrice)
+        {
+            // TP2 = opposite BB band (matches Python)
+            if (signal == 1)
+                return bollinger.Upper[0];  // LONG runner target = upper band
+            else
+                return bollinger.Lower[0];  // SHORT runner target = lower band
         }
 
         // diag flush is per-bar; no OnTermination needed — file closed on process exit
