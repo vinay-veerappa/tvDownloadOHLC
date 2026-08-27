@@ -164,3 +164,156 @@ Before arming an automated trade, compute the **Composite Confluence Score (S)**
 * **Score >= 8 / 10**: **Full Position Size (100% Pack Trading: 50% Queen + 50% Runner)**.
 * **Score 6--7 / 10**: **Half Position Size (50% Sizing)**.
 * **Score < 6 / 10**: **NO TRADE / CASH**.
+
+---
+
+## 8. Indicator & Signal Library Inventory
+
+Every indicator, RSI variant, and signal engine built and tested in this repo. Each entry lists what it is, where it lives, and its empirical performance where measured.
+
+### 8.1 RSI Variants (tested on BB mean reversion, ES 5m)
+
+All variants return a 0-100 series and are drop-in replacements for Wilder RSI in the BB strategy. Empirical results from `docs/research/COMPREHENSIVE_EXPERIMENTS.md` (ES 09-26 5m, 2025-01-01 → 2026-08-21, 4×MES, $0 cost).
+
+| Variant | Mechanism | Source | BB PF | BB WR | BB Net | Verdict |
+| :--- | :--- | :--- | :---: | :---: | :---: | :--- |
+| **Wilder RSI (33/67)** | Fixed 14-period, fixed thresholds | `range_strategy_comparison.py:_wilder_rsi` | 1.12 | 48.0% | $+109 | Baseline — low frequency (25 trades) |
+| **Wilder RSI + 2-bar hook** | Fixed 14-period, requires 2-bar confirmation (prior bar at band + RSI extreme, current bar closes back inside) | NT8 `BBMRReversionBot` + Python `BBRsiMeanReversionStrategy` | 1.14 | 54.2% | $+240 | **Doubles trades (25→48)**, improves WR |
+| **Wilder RSI SHORT-only** | Drops LONG signals entirely | `comprehensive_experiments.py` | **2.12** | 64.3% | $+420 | **Best single-side config** — short regime bias in ES |
+| **Adaptive RSI Zones** | Logit transform + adaptive thresholds (tanh-based zones that widen in vol, tighten in squeeze) | `libs_py/adaptive_rsi.py` + NT8 `AdaptiveRSIZones.cs` | 1.05 | 46.7% | $+34 | Fewer signals (15), no edge over Wilder |
+| **Adaptive RSI (relaxed)** | Same but with relaxed zone thresholds | `adaptive_rsi.py` | 0.87 | 45.2% | $-160 | Too many false signals (31 trades) |
+| **Chande DMI** | Variable lookback via volatility index (TD = 14/VI, clipped 5-30) | `libs_py/adaptive_rsi_variants.py:chande_dmi_rsi` | 0.28 | 33.3% | $-501 | **Worst variant** — terrible for BB |
+| **Kaufman ER RSI** | Efficiency-ratio scaled period (14 in trends → 28 in chop) + adaptive alpha | `libs_py/adaptive_rsi_variants.py:kaufman_er_rsi` | **1.90** | 56.2% | $+450 | **Best RSI for BB** — adapts to regime |
+| **Kaufman ER + 2-bar hook** | Same + 2-bar confirmation | NT8 `BBMRReversionBot` (UseKaufmanErRsi=true) | **1.81** | 60.7% | $+652 | **Best overall BB config** (Python) |
+| **Kaufman ER SHORT-only** | Drops LONG | `comprehensive_experiments.py` | **2.12** | 63.6% | $+389 | Tied with Wilder SHORT-only |
+| **Ehlers Cycle RSI** | Dominant cycle via autocorrelation periodogram, RSI length = half cycle | `libs_py/adaptive_rsi_variants.py:ehlers_cycle_rsi` | 2.03 | 60.0% | $+296 | High PF but only 10 trades — low sample |
+| **Connors RSI** | Composite: RSI(3) + RSI(streak,2) + percent-rank(close,100) / 3 | `libs_py/adaptive_rsi_variants.py:connors_rsi` | 0.39 | 50.0% | $-208 | **Fails for BB** — too few trades (6) |
+
+**Key takeaway**: Kaufman ER RSI with 2-bar hook is the winning BB config. Wilder RSI SHORT-only is a strong alternative. Chande DMI and Connors RSI are dead weight for mean reversion.
+
+### 8.2 Trend-Following Indicators
+
+#### Supertrend (ST)
+* **Formula**: ATR-based trailing band. Upper = (high+low)/2 + mult×ATR, Lower = (high+low)/2 - mult×ATR. Flip on close beyond band.
+* **Source**: NT8 `SupertrendIndicator.cs` + Python `supertrend_intraday_cost.py`
+* **Default params**: period=14, multiplier=2.0 (ATR uses crude `(MAX-MIN)/14` to match NT8)
+* **Trail policy**: `SupertrendTrail` — ratchet stop on High/Low × trail_mult×ATR, skip entry bar (`trailFirstBar` flag)
+* **Empirical results** (ES 5m, 2025, 1×ES):
+
+| Config | Trades | WR | PF | Net | Avg R |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| ST baseline (14,2) trail 1.5 | 762 | 38.3% | 1.50 | $+1,876 | +0.29 |
+| + ATR regime filter (Q4 only) | 353 | 40.5% | 1.56 | $+1,059 | +0.38 |
+| + Time filter (skip 14:00+) | 478 | 42.3% | 1.80 | $+1,958 | +0.46 |
+| + ATR + Time | 250 | 42.0% | 1.79 | $+1,046 | +0.53 |
+| + ATR + Time + 1.0×trail | 250 | **55.6%** | **3.37** | $+1,844 | +0.56 |
+
+**Key takeaway**: ATR regime + time filter (LatestEntry=1359) + 1.0×ATR trail is the winning ST config (PF 3.37). FVG/HTF confluence HURTS Supertrend.
+
+#### HalfTrend
+* **Formula**: ATR-based trend with amplitude filter. Similar to Supertrend but uses a half-cycle detection to avoid whipsaw.
+* **Source**: `docs/research/SUPERTREND_HALFTREND.md`
+* **Status**: Evaluated, Supertrend preferred for simplicity and parity.
+
+### 8.3 Bollinger Band Configurations
+
+* **Source**: NT8 `BBMRReversionBot.cs` + Python `BBRsiMeanReversionStrategy`
+* **Default**: BB(20, 2.0σ) on 5m close, ADX(14) < 25 gate
+* **Stop**: min(band, close) - 1.5×ATR_5m, floored at entry - 1.0×ATR_5m
+* **TP1**: BB middle band (SMA 20) — scale 50%
+* **TP2**: Opposite BB band — runner (stop to BE after TP1)
+* **Policy**: `FixedTP1TP2` (Python parity)
+* **Session**: NY_MIDDAY + NY_PM (11:30-16:00 ET), one trade per session
+* **Filters tested**: ADX gate, squeeze-only (bandwidth percentile), IB compression, MACD histogram, Kaufman ER RSI, 2-bar hook, SHORT-only
+
+### 8.4 VWAP & Volume Indicators
+
+| Indicator | Description | Source | NT8 | Pine | Python |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| **RedTailAutoVWAP** | Session-anchored VWAP with std-dev bands | `indicators/redtail/RedTailAutoVWAP.cs` | ✅ | — | — |
+| **RedTailSwingAnchoredVWAP** | Swing-point anchored VWAP (from major pivot) | `redtail/RedTailSwingAnchoredVWAP.cs` | ✅ | — | — |
+| **RedTailVWAPFibBands** | VWAP with Fibonacci extension bands | `redtail/RedTailVWAPFibBands.cs` | ✅ | — | — |
+| **VWAPSMIHybrid** | VWAP + Stochastic Momentum Index hybrid | `vinay/VWAPSMIHybrid.cs` | ✅ | ✅ | — |
+| **VWAPReclaimIndicator** | Price reclaim of VWAP after displacement | `vwap_reclaim/VWAPReclaimIndicator.cs` | ✅ | — | — |
+| **RedTailVolumeProfile** | Volume profile (POC, VAH, VAL, nodes) | `redtail/RedTailVolumeProfile.cs` | ✅ | — | — |
+| **RedTailVolume** | Cumulative delta + volume spikes | `redtail/RedTailVolume.cs` | ✅ | — | — |
+| **RedTailFRVP** | Footprint-style relative volume profile | `redtail/RedTailFRVP.cs` | ✅ | — | — |
+| **orderflow_bands** | Orderflow-based dynamic bands | `indicators-pine/orderflow_bands/` | — | ✅ | — |
+
+### 8.5 Market Structure & Level Indicators
+
+| Indicator | Description | Source |
+| :--- | :--- | :--- |
+| **RedTailMarketStructure** | BOS/CHoCH/MSS detection (swing-based structure) | `redtail/RedTailMarketStructure.cs` |
+| **RedTailMarketStructureCompanion** | Companion panel for structure overlays | `redtail/RedTailMarketStructureCompanion.cs` |
+| **RedTailKeyLevels** | Auto-detect PDH/PDL/IB High/Low/session levels | `redtail/RedTailKeyLevels.cs` |
+| **RedTailLVNHunter** | Low-Volume-Node hunter (liquidity voids) | `redtail/RedTailLVNHunter.cs` |
+| **SessionStatisticalLevels** | Statistical session high/low levels | `redtail/SessionStatisticalLevels.cs` |
+| **SessionOpeningBarRange** | Opening Range (OR) with session presets | `redtail/SessionOpeningBarRange.cs` |
+| **SessionRanges** | Configurable session range boxes (Asia/London/NY/IB) | `vinay/SessionRanges.cs` |
+| **SessionOpensEngine** | Session open times + overnight levels | `vinay/SessionOpensEngine.cs` |
+| **LiquidityLevels** | BSL/SSL sweep detection + liquidity catalog | `vinay/LiquidityLevels.cs` |
+| **DailyNYLevels** | PDH/PDL/PWH/PWL + Midnight Open + midnight anchors | Pine `DailyNYLevelsAnalytics.pine` |
+| **RangeProbabilityIndicator** | Probability look-up-table for range targets | `range_probability/RangeProbabilityIndicator.cs` |
+
+### 8.6 ICT / SMC Indicators
+
+| Indicator | Description | Source |
+| :--- | :--- | :--- |
+| **ICTFVGCISDIndicator** | Fair Value Gap + CISD (Change-in-Structure-Delivery) detection | `ifvg_cisd/ICTFVGCISDIndicator.cs` + Pine `IFVG_CISD_MTF_Indicator.pine` |
+| **FailedAuctionIndicator** | Failed auction detection (Tape Reading) | `failed_auction/FailedAuctionIndicator.cs` |
+| **ProfilerIndicator** | Session profiler (Asia/London/NY status, IB probabilities, broken logic) | Pine `profiler/ProfilerIndicator.pine` |
+| **PriceModelIndicator** | Institutional price model overlay (order blocks, MSS, liquidity) | Pine `profiler/PriceModelIndicator.pine` |
+| **Pre-computed ICT features** | FVG, HTF levels (PDH/PDL/PWH/PWL), liquidity sweeps | `data/derived/ICT/ES1_{imbalance_5m,htf_levels,liquidity_5m}.parquet` |
+
+### 8.7 Oscillators & Momentum
+
+| Indicator | Description | Source |
+| :--- | :--- | :--- |
+| **AdaptiveRSIZones** | Adaptive RSI with logit-transform + dynamic zones (tanh-based) | `vinay/AdaptiveRSIZones.cs` + Python `libs_py/adaptive_rsi.py` |
+| **KeltnerChannelSignals** | Keltner Channel (EMA + ATR) with breakout signals | `keltner_channel/KeltnerChannelSignals.cs` + Pine `KeltnerChannelSignals.pine` |
+| **RedTailEMACloud** | EMA cloud (fast/slow) with trend ribbon | `redtail/RedTailEMACloud.cs` |
+| **EMAPullbackIndicator** | EMA pullback entry detection (8/21/55 EMA stack) | `ema_pullback/EMAPullbackIndicator.cs` |
+| **MACD** | Standard MACD (12/26/9) — used as BB gate (histogram direction) | Python `vwap_fade.py:_macd` |
+| **ADX** | Wilder ADX (14) — regime gate for BB (skip if ≥25) | Python `range_strategy_comparison.py:_adx` |
+
+### 8.8 Strat / Pattern Indicators
+
+| Indicator | Description | Source |
+| :--- | :--- | :--- |
+| **TheStratClassifier** | TheStrat candle classification (1-2-3 inside/outside) | `the_strat/TheStratClassifier.cs` |
+| **TheStratFTFCHud** | Full-Timeframe-continuation HUD for TheStrat | `the_strat/TheStratFTFCHud.cs` |
+| **CandleScience** | 3-candle pattern statistical probabilities (Filter-then-Compute) | Pine `CandleScience/candle_science_v17_5.pine` |
+| **DailyClassification** | R1/R2/DWP/DNP daily classification + OR logic hierarchy | Pine `DailyClassification/daily_classification_v2.pine` |
+| **HTF EMA Analysis** | Higher-timeframe EMA stack analysis (session-by-session) | Pine `htf_ema_analysis/HTF_EMA_Analysis.pine` + Python `wargaming/htf_ema_analysis.py` |
+| **ProbabilityMap** | Session-based probability map for directional bias | Pine `ProbabilityMap/ProbabilityMap.pine` |
+| **MagicHour** | 7-strategy magic-hour session analysis | Pine `magic_hour_analysis/` |
+
+### 8.9 Options & Dealer-Level Indicators
+
+| Indicator | Description | Source |
+| :--- | :--- | :--- |
+| **ExpectedMove (EM) Walls** | Options-implied ±1σ expected move per expiration (0DTE-weekly) | Pine `options/ROWExpectedMove_v3.pine` + TOS RTD real-time |
+| **DealerLevels** | Gamma/GEX dealer levels (charm, vanna exposure) | Pine `options/DealerLevels.pine` + `MacroDealerLevels.pine` |
+| **ExecutionHUD** | Real-time execution HUD (Greeks, delta, gamma exposure) | Pine `options/ExecutionHUD.pine` |
+| **DailyOC levels** | Daily Options-Cross levels (max pain, gamma flip) | Pine `options/Daily_OC_levels.pine` |
+| **ExpectedVolatility** | Implied volatility regime + term structure | Pine `options/ExpectedVolatality.pine` |
+
+### 8.10 Strategies (Built & Tested)
+
+| Strategy | Type | Description | NT8 | Python | Validated |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| **BBMRReversionBot** | Mean reversion | BB(20,2) + RSI + ADX gate, FixedTP1TP2 exit | ✅ | ✅ | ✅ (parity) |
+| **STTrendBot** | Trend following | Supertrend(14,2) + ATR regime + time filter, 1.0×trail | ✅ | ✅ | ✅ (parity) |
+| **Bandits8020Bot** | Mean reversion | 80/20 bandit (prior IB sweep + BB confirmation) | ✅ | — | — |
+| **IBBreakoutBot** | Breakout | IB High/Low breakout continuation | ✅ | — | — |
+| **IBRetestBot** | Breakout | IB level retest entry | ✅ | — | — |
+| **IBFadeBot** | Mean reversion | IB extreme fade (reject back inside) | ✅ | — | — |
+| **ICTFVGCISDBot** | ICT | FVG + CISD confluence entry | ✅ | — | — |
+| **FailedAuctionBot** | Tape reading | Failed auction reversal entry | ✅ | — | — |
+| **VWAPReclaimBot** | Mean reversion | VWAP reclaim after displacement | ✅ | — | — |
+| **KeltnerChannelBot** | Breakout | Keltner Channel breakout with signals | ✅ | — | — |
+| **EMAPullbackBot** | Trend following | EMA pullback entry (8/21/55 stack) | ✅ | — | — |
+| **Strat212ContinuationBot** | Pattern | TheStrat 2-1-2 continuation | ✅ | — | — |
+| **Strat22RevStratBot** | Pattern | TheStrat 2-2 reversal | ✅ | — | — |
+| **RangeProbabilityStrategy** | Statistical | Range-target probability LUT | ✅ | — | — |
