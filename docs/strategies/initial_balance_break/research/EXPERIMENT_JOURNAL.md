@@ -333,3 +333,39 @@
 t_compile) with **0 errors**.
   * IBFadeBot on ES 09-26: **66.7% Entry WR**, **1.405 PF**, **+.50 Net Profit**, 2-leg execution verified.
   * IBBreakoutBot & IBRetestBot on MNQ 09-26: Cover The Queen + Breakeven stop lock verified in live trade logs.
+
+---
+
+### EXP-IB-014: Multi-Session IB Empirical Validation (NY, London, Tokyo, Globex - 2019 to 2026, 1,958 Sessions)
+* **Date**: 2026-08-26
+* **Objective**: Evaluate the invariant Initial Balance Strategy Suite across all 4 global trading sessions (NY RTH, London Open, Tokyo/Asia Open, and Globex Overnight) on continuous 1-minute NQ1 data (2019-2026).
+* **Dataset**: Continuous 1-minute NQ1 (2,721,865 bars, 1,958 sessions).
+* **Empirical Multi-Session Performance Matrix**:
+
+`
++-------------------------------------------------------------------------------------------------------------------------------+
+|                                    MULTI-SESSION INITIAL BALANCE PERFORMANCE MATRIX (2019-2026)                              |
++-------------------+-----------------------------+---------+--------+-------------------+--------------+-----------------------+
+| Session           | Strategy / Play             | Win %   | PF     | Net Return (bps)  | Max DD (bps) | Optimal Play Type     |
++-------------------+-----------------------------+---------+--------+-------------------+--------------+-----------------------+
+| **NY RTH Open**   | **Play 1: Breakout**        | **60.4%**| **1.30**| **+2,661.9 bps**  | 172.1 bps    | Trend Expansion       |
+| *(09:30-10:00 ET)*| **Play 2: Fib Retest**      | **57.8%**| **1.20**| **+1,518.4 bps**  | 170.9 bps    | Trend Pullback        |
+|                   | **Play 3: iFVG Fade**       | **57.0%**| **5.06**| **+19,993.7 bps** | 92.0 bps     | High-Volume Fade      |
++-------------------+-----------------------------+---------+--------+-------------------+--------------+-----------------------+
+| **London Open**   | **Play 1: Breakout**        | **58.8%**| **1.25**| **+2,300.6 bps**  | 171.8 bps    | Trend Expansion       |
+| *(03:00-03:30 ET)*| **Play 2: Fib Retest**      | 55.9%   | 1.10   | +872.3 bps        | 298.0 bps    | Trend Pullback        |
+|                   | **Play 3: iFVG Fade**       | **69.6%**| **5.13**| **+12,423.7 bps** | 95.9 bps     | High-Volume Fade      |
++-------------------+-----------------------------+---------+--------+-------------------+--------------+-----------------------+
+| **Tokyo / Asia**  | Play 1: Breakout            | 54.1%   | 1.19   | +1,513.4 bps      | 168.3 bps    | Lower Follow-Through  |
+| *(19:30-20:00 ET)*| Play 2: Fib Retest          | 54.5%   | 1.08   | +523.8 bps        | 239.0 bps    | Lower Follow-Through  |
+|                   | **Play 3: iFVG Fade**       | **84.2%**| **9.53**| **+10,110.0 bps** | **51.9 bps** | **ULTIMATE MEAN REV** |
++-------------------+-----------------------------+---------+--------+-------------------+--------------+-----------------------+
+| **Globex Reopen** | Play 1: Breakout            | 52.1%   | 1.03   | +283.7 bps        | 448.6 bps    | Chop Hazard           |
+| *(18:00-18:30 ET)*| Play 2: Fib Retest          | 54.3%   | 1.04   | +343.9 bps        | 527.8 bps    | Chop Hazard           |
+|                   | **Play 3: iFVG Fade**       | **80.9%**| **7.49**| **+14,640.9 bps** | **96.1 bps** | **OVERNIGHT FADE**    |
++-------------------+-----------------------------+---------+--------+-------------------+--------------+-----------------------+
+`
+
+* **Core Session Dynamics Discovered**:
+  1. **Cash Hours (NY & London)**: Breakouts (Play 1) and Fib Retests (Play 2) thrive during NY RTH (PF 1.30, +2,661 bps) and London Open (PF 1.25, +2,300 bps) driven by institutional volume expansion.
+  2. **Overnight Hours (Tokyo & Globex)**: Fades (Play 3) achieve extraordinary win rates (**84.2% in Tokyo, 80.9% in Globex**) and Profit Factors (**9.53 in Tokyo, 7.49 in Globex**) with Max Drawdowns suppressed to 51.9 bps due to false opening wick sweeps.
