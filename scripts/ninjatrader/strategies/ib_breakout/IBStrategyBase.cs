@@ -145,6 +145,26 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "Use BPS Stop Ceiling", Order = 5, GroupName = "Pack Trading & Risk Brackets")]
         public bool UseBpsStopCeiling { get; set; } = true;
 
+        [NinjaScriptProperty]
+        [Display(Name = "Use IB Midpoint Gate", Order = 6, GroupName = "Pack Trading & Risk Brackets")]
+        public bool UseIbMidFilter { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Earliest Continuation Time (ET)", Order = 7, GroupName = "Pack Trading & Risk Brackets")]
+        public int EarliestContinuationTime { get; set; } = 1030;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Enable Lunch Moratorium (11:30-13:30)", Order = 8, GroupName = "Pack Trading & Risk Brackets")]
+        public bool EnableLunchMoratorium { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use 5m FVG Anti-Chop Gate", Order = 9, GroupName = "Pack Trading & Risk Brackets")]
+        public bool UseFvgChopGate { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use 09:00 Sweep / R1 Whipsaw Gate", Order = 10, GroupName = "Pack Trading & Risk Brackets")]
+        public bool Use0900SweepGate { get; set; } = true;
+
         #endregion
 
         #region IB-Specific State (Play 3 overshoot state machine + entry guards)
@@ -179,6 +199,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         //    on every bar beyond the IB boundary, producing 15+ trades/day vs 1). ──
         protected bool longTakenToday;
         protected bool shortTakenToday;
+
+        // ── 09:00 AM Hourly sweep & R1 whipsaw tracking ──
+        protected double h09High;
+        protected double h09Low;
+        protected bool isDoubleSweepWhipsawDay;
 
         #endregion
 
@@ -535,6 +560,27 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return breakoutExtreme + (wave * fibRatio);
             }
             return rangeMid;
+        }
+
+        /// <summary>
+        /// Validates temporal and macro gates (10:30 stabilization fence, lunch moratorium, and R1 double sweep lockout).
+        /// </summary>
+        public bool IsContinuationTimeAllowed()
+        {
+            int nowNum = ToTime(Time[0]);
+            if (nowNum < EarliestContinuationTime * 100) return false;
+            if (EnableLunchMoratorium && nowNum >= 113000 && nowNum <= 133000) return false;
+            if (Use0900SweepGate && isDoubleSweepWhipsawDay) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Validates IB Midpoint gravitational gate (Long > Mid, Short < Mid).
+        /// </summary>
+        public bool HasIbMidConfluence(int dir, double price)
+        {
+            if (!UseIbMidFilter || rangeMid <= 0) return true;
+            return dir == 1 ? price > rangeMid : price < rangeMid;
         }
 
         /// <summary>

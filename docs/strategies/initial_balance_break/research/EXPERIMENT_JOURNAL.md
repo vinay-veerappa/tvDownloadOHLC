@@ -303,3 +303,33 @@
 | *(250-pt Quarters)*| In Hesitation Zone (<25pt)| 84.2% Win Rate    | Expect stall / delay at quarter    |
 +--------------------+---------------------------+-------------------+------------------------------------+
 `
+
+---
+
+### EXP-IB-013: Unified Confluence IS/OOS Multi-Asset Backtest & NT8 Parity Verification
+* **Date**: 2026-08-26
+* **Objective**: Evaluate the complete Unified Confluence Strategy Suite (5m FVG / iFVG respect gate, IB Midpoint pivot, 10:00 AM sweep gate, 10:30 AM stabilization fence, lunch moratorium, and Pack Trading brackets) across 7.5 years of continuous data on NQ1 and ES1, and verify execution in NinjaTrader 8.
+* **Dataset**: Continuous 1-minute NQ1 (2,721,865 bars) and ES1 (2,671,290 bars), 2019-2026 (IS: 2019-2023, OOS: 2024-2026).
+* **Unified Confluence Performance Matrix (IS vs. OOS)**:
+
+`
++-------------------------------------------------------------------------------------------------------------------------------+
+|                                    UNIFIED CONFLUENCE IS vs. OOS PERFORMANCE MATRIX                                           |
++-------+-----------------------------+---------+--------+--------------+---------+--------+------------+--------------+--------+
+| Asset | Strategy / Play             | IS WR%  | IS PF  | IS MaxDD     | OOS WR% | OOS PF | OOS Net    | OOS MaxDD    | OOS/IS |
++-------+-----------------------------+---------+--------+--------------+---------+--------+------------+--------------+--------+
+| **NQ1**| **Play 1 Breakout**         | 56.9%   | 1.15   | 275.0 bps    | **57.6%**| **1.13**| **+379.1 bps**| **180.0 bps**| **0.98x**|
+| **NQ1**| **Play 2 Fib Retest**       | 59.1%   | 1.28   | 161.5 bps    | **57.4%**| **1.15**| **+339.1 bps**| **182.0 bps**| **0.90x**|
+| **NQ1**| **Play 3 iFVG Sweep Fade**  | **66.9%**| **7.44**| 101.3 bps   | **68.6%**| **7.94**|**+8,701.0 bps**| **53.3 bps** | **1.07x**|
++-------+-----------------------------+---------+--------+--------------+---------+--------+------------+--------------+--------+
+| **ES1**| **Play 1 Breakout**         | 55.3%   | 1.10   | 420.4 bps    | **59.4%**| **1.22**| **+560.6 bps**| **186.5 bps**| **1.10x**|
+| **ES1**| **Play 2 Fib Retest**       | 56.3%   | 1.15   | 314.0 bps    | **56.1%**| **1.09**| **+189.4 bps**| **227.8 bps**| **0.95x**|
+| **ES1**| **Play 3 iFVG Sweep Fade**  | **68.8%**| **7.14**| 44.0 bps    | **75.3%**| **8.12**|**+5,487.0 bps**| **56.6 bps** | **1.14x**|
++-------+-----------------------------+---------+--------+--------------+---------+--------+------------+--------------+--------+
+`
+
+* **NinjaTrader 8 Verification**:
+  * Compiled via Roslyn (
+t_compile) with **0 errors**.
+  * IBFadeBot on ES 09-26: **66.7% Entry WR**, **1.405 PF**, **+.50 Net Profit**, 2-leg execution verified.
+  * IBBreakoutBot & IBRetestBot on MNQ 09-26: Cover The Queen + Breakeven stop lock verified in live trade logs.

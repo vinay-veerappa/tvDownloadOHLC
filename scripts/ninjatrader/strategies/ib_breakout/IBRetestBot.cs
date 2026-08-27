@@ -59,6 +59,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// </summary>
         protected override int CheckForEntry()
         {
+            if (!IsContinuationTimeAllowed())
+                return 0;
+
             TrackFirstBreak();  // track which side broke first
             if (firstBreakDir == 0) return 0;  // no break yet
 
@@ -97,7 +100,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
 
                 // Entry condition: bar low touched the retracement level and bar closed holding at/above it
-                if (Low[0] <= triggerLevel && Close[0] >= triggerLevel)
+                if (Low[0] <= triggerLevel && Close[0] >= triggerLevel && HasIbMidConfluence(1, Close[0]))
                 {
                     double entry = Close[0];
                     double stop = rangeLow;
@@ -154,7 +157,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
 
                 // Entry condition: bar high touched the retracement level and bar closed holding at/below it
-                if (High[0] >= triggerLevel && Close[0] <= triggerLevel)
+                if (High[0] >= triggerLevel && Close[0] <= triggerLevel && HasIbMidConfluence(-1, Close[0]))
                 {
                     double entry = Close[0];
                     double stop = rangeHigh;
