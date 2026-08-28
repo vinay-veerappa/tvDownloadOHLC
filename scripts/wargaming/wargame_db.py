@@ -128,9 +128,20 @@ def init_all_databases():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_actuals_date_ticker ON market_actuals(session_date, ticker);")
         conn.commit()
 
-    log.info(f"Initialized all 3 databases in {DB_DIR}")
+    with get_connection(MICKEY_DB_PATH) as conn:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mickey_date_ticker ON mickey_wargames(session_date, ticker);")
+        conn.commit()
+
+    with get_connection(SYSTEM_DB_PATH) as conn:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_system_date_ticker ON system_wargames(session_date, ticker);")
+        conn.commit()
+
+    log.info(f"Initialized all 3 databases and composite indexes in {DB_DIR}")
+
+
 
 
 def save_mickey_ground_truth(data: Dict[str, Any]) -> str:

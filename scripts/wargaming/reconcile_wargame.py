@@ -85,11 +85,51 @@ def compute_market_actuals(ticker: str, target_date: date, df_1m: Optional[pd.Da
         step2_met = False
 
 
-    step3_met = True if hod_ts.hour >= 10 and lod_ts.hour >= 10 else False
-    step4_met = True if (hod_ts.hour == 10 and hod_ts.minute < 15) or (lod_ts.hour == 10 and lod_ts.minute < 15) else False
+    # Step 3: 10:00 AM Candle sweeps 09:00 extreme
+    h10_start = pd.Timestamp(datetime.combine(target_date, time(10, 0)), tz="America/New_York")
+    h10_end = pd.Timestamp(datetime.combine(target_date, time(11, 0)), tz="America/New_York")
+    h10_df = df_1m[(df_1m.index >= h10_start) & (df_1m.index < h10_end)]
+    if not h10_df.empty and not h09_df.empty:
+        h10_high = float(h10_df["high"].max())
+        h10_low = float(h10_df["low"].min())
+        h09_high = float(h09_df["high"].max())
+        h09_low = float(h09_df["low"].min())
+        step3_met = bool(h10_high > h09_high or h10_low < h09_low)
+    else:
+        step3_met = bool(hod_ts.hour >= 10 and lod_ts.hour >= 10)
+
+    # Step 4: 10:00 AM Q1 (10:00-10:14) InStat Instant Extreme
+    q1_start = pd.Timestamp(datetime.combine(target_date, time(10, 0)), tz="America/New_York")
+    q1_end = pd.Timestamp(datetime.combine(target_date, time(10, 15)), tz="America/New_York")
+    q1_df = df_1m[(df_1m.index >= q1_start) & (df_1m.index < q1_end)]
+    if not q1_df.empty:
+        q1_high = float(q1_df["high"].max())
+        q1_low = float(q1_df["low"].min())
+        step4_met = bool((q1_high == rth_high) or (q1_low == rth_low))
+    else:
+        step4_met = bool((hod_ts.hour == 10 and hod_ts.minute < 15) or (lod_ts.hour == 10 and lod_ts.minute < 15))
 
     four_step_score = sum([step1_met, step2_met, step3_met, step4_met])
-    winning_scenario = "FALSE_REVERSION" if four_step_score >= 3 else "TRUE_CONTINUATION"
+
+    # Austin +40 bps Continuation Check (06:00-09:00 box expansion)
+    box_start = pd.Timestamp(datetime.combine(target_date, time(6, 0)), tz="America/New_York")
+    box_end = pd.Timestamp(datetime.combine(target_date, time(9, 0)), tz="America/New_York")
+    box_df = df_1m[(df_1m.index >= box_start) & (df_1m.index < box_end)]
+    continuation_40bps = False
+    if not box_df.empty and rth_open > 0:
+        box_high = float(box_df["high"].max())
+        box_low = float(box_df["low"].min())
+        bps_up = ((rth_high - box_high) / rth_open) * 10000.0
+        bps_down = ((box_low - rth_low) / rth_open) * 10000.0
+        if (bps_up >= 40.0 or bps_down >= 40.0) and four_step_score < 3:
+            continuation_40bps = True
+
+    if continuation_40bps:
+        winning_scenario = "TRUE_CONTINUATION"
+    else:
+        winning_scenario = "FALSE_REVERSION" if four_step_score >= 3 else "TRUE_CONTINUATION"
+
+
 
     # EOD Day Type classification
     net_chg_pts = rth_close - rth_open

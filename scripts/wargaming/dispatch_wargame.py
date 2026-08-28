@@ -52,36 +52,37 @@ def build_discord_embed(data: Dict[str, Any], html_chart_path: Optional[str] = N
     fields = [
         {
             "name": "🧭 Overnight Context & Structure",
-            "value": f"• **P12 Range**: `{p12['high']:,.2f}` to `{p12['low']:,.2f}` (Mid: `{p12['mid']:,.2f}`)
-"
-                     f"• **P12 Vector Switch**: **{p12['bias']}** ({p12_pos} by `{abs(p12['diff_pts']):.2f} pts` / `{abs(p12['diff_bps']):.1f} bps`)
-"
-                     f"• **Session Alignment**: `{sess['alignment']}`",
+            "value": (
+                f"• **P12 Range**: `{p12['high']:,.2f}` to `{p12['low']:,.2f}` (Mid: `{p12['mid']:,.2f}`)\n"
+                f"• **P12 Vector Switch**: **{p12['bias']}** ({p12_pos} by `{abs(p12['diff_pts']):.2f} pts` / `{abs(p12['diff_bps']):.1f} bps`)\n"
+                f"• **Session Alignment**: `{sess['alignment']}`"
+            ),
             "inline": False,
         },
         {
             "name": "📊 Key Anchor Magnets",
-            "value": f"• **Midnight Open**: `{anchors['midnight_open']:,.2f}`
-"
-                     f"• **Previous Day High (PDH)**: `{anchors['pdh']:,.2f}`
-"
-                     f"• **Previous Day Low (PDL)**: `{anchors['pdl']:,.2f}`",
+            "value": (
+                f"• **Midnight Open**: `{anchors['midnight_open']:,.2f}`\n"
+                f"• **Previous Day High (PDH)**: `{anchors['pdh']:,.2f}`\n"
+                f"• **Previous Day Low (PDL)**: `{anchors['pdl']:,.2f}`"
+            ),
             "inline": False,
         },
         {
             "name": "🛡️ Pack Trading Execution Brackets",
-            "value": f"• **Target 1 ("Cover The Queen")**: **+{pack['cover_the_queen_bps']:.1f} bps (+{pack['queen_pts']:.2f} pts)** *(50% scale + BE stop lock)*
-"
-                     f"• **Target 2 ("Runner")**: **+{pack['runner_bps']:.1f} bps (+{pack['runner_pts']:.2f} pts)** trailing
-"
-                     f"• **Stop Ceiling**: **Max {pack['stop_ceiling_bps']:.1f} bps (~{pack['stop_pts']:.2f} pts)**",
+            "value": (
+                f"• **Target 1 ('Cover The Queen')**: **+{pack['cover_the_queen_bps']:.1f} bps (+{pack['queen_pts']:.2f} pts)** *(50% scale + BE stop lock)*\n"
+                f"• **Target 2 ('Runner')**: **+{pack['runner_bps']:.1f} bps (+{pack['runner_pts']:.2f} pts)** trailing\n"
+                f"• **Stop Ceiling**: **Max {pack['stop_ceiling_bps']:.1f} bps (~{pack['stop_pts']:.2f} pts)**"
+            ),
             "inline": False,
         },
         {
             "name": "🔴 Scenario 1: False Reversion (Primary)",
-            "value": f"If 09:30 sweeps `{p12['low']:,.2f}` and fails 10 bps breakout in 0-5 box -> Target P12 Mid (`{p12['mid']:,.2f}`) & Midnight Open (`{anchors['midnight_open']:,.2f}`).
-"
-                     f"*Cutoff*: Midline retest expected before **09:45 AM**; window closes at **10:15 AM**.",
+            "value": (
+                f"If 09:30 sweeps `{p12['low']:,.2f}` and fails 10 bps breakout in 0-5 box -> Target P12 Mid (`{p12['mid']:,.2f}`) & Midnight Open (`{anchors['midnight_open']:,.2f}`).\n"
+                f"*Cutoff*: Midline retest expected before **09:45 AM**; window closes at **10:15 AM**."
+            ),
             "inline": False,
         },
         {
@@ -90,6 +91,7 @@ def build_discord_embed(data: Dict[str, Any], html_chart_path: Optional[str] = N
             "inline": False,
         }
     ]
+
 
     embed = {
         "title": f"⚔️ Mickey & Austin Wargaming Playbook: {ticker}",
@@ -109,10 +111,19 @@ def dispatch_discord(data: Dict[str, Any], webhook_url: Optional[str] = None, at
         webhook_url = load_webhook_url("wargaming") or load_webhook_url("default")
 
     if not webhook_url:
-        log.warning("No Discord webhook URL configured.")
+        log.info("No Discord webhook URL found. Printing formatted Discord Embed preview:")
+        embed = build_discord_embed(data)
+        print("\n" + "=" * 65)
+        print(f" TITLE: {embed['title']}")
+        print(f" DESC:  {embed['description']}")
+        print("=" * 65)
+        for f in embed["fields"]:
+            print(f"\n[{f['name']}]\n{f['value']}")
+        print("=" * 65 + "\n")
         return False
 
     chart_path = None
+
     if attach_chart:
         chart_path = render_and_save_chart(ticker=data["ticker"], target_date=datetime.strptime(data["date"], "%Y-%m-%d").date(), cutoff_time=data["cutoff_time"])
 
@@ -146,7 +157,9 @@ def main():
     args = parser.parse_args()
 
     t_date = datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else datetime.now(ET).date()
-    dispatch_wargame(ticker=args.ticker, target_date=t_date, cutoff_time=args.time, to_discord=args.discord, to_email=args.email)
+    send_discord = args.discord or not args.email
+    dispatch_wargame(ticker=args.ticker, target_date=t_date, cutoff_time=args.time, to_discord=send_discord, to_email=args.email)
+
 
 
 if __name__ == "__main__":

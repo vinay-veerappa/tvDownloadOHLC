@@ -84,14 +84,30 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     p12_pos = "ABOVE" if p12["diff_pts"] >= 0 else "BELOW"
     bias_color = "#22c55e" if p12["bias"] == "BULLISH" else "#ef4444"
 
+    # Inline local Lightweight Charts JS bundle for 100% offline self-containment if found
+    lwc_script_tag = '<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>'
+    for possible_path in [
+        REPO_ROOT / "web" / "node_modules" / "lightweight-charts" / "dist" / "lightweight-charts.standalone.production.js",
+        REPO_ROOT / "node_modules" / "lightweight-charts" / "dist" / "lightweight-charts.standalone.production.js"
+    ]:
+        if possible_path.exists():
+            try:
+                bundle_code = possible_path.read_text(encoding="utf-8")
+                lwc_script_tag = f"<script>{bundle_code}</script>"
+                log.info(f"Inlined local Lightweight Charts bundle ({len(bundle_code)} bytes)")
+                break
+            except Exception as e:
+                log.warning(f"Could not inline local Lightweight Charts: {e}")
+
     html_template = f"""<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>⚔️ Mickey & Austin Wargaming Chart: {ticker} ({dt_str})</title>
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    {lwc_script_tag}
     <style>
+
         :root {{
             --bg: #090d16;
             --card-bg: #111827;
@@ -376,8 +392,14 @@ def render_and_save_chart(ticker: str = "NQ1", target_date: Optional[date] = Non
     out_file.write_text(html_content, encoding="utf-8")
     log.info(f"Saved interactive HTML report: {out_file} ({len(html_content)} bytes)")
 
+    # Save JSON export for Next.js platform dashboard ingestion
+    json_out_file = REPORTS_DIR / f"{target_date.isoformat()}_{ticker}_wargame.json"
+    json_out_file.write_text(json.dumps(wargame_data, indent=2, default=str), encoding="utf-8")
+    log.info(f"Saved platform JSON report: {json_out_file.name}")
+
     if upload_gdrive:
         try:
+
             res = upload_to_drive(out_file, folder_type="daily_reports")
             log.info(f"Uploaded HTML report to Google Drive: {res.get('webViewLink')}")
         except Exception as e:
