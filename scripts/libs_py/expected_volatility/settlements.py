@@ -32,6 +32,17 @@ MARKET_VOL_PAIRS: dict[str, str] = {
     "YM": "CBOE:VXD",     # also DIA
 }
 
+# Pine input toggles (useVOLI / useVIX1D) swap the vol source for the ES family:
+#   request.security(useVOLI ? 'NASDAQ:VOLI' : useVIX1D ? 'CBOE:VIX1D' : 'CBOE:VIX', ...)
+# Other families have no alternate source in the Pine code.
+VOL_SOURCE_ALTERNATES: dict[str, dict[str, str]] = {
+    "ES": {
+        "VIX": "CBOE:VIX",
+        "VOLI": "NASDAQ:VOLI",
+        "VIX1D": "CBOE:VIX1D",
+    },
+}
+
 SESSION_END_HOUR = 16  # bars at/after this ET hour belong to the next daily bar
 
 
@@ -61,8 +72,25 @@ def map_ticker_family(ticker: str) -> str:
     raise ValueError(f"Unrecognized ticker family for {ticker!r}")
 
 
-def vol_index_for_ticker(ticker: str) -> str:
-    return MARKET_VOL_PAIRS[map_ticker_family(ticker)]
+def vol_index_for_ticker(
+    ticker: str, source: str = "VIX"
+) -> str:
+    """Vol index symbol for a chart ticker, honouring Pine's source toggles.
+
+    ``source`` mirrors the Pine inputs ``useVOLI``/``useVIX1D``: "VIX"
+    (default), "VOLI" or "VIX1D". Only the ES family has alternates in the
+    Pine code; other families ignore it and return their base pairing.
+    """
+    family = map_ticker_family(ticker)
+    alternates = VOL_SOURCE_ALTERNATES.get(family, {})
+    if source in alternates:
+        return alternates[source]
+    if source != "VIX":
+        raise ValueError(
+            f"vol source {source!r} has no alternate for family {family!r}; "
+            f"valid sources: {sorted(alternates) or ['VIX']}"
+        )
+    return MARKET_VOL_PAIRS[family]
 
 
 def _et_index(df: pd.DataFrame) -> pd.DatetimeIndex:
@@ -110,25 +138,15 @@ def build_daily_settlements(
     """
     et = _et_index(intraday)
 
+    # Daily-frequency frames (VOLI_1d / VIX1D_1d) carry close-stamps at the
+    # cutoff hour itself (16:00 ET), so the intraday cutoff would drop every
+    # bar. Route them through the daily path.
+    et_hours = pd.Index(et.hour)
+    if len(et) <= 1 or (et_hours.nunique() <= 2 and et.hour.min() >= SESSION_END_HOUR):
+        return _settlements_from_daily(intraday, toggle)
+
     if daily is not None and len(daily) > 0:
-        if isinstance(daily, pd.Series):
-            s = daily.copy()
-        else:
-            col = "open" if toggle and "open" in daily.columns else (
-                "close" if "close" in daily.columns else daily.columns[0]
-            )
-            s = daily[col].copy()
-        idx = pd.to_datetime(s.index)
-        if idx.tz is not None:
-            idx = idx.tz_convert(DEFAULT_TZ).normalize()
-        else:
-            idx = idx.tz_localize(DEFAULT_TZ).normalize()
-        s.index = idx
-        s = s.sort_index()
-        s = s[~s.index.duplicated(keep="last")]
-        if not toggle:
-            s = s.shift(1)  # close_day = close[1]
-        return s.rename("settlement")
+        return _settlements_from_daily(daily, toggle)
 
     # Intraday fallback: per-day aggregation with the 16:00 ET cutoff.
     values_col = "open" if toggle else "close"
@@ -139,6 +157,36 @@ def build_daily_settlements(
     if not toggle:
         per_day = per_day.shift(1)  # previous day's close
     return per_day.rename("settlement")
+
+
+def _settlements_from_daily(
+    daily: pd.DataFrame | pd.Series, toggle: bool
+) -> pd.Series:
+    """Settlements from an explicit daily frame/Series (Pine 1D security).
+
+    Bars are attached to the ET day they represent: daily close-stamps at
+    16:00 ET (VOLI_1d, VIX1D_1d) and 17:00 ET (futures 1d captures like
+    ES1_1d at 22:00 UTC) both normalize onto their own ET calendar date.
+    Default: prior day's close (``close[1]``); toggle: same day's open.
+    """
+    if isinstance(daily, pd.Series):
+        s = daily.copy()
+    else:
+        col = "open" if toggle and "open" in daily.columns else (
+            "close" if "close" in daily.columns else daily.columns[0]
+        )
+        s = daily[col].copy()
+    idx = pd.to_datetime(s.index)
+    if idx.tz is not None:
+        idx = idx.tz_convert(DEFAULT_TZ).normalize()
+    else:
+        idx = idx.tz_localize(DEFAULT_TZ).normalize()
+    s.index = idx
+    s = s.sort_index()
+    s = s[~s.index.duplicated(keep="last")]
+    if not toggle:
+        s = s.shift(1)  # close_day = close[1]
+    return s.rename("settlement")
 
 
 def session_settlements(

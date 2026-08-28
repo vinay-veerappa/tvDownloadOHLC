@@ -19,6 +19,7 @@ from .core import (
 )
 from .settlements import (
     MARKET_VOL_PAIRS,
+    VOL_SOURCE_ALTERNATES,
     build_daily_settlements,
     map_ticker_family,
     session_settlements,
@@ -35,6 +36,7 @@ __all__ = [
     "is_session_start",
     "session_start_times",
     "MARKET_VOL_PAIRS",
+    "VOL_SOURCE_ALTERNATES",
     "build_daily_settlements",
     "map_ticker_family",
     "session_settlements",

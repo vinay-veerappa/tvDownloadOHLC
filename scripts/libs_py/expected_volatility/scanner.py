@@ -22,13 +22,23 @@ from .settlements import build_daily_settlements, session_settlements, vol_index
 DEFAULT_DATA_DIR = Path("data")
 
 
-def load_vol_index(ticker: str, data_dir: str | Path = DEFAULT_DATA_DIR) -> pd.DataFrame:
+def load_vol_index(
+    ticker: str,
+    data_dir: str | Path = DEFAULT_DATA_DIR,
+    source: str = "VIX",
+) -> pd.DataFrame:
     """Best-effort load of the local parquet for the paired volatility index.
 
-    Returns an empty frame if no file exists locally.
+    ``source`` mirrors the Pine ``useVOLI``/``useVIX1D`` toggles ("VIX",
+    "VOLI", "VIX1D"). Returns an empty frame if no file exists locally.
+    Daily-only captures (VOLI_1d / VIX1D_1d) are loaded as-is; settlement
+    extraction handles daily stamps via the ET-date normalization in
+    ``build_daily_settlements``.
     """
-    vol_symbol = vol_index_for_ticker(ticker).split(":")[-1]  # VIX, VXN, ...
+    vol_symbol = vol_index_for_ticker(ticker, source=source).split(":")[-1]
     path = Path(data_dir) / f"{vol_symbol}_1m.parquet"
+    if not path.exists():
+        path = Path(data_dir) / f"{vol_symbol}_1d.parquet"
     if not path.exists():
         return pd.DataFrame()
     return pd.read_parquet(path)
@@ -55,6 +65,7 @@ def scan_expected_volatility(
     session: str = "0930-1600",
     tz: str = "America/New_York",
     toggle: bool = False,
+    vol_source: str = "VIX",
 ) -> pd.DataFrame:
     """Compute one zone-ladder row per session start.
 
@@ -62,10 +73,11 @@ def scan_expected_volatility(
     ----------
     intraday    : underlying OHLCV frame (tz-aware datetime index).
     ticker      : chart symbol the indicator runs on, e.g. ``"ES1!"`` or ``"NQ1!"``.
-    vol_intraday: intraday frame of the correlated volatility index. When
-                  omitted, auto-loads from ``data/`` via the market pairing
-                  table (ES->VIX, NQ->VXN, CL->OVX, RTY->RVX, VIX->VVIX,
-                  GC->GVZ, SI->VXSLV, YM->VXD).
+    vol_intraday: frame of the correlated volatility index. When omitted,
+                  auto-loads from ``data/`` according to ``vol_source``
+                  (ES family mirrors the Pine useVOLI/useVIX1D toggles:
+                  ES->VIX, NASDAQ:VOLI or CBOE:VIX1D; NQ->VXN, CL->OVX,
+                  RTY->RVX, VIX->VVIX, GC->GVZ, SI->VXSLV, YM->VXD).
     session/tz  : session window + timezone (Pine input mirrors).
     toggle      : mirror of the Pine open/close toggle.
 
@@ -80,7 +92,7 @@ def scan_expected_volatility(
         raise ValueError("intraday frame must have a tz-aware DatetimeIndex")
 
     if vol_intraday is None:
-        vol_intraday = load_vol_index(ticker)
+        vol_intraday = load_vol_index(ticker, source=vol_source)
 
     if vol_intraday is not None and len(vol_intraday):
         vol_settle = build_daily_settlements(vol_intraday, None, toggle=toggle)
