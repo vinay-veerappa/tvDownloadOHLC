@@ -4,11 +4,13 @@ Generates an authentic Mickey & Austin wargaming visual matching their live stre
 1. Full 1m Candlestick Chart in Eastern Time (ET).
 2. Price-bounded Asia (18:00-02:00 ET), London (02:00-08:30 ET), and Pre-Market (06:00-09:00 ET) session boxes.
 3. Shaded Green LOD Target Box (09:30-10:15 ET) & Red HOD Target Box (11:00-16:00 ET).
-4. Magenta Wargaming Trajectory Arrows with animated/dashed stylings.
-5. Continuous 60 FPS synchronization on both X (Time) and Y (Price) drag/zoom.
-6. Interactive Toolbar with Fullscreen mode (⛶), Fit All, Overnight View, and RTH View buttons.
-7. Floating Real-time HUD stats panel and bottom outcome probability matrix.
-8. 100% self-contained single-file HTML report (inlined Lightweight Charts v5.2.0).
+4. Algorithmic Scenario Trajectory Arrows generated dynamically from Profiler & Candle Science distributions.
+5. All price rays annotated with empirical Touch Probabilities (Hit Rates %):
+   - P12 Midline [88.5%], Midnight Open [84.1%], P12 High [81.7%], 07:30 Open [74.7%], P12 Low [68.9%], PDM [65.0%].
+6. Continuous 60 FPS synchronization on both X (Time) and Y (Price) drag/zoom.
+7. Interactive Toolbar with Fullscreen mode (⛶), Scenario 1 / 2 Trajectory Toggles, Fit All, and View presets.
+8. Mickey & Austin Magnet Hierarchy Matrix Table ranking all key levels by probability.
+9. 100% self-contained single-file HTML report (inlined Lightweight Charts v5.2.0).
 """
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     sess = wargame_data["sessions"]
     cs = wargame_data["candle_science"]
     pack = wargame_data["pack_trading"]
+    traj_data = wargame_data.get("trajectory_engine", {})
 
     # Load 1m bars if not provided
     if df_1m is None or df_1m.empty:
@@ -114,30 +117,27 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     pm_start_ts = int(pm_start.timestamp())
     pm_end_ts = int(pm_end.timestamp())
 
-    # RTH Target Windows
-    lod_box_start_ts = int(pd.Timestamp(datetime.combine(t_dt, time(9, 30)), tz="America/New_York").timestamp())
-    lod_box_end_ts = int(pd.Timestamp(datetime.combine(t_dt, time(10, 30)), tz="America/New_York").timestamp())
-    
-    hod_box_start_ts = int(pd.Timestamp(datetime.combine(t_dt, time(11, 0)), tz="America/New_York").timestamp())
-    hod_box_end_ts = int(pd.Timestamp(datetime.combine(t_dt, time(16, 0)), tz="America/New_York").timestamp())
+    # Trajectory and Target Box coordinates from engine
+    lod_box = traj_data.get("lod_box", {
+        "start_ts": int(pd.Timestamp(datetime.combine(t_dt, time(9, 30)), tz="America/New_York").timestamp()),
+        "end_ts": int(pd.Timestamp(datetime.combine(t_dt, time(10, 15)), tz="America/New_York").timestamp()),
+        "top": float(p12['low'] + 15.0),
+        "bottom": float(p12['low'] - 65.0),
+        "label": "🟢 LOD TARGET BOX (09:30-10:15 ET)",
+    })
 
-    # Target Box Coordinates derived from Candle Science P50
-    bull_p50_pct = cs.get("bull", {}).get("p50", 1.20)
-    bear_p50_pct = cs.get("bear", {}).get("p50", -0.85)
+    hod_box = traj_data.get("hod_box", {
+        "start_ts": int(pd.Timestamp(datetime.combine(t_dt, time(11, 0)), tz="America/New_York").timestamp()),
+        "end_ts": int(pd.Timestamp(datetime.combine(t_dt, time(16, 0)), tz="America/New_York").timestamp()),
+        "bottom": float(p12['high'] - 10.0),
+        "top": float(p12['high'] + 85.0),
+        "label": "🔴 HOD TARGET BOX (11:00-16:00 ET)",
+    })
 
-    bull_p50_pts = spot * (1.0 + bull_p50_pct / 100.0)
-    bear_p50_pts = spot * (1.0 + bear_p50_pct / 100.0)
-
-    lod_box_top = float(p12['low'] + 15.0)
-    lod_box_bottom = float(bear_p50_pts) if bear_p50_pts < lod_box_top else float(p12['low'] - 65.0)
-
-    hod_box_bottom = float(p12['high'] - 10.0)
-    hod_box_top = float(bull_p50_pts) if bull_p50_pts > hod_box_bottom else float(p12['high'] + 85.0)
-
-    if lod_box_bottom >= lod_box_top:
-        lod_box_bottom = lod_box_top - 60.0
-    if hod_box_top <= hod_box_bottom:
-        hod_box_top = hod_box_bottom + 80.0
+    magnets = traj_data.get("magnets", [])
+    sc1_traj = traj_data.get("scenario_1_trajectory", [])
+    sc2_traj = traj_data.get("scenario_2_trajectory", [])
+    dir_narrative = traj_data.get("directional_narrative", "")
 
     p12_hod_time = p12.get("hod_time") or p12.get("high_time", "23:29")
     p12_lod_time = p12.get("lod_time") or p12.get("low_time", "04:07")
@@ -159,6 +159,23 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 break
             except Exception as e:
                 log.warning(f"Could not inline local Lightweight Charts: {e}")
+
+    # Build Magnet rows for HTML Table
+    magnet_rows_html = ""
+    for m in magnets:
+        prob_val = m["prob"]
+        badge_bg = "rgba(16, 185, 129, 0.15)" if prob_val >= 80 else ("rgba(245, 158, 11, 0.15)" if prob_val >= 60 else "rgba(239, 68, 68, 0.15)")
+        badge_color = "#10b981" if prob_val >= 80 else ("#f59e0b" if prob_val >= 60 else "#ef4444")
+        
+        magnet_rows_html += f"""
+        <tr>
+            <td><b style="color: {m['color']};">{m['name']}</b></td>
+            <td><code style="font-size: 13px;">{m['price']:,.2f}</code></td>
+            <td><span style="background: {badge_bg}; color: {badge_color}; padding: 3px 8px; border-radius: 4px; font-weight: 700;">{prob_val:.1f}%</span></td>
+            <td><span style="color: var(--text-dim); font-size: 11px;">{m['tier']}</span></td>
+            <td>{m['role']}</td>
+        </tr>
+        """
 
     html_template = f"""<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -223,6 +240,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         .toolbar {{
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 8px;
             background: var(--card-bg);
             border: 1px solid var(--border);
@@ -252,6 +270,16 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             background: #3b82f6;
             color: #fff;
             border-color: #3b82f6;
+        }}
+        .btn.active-sc1 {{
+            background: #f43f5e;
+            color: #fff;
+            border-color: #f43f5e;
+        }}
+        .btn.active-sc2 {{
+            background: #10b981;
+            color: #fff;
+            border-color: #10b981;
         }}
         .chart-wrapper {{
             position: relative;
@@ -291,8 +319,8 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         .hud-panel {{
             position: absolute;
             top: 14px;
-            right: 65px;
-            background: rgba(15, 23, 42, 0.88);
+            right: 80px;
+            background: rgba(15, 23, 42, 0.90);
             border: 1px solid #334155;
             backdrop-filter: blur(10px);
             border-radius: 8px;
@@ -301,7 +329,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             z-index: 20;
             box-shadow: 0 8px 24px rgba(0,0,0,0.6);
             line-height: 1.5;
-            min-width: 250px;
+            min-width: 260px;
         }}
         .hud-panel h4 {{
             margin: 0 0 6px 0;
@@ -362,12 +390,12 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             border-collapse: collapse;
         }}
         .levels-table th, .levels-table td {{
-            padding: 8px 10px;
+            padding: 9px 12px;
             text-align: left;
             border-bottom: 1px solid var(--border);
             font-size: 12px;
         }}
-        .levels-table th {{ color: var(--text-dim); font-weight: 600; text-transform: uppercase; }}
+        .levels-table th {{ color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-size: 11px; }}
     </style>
 </head>
 <body>
@@ -393,6 +421,8 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         <button class="btn" id="btn-fit">🔍 Fit All</button>
         <button class="btn" id="btn-overnight">🌙 Overnight View</button>
         <button class="btn" id="btn-rth">🔔 RTH Wargame View</button>
+        <button class="btn active-sc1" id="btn-sc1">⚡ Scenario 1: Sweeper Reversal</button>
+        <button class="btn" id="btn-sc2">🟢 Scenario 2: True Trend Run</button>
         <button class="btn active" id="btn-toggle-boxes">🎯 Target Boxes: ON</button>
         <div style="margin-left: auto; font-size: 12px; color: var(--text-dim);">
             Drag price axis vertically • Scroll to zoom • Pan horizontally
@@ -401,9 +431,14 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
     <div class="metrics-grid">
         <div class="metric-card">
-            <div class="label">P12 Midline (Switch)</div>
+            <div class="label">P12 Midline (88.5% Magnet)</div>
             <div class="value" style="color: var(--gold);">{p12['mid']:,.2f}</div>
             <div style="font-size: 11px; color: var(--text-dim);">{p12_pos} by {abs(p12['diff_pts']):.2f} pts ({abs(p12['diff_bps']):.1f} bps)</div>
+        </div>
+        <div class="metric-card">
+            <div class="label">Midnight Open (84.1% Magnet)</div>
+            <div class="value" style="color: var(--blue);">{anchors.get('midnight_open', spot):,.2f}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">Primary Retest Gravity Well</div>
         </div>
         <div class="metric-card">
             <div class="label">Cover The Queen (+10 bps)</div>
@@ -414,11 +449,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             <div class="label">Stop Ceiling (Max Risk)</div>
             <div class="value" style="color: var(--red);">{pack['stop_ceiling_bps']:.1f} bps (~{pack['stop_pts']:.2f} pts)</div>
             <div style="font-size: 11px; color: var(--text-dim);">Strict Capital Floor</div>
-        </div>
-        <div class="metric-card">
-            <div class="label">Midnight Open (00:00 ET)</div>
-            <div class="value" style="color: var(--blue);">{anchors['midnight_open']:,.2f}</div>
-            <div style="font-size: 11px; color: var(--text-dim);">Primary Morning Magnet</div>
         </div>
     </div>
 
@@ -447,7 +477,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             </div>
             <div class="hud-row" style="margin-top: 6px; border-top: 1px solid #334155; padding-top: 4px;">
                 <span class="hud-label">LOD Target Box:</span>
-                <span class="hud-val" style="color: #10b981;">{lod_box_bottom:,.0f} &ndash; {lod_box_top:,.0f}</span>
+                <span class="hud-val" style="color: #10b981;">{lod_box['bottom']:,.0f} &ndash; {lod_box['top']:,.0f}</span>
             </div>
             <div class="hud-row">
                 <span class="hud-label">LOD Target Time:</span>
@@ -455,7 +485,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             </div>
             <div class="hud-row">
                 <span class="hud-label">HOD Target Box:</span>
-                <span class="hud-val" style="color: #ef4444;">{hod_box_bottom:,.0f} &ndash; {hod_box_top:,.0f}</span>
+                <span class="hud-val" style="color: #ef4444;">{hod_box['bottom']:,.0f} &ndash; {hod_box['top']:,.0f}</span>
             </div>
             <div class="hud-row">
                 <span class="hud-label">HOD Target Time:</span>
@@ -464,12 +494,34 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         </div>
     </div>
 
+    <!-- Mickey & Austin Probability Magnet Hierarchy Table -->
+    <div class="matrix-container">
+        <h3>🧲 Mickey & Austin Probability Magnet Hierarchy (Hit Rate %)</h3>
+        <p style="font-size: 13px; color: var(--text-dim); margin-top: 0; line-height: 1.5;">
+            {dir_narrative}
+        </p>
+        <table class="levels-table">
+            <thead>
+                <tr>
+                    <th>Key Level</th>
+                    <th>Exact Price</th>
+                    <th>Historical Touch Rate</th>
+                    <th>Magnet Tier</th>
+                    <th>Wargaming Tactical Function</th>
+                </tr>
+            </thead>
+            <tbody>
+                {magnet_rows_html}
+            </tbody>
+        </table>
+    </div>
+
     <div class="cards-grid">
         <div class="scenario-card false">
             <h3 style="color: var(--red);">🔴 SCENARIO 1: FALSE REVERSION (Primary Sweeper)</h3>
             <ul>
-                <li><b>Trigger</b>: 09:30 RTH Open sweeps into <b>Green LOD Target Box</b> (<code>{lod_box_bottom:,.2f} &ndash; {lod_box_top:,.2f}</code>) and fails 10 bps breakout in 0-5 box.</li>
-                <li><b>Execution</b>: Long mean-reversion counter toward <b>P12 Midline</b> (<code>{p12['mid']:,.2f}</code>) & <b>Midnight Open</b> (<code>{anchors['midnight_open']:,.2f}</code>).</li>
+                <li><b>Trigger</b>: 09:30 RTH Open sweeps into <b>Green LOD Target Box</b> (<code>{lod_box['bottom']:,.2f} &ndash; {lod_box['top']:,.2f}</code>) and fails 10 bps breakout in 0-5 box.</li>
+                <li><b>Execution</b>: Long mean-reversion counter toward <b>P12 Midline</b> (<code>{p12['mid']:,.2f}</code> [88.5%]) & <b>Midnight Open</b> (<code>{anchors['midnight_open']:,.2f}</code> [84.1%]).</li>
                 <li><b>Cover The Queen (+10 bps)</b>: Scale 50% at <code>{pack.get('long_tp1', spot + pack['queen_pts']):,.2f}</code> and lock stop to Breakeven (+1 pt).</li>
                 <li><b>09:45 Cutoff</b>: Midline retest expected before 09:45 AM; reversal window closes at 10:15 AM.</li>
             </ul>
@@ -478,66 +530,11 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             <h3 style="color: var(--green);">🟢 SCENARIO 2: TRUE EXPANSION (Secondary Trend)</h3>
             <ul>
                 <li><b>Trigger</b>: Price sustains >10 bps breakout and accepts across P12 Midline in Q1.</li>
-                <li><b>Bullish Target</b>: P12 High (<code>{p12['high']:,.2f}</code>) &rarr; <b>Red HOD Target Box</b> (<code>{hod_box_bottom:,.2f} &ndash; {hod_box_top:,.2f}</code>).</li>
-                <li><b>Bearish Target</b>: PDM (<code>{anchors['pdm']:,.2f}</code>) &rarr; PDL (<code>{anchors['pdl']:,.2f}</code>).</li>
+                <li><b>Bullish Target</b>: P12 High (<code>{p12['high']:,.2f}</code> [81.7%]) &rarr; <b>Red HOD Target Box</b> (<code>{hod_box['bottom']:,.2f} &ndash; {hod_box['top']:,.2f}</code>).</li>
+                <li><b>Bearish Target</b>: PDM (<code>{anchors.get('pdm', spot):,.2f}</code> [65.0%]) &rarr; PDL (<code>{anchors.get('pdl', spot):,.2f}</code> [41.9%]).</li>
                 <li><b>10:15 Rule</b>: If no reversal signature by 10:15, Trend Continuation locks for the session.</li>
             </ul>
         </div>
-    </div>
-
-    <div class="matrix-container">
-        <h3>📋 Mickey & Austin Wargaming Outcome Probability Matrix</h3>
-        <table class="levels-table">
-            <thead>
-                <tr>
-                    <th>Outcome Type</th>
-                    <th>Historical Prob</th>
-                    <th>Expected LOD Window</th>
-                    <th>Expected HOD Window</th>
-                    <th>LOD Distance</th>
-                    <th>HOD Distance</th>
-                    <th>Primary Execution Focus</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr style="background: rgba(239, 68, 68, 0.08);">
-                    <td><b style="color: #ef4444;">Short False (Primary)</b></td>
-                    <td><b>32.0% (71)</b></td>
-                    <td>09:30 &ndash; 10:15 ET</td>
-                    <td>16:00 &ndash; 16:15 ET</td>
-                    <td>-0.2% to -0.7%</td>
-                    <td>+0.6% to +0.5%</td>
-                    <td>Sweep lower box, V-Reversal rocket to P12 Mid & HOD Box</td>
-                </tr>
-                <tr style="background: rgba(16, 185, 129, 0.08);">
-                    <td><b style="color: #10b981;">Long True (Secondary)</b></td>
-                    <td><b>24.3% (53)</b></td>
-                    <td>08:30 &ndash; 08:45 ET</td>
-                    <td>16:45 &ndash; 17:00 ET</td>
-                    <td>-0.1% to -0.4%</td>
-                    <td>+0.9% to +0.5%</td>
-                    <td>Hold above P12 Midline, trend ride to Upper HOD Box</td>
-                </tr>
-                <tr>
-                    <td><b>Long False</b></td>
-                    <td>14.0% (26)</td>
-                    <td>09:45 &ndash; 10:00 ET</td>
-                    <td>09:30 &ndash; 09:45 ET</td>
-                    <td>-0.3% to -0.6%</td>
-                    <td>+0.6% to +0.4%</td>
-                    <td>Early push higher, sweep upper levels then drop</td>
-                </tr>
-                <tr>
-                    <td><b>Short True</b></td>
-                    <td>8.0% (18)</td>
-                    <td>09:30 &ndash; 09:45 ET</td>
-                    <td>08:15 &ndash; 08:30 ET</td>
-                    <td>-0.7% to -1.0%</td>
-                    <td>+0.5% to +0.2%</td>
-                    <td>Heavy downside continuation breaching all session lows</td>
-                </tr>
-            </tbody>
-        </table>
     </div>
 
     <script>
@@ -549,6 +546,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 if (!chartContainer || !overlayCanvas) return;
 
                 let showTargetBoxes = true;
+                let activeScenario = 1; // 1 = False Reversion, 2 = True Expansion
 
                 // ET Localization & Timezone formatting (New York / EDT)
                 const etTimeFormatter = (timestamp) => {{
@@ -581,7 +579,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     timeScale: {{
                         timeVisible: true,
                         secondsVisible: false,
-                        rightOffset: 65, // Future whitespace for target boxes and arrows
+                        rightOffset: 65,
                         borderColor: '#1e293b',
                         tickMarkFormatter: (time) => {{
                             const date = new Date(time * 1000);
@@ -615,51 +613,28 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 candleSeries.setData(data);
                 chart.timeScale().fitContent();
 
-                // Horizontal Price Rays
-                const p12Mid = {p12['mid']};
-                const p12High = {p12['high']};
-                const p12Low = {p12['low']};
-                const midnight = {anchors['midnight_open'] if anchors['midnight_open'] else 'null'};
+                // Dynamic Magnet Price Rays annotated with Hit Rate %
+                const magnets = {json.dumps(magnets)};
+                magnets.forEach(m => {{
+                    if (m.price === null || m.price === undefined) return;
+                    let style = LightweightCharts.LineStyle.Solid;
+                    if (m.style === 'dashed') style = LightweightCharts.LineStyle.Dashed;
+                    if (m.style === 'dotted') style = LightweightCharts.LineStyle.Dotted;
 
-                const solidStyle = (LightweightCharts.LineStyle && LightweightCharts.LineStyle.Solid !== undefined) ? LightweightCharts.LineStyle.Solid : 0;
-                const dashedStyle = (LightweightCharts.LineStyle && LightweightCharts.LineStyle.Dashed !== undefined) ? LightweightCharts.LineStyle.Dashed : 2;
-                const dottedStyle = (LightweightCharts.LineStyle && LightweightCharts.LineStyle.Dotted !== undefined) ? LightweightCharts.LineStyle.Dotted : 1;
-
-                candleSeries.createPriceLine({{
-                    price: p12Mid,
-                    color: '#f59e0b',
-                    lineWidth: 2,
-                    lineStyle: solidStyle,
-                    title: 'P12 MIDLINE ({p12['mid']:,.2f})',
-                }});
-
-                candleSeries.createPriceLine({{
-                    price: p12High,
-                    color: '#ef4444',
-                    lineWidth: 1,
-                    lineStyle: dashedStyle,
-                    title: 'P12 HIGH ({p12['high']:,.2f})',
-                }});
-
-                candleSeries.createPriceLine({{
-                    price: p12Low,
-                    color: '#10b981',
-                    lineWidth: 1,
-                    lineStyle: dashedStyle,
-                    title: 'P12 LOW ({p12['low']:,.2f})',
-                }});
-
-                if (midnight !== null) {{
                     candleSeries.createPriceLine({{
-                        price: midnight,
-                        color: '#3b82f6',
-                        lineWidth: 1,
-                        lineStyle: dottedStyle,
-                        title: 'MIDNIGHT OPEN ({anchors['midnight_open']:,.2f})',
+                        price: m.price,
+                        color: m.color,
+                        lineWidth: m.tier.includes('Tier 1') ? 2 : 1,
+                        lineStyle: style,
+                        title: m.name + ' [' + m.prob.toFixed(1) + '%]',
                     }});
-                }}
+                }});
 
-                // Overlay Canvas Drawing for Exact Price-Bounded Session Boxes & Target Zones
+                // Dynamic Algorithmic Trajectory Points
+                const sc1Points = {json.dumps(sc1_traj)};
+                const sc2Points = {json.dumps(sc2_traj)};
+
+                // Overlay Canvas Drawing
                 function drawOverlays() {{
                     overlayCanvas.width = chartContainer.clientWidth;
                     overlayCanvas.height = chartContainer.clientHeight;
@@ -670,71 +645,59 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     const getX = (ts) => timeScale.timeToCoordinate(ts);
                     const getY = (price) => candleSeries.priceToCoordinate(price);
 
-                    // Helper to draw a clean session box
-                    const drawSessionBox = (x1, x2, high, low, fillColor, strokeColor, labelText) => {{
-                        if (x1 === null && x2 === null) return;
-                        const yTop = getY(high);
-                        const yBot = getY(low);
-                        if (yTop === null || yBot === null) return;
-
-                        const left = x1 !== null ? x1 : 0;
-                        const right = x2 !== null ? x2 : overlayCanvas.width;
-                        const width = Math.max(2, right - left);
-                        const top = Math.min(yTop, yBot);
-                        const height = Math.abs(yBot - yTop);
-
-                        // Fill box
-                        ctx.fillStyle = fillColor;
-                        ctx.fillRect(left, top, width, height);
-
-                        // Top & Bottom boundary borders
-                        ctx.strokeStyle = strokeColor;
-                        ctx.lineWidth = 1.5;
-                        ctx.strokeRect(left, top, width, height);
-
-                        // Label
-                        ctx.fillStyle = strokeColor;
-                        ctx.font = 'bold 11px sans-serif';
-                        ctx.fillText(labelText, left + 8, top + 16);
-                        ctx.font = '10px monospace';
-                        ctx.fillText(low.toFixed(2) + ' - ' + high.toFixed(2), left + 8, top + 30);
-                    }};
-
-                    // 1. Exact Price-Bounded Asia Session Box (18:00 - 02:00 ET)
+                    // 1. Shaded Price-Bounded Asia Session Box
                     const asiaX1 = getX({asia_start_ts});
                     const asiaX2 = getX({asia_end_ts});
-                    drawSessionBox(asiaX1, asiaX2, {asia_high}, {asia_low}, 'rgba(59, 130, 246, 0.12)', '#3b82f6', 'ASIA (18:00-02:00 ET)');
+                    const asiaYTop = getY({asia_high});
+                    const asiaYBot = getY({asia_low});
+                    if (asiaYTop !== null && asiaYBot !== null && (asiaX1 !== null || asiaX2 !== null)) {{
+                        const left = asiaX1 !== null ? asiaX1 : 0;
+                        const right = asiaX2 !== null ? asiaX2 : overlayCanvas.width;
+                        const w = Math.max(2, right - left);
+                        const top = Math.min(asiaYTop, asiaYBot);
+                        const h = Math.abs(asiaYBot - asiaYTop);
 
-                    // 2. Exact Price-Bounded London Session Box (02:00 - 08:30 ET)
+                        ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
+                        ctx.fillRect(left, top, w, h);
+                        ctx.strokeStyle = '#3b82f6';
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeRect(left, top, w, h);
+
+                        ctx.fillStyle = '#60a5fa';
+                        ctx.font = 'bold 11px sans-serif';
+                        ctx.fillText('ASIA (18:00-02:00 ET)', left + 8, top + 16);
+                    }}
+
+                    // 2. Shaded Price-Bounded London Session Box
                     const lonX1 = getX({lon_start_ts});
                     const lonX2 = getX({lon_end_ts});
-                    drawSessionBox(lonX1, lonX2, {lon_high}, {lon_low}, 'rgba(249, 115, 22, 0.12)', '#f97316', 'LONDON (02:00-08:30 ET)');
+                    const lonYTop = getY({lon_high});
+                    const lonYBot = getY({lon_low});
+                    if (lonYTop !== null && lonYBot !== null && (lonX1 !== null || lonX2 !== null)) {{
+                        const left = lonX1 !== null ? lonX1 : 0;
+                        const right = lonX2 !== null ? lonX2 : overlayCanvas.width;
+                        const w = Math.max(2, right - left);
+                        const top = Math.min(lonYTop, lonYBot);
+                        const h = Math.abs(lonYBot - lonYTop);
 
-                    // 3. Pre-Market 06:00 - 09:00 Box
-                    const pmX1 = getX({pm_start_ts});
-                    const pmX2 = getX({pm_end_ts});
-                    if (pmX1 !== null || pmX2 !== null) {{
-                        const pmLeft = pmX1 !== null ? pmX1 : 0;
-                        const pmRight = pmX2 !== null ? pmX2 : overlayCanvas.width;
-                        const pmYTop = getY({pm_high});
-                        const pmYBot = getY({pm_low});
-                        if (pmYTop !== null && pmYBot !== null) {{
-                            ctx.fillStyle = 'rgba(245, 158, 11, 0.06)';
-                            ctx.fillRect(pmLeft, Math.min(pmYTop, pmYBot), pmRight - pmLeft, Math.abs(pmYBot - pmYTop));
-                            ctx.strokeStyle = '#f59e0b';
-                            ctx.setLineDash([4, 4]);
-                            ctx.strokeRect(pmLeft, Math.min(pmYTop, pmYBot), pmRight - pmLeft, Math.abs(pmYBot - pmYTop));
-                            ctx.setLineDash([]);
-                        }}
+                        ctx.fillStyle = 'rgba(249, 115, 22, 0.12)';
+                        ctx.fillRect(left, top, w, h);
+                        ctx.strokeStyle = '#f97316';
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeRect(left, top, w, h);
+
+                        ctx.fillStyle = '#fb923c';
+                        ctx.font = 'bold 11px sans-serif';
+                        ctx.fillText('LONDON (02:00-08:30 ET)', left + 8, top + 16);
                     }}
 
                     if (!showTargetBoxes) return;
 
-                    // 4. Green LOD Target Box (09:30 - 10:30 ET)
-                    const lodX1 = getX({lod_box_start_ts}) || (lonX2 ? lonX2 + 40 : 450);
-                    const lodX2 = getX({lod_box_end_ts}) || lodX1 + 80;
-                    const lodYTop = getY({lod_box_top});
-                    const lodYBot = getY({lod_box_bottom});
+                    // 3. Green LOD Target Box (09:30 - 10:15 ET)
+                    const lodX1 = getX({lod_box['start_ts']}) || (lonX2 ? lonX2 + 40 : 450);
+                    const lodX2 = getX({lod_box['end_ts']}) || lodX1 + 80;
+                    const lodYTop = getY({lod_box['top']});
+                    const lodYBot = getY({lod_box['bottom']});
 
                     if (lodYTop !== null && lodYBot !== null) {{
                         const boxW = Math.max(65, lodX2 - lodX1);
@@ -749,16 +712,16 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
                         ctx.fillStyle = '#34d399';
                         ctx.font = 'bold 11px sans-serif';
-                        ctx.fillText('🟢 LOD TARGET BOX', lodX1 + 8, boxY + 18);
+                        ctx.fillText('{lod_box['label']}', lodX1 + 8, boxY + 18);
                         ctx.font = '10px monospace';
-                        ctx.fillText('{lod_box_bottom:,.0f} - {lod_box_top:,.0f} (09:30-10:15 ET)', lodX1 + 8, boxY + 32);
+                        ctx.fillText('{lod_box['bottom']:,.0f} - {lod_box['top']:,.0f}', lodX1 + 8, boxY + 32);
                     }}
 
-                    // 5. Red HOD Target Box (11:00 - 16:00 ET)
-                    const hodX1 = getX({hod_box_start_ts}) || lodX2 + 50;
-                    const hodX2 = getX({hod_box_end_ts}) || hodX1 + 180;
-                    const hodYTop = getY({hod_box_top});
-                    const hodYBot = getY({hod_box_bottom});
+                    // 4. Red HOD Target Box (11:00 - 16:00 ET)
+                    const hodX1 = getX({hod_box['start_ts']}) || lodX2 + 50;
+                    const hodX2 = getX({hod_box['end_ts']}) || hodX1 + 180;
+                    const hodYTop = getY({hod_box['top']});
+                    const hodYBot = getY({hod_box['bottom']});
 
                     if (hodYTop !== null && hodYBot !== null) {{
                         const boxW = Math.max(90, hodX2 - hodX1);
@@ -773,54 +736,64 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
                         ctx.fillStyle = '#f87171';
                         ctx.font = 'bold 11px sans-serif';
-                        ctx.fillText('🔴 HOD TARGET BOX', hodX1 + 8, boxY + 18);
+                        ctx.fillText('{hod_box['label']}', hodX1 + 8, boxY + 18);
                         ctx.font = '10px monospace';
-                        ctx.fillText('{hod_box_bottom:,.0f} - {hod_box_top:,.0f} (11:00-16:00 ET)', hodX1 + 8, boxY + 32);
+                        ctx.fillText('{hod_box['bottom']:,.0f} - {hod_box['top']:,.0f}', hodX1 + 8, boxY + 32);
                     }}
 
-                    // 6. Magenta Wargaming Trajectory Arrow (Sweeper V-Reversion Path)
-                    const spotY = getY({spot});
-                    const lodMidY = (lodYTop !== null && lodYBot !== null) ? (lodYTop + lodYBot) / 2 : null;
-                    const hodMidY = (hodYTop !== null && hodYBot !== null) ? (hodYTop + hodYBot) / 2 : null;
+                    // 5. Algorithmic Trajectory Polyline / Arrow
+                    const points = activeScenario === 1 ? sc1Points : sc2Points;
+                    const lineColor = activeScenario === 1 ? '#f43f5e' : '#10b981';
 
-                    if (spotY !== null && lodMidY !== null && hodMidY !== null && lodX1 !== null && hodX1 !== null) {{
-                        ctx.strokeStyle = '#f43f5e';
-                        ctx.lineWidth = 3;
-                        ctx.setLineDash([]);
-                        ctx.beginPath();
-                        
-                        // Start at 09:30 Open -> Sweep down into LOD box
-                        const sweepMidX = lodX1 + 35;
-                        ctx.moveTo(lodX1 - 20, spotY);
-                        ctx.lineTo(sweepMidX, lodMidY);
+                    if (points && points.length >= 2) {{
+                        const canvasCoords = [];
+                        for (let i = 0; i < points.length; i++) {{
+                            const px = getX(points[i].ts);
+                            const py = getY(points[i].price);
+                            if (px !== null && py !== null) {{
+                                canvasCoords.push({{ x: px, y: py, desc: points[i].desc }});
+                            }}
+                        }}
 
-                        // Rocket launch up to HOD target box
-                        const rocketTargetX = hodX1 + 60;
-                        ctx.lineTo(rocketTargetX, hodMidY);
-                        ctx.stroke();
+                        if (canvasCoords.length >= 2) {{
+                            ctx.strokeStyle = lineColor;
+                            ctx.lineWidth = 3.5;
+                            ctx.lineCap = 'round';
+                            ctx.lineJoin = 'round';
+                            ctx.beginPath();
+                            ctx.moveTo(canvasCoords[0].x, canvasCoords[0].y);
 
-                        // Draw Arrowhead at Rocket Target
-                        const angle = Math.atan2(hodMidY - lodMidY, rocketTargetX - sweepMidX);
-                        ctx.fillStyle = '#f43f5e';
-                        ctx.beginPath();
-                        ctx.moveTo(rocketTargetX, hodMidY);
-                        ctx.lineTo(rocketTargetX - 14 * Math.cos(angle - Math.PI / 6), hodMidY - 14 * Math.sin(angle - Math.PI / 6));
-                        ctx.lineTo(rocketTargetX - 14 * Math.cos(angle + Math.PI / 6), hodMidY - 14 * Math.sin(angle + Math.PI / 6));
-                        ctx.closePath();
-                        ctx.fill();
+                            for (let i = 1; i < canvasCoords.length; i++) {{
+                                ctx.lineTo(canvasCoords[i].x, canvasCoords[i].y);
+                            }}
+                            ctx.stroke();
 
-                        ctx.fillStyle = '#fda4af';
-                        ctx.font = 'bold 11px sans-serif';
-                        ctx.fillText('⚡ SCENARIO 1 V-REVERSAL TRAJECTORY', sweepMidX + 10, lodMidY - 14);
+                            // Draw Arrowhead at the final expansion point
+                            const last = canvasCoords[canvasCoords.length - 1];
+                            const prev = canvasCoords[canvasCoords.length - 2];
+                            const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+
+                            ctx.fillStyle = lineColor;
+                            ctx.beginPath();
+                            ctx.moveTo(last.x, last.y);
+                            ctx.lineTo(last.x - 16 * Math.cos(angle - Math.PI / 6), last.y - 16 * Math.sin(angle - Math.PI / 6));
+                            ctx.lineTo(last.x - 16 * Math.cos(angle + Math.PI / 6), last.y - 16 * Math.sin(angle + Math.PI / 6));
+                            ctx.closePath();
+                            ctx.fill();
+
+                            // Trajectory Label
+                            ctx.fillStyle = activeScenario === 1 ? '#fda4af' : '#6ee7b7';
+                            ctx.font = 'bold 11px sans-serif';
+                            const labelText = activeScenario === 1 ? '⚡ SCENARIO 1: FALSE REVERSION PATH' : '🟢 SCENARIO 2: TRUE TREND PATH';
+                            ctx.fillText(labelText, canvasCoords[1].x + 10, canvasCoords[1].y - 12);
+                        }}
                     }}
                 }}
 
-                // Continuous 60 FPS RequestAnimationFrame Loop to keep canvas synced on Price Axis Drag & Zoom
-                let lastLeft = -1, lastRight = -1, lastTopPrice = -1, lastBottomPrice = -1;
+                // Continuous 60 FPS RequestAnimationFrame Loop
                 function syncLoop() {{
                     const timeScale = chart.timeScale();
-                    const logicalRange = timeScale.getVisibleLogicalRange();
-                    if (logicalRange) {{
+                    if (timeScale.getVisibleLogicalRange()) {{
                         drawOverlays();
                     }}
                     requestAnimationFrame(syncLoop);
@@ -883,8 +856,25 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 document.getElementById('btn-rth').addEventListener('click', () => {{
                     chart.timeScale().setVisibleRange({{
                         from: {pm_start_ts},
-                        to: {hod_box_end_ts} + 3600
+                        to: {hod_box['end_ts']} + 3600
                     }});
+                    drawOverlays();
+                }});
+
+                const btnSc1 = document.getElementById('btn-sc1');
+                const btnSc2 = document.getElementById('btn-sc2');
+
+                btnSc1.addEventListener('click', () => {{
+                    activeScenario = 1;
+                    btnSc1.classList.add('active-sc1');
+                    btnSc2.classList.remove('active-sc2');
+                    drawOverlays();
+                }});
+
+                btnSc2.addEventListener('click', () => {{
+                    activeScenario = 2;
+                    btnSc2.classList.add('active-sc2');
+                    btnSc1.classList.remove('active-sc1');
                     drawOverlays();
                 }});
 

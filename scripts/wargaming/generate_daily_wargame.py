@@ -30,6 +30,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from scripts.utils.fused_data_loader import load_fused_data
+from scripts.libs_py.profiler.live_prediction import compute_live_prediction
+from scripts.wargaming.wargame_trajectory_engine import compute_wargame_probabilities_and_trajectories
 from scripts.trader.signals.candle_science import get_candle_science_read
 from scripts.wargaming.htf_ema_analysis import compute_htf_ema_analysis
 from scripts.risk.position_sizer import calculate_position_size, load_ticker_config
@@ -203,6 +205,41 @@ def generate_wargame_data(
     short_tp2 = spot_price - runner_pts
     short_sl = spot_price + stop_pts
 
+    # 8. Profiler Live Level Hit Rates & Algorithmic Trajectories
+    profiler_pred = compute_live_prediction(ticker=ticker, target_date=t_dt, now_et=cutoff_dt)
+    traj_data = compute_wargame_probabilities_and_trajectories(
+        ticker=ticker,
+        target_date=t_dt,
+        spot_price=spot_price,
+        p12={
+            "high": p12_high,
+            "low": p12_low,
+            "mid": p12_mid,
+            "hod_time": p12_hod_time,
+            "lod_time": p12_lod_time,
+            "bias": p12_bias,
+            "diff_pts": p12_diff_pts,
+            "diff_bps": p12_diff_bps,
+        },
+        anchors={
+            "midnight_open": midnight_open,
+            "globex_open": globex_open,
+            "pdh": pdh,
+            "pdl": pdl,
+            "pdm": pdm,
+            "pdc": pdc,
+        },
+        sessions={
+            "asia_status": asia_status,
+            "asia_broken": asia_broken,
+            "london_status": london_status,
+            "london_broken": london_broken,
+            "alignment": session_alignment,
+        },
+        cs=cs_targets,
+        profiler_prediction=profiler_pred,
+    )
+
     return {
         "ticker": ticker,
         "date": t_dt.isoformat(),
@@ -248,7 +285,8 @@ def generate_wargame_data(
             "short_tp1": short_tp1,
             "short_tp2": short_tp2,
             "short_sl": short_sl,
-        }
+        },
+        "trajectory_engine": traj_data,
     }
 
 
