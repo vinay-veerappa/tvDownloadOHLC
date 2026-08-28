@@ -49,6 +49,18 @@ Boxes are drawn at `time_close` and extend 1 day forward.
 | SI | CBOE:VXSLV |
 | YM / DIA | CBOE:VXD |
 
+**Alternate vol sources (ES family only, mirroring the Pine `useVOLI` /
+`useVIX1D` input toggles):**
+
+| `vol_source` | Symbol | Local data |
+|---|---|---|
+| `"VIX"` (default) | CBOE:VIX | `data/VIX_1m.parquet` |
+| `"VOLI"` | NASDAQ:VOLI | `data/VOLI_1d.parquet` (daily-only) |
+| `"VIX1D"` | CBOE:VIX1D | `data/VIX1D_1d.parquet` (daily-only) |
+
+Other families have no alternates in the Pine code; passing VOLI/VIX1D for
+them raises `ValueError`.
+
 ## Usage
 
 ```python
@@ -61,6 +73,11 @@ from scripts.libs_py.expected_volatility import (
 
 es = pd.read_parquet('data/ES1_1m.parquet').tz_localize('UTC')
 scan = scan_expected_volatility(es, 'ES1!')   # auto-loads data/VIX_1m.parquet
+
+# Pine's alternate vol sources (ES family only):
+scan_voli  = scan_expected_volatility(es, 'ES1!', vol_source='VOLI')   # NASDAQ:VOLI
+scan_vix1d = scan_expected_volatility(es, 'ES1!', vol_source='VIX1D')  # CBOE:VIX1D
+
 touches = touch_stats(es, scan)
 ```
 
@@ -88,6 +105,9 @@ Output columns of `scan_expected_volatility`:
 - 62/64 sessions valid Oct–Dec 2025 (2 gaps = VIX parquet holes).
 - Touch-rate sanity on 12 sessions: 0.25σ touched ~50–67%, 1.0σ+ rarely —
   matches expected box geometry.
+- **All three ES vol sources** (VIX / VOLI / VIX1D) validated Dec 2025:
+  20/21 sessions each; Dec-30 session values VIX 14.15 / VOLI 11.76 /
+  VIX1D 8.83 (expected ordering: 1-day CEBO < 30-day VIX < VOLI).
 
 ## Critical Implementation Notes (do not regress)
 
@@ -103,10 +123,16 @@ Output columns of `scan_expected_volatility`:
    passes `daily=None` and lets `build_daily_settlements()` work from raw 1m
    bars with the cutoff. `scanner.daily_from_intraday()` is kept for other
    uses but is NOT used in the settlement path.
-3. **tz handling** — parquet indices are tz-naive UTC; call
+3. **Daily-only vol captures need the daily path** — VOLI_1d / VIX1D_1d stamp
+   bars at exactly 16:00 ET (close stamp), so the `hour < 16` cutoff would
+   drop every bar. `build_daily_settlements()` auto-detects
+   daily-frequency frames (≤2 distinct ET hours, all ≥ 16) and routes them
+   through the daily path (ET-date normalize → `shift(1)`). Same path serves
+   explicit `daily=` frames (e.g. ES1_1d at 22:00/23:00 UTC = 17:00 ET).
+4. **tz handling** — parquet indices are tz-naive UTC; call
    `.tz_localize('UTC')` before passing to the library (ADR-001: ET for
    session math, UTC for storage).
-4. **Contract-basis caveat** — parquet ES prices differ ~100 pts from
+5. **Contract-basis caveat** — parquet ES prices differ ~100 pts from
    TradingView-derived dailies (contract-stitching basis). Settlement *timing
    structure* is validated, not price parity.
 
@@ -114,6 +140,9 @@ Output columns of `scan_expected_volatility`:
 
 - `data/VXN_1m.parquet` (NQ) does not exist locally — NQ scans currently need
   `vol_intraday=` passed explicitly or a VIX proxy.
+- VOLI / VIX1D exist locally only as daily captures (no 1m) — fine for the
+  settlement anchor (which is daily anyway), but intraday granularity of
+  those indices cannot be replicated.
 - Pine `lookahead_on` daily-data subtlety is approximated by the intraday
   cutoff rule; exact parity with TV's `request.security` requires TV daily
   data ("TradingView-derived daily closes differ ~100 pts").
