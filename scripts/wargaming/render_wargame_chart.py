@@ -1,13 +1,13 @@
 """Interactive Lightweight Charts HTML Visual Renderer for Pack Wargaming
 
-Generates an authentic Mickey & Austin wargaming visual matching their live streams:
-1. Full 1m Candlestick Chart in Eastern Time (ET).
-2. Exact Profiler Session Boxes:
-   - Asia Box (19:30-02:30 ET) with Asia High, Low, and Asia Midpoint.
-   - London Box (03:30-07:30 ET) with London High, Low, and London Midpoint.
-   - NY1 Box (08:30-11:30 ET) with NY1 High, Low, and NY1 Midpoint.
-3. Shaded Green LOD Target Box (09:30-10:15 ET) & Red HOD Target Box (11:00-16:00 ET).
-4. Algorithmic Scenario Trajectory Arrows projected via logicalToCoordinate.
+Exact replication of The Daily Profiler indicator framework:
+1. Exact Time-Based Range Reference Boxes:
+   - Asia Range Box (18:00-19:30 ET) with Asia Mid line extending forward.
+   - London Range Box (02:30-03:30 ET) with Lon Mid line extending forward.
+   - NY1 Range Box (07:30-08:30 ET) with NY1 Mid line extending forward.
+2. Full 1m Candlestick Chart in Eastern Time (ET).
+3. Forward-projected Green LOD Target Box (09:30-10:15 ET) & Red HOD Target Box (11:00-16:00 ET).
+4. Algorithmic Scenario Trajectory Arrows (Scenario 1 Sweeper Reversal vs Scenario 2 True Trend).
 5. All price rays annotated with empirical Touch Probabilities (Hit Rates %).
 6. Continuous 60 FPS synchronization on both X (Time) and Y (Price) drag/zoom.
 7. Interactive Toolbar with Fullscreen mode (⛶), Scenario 1 / 2 Trajectory Toggles, Fit All, and View presets.
@@ -90,20 +90,23 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
     candles_json = json.dumps(candles_data)
 
-    # EXACT Profiler Session Windows (from ProfilerIndicator.pine: 19:30-02:30, 03:30-07:30, 08:30-11:30)
-    asia_start = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(19, 30)), tz="America/New_York")
-    asia_end = pd.Timestamp(datetime.combine(t_dt, time(2, 30)), tz="America/New_York")
+    # EXACT Profiler Time-Based Initial Ranges (t_asia, t_lon, t_ny1)
+    # Asia Range: 18:00 - 19:30 ET
+    asia_start = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(18, 0)), tz="America/New_York")
+    asia_end = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(19, 30)), tz="America/New_York")
     asia_df = df_1m[(df_1m.index >= asia_start) & (df_1m.index < asia_end)]
 
-    lon_start = pd.Timestamp(datetime.combine(t_dt, time(3, 30)), tz="America/New_York")
-    lon_end = pd.Timestamp(datetime.combine(t_dt, time(7, 30)), tz="America/New_York")
+    # London Range: 02:30 - 03:30 ET
+    lon_start = pd.Timestamp(datetime.combine(t_dt, time(2, 30)), tz="America/New_York")
+    lon_end = pd.Timestamp(datetime.combine(t_dt, time(3, 30)), tz="America/New_York")
     lon_df = df_1m[(df_1m.index >= lon_start) & (df_1m.index < lon_end)]
 
-    ny1_start = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
-    ny1_end = pd.Timestamp(datetime.combine(t_dt, time(11, 30)), tz="America/New_York")
+    # NY1 Range: 07:30 - 08:30 ET
+    ny1_start = pd.Timestamp(datetime.combine(t_dt, time(7, 30)), tz="America/New_York")
+    ny1_end = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
     ny1_df = df_1m[(df_1m.index >= ny1_start) & (df_1m.index < ny1_end)]
 
-    # Exact session high, low, and midpoints
+    # Compute high, low, midpoints
     asia_high = float(asia_df['high'].max()) if not asia_df.empty else float(p12['high'])
     asia_low = float(asia_df['low'].min()) if not asia_df.empty else float(p12['low'])
     asia_mid = (asia_high + asia_low) / 2.0
@@ -116,17 +119,14 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     lon_start_ts = int(lon_start.timestamp())
     lon_end_ts = int(lon_end.timestamp())
 
-    # NY1 Session Box
-    if not ny1_df.empty and cutoff_dt >= ny1_start:
-        ny1_high = float(ny1_df['high'].max())
-        ny1_low = float(ny1_df['low'].min())
-    else:
-        # Pre-market projection based on P12 range
-        ny1_high = float(p12['high'] + 45.0)
-        ny1_low = float(p12['low'] - 35.0)
+    ny1_high = float(ny1_df['high'].max()) if not ny1_df.empty else float(p12['high'])
+    ny1_low = float(ny1_df['low'].min()) if not ny1_df.empty else float(p12['low'])
     ny1_mid = (ny1_high + ny1_low) / 2.0
     ny1_start_ts = int(ny1_start.timestamp())
     ny1_end_ts = int(ny1_end.timestamp())
+
+    # End of Day timestamp for forward extending midpoint lines (17:00 ET)
+    eod_ts = int(pd.Timestamp(datetime.combine(t_dt, time(17, 0)), tz="America/New_York").timestamp())
 
     # Trajectory and Target Box coordinates from engine
     lod_box = traj_data.get("lod_box", {
@@ -469,26 +469,18 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         <canvas id="overlay-canvas"></canvas>
         
         <div class="hud-panel">
-            <h4>📊 Live Wargame HUD</h4>
+            <h4>📊 Time-Based Initial Ranges</h4>
             <div class="hud-row">
-                <span class="hud-label">Overnight HOD:</span>
-                <span class="hud-val" style="color: #ef4444;">{p12['high']:,.2f} ({p12_hod_time})</span>
-            </div>
-            <div class="hud-row">
-                <span class="hud-label">Overnight LOD:</span>
-                <span class="hud-val" style="color: #10b981;">{p12['low']:,.2f} ({p12_lod_time})</span>
-            </div>
-            <div class="hud-row">
-                <span class="hud-label">Asia Box (19:30-02:30):</span>
+                <span class="hud-label">Asia Range (18:00-19:30):</span>
                 <span class="hud-val" style="color: #60a5fa;">{asia_high:,.0f} - {asia_low:,.0f} (Mid: {asia_mid:,.0f})</span>
             </div>
             <div class="hud-row">
-                <span class="hud-label">London Box (03:30-07:30):</span>
-                <span class="hud-val" style="color: #fb923c;">{lon_high:,.0f} - {lon_low:,.0f} (Mid: {lon_mid:,.0f})</span>
+                <span class="hud-label">London Range (02:30-03:30):</span>
+                <span class="hud-val" style="color: #ef4444;">{lon_high:,.0f} - {lon_low:,.0f} (Mid: {lon_mid:,.0f})</span>
             </div>
             <div class="hud-row">
-                <span class="hud-label">NY1 Box (08:30-11:30):</span>
-                <span class="hud-val" style="color: #eab308;">{ny1_high:,.0f} - {ny1_low:,.0f} (Mid: {ny1_mid:,.0f})</span>
+                <span class="hud-label">NY1 Range (07:30-08:30):</span>
+                <span class="hud-val" style="color: #f97316;">{ny1_high:,.0f} - {ny1_low:,.0f} (Mid: {ny1_mid:,.0f})</span>
             </div>
             <div class="hud-row" style="margin-top: 6px; border-top: 1px solid #334155; padding-top: 4px;">
                 <span class="hud-label">LOD Target Box:</span>
@@ -656,11 +648,10 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
                     // Convert any UNIX timestamp (historical or future) to pixel X coordinate
                     const getX = (ts) => {{
-                        // Check if direct coordinate exists
                         const directX = timeScale.timeToCoordinate(ts);
                         if (directX !== null) return directX;
 
-                        // Continuous linear projection based on 1-minute bar spacing
+                        // Linear projection based on 1-minute bar spacing
                         if (ts > lastBar.time) {{
                             const minutesAhead = (ts - lastBar.time) / 60.0;
                             const lastBarLogicalIndex = data.length - 1;
@@ -675,8 +666,8 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
                     const getY = (price) => candleSeries.priceToCoordinate(price);
 
-                    // Helper to draw a clean session box with mid line
-                    const drawSessionBox = (x1, x2, high, low, mid, fillColor, strokeColor, labelText, midLabel) => {{
+                    // Helper to draw an exact Initial Range Box with its forward-extending Midpoint line
+                    const drawInitialRangeBox = (x1, x2, high, low, mid, fillColor, strokeColor, labelText, midLabel) => {{
                         if (x1 === null && x2 === null) return;
                         const yTop = getY(high);
                         const yBot = getY(low);
@@ -689,53 +680,54 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         const top = Math.min(yTop, yBot);
                         const height = Math.abs(yBot - yTop);
 
-                        // Fill box
+                        // Fill Initial Range Box
                         ctx.fillStyle = fillColor;
                         ctx.fillRect(left, top, width, height);
 
-                        // Top & Bottom boundary borders
+                        // Boundary border
                         ctx.strokeStyle = strokeColor;
                         ctx.lineWidth = 1.5;
                         ctx.strokeRect(left, top, width, height);
 
-                        // Midpoint line slicing through the center of the box
+                        // Forward-extending Midpoint line (from range start all the way across)
                         if (yMid !== null) {{
+                            const eodX = getX({eod_ts}) || overlayCanvas.width;
                             ctx.strokeStyle = strokeColor;
                             ctx.lineWidth = 1.2;
                             ctx.setLineDash([4, 4]);
                             ctx.beginPath();
                             ctx.moveTo(left, yMid);
-                            ctx.lineTo(right, yMid);
+                            ctx.lineTo(eodX, yMid);
                             ctx.stroke();
                             ctx.setLineDash([]);
 
                             ctx.fillStyle = strokeColor;
-                            ctx.font = '10px monospace';
-                            ctx.fillText(midLabel + ': ' + mid.toFixed(2), left + 8, yMid - 4);
+                            ctx.font = 'bold 10px monospace';
+                            ctx.fillText(midLabel + ': ' + mid.toFixed(2), Math.min(right + 6, overlayCanvas.width - 120), yMid - 4);
                         }}
 
-                        // Header Label
+                        // Header Tag on top of box
                         ctx.fillStyle = strokeColor;
-                        ctx.font = 'bold 11px sans-serif';
-                        ctx.fillText(labelText, left + 8, top + 16);
-                        ctx.font = '10px monospace';
-                        ctx.fillText(low.toFixed(2) + ' - ' + high.toFixed(2), left + 8, top + 30);
+                        ctx.font = 'bold 10px sans-serif';
+                        ctx.fillText(labelText, left + 4, top + 14);
+                        ctx.font = '9px monospace';
+                        ctx.fillText(low.toFixed(0) + '-' + high.toFixed(0), left + 4, top + 26);
                     }};
 
-                    // 1. Exact Asia Session Box (19:30 - 02:30 ET)
+                    // 1. Exact Asia Initial Range Box (18:00 - 19:30 ET)
                     const asiaX1 = getX({asia_start_ts});
                     const asiaX2 = getX({asia_end_ts});
-                    drawSessionBox(asiaX1, asiaX2, {asia_high}, {asia_low}, {asia_mid}, 'rgba(59, 130, 246, 0.12)', '#3b82f6', 'ASIA (19:30-02:30 ET)', 'Asia Mid');
+                    drawInitialRangeBox(asiaX1, asiaX2, {asia_high}, {asia_low}, {asia_mid}, 'rgba(59, 130, 246, 0.14)', '#3b82f6', 'ASIA (18:00-19:30)', 'Asia Mid');
 
-                    // 2. Exact London Session Box (03:30 - 07:30 ET)
+                    // 2. Exact London Initial Range Box (02:30 - 03:30 ET)
                     const lonX1 = getX({lon_start_ts});
                     const lonX2 = getX({lon_end_ts});
-                    drawSessionBox(lonX1, lonX2, {lon_high}, {lon_low}, {lon_mid}, 'rgba(249, 115, 22, 0.12)', '#f97316', 'LONDON (03:30-07:30 ET)', 'Lon Mid');
+                    drawInitialRangeBox(lonX1, lonX2, {lon_high}, {lon_low}, {lon_mid}, 'rgba(239, 68, 68, 0.14)', '#ef4444', 'LON (02:30-03:30)', 'Lon Mid');
 
-                    // 3. Exact NY1 Session Box (08:30 - 11:30 ET)
+                    // 3. Exact NY1 Initial Range Box (07:30 - 08:30 ET)
                     const ny1X1 = getX({ny1_start_ts});
                     const ny1X2 = getX({ny1_end_ts});
-                    drawSessionBox(ny1X1, ny1X2, {ny1_high}, {ny1_low}, {ny1_mid}, 'rgba(234, 179, 8, 0.12)', '#eab308', 'NY1 (08:30-11:30 ET)', 'NY1 Mid');
+                    drawInitialRangeBox(ny1X1, ny1X2, {ny1_high}, {ny1_low}, {ny1_mid}, 'rgba(249, 115, 22, 0.14)', '#f97316', 'NY1 (07:30-08:30)', 'NY1 Mid');
 
                     if (!showTargetBoxes) return;
 
