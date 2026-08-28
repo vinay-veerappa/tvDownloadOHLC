@@ -1,18 +1,21 @@
 """Interactive Lightweight Charts HTML Visual Renderer for Pack Wargaming
 
 Exact replication of The Daily Profiler indicator framework:
-1. Exact Time-Based Range Reference Boxes:
+1. Exact Time-Based Initial Range Reference Boxes:
    - Asia Range Box (18:00-19:30 ET) with Asia Mid line extending forward.
    - London Range Box (02:30-03:30 ET) with Lon Mid line extending forward.
    - NY1 Range Box (07:30-08:30 ET) with NY1 Mid line extending forward.
 2. Full 1m Candlestick Chart in Eastern Time (ET).
-3. Forward-projected Green LOD Target Box (09:30-10:15 ET) & Red HOD Target Box (11:00-16:00 ET).
-4. Algorithmic Scenario Trajectory Arrows (Scenario 1 Sweeper Reversal vs Scenario 2 True Trend).
+3. Complete 4-Outcome Decision Tree Engine:
+   - SF (Short False): Sweeps < NY1 Low, reverses > NY1 Mid (32.8% base / 66.5% conditional)
+   - LF (Long False): Breaks > NY1 High, reverses < NY1 Mid (33.3% base / 66.0% conditional)
+   - LT (Long True): Breaks > NY1 High, sustains bullish trend (17.2% base / 34.0% conditional)
+   - ST (Short True): Breaks < NY1 Low, sustains bearish trend (16.5% base / 33.5% conditional)
+4. Interactive 4-Scenario Toolbar Toggles with dynamic trajectory switching.
 5. All price rays annotated with empirical Touch Probabilities (Hit Rates %).
 6. Continuous 60 FPS synchronization on both X (Time) and Y (Price) drag/zoom.
-7. Interactive Toolbar with Fullscreen mode (⛶), Scenario 1 / 2 Trajectory Toggles, Fit All, and View presets.
-8. Mickey & Austin Magnet Hierarchy Matrix Table.
-9. 100% self-contained single-file HTML report (inlined Lightweight Charts v5.2.0).
+7. Mickey & Austin Magnet Hierarchy Table & 4-Scenario Cards.
+8. 100% self-contained single-file HTML report (inlined Lightweight Charts v5.2.0).
 """
 from __future__ import annotations
 
@@ -119,8 +122,8 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     lon_start_ts = int(lon_start.timestamp())
     lon_end_ts = int(lon_end.timestamp())
 
-    ny1_high = float(ny1_df['high'].max()) if not ny1_df.empty else float(p12['high'])
-    ny1_low = float(ny1_df['low'].min()) if not ny1_df.empty else float(p12['low'])
+    ny1_high = float(ny1_df['high'].max()) if not ny1_df.empty else float(p12['high'] - 40.0)
+    ny1_low = float(ny1_df['low'].min()) if not ny1_df.empty else float(p12['low'] + 20.0)
     ny1_mid = (ny1_high + ny1_low) / 2.0
     ny1_start_ts = int(ny1_start.timestamp())
     ny1_end_ts = int(ny1_end.timestamp())
@@ -128,7 +131,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     # End of Day timestamp for forward extending midpoint lines (17:00 ET)
     eod_ts = int(pd.Timestamp(datetime.combine(t_dt, time(17, 0)), tz="America/New_York").timestamp())
 
-    # Trajectory and Target Box coordinates from engine
+    # Target Boxes & Trajectories from 4-Outcome Engine
     lod_box = traj_data.get("lod_box", {
         "start_ts": int(pd.Timestamp(datetime.combine(t_dt, time(9, 30)), tz="America/New_York").timestamp()),
         "end_ts": int(pd.Timestamp(datetime.combine(t_dt, time(10, 15)), tz="America/New_York").timestamp()),
@@ -146,8 +149,9 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     })
 
     magnets = traj_data.get("magnets", [])
-    sc1_traj = traj_data.get("scenario_1_trajectory", [])
-    sc2_traj = traj_data.get("scenario_2_trajectory", [])
+    trajectories = traj_data.get("trajectories", {})
+    state_desc = traj_data.get("state_desc", "All 4 scenarios active.")
+    c_probs = traj_data.get("conditional_probs", {"SF": 32.8, "LF": 33.3, "LT": 17.2, "ST": 16.5})
     dir_narrative = traj_data.get("directional_narrative", "")
 
     p12_hod_time = p12.get("hod_time") or p12.get("high_time", "23:29")
@@ -248,6 +252,19 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             color: {bias_color};
             border: 1px solid {bias_color}66;
         }}
+        .decision-banner {{
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid #334155;
+            border-left: 4px solid var(--gold);
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
         .toolbar {{
             display: flex;
             align-items: center;
@@ -277,21 +294,11 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             background: #334155;
             border-color: #475569;
         }}
-        .btn.active {{
-            background: #3b82f6;
-            color: #fff;
-            border-color: #3b82f6;
-        }}
-        .btn.active-sc1 {{
-            background: #f43f5e;
-            color: #fff;
-            border-color: #f43f5e;
-        }}
-        .btn.active-sc2 {{
-            background: #10b981;
-            color: #fff;
-            border-color: #10b981;
-        }}
+        .btn.active-sf {{ background: #f43f5e; color: #fff; border-color: #f43f5e; }}
+        .btn.active-lf {{ background: #ef4444; color: #fff; border-color: #ef4444; }}
+        .btn.active-lt {{ background: #10b981; color: #fff; border-color: #10b981; }}
+        .btn.active-st {{ background: #b91c1c; color: #fff; border-color: #b91c1c; }}
+        .btn.active {{ background: #3b82f6; color: #fff; border-color: #3b82f6; }}
         .chart-wrapper {{
             position: relative;
             width: 100%;
@@ -372,22 +379,24 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         }}
         .metric-card .label {{ font-size: 11px; color: var(--text-dim); margin-bottom: 2px; text-transform: uppercase; }}
         .metric-card .value {{ font-size: 17px; font-weight: 700; font-family: monospace; }}
-        .cards-grid {{
+        .cards-grid-4 {{
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 14px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
             margin-bottom: 16px;
         }}
         .scenario-card {{
             background: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 10px;
-            padding: 16px 20px;
+            padding: 14px 16px;
         }}
-        .scenario-card.false {{ border-top: 4px solid var(--red); }}
-        .scenario-card.true {{ border-top: 4px solid var(--green); }}
-        .scenario-card h3 {{ margin: 0 0 10px 0; font-size: 16px; }}
-        .scenario-card ul {{ margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }}
+        .scenario-card.sf {{ border-top: 4px solid var(--magenta); }}
+        .scenario-card.lf {{ border-top: 4px solid var(--red); }}
+        .scenario-card.lt {{ border-top: 4px solid var(--green); }}
+        .scenario-card.st {{ border-top: 4px solid #b91c1c; }}
+        .scenario-card h3 {{ margin: 0 0 8px 0; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }}
+        .scenario-card ul {{ margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.5; }}
         .matrix-container {{
             background: var(--card-bg);
             border: 1px solid var(--border);
@@ -426,14 +435,24 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         </div>
     </div>
 
-    <!-- Interactive Toolbar -->
+    <!-- Live Decision Tree Status Banner -->
+    <div class="decision-banner">
+        <span style="font-size: 18px;">🧭</span>
+        <div>
+            <b>Mickey Decision Tree Filter:</b> {state_desc}
+        </div>
+    </div>
+
+    <!-- Interactive 4-Scenario Toolbar -->
     <div class="toolbar">
         <button class="btn" id="btn-fullscreen">⛶ Fullscreen</button>
         <button class="btn" id="btn-fit">🔍 Fit All</button>
         <button class="btn" id="btn-overnight">🌙 Overnight View</button>
         <button class="btn" id="btn-rth">🔔 RTH Wargame View</button>
-        <button class="btn active-sc1" id="btn-sc1">⚡ Scenario 1: Sweeper Reversal</button>
-        <button class="btn" id="btn-sc2">🟢 Scenario 2: True Trend Run</button>
+        <button class="btn active-sf" id="btn-sf">⚡ SF: Short False ({c_probs['SF']:.1f}%)</button>
+        <button class="btn" id="btn-lf">🔴 LF: Long False ({c_probs['LF']:.1f}%)</button>
+        <button class="btn" id="btn-lt">🟢 LT: Long True ({c_probs['LT']:.1f}%)</button>
+        <button class="btn" id="btn-st">🔴 ST: Short True ({c_probs['ST']:.1f}%)</button>
         <button class="btn active" id="btn-toggle-boxes">🎯 Target Boxes: ON</button>
         <div style="margin-left: auto; font-size: 12px; color: var(--text-dim);">
             Drag price axis vertically • Scroll to zoom • Pan horizontally
@@ -452,14 +471,14 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             <div style="font-size: 11px; color: var(--text-dim);">Primary Retest Gravity Well</div>
         </div>
         <div class="metric-card">
+            <div class="label">NY1 Range Box (07:30-08:30)</div>
+            <div class="value" style="color: var(--orange);">{ny1_high:,.0f} - {ny1_low:,.0f}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">Midpoint: {ny1_mid:,.2f} (99.4%)</div>
+        </div>
+        <div class="metric-card">
             <div class="label">Cover The Queen (+10 bps)</div>
             <div class="value" style="color: var(--green);">+{pack['cover_the_queen_bps']:.1f} bps (+{pack['queen_pts']:.2f} pts)</div>
             <div style="font-size: 11px; color: var(--text-dim);">50% Scale + BE Stop Lock</div>
-        </div>
-        <div class="metric-card">
-            <div class="label">Stop Ceiling (Max Risk)</div>
-            <div class="value" style="color: var(--red);">{pack['stop_ceiling_bps']:.1f} bps (~{pack['stop_pts']:.2f} pts)</div>
-            <div style="font-size: 11px; color: var(--text-dim);">Strict Capital Floor</div>
         </div>
     </div>
 
@@ -493,6 +512,42 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         </div>
     </div>
 
+    <!-- 4 Scenario Cards Grid -->
+    <div class="cards-grid-4">
+        <div class="scenario-card sf">
+            <h3 style="color: var(--magenta);">⚡ SHORT FALSE <span style="font-size: 11px; background: rgba(244,63,94,0.2); padding: 2px 6px; border-radius: 4px;">{c_probs['SF']:.1f}%</span></h3>
+            <ul>
+                <li><b>Trigger</b>: 09:30 Open sweeps below <code>{ny1_low:,.2f}</code> (NY1 Low), gets rejected in 0-5 box.</li>
+                <li><b>Target</b>: Mean reversion &rarr; <b>P12 Mid</b> (<code>{p12['mid']:,.2f}</code>) &rarr; <b>P12 High</b> (<code>{p12['high']:,.2f}</code>).</li>
+                <li><b>Cutoff</b>: Midline retest expected before 09:45 AM.</li>
+            </ul>
+        </div>
+        <div class="scenario-card lf">
+            <h3 style="color: var(--red);">🔴 LONG FALSE <span style="font-size: 11px; background: rgba(239,68,68,0.2); padding: 2px 6px; border-radius: 4px;">{c_probs['LF']:.1f}%</span></h3>
+            <ul>
+                <li><b>Trigger</b>: 09:30 Open breaks above <code>{ny1_high:,.2f}</code> (NY1 High), fails to sustain >10 bps breakout.</li>
+                <li><b>Target</b>: Mean reversion &rarr; <b>P12 Mid</b> (<code>{p12['mid']:,.2f}</code>) &rarr; <b>NY1 Low</b> (<code>{ny1_low:,.2f}</code>).</li>
+                <li><b>Cutoff</b>: Drops below 09:30 Open before 09:45 AM.</li>
+            </ul>
+        </div>
+        <div class="scenario-card lt">
+            <h3 style="color: var(--green);">🟢 LONG TRUE <span style="font-size: 11px; background: rgba(16,185,129,0.2); padding: 2px 6px; border-radius: 4px;">{c_probs['LT']:.1f}%</span></h3>
+            <ul>
+                <li><b>Trigger</b>: Accepts above <code>{ny1_high:,.2f}</code> by >10 bps in Q1 and holds pullback.</li>
+                <li><b>Target</b>: Trend Long &rarr; <b>Bullish P70</b> (<code>+{cs['bull']['p70']:.1f}%</code>).</li>
+                <li><b>Rule</b>: If no reversal by 10:15, Trend Continuation locks.</li>
+            </ul>
+        </div>
+        <div class="scenario-card st">
+            <h3 style="color: #f87171;">🔴 SHORT TRUE <span style="font-size: 11px; background: rgba(185,28,28,0.2); padding: 2px 6px; border-radius: 4px;">{c_probs['ST']:.1f}%</span></h3>
+            <ul>
+                <li><b>Trigger</b>: Accepts below <code>{ny1_low:,.2f}</code> by >10 bps and defends pullback.</li>
+                <li><b>Target</b>: Trend Short &rarr; <b>Bearish P70</b> (<code>{cs['bear']['p70']:.1f}%</code>).</li>
+                <li><b>Rule</b>: Sustained hourly red line signature.</li>
+            </ul>
+        </div>
+    </div>
+
     <!-- Mickey & Austin Probability Magnet Hierarchy Table -->
     <div class="matrix-container">
         <h3>🧲 Mickey & Austin Probability Magnet Hierarchy (Hit Rate %)</h3>
@@ -515,27 +570,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         </table>
     </div>
 
-    <div class="cards-grid">
-        <div class="scenario-card false">
-            <h3 style="color: var(--red);">🔴 SCENARIO 1: FALSE REVERSION (Primary Sweeper)</h3>
-            <ul>
-                <li><b>Trigger</b>: 09:30 RTH Open sweeps into <b>Green LOD Target Box</b> (<code>{lod_box['bottom']:,.2f} &ndash; {lod_box['top']:,.2f}</code>) and fails 10 bps breakout in 0-5 box.</li>
-                <li><b>Execution</b>: Long mean-reversion counter toward <b>P12 Midline</b> (<code>{p12['mid']:,.2f}</code> [88.5%]) & <b>Midnight Open</b> (<code>{anchors['midnight_open']:,.2f}</code> [84.1%]).</li>
-                <li><b>Cover The Queen (+10 bps)</b>: Scale 50% at <code>{pack.get('long_tp1', spot + pack['queen_pts']):,.2f}</code> and lock stop to Breakeven (+1 pt).</li>
-                <li><b>09:45 Cutoff</b>: Midline retest expected before 09:45 AM; reversal window closes at 10:15 AM.</li>
-            </ul>
-        </div>
-        <div class="scenario-card true">
-            <h3 style="color: var(--green);">🟢 SCENARIO 2: TRUE EXPANSION (Secondary Trend)</h3>
-            <ul>
-                <li><b>Trigger</b>: Price sustains >10 bps breakout and accepts across P12 Midline in Q1.</li>
-                <li><b>Bullish Target</b>: P12 High (<code>{p12['high']:,.2f}</code> [81.7%]) &rarr; <b>Red HOD Target Box</b> (<code>{hod_box['bottom']:,.2f} &ndash; {hod_box['top']:,.2f}</code>).</li>
-                <li><b>Bearish Target</b>: PDM (<code>{anchors.get('pdm', spot):,.2f}</code> [65.0%]) &rarr; PDL (<code>{anchors.get('pdl', spot):,.2f}</code> [41.9%]).</li>
-                <li><b>10:15 Rule</b>: If no reversal signature by 10:15, Trend Continuation locks for the session.</li>
-            </ul>
-        </div>
-    </div>
-
     <script>
         document.addEventListener('DOMContentLoaded', () => {{
             try {{
@@ -545,7 +579,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 if (!chartContainer || !overlayCanvas) return;
 
                 let showTargetBoxes = true;
-                let activeScenario = 1;
+                let activeScenario = 'SF'; // Default to Short False (Primary Sweeper)
 
                 // ET Localization & Timezone formatting (New York / EDT)
                 const etTimeFormatter = (timestamp) => {{
@@ -629,9 +663,8 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     }});
                 }});
 
-                // Dynamic Algorithmic Trajectory Points
-                const sc1Points = {json.dumps(sc1_traj)};
-                const sc2Points = {json.dumps(sc2_traj)};
+                // Dynamic Trajectories for all 4 outcomes
+                const allTraj = {json.dumps(trajectories)};
 
                 // Overlay Canvas Drawing with Deterministic Logical Coordinate Projection
                 function drawOverlays() {{
@@ -779,9 +812,10 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         ctx.fillText('{hod_box['bottom']:,.0f} - {hod_box['top']:,.0f}', hodX1 + 8, boxY + 32);
                     }}
 
-                    // 6. Algorithmic Trajectory Polyline / Arrow with Deterministic Future Coordinate Projection
-                    const points = activeScenario === 1 ? sc1Points : sc2Points;
-                    const lineColor = activeScenario === 1 ? '#f43f5e' : '#10b981';
+                    // 6. Algorithmic Trajectory for the Active 4-Outcome Scenario
+                    const points = allTraj[activeScenario] || allTraj['SF'];
+                    const colorMap = {{ 'SF': '#f43f5e', 'LF': '#ef4444', 'LT': '#10b981', 'ST': '#b91c1c' }};
+                    const lineColor = colorMap[activeScenario] || '#f43f5e';
 
                     if (points && points.length >= 2) {{
                         const canvasCoords = [];
@@ -806,7 +840,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                             }}
                             ctx.stroke();
 
-                            // Draw Arrowhead at the final expansion point
+                            // Draw Arrowhead
                             const last = canvasCoords[canvasCoords.length - 1];
                             const prev = canvasCoords[canvasCoords.length - 2];
                             const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
@@ -820,9 +854,9 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                             ctx.fill();
 
                             // Trajectory Label
-                            ctx.fillStyle = activeScenario === 1 ? '#fda4af' : '#6ee7b7';
+                            ctx.fillStyle = lineColor;
                             ctx.font = 'bold 11px sans-serif';
-                            const labelText = activeScenario === 1 ? '⚡ SCENARIO 1: FALSE REVERSION PATH' : '🟢 SCENARIO 2: TRUE TREND PATH';
+                            const labelText = '⚡ SCENARIO: ' + activeScenario + ' (' + points[1].desc + ')';
                             ctx.fillText(labelText, canvasCoords[1].x + 10, canvasCoords[1].y - 12);
                         }}
                     }}
@@ -901,20 +935,44 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     drawOverlays();
                 }});
 
-                const btnSc1 = document.getElementById('btn-sc1');
-                const btnSc2 = document.getElementById('btn-sc2');
+                // 4-Scenario Button Toggles
+                const btnSf = document.getElementById('btn-sf');
+                const btnLf = document.getElementById('btn-lf');
+                const btnLt = document.getElementById('btn-lt');
+                const btnSt = document.getElementById('btn-st');
 
-                btnSc1.addEventListener('click', () => {{
-                    activeScenario = 1;
-                    btnSc1.classList.add('active-sc1');
-                    btnSc2.classList.remove('active-sc2');
+                function clearScenarioBtns() {{
+                    btnSf.className = 'btn';
+                    btnLf.className = 'btn';
+                    btnLt.className = 'btn';
+                    btnSt.className = 'btn';
+                }}
+
+                btnSf.addEventListener('click', () => {{
+                    activeScenario = 'SF';
+                    clearScenarioBtns();
+                    btnSf.classList.add('active-sf');
                     drawOverlays();
                 }});
 
-                btnSc2.addEventListener('click', () => {{
-                    activeScenario = 2;
-                    btnSc2.classList.add('active-sc2');
-                    btnSc1.classList.remove('active-sc1');
+                btnLf.addEventListener('click', () => {{
+                    activeScenario = 'LF';
+                    clearScenarioBtns();
+                    btnLf.classList.add('active-lf');
+                    drawOverlays();
+                }});
+
+                btnLt.addEventListener('click', () => {{
+                    activeScenario = 'LT';
+                    clearScenarioBtns();
+                    btnLt.classList.add('active-lt');
+                    drawOverlays();
+                }});
+
+                btnSt.addEventListener('click', () => {{
+                    activeScenario = 'ST';
+                    clearScenarioBtns();
+                    btnSt.classList.add('active-st');
                     drawOverlays();
                 }});
 

@@ -152,6 +152,17 @@ def generate_wargame_data(
     else:
         pdh, pdl, pdc, pdo, pdm = None, None, None, None, None
 
+    # 3.5 NY1 Initial Range (07:30 - 08:30 ET)
+    ny1_range_start = pd.Timestamp(datetime.combine(t_dt, time(7, 30)), tz="America/New_York")
+    ny1_range_end = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
+    ny1_initial_df = df_1m[(df_1m.index >= ny1_range_start) & (df_1m.index < ny1_range_end)]
+    if not ny1_initial_df.empty:
+        ny1_h = float(ny1_initial_df["high"].max())
+        ny1_l = float(ny1_initial_df["low"].min())
+        ny1_m = (ny1_h + ny1_l) / 2.0
+    else:
+        ny1_h, ny1_l, ny1_m = p12_high - 40.0, p12_low + 20.0, p12_mid
+
     # 4. SessionBoxEngine for Asia / London states & broken status
     engine = SessionBoxEngine(df_cutoff, ticker=ticker).process()
     live_sessions = engine.get_live_sessions()
@@ -228,6 +239,9 @@ def generate_wargame_data(
             "pdl": pdl,
             "pdm": pdm,
             "pdc": pdc,
+            "ny1_high": ny1_h,
+            "ny1_low": ny1_l,
+            "ny1_mid": ny1_m,
         },
         sessions={
             "asia_status": asia_status,
