@@ -79,19 +79,17 @@ def scan_expected_volatility(
     if intraday.index.tz is None:
         raise ValueError("intraday frame must have a tz-aware DatetimeIndex")
 
-    daily_chart = daily_from_intraday(intraday)
     if vol_intraday is None:
         vol_intraday = load_vol_index(ticker)
 
     if vol_intraday is not None and len(vol_intraday):
-        vol_daily = daily_from_intraday(vol_intraday)
-        vol_settle = build_daily_settlements(vol_intraday, vol_daily, toggle=toggle)
+        vol_settle = build_daily_settlements(vol_intraday, None, toggle=toggle)
     else:
         vol_settle = pd.Series(dtype=float, name="settlement")
 
-    chart_settle = build_daily_settlements(intraday, daily_chart, toggle=toggle)
-
-    sess = session_settlements(intraday, daily_chart, session, tz, toggle)
+    # Settlements straight from intraday bars with the 16:00 ET cutoff -
+    # no intermediate UTC resample (which would corrupt the day anchoring).
+    sess = session_settlements(intraday, None, session, tz, toggle)
     sess["vix"] = vol_settle.reindex(sess["day"]).to_numpy()
 
     valid = sess["close_day"].notna() & sess["vix"].notna()

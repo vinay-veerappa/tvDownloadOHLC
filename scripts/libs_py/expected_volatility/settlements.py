@@ -2,8 +2,15 @@
 
 "Settlement" here mirrors Pine's ``close_day``: with default inputs
 (``toggle=false``) the indicator uses ``close[1]`` of the 1D chart - i.e. the
-previous regular-session close. With ``toggle=true`` it uses the current
-first-bar open instead.
+previous regular-session close.
+
+Timebase (matches Pine ``request.security(.., '1D', close[1])`` on CME-style
+23h symbols): the TradingView daily bar for calendar day D spans
+[D-1 17:00 ET, D ~16:00 ET), so its close is the last 1m trade before 16:00
+on day D. Evening bars at/after 17:00 ET belong to the NEXT daily bar.
+Therefore the value used at the 09:30 session start on day X is the last
+intraday close strictly before 16:00 ET on calendar day X-1 (equities and
+futures both satisfy this; holidays fall back further).
 """
 
 from __future__ import annotations
@@ -24,6 +31,8 @@ MARKET_VOL_PAIRS: dict[str, str] = {
     "SI": "CBOE:VXSLV",
     "YM": "CBOE:VXD",     # also DIA
 }
+
+SESSION_END_HOUR = 16  # bars at/after this ET hour belong to the next daily bar
 
 
 def map_ticker_family(ticker: str) -> str:
@@ -56,41 +65,59 @@ def vol_index_for_ticker(ticker: str) -> str:
     return MARKET_VOL_PAIRS[map_ticker_family(ticker)]
 
 
+def _et_index(df: pd.DataFrame) -> pd.DatetimeIndex:
+    """ET-converted index of a frame with tz-aware or UTC-naive timestamps."""
+    idx = df.index
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    return idx.tz_convert(DEFAULT_TZ)
+
+
+def _per_day_by_cutoff(
+    values: pd.Series,
+    et_index: pd.DatetimeIndex,
+    cutoff_hour: int,
+    agg: str,
+) -> pd.Series:
+    """Aggregate values per ET calendar day, using only bars strictly before
+    ``cutoff_hour`` ET. Evening bars (>= cutoff) are dropped entirely - they
+    belong to the next TradingView daily bar and must not pollute day D's
+    close.
+    """
+    days = et_index.normalize()
+    keep = et_index.hour < cutoff_hour
+    if agg == "last":
+        grouped = values[keep].groupby(days[keep]).last()
+    elif agg == "first":
+        grouped = values[keep].groupby(days[keep]).first()
+    else:
+        raise ValueError(f"unsupported agg: {agg}")
+    return grouped.sort_index()
+
+
 def build_daily_settlements(
     intraday: pd.DataFrame,
     daily: pd.DataFrame | pd.Series | None = None,
     toggle: bool = False,
 ) -> pd.Series:
-    """Per-day "settlement" value the indicator anchors boxes at.
+    """Per-day value the indicator's boxes are anchored at, indexed by ET day.
 
-    Parameters
-    ----------
-    intraday : underlying 1m/5m OHLCV frame (tz-aware datetime index).
-    daily    : optional 1D frame (or close Series). When supplied, replicates
-               Pine's ``request.security(..., '1D', close_day)`` exactly:
-               day D uses the prior daily bar's close (``close[1]``) or,
-               with ``toggle=True``, the current daily bar's open. When
-               omitted, falls back to the intraday frame's own daily close
-               (last bar of each day), which equals the 1D close on days the
-               session completed.
-    toggle   : mirror of the Pine boolean input.
-
-    Returns
-    -------
-    Series indexed by normalized day, containing the settlement price for
-    that day (i.e. what the boxes drawn on that day are anchored at).
+    Default (toggle=False): last close strictly before 16:00 ET on the
+    PREVIOUS calendar day with qualifying bars (Pine ``close[1]`` on 1D).
+    toggle=True: first regular open at/after 09:30 ET of the same day
+    (Pine ``session.isfirstbar_regular`` open), matching the ``useTF`` bar
+    assigned to the session date.
     """
+    et = _et_index(intraday)
+
     if daily is not None and len(daily) > 0:
         if isinstance(daily, pd.Series):
-            base = daily.to_frame("value")
-            value_col = "value"
+            s = daily.copy()
         else:
-            base = daily
-            if "close" in base.columns:
-                value_col = "close"
-            else:
-                value_col = base.columns[0]
-        s = base[value_col].copy()
+            col = "open" if toggle and "open" in daily.columns else (
+                "close" if "close" in daily.columns else daily.columns[0]
+            )
+            s = daily[col].copy()
         idx = pd.to_datetime(s.index)
         if idx.tz is not None:
             idx = idx.tz_convert(DEFAULT_TZ).normalize()
@@ -99,37 +126,16 @@ def build_daily_settlements(
         s.index = idx
         s = s.sort_index()
         s = s[~s.index.duplicated(keep="last")]
+        if not toggle:
+            s = s.shift(1)  # close_day = close[1]
+        return s.rename("settlement")
 
-        if toggle:
-            # Pine: close_day = open (first regular-session bar of the day).
-            if isinstance(daily, pd.Series):
-                raise TypeError("toggle=True requires an OHLC daily DataFrame")
-            open_col = "open" if "open" in base.columns else None
-            if open_col is None:
-                raise KeyError("toggle=True requires an 'open' column in daily data")
-            o = base[open_col].copy()
-            oi = pd.to_datetime(o.index)
-            if oi.tz is not None:
-                oi = oi.tz_convert(DEFAULT_TZ).normalize()
-            else:
-                oi = oi.tz_localize(DEFAULT_TZ).normalize()
-            o.index = oi
-            o = o.sort_index()
-            o = o[~o.index.duplicated(keep="last")]
-            return o.rename("settlement")
-
-        return s.shift(1).rename("settlement")  # close_day = close[1]
-
-    # Intraday-only fallback: last intra-day bar close == daily close.
-    et = (intraday.index.tz_convert(DEFAULT_TZ)
-          if intraday.index.tz is not None
-          else intraday.index.tz_localize(DEFAULT_TZ))
-    day = et.normalize()
-    if toggle:
-        per_day = intraday["open"].groupby(day).first()
-    else:
-        per_day = intraday["close"].groupby(day).last()
-    per_day = per_day.sort_index()
+    # Intraday fallback: per-day aggregation with the 16:00 ET cutoff.
+    values_col = "open" if toggle else "close"
+    per_day = _per_day_by_cutoff(
+        intraday[values_col].astype(float), et, SESSION_END_HOUR,
+        agg=("first" if toggle else "last"),
+    )
     if not toggle:
         per_day = per_day.shift(1)  # previous day's close
     return per_day.rename("settlement")

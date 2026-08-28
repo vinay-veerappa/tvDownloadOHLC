@@ -71,9 +71,12 @@ def touch_stats(
     lows = intraday["low"].to_numpy(dtype=float)
 
     out = []
-    scan_index = scan.index.to_numpy()
-    for i, (_, box) in enumerate(boxes.iterrows()):
-        start, end = box["start_ts"], box["end_ts"]
+    scan_rows = [scan.loc[i] for i in scan.index]
+    boxes_list = list(boxes.itertuples(index=False))
+    for i, box in enumerate(boxes_list):
+        if i >= len(scan_rows):
+            break
+        start, end = box.start_ts, box.end_ts
         lo = idx.searchsorted(start, side="left")
         hi = idx.searchsorted(end, side="left")
         if lo >= hi:
@@ -81,9 +84,8 @@ def touch_stats(
         b_high = highs[lo:hi]
         b_low = lows[lo:hi]
 
-        row = scan_index[i]
-        edges = zone_edges(scan.loc[row])
-        for _, edge in edges.iterrows():
+        edge_rows = zone_edges(scan_rows[i])
+        for _, edge in edge_rows.iterrows():
             hit = (b_high >= edge["bottom"]) & (b_low <= edge["top"])
             first = idx[lo:hi][hit.argmax()] if hit.any() else pd.NaT
             # deepest fraction of the zone's height traveled by any bar
