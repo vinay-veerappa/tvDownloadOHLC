@@ -2,14 +2,16 @@
 
 Generates an authentic Mickey & Austin wargaming visual matching their live streams:
 1. Full 1m Candlestick Chart in Eastern Time (ET).
-2. Price-bounded Asia (18:00-02:00 ET), London (02:00-08:30 ET), and Pre-Market (06:00-09:00 ET) session boxes.
+2. Exact Profiler Session Boxes:
+   - Asia Box (19:30-02:30 ET) with Asia High, Low, and Asia Midpoint.
+   - London Box (03:30-07:30 ET) with London High, Low, and London Midpoint.
+   - NY1 Box (08:30-11:30 ET) with NY1 High, Low, and NY1 Midpoint.
 3. Shaded Green LOD Target Box (09:30-10:15 ET) & Red HOD Target Box (11:00-16:00 ET).
-4. Algorithmic Scenario Trajectory Arrows generated dynamically from Profiler & Candle Science distributions.
-5. All price rays annotated with empirical Touch Probabilities (Hit Rates %):
-   - P12 Midline [88.5%], Midnight Open [84.1%], P12 High [81.7%], 07:30 Open [74.7%], P12 Low [68.9%], PDM [65.0%].
+4. Algorithmic Scenario Trajectory Arrows projected via logicalToCoordinate.
+5. All price rays annotated with empirical Touch Probabilities (Hit Rates %).
 6. Continuous 60 FPS synchronization on both X (Time) and Y (Price) drag/zoom.
 7. Interactive Toolbar with Fullscreen mode (⛶), Scenario 1 / 2 Trajectory Toggles, Fit All, and View presets.
-8. Mickey & Austin Magnet Hierarchy Matrix Table ranking all key levels by probability.
+8. Mickey & Austin Magnet Hierarchy Matrix Table.
 9. 100% self-contained single-file HTML report (inlined Lightweight Charts v5.2.0).
 """
 from __future__ import annotations
@@ -88,34 +90,43 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
     candles_json = json.dumps(candles_data)
 
-    # Session bounds in timestamps
-    asia_start = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(18, 0)), tz="America/New_York")
-    asia_end = pd.Timestamp(datetime.combine(t_dt, time(2, 0)), tz="America/New_York")
+    # EXACT Profiler Session Windows (from ProfilerIndicator.pine: 19:30-02:30, 03:30-07:30, 08:30-11:30)
+    asia_start = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(19, 30)), tz="America/New_York")
+    asia_end = pd.Timestamp(datetime.combine(t_dt, time(2, 30)), tz="America/New_York")
     asia_df = df_1m[(df_1m.index >= asia_start) & (df_1m.index < asia_end)]
 
-    lon_start = pd.Timestamp(datetime.combine(t_dt, time(2, 0)), tz="America/New_York")
-    lon_end = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
+    lon_start = pd.Timestamp(datetime.combine(t_dt, time(3, 30)), tz="America/New_York")
+    lon_end = pd.Timestamp(datetime.combine(t_dt, time(7, 30)), tz="America/New_York")
     lon_df = df_1m[(df_1m.index >= lon_start) & (df_1m.index < lon_end)]
 
-    pm_start = pd.Timestamp(datetime.combine(t_dt, time(6, 0)), tz="America/New_York")
-    pm_end = pd.Timestamp(datetime.combine(t_dt, time(9, 0)), tz="America/New_York")
-    pm_df = df_1m[(df_1m.index >= pm_start) & (df_1m.index < pm_end)]
+    ny1_start = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
+    ny1_end = pd.Timestamp(datetime.combine(t_dt, time(11, 30)), tz="America/New_York")
+    ny1_df = df_1m[(df_1m.index >= ny1_start) & (df_1m.index < ny1_end)]
 
-    # Exact session high and low values
+    # Exact session high, low, and midpoints
     asia_high = float(asia_df['high'].max()) if not asia_df.empty else float(p12['high'])
     asia_low = float(asia_df['low'].min()) if not asia_df.empty else float(p12['low'])
+    asia_mid = (asia_high + asia_low) / 2.0
     asia_start_ts = int(asia_start.timestamp())
     asia_end_ts = int(asia_end.timestamp())
 
     lon_high = float(lon_df['high'].max()) if not lon_df.empty else float(p12['high'])
     lon_low = float(lon_df['low'].min()) if not lon_df.empty else float(p12['low'])
+    lon_mid = (lon_high + lon_low) / 2.0
     lon_start_ts = int(lon_start.timestamp())
     lon_end_ts = int(lon_end.timestamp())
 
-    pm_high = float(pm_df['high'].max()) if not pm_df.empty else float(p12['high'])
-    pm_low = float(pm_df['low'].min()) if not pm_df.empty else float(p12['low'])
-    pm_start_ts = int(pm_start.timestamp())
-    pm_end_ts = int(pm_end.timestamp())
+    # NY1 Session Box
+    if not ny1_df.empty and cutoff_dt >= ny1_start:
+        ny1_high = float(ny1_df['high'].max())
+        ny1_low = float(ny1_df['low'].min())
+    else:
+        # Pre-market projection based on P12 range
+        ny1_high = float(p12['high'] + 45.0)
+        ny1_low = float(p12['low'] - 35.0)
+    ny1_mid = (ny1_high + ny1_low) / 2.0
+    ny1_start_ts = int(ny1_start.timestamp())
+    ny1_end_ts = int(ny1_end.timestamp())
 
     # Trajectory and Target Box coordinates from engine
     lod_box = traj_data.get("lod_box", {
@@ -468,28 +479,24 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 <span class="hud-val" style="color: #10b981;">{p12['low']:,.2f} ({p12_lod_time})</span>
             </div>
             <div class="hud-row">
-                <span class="hud-label">Asia Range ({asia_df['high'].max() if not asia_df.empty else p12['high']:,.0f}-{asia_df['low'].min() if not asia_df.empty else p12['low']:,.0f}):</span>
-                <span class="hud-val" style="color: #60a5fa;">{sess['asia_status']} (BK: {str(sess['asia_broken'])})</span>
+                <span class="hud-label">Asia Box (19:30-02:30):</span>
+                <span class="hud-val" style="color: #60a5fa;">{asia_high:,.0f} - {asia_low:,.0f} (Mid: {asia_mid:,.0f})</span>
             </div>
             <div class="hud-row">
-                <span class="hud-label">London Range ({lon_df['high'].max() if not lon_df.empty else p12['high']:,.0f}-{lon_df['low'].min() if not lon_df.empty else p12['low']:,.0f}):</span>
-                <span class="hud-val" style="color: #fb923c;">{sess['london_status']} (BK: {str(sess['london_broken'])})</span>
+                <span class="hud-label">London Box (03:30-07:30):</span>
+                <span class="hud-val" style="color: #fb923c;">{lon_high:,.0f} - {lon_low:,.0f} (Mid: {lon_mid:,.0f})</span>
+            </div>
+            <div class="hud-row">
+                <span class="hud-label">NY1 Box (08:30-11:30):</span>
+                <span class="hud-val" style="color: #eab308;">{ny1_high:,.0f} - {ny1_low:,.0f} (Mid: {ny1_mid:,.0f})</span>
             </div>
             <div class="hud-row" style="margin-top: 6px; border-top: 1px solid #334155; padding-top: 4px;">
                 <span class="hud-label">LOD Target Box:</span>
                 <span class="hud-val" style="color: #10b981;">{lod_box['bottom']:,.0f} &ndash; {lod_box['top']:,.0f}</span>
             </div>
             <div class="hud-row">
-                <span class="hud-label">LOD Target Time:</span>
-                <span class="hud-val" style="color: #10b981;">09:30 &ndash; 10:15 ET</span>
-            </div>
-            <div class="hud-row">
                 <span class="hud-label">HOD Target Box:</span>
                 <span class="hud-val" style="color: #ef4444;">{hod_box['bottom']:,.0f} &ndash; {hod_box['top']:,.0f}</span>
-            </div>
-            <div class="hud-row">
-                <span class="hud-label">HOD Target Time:</span>
-                <span class="hud-val" style="color: #ef4444;">11:00 &ndash; 16:00 ET</span>
             </div>
         </div>
     </div>
@@ -546,7 +553,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 if (!chartContainer || !overlayCanvas) return;
 
                 let showTargetBoxes = true;
-                let activeScenario = 1; // 1 = False Reversion, 2 = True Expansion
+                let activeScenario = 1;
 
                 // ET Localization & Timezone formatting (New York / EDT)
                 const etTimeFormatter = (timestamp) => {{
@@ -579,7 +586,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     timeScale: {{
                         timeVisible: true,
                         secondsVisible: false,
-                        rightOffset: 65,
+                        rightOffset: 120, // Ample future whitespace for full day projection
                         borderColor: '#1e293b',
                         tickMarkFormatter: (time) => {{
                             const date = new Date(time * 1000);
@@ -634,7 +641,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 const sc1Points = {json.dumps(sc1_traj)};
                 const sc2Points = {json.dumps(sc2_traj)};
 
-                // Overlay Canvas Drawing
+                // Overlay Canvas Drawing with Deterministic Logical Coordinate Projection
                 function drawOverlays() {{
                     overlayCanvas.width = chartContainer.clientWidth;
                     overlayCanvas.height = chartContainer.clientHeight;
@@ -642,64 +649,103 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
                     const timeScale = chart.timeScale();
-                    const getX = (ts) => timeScale.timeToCoordinate(ts);
+                    if (!data.length) return;
+
+                    const firstBar = data[0];
+                    const lastBar = data[data.length - 1];
+
+                    // Convert any UNIX timestamp (historical or future) to pixel X coordinate
+                    const getX = (ts) => {{
+                        // Check if direct coordinate exists
+                        const directX = timeScale.timeToCoordinate(ts);
+                        if (directX !== null) return directX;
+
+                        // Continuous linear projection based on 1-minute bar spacing
+                        if (ts > lastBar.time) {{
+                            const minutesAhead = (ts - lastBar.time) / 60.0;
+                            const lastBarLogicalIndex = data.length - 1;
+                            const futureLogicalIndex = lastBarLogicalIndex + minutesAhead;
+                            return timeScale.logicalToCoordinate(futureLogicalIndex);
+                        }} else if (ts < firstBar.time) {{
+                            const minutesBehind = (firstBar.time - ts) / 60.0;
+                            return timeScale.logicalToCoordinate(-minutesBehind);
+                        }}
+                        return null;
+                    }};
+
                     const getY = (price) => candleSeries.priceToCoordinate(price);
 
-                    // 1. Shaded Price-Bounded Asia Session Box
+                    // Helper to draw a clean session box with mid line
+                    const drawSessionBox = (x1, x2, high, low, mid, fillColor, strokeColor, labelText, midLabel) => {{
+                        if (x1 === null && x2 === null) return;
+                        const yTop = getY(high);
+                        const yBot = getY(low);
+                        const yMid = getY(mid);
+                        if (yTop === null || yBot === null) return;
+
+                        const left = x1 !== null ? x1 : 0;
+                        const right = x2 !== null ? x2 : overlayCanvas.width;
+                        const width = Math.max(2, right - left);
+                        const top = Math.min(yTop, yBot);
+                        const height = Math.abs(yBot - yTop);
+
+                        // Fill box
+                        ctx.fillStyle = fillColor;
+                        ctx.fillRect(left, top, width, height);
+
+                        // Top & Bottom boundary borders
+                        ctx.strokeStyle = strokeColor;
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeRect(left, top, width, height);
+
+                        // Midpoint line slicing through the center of the box
+                        if (yMid !== null) {{
+                            ctx.strokeStyle = strokeColor;
+                            ctx.lineWidth = 1.2;
+                            ctx.setLineDash([4, 4]);
+                            ctx.beginPath();
+                            ctx.moveTo(left, yMid);
+                            ctx.lineTo(right, yMid);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+
+                            ctx.fillStyle = strokeColor;
+                            ctx.font = '10px monospace';
+                            ctx.fillText(midLabel + ': ' + mid.toFixed(2), left + 8, yMid - 4);
+                        }}
+
+                        // Header Label
+                        ctx.fillStyle = strokeColor;
+                        ctx.font = 'bold 11px sans-serif';
+                        ctx.fillText(labelText, left + 8, top + 16);
+                        ctx.font = '10px monospace';
+                        ctx.fillText(low.toFixed(2) + ' - ' + high.toFixed(2), left + 8, top + 30);
+                    }};
+
+                    // 1. Exact Asia Session Box (19:30 - 02:30 ET)
                     const asiaX1 = getX({asia_start_ts});
                     const asiaX2 = getX({asia_end_ts});
-                    const asiaYTop = getY({asia_high});
-                    const asiaYBot = getY({asia_low});
-                    if (asiaYTop !== null && asiaYBot !== null && (asiaX1 !== null || asiaX2 !== null)) {{
-                        const left = asiaX1 !== null ? asiaX1 : 0;
-                        const right = asiaX2 !== null ? asiaX2 : overlayCanvas.width;
-                        const w = Math.max(2, right - left);
-                        const top = Math.min(asiaYTop, asiaYBot);
-                        const h = Math.abs(asiaYBot - asiaYTop);
+                    drawSessionBox(asiaX1, asiaX2, {asia_high}, {asia_low}, {asia_mid}, 'rgba(59, 130, 246, 0.12)', '#3b82f6', 'ASIA (19:30-02:30 ET)', 'Asia Mid');
 
-                        ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
-                        ctx.fillRect(left, top, w, h);
-                        ctx.strokeStyle = '#3b82f6';
-                        ctx.lineWidth = 1.5;
-                        ctx.strokeRect(left, top, w, h);
-
-                        ctx.fillStyle = '#60a5fa';
-                        ctx.font = 'bold 11px sans-serif';
-                        ctx.fillText('ASIA (18:00-02:00 ET)', left + 8, top + 16);
-                    }}
-
-                    // 2. Shaded Price-Bounded London Session Box
+                    // 2. Exact London Session Box (03:30 - 07:30 ET)
                     const lonX1 = getX({lon_start_ts});
                     const lonX2 = getX({lon_end_ts});
-                    const lonYTop = getY({lon_high});
-                    const lonYBot = getY({lon_low});
-                    if (lonYTop !== null && lonYBot !== null && (lonX1 !== null || lonX2 !== null)) {{
-                        const left = lonX1 !== null ? lonX1 : 0;
-                        const right = lonX2 !== null ? lonX2 : overlayCanvas.width;
-                        const w = Math.max(2, right - left);
-                        const top = Math.min(lonYTop, lonYBot);
-                        const h = Math.abs(lonYBot - lonYTop);
+                    drawSessionBox(lonX1, lonX2, {lon_high}, {lon_low}, {lon_mid}, 'rgba(249, 115, 22, 0.12)', '#f97316', 'LONDON (03:30-07:30 ET)', 'Lon Mid');
 
-                        ctx.fillStyle = 'rgba(249, 115, 22, 0.12)';
-                        ctx.fillRect(left, top, w, h);
-                        ctx.strokeStyle = '#f97316';
-                        ctx.lineWidth = 1.5;
-                        ctx.strokeRect(left, top, w, h);
-
-                        ctx.fillStyle = '#fb923c';
-                        ctx.font = 'bold 11px sans-serif';
-                        ctx.fillText('LONDON (02:00-08:30 ET)', left + 8, top + 16);
-                    }}
+                    // 3. Exact NY1 Session Box (08:30 - 11:30 ET)
+                    const ny1X1 = getX({ny1_start_ts});
+                    const ny1X2 = getX({ny1_end_ts});
+                    drawSessionBox(ny1X1, ny1X2, {ny1_high}, {ny1_low}, {ny1_mid}, 'rgba(234, 179, 8, 0.12)', '#eab308', 'NY1 (08:30-11:30 ET)', 'NY1 Mid');
 
                     if (!showTargetBoxes) return;
 
-                    // 3. Green LOD Target Box (09:30 - 10:15 ET)
-                    const lodX1 = getX({lod_box['start_ts']}) || (lonX2 ? lonX2 + 40 : 450);
-                    const lodX2 = getX({lod_box['end_ts']}) || lodX1 + 80;
+                    // 4. Green LOD Target Box (09:30 - 10:15 ET)
+                    const lodX1 = getX({lod_box['start_ts']});
+                    const lodX2 = getX({lod_box['end_ts']});
                     const lodYTop = getY({lod_box['top']});
                     const lodYBot = getY({lod_box['bottom']});
 
-                    if (lodYTop !== null && lodYBot !== null) {{
+                    if (lodYTop !== null && lodYBot !== null && lodX1 !== null && lodX2 !== null) {{
                         const boxW = Math.max(65, lodX2 - lodX1);
                         const boxH = Math.abs(lodYBot - lodYTop);
                         const boxY = Math.min(lodYTop, lodYBot);
@@ -717,13 +763,13 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         ctx.fillText('{lod_box['bottom']:,.0f} - {lod_box['top']:,.0f}', lodX1 + 8, boxY + 32);
                     }}
 
-                    // 4. Red HOD Target Box (11:00 - 16:00 ET)
-                    const hodX1 = getX({hod_box['start_ts']}) || lodX2 + 50;
-                    const hodX2 = getX({hod_box['end_ts']}) || hodX1 + 180;
+                    // 5. Red HOD Target Box (11:00 - 16:00 ET)
+                    const hodX1 = getX({hod_box['start_ts']});
+                    const hodX2 = getX({hod_box['end_ts']});
                     const hodYTop = getY({hod_box['top']});
                     const hodYBot = getY({hod_box['bottom']});
 
-                    if (hodYTop !== null && hodYBot !== null) {{
+                    if (hodYTop !== null && hodYBot !== null && hodX1 !== null && hodX2 !== null) {{
                         const boxW = Math.max(90, hodX2 - hodX1);
                         const boxH = Math.abs(hodYBot - hodYTop);
                         const boxY = Math.min(hodYTop, hodYBot);
@@ -741,7 +787,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         ctx.fillText('{hod_box['bottom']:,.0f} - {hod_box['top']:,.0f}', hodX1 + 8, boxY + 32);
                     }}
 
-                    // 5. Algorithmic Trajectory Polyline / Arrow
+                    // 6. Algorithmic Trajectory Polyline / Arrow with Deterministic Future Coordinate Projection
                     const points = activeScenario === 1 ? sc1Points : sc2Points;
                     const lineColor = activeScenario === 1 ? '#f43f5e' : '#10b981';
 
@@ -846,17 +892,19 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 }});
 
                 document.getElementById('btn-overnight').addEventListener('click', () => {{
-                    chart.timeScale().setVisibleRange({{
-                        from: {asia_start_ts},
-                        to: {lon_end_ts} + 1800
+                    const lastIdx = data.length - 1;
+                    chart.timeScale().setVisibleLogicalRange({{
+                        from: 0,
+                        to: lastIdx + 20
                     }});
                     drawOverlays();
                 }});
 
                 document.getElementById('btn-rth').addEventListener('click', () => {{
-                    chart.timeScale().setVisibleRange({{
-                        from: {pm_start_ts},
-                        to: {hod_box['end_ts']} + 3600
+                    const lastIdx = data.length - 1;
+                    chart.timeScale().setVisibleLogicalRange({{
+                        from: Math.max(0, lastIdx - 80),
+                        to: lastIdx + 160
                     }});
                     drawOverlays();
                 }});
