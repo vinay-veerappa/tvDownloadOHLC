@@ -1,0 +1,75 @@
+{
+  "google_drive": {
+    "root_id": "1yS14ZHL80G2yD3LbLjrsYEYMMQgBQNY1",
+    "root_path": "My Drive/Trading/PackVideos",
+    "folders": {
+      "wargaming": "1QlXsVisXx_p8W8hkE5nH6rEkWBt_t4yM",
+      "reengineering": "1GWalYFmkxOsz0ZJOsVpok-VAMYTS6lfM",
+      "bootcamp": "1UPUFw9OHHGu7EfHOtEa5W4b86c8v02d1",
+      "daily_reports": "1DpoWwSg4sbEMrfotOID5-gLrdalYTFMJ"
+    }
+  },
+  "playlists": {
+    "live_wargaming": {
+      "name": "Pack Trading - Live Wargaming (Morning Pre-Market)",
+      "notebook_id": "79bec20c-caf4-4271-8348-9426141103e1",
+      "notebook_url": "https://notebooklm.google.com/notebook/79bec20c-caf4-4271-8348-9426141103e1",
+      "gdrive_folder_id": "1QlXsVisXx_p8W8hkE5nH6rEkWBt_t4yM",
+      "schedule": "08:30-09:30 EST (Mon-Fri)",
+      "urls": [
+        "https://www.youtube.com/playlist?list=PLNfg4GdZd0J-bHFVZRHwD23wP5BM8npwz"
+      ],
+      "playlist_id": "PLNfg4GdZd0J-bHFVZRHwD23wP5BM8npwz",
+      "video_count": 83,
+      "last_processed_video_id": "1pxjHZDeqc8",
+      "last_sync_timestamp": "2026-08-28T11:56:00Z"
+    },
+    "reengineering": {
+      "name": "Pack Trading - EOD Reengineering (Post-Mortem)",
+      "notebook_id": "ef6358af-5096-4427-87fd-93ed015416c6",
+      "notebook_url": "https://notebooklm.google.com/notebook/ef6358af-5096-4427-87fd-93ed015416c6",
+      "gdrive_folder_id": "1GWalYFmkxOsz0ZJOsVpok-VAMYTS6lfM",
+      "schedule": "16:00-17:00 EST (Mon-Fri)",
+      "urls": [
+        "https://www.youtube.com/playlist?list=PLNsd-wh14sP4"
+      ],
+      "playlist_id": "PLNsd-wh14sP4",
+      "video_count": 8,
+      "last_processed_video_id": "1pxjHZDeqc8",
+      "last_sync_timestamp": "2026-08-28T11:56:00Z"
+    },
+
+    "bootcamp": {
+      "name": "Pack Trading - October Bootcamp & Advanced Tactics",
+      "notebook_id": "1689f881-6486-4b05-9fd4-f3a3d7f4af31",
+      "notebook_url": "https://notebooklm.google.com/notebook/1689f881-6486-4b05-9fd4-f3a3d7f4af31",
+      "gdrive_folder": "My Drive/Trading/PackVideos/Bootcamp",
+      "schedule": "On-Demand Archives",
+      "urls": [],
+      "last_processed_video_id": null,
+      "last_sync_timestamp": "2026-08-28T11:00:00Z"
+    }
+  },
+  "reference_notebooks": {
+    "tcm_notes": {
+      "id": "34ff4525-621a-441c-adf2-1d665996099a",
+      "title": "TCM Notes (279 sources)",
+      "url": "https://notebooklm.google.com/notebook/34ff4525-621a-441c-adf2-1d665996099a"
+    },
+    "orb_0930_analysis": {
+      "id": "d86e9c4d-5645-47b2-9ccb-29bd58fdfc22",
+      "title": "0930 All Day ORB Data Analysis (257 sources)",
+      "url": "https://notebooklm.google.com/notebook/d86e9c4d-5645-47b2-9ccb-29bd58fdfc22"
+    },
+    "box_0_5_strategy": {
+      "id": "f95ef291-d156-4119-aab1-e4d73c86efeb",
+      "title": "0-5 Box Strategy (11 sources)",
+      "url": "https://notebooklm.google.com/notebook/f95ef291-d156-4119-aab1-e4d73c86efeb"
+    },
+    "candle_science_patterns": {
+      "id": "77f2f1d0-d367-4523-8175-50d596a1d33b",
+      "title": "C1 C2 C3 Candle Pattern Analysis (11 sources)",
+      "url": "https://notebooklm.google.com/notebook/77f2f1d0-d367-4523-8175-50d596a1d33b"
+    }
+  }
+}
