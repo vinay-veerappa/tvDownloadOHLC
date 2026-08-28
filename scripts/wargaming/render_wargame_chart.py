@@ -2,12 +2,12 @@
 
 Generates an authentic Mickey & Austin wargaming visual matching their live streams:
 1. Full 1m Candlestick Chart in Eastern Time (ET).
-2. Shaded Asia (18:00-02:00 ET) and London (02:00-08:30 ET) session boxes with H/L boundaries.
+2. Price-bounded Asia (18:00-02:00 ET), London (02:00-08:30 ET), and Pre-Market (06:00-09:00 ET) session boxes.
 3. Shaded Green LOD Target Box (09:30-10:15 ET) & Red HOD Target Box (11:00-16:00 ET).
-4. Magenta Wargaming Trajectory Arrows (Sweeper -> Mean Reversion -> Expansion).
-5. Floating Real-time HUD stats panel (Overnight HOD/LOD, Distances, 10-Day Median Ranges).
-6. Horizontal Price Rays for P12 High, Low, Midline, and Midnight Open.
-7. Bottom Probability Matrix Table.
+4. Magenta Wargaming Trajectory Arrows with animated/dashed stylings.
+5. Continuous 60 FPS synchronization on both X (Time) and Y (Price) drag/zoom.
+6. Interactive Toolbar with Fullscreen mode (⛶), Fit All, Overnight View, and RTH View buttons.
+7. Floating Real-time HUD stats panel and bottom outcome probability matrix.
 8. 100% self-contained single-file HTML report (inlined Lightweight Charts v5.2.0).
 """
 from __future__ import annotations
@@ -86,13 +86,35 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     candles_json = json.dumps(candles_data)
 
     # Session bounds in timestamps
-    asia_start_ts = int(pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(18, 0)), tz="America/New_York").timestamp())
-    asia_end_ts = int(pd.Timestamp(datetime.combine(t_dt, time(2, 0)), tz="America/New_York").timestamp())
-    
-    lon_start_ts = int(pd.Timestamp(datetime.combine(t_dt, time(2, 0)), tz="America/New_York").timestamp())
-    lon_end_ts = int(pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York").timestamp())
-    
-    ny_open_ts = int(pd.Timestamp(datetime.combine(t_dt, time(9, 30)), tz="America/New_York").timestamp())
+    asia_start = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(18, 0)), tz="America/New_York")
+    asia_end = pd.Timestamp(datetime.combine(t_dt, time(2, 0)), tz="America/New_York")
+    asia_df = df_1m[(df_1m.index >= asia_start) & (df_1m.index < asia_end)]
+
+    lon_start = pd.Timestamp(datetime.combine(t_dt, time(2, 0)), tz="America/New_York")
+    lon_end = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
+    lon_df = df_1m[(df_1m.index >= lon_start) & (df_1m.index < lon_end)]
+
+    pm_start = pd.Timestamp(datetime.combine(t_dt, time(6, 0)), tz="America/New_York")
+    pm_end = pd.Timestamp(datetime.combine(t_dt, time(9, 0)), tz="America/New_York")
+    pm_df = df_1m[(df_1m.index >= pm_start) & (df_1m.index < pm_end)]
+
+    # Exact session high and low values
+    asia_high = float(asia_df['high'].max()) if not asia_df.empty else float(p12['high'])
+    asia_low = float(asia_df['low'].min()) if not asia_df.empty else float(p12['low'])
+    asia_start_ts = int(asia_start.timestamp())
+    asia_end_ts = int(asia_end.timestamp())
+
+    lon_high = float(lon_df['high'].max()) if not lon_df.empty else float(p12['high'])
+    lon_low = float(lon_df['low'].min()) if not lon_df.empty else float(p12['low'])
+    lon_start_ts = int(lon_start.timestamp())
+    lon_end_ts = int(lon_end.timestamp())
+
+    pm_high = float(pm_df['high'].max()) if not pm_df.empty else float(p12['high'])
+    pm_low = float(pm_df['low'].min()) if not pm_df.empty else float(p12['low'])
+    pm_start_ts = int(pm_start.timestamp())
+    pm_end_ts = int(pm_end.timestamp())
+
+    # RTH Target Windows
     lod_box_start_ts = int(pd.Timestamp(datetime.combine(t_dt, time(9, 30)), tz="America/New_York").timestamp())
     lod_box_end_ts = int(pd.Timestamp(datetime.combine(t_dt, time(10, 30)), tz="America/New_York").timestamp())
     
@@ -112,7 +134,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     hod_box_bottom = float(p12['high'] - 10.0)
     hod_box_top = float(bull_p50_pts) if bull_p50_pts > hod_box_bottom else float(p12['high'] + 85.0)
 
-    # Invalidate if invalid
     if lod_box_bottom >= lod_box_top:
         lod_box_bottom = lod_box_top - 60.0
     if hod_box_top <= hod_box_bottom:
@@ -120,7 +141,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
     p12_hod_time = p12.get("hod_time") or p12.get("high_time", "23:29")
     p12_lod_time = p12.get("lod_time") or p12.get("low_time", "04:07")
-
 
     p12_pos = "ABOVE" if p12["diff_pts"] >= 0 else "BELOW"
     bias_color = "#22c55e" if p12["bias"] == "BULLISH" else "#ef4444"
@@ -149,16 +169,17 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     {lwc_script_tag}
     <style>
         :root {{
-            --bg: #0b0f19;
-            --card-bg: #111827;
-            --border: #1f2937;
-            --text: #f3f4f6;
-            --text-dim: #9ca3af;
+            --bg: #070a12;
+            --card-bg: #0f172a;
+            --border: #1e293b;
+            --text: #f8fafc;
+            --text-dim: #94a3b8;
             --green: #10b981;
             --red: #ef4444;
             --gold: #f59e0b;
             --blue: #3b82f6;
-            --magenta: #e11d48;
+            --orange: #f97316;
+            --magenta: #f43f5e;
         }}
         body {{
             margin: 0;
@@ -166,6 +187,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             background: var(--bg);
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
         }}
         .header {{
             display: flex;
@@ -198,15 +220,60 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             color: {bias_color};
             border: 1px solid {bias_color}66;
         }}
+        .toolbar {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }}
+        .btn {{
+            background: #1e293b;
+            color: var(--text);
+            border: 1px solid #334155;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.15s ease;
+        }}
+        .btn:hover {{
+            background: #334155;
+            border-color: #475569;
+        }}
+        .btn.active {{
+            background: #3b82f6;
+            color: #fff;
+            border-color: #3b82f6;
+        }}
         .chart-wrapper {{
             position: relative;
             width: 100%;
-            height: 640px;
-            background: #070a12;
+            height: 660px;
+            background: #030712;
             border: 1px solid var(--border);
             border-radius: 10px;
             overflow: hidden;
             margin-bottom: 16px;
+            transition: all 0.2s ease;
+        }}
+        .chart-wrapper.fullscreen {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 99999;
+            border-radius: 0;
+            border: none;
+            margin: 0;
         }}
         #chart-container {{
             width: 100%;
@@ -225,16 +292,16 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             position: absolute;
             top: 14px;
             right: 65px;
-            background: rgba(17, 24, 39, 0.88);
-            border: 1px solid #374151;
-            backdrop-filter: blur(8px);
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid #334155;
+            backdrop-filter: blur(10px);
             border-radius: 8px;
             padding: 12px 16px;
             font-size: 11px;
             z-index: 20;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
             line-height: 1.5;
-            min-width: 240px;
+            min-width: 250px;
         }}
         .hud-panel h4 {{
             margin: 0 0 6px 0;
@@ -242,7 +309,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             color: var(--gold);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            border-bottom: 1px solid #374151;
+            border-bottom: 1px solid #334155;
             padding-bottom: 4px;
         }}
         .hud-row {{
@@ -320,6 +387,18 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         </div>
     </div>
 
+    <!-- Interactive Toolbar -->
+    <div class="toolbar">
+        <button class="btn" id="btn-fullscreen">⛶ Fullscreen</button>
+        <button class="btn" id="btn-fit">🔍 Fit All</button>
+        <button class="btn" id="btn-overnight">🌙 Overnight View</button>
+        <button class="btn" id="btn-rth">🔔 RTH Wargame View</button>
+        <button class="btn active" id="btn-toggle-boxes">🎯 Target Boxes: ON</button>
+        <div style="margin-left: auto; font-size: 12px; color: var(--text-dim);">
+            Drag price axis vertically • Scroll to zoom • Pan horizontally
+        </div>
+    </div>
+
     <div class="metrics-grid">
         <div class="metric-card">
             <div class="label">P12 Midline (Switch)</div>
@@ -344,7 +423,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     </div>
 
     <!-- Chart Container with Overlay Canvas and HUD -->
-    <div class="chart-wrapper">
+    <div class="chart-wrapper" id="chart-wrapper">
         <div id="chart-container"></div>
         <canvas id="overlay-canvas"></canvas>
         
@@ -358,16 +437,15 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 <span class="hud-label">Overnight LOD:</span>
                 <span class="hud-val" style="color: #10b981;">{p12['low']:,.2f} ({p12_lod_time})</span>
             </div>
-
             <div class="hud-row">
-                <span class="hud-label">Asia Session:</span>
+                <span class="hud-label">Asia Range ({asia_df['high'].max() if not asia_df.empty else p12['high']:,.0f}-{asia_df['low'].min() if not asia_df.empty else p12['low']:,.0f}):</span>
                 <span class="hud-val" style="color: #60a5fa;">{sess['asia_status']} (BK: {str(sess['asia_broken'])})</span>
             </div>
             <div class="hud-row">
-                <span class="hud-label">London Session:</span>
+                <span class="hud-label">London Range ({lon_df['high'].max() if not lon_df.empty else p12['high']:,.0f}-{lon_df['low'].min() if not lon_df.empty else p12['low']:,.0f}):</span>
                 <span class="hud-val" style="color: #fb923c;">{sess['london_status']} (BK: {str(sess['london_broken'])})</span>
             </div>
-            <div class="hud-row" style="margin-top: 6px; border-top: 1px solid #374151; padding-top: 4px;">
+            <div class="hud-row" style="margin-top: 6px; border-top: 1px solid #334155; padding-top: 4px;">
                 <span class="hud-label">LOD Target Box:</span>
                 <span class="hud-val" style="color: #10b981;">{lod_box_bottom:,.0f} &ndash; {lod_box_top:,.0f}</span>
             </div>
@@ -394,7 +472,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 <li><b>Execution</b>: Long mean-reversion counter toward <b>P12 Midline</b> (<code>{p12['mid']:,.2f}</code>) & <b>Midnight Open</b> (<code>{anchors['midnight_open']:,.2f}</code>).</li>
                 <li><b>Cover The Queen (+10 bps)</b>: Scale 50% at <code>{pack.get('long_tp1', spot + pack['queen_pts']):,.2f}</code> and lock stop to Breakeven (+1 pt).</li>
                 <li><b>09:45 Cutoff</b>: Midline retest expected before 09:45 AM; reversal window closes at 10:15 AM.</li>
-
             </ul>
         </div>
         <div class="scenario-card true">
@@ -466,9 +543,12 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     <script>
         document.addEventListener('DOMContentLoaded', () => {{
             try {{
+                const chartWrapper = document.getElementById('chart-wrapper');
                 const chartContainer = document.getElementById('chart-container');
                 const overlayCanvas = document.getElementById('overlay-canvas');
                 if (!chartContainer || !overlayCanvas) return;
+
+                let showTargetBoxes = true;
 
                 // ET Localization & Timezone formatting (New York / EDT)
                 const etTimeFormatter = (timestamp) => {{
@@ -485,14 +565,14 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
                 const chart = LightweightCharts.createChart(chartContainer, {{
                     width: chartContainer.clientWidth || 1000,
-                    height: 640,
+                    height: 660,
                     layout: {{
-                        background: {{ color: '#070a12' }},
-                        textColor: '#9ca3af',
+                        background: {{ color: '#030712' }},
+                        textColor: '#94a3b8',
                     }},
                     grid: {{
-                        vertLines: {{ color: '#161e2e' }},
-                        horzLines: {{ color: '#161e2e' }},
+                        vertLines: {{ color: '#0f172a' }},
+                        horzLines: {{ color: '#0f172a' }},
                     }},
                     localization: {{
                         timeFormatter: etTimeFormatter,
@@ -502,7 +582,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         timeVisible: true,
                         secondsVisible: false,
                         rightOffset: 65, // Future whitespace for target boxes and arrows
-                        borderColor: '#1f2937',
+                        borderColor: '#1e293b',
                         tickMarkFormatter: (time) => {{
                             const date = new Date(time * 1000);
                             return new Intl.DateTimeFormat('en-US', {{
@@ -514,7 +594,8 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         }},
                     }},
                     rightPriceScale: {{
-                        borderColor: '#1f2937',
+                        borderColor: '#1e293b',
+                        autoScale: true,
                     }},
                 }});
 
@@ -578,7 +659,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     }});
                 }}
 
-                // Overlay Canvas Drawing for Shaded Target Boxes, Session Zones & Arrows
+                // Overlay Canvas Drawing for Exact Price-Bounded Session Boxes & Target Zones
                 function drawOverlays() {{
                     overlayCanvas.width = chartContainer.clientWidth;
                     overlayCanvas.height = chartContainer.clientHeight;
@@ -586,48 +667,84 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
                     const timeScale = chart.timeScale();
-
-                    // Helper to get coordinates
                     const getX = (ts) => timeScale.timeToCoordinate(ts);
                     const getY = (price) => candleSeries.priceToCoordinate(price);
 
-                    // 1. Shaded Asia Session Box (18:00 - 02:00 ET)
+                    // Helper to draw a clean session box
+                    const drawSessionBox = (x1, x2, high, low, fillColor, strokeColor, labelText) => {{
+                        if (x1 === null && x2 === null) return;
+                        const yTop = getY(high);
+                        const yBot = getY(low);
+                        if (yTop === null || yBot === null) return;
+
+                        const left = x1 !== null ? x1 : 0;
+                        const right = x2 !== null ? x2 : overlayCanvas.width;
+                        const width = Math.max(2, right - left);
+                        const top = Math.min(yTop, yBot);
+                        const height = Math.abs(yBot - yTop);
+
+                        // Fill box
+                        ctx.fillStyle = fillColor;
+                        ctx.fillRect(left, top, width, height);
+
+                        // Top & Bottom boundary borders
+                        ctx.strokeStyle = strokeColor;
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeRect(left, top, width, height);
+
+                        // Label
+                        ctx.fillStyle = strokeColor;
+                        ctx.font = 'bold 11px sans-serif';
+                        ctx.fillText(labelText, left + 8, top + 16);
+                        ctx.font = '10px monospace';
+                        ctx.fillText(low.toFixed(2) + ' - ' + high.toFixed(2), left + 8, top + 30);
+                    }};
+
+                    // 1. Exact Price-Bounded Asia Session Box (18:00 - 02:00 ET)
                     const asiaX1 = getX({asia_start_ts});
                     const asiaX2 = getX({asia_end_ts});
-                    if (asiaX1 !== null && asiaX2 !== null) {{
-                        ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
-                        ctx.fillRect(asiaX1, 0, Math.max(2, asiaX2 - asiaX1), overlayCanvas.height);
-                        ctx.fillStyle = '#60a5fa';
-                        ctx.font = '11px sans-serif';
-                        ctx.fillText('ASIA (18:00-02:00 ET)', asiaX1 + 8, 24);
-                    }}
+                    drawSessionBox(asiaX1, asiaX2, {asia_high}, {asia_low}, 'rgba(59, 130, 246, 0.12)', '#3b82f6', 'ASIA (18:00-02:00 ET)');
 
-                    // 2. Shaded London Session Box (02:00 - 08:30 ET)
+                    // 2. Exact Price-Bounded London Session Box (02:00 - 08:30 ET)
                     const lonX1 = getX({lon_start_ts});
                     const lonX2 = getX({lon_end_ts});
-                    if (lonX1 !== null && lonX2 !== null) {{
-                        ctx.fillStyle = 'rgba(249, 115, 22, 0.08)';
-                        ctx.fillRect(lonX1, 0, Math.max(2, lonX2 - lonX1), overlayCanvas.height);
-                        ctx.fillStyle = '#fb923c';
-                        ctx.font = '11px sans-serif';
-                        ctx.fillText('LONDON (02:00-08:30 ET)', lonX1 + 8, 24);
+                    drawSessionBox(lonX1, lonX2, {lon_high}, {lon_low}, 'rgba(249, 115, 22, 0.12)', '#f97316', 'LONDON (02:00-08:30 ET)');
+
+                    // 3. Pre-Market 06:00 - 09:00 Box
+                    const pmX1 = getX({pm_start_ts});
+                    const pmX2 = getX({pm_end_ts});
+                    if (pmX1 !== null || pmX2 !== null) {{
+                        const pmLeft = pmX1 !== null ? pmX1 : 0;
+                        const pmRight = pmX2 !== null ? pmX2 : overlayCanvas.width;
+                        const pmYTop = getY({pm_high});
+                        const pmYBot = getY({pm_low});
+                        if (pmYTop !== null && pmYBot !== null) {{
+                            ctx.fillStyle = 'rgba(245, 158, 11, 0.06)';
+                            ctx.fillRect(pmLeft, Math.min(pmYTop, pmYBot), pmRight - pmLeft, Math.abs(pmYBot - pmYTop));
+                            ctx.strokeStyle = '#f59e0b';
+                            ctx.setLineDash([4, 4]);
+                            ctx.strokeRect(pmLeft, Math.min(pmYTop, pmYBot), pmRight - pmLeft, Math.abs(pmYBot - pmYTop));
+                            ctx.setLineDash([]);
+                        }}
                     }}
 
-                    // 3. Green LOD Target Box (09:30 - 10:30 ET)
-                    const lodX1 = getX({lod_box_start_ts}) || (lonX2 ? lonX2 + 40 : 400);
+                    if (!showTargetBoxes) return;
+
+                    // 4. Green LOD Target Box (09:30 - 10:30 ET)
+                    const lodX1 = getX({lod_box_start_ts}) || (lonX2 ? lonX2 + 40 : 450);
                     const lodX2 = getX({lod_box_end_ts}) || lodX1 + 80;
                     const lodYTop = getY({lod_box_top});
                     const lodYBot = getY({lod_box_bottom});
 
                     if (lodYTop !== null && lodYBot !== null) {{
-                        const boxW = Math.max(60, lodX2 - lodX1);
+                        const boxW = Math.max(65, lodX2 - lodX1);
                         const boxH = Math.abs(lodYBot - lodYTop);
                         const boxY = Math.min(lodYTop, lodYBot);
 
                         ctx.fillStyle = 'rgba(16, 185, 129, 0.22)';
                         ctx.fillRect(lodX1, boxY, boxW, boxH);
                         ctx.strokeStyle = '#10b981';
-                        ctx.lineWidth = 1.5;
+                        ctx.lineWidth = 1.8;
                         ctx.strokeRect(lodX1, boxY, boxW, boxH);
 
                         ctx.fillStyle = '#34d399';
@@ -637,7 +754,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         ctx.fillText('{lod_box_bottom:,.0f} - {lod_box_top:,.0f} (09:30-10:15 ET)', lodX1 + 8, boxY + 32);
                     }}
 
-                    // 4. Red HOD Target Box (11:00 - 16:00 ET)
+                    // 5. Red HOD Target Box (11:00 - 16:00 ET)
                     const hodX1 = getX({hod_box_start_ts}) || lodX2 + 50;
                     const hodX2 = getX({hod_box_end_ts}) || hodX1 + 180;
                     const hodYTop = getY({hod_box_top});
@@ -651,7 +768,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';
                         ctx.fillRect(hodX1, boxY, boxW, boxH);
                         ctx.strokeStyle = '#ef4444';
-                        ctx.lineWidth = 1.5;
+                        ctx.lineWidth = 1.8;
                         ctx.strokeRect(hodX1, boxY, boxW, boxH);
 
                         ctx.fillStyle = '#f87171';
@@ -661,7 +778,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         ctx.fillText('{hod_box_bottom:,.0f} - {hod_box_top:,.0f} (11:00-16:00 ET)', hodX1 + 8, boxY + 32);
                     }}
 
-                    // 5. Magenta Wargaming Trajectory Arrow (Sweeper V-Reversion Path)
+                    // 6. Magenta Wargaming Trajectory Arrow (Sweeper V-Reversion Path)
                     const spotY = getY({spot});
                     const lodMidY = (lodYTop !== null && lodYBot !== null) ? (lodYTop + lodYBot) / 2 : null;
                     const hodMidY = (hodYTop !== null && hodYBot !== null) ? (hodYTop + hodYBot) / 2 : null;
@@ -698,13 +815,84 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     }}
                 }}
 
-                // Redraw on zoom, scroll, and resize
-                chart.timeScale().subscribeVisibleTimeRangeChange(drawOverlays);
-                chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlays);
-                setTimeout(drawOverlays, 100);
+                // Continuous 60 FPS RequestAnimationFrame Loop to keep canvas synced on Price Axis Drag & Zoom
+                let lastLeft = -1, lastRight = -1, lastTopPrice = -1, lastBottomPrice = -1;
+                function syncLoop() {{
+                    const timeScale = chart.timeScale();
+                    const logicalRange = timeScale.getVisibleLogicalRange();
+                    if (logicalRange) {{
+                        drawOverlays();
+                    }}
+                    requestAnimationFrame(syncLoop);
+                }}
+                requestAnimationFrame(syncLoop);
 
+                // Window Resize Handler
                 window.addEventListener('resize', () => {{
-                    chart.applyOptions({{ width: chartContainer.clientWidth }});
+                    chart.applyOptions({{ 
+                        width: chartContainer.clientWidth,
+                        height: chartContainer.clientHeight
+                    }});
+                    drawOverlays();
+                }});
+
+                // Toolbar Actions
+                const btnFullscreen = document.getElementById('btn-fullscreen');
+                btnFullscreen.addEventListener('click', () => {{
+                    chartWrapper.classList.toggle('fullscreen');
+                    const isFull = chartWrapper.classList.contains('fullscreen');
+                    btnFullscreen.innerHTML = isFull ? '🗗 Exit Fullscreen' : '⛶ Fullscreen';
+                    setTimeout(() => {{
+                        chart.applyOptions({{ 
+                            width: chartContainer.clientWidth,
+                            height: chartContainer.clientHeight
+                        }});
+                        chart.timeScale().fitContent();
+                        drawOverlays();
+                    }}, 100);
+                }});
+
+                document.addEventListener('keydown', (e) => {{
+                    if (e.key === 'Escape' && chartWrapper.classList.contains('fullscreen')) {{
+                        chartWrapper.classList.remove('fullscreen');
+                        btnFullscreen.innerHTML = '⛶ Fullscreen';
+                        setTimeout(() => {{
+                            chart.applyOptions({{ 
+                                width: chartContainer.clientWidth,
+                                height: 660
+                            }});
+                            chart.timeScale().fitContent();
+                            drawOverlays();
+                        }}, 100);
+                    }}
+                }});
+
+                document.getElementById('btn-fit').addEventListener('click', () => {{
+                    chart.timeScale().fitContent();
+                    drawOverlays();
+                }});
+
+                document.getElementById('btn-overnight').addEventListener('click', () => {{
+                    chart.timeScale().setVisibleRange({{
+                        from: {asia_start_ts},
+                        to: {lon_end_ts} + 1800
+                    }});
+                    drawOverlays();
+                }});
+
+                document.getElementById('btn-rth').addEventListener('click', () => {{
+                    chart.timeScale().setVisibleRange({{
+                        from: {pm_start_ts},
+                        to: {hod_box_end_ts} + 3600
+                    }});
+                    drawOverlays();
+                }});
+
+                const btnToggleBoxes = document.getElementById('btn-toggle-boxes');
+                btnToggleBoxes.addEventListener('click', () => {{
+                    showTargetBoxes = !showTargetBoxes;
+                    btnToggleBoxes.classList.toggle('active', showTargetBoxes);
+                    btnToggleBoxes.innerHTML = showTargetBoxes ? '🎯 Target Boxes: ON' : '🎯 Target Boxes: OFF';
                     drawOverlays();
                 }});
 
