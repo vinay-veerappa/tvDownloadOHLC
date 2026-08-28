@@ -1,3 +1,11 @@
+"""Daily Wargame Playbook Generator"""
+from __future__ import annotations
+from scripts.candle_science.run_candle_science import analyze_candle_science
+from scripts.wargaming.htf_macro_levels import compute_htf_macro_levels
+from scripts.wargaming.weekly_outlook_engine import compute_weekly_outlook
+from scripts.wargaming.p12_scenario_engine import compute_p12_scenarios
+from scripts.wargaming.session_budget_engine import compute_session_budget
+from scripts.wargaming.signature_setup_scanner import scan_signature_setups
 """Mickey & Austin Daily Wargaming Generation Engine
 
 Generates the canonical 6-Section Pre-Market Wargaming Briefing & Scenario Cards
@@ -9,7 +17,6 @@ Usage:
     python scripts/wargaming/generate_daily_wargame.py --ticker NQ1 --time 06:00
     python scripts/wargaming/generate_daily_wargame.py --ticker NQ1 --date 2026-08-28 --time 08:30
 """
-from __future__ import annotations
 
 import sys
 import json
@@ -254,6 +261,12 @@ def generate_wargame_data(
         profiler_prediction=profiler_pred,
     )
 
+    # 9. HTF Macro Levels, Weekly Outlook, Session Budget & Signature Setups
+    htf_macro = compute_htf_macro_levels(ticker=ticker, target_date=t_dt.isoformat())
+    weekly_outlook = compute_weekly_outlook(ticker=ticker, target_date=t_dt.isoformat())
+    session_budget = compute_session_budget(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
+    sig_setups = scan_signature_setups(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
+
     return {
         "ticker": ticker,
         "date": t_dt.isoformat(),
@@ -301,6 +314,10 @@ def generate_wargame_data(
             "short_sl": short_sl,
         },
         "trajectory_engine": traj_data,
+        "htf_macro": htf_macro,
+        "weekly_outlook": weekly_outlook,
+        "session_budget": session_budget,
+        "signature_setups": sig_setups,
     }
 
 

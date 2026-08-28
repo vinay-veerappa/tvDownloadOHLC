@@ -1,22 +1,14 @@
 """Interactive Lightweight Charts HTML Visual Renderer for Pack Wargaming
 
-Exact replication of The Daily Profiler indicator framework:
-1. Exact Time-Based Initial Range Reference Boxes:
-   - Asia Range Box (18:00-19:30 ET) with Asia Mid line extending forward.
-   - London Range Box (02:30-03:30 ET) with Lon Mid line extending forward.
-   - NY1 Range Box (07:30-08:30 ET) with NY1 Mid line extending forward.
-2. Full 1m Candlestick Chart in Eastern Time (ET).
-3. Complete 4-Outcome Decision Tree Engine:
-   - SF (Short False): Sweeps < NY1 Low (09:30-10:15), expands to HOD Box (13:30-16:00)
-   - LF (Long False): Sweeps > NY1 High (09:30-10:15), expands to LOD Box (13:30-16:00)
-   - LT (Long True): Defends > NY1 Mid (09:30-09:45), expands to Bullish P70 (14:30-16:15)
-   - ST (Short True): Rejects < NY1 Mid (09:30-09:45), expands to Bearish P70 (14:30-16:15)
-4. Dynamic Outcome-Specific Target Boxes & Times (rendered live upon button click).
-5. Interactive 4-Scenario Toolbar Toggles with real-time HUD synchronization.
-6. All price rays annotated with empirical Touch Probabilities (Hit Rates %).
-7. Continuous 60 FPS synchronization on both X (Time) and Y (Price) drag/zoom.
-8. Mickey & Austin Magnet Hierarchy Table & 4-Scenario Cards.
-9. 100% self-contained single-file HTML report (inlined Lightweight Charts v5.2.0).
+Mickey & Austin Complete Master Wargaming Suite:
+1. Exact Time-Based Initial Range Reference Boxes (Asia 18:00-19:30, Lon 02:30-03:30, NY1 07:30-08:30) with Midpoint Rays.
+2. Complete 4-Outcome Decision Tree Engine (SF, LF, LT, ST) with Pre-Market Elimination Filter.
+3. Dynamic Outcome-Specific Target Boxes & Mode Timing Windows.
+4. Higher Timeframe (HTF) Macro Levels (Monthly Mid, NFP Mid, Weekly EMA(5), Daily 21/50 EMAs).
+5. Macro Weekly Candle Outlook & Day-of-Week Cycle (Mon/Tue extreme vs. Thu/Fri expansion).
+6. Volatility Checkbook Spending Budget (DRO vs 10-day median range).
+7. Signature Setup Scanner (Firecracker, Spongebob, Goalpost).
+8. 100% Self-Contained Offline HTML with 60 FPS Dual-Axis Sync Loop and Real-Time HUD.
 """
 from __future__ import annotations
 
@@ -59,6 +51,10 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     cs = wargame_data["candle_science"]
     pack = wargame_data["pack_trading"]
     traj_data = wargame_data.get("trajectory_engine", {})
+    htf = wargame_data.get("htf_macro", {})
+    wk = wargame_data.get("weekly_outlook", {})
+    budget = wargame_data.get("session_budget", {})
+    setups = wargame_data.get("signature_setups", {})
 
     # Load 1m bars if not provided
     if df_1m is None or df_1m.empty:
@@ -76,7 +72,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     chart_df = df_1m[(df_1m.index >= start_dt) & (df_1m.index <= cutoff_dt)].copy()
     chart_df = chart_df[~chart_df.index.duplicated(keep='last')].sort_index()
 
-    # Convert candles to Lightweight Charts JSON format
     candles_data = []
     seen_ts = set()
     for ts, row in chart_df.iterrows():
@@ -95,22 +90,18 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     candles_json = json.dumps(candles_data)
 
     # EXACT Profiler Time-Based Initial Ranges (t_asia, t_lon, t_ny1)
-    # Asia Range: 18:00 - 19:30 ET
     asia_start = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(18, 0)), tz="America/New_York")
     asia_end = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(19, 30)), tz="America/New_York")
     asia_df = df_1m[(df_1m.index >= asia_start) & (df_1m.index < asia_end)]
 
-    # London Range: 02:30 - 03:30 ET
     lon_start = pd.Timestamp(datetime.combine(t_dt, time(2, 30)), tz="America/New_York")
     lon_end = pd.Timestamp(datetime.combine(t_dt, time(3, 30)), tz="America/New_York")
     lon_df = df_1m[(df_1m.index >= lon_start) & (df_1m.index < lon_end)]
 
-    # NY1 Range: 07:30 - 08:30 ET
     ny1_start = pd.Timestamp(datetime.combine(t_dt, time(7, 30)), tz="America/New_York")
     ny1_end = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
     ny1_df = df_1m[(df_1m.index >= ny1_start) & (df_1m.index < ny1_end)]
 
-    # Compute high, low, midpoints
     asia_high = float(asia_df['high'].max()) if not asia_df.empty else float(p12['high'])
     asia_low = float(asia_df['low'].min()) if not asia_df.empty else float(p12['low'])
     asia_mid = (asia_high + asia_low) / 2.0
@@ -129,24 +120,56 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     ny1_start_ts = int(ny1_start.timestamp())
     ny1_end_ts = int(ny1_end.timestamp())
 
-    # End of Day timestamp for forward extending midpoint lines (17:00 ET)
     eod_ts = int(pd.Timestamp(datetime.combine(t_dt, time(17, 0)), tz="America/New_York").timestamp())
 
-    # Target Boxes & Trajectories from 4-Outcome Engine
     boxes_by_outcome = traj_data.get("boxes_by_outcome", {})
     magnets = traj_data.get("magnets", [])
+    
+    # Add HTF Macro Levels to Magnets list
+    if htf.get("monthly", {}).get("monthly_mid"):
+        magnets.append({
+            "name": "MONTHLY MID (50%)",
+            "price": htf["monthly"]["monthly_mid"],
+            "prob": 55.0,
+            "tier": "HTF Macro Anchor",
+            "color": "#8b5cf6",
+            "style": "solid",
+            "role": "Prior Month 50% Equilibrium Balance"
+        })
+    if htf.get("nfp", {}).get("nfp_mid"):
+        magnets.append({
+            "name": "NFP MIDPOINT",
+            "price": htf["nfp"]["nfp_mid"],
+            "prob": 52.0,
+            "tier": "HTF Macro Anchor",
+            "color": "#ec4899",
+            "style": "dashed",
+            "role": "Most Recent First-Friday NFP Range 50%"
+        })
+    if htf.get("weekly_ema5", {}).get("prior_weekly_ema5"):
+        magnets.append({
+            "name": "WEEKLY EMA(5)",
+            "price": htf["weekly_ema5"]["prior_weekly_ema5"],
+            "prob": 62.0,
+            "tier": "HTF Macro Anchor",
+            "color": "#06b6d4",
+            "style": "solid",
+            "role": "52-Week Mean-Reversion Dynamic Gravity Well"
+        })
+
     trajectories = traj_data.get("trajectories", {})
     state_desc = traj_data.get("state_desc", "All 4 scenarios active.")
     c_probs = traj_data.get("conditional_probs", {"SF": 32.8, "LF": 33.3, "LT": 17.2, "ST": 16.5})
     dir_narrative = traj_data.get("directional_narrative", "")
 
-    p12_hod_time = p12.get("hod_time") or p12.get("high_time", "23:29")
-    p12_lod_time = p12.get("lod_time") or p12.get("low_time", "04:07")
-
     p12_pos = "ABOVE" if p12["diff_pts"] >= 0 else "BELOW"
     bias_color = "#22c55e" if p12["bias"] == "BULLISH" else "#ef4444"
 
-    # Inline local Lightweight Charts JS bundle for 100% offline self-containment if found
+    primary_setup = setups.get("primary_setup", "🥅 BROKEN-BROKEN GOALPOST")
+    spend_pct = budget.get("overnight_spend_pct", 35.6)
+    regime_text = budget.get("regime", "COILED VOLATILITY")
+    cycle_phase = wk.get("cycle_analysis", {}).get("cycle_phase", "Thursday/Friday Expansion")
+
     lwc_script_tag = '<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>'
     for possible_path in [
         REPO_ROOT / "web" / "node_modules" / "lightweight-charts" / "dist" / "lightweight-charts.standalone.production.js",
@@ -161,20 +184,31 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             except Exception as e:
                 log.warning(f"Could not inline local Lightweight Charts: {e}")
 
-    # Build Magnet rows for HTML Table
     magnet_rows_html = ""
-    for m in magnets:
-        prob_val = m["prob"]
+    for m in sorted(magnets, key=lambda x: x.get("prob", 0), reverse=True):
+        prob_val = m.get("prob", 50.0)
         badge_bg = "rgba(16, 185, 129, 0.15)" if prob_val >= 80 else ("rgba(245, 158, 11, 0.15)" if prob_val >= 60 else "rgba(239, 68, 68, 0.15)")
         badge_color = "#10b981" if prob_val >= 80 else ("#f59e0b" if prob_val >= 60 else "#ef4444")
         
         magnet_rows_html += f"""
         <tr>
-            <td><b style="color: {m['color']};">{m['name']}</b></td>
-            <td><code style="font-size: 13px;">{m['price']:,.2f}</code></td>
+            <td><b style="color: {m.get('color', '#fff')};">{m.get('name')}</b></td>
+            <td><code style="font-size: 13px;">{m.get('price', 0.0):,.2f}</code></td>
             <td><span style="background: {badge_bg}; color: {badge_color}; padding: 3px 8px; border-radius: 4px; font-weight: 700;">{prob_val:.1f}%</span></td>
-            <td><span style="color: var(--text-dim); font-size: 11px;">{m['tier']}</span></td>
-            <td>{m['role']}</td>
+            <td><span style="color: var(--text-dim); font-size: 11px;">{m.get('tier', 'Anchor')}</span></td>
+            <td>{m.get('role', '')}</td>
+        </tr>
+        """
+
+    # Expected Move Rows
+    em_rows_html = ""
+    for em in wk.get("expected_moves", []):
+        em_rows_html += f"""
+        <tr>
+            <td><b>{em['expiry_date']}</b></td>
+            <td><code>{em['dte_label']}</code></td>
+            <td><span style="color: var(--gold); font-weight: 700;">±{em['em_pts']:,.2f} pts</span> ({em['em_pct']:.2f}%)</td>
+            <td><code style="font-size: 12px;">{em['lower_em']:,.2f} &ndash; {em['upper_em']:,.2f}</code></td>
         </tr>
         """
 
@@ -197,6 +231,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             --gold: #f59e0b;
             --blue: #3b82f6;
             --orange: #f97316;
+            --purple: #8b5cf6;
             --magenta: #f43f5e;
         }}
         body {{
@@ -333,7 +368,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             z-index: 20;
             box-shadow: 0 8px 24px rgba(0,0,0,0.6);
             line-height: 1.5;
-            min-width: 260px;
+            min-width: 270px;
         }}
         .hud-panel h4 {{
             margin: 0 0 6px 0;
@@ -402,21 +437,30 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             font-size: 12px;
         }}
         .levels-table th {{ color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-size: 11px; }}
+        .htf-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }}
     </style>
 </head>
 <body>
 
     <div class="header">
         <div class="title-group">
-            <h1>⚔️ {ticker} Wargaming Playbook: {dt_str}</h1>
+            <h1>⚔️ {ticker} Master Wargaming Suite: {dt_str}</h1>
             <div style="font-size: 13px; color: var(--text-dim);">
                 Analysis Cutoff: <b>{cutoff} EST</b> | Current Spot: <b style="color: #fff; font-family: monospace;">{spot:,.2f}</b> | Time Scale: <b>Eastern Time (New York / EDT)</b>
             </div>
         </div>
-        <div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
             <span class="badge badge-bias">{p12['bias']} P12 VECTOR</span>
-            <span class="badge" style="background: #3b82f622; color: #3b82f6; border: 1px solid #3b82f666; margin-left: 8px;">
-                {sess['alignment']}
+            <span class="badge" style="background: #3b82f622; color: #3b82f6; border: 1px solid #3b82f666;">
+                {primary_setup}
+            </span>
+            <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b98166;">
+                {regime_text} ({spend_pct:.1f}%)
             </span>
         </div>
     </div>
@@ -425,7 +469,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     <div class="decision-banner">
         <span style="font-size: 18px;">🧭</span>
         <div>
-            <b>Mickey Decision Tree Filter:</b> {state_desc}
+            <b>Mickey Decision Tree & Cycle Filter:</b> {state_desc} <span style="color: var(--gold);">| Active Cycle: <b>{cycle_phase}</b></span>
         </div>
     </div>
 
@@ -452,14 +496,14 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
             <div style="font-size: 11px; color: var(--text-dim);">{p12_pos} by {abs(p12['diff_pts']):.2f} pts ({abs(p12['diff_bps']):.1f} bps)</div>
         </div>
         <div class="metric-card">
-            <div class="label">Midnight Open (84.1% Magnet)</div>
-            <div class="value" style="color: var(--blue);">{anchors.get('midnight_open', spot):,.2f}</div>
-            <div style="font-size: 11px; color: var(--text-dim);">Primary Retest Gravity Well</div>
+            <div class="label">Monthly Midpoint (50%)</div>
+            <div class="value" style="color: var(--purple);">{htf.get('monthly', {}).get('monthly_mid', spot):,.2f}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">Monthly Macro Balance</div>
         </div>
         <div class="metric-card">
-            <div class="label">NY1 Range Box (07:30-08:30)</div>
-            <div class="value" style="color: var(--orange);">{ny1_high:,.0f} - {ny1_low:,.0f}</div>
-            <div style="font-size: 11px; color: var(--text-dim);">Midpoint: {ny1_mid:,.2f} (99.4%)</div>
+            <div class="label">NFP Midpoint (50%)</div>
+            <div class="value" style="color: var(--magenta);">{htf.get('nfp', {}).get('nfp_mid', spot):,.2f}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">First-Friday Economic Anchor</div>
         </div>
         <div class="metric-card">
             <div class="label">Cover The Queen (+10 bps)</div>
@@ -542,26 +586,48 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         </div>
     </div>
 
-    <!-- Mickey & Austin Probability Magnet Hierarchy Table -->
-    <div class="matrix-container">
-        <h3>🧲 Mickey & Austin Probability Magnet Hierarchy (Hit Rate %)</h3>
-        <p style="font-size: 13px; color: var(--text-dim); margin-top: 0; line-height: 1.5;">
-            {dir_narrative}
-        </p>
-        <table class="levels-table">
-            <thead>
-                <tr>
-                    <th>Key Level</th>
-                    <th>Exact Price</th>
-                    <th>Historical Touch Rate</th>
-                    <th>Magnet Tier</th>
-                    <th>Wargaming Tactical Function</th>
-                </tr>
-            </thead>
-            <tbody>
-                {magnet_rows_html}
-            </tbody>
-        </table>
+    <!-- HTF Macro & Weekly Structure Two-Column Grid -->
+    <div class="htf-grid">
+        <div class="matrix-container">
+            <h3>🗓️ Weekly Structure & Day-of-Week Macro Cycle</h3>
+            <p style="font-size: 13px; color: var(--text-dim); margin-top: 0; line-height: 1.5;">
+                <b>Cycle Status</b>: {wk.get('cycle_analysis', {}).get('mon_tue_extreme', 'N/A')}<br/>
+                <b>Mickey Weekly Edge</b>: {wk.get('cycle_analysis', {}).get('cycle_edge', 'Standard weekly flow.')}
+            </p>
+            <table class="levels-table">
+                <thead>
+                    <tr>
+                        <th>Expiry Date</th>
+                        <th>DTE Horizon</th>
+                        <th>Expected Move (±)</th>
+                        <th>Target Range</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {em_rows_html}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="matrix-container">
+            <h3>🧲 Mickey & Austin Probability Magnet Hierarchy</h3>
+            <p style="font-size: 13px; color: var(--text-dim); margin-top: 0; line-height: 1.5;">
+                {dir_narrative}
+            </p>
+            <table class="levels-table">
+                <thead>
+                    <tr>
+                        <th>Key Level</th>
+                        <th>Exact Price</th>
+                        <th>Touch Rate</th>
+                        <th>Magnet Tier</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {magnet_rows_html}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <script>
@@ -573,13 +639,11 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 if (!chartContainer || !overlayCanvas) return;
 
                 let showTargetBoxes = true;
-                let activeScenario = 'SF'; // Default to Short False (Primary Sweeper)
+                let activeScenario = 'SF';
 
-                // Outcome-specific target boxes and trajectories
                 const boxesByOutcome = {json.dumps(boxes_by_outcome)};
                 const allTraj = {json.dumps(trajectories)};
 
-                // ET Localization & Timezone formatting (New York / EDT)
                 const etTimeFormatter = (timestamp) => {{
                     const date = new Date(timestamp * 1000);
                     return new Intl.DateTimeFormat('en-US', {{
@@ -610,7 +674,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     timeScale: {{
                         timeVisible: true,
                         secondsVisible: false,
-                        rightOffset: 120, // Ample future whitespace for full day projection
+                        rightOffset: 120,
                         borderColor: '#1e293b',
                         tickMarkFormatter: (time) => {{
                             const date = new Date(time * 1000);
@@ -644,7 +708,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 candleSeries.setData(data);
                 chart.timeScale().fitContent();
 
-                // Dynamic Magnet Price Rays annotated with Hit Rate %
                 const magnets = {json.dumps(magnets)};
                 magnets.forEach(m => {{
                     if (m.price === null || m.price === undefined) return;
@@ -655,13 +718,12 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     candleSeries.createPriceLine({{
                         price: m.price,
                         color: m.color,
-                        lineWidth: m.tier.includes('Tier 1') ? 2 : 1,
+                        lineWidth: (m.tier && m.tier.includes('Tier 1')) ? 2 : 1,
                         lineStyle: style,
-                        title: m.name + ' [' + m.prob.toFixed(1) + '%]',
+                        title: m.name + ' [' + m.prob.toFixed(0) + '%]',
                     }});
                 }});
 
-                // Update HUD Text
                 function updateHud() {{
                     const curBoxes = boxesByOutcome[activeScenario] || boxesByOutcome['SF'];
                     const hudTitle = document.getElementById('hud-title');
@@ -678,7 +740,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 }}
                 updateHud();
 
-                // Overlay Canvas Drawing with Deterministic Logical Coordinate Projection
                 function drawOverlays() {{
                     overlayCanvas.width = chartContainer.clientWidth;
                     overlayCanvas.height = chartContainer.clientHeight;
@@ -691,12 +752,10 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     const firstBar = data[0];
                     const lastBar = data[data.length - 1];
 
-                    // Convert any UNIX timestamp (historical or future) to pixel X coordinate
                     const getX = (ts) => {{
                         const directX = timeScale.timeToCoordinate(ts);
                         if (directX !== null) return directX;
 
-                        // Linear projection based on 1-minute bar spacing
                         if (ts > lastBar.time) {{
                             const minutesAhead = (ts - lastBar.time) / 60.0;
                             const lastBarLogicalIndex = data.length - 1;
@@ -711,7 +770,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
 
                     const getY = (price) => candleSeries.priceToCoordinate(price);
 
-                    // Helper to draw an exact Initial Range Box with its forward-extending Midpoint line
                     const drawInitialRangeBox = (x1, x2, high, low, mid, fillColor, strokeColor, labelText, midLabel) => {{
                         if (x1 === null && x2 === null) return;
                         const yTop = getY(high);
@@ -725,16 +783,13 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         const top = Math.min(yTop, yBot);
                         const height = Math.abs(yBot - yTop);
 
-                        // Fill Initial Range Box
                         ctx.fillStyle = fillColor;
                         ctx.fillRect(left, top, width, height);
 
-                        // Boundary border
                         ctx.strokeStyle = strokeColor;
                         ctx.lineWidth = 1.5;
                         ctx.strokeRect(left, top, width, height);
 
-                        // Forward-extending Midpoint line (from range start all the way across)
                         if (yMid !== null) {{
                             const eodX = getX({eod_ts}) || overlayCanvas.width;
                             ctx.strokeStyle = strokeColor;
@@ -751,7 +806,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                             ctx.fillText(midLabel + ': ' + mid.toFixed(2), Math.min(right + 6, overlayCanvas.width - 120), yMid - 4);
                         }}
 
-                        // Header Tag on top of box
                         ctx.fillStyle = strokeColor;
                         ctx.font = 'bold 10px sans-serif';
                         ctx.fillText(labelText, left + 4, top + 14);
@@ -759,27 +813,23 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         ctx.fillText(low.toFixed(0) + '-' + high.toFixed(0), left + 4, top + 26);
                     }};
 
-                    // 1. Exact Asia Initial Range Box (18:00 - 19:30 ET)
+                    // Initial Ranges
                     const asiaX1 = getX({asia_start_ts});
                     const asiaX2 = getX({asia_end_ts});
                     drawInitialRangeBox(asiaX1, asiaX2, {asia_high}, {asia_low}, {asia_mid}, 'rgba(59, 130, 246, 0.14)', '#3b82f6', 'ASIA (18:00-19:30)', 'Asia Mid');
 
-                    // 2. Exact London Initial Range Box (02:30 - 03:30 ET)
                     const lonX1 = getX({lon_start_ts});
                     const lonX2 = getX({lon_end_ts});
                     drawInitialRangeBox(lonX1, lonX2, {lon_high}, {lon_low}, {lon_mid}, 'rgba(239, 68, 68, 0.14)', '#ef4444', 'LON (02:30-03:30)', 'Lon Mid');
 
-                    // 3. Exact NY1 Initial Range Box (07:30 - 08:30 ET)
                     const ny1X1 = getX({ny1_start_ts});
                     const ny1X2 = getX({ny1_end_ts});
                     drawInitialRangeBox(ny1X1, ny1X2, {ny1_high}, {ny1_low}, {ny1_mid}, 'rgba(249, 115, 22, 0.14)', '#f97316', 'NY1 (07:30-08:30)', 'NY1 Mid');
 
                     if (!showTargetBoxes) return;
 
-                    // 4. Dynamic Outcome-Specific Target Boxes (LOD & HOD)
                     const curBoxes = boxesByOutcome[activeScenario] || boxesByOutcome['SF'];
 
-                    // Draw LOD Box for Active Scenario
                     if (curBoxes && curBoxes.lod) {{
                         const lodX1 = getX(curBoxes.lod.start_ts);
                         const lodX2 = getX(curBoxes.lod.end_ts);
@@ -805,7 +855,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         }}
                     }}
 
-                    // Draw HOD Box for Active Scenario
                     if (curBoxes && curBoxes.hod) {{
                         const hodX1 = getX(curBoxes.hod.start_ts);
                         const hodX2 = getX(curBoxes.hod.end_ts);
@@ -831,7 +880,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                         }}
                     }}
 
-                    // 5. Algorithmic Trajectory for the Active 4-Outcome Scenario
                     const points = allTraj[activeScenario] || allTraj['SF'];
                     const colorMap = {{ 'SF': '#f43f5e', 'LF': '#ef4444', 'LT': '#10b981', 'ST': '#b91c1c' }};
                     const lineColor = colorMap[activeScenario] || '#f43f5e';
@@ -859,7 +907,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                             }}
                             ctx.stroke();
 
-                            // Draw Arrowhead
                             const last = canvasCoords[canvasCoords.length - 1];
                             const prev = canvasCoords[canvasCoords.length - 2];
                             const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
@@ -872,7 +919,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                             ctx.closePath();
                             ctx.fill();
 
-                            // Trajectory Label
                             ctx.fillStyle = lineColor;
                             ctx.font = 'bold 11px sans-serif';
                             const labelText = '⚡ SCENARIO: ' + activeScenario + ' (' + points[1].desc + ')';
@@ -881,7 +927,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     }}
                 }}
 
-                // Continuous 60 FPS RequestAnimationFrame Loop
                 function syncLoop() {{
                     const timeScale = chart.timeScale();
                     if (timeScale.getVisibleLogicalRange()) {{
@@ -891,7 +936,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                 }}
                 requestAnimationFrame(syncLoop);
 
-                // Window Resize Handler
                 window.addEventListener('resize', () => {{
                     chart.applyOptions({{ 
                         width: chartContainer.clientWidth,
@@ -900,7 +944,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     drawOverlays();
                 }});
 
-                // Toolbar Actions
                 const btnFullscreen = document.getElementById('btn-fullscreen');
                 btnFullscreen.addEventListener('click', () => {{
                     chartWrapper.classList.toggle('fullscreen');
@@ -954,7 +997,6 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
                     drawOverlays();
                 }});
 
-                // 4-Scenario Button Toggles
                 const btnSf = document.getElementById('btn-sf');
                 const btnLf = document.getElementById('btn-lf');
                 const btnLt = document.getElementById('btn-lt');
@@ -1035,7 +1077,6 @@ def render_and_save_chart(ticker: str = "NQ1", target_date: Optional[date] = Non
     out_file.write_text(html_content, encoding="utf-8")
     log.info(f"Saved interactive HTML report: {out_file} ({len(html_content)} bytes)")
 
-    # Save JSON export for Next.js platform dashboard ingestion
     json_out_file = REPORTS_DIR / f"{target_date.isoformat()}_{ticker}_wargame.json"
     json_out_file.write_text(json.dumps(wargame_data, indent=2, default=str), encoding="utf-8")
     log.info(f"Saved platform JSON report: {json_out_file.name}")
