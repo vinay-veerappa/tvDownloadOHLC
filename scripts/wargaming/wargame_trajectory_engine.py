@@ -6,11 +6,7 @@ Mickey & Austin 4-Outcome Framework:
 3. Short True (ST)  - Breakout < NY1 Low sustains trend expansion
 4. Short False (SF) - Breakout < NY1 Low fails, reverses through Mid, sweeps NY1 High
 
-Elimination Rules:
-- At 08:30-09:30 (Inside NY1 Range 07:30-08:30): All 4 outcomes active.
-- Breakout > NY1 High: Eliminates ST & SF -> Active Branch [LF (66%) vs LT (34%)].
-- Breakout < NY1 Low: Eliminates LT & LF -> Active Branch [SF (66%) vs ST (34%)].
-- 09:45 / 10:15 Cutoff: Midline retest confirms False; lack of reversal confirms True.
+Each outcome has distinct Target Box coordinates, Mode Times, and Trajectory paths.
 """
 from __future__ import annotations
 
@@ -32,12 +28,11 @@ def compute_wargame_probabilities_and_trajectories(
     cs: Dict[str, Any],
     profiler_prediction: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Compute level hit probabilities, magnet tiers, 4-outcome elimination tree, and trajectories."""
+    """Compute level hit probabilities, magnet tiers, 4-outcome elimination tree, and outcome-specific target boxes."""
     t_dt = target_date
     ny1_pred = profiler_prediction.get("predictions", {}).get("NY1", {})
     rates_by_outcome = ny1_pred.get("level_hit_rates_per_outcome", {})
 
-    # Extract outcome-specific rates
     rates_sf = rates_by_outcome.get("SF", {})
     rates_lf = rates_by_outcome.get("LF", {})
     rates_lt = rates_by_outcome.get("LT", {})
@@ -65,8 +60,6 @@ def compute_wargame_probabilities_and_trajectories(
         state = "LONG_BREAKOUT"
         active_outcomes = ["LF", "LT"]
         eliminated_outcomes = ["SF", "ST"]
-        active_long_prob = 100.0
-        active_short_prob = 0.0
         lf_conditional = round(base_probs["LF"] / (base_probs["LF"] + base_probs["LT"]) * 100, 1)
         lt_conditional = round(base_probs["LT"] / (base_probs["LF"] + base_probs["LT"]) * 100, 1)
         sf_conditional = 0.0
@@ -76,8 +69,6 @@ def compute_wargame_probabilities_and_trajectories(
         state = "SHORT_BREAKOUT"
         active_outcomes = ["SF", "ST"]
         eliminated_outcomes = ["LF", "LT"]
-        active_long_prob = 0.0
-        active_short_prob = 100.0
         sf_conditional = round(base_probs["SF"] / (base_probs["SF"] + base_probs["ST"]) * 100, 1)
         st_conditional = round(base_probs["ST"] / (base_probs["SF"] + base_probs["ST"]) * 100, 1)
         lf_conditional = 0.0
@@ -87,8 +78,6 @@ def compute_wargame_probabilities_and_trajectories(
         state = "INSIDE_RANGE"
         active_outcomes = ["SF", "LF", "LT", "ST"]
         eliminated_outcomes = []
-        active_long_prob = base_probs["LF"] + base_probs["LT"]  # 50.5%
-        active_short_prob = base_probs["SF"] + base_probs["ST"] # 49.3%
         sf_conditional = base_probs["SF"]
         lf_conditional = base_probs["LF"]
         lt_conditional = base_probs["LT"]
@@ -104,67 +93,119 @@ def compute_wargame_probabilities_and_trajectories(
     bear_p50 = spot_price * (1.0 + cs["bear"]["p50"] / 100.0)
     bear_p70 = spot_price * (1.0 + cs["bear"]["p70"] / 100.0)
 
-    # Timestamps
-    ts_open = int(pd.Timestamp(datetime.combine(t_dt, time(9, 30)), tz="America/New_York").timestamp())
-    ts_sweep = int(pd.Timestamp(datetime.combine(t_dt, time(9, 50)), tz="America/New_York").timestamp())
-    ts_retest = int(pd.Timestamp(datetime.combine(t_dt, time(10, 20)), tz="America/New_York").timestamp())
-    ts_expansion = int(pd.Timestamp(datetime.combine(t_dt, time(14, 30)), tz="America/New_York").timestamp())
+    def ts_at(hour: int, minute: int) -> int:
+        return int(pd.Timestamp(datetime.combine(t_dt, time(hour, minute)), tz="America/New_York").timestamp())
 
-    # Target Boxes
-    lod_box = {
-        "start_ts": int(pd.Timestamp(datetime.combine(t_dt, time(9, 30)), tz="America/New_York").timestamp()),
-        "end_ts": int(pd.Timestamp(datetime.combine(t_dt, time(10, 15)), tz="America/New_York").timestamp()),
-        "top": float(max(p12["low"], bear_p30)),
-        "bottom": float(min(bear_p50, p12["low"] - 35.0)),
-        "label": f"🟢 LOD TARGET BOX ({cs['bear']['p30']:.1f}% to {cs['bear']['p50']:.1f}% | 09:30-10:15 ET)",
+    # 4. OUTCOME-SPECIFIC TARGET BOXES (Times & Prices)
+    boxes_by_outcome = {
+        "SF": {
+            "lod": {
+                "start_ts": ts_at(9, 30),
+                "end_ts": ts_at(10, 15),
+                "top": float(max(p12["low"], bear_p30)),
+                "bottom": float(min(bear_p50, p12["low"] - 35.0)),
+                "label": "🟢 SF LOD TARGET BOX (09:30-10:15 ET)",
+                "time_desc": "09:30 – 10:15 ET",
+            },
+            "hod": {
+                "start_ts": ts_at(13, 30),
+                "end_ts": ts_at(16, 0),
+                "bottom": float(min(p12["high"], bull_p30)),
+                "top": float(max(bull_p50, p12["high"] + 45.0)),
+                "label": "🔴 SF HOD TARGET BOX (13:30-16:00 ET)",
+                "time_desc": "13:30 – 16:00 ET",
+            }
+        },
+        "LF": {
+            "hod": {
+                "start_ts": ts_at(9, 30),
+                "end_ts": ts_at(10, 15),
+                "bottom": float(ny1_h),
+                "top": float(max(ny1_h + 35.0, bull_p30)),
+                "label": "🔴 LF HOD TARGET BOX (09:30-10:15 ET)",
+                "time_desc": "09:30 – 10:15 ET",
+            },
+            "lod": {
+                "start_ts": ts_at(13, 30),
+                "end_ts": ts_at(16, 0),
+                "top": float(min(ny1_l, bear_p30)),
+                "bottom": float(min(bear_p50, ny1_l - 45.0)),
+                "label": "🟢 LF LOD TARGET BOX (13:30-16:00 ET)",
+                "time_desc": "13:30 – 16:00 ET",
+            }
+        },
+        "LT": {
+            "lod": {
+                "start_ts": ts_at(9, 30),
+                "end_ts": ts_at(9, 45),
+                "top": float(ny1_h),
+                "bottom": float(ny1_m),
+                "label": "🟢 LT LOD BASELINE (09:30-09:45 ET)",
+                "time_desc": "09:30 – 09:45 ET",
+            },
+            "hod": {
+                "start_ts": ts_at(14, 30),
+                "end_ts": ts_at(16, 15),
+                "bottom": float(bull_p50),
+                "top": float(bull_p70),
+                "label": "🔴 LT HOD EXTENSION (14:30-16:15 ET)",
+                "time_desc": "14:30 – 16:15 ET",
+            }
+        },
+        "ST": {
+            "hod": {
+                "start_ts": ts_at(9, 30),
+                "end_ts": ts_at(9, 45),
+                "top": float(ny1_m),
+                "bottom": float(ny1_l),
+                "label": "🔴 ST HOD BASELINE (09:30-09:45 ET)",
+                "time_desc": "09:30 – 09:45 ET",
+            },
+            "lod": {
+                "start_ts": ts_at(14, 30),
+                "end_ts": ts_at(16, 15),
+                "top": float(bear_p50),
+                "bottom": float(bear_p70),
+                "label": "🟢 ST LOD EXTENSION (14:30-16:15 ET)",
+                "time_desc": "14:30 – 16:15 ET",
+            }
+        },
     }
 
-    hod_box = {
-        "start_ts": int(pd.Timestamp(datetime.combine(t_dt, time(11, 0)), tz="America/New_York").timestamp()),
-        "end_ts": int(pd.Timestamp(datetime.combine(t_dt, time(16, 0)), tz="America/New_York").timestamp()),
-        "bottom": float(min(p12["high"], bull_p30)),
-        "top": float(max(bull_p50, p12["high"] + 45.0)),
-        "label": f"🔴 HOD TARGET BOX (+{cs['bull']['p30']:.1f}% to +{cs['bull']['p50']:.1f}% | 11:00-16:00 ET)",
-    }
-
-    # 4. Trajectories for ALL 4 SCENARIOS:
-    # 1. SF (Short False - Primary Bullish Mean Reversion):
-    # Sweep below NY1 Low -> Rebound through NY1 Mid & P12 Mid -> Expansion to HOD Box
+    # 5. TRAJECTORIES FOR ALL 4 OUTCOMES
+    # 1. SF (Short False - Primary Bullish Mean Reversion)
     traj_sf = [
-        {"ts": ts_open, "price": spot_price, "desc": "09:30 RTH Open"},
-        {"ts": ts_sweep, "price": (lod_box["top"] + lod_box["bottom"]) / 2.0, "desc": "09:50 False Sweep < NY1 Low"},
-        {"ts": ts_retest, "price": p12["mid"], "desc": "10:20 Reversion > P12 Mid (88.5%)"},
-        {"ts": ts_expansion, "price": (hod_box["top"] + hod_box["bottom"]) / 2.0, "desc": "14:30 Target NY1 High & HOD Box (81.7%)"},
+        {"ts": ts_at(9, 30), "price": spot_price, "desc": "09:30 RTH Open"},
+        {"ts": ts_at(9, 50), "price": (boxes_by_outcome["SF"]["lod"]["top"] + boxes_by_outcome["SF"]["lod"]["bottom"]) / 2.0, "desc": "09:50 False Sweep < NY1 Low"},
+        {"ts": ts_at(10, 20), "price": p12["mid"], "desc": "10:20 Reversion > P12 Mid (88.5%)"},
+        {"ts": ts_at(14, 30), "price": (boxes_by_outcome["SF"]["hod"]["top"] + boxes_by_outcome["SF"]["hod"]["bottom"]) / 2.0, "desc": "14:30 Target HOD Box (81.7%)"},
     ]
 
-    # 2. LF (Long False - Bearish Mean Reversion):
-    # Fakeout above NY1 High -> Rejection back below NY1 Mid -> Sweep to LOD Box / PDL
+    # 2. LF (Long False - Bearish Mean Reversion)
     traj_lf = [
-        {"ts": ts_open, "price": spot_price, "desc": "09:30 RTH Open"},
-        {"ts": ts_sweep, "price": ny1_h + 15.0, "desc": "09:50 Long Trap > NY1 High"},
-        {"ts": ts_retest, "price": p12["mid"], "desc": "10:20 Rejection < P12 Mid (88.5%)"},
-        {"ts": ts_expansion, "price": (lod_box["top"] + lod_box["bottom"]) / 2.0, "desc": "14:30 Target NY1 Low & LOD Box"},
+        {"ts": ts_at(9, 30), "price": spot_price, "desc": "09:30 RTH Open"},
+        {"ts": ts_at(9, 50), "price": (boxes_by_outcome["LF"]["hod"]["top"] + boxes_by_outcome["LF"]["hod"]["bottom"]) / 2.0, "desc": "09:50 Long Trap > NY1 High"},
+        {"ts": ts_at(10, 20), "price": p12["mid"], "desc": "10:20 Rejection < P12 Mid (88.5%)"},
+        {"ts": ts_at(14, 30), "price": (boxes_by_outcome["LF"]["lod"]["top"] + boxes_by_outcome["LF"]["lod"]["bottom"]) / 2.0, "desc": "14:30 Target LOD Box"},
     ]
 
-    # 3. LT (Long True - Bullish Trend Expansion):
-    # Breakout > NY1 High -> Holds above NY1 High -> Direct trend expansion to Bullish P70
+    # 3. LT (Long True - Bullish Trend Expansion)
     traj_lt = [
-        {"ts": ts_open, "price": spot_price, "desc": "09:30 RTH Open"},
-        {"ts": ts_sweep, "price": ny1_h + 10.0, "desc": "09:45 Acceptance > NY1 High"},
-        {"ts": ts_retest, "price": ny1_h + 25.0, "desc": "10:30 Trend Continuation"},
-        {"ts": ts_expansion, "price": bull_p70, "desc": "15:00 Bullish Expansion to P70 (+1.73%)"},
+        {"ts": ts_at(9, 30), "price": spot_price, "desc": "09:30 RTH Open"},
+        {"ts": ts_at(9, 45), "price": ny1_h + 10.0, "desc": "09:45 Acceptance > NY1 High"},
+        {"ts": ts_at(10, 30), "price": ny1_h + 25.0, "desc": "10:30 Trend Continuation"},
+        {"ts": ts_at(15, 0), "price": (boxes_by_outcome["LT"]["hod"]["top"] + boxes_by_outcome["LT"]["hod"]["bottom"]) / 2.0, "desc": "15:00 Bullish Expansion to P70"},
     ]
 
-    # 4. ST (Short True - Bearish Trend Expansion):
-    # Breakout < NY1 Low -> Rejects NY1 Mid -> Direct trend expansion to Bearish P70
+    # 4. ST (Short True - Bearish Trend Expansion)
     traj_st = [
-        {"ts": ts_open, "price": spot_price, "desc": "09:30 RTH Open"},
-        {"ts": ts_sweep, "price": ny1_l - 10.0, "desc": "09:45 Acceptance < NY1 Low"},
-        {"ts": ts_retest, "price": ny1_l - 25.0, "desc": "10:30 Trend Continuation"},
-        {"ts": ts_expansion, "price": bear_p70, "desc": "15:00 Bearish Expansion to P70 (-1.38%)"},
+        {"ts": ts_at(9, 30), "price": spot_price, "desc": "09:30 RTH Open"},
+        {"ts": ts_at(9, 45), "price": ny1_l - 10.0, "desc": "09:45 Acceptance < NY1 Low"},
+        {"ts": ts_at(10, 30), "price": ny1_l - 25.0, "desc": "10:30 Trend Continuation"},
+        {"ts": ts_at(15, 0), "price": (boxes_by_outcome["ST"]["lod"]["top"] + boxes_by_outcome["ST"]["lod"]["bottom"]) / 2.0, "desc": "15:00 Bearish Expansion to P70"},
     ]
 
-    # 5. Build Magnet Hierarchy for active outcome
+    # 6. Build Magnet Hierarchy for active outcome
     active_rates = rates_sf if p12.get("bias") == "BULLISH" else rates_lf
     magnets_list = [
         {"name": "P12 MIDLINE", "price": p12["mid"], "prob": get_hr(active_rates, "p12m", 88.5), "tier": "Tier 1 (Core Magnet)", "color": "#f59e0b", "style": "solid", "role": "Equilibrium Switch & Primary Mean-Reversion Target"},
@@ -194,17 +235,16 @@ def compute_wargame_probabilities_and_trajectories(
             "ST": st_conditional,
         },
         "magnets": valid_magnets,
-        "lod_box": lod_box,
-        "hod_box": hod_box,
+        "boxes_by_outcome": boxes_by_outcome,
+        # Default boxes for active
+        "lod_box": boxes_by_outcome["SF"]["lod"],
+        "hod_box": boxes_by_outcome["SF"]["hod"],
         "trajectories": {
             "SF": traj_sf,
             "LF": traj_lf,
             "LT": traj_lt,
             "ST": traj_st,
         },
-        # Backwards compatibility
-        "scenario_1_trajectory": traj_sf if p12.get("bias") == "BULLISH" else traj_lf,
-        "scenario_2_trajectory": traj_lt if p12.get("bias") == "BULLISH" else traj_st,
         "directional_narrative": (
             f"Decision Tree Status: {state_desc} "
             f"P12 Midline ({p12['mid']:,.2f}) has an 88.5% touch probability and Midnight Open ({anchors.get('midnight_open', p12['mid']):,.2f}) has an 84.1% touch probability. "
